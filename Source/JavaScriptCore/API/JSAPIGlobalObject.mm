@@ -26,7 +26,7 @@
 #import "config.h"
 #import "JSAPIGlobalObject.h"
 
-#if JSC_OBJC_API_ENABLED
+// #if JSC_OBJC_API_ENABLED
 
 #import "APICast.h"
 #import "CallFrameInlines.h"
@@ -286,4 +286,4 @@ JSValue JSAPIGlobalObject::loadAndEvaluateJSScriptModule(const JSLockHolder&, JS
 
 }
 
-#endif // JSC_OBJC_API_ENABLED
+// #endif // JSC_OBJC_API_ENABLED

@@ -478,7 +478,7 @@ JSCValue* jsc_value_new_array(JSCContext* context, GType firstItemType, ...)
 
     auto* jsContext = jscContextGetJSContext(context);
     JSC::JSGlobalObject* globalObject = toJS(jsContext);
-    JSC::JSLockHolder locker(globalObject);
+    
 
     JSValueRef exception = nullptr;
     auto* jsArray = JSObjectMakeArray(jsContext, 0, nullptr, &exception);
@@ -884,7 +884,7 @@ static GRefPtr<JSCValue> jscValueCallFunction(JSCValue* value, JSObjectRef funct
     JSCValuePrivate* priv = value->priv;
     auto* jsContext = jscContextGetJSContext(priv->context.get());
     JSC::JSGlobalObject* globalObject = toJS(jsContext);
-    JSC::JSLockHolder locker(globalObject);
+    
 
     JSValueRef exception = nullptr;
     Vector<JSValueRef> arguments;
@@ -2082,7 +2082,7 @@ JSCValue* jsc_value_new_from_json(JSCContext* context, const char* json)
 
     auto* jsContext = jscContextGetJSContext(context);
     JSC::JSGlobalObject* globalObject = toJS(jsContext);
-    JSC::JSLockHolder locker(globalObject);
+    
 
     JSValueRef exception = nullptr;
     JSC::JSValue jsValue;
