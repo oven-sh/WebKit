@@ -29,6 +29,7 @@
 #include <wtf/text/ASCIILiteral.h>
 #include <wtf/text/IntegerToStringConversion.h>
 #include <wtf/text/StringImpl.h>
+#include <wtf/text/ExternalStringImpl.h>
 
 #ifdef __OBJC__
 #include <objc/objc.h>
@@ -89,6 +90,11 @@ public:
     String(StringImpl*);
     String(Ref<StringImpl>&&);
     String(RefPtr<StringImpl>&&);
+
+    String(ExternalStringImpl&);
+    String(ExternalStringImpl*);
+    String(Ref<ExternalStringImpl>&&);
+    String(RefPtr<ExternalStringImpl>&&);
 
     String(Ref<AtomStringImpl>&&);
     String(RefPtr<AtomStringImpl>&&);
@@ -464,7 +470,24 @@ inline String::String(StaticStringImpl* string)
 }
 
 inline String::String(ASCIILiteral characters)
-    : m_impl(characters.isNull() ? nullptr : RefPtr<StringImpl> { StringImpl::createFromLiteral(characters) })
+    : m_impl(characters.isNull() ? nullptr : RefPtr<StringImpl> { StringImpl::createFromLiteral(characters) }) {}
+inline String::String(ExternalStringImpl& string)
+    : m_impl(&string)
+{
+}
+
+inline String::String(ExternalStringImpl* string)
+    : m_impl(string)
+{
+}
+
+inline String::String(Ref<ExternalStringImpl>&& string)
+    : m_impl(WTFMove(string))
+{
+}
+
+inline String::String(RefPtr<ExternalStringImpl>&& string)
+    : m_impl(WTFMove(string))
 {
 }
 
