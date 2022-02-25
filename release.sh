@@ -51,7 +51,7 @@ fi
 
 id=$(docker create $CONTAINER_NAME:latest)
 docker cp $id:/output $temp/$CONTAINER_NAME
-cd $temp && zip -r $CONTAINER_NAME.tar.gz $CONTAINER_NAME
+cd $temp && tar -cf $CONTAINER_NAME.tar $CONTAINER_NAME && gzip $CONTAINER_NAME.tar >$CONTAINER_NAME.tar.gz
 docker rm -v $id
 
 gh releases upload $TAG $temp/$CONTAINER_NAME.tar.gz --clobber --repo Jarred-Sumner/webkit
