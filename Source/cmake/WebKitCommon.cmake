@@ -5,11 +5,11 @@
 # -----------------------------------------------------------------------------
 if (NOT HAS_RUN_WEBKIT_COMMON)
     set(HAS_RUN_WEBKIT_COMMON TRUE)
-    set(CMAKE_BUILD_TYPE "RelWithDebInfo" CACHE STRING "Choose the type of build." FORCE)
+    set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build." FORCE)
 
     if (NOT CMAKE_BUILD_TYPE)
-        message(WARNING "No CMAKE_BUILD_TYPE value specified, defaulting to RelWithDebInfo.")
-        set(CMAKE_BUILD_TYPE "RelWithDebInfo" CACHE STRING "Choose the type of build." FORCE)
+        message(WARNING "No CMAKE_BUILD_TYPE value specified, defaulting to Release.")
+        set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build." FORCE)
     else ()
         message(STATUS "The CMake build type is: ${CMAKE_BUILD_TYPE}")
     endif ()
