@@ -3,8 +3,8 @@ find_package(Threads REQUIRED)
 if (MSVC)
     include(OptionsMSVC)
 else ()
-    set(CMAKE_C_VISIBILITY_PRESET default)
-    set(CMAKE_CXX_VISIBILITY_PRESET default)
+    set(CMAKE_C_VISIBILITY_PRESET hidden)
+    set(CMAKE_CXX_VISIBILITY_PRESET hidden)
     set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 endif ()
 
@@ -62,9 +62,11 @@ endif ()
 # FIXME: JSCOnly on WIN32 seems to only work with fully static build
 # https://bugs.webkit.org/show_bug.cgi?id=172862
 if (NOT ENABLE_STATIC_JSC AND NOT WIN32)
-    set(JavaScriptCore_LIBRARY_TYPE SHARED)
     set(bmalloc_LIBRARY_TYPE OBJECT)
     set(WTF_LIBRARY_TYPE OBJECT)
+    set(JavaScriptCore_LIBRARY_TYPE SHARED)
+    set(PAL_LIBRARY_TYPE OBJECT)
+    set(WebCore_LIBRARY_TYPE SHARED)
 endif ()
 
 if (WIN32)
