@@ -20,7 +20,7 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #include "config.h"
@@ -30,7 +30,6 @@
 #include "InitializeThreading.h"
 #include "OpaqueJSString.h"
 #include <wtf/unicode/UTF8Conversion.h>
-
 
 using namespace JSC;
 using namespace WTF::Unicode;
@@ -60,8 +59,6 @@ JSStringRef JSStringCreateWithUTF8CString(const char* string)
     return &OpaqueJSString::create().leakRef();
 }
 
-
-
 JSStringRef JSStringCreate(const char* string, size_t length)
 {
     JSC::initialize();
@@ -71,7 +68,7 @@ JSStringRef JSStringCreate(const char* string, size_t length)
 JSStringRef JSStringCreateStatic(const char* string, size_t length)
 {
     JSC::initialize();
-     
+
     Ref<ExternalStringImpl> impl = ExternalStringImpl::createStatic(reinterpret_cast<const LChar*>(string), length);
     String str = *new String(impl.get());
     return OpaqueJSString::tryCreate(str).leakRef();
@@ -80,10 +77,8 @@ JSStringRef JSStringCreateStatic(const char* string, size_t length)
 JSStringRef JSStringCreateExternal(const char* string, size_t length, void* finalize_ptr, const ExternalStringFinalizer finalizer)
 {
     JSC::initialize();
-    
-    Ref<ExternalStringImpl> impl = ExternalStringImpl::create(reinterpret_cast<const LChar*>(string), length, [finalize_ptr, finalizer](ExternalStringImpl * externalStringImpl, void * buffer, unsigned bufferSize) -> void {
-        if (finalizer != nullptr) finalizer(finalize_ptr, buffer, bufferSize);
-	});
+
+    Ref<ExternalStringImpl> impl = ExternalStringImpl::create(reinterpret_cast<const LChar*>(string), length, finalize_ptr, finalizer);
     String str = *new String(impl.get());
     return OpaqueJSString::tryCreate(str).leakRef();
 }
@@ -154,7 +149,8 @@ size_t JSStringGetUTF8CString(JSStringRef string, char* buffer, size_t bufferSiz
     return failed ? 0 : destination - buffer;
 }
 
-char JSStringEncoding(JSStringRef string) {
+char JSStringEncoding(JSStringRef string)
+{
     if (!string || string->isEmpty()) {
         return 0;
     }
@@ -177,9 +173,8 @@ bool JSStringIsEqualToString(JSStringRef a, const char* b, size_t length)
     if (a->is8Bit()) {
         return length == a->length() && a->rawString() == StringView(b, length);
     } else {
-        return length == a->length() && a->rawString() ==  StringView(b, length);
+        return length == a->length() && a->rawString() == StringView(b, length);
     }
-
 }
 
 bool JSStringIsStatic(JSStringRef string)
