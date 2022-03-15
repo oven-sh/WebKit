@@ -50,8 +50,9 @@ if $? -ne 0; then
 fi
 
 id=$(docker create $CONTAINER_NAME:latest)
-docker cp $id:/output $temp/$CONTAINER_NAME
-cd $temp && tar -cf $CONTAINER_NAME.tar $CONTAINER_NAME && gzip $CONTAINER_NAME.tar >$CONTAINER_NAME.tar.gz
+docker cp $id:/output $temp/bun-webkit
+
+cd $temp && tar -cf $CONTAINER_NAME.tar bun-webkit && gzip $CONTAINER_NAME.tar >$CONTAINER_NAME.tar.gz
 docker rm -v $id
 
-gh releases upload $TAG $temp/$CONTAINER_NAME.tar.gz --clobber --repo Jarred-Sumner/webkit
+gh release upload $TAG $temp/$CONTAINER_NAME.tar.gz --clobber --repo Jarred-Sumner/webkit
