@@ -132,7 +132,7 @@ class UnlinkedFunctionCodeBlock;
     };
 
 #if ENABLE(WEBASSEMBLY)
-    class BaseWebAssemblySourceProvider : public SourceProvider {
+   class BaseWebAssemblySourceProvider : public SourceProvider {
     public:
         virtual const uint8_t* data() = 0;
         virtual size_t size() const = 0;
@@ -143,9 +143,9 @@ class UnlinkedFunctionCodeBlock;
         JS_EXPORT_PRIVATE BaseWebAssemblySourceProvider(const SourceOrigin&, String&&);
     };
 
-   JS_EXPORT_PRIVATE class WebAssemblySourceProvider final : public BaseWebAssemblySourceProvider {
+    class WebAssemblySourceProvider final : public BaseWebAssemblySourceProvider {
     public:
-        JS_EXPORT_PRIVATE static Ref<WebAssemblySourceProvider> create(Vector<uint8_t>&& data, const SourceOrigin& sourceOrigin, String sourceURL)
+        static Ref<WebAssemblySourceProvider> create(Vector<uint8_t>&& data, const SourceOrigin& sourceOrigin, String sourceURL)
         {
             return adoptRef(*new WebAssemblySourceProvider(WTFMove(data), sourceOrigin, WTFMove(sourceURL)));
         }
@@ -176,9 +176,12 @@ class UnlinkedFunctionCodeBlock;
         }
 
     private:
-        JS_EXPORT_PRIVATE WebAssemblySourceProvider(Vector<uint8_t>&& data, const SourceOrigin& sourceOrigin, String&& sourceURL)
-            : BaseWebAssemblySourceProvider(sourceOrigin, WTFMove(sourceURL)) 
-    {
+        WebAssemblySourceProvider(Vector<uint8_t>&& data, const SourceOrigin& sourceOrigin, String&& sourceURL)
+            : BaseWebAssemblySourceProvider(sourceOrigin, WTFMove(sourceURL))
+            , m_source("[WebAssembly source]")
+            , m_data(WTFMove(data))
+        {
+        }
 
         String m_source;
         Vector<uint8_t> m_data;

@@ -197,3 +197,4 @@ bool JSStringIsExternal(JSStringRef string)
 //     metadata |= (string->isExternal()) << 1;
 //     metadata |= (string->is()) << 2;
 // }
+

@@ -1114,9 +1114,9 @@ inline void StringImpl::iterCharacters(jsstring_iterator* iter, unsigned start, 
     static_assert(std::is_same_v<SourceCharacterType, LChar> || std::is_same_v<SourceCharacterType, UChar>);
 
     if constexpr (std::is_same_v<SourceCharacterType, LChar>) {
-       iter->write8(iter, (void*) source, numCharacters, start);
+       iter->write8(iter, (const void*) source, numCharacters, start);
     } else {
-       iter->write16(iter, (void*) source, numCharacters, start);
+       iter->write16(iter, (const void*) source, numCharacters, start);
     }
 }
 

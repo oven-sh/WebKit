@@ -71,7 +71,7 @@ JSObjectRef JSWeakObjectMapGet(JSContextRef ctx, JSWeakObjectMapRef map, void* k
         ASSERT_NOT_REACHED();
         return nullptr;
     }
-    JSGlobalObject* globalObject = toJS(ctx);
+  
     
     return toRef(jsCast<JSObject*>(map->map().get(key)));
 }
@@ -82,7 +82,6 @@ void JSWeakObjectMapRemove(JSContextRef ctx, JSWeakObjectMapRef map, void* key)
         ASSERT_NOT_REACHED();
         return;
     }
-    JSGlobalObject* globalObject = toJS(ctx);
     
     map->map().remove(key);
 }

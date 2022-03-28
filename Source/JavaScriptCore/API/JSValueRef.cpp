@@ -458,11 +458,12 @@ bool JSValueIsEqualString(JSContextRef ctx, JSValueRef value, const char* ptr, s
 }
 
 void* JSValueGetCell(JSContextRef ctx, JSValueRef value) {
+    UNUSED_PARAM(ctx);
     JSC::JSValue result = bitwise_cast<JSC::JSValue>(value);
     if (!result.isCell()) {
         return nullptr;
     }
-    JSC:JSCell* cell = result.asCell();
+    JSCell* cell = result.asCell();
     gcProtect(cell);
 
     return cell;
@@ -478,8 +479,4 @@ size_t JSStringLength(JSC::JSString *string) {
 
 void JSStringIterate(JSC::JSString *string, jsstring_iterator *iter) {
     string->value(iter);
-}
-
-uint8_t JSCellType(JSC::JSCell *cell) {
-    return cell->type();
 }
