@@ -1,6 +1,6 @@
 # BuildKit is required to build this
 # Enable via DOCKER_BUILDKIT=1 
-FROM ubuntu:latest
+FROM ubuntu:20.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install --no-install-recommends -y wget gnupg2 curl lsb-release wget software-properties-common
@@ -25,18 +25,17 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
     gcc \
     git \
     gnupg2 \
-    icu-devtools \ 
+    libicu66 \ 
     libc++-13-dev \
     libc++abi-13-dev \
     libclang-13-dev \
-    libicu-dev \
     liblld-13-dev \
     libssl-dev \
     lld-13 \
     make \
     ninja-build \
     perl \
-    python \
+    python2 \
     rsync \
     ruby \
     software-properties-common \
