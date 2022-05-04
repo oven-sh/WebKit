@@ -1287,6 +1287,11 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
 
     bytecode/Opcode.h
     llint/LLIntOpcode.h
+
+    runtime/LazyClassStructureInlines.h
+    runtime/LazyPropertyInlines.h
+    runtime/JSTypedArrayViewPrototype.h
+    runtime/JSTypedArrayPrototypes.h
 )
 
 
