@@ -38,6 +38,11 @@
 #include "TypedArrayController.h"
 #include <wtf/StdLibExtras.h>
 
+#if OS(DARWIN)
+// This is for memset_pattern8
+#include <strings.h>
+#endif
+
 namespace JSC {
 
 // This implements 22.2.4.7 TypedArraySpeciesCreate
@@ -319,11 +324,11 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFill(VM& vm, JSGlobal
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     ViewClass* thisObject = jsCast<ViewClass*>(callFrame->thisValue());
-    if (thisObject->isDetached())
+    if (UNLIKELY(thisObject->isDetached()))
         return throwVMTypeError(globalObject, scope, typedArrayBufferHasBeenDetachedErrorMessage);
 
     size_t length = thisObject->length();
-    auto nativeValue = ViewClass::toAdaptorNativeFromValue(globalObject, callFrame->argument(0));
+    typename ViewClass::ElementType nativeValue = ViewClass::toAdaptorNativeFromValue(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
 
     size_t start = argumentClampedIndexFromStartOrEnd(globalObject, callFrame->argument(1), length, 0);
@@ -331,13 +336,44 @@ ALWAYS_INLINE EncodedJSValue genericTypedArrayViewProtoFuncFill(VM& vm, JSGlobal
     size_t end = argumentClampedIndexFromStartOrEnd(globalObject, callFrame->argument(2), length, length);
     RETURN_IF_EXCEPTION(scope, { });
 
-    if (thisObject->isDetached())
+    if (UNLIKELY(thisObject->isDetached()))
         return throwVMTypeError(globalObject, scope, typedArrayBufferHasBeenDetachedErrorMessage);
 
-    for (size_t index = start; index < end; ++index)
-        thisObject->setIndexQuicklyToNativeValue(index, nativeValue);
 
-    return JSValue::encode(thisObject);
+    start = std::min(start, end);
+    end = std::max(start, end);
+
+    typename ViewClass::ElementType* array = thisObject->typedVector() + start;
+    size_t count = end - start;
+
+    #if OS(DARWIN)
+        // memset_pattern is only availble on apple platforms.
+        if constexpr (ViewClass::elementSize == 8) {
+            memset_pattern8(static_cast<void*>(array), static_cast<void*>(&nativeValue), count * ViewClass::elementSize);
+            return JSValue::encode(thisObject);
+        } else if constexpr (ViewClass::elementSize == 4) {
+            memset_pattern4(static_cast<void*>(array), static_cast<void*>(&nativeValue), count * ViewClass::elementSize);
+            return JSValue::encode(thisObject);
+        } else if constexpr (ViewClass::elementSize == 1) {
+            // memset outperforms std::fill https://lemire.me/blog/2020/01/20/filling-large-arrays-with-zeroes-quickly-in-c/
+            memset(array, nativeValue, count);
+            return JSValue::encode(thisObject);
+        } else {
+            std::fill(array, array + count, nativeValue);
+            return JSValue::encode(thisObject);
+        }
+    #else 
+        if constexpr (ViewClass::elementSize == 1) {
+            // memset outperforms std::fill https://lemire.me/blog/2020/01/20/filling-large-arrays-with-zeroes-quickly-in-c/
+            memset(array, nativeValue, count);
+            return JSValue::encode(thisObject);
+        } else {
+            // this benchmarked faster than a for loop
+            std::fill(array, array + count, nativeValue);
+            return JSValue::encode(thisObject);
+        }
+    #endif
+    
 }
 
 template<typename ViewClass>
