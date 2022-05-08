@@ -1291,6 +1291,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/LazyPropertyInlines.h
     runtime/JSTypedArrayViewPrototype.h
     runtime/JSTypedArrayPrototypes.h
+    API/JSWeakValue.h
 )
 
 
