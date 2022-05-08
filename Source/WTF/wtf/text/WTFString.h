@@ -464,7 +464,9 @@ inline String::String(StaticStringImpl* string)
 }
 
 inline String::String(ASCIILiteral characters)
-    : m_impl(characters.isNull() ? nullptr : RefPtr<StringImpl> { StringImpl::createFromLiteral(characters) }) {}
+    : m_impl(characters.isNull() ? nullptr : RefPtr<StringImpl> { StringImpl::create(characters) })
+{
+}
 
 inline String::String(ExternalStringImpl& string)
     : m_impl(&string)
