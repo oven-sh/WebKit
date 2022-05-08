@@ -29,12 +29,15 @@
 #include "APIArray.h"
 #include "APINotificationProvider.h"
 #include "APISecurityOrigin.h"
+#include "Logging.h"
 #include "WebNotification.h"
 #include "WebNotificationManagerMessages.h"
 #include "WebPageProxy.h"
 #include "WebProcessPool.h"
 #include "WebProcessProxy.h"
+#include "WebsiteDataStore.h"
 #include <WebCore/NotificationData.h>
+#include <WebCore/SecurityOriginData.h>
 
 namespace WebKit {
 using namespace WebCore;
@@ -110,10 +113,12 @@ void WebNotificationManagerProxy::show(WebPageProxy* webPage, IPC::Connection& c
     m_provider->show(webPage, notification.get());
 }
 
-void WebNotificationManagerProxy::cancel(WebPageProxy*, const UUID& pageNotificationID)
+void WebNotificationManagerProxy::cancel(WebPageProxy* page, const UUID& pageNotificationID)
 {
-    if (auto webNotification = m_notifications.get(pageNotificationID))
+    if (auto webNotification = m_notifications.get(pageNotificationID)) {
         m_provider->cancel(*webNotification);
+        didDestroyNotification(page, pageNotificationID);
+    }
 }
     
 void WebNotificationManagerProxy::didDestroyNotification(WebPageProxy*, const UUID& pageNotificationID)
@@ -186,11 +191,18 @@ static void dispatchDidClickNotification(WebNotification* notification)
     if (!notification)
         return;
 
-    auto* connection = notification->sourceConnection();
-    if (!connection)
+#if ENABLE(SERVICE_WORKER)
+    if (notification->isPersistentNotification()) {
+        if (auto* dataStore = WebsiteDataStore::existingDataStoreForSessionID(notification->sessionID()))
+            dataStore->networkProcess().processNotificationEvent(notification->data(), NotificationEventType::Click, [](bool) { });
+        else
+            RELEASE_LOG_ERROR(Notifications, "WebsiteDataStore not found from sessionID %" PRIu64 ", dropping notification click", notification->sessionID().toUInt64());
         return;
+    }
+#endif
 
-    connection->send(Messages::WebNotificationManager::DidClickNotification(notification->coreNotificationID()), 0);
+    if (auto* connection = notification->sourceConnection())
+        connection->send(Messages::WebNotificationManager::DidClickNotification(notification->coreNotificationID()), 0);
 }
 
 void WebNotificationManagerProxy::providerDidClickNotification(uint64_t globalNotificationID)
@@ -242,6 +254,16 @@ void WebNotificationManagerProxy::providerDidCloseNotifications(API::Array* glob
         if (!notification)
             continue;
 
+#if ENABLE(SERVICE_WORKER)
+        if (notification->isPersistentNotification()) {
+            if (auto* dataStore = WebsiteDataStore::existingDataStoreForSessionID(notification->sessionID()))
+                dataStore->networkProcess().processNotificationEvent(notification->data(), NotificationEventType::Close, [](bool) { });
+            else
+                RELEASE_LOG_ERROR(Notifications, "WebsiteDataStore not found from sessionID %" PRIu64 ", dropping notification close", notification->sessionID().toUInt64());
+            return;
+        }
+#endif
+
         m_globalNotificationMap.remove(notification->notificationID());
         closedNotifications.append(WTFMove(notification));
     }
@@ -267,25 +289,89 @@ void WebNotificationManagerProxy::providerDidUpdateNotificationPolicy(const API:
     processPool()->sendToAllProcesses(Messages::WebNotificationManager::DidUpdateNotificationDecision(origin->securityOrigin().toString(), allowed));
 }
 
-void WebNotificationManagerProxy::providerDidRemoveNotificationPolicies(API::Array* origins)
+static void removePushSubscriptionsForOrigins(const Vector<WebCore::SecurityOriginData>& origins)
 {
-    if (!processPool())
+    RefPtr<NetworkProcessProxy> networkProcess;
+    auto sessionID = PAL::SessionID::defaultSessionID();
+
+    WebsiteDataStore::forEachWebsiteDataStore([&networkProcess, &sessionID](WebsiteDataStore& dataStore) {
+        if (!networkProcess && dataStore.isPersistent()) {
+            networkProcess = &dataStore.networkProcess();
+            sessionID = dataStore.sessionID();
+        }
+    });
+
+    if (!networkProcess)
         return;
 
+    for (auto& origin : origins)
+        networkProcess->deletePushAndNotificationRegistration(sessionID, origin, [originString = origin.toString()](auto&&) { });
+}
+
+static Vector<WebCore::SecurityOriginData> apiArrayToSecurityOrigins(API::Array* origins)
+{
+    if (!origins)
+        return { };
+
+    Vector<WebCore::SecurityOriginData> securityOrigins;
     size_t size = origins->size();
-    if (!size)
-        return;
-    
+    securityOrigins.reserveInitialCapacity(size);
+
+    for (size_t i = 0; i < size; ++i)
+        securityOrigins.uncheckedAppend(origins->at<API::SecurityOrigin>(i)->securityOrigin());
+
+    return securityOrigins;
+}
+
+static Vector<String> apiArrayToSecurityOriginStrings(API::Array* origins)
+{
+    if (!origins)
+        return { };
+
     Vector<String> originStrings;
+    size_t size = origins->size();
     originStrings.reserveInitialCapacity(size);
+
     for (size_t i = 0; i < size; ++i)
         originStrings.uncheckedAppend(origins->at<API::SecurityOrigin>(i)->securityOrigin().toString());
 
-    WebProcessPool::sendToAllRemoteWorkerProcesses(Messages::WebNotificationManager::DidRemoveNotificationDecisions(originStrings));
+    return originStrings;
+}
 
-    if (!processPool())
+void WebNotificationManagerProxy::providerDidRemoveNotificationPolicies(API::Array* origins)
+{
+    size_t size = origins->size();
+    if (!size)
         return;
-    processPool()->sendToAllProcesses(Messages::WebNotificationManager::DidRemoveNotificationDecisions(originStrings));
+
+    if (this == &sharedServiceWorkerManager()) {
+        removePushSubscriptionsForOrigins(apiArrayToSecurityOrigins(origins));
+        WebProcessPool::sendToAllRemoteWorkerProcesses(Messages::WebNotificationManager::DidRemoveNotificationDecisions(apiArrayToSecurityOriginStrings(origins)));
+        return;
+    }
+
+    if (processPool())
+        processPool()->sendToAllProcesses(Messages::WebNotificationManager::DidRemoveNotificationDecisions(apiArrayToSecurityOriginStrings(origins)));
+}
+
+void WebNotificationManagerProxy::getNotifications(const URL& url, const String& tag, PAL::SessionID sessionID, CompletionHandler<void(Vector<NotificationData>&&)>&& callback)
+{
+    Vector<WebNotification*> notifications;
+    for (auto& notification : m_notifications.values()) {
+        auto& data = notification->data();
+        if (data.serviceWorkerRegistrationURL != url || data.sourceSession != sessionID)
+            continue;
+        if (!tag.isEmpty() && data.tag != tag)
+            continue;
+        notifications.append(notification.ptr());
+    }
+    // Let's sort as per https://notifications.spec.whatwg.org/#dom-serviceworkerregistration-getnotifications.
+    std::sort(notifications.begin(), notifications.end(), [](auto& a, auto& b) {
+        if (a->data().creationTime < b->data().creationTime)
+            return true;
+        return a->data().creationTime == b->data().creationTime && a->identifier() < b->identifier();
+    });
+    callback(map(notifications, [](auto& notification) { return notification->data(); }));
 }
 
 } // namespace WebKit

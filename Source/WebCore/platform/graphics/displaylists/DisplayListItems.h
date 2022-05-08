@@ -20,7 +20,7 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #pragma once
@@ -33,7 +33,6 @@
 #include "GlyphBuffer.h"
 #include "Gradient.h"
 #include "GraphicsContext.h"
-#include "GraphicsContextFlushIdentifier.h"
 #include "Image.h"
 #include "MediaPlayerIdentifier.h"
 #include "Pattern.h"
@@ -441,7 +440,7 @@ public:
         , m_destinationRect(destinationRect)
     {
     }
-    
+
     RenderingResourceIdentifier imageBufferIdentifier() const { return m_imageBufferIdentifier; }
     FloatRect destinationRect() const { return m_destinationRect; }
     bool isValid() const { return m_imageBufferIdentifier.isValid(); }
@@ -907,7 +906,7 @@ public:
     static constexpr bool isInlineItem = false;
     static constexpr bool isDrawingItem = true;
 
-    WEBCORE_EXPORT DrawLinesForText(const FloatPoint& blockLocation, const FloatSize& localAnchor, float thickness, const DashArray& widths, bool printing, bool doubleLines);
+    WEBCORE_EXPORT DrawLinesForText(const FloatPoint& blockLocation, const FloatSize& localAnchor, float thickness, const DashArray& widths, bool printing, bool doubleLines, StrokeStyle);
 
     void setBlockLocation(const FloatPoint& blockLocation) { m_blockLocation = blockLocation; }
     const FloatPoint& blockLocation() const { return m_blockLocation; }
@@ -917,6 +916,7 @@ public:
     const DashArray& widths() const { return m_widths; }
     bool isPrinting() const { return m_printing; }
     bool doubleLines() const { return m_doubleLines; }
+    StrokeStyle style() const { return m_style; }
 
     WEBCORE_EXPORT void apply(GraphicsContext&) const;
 
@@ -933,6 +933,7 @@ private:
     float m_thickness;
     bool m_printing;
     bool m_doubleLines;
+    StrokeStyle m_style;
 };
 
 template<class Encoder>
@@ -944,6 +945,7 @@ void DrawLinesForText::encode(Encoder& encoder) const
     encoder << m_thickness;
     encoder << m_printing;
     encoder << m_doubleLines;
+    encoder << m_style;
 }
 
 template<class Decoder>
@@ -979,7 +981,12 @@ std::optional<DrawLinesForText> DrawLinesForText::decode(Decoder& decoder)
     if (!doubleLines)
         return std::nullopt;
 
-    return {{ *blockLocation, *localAnchor, *thickness, *widths, *printing, *doubleLines }};
+    std::optional<StrokeStyle> style;
+    decoder >> style;
+    if (!style)
+        return std::nullopt;
+
+    return { { *blockLocation, *localAnchor, *thickness, *widths, *printing, *doubleLines, *style } };
 }
 
 class DrawDotsForDocumentMarker {
@@ -1967,26 +1974,6 @@ private:
     float m_scaleFactor { 1 };
 };
 
-class FlushContext {
-public:
-    static constexpr ItemType itemType = ItemType::FlushContext;
-    static constexpr bool isInlineItem = true;
-    static constexpr bool isDrawingItem = false;
-
-    explicit FlushContext(GraphicsContextFlushIdentifier identifier)
-        : m_identifier(identifier)
-    {
-    }
-
-    GraphicsContextFlushIdentifier identifier() const { return m_identifier; }
-    bool isValid() const { return m_identifier.isValid(); }
-
-    WEBCORE_EXPORT void apply(GraphicsContext&) const;
-
-private:
-    GraphicsContextFlushIdentifier m_identifier;
-};
-
 using DisplayListItem = std::variant
     < ApplyDeviceScaleFactor
     , BeginTransparencyLayer
@@ -2021,7 +2008,6 @@ using DisplayListItem = std::variant
     , FillRectWithGradient
     , FillRectWithRoundedHole
     , FillRoundedRect
-    , FlushContext
     , Restore
     , Rotate
     , Save
@@ -2064,7 +2050,69 @@ using DisplayListItem = std::variant
 size_t paddedSizeOfTypeAndItemInBytes(const DisplayListItem&);
 ItemType displayListItemType(const DisplayListItem&);
 
+#if !LOG_DISABLED
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const Translate&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const Rotate&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const Scale&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const SetCTM&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const ConcatenateCTM&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const SetInlineFillColor&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const SetInlineStrokeColor&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const SetStrokeThickness&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const SetState&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const SetLineCap&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const SetLineDash&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const SetLineJoin&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const SetMiterLimit&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const Clip&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const ClipOut&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const ClipToImageBuffer&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const ClipOutToPath&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const ClipPath&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const DrawFilteredImageBuffer&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const DrawGlyphs&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const DrawImageBuffer&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const DrawNativeImage&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const DrawSystemImage&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const DrawPattern&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const DrawRect&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const DrawLine&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const DrawLinesForText&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const DrawDotsForDocumentMarker&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const DrawEllipse&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const DrawPath&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const DrawFocusRingPath&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const DrawFocusRingRects&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const FillRect&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const FillRectWithColor&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const FillRectWithGradient&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const FillCompositedRect&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const FillRoundedRect&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const FillRectWithRoundedHole&);
+#if ENABLE(INLINE_PATH_DATA)
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const FillLine&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const FillArc&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const FillQuadCurve&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const FillBezierCurve&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const StrokeArc&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const StrokeQuadCurve&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const StrokeBezierCurve&);
+#endif // ENABLE(INLINE_PATH_DATA)
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const FillPath&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const FillEllipse&);
+#if ENABLE(VIDEO)
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const PaintFrameForMedia&);
+#endif // ENABLE(VIDEO)
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const StrokeRect&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const StrokePath&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const StrokeEllipse&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const StrokeLine&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const ClearRect&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const BeginTransparencyLayer&);
+WEBCORE_EXPORT TextStream& operator<<(TextStream&, const ApplyDeviceScaleFactor&);
+
 TextStream& operator<<(TextStream&, ItemHandle);
+#endif
 
 } // namespace DisplayList
 } // namespace WebCore
@@ -2122,7 +2170,6 @@ template<> struct EnumTraits<WebCore::DisplayList::ItemType> {
 #endif
     WebCore::DisplayList::ItemType::FillPath,
     WebCore::DisplayList::ItemType::FillEllipse,
-    WebCore::DisplayList::ItemType::FlushContext,
 #if ENABLE(VIDEO)
     WebCore::DisplayList::ItemType::PaintFrameForMedia,
 #endif

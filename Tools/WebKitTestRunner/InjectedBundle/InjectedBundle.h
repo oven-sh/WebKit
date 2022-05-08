@@ -83,7 +83,7 @@ public:
     bool dumpJSConsoleLogInStdErr() const { return m_dumpJSConsoleLogInStdErr; };
 
     enum class IsFinalTestOutput : bool { No, Yes };
-    void outputText(const String&, IsFinalTestOutput = IsFinalTestOutput::No);
+    void outputText(StringView, IsFinalTestOutput = IsFinalTestOutput::No);
     void dumpToStdErr(const String&);
     void postNewBeforeUnloadReturnValue(bool);
     void postAddChromeInputField();
@@ -149,6 +149,8 @@ public:
     void resetUserScriptInjectedCount() { m_userScriptInjectedCount = 0; }
     void increaseUserScriptInjectedCount() { ++m_userScriptInjectedCount; }
     size_t userScriptInjectedCount() const { return m_userScriptInjectedCount; }
+
+    void clearResourceLoadStatistics();
 
 private:
     InjectedBundle() = default;

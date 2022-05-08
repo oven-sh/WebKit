@@ -55,13 +55,15 @@ IPCStreamTester::~IPCStreamTester() = default;
 void IPCStreamTester::initialize()
 {
     m_streamConnection->startReceivingMessages(*this, Messages::IPCStreamTester::messageReceiverName(), m_identifier.toUInt64());
+    m_streamConnection->open();
     workQueue().dispatch([this] {
-        m_streamConnection->connection().send(Messages::IPCStreamTesterProxy::WasCreated(workQueue().wakeUpSemaphore()), m_identifier);
+        m_streamConnection->connection().send(Messages::IPCStreamTesterProxy::WasCreated(workQueue().wakeUpSemaphore(), m_streamConnection->clientWaitSemaphore()), m_identifier);
     });
 }
 
 void IPCStreamTester::stopListeningForIPC(Ref<IPCStreamTester>&& refFromConnection)
 {
+    m_streamConnection->invalidate();
     m_streamConnection->stopReceivingMessages(Messages::IPCStreamTester::messageReceiverName(), m_identifier.toUInt64());
     workQueue().stopAndWaitForCompletion();
 }
@@ -83,6 +85,20 @@ void IPCStreamTester::syncMessageReturningSharedMemory1(uint32_t byteCount, Comp
         return { WTFMove(handle), sharedMemory->size() };
     }();
     completionHandler(WTFMove(result));
+}
+
+void IPCStreamTester::syncCrashOnZero(int32_t value, CompletionHandler<void(int32_t)>&& completionHandler)
+{
+    if (!value) {
+        // Use exit so that we don't leave a crash report.
+#if OS(WINDOWS)
+        // Calling _exit in non-main threads may cause a deadlock in WTF::Thread::ThreadHolder::~ThreadHolder.
+        TerminateProcess(GetCurrentProcess(), EXIT_SUCCESS);
+#else
+        _exit(EXIT_SUCCESS);
+#endif
+    }
+    completionHandler(value);
 }
 
 }

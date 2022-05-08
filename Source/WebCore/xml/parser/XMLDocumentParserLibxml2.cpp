@@ -31,6 +31,7 @@
 #include "CDATASection.h"
 #include "Comment.h"
 #include "CachedResourceLoader.h"
+#include "CommonAtomStrings.h"
 #include "Document.h"
 #include "DocumentFragment.h"
 #include "DocumentType.h"
@@ -424,15 +425,15 @@ static bool shouldAllowExternalLoad(const URL& url)
         return false;
 
     // On Windows, libxml computes a URL relative to where its DLL resides.
-    if (startsWithLettersIgnoringASCIICase(urlString, "file:///") && urlString.endsWithIgnoringASCIICase("/etc/catalog"))
+    if (startsWithLettersIgnoringASCIICase(urlString, "file:///"_s) && urlString.endsWithIgnoringASCIICase("/etc/catalog"))
         return false;
 
     // The most common DTD. There isn't much point in hammering www.w3c.org by requesting this for every XHTML document.
-    if (startsWithLettersIgnoringASCIICase(urlString, "http://www.w3.org/tr/xhtml"))
+    if (startsWithLettersIgnoringASCIICase(urlString, "http://www.w3.org/tr/xhtml"_s))
         return false;
 
     // Similarly, there isn't much point in requesting the SVG DTD.
-    if (startsWithLettersIgnoringASCIICase(urlString, "http://www.w3.org/graphics/svg"))
+    if (startsWithLettersIgnoringASCIICase(urlString, "http://www.w3.org/graphics/svg"_s))
         return false;
 
     // The libxml doesn't give us a lot of context for deciding whether to
@@ -458,7 +459,7 @@ static void* openFunc(const char* uri)
     Document* document = cachedResourceLoader.document();
     // Same logic as HTMLBaseElement::href(). Keep them in sync.
     auto* encoding = (document && document->decoder()) ? document->decoder()->encodingForURLParsing() : nullptr;
-    URL url(document ? document->fallbackBaseURL() : URL(), stripLeadingAndTrailingHTMLSpaces(uri), encoding);
+    URL url(document ? document->fallbackBaseURL() : URL(), stripLeadingAndTrailingHTMLSpaces(String::fromLatin1(uri)), encoding);
 
     if (!shouldAllowExternalLoad(url))
         return &globalDescriptor;
@@ -698,7 +699,7 @@ static inline bool handleNamespaceAttributes(Vector<Attribute>& prefixedAttribut
         AtomString namespaceQName = xmlnsAtom();
         AtomString namespaceURI = toAtomString(namespaces[i].uri);
         if (namespaces[i].prefix)
-            namespaceQName = "xmlns:" + toString(namespaces[i].prefix);
+            namespaceQName = makeAtomString("xmlns:", toString(namespaces[i].prefix));
 
         auto result = Element::parseAttributeName(XMLNSNames::xmlnsNamespaceURI, namespaceQName);
         if (result.hasException())
@@ -726,7 +727,7 @@ static inline bool handleElementAttributes(Vector<Attribute>& prefixedAttributes
         AtomString attrValue = toAtomString(attributes[i].value, valueLength);
         String attrPrefix = toString(attributes[i].prefix);
         AtomString attrURI = attrPrefix.isEmpty() ? nullAtom() : toAtomString(attributes[i].uri);
-        AtomString attrQName = attrPrefix.isEmpty() ? toAtomString(attributes[i].localname) : attrPrefix + ":" + toString(attributes[i].localname);
+        AtomString attrQName = attrPrefix.isEmpty() ? toAtomString(attributes[i].localname) : makeAtomString(attrPrefix, ':', toString(attributes[i].localname));
 
         auto result = Element::parseAttributeName(attrURI, attrQName);
         if (result.hasException())

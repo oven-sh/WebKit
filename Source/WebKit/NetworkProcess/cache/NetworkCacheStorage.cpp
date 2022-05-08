@@ -176,7 +176,7 @@ static String makeCachePath(const String& baseCachePath)
 #if PLATFORM(MAC)
     // Put development cache to a different directory to avoid affecting the system cache.
     if (!AuxiliaryProcess::isSystemWebKit())
-        return FileSystem::pathByAppendingComponent(baseCachePath, "Development");
+        return FileSystem::pathByAppendingComponent(baseCachePath, "Development"_s);
 #endif
     return baseCachePath;
 }
@@ -235,7 +235,7 @@ static void traverseRecordsFiles(const String& recordsPath, const String& expect
                 if (entryType != DirectoryEntryType::File || fileName.length() < Key::hashStringLength())
                     return;
 
-                String hashString = fileName.substring(0, Key::hashStringLength());
+                String hashString = fileName.left(Key::hashStringLength());
                 auto isBlob = fileName.length() > Key::hashStringLength() && fileName.endsWith(blobSuffix);
                 function(fileName, hashString, actualType, isBlob, recordDirectoryPath);
             });

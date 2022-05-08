@@ -106,9 +106,12 @@ public:
     WEBCORE_EXPORT virtual void changeSheetRect(const FloatRect&) = 0;
 
     WEBCORE_EXPORT virtual void openURLExternally(const String& url) = 0;
+    WEBCORE_EXPORT virtual void revealFileExternally(const String& path) = 0;
     virtual bool canSave() = 0;
     virtual void save(const String& url, const String& content, bool base64Encoded, bool forceSaveAs) = 0;
     virtual void append(const String& url, const String& content) = 0;
+    virtual bool canLoad() = 0;
+    virtual void load(const String& path, CompletionHandler<void(const String&)>&&) = 0;
 
     virtual void inspectedURLChanged(const String&) = 0;
     virtual void showCertificate(const CertificateInfo&) = 0;

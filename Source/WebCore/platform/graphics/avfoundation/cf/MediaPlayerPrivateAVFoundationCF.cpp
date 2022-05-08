@@ -69,6 +69,7 @@
 #endif
 #include <wtf/HashMap.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/RobinHoodHashMap.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/Threading.h>
 #include <wtf/text/CString.h>
@@ -206,7 +207,7 @@ private:
     InbandTextTrackPrivateAVF* m_currentTextTrack;
 
 #if HAVE(AVFOUNDATION_LOADER_DELEGATE)
-    HashMap<String, Vector<RetainPtr<AVCFAssetResourceLoadingRequestRef>>> m_keyURIToRequestMap;
+    MemoryCompactRobinHoodHashMap<String, Vector<RetainPtr<AVCFAssetResourceLoadingRequestRef>>> m_keyURIToRequestMap;
     AVCFAssetResourceLoaderCallbacks m_resourceLoaderCallbacks;
 #endif
 };
@@ -910,8 +911,8 @@ DestinationColorSpace MediaPlayerPrivateAVFoundationCF::colorSpace()
 
 static bool keySystemIsSupported(const String& keySystem)
 {
-    return equalLettersIgnoringASCIICase(keySystem, "com.apple.fps")
-        || equalLettersIgnoringASCIICase(keySystem, "com.apple.fps.1_0");
+    return equalLettersIgnoringASCIICase(keySystem, "com.apple.fps"_s)
+        || equalLettersIgnoringASCIICase(keySystem, "com.apple.fps.1_0"_s);
 }
 
 #endif

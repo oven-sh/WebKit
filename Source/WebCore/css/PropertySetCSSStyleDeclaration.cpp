@@ -242,7 +242,7 @@ ExceptionOr<void> PropertySetCSSStyleDeclaration::setProperty(const String& prop
     if (!willMutate())
         return { };
 
-    bool important = equalIgnoringASCIICase(priority, "important");
+    bool important = equalLettersIgnoringASCIICase(priority, "important"_s);
     if (!important && !priority.isEmpty())
         return { };
 
@@ -300,14 +300,10 @@ RefPtr<CSSValue> PropertySetCSSStyleDeclaration::getPropertyCSSValueInternal(CSS
 String PropertySetCSSStyleDeclaration::getPropertyValueInternal(CSSPropertyID propertyID)
 {
     String value = m_propertySet->getPropertyValue(propertyID);
-    CSSPropertyID relatedPropertyID = getRelatedPropertyId(propertyID);
-    String relatedValue = m_propertySet->getPropertyValue(relatedPropertyID);
-        
+
     if (!value.isEmpty())
         return value;
-    if (!relatedValue.isEmpty())
-        return relatedValue;
-    
+
     return { };
 }
 
@@ -333,14 +329,11 @@ RefPtr<DeprecatedCSSOMValue> PropertySetCSSStyleDeclaration::wrapForDeprecatedCS
 
     // The map is here to maintain the object identity of the CSSValues over multiple invocations.
     // FIXME: It is likely that the identity is not important for web compatibility and this code should be removed.
-    if (!m_cssomValueWrappers)
-        m_cssomValueWrappers = makeUnique<HashMap<CSSValue*, WeakPtr<DeprecatedCSSOMValue>>>();
-    
-    auto& clonedValue = m_cssomValueWrappers->add(internalValue, WeakPtr<DeprecatedCSSOMValue>()).iterator->value;
+    auto& clonedValue = m_cssomValueWrappers.add(internalValue, WeakPtr<DeprecatedCSSOMValue>()).iterator->value;
     if (clonedValue)
         return clonedValue.get();
 
-    RefPtr<DeprecatedCSSOMValue> wrapper = internalValue->createDeprecatedCSSOMWrapper(*this);
+    auto wrapper = internalValue->createDeprecatedCSSOMWrapper(*this);
     clonedValue = wrapper;
     return wrapper;
 }
@@ -401,7 +394,7 @@ void StyleRuleCSSStyleDeclaration::didMutate(MutationType type)
     ASSERT(m_parentRule->parentStyleSheet());
 
     if (type == PropertyChanged)
-        m_cssomValueWrappers = nullptr;
+        m_cssomValueWrappers.clear();
 
     // Style sheet mutation needs to be signaled even if the change failed. willMutate*/didMutate* must pair.
     m_parentRule->parentStyleSheet()->didMutateRuleFromCSSStyleDeclaration();
@@ -443,7 +436,7 @@ void InlineCSSStyleDeclaration::didMutate(MutationType type)
     if (type == NoChanges)
         return;
 
-    m_cssomValueWrappers = nullptr;
+    m_cssomValueWrappers.clear();
 
     if (!m_parentElement)
         return;

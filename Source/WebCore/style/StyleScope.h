@@ -60,7 +60,7 @@ namespace Style {
 
 class Resolver;
 
-class Scope : public CanMakeCheckedPtr {
+class Scope : public CanMakeWeakPtr<Scope> {
     WTF_MAKE_FAST_ALLOCATED;
 public:
     explicit Scope(Document&);
@@ -144,7 +144,7 @@ private:
     void updateActiveStyleSheets(UpdateType);
     void scheduleUpdate(UpdateType);
 
-    using ResolverScopes = HashMap<Ref<Resolver>, Vector<CheckedPtr<Scope>>>;
+    using ResolverScopes = HashMap<Ref<Resolver>, Vector<WeakPtr<Scope>>>;
     ResolverScopes collectResolverScopes();
     template <typename TestFunction> void evaluateMediaQueries(TestFunction&&);
 
@@ -186,7 +186,7 @@ private:
 
     Timer m_pendingUpdateTimer;
 
-    mutable std::unique_ptr<HashSet<const CSSStyleSheet*>> m_weakCopyOfActiveStyleSheetListForFastLookup;
+    mutable HashSet<const CSSStyleSheet*> m_weakCopyOfActiveStyleSheetListForFastLookup;
 
     // Track the currently loading top-level stylesheets needed for rendering.
     // Sheets loaded using the @import directive are not included in this count.

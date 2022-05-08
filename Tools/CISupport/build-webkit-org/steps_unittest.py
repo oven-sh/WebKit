@@ -402,7 +402,7 @@ class TestCompileWebKit(BuildStepMixinAdditions, unittest.TestCase):
         self.expectRemoteCommands(
             ExpectShell(
                 workdir='wkdir',
-                timeout=1200,
+                timeout=1800,
                 logEnviron=True,
                 command=['perl', 'Tools/Scripts/build-webkit', '--release'],
             ) + 0,
@@ -418,7 +418,7 @@ class TestCompileWebKit(BuildStepMixinAdditions, unittest.TestCase):
         self.expectRemoteCommands(
             ExpectShell(
                 workdir='wkdir',
-                timeout=1200,
+                timeout=1800,
                 logEnviron=True,
                 command=['perl', 'Tools/Scripts/build-webkit', '--release', '--prefix=/app/webkit/WebKitBuild/Release/install', '--gtk'],
             ) + 0,
@@ -434,7 +434,7 @@ class TestCompileWebKit(BuildStepMixinAdditions, unittest.TestCase):
         self.expectRemoteCommands(
             ExpectShell(
                 workdir='wkdir',
-                timeout=1200,
+                timeout=1800,
                 logEnviron=True,
                 command=['perl', 'Tools/Scripts/build-webkit', '--release', '--wpe'],
             ) + 0,
@@ -449,7 +449,7 @@ class TestCompileWebKit(BuildStepMixinAdditions, unittest.TestCase):
         self.expectRemoteCommands(
             ExpectShell(
                 workdir='wkdir',
-                timeout=1200,
+                timeout=1800,
                 logEnviron=True,
                 command=['perl', 'Tools/Scripts/build-webkit', '--debug'],
             ) + 2
@@ -474,7 +474,7 @@ class TestCompileJSCOnly(BuildStepMixinAdditions, unittest.TestCase):
         self.expectRemoteCommands(
             ExpectShell(
                 workdir='wkdir',
-                timeout=1200,
+                timeout=1800,
                 logEnviron=True,
                 command=['perl', 'Tools/Scripts/build-jsc', '--release'],
             ) + 0,
@@ -489,6 +489,7 @@ class TestCompileJSCOnly(BuildStepMixinAdditions, unittest.TestCase):
         self.expectRemoteCommands(
             ExpectShell(
                 workdir='wkdir',
+                timeout=1800,
                 logEnviron=True,
                 command=['perl', 'Tools/Scripts/build-jsc', '--debug'],
             ) + 2
@@ -508,12 +509,12 @@ class TestShowIdentifier(BuildStepMixinAdditions, unittest.TestCase):
 
     def test_success(self):
         self.setupStep(ShowIdentifier())
-        self.setProperty('got_revision', '272692')
+        self.setProperty('got_revision', 'd3f2b739b65eda1eeb651991a3554dfaeebdfe0b')
         self.expectRemoteCommands(
             ExpectShell(workdir='wkdir',
                         timeout=600,
                         logEnviron=False,
-                        command=['python3', 'Tools/Scripts/git-webkit', 'find', 'r272692']) +
+                        command=['python3', 'Tools/Scripts/git-webkit', 'find', 'd3f2b739b65eda1eeb651991a3554dfaeebdfe0b']) +
             ExpectShell.log('stdio', stdout='Identifier: 233939@main') +
             0,
         )
@@ -524,12 +525,12 @@ class TestShowIdentifier(BuildStepMixinAdditions, unittest.TestCase):
 
     def test_failure(self):
         self.setupStep(ShowIdentifier())
-        self.setProperty('got_revision', '272692')
+        self.setProperty('got_revision', 'd3f2b739b65eda1eeb651991a3554dfaeebdfe0b')
         self.expectRemoteCommands(
             ExpectShell(workdir='wkdir',
                         timeout=600,
                         logEnviron=False,
-                        command=['python3', 'Tools/Scripts/git-webkit', 'find', 'r272692']) +
+                        command=['python3', 'Tools/Scripts/git-webkit', 'find', 'd3f2b739b65eda1eeb651991a3554dfaeebdfe0b']) +
             ExpectShell.log('stdio', stdout='Unexpected failure') +
             2,
         )
@@ -989,6 +990,7 @@ class TestRunJavaScriptCoreTests(BuildStepMixinAdditions, unittest.TestCase):
 
     def configureStep(self, platform=None, fullPlatform=None, configuration=None):
         self.setupStep(RunJavaScriptCoreTests())
+        self.commandExtra = RunJavaScriptCoreTests.commandExtra
         if platform:
             self.setProperty('platform', platform)
         if fullPlatform:
@@ -1004,7 +1006,7 @@ class TestRunJavaScriptCoreTests(BuildStepMixinAdditions, unittest.TestCase):
         self.expectRemoteCommands(
             ExpectShell(workdir='wkdir',
                         logEnviron=False,
-                        command=['perl', 'Tools/Scripts/run-javascriptcore-tests', '--no-build', '--no-fail-fast', '--json-output={0}'.format(self.jsonFileName), '--release', '--builder-name', 'JSC-Tests', '--build-number', '101', '--buildbot-worker', 'bot100', '--buildbot-master', CURRENT_HOSTNAME, '--report', 'https://results.webkit.org'],
+                        command=['perl', 'Tools/Scripts/run-javascriptcore-tests', '--no-build', '--no-fail-fast', '--json-output={0}'.format(self.jsonFileName), '--release', '--builder-name', 'JSC-Tests', '--build-number', '101', '--buildbot-worker', 'bot100', '--buildbot-master', CURRENT_HOSTNAME, '--report', 'https://results.webkit.org'] + self.commandExtra,
                         logfiles={'json': self.jsonFileName},
                         env={'RESULTS_SERVER_API_KEY': 'test-api-key'}
                         )
@@ -1018,7 +1020,7 @@ class TestRunJavaScriptCoreTests(BuildStepMixinAdditions, unittest.TestCase):
         self.expectRemoteCommands(
             ExpectShell(workdir='wkdir',
                         logEnviron=False,
-                        command=['perl', 'Tools/Scripts/run-javascriptcore-tests', '--no-build', '--no-fail-fast', '--json-output={0}'.format(self.jsonFileName), '--debug', '--builder-name', 'JSC-Tests', '--build-number', '101', '--buildbot-worker', 'bot100', '--buildbot-master', CURRENT_HOSTNAME, '--report', 'https://results.webkit.org'],
+                        command=['perl', 'Tools/Scripts/run-javascriptcore-tests', '--no-build', '--no-fail-fast', '--json-output={0}'.format(self.jsonFileName), '--debug', '--builder-name', 'JSC-Tests', '--build-number', '101', '--buildbot-worker', 'bot100', '--buildbot-master', CURRENT_HOSTNAME, '--report', 'https://results.webkit.org'] + self.commandExtra,
                         logfiles={'json': self.jsonFileName},
                         env={'RESULTS_SERVER_API_KEY': 'test-api-key'}
                         )
@@ -1058,7 +1060,7 @@ class TestSetPermissions(BuildStepMixinAdditions, unittest.TestCase):
         return self.runStep()
 
 
-class TestSVNCleanup(BuildStepMixinAdditions, unittest.TestCase):
+class TestCleanUpGitIndexLock(BuildStepMixinAdditions, unittest.TestCase):
     def setUp(self):
         self.longMessage = True
         return self.setUpBuildStep()
@@ -1067,30 +1069,30 @@ class TestSVNCleanup(BuildStepMixinAdditions, unittest.TestCase):
         return self.tearDownBuildStep()
 
     def test_success(self):
-        self.setupStep(SVNCleanup())
+        self.setupStep(CleanUpGitIndexLock())
         self.expectRemoteCommands(
             ExpectShell(
                 workdir='wkdir',
-                timeout=600,
+                timeout=120,
                 logEnviron=False,
-                command=['svn', 'cleanup'],
+                command=['rm', '-f', '.git/index.lock'],
             ) + 0,
         )
-        self.expectOutcome(result=SUCCESS, state_string='Run svn cleanup')
+        self.expectOutcome(result=SUCCESS, state_string='Deleted .git/index.lock')
         return self.runStep()
 
     def test_failure(self):
-        self.setupStep(SVNCleanup())
+        self.setupStep(CleanUpGitIndexLock())
         self.expectRemoteCommands(
             ExpectShell(
                 workdir='wkdir',
-                timeout=600,
+                timeout=120,
                 logEnviron=False,
-                command=['svn', 'cleanup'],
+                command=['rm', '-f', '.git/index.lock'],
             ) + 2
             + ExpectShell.log('stdio', stdout='Unexpected error.'),
         )
-        self.expectOutcome(result=FAILURE, state_string='Run svn cleanup (failure)')
+        self.expectOutcome(result=FAILURE, state_string='Deleted .git/index.lock (failure)')
         return self.runStep()
 
 

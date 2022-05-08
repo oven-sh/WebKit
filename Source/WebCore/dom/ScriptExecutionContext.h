@@ -34,6 +34,7 @@
 #include "SecurityContext.h"
 #include "ServiceWorkerIdentifier.h"
 #include "Settings.h"
+#include "StorageBlockingPolicy.h"
 #include <JavaScriptCore/ConsoleTypes.h>
 #include <JavaScriptCore/HandleTypes.h>
 #include <pal/SessionID.h>
@@ -101,7 +102,6 @@ public:
     virtual bool isDocument() const { return false; }
     virtual bool isWorkerGlobalScope() const { return false; }
     virtual bool isServiceWorkerGlobalScope() const { return false; }
-    virtual bool isShadowRealmGlobalScope() const { return false; }
     virtual bool isWorkletGlobalScope() const { return false; }
 
     virtual bool isContextThread() const { return true; }
@@ -265,10 +265,10 @@ public:
     int timerNestingLevel() const { return m_timerNestingLevel; }
     void setTimerNestingLevel(int timerNestingLevel) { m_timerNestingLevel = timerNestingLevel; }
 
-    RejectedPromiseTracker& ensureRejectedPromiseTracker()
+    RejectedPromiseTracker* ensureRejectedPromiseTracker()
     {
         if (m_rejectedPromiseTracker)
-            return *m_rejectedPromiseTracker.get();
+            return m_rejectedPromiseTracker.get();
         return ensureRejectedPromiseTrackerSlow();
     }
 
@@ -288,6 +288,7 @@ public:
 
     ServiceWorkerContainer* serviceWorkerContainer();
     ServiceWorkerContainer* ensureServiceWorkerContainer();
+    virtual void updateServiceWorkerClientData() { ASSERT_NOT_REACHED(); }
 #endif
     WEBCORE_EXPORT static bool postTaskTo(ScriptExecutionContextIdentifier, Task&&);
     WEBCORE_EXPORT static bool ensureOnContextThread(ScriptExecutionContextIdentifier, Task&&);
@@ -296,6 +297,21 @@ public:
 
     bool hasLoggedAuthenticatedEncryptionWarning() const { return m_hasLoggedAuthenticatedEncryptionWarning; }
     void setHasLoggedAuthenticatedEncryptionWarning(bool value) { m_hasLoggedAuthenticatedEncryptionWarning = value; }
+
+    void setStorageBlockingPolicy(StorageBlockingPolicy policy) { m_storageBlockingPolicy = policy; }
+    enum class ResourceType : uint8_t {
+        ApplicationCache,
+        Cookies,
+        Geolocation,
+        IndexedDB,
+        LocalStorage,
+        Plugin,
+        SessionStorage,
+        StorageManager,
+        WebSQL
+    };
+    enum class HasResourceAccess : uint8_t { No, Yes, DefaultForThirdParty };
+    WEBCORE_EXPORT HasResourceAccess canAccessResource(ResourceType) const;
 
 protected:
     class AddConsoleMessageTask : public Task {
@@ -336,7 +352,7 @@ private:
     enum class ShouldContinue { No, Yes };
     void forEachActiveDOMObject(const Function<ShouldContinue(ActiveDOMObject&)>&) const;
 
-    RejectedPromiseTracker& ensureRejectedPromiseTrackerSlow();
+    RejectedPromiseTracker* ensureRejectedPromiseTrackerSlow();
 
     void checkConsistency() const;
 
@@ -378,6 +394,7 @@ private:
     mutable ScriptExecutionContextIdentifier m_identifier;
 
     bool m_hasLoggedAuthenticatedEncryptionWarning { false };
+    StorageBlockingPolicy m_storageBlockingPolicy { StorageBlockingPolicy::AllowAll };
 };
 
 } // namespace WebCore

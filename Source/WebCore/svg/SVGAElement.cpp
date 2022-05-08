@@ -134,7 +134,7 @@ void SVGAElement::defaultEventHandler(Event& event)
                 }
             }
 
-            String target = this->target();
+            auto target = this->target();
             if (target.isEmpty() && attributeWithoutSynchronization(XLinkNames::showAttr) == "new")
                 target = blankTargetFrameName();
             event.setDefaultHandled();
@@ -228,10 +228,10 @@ DOMTokenList& SVGAElement::relList()
     if (!m_relList) {
         m_relList = makeUnique<DOMTokenList>(*this, SVGNames::relAttr, [](Document&, StringView token) {
 #if USE(SYSTEM_PREVIEW)
-            if (equalIgnoringASCIICase(token, "ar"))
+            if (equalLettersIgnoringASCIICase(token, "ar"_s))
                 return true;
 #endif
-            return equalIgnoringASCIICase(token, "noreferrer") || equalIgnoringASCIICase(token, "noopener");
+            return equalLettersIgnoringASCIICase(token, "noreferrer"_s) || equalLettersIgnoringASCIICase(token, "noopener"_s);
         });
     }
     return *m_relList;

@@ -30,8 +30,8 @@
 #include "MediaPlayerPrivateAVFoundation.h"
 #include <CoreMedia/CMTime.h>
 #include <wtf/Function.h>
-#include <wtf/HashMap.h>
 #include <wtf/Observer.h>
+#include <wtf/RobinHoodHashMap.h>
 
 OBJC_CLASS AVAssetImageGenerator;
 OBJC_CLASS AVAssetTrack;
@@ -69,7 +69,7 @@ class MediaPlaybackTarget;
 class MediaSelectionGroupAVFObjC;
 class PixelBufferConformerCV;
 class QueuedVideoOutput;
-class FragmentedSharedBuffer;
+class SharedBuffer;
 class VideoLayerManagerObjC;
 class VideoTrackPrivateAVFObjC;
 class WebCoreAVFResourceLoader;
@@ -233,7 +233,10 @@ private:
     bool hasContextRenderer() const final;
     bool hasLayerRenderer() const final;
 
-    void updateVideoLayerGravity() final;
+
+    enum class ShouldAnimate : bool { No, Yes };
+    void updateVideoLayerGravity() final { updateVideoLayerGravity(ShouldAnimate::No); }
+    void updateVideoLayerGravity(ShouldAnimate);
 
     bool didPassCORSAccessCheck() const final;
     std::optional<bool> wouldTaintOrigin(const SecurityOrigin&) const final;
@@ -384,8 +387,8 @@ private:
     friend class WebCoreAVFResourceLoader;
     HashMap<RetainPtr<CFTypeRef>, RefPtr<WebCoreAVFResourceLoader>> m_resourceLoaderMap;
     RetainPtr<WebCoreAVFLoaderDelegate> m_loaderDelegate;
-    HashMap<String, RetainPtr<AVAssetResourceLoadingRequest>> m_keyURIToRequestMap;
-    HashMap<String, RetainPtr<AVAssetResourceLoadingRequest>> m_sessionIDToRequestMap;
+    MemoryCompactRobinHoodHashMap<String, RetainPtr<AVAssetResourceLoadingRequest>> m_keyURIToRequestMap;
+    MemoryCompactRobinHoodHashMap<String, RetainPtr<AVAssetResourceLoadingRequest>> m_sessionIDToRequestMap;
 
     RetainPtr<AVPlayerItemLegibleOutput> m_legibleOutput;
 
@@ -400,7 +403,7 @@ private:
     RefPtr<InbandMetadataTextTrackPrivateAVF> m_metadataTrack;
 #endif
 
-    HashMap<String, RefPtr<InbandChapterTrackPrivateAVFObjC>> m_chapterTracks;
+    MemoryCompactRobinHoodHashMap<String, RefPtr<InbandChapterTrackPrivateAVFObjC>> m_chapterTracks;
 
 #if ENABLE(WIRELESS_PLAYBACK_TARGET) && PLATFORM(MAC)
     RetainPtr<AVOutputContext> m_outputContext;
@@ -435,7 +438,7 @@ private:
     mutable std::optional<WallTime> m_wallClockAtCachedCurrentTime;
     mutable int m_timeControlStatusAtCachedCurrentTime { 0 };
     mutable double m_requestedRateAtCachedCurrentTime { 0 };
-    RefPtr<FragmentedSharedBuffer> m_keyID;
+    RefPtr<SharedBuffer> m_keyID;
     double m_cachedRate { 0 };
     bool m_requestedPlaying { false };
     double m_requestedRate { 1.0 };

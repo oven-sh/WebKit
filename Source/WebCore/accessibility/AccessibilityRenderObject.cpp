@@ -535,7 +535,7 @@ AccessibilityObject* AccessibilityRenderObject::parentObject() const
     return nullptr;
 }
 
-AXCoreObject* AccessibilityRenderObject::parentObjectUnignored() const
+AccessibilityObject* AccessibilityRenderObject::parentObjectUnignored() const
 {
 #if USE(ATSPI)
     // Expose markers that are not direct children of a list item too.
@@ -1076,29 +1076,31 @@ void AccessibilityRenderObject::addRadioButtonGroupMembers(AccessibilityChildren
         }
     }
 }
-    
-// linked ui elements could be all the related radio buttons in a group
-// or an internal anchor connection
-void AccessibilityRenderObject::linkedUIElements(AccessibilityChildrenVector& linkedUIElements) const
+
+// Linked ui elements could be all the related radio buttons in a group
+// or an internal anchor connection.
+AXCoreObject::AccessibilityChildrenVector AccessibilityRenderObject::linkedObjects() const
 {
-    ariaFlowToElements(linkedUIElements);
+    auto linkedObjects = flowToObjects();
 
     if (isLink()) {
-        AccessibilityObject* linkedAXElement = internalLinkElement();
+        auto* linkedAXElement = internalLinkElement();
         if (linkedAXElement)
-            linkedUIElements.append(linkedAXElement);
+            linkedObjects.append(linkedAXElement);
     }
 
     if (roleValue() == AccessibilityRole::RadioButton)
-        addRadioButtonGroupMembers(linkedUIElements);
+        addRadioButtonGroupMembers(linkedObjects);
+
+    return linkedObjects;
 }
 
 bool AccessibilityRenderObject::hasPopup() const
 {
     // Return true if this has the aria-haspopup attribute, or if it has an ancestor of type link with the aria-haspopup attribute.
     return Accessibility::findAncestor<AccessibilityObject>(*this, true, [this] (const AccessibilityObject& object) {
-        return (this == &object) ? !equalLettersIgnoringASCIICase(object.popupValue(), "false")
-            : object.isLink() && !equalLettersIgnoringASCIICase(object.popupValue(), "false");
+        return (this == &object) ? !equalLettersIgnoringASCIICase(object.popupValue(), "false"_s)
+            : object.isLink() && !equalLettersIgnoringASCIICase(object.popupValue(), "false"_s);
     });
 }
 
@@ -1110,7 +1112,7 @@ bool AccessibilityRenderObject::supportsDropping() const
 bool AccessibilityRenderObject::supportsDragging() const
 {
     const AtomString& grabbed = getAttribute(aria_grabbedAttr);
-    return equalLettersIgnoringASCIICase(grabbed, "true") || equalLettersIgnoringASCIICase(grabbed, "false") || hasAttribute(draggableAttr);
+    return equalLettersIgnoringASCIICase(grabbed, "true"_s) || equalLettersIgnoringASCIICase(grabbed, "false"_s) || hasAttribute(draggableAttr);
 }
 
 bool AccessibilityRenderObject::isGrabbed()
@@ -1127,11 +1129,8 @@ Vector<String> AccessibilityRenderObject::determineDropEffects() const
 {
     // Order is aria-dropeffect, dropzone, webkitdropzone
     const AtomString& dropEffects = getAttribute(aria_dropeffectAttr);
-    if (!dropEffects.isEmpty()) {
-        String dropEffectsString = dropEffects.string();
-        dropEffectsString.replace('\n', ' ');
-        return dropEffectsString.split(' ');
-    }
+    if (!dropEffects.isEmpty())
+        return makeStringByReplacingAll(dropEffects.string(), '\n', ' ').split(' ');
     
     auto dropzone = getAttribute(dropzoneAttr);
     if (!dropzone.isEmpty())
@@ -1266,7 +1265,7 @@ AccessibilityObjectInclusion AccessibilityRenderObject::defaultObjectInclusion()
 
     if (m_renderer->style().visibility() != Visibility::Visible) {
         // aria-hidden is meant to override visibility as the determinant in AX hierarchy inclusion.
-        if (equalLettersIgnoringASCIICase(getAttribute(aria_hiddenAttr), "false"))
+        if (equalLettersIgnoringASCIICase(getAttribute(aria_hiddenAttr), "false"_s))
             return AccessibilityObjectInclusion::DefaultBehavior;
 
         return AccessibilityObjectInclusion::IgnoreObject;
@@ -1777,26 +1776,6 @@ bool AccessibilityRenderObject::isVisited() const
     return m_renderer->style().isLink() && m_renderer->style().insideLink() == InsideLink::InsideVisited;
 }
 
-void AccessibilityRenderObject::setElementAttributeValue(const QualifiedName& attributeName, bool value)
-{
-    if (!m_renderer)
-        return;
-    
-    Node* node = m_renderer->node();
-    if (!is<Element>(node))
-        return;
-    
-    downcast<Element>(*node).setAttribute(attributeName, (value) ? "true" : "false");
-}
-    
-bool AccessibilityRenderObject::elementAttributeValue(const QualifiedName& attributeName) const
-{
-    if (!m_renderer)
-        return false;
-    
-    return equalLettersIgnoringASCIICase(getAttribute(attributeName), "true");
-}
-    
 bool AccessibilityRenderObject::isSelected() const
 {
     if (!m_renderer)
@@ -1805,7 +1784,7 @@ bool AccessibilityRenderObject::isSelected() const
     if (!m_renderer->node())
         return false;
     
-    if (equalLettersIgnoringASCIICase(getAttribute(aria_selectedAttr), "true"))
+    if (equalLettersIgnoringASCIICase(getAttribute(aria_selectedAttr), "true"_s))
         return true;    
     
     if (isTabItem() && isTabItemSelected())
@@ -1822,33 +1801,31 @@ bool AccessibilityRenderObject::isTabItemSelected() const
 {
     if (!isTabItem() || !m_renderer)
         return false;
-    
+
     Node* node = m_renderer->node();
     if (!node || !node->isElementNode())
         return false;
-    
+
     // The ARIA spec says a tab item can also be selected if it is aria-labeled by a tabpanel
     // that has keyboard focus inside of it, or if a tabpanel in its aria-controls list has KB
     // focus inside of it.
-    AccessibilityObject* focusedElement = static_cast<AccessibilityObject*>(focusedUIElement());
+    auto* focusedElement = static_cast<AccessibilityObject*>(focusedUIElement());
     if (!focusedElement)
         return false;
-    
-    Vector<Element*> elements;
-    elementsFromAttribute(elements, aria_controlsAttr);
-    
-    AXObjectCache* cache = axObjectCache();
+
+    auto* cache = axObjectCache();
     if (!cache)
         return false;
-    
+
+    auto elements = elementsFromAttribute(aria_controlsAttr);
     for (const auto& element : elements) {
-        AccessibilityObject* tabPanel = cache->getOrCreate(element);
+        auto* tabPanel = cache->getOrCreate(element);
 
         // A tab item should only control tab panels.
         if (!tabPanel || tabPanel->roleValue() != AccessibilityRole::TabPanel)
             continue;
-        
-        AccessibilityObject* checkFocusElement = focusedElement;
+
+        auto* checkFocusElement = focusedElement;
         // Check if the focused element is a descendant of the element controlled by the tab item.
         while (checkFocusElement) {
             if (tabPanel == checkFocusElement)
@@ -1856,7 +1833,7 @@ bool AccessibilityRenderObject::isTabItemSelected() const
             checkFocusElement = checkFocusElement->parentObject();
         }
     }
-    
+
     return false;
 }
     
@@ -2740,11 +2717,10 @@ AccessibilityObject* AccessibilityRenderObject::activeDescendant() const
 
 RenderObject* AccessibilityRenderObject::targetElementForActiveDescendant(const QualifiedName& attributeName, AccessibilityObject* activeDescendant) const
 {
-    AccessibilityObject::AccessibilityChildrenVector elements;
-    ariaElementsFromAttribute(elements, attributeName);
-    for (const auto& element : elements) {
-        if (activeDescendant->isDescendantOfObject(element.get()))
-            return element->renderer();
+    auto objects = ariaElementsFromAttribute(attributeName);
+    for (const auto& object : objects) {
+        if (activeDescendant->isDescendantOfObject(object.get()))
+            return object->renderer();
     }
 
     return nullptr;
@@ -2933,11 +2909,11 @@ AccessibilityRole AccessibilityRenderObject::determineAccessibilityRole()
 AccessibilityOrientation AccessibilityRenderObject::orientation() const
 {
     const AtomString& ariaOrientation = getAttribute(aria_orientationAttr);
-    if (equalLettersIgnoringASCIICase(ariaOrientation, "horizontal"))
+    if (equalLettersIgnoringASCIICase(ariaOrientation, "horizontal"_s))
         return AccessibilityOrientation::Horizontal;
-    if (equalLettersIgnoringASCIICase(ariaOrientation, "vertical"))
+    if (equalLettersIgnoringASCIICase(ariaOrientation, "vertical"_s))
         return AccessibilityOrientation::Vertical;
-    if (equalLettersIgnoringASCIICase(ariaOrientation, "undefined"))
+    if (equalLettersIgnoringASCIICase(ariaOrientation, "undefined"_s))
         return AccessibilityOrientation::Undefined;
 
     // In ARIA 1.1, the implicit value of aria-orientation changed from horizontal
@@ -3298,6 +3274,11 @@ void AccessibilityRenderObject::updateRoleAfterChildrenCreation()
     }
     if (role == AccessibilityRole::SVGRoot && !children().size())
         m_role = AccessibilityRole::Image;
+
+    if (role != m_role) {
+        if (auto* cache = axObjectCache())
+            cache->handleRoleChange(this);
+    }
 }
     
 void AccessibilityRenderObject::addChildren()
@@ -3359,7 +3340,7 @@ const String AccessibilityRenderObject::liveRegionStatus() const
 
 const String AccessibilityRenderObject::liveRegionRelevant() const
 {
-    static MainThreadNeverDestroyed<const AtomString> defaultLiveRegionRelevant("additions text", AtomString::ConstructFromLiteral);
+    static MainThreadNeverDestroyed<const AtomString> defaultLiveRegionRelevant("additions text"_s);
     const AtomString& relevant = getAttribute(aria_relevantAttr);
 
     // Default aria-relevant = "additions text".
@@ -3372,9 +3353,9 @@ const String AccessibilityRenderObject::liveRegionRelevant() const
 bool AccessibilityRenderObject::liveRegionAtomic() const
 {
     const AtomString& atomic = getAttribute(aria_atomicAttr);
-    if (equalLettersIgnoringASCIICase(atomic, "true"))
+    if (equalLettersIgnoringASCIICase(atomic, "true"_s))
         return true;
-    if (equalLettersIgnoringASCIICase(atomic, "false"))
+    if (equalLettersIgnoringASCIICase(atomic, "false"_s))
         return false;
 
     // WAI-ARIA "alert" and "status" roles have an implicit aria-atomic value of true.
@@ -3385,11 +3366,6 @@ bool AccessibilityRenderObject::liveRegionAtomic() const
     default:
         return false;
     }
-}
-
-bool AccessibilityRenderObject::isBusy() const
-{
-    return elementAttributeValue(aria_busyAttr);
 }
 
 bool AccessibilityRenderObject::canHaveSelectedChildren() const

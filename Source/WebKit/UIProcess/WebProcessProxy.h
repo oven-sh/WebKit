@@ -74,6 +74,7 @@ class PageConfiguration;
 namespace WebCore {
 class DeferrableOneShotTimer;
 class ResourceRequest;
+struct NotificationData;
 struct PluginInfo;
 struct PrewarmInformation;
 struct SecurityOriginData;
@@ -327,7 +328,7 @@ public:
 
     // ProcessThrottlerClient
     void sendPrepareToSuspend(IsSuspensionImminent, CompletionHandler<void()>&&) final;
-    void sendProcessDidResume() final;
+    void sendProcessDidResume(ResumeReason) final;
     void didSetAssertionType(ProcessAssertionType) final;
     ASCIILiteral clientName() const final { return "WebProcess"_s; }
 
@@ -382,7 +383,7 @@ public:
 
 #if ENABLE(GPU_PROCESS)
     void gpuProcessDidFinishLaunching();
-    void gpuProcessExited(GPUProcessTerminationReason);
+    void gpuProcessExited(ProcessTerminationReason);
 #endif
 
     bool hasSleepDisabler() const;
@@ -427,9 +428,14 @@ public:
     void setCaptionDisplayMode(WebCore::CaptionUserPreferences::CaptionDisplayMode);
     void setCaptionLanguage(const String&);
 #endif
+    void getNotifications(const URL&, const String&, CompletionHandler<void(Vector<WebCore::NotificationData>&&)>&&);
 
     WebCore::CrossOriginMode crossOriginMode() const { return m_crossOriginMode; }
     CaptivePortalMode captivePortalMode() const { return m_captivePortalMode; }
+
+#if PLATFORM(COCOA)
+    std::optional<audit_token_t> auditToken() const;
+#endif
 
 protected:
     WebProcessProxy(WebProcessPool&, WebsiteDataStore*, IsPrewarmed, WebCore::CrossOriginMode, CaptivePortalMode);
@@ -476,7 +482,7 @@ private:
     void getNetworkProcessConnection(Messages::WebProcessProxy::GetNetworkProcessConnectionDelayedReply&&);
 
 #if ENABLE(GPU_PROCESS)
-    void getGPUProcessConnection(GPUProcessConnectionParameters&&, Messages::WebProcessProxy::GetGPUProcessConnectionDelayedReply&&);
+    void createGPUProcessConnection(IPC::Attachment&& connectionIdentifier, WebKit::GPUProcessConnectionParameters&&);
 #endif
 
 #if ENABLE(WEB_AUTHN)

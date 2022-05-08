@@ -60,7 +60,7 @@ TemporalDuration::TemporalDuration(VM& vm, Structure* structure, ISO8601::Durati
 void TemporalDuration::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    ASSERT(inherits(vm, info()));
+    ASSERT(inherits(info()));
 }
 
 // CreateTemporalDuration ( years, months, weeks, days, hours, minutes, seconds, milliseconds, microseconds, nanoseconds [ , newTarget ] )
@@ -85,7 +85,7 @@ ISO8601::Duration TemporalDuration::fromDurationLike(JSGlobalObject* globalObjec
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (durationLike->inherits<TemporalDuration>(vm))
+    if (durationLike->inherits<TemporalDuration>())
         return jsCast<TemporalDuration*>(durationLike)->m_duration;
 
     ISO8601::Duration result;
@@ -100,7 +100,7 @@ ISO8601::Duration TemporalDuration::fromDurationLike(JSGlobalObject* globalObjec
         }
 
         hasRelevantProperty = true;
-        result[unit] = value.toNumber(globalObject);
+        result[unit] = value.toIntegerWithoutRounding(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
 
         if (!isInteger(result[unit])) {
@@ -157,7 +157,7 @@ TemporalDuration* TemporalDuration::toTemporalDuration(JSGlobalObject* globalObj
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (itemValue.inherits<TemporalDuration>(vm))
+    if (itemValue.inherits<TemporalDuration>())
         return jsCast<TemporalDuration*>(itemValue);
 
     auto result = toISO8601Duration(globalObject, itemValue);
@@ -195,7 +195,7 @@ TemporalDuration* TemporalDuration::from(JSGlobalObject* globalObject, JSValue i
 {
     VM& vm = globalObject->vm();
 
-    if (itemValue.inherits<TemporalDuration>(vm)) {
+    if (itemValue.inherits<TemporalDuration>()) {
         ISO8601::Duration cloned = jsCast<TemporalDuration*>(itemValue)->m_duration;
         return TemporalDuration::create(vm, globalObject->durationStructure(), WTFMove(cloned));
     }
@@ -515,7 +515,7 @@ double TemporalDuration::total(JSGlobalObject* globalObject, JSValue optionsValu
     JSObject* options = intlGetOptionsObject(globalObject, optionsValue);
     RETURN_IF_EXCEPTION(scope, 0);
 
-    String unitString = intlStringOption(globalObject, options, vm.propertyNames->unit, { }, ASCIILiteral::null(), ASCIILiteral::null());
+    String unitString = intlStringOption(globalObject, options, vm.propertyNames->unit, { }, { }, { });
     RETURN_IF_EXCEPTION(scope, 0);
 
     auto unitType = temporalUnitType(unitString);
@@ -605,7 +605,7 @@ String TemporalDuration::toString(const ISO8601::Duration& duration, std::tuple<
         builder.append(formatInteger(duration.days()), 'D');
 
     // The zero value is displayed in seconds.
-    auto usesSeconds = balancedSeconds || balancedMilliseconds || balancedMicroseconds || balancedNanoseconds || !sign;
+    auto usesSeconds = balancedSeconds || balancedMilliseconds || balancedMicroseconds || balancedNanoseconds || !sign || std::get<0>(precision) != Precision::Auto;
     if (!duration.hours() && !duration.minutes() && !usesSeconds)
         return builder.toString();
 

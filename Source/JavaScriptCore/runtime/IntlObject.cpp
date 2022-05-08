@@ -82,63 +82,63 @@ static JSC_DECLARE_HOST_FUNCTION(intlObjectFuncSupportedValuesOf);
 static JSValue createCollatorConstructor(VM& vm, JSObject* object)
 {
     IntlObject* intlObject = jsCast<IntlObject*>(object);
-    JSGlobalObject* globalObject = intlObject->globalObject(vm);
+    JSGlobalObject* globalObject = intlObject->globalObject();
     return IntlCollatorConstructor::create(vm, IntlCollatorConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<IntlCollatorPrototype*>(globalObject->collatorStructure()->storedPrototypeObject()));
 }
 
-static JSValue createDateTimeFormatConstructor(VM& vm, JSObject* object)
+static JSValue createDateTimeFormatConstructor(VM&, JSObject* object)
 {
     IntlObject* intlObject = jsCast<IntlObject*>(object);
-    JSGlobalObject* globalObject = intlObject->globalObject(vm);
+    JSGlobalObject* globalObject = intlObject->globalObject();
     return globalObject->dateTimeFormatConstructor();
 }
 
 static JSValue createDisplayNamesConstructor(VM& vm, JSObject* object)
 {
     IntlObject* intlObject = jsCast<IntlObject*>(object);
-    JSGlobalObject* globalObject = intlObject->globalObject(vm);
+    JSGlobalObject* globalObject = intlObject->globalObject();
     return IntlDisplayNamesConstructor::create(vm, IntlDisplayNamesConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<IntlDisplayNamesPrototype*>(globalObject->displayNamesStructure()->storedPrototypeObject()));
 }
 
 static JSValue createListFormatConstructor(VM& vm, JSObject* object)
 {
     IntlObject* intlObject = jsCast<IntlObject*>(object);
-    JSGlobalObject* globalObject = intlObject->globalObject(vm);
+    JSGlobalObject* globalObject = intlObject->globalObject();
     return IntlListFormatConstructor::create(vm, IntlListFormatConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<IntlListFormatPrototype*>(globalObject->listFormatStructure()->storedPrototypeObject()));
 }
 
 static JSValue createLocaleConstructor(VM& vm, JSObject* object)
 {
     IntlObject* intlObject = jsCast<IntlObject*>(object);
-    JSGlobalObject* globalObject = intlObject->globalObject(vm);
+    JSGlobalObject* globalObject = intlObject->globalObject();
     return IntlLocaleConstructor::create(vm, IntlLocaleConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<IntlLocalePrototype*>(globalObject->localeStructure()->storedPrototypeObject()));
 }
 
-static JSValue createNumberFormatConstructor(VM& vm, JSObject* object)
+static JSValue createNumberFormatConstructor(VM&, JSObject* object)
 {
     IntlObject* intlObject = jsCast<IntlObject*>(object);
-    JSGlobalObject* globalObject = intlObject->globalObject(vm);
+    JSGlobalObject* globalObject = intlObject->globalObject();
     return globalObject->numberFormatConstructor();
 }
 
 static JSValue createPluralRulesConstructor(VM& vm, JSObject* object)
 {
     IntlObject* intlObject = jsCast<IntlObject*>(object);
-    JSGlobalObject* globalObject = intlObject->globalObject(vm);
+    JSGlobalObject* globalObject = intlObject->globalObject();
     return IntlPluralRulesConstructor::create(vm, IntlPluralRulesConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<IntlPluralRulesPrototype*>(globalObject->pluralRulesStructure()->storedPrototypeObject()));
 }
 
 static JSValue createRelativeTimeFormatConstructor(VM& vm, JSObject* object)
 {
     IntlObject* intlObject = jsCast<IntlObject*>(object);
-    JSGlobalObject* globalObject = intlObject->globalObject(vm);
+    JSGlobalObject* globalObject = intlObject->globalObject();
     return IntlRelativeTimeFormatConstructor::create(vm, IntlRelativeTimeFormatConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<IntlRelativeTimeFormatPrototype*>(globalObject->relativeTimeFormatStructure()->storedPrototypeObject()));
 }
 
 static JSValue createSegmenterConstructor(VM& vm, JSObject* object)
 {
     IntlObject* intlObject = jsCast<IntlObject*>(object);
-    JSGlobalObject* globalObject = intlObject->globalObject(vm);
+    JSGlobalObject* globalObject = intlObject->globalObject();
     return IntlSegmenterConstructor::create(vm, IntlSegmenterConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), jsCast<IntlSegmenterPrototype*>(globalObject->segmenterStructure()->storedPrototypeObject()));
 }
 
@@ -237,7 +237,7 @@ IntlObject* IntlObject::create(VM& vm, JSGlobalObject* globalObject, Structure* 
 void IntlObject::finishCreation(VM& vm, JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
-    ASSERT(inherits(vm, info()));
+    ASSERT(inherits(info()));
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 #if HAVE(ICU_U_LIST_FORMATTER)
     putDirectWithoutTransition(vm, vm.propertyNames->ListFormat, createListFormatConstructor(vm, this), static_cast<unsigned>(PropertyAttribute::DontEnum));
@@ -245,7 +245,7 @@ void IntlObject::finishCreation(VM& vm, JSGlobalObject* globalObject)
     UNUSED_PARAM(&createListFormatConstructor);
 #endif
     if (Options::useIntlEnumeration())
-        JSC_NATIVE_FUNCTION_WITHOUT_TRANSITION("supportedValuesOf", intlObjectFuncSupportedValuesOf, static_cast<unsigned>(PropertyAttribute::DontEnum), 1);
+        JSC_NATIVE_FUNCTION_WITHOUT_TRANSITION("supportedValuesOf"_s, intlObjectFuncSupportedValuesOf, static_cast<unsigned>(PropertyAttribute::DontEnum), 1);
 }
 
 Structure* IntlObject::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
@@ -702,7 +702,7 @@ Vector<String> canonicalizeLocaleList(JSGlobalObject* globalObject, JSValue loca
         return seen;
 
     JSObject* localesObject;
-    if (locales.isString() || locales.inherits<IntlLocale>(vm)) {
+    if (locales.isString() || locales.inherits<IntlLocale>()) {
         JSArray* localesArray = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous));
         if (!localesArray) {
             throwOutOfMemoryError(globalObject, scope);
@@ -739,7 +739,7 @@ Vector<String> canonicalizeLocaleList(JSGlobalObject* globalObject, JSValue loca
             }
 
             String tag;
-            if (kValue.inherits<IntlLocale>(vm))
+            if (kValue.inherits<IntlLocale>())
                 tag = jsCast<IntlLocale*>(kValue)->toString();
             else {
                 JSString* string = kValue.toString(globalObject);
@@ -896,7 +896,7 @@ constexpr ASCIILiteral relevantExtensionKeyString(RelevantExtensionKey key)
     JSC_INTL_RELEVANT_EXTENSION_KEYS(JSC_RETURN_INTL_RELEVANT_EXTENSION_KEYS)
 #undef JSC_RETURN_INTL_RELEVANT_EXTENSION_KEYS
     }
-    return ASCIILiteral::null();
+    return { };
 }
 
 ResolvedLocale resolveLocale(JSGlobalObject* globalObject, const LocaleSet& availableLocales, const Vector<String>& requestedLocales, LocaleMatcher localeMatcher, const ResolveLocaleOptions& options, std::initializer_list<RelevantExtensionKey> relevantExtensionKeys, Vector<String> (*localeData)(const String&, RelevantExtensionKey))
@@ -917,7 +917,8 @@ ResolvedLocale resolveLocale(JSGlobalObject* globalObject, const LocaleSet& avai
     ResolvedLocale resolved;
     resolved.dataLocale = foundLocale;
 
-    String supportedExtension = "-u"_s;
+    StringBuilder supportedExtension;
+    supportedExtension.append("-u"_s);
     for (RelevantExtensionKey key : relevantExtensionKeys) {
         ASCIILiteral keyString = relevantExtensionKeyString(key);
         Vector<String> keyLocaleData = localeData(foundLocale, key);
@@ -957,7 +958,7 @@ ResolvedLocale resolveLocale(JSGlobalObject* globalObject, const LocaleSet& avai
 
     if (supportedExtension.length() > 2) {
         StringView foundLocaleView(foundLocale);
-        foundLocale = makeString(foundLocaleView.substring(0, matcherResult.extensionIndex), supportedExtension, foundLocaleView.substring(matcherResult.extensionIndex));
+        foundLocale = makeString(foundLocaleView.left(matcherResult.extensionIndex), supportedExtension.toString(), foundLocaleView.substring(matcherResult.extensionIndex));
     }
 
     resolved.locale = WTFMove(foundLocale);
@@ -1050,7 +1051,7 @@ Vector<String> numberingSystemsForLocale(const String& locale)
     UErrorCode status = U_ZERO_ERROR;
     UNumberingSystem* defaultSystem = unumsys_open(locale.utf8().data(), &status);
     ASSERT(U_SUCCESS(status));
-    String defaultSystemName(unumsys_getName(defaultSystem));
+    auto defaultSystemName = String::fromLatin1(unumsys_getName(defaultSystem));
     unumsys_close(defaultSystem);
 
     Vector<String> numberingSystems({ defaultSystemName });
@@ -1898,7 +1899,7 @@ static JSArray* availableUnits(JSGlobalObject* globalObject)
 
     int32_t index = 0;
     for (const MeasureUnit& unit : simpleUnits) {
-        result->putDirectIndex(globalObject, index++, jsString(vm, StringImpl::createFromLiteral(unit.subType)));
+        result->putDirectIndex(globalObject, index++, jsString(vm, StringImpl::create(unit.subType)));
         RETURN_IF_EXCEPTION(scope, { });
     }
     return result;

@@ -47,7 +47,6 @@
 #include "ErrorInstance.h"
 #include "EvalCodeBlock.h"
 #include "Exception.h"
-#include "ExecutableToCodeBlockEdge.h"
 #include "FTLThunks.h"
 #include "FileBasedFuzzerAgent.h"
 #include "FunctionCodeBlock.h"
@@ -206,6 +205,7 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
     , m_apiLock(adoptRef(new JSLock(this)))
     , m_runLoop(runLoop ? *runLoop : WTF::RunLoop::current())
     , m_random(Options::seedOfVMRandomForFuzzer() ? Options::seedOfVMRandomForFuzzer() : cryptographicallyRandomNumber())
+    , m_heapRandom(Options::seedOfVMRandomForFuzzer() ? Options::seedOfVMRandomForFuzzer() : cryptographicallyRandomNumber())
     , m_integrityRandom(*this)
     , heap(*this, heapType)
     , clientHeap(heap)
@@ -220,7 +220,6 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
     , emptyList(new ArgList)
     , machineCodeBytesPerBytecodeWordForBaselineJIT(makeUnique<SimpleStats>())
     , symbolImplToSymbolMap(*this)
-    , structureCache(*this)
     , interpreter(nullptr)
     , entryScope(nullptr)
     , m_regExpCache(new RegExpCache(this))
@@ -298,7 +297,6 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
     hashMapBucketSetStructure.set(*this, HashMapBucket<HashMapBucketDataKey>::createStructure(*this, nullptr, jsNull()));
     hashMapBucketMapStructure.set(*this, HashMapBucket<HashMapBucketDataKeyValue>::createStructure(*this, nullptr, jsNull()));
     bigIntStructure.set(*this, JSBigInt::createStructure(*this, nullptr, jsNull()));
-    executableToCodeBlockEdgeStructure.set(*this, ExecutableToCodeBlockEdge::createStructure(*this, nullptr, jsNull()));
 
     // Eagerly initialize constant cells since the concurrent compiler can access them.
     if (Options::useJIT()) {
@@ -718,9 +716,17 @@ NativeExecutable* VM::getRemoteFunction(bool isJSFunction)
     auto getOrCreate = [&] (Weak<NativeExecutable>& slot) -> NativeExecutable* {
         if (auto* cached = slot.get())
             return cached;
+
+        Intrinsic intrinsic = NoIntrinsic;
+        if (!slowCase) {
+#if !(OS(WINDOWS) && CPU(X86_64))
+            intrinsic = RemoteFunctionCallIntrinsic;
+#endif
+        }
+
         NativeExecutable* result = getHostFunction(
             slowCase ? remoteFunctionCallGeneric : remoteFunctionCallForJSFunction,
-            slowCase ? NoIntrinsic : RemoteFunctionCallIntrinsic,
+            intrinsic,
             callHostFunctionAsConstructor, nullptr, String());
         slot = Weak<NativeExecutable>(result);
         return result;
@@ -892,9 +898,6 @@ Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exception
     }
 
     CallFrame* throwOriginFrame = topJSCallFrame();
-    if (!throwOriginFrame)
-        throwOriginFrame = globalObject->deprecatedCallFrameForDebugger();
-
     if (UNLIKELY(Options::breakOnThrow())) {
         CodeBlock* codeBlock = throwOriginFrame ? throwOriginFrame->codeBlock() : nullptr;
         dataLog("Throwing exception in call frame ", RawPointer(throwOriginFrame), " for code block ", codeBlock, "\n");
@@ -914,8 +917,7 @@ Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exception
 
 Exception* VM::throwException(JSGlobalObject* globalObject, JSValue thrownValue)
 {
-    VM& vm = *this;
-    Exception* exception = jsDynamicCast<Exception*>(vm, thrownValue);
+    Exception* exception = jsDynamicCast<Exception*>(thrownValue);
     if (!exception)
         exception = Exception::create(*this, thrownValue);
 
@@ -1236,7 +1238,7 @@ void VM::callPromiseRejectionCallback(Strong<JSPromise>& promise)
 
     auto scope = DECLARE_CATCH_SCOPE(*this);
 
-    auto callData = getCallData(*this, callback);
+    auto callData = JSC::getCallData(callback);
     ASSERT(callData.type != CallData::Type::None);
 
     MarkedArgumentBuffer args;

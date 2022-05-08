@@ -27,6 +27,7 @@
 
 #include "ArgumentCoder.h"
 #include "ArrayReference.h"
+#include "ArrayReferenceTuple.h"
 #include <utility>
 #include <variant>
 #include <wtf/Box.h>
@@ -88,6 +89,85 @@ template<typename T, size_t Extent> struct ArgumentCoder<Span<T, Extent>> {
         if (!data)
             return std::nullopt;
         return Span<T, Extent>(reinterpret_cast<const T*>(data), static_cast<size_t>(*size));
+    }
+};
+
+template<typename T0, typename T1> struct ArgumentCoder<ArrayReferenceTuple<T0, T1>> {
+    using ArrayReferenceTupleType = ArrayReferenceTuple<T0, T1>;
+    template<typename Encoder>
+    static void encode(Encoder& encoder, const ArrayReferenceTupleType& arrayReference)
+    {
+        encoder << static_cast<uint64_t>(arrayReference.size());
+        auto size = arrayReference.size();
+        if (UNLIKELY(!size))
+            return;
+        encoder.encodeFixedLengthData(reinterpret_cast<const uint8_t*>(arrayReference.template data<0>()), size * sizeof(T0), alignof(T0));
+        encoder.encodeFixedLengthData(reinterpret_cast<const uint8_t*>(arrayReference.template data<1>()), size * sizeof(T1), alignof(T1));
+    }
+    static std::optional<ArrayReferenceTupleType> decode(Decoder& decoder)
+    {
+        uint64_t size;
+        if (UNLIKELY(!decoder.decode(size)))
+            return std::nullopt;
+        if (UNLIKELY(!size))
+            return ArrayReferenceTupleType { };
+
+        auto dataSize = CheckedSize { size } * sizeof(T0);
+        if (UNLIKELY(dataSize.hasOverflowed()))
+            return std::nullopt;
+        const uint8_t* data0 = decoder.decodeFixedLengthReference(dataSize, alignof(T0));
+        if (UNLIKELY(!data0))
+            return std::nullopt;
+        dataSize = CheckedSize { size } * sizeof(T1);
+        if (UNLIKELY(dataSize.hasOverflowed()))
+            return std::nullopt;
+        const uint8_t* data1 = decoder.decodeFixedLengthReference(dataSize, alignof(T1));
+        if (UNLIKELY(!data1))
+            return std::nullopt;
+        return ArrayReferenceTupleType { reinterpret_cast<const T0*>(data0), reinterpret_cast<const T1*>(data1), static_cast<size_t>(size) };
+    }
+};
+
+template<typename T0, typename T1, typename T2> struct ArgumentCoder<ArrayReferenceTuple<T0, T1, T2>> {
+    using ArrayReferenceTupleType = ArrayReferenceTuple<T0, T1, T2>;
+    template<typename Encoder>
+    static void encode(Encoder& encoder, const ArrayReferenceTupleType& arrayReference)
+    {
+        encoder << static_cast<uint64_t>(arrayReference.size());
+        auto size = arrayReference.size();
+        if (UNLIKELY(!size))
+            return;
+        encoder.encodeFixedLengthData(reinterpret_cast<const uint8_t*>(arrayReference.template data<0>()), size * sizeof(T0), alignof(T0));
+        encoder.encodeFixedLengthData(reinterpret_cast<const uint8_t*>(arrayReference.template data<1>()), size * sizeof(T1), alignof(T1));
+        encoder.encodeFixedLengthData(reinterpret_cast<const uint8_t*>(arrayReference.template data<2>()), size * sizeof(T2), alignof(T2));
+    }
+    static std::optional<ArrayReferenceTupleType> decode(Decoder& decoder)
+    {
+        uint64_t size;
+        if (UNLIKELY(!decoder.decode(size)))
+            return std::nullopt;
+        if (UNLIKELY(!size))
+            return ArrayReferenceTupleType { };
+
+        auto dataSize = CheckedSize { size } * sizeof(T0);
+        if (UNLIKELY(dataSize.hasOverflowed()))
+            return std::nullopt;
+        const uint8_t* data0 = decoder.decodeFixedLengthReference(dataSize, alignof(T0));
+        if (UNLIKELY(!data0))
+            return std::nullopt;
+        dataSize = CheckedSize { size } * sizeof(T1);
+        if (UNLIKELY(dataSize.hasOverflowed()))
+            return std::nullopt;
+        const uint8_t* data1 = decoder.decodeFixedLengthReference(dataSize, alignof(T1));
+        if (UNLIKELY(!data1))
+            return std::nullopt;
+        dataSize = CheckedSize { size } * sizeof(T2);
+        if (UNLIKELY(dataSize.hasOverflowed()))
+            return std::nullopt;
+        const uint8_t* data2 = decoder.decodeFixedLengthReference(dataSize, alignof(T2));
+        if (UNLIKELY(!data2))
+            return std::nullopt;
+        return ArrayReferenceTupleType { reinterpret_cast<const T0*>(data0), reinterpret_cast<const T1*>(data1), reinterpret_cast<const T2*>(data2), static_cast<size_t>(size) };
     }
 };
 
@@ -290,38 +370,26 @@ template<typename T> struct ArgumentCoder<RefPtr<T>> {
     }
 };
 
-template<size_t index, typename... Elements>
+template<typename... Elements>
 struct TupleEncoder {
     template<typename Encoder>
     static void encode(Encoder& encoder, const std::tuple<Elements...>& tuple)
     {
-        encoder << std::get<sizeof...(Elements) - index>(tuple);
-        TupleEncoder<index - 1, Elements...>::encode(encoder, tuple);
+        encode(encoder, tuple, std::index_sequence_for<Elements...> { });
     }
-};
 
-template<typename... Elements>
-struct TupleEncoder<0, Elements...> {
-    template<typename Encoder>
-    static void encode(Encoder&, const std::tuple<Elements...>&)
+    template<typename Encoder, size_t... Indices>
+    static void encode(Encoder& encoder, const std::tuple<Elements...>& tuple, std::index_sequence<Indices...>)
     {
+        if constexpr (sizeof...(Indices) > 0)
+            (encoder << ... << std::get<Indices>(tuple));
     }
 };
 
-template <typename T, typename... Elements, size_t... Indices>
-auto tupleFromTupleAndObject(T&& object, std::tuple<Elements...>&& tuple, std::index_sequence<Indices...>)
-{
-    return std::make_tuple(WTFMove(object), WTFMove(std::get<Indices>(tuple))...);
-}
-
-template <typename T, typename... Elements>
-auto tupleFromTupleAndObject(T&& object, std::tuple<Elements...>&& tuple)
-{
-    return tupleFromTupleAndObject(WTFMove(object), WTFMove(tuple), std::index_sequence_for<Elements...>());
-}
+template<typename... Elements> struct TupleDecoder;
 
 template<typename Type, typename... Types>
-struct TupleDecoderImpl {
+struct TupleDecoder<Type, Types...> {
     template<typename Decoder>
     static std::optional<std::tuple<Type, Types...>> decode(Decoder& decoder)
     {
@@ -330,38 +398,16 @@ struct TupleDecoderImpl {
         if (!optional)
             return std::nullopt;
 
-        std::optional<std::tuple<Types...>> subTuple = TupleDecoderImpl<Types...>::decode(decoder);
-        if (!subTuple)
+        std::optional<std::tuple<Types...>> remainder = TupleDecoder<Types...>::decode(decoder);
+        if (!remainder)
             return std::nullopt;
 
-        return tupleFromTupleAndObject(WTFMove(*optional), WTFMove(*subTuple));
-    }
-};
-
-template<typename Type>
-struct TupleDecoderImpl<Type> {
-    template<typename Decoder>
-    static std::optional<std::tuple<Type>> decode(Decoder& decoder)
-    {
-        std::optional<Type> optional;
-        decoder >> optional;
-        if (!optional)
-            return std::nullopt;
-        return std::make_tuple(WTFMove(*optional));
-    }
-};
-
-template<size_t size, typename... Elements>
-struct TupleDecoder {
-    template<typename Decoder>
-    static std::optional<std::tuple<Elements...>> decode(Decoder& decoder)
-    {
-        return TupleDecoderImpl<Elements...>::decode(decoder);
+        return std::tuple_cat(std::make_tuple(WTFMove(*optional)), WTFMove(*remainder));
     }
 };
 
 template<>
-struct TupleDecoder<0> {
+struct TupleDecoder<> {
     template<typename Decoder>
     static std::optional<std::tuple<>> decode(Decoder&)
     {
@@ -373,13 +419,13 @@ template<typename... Elements> struct ArgumentCoder<std::tuple<Elements...>> {
     template<typename Encoder>
     static void encode(Encoder& encoder, const std::tuple<Elements...>& tuple)
     {
-        TupleEncoder<sizeof...(Elements), Elements...>::encode(encoder, tuple);
+        TupleEncoder<Elements...>::encode(encoder, tuple);
     }
 
     template<typename Decoder>
     static std::optional<std::tuple<Elements...>> decode(Decoder& decoder)
     {
-        return TupleDecoder<sizeof...(Elements), Elements...>::decode(decoder);
+        return TupleDecoder<Elements...>::decode(decoder);
     }
 };
 
@@ -827,6 +873,11 @@ template<> struct ArgumentCoder<String> {
     static WARN_UNUSED_RETURN bool decode(Decoder&, String&);
     template<typename Decoder>
     static std::optional<String> decode(Decoder&);
+};
+
+template<> struct ArgumentCoder<StringView> {
+    template<typename Encoder>
+    static void encode(Encoder&, StringView);
 };
 
 template<> struct ArgumentCoder<SHA1::Digest> {

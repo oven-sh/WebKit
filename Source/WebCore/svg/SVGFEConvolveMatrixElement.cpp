@@ -21,6 +21,7 @@
 #include "config.h"
 #include "SVGFEConvolveMatrixElement.h"
 
+#include "CommonAtomStrings.h"
 #include "FEConvolveMatrix.h"
 #include "SVGNames.h"
 #include "SVGParserUtilities.h"
@@ -122,9 +123,9 @@ void SVGFEConvolveMatrixElement::parseAttribute(const QualifiedName& name, const
     }
 
     if (name == SVGNames::preserveAlphaAttr) {
-        if (value == "true")
+        if (value == trueAtom())
             m_preserveAlpha->setBaseValInternal(true);
-        else if (value == "false")
+        else if (value == falseAtom())
             m_preserveAlpha->setBaseValInternal(false);
         else
             document().accessSVGExtensions().reportWarning("feConvolveMatrix: problem parsing preserveAlphaAttr=\"" + value  + "\". Filtered element will not be displayed.");
@@ -187,7 +188,7 @@ void SVGFEConvolveMatrixElement::svgAttributeChanged(const QualifiedName& attrNa
     SVGFilterPrimitiveStandardAttributes::svgAttributeChanged(attrName);
 }
 
-RefPtr<FilterEffect> SVGFEConvolveMatrixElement::filterEffect(const SVGFilterBuilder&, const FilterEffectVector&) const
+RefPtr<FilterEffect> SVGFEConvolveMatrixElement::filterEffect(const SVGFilter&, const FilterEffectVector&, const GraphicsContext&) const
 {
     int orderXValue = orderX();
     int orderYValue = orderY();

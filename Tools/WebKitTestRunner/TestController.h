@@ -296,6 +296,7 @@ public:
 
     void clearServiceWorkerRegistrations();
 
+    void clearMemoryCache();
     void clearDOMCache(WKStringRef origin);
     void clearDOMCaches();
     bool hasDOMCache(WKStringRef origin);
@@ -378,6 +379,8 @@ public:
     bool denyNotificationPermission(WKStringRef origin);
     bool denyNotificationPermissionOnPrompt(WKStringRef origin);
 
+    PlatformWebView* createOtherPlatformWebView(PlatformWebView* parentView, WKPageConfigurationRef, WKNavigationActionRef, WKWindowFeaturesRef);
+
 private:
     WKRetainPtr<WKPageConfigurationRef> generatePageConfiguration(const TestOptions&);
     WKRetainPtr<WKContextConfigurationRef> generateContextConfiguration(const TestOptions&) const;
@@ -458,12 +461,12 @@ private:
     void didReceiveRawKeyUpMessageFromInjectedBundle(WKDictionaryRef messageBodyDictionary, bool synchronous);
 
     // WKContextClient
-    static void networkProcessDidCrash(WKContextRef, const void*);
-    void networkProcessDidCrash();
-    static void serviceWorkerProcessDidCrash(WKContextRef, WKProcessID, const void*);
-    void serviceWorkerProcessDidCrash(WKProcessID);
-    static void gpuProcessDidCrash(WKContextRef, WKProcessID, const void*);
-    void gpuProcessDidCrash(WKProcessID);
+    static void networkProcessDidCrashWithDetails(WKContextRef, WKProcessID, WKProcessTerminationReason, const void*);
+    void networkProcessDidCrash(WKProcessID, WKProcessTerminationReason);
+    static void serviceWorkerProcessDidCrashWithDetails(WKContextRef, WKProcessID, WKProcessTerminationReason, const void*);
+    void serviceWorkerProcessDidCrash(WKProcessID, WKProcessTerminationReason);
+    static void gpuProcessDidCrashWithDetails(WKContextRef, WKProcessID, WKProcessTerminationReason, const void*);
+    void gpuProcessDidCrash(WKProcessID, WKProcessTerminationReason);
 
     // WKPageNavigationClient
     static void didCommitNavigation(WKPageRef, WKNavigationRef, WKTypeRef userData, const void*);
@@ -603,7 +606,7 @@ private:
     bool m_forceNoTimeout { false };
 
     bool m_didPrintWebProcessCrashedMessage { false };
-    bool m_shouldExitWhenWebProcessCrashes { true };
+    bool m_shouldExitWhenAuxiliaryProcessCrashes { true };
     
     bool m_beforeUnloadReturnValue { true };
 

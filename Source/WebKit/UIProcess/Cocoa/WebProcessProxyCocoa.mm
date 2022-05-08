@@ -28,6 +28,7 @@
 
 #import "AccessibilitySupportSPI.h"
 #import "CodeSigning.h"
+#import "DefaultWebBrowserChecks.h"
 #import "HighPerformanceGPUManager.h"
 #import "Logging.h"
 #import "ObjCObjectGraph.h"
@@ -247,7 +248,7 @@ void WebProcessProxy::unblockAccessibilityServerIfNeeded()
 
     Vector<SandboxExtension::Handle> handleArray;
 #if PLATFORM(IOS_FAMILY)
-    handleArray = SandboxExtension::createHandlesForMachLookup({ "com.apple.iphone.axserver-systemwide"_s, "com.apple.frontboard.systemappservices"_s }, connection() ? connection()->getAuditToken() : std::nullopt);
+    handleArray = SandboxExtension::createHandlesForMachLookup({ "com.apple.iphone.axserver-systemwide"_s, "com.apple.frontboard.systemappservices"_s }, auditToken(), SandboxExtension::MachBootstrapOptions::EnableMachBootstrap);
     ASSERT(handleArray.size() == 2);
 #endif
 
@@ -322,6 +323,14 @@ bool WebProcessProxy::messageSourceIsValidWebContentProcess()
 #endif
 
     return true;
+}
+
+std::optional<audit_token_t> WebProcessProxy::auditToken() const
+{
+    if (!hasConnection())
+        return std::nullopt;
+    
+    return connection()->getAuditToken();
 }
 
 }

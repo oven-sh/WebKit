@@ -564,6 +564,25 @@ static AccessibilityObjectWrapper* AccessibilityUnignoredAncestor(AccessibilityO
     return self.axBackingObject->isInCell();
 }
 
+- (BOOL)accessibilityIsAttributeSettable:(NSString *)attributeName
+{
+    if (![self _prepareAccessibilityCall])
+        return NO;
+
+    if ([attributeName isEqualToString:@"AXValue"])
+        return self.axBackingObject->canSetValueAttribute();
+
+    return NO;
+}
+
+- (BOOL)accessibilityIsRequired
+{
+    if (![self _prepareAccessibilityCall])
+        return NO;
+
+    return self.axBackingObject->isRequired();
+}
+
 - (NSString *)accessibilityLanguage
 {
     if (![self _prepareAccessibilityCall])
@@ -1095,7 +1114,7 @@ static AccessibilityObjectWrapper *ancestorWithRole(const AXCoreObject& descenda
         // https://bugs.webkit.org/show_bug.cgi?id=223492
         return self.axBackingObject->isKeyboardFocusable()
             && [self accessibilityElementCount] == 0
-            && self.axBackingObject->descriptionAttributeValue().stripWhiteSpace().length() > 0;
+            && self.axBackingObject->descriptionAttributeValue().find(isNotSpaceOrNewline) != notFound;
     case AccessibilityRole::Ignored:
     case AccessibilityRole::Presentational:
     case AccessibilityRole::Unknown:
@@ -1441,14 +1460,13 @@ static void appendStringToResult(NSMutableString *result, NSString *string)
         return NSMakeRange(NSNotFound, 0);
 
     if (self.axBackingObject->isRadioButton()) {
-        AccessibilityObject::AccessibilityChildrenVector radioButtonSiblings;
-        self.axBackingObject->linkedUIElements(radioButtonSiblings);
+        auto radioButtonSiblings = self.axBackingObject->linkedObjects();
         if (radioButtonSiblings.size() <= 1)
             return NSMakeRange(NSNotFound, 0);
-        
+
         return NSMakeRange(radioButtonSiblings.find(self.axBackingObject), radioButtonSiblings.size());
     }
-    
+
     AccessibilityTableCell* tableCell = [self tableCellParent];
     if (!tableCell)
         return NSMakeRange(NSNotFound, 0);
@@ -1671,12 +1689,12 @@ static void appendStringToResult(NSMutableString *result, NSString *string)
     BOOL result = self.axBackingObject->scrollByPage(scrollDirection);
 
     if (result) {
-        String notificationName = AXObjectCache::notificationPlatformName(AXObjectCache::AXNotification::AXPageScrolled);
-        [self postNotification:notificationName];
+        auto notificationName = AXObjectCache::notificationPlatformName(AXObjectCache::AXNotification::AXPageScrolled).createNSString();
+        [self postNotification:notificationName.get()];
 
         CGPoint scrollPos = [self _accessibilityScrollPosition];
         NSString *testString = [NSString stringWithFormat:@"AXScroll [position: %.2f %.2f]", scrollPos.x, scrollPos.y];
-        [self accessibilityPostedNotification:notificationName userInfo:@{ @"status" : testString }];
+        [self accessibilityPostedNotification:notificationName.get() userInfo:@{ @"status" : testString }];
     }
 
     // This means that this object handled the scroll and no other ancestor should attempt scrolling.
@@ -1889,11 +1907,8 @@ static void appendStringToResult(NSMutableString *result, NSString *string)
 {
     if (![self _prepareAccessibilityCall])
         return nil;
-    
-    AccessibilityObject::AccessibilityChildrenVector children;
-    self.axBackingObject->ariaFlowToElements(children);
-    
-    return createNSArray(children, [] (auto& child) -> id {
+
+    return createNSArray(self.axBackingObject->flowToObjects(), [] (auto& child) -> id {
         auto wrapper = child->wrapper();
         ASSERT(wrapper);
 
@@ -1926,20 +1941,14 @@ static NSArray *accessibleElementsForObjects(const AXCoreObject::AccessibilityCh
 {
     if (![self _prepareAccessibilityCall])
         return nil;
-
-    AXCoreObject::AccessibilityChildrenVector detailsElements;
-    self.axBackingObject->ariaDetailsElements(detailsElements);
-    return accessibleElementsForObjects(detailsElements);
+    return accessibleElementsForObjects(self.axBackingObject->detailedByObjects());
 }
 
 - (NSArray *)accessibilityErrorMessageElements
 {
     if (![self _prepareAccessibilityCall])
         return nil;
-
-    AXCoreObject::AccessibilityChildrenVector errorElements;
-    self.axBackingObject->ariaErrorMessageElements(errorElements);
-    return accessibleElementsForObjects(errorElements);
+    return accessibleElementsForObjects(self.axBackingObject->errorMessageObjects());
 }
 
 - (id)accessibilityLinkedElement
@@ -1948,23 +1957,20 @@ static NSArray *accessibleElementsForObjects(const AXCoreObject::AccessibilityCh
         return nil;
 
     // If this static text inside of a link, it should use its parent's linked element.
-    AXCoreObject* element = self.axBackingObject;
-    if (self.axBackingObject->roleValue() == AccessibilityRole::StaticText && self.axBackingObject->parentObjectUnignored()->isLink())
-        element = self.axBackingObject->parentObjectUnignored();
+    auto* backingObject = self.axBackingObject;
+    if (backingObject->roleValue() == AccessibilityRole::StaticText && backingObject->parentObjectUnignored()->isLink())
+        backingObject = backingObject->parentObjectUnignored();
 
-    AccessibilityObject::AccessibilityChildrenVector linkedElements;
-    element->linkedUIElements(linkedElements);
-    if (!linkedElements.size() || !linkedElements[0])
+    auto linkedObjects = backingObject->linkedObjects();
+    if (linkedObjects.isEmpty() || !linkedObjects[0])
         return nil;
 
-    // AccessibilityObject::linkedUIElements may return an object that is
-    // exposed in other platforms but not on iOS, i.e., grouping or structure
-    // elements like <div> or <p>. Thus find the next accessible object that is
-    // exposed on iOS.
-    auto linkedElement = firstAccessibleObjectFromNode(linkedElements[0]->node(), [] (const AccessibilityObject& accessible) {
+    // AXCoreObject::linkedObject may return an object that is exposed in other platforms but not on iOS, i.e., grouping or structure elements like <div> or <p>.
+    // Thus find the next accessible object that is exposed on iOS.
+    auto linkedObject = firstAccessibleObjectFromNode(linkedObjects[0]->node(), [] (const auto& accessible) {
         return accessible.wrapper().isAccessibilityElement;
     });
-    return linkedElement ? linkedElement->wrapper() : nullptr;
+    return linkedObject ? linkedObject->wrapper() : nil;
 }
 
 - (BOOL)isAttachment

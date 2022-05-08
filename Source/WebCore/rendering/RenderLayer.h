@@ -478,6 +478,7 @@ public:
     void autoscroll(const IntPoint&);
 
     bool canResize() const;
+    LayoutSize minimumSizeForResizing(float zoomFactor) const;
     void resize(const PlatformMouseEvent&, const LayoutSize&);
     bool inResizeMode() const { return m_inResizeMode; }
     void setInResizeMode(bool b) { m_inResizeMode = b; }
@@ -698,6 +699,8 @@ public:
     WEBCORE_EXPORT IntRect absoluteBoundingBox() const;
     // Device pixel snapped bounding box relative to the root. absoluteBoundingBox() callers will be directed to this.
     FloatRect absoluteBoundingBoxForPainting() const;
+    // Returns the 'reference box' used for clip-path handling (different rules for inlines, wrt. to boxes).
+    FloatRect referenceBoxRectForClipPath(CSSBoxType, const LayoutSize& offsetFromRoot, const LayoutRect& rootRelativeBounds) const;
 
     // Bounds used for layer overlap testing in RenderLayerCompositor.
     LayoutRect overlapBounds() const;
@@ -727,9 +730,11 @@ public:
     bool hasTransform() const { return renderer().hasTransform(); }
     // Note that this transform has the transform-origin baked in.
     TransformationMatrix* transform() const { return m_transform.get(); }
+    // updateTransformFromStyle computes a transform according to the passed options (e.g. transform-origin baked in or excluded) and the given style.
+    void updateTransformFromStyle(TransformationMatrix&, const RenderStyle&, OptionSet<RenderStyle::TransformOperationOption>) const;
     // currentTransform computes a transform which takes accelerated animations into account. The
-    // resulting transform has transform-origin baked in. If the layer does not have a transform,
-    // returns the identity matrix.
+    // resulting transform has transform-origin baked in, unless non-default options are given. If
+    // the layer does not have a transform, the identity matrix is returned.
     TransformationMatrix currentTransform(OptionSet<RenderStyle::TransformOperationOption> = RenderStyle::allTransformOperations) const;
     TransformationMatrix renderableTransform(OptionSet<PaintBehavior>) const;
     
@@ -979,7 +984,7 @@ private:
             return downcast<RenderBox>(renderer()).location();
 #if ENABLE(LAYER_BASED_SVG_ENGINE)
         if (is<RenderSVGModelObject>(renderer()))
-            return downcast<RenderSVGModelObject>(renderer()).layoutLocation();
+            return downcast<RenderSVGModelObject>(renderer()).currentSVGLayoutLocation();
 #endif
 
         return LayoutPoint();

@@ -137,7 +137,6 @@
 		A54C224D148B23DE00373FA3 /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
-				DefaultBuildSystemTypeForWorkspace = Original;
 				LastSwiftUpdateCheck = 0700;
 				LastUpgradeCheck = 1140;
 				ORGANIZATIONNAME = Apple;
@@ -178,7 +177,7 @@
 			name = "Copy User Interface Resources";
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "/usr/bin/perl \"${SRCROOT}/Scripts/copy-user-interface-resources.pl\"\n";
+			shellScript = "if [[ \"${ACTION}\" == \"installapi\" || \"${ACTION}\" == \"installhdrs\" ]]; then\n    exit\nfi\n\n/usr/bin/perl \"${SRCROOT}/Scripts/copy-user-interface-resources.pl\"\n";
 		};
 		6517571727C9AD6B00D9FE40 /* Copy Frameworks to Secondary Path */ = {
 			isa = PBXShellScriptBuildPhase;

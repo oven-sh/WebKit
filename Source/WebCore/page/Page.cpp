@@ -37,6 +37,7 @@
 #include "CachedResourceLoader.h"
 #include "Chrome.h"
 #include "ChromeClient.h"
+#include "CommonAtomStrings.h"
 #include "ConstantPropertyMap.h"
 #include "ContextMenuClient.h"
 #include "ContextMenuController.h"
@@ -64,6 +65,7 @@
 #include "EventNames.h"
 #include "ExtensionStyleSheets.h"
 #include "FocusController.h"
+#include "FontCache.h"
 #include "FrameLoader.h"
 #include "FrameLoaderClient.h"
 #include "FrameSelection.h"
@@ -162,7 +164,6 @@
 #include "VisitedLinkStore.h"
 #include "VoidCallback.h"
 #include "WebCoreJSClientData.h"
-#include "WebLockRegistry.h"
 #include "WheelEventDeltaFilter.h"
 #include "WheelEventTestMonitor.h"
 #include "Widget.h"
@@ -310,7 +311,6 @@ Page::Page(PageConfiguration&& pageConfiguration)
     , m_userContentProvider(WTFMove(pageConfiguration.userContentProvider))
     , m_visitedLinkStore(*WTFMove(pageConfiguration.visitedLinkStore))
     , m_broadcastChannelRegistry(WTFMove(pageConfiguration.broadcastChannelRegistry))
-    , m_webLockRegistry(WTFMove(pageConfiguration.webLockRegistry))
     , m_sessionID(pageConfiguration.sessionID)
 #if ENABLE(VIDEO)
     , m_playbackControlsManagerUpdateTimer(*this, &Page::playbackControlsManagerUpdateTimerFired)
@@ -347,6 +347,7 @@ Page::Page(PageConfiguration&& pageConfiguration)
 #if ENABLE(ATTACHMENT_ELEMENT)
     , m_attachmentElementClient(WTFMove(pageConfiguration.attachmentElementClient))
 #endif
+    , m_contentSecurityPolicyModeForExtension(WTFMove(pageConfiguration.contentSecurityPolicyModeForExtension))
 {
     updateTimerThrottlingState();
 
@@ -354,10 +355,10 @@ Page::Page(PageConfiguration&& pageConfiguration)
     m_userContentProvider->addPage(*this);
     m_visitedLinkStore->addPage(*this);
 
-    static bool addedListener;
-    if (!addedListener) {
-        platformStrategies()->loaderStrategy()->addOnlineStateChangeListener(&networkStateChanged);
-        addedListener = true;
+    static bool firstTimeInitializationRan = false;
+    if (!firstTimeInitializationRan) {
+        firstTimeInitialization();
+        firstTimeInitializationRan = true;
     }
 
     ASSERT(!allPages().contains(this));
@@ -429,6 +430,17 @@ Page::~Page()
     m_pluginInfoProvider->removePage(*this);
     m_userContentProvider->removePage(*this);
     m_visitedLinkStore->removePage(*this);
+}
+
+void Page::firstTimeInitialization()
+{
+    platformStrategies()->loaderStrategy()->addOnlineStateChangeListener(&networkStateChanged);
+
+    FontCache::registerFontCacheInvalidationCallback([] {
+        forEachPage([](auto& page) {
+            page.setNeedsRecalcStyleInAllFrames();
+        });
+    });
 }
 
 void Page::clearPreviousItemFromAllPages(HistoryItem* item)
@@ -586,6 +598,17 @@ void Page::settingsDidChange()
     m_libWebRTCProvider->setH265Support(settings().webRTCH265CodecEnabled());
     m_libWebRTCProvider->setVP9Support(settings().webRTCVP9Profile0CodecEnabled(), settings().webRTCVP9Profile2CodecEnabled());
 #endif
+}
+
+std::optional<AXTreeData> Page::accessibilityTreeData() const
+{
+    auto* document = mainFrame().document();
+    if (!document)
+        return std::nullopt;
+
+    if (auto* cache = document->existingAXObjectCache())
+        return { cache->treeData() };
+    return std::nullopt;
 }
 
 void Page::progressEstimateChanged(Frame& frameWithProgressUpdate) const
@@ -1985,7 +2008,7 @@ void Page::userStyleSheetLocationChanged()
     URL url = m_settings->userStyleSheetLocation();
     
     // Allow any local file URL scheme to be loaded.
-    if (LegacySchemeRegistry::shouldTreatURLSchemeAsLocal(url.protocol().toStringWithoutCopying()))
+    if (LegacySchemeRegistry::shouldTreatURLSchemeAsLocal(url.protocol()))
         m_userStyleSheetPath = url.fileSystemPath();
     else
         m_userStyleSheetPath = String();
@@ -1999,7 +2022,7 @@ void Page::userStyleSheetLocationChanged()
     if (url.protocolIsData() && url.string().startsWith("data:text/css;charset=utf-8;base64,")) {
         m_didLoadUserStyleSheet = true;
 
-        if (auto styleSheetAsUTF8 = base64Decode(PAL::decodeURLEscapeSequences(url.string().substring(35)), Base64DecodeOptions::IgnoreSpacesAndNewLines))
+        if (auto styleSheetAsUTF8 = base64Decode(PAL::decodeURLEscapeSequences(StringView(url.string()).substring(35)), Base64DecodeOptions::IgnoreSpacesAndNewLines))
             m_userStyleSheet = String::fromUTF8(styleSheetAsUTF8->data(), styleSheetAsUTF8->size());
     }
 
@@ -2042,7 +2065,7 @@ const String& Page::userStyleSheet() const
     if (!data)
         return m_userStyleSheet;
 
-    m_userStyleSheet = TextResourceDecoder::create("text/css")->decodeAndFlush(data->data(), data->size());
+    m_userStyleSheet = TextResourceDecoder::create(cssContentTypeAtom())->decodeAndFlush(data->data(), data->size());
 
     return m_userStyleSheet;
 }
@@ -3368,7 +3391,7 @@ bool Page::useDarkAppearance() const
 {
 #if ENABLE(DARK_MODE_CSS)
     FrameView* view = mainFrame().view();
-    if (!view || !equalLettersIgnoringASCIICase(view->mediaType(), "screen"))
+    if (!view || !equalLettersIgnoringASCIICase(view->mediaType(), "screen"_s))
         return false;
     if (m_useDarkAppearanceOverride)
         return m_useDarkAppearanceOverride.value();
@@ -3510,7 +3533,7 @@ bool Page::allowsLoadFromURL(const URL& url, MainFrameMainResource mainFrameMain
         return true;
     if (!url.protocolIsInHTTPFamily() && !url.protocolIs("ws") && !url.protocolIs("wss"))
         return true;
-    return m_allowedNetworkHosts->contains(url.host().toStringWithoutCopying());
+    return m_allowedNetworkHosts->contains<StringViewHashTranslator>(url.host());
 }
 
 void Page::applicationWillResignActive()
@@ -3556,26 +3579,34 @@ ScrollLatchingController* Page::scrollLatchingControllerIfExists()
 }
 #endif // ENABLE(WHEEL_EVENT_LATCHING)
 
-static void dispatchPrintEvent(Frame& mainFrame, const AtomString& eventType)
+enum class DispatchedOnDocumentEventLoop : bool { No, Yes };
+static void dispatchPrintEvent(Frame& mainFrame, const AtomString& eventType, DispatchedOnDocumentEventLoop dispatchedOnDocumentEventLoop)
 {
     Vector<Ref<Frame>> frames;
     for (auto* frame = &mainFrame; frame; frame = frame->tree().traverseNext())
         frames.append(*frame);
 
     for (auto& frame : frames) {
-        if (auto* window = frame->window())
-            window->dispatchEvent(Event::create(eventType, Event::CanBubble::No, Event::IsCancelable::No), window->document());
+        if (RefPtr window = frame->window()) {
+            auto dispatchEvent = [window = WTFMove(window), eventType] {
+                window->dispatchEvent(Event::create(eventType, Event::CanBubble::No, Event::IsCancelable::No), window->document());
+            };
+            if (dispatchedOnDocumentEventLoop == DispatchedOnDocumentEventLoop::No)
+                return dispatchEvent();
+            if (auto* document = frame->document())
+                document->eventLoop().queueTask(TaskSource::DOMManipulation, WTFMove(dispatchEvent));
+        }
     }
 }
 
 void Page::dispatchBeforePrintEvent()
 {
-    dispatchPrintEvent(m_mainFrame, eventNames().beforeprintEvent);
+    dispatchPrintEvent(m_mainFrame, eventNames().beforeprintEvent, DispatchedOnDocumentEventLoop::No);
 }
 
 void Page::dispatchAfterPrintEvent()
 {
-    dispatchPrintEvent(m_mainFrame, eventNames().afterprintEvent);
+    dispatchPrintEvent(m_mainFrame, eventNames().afterprintEvent, DispatchedOnDocumentEventLoop::Yes);
 }
 
 #if ENABLE(APPLE_PAY)
@@ -3948,16 +3979,17 @@ void Page::setupForRemoteWorker(const URL& scriptURL, const SecurityOriginData& 
     mainFrame().loader().initForSynthesizedDocument({ });
     auto document = Document::createNonRenderedPlaceholder(mainFrame(), scriptURL);
     document->createDOMWindow();
-
     document->storageBlockingStateDidChange();
 
     auto origin = topOrigin.securityOrigin();
-    origin->setStorageBlockingPolicy(settings().storageBlockingPolicy());
-
     auto originAsURL = origin->toURL();
     document->setSiteForCookies(originAsURL);
     document->setFirstPartyForCookies(originAsURL);
-    document->setDomainForCachePartition(origin->domainForCachePartition());
+
+    if (document->settings().storageBlockingPolicy() != StorageBlockingPolicy::BlockThirdParty)
+        document->setDomainForCachePartition(String { emptyString() });
+    else
+        document->setDomainForCachePartition(origin->domainForCachePartition());
 
     if (auto policy = parseReferrerPolicy(referrerPolicy, ReferrerPolicySource::HTTPHeader))
         document->setReferrerPolicy(*policy);

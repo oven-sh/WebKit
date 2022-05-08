@@ -225,9 +225,9 @@ void RemoteDisplayListRecorderProxy::recordDrawLine(const FloatPoint& point1, co
     send(Messages::RemoteDisplayListRecorder::DrawLine(point1, point2));
 }
 
-void RemoteDisplayListRecorderProxy::recordDrawLinesForText(const FloatPoint& blockLocation, const FloatSize& localAnchor, float thickness, const DashArray& widths, bool printing, bool doubleLines)
+void RemoteDisplayListRecorderProxy::recordDrawLinesForText(const FloatPoint& blockLocation, const FloatSize& localAnchor, float thickness, const DashArray& widths, bool printing, bool doubleLines, StrokeStyle style)
 {
-    send(Messages::RemoteDisplayListRecorder::DrawLinesForText(DisplayList::DrawLinesForText { blockLocation, localAnchor, thickness, widths, printing, doubleLines }));
+    send(Messages::RemoteDisplayListRecorder::DrawLinesForText(DisplayList::DrawLinesForText { blockLocation, localAnchor, thickness, widths, printing, doubleLines, style }));
 }
 
 void RemoteDisplayListRecorderProxy::recordDrawDotsForDocumentMarker(const FloatRect& rect, const DocumentMarkerLineStyle& style)
@@ -449,7 +449,9 @@ RefPtr<ImageBuffer> RemoteDisplayListRecorderProxy::createImageBuffer(const Floa
     if (renderingMethod)
         return Recorder::createImageBuffer(size, resolutionScale, colorSpace, renderingMode, renderingMethod);
 
-    return m_renderingBackend->createImageBuffer(size, renderingMode.value_or(this->renderingMode()), resolutionScale, colorSpace, PixelFormat::BGRA8);
+    // FIXME: Ideally we'd plumb the purpose through for callers of GraphicsContext::createImageBuffer().
+    RenderingPurpose purpose = m_imageBuffer ? m_imageBuffer->renderingPurpose() : RenderingPurpose::Unspecified;
+    return m_renderingBackend->createImageBuffer(size, renderingMode.value_or(this->renderingMode()), purpose, resolutionScale, colorSpace, PixelFormat::BGRA8);
 }
 
 RefPtr<ImageBuffer> RemoteDisplayListRecorderProxy::createAlignedImageBuffer(const FloatSize& size, const DestinationColorSpace& colorSpace, std::optional<RenderingMethod> renderingMethod) const

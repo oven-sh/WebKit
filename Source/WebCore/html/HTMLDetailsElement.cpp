@@ -25,6 +25,7 @@
 #include "AXObjectCache.h"
 #include "DocumentInlines.h"
 #include "ElementIterator.h"
+#include "ElementRareData.h"
 #include "EventLoop.h"
 #include "EventNames.h"
 #include "GCReachableRef.h"
@@ -47,7 +48,7 @@ using namespace HTMLNames;
 
 static const AtomString& summarySlotName()
 {
-    static MainThreadNeverDestroyed<const AtomString> summarySlot("summarySlot");
+    static MainThreadNeverDestroyed<const AtomString> summarySlot("summarySlot"_s);
     return summarySlot;
 }
 

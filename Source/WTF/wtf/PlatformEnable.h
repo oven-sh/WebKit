@@ -351,6 +351,10 @@
 #define ENABLE_LAYOUT_FORMATTING_CONTEXT 0
 #endif
 
+#if !defined(ENABLE_LLVM_PROFILE_GENERATION)
+#define ENABLE_LLVM_PROFILE_GENERATION 0
+#endif
+
 #if !defined(ENABLE_MATHML)
 #define ENABLE_MATHML 1
 #endif
@@ -611,8 +615,10 @@
 #endif
 #endif
 
-#if !defined(ENABLE_JUMP_ISLANDS) && CPU(ARM64) && CPU(ADDRESS64) && ENABLE(JIT)
+#if !defined(ENABLE_JUMP_ISLANDS) && ENABLE(JIT)
+#if (CPU(ARM64) && CPU(ADDRESS64)) || CPU(ARM_THUMB2)
 #define ENABLE_JUMP_ISLANDS 1
+#endif
 #endif
 
 /* FIXME: This should be turned into an #error invariant */

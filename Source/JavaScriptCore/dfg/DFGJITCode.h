@@ -49,13 +49,53 @@ namespace DFG {
 
 class JITCompiler;
 
+class JITData final : public TrailingArray<JITData, void*> {
+    WTF_MAKE_FAST_ALLOCATED;
+    friend class LLIntOffsetsExtractor;
+public:
+    using Base = TrailingArray<JITData, void*>;
+    using ExitVector = FixedVector<MacroAssemblerCodeRef<OSRExitPtrTag>>;
+
+    static ptrdiff_t offsetOfExits() { return OBJECT_OFFSETOF(JITData, m_exits); }
+    static ptrdiff_t offsetOfIsInvalidated() { return OBJECT_OFFSETOF(JITData, m_isInvalidated); }
+
+    static std::unique_ptr<JITData> create(unsigned poolSize, ExitVector&& exits)
+    {
+        return std::unique_ptr<JITData> { new (NotNull, fastMalloc(Base::allocationSize(poolSize))) JITData(poolSize, WTFMove(exits)) };
+    }
+
+    void setExitCode(unsigned exitIndex, MacroAssemblerCodeRef<OSRExitPtrTag> code)
+    {
+        m_exits[exitIndex] = WTFMove(code);
+    }
+    const MacroAssemblerCodeRef<OSRExitPtrTag>& exitCode(unsigned exitIndex) const { return m_exits[exitIndex]; }
+
+    bool isInvalidated() const { return !!m_isInvalidated; }
+
+    void invalidate()
+    {
+        m_isInvalidated = 1;
+    }
+
+private:
+    explicit JITData(unsigned size, ExitVector&& exits)
+        : Base(size)
+        , m_exits(WTFMove(exits))
+    {
+    }
+
+    ExitVector m_exits;
+    uint8_t m_isInvalidated { 0 };
+};
+
 class JITCode final : public DirectJITCode {
 public:
-    JITCode();
+    JITCode(bool isUnlinked);
     ~JITCode() final;
     
     CommonData* dfgCommon() final;
     JITCode* dfg() final;
+    bool isUnlinked() const { return common.isUnlinked(); }
     
     OSREntryData* osrEntryDataForBytecodeIndex(BytecodeIndex bytecodeIndex)
     {
@@ -147,8 +187,8 @@ public:
     HashMap<BytecodeIndex, TriggerReason> tierUpEntryTriggers;
 
     WriteBarrier<CodeBlock> m_osrEntryBlock;
-    unsigned osrEntryRetry;
-    bool abandonOSREntry;
+    unsigned osrEntryRetry { 0 };
+    bool abandonOSREntry { false };
 #endif // ENABLE(FTL_JIT)
 };
 

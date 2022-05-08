@@ -52,7 +52,7 @@ WEBKIT_WPT_DIR = 'LayoutTests/imported/w3c/web-platform-tests'
 WPT_PR_URL = "%s/pull/" % WPT_GH_URL
 WEBKIT_EXPORT_PR_LABEL = 'webkit-export'
 
-EXCLUDED_FILE_SUFFIXES = ['-expected.txt', '.worker.html', '.any.html', '.any.worker.html', 'w3c-import.log']
+EXCLUDED_FILE_SUFFIXES = ['-expected.txt', '-expected.html', '.worker.html', '.any.html', '.any.worker.html', 'w3c-import.log']
 
 
 class WebPlatformTestExporter(object):
@@ -179,7 +179,7 @@ class WebPlatformTestExporter(object):
             if include_file:
                 new_lines.append(line)
 
-        return b'\n'.join(new_lines)
+        return b'\n'.join(new_lines) + b'\n'
 
     def write_git_patch_file(self):
         _, patch_file = self._filesystem.open_binary_tempfile('wpt_export_patch')
@@ -304,7 +304,7 @@ class WebPlatformTestExporter(object):
             self._git.delete_branch(self._branch_name)
             self._git.checkout_new_branch(self._branch_name)
         try:
-            self._git.apply_mail_patch([patch])
+            self._git.apply_mail_patch([patch, '-3'])
         except Exception as e:
             _log.warning(e)
             return False
@@ -348,12 +348,15 @@ class WebPlatformTestExporter(object):
         pr_number = None
         try:
             pr_number = self._github.create_pr(remote_branch_name, title, body)
-        except Exception as e:
+        except HTTPError as e:
             if e.code == 422:
                 _log.info('Unable to create a new pull request for branch "%s" because a pull request already exists. The branch has been updated and there is no further action needed.' % (remote_branch_name))
             else:
                 _log.warning(e)
                 _log.info('Error creating a pull request on github. Please ensure that the provided github token has the "public_repo" scope.')
+        except Exception as e:
+            _log.warning(e)
+            _log.info('Error creating a pull request on github. Please ensure that the provided github token has the "public_repo" scope.')
         return pr_number
 
     def delete_local_branch(self):

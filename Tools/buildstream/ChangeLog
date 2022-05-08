@@ -1,3 +1,117 @@
+2022-05-06  Adrian Perez de Castro  <aperez@igalia.com>
+
+        [Flatpak SDK] Update mold to version 1.2.1
+        https://bugs.webkit.org/show_bug.cgi?id=240162
+
+        Reviewed by Philippe Normand.
+
+        Update Mold to version 1.2.1, which now properly supports --gdb-index and Clang's
+        ThinLTO (on top of regular LTO support). The copy of libtbb bundled with the Mold
+        sources does no longer build with the rest of tooling from the SDK, so this patch
+        adds Buildstream elements for it and its hwloc dependency; both these two packages
+        are built with the minimal set of options needed to build Mold.
+
+        * elements/sdk/hwloc.bst: Added.
+        * elements/sdk/mold.bst: Updated to version 1.2.1
+        * elements/sdk/tbb.bst: Added.
+
+2022-05-05  Philippe Normand  <philn@igalia.com>
+
+        [Flatpak SDK] Bump to GStreamer 1.20.2
+        https://bugs.webkit.org/show_bug.cgi?id=240121
+
+        Reviewed by Adrian Perez de Castro.
+
+        * elements/sdk/gst-libav.bst:
+        * elements/sdk/gst-plugins-bad.bst:
+        * elements/sdk/gst-plugins-base.bst:
+        * elements/sdk/gst-plugins-good.bst:
+        * elements/sdk/gst-plugins-ugly.bst:
+        * elements/sdk/gstreamer.bst:
+        * patches/gstreamer-0001-typefind-Skip-parsing-of-data-URIs.patch: Removed.
+        * patches/gstreamer-0002-uri-Build-doubly-linked-list-by-prepending-items.patch: Removed.
+
+2022-04-24  Philippe Normand  <philn@igalia.com>
+
+        [Flatpak SDK] Partial revert of r249480
+        https://bugs.webkit.org/show_bug.cgi?id=239700
+
+        Reviewed by Adrian Perez de Castro.
+
+        The switch to upstream gtk3 recipe broke something related with icons handling and
+        introduced a crash in media/video-controls-drag.html. For the time being, revert to our
+        custom recipe.
+
+        This patch also updates the pipenv environment used to build the SDK, to BuildStream 1.6.5.
+
+        * Pipfile:
+        * Pipfile.lock:
+        * elements/qt5/qtbase.bst:
+        * elements/sdk-platform.bst:
+        * elements/sdk/adwaita-icon-theme.bst:
+        * elements/sdk/gst-plugins-base.bst:
+        * elements/sdk/gst-plugins-good.bst:
+        * elements/sdk/gtk+-3.bst: Added.
+
+2022-04-11  Philippe Normand  <pnormand@igalia.com>
+
+        [Flatpak SDK] Almost-easter eggs update
+        https://bugs.webkit.org/show_bug.cgi?id=239048
+
+        Reviewed by Adrian Perez de Castro.
+
+        * elements/sdk/clangd.bst: Bump to version 14.
+        * elements/sdk/gst-plugins-bad.bst: Enable the new libva plugin, going to be useful as
+        replacement for gstreamer-vaapi.
+        * elements/sdk/libwpe.bst: Bump to version 1.12.
+        * elements/sdk/rr.bst: Bump to latest master version.
+        * elements/sdk/wpebackend-fdo.bst: Bump to version 1.12.
+
+2022-04-10  Philippe Normand  <pnormand@igalia.com>
+
+        [Flatpak SDK] Pre-easter eggs update
+        https://bugs.webkit.org/show_bug.cgi?id=239007
+
+        Reviewed by Adrian Perez de Castro.
+
+        * elements/freedesktop-sdk.bst: Bump junction.
+        * elements/qt5/qtbase.bst: Remove reference to removed gtk3 recipe.
+        * elements/sdk-platform.bst: Replace duplicate recipes with their upstream version.
+        * elements/sdk/adwaita-icon-theme.bst: Remove reference to removed gtk3 recipe.
+        * elements/sdk/bubblewrap.bst: Removed.
+        * elements/sdk/ffmpeg.bst: Bump to version 5, inspired from upstream version of the recipe.
+        * elements/sdk/gst-plugins-base.bst: Remove reference to removed gtk3 recipe.
+        * elements/sdk/gst-plugins-good.bst: Remove reference to removed gtk3 recipe.
+        * elements/sdk/gtk+-3.bst: Removed.
+        * patches/fdo-0001-shared-mime-info-Backport-meson-0.60-build-fix.patch: Removed.
+        * patches/gtk-gcc11-build-fix.patch: Removed.
+
+2022-04-08  Carlos Alberto Lopez Perez  <clopez@igalia.com>
+
+        [Flatpak SDK] Update patchelf recipe
+        https://bugs.webkit.org/show_bug.cgi?id=238976
+
+        Reviewed by Philippe Normand.
+
+        Update patchelf to the last stable release (0.14.5)
+        patchelf is needed by the script generate-bundle.
+
+        * elements/sdk/patchelf.bst:
+
+2022-03-30  Philippe Normand  <pnormand@igalia.com>
+
+        [Flatpak SDK] Bump to Meson 0.62.
+        https://bugs.webkit.org/show_bug.cgi?id=238454
+
+        Reviewed by Adrian Perez de Castro.
+
+        Needed for meson devenv --dump support in local dependencies builds.
+
+        * elements/freedesktop-sdk.bst:
+        * patches/fdo-0001-gobject-introspection-Bump-to-1.72.patch: Added.
+        * patches/fdo-0001-meson-Bump-to-0.60.3.patch: Removed.
+        * patches/fdo-0002-meson-Bump-to-1.62.patch: Added.
+
 2022-03-20  Philippe Normand  <pnormand@igalia.com>
 
         [Flatpak SDK] Bump to meson 0.60

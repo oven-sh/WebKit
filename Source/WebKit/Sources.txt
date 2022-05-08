@@ -166,7 +166,6 @@ NetworkProcess/WebStorage/LocalStorageNamespace.cpp
 NetworkProcess/WebStorage/SessionStorageNamespace.cpp
 NetworkProcess/WebStorage/StorageArea.cpp
 NetworkProcess/WebStorage/StorageManager.cpp
-NetworkProcess/WebStorage/StorageManagerSet.cpp
 NetworkProcess/WebStorage/TransientLocalStorageNamespace.cpp
 
 NetworkProcess/cache/CacheStorageEngine.cpp
@@ -228,6 +227,7 @@ Shared/EditorState.cpp
 Shared/FontInfo.cpp
 Shared/FrameInfoData.cpp
 Shared/InspectorExtensionTypes.cpp
+Shared/IPCConnectionTester.cpp
 Shared/IPCStreamTester.cpp
 Shared/IPCTester.cpp
 Shared/LayerTreeContext.cpp
@@ -236,6 +236,7 @@ Shared/NavigationActionData.cpp
 Shared/PersistencyUtils.cpp
 Shared/PlatformPopupMenuData.cpp
 Shared/PrintInfo.cpp
+Shared/ProcessTerminationReason.cpp
 Shared/RTCNetwork.cpp
 Shared/RTCPacketOptions.cpp
 Shared/RemoteWorkerInitializationData.cpp
@@ -868,6 +869,7 @@ WebProcess/WebStorage/WebStorageNamespaceProvider.cpp
 
 WebProcess/XR/PlatformXRSystemProxy.cpp
 
+IPCConnectionTesterMessageReceiver.cpp
 IPCStreamTesterMessageReceiver.cpp
 IPCStreamTesterProxyMessageReceiver.cpp
 IPCTesterMessageReceiver.cpp

@@ -30,6 +30,7 @@
 
 #if ENABLE(MATHML)
 
+#include "CommonAtomStrings.h"
 #include "ElementIterator.h"
 #include "HTMLHtmlElement.h"
 #include "HTMLMapElement.h"
@@ -181,7 +182,7 @@ bool MathMLPresentationElement::isFlowContent(const Node& node)
         || htmlElement.hasTagName(HTMLNames::pTag)
         || htmlElement.hasTagName(HTMLNames::preTag)
         || htmlElement.hasTagName(HTMLNames::sectionTag)
-        || (htmlElement.hasTagName(HTMLNames::styleTag) && htmlElement.hasAttribute("scoped"))
+        || (htmlElement.hasTagName(HTMLNames::styleTag) && htmlElement.hasAttribute(HTMLNames::scopedAttr))
         || htmlElement.hasTagName(HTMLNames::tableTag)
         || htmlElement.hasTagName(HTMLNames::ulTag);
 }
@@ -193,9 +194,9 @@ const MathMLElement::BooleanValue& MathMLPresentationElement::cachedBooleanAttri
 
     // In MathML, attribute values are case-sensitive.
     const AtomString& value = attributeWithoutSynchronization(name);
-    if (value == "true")
+    if (value == trueAtom())
         attribute = BooleanValue::True;
-    else if (value == "false")
+    else if (value == falseAtom())
         attribute = BooleanValue::False;
     else
         attribute = BooleanValue::Default;
@@ -235,7 +236,7 @@ MathMLElement::Length MathMLPresentationElement::parseNumberAndUnit(StringView s
     }
 
     bool ok;
-    float lengthValue = string.substring(0, stringLength).toFloat(ok);
+    float lengthValue = string.left(stringLength).toFloat(ok);
     if (!ok)
         return Length();
 

@@ -148,19 +148,20 @@
 #import <WebCore/UserGestureIndicator.h>
 #import <WebCore/VisibleUnits.h>
 #import <WebCore/WebEvent.h>
-#import <pal/cocoa/RevealSoftLink.h>
 #import <wtf/MathExtras.h>
 #import <wtf/MemoryPressureHandler.h>
 #import <wtf/Scope.h>
 #import <wtf/SetForScope.h>
-#import <wtf/SoftLinking.h>
 #import <wtf/cocoa/Entitlements.h>
 #import <wtf/text/StringToIntegerConversion.h>
+#import <wtf/text/TextBreakIterator.h>
 #import <wtf/text/TextStream.h>
 
 #if ENABLE(ATTACHMENT_ELEMENT)
 #import <WebCore/PromisedAttachmentInfo.h>
 #endif
+
+#import <pal/cocoa/RevealSoftLink.h>
 
 #define WEBPAGE_RELEASE_LOG(channel, fmt, ...) RELEASE_LOG(channel, "%p - WebPage::" fmt, this, ##__VA_ARGS__)
 #define WEBPAGE_RELEASE_LOG_ERROR(channel, fmt, ...) RELEASE_LOG_ERROR(channel, "%p - WebPage::" fmt, this, ##__VA_ARGS__)
@@ -713,29 +714,29 @@ void WebPage::generateSyntheticEditingCommand(SyntheticEditingCommandType comman
     
     switch (command) {
     case SyntheticEditingCommandType::Undo:
-        keyEvent = PlatformKeyboardEvent(PlatformEvent::KeyDown, "z", "z",
-        "z", "KeyZ"_s,
-        @"U+005A", 90, false, false, false, modifiers, WallTime::now());
+        keyEvent = PlatformKeyboardEvent(PlatformEvent::KeyDown, "z"_s, "z"_s,
+        "z"_s, "KeyZ"_s,
+        "U+005A"_s, 90, false, false, false, modifiers, WallTime::now());
         break;
     case SyntheticEditingCommandType::Redo:
-        keyEvent = PlatformKeyboardEvent(PlatformEvent::KeyDown, "y", "y",
-        "y", "KeyY"_s,
-        @"U+0059", 89, false, false, false, modifiers, WallTime::now());
+        keyEvent = PlatformKeyboardEvent(PlatformEvent::KeyDown, "y"_s, "y"_s,
+        "y"_s, "KeyY"_s,
+        "U+0059"_s, 89, false, false, false, modifiers, WallTime::now());
         break;
     case SyntheticEditingCommandType::ToggleBoldface:
-        keyEvent = PlatformKeyboardEvent(PlatformEvent::KeyDown, "b", "b",
-        "b", "KeyB"_s,
-        @"U+0042", 66, false, false, false, modifiers, WallTime::now());
+        keyEvent = PlatformKeyboardEvent(PlatformEvent::KeyDown, "b"_s, "b"_s,
+        "b"_s, "KeyB"_s,
+        "U+0042"_s, 66, false, false, false, modifiers, WallTime::now());
         break;
     case SyntheticEditingCommandType::ToggleItalic:
-        keyEvent = PlatformKeyboardEvent(PlatformEvent::KeyDown, "i", "i",
-        "i", "KeyI"_s,
-        @"U+0049", 73, false, false, false, modifiers, WallTime::now());
+        keyEvent = PlatformKeyboardEvent(PlatformEvent::KeyDown, "i"_s, "i"_s,
+        "i"_s, "KeyI"_s,
+        "U+0049"_s, 73, false, false, false, modifiers, WallTime::now());
         break;
     case SyntheticEditingCommandType::ToggleUnderline:
-        keyEvent = PlatformKeyboardEvent(PlatformEvent::KeyDown, "u", "u",
-        "u", "KeyU"_s,
-        @"U+0055", 85, false, false, false, modifiers, WallTime::now());
+        keyEvent = PlatformKeyboardEvent(PlatformEvent::KeyDown, "u"_s, "u"_s,
+        "u"_s, "KeyU"_s,
+        "U+0055"_s, 85, false, false, false, modifiers, WallTime::now());
         break;
     default:
         break;
@@ -1815,6 +1816,47 @@ void WebPage::selectWithTwoTouches(const WebCore::IntPoint& from, const WebCore:
     completionHandler(from, gestureType, gestureState, { });
 }
 
+void WebPage::extendSelectionForReplacement(CompletionHandler<void()>&& completion)
+{
+    auto callCompletionHandlerOnExit = makeScopeExit(WTFMove(completion));
+
+    Ref frame = CheckedRef(m_page->focusController())->focusedOrMainFrame();
+    RefPtr document = frame->document();
+    if (!document)
+        return;
+
+    auto selectedRange = frame->selection().selection().range();
+    if (!selectedRange || !selectedRange->collapsed())
+        return;
+
+    VisiblePosition position = frame->selection().selection().start();
+    RefPtr container = position.deepEquivalent().containerNode();
+    if (!container)
+        return;
+
+    auto markerRanges = document->markers().markersFor(*container, { DocumentMarker::DictationAlternatives }).map([&](auto* marker) {
+        return makeSimpleRange(*container, *marker);
+    });
+
+    std::optional<SimpleRange> rangeToSelect;
+    for (auto& markerRange : markerRanges) {
+        if (contains(makeVisiblePositionRange(markerRange), position)) {
+            // In practice, dictation markers should only span a single text node, so it's sufficient to
+            // grab the first matching range (instead of taking the union of all intersecting ranges).
+            rangeToSelect = markerRange;
+            break;
+        }
+    }
+
+    if (!rangeToSelect)
+        rangeToSelect = wordRangeFromPosition(position);
+
+    if (!rangeToSelect)
+        return;
+
+    setSelectedRangeDispatchingSyntheticMouseEventsIfNeeded(*rangeToSelect, position.affinity());
+}
+
 void WebPage::extendSelection(WebCore::TextGranularity granularity, CompletionHandler<void()>&& completionHandler)
 {
     auto callCompletionHandlerOnExit = makeScopeExit(WTFMove(completionHandler));
@@ -1829,17 +1871,23 @@ void WebPage::extendSelection(WebCore::TextGranularity granularity, CompletionHa
     if (!wordRange)
         return;
 
+    setSelectedRangeDispatchingSyntheticMouseEventsIfNeeded(*wordRange, position.affinity());
+}
+
+void WebPage::setSelectedRangeDispatchingSyntheticMouseEventsIfNeeded(const SimpleRange& range, Affinity affinity)
+{
+    Ref frame = CheckedRef(m_page->focusController())->focusedOrMainFrame();
     IntPoint endLocationForSyntheticMouseEvents;
     bool shouldDispatchMouseEvents = shouldDispatchSyntheticMouseEventsWhenModifyingSelection();
     if (shouldDispatchMouseEvents) {
         RefPtr view = frame->view();
-        auto startLocationForSyntheticMouseEvents = view->contentsToRootView(VisiblePosition(makeDeprecatedLegacyPosition(wordRange->start)).absoluteCaretBounds()).center();
-        endLocationForSyntheticMouseEvents = view->contentsToRootView(VisiblePosition(makeDeprecatedLegacyPosition(wordRange->end)).absoluteCaretBounds()).center();
+        auto startLocationForSyntheticMouseEvents = view->contentsToRootView(VisiblePosition(makeDeprecatedLegacyPosition(range.start)).absoluteCaretBounds()).center();
+        endLocationForSyntheticMouseEvents = view->contentsToRootView(VisiblePosition(makeDeprecatedLegacyPosition(range.end)).absoluteCaretBounds()).center();
         dispatchSyntheticMouseEventsForSelectionGesture(SelectionTouch::Started, startLocationForSyntheticMouseEvents);
         dispatchSyntheticMouseEventsForSelectionGesture(SelectionTouch::Moved, endLocationForSyntheticMouseEvents);
     }
 
-    frame->selection().setSelectedRange(wordRange, position.affinity(), WebCore::FrameSelection::ShouldCloseTyping::Yes, UserTriggered);
+    frame->selection().setSelectedRange(range, affinity, WebCore::FrameSelection::ShouldCloseTyping::Yes, UserTriggered);
 
     if (shouldDispatchMouseEvents)
         dispatchSyntheticMouseEventsForSelectionGesture(SelectionTouch::Ended, endLocationForSyntheticMouseEvents);
@@ -2367,15 +2415,26 @@ void WebPage::requestRVItemInCurrentSelectedRange(CompletionHandler<void(const W
     completionHandler(RevealItem(revealItemForCurrentSelection()));
 }
 
-void WebPage::prepareSelectionForContextMenuWithLocationInView(const WebCore::IntPoint point, CompletionHandler<void(bool, const RevealItem&)>&& completionHandler)
+void WebPage::prepareSelectionForContextMenuWithLocationInView(IntPoint point, CompletionHandler<void(bool, const RevealItem&)>&& completionHandler)
 {
-    constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::AllowVisibleChildFrameContentOnly };
-    auto& eventHander = m_page->mainFrame().eventHandler();
-    HitTestResult result = eventHander.hitTestResultAtPoint(point, hitType);
-    
-    eventHander.selectClosestContextualWordOrLinkFromHitTestResult(result, WebCore::DontAppendTrailingWhitespace);
-    
-    completionHandler(true, RevealItem(revealItemForCurrentSelection()));
+    constexpr OptionSet hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::AllowVisibleChildFrameContentOnly };
+    Ref frame = m_page->mainFrame();
+    auto result = frame->eventHandler().hitTestResultAtPoint(point, hitType);
+    RefPtr hitNode = result.innerNonSharedNode();
+    if (!hitNode)
+        return completionHandler(false, { });
+
+    if (is<HTMLImageElement>(*hitNode) && hitNode->hasEditableStyle()) {
+        auto range = makeRangeSelectingNode(*hitNode);
+        if (range && frame->selection().setSelectedRange(range, Affinity::Upstream, FrameSelection::ShouldCloseTyping::Yes, UserTriggered)) {
+            layoutIfNeeded();
+            sendEditorStateUpdate();
+            return completionHandler(true, { });
+        }
+    }
+
+    frame->eventHandler().selectClosestContextualWordOrLinkFromHitTestResult(result, DontAppendTrailingWhitespace);
+    completionHandler(true, { revealItemForCurrentSelection() });
 }
 #endif
 
@@ -2385,10 +2444,10 @@ void WebPage::replaceSelectedText(const String& oldText, const String& newText)
     auto wordRange = frame->selection().isCaret() ? wordRangeFromPosition(frame->selection().selection().start()) : frame->selection().selection().toNormalizedRange();
     if (plainTextForContext(wordRange) != oldText)
         return;
-    frame->editor().setIgnoreSelectionChanges(true);
+
+    IgnoreSelectionChangeForScope ignoreSelectionChanges { frame };
     frame->selection().setSelectedRange(wordRange, Affinity::Upstream, WebCore::FrameSelection::ShouldCloseTyping::Yes);
     frame->editor().insertText(newText, 0);
-    frame->editor().setIgnoreSelectionChanges(false);
 }
 
 void WebPage::replaceDictatedText(const String& oldText, const String& newText)
@@ -2402,7 +2461,7 @@ void WebPage::replaceDictatedText(const String& oldText, const String& newText)
         return;
     }
     VisiblePosition position = frame->selection().selection().start();
-    for (size_t i = 0; i < oldText.length(); ++i)
+    for (auto i = numGraphemeClusters(oldText); i; --i)
         position = position.previous();
     if (position.isNull())
         position = startOfDocument(frame->document());
@@ -2412,10 +2471,24 @@ void WebPage::replaceDictatedText(const String& oldText, const String& newText)
         return;
 
     // We don't want to notify the client that the selection has changed until we are done inserting the new text.
-    frame->editor().setIgnoreSelectionChanges(true);
+    IgnoreSelectionChangeForScope ignoreSelectionChanges { frame };
     frame->selection().setSelectedRange(range, Affinity::Upstream, WebCore::FrameSelection::ShouldCloseTyping::Yes);
     frame->editor().insertText(newText, 0);
-    frame->editor().setIgnoreSelectionChanges(false);
+}
+
+void WebPage::willInsertFinalDictationResult()
+{
+    Ref frame = CheckedRef(m_page->focusController())->focusedOrMainFrame();
+    if (frame->selection().isNone())
+        return;
+
+    m_ignoreSelectionChangeScopeForDictation = makeUnique<IgnoreSelectionChangeForScope>(frame);
+}
+
+void WebPage::didInsertFinalDictationResult()
+{
+    m_ignoreSelectionChangeScopeForDictation = nullptr;
+    scheduleFullEditorStateUpdate();
 }
 
 void WebPage::requestAutocorrectionData(const String& textForAutocorrection, CompletionHandler<void(WebAutocorrectionData)>&& reply)
@@ -2505,6 +2578,9 @@ bool WebPage::applyAutocorrectionInternal(const String& correction, const String
         // forward such that it matches the original selection as much as possible.
         if (foldQuoteMarks(textForRange) != originalTextWithFoldedQuoteMarks) {
             // Search for the original text before the selection caret.
+            // FIXME: Does this do the right thing in the case where `originalText` contains one or more grapheme clusters
+            // that encompass multiple codepoints? Advancing backwards by grapheme cluster count here may also allow us to
+            // sidestep the position adjustment logic below in some cases.
             for (size_t i = 0; i < originalText.length(); ++i)
                 position = position.previous();
             if (position.isNull())
@@ -2598,10 +2674,10 @@ WebAutocorrectionContext WebPage::autocorrectionContext()
                     break;
                 contextStartPosition = previousPosition;
             }
-            VisiblePosition sentenceContextStartPosition = positionOfNextBoundaryOfGranularity(startPosition, TextGranularity::SentenceGranularity, SelectionDirection::Backward);
+            VisiblePosition sentenceContextStartPosition = startOfSentence(startPosition);
             if (sentenceContextStartPosition.isNotNull() && sentenceContextStartPosition < contextStartPosition)
                 contextStartPosition = sentenceContextStartPosition;
-            if (contextStartPosition.isNotNull() && contextStartPosition != startPosition) {
+            if (contextStartPosition.isNotNull() && contextStartPosition < startPosition) {
                 contextBefore = plainTextForContext(makeSimpleRange(contextStartPosition, startPosition));
                 if (atBoundaryOfGranularity(contextStartPosition, TextGranularity::ParagraphGranularity, SelectionDirection::Backward) && firstPositionInEditableContent != contextStartPosition)
                     contextBefore = makeString("\n "_s, contextBefore);
@@ -2609,8 +2685,8 @@ WebAutocorrectionContext WebPage::autocorrectionContext()
         }
 
         if (endPosition != endOfEditableContent(endPosition)) {
-            VisiblePosition nextPosition = positionOfNextBoundaryOfGranularity(endPosition, TextGranularity::SentenceGranularity, SelectionDirection::Forward);
-            if (nextPosition.isNotNull() && nextPosition != endPosition)
+            VisiblePosition nextPosition = endOfSentence(endPosition);
+            if (nextPosition.isNotNull() && nextPosition > endPosition)
                 contextAfter = plainTextForContext(makeSimpleRange(endPosition, nextPosition));
         }
     }
@@ -2694,24 +2770,6 @@ static inline bool isObscuredElement(Element& element)
         return false;
 
     return true;
-}
-
-void WebPage::getPositionInformation(const InteractionInformationRequest& request, CompletionHandler<void(InteractionInformationAtPosition&&)>&& reply)
-{
-    // Avoid UIProcess hangs when the WebContent process is stuck on a sync IPC.
-    if (IPC::UnboundedSynchronousIPCScope::hasOngoingUnboundedSyncIPC()) {
-        WEBPAGE_RELEASE_LOG_ERROR(Process, "getPositionInformation - Not processing because the process is stuck on unbounded sync IPC");
-        return reply({ });
-    }
-
-    sendEditorStateUpdate();
-
-    m_pendingSynchronousPositionInformationReply = WTFMove(reply);
-
-    auto information = positionInformation(request);
-
-    if (auto reply = WTFMove(m_pendingSynchronousPositionInformationReply))
-        reply(WTFMove(information));
 }
     
 static void focusedElementPositionInformation(WebPage& page, Element& focusedElement, const InteractionInformationRequest& request, InteractionInformationAtPosition& info)
@@ -2798,7 +2856,7 @@ static void dataDetectorImageOverlayPositionInformation(const HTMLElement& overl
     if (!frame)
         return;
 
-    auto elementAndBounds = WebPage::findDataDetectionResultElementInImageOverlay(request.point, overlayHost);
+    auto elementAndBounds = DataDetection::findDataDetectionResultElementInImageOverlay(request.point, overlayHost);
     if (!elementAndBounds)
         return;
 
@@ -3055,8 +3113,8 @@ static void textInteractionPositionInformation(WebPage& page, const HTMLInputEle
 RefPtr<ShareableBitmap> WebPage::shareableBitmapSnapshotForNode(Element& element)
 {
     // Ensure that the image contains at most 600K pixels, so that it is not too big.
-    if (RefPtr<WebImage> snapshot = snapshotNode(element, SnapshotOptionsShareable, 600 * 1024))
-        return &snapshot->bitmap();
+    if (auto snapshot = snapshotNode(element, SnapshotOptionsShareable, 600 * 1024))
+        return snapshot->bitmap();
     return nullptr;
 }
 
@@ -3460,7 +3518,7 @@ std::optional<FocusedElementInformation> WebPage::focusedElementInformation()
         else if (element.isTelephoneField())
             information.elementType = InputType::Phone;
         else if (element.isNumberField())
-            information.elementType = element.getAttribute("pattern") == "\\d*" || element.getAttribute("pattern") == "[0-9]*" ? InputType::NumberPad : InputType::Number;
+            information.elementType = element.getAttribute(HTMLNames::patternAttr) == "\\d*" || element.getAttribute(HTMLNames::patternAttr) == "[0-9]*" ? InputType::NumberPad : InputType::Number;
         else if (element.isDateTimeLocalField())
             information.elementType = InputType::DateTimeLocal;
         else if (element.isDateField())
@@ -3570,18 +3628,6 @@ void WebPage::setViewportConfigurationViewLayoutSize(const FloatSize& size, doub
     viewportConfigurationChanged(zoomToInitialScale);
 }
 
-void WebPage::setMinimumUnobscuredSize(const FloatSize& minimumUnobscuredSize)
-{
-    m_minimumUnobscuredSize = minimumUnobscuredSize;
-    updateViewportSizeForCSSViewportUnits();
-}
-
-void WebPage::setMaximumUnobscuredSize(const FloatSize& maximumUnobscuredSize)
-{
-    m_maximumUnobscuredSize = maximumUnobscuredSize;
-    updateViewportSizeForCSSViewportUnits();
-}
-
 void WebPage::setDeviceOrientation(int32_t deviceOrientation)
 {
     if (deviceOrientation == m_deviceOrientation)
@@ -3643,6 +3689,7 @@ void WebPage::dynamicViewportSizeUpdate(const FloatSize& viewLayoutSize, const W
     if (setFixedLayoutSize(newLayoutSize))
         resetTextAutosizing();
 
+    setDefaultUnobscuredSize(maximumUnobscuredSize);
     setMinimumUnobscuredSize(minimumUnobscuredSize);
     setMaximumUnobscuredSize(maximumUnobscuredSize);
     m_page->setUnobscuredSafeAreaInsets(targetUnobscuredSafeAreaInsets);
@@ -3962,7 +4009,9 @@ void WebPage::viewportConfigurationChanged(ZoomToInitialScale zoomToInitialScale
 
     m_page->setZoomedOutPageScaleFactor(m_viewportConfiguration.minimumScale());
 
-    updateViewportSizeForCSSViewportUnits();
+    updateSizeForCSSDefaultViewportUnits();
+    updateSizeForCSSSmallViewportUnits();
+    updateSizeForCSSLargeViewportUnits();
 
     FrameView& frameView = *mainFrameView();
     IntPoint scrollPosition = frameView.scrollPosition();
@@ -3986,23 +4035,6 @@ void WebPage::viewportConfigurationChanged(ZoomToInitialScale zoomToInitialScale
 
         frameView.setCustomSizeForResizeEvent(expandedIntSize(m_viewportConfiguration.minimumLayoutSize()));
     }
-}
-
-void WebPage::updateViewportSizeForCSSViewportUnits()
-{
-    FloatSize smallestUnobscuredSize = m_minimumUnobscuredSize;
-    if (smallestUnobscuredSize.isEmpty())
-        smallestUnobscuredSize = m_viewportConfiguration.viewLayoutSize();
-
-    FloatSize largestUnobscuredSize = m_maximumUnobscuredSize;
-    if (largestUnobscuredSize.isEmpty())
-        largestUnobscuredSize = m_viewportConfiguration.viewLayoutSize();
-
-    FrameView& frameView = *mainFrameView();
-    smallestUnobscuredSize.scale(1 / m_viewportConfiguration.initialScaleIgnoringContentSize());
-    largestUnobscuredSize.scale(1 / m_viewportConfiguration.initialScaleIgnoringContentSize());
-    frameView.setSizeForCSSSmallViewportUnits(smallestUnobscuredSize);
-    frameView.setSizeForCSSLargeViewportUnits(largestUnobscuredSize);
 }
 
 void WebPage::applicationWillResignActive()
@@ -4068,12 +4100,14 @@ void WebPage::applicationDidBecomeActive()
 
 void WebPage::applicationDidEnterBackgroundForMedia(bool isSuspendedUnderLock)
 {
-    [[NSNotificationCenter defaultCenter] postNotificationName:WebUIApplicationDidEnterBackgroundNotification object:nil userInfo:@{@"isSuspendedUnderLock": @(isSuspendedUnderLock)}];
+    if (auto* manager = PlatformMediaSessionManager::sharedManagerIfExists())
+        manager->applicationDidEnterBackground(isSuspendedUnderLock);
 }
 
 void WebPage::applicationWillEnterForegroundForMedia(bool isSuspendedUnderLock)
 {
-    [[NSNotificationCenter defaultCenter] postNotificationName:WebUIApplicationWillEnterForegroundNotification object:nil userInfo:@{@"isSuspendedUnderLock": @(isSuspendedUnderLock)}];
+    if (auto* manager = PlatformMediaSessionManager::sharedManagerIfExists())
+        manager->applicationWillEnterForeground(isSuspendedUnderLock);
 }
 
 static inline void adjustVelocityDataForBoundedScale(VelocityData& velocityData, double exposedRectScale, double minimumScale, double maximumScale)
@@ -4352,7 +4386,7 @@ String WebPage::platformUserAgent(const URL&) const
         return String();
 
     if (document->quirks().shouldAvoidUsingIOS13ForGmail() && osNameForUserAgent() == "iPhone OS")
-        return standardUserAgentWithApplicationName({ }, "12_1_3");
+        return standardUserAgentWithApplicationName({ }, "12_1_3"_s);
 
     return String();
 }

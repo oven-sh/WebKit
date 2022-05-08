@@ -36,6 +36,13 @@ GraphicsContextState::GraphicsContextState(const ChangeFlags& changeFlags, Inter
 {
 }
 
+GraphicsContextState GraphicsContextState::cloneForRecording() const
+{
+    auto clone = *this;
+    clone.m_changeFlags = { };
+    return clone;
+}
+
 bool GraphicsContextState::containsOnlyInlineChanges() const
 {
     if (m_changeFlags != (m_changeFlags & basicChangeFlags))
@@ -154,6 +161,8 @@ static const char* stateChangeName(GraphicsContextState::Change change)
         return "use-dark-appearance";
 #endif
     }
+
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 TextStream& GraphicsContextState::dump(TextStream& ts) const

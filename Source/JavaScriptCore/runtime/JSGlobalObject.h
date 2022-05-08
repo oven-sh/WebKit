@@ -42,6 +42,7 @@
 #include "RegExpGlobalData.h"
 #include "RuntimeFlags.h"
 #include "StringPrototype.h"
+#include "StructureCache.h"
 #include "SymbolPrototype.h"
 #include "VM.h"
 #include "Watchpoint.h"
@@ -297,8 +298,6 @@ private:
 public:
     template<typename T> using Initializer = typename LazyProperty<JSGlobalObject, T>::Initializer;
 
-    Register m_deprecatedCallFrameForDebugger[CallFrame::headerSizeInRegisters];
-    
     WriteBarrier<JSObject> m_globalThis;
 
     WriteBarrier<JSGlobalLexicalEnvironment> m_globalLexicalEnvironment;
@@ -356,6 +355,7 @@ public:
     LazyProperty<JSGlobalObject, JSFunction> m_iteratorProtocolFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_promiseResolveFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_numberProtoToStringFunction;
+    LazyProperty<JSGlobalObject, JSFunction> m_typedArrayProtoSort;
     WriteBarrier<JSFunction> m_objectProtoValueOfFunction;
     WriteBarrier<JSFunction> m_functionProtoHasInstanceSymbolFunction;
     WriteBarrier<JSObject> m_regExpProtoSymbolReplace;
@@ -490,6 +490,8 @@ public:
 #undef DECLARE_TYPED_ARRAY_TYPE_STRUCTURE
 
     FixedVector<LazyProperty<JSGlobalObject, JSCell>> m_linkTimeConstants;
+
+    StructureCache m_structureCache;
 
     String m_name;
 
@@ -725,6 +727,7 @@ public:
     JSFunction* numberProtoToStringFunction() const { return m_numberProtoToStringFunction.getInitializedOnMainThread(this); }
     JSFunction* functionProtoHasInstanceSymbolFunction() const { return m_functionProtoHasInstanceSymbolFunction.get(); }
     JSFunction* regExpProtoExecFunction() const;
+    JSFunction* typedArrayProtoSort() const { return m_typedArrayProtoSort.get(this); }
     JSObject* regExpProtoSymbolReplaceFunction() const { return m_regExpProtoSymbolReplace.get(); }
     GetterSetter* regExpProtoGlobalGetter() const;
     GetterSetter* regExpProtoUnicodeGetter() const;
@@ -921,9 +924,13 @@ public:
     RegExpGlobalData& regExpGlobalData() { return m_regExpGlobalData; }
     static ptrdiff_t regExpGlobalDataOffset() { return OBJECT_OFFSETOF(JSGlobalObject, m_regExpGlobalData); }
 
+    static ptrdiff_t offsetOfGlobalThis() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalThis); }
     static ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(JSGlobalObject, m_vm); }
     static ptrdiff_t offsetOfGlobalLexicalEnvironment() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalLexicalEnvironment); }
     static ptrdiff_t offsetOfGlobalLexicalBindingEpoch() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalLexicalBindingEpoch); }
+    static ptrdiff_t offsetOfVarInjectionWatchpoint() { return OBJECT_OFFSETOF(JSGlobalObject, m_varInjectionWatchpoint); }
+    static ptrdiff_t offsetOfVarReadOnlyWatchpoint() { return OBJECT_OFFSETOF(JSGlobalObject, m_varReadOnlyWatchpoint); }
+    static ptrdiff_t offsetOfFunctionProtoHasInstanceSymbolFunction() { return OBJECT_OFFSETOF(JSGlobalObject, m_functionProtoHasInstanceSymbolFunction); }
 
 #if ENABLE(REMOTE_INSPECTOR)
     Inspector::JSGlobalObjectInspectorController& inspectorController() const { return *m_inspectorController.get(); }
@@ -940,6 +947,8 @@ public:
 
     void setName(const String&);
     const String& name() const { return m_name; }
+
+    StructureCache& structureCache() { return m_structureCache; }
 
     void setUnhandledRejectionCallback(VM& vm, JSObject* function) { m_unhandledRejectionCallback.set(vm, function); }
     JSObject* unhandledRejectionCallback() const { return m_unhandledRejectionCallback.get(); }
@@ -1030,7 +1039,7 @@ public:
     }
     bool isOriginalTypedArrayStructure(Structure* structure)
     {
-        TypedArrayType type = structure->classInfo()->typedArrayStorageType;
+        TypedArrayType type = structure->classInfoForCells()->typedArrayStorageType;
         if (type == NotTypedArray)
             return false;
         return typedArrayStructureConcurrently(type) == structure;
@@ -1086,14 +1095,13 @@ public:
 
     const GlobalObjectMethodTable* globalObjectMethodTable() const { return m_globalObjectMethodTable; }
 
-    JS_EXPORT_PRIVATE CallFrame* deprecatedCallFrameForDebugger();
-
     static bool supportsRichSourceInfo(const JSGlobalObject*) { return true; }
 
     static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject)
     {
         auto& vm = globalObject->vm();
-        return JSGlobalObject::createWithCustomMethodTable(vm, JSGlobalObject::createStructure(vm, jsNull()), globalObject->globalObjectMethodTable());
+        JSGlobalObject* result = JSGlobalObject::createWithCustomMethodTable(vm, JSGlobalObject::createStructureForShadowRealm(vm, jsNull()), globalObject->globalObjectMethodTable());
+        return result;
     }
 
     static bool shouldInterruptScript(const JSGlobalObject*) { return true; }
@@ -1134,6 +1142,12 @@ public:
     static Structure* createStructure(VM& vm, JSValue prototype)
     {
         Structure* result = Structure::create(vm, nullptr, prototype, TypeInfo(GlobalObjectType, StructureFlags), info());
+        result->setTransitionWatchpointIsLikelyToBeFired(true);
+        return result;
+    }
+    static Structure* createStructureForShadowRealm(VM& vm, JSValue prototype)
+    {
+        Structure* result = Structure::create(vm, nullptr, prototype, TypeInfo(GlobalObjectType, StructureFlags & ~IsImmutablePrototypeExoticObject), info());
         result->setTransitionWatchpointIsLikelyToBeFired(true);
         return result;
     }

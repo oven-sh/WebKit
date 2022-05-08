@@ -79,7 +79,7 @@ namespace JSC {
 
 #if ENABLE(DFG_JIT)
 namespace DFG {
-struct OSRExitState;
+class JITData;
 } // namespace DFG
 #endif
 
@@ -87,12 +87,12 @@ class UnaryArithProfile;
 class BinaryArithProfile;
 class BytecodeLivenessAnalysis;
 class CodeBlockSet;
-class ExecutableToCodeBlockEdge;
 class JSModuleEnvironment;
 class LLIntOffsetsExtractor;
 class LLIntPrototypeLoadAdaptiveStructureWatchpoint;
 class MetadataTable;
 class RegisterAtOffsetList;
+class ScriptExecutable;
 class StructureStubInfo;
 class BaselineJITCode;
 class BaselineJITData;
@@ -134,8 +134,6 @@ protected:
 
     void finishCreation(VM&, CopyParsedBlockTag, CodeBlock& other);
     bool finishCreation(VM&, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock*, JSScope*);
-    
-    void finishCreationCommon(VM&);
 
     WriteBarrier<JSGlobalObject> m_globalObject;
 
@@ -229,7 +227,8 @@ public:
 
     JSParserScriptMode scriptMode() const { return m_unlinkedCode->scriptMode(); }
 
-    bool hasInstalledVMTrapBreakpoints() const;
+    bool hasInstalledVMTrapsBreakpoints() const;
+    bool canInstallVMTrapBreakpoints() const;
     bool installVMTrapBreakpoints();
 
     ALWAYS_INLINE bool isTemporaryRegister(VirtualRegister reg)
@@ -247,7 +246,7 @@ public:
 
     std::optional<BytecodeIndex> bytecodeIndexFromCallSiteIndex(CallSiteIndex);
 
-    // Because we might throw out baseline JIT code and all its baseline JIT data (m_baselineJITData),
+    // Because we might throw out baseline JIT code and all its baseline JIT data (m_jitData),
     // you need to be careful about the lifetime of when you use the return value of this function.
     // The return value may have raw pointers into this data structure that gets thrown away.
     // Specifically, you need to ensure that no GC can be finalized (typically that means no
@@ -258,7 +257,7 @@ public:
 #if ENABLE(JIT)
     void setupWithUnlinkedBaselineCode(Ref<BaselineJITCode>);
 
-    static ptrdiff_t offsetOfBaselineJITData() { return OBJECT_OFFSETOF(CodeBlock, m_baselineJITData); }
+    static ptrdiff_t offsetOfJITData() { return OBJECT_OFFSETOF(CodeBlock, m_jitData); }
 
     StructureStubInfo* addOptimizingStubInfo(AccessType, CodeOrigin);
 
@@ -369,8 +368,6 @@ public:
     
     ScriptExecutable* ownerExecutable() const { return m_ownerExecutable.get(); }
     
-    ExecutableToCodeBlockEdge* ownerEdge() const { return m_ownerEdge.get(); }
-
     VM& vm() const { return *m_vm; }
 
     VirtualRegister thisRegister() const { return m_unlinkedCode->thisRegister(); }
@@ -534,9 +531,25 @@ public:
     StringJumpTable& baselineStringSwitchJumpTable(int tableIndex);
     BaselineJITData* baselineJITData()
     {
-        RELEASE_ASSERT(jitType() == JITType::BaselineJIT);
-        return m_baselineJITData.get();
+        if (!JITCode::isOptimizingJIT(jitType()))
+            return bitwise_cast<BaselineJITData*>(m_jitData);
+        return nullptr;
     }
+
+#if ENABLE(DFG_JIT)
+    void setDFGJITData(std::unique_ptr<DFG::JITData>&& jitData)
+    {
+        ASSERT(!m_jitData);
+        m_jitData = jitData.release();
+    }
+
+    DFG::JITData* dfgJITData()
+    {
+        if (JITCode::isOptimizingJIT(jitType()))
+            return bitwise_cast<DFG::JITData*>(m_jitData);
+        return nullptr;
+    }
+#endif
 #endif
     size_t numberOfUnlinkedSwitchJumpTables() const { return m_unlinkedCode->numberOfUnlinkedSwitchJumpTables(); }
     const UnlinkedSimpleJumpTable& unlinkedSwitchJumpTable(int tableIndex) { return m_unlinkedCode->unlinkedSwitchJumpTable(tableIndex); }
@@ -693,11 +706,6 @@ public:
 
     void countOSRExit() { m_osrExitCounter++; }
 
-    enum class OptimizeAction { None, ReoptimizeNow };
-#if ENABLE(DFG_JIT)
-    OptimizeAction updateOSRExitCounterAndCheckIfNeedToReoptimize(DFG::OSRExitState&);
-#endif
-
     static ptrdiff_t offsetOfOSRExitCounter() { return OBJECT_OFFSETOF(CodeBlock, m_osrExitCounter); }
 
     uint32_t adjustedExitCountThreshold(uint32_t desiredThreshold);
@@ -731,6 +739,8 @@ public:
         ASSERT(m_numBreakpoints >= numBreakpoints);
         m_numBreakpoints -= numBreakpoints;
     }
+
+    bool isJettisoned() const { return m_isJettisoned; }
 
     enum SteppingMode {
         SteppingModeDisabled,
@@ -849,7 +859,8 @@ protected:
 
 private:
     friend class CodeBlockSet;
-    friend class ExecutableToCodeBlockEdge;
+    friend class FunctionExecutable;
+    friend class ScriptExecutable;
 
     template<typename Visitor> ALWAYS_INLINE void visitChildren(Visitor&);
 
@@ -923,7 +934,6 @@ private:
 
     WriteBarrier<UnlinkedCodeBlock> m_unlinkedCode;
     WriteBarrier<ScriptExecutable> m_ownerExecutable;
-    WriteBarrier<ExecutableToCodeBlockEdge> m_ownerEdge;
     // m_vm must be a pointer (instead of a reference) because the JSCLLIntOffsetsExtractor
     // cannot handle it being a reference.
     VM* m_vm;
@@ -937,7 +947,7 @@ private:
     RefPtr<JITCode> m_jitCode;
 #if ENABLE(JIT)
 public:
-    std::unique_ptr<BaselineJITData> m_baselineJITData;
+    void* m_jitData { nullptr };
 private:
 #endif
 #if ENABLE(DFG_JIT)
@@ -975,7 +985,7 @@ private:
 #endif
 };
 #if !ASSERT_ENABLED && COMPILER(GCC_COMPATIBLE)
-static_assert(sizeof(CodeBlock) <= 256, "Keep it small for memory saving");
+static_assert(sizeof(CodeBlock) <= 240, "Keep it small for memory saving");
 #endif
 
 template <typename ExecutableType>

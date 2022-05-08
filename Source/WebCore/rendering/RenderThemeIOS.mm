@@ -81,7 +81,6 @@
 #import "Theme.h"
 #import "UTIUtilities.h"
 #import "WebCoreThreadRun.h"
-#import "WebCoreUIColorExtras.h"
 #import <CoreGraphics/CoreGraphics.h>
 #import <CoreImage/CoreImage.h>
 #import <objc/runtime.h>
@@ -1446,7 +1445,6 @@ struct CSSValueSystemColorInformation {
     SEL selector;
     bool makeOpaque { false };
     float opacity { 1.0f };
-    UIColor *(*function)(void) { nullptr };
 };
 
 static const Vector<CSSValueSystemColorInformation>& cssValueSystemColorInformationList()
@@ -1459,7 +1457,7 @@ static const Vector<CSSValueSystemColorInformation>& cssValueSystemColorInformat
         [] {
         cssValueSystemColorInformationList.get() = Vector(std::initializer_list<CSSValueSystemColorInformation> {
             { CSSValueText, @selector(labelColor) },
-            { CSSValueWebkitControlBackground, nil, false, 1.0f, &systemBackgroundColor },
+            { CSSValueWebkitControlBackground, @selector(systemBackgroundColor) },
             { CSSValueAppleSystemBlue, @selector(systemBlueColor) },
             { CSSValueAppleSystemBrown, @selector(systemBrownColor) },
             { CSSValueAppleSystemGray, @selector(systemGrayColor) },
@@ -1471,7 +1469,7 @@ static const Vector<CSSValueSystemColorInformation>& cssValueSystemColorInformat
             { CSSValueAppleSystemRed, @selector(systemRedColor) },
             { CSSValueAppleSystemTeal, @selector(systemTealColor) },
             { CSSValueAppleSystemYellow, @selector(systemYellowColor) },
-            { CSSValueAppleSystemBackground, nil, false, 1.0f, &systemBackgroundColor },
+            { CSSValueAppleSystemBackground, @selector(systemBackgroundColor) },
             { CSSValueAppleSystemSecondaryBackground, @selector(secondarySystemBackgroundColor) },
             { CSSValueAppleSystemTertiaryBackground, @selector(tertiarySystemBackgroundColor) },
             { CSSValueAppleSystemOpaqueFill, @selector(systemFillColor), true },
@@ -1491,11 +1489,11 @@ static const Vector<CSSValueSystemColorInformation>& cssValueSystemColorInformat
             // FIXME: <rdar://problem/79471528> Adopt [UIColor opaqueSeparatorColor] once it has a high contrast variant.
             { CSSValueAppleSystemOpaqueSeparator, @selector(separatorColor), true },
             { CSSValueAppleSystemContainerBorder, @selector(separatorColor) },
-            { CSSValueAppleSystemControlBackground, nil, false, 1.0f, &systemBackgroundColor },
+            { CSSValueAppleSystemControlBackground, @selector(systemBackgroundColor) },
             { CSSValueAppleSystemGrid, @selector(separatorColor) },
             { CSSValueAppleSystemHeaderText, @selector(labelColor) },
             { CSSValueAppleSystemSelectedContentBackground, @selector(tableCellDefaultSelectionTintColor) },
-            { CSSValueAppleSystemTextBackground, nil, false, 1.0f, &systemBackgroundColor },
+            { CSSValueAppleSystemTextBackground, @selector(systemBackgroundColor) },
             { CSSValueAppleSystemUnemphasizedSelectedContentBackground, @selector(tableCellDefaultSelectionTintColor) },
             { CSSValueAppleWirelessPlaybackTargetActive, @selector(systemBlueColor) },
         });
@@ -1506,12 +1504,7 @@ static const Vector<CSSValueSystemColorInformation>& cssValueSystemColorInformat
 
 static inline std::optional<Color> systemColorFromCSSValueSystemColorInformation(CSSValueSystemColorInformation systemColorInformation, bool useDarkAppearance)
 {
-    UIColor *color = nil;
-    if (systemColorInformation.selector)
-        color = wtfObjCMsgSend<UIColor *>(PAL::getUIColorClass(), systemColorInformation.selector);
-    else
-        color = systemColorInformation.function();
-
+    UIColor *color = wtfObjCMsgSend<UIColor *>(PAL::getUIColorClass(), systemColorInformation.selector);
     if (!color)
         return std::nullopt;
 
@@ -1672,10 +1665,14 @@ static CGFloat attachmentDynamicTypeScaleFactor()
     return std::max<CGFloat>(1, dynamicPointSize / fixedPointSize);
 }
 
-static UIColor *attachmentTitleColor() { return [PAL::getUIColorClass() systemGrayColor]; }
+static UIColor *attachmentTitleColor(const RenderAttachment& renderer)
+{
+    return cocoaColor(RenderTheme::singleton().systemColor(CSSValueAppleSystemGray, renderer.styleColorOptions())).autorelease();
+}
 
 static RetainPtr<CTFontRef> attachmentSubtitleFont() { return attachmentTitleFont(); }
-static UIColor *attachmentSubtitleColor() { return [PAL::getUIColorClass() systemGrayColor]; }
+
+static UIColor *attachmentSubtitleColor(const RenderAttachment& renderer) { return attachmentTitleColor(renderer); }
 
 struct RenderAttachmentInfo {
     explicit RenderAttachmentInfo(const RenderAttachment&);
@@ -1883,8 +1880,8 @@ RenderAttachmentInfo::RenderAttachmentInfo(const RenderAttachment& attachment)
         buildWrappedLines(action, attachmentActionFont().get(), attachmentActionColor(attachment).get(), attachmentWrappingTextMaximumLineCount);
 
     bool forceSingleLineTitle = !action.isEmpty() || !subtitle.isEmpty() || hasProgress;
-    buildWrappedLines(title, attachmentTitleFont().get(), attachmentTitleColor(), forceSingleLineTitle ? 1 : attachmentWrappingTextMaximumLineCount);
-    buildSingleLine(subtitle, attachmentSubtitleFont().get(), attachmentSubtitleColor());
+    buildWrappedLines(title, attachmentTitleFont().get(), attachmentTitleColor(attachment), forceSingleLineTitle ? 1 : attachmentWrappingTextMaximumLineCount);
+    buildSingleLine(subtitle, attachmentSubtitleFont().get(), attachmentSubtitleColor(attachment));
 
     if (!lines.isEmpty()) {
         for (auto& line : lines) {
@@ -1922,7 +1919,7 @@ static void paintAttachmentIcon(GraphicsContext& context, RenderAttachmentInfo& 
 
 static void paintAttachmentText(GraphicsContext& context, RenderAttachmentInfo& info)
 {
-    DrawGlyphsRecorder recorder(context, DrawGlyphsRecorder::DeconstructDrawGlyphs::Yes, DrawGlyphsRecorder::DeriveFontFromContext::Yes);
+    DrawGlyphsRecorder recorder(context, 1, DrawGlyphsRecorder::DeconstructDrawGlyphs::Yes, DrawGlyphsRecorder::DeriveFontFromContext::Yes);
 
     for (const auto& line : info.lines)
         recorder.drawNativeText(line.font.get(), CTFontGetSize(line.font.get()), line.line.get(), line.rect);
@@ -1994,6 +1991,12 @@ bool RenderThemeIOS::paintAttachment(const RenderObject& renderer, const PaintIn
     paintAttachmentText(context, info);
 
     return true;
+}
+
+String RenderThemeIOS::attachmentStyleSheet() const
+{
+    ASSERT(RuntimeEnabledFeatures::sharedFeatures().attachmentElementEnabled());
+    return "attachment { appearance: auto; color: -apple-system-blue; }"_s;
 }
 
 #endif // ENABLE(ATTACHMENT_ELEMENT)
@@ -2177,7 +2180,14 @@ bool RenderThemeIOS::paintCheckbox(const RenderObject& box, const PaintInfo& pai
     }
 
     Path path;
-    if (checked) {
+    if (indeterminate) {
+        const FloatSize indeterminateBarRoundingRadii(1.25f, 1.25f);
+        constexpr float indeterminateBarPadding = 2.5f;
+        float height = 0.12f * rect.height();
+
+        FloatRect indeterminateBarRect(rect.x() + indeterminateBarPadding, rect.center().y() - height / 2.0f, rect.width() - indeterminateBarPadding * 2, height);
+        path.addRoundedRect(indeterminateBarRect, indeterminateBarRoundingRadii);
+    } else {
         path.moveTo({ 28.174f, 68.652f });
         path.addBezierCurveTo({ 31.006f, 68.652f }, { 33.154f, 67.578f }, { 34.668f, 65.332f });
         path.addLineTo({ 70.02f, 11.28f });
@@ -2199,13 +2209,6 @@ bool RenderThemeIOS::paintCheckbox(const RenderObject& box, const PaintInfo& pai
         transform.translate(rect.center() - (checkmarkSize * scale * 0.5f));
         transform.scale(scale);
         path.transform(transform);
-    } else {
-        const FloatSize indeterminateBarRoundingRadii(1.25f, 1.25f);
-        constexpr float indeterminateBarPadding = 2.5f;
-        float height = 0.12f * rect.height();
-
-        FloatRect indeterminateBarRect(rect.x() + indeterminateBarPadding, rect.center().y() - height / 2.0f, rect.width() - indeterminateBarPadding * 2, height);
-        path.addRoundedRect(indeterminateBarRect, indeterminateBarRoundingRadii);
     }
 
     context.setFillColor(checkboxRadioIndicatorColor(controlStates, styleColorOptions));
@@ -2599,7 +2602,7 @@ String RenderThemeIOS::colorInputStyleSheet(const Settings& settings) const
     if (!settings.iOSFormControlRefreshEnabled())
         return RenderTheme::colorInputStyleSheet(settings);
 
-    return "input[type=\"color\"] { -webkit-appearance: color-well; width: 28px; height: 28px; outline: none; border: initial; border-radius: 50%; } "_s;
+    return "input[type=\"color\"] { appearance: auto; width: 28px; height: 28px; box-sizing: border-box; outline: none; border: initial; border-radius: 50%; } "_s;
 }
 
 void RenderThemeIOS::adjustColorWellStyle(RenderStyle& style, const Element* element) const

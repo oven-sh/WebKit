@@ -1,3 +1,871 @@
+2022-05-03  Patrick Angle  <pangle@apple.com>
+
+        Web Inspector: Importing a timeline leaves timeline overview non-scrollable/non-zoomable until windows is resized
+        https://bugs.webkit.org/show_bug.cgi?id=239880
+
+        Reviewed by Devin Rousso.
+
+        Cancelling an in-progress layout (or the layout of a child of a view in middle of laying out) led to
+        `_dirtyDescendantsCount` being in an inconsistent state. Views had their `_dirtyDescendantsCount` cleared before
+        they are laid out, so every non-zero `_dirtyDescendantsCount` of a view in the process of being laid out meant
+        that during layout `needsLayout()` was called to dirty that view or one of its children. In this case, a
+        previous cancellation meant that the TimelineOverview ended up in an inconsistent state where its parent view
+        tree was not aware that it needed layout because it reached a zero `_dirtyDescendantsCount` while walking down
+        the view hierarchy, which meant that the TimelineOverview was perpetually stuck until the entire view hierarchy
+        needed re-laid out due to a window resize or similar event.
+
+        Our current accounting for `_dirtyDescendantsCount` in View makes assumptions that are not always true during
+        layout. Specifically that parents of views undergoing layout will have a non-zero `_dirtyDescendantsCount` still
+        from which to subtract in `_cancelScheduledLayoutForView`. This wasn't always true because as soon as we began
+        laying out a parent view, we cleared both the `_dirty` flag as well as zeroed out `_dirtyDescendantsCount`. In
+        the case of cancelling a layout from within a layout, the cancellation wouldn't actually take effect anyways,
+        and since `cancelLayout` was only ever invoked from `updateLayout`, the relevant layout flags should instead be
+        cleared as part of actually performing the layout. `cancelLayout` at most saved us a rAF callback only to
+        realize we no longer have any views in need of layout, but this benefit was negligible, and in general we should
+        prefer not to be calling `updateLayout` for performance reasons anyways.
+
+        This patch improves the accounting around `_dirtyDescendantsCount`, making sure to decrement it as we perform
+        layout, instead of all at once. This reduces our reliance on assumptions about who will modify the
+        `_dirtyDescendantsCount` and at what times relative to layout.
+
+        The only time in this patch that we do not do a +1/-1 adjustment to the layout count is in the special case of
+        attaching/detaching a view. In that case, the parent tree from which we are detaching the view will have the
+        `_dirtyDescendantsCount` of the detached parent adjusted by the `_dirtyDescendantsCount` of the former child
+        view. This is done by `_setSelfAndDescendantsNotDirty`, which allows us to avoid an exponential walking of the
+        tree for this otherwise self-contained operation (we don't call into any overridable functions that could modify
+        the `_dirty` flag or `_dirtyDescendantsCount`).
+
+        After we have cleaned up the former parent branch of the tree, we mark the newly attached view as needing
+        layout, which will then ensure the child view gets laid out again by marking it as `dirty` and incrementing its
+        new parent branch of the tree's `_dirtyDescendantsCount`.
+
+        * UserInterface/Views/View.js:
+        (WI.View.prototype.insertSubviewBefore):
+        - Add assertion that the view is not currently a child of a different view in addition to the existing check
+        that a view is not already a child of the target view.
+
+        (WI.View.prototype._setDirty):
+        - New utility method through which (almost) all marking of dirty/not dirty should be done in order to ensure
+        that `_dirtyDescendantsCount` is correctly adjusted.
+
+        (WI.View.prototype._didMoveToParent):
+        - Mark the view and all subviews as not dirty before removing it from its previous parent in order to adjust
+        `_dirtyDescendantsCount` appropriately, and then mark the view as dirty once attached to its new parent.
+        - Inline the logic from WI.View.prototype._didMoveToWindow in order to also handle marking children as not dirty
+        and having a zeroed `_dirtyDescendantsCount`.
+        - This method contains the exception to the rule that _dirtyDescendantsCount is always incremented/decremented
+        by one. Here we are able to optimize away the need to walk the entire parent tree for each subview/subviews of
+        subviews/etc. because the operation takes place all at once with no overridable function being called where we
+        have to worry about mutations to `_dirty`/`_dirtyDescendantsCount`.
+
+        (WI.View.prototype._layoutSubtree):
+        (WI.View._visitViewTreeForLayout):
+        - Don't zero out the `_dirtyDescendantsCount`, and instead use the new `_setDirty` helper.
+
+        (WI.View._scheduleLayoutForView):
+        - Don't zero out the `_dirtyDescendantsCount`, and instead use the new `_setDirty` helper.
+        - Mark the view as dirty after checking if its attached a view so that detached views have no dirty state until
+        they are attached, at which point the root of the previous detached subtree will be marked as dirty.
+        - Drive-by change to use a for-loop instead of a while-loop to avoid `Array.prototype.shift()`.
+
+        (WI.View.prototype.updateLayout):
+        (WI.View.prototype.cancelLayout): Deleted.
+        (WI.View._cancelScheduledLayoutForView): Deleted.
+        - Remove the concept of "canceling" layout, since it is only used by `updateLayout`, and the call to
+        `_layoutSubtree` in `updateLayout` will cause the view, dirty or not, to be marked as not dirty.
+
+2022-05-03  Michael Saboff  <msaboff@apple.com>
+
+        WebInspectorUI is missing a symlink to system content path
+        https://bugs.webkit.org/show_bug.cgi?id=239971
+
+        Reviewed by Alexey Proskuryakov.
+
+        Enabled script execution for install headers phase.
+        Added checks to run Copy User Interface Resources script only during the install phase.
+
+        * Configurations/WebInspectorUIFramework.xcconfig:
+        * WebInspectorUI.xcodeproj/project.pbxproj:
+
+2022-04-21  Dan Glastonbury  <djg@apple.com>
+
+        WebInspector: Improve rendering of GLbitfield in WebGL canvas recordings.
+        https://bugs.webkit.org/show_bug.cgi?id=239589
+
+        Reviewed by Devin Rousso.
+
+        * UserInterface/Models/RecordingAction.js:
+        (WI.RecordingAction.bitfieldNamesForParameter.test_and_clear_bit):
+        (WI.RecordingAction.bitfieldNamesForParameter): Split known
+        bitfields into an array of valid named representation for each
+        bit. Unknown bits are returned as hexadecimal formatted string.
+        * UserInterface/Views/RecordingActionTreeElement.js:
+        (WI.RecordingActionTreeElement._generateDOM.createParameterElement):
+        (WI.RecordingActionTreeElement._generateDOM): If param has a
+        non-null, array of strings, render the array as
+        `context.FIELD1|context.FIELD2`
+
+2022-04-29  Patrick Angle  <pangle@apple.com>
+
+        Web Inspector: Regression(r267038) Import a timeline does not render the timeline, only lists the events
+        https://bugs.webkit.org/show_bug.cgi?id=239872
+
+        Reviewed by Devin Rousso.
+
+        Two issues existed after r267038 that prevented the timeline overview from rendering correctly for imported
+        recordings. The first is that the timeline view itself was not visible as the result of assuming that we would
+        already be in middle of layout when inside `WI.TimelineRecordingContentView.prototype._updateTimes`, which isn't
+        true for the updating of times when importing a recording. In that case, syncronously attempting to lay out the
+        view means that the layout, including initial layout, will be performed before the view is attached, which means
+        we are unable to get the clientWidth of the view's element during layout, which in turn prevents us from
+        painting the timeline ruler.
+
+        The second issue is that when importing a timeline, we should ignore the current capturing state when setting
+        the current, start, and end times, otherwise not all the values will be kept.
+
+        * UserInterface/Views/TimelineRecordingContentView.js:
+        (WI.TimelineRecordingContentView):
+        (WI.TimelineRecordingContentView.prototype._updateTimes):
+
+2022-04-27  Devin Rousso  <drousso@apple.com>
+
+        Web Inspector: Uncaught Exception: undefined is not an object (evaluating 'this.resource.hadLoadingError')
+        https://bugs.webkit.org/show_bug.cgi?id=239824
+
+        Reviewed by Patrick Angle.
+
+        * UserInterface/Views/LocalResourceOverrideTreeElement.js:
+        (WI.LocalResourceOverrideTreeElement.prototype.updateStatus):
+
+2022-04-20  Dan Glastonbury  <djg@apple.com>
+
+        Web Inspector: Improve rendering of GLenums in WebGL canvas recordings.
+        https://bugs.webkit.org/show_bug.cgi?id=239586
+
+        Reviewed by Devin Rousso.
+
+        * UserInterface/Models/RecordingAction.js:
+        (WI.RecordingAction.constantNameForParameter):
+        Arrays are also objects, so checking for typeof x == "object" is
+        not enough to distinguish arrays from dictionaries. Since the if
+        above the failing check was handling arrays, turn "object" check
+        into an `else if` handles arrays and dictionaries correctly.
+
+2022-04-27  Ziran Sun  <zsun@igalia.com>
+
+        [css-ui] Remove some unimplemented -webkit-appearance keywords
+        https://bugs.webkit.org/show_bug.cgi?id=238930
+
+        Reviewed by Aditya Keerthi.
+
+        We might need to update the changes on UserInterface/External/CodeMirror/css.js since
+        PR https://github.com/codemirror/CodeMirror/pull/6912 has been merged in CodeMirror.
+
+        * UserInterface/External/CSSDocumentation/CSSDocumentation-overrides.json:
+        * UserInterface/External/CSSDocumentation/CSSDocumentation.js:
+
+2022-04-25  Devin Rousso  <drousso@apple.com>
+
+        Web Inspector: add UI for blocking requests
+        https://bugs.webkit.org/show_bug.cgi?id=239674
+
+        Reviewed by Patrick Angle.
+
+        * UserInterface/Models/LocalResourceOverride.js:
+        (WI.LocalResourceOverride):
+        (WI.LocalResourceOverride.create):
+        (WI.LocalResourceOverride.displayNameForNetworkStageOfType): Added.
+        (WI.LocalResourceOverride.displayNameForType):
+        (WI.LocalResourceOverride.displayNameForResourceErrorType): Added.
+        (WI.LocalResourceOverride.fromJSON):
+        (WI.LocalResourceOverride.prototype.toJSON):
+        (WI.LocalResourceOverride.prototype.get resourceErrorType): Added.
+        (WI.LocalResourceOverride.prototype.set resourceErrorType): Added.
+        (WI.LocalResourceOverride.prototype.get canMapToFile):
+        Add `WI.LocalResourceOverride.ResourceErrorType` (and a corresponding member variable) that
+        is be used when blocking matching requests.
+
+        * UserInterface/Controllers/NetworkManager.js:
+        (WI.NetworkManager.supportsBlockingRequests): Added.
+        (WI.NetworkManager.prototype.async requestIntercepted):
+        (WI.NetworkManager.prototype._handleResourceOverrideResourceErrorTypeChanged): Added.
+        Make sure to save `WI.LocalResourceOverride.InterceptType.Block` whenever the
+        `WI.LocalResourceOverride.ResourceErrorType` changes.
+
+        * UserInterface/Views/ContextMenuUtilities.js:
+        (WI.appendContextMenuItemsForSourceCode):
+        * UserInterface/Views/ResourceContentView.js:
+        (WI.ResourceContentView):
+        (WI.ResourceContentView.prototype._populateCreateLocalResourceOverrideContextMenu):
+        (WI.ResourceContentView.prototype._handleCreateLocalResourceOverride): Deleted.
+        Add contextmenu items for "Block Request URL".
+
+        * UserInterface/Views/LocalResourceOverrideRequestContentView.js:
+        (WI.LocalResourceOverrideRequestContentView):
+        (WI.LocalResourceOverrideRequestContentView.prototype.initialLayout):
+        (WI.LocalResourceOverrideRequestContentView.prototype.initialLayout.addOption): Added.
+        * UserInterface/Views/LocalResourceOverrideRequestContentView.css:
+        (.content-view.text.local-resource-override-request > .message-text-view select): Added.
+        There will be no request or response content for `WI.LocalResourceOverride.InterceptType.Block`
+        so show a `<select>` for choosing the `WI.LocalResourceOverride.ResourceErrorType`.
+
+        * UserInterface/Views/LocalResourceOverridePopover.js:
+        (WI.LocalResourceOverridePopover.prototype.get serializedData):
+        (WI.LocalResourceOverridePopover.prototype.show):
+        * UserInterface/Views/LocalResourceOverridePopover.css:
+        (.popover .local-resource-override-popover-content:is(.response, .block) .editor.url): Renamed from `.popover .local-resource-override-popover-content.response .editor.url`.
+        Only show the URL editor for `WI.LocalResourceOverride.InterceptType.Block`.
+
+        * UserInterface/Models/Resource.js:
+        (WI.Resource.classNamesForResource):
+        * UserInterface/Views/ResourceTreeElement.js:
+        (WI.ResourceTreeElement.prototype._updateResource):
+        (WI.ResourceTreeElement.prototype._updateIcon):
+        (WI.ResourceTreeElement.prototype._loadingDidFail): Added.
+        * UserInterface/Views/ResourceIcons.css:
+        (.resource-icon.override.skip-network .icon): Added.
+        (body:not(.window-inactive, .window-docked-inactive) :is(.table, .data-grid):focus-within .selected .resource-icon.override.skip-network .icon, body:not(.window-inactive, .window-docked-inactive) .tree-outline:focus-within .selected.resource-icon.override.skip-network .icon): Added.
+        (@media (prefers-color-scheme: dark) .resource-icon.override.skip-network .icon): Added.
+        * UserInterface/Images/SkipNetwork.svg: Added.
+        Add a new icon for when requests do not involve any network activity.
+
+        * UserInterface/Views/ContentView.js:
+        (WI.ContentView.createFromRepresentedObject):
+        (WI.ContentView.resolvedRepresentedObjectForRepresentedObject):
+        * UserInterface/Views/FontResourceContentView.js:
+        (WI.FontResourceContentView.prototype.dropZoneShouldAppearForDragEvent):
+        * UserInterface/Views/ImageResourceContentView.js:
+        (WI.ImageResourceContentView.prototype.dropZoneShouldAppearForDragEvent):
+        * UserInterface/Views/LocalResourceOverrideTreeElement.js:
+        (WI.LocalResourceOverrideTreeElement.prototype.willDismissPopover):
+        Use positive checks for the desired `WI.LocalResourceOverride.InterceptType` instead of
+        a negative check for the one value meant to be exlucded in the expectation that no new
+        enum values would get added (which this patch proves to be false).
+
+        * UserInterface/Views/LocalResourceOverrideLabelView.js:
+        (WI.LocalResourceOverrideLabelView.prototype.initialLayout):
+        Use the new `WI.LocalResourceOverride.displayNameForNetworkStageOfType` instead of doing
+        that work here.
+
+        * Localizations/en.lproj/localizedStrings.js:
+
+2022-04-25  Devin Rousso  <drousso@apple.com>
+
+        Web Inspector: response overrides with an error status code should indicate that somewhere
+        https://bugs.webkit.org/show_bug.cgi?id=239676
+
+        Reviewed by Patrick Angle.
+
+        * UserInterface/Views/LocalResourceOverrideTreeElement.js:
+        (WI.LocalResourceOverrideTreeElement.prototype.updateStatus):
+        Also have the `WI.LocalResourceOverrideTreeElement` add/remove the `"error"` CSS class
+        depening on the state of the related `WI.LocalResource` (which is what's done for "regular"
+        `WI.ResourceTreeElement` and `WI.Resource`).
+
+2022-04-25  Tim Nguyen  <ntim@apple.com>
+
+        Web Inspector: Unprefix CSS properties in source code
+        https://bugs.webkit.org/show_bug.cgi?id=239517
+
+        Reviewed by Patrick Angle.
+
+        Properties:
+        -webkit-appearance
+        -webkit-mask-image
+        -webkit-clip-path
+        -webkit-text-decoration-*
+        -webkit-user-select
+
+        Values:
+        cursor: -webkit-grab/grabbing
+        -webkit-fill-available
+
+        JS Properties:
+        webkitTransform
+
+        Media queries:
+        -webkit-device-pixel-ratio
+        -webkit-min-device-pixel-ratio
+        -webkit-max-device-pixel-ratio
+
+        Also used shorthand properties there and there.
+
+        * UserInterface/Debug/UncaughtExceptionReporter.css:
+        (.sheet-container):
+        (.uncaught-exception-sheet li):
+        * UserInterface/Views/AuditTestCaseContentView.css:
+        (.content-view.audit-test-case > section table > tr > td > :not(.tree-outline)):
+        * UserInterface/Views/AuditTestContentView.css:
+        (.content-view.audit-test.manager-editing > header :is(.name, .description)[contenteditable]):
+        * UserInterface/Views/BoxShadowEditor.css:
+        (.box-shadow-editor > table > tr > td > input[type="text"]):
+        * UserInterface/Views/BreakpointActionView.css:
+        (.breakpoint-action-eval-editor):
+        * UserInterface/Views/BreakpointPopover.css:
+        (.popover .edit-breakpoint-popover-content > table > tr.condition > td > .editor):
+        * UserInterface/Views/BreakpointTreeElement.css:
+        (.item.breakpoint .status > .status-image.auto-continue::after):
+        * UserInterface/Views/CPUTimelineView.css:
+        (.timeline-view.cpu > .content > .overview .legend):
+        (.timeline-view.cpu > .content > .overview > .chart > .container.stats):
+        * UserInterface/Views/CPUUsageCombinedView.css:
+        (.cpu-usage-combined-view > .details):
+        * UserInterface/Views/ChangesDetailsSidebarPanel.css:
+        (.sidebar > .panel.changes-panel .css-rule):
+        * UserInterface/Views/CodeMirrorOverrides.css:
+        (.CodeMirror-linewidget):
+        * UserInterface/Views/ColorSquare.css:
+        (@media (-webkit-device-pixel-ratio: 1) .color-square > .srgb-edge): Deleted.
+        * UserInterface/Views/ComputedStyleSection.css:
+        (.computed-style-section):
+        (.computed-style-section .computed-property-item .disclosure-button):
+        * UserInterface/Views/ConsoleMessageView.css:
+        (.console-user-command.special-user-log > .console-message-body):
+        (.console-message-body > span):
+        (.console-message-body > span > :matches(.console-message-enclosed, .console-message-preview, .console-message-preview-divider)):
+        (.console-message .console-message-extra-parameters-container > li,):
+        (.console-user-command > .console-message-body):
+        * UserInterface/Views/CookiePopover.css:
+        (.popover .cookie-popover-content > table > tr > td > input:matches([type="text"], [type="datetime-local"])):
+        * UserInterface/Views/DOMEventsBreakdownView.css:
+        (.waterfall-popover-content .dom-events-breakdown):
+        * UserInterface/Views/DOMTreeOutline.css:
+        (.tree-outline.dom.non-selectable):
+        (.tree-outline.dom li .selection-area):
+        * UserInterface/Views/DatabaseContentView.css:
+        (:matches(.database-user-query, .database-query-result)::before):
+        (.database-query-text):
+        (.database-query-result.error):
+        (.database-query-result.no-results):
+        * UserInterface/Views/DetailsSection.css:
+        (.details-section > .content > .group > .row.simple > .value):
+        (.details-section > .content > .group > .row.text):
+        (@media (-webkit-min-device-pixel-ratio: 2) .details-section,): Deleted.
+        * UserInterface/Views/Editing.css:
+        (.editing):
+        * UserInterface/Views/EventBreakpointPopover.css:
+        (.popover .edit-breakpoint-popover-content .event input):
+        * UserInterface/Views/FilterBar.css:
+        (:matches(.filter-bar, .search-bar) > input[type="search"]):
+        (:matches(.filter-bar, .search-bar) > input[type="search"]::-webkit-search-decoration):
+        * UserInterface/Views/FindBanner.css:
+        (.find-banner > input[type="search"]):
+        (.find-banner > button):
+        * UserInterface/Views/FontResourceContentView.css:
+        (.content-view.resource.font .preview > .line > .content):
+        * UserInterface/Views/FormattedValue.css:
+        (.formatted-node > .tree-outline.dom li):
+        * UserInterface/Views/GeneralStyleDetailsSidebarPanel.css:
+        (.sidebar > .panel.details.css-style > .content ~ .options-container > .filter-bar):
+        (.sidebar > .panel.details.css-style > .content ~ .options-container > .toggle-class-toggle):
+        * UserInterface/Views/GoToLineDialog.css:
+        (.go-to-line-dialog > div > input):
+        * UserInterface/Views/GradientEditor.css:
+        (.gradient-editor > .gradient-angle > input::-webkit-inner-spin-button):
+        * UserInterface/Views/GradientSlider.js:
+        (WI.GradientSliderKnob.prototype._updateTransform):
+        (WI.GradientSliderKnob):
+        * UserInterface/Views/ImageResourceContentView.css:
+        (.content-view.resource.image img):
+        * UserInterface/Views/IndexedDatabaseContentView.css:
+        (.indexed-database.content-view):
+        * UserInterface/Views/InlineSwatch.css:
+        (@media (-webkit-max-device-pixel-ratio: 1) .inline-swatch): Deleted.
+        * UserInterface/Views/InputPopover.css:
+        (.popover .input-popover-content > .editor):
+        * UserInterface/Views/LocalResourceOverrideLabelView.css:
+        (.local-resource-override-label-view > div > .url):
+        * UserInterface/Views/LocalResourceOverridePopover.css:
+        (.popover .local-resource-override-popover-content .editor):
+        * UserInterface/Views/Main.css:
+        (body):
+        (input[type=range]):
+        (.message-text-view):
+        (.resource-link,):
+        (.go-to-arrow):
+        (.css-documentation-button):
+        (.search-settings):
+        (.expand-list-button):
+        (.bouncy-highlight):
+        (@media (-webkit-device-pixel-ratio: 1) .reference-page-link): Deleted.
+        * UserInterface/Views/NetworkResourceDetailView.css:
+        (.content-view.resource-details):
+        * UserInterface/Views/NetworkTableContentView.css:
+        (.network-table > .statistics > .statistic > .text):
+        * UserInterface/Views/ObjectTreeView.css:
+        (.tree-outline.object li):
+        * UserInterface/Views/OpenResourceDialog.css:
+        (.open-resource-dialog > .field > input):
+        * UserInterface/Views/RecordingContentView.css:
+        (.content-view.recording > .preview-container):
+        * UserInterface/Views/ResourceCookiesContentView.css:
+        (.resource-cookies .table > .header):
+        * UserInterface/Views/ResourceHeadersContentView.css:
+        (.resource-headers .go-to-link):
+        (.resource-headers .call-stack):
+        * UserInterface/Views/ResourceTimingBreakdownView.css:
+        (.waterfall-popover-content .resource-timing-breakdown):
+        * UserInterface/Views/ResourceTreeElement.css:
+        (.item.resource.resource-type-websocket .status > .ready-state):
+        * UserInterface/Views/ScopeChainDetailsSidebarPanel.css:
+        (.watch-expression-editor):
+        * UserInterface/Views/Slider.css:
+        (@media (-webkit-min-device-pixel-ratio: 2) .slider): Deleted.
+        * UserInterface/Views/SourceCodeTextEditor.css:
+        (.source-code.text-editor > .CodeMirror .line-indicator-widget.inline):
+        (@media (-webkit-min-device-pixel-ratio: 2) .popover .debugger-popover-content > .body): Deleted.
+        * UserInterface/Views/SpreadsheetCSSStyleDeclarationEditor.css:
+        (.spreadsheet-style-declaration-editor):
+        (.spreadsheet-style-declaration-editor > .property:matches(.invalid-name, .other-vendor, .overridden):not(.disabled) > .content > *:not(.name, .value-container),):
+        (.spreadsheet-style-declaration-editor > .property.invalid-name:not(.disabled) > .content > *:not(.name, .value-container),):
+        (body:not(.meta-key-pressed) .spreadsheet-style-declaration-editor > .property.invalid-value:not(.disabled) > .content .value:not(.editing),):
+        (.spreadsheet-style-declaration-editor .property.has-warning .warning):
+        * UserInterface/Views/SpreadsheetCSSStyleDeclarationSection.css:
+        (.spreadsheet-css-declaration):
+        (.spreadsheet-css-declaration.selecting,):
+        (.spreadsheet-css-declaration .selector > .icon):
+        * UserInterface/Views/SpringEditor.css:
+        (.spring-editor > .number-input-container > .number-input-row > input::-webkit-inner-spin-button):
+        * UserInterface/Views/TextEditor.css:
+        (.text-editor > .CodeMirror .has-breakpoint .CodeMirror-linenumber::before):
+        (.text-editor > .CodeMirror .breakpoint-auto-continue:not(.execution-line.primary) .CodeMirror-linenumber::after):
+        * UserInterface/Views/TimelineRecordFrame.css:
+        (.timeline-record-frame.tall):
+        * UserInterface/Views/TimelineRuler.css:
+        (.timeline-ruler:not(.disabled, .resizing-selection) > .selection-drag):
+        (.timeline-ruler:not(.disabled, .resizing-selection) > .selection-drag:active):
+        * UserInterface/Views/TreeOutline.css:
+        (.tree-outline .item .disclosure-button):
+        * UserInterface/Views/TypeTreeElement.css:
+        (.item.type-tree-element > .disclosure-button):
+        * UserInterface/Views/TypeTreeView.css:
+        (.tree-outline.type li):
+        * UserInterface/Views/URLBreakpointPopover.css:
+        (.popover .edit-breakpoint-popover-content .url .editor):
+        (@media (prefers-color-scheme: dark) .popover .edit-breakpoint-popover-content .url .editor):
+
+2022-04-21  Devin Rousso  <drousso@apple.com>
+
+        Web Inspector: Elements: Layout: hovering over a node should highlight it in the page
+        https://bugs.webkit.org/show_bug.cgi?id=239621
+
+        Reviewed by Patrick Angle.
+
+        * UserInterface/Views/NodeOverlayListSection.js:
+        (WI.NodeOverlayListSection.prototype.layout):
+        Use the existing `WI.linkifyNodeReference` to create the UI for the `WI.DOMNode`.
+
+        * UserInterface/Base/DOMUtilities.js:
+        (WI.linkifyNodeReferenceElement):
+        Don't style the UI as a link if clicking it doesn't do anything.
+
+2022-04-21  Devin Rousso  <drousso@apple.com>
+
+        Web Inspector: add reference page links for the Timelines Tab
+        https://bugs.webkit.org/show_bug.cgi?id=239580
+
+        Reviewed by Patrick Angle.
+
+        * UserInterface/Views/TimelineView.js:
+        (WI.TimelineView.prototype.initialLayout): Added.
+        * UserInterface/Views/TimelineView.css:
+        (.timeline-view > .reference-page-link-container): Added.
+        Add a reference page link to the bottom-right of each timeline view.
+
+        * UserInterface/Views/CPUTimelineView.js:
+        (WI.CPUTimelineView.prototype.initialLayout):
+        * UserInterface/Views/HeapAllocationsTimelineView.js:
+        * UserInterface/Views/LayoutTimelineView.js:
+        * UserInterface/Views/MediaTimelineView.js:
+        * UserInterface/Views/MemoryTimelineView.js:
+        * UserInterface/Views/NetworkTimelineView.js:
+        * UserInterface/Views/OverviewTimelineView.js:
+        * UserInterface/Views/RenderingFrameTimelineView.js:
+        * UserInterface/Views/ScriptDetailsTimelineView.js:
+        * UserInterface/Views/ScriptProfileTimelineView.js:
+        Add `WI.*.ReferencePage = WI.ReferencePage.*` relationships for each timeline view.
+
+        * UserInterface/Base/ReferencePage.js:
+        (WI.ReferencePage): Added.
+        (WI.ReferencePage.prototype.get page): Added.
+        (WI.ReferencePage.prototype.get topic): Added.
+        (WI.ReferencePage.prototype.createLinkElement): Added.
+        * UserInterface/Base/Main.js:
+        (WI.createReferencePageLink): Moved to `WI.ReferencePage.prototype.createLinkElement`.
+        Create a `WI.ReferencePage` class that knows how to generate a `<a>`.
+
+        * UserInterface/Views/AuditNavigationSidebarPanel.js:
+        (WI.AuditNavigationSidebarPanel.prototype.showDefaultContentView):
+        * UserInterface/Views/AuditTestCaseContentView.js:
+        (WI.AuditTestCaseContentView.prototype.showRunningPlaceholder):
+        * UserInterface/Views/AuditTestContentView.js:
+        (WI.AuditTestContentView.prototype.showStoppingPlaceholder):
+        (WI.AuditTestContentView.prototype.showNoResultPlaceholder):
+        (WI.AuditTestContentView.prototype.showNoResultDataPlaceholder):
+        (WI.AuditTestContentView.prototype.showFilteredPlaceholder):
+        * UserInterface/Views/AuditTestGroupContentView.js:
+        (WI.AuditTestGroupContentView.prototype.showRunningPlaceholder):
+        * UserInterface/Views/BreakpointPopover.js:
+        (WI.BreakpointPopover.prototype.show):
+        * UserInterface/Views/CreateAuditPopover.js:
+        (WI.CreateAuditPopover.prototype.show):
+        * UserInterface/Views/Layers3DContentView.js:
+        (WI.Layers3DContentView.prototype.initialLayout):
+        * UserInterface/Views/LocalResourceOverridePopover.js:
+        (WI.LocalResourceOverridePopover.prototype.show):
+        Replace `WI.createReferencePageLink` with `WI.ReferencePage.*.createLinkElement`
+
+2022-04-18  Elliott Williams  <emw@apple.com>
+
+        [XCBuild] Use XCBuild for all command-line and project builds
+        https://bugs.webkit.org/show_bug.cgi?id=238916
+
+        Reviewed by Alexey Proskuryakov.
+
+        * WebInspectorUI.xcodeproj/project.pbxproj:
+
+2022-04-13  Elliott Williams  <emw@apple.com>
+
+        [Xcode] Fix public watchOS workspace build by updating scheme and build settings
+        https://bugs.webkit.org/show_bug.cgi?id=239301
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/Base.xcconfig:
+
+2022-04-13  Patrick Angle  <pangle@apple.com>
+
+        Web Inspector: Clean up `WI.DOMNode` to no longer require the shared `WI.DOMManager` be passed during construction
+        https://bugs.webkit.org/show_bug.cgi?id=239129
+
+        Reviewed by Devin Rousso.
+
+        * UserInterface/Controllers/DOMManager.js:
+        (WI.DOMManager.prototype._setDocument):
+        (WI.DOMManager.prototype._childNodeInserted):
+        (WI.DOMManager.prototype._pseudoElementAdded):
+        - Update to use new syntax for `WI.DOMNode` constructor/`newOrExistingFromPayload`. Additionally, there is no
+        need to explicitly map node ids to nodes here since `WI.DOMNode`'s constructor does this.
+        
+        (WI.DOMManager.prototype._setChildNodes):
+        (WI.DOMManager.prototype._setDetachedRoot): Deleted.
+        - Inline _setDetachedRoot with a comment instead and update to use `WI.DOMNode.newOrExistingFromPayload` instead
+        of always creating a new node.
+        
+        * UserInterface/Models/DOMNode.js:
+        (WI.DOMNode):
+        - Remove the _domManager property since it will always be `WI.domManager`, the shared singleton and update the
+        required arguments to use an options object for non-required parameters.
+
+        (WI.DOMNode.prototype.newOrExistingFromPayload):
+        (WI.DOMNode.prototype._insertChild):
+        (WI.DOMNode.prototype._setChildrenPayload):
+        - Update to use new constructor syntax.
+        
+
+2022-04-12  Elliott Williams  <emw@apple.com>
+
+        [Xcode] In open-source builds, disable bitcode in xcconfigs instead of build-webkit
+        https://bugs.webkit.org/show_bug.cgi?id=239262
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/Base.xcconfig:
+
+2022-04-12  Elliott Williams  <emw@apple.com>
+
+        Reland "[XCBuild] Enable dependency validation by default"
+        https://bugs.webkit.org/show_bug.cgi?id=238901
+        <rdar://problem/91379968>
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/DebugRelease.xcconfig: In open-source builds, disable
+        VALIDATE_DEPENDENCIES when there is no PRODUCT_TYPE (i.e. not building
+        a native target).
+
+2022-04-12  Patrick Angle  <pangle@apple.com>
+
+        Web Inspector: Add engineering-build-only ability to dump the current known bound nodes tree in Inspector^2 or layout tests
+        https://bugs.webkit.org/show_bug.cgi?id=239086
+
+        Reviewed by Devin Rousso.
+
+        * UserInterface/Debug/DOMManager.js: Added.
+        (appendLine):
+        (appendChildren):
+        (get let):
+        - To assist with debugging layout tests and patches to the DOMManager, add a utility getter to dump the current
+        node tree.
+        
+        * UserInterface/Main.html:
+        * UserInterface/Test.html:
+
+2022-04-11  Patrick Angle  <pangle@apple.com>
+
+        Web Inspector: preserve DOM.NodeId if a node is removed and re-added
+        https://bugs.webkit.org/show_bug.cgi?id=189687
+
+        Reviewed by Devin Rousso.
+
+        Instead of unbinding and rebinding nodes upon removal/reinsertion to the DOM tree, we should only perform the
+        unbinding actions on a `Node` that is being destroyed.
+
+        * UserInterface/Controllers/DOMDebuggerManager.js:
+
+        * UserInterface/Controllers/DOMManager.js:
+        (WI.DOMManager.prototype._pseudoElementAdded):
+
+        (WI.DOMManager.prototype.willDestroyDOMNode):
+        (WI.DOMManager.prototype._unbind):
+        - To match the backend, we should only unbind nodes when they are destroyed, not removed.
+
+        * UserInterface/Models/DOMNode.js:
+        (WI.DOMNode.prototype.newOrExistingFromPayload):
+        - Reuse an existing orphaned DOMNode if it already exists. In the future, we want to stop sending entire node
+        payloads to the frontend in those situations.
+
+        (WI.DOMNode.prototype._insertChild):
+        (WI.DOMNode.prototype._setChildrenPayload):
+
+2022-04-11  Nikita Vasilyev  <nvasilyev@apple.com>
+
+        Web Inspector: REGRESSION(r290770): Styles: creating a new property scrolls the input to the top of the panel
+        https://bugs.webkit.org/show_bug.cgi?id=237747
+        <rdar://problem/90130669>
+
+        Reviewed by Patrick Angle.
+
+        Remove unnecessary scrollIntoViewIfNeeded call. I added the scrollIntoViewIfNeeded call in 2017 (r222959) because,
+        at the time, focusing on an input field didn't scroll it into the viewport. It was possible to tab into an element
+        outside of the viewport and  WebKit wouldn't scroll it make it visible. This is no longer the case.
+
+        * UserInterface/Views/SpreadsheetSelectorField.js:
+        (WI.SpreadsheetSelectorField.prototype.startEditing):
+        Call `focus()` to scroll to the edited element.
+
+        * UserInterface/Views/SpreadsheetTextField.js:
+        (WI.SpreadsheetTextField.prototype.startEditing):
+
+2022-04-08  Elliott Williams  <emw@apple.com>
+
+        [Xcode] Avoid targeting 32-bit iOS and Mac architectures
+        https://bugs.webkit.org/show_bug.cgi?id=238971
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/DebugRelease.xcconfig:
+
+2022-04-08  Elliott Williams  <emw@apple.com>
+
+        Unreviewed, reverting r292591.
+
+        Causing spurious EWS errors
+
+        Reverted changeset:
+
+        "[XCBuild] Enable dependency validation by default"
+        https://bugs.webkit.org/show_bug.cgi?id=238901
+        https://commits.webkit.org/r292591
+
+2022-04-08  Carlos Garcia Campos  <cgarcia@igalia.com>
+
+        Web Inspector: Use computedStyleMap() instead of deprecated getPropertyCSSValue()
+        https://bugs.webkit.org/show_bug.cgi?id=238661
+
+        Reviewed by Devin Rousso.
+
+        Add Element.getComputedCSSPropertyNumberValue() instead of using computedStyleMap() directly to have a fallback
+        in case CSS_TYPED_OM is disabled in build.
+
+        * UserInterface/Base/Utilities.js:
+        (get return):
+        * UserInterface/Views/DataGridNode.js:
+        (WI.DataGridNode.prototype.isEventWithinDisclosureTriangle):
+        * UserInterface/Views/TabBar.js:
+        (WI.TabBar.prototype._handleMouseMoved.inlineStyleValue):
+        (WI.TabBar.prototype._handleMouseMoved):
+        * UserInterface/Views/TreeElement.js:
+        (WI.TreeElement.prototype.isEventWithinDisclosureTriangle):
+
+2022-04-07  Elliott Williams  <emw@apple.com>
+
+        [XCBuild] Enable dependency validation by default
+        https://bugs.webkit.org/show_bug.cgi?id=238901
+        <rdar://problem/91379968>
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/DebugRelease.xcconfig:
+
+2022-04-05  Patrick Angle  <pangle@apple.com>
+
+        Web Inspector: Regression(r291729) The result of logging $0 to the console shows overlapping `$0` and `$[n]` after the node
+        https://bugs.webkit.org/show_bug.cgi?id=238843
+
+        Reviewed by Devin Rousso.
+
+        r291729 was missing a check that the `DOMTreeOutline` is actually supposed to show an indicator for the
+        inspected node, which means other uses of `DOMTreeOutline` (the console, the sources tab, etc.) were showing the
+        $0 indicator as well.
+
+        * UserInterface/Views/DOMTreeOutline.js:
+        (WI.DOMTreeOutline.prototype.update):
+
+2022-04-01  Michael Saboff  <msaboff@apple.com>
+
+        Stop copying StagedFrameworks to the secondary path by default
+        https://bugs.webkit.org/show_bug.cgi?id=238688
+
+        Reviewed by Saam Barati.
+
+        Decoupled COPY_STAGED_FRAMEWORKS_TO_SECONDARY_PATH from USE_SYSTEM_CONTENT_PATH so we won't
+        always copy frameworks to the secondary path on macOS.  Instead, the build configuration can set
+        COPY_STAGED_FRAMEWORKS_TO_SECONDARY_PATH as appropriate.
+
+        * Configurations/WebInspectorUIFramework.xcconfig:
+
+2022-03-31  Patrick Angle  <pangle@apple.com>
+
+        Web Inspector: Support Container Queries in the Styles sidebar
+        https://bugs.webkit.org/show_bug.cgi?id=238346
+
+        Reviewed by Devin Rousso.
+
+        * UserInterface/Models/CSSGrouping.js:
+        (WI.CSSGrouping.prototype.get isContainer):
+        (WI.CSSGrouping.prototype.get prefix):
+        (WI.CSSGrouping):
+
+2022-03-31  Devin Rousso  <drousso@apple.com>
+
+        Web Inspector: Sources: the mapped file URL of a Respone Local Override should wrap
+        https://bugs.webkit.org/show_bug.cgi?id=238625
+
+        Reviewed by Patrick Angle.
+
+        * UserInterface/Views/ResourceContentView.js:
+        (WI.ResourceContentView.prototype._handleMappedFilePathChanged):
+        Long file paths should be wrappable so the text doesn't overflow the content area.
+
+2022-03-31  Alex Christensen  <achristensen@webkit.org>
+
+        Remove EXPERIMENTAL_FEATURES flag on Cocoa platforms
+        https://bugs.webkit.org/show_bug.cgi?id=238565
+
+        Reviewed by Darin Adler.
+
+        * UserInterface/Base/BrowserInspectorFrontendHost.js:
+        (window.InspectorFrontendHost.WI.BrowserInspectorFrontendHost.prototype.isExperimentalBuild): Deleted.
+        * UserInterface/Base/Main.js:
+        * UserInterface/Base/Setting.js:
+        (WI.canShowPreviewFeatures):
+        * UserInterface/Test/Test.js:
+
+2022-03-30  Devin Rousso  <drousso@apple.com>
+
+        Web Inspector: Sources: the mapped file URL of a Response Local Override should be clickable
+        https://bugs.webkit.org/show_bug.cgi?id=238533
+
+        Reviewed by Patrick Angle.
+
+        * UserInterface/Views/ResourceContentView.js:
+        (WI.ResourceContentView.prototype._handleMappedFilePathChanged):
+        Instead of showing the mapped file path as basic text, linkify it such that it is shown in
+        the system file explorer when clicked.
+
+        * UserInterface/Base/Main.js:
+        (WI.createMessageTextView):
+        Allow the `message` to be a `Node` (in addition to a `String`).
+
+2022-03-29  Devin Rousso  <drousso@apple.com>
+
+        Web Inspector: Sources: allow Response Local Overrides to map to a file on disk
+        https://bugs.webkit.org/show_bug.cgi?id=238236
+        <rdar://problem/59009154>
+
+        Reviewed by Patrick Angle.
+
+        This makes Response Local Overrides even more powerful by allowing developers to map the
+        contents of the (Local Override) resource to a file on disk (e.g. a local copy of the file),
+        meaning that they can use their preferred editor of choice (and all the tools that may come
+        with it) to make changes instead of having to stay within Web Inspector.
+
+        * UserInterface/Models/LocalResource.js:
+        (WI.LocalResource):
+        (WI.LocalResource.canMapToFile): Added.
+        (WI.LocalResource.prototype.toJSON):
+        (WI.LocalResource.prototype.get mappedFilePath): Added.
+        (WI.LocalResource.prototype.set mappedFilePath): Added.
+        (WI.LocalResource.prototype.async requestContent):
+        (WI.LocalResource.prototype.async _loadFromFileSystem): Added.
+        * UserInterface/Models/LocalResourceOverride.js:
+        (WI.LocalResourceOverride.prototype.get canMapToFile): Added.
+        Save the given local file path as a member variable and use `InspectorFrontendHost.load` to
+        grab its contents (saving it inside the `WI.LocalResource` so that it can still be used in
+        case the file is moved/deleted) whenever anyone `requestContent`.
+
+        * UserInterface/Views/ResourceContentView.js:
+        (WI.ResourceContentView):
+        (WI.ResourceContentView.prototype.get navigationItems):
+        (WI.ResourceContentView.prototype.showMessage):
+        (WI.ResourceContentView.prototype.addIssue):
+        (WI.ResourceContentView.prototype._contentAvailable):
+        (WI.ResourceContentView.prototype.async _handleMapLocalResourceOverrideToFile): Added.
+        (WI.ResourceContentView.prototype._handleMappedFilePathChanged): Added.
+        Add a new "[Disk.svg] Map to File" navigation item when viewing Response Local Overrides. If
+        the Response Local Override has already been mapped to a file, show the path of the file
+        instead of the contents of the resource. This allows us to not have to monitor the file for
+        changes, instead only grabbing the current contents when necessary (i.e. when replacing the
+        response of an intercepted network request).
+
+        * UserInterface/Views/ResourceContentView.css: Added.
+        (.content-view.resource > .local-resource-override-label-view + .message-text-view):
+        Still show the Local Override banner if the Local Override has been mapped to a file.
+
+        * UserInterface/Views/TextResourceContentView.js:
+        (WI.TextResourceContentView.prototype._contentWillPopulate):
+        Don't show the `WI.SourceCodeTextEditor` if there's already something else being shown.
+
+        * UserInterface/Controllers/NetworkManager.js:
+        (WI.NetworkManager.prototype.async requestIntercepted):
+        (WI.NetworkManager.prototype.async responseIntercepted):
+        Make sure to `requestContent` before using the `currentRevision` so that any file-mapped
+        `WI.LocalResource` have a chance to load from disk before handling the interception.
+
+        * Localizations/en.lproj/localizedStrings.js:
+        * UserInterface/Main.html:
+        * UserInterface/Images/Disk.svg: Added.
+
+2022-03-29  Patrick Angle  <pangle@apple.com>
+
+        Web Inspector: [Cocoa] Indicate a request was sent through proxy/private relay in Network tab
+        https://bugs.webkit.org/show_bug.cgi?id=233202
+
+        Reviewed by Devin Rousso.
+
+        For resources that are sent through a proxy or relay (like iCloud Private Relay), the remoteAddress will be that
+        of the proxy or relay server, not the server that provided the page to the proxy or relay. To indicate this, we
+        now append `(Proxy)` to these remote IP addresses in Web Inspector so that it is clearer what server the remote
+        address actually represents in these cases.
+
+        * Localizations/en.lproj/localizedStrings.js:
+        * UserInterface/Models/LocalResource.js:
+        * UserInterface/Models/Resource.js:
+        (WI.Resource.prototype.get displayRemoteAddress):
+        - Similar to `displayName` and `displayURL` which provide user-facing strings, add a `displayRemoteAddress` that
+        will denote the address is a proxy if applicable.
+        
+        (WI.Resource.prototype.updateWithMetrics):
+        * UserInterface/Views/NetworkTableContentView.js:
+        (WI.NetworkTableContentView.prototype._entryForResource):
+        * UserInterface/Views/ResourceDetailsSidebarPanel.js:
+        (WI.ResourceDetailsSidebarPanel.prototype._refreshRequestAndResponse):
+        * UserInterface/Views/ResourceHeadersContentView.js:
+        (WI.ResourceHeadersContentView.prototype._refreshSummarySection):
+        * UserInterface/Views/ResourceTimelineDataGridNode.js:
+        (WI.ResourceTimelineDataGridNode.prototype.get data):
+
 2022-03-23  Razvan Caliman  <rcaliman@apple.com>
 
         Web Inspector: Styles panel: Unwanted extra dash when autocompleting CSS variable names

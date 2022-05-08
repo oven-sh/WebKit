@@ -251,7 +251,7 @@ void WebAutomationSessionProxy::setScriptObject(JSGlobalContextRef context, JSOb
     JSC::JSLockHolder locker(vm);
     auto scriptObjectID = JSC::Identifier::fromUid(m_scriptObjectIdentifier);
     JSC::PutPropertySlot slot(globalObject);
-    globalObject->methodTable(vm)->put(globalObject, globalObject, scriptObjectID, toJS(globalObject, object), slot);
+    globalObject->methodTable()->put(globalObject, globalObject, scriptObjectID, toJS(globalObject, object), slot);
 }
 
 JSObjectRef WebAutomationSessionProxy::scriptObjectForFrame(WebFrame& frame)
@@ -296,7 +296,7 @@ WebCore::Element* WebAutomationSessionProxy::elementForNodeHandle(WebFrame& fram
     if (!element)
         return nullptr;
 
-    auto elementWrapper = JSC::jsDynamicCast<WebCore::JSElement*>(toJS(context)->vm(), toJS(element));
+    auto elementWrapper = JSC::jsDynamicCast<WebCore::JSElement*>(toJS(element));
     if (!elementWrapper)
         return nullptr;
 
@@ -523,7 +523,7 @@ void WebAutomationSessionProxy::resolveChildFrameWithName(WebCore::PageIdentifie
         return;
     }
 
-    WebCore::Frame* coreChildFrame = coreFrame->tree().scopedChild(name);
+    WebCore::Frame* coreChildFrame = coreFrame->tree().scopedChild(AtomString { name });
     if (!coreChildFrame) {
         completionHandler(frameNotFoundErrorType, std::nullopt);
         return;
@@ -861,7 +861,7 @@ void WebAutomationSessionProxy::takeScreenshot(WebCore::PageIdentifier pageID, s
             return;
         }
 
-        image->bitmap().createHandle(handle, SharedMemory::Protection::ReadOnly);
+        handle = image->createHandle(SharedMemory::Protection::ReadOnly);
         WebProcess::singleton().parentProcessConnection()->send(Messages::WebAutomationSession::DidTakeScreenshot(callbackID, handle, { }), 0);
     });
 }

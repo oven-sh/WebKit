@@ -155,6 +155,11 @@ void ServiceWorkerRegistration::update(Ref<DeferredPromise>&& promise)
         return;
     }
 
+    if (auto* serviceWorkerGlobalScope = dynamicDowncast<ServiceWorkerGlobalScope>(scriptExecutionContext()); serviceWorkerGlobalScope && serviceWorkerGlobalScope->serviceWorker().state() == ServiceWorkerState::Installing) {
+        promise->reject(Exception(InvalidStateError, "service worker is installing"_s));
+        return;
+    }
+
     m_container->updateRegistration(m_registrationData.scopeURL, newestWorker->scriptURL(), newestWorker->workerType(), WTFMove(promise));
 }
 
@@ -292,56 +297,24 @@ void ServiceWorkerRegistration::showNotification(ScriptExecutionContext& context
 
     // The Notification is kept alive by virtue of being show()'n soon.
     // FIXME: When implementing getNotifications(), store this Notification in the registration's notification list.
-    auto notification = Notification::create(context, WTFMove(title), WTFMove(options));
+    auto notificationResult = Notification::createForServiceWorker(context, WTFMove(title), WTFMove(options), m_registrationData.scopeURL);
+    if (notificationResult.hasException()) {
+        promise.reject(notificationResult.releaseException());
+        return;
+    }
+
+    auto notification = notificationResult.releaseReturnValue();
+    notification->showSoon();
 
     context.eventLoop().queueTask(TaskSource::DOMManipulation, [promise = WTFMove(promise)]() mutable {
         promise.resolve();
     });
 }
 
-void ServiceWorkerRegistration::getNotifications(ScriptExecutionContext& context, const GetNotificationOptions& filter, DOMPromiseDeferred<IDLSequence<IDLInterface<Notification>>> promise)
+void ServiceWorkerRegistration::getNotifications(const GetNotificationOptions& filter, DOMPromiseDeferred<IDLSequence<IDLInterface<Notification>>> promise)
 {
-    auto notifications = filteredNotificationList(filter.tag);
-    context.eventLoop().queueTask(TaskSource::DOMManipulation, [promise = WTFMove(promise), notifications = WTFMove(notifications)]() mutable {
-        promise.resolve(WTFMove(notifications));
-    });
+    m_container->getNotifications(m_registrationData.scopeURL, filter.tag, WTFMove(promise));
 }
-
-void ServiceWorkerRegistration::addNotificationToList(Notification& notification)
-{
-    // A Notification at this exact address might previously have been in the list but not successfully removed.
-    // The WeakHashSet captures that possibility here to help us maintain consistency.
-    auto iter = m_notificationList.find(&notification);
-    if (iter != m_notificationList.end()) {
-        RELEASE_ASSERT(!m_notificationSet.contains(notification));
-        m_notificationList.remove(iter);
-    }
-
-    m_notificationList.add(&notification);
-    auto result = m_notificationSet.add(notification);
-    ASSERT_UNUSED(result, result.isNewEntry);
-}
-
-void ServiceWorkerRegistration::removeNotificationFromList(Notification& notification)
-{
-    // The same notification might try to remove itself from this list more than once, and that's fine.
-    m_notificationList.remove(&notification);
-    m_notificationSet.remove(notification);
-}
-
-Vector<Ref<Notification>> ServiceWorkerRegistration::filteredNotificationList(const String& filteredTag)
-{
-    Vector<Ref<Notification>> results;
-    for (auto* notification : m_notificationList) {
-        if (!m_notificationSet.contains(*notification))
-            continue;
-        if (filteredTag.isEmpty() || notification->tag() == filteredTag)
-            results.append(notification->copyForGetNotifications());
-    }
-
-    return results;
-}
-
 #endif // ENABLE(NOTIFICATION_EVENT)
 
 } // namespace WebCore

@@ -61,6 +61,9 @@ void WebInspectorUI::enableFrontendFeatures(WebPage& page)
 #if ENABLE(WEBGL2)
     page.corePage()->settings().setWebGL2Enabled(true);
 #endif
+#if ENABLE(CSS_TYPED_OM)
+    page.corePage()->settings().setCSSTypedOMEnabled(true);
+#endif
 }
 
 WebInspectorUI::WebInspectorUI(WebPage& page)
@@ -98,38 +101,14 @@ void WebInspectorUI::updateConnection()
         m_backendConnection->invalidate();
         m_backendConnection = nullptr;
     }
+    auto connectionIdentifiers = IPC::Connection::createConnectionIdentifierPair();
+    if (!connectionIdentifiers)
+        return;
 
-#if USE(UNIX_DOMAIN_SOCKETS)
-    IPC::Connection::SocketPair socketPair = IPC::Connection::createPlatformConnection();
-    IPC::Connection::Identifier connectionIdentifier(socketPair.server);
-    UNUSED_PARAM(connectionIdentifier);
-    IPC::Attachment connectionClientPort(socketPair.client);
-#elif OS(DARWIN)
-    mach_port_t listeningPort = MACH_PORT_NULL;
-    if (mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &listeningPort) != KERN_SUCCESS)
-        CRASH();
-
-    if (mach_port_insert_right(mach_task_self(), listeningPort, listeningPort, MACH_MSG_TYPE_MAKE_SEND) != KERN_SUCCESS)
-        CRASH();
-
-    IPC::Connection::Identifier connectionIdentifier(listeningPort);
-    UNUSED_PARAM(connectionIdentifier);
-    IPC::Attachment connectionClientPort(listeningPort, MACH_MSG_TYPE_MOVE_SEND);
-#elif PLATFORM(WIN)
-    IPC::Connection::Identifier connectionIdentifier, connClient;
-    IPC::Connection::createServerAndClientIdentifiers(connectionIdentifier, connClient);
-    IPC::Attachment connectionClientPort(connClient);
-#else
-    notImplemented();
-    return;
-#endif
-
-#if USE(UNIX_DOMAIN_SOCKETS) || OS(DARWIN) || PLATFORM(WIN)
-    m_backendConnection = IPC::Connection::createServerConnection(connectionIdentifier, *this);
+    m_backendConnection = IPC::Connection::createServerConnection(connectionIdentifiers->server, *this);
     m_backendConnection->open();
-#endif
 
-    WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::SetFrontendConnection(connectionClientPort), m_inspectedPageIdentifier);
+    WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::SetFrontendConnection(connectionIdentifiers->client), m_inspectedPageIdentifier);
 }
 
 void WebInspectorUI::windowObjectCleared()
@@ -253,7 +232,7 @@ void WebInspectorUI::requestSetDockSide(DockSide dockSide)
 
 void WebInspectorUI::setDockSide(DockSide dockSide)
 {
-    ASCIILiteral dockSideString { ASCIILiteral::null() };
+    ASCIILiteral dockSideString;
 
     switch (dockSide) {
     case DockSide::Undocked:
@@ -317,6 +296,11 @@ void WebInspectorUI::openURLExternally(const String& url)
     WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::OpenURLExternally(url), m_inspectedPageIdentifier);
 }
 
+void WebInspectorUI::revealFileExternally(const String& path)
+{
+    WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::RevealFileExternally(path), m_inspectedPageIdentifier);
+}
+
 void WebInspectorUI::save(const WTF::String& filename, const WTF::String& content, bool base64Encoded, bool forceSaveAs)
 {
     WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::Save(filename, content, base64Encoded, forceSaveAs), m_inspectedPageIdentifier);
@@ -325,6 +309,11 @@ void WebInspectorUI::save(const WTF::String& filename, const WTF::String& conten
 void WebInspectorUI::append(const WTF::String& filename, const WTF::String& content)
 {
     WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::Append(filename, content), m_inspectedPageIdentifier);
+}
+
+void WebInspectorUI::load(const WTF::String& path, CompletionHandler<void(const String&)>&& completionHandler)
+{
+    WebProcess::singleton().parentProcessConnection()->sendWithAsyncReply(Messages::WebInspectorUIProxy::Load(path), WTFMove(completionHandler), m_inspectedPageIdentifier);
 }
 
 void WebInspectorUI::inspectedURLChanged(const String& urlString)
@@ -490,6 +479,12 @@ WebCore::Page* WebInspectorUI::frontendPage()
 
 #if !PLATFORM(MAC) && !PLATFORM(GTK) && !PLATFORM(WIN)
 bool WebInspectorUI::canSave()
+{
+    notImplemented();
+    return false;
+}
+
+bool WebInspectorUI::canLoad()
 {
     notImplemented();
     return false;

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -40,6 +40,7 @@ BaseObject.addConstructorFunctions(QueueView);
 
 QueueView.UpdateInterval = 45000; // 45 seconds
 QueueView.UpdateSoonTimeout = 1000; // 1 second
+QueueView.MAX_POPOVER = 20;
 
 QueueView.prototype = {
     constructor: QueueView,
@@ -118,68 +119,66 @@ QueueView.prototype = {
         var branches = queue.branches;
         for (var i = 0; i < branches.length; ++i) {
             var branch = branches[i];
+            if (branch.name === 'trunk')
+                branch.name = 'main';
             var repository = branch.repository;
             var repositoryName = repository.name;
-            var trac = repository.trac;
-            var latestProductiveRevisionNumber = latestProductiveIteration.revision[repositoryName];
-            if (!latestProductiveRevisionNumber)
+            var commits = repository.commits;
+            var latestProductiveIdentifier = latestProductiveIteration.revision[repositoryName];
+            if (!latestProductiveIdentifier)
                 continue;
-            if (!trac)
+            if (!commits)
                 continue;
-            if (!trac.latestRecordedRevisionNumber || trac.indexOfRevision(trac.oldestRecordedRevisionNumber) > trac.indexOfRevision(latestProductiveRevisionNumber)) {
-                trac.loadMoreHistoricalData();
-                return;
+            var head = commits.heads[branch.name];
+            if (!head) {
+                commits.heads[branch.name] = null;
+                continue;
             }
-
-            totalRevisionsBehind += trac.commitsOnBranchLaterThanRevision(branch.name, latestProductiveRevisionNumber).length;
+            totalRevisionsBehind = commits.branchPosition(commits.heads[branch.name].identifier) - commits.branchPosition(latestProductiveIdentifier);
         }
 
         if (!totalRevisionsBehind)
             return;
 
+        commits.fetch(branch.name, Math.min(totalRevisionsBehind, QueueView.MAX_POPOVER));
         var messageElement = document.createElement("span"); // We can't just pass text to StatusLineView here, because we need an element that perfectly fits the text for popover positioning.
-        messageElement.textContent = totalRevisionsBehind + " " + (totalRevisionsBehind === 1 ? "revision behind" : "revisions behind");
+        messageElement.textContent = totalRevisionsBehind + " " + (totalRevisionsBehind === 1 ? "commit behind" : "commits behind");
         var status = new StatusLineView(messageElement, StatusLineView.Status.NoBubble);
         this.element.appendChild(status.element);
 
         new PopoverTracker(messageElement, this._presentPopoverForPendingCommits.bind(this, latestIterationGetter), queue);
     },
 
-    _popoverLinesForCommitRange: function(trac, branch, firstRevisionNumber, lastRevisionNumber)
+    _popoverLinesForCommitRange: function(commits, branch, commitList)
     {
-        function lineForCommit(trac, commit)
+        function lineForCommit(commits, commit)
         {
             var result = document.createElement("div");
             result.className = "pending-commit";
 
             var linkElement = document.createElement("a");
             linkElement.className = "revision";
-            linkElement.href = trac.revisionURL(commit.revisionNumber);
+            linkElement.href = commits.urlFor(commit.identifier);
             linkElement.target = "_blank";
-            linkElement.textContent = this._formatRevisionForDisplay(commit.revisionNumber, branch.repository);
+            linkElement.textContent = this._formatRevisionForDisplay(commit.identifier, branch.repository);
             result.appendChild(linkElement);
 
             var authorElement = document.createElement("span");
             authorElement.className = "author";
-            authorElement.textContent = commit.author;
+            authorElement.textContent = commit.author ? commit.author.name : '';
             result.appendChild(authorElement);
 
             var titleElement = document.createElement("span");
             titleElement.className = "title";
-            titleElement.innerHTML = commit.title.innerHTML;
+            titleElement.innerHTML = commit.message ? commit.message.split('\n')[0] : '';
             result.appendChild(titleElement);
 
             return result;
         }
 
-        console.assert(trac.indexOfRevision(trac.oldestRecordedRevisionNumber) <= trac.indexOfRevision(firstRevisionNumber));
-
-        // FIXME: To be 100% correct, we should also filter out changes that are ignored by
-        // the queue, see _should_file_trigger_build in wkbuild.py.
-        var commits = trac.commitsOnBranchInRevisionRange(branch.name, firstRevisionNumber, lastRevisionNumber);
-        return commits.map(function(commit) {
-            return lineForCommit.call(this, trac, commit);
-        }, this).reverse();
+        return commitList.map(function(commit) {
+            return lineForCommit.call(this, commits, commit);
+        }, this);
     },
 
     _presentPopoverForPendingCommits: function(latestIterationGetter, element, popover, queue)
@@ -197,14 +196,21 @@ QueueView.prototype = {
             var branch = branches[i];
             var repository = branch.repository;
             var repositoryName = repository.name;
-            var trac = repository.trac;
-            var latestProductiveRevisionNumber = latestProductiveIteration.revision[repositoryName];
-            if (!latestProductiveRevisionNumber || !trac.latestRecordedRevisionNumber)
+            var commits = repository.commits;
+            if (!commits.heads[branch.name])
                 continue;
-            var nextRevision = trac.nextRevision(branch.name, latestProductiveRevisionNumber);
-            if (nextRevision === Trac.NO_MORE_REVISIONS)
-                continue;
-            var lines = this._popoverLinesForCommitRange(trac, branch, nextRevision, trac.latestRecordedRevisionNumber);
+
+            var commitList = [];
+            var latestProductiveIdentifier = latestProductiveIteration.revision[repositoryName];
+            for (const identifier of commits.lastNIdentifiers(branch.name, QueueView.MAX_POPOVER)) {
+                if (identifier == latestProductiveIdentifier)
+                    break;
+                if (commits.commits[identifier])
+                    commitList.push(commits.commits[identifier]);
+            }
+            if (!commitList.length)
+                continue
+            var lines = this._popoverLinesForCommitRange(commits, branch, commitList);
             var length = lines.length;
             if (length && shouldAddDivider)
                 this._addDividerToPopover(content);
@@ -225,6 +231,8 @@ QueueView.prototype = {
         console.assert(repository.isSVN || repository.isGit, "Should not get here; " + repository.name + " did not specify a known VCS type.");
         if (repository.isSVN)
             return "r" + revision;
+        if (revision.includes('@'))
+            return revision;
         // Truncating for display. Git traditionally uses seven characters for a short hash.
         return revision.substr(0, 7);
     },

@@ -796,6 +796,14 @@ using WebGLRenderingContextBaseSet = HashSet<WebGLRenderingContextBase*>;
 
 static WebGLRenderingContextBaseSet& activeContexts()
 {
+    if (isMainThread()) {
+        // WebKitLegacy special case: check for main thread because TLS does not work when entering sometimes from
+        // WebThread and sometimes from real main thread.
+        // Leave this on for non-legacy cases, as this is the base case for current operation where offscreen canvas
+        // is not supported or is rarely used.
+        static NeverDestroyed<WebGLRenderingContextBaseSet> s_mainThreadActiveContexts;
+        return s_mainThreadActiveContexts.get();
+    }
     static LazyNeverDestroyed<ThreadSpecific<WebGLRenderingContextBaseSet>> s_activeContexts;
     static std::once_flag s_onceFlag;
     std::call_once(s_onceFlag, [] {
@@ -855,7 +863,7 @@ std::unique_ptr<WebGLRenderingContextBase> WebGLRenderingContextBase::create(Can
         // particular, if WebGL contexts were lost one or more times via the GL_ARB_robustness extension.
         if (!frame->loader().client().allowWebGL(frame->settings().webGLEnabled())) {
             canvasElement->dispatchEvent(WebGLContextEvent::create(eventNames().webglcontextcreationerrorEvent,
-                Event::CanBubble::No, Event::IsCancelable::Yes, "Web page was not allowed to create a WebGL context."));
+                Event::CanBubble::No, Event::IsCancelable::Yes, "Web page was not allowed to create a WebGL context."_s));
             return nullptr;
         }
 
@@ -924,7 +932,7 @@ std::unique_ptr<WebGLRenderingContextBase> WebGLRenderingContextBase::create(Can
     if (!context) {
         if (canvasElement) {
             canvasElement->dispatchEvent(WebGLContextEvent::create(eventNames().webglcontextcreationerrorEvent,
-                Event::CanBubble::No, Event::IsCancelable::Yes, "Could not create a WebGL context."));
+                Event::CanBubble::No, Event::IsCancelable::Yes, "Could not create a WebGL context."_s));
         }
         return nullptr;
     }
@@ -1143,17 +1151,17 @@ void WebGLRenderingContextBase::setupFlags()
     // turning it off causes problems.
     m_isGLES2Compliant = m_context->isGLES2Compliant();
     if (m_isGLES2Compliant) {
-        m_isGLES2NPOTStrict = !m_context->isExtensionEnabled("GL_OES_texture_npot");
-        m_isDepthStencilSupported = m_context->isExtensionEnabled("GL_OES_packed_depth_stencil") || m_context->isExtensionEnabled("GL_ANGLE_depth_texture");
+        m_isGLES2NPOTStrict = !m_context->isExtensionEnabled("GL_OES_texture_npot"_s);
+        m_isDepthStencilSupported = m_context->isExtensionEnabled("GL_OES_packed_depth_stencil"_s) || m_context->isExtensionEnabled("GL_ANGLE_depth_texture"_s);
     } else {
 #if USE(ANGLE)
         m_isGLES2NPOTStrict = true;
 #else
-        m_isGLES2NPOTStrict = !m_context->isExtensionEnabled("GL_ARB_texture_non_power_of_two");
+        m_isGLES2NPOTStrict = !m_context->isExtensionEnabled("GL_ARB_texture_non_power_of_two"_s);
 #endif
-        m_isDepthStencilSupported = m_context->isExtensionEnabled("GL_EXT_packed_depth_stencil") || m_context->isExtensionEnabled("GL_ANGLE_depth_texture");
+        m_isDepthStencilSupported = m_context->isExtensionEnabled("GL_EXT_packed_depth_stencil"_s) || m_context->isExtensionEnabled("GL_ANGLE_depth_texture"_s);
     }
-    m_isRobustnessEXTSupported = m_context->isExtensionEnabled("GL_EXT_robustness");
+    m_isRobustnessEXTSupported = m_context->isExtensionEnabled("GL_EXT_robustness"_s);
 }
 
 void WebGLRenderingContextBase::addCompressedTextureFormat(GCGLenum format)
@@ -1896,8 +1904,7 @@ GCGLenum WebGLRenderingContextBase::checkFramebufferStatus(GCGLenum target)
     const char* reason = "framebuffer incomplete";
     GCGLenum result = targetFramebuffer->checkStatus(&reason);
     if (result != GraphicsContextGL::FRAMEBUFFER_COMPLETE) {
-        String str = "WebGL: checkFramebufferStatus:" + String(reason);
-        printToConsole(MessageLevel::Warning, str);
+        printToConsole(MessageLevel::Warning, makeString("WebGL: checkFramebufferStatus: ", reason));
         return result;
     }
     result = m_context->checkFramebufferStatus(target);
@@ -3067,7 +3074,7 @@ RefPtr<WebGLActiveInfo> WebGLRenderingContextBase::getActiveUniform(WebGLProgram
     // FIXME: Do we still need this for the ANGLE backend?
     if (!isGLES2Compliant())
         if (info.size > 1 && !info.name.endsWith("[0]"))
-            info.name.append("[0]");
+            info.name = makeString(info.name, "[0]"_s);
 
     LOG(WebGL, "Returning active uniform %d: %s", index, info.name.utf8().data());
 
@@ -3986,7 +3993,7 @@ long long WebGLRenderingContextBase::getVertexAttribOffset(GCGLuint index, GCGLe
 bool WebGLRenderingContextBase::extensionIsEnabled(const String& name)
 {
 #define CHECK_EXTENSION(variable, nameLiteral) \
-    if (equalIgnoringASCIICase(name, nameLiteral)) \
+    if (equalIgnoringASCIICase(name, nameLiteral ## _s)) \
         return variable != nullptr;
 
     CHECK_EXTENSION(m_extFragDepth, "EXT_frag_depth");
@@ -4243,6 +4250,11 @@ void WebGLRenderingContextBase::makeXRCompatible(MakeXRCompatiblePromise&& promi
         // Otherwise: Queue a task on the WebGL task source to perform the following steps:
         // FIXME: add a way to verify that we're using a compatible graphics adapter.
         m_isXRCompatible = true;
+
+#if PLATFORM(COCOA) && !PLATFORM(IOS_FAMILY_SIMULATOR)
+        enableSupportedExtension("GL_OES_EGL_image"_s);
+#endif
+
         promise.resolve();
         rejectPromiseWithInvalidStateError.release();
     });
@@ -5617,17 +5629,17 @@ bool WebGLRenderingContextBase::validateTexFuncParameters(const char* functionNa
 
 void WebGLRenderingContextBase::addExtensionSupportedFormatsAndTypes()
 {
-    if (!m_areOESTextureFloatFormatsAndTypesAdded && extensionIsEnabled("OES_texture_float")) {
+    if (!m_areOESTextureFloatFormatsAndTypesAdded && extensionIsEnabled("OES_texture_float"_s)) {
         ADD_VALUES_TO_SET(m_supportedTexImageSourceTypes, SupportedTypesOESTextureFloat);
         m_areOESTextureFloatFormatsAndTypesAdded = true;
     }
 
-    if (!m_areOESTextureHalfFloatFormatsAndTypesAdded && extensionIsEnabled("OES_texture_half_float")) {
+    if (!m_areOESTextureHalfFloatFormatsAndTypesAdded && extensionIsEnabled("OES_texture_half_float"_s)) {
         ADD_VALUES_TO_SET(m_supportedTexImageSourceTypes, SupportedTypesOESTextureHalfFloat);
         m_areOESTextureHalfFloatFormatsAndTypesAdded = true;
     }
 
-    if (!m_areEXTsRGBFormatsAndTypesAdded && extensionIsEnabled("EXT_sRGB")) {
+    if (!m_areEXTsRGBFormatsAndTypesAdded && extensionIsEnabled("EXT_sRGB"_s)) {
         ADD_VALUES_TO_SET(m_supportedTexImageSourceInternalFormats, SupportedInternalFormatsEXTsRGB);
         ADD_VALUES_TO_SET(m_supportedTexImageSourceFormats, SupportedFormatsEXTsRGB);
         m_areEXTsRGBFormatsAndTypesAdded = true;
@@ -6452,7 +6464,7 @@ void WebGLRenderingContextBase::loseContextImpl(WebGLRenderingContextBase::LostC
     if (isContextLost())
         return;
     if (mode == RealLostContext)
-        printToConsole(MessageLevel::Error, "WebGL: context lost.");
+        printToConsole(MessageLevel::Error, "WebGL: context lost."_s);
 
     m_contextLostState = ContextLostState { mode };
     m_contextLostState->errors.add(GraphicsContextGL::CONTEXT_LOST_WEBGL);
@@ -7328,7 +7340,7 @@ void WebGLRenderingContextBase::printToConsole(MessageLevel level, const String&
 
     --m_numGLErrorsToConsoleAllowed;
     if (!m_numGLErrorsToConsoleAllowed)
-        printToConsole(MessageLevel::Warning, "WebGL: too many errors, no more errors will be reported to the console for this context.");
+        printToConsole(MessageLevel::Warning, "WebGL: too many errors, no more errors will be reported to the console for this context."_s);
 }
 
 bool WebGLRenderingContextBase::validateFramebufferTarget(GCGLenum target)
@@ -7778,7 +7790,7 @@ void WebGLRenderingContextBase::maybeRestoreContext()
         if (m_contextLostState->mode == RealLostContext)
             m_restoreTimer.startOneShot(secondsBetweenRestoreAttempts);
         else
-            printToConsole(MessageLevel::Error, "WebGL: error restoring lost context.");
+            printToConsole(MessageLevel::Error, "WebGL: error restoring lost context."_s);
         return;
     }
 
@@ -7824,7 +7836,7 @@ ImageBuffer* WebGLRenderingContextBase::LRUImageBufferCache::imageBuffer(const I
     }
 
     // FIXME (149423): Should this ImageBuffer be unconditionally unaccelerated?
-    auto temp = ImageBuffer::create(size, RenderingMode::Unaccelerated, 1, colorSpace, PixelFormat::BGRA8);
+    auto temp = ImageBuffer::create(size, RenderingPurpose::Unspecified, 1, colorSpace, PixelFormat::BGRA8);
     if (!temp)
         return nullptr;
     ASSERT(m_buffers.size() > 0);
@@ -8143,7 +8155,7 @@ void WebGLRenderingContextBase::forceContextLost()
 
 void WebGLRenderingContextBase::recycleContext()
 {
-    printToConsole(MessageLevel::Error, "There are too many active WebGL contexts on this page, the oldest context will be lost.");
+    printToConsole(MessageLevel::Error, "There are too many active WebGL contexts on this page, the oldest context will be lost."_s);
     // Using SyntheticLostContext means the developer won't be able to force the restoration
     // of the context by calling preventDefault() in a "webglcontextlost" event handler.
     forceLostContext(SyntheticLostContext);

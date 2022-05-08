@@ -1,3 +1,1313 @@
+2022-05-06  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Fix build on downlevel OSes in Apple's build system
+        https://bugs.webkit.org/show_bug.cgi?id=240159
+        <rdar://problem/92524485>
+
+        Reviewed by Alexey Proskuryakov.
+
+        Some variables from WebKitTargetConditionals.xcconfig and
+        PlatformSupport.xcconfig are used, so we have to make sure
+        we include them. Also refactor the INSTALL_PATH variable a
+        bit.
+
+        * Configurations/Base.xcconfig:
+        * Configurations/WebGPU.xcconfig:
+        * Configurations/WebKitTargetConditionals.xcconfig: Added.
+        * WebGPU.xcodeproj/project.pbxproj:
+
+2022-05-03  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Device creation should not always fail if supported features are requested
+        https://bugs.webkit.org/show_bug.cgi?id=239955
+
+        Reviewed by Kimmo Kinnunen.
+
+        Somehow a block of code was remaining from before we implemented optional features.
+
+        Test: webgpu/api/validation/createTexture
+
+        * WebGPU/Adapter.mm:
+        (WebGPU::Adapter::requestDevice):
+        * WebGPU/Instance.mm:
+        (WebGPU::Instance::requestAdapter):
+
+2022-05-02  Alex Christensen  <achristensen@webkit.org>
+
+        Fix tvOS build
+        https://bugs.webkit.org/show_bug.cgi?id=239973
+        <rdar://problem/92599361>
+
+        * WebGPU/HardwareCapabilities.mm:
+
+2022-05-02  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] [tvOS] Neither MTLGPUFamilyApple6 nor MTLGPUFamilyApple7 exist on tvOS
+        https://bugs.webkit.org/show_bug.cgi?id=239973
+        <rdar://problem/92599361>
+
+        Unreviewed build fix.
+
+        * WebGPU/HardwareCapabilities.mm:
+        (WebGPU::rawHardwareCapabilities):
+
+2022-04-27  Michael Saboff  <msaboff@apple.com>
+
+        WebGPU doesn't create a symlink to the system content path in installhdrs
+        https://bugs.webkit.org/show_bug.cgi?id=239819
+
+        Reviewed by Alexey Proskuryakov.
+
+        Enabled script phases for installhdrs and installapi.
+
+        * Configurations/WebGPU.xcconfig:
+
+2022-04-20  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Expand hardware capabilities to include features (beyond just limits)
+        https://bugs.webkit.org/show_bug.cgi?id=239443
+
+        Reviewed by Kimmo Kinnunen.
+
+        Only MTLGPUFamilyApple devices support depth/stencil textures in the managed/shared address space.
+        So, we have to expand the hardware capabilities infrastructure to be able to hold this kind
+        of information (so the texture creation function can consult with this state to know what storage
+        mode to use for the created texture). This patch replaces the stored WGPULimits struct with a new
+        struct, HardwareCapabilities, which holds a WGPULimits iniside it.
+
+        While I was here, I also included a Vector<WGPUFeature> inside the HardwareCapabilities struct,
+        and hooked it up to the various places which need to be guarded by the presence of features.
+        This is needed for compressed textures to work (among other things). Because there are only
+        a handful of possible features, I elected to use a sorted Vector instead of using the big HashSet
+        hammer.
+
+        * WebGPU.xcodeproj/project.pbxproj:
+        * WebGPU/Adapter.h:
+        (WebGPU::Adapter::create):
+        * WebGPU/Adapter.mm:
+        (WebGPU::Adapter::Adapter):
+        (WebGPU::Adapter::enumerateFeatures):
+        (WebGPU::Adapter::getLimits):
+        (WebGPU::Adapter::hasFeature):
+        (WebGPU::Adapter::requestDevice):
+        * WebGPU/Device.h:
+        (WebGPU::Device::limits const):
+        (WebGPU::Device::features const):
+        (WebGPU::Device::baseCapabilities const):
+        * WebGPU/Device.mm:
+        (WebGPU::Device::create):
+        (WebGPU::Device::Device):
+        (WebGPU::Device::enumerateFeatures):
+        (WebGPU::Device::getLimits):
+        (WebGPU::Device::hasFeature):
+        * WebGPU/HardwareCapabilities.h: Renamed from Source/WebGPU/WebGPU/HardwareLimits.h.
+        * WebGPU/HardwareCapabilities.mm: Added.
+        (WebGPU::baseCapabilities):
+        (WebGPU::baseFeatures):
+        (WebGPU::apple3):
+        (WebGPU::apple4):
+        (WebGPU::apple5):
+        (WebGPU::apple6):
+        (WebGPU::apple7):
+        (WebGPU::mac2):
+        (WebGPU::mergeMaximum):
+        (WebGPU::mergeAlignment):
+        (WebGPU::mergeLimits):
+        (WebGPU::mergeFeatures):
+        (WebGPU::mergeBaseCapabilities):
+        (WebGPU::rawHardwareCapabilities):
+        (WebGPU::anyLimitIsBetterThan):
+        (WebGPU::includesUnsupportedFeatures):
+        (WebGPU::checkLimits):
+        (WebGPU::hardwareCapabilities):
+        (WebGPU::isValid):
+        * WebGPU/HardwareLimits.mm: Removed.
+        * WebGPU/Instance.mm:
+        (WebGPU::Instance::requestAdapter):
+        * WebGPU/Texture.mm:
+        (WebGPU::featureRequirementForFormat):
+        (WebGPU::Device::validateCreateTexture):
+        (WebGPU::storageMode):
+        (WebGPU::Device::createTexture):
+
+2022-04-20  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] RGB9E5Ufloat textures are not renderable
+        https://bugs.webkit.org/show_bug.cgi?id=239445
+
+        Reviewed by Kimmo Kinnunen.
+
+        I misread the table in the spec. This format isn't listed in
+        https://gpuweb.github.io/gpuweb/#plain-color-formats but is instead
+        listed in https://gpuweb.github.io/gpuweb/#packed-formats.
+
+        * WebGPU/Texture.mm:
+        (WebGPU::isRenderableFormat):
+
+2022-04-18  Elliott Williams  <emw@apple.com>
+
+        [XCBuild] Use XCBuild for all command-line and project builds
+        https://bugs.webkit.org/show_bug.cgi?id=238916
+
+        Reviewed by Alexey Proskuryakov.
+
+        * WebGPU.xcodeproj/project.pbxproj:
+
+2022-04-16  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Fix the Big Sur build
+        https://bugs.webkit.org/show_bug.cgi?id=239422
+
+        Unreviewed.
+
+        HardwareLimits.mm:338:23: error: constexpr function never produces a constant expression [-Winvalid-constexpr]
+
+        * WebGPU/HardwareLimits.mm:
+        (WebGPU::checkLimits):
+
+2022-04-15  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Implement hardware limits
+        https://bugs.webkit.org/show_bug.cgi?id=239377
+
+        Reviewed by Darin Adler.
+
+        We gather the values of the limits from the Metal Feature Set Tables
+        at https://developer.apple.com/metal/Metal-Feature-Set-Tables.pdf.
+
+        There are no limit tables for the Common families, so we use Apple
+        and Mac families instead.
+
+        Test: webgpu/api/validation/createTexture
+
+        * WebGPU.xcodeproj/project.pbxproj:
+        * WebGPU/Adapter.h:
+        (WebGPU::Adapter::create):
+        * WebGPU/Adapter.mm:
+        (WebGPU::Adapter::Adapter):
+        (WebGPU::Adapter::requestDevice):
+        (WebGPU::Adapter::requestInvalidDevice):
+        (wgpuAdapterRequestInvalidDeviceWithBlock):
+        (WebGPU::deviceMeetsRequiredLimits): Deleted.
+        * WebGPU/Device.h:
+        * WebGPU/Device.mm:
+        (WebGPU::Device::create):
+        (WebGPU::Device::Device):
+        * WebGPU/HardwareLimits.h: Copied from Source/WebGPU/WebGPU/Adapter.h.
+        * WebGPU/HardwareLimits.mm: Added.
+        (WebGPU::apple3):
+        (WebGPU::apple4):
+        (WebGPU::apple5):
+        (WebGPU::apple6):
+        (WebGPU::apple7):
+        (WebGPU::mac2):
+        (WebGPU::rawLimits):
+        (WebGPU::checkLimits):
+        (WebGPU::limits):
+        (WebGPU::isValid):
+        (WebGPU::anyLimitIsBetterThan):
+        * WebGPU/Instance.mm:
+        (WebGPU::Instance::requestAdapter):
+        * WebGPU/Texture.mm:
+        (WebGPU::Device::validateCreateTexture):
+        (WebGPU::Texture::createView):
+        * WebGPU/WebGPUExt.h:
+
+2022-04-13  Elliott Williams  <emw@apple.com>
+
+        [Xcode] Fix public watchOS workspace build by updating scheme and build settings
+        https://bugs.webkit.org/show_bug.cgi?id=239301
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/Base.xcconfig:
+        * Configurations/WebGPU.xcconfig:
+
+2022-04-12  Elliott Williams  <emw@apple.com>
+
+        [Xcode] In open-source builds, disable bitcode in xcconfigs instead of build-webkit
+        https://bugs.webkit.org/show_bug.cgi?id=239262
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/Base.xcconfig:
+
+2022-04-12  Elliott Williams  <emw@apple.com>
+
+        Reland "[XCBuild] Enable dependency validation by default"
+        https://bugs.webkit.org/show_bug.cgi?id=238901
+        <rdar://problem/91379968>
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/DebugRelease.xcconfig: In open-source builds, disable
+        VALIDATE_DEPENDENCIES when there is no PRODUCT_TYPE (i.e. not building
+        a native target).
+
+2022-04-12  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Fix the watchOS build
+        https://bugs.webkit.org/show_bug.cgi?id=239256
+
+        Unreviewed.
+
+        * WebGPU/Buffer.mm:
+        (WebGPU::computeRangeSize):
+
+2022-04-11  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Fix the tvOS build (again)
+        https://bugs.webkit.org/show_bug.cgi?id=239106
+        <rdar://problem/91351306>
+
+        Unreviewed.
+
+        Turns out PLATFORM(APPLETV) and PLATFORM(TVOS) are different things.
+
+        * WebGPU/Texture.mm:
+        (WebGPU::Device::createTexture):
+        (WebGPU::Texture::createView):
+
+2022-04-11  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Use checked arithmetic
+        https://bugs.webkit.org/show_bug.cgi?id=239058
+
+        Reviewed by Kimmo Kinnunen.
+
+        We have a bunch of places where overflow can occur.
+
+        Luckily, we can just detect overflow inside the validation functions, and not have
+        to do any inside the code that creates platform types (NSUInteger, etc.). This is
+        because if the validation code succeeds, then we are guaranteed that the cast to
+        NSUIntegers will succeed. This is because ranges in a resource are checked against
+        the size of the resource, and the size of the resource has been checked against
+        platform maximums, which are guaranteed to be smaller than the largest NSUInteger.
+
+        * WebGPU/BindGroup.mm:
+        (WebGPU::Device::createBindGroup):
+        * WebGPU/Buffer.mm:
+        (WebGPU::Buffer::validateGetMappedRange const):
+        (WebGPU::Buffer::getMappedRange):
+        (WebGPU::Buffer::validateMapAsync const):
+        (WebGPU::Buffer::mapAsync):
+        * WebGPU/CommandEncoder.mm:
+        (WebGPU::CommandEncoder::validateCopyBufferToBuffer):
+        (WebGPU::CommandEncoder::copyBufferToTexture):
+        (WebGPU::CommandEncoder::copyTextureToBuffer):
+        (WebGPU::CommandEncoder::copyTextureToTexture):
+        (WebGPU::CommandEncoder::validateClearBuffer):
+        (WebGPU::CommandEncoder::clearBuffer):
+        * WebGPU/Queue.mm:
+        (WebGPU::Queue::validateWriteBuffer const):
+        (WebGPU::Queue::writeTexture):
+        * WebGPU/Texture.h:
+        * WebGPU/Texture.mm:
+        (WebGPU::Texture::resolveTextureViewDescriptorDefaults const):
+        (WebGPU::Texture::validateCreateView const):
+        (WebGPU::Texture::createView):
+        (WebGPU::Texture::validateTextureCopyRange):
+        (WebGPU::Texture::validateLinearTextureData):
+
+2022-04-11  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] WebGPU strings are UTF-8, not Latin-1
+        https://bugs.webkit.org/show_bug.cgi?id=239057
+
+        Reviewed by Kimmo Kinnunen.
+
+        Replace String::fromLatin1() with String::fromUTF8().
+
+        * WebGPU/APIConversions.h:
+        (WebGPU::fromAPI):
+        * WebGPU/Adapter.mm:
+        (WebGPU::Adapter::requestDevice):
+        * WebGPU/ComputePipeline.mm:
+        (WebGPU::createConstantValues):
+        (WebGPU::Device::createComputePipeline):
+        * WebGPU/ShaderModule.mm:
+        (WebGPU::earlyCompileShaderModule):
+        (WebGPU::Device::createShaderModule):
+
+2022-04-11  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Make sure asynchronous things are asynchronous
+        https://bugs.webkit.org/show_bug.cgi?id=239056
+
+        Reviewed by Kimmo Kinnunen.
+
+        This isn't strictly necessary, because these asynchronous callbacks get hooked up
+        to promises in the browser which only call their callbacks at microtask boundaries.
+        However, for native code that uses WebGPU.framework, it's probably better to make
+        sure the asynchronous callbacks are actually asynchronous.
+
+        * WebGPU/Adapter.mm:
+        (WebGPU::Adapter::requestDevice):
+        * WebGPU/Buffer.mm:
+        (WebGPU::Buffer::mapAsync):
+        * WebGPU/ComputePipeline.mm:
+        (WebGPU::Device::createComputePipelineAsync):
+        * WebGPU/Device.mm:
+        (WebGPU::Device::loseTheDevice):
+        (WebGPU::Device::popErrorScope):
+        * WebGPU/Instance.mm:
+        (WebGPU::Instance::requestAdapter):
+        * WebGPU/RenderPipeline.mm:
+        (WebGPU::Device::createRenderPipelineAsync):
+        * WebGPU/ShaderModule.mm:
+        (WebGPU::ShaderModule::getCompilationInfo):
+
+2022-04-11  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Implement missing validity checks
+        https://bugs.webkit.org/show_bug.cgi?id=238722
+
+        Reviewed by Kimmo Kinnunen.
+
+        Now that WebGPU objects have a notion of validity, we can implement all the
+        FIXMEs for validity checks.
+
+        * WebGPU/Buffer.mm:
+        (WebGPU::validateCreateBuffer):
+        (WebGPU::Buffer::validateMapAsync const):
+        * WebGPU/CommandEncoder.h:
+        (WebGPU::CommandEncoder::makeInvalid):
+        * WebGPU/CommandEncoder.mm:
+        (WebGPU::CommandEncoder::validateCopyBufferToBuffer):
+        (WebGPU::validateImageCopyBuffer):
+        (WebGPU::CommandEncoder::validateClearBuffer):
+        (WebGPU::CommandEncoder::validateFinish const):
+        (WebGPU::CommandEncoder::finish):
+        (WebGPU::CommandEncoder::popDebugGroup):
+        (WebGPU::validateCopyBufferToBuffer): Deleted.
+        (WebGPU::validateClearBuffer): Deleted.
+        * WebGPU/ComputePassEncoder.h:
+        (WebGPU::ComputePassEncoder::makeInvalid):
+        * WebGPU/ComputePassEncoder.mm:
+        (WebGPU::ComputePassEncoder::popDebugGroup):
+        * WebGPU/ObjectBase.h:
+        (WebGPU::ObjectBase::isValidToUseWith const):
+        (WebGPU::ObjectBase::device const):
+        * WebGPU/Queue.h:
+        (WebGPU::Queue::device const):
+        * WebGPU/Queue.mm:
+        (WebGPU::Queue::validateSubmit const):
+        (WebGPU::Queue::submit):
+        (WebGPU::Queue::validateWriteBuffer const):
+        * WebGPU/RenderBundleEncoder.h:
+        (WebGPU::RenderBundleEncoder::makeInvalid):
+        * WebGPU/RenderBundleEncoder.mm:
+        (WebGPU::RenderBundleEncoder::popDebugGroup):
+        * WebGPU/RenderPassEncoder.h:
+        (WebGPU::RenderPassEncoder::makeInvalid):
+        * WebGPU/RenderPassEncoder.mm:
+        (WebGPU::RenderPassEncoder::popDebugGroup):
+        * WebGPU/Sampler.mm:
+        (WebGPU::validateCreateSampler):
+        * WebGPU/Texture.mm:
+        (WebGPU::Device::validateCreateTexture):
+        (WebGPU::Device::createTexture):
+        (WebGPU::Texture::validateCreateView const):
+        (WebGPU::Texture::createView):
+        (WebGPU::Texture::validateImageCopyTexture):
+
+2022-04-11  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] RGB9E5Ufloat textures should not be multisamplable
+        https://bugs.webkit.org/show_bug.cgi?id=239053
+
+        Reviewed by Kimmo Kinnunen.
+
+        It's classified as a "packed format" rather than a "mixed component width format."
+
+        * WebGPU/Texture.mm:
+        (WebGPU::supportsMultisampling):
+
+2022-04-08  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Fix the release build
+        https://bugs.webkit.org/show_bug.cgi?id=239023
+
+        Unreviewed build fix.
+
+        * WebGPU/Device.mm:
+        (WebGPU::Device::Device):
+
+2022-04-08  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Make callbacks in unimplemented functions execute
+        https://bugs.webkit.org/show_bug.cgi?id=238727
+
+        Reviewed by Dean Jackson.
+
+        CompletionHandler ASSERT()s that it has been executed in its destructor. We have some
+        functions which we haven't implemented yet which take CompletionHandlers, so let's
+        temporarily just call the completion handlers just to make tests stop ASSERT()ing.
+
+        * WebGPU/ComputePipeline.mm:
+        (WebGPU::Device::createComputePipelineAsync):
+        * WebGPU/RenderPipeline.mm:
+        (WebGPU::Device::createRenderPipelineAsync):
+
+2022-04-08  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Implement the concept of device lost
+        https://bugs.webkit.org/show_bug.cgi?id=238725
+
+        Reviewed by Dean Jackson.
+
+        This patch builds on https://bugs.webkit.org/show_bug.cgi?id=238723 to finish
+        the implementation of the concept of device lost. The device can only be lost
+        on macOS, where you can register a block callback to be run when it happens.
+        Also, the registration function returns a token that you can pass to the
+        unregistration function, which happens in Device's destructor.
+
+        * WebGPU/Buffer.mm:
+        (WebGPU::validateDescriptor):
+        * WebGPU/Device.h:
+        (WebGPU::Device::isLost const):
+        * WebGPU/Device.mm:
+        (WebGPU::Device::Device):
+        (WebGPU::Device::~Device):
+        (WebGPU::Device::loseTheDevice):
+        (WebGPU::Device::destroy):
+        (WebGPU::Device::validatePopErrorScope const):
+        (WebGPU::Device::setDeviceLostCallback):
+
+2022-04-08  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Represent failure by invalidity rather than nullptr
+        https://bugs.webkit.org/show_bug.cgi?id=238724
+
+        Reviewed by Dean Jackson.
+
+        This is the biggest blocker for running the WebGPU conformance test suite. WebGPU is designed
+        such that creation routines don't return undefined if the object couldn't be created; instead,
+        in "invalid" object is returned. Now that objects have the notion of invalidity, this patch
+        migrates from creation functions returning RefPtr to creation functions returning Ref. All
+        the places where we previously returned nullptr now return invalid objects.
+
+        * WebGPU/APIConversions.h:
+        (WebGPU::releaseToAPI):
+        * WebGPU/Adapter.h:
+        * WebGPU/Adapter.mm:
+        (WebGPU::Adapter::requestDevice):
+        (wgpuAdapterRequestDevice):
+        (wgpuAdapterRequestDeviceWithBlock):
+        * WebGPU/BindGroup.mm:
+        (WebGPU::Device::createBindGroup):
+        * WebGPU/BindGroupLayout.mm:
+        (WebGPU::Device::createBindGroupLayout):
+        * WebGPU/Buffer.mm:
+        (WebGPU::Device::createBuffer):
+        * WebGPU/CommandEncoder.h:
+        * WebGPU/CommandEncoder.mm:
+        (WebGPU::Device::createCommandEncoder):
+        (WebGPU::CommandEncoder::beginComputePass):
+        (WebGPU::CommandEncoder::beginRenderPass):
+        (WebGPU::CommandEncoder::finish):
+        * WebGPU/ComputePipeline.mm:
+        (WebGPU::Device::createComputePipeline):
+        (WebGPU::Device::createComputePipelineAsync):
+        * WebGPU/Device.h:
+        * WebGPU/Device.mm:
+        (WebGPU::Device::create):
+        (wgpuDeviceCreateComputePipelineAsync):
+        (wgpuDeviceCreateComputePipelineAsyncWithBlock):
+        (wgpuDeviceCreateRenderPipelineAsync):
+        (wgpuDeviceCreateRenderPipelineAsyncWithBlock):
+        * WebGPU/Instance.h:
+        * WebGPU/Instance.mm:
+        (WebGPU::Instance::create):
+        (WebGPU::Instance::createSurface):
+        (WebGPU::Instance::requestAdapter):
+        (wgpuInstanceRequestAdapter):
+        (wgpuInstanceRequestAdapterWithBlock):
+        * WebGPU/PipelineLayout.mm:
+        (WebGPU::Device::createPipelineLayout):
+        * WebGPU/QuerySet.mm:
+        (WebGPU::Device::createQuerySet):
+        * WebGPU/RenderBundleEncoder.h:
+        * WebGPU/RenderBundleEncoder.mm:
+        (WebGPU::Device::createRenderBundleEncoder):
+        (WebGPU::RenderBundleEncoder::finish):
+        * WebGPU/RenderPipeline.mm:
+        (WebGPU::Device::createRenderPipeline):
+        (WebGPU::Device::createRenderPipelineAsync):
+        * WebGPU/Sampler.mm:
+        (WebGPU::Device::createSampler):
+        * WebGPU/ShaderModule.mm:
+        (WebGPU::Device::createShaderModule):
+        * WebGPU/SwapChain.mm:
+        (WebGPU::Device::createSwapChain):
+        * WebGPU/Texture.h:
+        * WebGPU/Texture.mm:
+        (WebGPU::Device::createTexture):
+        (WebGPU::Texture::createView):
+
+2022-04-08  Elliott Williams  <emw@apple.com>
+
+        [Xcode] Avoid targeting 32-bit iOS and Mac architectures
+        https://bugs.webkit.org/show_bug.cgi?id=238971
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/DebugRelease.xcconfig:
+
+2022-04-08  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Implement destroy() methods
+        https://bugs.webkit.org/show_bug.cgi?id=238723
+
+        Reviewed by Dean Jackson.
+
+        The destroy() methods cause objects to become invalid. This is important because
+        the test suite creates and destroys lots of objects, and we want to make sure we
+        free up resources before GC runs.
+
+        This patch also makes Device own a Ref<Adapter> instead of Ref<Instance> because
+        part of the implementation of Device::destroy() involves interacting with its
+        adapter.
+
+        * WebGPU/Adapter.h:
+        (WebGPU::Adapter::makeInvalid):
+        (WebGPU::Adapter::instance const):
+        * WebGPU/Adapter.mm:
+        (WebGPU::Adapter::requestDevice):
+        * WebGPU/Buffer.h:
+        * WebGPU/Device.h:
+        (WebGPU::Device::createInvalid):
+        (WebGPU::Device::instance const):
+        (WebGPU::Device::makeInvalid):
+        * WebGPU/Device.mm:
+        (WebGPU::Device::create):
+        (WebGPU::Device::Device):
+        (WebGPU::Device::loseTheDevice):
+        (WebGPU::Device::destroy):
+        (WebGPU::Device::generateAValidationError):
+        (WebGPU::Device::popErrorScope):
+        * WebGPU/QuerySet.h:
+        * WebGPU/QuerySet.mm:
+        (WebGPU::QuerySet::destroy):
+        * WebGPU/Queue.h:
+        (WebGPU::Queue::makeInvalid):
+        * WebGPU/Texture.h:
+        * WebGPU/Texture.mm:
+        (WebGPU::Texture::destroy):
+
+2022-04-08  Elliott Williams  <emw@apple.com>
+
+        Unreviewed, reverting r292591.
+
+        Causing spurious EWS errors
+
+        Reverted changeset:
+
+        "[XCBuild] Enable dependency validation by default"
+        https://bugs.webkit.org/show_bug.cgi?id=238901
+        https://commits.webkit.org/r292591
+
+2022-04-07  Elliott Williams  <emw@apple.com>
+
+        [XCBuild] Enable dependency validation by default
+        https://bugs.webkit.org/show_bug.cgi?id=238901
+        <rdar://problem/91379968>
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/DebugRelease.xcconfig:
+
+2022-04-07  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Add support for the "is valid to use with" operation to WebGPU objects
+        https://bugs.webkit.org/show_bug.cgi?id=238719
+
+        Addressing post-review comment.
+
+        Unreviewed.
+
+        * WebGPU/IsValidToUseWith.h:
+        (WebGPU::isValidToUseWith):
+        (WebGPU::isValidToUseWith const): Deleted.
+
+2022-04-07  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Give objects a notion of invalidity
+        https://bugs.webkit.org/show_bug.cgi?id=238720
+
+        Reviewed by Kimmo Kinnunen.
+
+        This is the biggest blocker for running the WebGPU conformance test suite. WebGPU is designed
+        such that creation routines don't return undefined if the object couldn't be created; instead,
+        in "invalid" object is returned. This patch is a step on the path to making creation routines
+        never return nullptr.
+
+        Some objects have destroy() methods which makes the object invalid. Those will be implemented
+        in a forthcoming patch.
+
+        * WebGPU/Adapter.h:
+        (WebGPU::Adapter::createInvalid):
+        (WebGPU::Adapter::isValid const):
+        * WebGPU/Adapter.mm:
+        (WebGPU::Adapter::Adapter):
+        * WebGPU/BindGroup.h:
+        (WebGPU::BindGroup::createInvalid):
+        (WebGPU::BindGroup::isValid const):
+        * WebGPU/BindGroup.mm:
+        (WebGPU::BindGroup::BindGroup):
+        * WebGPU/BindGroupLayout.h:
+        (WebGPU::BindGroupLayout::createInvalid):
+        (WebGPU::BindGroupLayout::isValid const):
+        * WebGPU/BindGroupLayout.mm:
+        (WebGPU::BindGroupLayout::BindGroupLayout):
+        * WebGPU/Buffer.h:
+        (WebGPU::Buffer::createInvalid):
+        (WebGPU::Buffer::isValid const):
+        * WebGPU/Buffer.mm:
+        (WebGPU::Buffer::Buffer):
+        * WebGPU/CommandBuffer.h:
+        (WebGPU::CommandBuffer::createInvalid):
+        (WebGPU::CommandBuffer::isValid const):
+        * WebGPU/CommandBuffer.mm:
+        (WebGPU::CommandBuffer::CommandBuffer):
+        * WebGPU/CommandEncoder.h:
+        (WebGPU::CommandEncoder::createInvalid):
+        (WebGPU::CommandEncoder::isValid const):
+        * WebGPU/CommandEncoder.mm:
+        (WebGPU::CommandEncoder::CommandEncoder):
+        * WebGPU/ComputePassEncoder.h:
+        (WebGPU::ComputePassEncoder::createInvalid):
+        (WebGPU::ComputePassEncoder::isValid const):
+        * WebGPU/ComputePassEncoder.mm:
+        (WebGPU::ComputePassEncoder::ComputePassEncoder):
+        * WebGPU/ComputePipeline.h:
+        (WebGPU::ComputePipeline::createInvalid):
+        (WebGPU::ComputePipeline::isValid const):
+        * WebGPU/ComputePipeline.mm:
+        (WebGPU::ComputePipeline::ComputePipeline):
+        * WebGPU/Device.h:
+        (WebGPU::Device::createInvalid):
+        (WebGPU::Device::isValid const):
+        * WebGPU/Device.mm:
+        (WebGPU::Device::Device):
+        * WebGPU/Instance.h:
+        (WebGPU::Instance::createInvalid):
+        (WebGPU::Instance::isValid const):
+        * WebGPU/Instance.mm:
+        (WebGPU::Instance::Instance):
+        (WebGPU::m_isValid):
+        * WebGPU/PipelineLayout.h:
+        (WebGPU::PipelineLayout::createInvalid):
+        (WebGPU::PipelineLayout::isValid const):
+        * WebGPU/PipelineLayout.mm:
+        (WebGPU::PipelineLayout::PipelineLayout):
+        * WebGPU/QuerySet.h:
+        (WebGPU::QuerySet::createInvalid):
+        (WebGPU::QuerySet::isValid const):
+        * WebGPU/QuerySet.mm:
+        (WebGPU::QuerySet::QuerySet):
+        * WebGPU/Queue.h:
+        (WebGPU::Queue::createInvalid):
+        (WebGPU::Queue::isValid const):
+        * WebGPU/Queue.mm:
+        (WebGPU::Queue::Queue):
+        * WebGPU/RenderBundle.h:
+        (WebGPU::RenderBundle::createInvalid):
+        (WebGPU::RenderBundle::isValid const):
+        * WebGPU/RenderBundle.mm:
+        (WebGPU::RenderBundle::RenderBundle):
+        * WebGPU/RenderBundleEncoder.h:
+        (WebGPU::RenderBundleEncoder::createInvalid):
+        (WebGPU::RenderBundleEncoder::isValid const):
+        * WebGPU/RenderBundleEncoder.mm:
+        (WebGPU::RenderBundleEncoder::RenderBundleEncoder):
+        * WebGPU/RenderPassEncoder.h:
+        (WebGPU::RenderPassEncoder::createInvalid):
+        (WebGPU::RenderPassEncoder::isValid const):
+        * WebGPU/RenderPassEncoder.mm:
+        (WebGPU::RenderPassEncoder::RenderPassEncoder):
+        * WebGPU/RenderPipeline.h:
+        (WebGPU::RenderPipeline::createInvalid):
+        (WebGPU::RenderPipeline::isValid const):
+        * WebGPU/RenderPipeline.mm:
+        (WebGPU::RenderPipeline::RenderPipeline):
+        * WebGPU/Sampler.h:
+        (WebGPU::Sampler::createInvalid):
+        (WebGPU::Sampler::isValid const):
+        * WebGPU/Sampler.mm:
+        (WebGPU::Sampler::Sampler):
+        * WebGPU/ShaderModule.h:
+        (WebGPU::ShaderModule::createInvalid):
+        (WebGPU::ShaderModule::isValid const):
+        * WebGPU/ShaderModule.mm:
+        (WebGPU::ShaderModule::convertCheckResult):
+        (WebGPU::ShaderModule::ShaderModule):
+        (WebGPU::ShaderModule::getCompilationInfo):
+        (WebGPU::ShaderModule::ast const):
+        * WebGPU/Texture.h:
+        (WebGPU::Texture::createInvalid):
+        (WebGPU::Texture::isValid const):
+        * WebGPU/Texture.mm:
+        (WebGPU::Texture::Texture):
+        * WebGPU/TextureView.h:
+        (WebGPU::TextureView::createInvalid):
+        (WebGPU::TextureView::isValid const):
+        * WebGPU/TextureView.mm:
+        (WebGPU::TextureView::TextureView):
+
+2022-04-07  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Add support for the "is valid to use with" operation to WebGPU objects
+        https://bugs.webkit.org/show_bug.cgi?id=238719
+
+        Reviewed by Kimmo Kinnunen.
+
+        The spec also has the representation of this base class, named GPUObjectBase, which supports
+        the setting of labels. However, in our WebGPU implementation, all objects implement labels
+        differently, so that handling isn't present.
+
+        * WebGPU.xcodeproj/project.pbxproj:
+        * WebGPU/Adapter.h:
+        * WebGPU/BindGroup.h:
+        (WebGPU::BindGroup::create):
+        * WebGPU/BindGroup.mm:
+        (WebGPU::Device::createBindGroup):
+        (WebGPU::BindGroup::BindGroup):
+        * WebGPU/BindGroupLayout.h:
+        (WebGPU::BindGroupLayout::create):
+        * WebGPU/BindGroupLayout.mm:
+        (WebGPU::Device::createBindGroupLayout):
+        (WebGPU::BindGroupLayout::BindGroupLayout):
+        * WebGPU/Buffer.h:
+        * WebGPU/Buffer.mm:
+        (WebGPU::Buffer::Buffer):
+        * WebGPU/CommandBuffer.h:
+        (WebGPU::CommandBuffer::create):
+        * WebGPU/CommandBuffer.mm:
+        (WebGPU::CommandBuffer::CommandBuffer):
+        * WebGPU/CommandEncoder.h:
+        * WebGPU/CommandEncoder.mm:
+        (WebGPU::CommandEncoder::CommandEncoder):
+        (WebGPU::CommandEncoder::beginComputePass):
+        (WebGPU::CommandEncoder::beginRenderPass):
+        (WebGPU::CommandEncoder::finish):
+        * WebGPU/CommandsMixin.h:
+        * WebGPU/ComputePassEncoder.h:
+        (WebGPU::ComputePassEncoder::create):
+        * WebGPU/ComputePassEncoder.mm:
+        (WebGPU::ComputePassEncoder::ComputePassEncoder):
+        * WebGPU/ComputePipeline.h:
+        (WebGPU::ComputePipeline::create):
+        * WebGPU/ComputePipeline.mm:
+        (WebGPU::Device::createComputePipeline):
+        (WebGPU::ComputePipeline::ComputePipeline):
+        * WebGPU/Device.h:
+        * WebGPU/Instance.h:
+        * WebGPU/IsValidToUseWith.h: Copied from Source/WebGPU/WebGPU/CommandsMixin.h.
+        (WebGPU::ObjectBase::ObjectBase):
+        * WebGPU/PipelineLayout.h:
+        (WebGPU::PipelineLayout::create):
+        * WebGPU/PipelineLayout.mm:
+        (WebGPU::Device::createPipelineLayout):
+        (WebGPU::PipelineLayout::PipelineLayout):
+        * WebGPU/QuerySet.h:
+        (WebGPU::QuerySet::create):
+        * WebGPU/QuerySet.mm:
+        (WebGPU::Device::createQuerySet):
+        (WebGPU::QuerySet::QuerySet):
+        * WebGPU/Queue.h:
+        * WebGPU/RenderBundle.h:
+        (WebGPU::RenderBundle::create):
+        * WebGPU/RenderBundle.mm:
+        (WebGPU::RenderBundle::RenderBundle):
+        * WebGPU/RenderBundleEncoder.h:
+        (WebGPU::RenderBundleEncoder::create):
+        * WebGPU/RenderBundleEncoder.mm:
+        (WebGPU::Device::createRenderBundleEncoder):
+        (WebGPU::RenderBundleEncoder::RenderBundleEncoder):
+        (WebGPU::RenderBundleEncoder::finish):
+        * WebGPU/RenderPassEncoder.h:
+        (WebGPU::RenderPassEncoder::create):
+        * WebGPU/RenderPassEncoder.mm:
+        (WebGPU::RenderPassEncoder::RenderPassEncoder):
+        * WebGPU/RenderPipeline.h:
+        (WebGPU::RenderPipeline::create):
+        * WebGPU/RenderPipeline.mm:
+        (WebGPU::Device::createRenderPipeline):
+        (WebGPU::RenderPipeline::RenderPipeline):
+        * WebGPU/Sampler.h:
+        * WebGPU/Sampler.mm:
+        (WebGPU::Sampler::Sampler):
+        * WebGPU/ShaderModule.h:
+        (WebGPU::ShaderModule::create):
+        * WebGPU/ShaderModule.mm:
+        (WebGPU::earlyCompileShaderModule):
+        (WebGPU::Device::createShaderModule):
+        (WebGPU::ShaderModule::ShaderModule):
+        * WebGPU/Texture.h:
+        * WebGPU/Texture.mm:
+        (WebGPU::Texture::Texture):
+        (WebGPU::Texture::createView):
+        * WebGPU/TextureView.h:
+        (WebGPU::TextureView::create):
+        * WebGPU/TextureView.mm:
+        (WebGPU::TextureView::TextureView):
+
+2022-04-07  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Delete redundant spec quotes
+        https://bugs.webkit.org/show_bug.cgi?id=238711
+
+        Reviewed by Kimmo Kinnunen.
+
+        I actually prefer to have lots and lots of spec quotes throughout the implementation,
+        but enough people have commented about it that it's become clear that we probably
+        shouldn't have them. This deletes almost all of them (and leaves just the ones that
+        are particularly insightful).
+
+        * WebGPU/Buffer.h:
+        * WebGPU/Buffer.mm:
+        (WebGPU::validateDescriptor):
+        (WebGPU::validateCreateBuffer):
+        (WebGPU::Device::createBuffer):
+        (WebGPU::Buffer::destroy):
+        (WebGPU::Buffer::validateGetMappedRange const):
+        (WebGPU::Buffer::getMappedRange):
+        (WebGPU::Buffer::validateMapAsync const):
+        (WebGPU::Buffer::mapAsync):
+        (WebGPU::Buffer::validateUnmap const):
+        (WebGPU::Buffer::unmap):
+        * WebGPU/CommandEncoder.mm:
+        (WebGPU::validateCopyBufferToBuffer):
+        (WebGPU::CommandEncoder::copyBufferToBuffer):
+        (WebGPU::validateImageCopyBuffer):
+        (WebGPU::validateCopyBufferToTexture):
+        (WebGPU::CommandEncoder::copyBufferToTexture):
+        (WebGPU::validateCopyTextureToBuffer):
+        (WebGPU::CommandEncoder::copyTextureToBuffer):
+        (WebGPU::areCopyCompatible):
+        (WebGPU::validateCopyTextureToTexture):
+        (WebGPU::CommandEncoder::copyTextureToTexture):
+        (WebGPU::validateClearBuffer):
+        (WebGPU::CommandEncoder::clearBuffer):
+        (WebGPU::CommandEncoder::validateFinish const):
+        (WebGPU::CommandEncoder::finish):
+        (WebGPU::CommandEncoder::insertDebugMarker):
+        (WebGPU::CommandEncoder::validatePopDebugGroup const):
+        (WebGPU::CommandEncoder::popDebugGroup):
+        (WebGPU::CommandEncoder::pushDebugGroup):
+        * WebGPU/ComputePassEncoder.mm:
+        (WebGPU::ComputePassEncoder::insertDebugMarker):
+        (WebGPU::ComputePassEncoder::validatePopDebugGroup const):
+        (WebGPU::ComputePassEncoder::popDebugGroup):
+        (WebGPU::ComputePassEncoder::pushDebugGroup):
+        * WebGPU/Device.h:
+        * WebGPU/Device.mm:
+        (WebGPU::Device::currentErrorScope):
+        (WebGPU::Device::generateAValidationError):
+        (WebGPU::Device::validatePopErrorScope const):
+        (WebGPU::Device::popErrorScope):
+        (WebGPU::Device::pushErrorScope):
+        * WebGPU/Queue.mm:
+        (WebGPU::Queue::submit):
+        (WebGPU::validateWriteBufferInitial):
+        (WebGPU::Queue::validateWriteBuffer const):
+        (WebGPU::Queue::writeBuffer):
+        (WebGPU::validateWriteTexture):
+        (WebGPU::Queue::writeTexture):
+        * WebGPU/RenderBundleEncoder.mm:
+        (WebGPU::RenderBundleEncoder::insertDebugMarker):
+        (WebGPU::RenderBundleEncoder::validatePopDebugGroup const):
+        (WebGPU::RenderBundleEncoder::popDebugGroup):
+        (WebGPU::RenderBundleEncoder::pushDebugGroup):
+        * WebGPU/RenderPassEncoder.mm:
+        (WebGPU::RenderPassEncoder::insertDebugMarker):
+        (WebGPU::RenderPassEncoder::validatePopDebugGroup const):
+        (WebGPU::RenderPassEncoder::popDebugGroup):
+        (WebGPU::RenderPassEncoder::pushDebugGroup):
+        * WebGPU/Sampler.h:
+        (WebGPU::Sampler::descriptor const):
+        (WebGPU::Sampler::isComparison const):
+        * WebGPU/Sampler.mm:
+        (WebGPU::validateCreateSampler):
+        (WebGPU::Device::createSampler):
+        * WebGPU/Texture.h:
+        * WebGPU/Texture.mm:
+        (WebGPU::isCompressedFormat):
+        (WebGPU::Texture::isDepthOrStencilFormat):
+        (WebGPU::Texture::texelBlockWidth):
+        (WebGPU::Texture::texelBlockHeight):
+        (WebGPU::isRenderableFormat):
+        (WebGPU::supportsMultisampling):
+        (WebGPU::maximumMiplevelCount):
+        (WebGPU::Device::validateCreateTexture):
+        (WebGPU::Device::createTexture):
+        (WebGPU::Texture::resolveTextureViewDescriptorDefaults const):
+        (WebGPU::Texture::arrayLayerCount const):
+        (WebGPU::Texture::validateCreateView const):
+        (WebGPU::computeRenderExtent):
+        (WebGPU::Texture::createView):
+        (WebGPU::Texture::logicalMiplevelSpecificTextureExtent):
+        (WebGPU::Texture::physicalMiplevelSpecificTextureExtent):
+        (WebGPU::imageCopyTextureSubresourceSize):
+        (WebGPU::Texture::validateImageCopyTexture):
+        (WebGPU::Texture::validateTextureCopyRange):
+        (WebGPU::Texture::validateLinearTextureData):
+
+2022-04-07  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Implement Texture view format compatibility
+        https://bugs.webkit.org/show_bug.cgi?id=238710
+
+        Reviewed by Kimmo Kinnunen.
+
+        Right now, the definition of texture view format compatibility is narrow enough that we'll
+        never need to add MTLTextureUsagePixelFormatView to the usage of any textures. So, all we
+        have to do is validate.
+
+        Test: http/tests/webgpu/webgpu/api/validation/createTexture.html
+
+        * WebGPU/CommandEncoder.mm:
+        (WebGPU::areCopyCompatible):
+        (WebGPU::isSRGBCompatible): Deleted.
+        * WebGPU/Device.h:
+        * WebGPU/Texture.h:
+        (WebGPU::Texture::create):
+        * WebGPU/Texture.mm:
+        (WebGPU::Texture::removeSRGBSuffix):
+        (WebGPU::textureViewFormatCompatible):
+        (WebGPU::Device::validateCreateTexture):
+        (WebGPU::usage):
+        (WebGPU::Device::createTexture):
+        (WebGPU::Texture::Texture):
+        (WebGPU::Texture::validateCreateView const):
+
+2022-04-06  Chris Dumez  <cdumez@apple.com>
+
+        Start replacing String(const char*) constructor with a String::fromLatin1(const char*) function
+        https://bugs.webkit.org/show_bug.cgi?id=238701
+
+        Reviewed by Geoffrey Garen.
+
+        * WebGPU/APIConversions.h:
+        (WebGPU::fromAPI):
+        * WebGPU/Adapter.mm:
+        (WebGPU::Adapter::requestDevice):
+        * WebGPU/ComputePipeline.mm:
+        (WebGPU::createConstantValues):
+        (WebGPU::Device::createComputePipeline):
+        * WebGPU/ShaderModule.mm:
+        (WebGPU::earlyCompileShaderModule):
+        (WebGPU::Device::createShaderModule):
+
+2022-04-06  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Fix the tvOS build
+        https://bugs.webkit.org/show_bug.cgi?id=238881
+        <rdar://problem/91351306>
+
+        Unreviewed.
+
+        MTLTextureType2DMultisampleArray is not available on tvOS.
+
+        * WebGPU/Texture.mm:
+        (WebGPU::Device::createTexture):
+        (WebGPU::Texture::createView):
+
+2022-04-04  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Set svn:ignore on WebGPU.xcodeproj
+        https://bugs.webkit.org/show_bug.cgi?id=238828
+
+        Reviewed by Alexey Proskuryakov.
+
+        For people who use pure SVN, building causes some spurious files to be created.
+        Other WebKit projects solve this by setting svn:ignore on .xcodeproj directories.
+        This does the same.
+
+        % svn propget svn:ignore WebGPU.xcodeproj
+        *.mode*
+        *.pbxuser
+        *.perspective*
+        project.xcworkspace
+        xcuserdata
+        
+        % 
+
+        * WebGPU.xcodeproj: Set svn:ignore.
+
+2022-04-05  Chris Dumez  <cdumez@apple.com>
+
+        Mark String(const char*) constructor as explicit
+        https://bugs.webkit.org/show_bug.cgi?id=238693
+
+        Reviewed by Geoffrey Garen.
+
+        * WebGPU/CommandEncoder.mm:
+        (WebGPU::CommandEncoder::copyBufferToTexture):
+        (WebGPU::CommandEncoder::copyTextureToBuffer):
+        (WebGPU::CommandEncoder::copyTextureToTexture):
+
+2022-04-04  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Fix Apple's internal build
+        https://bugs.webkit.org/show_bug.cgi?id=238786
+        <rdar://problem/91271543>
+
+        Unreviewed build fix.
+
+        Copy FRAMEWORK_SEARCH_PATHS and SYSTEM_FRAMEWORK_SEARCH_PATHS from WebCore.xcconfig.
+
+        * Configurations/WebGPU.xcconfig:
+
+2022-04-01  Michael Saboff  <msaboff@apple.com>
+
+        Stop copying StagedFrameworks to the secondary path by default
+        https://bugs.webkit.org/show_bug.cgi?id=238688
+
+        Reviewed by Saam Barati.
+
+        Decoupled COPY_STAGED_FRAMEWORKS_TO_SECONDARY_PATH from USE_SYSTEM_CONTENT_PATH so we won't
+        always copy frameworks to the secondary path on macOS.  Instead, the build configuration can set
+        COPY_STAGED_FRAMEWORKS_TO_SECONDARY_PATH as appropriate.
+
+        * Configurations/WebGPU.xcconfig:
+
+2022-03-31  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] There's no need to sprinkle std::optionals everywhere just for _Force32 enum values
+        https://bugs.webkit.org/show_bug.cgi?id=238434
+
+        For ABI compatibility, the shared header uses this pattern:
+
+        enum Foo {
+            Foo_AValue = 1,
+            Foo_AnotherValue = 2,
+            Foo_SomeOtherValue = 3,
+            Foo_Force32 = 0x7FFFFFFF
+        };
+
+        This is so that more values can be added to the enum without making it wider.
+
+        However, this means that if you want to switch over the values of Foo, you have to have
+        a dummy _Force32 case. These cases will never actually occur, and we have ASSERTs() for
+        them.
+
+        Originally, I made some functions return a std::optional<> so that there was some "empty"
+        value that could be returned in these case statements. That means that every caller of
+        any function that switches over any enum has to check the return value for nullopt. This
+        is pretty yucky.
+
+        And, indeed, it's all for nothing - the client calling into WebGPU can happily cast any
+        aribtrary integer to a Foo can call our functions, so the cases for the _Force32 values
+        should be no different. Therefore, we can just say "in order to call WebGPU functions,
+        it's illegal to pass in the _Force32 values (just as it would be illegal to pass in
+        unassigned values)." This means we can clean up the code a bit, and remove a bunch of
+        nullopt checks.
+
+        Reviewed by Dean Jackson.
+
+        * WebGPU/BindGroupLayout.mm:
+        (WebGPU::createArgumentDescriptor):
+        * WebGPU/Buffer.mm:
+        (WebGPU::Buffer::mapAsync):
+        * WebGPU/CommandEncoder.mm:
+        (WebGPU::CommandEncoder::copyBufferToTexture):
+        (WebGPU::CommandEncoder::copyTextureToBuffer):
+        * WebGPU/Instance.mm:
+        (WebGPU::sortedDevices):
+        * WebGPU/Queue.mm:
+        (WebGPU::Queue::writeTexture):
+        * WebGPU/Sampler.mm:
+        (WebGPU::addressMode):
+        (WebGPU::minMagFilter):
+        (WebGPU::mipFilter):
+        (WebGPU::compareFunction):
+        (WebGPU::Device::createSampler):
+        * WebGPU/Texture.h:
+        * WebGPU/Texture.mm:
+        (WebGPU::featureRequirementForFormat):
+        (WebGPU::isCompressedFormat):
+        (WebGPU::stencilSpecificFormat):
+        (WebGPU::Texture::texelBlockWidth):
+        (WebGPU::Texture::texelBlockHeight):
+        (WebGPU::isRenderableFormat):
+        (WebGPU::supportsMultisampling):
+        (WebGPU::maximumMiplevelCount):
+        (WebGPU::hasStorageBindingCapability):
+        (WebGPU::Device::validateCreateTexture):
+        (WebGPU::pixelFormat):
+        (WebGPU::depthOnlyAspectMetalFormat):
+        (WebGPU::stencilOnlyAspectMetalFormat):
+        (WebGPU::Device::createTexture):
+        (WebGPU::Texture::resolveTextureViewDescriptorDefaults const):
+        (WebGPU::Texture::validateCreateView const):
+        (WebGPU::Texture::createView):
+        (WebGPU::Texture::refersToSingleAspect):
+
+2022-03-31  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] etc2-rgba8unorm and etc2-rgba8unorm-srgb are not handled
+        https://bugs.webkit.org/show_bug.cgi?id=238435
+
+        Reviewed by Dean Jackson.
+
+        They map to MTLPixelFormatEAC_RGBA8 and MTLPixelFormatEAC_RGBA8_sRGB.
+
+        * WebGPU/Texture.mm:
+        (WebGPU::pixelFormat):
+        (WebGPU::Device::createTexture):
+
+2022-03-31  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] 2 texture formats need to be guarded behind optional extensions
+        https://bugs.webkit.org/show_bug.cgi?id=238433
+
+        Reviewed by Dean Jackson.
+
+        WGPUTextureFormat_Depth24UnormStencil8 needs to be guarded behind WGPUFeatureName_Depth24UnormStencil8
+        and WGPUTextureFormat_Depth32FloatStencil8 needs to be guarded behind WGPUFeatureName_Depth32FloatStencil8.
+
+        * WebGPU/Texture.mm:
+        (WebGPU::featureRequirementForFormat):
+
+2022-03-31  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Implement Queue::writeTexture() according to the spec
+        https://bugs.webkit.org/show_bug.cgi?id=238432
+
+        Reviewed by Dean Jackson.
+
+        This implements Queue::writeTexture() according to the spec.
+        It re-uses many of the helper functions added in
+        https://bugs.webkit.org/show_bug.cgi?id=238428. There are links and quotes from
+        the spec where appropriate.
+
+        * WebGPU/Queue.mm:
+        (WebGPU::Queue::writeBuffer):
+        (WebGPU::validateWriteTexture):
+        (WebGPU::Queue::writeTexture):
+
+2022-03-31  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Implement CommandEncoder::copyTextureToTexture() according to the spec
+        https://bugs.webkit.org/show_bug.cgi?id=238431
+
+        Reviewed by Dean Jackson.
+
+        This implements CommandEncoder::copyTextureToBuffer() according to the spec.
+        It re-uses many of the helper functions added in
+        https://bugs.webkit.org/show_bug.cgi?id=238428. There are links and quotes from
+        the spec where appropriate.
+
+        * WebGPU/CommandEncoder.mm:
+        (WebGPU::refersToAllAspects):
+        (WebGPU::isSRGBCompatible):
+        (WebGPU::areCopyCompatible):
+        (WebGPU::validateCopyTextureToTexture):
+        (WebGPU::CommandEncoder::copyTextureToTexture):
+
+2022-03-31  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Implement CommandEncoder::copyTextureToBuffer() according to the spec.
+        https://bugs.webkit.org/show_bug.cgi?id=238430
+
+        Reviewed by Dean Jackson.
+
+        This implements CommandEncoder::copyTextureToBuffer() according to the spec.
+        It re-uses many of the helper functions added in
+        https://bugs.webkit.org/show_bug.cgi?id=238428. There are links and quotes from
+        the spec where appropriate.
+
+        * WebGPU/CommandEncoder.mm:
+        (WebGPU::validateCopyTextureToBuffer):
+        (WebGPU::CommandEncoder::copyTextureToBuffer):
+        * WebGPU/Texture.h:
+        * WebGPU/Texture.mm:
+        (WebGPU::Texture::isValidImageCopySource):
+
+2022-03-31  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Implement CommandEncoder::copyBufferToTexture() according to the spec
+        https://bugs.webkit.org/show_bug.cgi?id=238428
+
+        Reviewed by Kimmo Kinnunen.
+
+        This patch implements CommandEncoder::copyBufferToTexture() according to the spec.
+        There are a bunch of helper validation functions added as public static members of Texture
+        because they will be needed for Queue::writeTexture() later. There are links and quotes
+        from the spec where appropriate.
+
+        * WebGPU/CommandEncoder.mm:
+        (WebGPU::validateImageCopyBuffer):
+        (WebGPU::validateCopyBufferToTexture):
+        (WebGPU::CommandEncoder::copyBufferToTexture):
+        * WebGPU/Texture.h:
+        * WebGPU/Texture.mm:
+        (WebGPU::Texture::texelBlockSize):
+        (WebGPU::Texture::aspectSpecificFormat):
+        (WebGPU::Texture::logicalTextureSubresourceExtent):
+        (WebGPU::Texture::physicalTextureSubresourceExtent):
+        (WebGPU::imageCopyTextureSubresourceSize):
+        (WebGPU::Texture::validateImageCopyTexture):
+        (WebGPU::Texture::refersToSingleAspect):
+        (WebGPU::Texture::isValidImageCopyDestination):
+        (WebGPU::Texture::validateTextureCopyRange):
+        (WebGPU::Texture::validateLinearTextureData):
+
+2022-03-31  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Implement Texture::createView() according to the spec
+        https://bugs.webkit.org/show_bug.cgi?id=238311
+
+        This patch implements texture views, which are the objects that get bound to pipelines (rather
+        than textures themselves). It links to the spec where relevant, and quotes the spec in comments
+        where relevant.
+
+        Test: api/validation/createView.spec.ts
+
+        Reviewed by Kimmo Kinnunen.
+
+        * WebGPU/Texture.h:
+        (WebGPU::Texture::create):
+        * WebGPU/Texture.mm:
+        (WebGPU::depthOnlyAspectMetalFormat):
+        (WebGPU::stencilOnlyAspectMetalFormat):
+        (WebGPU::Device::createTexture):
+        (WebGPU::Texture::Texture):
+        (WebGPU::Texture::resolveTextureViewDescriptorDefaults const):
+        (WebGPU::Texture::arrayLayerCount const):
+        (WebGPU::Texture::validateCreateView const):
+        (WebGPU::computeRenderExtent):
+        (WebGPU::Texture::createView):
+        * WebGPU/TextureView.h:
+        (WebGPU::TextureView::create):
+        (WebGPU::TextureView::descriptor const):
+        (WebGPU::TextureView::renderExtent const):
+        * WebGPU/TextureView.mm:
+        (WebGPU::TextureView::TextureView):
+
+2022-03-30  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Refactor isDepthOrStencilFormat() for upcoming data transfer patches
+        https://bugs.webkit.org/show_bug.cgi?id=238427
+
+        Reviewed by Kimmo Kinnunen.
+
+        This exposes isDepthOrStencilFormat() outside of Texture.mm, and changes its implementation
+        to use depthSpecificFormat() and stencilSpecificFormat(), which will become useful in the
+        implementation of subsequent data transfer patches.
+
+        * WebGPU/Texture.h:
+        * WebGPU/Texture.mm:
+        (WebGPU::depthSpecificFormat):
+        (WebGPU::stencilSpecificFormat):
+        (WebGPU::Texture::containsDepthAspect):
+        (WebGPU::Texture::containsStencilAspect):
+        (WebGPU::Texture::isDepthOrStencilFormat):
+        (WebGPU::Device::validateCreateTexture):
+        (WebGPU::isDepthOrStencilFormat): Deleted.
+
 2022-03-25  Myles C. Maxfield  <mmaxfield@apple.com>
 
         [WebGPU] Remove default: from switch statements, in favor of exhaustively listing all cases

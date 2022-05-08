@@ -85,11 +85,6 @@ struct WebProcessCreationParameters {
 
     UserData initializationUserData;
 
-#if PLATFORM(IOS_FAMILY)
-    SandboxExtension::Handle cookieStorageDirectoryExtensionHandle;
-    SandboxExtension::Handle containerCachesDirectoryExtensionHandle;
-    SandboxExtension::Handle containerTemporaryDirectoryExtensionHandle;
-#endif
 #if PLATFORM(COCOA) && ENABLE(REMOTE_INSPECTOR)
     SandboxExtension::Handle enableRemoteWebInspectorExtensionHandle;
 #endif
@@ -260,6 +255,8 @@ struct WebProcessCreationParameters {
 #if USE(ATSPI)
     String accessibilityBusAddress;
 #endif
+
+    String timeZoneOverride;
 };
 
 } // namespace WebKit

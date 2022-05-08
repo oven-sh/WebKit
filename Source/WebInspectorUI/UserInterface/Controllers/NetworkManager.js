@@ -61,6 +61,7 @@ WI.NetworkManager = class NetworkManager extends WI.Object
             WI.Resource.addEventListener(WI.SourceCode.Event.ContentDidChange, this._handleResourceContentChangedForLocalResourceOverride, this);
             WI.Resource.addEventListener(WI.Resource.Event.RequestDataDidChange, this._handleResourceContentChangedForLocalResourceOverride, this);
             WI.LocalResourceOverride.addEventListener(WI.LocalResourceOverride.Event.DisabledChanged, this._handleResourceOverrideDisabledChanged, this);
+            WI.LocalResourceOverride.addEventListener(WI.LocalResourceOverride.Event.ResourceErrorTypeChanged, this._handleResourceOverrideResourceErrorTypeChanged, this);
 
             WI.Target.registerInitializationPromise((async () => {
                 let serializedLocalResourceOverrides = await WI.objectStores.localResourceOverrides.getAll();
@@ -71,6 +72,10 @@ WI.NetworkManager = class NetworkManager extends WI.Object
 
                     let supported = false;
                     switch (localResourceOverride.type) {
+                    case WI.LocalResourceOverride.InterceptType.Block:
+                        supported = WI.NetworkManager.supportsBlockingRequests();
+                        break;
+
                     case WI.LocalResourceOverride.InterceptType.Request:
                         supported = WI.NetworkManager.supportsOverridingRequests();
                         break;
@@ -113,6 +118,12 @@ WI.NetworkManager = class NetworkManager extends WI.Object
     {
         return InspectorFrontendHost.supportsShowCertificate
             && InspectorBackend.hasCommand("Network.getSerializedCertificate");
+    }
+
+    static supportsBlockingRequests()
+    {
+        // COMPATIBILITY (iOS 13.4): Network.interceptRequestWithError did not exist yet.
+        return InspectorBackend.hasCommand("Network.interceptRequestWithError");
     }
 
     static supportsOverridingRequests()
@@ -946,7 +957,7 @@ WI.NetworkManager = class NetworkManager extends WI.Object
         this._resourceRequestIdentifierMap.delete(requestIdentifier);
     }
 
-    requestIntercepted(target, requestId, request)
+    async requestIntercepted(target, requestId, request)
     {
         let url = WI.urlWithoutFragment(request.url);
         for (let localResourceOverride of this.localResourceOverridesForURL(url)) {
@@ -954,9 +965,18 @@ WI.NetworkManager = class NetworkManager extends WI.Object
                 continue;
 
             let localResource = localResourceOverride.localResource;
+            await localResource.requestContent();
+
             let revision = localResource.currentRevision;
 
             switch (localResourceOverride.type) {
+            case WI.LocalResourceOverride.InterceptType.Block:
+                target.NetworkAgent.interceptRequestWithError.invoke({
+                    requestId,
+                    errorType: localResourceOverride.resourceErrorType,
+                });
+                return;
+
             case WI.LocalResourceOverride.InterceptType.Request: {
                 target.NetworkAgent.interceptWithRequest.invoke({
                     requestId,
@@ -992,7 +1012,7 @@ WI.NetworkManager = class NetworkManager extends WI.Object
         });
     }
 
-    responseIntercepted(target, requestId, response)
+    async responseIntercepted(target, requestId, response)
     {
         let url = WI.urlWithoutFragment(response.url);
         for (let localResourceOverride of this.localResourceOverridesForURL(url)) {
@@ -1000,6 +1020,8 @@ WI.NetworkManager = class NetworkManager extends WI.Object
                 continue;
 
             let localResource = localResourceOverride.localResource;
+            await localResource.requestContent();
+
             let revision = localResource.currentRevision;
 
             switch (localResourceOverride.type) {
@@ -1498,6 +1520,14 @@ WI.NetworkManager = class NetworkManager extends WI.Object
             this._removeInterception(localResourceOverride);
         else
             this._addInterception(localResourceOverride);
+    }
+
+    _handleResourceOverrideResourceErrorTypeChanged(event)
+    {
+        console.assert(WI.NetworkManager.supportsBlockingRequests());
+
+        let localResourceOverride = event.target;
+        WI.objectStores.localResourceOverrides.putObject(localResourceOverride);
     }
 
     _handleBootstrapScriptContentDidChange(event)

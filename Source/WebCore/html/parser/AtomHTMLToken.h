@@ -27,6 +27,7 @@
 #pragma once
 
 #include "HTMLNameCache.h"
+#include "HTMLNames.h"
 #include "HTMLToken.h"
 #include <wtf/HashSet.h>
 #include <wtf/text/AtomStringHash.h>
@@ -73,6 +74,7 @@ public:
     // Comment
 
     const String& comment() const;
+    String& comment();
 
     HasDuplicateAttribute hasDuplicateAttribute() const { return m_hasDuplicateAttribute; };
 
@@ -161,6 +163,12 @@ inline const String& AtomHTMLToken::comment() const
     return m_data;
 }
 
+inline String& AtomHTMLToken::comment()
+{
+    ASSERT(m_type == HTMLToken::Comment);
+    return m_data;
+}
+
 inline bool AtomHTMLToken::forceQuirks() const
 {
     ASSERT(m_type == HTMLToken::DOCTYPE);
@@ -230,7 +238,10 @@ inline AtomHTMLToken::AtomHTMLToken(HTMLToken& token)
         ASSERT_NOT_REACHED();
         return;
     case HTMLToken::DOCTYPE:
-        m_name = HTMLNameCache::makeTagName(token.name());
+        if (LIKELY(token.name().size() == 4 && equal(HTMLNames::htmlTag->localName().impl(), token.name().data(), 4)))
+            m_name = HTMLNames::htmlTag->localName();
+        else
+            m_name = AtomString(token.name().data(), token.name().size());
         m_doctypeData = token.releaseDoctypeData();
         return;
     case HTMLToken::EndOfFile:
@@ -238,7 +249,9 @@ inline AtomHTMLToken::AtomHTMLToken(HTMLToken& token)
     case HTMLToken::StartTag:
     case HTMLToken::EndTag:
         m_selfClosing = token.selfClosing();
-        m_name = HTMLNameCache::makeTagName(token.name());
+        m_name = HTMLNames::findHTMLTag(token.name());
+        if (UNLIKELY(m_name.isNull()))
+            m_name = AtomString(token.name().data(), token.name().size());
         initializeAttributes(token.attributes());
         return;
     case HTMLToken::Comment:

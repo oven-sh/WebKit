@@ -543,7 +543,7 @@ void InjectedBundle::beginTesting(WKDictionaryRef settings, BegingTestingMode te
     WKBundleClearAllDatabases(m_bundle.get());
     WKBundlePageClearApplicationCache(page()->page());
     WKBundleResetOriginAccessAllowLists(m_bundle.get());
-    WKBundleClearResourceLoadStatistics(m_bundle.get());
+    clearResourceLoadStatistics();
 
     // [WK2] REGRESSION(r128623): It made layout tests extremely slow
     // https://bugs.webkit.org/show_bug.cgi?id=96862
@@ -576,6 +576,11 @@ void InjectedBundle::done()
     m_state = Idle;
 }
 
+void InjectedBundle::clearResourceLoadStatistics()
+{
+    WKBundleClearResourceLoadStatistics(m_bundle.get());
+}
+
 void InjectedBundle::dumpBackForwardListsForAllPages(StringBuilder& stringBuilder)
 {
     size_t size = m_pages.size();
@@ -594,7 +599,7 @@ void InjectedBundle::dumpToStdErr(const String& output)
     postPageMessage("DumpToStdErr", string ? string->data() : "Out of memory\n");
 }
 
-void InjectedBundle::outputText(const String& output, IsFinalTestOutput isFinalTestOutput)
+void InjectedBundle::outputText(StringView output, IsFinalTestOutput isFinalTestOutput)
 {
     if (m_state != Testing)
         return;

@@ -114,7 +114,7 @@ void CtapAuthenticator::makeCredential()
 
 void CtapAuthenticator::continueMakeCredentialAfterResponseReceived(Vector<uint8_t>&& data)
 {
-    auto response = readCTAPMakeCredentialResponse(data, AuthenticatorAttachment::CrossPlatform, std::get<PublicKeyCredentialCreationOptions>(requestData().options).attestation);
+    auto response = readCTAPMakeCredentialResponse(data, AuthenticatorAttachment::CrossPlatform, transports(), std::get<PublicKeyCredentialCreationOptions>(requestData().options).attestation);
     if (!response) {
         auto error = getResponseCode(data);
 
@@ -210,7 +210,7 @@ void CtapAuthenticator::continueGetNextAssertionAfterResponseReceived(Vector<uin
     if (!m_remainingAssertionResponses) {
         if (auto* observer = this->observer()) {
             observer->selectAssertionResponse(Vector { m_assertionResponses }, WebAuthenticationSource::External, [this, weakThis = WeakPtr { *this }] (AuthenticatorAssertionResponse* response) {
-                ASSERT(RunLoop::isMain());
+                RELEASE_ASSERT(RunLoop::isMain());
                 if (!weakThis)
                     return;
                 auto result = m_assertionResponses.findIf([expectedResponse = response] (auto& response) {
@@ -272,7 +272,7 @@ void CtapAuthenticator::continueRequestPinAfterGetKeyAgreement(Vector<uint8_t>&&
 
     if (auto* observer = this->observer()) {
         observer->requestPin(retries, [weakThis = WeakPtr { *this }, keyAgreement = WTFMove(*keyAgreement)] (const String& pin) {
-            ASSERT(RunLoop::isMain());
+            RELEASE_ASSERT(RunLoop::isMain());
             if (!weakThis)
                 return;
             weakThis->continueGetPinTokenAfterRequestPin(pin, keyAgreement.peerKey);
@@ -382,6 +382,14 @@ bool CtapAuthenticator::processGoogleLegacyAppIdSupportExtension()
     if (extensions->googleLegacyAppidSupport)
         tryDowngrade();
     return extensions->googleLegacyAppidSupport;
+}
+
+Vector<AuthenticatorTransport> CtapAuthenticator::transports() const
+{
+    
+    if (auto& infoTransports = m_info.transports())
+        return *infoTransports;
+    return Vector { driver().transport() };
 }
 
 } // namespace WebKit

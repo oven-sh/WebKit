@@ -25,14 +25,16 @@
 
 #pragma once
 
+#import "Adapter.h"
+#import "HardwareCapabilities.h"
 #import "Queue.h"
 #import <wtf/CompletionHandler.h>
 #import <wtf/FastMalloc.h>
 #import <wtf/Function.h>
 #import <wtf/Ref.h>
-#import <wtf/RefCounted.h>
-#import <wtf/RefPtr.h>
+#import <wtf/ThreadSafeRefCounted.h>
 #import <wtf/Vector.h>
+#import <wtf/WeakPtr.h>
 #import <wtf/text/WTFString.h>
 
 struct WGPUDeviceImpl {
@@ -56,28 +58,33 @@ class Surface;
 class SwapChain;
 class Texture;
 
-class Device : public WGPUDeviceImpl, public RefCounted<Device> {
+// https://gpuweb.github.io/gpuweb/#gpudevice
+class Device : public WGPUDeviceImpl, public ThreadSafeRefCounted<Device>, public CanMakeWeakPtr<Device> {
     WTF_MAKE_FAST_ALLOCATED;
 public:
-    static RefPtr<Device> create(id<MTLDevice>, String&& deviceLabel, Instance&);
+    static Ref<Device> create(id<MTLDevice>, String&& deviceLabel, HardwareCapabilities&&, Adapter&);
+    static Ref<Device> createInvalid(Adapter& adapter)
+    {
+        return adoptRef(*new Device(adapter));
+    }
 
     ~Device();
 
-    RefPtr<BindGroup> createBindGroup(const WGPUBindGroupDescriptor&);
-    RefPtr<BindGroupLayout> createBindGroupLayout(const WGPUBindGroupLayoutDescriptor&);
-    RefPtr<Buffer> createBuffer(const WGPUBufferDescriptor&);
-    RefPtr<CommandEncoder> createCommandEncoder(const WGPUCommandEncoderDescriptor&);
-    RefPtr<ComputePipeline> createComputePipeline(const WGPUComputePipelineDescriptor&);
-    void createComputePipelineAsync(const WGPUComputePipelineDescriptor&, CompletionHandler<void(WGPUCreatePipelineAsyncStatus, RefPtr<ComputePipeline>&&, String&& message)>&& callback);
-    RefPtr<PipelineLayout> createPipelineLayout(const WGPUPipelineLayoutDescriptor&);
-    RefPtr<QuerySet> createQuerySet(const WGPUQuerySetDescriptor&);
-    RefPtr<RenderBundleEncoder> createRenderBundleEncoder(const WGPURenderBundleEncoderDescriptor&);
-    RefPtr<RenderPipeline> createRenderPipeline(const WGPURenderPipelineDescriptor&);
-    void createRenderPipelineAsync(const WGPURenderPipelineDescriptor&, CompletionHandler<void(WGPUCreatePipelineAsyncStatus, RefPtr<RenderPipeline>&&, String&& message)>&& callback);
-    RefPtr<Sampler> createSampler(const WGPUSamplerDescriptor&);
-    RefPtr<ShaderModule> createShaderModule(const WGPUShaderModuleDescriptor&);
-    RefPtr<SwapChain> createSwapChain(const Surface&, const WGPUSwapChainDescriptor&);
-    RefPtr<Texture> createTexture(const WGPUTextureDescriptor&);
+    Ref<BindGroup> createBindGroup(const WGPUBindGroupDescriptor&);
+    Ref<BindGroupLayout> createBindGroupLayout(const WGPUBindGroupLayoutDescriptor&);
+    Ref<Buffer> createBuffer(const WGPUBufferDescriptor&);
+    Ref<CommandEncoder> createCommandEncoder(const WGPUCommandEncoderDescriptor&);
+    Ref<ComputePipeline> createComputePipeline(const WGPUComputePipelineDescriptor&);
+    void createComputePipelineAsync(const WGPUComputePipelineDescriptor&, CompletionHandler<void(WGPUCreatePipelineAsyncStatus, Ref<ComputePipeline>&&, String&& message)>&& callback);
+    Ref<PipelineLayout> createPipelineLayout(const WGPUPipelineLayoutDescriptor&);
+    Ref<QuerySet> createQuerySet(const WGPUQuerySetDescriptor&);
+    Ref<RenderBundleEncoder> createRenderBundleEncoder(const WGPURenderBundleEncoderDescriptor&);
+    Ref<RenderPipeline> createRenderPipeline(const WGPURenderPipelineDescriptor&);
+    void createRenderPipelineAsync(const WGPURenderPipelineDescriptor&, CompletionHandler<void(WGPUCreatePipelineAsyncStatus, Ref<RenderPipeline>&&, String&& message)>&& callback);
+    Ref<Sampler> createSampler(const WGPUSamplerDescriptor&);
+    Ref<ShaderModule> createShaderModule(const WGPUShaderModuleDescriptor&);
+    Ref<SwapChain> createSwapChain(const Surface&, const WGPUSwapChainDescriptor&);
+    Ref<Texture> createTexture(const WGPUTextureDescriptor&);
     void destroy();
     size_t enumerateFeatures(WGPUFeatureName* features);
     bool getLimits(WGPUSupportedLimits&);
@@ -89,37 +96,55 @@ public:
     void setUncapturedErrorCallback(Function<void(WGPUErrorType, String&&)>&&);
     void setLabel(String&&);
 
+    bool isValid() const { return m_device; }
+    bool isLost() const { return m_isLost; }
+    const WGPULimits& limits() const { return m_capabilities.limits; }
+    const Vector<WGPUFeatureName>& features() const { return m_capabilities.features; }
+    const HardwareCapabilities::BaseCapabilities& baseCapabilities() const { return m_capabilities.baseCapabilities; }
+
     id<MTLDevice> device() const { return m_device; }
 
     void generateAValidationError(String&& message);
 
-    Instance& instance() const { return m_instance; }
+    Instance& instance() const { return m_adapter->instance(); }
     bool hasUnifiedMemory() const { return m_device.hasUnifiedMemory; }
 
 private:
-    Device(id<MTLDevice>, id<MTLCommandQueue> defaultQueue, Instance&);
+    Device(id<MTLDevice>, id<MTLCommandQueue> defaultQueue, HardwareCapabilities&&, Adapter&);
+    Device(Adapter&);
 
     struct ErrorScope;
     ErrorScope* currentErrorScope(WGPUErrorFilter);
     bool validatePopErrorScope() const;
     id<MTLBuffer> safeCreateBuffer(NSUInteger length, MTLStorageMode, MTLCPUCacheMode = MTLCPUCacheModeDefaultCache, MTLHazardTrackingMode = MTLHazardTrackingModeDefault) const;
-    bool validateCreateTexture(const WGPUTextureDescriptor&);
+    bool validateCreateTexture(const WGPUTextureDescriptor&, const Vector<WGPUTextureFormat>& viewFormats);
+
+    void makeInvalid() { m_device = nil; }
+
+    void loseTheDevice(WGPUDeviceLostReason);
 
     struct Error {
         WGPUErrorType type;
         String message;
     };
     struct ErrorScope {
-        std::optional<Error> error; // "The first GPUError, if any, observed while the GPU error scope was current."
-        const WGPUErrorFilter filter; // Determines what type of GPUError this GPU error scope observes.
+        std::optional<Error> error;
+        const WGPUErrorFilter filter;
     };
 
-    const id<MTLDevice> m_device { nil };
+    id<MTLDevice> m_device { nil };
     const Ref<Queue> m_defaultQueue;
-    const Ref<Instance> m_instance;
 
     Function<void(WGPUErrorType, String&&)> m_uncapturedErrorCallback;
-    Vector<ErrorScope> m_errorScopeStack; // "A stack of GPU error scopes that have been pushed to the GPUDevice."
+    Vector<ErrorScope> m_errorScopeStack;
+
+    Function<void(WGPUDeviceLostReason, String&&)> m_deviceLostCallback;
+    bool m_isLost { false };
+    id<NSObject> m_deviceObserver { nil };
+
+    HardwareCapabilities m_capabilities { };
+
+    const Ref<Adapter> m_adapter;
 };
 
 } // namespace WebGPU

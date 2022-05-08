@@ -949,7 +949,7 @@ void RenderThemeMac::setFontFromControlSize(RenderStyle& style, NSControlSize co
     fontDescription.setIsAbsoluteSize(true);
 
     NSFont* font = [NSFont systemFontOfSize:[NSFont systemFontSizeForControlSize:controlSize]];
-    fontDescription.setOneFamily(AtomString("-apple-system", AtomString::ConstructFromLiteral));
+    fontDescription.setOneFamily("-apple-system"_s);
     fontDescription.setComputedSize([font pointSize] * style.effectiveZoom());
     fontDescription.setSpecifiedSize([font pointSize] * style.effectiveZoom());
 
@@ -1644,6 +1644,7 @@ static const IntSize* menuListButtonSizes()
 
 void RenderThemeMac::adjustMenuListStyle(RenderStyle& style, const Element* e) const
 {
+    RenderTheme::adjustMenuListStyle(style, e);
     NSControlSize controlSize = controlSizeForFont(style);
 
     style.resetBorder();
@@ -2590,7 +2591,7 @@ int RenderThemeMac::attachmentBaseline(const RenderAttachment& attachment) const
 static RefPtr<Icon> iconForAttachment(const String& fileName, const String& attachmentType, const String& title)
 {
     if (!attachmentType.isEmpty()) {
-        if (equalIgnoringASCIICase(attachmentType, "multipart/x-folder") || equalIgnoringASCIICase(attachmentType, "application/vnd.apple.folder")) {
+        if (equalLettersIgnoringASCIICase(attachmentType, "multipart/x-folder"_s) || equalLettersIgnoringASCIICase(attachmentType, "application/vnd.apple.folder"_s)) {
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
             auto type = kUTTypeFolder;
 ALLOW_DEPRECATED_DECLARATIONS_END

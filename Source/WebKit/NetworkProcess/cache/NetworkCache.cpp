@@ -58,7 +58,7 @@ using namespace FileSystem;
 static const AtomString& resourceType()
 {
     ASSERT(WTF::RunLoop::isMain());
-    static NeverDestroyed<const AtomString> resource("Resource", AtomString::ConstructFromLiteral);
+    static NeverDestroyed<const AtomString> resource("Resource"_s);
     return resource;
 }
 
@@ -130,7 +130,7 @@ Cache::Cache(NetworkProcess& networkProcess, const String& storageDirectory, Ref
 #endif
 #if PLATFORM(GTK) || PLATFORM(WPE)
         // Triggers with "touch $cachePath/dump".
-        CString dumpFilePath = fileSystemRepresentation(pathByAppendingComponent(m_storage->basePathIsolatedCopy(), "dump"));
+        CString dumpFilePath = fileSystemRepresentation(pathByAppendingComponent(m_storage->basePathIsolatedCopy(), "dump"_s));
         GRefPtr<GFile> dumpFile = adoptGRef(g_file_new_for_path(dumpFilePath.data()));
         GFileMonitor* monitor = g_file_monitor_file(dumpFile.get(), G_FILE_MONITOR_NONE, nullptr, nullptr);
         g_signal_connect_swapped(monitor, "changed", G_CALLBACK(dumpFileChanged), this);
@@ -259,7 +259,7 @@ static RetrieveDecision makeRetrieveDecision(const WebCore::ResourceRequest& req
 
 static bool isMediaMIMEType(const String& type)
 {
-    return startsWithLettersIgnoringASCIICase(type, "video/") || startsWithLettersIgnoringASCIICase(type, "audio/");
+    return startsWithLettersIgnoringASCIICase(type, "video/"_s) || startsWithLettersIgnoringASCIICase(type, "audio/"_s);
 }
 
 static StoreDecision makeStoreDecision(const WebCore::ResourceRequest& originalRequest, const WebCore::ResourceResponse& response, size_t bodySize)
@@ -599,7 +599,7 @@ void Cache::traverse(Function<void(const TraversalEntry*)>&& traverseHandler)
 
 String Cache::dumpFilePath() const
 {
-    return pathByAppendingComponent(m_storage->versionPath(), "dump.json");
+    return pathByAppendingComponent(m_storage->versionPath(), "dump.json"_s);
 }
 
 void Cache::dumpContentsToFile()
@@ -607,8 +607,9 @@ void Cache::dumpContentsToFile()
     auto fd = openFile(dumpFilePath(), FileOpenMode::Write);
     if (!isHandleValid(fd))
         return;
-    auto prologue = String("{\n\"entries\": [\n").utf8();
-    writeToFile(fd, prologue.data(), prologue.length());
+
+    static const char prologue[] = "{\n\"entries\": [\n";
+    writeToFile(fd, prologue, strlen(prologue));
 
     struct Totals {
         unsigned count { 0 };

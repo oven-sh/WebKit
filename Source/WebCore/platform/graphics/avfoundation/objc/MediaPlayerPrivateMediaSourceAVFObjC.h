@@ -166,7 +166,7 @@ public:
 private:
     // MediaPlayerPrivateInterface
     void load(const String& url) override;
-    void load(const URL&, const ContentType&, MediaSourcePrivateClient*) override;
+    void load(const URL&, const ContentType&, MediaSourcePrivateClient&) override;
 #if ENABLE(MEDIA_STREAM)
     void load(MediaStreamPrivate&) override;
 #endif
@@ -282,6 +282,7 @@ private:
     void setResourceOwner(const ProcessIdentity& resourceOwner) final { m_resourceOwner = resourceOwner; }
 
     void checkNewVideoFrameMetadata(CMTime);
+    MediaTime clampTimeToLastSeekTime(const MediaTime&) const;
 
     friend class MediaSourcePrivateAVFObjC;
 

@@ -431,6 +431,9 @@ void MediaPlayerPrivateRemote::sizeChanged(WebCore::FloatSize naturalSize)
 void MediaPlayerPrivateRemote::currentTimeChanged(const MediaTime& mediaTime, const MonotonicTime& queryTime, bool timeIsProgressing)
 {
     auto reverseJump = mediaTime < m_cachedMediaTime;
+    if (reverseJump)
+        ALWAYS_LOG(LOGIDENTIFIER, "time jumped backwards, was ", m_cachedMediaTime, ", is now ", mediaTime);
+
     m_timeIsProgressing = timeIsProgressing;
     m_cachedMediaTime = mediaTime;
     m_cachedMediaTimeQueryTime = queryTime;
@@ -486,6 +489,7 @@ void MediaPlayerPrivateRemote::acceleratedRenderingStateChanged()
         m_renderingCanBeAccelerated = m_player->renderingCanBeAccelerated();
         connection().send(Messages::RemoteMediaPlayerProxy::AcceleratedRenderingStateChanged(m_renderingCanBeAccelerated), m_id);
     }
+    renderingModeChanged();
 }
 
 void MediaPlayerPrivateRemote::checkAcceleratedRenderingState()
@@ -565,11 +569,21 @@ void MediaPlayerPrivateRemote::prepareForRendering()
 
 void MediaPlayerPrivateRemote::setPageIsVisible(bool visible)
 {
+    if (m_pageIsVisible == visible)
+        return;
+
+    ALWAYS_LOG(LOGIDENTIFIER, visible);
+
+    m_pageIsVisible = visible;
     connection().send(Messages::RemoteMediaPlayerProxy::SetPageIsVisible(visible), m_id);
 }
 
 void MediaPlayerPrivateRemote::setShouldMaintainAspectRatio(bool maintainRatio)
 {
+    if (maintainRatio == m_shouldMaintainAspectRatio)
+        return;
+
+    m_shouldMaintainAspectRatio = maintainRatio;
     connection().send(Messages::RemoteMediaPlayerProxy::SetShouldMaintainAspectRatio(maintainRatio), m_id);
 }
 
@@ -780,7 +794,7 @@ void MediaPlayerPrivateRemote::remoteVideoTrackConfigurationChanged(TrackPrivate
 }
 
 #if ENABLE(MEDIA_SOURCE)
-void MediaPlayerPrivateRemote::load(const URL& url, const ContentType& contentType, MediaSourcePrivateClient* client)
+void MediaPlayerPrivateRemote::load(const URL& url, const ContentType& contentType, MediaSourcePrivateClient& client)
 {
     if (m_remoteEngineIdentifier == MediaPlayerEnums::MediaEngineIdentifier::AVFoundationMSE) {
         auto identifier = RemoteMediaSourceIdentifier::generate();
@@ -1012,6 +1026,9 @@ bool MediaPlayerPrivateRemote::copyVideoTextureToPlatformTexture(WebCore::Graphi
 
 RefPtr<WebCore::VideoFrame> MediaPlayerPrivateRemote::videoFrameForCurrentTime()
 {
+    if (readyState() < MediaPlayer::ReadyState::HaveCurrentData)
+        return { };
+
     std::optional<RemoteVideoFrameProxy::Properties> result;
     bool changed = false;
     if (!connection().sendSync(Messages::RemoteMediaPlayerProxy::VideoFrameForCurrentTimeIfChanged(), Messages::RemoteMediaPlayerProxy::VideoFrameForCurrentTimeIfChanged::Reply(result, changed), m_id))
@@ -1062,6 +1079,9 @@ bool MediaPlayerPrivateRemote::wirelessVideoPlaybackDisabled() const
 
 void MediaPlayerPrivateRemote::setWirelessVideoPlaybackDisabled(bool disabled)
 {
+    // Update the cache state so we don't have to make this a synchronous message send to avoid a
+    // race condition with the web process fetching the new state immediately after change.
+    m_cachedState.wirelessVideoPlaybackDisabled = disabled;
     connection().send(Messages::RemoteMediaPlayerProxy::SetWirelessVideoPlaybackDisabled(disabled), m_id);
 }
 
@@ -1411,9 +1431,6 @@ void MediaPlayerPrivateRemote::startVideoFrameMetadataGathering()
 void MediaPlayerPrivateRemote::stopVideoFrameMetadataGathering()
 {
     m_isGatheringVideoFrameMetadata = false;
-#if PLATFORM(COCOA)
-    m_pixelBufferGatheredWithVideoFrameMetadata = nullptr;
-#endif
     connection().send(Messages::RemoteMediaPlayerProxy::StopVideoFrameMetadataGathering(), m_id);
 }
 

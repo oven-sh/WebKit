@@ -54,8 +54,7 @@ static bool useBackslashAsYenSignForFamily(const AtomString& family)
     static NeverDestroyed set = [] {
         MemoryCompactLookupOnlyRobinHoodHashSet<AtomString> set;
         auto add = [&set] (const char* name, std::initializer_list<UChar> unicodeName) {
-            unsigned nameLength = strlen(name);
-            set.add(AtomString { name, nameLength, AtomString::ConstructFromLiteral });
+            set.add(AtomString { ASCIILiteral::fromLiteralUnsafe(name) });
             unsigned unicodeNameLength = unicodeName.size();
             set.add(AtomString { unicodeName.begin(), unicodeNameLength });
         };
@@ -214,7 +213,7 @@ std::unique_ptr<DisplayList::InMemoryDisplayList> FontCascade::displayListForTex
         return nullptr;
     
     std::unique_ptr<DisplayList::InMemoryDisplayList> displayList = makeUnique<DisplayList::InMemoryDisplayList>();
-    DisplayList::RecorderImpl recordingContext(*displayList, context.state(), FloatRect(), AffineTransform(), DrawGlyphsRecorder::DeconstructDrawGlyphs::No);
+    DisplayList::RecorderImpl recordingContext(*displayList, context.state().cloneForRecording(), FloatRect(), AffineTransform(), DrawGlyphsRecorder::DeconstructDrawGlyphs::No);
     
     FloatPoint startPoint = toFloatPoint(WebCore::size(glyphBuffer.initialAdvance()));
     drawGlyphBuffer(recordingContext, glyphBuffer, startPoint, customFontNotReadyAction);

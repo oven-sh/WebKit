@@ -95,6 +95,9 @@ public:
 #if ENABLE(FULLSCREEN_API)
     virtual String extraFullScreenStyleSheet() { return String(); }
 #endif
+#if ENABLE(ATTACHMENT_ELEMENT)
+    virtual String attachmentStyleSheet() const;
+#endif
 #if ENABLE(DATALIST_ELEMENT)
     String dataListStyleSheet() const;
 #endif
@@ -351,7 +354,6 @@ protected:
 #endif
 
 #if ENABLE(ATTACHMENT_ELEMENT)
-    virtual void adjustAttachmentStyle(RenderStyle&, const Element*) const;
     virtual bool paintAttachment(const RenderObject&, const PaintInfo&, const IntRect&);
 #endif
 
@@ -393,23 +395,12 @@ protected:
     virtual bool paintSearchFieldResultsButton(const RenderBox&, const PaintInfo&, const IntRect&) { return true; }
 
     virtual void adjustMediaControlStyle(RenderStyle&, const Element*) const;
-    virtual bool paintMediaFullscreenButton(const RenderObject&, const PaintInfo&, const IntRect&) { return true; }
     virtual bool paintMediaPlayButton(const RenderObject&, const PaintInfo&, const IntRect&) { return true; }
-    virtual bool paintMediaOverlayPlayButton(const RenderObject&, const PaintInfo&, const IntRect&) { return true; }
     virtual bool paintMediaMuteButton(const RenderObject&, const PaintInfo&, const IntRect&) { return true; }
-    virtual bool paintMediaSeekBackButton(const RenderObject&, const PaintInfo&, const IntRect&) { return true; }
-    virtual bool paintMediaSeekForwardButton(const RenderObject&, const PaintInfo&, const IntRect&) { return true; }
     virtual bool paintMediaSliderTrack(const RenderObject&, const PaintInfo&, const IntRect&) { return true; }
     virtual bool paintMediaSliderThumb(const RenderObject&, const PaintInfo&, const IntRect&) { return true; }
-    virtual bool paintMediaVolumeSliderContainer(const RenderObject&, const PaintInfo&, const IntRect&) { return true; }
     virtual bool paintMediaVolumeSliderTrack(const RenderObject&, const PaintInfo&, const IntRect&) { return true; }
     virtual bool paintMediaVolumeSliderThumb(const RenderObject&, const PaintInfo&, const IntRect&) { return true; }
-    virtual bool paintMediaRewindButton(const RenderObject&, const PaintInfo&, const IntRect&) { return true; }
-    virtual bool paintMediaReturnToRealtimeButton(const RenderObject&, const PaintInfo&, const IntRect&) { return true; }
-    virtual bool paintMediaToggleClosedCaptionsButton(const RenderObject&, const PaintInfo&, const IntRect&) { return true; }
-    virtual bool paintMediaControlsBackground(const RenderObject&, const PaintInfo&, const IntRect&) { return true; }
-    virtual bool paintMediaCurrentTime(const RenderObject&, const PaintInfo&, const IntRect&) { return true; }
-    virtual bool paintMediaTimeRemaining(const RenderObject&, const PaintInfo&, const IntRect&) { return true; }
     virtual bool paintMediaFullScreenVolumeSliderTrack(const RenderObject&, const PaintInfo&, const IntRect&) { return true; }
     virtual bool paintMediaFullScreenVolumeSliderThumb(const RenderObject&, const PaintInfo&, const IntRect&) { return true; }
 

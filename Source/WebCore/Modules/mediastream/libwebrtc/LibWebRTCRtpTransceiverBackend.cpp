@@ -91,7 +91,7 @@ static inline ExceptionOr<webrtc::RtpCodecCapability> toRtpCodecCapability(const
     else
         return Exception { InvalidModificationError, "RTCRtpCodecCapability bad mimeType"_s };
 
-    rtcCodec.name = codec.mimeType.substring(6).utf8().data();
+    rtcCodec.name = StringView(codec.mimeType).substring(6).utf8().toStdString();
     rtcCodec.clock_rate = codec.clockRate;
     if (codec.channels)
         rtcCodec.num_channels = *codec.channels;
@@ -100,7 +100,7 @@ static inline ExceptionOr<webrtc::RtpCodecCapability> toRtpCodecCapability(const
         auto position = parameter.find('=');
         if (position == notFound)
             return Exception { InvalidModificationError, "RTCRtpCodecCapability sdpFmtLine badly formated"_s };
-        rtcCodec.parameters.emplace(parameter.substring(0, position).utf8().data(), parameter.substring(position + 1).utf8().data());
+        rtcCodec.parameters.emplace(parameter.left(position).utf8().data(), parameter.substring(position + 1).utf8().data());
     }
 
     return rtcCodec;

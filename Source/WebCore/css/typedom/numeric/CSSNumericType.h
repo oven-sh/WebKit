@@ -29,18 +29,120 @@
 
 #include "CSSNumericBaseType.h"
 #include <optional>
+#include <wtf/Markable.h>
+#include <wtf/text/StringConcatenateNumbers.h>
 
 namespace WebCore {
 
+// https://drafts.css-houdini.org/css-typed-om/#dom-cssnumericvalue-type
 struct CSSNumericType {
-    long length { 0 };
-    long angle { 0 };
-    long time { 0 };
-    long frequency { 0 };
-    long resolution { 0 };
-    long flex { 0 };
-    long percent { 0 };
-    std::optional<CSSNumericBaseType> percentHint;
+    using BaseTypeStorage = Markable<int, IntegralMarkableTraits<int, std::numeric_limits<int>::min()>>;
+    BaseTypeStorage length;
+    BaseTypeStorage angle;
+    BaseTypeStorage time;
+    BaseTypeStorage frequency;
+    BaseTypeStorage resolution;
+    BaseTypeStorage flex;
+    BaseTypeStorage percent;
+    Markable<CSSNumericBaseType, EnumMarkableTraits<CSSNumericBaseType>> percentHint;
+
+    bool operator==(const CSSNumericType& other) const
+    {
+        return length == other.length
+            && angle == other.angle
+            && time == other.time
+            && frequency == other.frequency
+            && resolution == other.resolution
+            && flex == other.flex
+            && percent == other.percent
+            && percentHint == other.percentHint;
+    }
+
+    BaseTypeStorage& valueForType(CSSNumericBaseType type)
+    {
+        switch (type) {
+        case CSSNumericBaseType::Length:
+            return length;
+        case CSSNumericBaseType::Angle:
+            return angle;
+        case CSSNumericBaseType::Time:
+            return time;
+        case CSSNumericBaseType::Frequency:
+            return frequency;
+        case CSSNumericBaseType::Resolution:
+            return resolution;
+        case CSSNumericBaseType::Flex:
+            return flex;
+        case CSSNumericBaseType::Percent:
+            return percent;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    const BaseTypeStorage& valueForType(CSSNumericBaseType type) const
+    {
+        return const_cast<CSSNumericType*>(this)->valueForType(type);
+    }
+
+    void applyPercentHint(CSSNumericBaseType hint)
+    {
+        // https://drafts.css-houdini.org/css-typed-om/#apply-the-percent-hint
+        auto& optional = valueForType(hint);
+        if (!optional)
+            optional = 0;
+        if (percent)
+            *optional += *std::exchange(percent, 0);
+        percentHint = hint;
+    }
+
+    size_t nonZeroEntryCount() const
+    {
+        size_t count { 0 };
+        count += length && *length;
+        count += angle && *angle;
+        count += time && *time;
+        count += frequency && *frequency;
+        count += resolution && *resolution;
+        count += flex && *flex;
+        count += percent && *percent;
+        return count;
+    }
+
+    template<CSSNumericBaseType type>
+    bool matches() const
+    {
+        // https://drafts.css-houdini.org/css-typed-om/#cssnumericvalue-match
+        return (type == CSSNumericBaseType::Percent || !percentHint)
+            && nonZeroEntryCount() == 1
+            && valueForType(type)
+            && *valueForType(type);
+    }
+
+    bool matchesNumber() const
+    {
+        // https://drafts.css-houdini.org/css-typed-om/#cssnumericvalue-match
+        return !nonZeroEntryCount() && !percentHint;
+    }
+
+    template<CSSNumericBaseType type>
+    bool matchesTypeOrPercentage() const
+    {
+        return matches<type>() || matches<CSSNumericBaseType::Percent>();
+    }
+
+    String debugString() const
+    {
+        return makeString("{",
+            length ? makeString(" length:", *length) : String(),
+            angle ? makeString(" angle:", *angle) : String(),
+            time ? makeString(" time:", *time) : String(),
+            frequency ? makeString(" frequency:", *frequency) : String(),
+            resolution ? makeString(" resolution:", *resolution) : String(),
+            flex ? makeString(" flex:", *flex) : String(),
+            percent ? makeString(" percent:", *percent) : String(),
+            percentHint ? makeString(" percentHint:", WebCore::debugString(*percentHint)) : String(),
+        " }");
+    }
 };
 
 } // namespace WebCore

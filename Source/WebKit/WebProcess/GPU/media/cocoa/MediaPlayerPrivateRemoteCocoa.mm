@@ -49,24 +49,17 @@ PlatformLayerContainer MediaPlayerPrivateRemote::createVideoFullscreenLayer()
 }
 #endif
 
-void MediaPlayerPrivateRemote::pushVideoFrameMetadata(WebCore::VideoFrameMetadata&& videoFrameMetadata, RetainPtr<CVPixelBufferRef>&& buffer)
+void MediaPlayerPrivateRemote::pushVideoFrameMetadata(WebCore::VideoFrameMetadata&& videoFrameMetadata)
 {
     if (!m_isGatheringVideoFrameMetadata)
         return;
     m_videoFrameMetadata = WTFMove(videoFrameMetadata);
-    m_pixelBufferGatheredWithVideoFrameMetadata = WTFMove(buffer);
 }
 
 RefPtr<NativeImage> MediaPlayerPrivateRemote::nativeImageForCurrentTime()
 {
-    if (m_pixelBufferGatheredWithVideoFrameMetadata) {
-        if (!m_pixelBufferConformer)
-            m_pixelBufferConformer = makeUnique<PixelBufferConformerCV>((__bridge CFDictionaryRef)@{ (__bridge NSString *)kCVPixelBufferPixelFormatTypeKey: @(kCVPixelFormatType_32BGRA) });
-        ASSERT(m_pixelBufferConformer);
-        if (!m_pixelBufferConformer)
-            return nullptr;
-        return NativeImage::create(m_pixelBufferConformer->createImageFromPixelBuffer(m_pixelBufferGatheredWithVideoFrameMetadata.get()));
-    }
+    if (readyState() < MediaPlayer::ReadyState::HaveCurrentData)
+        return { };
 
     std::optional<MachSendRight> sendRight;
     auto colorSpace = DestinationColorSpace::SRGB();
@@ -90,6 +83,9 @@ RefPtr<NativeImage> MediaPlayerPrivateRemote::nativeImageForCurrentTime()
 WebCore::DestinationColorSpace MediaPlayerPrivateRemote::colorSpace()
 {
     auto colorSpace = DestinationColorSpace::SRGB();
+    if (readyState() < MediaPlayer::ReadyState::HaveCurrentData)
+        return colorSpace;
+
     connection().sendSync(Messages::RemoteMediaPlayerProxy::ColorSpace(), Messages::RemoteMediaPlayerProxy::ColorSpace::Reply(colorSpace), m_id);
     return colorSpace;
 }

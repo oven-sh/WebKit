@@ -174,10 +174,6 @@ webkit.org/b/218349 fast/forms/focus2.html [ Failure ]
 webkit.org/b/218349 mathml/presentation/href-enter.html [ ImageOnlyFailure ]
 webkit.org/b/218349 mathml/presentation/href-style.html [ ImageOnlyFailure ]
 
-# Printing
-webkit.org/b/196542 printing/crash-while-formatting-subframe-for-printing.html [ Crash ]
-webkit.org/b/196542 printing/printing-events.html [ Crash ]
-
 # ResourceLoading
 webkit.org/b/201270 [ Release ] http/tests/security/navigate-when-restoring-cached-page.html [ Timeout ]
 webkit.org/b/201270 [ Debug ] http/tests/security/navigate-when-restoring-cached-page.html [ Crash ]
@@ -202,9 +198,6 @@ webkit.org/b/208988 webxr [ Skip ]
 
 # Crash on EWS bot.
 webrtc/vp8-then-h264-gpu-process-crash.html [ Skip ]
-
-# This test introduces flakiness due to issues with resetting WebPreferences.
-webkit.org/b/237181 fast/forms/validation-message-minimum-font-size.html [ Skip ]
 
 #//////////////////////////////////////////////////////////////////////////////////////////
 # End of Triaged Expectations
@@ -420,7 +413,6 @@ webkit.org/b/169918 compositing/hidpi-subpixel-transform-origin.html [ ImageOnly
 webkit.org/b/169918 compositing/hidpi-transform-with-render-layer-on-fractional-pixel-value.html [ ImageOnlyFailure ]
 webkit.org/b/169918 compositing/layer-creation/deep-tree.html [ ImageOnlyFailure ]
 webkit.org/b/169918 compositing/overlap-blending/nested-overlap-overflow.html [ ImageOnlyFailure ]
-webkit.org/b/169918 compositing/overlap-blending/nested-overlap.html [ ImageOnlyFailure ]
 webkit.org/b/169918 compositing/patterns/direct-pattern-compositing-contain.html [ ImageOnlyFailure ]
 webkit.org/b/169918 compositing/patterns/direct-pattern-compositing-cover.html [ ImageOnlyFailure ]
 webkit.org/b/169918 compositing/patterns/direct-pattern-compositing-position.html [ ImageOnlyFailure ]
@@ -717,6 +709,7 @@ webkit.org/b/175419 imported/w3c/web-platform-tests/service-workers/cache-storag
 webkit.org/b/175419 imported/w3c/web-platform-tests/service-workers/cache-storage/serviceworker/cache-storage-match.https.html [ Skip ]
 webkit.org/b/175419 imported/w3c/web-platform-tests/service-workers/cache-storage/serviceworker/credentials.https.html [ Skip ]
 webkit.org/b/175419 [ Release ] http/tests/workers/service/postmessage-after-terminate.https.html [ Pass Failure Timeout ]
+webkit.org/b/175419 http/tests/workers/service/openwindow-from-notification-click.html [ Skip ]
 
 # FIXME: This can't be the right bug number.
 webkit.org/b/175419 imported/w3c/web-platform-tests/fetch/api/abort/serviceworker-intercepted.https.html [ Failure ]
@@ -776,6 +769,9 @@ http/tests/security/contentSecurityPolicy/same-origin-plugin-document-allowed-in
 http/tests/security/contentSecurityPolicy/same-origin-plugin-document-blocked-in-child-window-report.py [ Skip ]
 http/tests/security/contentSecurityPolicy/same-origin-plugin-document-blocked-in-child-window.html [ Skip ]
 http/tests/security/contentSecurityPolicy/same-origin-plugin-document-with-csp-blocked-in-child-window.html [ Skip ]
+
+# CSP extensions are not available on GTK
+http/tests/security/contentSecurityPolicy/extensions/ [ Skip ]
 
 webkit.org/b/206223 imported/mozilla/svg/svg-integration/clipPath-html-02.xhtml
 webkit.org/b/206223 imported/mozilla/svg/svg-integration/clipPath-html-05.xhtml
@@ -910,6 +906,9 @@ webkit.org/b/236298 imported/w3c/web-platform-tests/css/css-pseudo/first-letter-
 webkit.org/b/236298 imported/w3c/web-platform-tests/css/css-ui/text-overflow-012.html [ ImageOnlyFailure ]
 webkit.org/b/236298 imported/w3c/web-platform-tests/css/css-ui/text-overflow-022.html [ ImageOnlyFailure ]
 
+# Requires support for xHE-HAAC audio codec
+webkit.org/b/239750 media/media-source/media-mp4-xhe-aac.html [ Skip ]
+
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of Expected failures.
 #////////////////////////////////////////////////////////////////////////////////////////
@@ -932,10 +931,6 @@ webkit.org/b/207605 [ Debug ] http/tests/workers/service/registration-clear-redu
 webkit.org/b/207605 [ Debug ] http/tests/websocket/tests/hybi/no-subprotocol.html [ Crash ]
 
 webkit.org/b/212232 editing/async-clipboard/clipboard-read-while-pasting.html [ Crash ]
-
-webkit.org/b/225921 editing/execCommand/print.html [ Crash ]
-webkit.org/b/225921 fast/media/print-restores-previous-mediatype.html [ Crash ]
-webkit.org/b/225921 printing/print-close-crash.html [ Crash ]
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of Crashing tests
@@ -1813,8 +1808,6 @@ webkit.org/b/218111 compositing/clipping/border-radius-async-overflow-stacking.h
 
 webkit.org/b/219248 imported/w3c/web-platform-tests/uievents/mouse/mouseevent_move_button.html [ Failure ]
 
-webkit.org/b/223980 editing/deleting/insert-in-orphaned-selection-crash.html [ Failure ]
-
 webkit.org/b/224062 webgl/1.0.3/conformance/glsl/misc/shaders-with-missing-varyings.html [ Failure ]
 webkit.org/b/224062 webgl/1.0.3/conformance/glsl/misc/shaders-with-varyings.html [ Failure ]
 webkit.org/b/224062 webgl/1.0.3/conformance/rendering/gl-scissor-test.html [ Failure ]
@@ -1823,7 +1816,7 @@ webkit.org/b/224076 imported/w3c/web-platform-tests/css/css-text/white-space/whi
 
 webkit.org/b/230277 imported/w3c/web-platform-tests/css/css-transforms/3dtransform-and-filter-no-perspective-001.html [ ImageOnlyFailure ]
 
-webkit.org/b/234726 imported/w3c/web-platform-tests/css/css-color/color-mix-non-srgb-001.html [ Failure ]
+webkit.org/b/234726 imported/w3c/web-platform-tests/css/css-color/color-mix-non-srgb-001.html [ ImageOnlyFailure ]
 webkit.org/b/234726 imported/w3c/web-platform-tests/css/css-color/parsing/relative-color-computed.html  [ Failure ]
 webkit.org/b/234726 imported/w3c/web-platform-tests/css/css-color/parsing/relative-color-valid.html [ Failure ]
 webkit.org/b/234726 imported/w3c/web-platform-tests/css/css-color/parsing/color-mix-computed.html [ Failure ]
@@ -1863,7 +1856,7 @@ webkit.org/b/160119 fast/repaint/selection-gap-flipped-fixed-child.html [ Failur
 #////////////////////////////////////////////////////////////////////////////////////////
 
 accessibility/dialog-properties.html [ Skip ]
-accessibility/native-text-control-attributed-string.html [ Skip ]
+accessibility/ignored-aria-role-description.html [ Skip ]
 
 # These tests require platform support.
 media/media-allowed-codecs.html
@@ -1888,3 +1881,20 @@ http/tests/push-api/subscribe-grant-permissions.html [ Failure ]
 
 # Ftp code is disabled in gtk port
 http/tests/misc/ftp-eplf-directory.py [ Skip ]
+
+webkit.org/b/238885 imported/w3c/web-platform-tests/WebCryptoAPI/derive_bits_keys/pbkdf2.https.any.html?1001-2000 [ Failure Timeout ]
+webkit.org/b/238885 imported/w3c/web-platform-tests/WebCryptoAPI/derive_bits_keys/pbkdf2.https.any.html?2001-3000 [ Failure Timeout ]
+webkit.org/b/238885 imported/w3c/web-platform-tests/WebCryptoAPI/derive_bits_keys/pbkdf2.https.any.html?3001-4000 [ Failure Timeout ]
+webkit.org/b/238885 imported/w3c/web-platform-tests/WebCryptoAPI/derive_bits_keys/pbkdf2.https.any.html?4001-5000 [ Failure Timeout ]
+webkit.org/b/238885 imported/w3c/web-platform-tests/WebCryptoAPI/derive_bits_keys/pbkdf2.https.any.html?5001-6000 [ Failure Timeout ]
+webkit.org/b/238885 imported/w3c/web-platform-tests/WebCryptoAPI/derive_bits_keys/pbkdf2.https.any.html?6001-7000 [ Failure Timeout ]
+webkit.org/b/238885 imported/w3c/web-platform-tests/WebCryptoAPI/derive_bits_keys/pbkdf2.https.any.html?7001-8000 [ Failure Timeout ]
+webkit.org/b/238885 imported/w3c/web-platform-tests/WebCryptoAPI/derive_bits_keys/pbkdf2.https.any.html?8001-last [ Failure Timeout ]
+webkit.org/b/238885 imported/w3c/web-platform-tests/WebCryptoAPI/derive_bits_keys/pbkdf2.https.any.worker.html?1001-2000 [ Failure Timeout ]
+webkit.org/b/238885 imported/w3c/web-platform-tests/WebCryptoAPI/derive_bits_keys/pbkdf2.https.any.worker.html?2001-3000 [ Failure Timeout ]
+webkit.org/b/238885 imported/w3c/web-platform-tests/WebCryptoAPI/derive_bits_keys/pbkdf2.https.any.worker.html?3001-4000 [ Failure Timeout ]
+webkit.org/b/238885 imported/w3c/web-platform-tests/WebCryptoAPI/derive_bits_keys/pbkdf2.https.any.worker.html?4001-5000 [ Failure Timeout ]
+webkit.org/b/238885 imported/w3c/web-platform-tests/WebCryptoAPI/derive_bits_keys/pbkdf2.https.any.worker.html?5001-6000 [ Failure Timeout ]
+webkit.org/b/238885 imported/w3c/web-platform-tests/WebCryptoAPI/derive_bits_keys/pbkdf2.https.any.worker.html?6001-7000 [ Failure Timeout ]
+webkit.org/b/238885 imported/w3c/web-platform-tests/WebCryptoAPI/derive_bits_keys/pbkdf2.https.any.worker.html?7001-8000 [ Failure Timeout ]
+webkit.org/b/238885 imported/w3c/web-platform-tests/WebCryptoAPI/derive_bits_keys/pbkdf2.https.any.worker.html?8001-last [ Failure Timeout ]

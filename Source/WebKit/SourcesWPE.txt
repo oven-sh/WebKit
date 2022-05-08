@@ -21,8 +21,10 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
 // THE POSSIBILITY OF SUCH DAMAGE.
 
-GPUProcess/gstreamer/GPUProcessGStreamer.cpp
-GPUProcess/gstreamer/GPUProcessMainGStreamer.cpp
+GPUProcess/glib/GPUProcessGLib.cpp
+GPUProcess/glib/GPUProcessMainGLib.cpp
+
+GPUProcess/graphics/RemoteGraphicsContextGLGBM.cpp
 
 GPUProcess/media/RemoteAudioDestinationManager.cpp
 
@@ -195,7 +197,7 @@ UIProcess/API/wpe/WPEView.cpp @no-unify
 
 UIProcess/Automation/cairo/WebAutomationSessionCairo.cpp
 
-UIProcess/Automation/wpe/WebAutomationSessionWPE.cpp
+UIProcess/Automation/libwpe/WebAutomationSessionLibWPE.cpp
 
 UIProcess/CoordinatedGraphics/DrawingAreaProxyCoordinatedGraphics.cpp
 
@@ -228,6 +230,8 @@ UIProcess/soup/WebCookieManagerProxySoup.cpp
 UIProcess/soup/WebProcessPoolSoup.cpp
 
 UIProcess/wpe/WebPageProxyWPE.cpp
+
+WebProcess/GPU/graphics/gbm/RemoteGraphicsContextGLProxyGBM.cpp
 
 WebProcess/GPU/media/gstreamer/VideoLayerRemoteGStreamer.cpp
 

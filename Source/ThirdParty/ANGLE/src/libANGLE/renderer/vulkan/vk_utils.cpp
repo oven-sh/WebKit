@@ -181,7 +181,7 @@ angle::Result AllocateAndBindBufferOrImageMemory(vk::Context *context,
     ANGLE_TRY(FindAndAllocateCompatibleMemory(
         context, memoryProperties, requestedMemoryPropertyFlags, memoryPropertyFlagsOut,
         memoryRequirements, extraAllocationInfo, deviceMemoryOut));
-    ANGLE_VK_TRY(context, buffer->bindMemory(context->getDevice(), *deviceMemoryOut));
+    ANGLE_VK_TRY(context, buffer->bindMemory(context->getDevice(), *deviceMemoryOut, 0));
     return angle::Result::Continue;
 }
 
@@ -973,6 +973,10 @@ PFN_vkCreateStreamDescriptorSurfaceGGP vkCreateStreamDescriptorSurfaceGGP = null
 // VK_KHR_shared_presentable_image
 PFN_vkGetSwapchainStatusKHR vkGetSwapchainStatusKHR = nullptr;
 
+// VK_KHR_fragment_shading_rate
+PFN_vkGetPhysicalDeviceFragmentShadingRatesKHR vkGetPhysicalDeviceFragmentShadingRatesKHR = nullptr;
+PFN_vkCmdSetFragmentShadingRateKHR vkCmdSetFragmentShadingRateKHR                         = nullptr;
+
 void InitDebugUtilsEXTFunctions(VkInstance instance)
 {
     GET_INSTANCE_FUNC(vkCreateDebugUtilsMessengerEXT);
@@ -1092,6 +1096,13 @@ void InitExternalSemaphoreCapabilitiesFunctions(VkInstance instance)
 void InitGetSwapchainStatusKHRFunctions(VkDevice device)
 {
     GET_DEVICE_FUNC(vkGetSwapchainStatusKHR);
+}
+
+// VK_KHR_fragment_shading_rate
+void InitFragmentShadingRateKHRFunctions(VkDevice device)
+{
+    GET_DEVICE_FUNC(vkGetPhysicalDeviceFragmentShadingRatesKHR);
+    GET_DEVICE_FUNC(vkCmdSetFragmentShadingRateKHR);
 }
 
 #    undef GET_INSTANCE_FUNC
@@ -1606,20 +1617,20 @@ void BufferBlock::destroy(RendererVk *renderer)
     mDeviceMemory.destroy(device);
 }
 
-angle::Result BufferBlock::init(ContextVk *contextVk,
+angle::Result BufferBlock::init(Context *context,
                                 Buffer &buffer,
                                 vma::VirtualBlockCreateFlags flags,
                                 DeviceMemory &deviceMemory,
                                 VkMemoryPropertyFlags memoryPropertyFlags,
                                 VkDeviceSize size)
 {
-    RendererVk *renderer = contextVk->getRenderer();
+    RendererVk *renderer = context->getRenderer();
     ASSERT(!mVirtualBlock.valid());
     ASSERT(!mBuffer.valid());
     ASSERT(!mDeviceMemory.valid());
 
     mVirtualBlockMutex.init(renderer->isAsyncCommandQueueEnabled());
-    ANGLE_VK_TRY(contextVk, mVirtualBlock.init(renderer->getDevice(), flags, size));
+    ANGLE_VK_TRY(context, mVirtualBlock.init(renderer->getDevice(), flags, size));
 
     mBuffer              = std::move(buffer);
     mDeviceMemory        = std::move(deviceMemory);

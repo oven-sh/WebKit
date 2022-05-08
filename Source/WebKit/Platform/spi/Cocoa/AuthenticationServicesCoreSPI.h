@@ -183,6 +183,13 @@ typedef NS_OPTIONS(NSUInteger, ASCCredentialRequestTypes) {
     ASCCredentialRequestTypeSecurityKeyPublicKeyAssertion = 1 << 5,
 };
 
+typedef NS_ENUM(NSInteger, ASPublicKeyCredentialResidentKeyPreference) {
+    ASPublicKeyCredentialResidentKeyPreferenceNotPresent,
+    ASPublicKeyCredentialResidentKeyPreferenceDiscouraged,
+    ASPublicKeyCredentialResidentKeyPreferencePreferred,
+    ASPublicKeyCredentialResidentKeyPreferenceRequired,
+};
+
 @interface ASCPublicKeyCredentialCreationOptions : NSObject <NSSecureCoding>
 
 @property (nonatomic, nullable, copy) NSData *challenge;
@@ -198,6 +205,7 @@ typedef NS_OPTIONS(NSUInteger, ASCCredentialRequestTypes) {
 @property (nonatomic, nullable, copy) NSNumber *timeout;
 
 @property (nonatomic) BOOL shouldRequireResidentKey;
+@property (nonatomic) ASPublicKeyCredentialResidentKeyPreference residentKeyPreference;
 @property (nonatomic, copy) NSArray<ASCPublicKeyCredentialDescriptor *> *excludedCredentials;
 
 @end
@@ -282,6 +290,7 @@ typedef NS_ENUM(NSInteger, ASCredentialRequestStyle) {
 @property (nonatomic, copy, readonly) NSString *relyingPartyIdentifier;
 @property (nonatomic, copy, readonly) NSData *attestationObject;
 @property (nonatomic, copy, readonly) NSData *rawClientDataJSON;
+@property (nonatomic, copy) NSArray<NSNumber *> *transports;
 
 + (instancetype)new NS_UNAVAILABLE;
 - (instancetype)init NS_UNAVAILABLE;
@@ -296,6 +305,7 @@ typedef NS_ENUM(NSInteger, ASCredentialRequestStyle) {
 @property (nonatomic, copy, readonly) NSData *rawClientDataJSON;
 @property (nonatomic, copy, readonly) NSString *relyingPartyIdentifier;
 @property (nonatomic, copy, readonly) NSData *attestationObject;
+@property (nonatomic, copy) NSArray<NSNumber *> *transports;
 
 @end
 

@@ -71,10 +71,10 @@ FontDescription::FontDescription()
 static AtomString computeSpecializedChineseLocale()
 {
     for (auto& language : userPreferredLanguages()) {
-        if (startsWithLettersIgnoringASCIICase(language, "zh-"))
-            return language;
+        if (startsWithLettersIgnoringASCIICase(language, "zh-"_s))
+            return AtomString { language };
     }
-    return AtomString("zh-hans", AtomString::ConstructFromLiteral); // We have no signal. Pick one option arbitrarily.
+    return "zh-hans"_s; // We have no signal. Pick one option arbitrarily.
 }
 
 static AtomString& cachedSpecializedChineseLocale()

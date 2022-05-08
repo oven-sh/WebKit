@@ -29,7 +29,6 @@
 #include "AuxiliaryProcess.h"
 #include "CacheModel.h"
 #include "IdentifierTypes.h"
-#include "SandboxExtension.h"
 #include "StorageAreaMapIdentifier.h"
 #include "TextCheckerState.h"
 #include "UserContentControllerIdentifier.h"
@@ -127,7 +126,6 @@ class ProcessAssertion;
 class RemoteCDMFactory;
 class RemoteLegacyCDMFactory;
 class RemoteMediaEngineConfigurationFactory;
-class RemoteWebLockRegistry;
 class StorageAreaMap;
 class UserData;
 class WaylandCompositorDisplay;
@@ -145,8 +143,6 @@ class WebPage;
 class WebPageGroupProxy;
 class WebProcessSupplement;
 
-struct GPUProcessConnectionInfo;
-struct GPUProcessConnectionParameters;
 struct RemoteWorkerInitializationData;
 struct UserMessage;
 struct WebProcessCreationParameters;
@@ -208,8 +204,6 @@ public:
 #if PLATFORM(COCOA)
     const WTF::MachSendRight& compositingRenderServerPort() const { return m_compositingRenderServerPort; }
 #endif
-
-    void refreshPlugins();
 
     bool fullKeyboardAccessEnabled() const { return m_fullKeyboardAccessEnabled; }
 
@@ -337,7 +331,6 @@ public:
 
     WebCacheStorageProvider& cacheStorageProvider() { return m_cacheStorageProvider.get(); }
     WebBroadcastChannelRegistry& broadcastChannelRegistry() { return m_broadcastChannelRegistry.get(); }
-    RemoteWebLockRegistry& webLockRegistry() { return m_webLockRegistry.get(); }
     WebCookieJar& cookieJar() { return m_cookieJar.get(); }
     WebSocketChannelManager& webSocketChannelManager() { return m_webSocketChannelManager; }
 
@@ -355,6 +348,10 @@ public:
     void notifyPreferencesChanged(const String& domain, const String& key, const std::optional<String>& encodedValue);
 #endif
     void powerSourceDidChange(bool);
+#endif
+
+#if PLATFORM(MAC)
+    void openDirectoryCacheInvalidated(SandboxExtension::Handle&&);
 #endif
 
     bool areAllPagesThrottleable() const;
@@ -587,11 +584,6 @@ private:
     void updateFreezerStatus();
 #endif
 
-#if ENABLE(GPU_PROCESS)
-    static GPUProcessConnectionInfo getGPUProcessConnection(IPC::Connection&);
-    static void platformInitializeGPUProcessConnectionParameters(GPUProcessConnectionParameters&);
-#endif
-
 #if ENABLE(VIDEO)
     void suspendAllMediaBuffering();
     void resumeAllMediaBuffering();
@@ -669,7 +661,6 @@ private:
 
     Ref<WebCacheStorageProvider> m_cacheStorageProvider;
     Ref<WebBroadcastChannelRegistry> m_broadcastChannelRegistry;
-    Ref<RemoteWebLockRegistry> m_webLockRegistry;
     Ref<WebCookieJar> m_cookieJar;
     WebSocketChannelManager m_webSocketChannelManager;
 

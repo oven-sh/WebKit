@@ -28,7 +28,9 @@
 #if USE(APPLE_INTERNAL_SDK)
 
 #import "DeprecatedGlobalValues.h"
+#import "HTTPServer.h"
 #import "PlatformUtilities.h"
+#import "TestNavigationDelegate.h"
 #import "TestUIDelegate.h"
 #import "TestURLSchemeHandler.h"
 #import "TestWKWebView.h"
@@ -36,6 +38,8 @@
 #import <WebKit/WKWebViewConfigurationPrivate.h>
 #import <WebKit/WKWebViewPrivate.h>
 #import <WebKit/WKWebsiteDataRecordPrivate.h>
+#import <WebKit/WKWebsiteDataStorePrivate.h>
+#import <WebKit/_WKWebsiteDataStoreConfiguration.h>
 
 @interface FileSystemAccessMessageHandler : NSObject <WKScriptMessageHandler>
 @end
@@ -427,7 +431,7 @@ static NSString *mainFrameString = @"<script> \
     </script> \
     <iframe src='https://127.0.0.1:9091/'>";
 
-static const char* frameBytes = R"TESTRESOURCE(
+static constexpr auto frameBytes = R"TESTRESOURCE(
 <script>
 function postMessage(message)
 {
@@ -445,12 +449,12 @@ async function open()
 }
 open();
 </script>
-)TESTRESOURCE";
+)TESTRESOURCE"_s;
 
 TEST(FileSystemAccess, FetchDataForThirdParty)
 {
     TestWebKitAPI::HTTPServer server({
-        { "/", { frameBytes } },
+        { "/"_s, { frameBytes } },
     }, TestWebKitAPI::HTTPServer::Protocol::Https, nullptr, nullptr, 9091);
 
     auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);

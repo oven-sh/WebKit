@@ -33,6 +33,10 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+#if TARGET_OS_IOS
+@class UIFindInteraction;
+#endif
+
 @class WKBackForwardList;
 @class WKBackForwardListItem;
 @class WKContentWorld;
@@ -445,6 +449,8 @@ The uniform type identifier kUTTypeWebArchive can be used get the related pasteb
 */
 - (void)createWebArchiveDataWithCompletionHandler:(void (^)(NSData *, NSError *))completionHandler NS_REFINED_FOR_SWIFT WK_API_AVAILABLE(macos(11.0), ios(14.0));
 
+- (void)retrieveAccessibilityTreeData:(void (^)(NSData *, NSError *))completionHandler;
+
 /*! @abstract A Boolean value indicating whether horizontal swipe gestures
  will trigger back-forward list navigations.
  @discussion The default value is NO.
@@ -620,6 +626,39 @@ The uniform type identifier kUTTypeWebArchive can be used get the related pasteb
  property of WKWebView in order to receive notifications regarding the fullscreen state change.
  */
 @property (nonatomic, readonly) WKFullscreenState fullscreenState WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA));
+
+/*! @abstract Insets from the @link frame @/link that represent the smallest and largest possible size of the
+ visual area of the @link WKWebView @/link based on the state of the surrounding UI.
+ @discussion For apps with size-changing UI around the @link WKWebView @/link, specify minimumViewportInset and
+ maximumViewportInset to supply webpages with the appropriate value for CSS "large viewport" `lv*`
+ units and CSS "small viewport" `sv*` units respectively @link https://www.w3.org/TR/css-values-4/#viewport-variants @/link.
+ Set minimumViewportInset to the smallest inset a webpage may experience in your app's maximally
+ collapsed UI configuration. Set maximumViewportInset to the largest inset a webpage may experience
+ in your app's maximally expanded UI configuration. For apps where the maximally collapsed UI
+ configuration is such that the @link WKWebView @/link is not surrounded by anything, there is no need to specify
+ minimumViewportInset. For apps with fixed-sized UI surrounding the @link WKWebView @/link, there is no need to
+ specify either value. Both values must be either zero or positive, and maximumViewportInset must be
+ larger than minimumViewportInset.
+ */
+#if TARGET_OS_IPHONE
+@property (nonatomic, readonly) UIEdgeInsets minimumViewportInset WK_API_AVAILABLE(ios(WK_IOS_TBA));
+@property (nonatomic, readonly) UIEdgeInsets maximumViewportInset WK_API_AVAILABLE(ios(WK_IOS_TBA));
+- (void)setMinimumViewportInset:(UIEdgeInsets)minimumViewportInset maximumViewportInset:(UIEdgeInsets)maximumViewportInset WK_API_AVAILABLE(ios(WK_IOS_TBA));
+#else
+@property (nonatomic, readonly) NSEdgeInsets minimumViewportInset WK_API_AVAILABLE(macos(WK_MAC_TBA));
+@property (nonatomic, readonly) NSEdgeInsets maximumViewportInset WK_API_AVAILABLE(macos(WK_MAC_TBA));
+- (void)setMinimumViewportInset:(NSEdgeInsets)minimumViewportInset maximumViewportInset:(NSEdgeInsets)maximumViewportInset WK_API_AVAILABLE(macos(WK_MAC_TBA));
+#endif
+
+#if TARGET_OS_IOS
+
+/*! @abstract Enables the web view's built-in find interaction. */
+@property (nonatomic, readwrite, getter=isFindInteractionEnabled) BOOL findInteractionEnabled WK_API_AVAILABLE(ios(WK_IOS_TBA));
+
+/*! @abstract If  @link findInteractionEnabled @/link is set to true, returns this web view's built-in find interaction. Otherwise, nil. */
+@property (nonatomic, nullable, readonly) UIFindInteraction *findInteraction WK_API_AVAILABLE(ios(WK_IOS_TBA));
+
+#endif
 
 @end
 

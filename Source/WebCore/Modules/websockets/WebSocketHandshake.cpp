@@ -77,19 +77,17 @@ static String resourceName(const URL& url)
 static String hostName(const URL& url, bool secure)
 {
     ASSERT(url.protocolIs("wss") == secure);
-    String host = url.host().convertToASCIILowercase();
     if (url.port() && ((!secure && url.port().value() != 80) || (secure && url.port().value() != 443)))
-        return makeString(host, ':', url.port().value());
-    return host;
+        return makeString(asASCIILowercase(url.host()), ':', url.port().value());
+    return url.host().convertToASCIILowercase();
 }
 
-static const size_t maxInputSampleSize = 128;
-static String trimInputSample(const uint8_t* p, size_t len)
+static constexpr size_t maxInputSampleSize = 128;
+static String trimInputSample(const uint8_t* p, size_t length)
 {
-    String s = String(p, std::min<size_t>(len, maxInputSampleSize));
-    if (len > maxInputSampleSize)
-        s.append(horizontalEllipsis);
-    return s;
+    if (length <= maxInputSampleSize)
+        return String(p, length);
+    return makeString(StringView(p, length).left(maxInputSampleSize), horizontalEllipsis);
 }
 
 static String generateSecWebSocketKey()
@@ -222,7 +220,7 @@ int WebSocketHandshake::readServerHandshake(const uint8_t* header, size_t len)
 {
     m_mode = Incomplete;
     int statusCode;
-    String statusText;
+    AtomString statusText;
     int lineLength = readStatusLine(header, len, statusCode, statusText);
     if (lineLength == -1)
         return -1;
@@ -358,14 +356,14 @@ static inline bool headerHasValidHTTPVersion(StringView httpStatusLine)
 // Returns the header length (including "\r\n"), or -1 if we have not received enough data yet.
 // If the line is malformed or the status code is not a 3-digit number,
 // statusCode and statusText will be set to -1 and a null string, respectively.
-int WebSocketHandshake::readStatusLine(const uint8_t* header, size_t headerLength, int& statusCode, String& statusText)
+int WebSocketHandshake::readStatusLine(const uint8_t* header, size_t headerLength, int& statusCode, AtomString& statusText)
 {
     // Arbitrary size limit to prevent the server from sending an unbounded
     // amount of data with no newlines and forcing us to buffer it all.
     static const int maximumLength = 1024;
 
     statusCode = -1;
-    statusText = String();
+    statusText = nullAtom();
 
     const uint8_t* space1 = nullptr;
     const uint8_t* space2 = nullptr;
@@ -428,7 +426,7 @@ int WebSocketHandshake::readStatusLine(const uint8_t* header, size_t headerLengt
     }
 
     statusCode = parseInteger<int>(statusCodeString).value();
-    statusText = String(space2 + 1, end - space2 - 3); // Exclude "\r\n".
+    statusText = AtomString(space2 + 1, end - space2 - 3); // Exclude "\r\n".
     return lineLength;
 }
 
@@ -453,7 +451,7 @@ const uint8_t* WebSocketHandshake::readHTTPHeaders(const uint8_t* start, const u
         HTTPHeaderName headerName;
         if (!findHTTPHeaderName(name, headerName)) {
             // Evidence in the wild shows that services make use of custom headers in the handshake
-            m_serverHandshakeResponse.addHTTPHeaderField(name.toString(), value);
+            m_serverHandshakeResponse.addUncommonHTTPHeaderField(name.toString(), value);
             continue;
         }
 
@@ -518,11 +516,11 @@ bool WebSocketHandshake::checkResponseHeaders()
         return false;
     }
 
-    if (!equalLettersIgnoringASCIICase(serverUpgrade, "websocket")) {
+    if (!equalLettersIgnoringASCIICase(serverUpgrade, "websocket"_s)) {
         m_failureReason = "Error during WebSocket handshake: 'Upgrade' header value is not 'WebSocket'"_s;
         return false;
     }
-    if (!equalLettersIgnoringASCIICase(serverConnection, "upgrade")) {
+    if (!equalLettersIgnoringASCIICase(serverConnection, "upgrade"_s)) {
         m_failureReason = "Error during WebSocket handshake: 'Connection' header value is not 'Upgrade'"_s;
         return false;
     }

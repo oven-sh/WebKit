@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2005-2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2005-2022 Apple Inc. All rights reserved.
  *           (C) 2006 Graham Dennis (graham.dennis@gmail.com)
  *
  * Redistribution and use in source and binary forms, with or without
@@ -859,16 +859,6 @@ public:
 }
 #endif
 
-- (BOOL)isJavaEnabled
-{
-    return [self _boolValueForKey: WebKitJavaEnabledPreferenceKey];
-}
-
-- (void)setJavaEnabled:(BOOL)flag
-{
-    [self _setBoolValue: flag forKey: WebKitJavaEnabledPreferenceKey];
-}
-
 - (BOOL)isJavaScriptEnabled
 {
     return [self _boolValueForKey: WebKitJavaScriptEnabledPreferenceKey];
@@ -1401,16 +1391,6 @@ public:
     return [self _boolValueForKey:WebKitAlwaysRequestGeolocationPermissionPreferenceKey];
 }
 
-- (void)_setAlwaysUseAcceleratedOverflowScroll:(BOOL)flag
-{
-    [self _setBoolValue:flag forKey:WebKitAlwaysUseAcceleratedOverflowScrollPreferenceKey];
-}
-
-- (BOOL)_alwaysUseAcceleratedOverflowScroll
-{
-    return [self _boolValueForKey:WebKitAlwaysUseAcceleratedOverflowScrollPreferenceKey];
-}
-
 - (void)_setInterpolationQuality:(int)quality
 {
     [self _setIntegerValue:quality forKey:WebKitInterpolationQualityPreferenceKey];
@@ -1826,16 +1806,6 @@ static RetainPtr<NSString>& classIBCreatorID()
     [self _setBoolValue:enabled forKey:WebKitSubpixelAntialiasedLayerTextEnabledPreferenceKey];
 }
 
-- (BOOL)simpleLineLayoutEnabled
-{
-    return [self _boolValueForKey:WebKitSimpleLineLayoutEnabledPreferenceKey];
-}
-
-- (void)setSimpleLineLayoutEnabled:(BOOL)enabled
-{
-    [self _setBoolValue:enabled forKey:WebKitSimpleLineLayoutEnabledPreferenceKey];
-}
-
 - (BOOL)legacyLineLayoutVisualCoverageEnabled
 {
     return [self _boolValueForKey:WebKitLegacyLineLayoutVisualCoverageEnabledPreferenceKey];
@@ -2019,12 +1989,11 @@ static RetainPtr<NSString>& classIBCreatorID()
 
 - (void)setAVFoundationNSURLSessionEnabled:(BOOL)flag
 {
-    [self _setBoolValue:flag forKey:WebKitAVFoundationNSURLSessionEnabledKey];
 }
 
 - (BOOL)isAVFoundationNSURLSessionEnabled
 {
-    return [self _boolValueForKey:WebKitAVFoundationNSURLSessionEnabledKey];
+    return YES;
 }
 
 - (BOOL)isInheritURIQueryComponentEnabled
@@ -2800,16 +2769,6 @@ static RetainPtr<NSString>& classIBCreatorID()
     [self _setBoolValue:flag forKey:WebKitPictureInPictureAPIEnabledKey];
 }
 
-- (BOOL)viewportFitEnabled
-{
-    return [self _boolValueForKey:WebKitViewportFitEnabledPreferenceKey];
-}
-
-- (void)setViewportFitEnabled:(BOOL)flag
-{
-    [self _setBoolValue:flag forKey:WebKitViewportFitEnabledPreferenceKey];
-}
-
 - (BOOL)constantPropertiesEnabled
 {
     return [self _boolValueForKey:WebKitConstantPropertiesEnabledPreferenceKey];
@@ -2858,16 +2817,6 @@ static RetainPtr<NSString>& classIBCreatorID()
 - (void)setInspectorAdditionsEnabled:(BOOL)flag
 {
     [self _setBoolValue:flag forKey:WebKitInspectorAdditionsEnabledPreferenceKey];
-}
-
-- (BOOL)ariaReflectionEnabled
-{
-    return [self _boolValueForKey:WebKitAriaReflectionEnabledPreferenceKey];
-}
-
-- (void)setAriaReflectionEnabled:(BOOL)flag
-{
-    [self _setBoolValue:flag forKey:WebKitAriaReflectionEnabledPreferenceKey];
 }
 
 - (BOOL)mediaCapabilitiesEnabled
@@ -3492,6 +3441,15 @@ static RetainPtr<NSString>& classIBCreatorID()
 }
 
 - (void)setXSSAuditorEnabled:(BOOL)flag
+{
+}
+
+- (BOOL)isJavaEnabled
+{
+    return NO;
+}
+
+- (void)setJavaEnabled:(BOOL)flag
 {
 }
 

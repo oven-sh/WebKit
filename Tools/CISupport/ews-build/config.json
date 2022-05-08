@@ -37,7 +37,7 @@
     { "name": "ews106", "platform": "mac-bigsur" },
     { "name": "ews107", "platform": "mac-bigsur" },
     { "name": "ews108", "platform": "*" },
-    { "name": "ews109", "platform": "*" },
+    { "name": "ews109", "platform": "ios-15" },
     { "name": "ews112", "platform": "mac-bigsur" },
     { "name": "ews113", "platform": "mac-bigsur" },
     { "name": "ews114", "platform": "mac-bigsur" },
@@ -55,6 +55,12 @@
     { "name": "ews126", "platform": "ios-simulator-15" },
     { "name": "ews127", "platform": "mac-bigsur" },
     { "name": "ews128", "platform": "mac-bigsur" },
+    { "name": "ews130", "platform": "*" },
+    { "name": "ews131", "platform": "ios-15" },
+    { "name": "ews132", "platform": "*" },
+    { "name": "ews133", "platform": "*" },
+    { "name": "ews134", "platform": "*" },
+    { "name": "ews135", "platform": "*" },
     { "name": "ews150", "platform": "*" },
     { "name": "ews151", "platform": "*", "max_builds": 3 },
     { "name": "ews152", "platform": "*" },
@@ -99,7 +105,8 @@
     { "name": "ews215", "platform": "win" },
     { "name": "webkit-cq-01", "platform": "mac-bigsur" },
     { "name": "webkit-cq-02", "platform": "mac-bigsur" },
-    { "name": "webkit-cq-03", "platform": "mac-bigsur" }
+    { "name": "webkit-cq-03", "platform": "mac-bigsur" },
+    { "name": "webkit-cq-04", "platform": "mac-bigsur" }
   ],
   "builders": [
     {
@@ -130,14 +137,14 @@
       "name": "iOS-15-Build-EWS", "shortname": "ios", "icon": "buildOnly",
       "factory": "iOSEmbeddedBuildFactory", "platform": "ios-15",
       "configuration": "release", "architectures": ["arm64"],
-      "workernames": ["ews152", "ews154", "ews108", "ews109"]
+      "workernames": ["ews152", "ews154", "ews108", "ews109", "ews130", "ews131", "ews132", "ews133"]
     },
     {
       "name": "iOS-15-Simulator-Build-EWS", "shortname": "ios-sim", "icon": "buildOnly",
       "factory": "iOSBuildFactory", "platform": "ios-simulator-15",
       "configuration": "release", "architectures": ["x86_64"],
       "triggers": ["api-tests-ios-sim-ews", "ios-15-sim-wk2-tests-ews"],
-      "workernames": ["ews152", "ews154", "ews156", "ews157", "ews108", "ews109"]
+      "workernames": ["ews152", "ews154", "ews156", "ews157", "ews108", "ews130", "ews132", "ews133", "ews134", "ews135"]
     },
     {
       "name": "iOS-15-Simulator-WK2-Tests-EWS", "shortname": "ios-wk2", "icon": "testOnly",
@@ -179,7 +186,7 @@
       "factory": "macOSWK2Factory", "platform": "mac-bigsur",
       "configuration": "release", "architectures": ["x86_64"],
       "triggered_by": ["macos-bigsur-release-build-ews"],
-      "workernames": ["ews104", "ews105", "ews106", "ews107"]
+      "workernames": ["ews104", "ews106", "ews107"]
     },
     {
       "name": "macOS-Release-WK2-Stress-Tests-EWS", "shortname": "mac-wk2-stress", "icon": "testOnly",
@@ -205,13 +212,13 @@
     {
       "name": "watchOS-8-Build-EWS", "shortname": "watch", "icon": "buildOnly",
       "factory": "watchOSBuildFactory", "platform": "watchos-8",
-      "configuration": "release", "architectures": ["arm64_32", "armv7k"],
+      "configuration": "release", "architectures": ["arm64_32", "arm64"],
       "workernames": ["ews163", "ews164", "ews165"]
     },
     {
       "name": "watchOS-8-Simulator-Build-EWS", "shortname": "watch-sim", "icon": "buildOnly",
       "factory": "watchOSBuildFactory", "platform": "watchos-simulator-8",
-      "configuration": "release", "architectures": ["i386"],
+      "configuration": "release", "architectures": ["arm64"],
       "workernames": ["ews164", "ews165", "ews166"]
     },
     {
@@ -334,7 +341,13 @@
       "name": "Merge-Queue", "shortname": "merge", "icon": "buildAndTest",
       "factory": "MergeQueueFactory", "platform": "mac-bigsur",
       "configuration": "release", "architectures": ["x86_64"],
-      "workernames": ["webkit-cq-01", "webkit-cq-02", "webkit-cq-03", "ews151"]
+      "workernames": ["webkit-cq-01", "webkit-cq-02", "webkit-cq-03"]
+    },
+    {
+      "name": "Unsafe-Merge-Queue", "shortname": "unsafe-merge", "icon": "buildAndTest",
+      "factory": "UnsafeMergeQueueFactory", "platform": "mac-bigsur",
+      "configuration": "release", "architectures": ["arm64"],
+      "workernames": ["webkit-cq-01", "webkit-cq-02", "webkit-cq-03", "webkit-cq-04"]
     }
   ],
   "schedulers": [
@@ -365,6 +378,10 @@
     {
       "type": "AnyBranchScheduler", "name": "merge_queue",
       "builderNames": ["Merge-Queue"]
+    },
+    {
+      "type": "AnyBranchScheduler", "name": "unsafe_merge_queue",
+      "builderNames": ["Unsafe-Merge-Queue"]
     },
     {
       "type": "Triggerable", "name": "macos-bigsur-debug-build-ews",

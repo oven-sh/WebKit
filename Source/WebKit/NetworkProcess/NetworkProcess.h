@@ -46,8 +46,10 @@
 #include <WebCore/DiagnosticLoggingClient.h>
 #include <WebCore/FetchIdentifier.h>
 #include <WebCore/MessagePortChannelRegistry.h>
+#include <WebCore/NotificationEventType.h>
 #include <WebCore/PageIdentifier.h>
 #include <WebCore/PrivateClickMeasurement.h>
+#include <WebCore/PushPermissionState.h>
 #include <WebCore/RegistrableDomain.h>
 #include <WebCore/ServiceWorkerIdentifier.h>
 #include <WebCore/ServiceWorkerTypes.h>
@@ -84,6 +86,7 @@ class CertificateInfo;
 class CurlProxySettings;
 class ProtectionSpace;
 class NetworkStorageSession;
+struct NotificationData;
 class ResourceError;
 class UserContentURLPattern;
 enum class HTTPCookieAcceptPolicy : uint8_t;
@@ -174,7 +177,7 @@ public:
 
     void processWillSuspendImminentlyForTestingSync(CompletionHandler<void()>&&);
     void prepareToSuspend(bool isSuspensionImminent, CompletionHandler<void()>&&);
-    void processDidResume();
+    void processDidResume(bool forForegroundActivity);
 
     CacheModel cacheModel() const { return m_cacheModel; }
 
@@ -373,7 +376,8 @@ public:
 
 #if ENABLE(SERVICE_WORKER)
     void getPendingPushMessages(PAL::SessionID, CompletionHandler<void(const Vector<WebPushMessage>&)>&&);
-    void processPushMessage(PAL::SessionID, WebPushMessage&&, CompletionHandler<void(bool)>&&);
+    void processPushMessage(PAL::SessionID, WebPushMessage&&, WebCore::PushPermissionState, CompletionHandler<void(bool)>&&);
+    void processNotificationEvent(WebCore::NotificationData&&, WebCore::NotificationEventType, CompletionHandler<void(bool)>&&);
 #endif
 
     void deletePushAndNotificationRegistration(PAL::SessionID, const WebCore::SecurityOriginData&, CompletionHandler<void(const String&)>&&);
@@ -527,6 +531,7 @@ private:
     bool m_privateClickMeasurementEnabled { true };
     bool m_ftpEnabled { false };
     bool m_isSuspended { false };
+    std::optional<MonotonicTime> m_enterBackgroundTimestamp;
 };
 
 #if !PLATFORM(COCOA)

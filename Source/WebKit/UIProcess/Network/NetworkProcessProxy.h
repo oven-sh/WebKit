@@ -41,6 +41,7 @@
 #include "WebsiteDataStore.h"
 #include <WebCore/CrossSiteNavigationDataTransfer.h>
 #include <WebCore/FrameIdentifier.h>
+#include <WebCore/NotificationEventType.h>
 #include <WebCore/RegistrableDomain.h>
 #include <memory>
 #include <wtf/Deque.h>
@@ -72,13 +73,14 @@ class AuthenticationChallenge;
 class SharedBuffer;
 class ProtectionSpace;
 class ResourceRequest;
+class SecurityOrigin;
 enum class ShouldSample : bool;
 enum class StorageAccessPromptWasShown : bool;
 enum class StorageAccessWasGranted : bool;
 enum class StoredCredentialsPolicy : uint8_t;
-class SecurityOrigin;
-struct SecurityOriginData;
 struct ClientOrigin;
+struct NotificationData;
+struct SecurityOriginData;
 }
 
 namespace WebKit {
@@ -89,6 +91,7 @@ class WebCookieManagerProxy;
 class WebPageProxy;
 class WebUserContentControllerProxy;
 
+enum class ProcessTerminationReason;
 enum class RemoteWorkerType : bool;
 enum class ShouldGrandfatherStatistics : bool;
 enum class StorageAccessStatus : uint8_t;
@@ -124,8 +127,6 @@ public:
 
     static Vector<Ref<NetworkProcessProxy>> allNetworkProcesses();
     
-    void terminate() final;
-
     void getNetworkProcessConnection(WebProcessProxy&, Messages::WebProcessProxy::GetNetworkProcessConnectionDelayedReply&&);
 
     DownloadProxy& createDownloadProxy(WebsiteDataStore&, WebProcessPool&, const WebCore::ResourceRequest&, const FrameInfoData&, WebPageProxy* originatingPage);
@@ -223,6 +224,8 @@ public:
     void testProcessIncomingSyncMessagesWhenWaitingForSyncReply(WebPageProxyIdentifier, Messages::NetworkProcessProxy::TestProcessIncomingSyncMessagesWhenWaitingForSyncReplyDelayedReply&&);
     void terminateUnresponsiveServiceWorkerProcesses(WebCore::ProcessIdentifier);
 
+    void requestTermination();
+
     ProcessThrottler& throttler() final { return m_throttler; }
     void updateProcessAssertion();
 
@@ -237,7 +240,7 @@ public:
     void createSymLinkForFileUpgrade(const String& indexedDatabaseDirectory);
 
     // ProcessThrottlerClient
-    void sendProcessDidResume() final;
+    void sendProcessDidResume(ResumeReason) final;
     ASCIILiteral clientName() const final { return "NetworkProcess"_s; }
     
     static void setSuspensionAllowedForTesting(bool);
@@ -246,8 +249,7 @@ public:
     void registerSchemeForLegacyCustomProtocol(const String&);
     void unregisterSchemeForLegacyCustomProtocol(const String&);
 
-    enum class TerminationReason { RequestedByClient, Crash, ExceededMemoryLimit };
-    void networkProcessDidTerminate(TerminationReason);
+    void networkProcessDidTerminate(ProcessTerminationReason);
     
     void resetQuota(PAL::SessionID, CompletionHandler<void()>&&);
     void clearStorage(PAL::SessionID, CompletionHandler<void()>&&);
@@ -284,6 +286,7 @@ public:
 #if ENABLE(SERVICE_WORKER)
     void getPendingPushMessages(PAL::SessionID, CompletionHandler<void(const Vector<WebPushMessage>&)>&&);
     void processPushMessage(PAL::SessionID, const WebPushMessage&, CompletionHandler<void(bool wasProcessed)>&&);
+    void processNotificationEvent(const WebCore::NotificationData&, WebCore::NotificationEventType, CompletionHandler<void(bool wasProcessed)>&&);
 #endif
 
     void deletePushAndNotificationRegistration(PAL::SessionID, const WebCore::SecurityOriginData&, CompletionHandler<void(const String&)>&&);
@@ -299,6 +302,10 @@ public:
 
     void terminateRemoteWorkerContextConnectionWhenPossible(RemoteWorkerType, PAL::SessionID, const WebCore::RegistrableDomain&, WebCore::ProcessIdentifier);
 
+    void openWindowFromServiceWorker(PAL::SessionID, const String& urlString, const WebCore::SecurityOriginData& serviceWorkerOrigin, CompletionHandler<void(std::optional<WebCore::PageIdentifier>&&)>&&);
+
+    void navigateServiceWorkerClient(WebCore::FrameIdentifier, WebCore::ScriptExecutionContextIdentifier, const URL&, CompletionHandler<void(std::optional<WebCore::PageIdentifier>)>&&);
+
 private:
     explicit NetworkProcessProxy();
 
@@ -310,6 +317,7 @@ private:
     void getLaunchOptions(ProcessLauncher::LaunchOptions&) override;
     void connectionWillOpen(IPC::Connection&) override;
     void processWillShutDown(IPC::Connection&) override;
+    void terminate() final;
 
     // IPC::Connection::Client
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
@@ -372,6 +380,13 @@ private:
     void didExceedMemoryLimit();
 #endif
 
+    void applicationDidEnterBackground();
+    void applicationWillEnterForeground();
+#if PLATFORM(IOS_FAMILY)
+    void addBackgroundStateObservers();
+    void removeBackgroundStateObservers();
+#endif
+
     std::unique_ptr<DownloadProxyMap> m_downloadProxyMap;
 
     UniqueRef<API::CustomProtocolManagerClient> m_customProtocolManagerClient;
@@ -409,6 +424,11 @@ private:
     WeakHashSet<WebsiteDataStore> m_websiteDataStores;
     UniqueRef<WebCookieManagerProxy> m_cookieManager;
     HashMap<DataTaskIdentifier, Ref<API::DataTask>> m_dataTasks;
+
+#if PLATFORM(IOS_FAMILY)
+    RetainPtr<id> m_backgroundObserver;
+    RetainPtr<id> m_foregroundObserver;
+#endif
 };
 
 } // namespace WebKit

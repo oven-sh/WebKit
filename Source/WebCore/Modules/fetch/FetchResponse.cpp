@@ -131,9 +131,9 @@ ExceptionOr<Ref<FetchResponse>> FetchResponse::create(ScriptExecutionContext& co
     r->suspendIfNeeded();
 
     r->m_contentType = contentType;
-    auto mimeType = extractMIMETypeFromMediaType(contentType);
-    r->m_internalResponse.setMimeType(mimeType.isEmpty() ? defaultMIMEType() : mimeType);
-    r->m_internalResponse.setTextEncodingName(extractCharsetFromMediaType(contentType));
+    AtomString mimeType { extractMIMETypeFromMediaType(contentType) };
+    r->m_internalResponse.setMimeType(mimeType.isEmpty() ? AtomString { defaultMIMEType() } : mimeType);
+    r->m_internalResponse.setTextEncodingName(extractCharsetFromMediaType(contentType).toAtomString());
 
     r->m_internalResponse.setHTTPStatusCode(status);
     r->m_internalResponse.setHTTPStatusText(statusText);
@@ -487,6 +487,15 @@ void FetchResponse::closeStream()
     m_readableStreamSource = nullptr;
 }
 
+void FetchResponse::cancelStream()
+{
+    if (isAllowedToRunScript() && hasReadableStreamBody()) {
+        body().readableStream()->cancel(Exception { AbortError, "load is cancelled"_s });
+        return;
+    }
+    cancel();
+}
+
 void FetchResponse::feedStream()
 {
     ASSERT(m_readableStreamSource);
@@ -538,8 +547,12 @@ ResourceResponse FetchResponse::resourceResponse() const
 
     if (headers().guard() != FetchHeaders::Guard::Immutable) {
         // FIXME: Add a setHTTPHeaderFields on ResourceResponseBase.
-        for (auto& header : headers().internalHeaders())
-            response.setHTTPHeaderField(header.key, header.value);
+        for (auto& header : headers().internalHeaders()) {
+            if (header.keyAsHTTPHeaderName)
+                response.setHTTPHeaderField(*header.keyAsHTTPHeaderName, header.value);
+            else
+                response.setUncommonHTTPHeaderField(header.key, header.value);
+        }
     }
 
     return response;

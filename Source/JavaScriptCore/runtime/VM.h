@@ -36,6 +36,7 @@
 #include "ExceptionEventLocation.h"
 #include "FunctionHasExecutedCache.h"
 #include "Heap.h"
+#include "IndexingType.h"
 #include "Integrity.h"
 #include "Intrinsic.h"
 #include "JSCJSValue.h"
@@ -48,11 +49,11 @@
 #include "NumericStrings.h"
 #include "SmallStrings.h"
 #include "Strong.h"
-#include "StructureCache.h"
 #include "SubspaceAccess.h"
 #include "ThunkGenerator.h"
 #include "VMTraps.h"
 #include "WasmContext.h"
+#include "WeakGCMap.h"
 #include <variant>
 #include <wtf/BumpPointerAllocator.h>
 #include <wtf/CheckedArithmetic.h>
@@ -294,6 +295,7 @@ public:
     JS_EXPORT_PRIVATE JSGlobalObject* deprecatedVMEntryGlobalObject(JSGlobalObject*) const;
 
     WeakRandom& random() { return m_random; }
+    WeakRandom& heapRandom() { return m_heapRandom; }
     Integrity::Random& integrityRandom() { return m_integrityRandom; }
 
     bool terminationInProgress() const { return m_terminationInProgress; }
@@ -337,6 +339,7 @@ private:
     Ref<WTF::RunLoop> m_runLoop;
 
     WeakRandom m_random;
+    WeakRandom m_heapRandom;
     Integrity::Random m_integrityRandom;
 
 public:
@@ -372,9 +375,6 @@ public:
     DEFINE_DYNAMIC_ISO_SUBSPACE_ACCESSOR_IMPL(name, unused, unused2)
 
     FOR_EACH_JSC_DYNAMIC_ISO_SUBSPACE(DEFINE_DYNAMIC_ISO_SUBSPACE_ACCESSOR_IMPL)
-
-    ALWAYS_INLINE IsoCellSet& executableToCodeBlockEdgesWithConstraints() { return heap.executableToCodeBlockEdgesWithConstraints; }
-    ALWAYS_INLINE IsoCellSet& executableToCodeBlockEdgesWithFinalizers() { return heap.executableToCodeBlockEdgesWithFinalizers; }
 
     ALWAYS_INLINE GCClient::IsoSubspace& codeBlockSpace() { return clientHeap.codeBlockSpace; }
 
@@ -441,7 +441,6 @@ public:
     Strong<Structure> hashMapBucketSetStructure;
     Strong<Structure> hashMapBucketMapStructure;
     Strong<Structure> bigIntStructure;
-    Strong<Structure> executableToCodeBlockEdgeStructure;
 
     Strong<JSPropertyNameEnumerator> m_emptyPropertyNameEnumerator;
 
@@ -550,8 +549,6 @@ public:
 
     SourceProviderCache* addSourceProviderCache(SourceProvider*);
     void clearSourceProviderCaches();
-
-    StructureCache structureCache;
 
     typedef HashMap<RefPtr<SourceProvider>, RefPtr<SourceProviderCache>> SourceProviderCacheMap;
     SourceProviderCacheMap sourceProviderCacheMap;

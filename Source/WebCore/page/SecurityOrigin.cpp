@@ -107,13 +107,13 @@ static bool shouldTreatAsUniqueOrigin(const URL& url)
     if (schemeRequiresHost(innerURL) && innerURL.host().isEmpty())
         return true;
 
-    if (LegacySchemeRegistry::shouldTreatURLSchemeAsNoAccess(innerURL.protocol().toStringWithoutCopying()))
+    if (LegacySchemeRegistry::shouldTreatURLSchemeAsNoAccess(innerURL.protocol()))
         return true;
 
     // https://url.spec.whatwg.org/#origin with some additions
     if (url.hasSpecialScheme()
 #if PLATFORM(COCOA)
-        || !linkedOnOrAfter(SDKVersion::FirstWithNullOriginForNonSpecialSchemedURLs)
+        || !linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::NullOriginForNonSpecialSchemedURLs)
         || url.protocolIs("applewebdata")
         || url.protocolIs("x-apple-ql-id")
         || url.protocolIs("x-apple-ql-id2")
@@ -153,7 +153,7 @@ static bool isLoopbackIPAddress(StringView host)
 }
 
 // https://w3c.github.io/webappsec-secure-contexts/#is-origin-trustworthy (Editor's Draft, 17 November 2016)
-static bool shouldTreatAsPotentiallyTrustworthy(const String& protocol, StringView host)
+static bool shouldTreatAsPotentiallyTrustworthy(StringView protocol, StringView host)
 {
     if (LegacySchemeRegistry::shouldTreatURLSchemeAsSecure(protocol))
         return true;
@@ -172,7 +172,7 @@ static bool shouldTreatAsPotentiallyTrustworthy(const String& protocol, StringVi
 
 bool shouldTreatAsPotentiallyTrustworthy(const URL& url)
 {
-    return shouldTreatAsPotentiallyTrustworthy(url.protocol().toStringWithoutCopying(), url.host());
+    return shouldTreatAsPotentiallyTrustworthy(url.protocol(), url.host());
 }
 
 SecurityOrigin::SecurityOrigin(const URL& url)
@@ -195,7 +195,7 @@ SecurityOrigin::SecurityOrigin(const URL& url)
 SecurityOrigin::SecurityOrigin()
     : m_data { emptyString(), emptyString(), std::nullopt }
     , m_domain { emptyString() }
-    , m_isUnique { true }
+    , m_uniqueOriginIdentifier { UniqueOriginIdentifier::generateThreadSafe() }
     , m_isPotentiallyTrustworthy { false }
 {
 }
@@ -204,11 +204,10 @@ SecurityOrigin::SecurityOrigin(const SecurityOrigin* other)
     : m_data { other->m_data.isolatedCopy() }
     , m_domain { other->m_domain.isolatedCopy() }
     , m_filePath { other->m_filePath.isolatedCopy() }
-    , m_isUnique { other->m_isUnique }
+    , m_uniqueOriginIdentifier { other->m_uniqueOriginIdentifier }
     , m_universalAccess { other->m_universalAccess }
     , m_domainWasSetInDOM { other->m_domainWasSetInDOM }
     , m_canLoadLocalResources { other->m_canLoadLocalResources }
-    , m_storageBlockingPolicy { other->m_storageBlockingPolicy }
     , m_enforcesFilePathSeparation { other->m_enforcesFilePathSeparation }
     , m_needsStorageAccessFromFileURLsQuirk { other->m_needsStorageAccessFromFileURLsQuirk }
     , m_isPotentiallyTrustworthy { other->m_isPotentiallyTrustworthy }
@@ -259,12 +258,12 @@ void SecurityOrigin::setDomainFromDOM(const String& newDomain)
 bool SecurityOrigin::isSecure(const URL& url)
 {
     // Invalid URLs are secure, as are URLs which have a secure protocol.
-    if (!url.isValid() || LegacySchemeRegistry::shouldTreatURLSchemeAsSecure(url.protocol().toStringWithoutCopying()))
+    if (!url.isValid() || LegacySchemeRegistry::shouldTreatURLSchemeAsSecure(url.protocol()))
         return true;
 
     // URLs that wrap inner URLs are secure if those inner URLs are secure.
     if (shouldUseInnerURL(url))
-        return LegacySchemeRegistry::shouldTreatURLSchemeAsSecure(extractInnerURL(url).protocol().toStringWithoutCopying()) || BlobURL::isSecureBlobURL(url);
+        return LegacySchemeRegistry::shouldTreatURLSchemeAsSecure(extractInnerURL(url).protocol()) || BlobURL::isSecureBlobURL(url);
 
     return false;
 }
@@ -278,7 +277,7 @@ bool SecurityOrigin::isSameOriginDomain(const SecurityOrigin& other) const
         return true;
 
     if (isUnique() || other.isUnique())
-        return false;
+        return m_uniqueOriginIdentifier == other.m_uniqueOriginIdentifier;
 
     // Here are two cases where we should permit access:
     //
@@ -370,15 +369,15 @@ bool SecurityOrigin::canReceiveDragData(const SecurityOrigin& dragInitiator) con
 static bool isFeedWithNestedProtocolInHTTPFamily(const URL& url)
 {
     const String& string = url.string();
-    if (!startsWithLettersIgnoringASCIICase(string, "feed"))
+    if (!startsWithLettersIgnoringASCIICase(string, "feed"_s))
         return false;
-    return startsWithLettersIgnoringASCIICase(string, "feed://")
-        || startsWithLettersIgnoringASCIICase(string, "feed:http:")
-        || startsWithLettersIgnoringASCIICase(string, "feed:https:")
-        || startsWithLettersIgnoringASCIICase(string, "feeds:http:")
-        || startsWithLettersIgnoringASCIICase(string, "feeds:https:")
-        || startsWithLettersIgnoringASCIICase(string, "feedsearch:http:")
-        || startsWithLettersIgnoringASCIICase(string, "feedsearch:https:");
+    return startsWithLettersIgnoringASCIICase(string, "feed://"_s)
+        || startsWithLettersIgnoringASCIICase(string, "feed:http:"_s)
+        || startsWithLettersIgnoringASCIICase(string, "feed:https:"_s)
+        || startsWithLettersIgnoringASCIICase(string, "feeds:http:"_s)
+        || startsWithLettersIgnoringASCIICase(string, "feeds:https:"_s)
+        || startsWithLettersIgnoringASCIICase(string, "feedsearch:http:"_s)
+        || startsWithLettersIgnoringASCIICase(string, "feedsearch:https:"_s);
 }
 
 bool SecurityOrigin::canDisplay(const URL& url) const
@@ -398,7 +397,7 @@ bool SecurityOrigin::canDisplay(const URL& url) const
     if (isFeedWithNestedProtocolInHTTPFamily(url))
         return true;
 
-    String protocol = url.protocol().toString();
+    auto protocol = url.protocol();
 
     if (LegacySchemeRegistry::canDisplayOnlyIfCanRequest(protocol))
         return canRequest(url);
@@ -418,36 +417,6 @@ bool SecurityOrigin::canDisplay(const URL& url) const
     return true;
 }
 
-bool SecurityOrigin::canAccessStorage(const SecurityOrigin* topOrigin, ShouldAllowFromThirdParty shouldAllowFromThirdParty) const
-{
-    if (isUnique())
-        return false;
-
-    if (isLocal() && !needsStorageAccessFromFileURLsQuirk() && !m_universalAccess && shouldAllowFromThirdParty != AlwaysAllowFromThirdParty)
-        return false;
-    
-    if (m_storageBlockingPolicy == StorageBlockingPolicy::BlockAll)
-        return false;
-
-    // FIXME: This check should be replaced with an ASSERT once we can guarantee that topOrigin is not null.
-    if (!topOrigin)
-        return true;
-
-    if (topOrigin->m_storageBlockingPolicy == StorageBlockingPolicy::BlockAll)
-        return false;
-
-    if (shouldAllowFromThirdParty == AlwaysAllowFromThirdParty)
-        return true;
-
-    if (m_universalAccess)
-        return true;
-
-    if ((m_storageBlockingPolicy == StorageBlockingPolicy::BlockThirdParty || topOrigin->m_storageBlockingPolicy == StorageBlockingPolicy::BlockThirdParty) && !topOrigin->isSameOriginAs(*this))
-        return false;
-
-    return true;
-}
-
 SecurityOrigin::Policy SecurityOrigin::canShowNotifications() const
 {
     if (m_universalAccess)
@@ -463,7 +432,7 @@ bool SecurityOrigin::isSameOriginAs(const SecurityOrigin& other) const
         return true;
 
     if (isUnique() || other.isUnique())
-        return false;
+        return m_uniqueOriginIdentifier == other.m_uniqueOriginIdentifier;
 
     return isSameSchemeHostPort(other);
 }
@@ -517,9 +486,6 @@ void SecurityOrigin::grantStorageAccessFromFileURLsQuirk()
 
 String SecurityOrigin::domainForCachePartition() const
 {
-    if (m_storageBlockingPolicy != StorageBlockingPolicy::BlockThirdParty)
-        return emptyString();
-
     if (isHTTPFamily())
         return host();
 
@@ -609,6 +575,9 @@ bool SecurityOrigin::equal(const SecurityOrigin* other) const
 {
     if (other == this)
         return true;
+
+    if (isUnique() || other->isUnique())
+        return m_uniqueOriginIdentifier == other->m_uniqueOriginIdentifier;
     
     if (!isSameSchemeHostPort(*other))
         return false;
@@ -639,7 +608,7 @@ bool SecurityOrigin::isLocalHostOrLoopbackIPAddress(StringView host)
         return true;
 
     // FIXME: Ensure that localhost resolves to the loopback address.
-    if (equalLettersIgnoringASCIICase(host, "localhost") || host.endsWithIgnoringASCIICase(".localhost"))
+    if (equalLettersIgnoringASCIICase(host, "localhost"_s) || host.endsWithIgnoringASCIICase(".localhost"))
         return true;
 
     return false;

@@ -106,6 +106,7 @@
 #include <wtf/RunLoop.h>
 #include <wtf/Seconds.h>
 #include <wtf/WallTime.h>
+#include <wtf/WeakHashSet.h>
 #include <wtf/text/WTFString.h>
 
 #if USE(ATSPI)
@@ -200,6 +201,8 @@ class HTMLImageElement;
 class HTMLMenuElement;
 class HTMLMenuItemElement;
 class HTMLPlugInElement;
+class HTMLVideoElement;
+class IgnoreSelectionChangeForScope;
 class IntPoint;
 class KeyboardEvent;
 class MediaPlaybackTargetContext;
@@ -247,12 +250,14 @@ struct DictationAlternative;
 struct ElementContext;
 struct GlobalFrameIdentifier;
 struct GlobalWindowIdentifier;
+struct InteractionRegion;
 struct KeypressCommand;
 struct MediaUsageInfo;
 struct PromisedAttachmentInfo;
 struct RequestStorageAccessResult;
 struct RunJavaScriptParameters;
 struct TextCheckingResult;
+struct TextRecognitionOptions;
 struct TextRecognitionResult;
 struct ViewportArguments;
 
@@ -263,10 +268,6 @@ class HTMLAttachmentElement;
 #if HAVE(TRANSLATION_UI_SERVICES) && ENABLE(CONTEXT_MENUS)
 struct TranslationContextMenuInfo;
 #endif
-
-namespace ImageOverlay {
-class CroppedImage;
-}
 }
 
 namespace WebKit {
@@ -612,6 +613,10 @@ public:
     bool setFixedLayoutSize(const WebCore::IntSize&);
     WebCore::IntSize fixedLayoutSize() const;
 
+    void setDefaultUnobscuredSize(const WebCore::FloatSize&);
+    void setMinimumUnobscuredSize(const WebCore::FloatSize&);
+    void setMaximumUnobscuredSize(const WebCore::FloatSize&);
+
     void listenForLayoutMilestones(OptionSet<WebCore::LayoutMilestone>);
 
     void setSuppressScrollbarAnimations(bool);
@@ -787,6 +792,7 @@ public:
     void updateSelectionWithTouches(const WebCore::IntPoint&, SelectionTouch, bool baseIsStart, CompletionHandler<void(const WebCore::IntPoint&, SelectionTouch, OptionSet<SelectionFlags>)>&&);
     void selectWithTwoTouches(const WebCore::IntPoint& from, const WebCore::IntPoint& to, GestureType, GestureRecognizerState, CompletionHandler<void(const WebCore::IntPoint&, GestureType, GestureRecognizerState, OptionSet<SelectionFlags>)>&&);
     void extendSelection(WebCore::TextGranularity, CompletionHandler<void()>&&);
+    void extendSelectionForReplacement(CompletionHandler<void()>&&);
     void selectWordBackward();
     void moveSelectionByOffset(int32_t offset, CompletionHandler<void()>&&);
     void selectTextWithGranularityAtPoint(const WebCore::IntPoint&, WebCore::TextGranularity, bool isInteractingWithFocusedElement, CompletionHandler<void()>&&);
@@ -801,8 +807,10 @@ public:
 #if ENABLE(REVEAL)
     RetainPtr<RVItem> revealItemForCurrentSelection();
     void requestRVItemInCurrentSelectedRange(CompletionHandler<void(const WebKit::RevealItem&)>&&);
-    void prepareSelectionForContextMenuWithLocationInView(const WebCore::IntPoint, CompletionHandler<void(bool, const RevealItem&)>&&);
+    void prepareSelectionForContextMenuWithLocationInView(WebCore::IntPoint, CompletionHandler<void(bool, const RevealItem&)>&&);
 #endif
+    void willInsertFinalDictationResult();
+    void didInsertFinalDictationResult();
     void replaceDictatedText(const String& oldText, const String& newText);
     void replaceSelectedText(const String& oldText, const String& newText);
     void requestAutocorrectionData(const String& textForAutocorrection, CompletionHandler<void(WebAutocorrectionData)>&& reply);
@@ -810,7 +818,6 @@ public:
     void syncApplyAutocorrection(const String& correction, const String& originalText, CompletionHandler<void(bool)>&&);
     void handleAutocorrectionContextRequest();
     void preemptivelySendAutocorrectionContext();
-    void getPositionInformation(const InteractionInformationRequest&, CompletionHandler<void(InteractionInformationAtPosition&&)>&&);
     void requestPositionInformation(const InteractionInformationRequest&);
     void startInteractionWithElementContextOrPosition(std::optional<WebCore::ElementContext>&&, WebCore::IntPoint&&);
     void stopInteraction();
@@ -938,7 +945,8 @@ public:
     void didUpdateComposition();
     void didEndUserTriggeredSelectionChanges();
 
-    void interactableRegionsInRootViewCoordinates(WebCore::FloatRect, CompletionHandler<void(Vector<WebCore::FloatRect>)>&&);
+    void interactionRegions(WebCore::FloatRect rectInContentCoordinates, CompletionHandler<void(Vector<WebCore::InteractionRegion>)>&&);
+    void navigateServiceWorkerClient(WebCore::ScriptExecutionContextIdentifier, const URL&, CompletionHandler<void(bool)>&&);
 
 #if PLATFORM(COCOA)
     void platformInitializeAccessibility();
@@ -975,8 +983,11 @@ public:
 #endif
 
 #if PLATFORM(COCOA)
-    void replaceWithPasteboardData(const WebCore::ElementContext&, const Vector<String>& types, const IPC::DataReference&);
     void replaceSelectionWithPasteboardData(const Vector<String>& types, const IPC::DataReference&);
+#endif
+
+#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+    void replaceImageWithMarkupResults(const WebCore::ElementContext&, const Vector<String>& types, const IPC::DataReference&);
 #endif
 
     void setCompositionForTesting(const String& compositionString, uint64_t from, uint64_t length, bool suppressUnderline, const Vector<WebCore::CompositionHighlight>&);
@@ -1101,8 +1112,6 @@ public:
     void updateVisibilityState(bool isInitialState = false);
 
 #if PLATFORM(IOS_FAMILY)
-    void setMinimumUnobscuredSize(const WebCore::FloatSize&);
-    void setMaximumUnobscuredSize(const WebCore::FloatSize&);
     void setDeviceOrientation(int32_t);
     void dynamicViewportSizeUpdate(const WebCore::FloatSize& viewLayoutSize, const WebCore::FloatSize& minimumUnobscuredSize, const WebCore::FloatSize& maximumUnobscuredSize, const WebCore::FloatRect& targetExposedContentRect, const WebCore::FloatRect& targetUnobscuredRect, const WebCore::FloatRect& targetUnobscuredRectInScrollViewCoordinates, const WebCore::FloatBoxExtent& targetUnobscuredSafeAreaInsets, double scale, int32_t deviceOrientation, double minimumEffectiveDeviceWidth, DynamicViewportSizeUpdateID);
     bool scaleWasSetByUIProcess() const { return m_scaleWasSetByUIProcess; }
@@ -1195,7 +1204,6 @@ public:
     void detectDataInAllFrames(OptionSet<WebCore::DataDetectorType>, CompletionHandler<void(const DataDetectionResult&)>&&);
     void removeDataDetectedLinks(CompletionHandler<void(const DataDetectionResult&)>&&);
     void handleClickForDataDetectionResult(const WebCore::DataDetectorElementInfo&, const WebCore::IntPoint&);
-    static std::optional<std::pair<Ref<WebCore::HTMLElement>, WebCore::IntRect>> findDataDetectionResultElementInImageOverlay(const WebCore::FloatPoint& locationInRootView, const WebCore::HTMLElement& host);
 #endif
 
     unsigned extendIncrementalRenderingSuppression();
@@ -1284,7 +1292,7 @@ public:
 
     void didFinishLoadingImageForElement(WebCore::HTMLImageElement&);
 
-    WebURLSchemeHandlerProxy* urlSchemeHandlerForScheme(const String&);
+    WebURLSchemeHandlerProxy* urlSchemeHandlerForScheme(StringView);
     void stopAllURLSchemeTasks();
 
     std::optional<double> cpuLimit() const { return m_cpuLimit; }
@@ -1335,7 +1343,7 @@ public:
 #endif
 
 #if USE(WPE_RENDERER)
-    int hostFileDescriptor() const { return m_hostFileDescriptor.fileDescriptor(); }
+    int hostFileDescriptor() const { return m_hostFileDescriptor.fd().value(); }
 #endif
 
     void updateCurrentModifierState(OptionSet<WebCore::PlatformEvent::Modifier> modifiers);
@@ -1450,16 +1458,12 @@ public:
     void isPlayingMediaDidChange(WebCore::MediaProducerMediaStateFlags);
 
 #if ENABLE(IMAGE_ANALYSIS)
-    void requestTextRecognition(WebCore::Element&, const String& identifier = { }, CompletionHandler<void(RefPtr<WebCore::Element>&&)>&& = { });
+    void requestTextRecognition(WebCore::Element&, WebCore::TextRecognitionOptions&&, CompletionHandler<void(RefPtr<WebCore::Element>&&)>&& = { });
     void updateWithTextRecognitionResult(const WebCore::TextRecognitionResult&, const WebCore::ElementContext&, const WebCore::FloatPoint& location, CompletionHandler<void(TextRecognitionUpdateResult)>&&);
     void startImageAnalysis(const String& identifier);
 #endif
 
     void requestImageBitmap(const WebCore::ElementContext&, CompletionHandler<void(const ShareableBitmap::Handle&, const String& sourceMIMEType)>&&);
-#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
-    void installCroppedImageOverlay(const WebCore::ElementContext&, const SharedMemory::IPCHandle& imageData, const String& mimeType, WebCore::FloatRect normalizedCropRect);
-    void setCroppedImageOverlayVisibility(bool);
-#endif
 
 #if HAVE(TRANSLATION_UI_SERVICES) && ENABLE(CONTEXT_MENUS)
     void handleContextMenuTranslation(const WebCore::TranslationContextMenuInfo&);
@@ -1501,7 +1505,6 @@ public:
 
 #if ENABLE(MEDIA_SESSION_COORDINATOR)
     void createMediaSessionCoordinator(const String&, CompletionHandler<void(bool)>&&);
-    void invalidateMediaSessionCoordinator();
 #endif
 
     void setLastNavigationWasAppInitiated(bool wasAppBound) { m_lastNavigationWasAppInitiated = wasAppBound; }
@@ -1524,6 +1527,18 @@ public:
 #endif
 #if HAVE(SCENEKIT)
     bool useSceneKitForModel() const { return m_useSceneKitForModel; };
+#endif
+
+#if ENABLE(ARKIT_INLINE_PREVIEW_IOS)
+    void modelInlinePreviewDidLoad(WebCore::GraphicsLayer::PlatformLayerID);
+    void modelInlinePreviewDidFailToLoad(WebCore::GraphicsLayer::PlatformLayerID, const WebCore::ResourceError&);
+#endif
+
+    void extractVideoInElementFullScreen(const WebCore::HTMLVideoElement&);
+    void cancelVideoExtractionInElementFullScreen();
+
+#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+    void shouldAllowImageMarkup(const WebCore::ElementContext&, CompletionHandler<void(bool)>&&) const;
 #endif
 
 private:
@@ -1553,9 +1568,11 @@ private:
 
     bool didReceiveSyncWebPageMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&);
 
-#if PLATFORM(IOS_FAMILY)
-    void updateViewportSizeForCSSViewportUnits();
+    void updateSizeForCSSDefaultViewportUnits();
+    void updateSizeForCSSSmallViewportUnits();
+    void updateSizeForCSSLargeViewportUnits();
 
+#if PLATFORM(IOS_FAMILY)
     std::optional<FocusedElementInformation> focusedElementInformation();
     void generateSyntheticEditingCommand(SyntheticEditingCommandType);
     void handleSyntheticClick(WebCore::Node& nodeRespondingToClick, const WebCore::FloatPoint& location, OptionSet<WebKit::WebEvent::Modifier>, WebCore::PointerID = WebCore::mousePointerID);
@@ -1564,6 +1581,7 @@ private:
     WebCore::VisiblePosition visiblePositionInFocusedNodeForPoint(const WebCore::Frame&, const WebCore::IntPoint&, bool isInteractingWithFocusedElement);
     std::optional<WebCore::SimpleRange> rangeForGranularityAtPoint(WebCore::Frame&, const WebCore::IntPoint&, WebCore::TextGranularity, bool isInteractingWithFocusedElement);
     void setFocusedFrameBeforeSelectingTextAtLocation(const WebCore::IntPoint&);
+    void setSelectedRangeDispatchingSyntheticMouseEventsIfNeeded(const WebCore::SimpleRange&, WebCore::Affinity);
     void dispatchSyntheticMouseEventsForSelectionGesture(SelectionTouch, const WebCore::IntPoint&);
 
     void sendPositionInformation(InteractionInformationAtPosition&&);
@@ -1722,6 +1740,7 @@ private:
     void getWebArchiveOfFrame(WebCore::FrameIdentifier, CompletionHandler<void(const std::optional<IPC::SharedBufferCopy>&)>&&);
     void runJavaScript(WebFrame*, WebCore::RunJavaScriptParameters&&, ContentWorldIdentifier, CompletionHandler<void(const IPC::DataReference&, const std::optional<WebCore::ExceptionDetails>&)>&&);
     void runJavaScriptInFrameInScriptWorld(WebCore::RunJavaScriptParameters&&, std::optional<WebCore::FrameIdentifier>, const std::pair<ContentWorldIdentifier, String>& worldData, CompletionHandler<void(const IPC::DataReference&, const std::optional<WebCore::ExceptionDetails>&)>&&);
+    void getAccessibilityTreeData(CompletionHandler<void(const std::optional<IPC::SharedBufferCopy>&)>&&);
     void forceRepaint(CompletionHandler<void()>&&);
     void takeSnapshot(WebCore::IntRect snapshotRect, WebCore::IntSize bitmapSize, uint32_t options, CompletionHandler<void(const WebKit::ShareableBitmap::Handle&)>&&);
 
@@ -1932,8 +1951,6 @@ private:
     void voicesDidChange();
 #endif
 
-    void frameBecameRemote(WebCore::FrameIdentifier, WebCore::GlobalFrameIdentifier&& remoteFrameIdentifier, WebCore::GlobalWindowIdentifier&& remoteWindowIdentifier);
-
     void registerURLSchemeHandler(WebURLSchemeHandlerIdentifier, const String& scheme);
 
     void urlSchemeTaskWillPerformRedirection(WebURLSchemeHandlerIdentifier, WebCore::ResourceLoaderIdentifier taskIdentifier, WebCore::ResourceResponse&&, WebCore::ResourceRequest&&, CompletionHandler<void(WebCore::ResourceRequest&&)>&&);
@@ -2005,6 +2022,10 @@ private:
     HashMap<TextCheckerRequestID, RefPtr<WebCore::TextCheckingRequest>> m_pendingTextCheckingRequestMap;
 
     bool m_useFixedLayout { false };
+
+    WebCore::FloatSize m_defaultUnobscuredSize;
+    WebCore::FloatSize m_minimumUnobscuredSize;
+    WebCore::FloatSize m_maximumUnobscuredSize;
 
     WebCore::Color m_underlayColor;
 
@@ -2295,8 +2316,6 @@ private:
 
     std::optional<WebCore::SimpleRange> m_initialSelection;
     WebCore::VisibleSelection m_storedSelectionForAccessibility { WebCore::VisibleSelection() };
-    WebCore::FloatSize m_minimumUnobscuredSize;
-    WebCore::FloatSize m_maximumUnobscuredSize;
     int32_t m_deviceOrientation { 0 };
     bool m_keyboardIsAttached { false };
     bool m_canShowWhileLocked { false };
@@ -2315,6 +2334,7 @@ private:
     CompletionHandler<void(InteractionInformationAtPosition&&)> m_pendingSynchronousPositionInformationReply;
     std::optional<std::pair<TransactionID, double>> m_lastLayerTreeTransactionIdAndPageScaleBeforeScalingPage;
     bool m_sendAutocorrectionContextAfterFocusingElement { false };
+    std::unique_ptr<WebCore::IgnoreSelectionChangeForScope> m_ignoreSelectionChangeScopeForDictation;
 #endif // PLATFORM(IOS_FAMILY)
 
     WebCore::Timer m_layerVolatilityTimer;
@@ -2456,7 +2476,7 @@ private:
 #endif
 
 #if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
-    std::unique_ptr<WebCore::ImageOverlay::CroppedImage> m_croppedImageOverlay;
+    WeakHashSet<WebCore::HTMLImageElement> m_elementsToExcludeFromMarkup;
 #endif
 };
 

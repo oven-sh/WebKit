@@ -1350,6 +1350,11 @@ angle::Result ContextMtl::onMakeCurrent(const gl::Context *context)
 angle::Result ContextMtl::onUnMakeCurrent(const gl::Context *context)
 {
     flushCommandBuffer(mtl::WaitUntilScheduled);
+    // Note: this 2nd flush is needed because if there is a query in progress
+    // then during flush, new command buffers are allocated that also need
+    // to be flushed. This is a temporary fix and we should probably refactor
+    // this later. See TODO(anglebug.com/7138)
+    flushCommandBuffer(mtl::WaitUntilScheduled);
     return angle::Result::Continue;
 }
 
@@ -1905,7 +1910,7 @@ void ContextMtl::updateBlendDescArray(const gl::BlendStateExt &blendStateExt)
     for (size_t i = 0; i < mBlendDescArray.size(); i++)
     {
         mtl::BlendDesc &blendDesc = mBlendDescArray[i];
-        if (blendStateExt.mEnabledMask.test(i))
+        if (blendStateExt.getEnabledMask().test(i))
         {
             blendDesc.blendingEnabled = true;
 
@@ -2615,6 +2620,30 @@ angle::Result ContextMtl::checkIfPipelineChanged(const gl::Context *context,
     }
 
     *isPipelineDescChanged = rppChange;
+
+    return angle::Result::Continue;
+}
+
+angle::Result ContextMtl::copy2DTextureSlice0Level0ToWorkTexture(const mtl::TextureRef &srcTexture)
+{
+    if (!mWorkTexture || !mWorkTexture->sameTypeAndDimemsionsAs(srcTexture))
+    {
+        auto formatId = mtl::Format::MetalToAngleFormatID(srcTexture->pixelFormat());
+        auto format   = getPixelFormat(formatId);
+
+        ANGLE_TRY(mtl::Texture::Make2DTexture(this, format, srcTexture->widthAt0(),
+                                              srcTexture->heightAt0(), srcTexture->mipmapLevels(),
+                                              false, true, &mWorkTexture));
+    }
+    auto *blitEncoder = getBlitCommandEncoder();
+    blitEncoder->copyTexture(srcTexture,
+                             0,                          // srcStartSlice
+                             mtl::MipmapNativeLevel(0),  // MipmapNativeLevel
+                             mWorkTexture,               // dst
+                             0,                          // dstStartSlice
+                             mtl::MipmapNativeLevel(0),  // dstStartLevel
+                             1,                          // sliceCount,
+                             1);                         // levelCount
 
     return angle::Result::Continue;
 }

@@ -84,7 +84,7 @@ public:
     }
 
     uint64_t requestID() const { return m_requestID; }
-    const String& target() const { return m_request.frameName(); }
+    const AtomString& target() const { return m_request.frameName(); }
     const ResourceRequest & request() const { return m_request.resourceRequest(); }
     bool allowPopups() const { return m_allowPopups; }
 
@@ -591,30 +591,13 @@ PlatformLayer* PluginView::platformLayer() const
 }
 #endif
 
-JSObject* PluginView::scriptObject(JSGlobalObject* globalObject)
-{
-    // If we're already waiting for synchronous initialization of the plugin,
-    // calls to scriptObject() are from the plug-in itself and need to return 0;
-    if (m_isWaitingForSynchronousInitialization)
-        return 0;
-
-    // We might not have started initialization of the plug-in yet, the plug-in might be in the middle
-    // of being initializing asynchronously, or initialization might have previously failed.
-    if (!m_isInitialized || !m_plugin)
-        return 0;
-
-    UNUSED_PARAM(globalObject);
-    return 0;
-}
-
 void PluginView::storageBlockingStateChanged()
 {
     // The plug-in can be null here if it failed to initialize.
     if (!m_isInitialized || !m_plugin)
         return;
 
-    bool storageBlockingPolicy = !frame()->document()->securityOrigin().canAccessPluginStorage(frame()->document()->topOrigin());
-
+    bool storageBlockingPolicy = frame()->document()->canAccessResource(ScriptExecutionContext::ResourceType::Plugin) != ScriptExecutionContext::HasResourceAccess::Yes;
     m_plugin->storageBlockingStateChanged(storageBlockingPolicy);
 }
 
@@ -1097,7 +1080,8 @@ void PluginView::performJavaScriptURLRequest(URLRequest* request)
     if (!frame)
         return;
     
-    String jsString = PAL::decodeURLEscapeSequences(request->request().url().string().substring(sizeof("javascript:") - 1));
+    auto urlString = request->request().url().string();
+    String jsString = PAL::decodeURLEscapeSequences(StringView(urlString).substring(sizeof("javascript:") - 1));
 
     if (!request->target().isNull()) {
         // For security reasons, only allow JS requests to be made on the frame that contains the plug-in.
@@ -1222,7 +1206,7 @@ void PluginView::pageMutedStateDidChange()
 {
 }
 
-void PluginView::loadURL(uint64_t requestID, const String& method, const String& urlString, const String& target, const HTTPHeaderMap& headerFields, const Vector<uint8_t>& httpBody, bool allowPopups)
+void PluginView::loadURL(uint64_t requestID, const String& method, const String& urlString, const AtomString& target, const HTTPHeaderMap& headerFields, const Vector<uint8_t>& httpBody, bool allowPopups)
 {
     FrameLoadRequest frameLoadRequest { m_pluginElement->document(), m_pluginElement->document().securityOrigin(), { }, target, InitiatedByMainFrame::Unknown };
     frameLoadRequest.resourceRequest().setHTTPMethod(method);
@@ -1231,7 +1215,7 @@ void PluginView::loadURL(uint64_t requestID, const String& method, const String&
     if (!httpBody.isEmpty()) {
         frameLoadRequest.resourceRequest().setHTTPBody(FormData::create(httpBody.data(), httpBody.size()));
         if (frameLoadRequest.resourceRequest().httpContentType().isEmpty())
-            frameLoadRequest.resourceRequest().setHTTPContentType("application/x-www-form-urlencoded");
+            frameLoadRequest.resourceRequest().setHTTPContentType("application/x-www-form-urlencoded"_s);
     }
 
     String referrer = SecurityPolicy::generateReferrerHeader(frame()->document()->referrerPolicy(), frameLoadRequest.resourceRequest().url(), frame()->loader().outgoingReferrer());

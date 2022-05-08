@@ -35,13 +35,19 @@ struct WGPURenderPipelineImpl {
 namespace WebGPU {
 
 class BindGroupLayout;
+class Device;
 
+// https://gpuweb.github.io/gpuweb/#gpurenderpipeline
 class RenderPipeline : public WGPURenderPipelineImpl, public RefCounted<RenderPipeline> {
     WTF_MAKE_FAST_ALLOCATED;
 public:
-    static Ref<RenderPipeline> create(id<MTLRenderPipelineState> renderPipelineState)
+    static Ref<RenderPipeline> create(id<MTLRenderPipelineState> renderPipelineState, Device& device)
     {
-        return adoptRef(*new RenderPipeline(renderPipelineState));
+        return adoptRef(*new RenderPipeline(renderPipelineState, device));
+    }
+    static Ref<RenderPipeline> createInvalid(Device& device)
+    {
+        return adoptRef(*new RenderPipeline(device));
     }
 
     ~RenderPipeline();
@@ -49,12 +55,19 @@ public:
     BindGroupLayout* getBindGroupLayout(uint32_t groupIndex);
     void setLabel(String&&);
 
+    bool isValid() const { return m_renderPipelineState; }
+
     id<MTLRenderPipelineState> renderPipelineState() const { return m_renderPipelineState; }
 
+    Device& device() const { return m_device; }
+
 private:
-    RenderPipeline(id<MTLRenderPipelineState>);
+    RenderPipeline(id<MTLRenderPipelineState>, Device&);
+    RenderPipeline(Device&);
 
     const id<MTLRenderPipelineState> m_renderPipelineState { nil };
+
+    const Ref<Device> m_device;
 };
 
 } // namespace WebGPU

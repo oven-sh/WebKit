@@ -132,9 +132,9 @@ bool WebProcessProxy::hasReachedProcessCountLimit()
 static bool isMainThreadOrCheckDisabled()
 {
 #if PLATFORM(IOS_FAMILY)
-    return LIKELY(RunLoop::isMain()) || !linkedOnOrAfter(SDKVersion::FirstWithMainThreadReleaseAssertionInWebPageProxy);
+    return LIKELY(RunLoop::isMain()) || !linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::MainThreadReleaseAssertionInWebPageProxy);
 #elif PLATFORM(MAC)
-    return LIKELY(RunLoop::isMain()) || !linkedOnOrAfter(SDKVersion::FirstWithMainThreadReleaseAssertionInWebPageProxy);
+    return LIKELY(RunLoop::isMain()) || !linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::MainThreadReleaseAssertionInWebPageProxy);
 #else
     return RunLoop::isMain();
 #endif
@@ -407,7 +407,7 @@ void WebProcessProxy::getLaunchOptions(ProcessLauncher::LaunchOptions& launchOpt
     if (!m_processPool->customWebContentServiceBundleIdentifier().isEmpty())
         launchOptions.customWebContentServiceBundleIdentifier = m_processPool->customWebContentServiceBundleIdentifier().ascii();
     if (WebKit::isInspectorProcessPool(processPool()))
-        launchOptions.extraInitializationData.add("inspector-process"_s, "1"_s);
+        launchOptions.extraInitializationData.add<HashTranslatorASCIILiteral>("inspector-process"_s, "1"_s);
 
     LOG(Language, "WebProcessProxy is getting launch options.");
     auto overrideLanguages = m_processPool->configuration().overrideLanguages();
@@ -423,14 +423,14 @@ void WebProcessProxy::getLaunchOptions(ProcessLauncher::LaunchOptions& launchOpt
             languageString.append(overrideLanguages[i]);
         }
         LOG_WITH_STREAM(Language, stream << "Setting WebProcess's launch OverrideLanguages to " << languageString);
-        launchOptions.extraInitializationData.add("OverrideLanguages"_s, languageString.toString());
+        launchOptions.extraInitializationData.add<HashTranslatorASCIILiteral>("OverrideLanguages"_s, languageString.toString());
     } else
         LOG(Language, "overrideLanguages is still empty. Not setting WebProcess's launch OverrideLanguages.");
 
     launchOptions.nonValidInjectedCodeAllowed = shouldAllowNonValidInjectedCode();
 
     if (isPrewarmed())
-        launchOptions.extraInitializationData.add("is-prewarmed"_s, "1"_s);
+        launchOptions.extraInitializationData.add<HashTranslatorASCIILiteral>("is-prewarmed"_s, "1"_s);
 
 #if PLATFORM(PLAYSTATION)
     launchOptions.processPath = m_processPool->webProcessPath();
@@ -443,8 +443,8 @@ void WebProcessProxy::getLaunchOptions(ProcessLauncher::LaunchOptions& launchOpt
     }
 
     if (m_serviceWorkerInformation) {
-        launchOptions.extraInitializationData.add("service-worker-process"_s, "1"_s);
-        launchOptions.extraInitializationData.add("registrable-domain"_s, m_registrableDomain->string());
+        launchOptions.extraInitializationData.add<HashTranslatorASCIILiteral>("service-worker-process"_s, "1"_s);
+        launchOptions.extraInitializationData.add<HashTranslatorASCIILiteral>("registrable-domain"_s, m_registrableDomain->string());
     }
 }
 
@@ -559,19 +559,19 @@ WebPageProxy* WebProcessProxy::webPage(WebPageProxyIdentifier pageID)
 void WebProcessProxy::notifyPageStatisticsAndDataRecordsProcessed()
 {
     for (auto& page : globalPageMap())
-        page.value->postMessageToInjectedBundle("WebsiteDataScanForRegistrableDomainsFinished", nullptr);
+        page.value->postMessageToInjectedBundle("WebsiteDataScanForRegistrableDomainsFinished"_s, nullptr);
 }
 
 void WebProcessProxy::notifyWebsiteDataScanForRegistrableDomainsFinished()
 {
     for (auto& page : globalPageMap())
-        page.value->postMessageToInjectedBundle("WebsiteDataScanForRegistrableDomainsFinished", nullptr);
+        page.value->postMessageToInjectedBundle("WebsiteDataScanForRegistrableDomainsFinished"_s, nullptr);
 }
 
 void WebProcessProxy::notifyWebsiteDataDeletionForRegistrableDomainsFinished()
 {
     for (auto& page : globalPageMap())
-        page.value->postMessageToInjectedBundle("WebsiteDataDeletionForRegistrableDomainsFinished", nullptr);
+        page.value->postMessageToInjectedBundle("WebsiteDataDeletionForRegistrableDomainsFinished"_s, nullptr);
 }
 
 void WebProcessProxy::setThirdPartyCookieBlockingMode(ThirdPartyCookieBlockingMode thirdPartyCookieBlockingMode, CompletionHandler<void()>&& completionHandler)
@@ -819,9 +819,9 @@ void WebProcessProxy::getNetworkProcessConnection(Messages::WebProcessProxy::Get
 }
 
 #if ENABLE(GPU_PROCESS)
-void WebProcessProxy::getGPUProcessConnection(GPUProcessConnectionParameters&& parameters, Messages::WebProcessProxy::GetGPUProcessConnection::DelayedReply&& reply)
+void WebProcessProxy::createGPUProcessConnection(IPC::Attachment&& connectionIdentifier, WebKit::GPUProcessConnectionParameters&& parameters)
 {
-    m_processPool->getGPUProcessConnection(*this, WTFMove(parameters), WTFMove(reply));
+    m_processPool->createGPUProcessConnection(*this, WTFMove(connectionIdentifier), WTFMove(parameters));
 }
 
 void WebProcessProxy::gpuProcessDidFinishLaunching()
@@ -830,12 +830,9 @@ void WebProcessProxy::gpuProcessDidFinishLaunching()
         page->gpuProcessDidFinishLaunching();
 }
 
-void WebProcessProxy::gpuProcessExited(GPUProcessTerminationReason reason)
+void WebProcessProxy::gpuProcessExited(ProcessTerminationReason reason)
 {
-    if (reason == GPUProcessTerminationReason::IdleExit)
-        WEBPROCESSPROXY_RELEASE_LOG(Process, "gpuProcessExited: reason=idle-exit");
-    else
-        WEBPROCESSPROXY_RELEASE_LOG_ERROR(Process, "gpuProcessExited: reason=%u", static_cast<unsigned>(reason));
+    WEBPROCESSPROXY_RELEASE_LOG_ERROR(Process, "gpuProcessExited: reason=%{public}s", processTerminationReasonToString(reason));
 
     for (auto& page : copyToVectorOf<RefPtr<WebPageProxy>>(m_pageMap.values()))
         page->gpuProcessExited(reason);
@@ -901,7 +898,7 @@ void WebProcessProxy::didClose(IPC::Connection& connection)
 
 void WebProcessProxy::processDidTerminateOrFailedToLaunch(ProcessTerminationReason reason)
 {
-    WEBPROCESSPROXY_RELEASE_LOG_ERROR(Process, "processDidTerminateOrFailedToLaunch: reason=%u", static_cast<unsigned>(reason));
+    WEBPROCESSPROXY_RELEASE_LOG_ERROR(Process, "processDidTerminateOrFailedToLaunch: reason=%{public}s", processTerminationReasonToString(reason));
 
     // Protect ourselves, as the call to shutDown() below may otherwise cause us
     // to be deleted before we can finish our work.
@@ -924,11 +921,12 @@ void WebProcessProxy::processDidTerminateOrFailedToLaunch(ProcessTerminationReas
         callback(false);
 
     if (isStandaloneServiceWorkerProcess())
-        processPool().serviceWorkerProcessCrashed(*this);
+        processPool().serviceWorkerProcessCrashed(*this, reason);
 
     shutDown();
 
 #if ENABLE(PUBLIC_SUFFIX_LIST)
+    // FIXME: Perhaps this should consider ProcessTerminationReasons ExceededMemoryLimit, ExceededCPULimit, Unresponsive as well.
     if (pages.size() == 1 && reason == ProcessTerminationReason::Crash) {
         auto& page = *pages[0];
         String domain = topPrivatelyControlledDomain(URL({ }, page.currentURL()).host().toString());
@@ -1448,7 +1446,7 @@ void WebProcessProxy::sendPrepareToSuspend(IsSuspensionImminent isSuspensionImmi
     sendWithAsyncReply(Messages::WebProcess::PrepareToSuspend(isSuspensionImminent == IsSuspensionImminent::Yes), WTFMove(completionHandler), 0, { }, ShouldStartProcessThrottlerActivity::No);
 }
 
-void WebProcessProxy::sendProcessDidResume()
+void WebProcessProxy::sendProcessDidResume(ResumeReason)
 {
     WEBPROCESSPROXY_RELEASE_LOG(ProcessSuspension, "sendProcessDidResume:");
     if (canSendMessage())
@@ -1789,7 +1787,7 @@ void WebProcessProxy::createSpeechRecognitionServer(SpeechRecognitionServerIdent
 
 #if ENABLE(MEDIA_STREAM)
     auto createRealtimeMediaSource = [weakPage = WeakPtr { targetPage }]() {
-        return weakPage ? weakPage->createRealtimeMediaSourceForSpeechRecognition() : CaptureSourceOrError { "Page is invalid" };
+        return weakPage ? weakPage->createRealtimeMediaSourceForSpeechRecognition() : CaptureSourceOrError { "Page is invalid"_s };
     };
     speechRecognitionServer = makeUnique<SpeechRecognitionServer>(*connection(), identifier, WTFMove(permissionChecker), WTFMove(checkIfMockCaptureDevicesEnabled), WTFMove(createRealtimeMediaSource));
 #else
@@ -2079,7 +2077,7 @@ void WebProcessProxy::enableRemoteWorkers(RemoteWorkerType workerType, const Use
 void WebProcessProxy::didCreateSleepDisabler(SleepDisablerIdentifier identifier, const String& reason, bool display)
 {
     MESSAGE_CHECK(!reason.isNull());
-    auto sleepDisabler = makeUnique<WebCore::SleepDisabler>(reason.utf8().data(), display ? PAL::SleepDisabler::Type::Display : PAL::SleepDisabler::Type::System);
+    auto sleepDisabler = makeUnique<WebCore::SleepDisabler>(reason, display ? PAL::SleepDisabler::Type::Display : PAL::SleepDisabler::Type::System);
     m_sleepDisablers.add(identifier, WTFMove(sleepDisabler));
 }
 
@@ -2102,6 +2100,11 @@ void WebProcessProxy::markProcessAsRecentlyUsed()
 void WebProcessProxy::systemBeep()
 {
     PAL::systemBeep();
+}
+
+void WebProcessProxy::getNotifications(const URL& registrationURL, const String& tag, CompletionHandler<void(Vector<NotificationData>&&)>&& callback)
+{
+    WebNotificationManagerProxy::sharedServiceWorkerManager().getNotifications(registrationURL, tag, sessionID(), WTFMove(callback));
 }
 
 } // namespace WebKit

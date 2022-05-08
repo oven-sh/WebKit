@@ -389,8 +389,9 @@ static JSC::Yarr::RegularExpression createRegExpForLabels(const Vector<String>& 
         bool startsWithWordCharacter = false;
         bool endsWithWordCharacter = false;
         if (label.length()) {
-            startsWithWordCharacter = wordRegExp.get().match(label.substring(0, 1)) >= 0;
-            endsWithWordCharacter = wordRegExp.get().match(label.substring(label.length() - 1, 1)) >= 0;
+            StringView labelView { label };
+            startsWithWordCharacter = wordRegExp.get().match(labelView.left(1)) >= 0;
+            endsWithWordCharacter = wordRegExp.get().match(labelView.right(1)) >= 0;
         }
 
         // Search for word boundaries only if label starts/ends with "word characters".
@@ -503,7 +504,7 @@ static String matchLabelsAgainstString(const Vector<String>& labels, const Strin
 
     // Make numbers and _'s in field names behave like word boundaries, e.g., "address2"
     replace(mutableStringToMatch, JSC::Yarr::RegularExpression("\\d"), " ");
-    mutableStringToMatch.replace('_', ' ');
+    mutableStringToMatch = makeStringByReplacingAll(mutableStringToMatch, '_', ' ');
     
     JSC::Yarr::RegularExpression regExp = createRegExpForLabels(labels);
     // Use the largest match we can find in the whole string
@@ -601,7 +602,7 @@ bool Frame::requestDOMPasteAccess(DOMPasteAccessCategory pasteAccessCategory)
 
 void Frame::setPrinting(bool printing, const FloatSize& pageSize, const FloatSize& originalPageSize, float maximumShrinkRatio, AdjustViewSizeOrNot shouldAdjustViewSize)
 {
-    if (!view())
+    if (!view() || !document())
         return;
     // In setting printing, we should not validate resources already cached for the document.
     // See https://bugs.webkit.org/show_bug.cgi?id=43704
@@ -1128,10 +1129,10 @@ void Frame::resetScript()
 Frame* Frame::fromJSContext(JSContextRef context)
 {
     JSC::JSGlobalObject* globalObjectObj = toJS(context);
-    if (auto* window = JSC::jsDynamicCast<JSDOMWindow*>(globalObjectObj->vm(), globalObjectObj))
+    if (auto* window = JSC::jsDynamicCast<JSDOMWindow*>(globalObjectObj))
         return window->wrapped().frame();
 #if ENABLE(SERVICE_WORKER)
-    if (auto* serviceWorkerGlobalScope = JSC::jsDynamicCast<JSServiceWorkerGlobalScope*>(globalObjectObj->vm(), globalObjectObj))
+    if (auto* serviceWorkerGlobalScope = JSC::jsDynamicCast<JSServiceWorkerGlobalScope*>(globalObjectObj))
         return serviceWorkerGlobalScope->wrapped().serviceWorkerPage() ? &serviceWorkerGlobalScope->wrapped().serviceWorkerPage()->mainFrame() : nullptr;
 #endif
     return nullptr;
@@ -1149,7 +1150,7 @@ Frame* Frame::contentFrameFromWindowOrFrameElement(JSContextRef context, JSValue
     if (auto* window = JSDOMWindow::toWrapped(vm, value))
         return window->frame();
 
-    auto* jsNode = JSC::jsDynamicCast<JSNode*>(vm, value);
+    auto* jsNode = JSC::jsDynamicCast<JSNode*>(value);
     if (!jsNode || !is<HTMLFrameOwnerElement>(jsNode->wrapped()))
         return nullptr;
     return downcast<HTMLFrameOwnerElement>(jsNode->wrapped()).contentFrame();

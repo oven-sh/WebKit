@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include "CommonAtomStrings.h"
 #include "FEConvolveMatrix.h"
 #include "SVGFilterPrimitiveStandardAttributes.h"
 
@@ -40,7 +41,7 @@ struct SVGPropertyTraits<EdgeModeType> {
         case EdgeModeType::Wrap:
             return "wrap"_s;
         case EdgeModeType::None:
-            return "none"_s;
+            return noneAtom();
         }
 
         ASSERT_NOT_REACHED();
@@ -53,7 +54,7 @@ struct SVGPropertyTraits<EdgeModeType> {
             return EdgeModeType::Duplicate;
         if (value == "wrap")
             return EdgeModeType::Wrap;
-        if (value == "none")
+        if (value == noneAtom())
             return EdgeModeType::None;
         return EdgeModeType::Unknown;
     }
@@ -103,8 +104,8 @@ private:
     void svgAttributeChanged(const QualifiedName&) override;
 
     bool setFilterEffectAttribute(FilterEffect*, const QualifiedName&) override;
-    Vector<AtomString> filterEffectInputsNames() const override { return { in1() }; }
-    RefPtr<FilterEffect> filterEffect(const SVGFilterBuilder&, const FilterEffectVector&) const override;
+    Vector<AtomString> filterEffectInputsNames() const override { return { AtomString { in1() } }; }
+    RefPtr<FilterEffect> filterEffect(const SVGFilter&, const FilterEffectVector&, const GraphicsContext& destinationContext) const override;
 
     PropertyRegistry m_propertyRegistry { *this };
     Ref<SVGAnimatedString> m_in1 { SVGAnimatedString::create(this) };

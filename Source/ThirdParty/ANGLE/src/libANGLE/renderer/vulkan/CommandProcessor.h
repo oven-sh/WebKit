@@ -425,6 +425,9 @@ class CommandQueue final : public CommandQueueInterface
 
     VkQueue getQueue(egl::ContextPriority priority) { return mQueueMap[priority]; }
 
+    const angle::VulkanPerfCounters &getPerfCounters() const { return mPerfCounters; }
+    void resetPerFramePerfCounters();
+
   private:
     void releaseToCommandBatch(bool hasProtectedContent,
                                PrimaryCommandBuffer &&commandBuffer,
@@ -479,6 +482,8 @@ class CommandQueue final : public CommandQueueInterface
     DeviceQueueMap mQueueMap;
 
     FenceRecycler mFenceRecycler;
+
+    angle::VulkanPerfCounters mPerfCounters;
 };
 
 // CommandProcessor is used to dispatch work to the GPU when the asyncCommandQueue feature is
@@ -486,7 +491,7 @@ class CommandQueue final : public CommandQueueInterface
 // and shut down. This command is sent when the renderer instance shuts down. Tasks are defined by
 // the CommandQueue interface.
 
-class CommandProcessor : public Context, public CommandQueueInterface
+class CommandProcessor final : public Context, public CommandQueueInterface
 {
   public:
     CommandProcessor(RendererVk *renderer);
@@ -568,6 +573,14 @@ class CommandProcessor : public Context, public CommandQueueInterface
     uint32_t getDeviceQueueIndex() const { return mCommandQueue.getDeviceQueueIndex(); }
     VkQueue getQueue(egl::ContextPriority priority) { return mCommandQueue.getQueue(priority); }
 
+    // Note that due to inheritance from vk::Context, this class has a set of perf counters as well,
+    // but currently only the counters in the member command queue are of interest.
+    const angle::VulkanPerfCounters &getPerfCounters() const
+    {
+        return mCommandQueue.getPerfCounters();
+    }
+    void resetPerFramePerfCounters() { mCommandQueue.resetPerFramePerfCounters(); }
+
   private:
     bool hasPendingError() const
     {
@@ -619,6 +632,25 @@ class CommandProcessor : public Context, public CommandQueueInterface
 
     // Command queue worker thread.
     std::thread mTaskThread;
+};
+
+// An RAII wrapper for locking and unlocking the command-queue mutex.  On destructor, this class
+// handles device loss, if it has happened.  This is because handling device loss affects the
+// command queue state, so it's deferred until the current scope that's using the command queue
+// state is finished.
+class ANGLE_NO_DISCARD ScopedCommandQueueLock final
+{
+  public:
+    ScopedCommandQueueLock(RendererVk *renderer, std::mutex &lock)
+        : mRenderer(renderer), mLock(lock)
+    {
+        lock.lock();
+    }
+    ~ScopedCommandQueueLock();
+
+  private:
+    RendererVk *mRenderer;
+    std::mutex &mLock;
 };
 
 }  // namespace vk

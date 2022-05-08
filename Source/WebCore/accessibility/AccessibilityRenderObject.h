@@ -89,9 +89,9 @@ public:
     AccessibilityObject* nextSibling() const override;
     AccessibilityObject* parentObject() const override;
     AccessibilityObject* parentObjectIfExists() const override;
-    AXCoreObject* parentObjectUnignored() const override;
+    AccessibilityObject* parentObjectUnignored() const override;
     AccessibilityObject* observableObject() const override;
-    void linkedUIElements(AccessibilityChildrenVector&) const override;
+    AccessibilityChildrenVector linkedObjects() const override;
     AccessibilityObject* titleUIElement() const override;
 
     bool supportsARIAOwns() const override;
@@ -266,15 +266,11 @@ private:
     
     void ariaSelectedRows(AccessibilityChildrenVector&);
     
-    bool elementAttributeValue(const QualifiedName&) const;
-    void setElementAttributeValue(const QualifiedName&, bool);
-    
     OptionSet<SpeakAs> speakAsProperty() const override;
     
     const String liveRegionStatus() const override;
     const String liveRegionRelevant() const override;
     bool liveRegionAtomic() const override;
-    bool isBusy() const override;
 
     bool inheritsPresentationalRole() const override;
 

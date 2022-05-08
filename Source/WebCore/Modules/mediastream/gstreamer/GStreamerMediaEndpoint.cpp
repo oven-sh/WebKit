@@ -216,7 +216,8 @@ bool GStreamerMediaEndpoint::setConfiguration(MediaEndpointConfiguration& config
         bool stunSet = false;
         for (auto& url : server.urls) {
             if (url.protocol().startsWith("turn")) {
-                auto valid = url.string().isolatedCopy().replace("turn:", "turn://").replace("turns:", "turns://");
+                auto valid = makeStringByReplacingAll(url.string().isolatedCopy(), "turn:"_s, "turn://"_s);
+                valid = makeStringByReplacingAll(valid, "turns:"_s, "turns://"_s);
                 URL validURL(URL(), valid);
                 // FIXME: libnice currently doesn't seem to handle IPv6 addresses very well.
                 if (validURL.host().startsWith('['))
@@ -229,7 +230,7 @@ bool GStreamerMediaEndpoint::setConfiguration(MediaEndpointConfiguration& config
                     GST_WARNING("Unable to use TURN server: %s", validURL.string().utf8().data());
             }
             if (!stunSet && url.protocol().startsWith("stun")) {
-                auto valid = url.string().isolatedCopy().replace("stun:", "stun://");
+                auto valid = makeStringByReplacingAll(url.string().isolatedCopy(), "stun:"_s, "stun://"_s);
                 URL validURL(URL(), valid);
                 // FIXME: libnice currently doesn't seem to handle IPv6 addresses very well.
                 if (validURL.host().startsWith('['))
@@ -269,7 +270,7 @@ static std::optional<std::pair<RTCSdpType, String>> fetchDescription(GstElement*
 
     GUniquePtr<char> sdpString(gst_sdp_message_as_text(description->sdp));
     GST_TRACE_OBJECT(webrtcBin, "%s-description SDP: %s", name, sdpString.get());
-    return { { fromSessionDescriptionType(*description.get()), sdpString.get() } };
+    return { { fromSessionDescriptionType(*description.get()), String::fromLatin1(sdpString.get()) } };
 }
 
 static GstWebRTCSignalingState fetchSignalingState(GstElement* webrtcBin)
@@ -456,7 +457,7 @@ void GStreamerMediaEndpoint::storeRemoteMLineInfo(GstSDPMessage* message)
             continue;
         }
 
-        m_mediaForMid.set({ mid }, g_str_equal(mediaType, "audio") ? RealtimeMediaSource::Type::Audio : RealtimeMediaSource::Type::Video);
+        m_mediaForMid.set(String::fromLatin1(mid), g_str_equal(mediaType, "audio"_s) ? RealtimeMediaSource::Type::Audio : RealtimeMediaSource::Type::Video);
 
         // https://gitlab.freedesktop.org/gstreamer/gst-plugins-bad/-/merge_requests/1907
         if (sdpMediaHasAttributeKey(media, "ice-lite")) {
@@ -586,7 +587,7 @@ bool GStreamerMediaEndpoint::addTrack(GStreamerRtpSenderBackend& sender, MediaSt
     GStreamerRtpSenderBackend::Source source;
     GRefPtr<GstWebRTCRTPSender> rtcSender;
 
-    if (track.privateTrack().hasAudio()) {
+    if (track.privateTrack().isAudio()) {
         GST_DEBUG_OBJECT(m_pipeline.get(), "Adding outgoing audio source");
         auto audioSource = RealtimeOutgoingAudioSourceGStreamer::create(track.privateTrack());
         configureAndLinkSource(audioSource);
@@ -594,7 +595,7 @@ bool GStreamerMediaEndpoint::addTrack(GStreamerRtpSenderBackend& sender, MediaSt
         rtcSender = audioSource->sender();
         source = WTFMove(audioSource);
     } else {
-        ASSERT(track.privateTrack().hasVideo());
+        ASSERT(track.privateTrack().isVideo());
         GST_DEBUG_OBJECT(m_pipeline.get(), "Adding outgoing video source");
         auto videoSource = RealtimeOutgoingVideoSourceGStreamer::create(track.privateTrack());
         configureAndLinkSource(videoSource);
@@ -605,7 +606,7 @@ bool GStreamerMediaEndpoint::addTrack(GStreamerRtpSenderBackend& sender, MediaSt
 
     sender.setSource(WTFMove(source));
 
-    if (auto rtpSender = sender.rtcSender()) {
+    if (sender.rtcSender()) {
         GST_DEBUG_OBJECT(m_pipeline.get(), "Already has a sender.");
         return true;
     }
@@ -733,14 +734,14 @@ void GStreamerMediaEndpoint::addRemoteStream(GstPad* pad)
     auto sdpString = makeString(sdp.get());
 
     GUniquePtr<gchar> name(gst_pad_get_name(pad));
-    String label(name.get());
+    auto label = String::fromLatin1(name.get());
     auto key = makeString("msid:");
     auto lines = sdpString.split('\n');
     for (auto& line : lines) {
         auto i = line.find(key);
         if (i != notFound) {
             auto tmp = line.substring(i + key.ascii().length());
-            label = tmp.substring(0, tmp.find(' '));
+            label = tmp.left(tmp.find(' '));
             break;
         }
     }
@@ -880,10 +881,10 @@ std::optional<GStreamerMediaEndpoint::Backends> GStreamerMediaEndpoint::addTrans
 
 GStreamerRtpSenderBackend::Source GStreamerMediaEndpoint::createSourceForTrack(MediaStreamTrack& track)
 {
-    if (track.privateTrack().hasAudio())
+    if (track.privateTrack().isAudio())
         return RealtimeOutgoingAudioSourceGStreamer::create(track.privateTrack());
 
-    ASSERT(track.privateTrack().hasVideo());
+    ASSERT(track.privateTrack().isVideo());
     return RealtimeOutgoingVideoSourceGStreamer::create(track.privateTrack());
 }
 
@@ -924,7 +925,7 @@ void GStreamerMediaEndpoint::addIceCandidate(GStreamerIceCandidate& candidate, P
 
     if (!candidate.candidate.startsWith("candidate:")) {
         callOnMainThread([task = createSharedTask<PeerConnectionBackend::AddIceCandidateCallbackFunction>(WTFMove(callback))]() mutable {
-            task->run(Exception { OperationError, "Expect line: candidate:<candidate-str>" });
+            task->run(Exception { OperationError, "Expect line: candidate:<candidate-str>"_s });
         });
         return;
     }
@@ -932,7 +933,7 @@ void GStreamerMediaEndpoint::addIceCandidate(GStreamerIceCandidate& candidate, P
     auto parsedCandidate = parseIceCandidateSDP(candidate.candidate);
     if (!parsedCandidate) {
         callOnMainThread([task = createSharedTask<PeerConnectionBackend::AddIceCandidateCallbackFunction>(WTFMove(callback))]() mutable {
-            task->run(Exception { OperationError, "Error processing ICE candidate" });
+            task->run(Exception { OperationError, "Error processing ICE candidate"_s });
         });
         return;
     }
@@ -1085,9 +1086,9 @@ void GStreamerMediaEndpoint::createSessionDescriptionSucceeded(GUniquePtr<GstWeb
 
         GUniquePtr<char> sdp(gst_sdp_message_as_text(description->sdp));
         if (m_isInitiator)
-            m_peerConnectionBackend.createOfferSucceeded(sdp.get());
+            m_peerConnectionBackend.createOfferSucceeded(String::fromLatin1(sdp.get()));
         else
-            m_peerConnectionBackend.createAnswerSucceeded(sdp.get());
+            m_peerConnectionBackend.createAnswerSucceeded(String::fromLatin1(sdp.get()));
     });
 }
 
@@ -1097,7 +1098,7 @@ void GStreamerMediaEndpoint::createSessionDescriptionFailed(GUniquePtr<GError>&&
         if (isStopped())
             return;
 
-        auto exc = Exception { OperationError, error ? error->message : "Unknown Error" };
+        auto exc = Exception { OperationError, error ? String::fromUTF8(error->message) : "Unknown Error"_s };
         if (m_isInitiator)
             m_peerConnectionBackend.createOfferFailed(WTFMove(exc));
         else
@@ -1125,7 +1126,7 @@ void GStreamerMediaEndpoint::collectTransceivers()
         if (!receiver || !mid)
             continue;
 
-        m_peerConnectionBackend.newRemoteTransceiver(WTF::makeUnique<GStreamerRtpTransceiverBackend>(WTFMove(current)), m_mediaForMid.get(mid.get()));
+        m_peerConnectionBackend.newRemoteTransceiver(WTF::makeUnique<GStreamerRtpTransceiverBackend>(WTFMove(current)), m_mediaForMid.get(String::fromLatin1(mid.get())));
     }
 }
 

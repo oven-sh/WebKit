@@ -288,7 +288,7 @@ public:
     virtual void mediaPlayerQueueTaskOnEventLoop(Function<void()>&& task) { callOnMainThread(WTFMove(task)); }
 
 #if PLATFORM(COCOA)
-    virtual void mediaPlayerOnNewVideoFrameMetadata(VideoFrameMetadata&&, RetainPtr<CVPixelBufferRef>&&) { }
+    virtual void mediaPlayerOnNewVideoFrameMetadata(VideoFrameMetadata&&) { }
 #endif
 
     virtual bool mediaPlayerPrefersSandboxedParsing() const { return false; }
@@ -358,7 +358,7 @@ public:
 
     bool load(const URL&, const ContentType&, const String& keySystem);
 #if ENABLE(MEDIA_SOURCE)
-    bool load(const URL&, const ContentType&, MediaSourcePrivateClient*);
+    bool load(const URL&, const ContentType&, MediaSourcePrivateClient&);
 #endif
 #if ENABLE(MEDIA_STREAM)
     bool load(MediaStreamPrivate&);
@@ -590,7 +590,7 @@ public:
     void removeVideoTrack(VideoTrackPrivate&);
 
 #if PLATFORM(COCOA)
-    void onNewVideoFrameMetadata(VideoFrameMetadata&&, RetainPtr<CVPixelBufferRef>&&);
+    void onNewVideoFrameMetadata(VideoFrameMetadata&&);
 #endif
 
     bool requiresTextTrackRepresentation() const;
@@ -738,7 +738,7 @@ private:
     PitchCorrectionAlgorithm m_pitchCorrectionAlgorithm { PitchCorrectionAlgorithm::BestAllAround };
 
 #if ENABLE(MEDIA_SOURCE)
-    RefPtr<MediaSourcePrivateClient> m_mediaSource;
+    WeakPtr<MediaSourcePrivateClient> m_mediaSource;
 #endif
 #if ENABLE(MEDIA_STREAM)
     RefPtr<MediaStreamPrivate> m_mediaStream;

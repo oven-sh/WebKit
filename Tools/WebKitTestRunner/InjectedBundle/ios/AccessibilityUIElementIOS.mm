@@ -82,6 +82,7 @@ typedef void (*AXPostedNotificationCallback)(id element, NSString* notification,
 - (NSUInteger)accessibilityARIAColumnCount;
 - (NSUInteger)accessibilityARIARowIndex;
 - (NSUInteger)accessibilityARIAColumnIndex;
+- (BOOL)accessibilityARIAIsBusy;
 - (NSString *)accessibilityInvalidStatus;
 - (UIAccessibilityTraits)_axContainedByFieldsetTrait;
 - (id)_accessibilityFieldsetAncestor;
@@ -104,6 +105,8 @@ typedef void (*AXPostedNotificationCallback)(id element, NSString* notification,
 - (BOOL)accessibilityIsInDescriptionListDefinition;
 - (BOOL)accessibilityIsInDescriptionListTerm;
 - (BOOL)_accessibilityIsInTableCell;
+- (BOOL)accessibilityIsAttributeSettable:(NSString *)attributeName;
+- (BOOL)accessibilityIsRequired;
 - (id)_accessibilityTableAncestor;
 - (id)_accessibilityLandmarkAncestor;
 - (id)_accessibilityListAncestor;
@@ -486,7 +489,7 @@ bool AccessibilityUIElement::boolAttributeValue(JSStringRef attribute)
 
 bool AccessibilityUIElement::isAttributeSettable(JSStringRef attribute)
 {
-    return false;
+    return [m_element accessibilityIsAttributeSettable:[NSString stringWithJSStringRef:attribute]];
 }
 
 bool AccessibilityUIElement::isAttributeSupported(JSStringRef attribute)
@@ -629,6 +632,11 @@ bool AccessibilityUIElement::isDecrementActionSupported()
     return false;
 }
 
+bool AccessibilityUIElement::isBusy() const
+{
+    return [m_element accessibilityARIAIsBusy];
+}
+
 bool AccessibilityUIElement::isEnabled()
 {
     return false;
@@ -636,7 +644,7 @@ bool AccessibilityUIElement::isEnabled()
 
 bool AccessibilityUIElement::isRequired() const
 {
-    return false;
+    return [m_element accessibilityIsRequired];
 }
 
 RefPtr<AccessibilityUIElement> AccessibilityUIElement::focusedElement() const

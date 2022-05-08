@@ -85,7 +85,7 @@ Ref<RTCDataChannelEvent> GStreamerDataChannelHandler::createDataChannelEvent(Doc
     init.ordered = ordered;
     init.maxPacketLifeTime = maxPacketLifeTime;
     init.maxRetransmits = maxRetransmits;
-    init.protocol = String(protocol.get());
+    init.protocol = String::fromLatin1(protocol.get());
     init.negotiated = negotiated;
     init.id = id;
 
@@ -176,7 +176,10 @@ void GStreamerDataChannelHandler::checkState()
 
     RTCDataChannelState state;
     switch (channelState) {
+#if !GST_CHECK_VERSION(1, 21, 0)
+    // Removed in https://gitlab.freedesktop.org/gstreamer/gstreamer/-/merge_requests/2099.
     case GST_WEBRTC_DATA_CHANNEL_STATE_NEW:
+#endif
     case GST_WEBRTC_DATA_CHANNEL_STATE_CONNECTING:
         state = RTCDataChannelState::Connecting;
         break;

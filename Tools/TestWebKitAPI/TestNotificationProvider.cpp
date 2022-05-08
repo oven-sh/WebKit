@@ -27,13 +27,23 @@
 #include "TestNotificationProvider.h"
 
 #include "WTFStringUtilities.h"
+#include <WebKit/WKArray.h>
+#include <WebKit/WKContext.h>
+#include <WebKit/WKMutableDictionary.h>
+#include <WebKit/WKNotification.h>
 #include <WebKit/WKNotificationManager.h>
 #include <WebKit/WKNumber.h>
+#include <WebKit/WKPage.h>
 #include <WebKit/WKSecurityOriginRef.h>
 #include <WebKit/WKString.h>
 #include <wtf/text/WTFString.h>
 
 namespace TestWebKitAPI {
+
+static void showWebNotification(WKPageRef page, WKNotificationRef notification, const void* clientInfo)
+{
+    static_cast<TestNotificationProvider*>(const_cast<void*>(clientInfo))->showWebNotification(page, notification);
+}
 
 static WKDictionaryRef notificationPermissions(const void* clientInfo)
 {
@@ -42,11 +52,10 @@ static WKDictionaryRef notificationPermissions(const void* clientInfo)
 
 TestNotificationProvider::TestNotificationProvider(Vector<WKNotificationManagerRef>&& managers)
     : m_managers(WTFMove(managers))
-    , m_permissions(adoptWK(WKMutableDictionaryCreate()))
 {
     m_provider = {
         { 0, this },
-        0, // showWebNotification
+        &TestWebKitAPI::showWebNotification,
         0, // closeWebNotification
         0, // didDestroyNotification
         0, // addNotificationManager
@@ -67,19 +76,65 @@ TestNotificationProvider::~TestNotificationProvider()
 
 WKDictionaryRef TestNotificationProvider::notificationPermissions() const
 {
-    WKRetain(m_permissions.get());
-    return m_permissions.get();
+    auto permissions = WKMutableDictionaryCreate();
+
+    for (auto& [origin, allowed] : m_permissions) {
+        auto wkOriginString = adoptWK(WKStringCreateWithUTF8CString(origin.utf8().data()));
+        auto wkAllowed = adoptWK(WKBooleanCreate(allowed));
+        WKDictionarySetItem(permissions, wkOriginString.get(), wkAllowed.get());
+    }
+
+    return permissions;
 }
 
 void TestNotificationProvider::setPermission(const String& origin, bool allowed)
 {
-    auto wkAllowed = adoptWK(WKBooleanCreate(allowed));
-    auto wkOriginString = adoptWK(WKStringCreateWithUTF8CString(origin.utf8().data()));
-    WKDictionarySetItem(m_permissions.get(), wkOriginString.get(), wkAllowed.get());
+    m_permissions.set(origin, allowed);
 
+    auto wkOriginString = adoptWK(WKStringCreateWithUTF8CString(origin.utf8().data()));
     auto wkOrigin = adoptWK(WKSecurityOriginCreateFromString(wkOriginString.get()));
+
     for (auto& manager : m_managers)
         WKNotificationManagerProviderDidUpdateNotificationPolicy(manager, wkOrigin.get(), allowed);
+}
+
+void TestNotificationProvider::resetPermission(const String& origin)
+{
+    m_permissions.remove(origin);
+
+    auto wkOriginString = adoptWK(WKStringCreateWithUTF8CString(origin.utf8().data()));
+    auto wkOrigin = adoptWK(WKSecurityOriginCreateFromString(wkOriginString.get()));
+    auto wkOriginTypeRef = static_cast<WKTypeRef>(wkOrigin.get());
+    auto wkOriginArray = adoptWK(WKArrayCreate(&wkOriginTypeRef, 1));
+
+    for (auto& manager : m_managers)
+        WKNotificationManagerProviderDidRemoveNotificationPolicies(manager, wkOriginArray.get());
+}
+
+static WKNotificationManagerRef notificationManagerForPage(WKPageRef page)
+{
+    if (page)
+        return WKContextGetNotificationManager(WKPageGetContext(page));
+
+    return WKNotificationManagerGetSharedServiceWorkerNotificationManager();
+}
+
+void TestNotificationProvider::showWebNotification(WKPageRef page, WKNotificationRef notification)
+{
+    auto notificationManager = notificationManagerForPage(page);
+    uint64_t identifier = WKNotificationGetID(notification);
+    WKNotificationManagerProviderDidShowNotification(notificationManager, identifier);
+
+    WKRetain(notificationManager);
+    m_pendingNotification = std::make_pair(notificationManager, identifier);
+}
+
+void TestNotificationProvider::simulateNotificationClick()
+{
+    callOnMainThread([pair = std::exchange(m_pendingNotification, { })] {
+        WKNotificationManagerProviderDidClickNotification(pair.first, pair.second);
+        WKRelease(pair.first);
+    });
 }
 
 } // namespace TestWebKitAPI

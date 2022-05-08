@@ -221,9 +221,9 @@ RenderText::~RenderText()
     ASSERT(!originalTextMap().contains(this));
 }
 
-const char* RenderText::renderName() const
+ASCIILiteral RenderText::renderName() const
 {
-    return "RenderText";
+    return "RenderText"_s;
 }
 
 Text* RenderText::textNode() const
@@ -1351,7 +1351,7 @@ void RenderText::setRenderedText(const String& newText)
     m_text = newText;
 
     if (m_useBackslashAsYenSymbol)
-        m_text.replace('\\', yenSign);
+        m_text = makeStringByReplacingAll(m_text, '\\', yenSign);
     
     const auto& style = this->style();
     if (style.textTransform() != TextTransform::None)
@@ -1559,6 +1559,9 @@ float RenderText::width(unsigned from, unsigned length, const FontCascade& fontC
     auto& style = this->style();
     if (auto width = combineTextWidth(*this, fontCascade, style))
         return *width;
+
+    if (length == 1 && (characterAt(from) == space))
+        return canUseSimplifiedTextMeasuring() ? fontCascade.primaryFont().spaceWidth() : fontCascade.widthOfSpaceString();
 
     float width = 0.f;
     if (&fontCascade == &style.fontCascade()) {

@@ -23,6 +23,7 @@
 #include "ActivityState.h"
 #include "AnimationFrameRate.h"
 #include "Color.h"
+#include "ContentSecurityPolicy.h"
 #include "DisabledAdaptations.h"
 #include "Document.h"
 #include "FindOptions.h"
@@ -56,6 +57,7 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
 #include <wtf/Ref.h>
+#include <wtf/RobinHoodHashSet.h>
 #include <wtf/UniqueRef.h>
 #include <wtf/WeakHashMap.h>
 #include <wtf/WeakHashSet.h>
@@ -169,10 +171,10 @@ class ValidationMessageClient;
 class VisibleSelection;
 class VisitedLinkStore;
 class WebGLStateTracker;
-class WebLockRegistry;
 class WheelEventDeltaFilter;
 class WheelEventTestMonitor;
 
+struct AXTreeData;
 struct ApplePayAMSUIRequest;
 struct SimpleRange;
 struct TextRecognitionResult;
@@ -304,8 +306,6 @@ public:
 
     BroadcastChannelRegistry& broadcastChannelRegistry() { return m_broadcastChannelRegistry; }
     WEBCORE_EXPORT void setBroadcastChannelRegistry(Ref<BroadcastChannelRegistry>&&); // Only used by WebKitLegacy.
-
-    WebLockRegistry& webLockRegistry() { return m_webLockRegistry; }
 
     WEBCORE_EXPORT static void forEachPage(const Function<void(Page&)>&);
     WEBCORE_EXPORT static unsigned nonUtilityPageCount();
@@ -943,6 +943,7 @@ public:
     AttachmentElementClient* attachmentElementClient() { return m_attachmentElementClient.get(); }
 #endif
 
+    WEBCORE_EXPORT std::optional<AXTreeData> accessibilityTreeData() const;
 #if USE(ATSPI)
     AccessibilityRootAtspi* accessibilityRootObject() const { return m_accessibilityRootObject; }
     void setAccessibilityRootObject(AccessibilityRootAtspi* rootObject) { m_accessibilityRootObject = rootObject; }
@@ -955,12 +956,16 @@ public:
 
     void timelineControllerMaximumAnimationFrameRateDidChange(DocumentTimelinesController&);
 
+    ContentSecurityPolicyModeForExtension contentSecurityPolicyModeForExtension() const { return m_contentSecurityPolicyModeForExtension; }
+
 private:
     struct Navigation {
         RegistrableDomain domain;
         FrameLoadType type;
     };
     void logNavigation(const Navigation&);
+
+    static void firstTimeInitialization();
 
     WEBCORE_EXPORT void initGroup();
 
@@ -1157,8 +1162,8 @@ private:
 
     RefPtr<IDBClient::IDBConnectionToServer> m_idbConnectionToServer;
 
-    HashSet<String> m_seenPlugins;
-    HashSet<String> m_seenMediaEngines;
+    MemoryCompactRobinHoodHashSet<String> m_seenPlugins;
+    MemoryCompactRobinHoodHashSet<String> m_seenMediaEngines;
 
     unsigned m_lastSpatialNavigationCandidatesCount { 0 };
     unsigned m_forbidPromptsDepth { 0 };
@@ -1174,7 +1179,6 @@ private:
     Ref<UserContentProvider> m_userContentProvider;
     Ref<VisitedLinkStore> m_visitedLinkStore;
     Ref<BroadcastChannelRegistry> m_broadcastChannelRegistry;
-    Ref<WebLockRegistry> m_webLockRegistry;
     RefPtr<WheelEventTestMonitor> m_wheelEventTestMonitor;
     WeakHashSet<ActivityStateChangeObserver> m_activityStateChangeObservers;
 
@@ -1280,7 +1284,7 @@ private:
 
     Vector<UserContentURLPattern> m_corsDisablingPatterns;
     Vector<UserStyleSheet> m_userStyleSheetsPendingInjection;
-    std::optional<HashSet<String>> m_allowedNetworkHosts;
+    std::optional<MemoryCompactLookupOnlyRobinHoodHashSet<String>> m_allowedNetworkHosts;
     bool m_isTakingSnapshotsForApplicationSuspension { false };
     bool m_loadsSubresources { true };
     bool m_canUseCredentialStorage { true };
@@ -1313,6 +1317,8 @@ private:
 #if USE(ATSPI)
     AccessibilityRootAtspi* m_accessibilityRootObject { nullptr };
 #endif
+
+    ContentSecurityPolicyModeForExtension m_contentSecurityPolicyModeForExtension { ContentSecurityPolicyModeForExtension::None };
 };
 
 inline PageGroup& Page::group()

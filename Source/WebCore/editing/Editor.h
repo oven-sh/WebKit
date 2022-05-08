@@ -35,6 +35,7 @@
 #include "Frame.h"
 #include "FrameSelection.h"
 #include "PasteboardWriterData.h"
+#include <wtf/RobinHoodHashSet.h>
 #include "ScrollView.h"
 #include "TextChecking.h"
 #include "TextEventInputType.h"
@@ -128,9 +129,12 @@ enum class TemporarySelectionOption : uint8_t {
 };
 
 class TemporarySelectionChange {
+    WTF_MAKE_NONCOPYABLE(TemporarySelectionChange); WTF_MAKE_FAST_ALLOCATED;
 public:
     WEBCORE_EXPORT TemporarySelectionChange(Document&, std::optional<VisibleSelection> = std::nullopt, OptionSet<TemporarySelectionOption> = { });
     WEBCORE_EXPORT ~TemporarySelectionChange();
+
+    WEBCORE_EXPORT void invalidate();
 
 private:
     enum class IsTemporarySelection { No, Yes };
@@ -147,11 +151,14 @@ private:
 };
 
 class IgnoreSelectionChangeForScope {
+    WTF_MAKE_NONCOPYABLE(IgnoreSelectionChangeForScope); WTF_MAKE_FAST_ALLOCATED;
 public:
     IgnoreSelectionChangeForScope(Frame& frame)
         : m_selectionChange(*frame.document(), std::nullopt, TemporarySelectionOption::IgnoreSelectionChanges)
     {
     }
+
+    void invalidate() { m_selectionChange.invalidate(); }
 
     ~IgnoreSelectionChangeForScope() = default;
 
@@ -428,7 +435,7 @@ public:
 
 #if PLATFORM(IOS_FAMILY)
     WEBCORE_EXPORT void confirmMarkedText();
-    WEBCORE_EXPORT void setTextAsChildOfElement(const String&, Element&);
+    WEBCORE_EXPORT void setTextAsChildOfElement(String&&, Element&);
     WEBCORE_EXPORT void setTextAlignmentForChangedBaseWritingDirection(WritingDirection);
     WEBCORE_EXPORT void insertDictationPhrases(Vector<Vector<String>>&& dictationPhrases, id metadata);
     WEBCORE_EXPORT void setDictationPhrasesAsChildOfElement(const Vector<Vector<String>>& dictationPhrases, id metadata, Element&);
@@ -444,7 +451,7 @@ public:
     WEBCORE_EXPORT void handleAlternativeTextUIResult(const String& correction);
     void dismissCorrectionPanelAsIgnored();
 
-    WEBCORE_EXPORT void pasteAsFragment(Ref<DocumentFragment>&&, bool smartReplace, bool matchStyle, MailBlockquoteHandling = MailBlockquoteHandling::RespectBlockquote);
+    WEBCORE_EXPORT void pasteAsFragment(Ref<DocumentFragment>&&, bool smartReplace, bool matchStyle, MailBlockquoteHandling = MailBlockquoteHandling::RespectBlockquote, EditAction = EditAction::Paste);
     WEBCORE_EXPORT void pasteAsPlainText(const String&, bool smartReplace);
 
     // This is only called on the mac where paste is implemented primarily at the WebKit level.
@@ -537,7 +544,7 @@ public:
     void takeFindStringFromSelection();
     WEBCORE_EXPORT void replaceSelectionWithAttributedString(NSAttributedString *, MailBlockquoteHandling = MailBlockquoteHandling::RespectBlockquote);
     WEBCORE_EXPORT void readSelectionFromPasteboard(const String& pasteboardName);
-    WEBCORE_EXPORT void replaceNodeFromPasteboard(Node&, const String& pasteboardName);
+    WEBCORE_EXPORT void replaceNodeFromPasteboard(Node&, const String& pasteboardName, EditAction = EditAction::Paste);
 #endif
 
 #if PLATFORM(MAC)
@@ -567,11 +574,11 @@ public:
     bool isGettingDictionaryPopupInfo() const { return m_isGettingDictionaryPopupInfo; }
 
 #if ENABLE(ATTACHMENT_ELEMENT)
-    WEBCORE_EXPORT void insertAttachment(const String& identifier, std::optional<uint64_t>&& fileSize, const String& fileName, const String& contentType);
+    WEBCORE_EXPORT void insertAttachment(const String& identifier, std::optional<uint64_t>&& fileSize, const AtomString& fileName, const AtomString& contentType);
     void registerAttachmentIdentifier(const String&, const String& contentType, const String& preferredFileName, Ref<FragmentedSharedBuffer>&& fileData);
     void registerAttachments(Vector<SerializedAttachmentData>&&);
     void registerAttachmentIdentifier(const String&, const String& contentType, const String& filePath);
-    void registerAttachmentIdentifier(const String&);
+    void registerAttachmentIdentifier(const String&, const HTMLImageElement&);
     void cloneAttachmentData(const String& fromIdentifier, const String& toIdentifier);
     void didInsertAttachmentElement(HTMLAttachmentElement&);
     void didRemoveAttachmentElement(HTMLAttachmentElement&);
@@ -661,8 +668,8 @@ private:
     bool m_overwriteModeEnabled { false };
 
 #if ENABLE(ATTACHMENT_ELEMENT)
-    HashSet<String> m_insertedAttachmentIdentifiers;
-    HashSet<String> m_removedAttachmentIdentifiers;
+    MemoryCompactRobinHoodHashSet<String> m_insertedAttachmentIdentifiers;
+    MemoryCompactRobinHoodHashSet<String> m_removedAttachmentIdentifiers;
 #endif
 
     VisibleSelection m_mark;

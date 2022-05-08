@@ -37,11 +37,13 @@
 #include "CSSStyleRule.h"
 #include "CSSStyleSheet.h"
 #include "CSSValueKeywords.h"
+#include "CommonAtomStrings.h"
 #include "ContainerNode.h"
 #include "ContentSecurityPolicy.h"
 #include "DOMWindow.h"
 #include "ElementAncestorIterator.h"
 #include "ElementChildIterator.h"
+#include "ElementRareData.h"
 #include "Font.h"
 #include "FontCache.h"
 #include "FontCascade.h"
@@ -605,7 +607,7 @@ Protocol::ErrorStringOr<Ref<Protocol::CSS::Font>> InspectorCSSAgent::getFontData
     
     auto* computedStyle = node->computedStyle();
     if (!computedStyle)
-        return makeUnexpected("No computed style for node.");
+        return makeUnexpected("No computed style for node."_s);
     
     return buildObjectForFont(computedStyle->fontCascade().primaryFont());
 }
@@ -665,7 +667,7 @@ Protocol::ErrorStringOr<Ref<Protocol::CSS::CSSStyleSheetBody>> InspectorCSSAgent
 
     auto styleSheet = inspectorStyleSheet->buildObjectForStyleSheet();
     if (!styleSheet)
-        return makeUnexpected("Internal error: missing style sheet");
+        return makeUnexpected("Internal error: missing style sheet"_s);
 
     return styleSheet.releaseNonNull();
 }
@@ -747,7 +749,7 @@ Protocol::ErrorStringOr<Ref<Protocol::CSS::CSSRule>> InspectorCSSAgent::setRuleS
 
     auto rule = inspectorStyleSheet->buildObjectForRule(inspectorStyleSheet->ruleForId(compoundId));
     if (!rule)
-        return makeUnexpected("Internal error: missing style sheet");
+        return makeUnexpected("Internal error: missing style sheet"_s);
 
     return rule.releaseNonNull();
 }
@@ -781,7 +783,7 @@ InspectorStyleSheet* InspectorCSSAgent::createInspectorStyleSheetForDocument(Doc
         return nullptr;
 
     auto styleElement = HTMLStyleElement::create(document);
-    styleElement->setAttributeWithoutSynchronization(HTMLNames::typeAttr, AtomString("text/css", AtomString::ConstructFromLiteral));
+    styleElement->setAttributeWithoutSynchronization(HTMLNames::typeAttr, cssContentTypeAtom());
 
     ContainerNode* targetNode;
     // HEAD is absent in ImageDocuments, for example.
@@ -836,7 +838,7 @@ Protocol::ErrorStringOr<Ref<Protocol::CSS::CSSRule>> InspectorCSSAgent::addRule(
 
     auto rule = inspectorStyleSheet->buildObjectForRule(inspectorStyleSheet->ruleForId(rawAction.newRuleId()));
     if (!rule)
-        return makeUnexpected("Internal error: missing style sheet");
+        return makeUnexpected("Internal error: missing style sheet"_s);
 
     return rule.releaseNonNull();
 }
@@ -938,8 +940,13 @@ Protocol::ErrorStringOr<void> InspectorCSSAgent::forcePseudoState(Protocol::DOM:
 
 std::optional<Protocol::CSS::LayoutContextType> InspectorCSSAgent::layoutContextTypeForRenderer(RenderObject* renderer)
 {
-    if (is<RenderFlexibleBox>(renderer))
+    if (auto* renderFlexibleBox = dynamicDowncast<RenderFlexibleBox>(renderer)) {
+        // Subclasses of RenderFlexibleBox (buttons, selection inputs, etc.) should not be considered flex containers,
+        // as it is an internal implementation detail.
+        if (renderFlexibleBox->isFlexibleBoxImpl())
+            return std::nullopt;
         return Protocol::CSS::LayoutContextType::Flex;
+    }
     if (is<RenderGrid>(renderer))
         return Protocol::CSS::LayoutContextType::Grid;
     return std::nullopt;
@@ -980,10 +987,9 @@ void InspectorCSSAgent::nodeLayoutContextTypeChanged(Node& node, RenderObject* n
         return;
 
     auto nodeId = domAgent->boundNodeId(&node);
-    if (!nodeId && m_layoutContextTypeChangedMode == Protocol::CSS::LayoutContextTypeChangedMode::All) {
-        // FIXME: <https://webkit.org/b/189687> Preserve DOM.NodeId if a node is removed and re-added
+    if (!nodeId && m_layoutContextTypeChangedMode == Protocol::CSS::LayoutContextTypeChangedMode::All)
         nodeId = domAgent->identifierForNode(node);
-    }
+
     if (!nodeId)
         return;
 

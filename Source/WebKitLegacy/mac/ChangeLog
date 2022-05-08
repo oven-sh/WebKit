@@ -1,3 +1,498 @@
+2022-05-06  Brent Fulgham  <bfulgham@apple.com>
+
+        Remove the viewportFitEnabled WKPreference now that it is always on 
+        https://bugs.webkit.org/show_bug.cgi?id=240147
+
+        Reviewed by Tim Horton.
+
+        Remove the WKPreference 'ViewportFitEnabled' now that it is always enabled on all platforms, and
+        we do not wish to turn it off in testing or in other debugging circumstances.
+
+        * WebView/WebPreferenceKeysPrivate.h:
+        * WebView/WebPreferences.mm:
+        (-[WebPreferences viewportFitEnabled]): Deleted.
+        (-[WebPreferences setViewportFitEnabled:]): Deleted.
+        * WebView/WebPreferencesPrivate.h:
+
+2022-05-05  Brent Fulgham  <bfulgham@apple.com>
+
+        Remove abandoned WKPreference for AlwaysUseAcceleratedOverflowScroll
+        https://bugs.webkit.org/show_bug.cgi?id=240130
+
+        Reviewed by Simon Fraser.
+
+        The preference 'AlwaysUseAcceleratedOverflowScroll' and related code are no longer used. We should remove this dead code.
+
+        * WebView/WebPreferenceKeysPrivate.h:
+        * WebView/WebPreferences.mm:
+        (-[WebPreferences _setAlwaysUseAcceleratedOverflowScroll:]): Deleted.
+        (-[WebPreferences _alwaysUseAcceleratedOverflowScroll]): Deleted.
+        * WebView/WebPreferencesPrivate.h:
+
+2022-05-04  Brent Fulgham  <bfulgham@apple.com>
+
+        Remove deprecated 'JavaEnabled' feature flag and related code
+        https://bugs.webkit.org/show_bug.cgi?id=240044
+
+        Reviewed by Darin Adler.
+
+        We removed support for Java Plug-Ins in macOS 10.15, but never removed the preference. To reduce code complexity
+        and build times we should remove this unused preference, leaving non-functional stubs to avoid breaking binaries
+        that expect to call their accessor methods.
+
+        * WebCoreSupport/WebInspectorClient.mm:
+        (-[WebInspectorWindowController init]):
+        * WebView/WebPreferenceKeysPrivate.h:
+        * WebView/WebPreferences.h:
+        * WebView/WebPreferences.mm:
+        (-[WebPreferences isJavaEnabled]):
+        (-[WebPreferences setJavaEnabled:]):
+
+2022-04-28  Brent Fulgham  <bfulgham@apple.com>
+
+        Remove the AVFoundationNSURLSessionEnabled preference
+        https://bugs.webkit.org/show_bug.cgi?id=239632
+
+        Reviewed by Eric Carlson.
+
+        All supported operating systems have supported AVFoundationNSURLSession
+        for several years. Since we expect AVFoundation to always use WebKit
+        for network loading (and indeed, expect improper behavior if we do not)
+        we should remove this toggle to simplify the code and reduce the chance
+        for users to mistakenly activate it.
+
+        * WebView/WebPreferenceKeysPrivate.h:
+        * WebView/WebPreferences.mm:
+        (-[WebPreferences setAVFoundationNSURLSessionEnabled:]):
+        (-[WebPreferences isAVFoundationNSURLSessionEnabled]):
+
+2022-04-26  Manuel Rego Casasnovas  <rego@igalia.com>
+
+        Remove AriaReflectionEnabled runtime flag
+        https://bugs.webkit.org/show_bug.cgi?id=239532
+
+        Reviewed by Chris Fleizach.
+
+        * WebView/WebPreferenceKeysPrivate.h:
+        * WebView/WebPreferences.mm:
+        (-[WebPreferences ariaReflectionEnabled]): Deleted.
+        (-[WebPreferences setAriaReflectionEnabled:]): Deleted.
+
+2022-04-23  Wenson Hsieh  <wenson_hsieh@apple.com>
+
+        Remove the `PreferInlineTextSelectionInImages` internal feature flag
+        https://bugs.webkit.org/show_bug.cgi?id=234849
+
+        Reviewed by Sam Weinig.
+
+        See WebKit/ChangeLog for more details.
+
+        * WebView/WebHTMLView.mm:
+        (toTag):
+
+2022-04-21  Brent Fulgham  <bfulgham@apple.com>
+
+        Remove XSS Auditor: Part 4 (Settings)
+        https://bugs.webkit.org/show_bug.cgi?id=239628
+
+        Reviewed by Alex Christensen.
+
+        This change is a follow-up to Bug 230661 that removes the unused
+        WebKitXSSAuditorEnabledPreferenceKey.
+
+        * WebView/WebPreferenceKeysPrivate.h:
+
+2022-04-20  Alan Bujtas  <zalan@apple.com>
+
+        [IFC][Integration] Do not call WebPreferences::simpleLineLayoutEnabled in canUseForLineLayoutWithReason
+        https://bugs.webkit.org/show_bug.cgi?id=239540
+
+        Reviewed by Antti Koivisto.
+
+        * WebView/WebPreferences.mm:
+        (-[WebPreferences simpleLineLayoutEnabled]): Deleted.
+        (-[WebPreferences setSimpleLineLayoutEnabled:]): Deleted.
+        * WebView/WebPreferencesPrivate.h:
+
+2022-04-20  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] WebKit and WebKitLegacy shouldn't need to know about WebGPU.framework
+        https://bugs.webkit.org/show_bug.cgi?id=239528
+        <rdar://problem/91740931>
+
+        Unreviewed build fix.
+
+        * WebCoreSupport/WebChromeClient.mm:
+        (WebChromeClient::createGPUForWebGPU const):
+
+2022-04-17  Chris Dumez  <cdumez@apple.com>
+
+        Leverage StringView in more places
+        https://bugs.webkit.org/show_bug.cgi?id=239426
+
+        Reviewed by Sam Weinig.
+
+        Leverage StringView in more places, to reduce the number of String allocations.
+
+        * WebView/WebImmediateActionController.mm:
+        (+[WebImmediateActionController _dictionaryPopupInfoForRange:inFrame:withLookupOptions:indicatorOptions:transition:]):
+
+2022-04-15  Chris Dumez  <cdumez@apple.com>
+
+        Leverage StringView in more places to avoid some String allocations
+        https://bugs.webkit.org/show_bug.cgi?id=239356
+
+        Reviewed by Darin Adler.
+
+        * Misc/WebUserContentURLPattern.mm:
+        (-[WebUserContentURLPattern initWithPatternString:]):
+
+2022-04-15  Yusuke Suzuki  <ysuzuki@apple.com>
+
+        [JSC] Remove VM& parameter from structure related code including jsDyamicCast
+        https://bugs.webkit.org/show_bug.cgi?id=239362
+
+        Reviewed by Darin Adler.
+
+        * DOM/DOM.mm:
+        (+[DOMNode _nodeFromJSWrapper:]):
+        * WebView/WebFrame.mm:
+        (-[WebFrame _stringByEvaluatingJavaScriptFromString:withGlobalObject:inScriptWorld:]):
+        * WebView/WebView.mm:
+        (+[WebView _reportException:inContext:]):
+        (aeDescFromJSValue):
+
+2022-04-14  Yusuke Suzuki  <ysuzuki@apple.com>
+
+        [JSC] Reduce use of CallFrame::deprecatedVM
+        https://bugs.webkit.org/show_bug.cgi?id=239326
+
+        Reviewed by Devin Rousso.
+
+        * WebView/WebScriptDebugger.mm:
+        (WebScriptDebugger::handlePause):
+
+2022-04-13  Chris Dumez  <cdumez@apple.com>
+
+        Replace calls to substring(0, x) with the more concise left(x)
+        https://bugs.webkit.org/show_bug.cgi?id=239306
+
+        Reviewed by Darin Adler.
+
+        * WebView/WebHTMLRepresentation.mm:
+        (regExpForLabels):
+
+2022-04-13  Elliott Williams  <emw@apple.com>
+
+        [Xcode] Fix public watchOS workspace build by updating scheme and build settings
+        https://bugs.webkit.org/show_bug.cgi?id=239301
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/Base.xcconfig:
+        * Configurations/WebKitLegacy.xcconfig:
+
+2022-04-12  Elliott Williams  <emw@apple.com>
+
+        [Xcode] In open-source builds, disable bitcode in xcconfigs instead of build-webkit
+        https://bugs.webkit.org/show_bug.cgi?id=239262
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/Base.xcconfig:
+
+2022-04-12  Tim Horton  <timothy_horton@apple.com>
+
+        Adopt "version set"-based linked-on-or-after checks instead of platform-specific ones
+        https://bugs.webkit.org/show_bug.cgi?id=239054
+        <rdar://problem/83436715>
+
+        Reviewed by Wenson Hsieh.
+
+        * DefaultDelegates/WebDefaultUIDelegate.mm:
+        (-[WebDefaultUIDelegate webView:dragDestinationActionMaskForDraggingInfo:]):
+        * Misc/WebDownload.mm:
+        (shouldCallOnNetworkThread):
+        * Misc/WebIconDatabase.mm:
+        (+[WebIconDatabase sharedIconDatabase]):
+        * WebView/WebPreferencesDefaultValues.mm:
+        (WebKit::defaultAllowsPictureInPictureMediaPlayback):
+        (WebKit::defaultJavaScriptCanOpenWindowsAutomatically):
+        (WebKit::defaultPassiveTouchListenersAsDefaultOnDocument):
+        (WebKit::defaultRequiresUserGestureToLoadVideo):
+        (WebKit::defaultWebSQLEnabled):
+        (WebKit::defaultShouldRestrictBaseURLSchemes):
+        (WebKit::defaultShouldConvertInvalidURLsToBlank):
+        (WebKit::defaultPassiveWheelListenersAsDefaultOnDocument):
+        (WebKit::defaultWheelEventGesturesBecomeNonBlocking):
+        * WebView/WebView.mm:
+        (needsLaBanquePostaleQuirks):
+        Adopt the new naming.
+
+2022-04-12  Elliott Williams  <emw@apple.com>
+
+        Reland "[XCBuild] Enable dependency validation by default"
+        https://bugs.webkit.org/show_bug.cgi?id=238901
+        <rdar://problem/91379968>
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/DebugRelease.xcconfig: In open-source builds, disable
+        VALIDATE_DEPENDENCIES when there is no PRODUCT_TYPE (i.e. not building
+        a native target).
+
+2022-04-08  Elliott Williams  <emw@apple.com>
+
+        [Xcode] Avoid targeting 32-bit iOS and Mac architectures
+        https://bugs.webkit.org/show_bug.cgi?id=238971
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/DebugRelease.xcconfig:
+
+2022-04-08  Elliott Williams  <emw@apple.com>
+
+        Unreviewed, reverting r292591.
+
+        Causing spurious EWS errors
+
+        Reverted changeset:
+
+        "[XCBuild] Enable dependency validation by default"
+        https://bugs.webkit.org/show_bug.cgi?id=238901
+        https://commits.webkit.org/r292591
+
+2022-04-07  Elliott Williams  <emw@apple.com>
+
+        [XCBuild] Enable dependency validation by default
+        https://bugs.webkit.org/show_bug.cgi?id=238901
+        <rdar://problem/91379968>
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/DebugRelease.xcconfig:
+
+2022-04-07  Chris Dumez  <cdumez@apple.com>
+
+        Replace deprecated String(const char*) with String::fromLatin1() in more places
+        https://bugs.webkit.org/show_bug.cgi?id=238925
+
+        Reviewed by Darin Adler.
+
+        * History/HistoryPropertyList.mm:
+        (HistoryPropertyListWriter::HistoryPropertyListWriter):
+        * WebView/WebHTMLView.mm:
+        (-[WebHTMLView coreCommandByName:]):
+
+2022-04-07  Chris Dumez  <cdumez@apple.com>
+
+        Drop unused EditorClient::getAutoCorrectSuggestionForMisspelledWord()
+        https://bugs.webkit.org/show_bug.cgi?id=238897
+
+        Reviewed by Wenson Hsieh.
+
+        * WebCoreSupport/WebEditorClient.h:
+        (WebEditorClient::getAutoCorrectSuggestionForMisspelledWord): Deleted.
+        * WebCoreSupport/WebEditorClient.mm:
+        (WebEditorClient::getAutoCorrectSuggestionForMisspelledWord): Deleted.
+
+2022-04-06  Chris Dumez  <cdumez@apple.com>
+
+        Drop unnecessary ExceptionOr<> return types
+        https://bugs.webkit.org/show_bug.cgi?id=238876
+
+        Reviewed by Alex Christensen.
+
+        Drop unnecessary ExceptionOr<> return types as they may cause unnecessary branching at runtime.
+
+        * DOM/DOMMediaList.mm:
+        (-[DOMMediaList setMediaText:]):
+
+2022-04-06  Chris Dumez  <cdumez@apple.com>
+
+        Reduce number of conversions from StringView to String
+        https://bugs.webkit.org/show_bug.cgi?id=238841
+
+        Reviewed by Geoffrey Garen.
+
+        * WebCoreSupport/WebFrameLoaderClient.h:
+        * WebCoreSupport/WebFrameLoaderClient.mm:
+        (WebFrameLoaderClient::representationExistsForURLScheme const):
+        (WebFrameLoaderClient::generatedMIMETypeForURLScheme const):
+
+2022-04-06  Simon Fraser  <simon.fraser@apple.com>
+
+        Unify the two ImageBuffer::create() functions, passing RenderingPurpose everywhere
+        https://bugs.webkit.org/show_bug.cgi?id=238851
+
+        Reviewed by Said Abou-Hallawa.
+
+        I need to extend RenderingPurpose flags to distinguish layer backing store buffers from
+        other kinds of buffers. Before doing so, collapse the two ImageBuffer::create() functions
+        together by combining RenderingMode and ShouldUseDisplayList into OptionSet<ImageBufferOptions>,
+        and passing RenderingPurpose everywhere.
+        
+        Always passing RenderingPurpose is revealing, because it finds call sites in the
+        web process that can trigger accelerated buffers (e.g. webkit.org/b/238846).
+
+        * WebCoreSupport/WebContextMenuClient.mm:
+        (WebContextMenuClient::imageForCurrentSharingServicePickerItem):
+
+2022-04-05  Chris Dumez  <cdumez@apple.com>
+
+        Mark String(const char*) constructor as explicit
+        https://bugs.webkit.org/show_bug.cgi?id=238693
+
+        Reviewed by Geoffrey Garen.
+
+        * DOM/DOM.mm:
+        (-[DOMHTMLLinkElement _mediaQueryMatches]):
+        * WebCoreSupport/WebEditorClient.h:
+        (WebEditorClient::getAutoCorrectSuggestionForMisspelledWord):
+        * WebView/WebDataSource.mm:
+        (-[WebDataSource _setOverrideTextEncodingName:]):
+        * WebView/WebView.mm:
+        (-[WebView initSimpleHTMLDocumentWithStyle:frame:preferences:groupName:]):
+
+2022-04-05  Tim Horton  <timothy_horton@apple.com>
+
+        Remove system feature flags implementation
+        https://bugs.webkit.org/show_bug.cgi?id=238791
+
+        Reviewed by Megan Gardner.
+
+        * WebView/WebPreferencesDefaultValues.h:
+        * WebView/WebPreferencesDefaultValues.mm:
+        (WebKit::isFeatureFlagEnabled): Deleted.
+
+2022-04-04  Tim Horton  <timothy_horton@apple.com>
+
+        Remove VP8/9 and WebM-related system feature flags
+        https://bugs.webkit.org/show_bug.cgi?id=238757
+
+        Reviewed by Eric Carlson.
+
+        * WebView/WebPreferencesDefaultValues.h:
+
+2022-04-04  Tim Horton  <timothy_horton@apple.com>
+
+        Remove the incremental_pdf system feature flag
+        https://bugs.webkit.org/show_bug.cgi?id=238754
+
+        Reviewed by Wenson Hsieh.
+
+        * WebView/WebPreferencesDefaultValues.mm:
+        * WebView/WebPreferencesDefaultValues.h:
+        (WebKit::defaultIncrementalPDFEnabled): Deleted.
+
+2022-04-04  Elliott Williams  <emw@apple.com>
+
+        [XCBuild] WebKitLegacy's "Migrated headers" script does not emit task information
+        https://bugs.webkit.org/show_bug.cgi?id=238409
+        <rdar://problem/90869551>
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/WebKitLegacy.xcconfig: Use EXCLUDED_SOURCE_FILE_NAMES and
+        INCLUDED_SOURCE_FILE_NAMES to control which headers are exported. Set
+        USE_RECURSIVE_SCRIPT_INPUTS_IN_SCRIPT_PHASES, so that the "Generate Export Files" phase can
+        depend on the whole directory of reexport files and be invoked when any of them change.
+        * MigrateHeaders.make: Removed.
+
+2022-04-01  Michael Saboff  <msaboff@apple.com>
+
+        Stop copying StagedFrameworks to the secondary path by default
+        https://bugs.webkit.org/show_bug.cgi?id=238688
+
+        Reviewed by Saam Barati.
+
+        Decoupled COPY_STAGED_FRAMEWORKS_TO_SECONDARY_PATH from USE_SYSTEM_CONTENT_PATH so we won't
+        always copy frameworks to the secondary path on macOS.  Instead, the build configuration can set
+        COPY_STAGED_FRAMEWORKS_TO_SECONDARY_PATH as appropriate.
+
+        * Configurations/Base.xcconfig:
+
+2022-03-31  Chris Dumez  <cdumez@apple.com>
+
+        Prepare WebKit/ & WebKitLegacy/ for making the String(const char*) constructor explicit
+        https://bugs.webkit.org/show_bug.cgi?id=238525
+
+        Reviewed by Darin Adler.
+
+        * History/HistoryPropertyList.mm:
+        (HistoryPropertyListWriter::writeObjects):
+        * WebCoreSupport/WebApplicationCache.mm:
+        (webApplicationCacheStorage):
+        * WebCoreSupport/WebSecurityOrigin.mm:
+        (WebCore::SecurityOriginData::fromDatabaseIdentifier):
+        * WebView/WebHTMLView.mm:
+        (createSelectorExceptionMap):
+        (-[WebHTMLView coreCommandByName:]):
+        (-[WebHTMLView validateUserInterfaceItemWithoutDelegate:]):
+        (-[WebHTMLView _setPrinting:minimumPageLogicalWidth:logicalHeight:originalPageWidth:originalPageHeight:maximumShrinkRatio:adjustViewSize:paginateScreenContent:]):
+        (-[WebHTMLView insertText:]):
+        * WebView/WebView.mm:
+        (+[WebView _decodeData:]):
+
+2022-03-31  Commit Queue  <commit-queue@webkit.org>
+
+        Unreviewed, reverting r292183.
+        https://bugs.webkit.org/show_bug.cgi?id=238639
+
+        Broke the Big Sur build
+
+        Reverted changeset:
+
+        "[XCBuild] WebKitLegacy's "Migrated headers" script does not
+        emit task information"
+        https://bugs.webkit.org/show_bug.cgi?id=238409
+        https://commits.webkit.org/r292183
+
+2022-03-31  Elliott Williams  <emw@apple.com>
+
+        [XCBuild] WebKitLegacy's "Migrated headers" script does not emit task information
+        https://bugs.webkit.org/show_bug.cgi?id=238409
+        <rdar://problem/90869551>
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/WebKitLegacy.xcconfig: Use EXCLUDED_SOURCE_FILE_NAMES and
+        INCLUDED_SOURCE_FILE_NAMES to control which headers are exported. Set
+        USE_RECURSIVE_SCRIPT_INPUTS_IN_SCRIPT_PHASES, so that the "Generate Export Files" phase can
+        depend on the whole directory of reexport files and be invoked when any of them change.
+        * MigrateHeaders.make: Removed.
+
+2022-03-28  Ian Anderson  <iana@apple.com>
+
+        Some Apple internal clients fail to build due to redeclared AppKit types in WebKitLegacy
+        https://bugs.webkit.org/show_bug.cgi?id=238368
+
+        Reviewed by Jonathan Bedard.
+
+        WebKitLegacy can't always define NSClipView/NSView/NSScrollView/
+        NSWindow/NSResponder to their WAK counterparts in Mac Catalyst, but
+        those types are always the WAK ones in Mac Catalyst. Switch on
+        TARGET_OS_IPHONE to declare the WAK types explicitly.
+
+        * Misc/WebDownload.h:
+        * Misc/WebNSViewExtras.h:
+        * Plugins/WebPluginDatabase.h:
+        * WebView/WebDocument.h:
+        * WebView/WebDocumentPrivate.h:
+        * WebView/WebFramePrivate.h:
+        * WebView/WebFrameView.h:
+        (WEBKIT_CLASS_DEPRECATED_MAC):
+        * WebView/WebFrameViewPrivate.h:
+        * WebView/WebHTMLRepresentation.h:
+        * WebView/WebHTMLRepresentationPrivate.h:
+        * WebView/WebHTMLView.h:
+        * WebView/WebHTMLViewPrivate.h:
+        * WebView/WebUIDelegate.h:
+        * WebView/WebUIDelegatePrivate.h:
+        * WebView/WebView.h:
+        (WEBKIT_CLASS_DEPRECATED_MAC):
+        * WebView/WebViewPrivate.h:
+
 2022-03-26  Yusuke Suzuki  <ysuzuki@apple.com>
 
         Use static_assert instead of COMPILE_ASSERT

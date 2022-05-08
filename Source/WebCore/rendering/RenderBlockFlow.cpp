@@ -345,7 +345,8 @@ void RenderBlockFlow::adjustIntrinsicLogicalWidthsForColumns(LayoutUnit& minLogi
 
 void RenderBlockFlow::computeIntrinsicLogicalWidths(LayoutUnit& minLogicalWidth, LayoutUnit& maxLogicalWidth) const
 {
-    if (!shouldApplySizeContainment(*this)) {
+    auto shouldIgnoreDescendantContentForLogicalWidth = shouldApplySizeOrStyleContainment({ Containment::Size, Containment::InlineSize });
+    if (!shouldIgnoreDescendantContentForLogicalWidth) {
         if (childrenInline())
             computeInlinePreferredLogicalWidths(minLogicalWidth, maxLogicalWidth);
         else
@@ -1522,7 +1523,7 @@ LayoutUnit RenderBlockFlow::adjustBlockChildForPagination(LayoutUnit logicalTopA
         }
     }
 
-    if (shouldApplySizeContainment(child))
+    if (child.shouldApplySizeContainment())
         adjustSizeContainmentChildForPagination(child, result);
 
     // For replaced elements and scrolled elements, we want to shift them to the next page if they don't fit on the current one.
@@ -1902,7 +1903,7 @@ LayoutUnit RenderBlockFlow::logicalHeightForChildForFragmentation(const RenderBo
 
 void RenderBlockFlow::adjustSizeContainmentChildForPagination(RenderBox& child, LayoutUnit offset)
 {
-    if (!shouldApplySizeContainment(child))
+    if (!child.shouldApplySizeContainment())
         return;
 
     LayoutUnit childOverflowHeight = child.isHorizontalWritingMode() ? child.layoutOverflowRect().maxY() : child.layoutOverflowRect().maxX();
@@ -2842,7 +2843,8 @@ LayoutUnit RenderBlockFlow::getClearDelta(RenderBox& child, LayoutUnit logicalTo
             child.setMarginLeft(childOldMarginLeft);
             child.setMarginRight(childOldMarginRight);
             
-            if (childLogicalWidthAtNewLogicalTopOffset <= availableLogicalWidthAtNewLogicalTopOffset) {
+            auto shouldAvoidCurrentVerticalPosition = !availableLogicalWidthAtNewLogicalTopOffset || childLogicalWidthAtNewLogicalTopOffset > availableLogicalWidthAtNewLogicalTopOffset;
+            if (!shouldAvoidCurrentVerticalPosition) {
                 // Even though we may not be moving, if the logical width did shrink because of the presence of new floats, then
                 // we need to force a relayout as though we shifted. This happens because of the dynamic addition of overhanging floats
                 // from previous siblings when negative margins exist on a child (see the addOverhangingFloats call at the end of collapseMargins).
@@ -2944,7 +2946,7 @@ std::optional<LayoutUnit> RenderBlockFlow::firstLineBaseline() const
     if (isWritingModeRoot() && !isRubyRun() && !isGridItem())
         return std::nullopt;
 
-    if (shouldApplyLayoutContainment(*this))
+    if (shouldApplyLayoutContainment())
         return std::nullopt;
 
     if (!childrenInline())
@@ -2969,7 +2971,7 @@ std::optional<LayoutUnit> RenderBlockFlow::inlineBlockBaseline(LineDirectionMode
     if (isWritingModeRoot() && !isRubyRun())
         return std::nullopt;
 
-    if (shouldApplyLayoutContainment(*this))
+    if (shouldApplyLayoutContainment())
         return RenderBlock::inlineBlockBaseline(lineDirection);
 
     if (style().display() == DisplayType::InlineBlock) {
@@ -3222,55 +3224,20 @@ void RenderBlockFlow::clearMultiColumnFlow()
     rareBlockFlowData()->m_multiColumnFlow.clear();
 }
 
-bool shouldIncludeLinesForParentLineCount(const RenderBlockFlow& blockFlow)
-{
-    // FIXME: This test does not make much sense.
-    return !blockFlow.isFloatingOrOutOfFlowPositioned() && blockFlow.style().height().isAuto();
-}
-
 int RenderBlockFlow::lineCount() const
 {
-    // FIXME: This should be tested by clients.
-    if (style().visibility() != Visibility::Visible)
+    if (!childrenInline()) {
+        ASSERT_NOT_REACHED();
         return 0;
-
-    if (childrenInline()) {
+    }
 #if ENABLE(LAYOUT_FORMATTING_CONTEXT)
-        if (modernLineLayout())
-            return modernLineLayout()->lineCount();
+    if (modernLineLayout())
+        return modernLineLayout()->lineCount();
 #endif
-        if (legacyLineLayout())
-            return legacyLineLayout()->lineCount();
+    if (legacyLineLayout())
+        return legacyLineLayout()->lineCount();
 
-        return 0;
-    }
-
-    int count = 0;
-    for (auto& blockFlow : childrenOfType<RenderBlockFlow>(*this)) {
-        if (!shouldIncludeLinesForParentLineCount(blockFlow))
-            continue;
-        count += blockFlow.lineCount();
-    }
-
-    return count;
-}
-
-void RenderBlockFlow::clearTruncation()
-{
-    if (style().visibility() != Visibility::Visible)
-        return;
-
-    if (childrenInline() && hasMarkupTruncation()) {
-        setHasMarkupTruncation(false);
-        for (auto* box = firstRootBox(); box; box = box->nextRootBox())
-            box->clearTruncation();
-        return;
-    }
-
-    for (auto& blockFlow : childrenOfType<RenderBlockFlow>(*this)) {
-        if (shouldIncludeLinesForParentLineCount(blockFlow))
-            blockFlow.clearTruncation();
-    }
+    return 0;
 }
 
 bool RenderBlockFlow::containsNonZeroBidiLevel() const
@@ -3548,15 +3515,7 @@ bool RenderBlockFlow::relayoutForPagination()
 
 bool RenderBlockFlow::hasLines() const
 {
-    if (!childrenInline())
-        return false;
-
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
-    if (modernLineLayout())
-        return modernLineLayout()->lineCount();
-#endif
-
-    return legacyLineLayout() && legacyLineLayout()->lineBoxes().firstLineBox();
+    return childrenInline() ? lineCount() : false;
 }
 
 void RenderBlockFlow::invalidateLineLayoutPath()
@@ -3685,6 +3644,16 @@ void RenderBlockFlow::layoutModernLines(bool relayoutChildren, LayoutUnit& repai
     repaintLogicalTop = contentBoxTop;
     repaintLogicalBottom = std::max(oldBorderBoxBottom, newBorderBoxBottom);
 
+    auto inflateRepaintTopAndBottomWithInkOverflow = [&] {
+        if (!layoutFormattingContextLineLayout.hasVisualOverflow())
+            return;
+        for (auto lineBox = InlineIterator::firstLineBoxFor(*this); lineBox; lineBox.traverseNext()) {
+            repaintLogicalTop = std::min(repaintLogicalTop, LayoutUnit { lineBox->inkOverflowTop() });
+            repaintLogicalBottom = std::max(repaintLogicalBottom, LayoutUnit { lineBox->inkOverflowBottom() });
+        }
+    };
+    inflateRepaintTopAndBottomWithInkOverflow();
+
     setLogicalHeight(newBorderBoxBottom);
 }
 #endif
@@ -3757,19 +3726,6 @@ static inline bool resizeTextPermitted(const RenderObject& renderer)
     return true;
 }
 
-int RenderBlockFlow::lineCountForTextAutosizing()
-{
-    if (style().visibility() != Visibility::Visible)
-        return 0;
-    if (childrenInline())
-        return lineCount();
-    // Only descend into list items.
-    int count = 0;
-    for (auto& listItem : childrenOfType<RenderListItem>(*this))
-        count += listItem.lineCount();
-    return count;
-}
-
 static bool isNonBlocksOrNonFixedHeightListItems(const RenderObject& renderer)
 {
     if (!renderer.isRenderBlock())
@@ -3801,18 +3757,27 @@ void RenderBlockFlow::adjustComputedFontSizes(float size, float visibleWidth)
     if (visibleWidth >= width())
         return;
     
-    unsigned lineCount;
-    if (m_lineCountForTextAutosizing == NOT_SET) {
-        int count = lineCountForTextAutosizing();
-        if (!count)
+    unsigned lineCount = m_lineCountForTextAutosizing;
+    if (lineCount == NOT_SET) {
+        if (style().visibility() != Visibility::Visible)
             lineCount = NO_LINE;
-        else if (count == 1)
-            lineCount = ONE_LINE;
-        else
-            lineCount = MULTI_LINE;
-    } else
-        lineCount = m_lineCountForTextAutosizing;
-    
+        else {
+            size_t lineCountInBlock = 0;
+            if (childrenInline())
+                lineCountInBlock = this->lineCount();
+            else {
+                for (auto& listItem : childrenOfType<RenderListItem>(*this)) {
+                    if (!listItem.childrenInline() || listItem.style().visibility() != Visibility::Visible)
+                        continue;
+                    lineCountInBlock += listItem.lineCount();
+                    if (lineCountInBlock > 1)
+                        break;
+                }
+            }
+            lineCount = !lineCountInBlock ? NO_LINE : lineCountInBlock == 1 ? ONE_LINE : MULTI_LINE;
+        }
+    }
+
     ASSERT(lineCount != NOT_SET);
     if (lineCount == NO_LINE)
         return;
@@ -4118,10 +4083,7 @@ static inline LayoutUnit preferredWidth(LayoutUnit preferredWidth, float result)
 
 void RenderBlockFlow::computeInlinePreferredLogicalWidths(LayoutUnit& minLogicalWidth, LayoutUnit& maxLogicalWidth) const
 {
-    // "The inline-axis intrinsic sizes of the principal box are determined as if the element had no content."
-    // https://drafts.csswg.org/css-contain-3/#containment-inline-size
-    if (shouldApplyInlineSizeContainment(*this))
-        return;
+    ASSERT(!shouldApplyInlineSizeContainment());
 
 #if ENABLE(LAYOUT_FORMATTING_CONTEXT)
     if (const_cast<RenderBlockFlow&>(*this).tryComputePreferredWidthsUsingModernPath(minLogicalWidth, maxLogicalWidth))

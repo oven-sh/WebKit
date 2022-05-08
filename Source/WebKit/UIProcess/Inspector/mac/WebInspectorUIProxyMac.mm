@@ -496,6 +496,11 @@ void WebInspectorUIProxy::platformShowCertificate(const CertificateInfo& certifi
     [certificateView setDetailsDisclosed:YES];
 }
 
+void WebInspectorUIProxy::platformRevealFileExternally(const String& path)
+{
+    [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[ [NSURL URLWithString:path] ]];
+}
+
 void WebInspectorUIProxy::platformSave(const String& suggestedURL, const String& content, bool base64Encoded, bool forceSaveDialog)
 {
     ASSERT(!suggestedURL.isEmpty());
@@ -575,6 +580,14 @@ void WebInspectorUIProxy::platformAppend(const String& suggestedURL, const Strin
     [handle closeFile];
 
     m_inspectorPage->send(Messages::WebInspectorUI::DidAppend([actualURL absoluteString]));
+}
+
+void WebInspectorUIProxy::platformLoad(const String& path, CompletionHandler<void(const String&)>&& completionHandler)
+{
+    if (auto contents = FileSystem::readEntireFile(path))
+        completionHandler(String::adopt(WTFMove(*contents)));
+    else
+        completionHandler(nullString());
 }
 
 void WebInspectorUIProxy::windowFrameDidChange()

@@ -192,17 +192,12 @@ void CSSParser::parseDeclarationForInspector(const CSSParserContext& context, co
 RefPtr<CSSValue> CSSParser::parseValueWithVariableReferences(CSSPropertyID propID, const CSSValue& value, Style::BuilderState& builderState)
 {
     ASSERT((propID == CSSPropertyCustom && value.isCustomPropertyValue()) || (propID != CSSPropertyCustom && !value.isCustomPropertyValue()));
-    auto& style = builderState.style();
-    auto direction = style.direction();
-    auto writingMode = style.writingMode();
 
     if (is<CSSPendingSubstitutionValue>(value)) {
         // FIXME: Should have a resolvedShorthands cache to stop this from being done over and over for each longhand value.
         auto& substitution = downcast<CSSPendingSubstitutionValue>(value);
 
         auto shorthandID = substitution.shorthandPropertyId();
-        if (CSSProperty::isDirectionAwareProperty(shorthandID))
-            shorthandID = CSSProperty::resolveDirectionAwareProperty(shorthandID, direction, writingMode);
 
         auto resolvedData = substitution.shorthandValue().resolveVariableReferences(builderState);
         if (!resolvedData)
@@ -213,10 +208,7 @@ RefPtr<CSSValue> CSSParser::parseValueWithVariableReferences(CSSPropertyID propI
             return nullptr;
 
         for (auto& property : parsedProperties) {
-            CSSPropertyID currentId = property.id();
-            if (CSSProperty::isDirectionAwareProperty(currentId))
-                currentId = CSSProperty::resolveDirectionAwareProperty(currentId, direction, writingMode);
-            if (currentId == propID)
+            if (property.id() == propID)
                 return property.value();
         }
 
@@ -248,7 +240,7 @@ RefPtr<CSSValue> CSSParser::parseValueWithVariableReferences(CSSPropertyID propI
     for (auto id : dependencies)
         builderState.builder().applyProperty(id);
 
-    return CSSPropertyParser::parseTypedCustomPropertyValue(name, syntax, resolvedData->tokens(), builderState, valueWithReferences.context());
+    return CSSPropertyParser::parseTypedCustomPropertyValue(AtomString { name }, syntax, resolvedData->tokens(), builderState, valueWithReferences.context());
 }
 
 Vector<double> CSSParser::parseKeyframeKeyList(const String& selector)

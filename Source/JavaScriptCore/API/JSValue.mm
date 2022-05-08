@@ -674,16 +674,16 @@ inline Expected<Result, JSValueRef> performPropertyOperation(NSStringFunction st
 
 @end
 
-inline bool isDate(JSC::VM& vm, JSObjectRef object, JSGlobalContextRef context)
+inline bool isDate(JSObjectRef object, JSGlobalContextRef context)
 {
     JSC::JSLockHolder locker(toJS(context));
-    return toJS(object)->inherits<JSC::DateInstance>(vm);
+    return toJS(object)->inherits<JSC::DateInstance>();
 }
 
-inline bool isArray(JSC::VM& vm, JSObjectRef object, JSGlobalContextRef context)
+inline bool isArray(JSObjectRef object, JSGlobalContextRef context)
 {
     JSC::JSLockHolder locker(toJS(context));
-    return toJS(object)->inherits<JSC::JSArray>(vm);
+    return toJS(object)->inherits<JSC::JSArray>();
 }
 
 @implementation JSValue(Internal)
@@ -760,9 +760,6 @@ static void reportExceptionToInspector(JSGlobalContextRef context, JSC::JSValue 
 
 static JSContainerConvertor::Task valueToObjectWithoutCopy(JSGlobalContextRef context, JSValueRef value)
 {
-    JSC::JSGlobalObject* globalObject = toJS(context);
-    JSC::VM& vm = globalObject->vm();
-
     if (!JSValueIsObject(context, value)) {
         id primitive;
         if (JSValueIsBoolean(context, value))
@@ -790,10 +787,10 @@ static JSContainerConvertor::Task valueToObjectWithoutCopy(JSGlobalContextRef co
     if (id wrapped = tryUnwrapObjcObject(context, object))
         return { object, wrapped, ContainerNone };
 
-    if (isDate(vm, object, context))
+    if (isDate(object, context))
         return { object, [NSDate dateWithTimeIntervalSince1970:JSValueToNumber(context, object, 0) / 1000.0], ContainerNone };
 
-    if (isArray(vm, object, context))
+    if (isArray(object, context))
         return { object, [NSMutableArray array], ContainerArray };
 
     return { object, [NSMutableDictionary dictionary], ContainerDictionary };
@@ -1162,7 +1159,7 @@ static StructHandlers* createStructHandlerMap()
             return;
         {
             auto type = adoptSystem<char[]>(method_copyArgumentType(method, 2));
-            structHandlers->add(StringImpl::create(type.get()), (StructTagHandler) { selector, 0 });
+            structHandlers->add(StringImpl::createFromCString(type.get()), (StructTagHandler) { selector, 0 });
         }
     });
 
@@ -1179,7 +1176,7 @@ static StructHandlers* createStructHandlerMap()
             return;
         // Try to find a matching valueWith<Foo>:context: method.
         auto type = adoptSystem<char[]>(method_copyReturnType(method));
-        StructHandlers::iterator iter = structHandlers->find(String { type.get() });
+        StructHandlers::iterator iter = structHandlers->find(String::fromLatin1(type.get()));
         if (iter == structHandlers->end())
             return;
         StructTagHandler& handler = iter->value;
@@ -1217,7 +1214,7 @@ static StructTagHandler* handerForStructTag(const char* encodedType)
 
     static StructHandlers* structHandlers = createStructHandlerMap();
 
-    StructHandlers::iterator iter = structHandlers->find(String { encodedType });
+    StructHandlers::iterator iter = structHandlers->find(String::fromLatin1(encodedType));
     if (iter == structHandlers->end())
         return 0;
     return &iter->value;

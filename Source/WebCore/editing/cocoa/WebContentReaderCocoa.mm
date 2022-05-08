@@ -200,16 +200,9 @@ private:
     bool m_didDisableImage { false };
 };
 
-enum class ReplacementMethod : bool { BlobURL, Attachment };
-static bool shouldReplaceSubresourceURL(const URL& url, ReplacementMethod replacementType = ReplacementMethod::BlobURL)
+static bool shouldReplaceSubresourceURLWithBlobDuringSanitization(const URL& url)
 {
-    if (url.protocolIsData())
-        return false;
-
-    if (url.protocolIsInHTTPFamily())
-        return replacementType == ReplacementMethod::Attachment;
-
-    return true;
+    return !url.protocolIsData() && !url.protocolIsInHTTPFamily();
 }
 
 static bool shouldReplaceRichContentWithAttachments()
@@ -256,14 +249,14 @@ static Ref<DocumentFragment> createFragmentForImageAttachment(Frame& frame, Docu
 #if ENABLE(ATTACHMENT_ELEMENT)
     auto attachment = HTMLAttachmentElement::create(HTMLNames::attachmentTag, document);
     // FIXME: This fallback image name needs to be a localized string.
-    String defaultImageAttachmentName { "image"_s };
+    constexpr ASCIILiteral defaultImageAttachmentName { "image"_s };
 
     auto fragment = document.createDocumentFragment();
     if (supportsClientSideAttachmentData(frame)) {
         frame.editor().registerAttachmentIdentifier(attachment->ensureUniqueIdentifier(), contentType, defaultImageAttachmentName, buffer.copyRef());
         if (contentTypeIsSuitableForInlineImageRepresentation(contentType)) {
             auto image = HTMLImageElement::create(document);
-            image->setAttributeWithoutSynchronization(HTMLNames::srcAttr, DOMURL::createObjectURL(document, Blob::create(&document, buffer->extractData(), contentType)));
+            image->setAttributeWithoutSynchronization(HTMLNames::srcAttr, AtomString { DOMURL::createObjectURL(document, Blob::create(&document, buffer->extractData(), contentType)) });
             image->setAttachmentElement(WTFMove(attachment));
             if (preferredSize.width)
                 image->setAttributeWithoutSynchronization(HTMLNames::widthAttr, AtomString::number(*preferredSize.width));
@@ -271,7 +264,7 @@ static Ref<DocumentFragment> createFragmentForImageAttachment(Frame& frame, Docu
                 image->setAttributeWithoutSynchronization(HTMLNames::heightAttr, AtomString::number(*preferredSize.height));
             fragment->appendChild(WTFMove(image));
         } else {
-            attachment->updateAttributes(buffer->size(), contentType, defaultImageAttachmentName);
+            attachment->updateAttributes(buffer->size(), AtomString { contentType }, defaultImageAttachmentName);
             fragment->appendChild(WTFMove(attachment));
         }
     } else {
@@ -301,16 +294,16 @@ static void replaceRichContentWithAttachments(Frame& frame, DocumentFragment& fr
 
     // FIXME: Handle resources in subframe archives.
     HashMap<AtomString, Ref<ArchiveResource>> urlToResourceMap;
-    for (auto& subresource : subresources) {
-        auto& url = subresource->url();
-        if (shouldReplaceSubresourceURL(url, ReplacementMethod::Attachment))
-            urlToResourceMap.set(url.string(), subresource.copyRef());
-    }
+    for (auto& subresource : subresources)
+        urlToResourceMap.set(AtomString { subresource->url().string() }, subresource.copyRef());
 
     Vector<SerializedAttachmentData> serializedAttachmentData;
     for (auto& attachment : descendantsOfType<HTMLAttachmentElement>(fragment)) {
         auto resourceURL = HTMLAttachmentElement::archiveResourceURL(attachment.uniqueIdentifier());
-        auto resourceEntry = urlToResourceMap.find(resourceURL.string());
+        auto resourceURLAtom = resourceURL.string().toExistingAtomString();
+        if (resourceURLAtom.isNull())
+            continue;
+        auto resourceEntry = urlToResourceMap.find(resourceURLAtom);
         if (resourceEntry == urlToResourceMap.end())
             continue;
 
@@ -369,10 +362,10 @@ static void replaceRichContentWithAttachments(Frame& frame, DocumentFragment& fr
         if (supportsClientSideAttachmentData(frame)) {
             if (is<HTMLImageElement>(originalElement) && contentTypeIsSuitableForInlineImageRepresentation(info.contentType)) {
                 auto& image = downcast<HTMLImageElement>(originalElement.get());
-                image.setAttributeWithoutSynchronization(HTMLNames::srcAttr, DOMURL::createObjectURL(*frame.document(), Blob::create(frame.document(), info.data->copyData(), info.contentType)));
+                image.setAttributeWithoutSynchronization(HTMLNames::srcAttr, AtomString { DOMURL::createObjectURL(*frame.document(), Blob::create(frame.document(), info.data->copyData(), info.contentType)) });
                 image.setAttachmentElement(attachment.copyRef());
             } else {
-                attachment->updateAttributes(info.data->size(), info.contentType, info.fileName);
+                attachment->updateAttributes(info.data->size(), AtomString { info.contentType }, AtomString { info.fileName });
                 parent->replaceChild(attachment, WTFMove(originalElement));
             }
             frame.editor().registerAttachmentIdentifier(attachment->ensureUniqueIdentifier(), WTFMove(info.contentType), WTFMove(info.fileName), WTFMove(info.data));
@@ -421,7 +414,7 @@ RefPtr<DocumentFragment> createFragmentAndAddResources(Frame& frame, NSAttribute
     for (auto& subresource : fragmentAndResources.resources) {
         auto blob = Blob::create(&document, subresource->data().copyData(), subresource->mimeType());
         String blobURL = DOMURL::createObjectURL(document, blob);
-        blobURLMap.set(subresource->url().string(), blobURL);
+        blobURLMap.set(AtomString { subresource->url().string() }, AtomString { blobURL });
     }
 
     replaceSubresourceURLs(*fragmentAndResources.fragment, WTFMove(blobURLMap));
@@ -466,11 +459,11 @@ static String sanitizeMarkupWithArchive(Frame& frame, Document& destinationDocum
     HashMap<AtomString, AtomString> blobURLMap;
     for (const Ref<ArchiveResource>& subresource : markupAndArchive.archive->subresources()) {
         auto& subresourceURL = subresource->url();
-        if (!shouldReplaceSubresourceURL(subresourceURL))
+        if (!shouldReplaceSubresourceURLWithBlobDuringSanitization(subresourceURL))
             continue;
         auto blob = Blob::create(&destinationDocument, subresource->data().copyData(), subresource->mimeType());
         String blobURL = DOMURL::createObjectURL(destinationDocument, blob);
-        blobURLMap.set(subresourceURL.string(), blobURL);
+        blobURLMap.set(AtomString { subresourceURL.string() }, AtomString { blobURL });
     }
 
     auto contentOrigin = SecurityOrigin::create(markupAndArchive.mainResource->url());
@@ -484,7 +477,7 @@ static String sanitizeMarkupWithArchive(Frame& frame, Document& destinationDocum
             continue;
 
         auto subframeURL = subframeMainResource->url();
-        if (!shouldReplaceSubresourceURL(subframeURL))
+        if (!shouldReplaceSubresourceURLWithBlobDuringSanitization(subframeURL))
             continue;
 
         MarkupAndArchive subframeContent = { String::fromUTF8(subframeMainResource->data().makeContiguous()->data(), subframeMainResource->data().size()),
@@ -495,7 +488,7 @@ static String sanitizeMarkupWithArchive(Frame& frame, Document& destinationDocum
         auto blob = Blob::create(&destinationDocument, Vector { utf8.dataAsUInt8Ptr(), utf8.length() }, type);
 
         String subframeBlobURL = DOMURL::createObjectURL(destinationDocument, blob);
-        blobURLMap.set(subframeURL.string(), subframeBlobURL);
+        blobURLMap.set(AtomString { subframeURL.string() }, AtomString { subframeBlobURL });
     }
 
     replaceSubresourceURLs(fragment.get(), WTFMove(blobURLMap));
@@ -590,7 +583,7 @@ bool WebContentReader::readHTML(const String& string)
     if (RuntimeEnabledFeatures::sharedFeatures().customPasteboardDataEnabled() && shouldSanitize()) {
         markup = sanitizeMarkup(stringOmittingMicrosoftPrefix, msoListQuirksForMarkup(), WTF::Function<void (DocumentFragment&)> { [] (DocumentFragment& fragment) {
             removeSubresourceURLAttributes(fragment, [] (const URL& url) {
-                return shouldReplaceSubresourceURL(url);
+                return shouldReplaceSubresourceURLWithBlobDuringSanitization(url);
             });
         } });
     } else
@@ -609,7 +602,7 @@ bool WebContentMarkupReader::readHTML(const String& string)
     if (shouldSanitize()) {
         markup = sanitizeMarkup(rawHTML, msoListQuirksForMarkup(), WTF::Function<void (DocumentFragment&)> { [] (DocumentFragment& fragment) {
             removeSubresourceURLAttributes(fragment, [] (const URL& url) {
-                return shouldReplaceSubresourceURL(url);
+                return shouldReplaceSubresourceURLWithBlobDuringSanitization(url);
             });
         } });
     } else
@@ -742,7 +735,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
         attachment->setAttributeWithoutSynchronization(HTMLNames::progressAttr, AtomString::number(0));
     else if (contentTypeIsSuitableForInlineImageRepresentation(contentType)) {
         auto image = HTMLImageElement::create(document);
-        image->setAttributeWithoutSynchronization(HTMLNames::srcAttr, DOMURL::createObjectURL(document, File::create(document.ptr(), path)));
+        image->setAttributeWithoutSynchronization(HTMLNames::srcAttr, AtomString { DOMURL::createObjectURL(document, File::create(document.ptr(), path)) });
         image->setAttachmentElement(WTFMove(attachment));
         if (preferredSize.width)
             image->setAttributeWithoutSynchronization(HTMLNames::widthAttr, AtomString::number(*preferredSize.width));
@@ -751,11 +744,11 @@ ALLOW_DEPRECATED_DECLARATIONS_END
         return image;
     }
 
-    attachment->updateAttributes(WTFMove(fileSizeForDisplay), contentType, FileSystem::pathFileName(path));
+    attachment->updateAttributes(WTFMove(fileSizeForDisplay), AtomString { contentType }, AtomString { FileSystem::pathFileName(path) });
     return attachment;
 }
 
-static Ref<HTMLElement> attachmentForData(Frame& frame, FragmentedSharedBuffer& buffer, const String& contentType, const String& name, PresentationSize preferredSize)
+static Ref<HTMLElement> attachmentForData(Frame& frame, FragmentedSharedBuffer& buffer, const String& contentType, const AtomString& name, PresentationSize preferredSize)
 {
     Ref document = *frame.document();
     auto attachment = HTMLAttachmentElement::create(HTMLNames::attachmentTag, document);
@@ -764,7 +757,7 @@ static Ref<HTMLElement> attachmentForData(Frame& frame, FragmentedSharedBuffer& 
     // FIXME: We should instead ask CoreServices for a preferred name corresponding to the given content type.
     static constexpr ASCIILiteral defaultAttachmentName = "file"_s;
 
-    String fileName;
+    AtomString fileName;
     if (name.isEmpty())
         fileName = defaultAttachmentName;
     else
@@ -779,7 +772,7 @@ static Ref<HTMLElement> attachmentForData(Frame& frame, FragmentedSharedBuffer& 
 
     if (contentTypeIsSuitableForInlineImageRepresentation(attachmentType)) {
         auto image = HTMLImageElement::create(document);
-        image->setAttributeWithoutSynchronization(HTMLNames::srcAttr, DOMURL::createObjectURL(document, File::create(document.ptr(), Blob::create(document.ptr(), buffer.copyData(), WTFMove(attachmentType)), WTFMove(fileName))));
+        image->setAttributeWithoutSynchronization(HTMLNames::srcAttr, AtomString { DOMURL::createObjectURL(document, File::create(document.ptr(), Blob::create(document.ptr(), buffer.copyData(), WTFMove(attachmentType)), WTFMove(fileName))) });
         image->setAttachmentElement(WTFMove(attachment));
         if (preferredSize.width)
             image->setAttributeWithoutSynchronization(HTMLNames::widthAttr, AtomString::number(*preferredSize.width));
@@ -788,7 +781,7 @@ static Ref<HTMLElement> attachmentForData(Frame& frame, FragmentedSharedBuffer& 
         return image;
     }
 
-    attachment->updateAttributes({ buffer.size() }, WTFMove(attachmentType), WTFMove(fileName));
+    attachment->updateAttributes({ buffer.size() }, AtomString { attachmentType }, WTFMove(fileName));
     return attachment;
 }
 
@@ -829,7 +822,7 @@ bool WebContentReader::readURL(const URL& url, const String& title)
 
     Ref document = *frame.document();
     auto anchor = HTMLAnchorElement::create(document.get());
-    anchor->setAttributeWithoutSynchronization(HTMLNames::hrefAttr, url.string());
+    anchor->setAttributeWithoutSynchronization(HTMLNames::hrefAttr, AtomString { url.string() });
 
     NSString *linkText = title.isEmpty() ? [(NSURL *)url absoluteString] : (NSString *)title;
     anchor->appendChild(document->createTextNode([linkText precomposedStringWithCanonicalMapping]));
@@ -842,7 +835,7 @@ bool WebContentReader::readURL(const URL& url, const String& title)
     return true;
 }
 
-bool WebContentReader::readDataBuffer(SharedBuffer& buffer, const String& type, const String& name, PresentationSize preferredPresentationSize)
+bool WebContentReader::readDataBuffer(SharedBuffer& buffer, const String& type, const AtomString& name, PresentationSize preferredPresentationSize)
 {
     if (buffer.isEmpty())
         return false;

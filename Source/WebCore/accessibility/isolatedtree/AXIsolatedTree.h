@@ -44,21 +44,16 @@ namespace WebCore {
 class AXIsolatedObject;
 class AXObjectCache;
 class Page;
+enum class AXStreamOptions : uint8_t;
 
 using AXIsolatedTreeID = unsigned;
 
 enum class AXPropertyName : uint16_t {
-    ARIAControlsElements,
-    ARIADetailsElements,
-    DropEffects,
-    ARIAErrorMessageElements,
     ARIAIsMultiline,
-    ARIAFlowToElements,
     ARIALandmarkRoleDescription,
     ARIATreeItemContent,
     ARIATreeRows,
     ARIARoleAttribute,
-    ARIAOwnsElements,
     AXColumnCount,
     AXColumnIndex,
     AXRowCount,
@@ -97,20 +92,25 @@ enum class AXPropertyName : uint16_t {
     ColumnIndexRange,
     ComputedRoleString,
     Contents,
+    ControlledObjects,
     CurrentState,
     CurrentValue,
     DatetimeAttributeValue,
     DecrementButton,
     Description,
+    DetailedByObjects,
     DisclosedByRow,
     DisclosedRows,
     DocumentEncoding,
     DocumentLinks,
     DocumentURI,
+    DropEffects,
     EditableAncestor,
     EmbeddedImageDescription,
+    ErrorMessageObjects,
     ExpandedTextValue,
     FileUploadButtonReturnsValueInTitle,
+    FlowToObjects,
     FocusableAncestor,
     HasARIAValueNow,
     HasApplePDFAnnotationAttribute,
@@ -228,7 +228,7 @@ enum class AXPropertyName : uint16_t {
     Language,
     LayoutCount,
     LinkRelValue,
-    LinkedUIElements,
+    LinkedObjects,
     LiveRegionAtomic,
     LiveRegionRelevant,
     LiveRegionStatus,
@@ -250,6 +250,7 @@ enum class AXPropertyName : uint16_t {
     MaxValueForRange,
     MinValueForRange,
     NameAttribute,
+    OwnedObjects,
     Orientation,
     OuterHTML,
     Path,
@@ -323,6 +324,7 @@ struct AXPropertyChange {
 class AXIsolatedTree : public ThreadSafeRefCounted<AXIsolatedTree> {
     WTF_MAKE_NONCOPYABLE(AXIsolatedTree); WTF_MAKE_FAST_ALLOCATED;
     friend WTF::TextStream& operator<<(WTF::TextStream&, AXIsolatedTree&);
+    friend void streamIsolatedSubtreeOnMainThread(TextStream&, const AXIsolatedTree&, AXID, const OptionSet<AXStreamOptions>&);
 public:
     static Ref<AXIsolatedTree> create(AXObjectCache*);
     virtual ~AXIsolatedTree();
@@ -337,7 +339,6 @@ public:
     RefPtr<AXIsolatedObject> focusedNode();
     RefPtr<AXIsolatedObject> nodeForID(AXID) const;
     Vector<RefPtr<AXCoreObject>> objectsForIDs(const Vector<AXID>&) const;
-    Vector<AXID> idsForObjects(const Vector<RefPtr<AXCoreObject>>&) const;
 
     struct NodeChange {
         Ref<AXIsolatedObject> isolatedObject;
@@ -348,10 +349,13 @@ public:
 #endif
     };
 
-    void generateSubtree(AXCoreObject&, AXCoreObject*, bool attachWrapper);
+    void generateSubtree(AXCoreObject&);
     void updateNode(AXCoreObject&);
-    void updateNodeProperty(const AXCoreObject&, AXPropertyName);
     void updateChildren(AXCoreObject&);
+    void updateNodeProperty(AXCoreObject&, AXPropertyName);
+    void updateRelatedProperties(AXCoreObject&);
+    void updateTableProperties(AXCoreObject&);
+    void updateTreeItemProperties(AXCoreObject&);
 
     double loadingProgress() { return m_loadingProgress; }
     void updateLoadingProgress(double);
@@ -359,7 +363,7 @@ public:
     // Removes the corresponding isolated object and all descendants from the m_nodeMap and queues their removal from the tree.
     void removeNode(const AXCoreObject&);
     // Removes the given node and all its descendants from m_nodeMap.
-    void removeSubtreeFromNodeMap(AXID axID, AXCoreObject*, const HashSet<AXID>& = { });
+    void removeSubtreeFromNodeMap(AXID axID, AXCoreObject*);
 
     // Both setRootNodeID and setFocusedNodeID are called during the generation
     // of the IsolatedTree.
@@ -381,13 +385,13 @@ private:
     static HashMap<AXIsolatedTreeID, Ref<AXIsolatedTree>>& treeIDCache() WTF_REQUIRES_LOCK(s_cacheLock);
     static HashMap<PageIdentifier, Ref<AXIsolatedTree>>& treePageCache() WTF_REQUIRES_LOCK(s_cacheLock);
 
-    // Methods in this block are called on the main thread.
-    // Computes the parent ID of the given object, which is generally the "assumed" parent ID (but not always, like in the case of tables).
-    AXID parentIDForObject(AXCoreObject&, AXID assumedParentID);
-    NodeChange nodeChangeForObject(AXCoreObject&, AXID parentID, bool attachWrapper = true);
-    void collectNodeChangesForSubtree(AXCoreObject&, AXID parentID, bool attachWrapper, Vector<NodeChange>&, HashSet<AXID>* = nullptr);
+    enum class AttachWrapper : bool { OnMainThread, OnAXThread };
+    NodeChange nodeChangeForObject(AXCoreObject&, AttachWrapper = AttachWrapper::OnMainThread);
+    void collectNodeChangesForSubtree(AXCoreObject&);
     void queueChange(const NodeChange&) WTF_REQUIRES_LOCK(m_changeLogLock);
-    void queueChangesAndRemovals(const Vector<NodeChange>&, const Vector<AXID>& = { });
+    void queueRemovals(const Vector<AXID>&);
+    void queueRemovalsLocked(const Vector<AXID>&) WTF_REQUIRES_LOCK(m_changeLogLock);
+    void queueRemovalsAndUnresolvedChanges(const Vector<AXID>&);
 
     AXIsolatedTreeID m_treeID;
     AXObjectCache* m_axObjectCache { nullptr };
@@ -404,6 +408,13 @@ private:
     // its ObjectID to its ParentChildrenIDs struct.
     HashMap<AXID, ParentChildrenIDs> m_nodeMap;
 
+    // Only accessed on the main thread.
+    // The key is the ID of the object that will be resolved into an m_pendingAppends NodeChange.
+    // The value is whether the wrapper should be attached on the main thread or the AX thread.
+    HashMap<AXID, AttachWrapper> m_unresolvedPendingAppends;
+    // Only accessed on the main thread.
+    bool m_isCollectingNodeChanges { false };
+
     // Only accessed on AX thread requesting data.
     HashMap<AXID, Ref<AXIsolatedObject>> m_readerThreadNodeMap;
 
@@ -411,7 +422,6 @@ private:
     RefPtr<AXIsolatedObject> m_rootNode WTF_GUARDED_BY_LOCK(m_changeLogLock);
     Vector<NodeChange> m_pendingAppends WTF_GUARDED_BY_LOCK(m_changeLogLock); // Nodes to be added to the tree and platform-wrapped.
     Vector<AXPropertyChange> m_pendingPropertyChanges WTF_GUARDED_BY_LOCK(m_changeLogLock);
-    Vector<AXID> m_pendingNodeRemovals WTF_GUARDED_BY_LOCK(m_changeLogLock); // Nodes to be removed from the tree.
     Vector<AXID> m_pendingSubtreeRemovals WTF_GUARDED_BY_LOCK(m_changeLogLock); // Nodes whose subtrees are to be removed from the tree.
     Vector<std::pair<AXID, Vector<AXID>>> m_pendingChildrenUpdates WTF_GUARDED_BY_LOCK(m_changeLogLock);
     AXID m_pendingFocusedNodeID WTF_GUARDED_BY_LOCK(m_changeLogLock);

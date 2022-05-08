@@ -322,11 +322,15 @@ void PageClientImpl::setCursor(const WebCore::Cursor& cursor)
     if (!window)
         return;
 
-    if ([window windowNumber] != [NSWindow windowNumberAtPoint:[NSEvent mouseLocation] belowWindowWithWindowNumber:0])
+    auto mouseLocationInScreen = NSEvent.mouseLocation;
+    if (window.windowNumber != [NSWindow windowNumberAtPoint:mouseLocationInScreen belowWindowWithWindowNumber:0])
         return;
 
     NSCursor *platformCursor = cursor.platformCursor();
     if ([NSCursor currentCursor] == platformCursor)
+        return;
+
+    if (m_impl->imageAnalysisOverlayViewHasCursorAtPoint([m_view convertPoint:mouseLocationInScreen fromView:nil]))
         return;
 
     [platformCursor set];
@@ -485,12 +489,12 @@ void PageClientImpl::requestTextRecognition(const URL& imageURL, const Shareable
     m_impl->requestTextRecognition(imageURL, imageData, identifier, WTFMove(completion));
 }
 
-void PageClientImpl::computeHasImageAnalysisResults(const URL& imageURL, ShareableBitmap& imageBitmap, ImageAnalysisType type, CompletionHandler<void(bool)>&& completion)
+void PageClientImpl::computeHasVisualSearchResults(const URL& imageURL, ShareableBitmap& imageBitmap, CompletionHandler<void(bool)>&& completion)
 {
-    m_impl->computeHasImageAnalysisResults(imageURL, imageBitmap, type, WTFMove(completion));
+    m_impl->computeHasVisualSearchResults(imageURL, imageBitmap, WTFMove(completion));
 }
 
-#endif // ENABLE(IMAGE_ANALYSIS)
+#endif
 
 RefPtr<WebPopupMenuProxy> PageClientImpl::createPopupMenuProxy(WebPageProxy& page)
 {
@@ -1034,6 +1038,16 @@ void PageClientImpl::handleClickForDataDetectionResult(const DataDetectorElement
 }
 
 #endif
+
+void PageClientImpl::beginElementFullscreenVideoExtraction(const ShareableBitmap::Handle& bitmapHandle, FloatRect bounds)
+{
+    m_impl->beginElementFullscreenVideoExtraction(bitmapHandle, bounds);
+}
+
+void PageClientImpl::cancelElementFullscreenVideoExtraction()
+{
+    m_impl->cancelElementFullscreenVideoExtraction();
+}
 
 } // namespace WebKit
 

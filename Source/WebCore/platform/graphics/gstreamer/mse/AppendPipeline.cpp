@@ -113,7 +113,7 @@ AppendPipeline::AppendPipeline(SourceBufferPrivateGStreamer& sourceBufferPrivate
     // The track name is still unknown at this time, though.
     static size_t appendPipelineCount = 0;
     String pipelineName = makeString("append-pipeline-",
-        m_sourceBufferPrivate.type().containerType().replace("/", "-"), '-', appendPipelineCount++);
+        makeStringByReplacingAll(m_sourceBufferPrivate.type().containerType(), '/', '-'), '-', appendPipelineCount++);
     m_pipeline = gst_pipeline_new(pipelineName.utf8().data());
 
     m_bus = adoptGRef(gst_pipeline_get_bus(GST_PIPELINE(m_pipeline.get())));
@@ -299,9 +299,11 @@ void AppendPipeline::handleStateChangeMessage(GstMessage* message)
     if (GST_MESSAGE_SRC(message) == reinterpret_cast<GstObject*>(m_pipeline.get())) {
         GstState currentState, newState;
         gst_message_parse_state_changed(message, &currentState, &newState, nullptr);
-        CString sourceBufferType = String(m_sourceBufferPrivate.type().raw())
-            .replace("/", "_").replace(" ", "_")
-            .replace("\"", "").replace("\'", "").utf8();
+        String sourceBufferTypeString = makeStringByReplacingAll(m_sourceBufferPrivate.type().raw(), '/', '_');
+        sourceBufferTypeString = makeStringByReplacingAll(sourceBufferTypeString, ' ', '_');
+        sourceBufferTypeString = makeStringByReplacingAll(sourceBufferTypeString, '"', ""_s);
+        sourceBufferTypeString = makeStringByReplacingAll(sourceBufferTypeString, '\'', ""_s);
+        CString sourceBufferType = sourceBufferTypeString.utf8();
         CString dotFileName = makeString("webkit-append-",
             sourceBufferType.data(), '-',
             gst_element_state_get_name(currentState), '_',
@@ -320,7 +322,7 @@ std::tuple<GRefPtr<GstCaps>, AppendPipeline::StreamType, FloatSize> AppendPipeli
 
     const char* originalMediaType = capsMediaType(demuxerSrcPadCaps);
     auto& gstRegistryScanner = GStreamerRegistryScannerMSE::singleton();
-    if (!gstRegistryScanner.isCodecSupported(GStreamerRegistryScanner::Configuration::Decoding, originalMediaType)) {
+    if (!gstRegistryScanner.isCodecSupported(GStreamerRegistryScanner::Configuration::Decoding, String::fromLatin1(originalMediaType))) {
         streamType = StreamType::Invalid;
     } else if (doCapsHaveType(demuxerSrcPadCaps, GST_VIDEO_CAPS_TYPE_PREFIX)) {
         presentationSize = getVideoResolutionFromCaps(demuxerSrcPadCaps).value_or(FloatSize());
@@ -657,13 +659,13 @@ AtomString AppendPipeline::generateTrackId(StreamType streamType, int padIndex)
 {
     switch (streamType) {
     case Audio:
-        return makeString("A", padIndex);
+        return makeAtomString('A', padIndex);
     case Video:
-        return makeString("V", padIndex);
+        return makeAtomString('V', padIndex);
     case Text:
-        return makeString("T", padIndex);
+        return makeAtomString('T', padIndex);
     default:
-        return makeString("O", padIndex);
+        return makeAtomString('O', padIndex);
     }
 }
 
@@ -713,7 +715,7 @@ AppendPipeline::Track* AppendPipeline::tryMatchPadToExistingTrack(GstPad *demuxe
 {
     ASSERT(isMainThread());
     ASSERT(m_hasReceivedFirstInitializationSegment);
-    AtomString trackId = GST_PAD_NAME(demuxerSrcPad);
+    auto trackId = AtomString::fromLatin1(GST_PAD_NAME(demuxerSrcPad));
     auto [parsedCaps, streamType, presentationSize] = parseDemuxerSrcPadCaps(adoptGRef(gst_pad_get_current_caps(demuxerSrcPad)).get());
 
     // Try to find a matching pre-existing track. Ideally, tracks should be matched by track ID, but matching by type

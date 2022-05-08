@@ -117,11 +117,11 @@ bool MathMLElement::hasPresentationalHintsForAttribute(const QualifiedName& name
 static String convertMathSizeIfNeeded(const AtomString& value)
 {
     if (value == "small")
-        return "0.75em";
+        return "0.75em"_s;
     if (value == "normal")
-        return "1em";
+        return "1em"_s;
     if (value == "big")
-        return "1.5em";
+        return "1.5em"_s;
 
     // FIXME: mathsize accepts any MathML length, including named spaces (see parseMathMLLength).
     // FIXME: Might be better to use double than float.
@@ -145,9 +145,9 @@ void MathMLElement::collectPresentationalHintsForAttribute(const QualifiedName& 
         if (document().settings().coreMathMLEnabled() || hasTagName(mathTag) || hasTagName(mrowTag) || hasTagName(mstyleTag) || isMathMLToken())
             addPropertyToPresentationalHintStyle(style, CSSPropertyDirection, value);
     } else if (name == displaystyleAttr) {
-        if (equalLettersIgnoringASCIICase(value, "false"))
+        if (equalLettersIgnoringASCIICase(value, "false"_s))
             addPropertyToPresentationalHintStyle(style, CSSPropertyMathStyle, CSSValueCompact);
-        else if (equalLettersIgnoringASCIICase(value, "true"))
+        else if (equalLettersIgnoringASCIICase(value, "true"_s))
             addPropertyToPresentationalHintStyle(style, CSSPropertyMathStyle, CSSValueNormal);
     } else {
         if (document().settings().coreMathMLEnabled()) {

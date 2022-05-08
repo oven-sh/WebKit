@@ -30,6 +30,7 @@
 #include "GPUProcessConnection.h"
 #include "IPCSemaphore.h"
 #include "ImageBufferBackendHandle.h"
+#include "MarkSurfacesAsVolatileRequestIdentifier.h"
 #include "MessageReceiver.h"
 #include "MessageSender.h"
 #include "RemoteDisplayListRecorderMessages.h"
@@ -43,6 +44,7 @@
 #include <WebCore/RenderingResourceIdentifier.h>
 #include <WebCore/Timer.h>
 #include <wtf/Deque.h>
+#include <wtf/HashMap.h>
 #include <wtf/Span.h>
 #include <wtf/WeakPtr.h>
 
@@ -82,7 +84,7 @@ public:
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
 
     // Messages to be sent.
-    RefPtr<WebCore::ImageBuffer> createImageBuffer(const WebCore::FloatSize&, WebCore::RenderingMode, float resolutionScale, const WebCore::DestinationColorSpace&, WebCore::PixelFormat);
+    RefPtr<WebCore::ImageBuffer> createImageBuffer(const WebCore::FloatSize&, WebCore::RenderingMode, WebCore::RenderingPurpose, float resolutionScale, const WebCore::DestinationColorSpace&, WebCore::PixelFormat);
     bool getPixelBufferForImageBuffer(WebCore::RenderingResourceIdentifier, const WebCore::PixelBufferFormat& destinationFormat, const WebCore::IntRect& srcRect, Span<uint8_t> result);
     void putPixelBufferForImageBuffer(WebCore::RenderingResourceIdentifier, const WebCore::PixelBuffer&, const WebCore::IntRect& srcRect, const WebCore::IntPoint& destPoint, WebCore::AlphaPremultiplication destFormat);
     String getDataURLForImageBuffer(const String& mimeType, std::optional<double> quality, WebCore::PreserveResolution, WebCore::RenderingResourceIdentifier);
@@ -131,7 +133,7 @@ public:
 
     bool isGPUProcessConnectionClosed() const { return !m_gpuProcessConnection; }
 
-    void didCreateWakeUpSemaphoreForDisplayListStream(IPC::Semaphore&&);
+    void didInitialize(IPC::Semaphore&& wakeUpSemaphore, IPC::Semaphore&& clientWaitSemaphore);
 
     template<typename T, typename U>
     void sendToStream(T&& message, ObjectIdentifier<U> identifier)
@@ -159,9 +161,8 @@ private:
 
     // GPUProcessConnection::Client
     void gpuProcessConnectionDidClose(GPUProcessConnection&) final;
-
+    void disconnectGPUProcess();
     GPUProcessConnection& ensureGPUProcessConnection();
-    IPC::Connection& gpuProcessConnection();
 
     // Returns std::nullopt if no update is needed or allocation failed.
     // Returns handle if that should be sent to the receiver process.
@@ -172,18 +173,19 @@ private:
     void didCreateImageBufferBackend(ImageBufferBackendHandle, WebCore::RenderingResourceIdentifier);
     void didFlush(WebCore::GraphicsContextFlushIdentifier, WebCore::RenderingResourceIdentifier);
     void didFinalizeRenderingUpdate(RenderingUpdateID didRenderingUpdateID);
+    void didMarkLayersAsVolatile(MarkSurfacesAsVolatileRequestIdentifier, const Vector<WebCore::RenderingResourceIdentifier>& markedVolatileBufferIdentifiers, bool didMarkAllLayerAsVolatile);
 
+    GPUProcessConnection* m_gpuProcessConnection { nullptr };
+    RefPtr<IPC::Connection> m_connection;
     std::unique_ptr<IPC::StreamClientConnection> m_streamConnection;
     RemoteRenderingBackendCreationParameters m_parameters;
-    WeakPtr<GPUProcessConnection> m_gpuProcessConnection;
     RemoteResourceCacheProxy m_remoteResourceCacheProxy { *this };
     RefPtr<SharedMemory> m_getPixelBufferSharedMemory;
     WebCore::Timer m_destroyGetPixelBufferSharedMemoryTimer { *this, &RemoteRenderingBackendProxy::destroyGetPixelBufferSharedMemory };
+    HashMap<MarkSurfacesAsVolatileRequestIdentifier, CompletionHandler<void(bool)>> m_markAsVolatileRequests;
 
     RenderingUpdateID m_renderingUpdateID;
     RenderingUpdateID m_didRenderingUpdateID;
-
-    bool m_needsWakeUpSemaphoreForDisplayListStream { true };
 };
 
 } // namespace WebKit

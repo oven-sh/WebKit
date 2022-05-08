@@ -1,3 +1,193 @@
+2022-05-06  Youenn Fablet  <youenn@apple.com>
+
+        Remove usage of PixelBufferConformer in RealtimeOutgoingVideoSourceCocoa
+        https://bugs.webkit.org/show_bug.cgi?id=240118
+
+        Reviewed by Eric Carlson.
+
+        Add a routine to convert RGB CVPixelBuffer to YUV webrtc VideoFrameBuffer.
+
+        * Configurations/libwebrtc.iOS.exp:
+        * Configurations/libwebrtc.iOSsim.exp:
+        * Configurations/libwebrtc.mac.exp:
+        * Source/webrtc/sdk/WebKit/WebKitUtilities.h:
+        * Source/webrtc/sdk/WebKit/WebKitUtilities.mm:
+        (webrtc::convertBGRAToYUV):
+
+2022-04-30  Jer Noble  <jer.noble@apple.com>
+
+        [Mac] VTVideoDecoderClass object pointers can become unaligned on x86
+        https://bugs.webkit.org/show_bug.cgi?id=239916
+        <rdar://92445366>
+
+        Reviewed by Eric Carlson.
+
+        Both the base class and the derived class must be 4-byte aligned on x86, or there
+        is a chance that a pointer member of that struct will cross a page boundary, and
+        dereferencing that pointer will fail.
+
+        * Source/webrtc/sdk/WebKit/WebKitVP8Decoder.cpp:
+        * Source/webrtc/sdk/WebKit/WebKitVP9Decoder.cpp:
+
+2022-04-25  Tim Horton  <timothy_horton@apple.com>
+
+        Fix duplicate headers warning in libwebrtc Copy Headers phase
+        https://bugs.webkit.org/show_bug.cgi?id=239415
+
+        Reviewed by Sam Weinig.
+
+        * libwebrtc.xcodeproj/project.pbxproj:
+        Remove and re-add these files (Xcode won't delete just one copy of them,
+        because they have the same identifiers).
+
+2022-04-18  Elliott Williams  <emw@apple.com>
+
+        [XCBuild] Use XCBuild for all command-line and project builds
+        https://bugs.webkit.org/show_bug.cgi?id=238916
+
+        Reviewed by Alexey Proskuryakov.
+
+        * libwebrtc.xcodeproj/project.pbxproj:
+
+2022-04-15  Youenn Fablet  <youenn@apple.com>
+
+        Rename libwebrtc ObjC NSString utility routines
+        https://bugs.webkit.org/show_bug.cgi?id=239287
+        <rdar://91431764>
+
+        Reviewed by Eric Carlson.
+
+        Add rtc prefix to NSString utility routines to prevent symbol collision.
+
+        * Source/webrtc/sdk/objc/api/peerconnection/RTCRtpEncodingParameters.mm:
+        (-[RTCRtpEncodingParameters initWithNativeParameters:]):
+        (-[RTCRtpEncodingParameters nativeParameters]):
+        * Source/webrtc/sdk/objc/api/peerconnection/RTCVideoCodecInfo+Private.mm:
+        (-[RTCVideoCodecInfo initWithNativeSdpVideoFormat:]):
+        (-[RTCVideoCodecInfo nativeSdpVideoFormat]):
+        * Source/webrtc/sdk/objc/components/video_codec/RTCH264ProfileLevelId.mm:
+        * Source/webrtc/sdk/objc/helpers/NSString+StdString.h:
+        * Source/webrtc/sdk/objc/helpers/NSString+StdString.mm:
+        (-[NSString rtcStdString]):
+        (+[NSString rtcStdStringForString:]):
+        (+[NSString rtcStringForStdString:]):
+        (-[NSString stdString]): Deleted.
+        (+[NSString stdStringForString:]): Deleted.
+        (+[NSString stringForStdString:]): Deleted.
+        * Source/webrtc/sdk/objc/native/src/objc_video_decoder_factory.mm:
+        * Source/webrtc/sdk/objc/native/src/objc_video_encoder_factory.mm:
+
+2022-04-12  Elliott Williams  <emw@apple.com>
+
+        [Xcode] In open-source builds, disable bitcode in xcconfigs instead of build-webkit
+        https://bugs.webkit.org/show_bug.cgi?id=239262
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/Base.xcconfig:
+
+2022-04-12  Elliott Williams  <emw@apple.com>
+
+        Reland "[XCBuild] Enable dependency validation by default"
+        https://bugs.webkit.org/show_bug.cgi?id=238901
+        <rdar://problem/91379968>
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/DebugRelease.xcconfig: In open-source builds, disable
+        VALIDATE_DEPENDENCIES when there is no PRODUCT_TYPE (i.e. not building
+        a native target).
+
+2022-04-11  Michael Saboff  <msaboff@apple.com>
+
+        REGRESSION (r292411): libwebrtc header files aren't installed in system content path
+        https://bugs.webkit.org/show_bug.cgi?id=239100
+
+        Reviewed by Mark Lam.
+
+        Restored System Content Path processing for absl and webrtc header files.
+
+        * Configurations/libabsl.xcconfig:
+        * Configurations/libwebrtc.xcconfig:
+
+2022-04-08  Elliott Williams  <emw@apple.com>
+
+        [Xcode] Avoid targeting 32-bit iOS and Mac architectures
+        https://bugs.webkit.org/show_bug.cgi?id=238971
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/DebugRelease.xcconfig:
+
+2022-04-08  Elliott Williams  <emw@apple.com>
+
+        Unreviewed, reverting r292591.
+
+        Causing spurious EWS errors
+
+        Reverted changeset:
+
+        "[XCBuild] Enable dependency validation by default"
+        https://bugs.webkit.org/show_bug.cgi?id=238901
+        https://commits.webkit.org/r292591
+
+2022-04-07  Elliott Williams  <emw@apple.com>
+
+        [XCBuild] Enable dependency validation by default
+        https://bugs.webkit.org/show_bug.cgi?id=238901
+        <rdar://problem/91379968>
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/DebugRelease.xcconfig:
+
+2022-04-06  Youenn Fablet  <youenn@apple.com>
+
+        [Cocoa] Use GCD webrtc task queue
+        https://bugs.webkit.org/show_bug.cgi?id=238861
+
+        Reviewed by Eric Carlson.
+
+        * Configurations/libwebrtc.iOS.exp:
+        * Configurations/libwebrtc.iOSsim.exp:
+        * Configurations/libwebrtc.mac.exp:
+        * Source/webrtc/api/create_peerconnection_factory.cc:
+        * Source/webrtc/api/create_peerconnection_factory.h:
+        * libwebrtc.xcodeproj/project.pbxproj:
+
+2022-04-05  Elliott Williams  <emw@apple.com>
+
+        Reland "[XCBuild] libwebrtc's headers are copied via rsync and do not emit task outputs"
+        https://bugs.webkit.org/show_bug.cgi?id=237112
+
+        Reviewed by Alexey Proskuryakov.
+        
+        r291239 did not add all the headers needed for absl. In particular, some "internal" headers
+        which are included by public absl headers needed to be added. This omission was masked on
+        EWS by incremental build data, and on engineering builds by SDK content.
+        
+        Add the missing headers. Additionally, commit a sorted version of the project (via
+        `sort-Xcode-project-file`) to reduce the scope of the diff and clean up the project for
+        future changes.
+
+        * Configurations/Base.xcconfig: Same as before.
+        * Configurations/libabsl.xcconfig: Same as before.
+        * Configurations/libwebrtc.xcconfig: Same as before.
+        * libwebrtc.xcodeproj/project.pbxproj: Headers added, project sorted.
+
+2022-04-01  Michael Saboff  <msaboff@apple.com>
+
+        Stop copying StagedFrameworks to the secondary path by default
+        https://bugs.webkit.org/show_bug.cgi?id=238688
+
+        Reviewed by Saam Barati.
+
+        Decoupled COPY_STAGED_FRAMEWORKS_TO_SECONDARY_PATH from USE_SYSTEM_CONTENT_PATH so we won't
+        always copy frameworks to the secondary path on macOS.  Instead, the build configuration can set
+        COPY_STAGED_FRAMEWORKS_TO_SECONDARY_PATH as appropriate.
+
+        * Configurations/libwebrtc.xcconfig:
+
 2022-03-22  David Quesada  <david_quesada@apple.com>
 
         REGRESSION(r291455): libwebrtc has the wrong install name when using override frameworks directory

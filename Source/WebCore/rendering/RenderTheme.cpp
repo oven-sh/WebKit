@@ -95,19 +95,40 @@ ControlPart RenderTheme::adjustAppearanceForElement(RenderStyle& style, const El
 
     // Aliases of 'auto'.
     // https://drafts.csswg.org/css-ui-4/#typedef-appearance-compat-auto
-    if (part == AutoPart || part == SearchFieldPart || part == TextAreaPart || part == CheckboxPart || part == RadioPart || part == ListboxPart || part == MeterPart || part == ProgressBarPart) {
+    if (part == AutoPart || part == SearchFieldPart || part == TextAreaPart || part == CheckboxPart || part == RadioPart || part == ListboxPart || part == MeterPart || part == ProgressBarPart
+        || part == SquareButtonPart || part == PushButtonPart || part == SliderHorizontalPart || part == MenulistPart) {
         style.setEffectiveAppearance(autoAppearance);
         return autoAppearance;
     }
 
     // The following keywords should work well for some element types
     // even if their default appearances are different from the keywords.
-    if (part == MenulistButtonPart && autoAppearance != MenulistPart) {
+    if (part == ButtonPart) {
+        if (autoAppearance == PushButtonPart || autoAppearance == SquareButtonPart)
+            return part;
         style.setEffectiveAppearance(autoAppearance);
-        part = autoAppearance;
+        return autoAppearance;
+    }
+
+    if (part == MenulistButtonPart) {
+        if (autoAppearance == MenulistPart)
+            return part;
+        style.setEffectiveAppearance(autoAppearance);
+        return autoAppearance;
     }
 
     return part;
+}
+
+static bool isAppearanceAllowedForAllElements(ControlPart part)
+{
+#if ENABLE(APPLE_PAY)
+    if (part == ApplePayButtonPart)
+        return true;
+#endif
+
+    UNUSED_PARAM(part);
+    return false;
 }
 
 void RenderTheme::adjustStyle(RenderStyle& style, const Element* element, const RenderStyle* userAgentAppearanceStyle)
@@ -140,7 +161,8 @@ void RenderTheme::adjustStyle(RenderStyle& style, const Element* element, const 
         style.setEffectiveAppearance(part);
     }
 
-    if (!userAgentAppearanceStyle
+    if (!isAppearanceAllowedForAllElements(part)
+        && !userAgentAppearanceStyle
         && autoAppearance == NoControlPart
         && !style.borderAndBackgroundEqual(RenderStyle::defaultStyle()))
         style.setEffectiveAppearance(NoControlPart);
@@ -264,12 +286,6 @@ void RenderTheme::adjustStyle(RenderStyle& style, const Element* element, const 
     case MenulistButtonPart:
         return adjustMenuListButtonStyle(style, element);
     case MediaPlayButtonPart:
-    case MediaCurrentTimePart:
-    case MediaTimeRemainingPart:
-    case MediaEnterFullscreenButtonPart:
-    case MediaExitFullscreenButtonPart:
-    case MediaMuteButtonPart:
-    case MediaVolumeSliderContainerPart:
         return adjustMediaControlStyle(style, element);
     case MediaSliderPart:
     case MediaVolumeSliderPart:
@@ -305,11 +321,6 @@ void RenderTheme::adjustStyle(RenderStyle& style, const Element* element, const 
 #if ENABLE(APPLE_PAY)
     case ApplePayButtonPart:
         return adjustApplePayButtonStyle(style, element);
-#endif
-#if ENABLE(ATTACHMENT_ELEMENT)
-    case AttachmentPart:
-    case BorderlessAttachmentPart:
-        return adjustAttachmentStyle(style, element);
 #endif
 #if ENABLE(DATALIST_ELEMENT)
     case ListButtonPart:
@@ -528,33 +539,14 @@ bool RenderTheme::paint(const RenderBox& box, ControlStates& controlStates, cons
     case SliderThumbHorizontalPart:
     case SliderThumbVerticalPart:
         return paintSliderThumb(box, paintInfo, integralSnappedRect);
-    case MediaEnterFullscreenButtonPart:
-    case MediaExitFullscreenButtonPart:
-        return paintMediaFullscreenButton(box, paintInfo, integralSnappedRect);
     case MediaPlayButtonPart:
         return paintMediaPlayButton(box, paintInfo, integralSnappedRect);
-    case MediaOverlayPlayButtonPart:
-        return paintMediaOverlayPlayButton(box, paintInfo, integralSnappedRect);
-    case MediaMuteButtonPart:
-        return paintMediaMuteButton(box, paintInfo, integralSnappedRect);
-    case MediaSeekBackButtonPart:
-        return paintMediaSeekBackButton(box, paintInfo, integralSnappedRect);
-    case MediaSeekForwardButtonPart:
-        return paintMediaSeekForwardButton(box, paintInfo, integralSnappedRect);
-    case MediaRewindButtonPart:
-        return paintMediaRewindButton(box, paintInfo, integralSnappedRect);
-    case MediaReturnToRealtimeButtonPart:
-        return paintMediaReturnToRealtimeButton(box, paintInfo, integralSnappedRect);
-    case MediaToggleClosedCaptionsButtonPart:
-        return paintMediaToggleClosedCaptionsButton(box, paintInfo, integralSnappedRect);
     case MediaSliderPart:
         return paintMediaSliderTrack(box, paintInfo, integralSnappedRect);
     case MediaSliderThumbPart:
         return paintMediaSliderThumb(box, paintInfo, integralSnappedRect);
     case MediaVolumeSliderMuteButtonPart:
-        return paintMediaMuteButton(box, paintInfo, integralSnappedRect);
-    case MediaVolumeSliderContainerPart:
-        return paintMediaVolumeSliderContainer(box, paintInfo, integralSnappedRect);
+        return paintMediaMuteButton(box, paintInfo, integralSnappedRect);    
     case MediaVolumeSliderPart:
         return paintMediaVolumeSliderTrack(box, paintInfo, integralSnappedRect);
     case MediaVolumeSliderThumbPart:
@@ -563,12 +555,6 @@ bool RenderTheme::paint(const RenderBox& box, ControlStates& controlStates, cons
         return paintMediaFullScreenVolumeSliderTrack(box, paintInfo, integralSnappedRect);
     case MediaFullScreenVolumeSliderThumbPart:
         return paintMediaFullScreenVolumeSliderThumb(box, paintInfo, integralSnappedRect);
-    case MediaTimeRemainingPart:
-        return paintMediaTimeRemaining(box, paintInfo, integralSnappedRect);
-    case MediaCurrentTimePart:
-        return paintMediaCurrentTime(box, paintInfo, integralSnappedRect);
-    case MediaControlsBackgroundPart:
-        return paintMediaControlsBackground(box, paintInfo, integralSnappedRect);
     case MenulistButtonPart:
     case TextFieldPart:
     case TextAreaPart:
@@ -1166,8 +1152,10 @@ void RenderTheme::adjustTextAreaStyle(RenderStyle&, const Element*) const
 {
 }
 
-void RenderTheme::adjustMenuListStyle(RenderStyle&, const Element*) const
+void RenderTheme::adjustMenuListStyle(RenderStyle& style, const Element*) const
 {
+    style.setOverflowX(Overflow::Visible);
+    style.setOverflowY(Overflow::Visible);
 }
 
 void RenderTheme::adjustMeterStyle(RenderStyle& style, const Element*) const
@@ -1208,8 +1196,10 @@ bool RenderTheme::paintCapsLockIndicator(const RenderObject&, const PaintInfo&, 
 
 #if ENABLE(ATTACHMENT_ELEMENT)
 
-void RenderTheme::adjustAttachmentStyle(RenderStyle&, const Element*) const
+String RenderTheme::attachmentStyleSheet() const
 {
+    ASSERT(RuntimeEnabledFeatures::sharedFeatures().attachmentElementEnabled());
+    return "attachment { appearance: auto; }"_s;
 }
 
 bool RenderTheme::paintAttachment(const RenderObject&, const PaintInfo&, const IntRect&)
@@ -1223,7 +1213,7 @@ bool RenderTheme::paintAttachment(const RenderObject&, const PaintInfo&, const I
 
 String RenderTheme::colorInputStyleSheet(const Settings&) const
 {
-    return "input[type=\"color\"] { -webkit-appearance: color-well; width: 44px; height: 23px; outline: none; } "_s;
+    return "input[type=\"color\"] { appearance: auto; width: 44px; height: 23px; box-sizing: border-box; outline: none; } "_s;
 }
 
 #endif // ENABLE(INPUT_TYPE_COLOR)

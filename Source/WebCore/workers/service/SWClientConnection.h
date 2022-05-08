@@ -29,6 +29,7 @@
 
 #include "ExceptionOr.h"
 #include "NavigationPreloadState.h"
+#include "NotificationData.h"
 #include "PushPermissionState.h"
 #include "PushSubscriptionData.h"
 #include "ScriptExecutionContextIdentifier.h"
@@ -42,14 +43,17 @@ namespace WebCore {
 
 class ResourceError;
 class SecurityOrigin;
+class ScriptExecutionContext;
 class SerializedScriptValue;
 class ServiceWorkerContainer;
 class ServiceWorkerRegistration;
 enum class ServiceWorkerRegistrationState : uint8_t;
 enum class ServiceWorkerState : uint8_t;
 enum class ShouldNotifyWhenResolved : bool;
+struct ClientOrigin;
 struct ExceptionData;
 struct MessageWithMessagePorts;
+struct NotificationData;
 struct ServiceWorkerClientData;
 struct ServiceWorkerData;
 struct ServiceWorkerRegistrationData;
@@ -81,7 +85,7 @@ public:
     virtual SWServerConnectionIdentifier serverConnectionIdentifier() const = 0;
     virtual bool mayHaveServiceWorkerRegisteredForOrigin(const SecurityOriginData&) const = 0;
 
-    virtual void registerServiceWorkerClient(const SecurityOrigin& topOrigin, ServiceWorkerClientData&&, const std::optional<ServiceWorkerRegistrationIdentifier>&, String&& userAgent) = 0;
+    virtual void registerServiceWorkerClient(const ClientOrigin&, ServiceWorkerClientData&&, const std::optional<ServiceWorkerRegistrationIdentifier>&, String&& userAgent) = 0;
     virtual void unregisterServiceWorkerClient(ScriptExecutionContextIdentifier) = 0;
 
     virtual void finishFetchingScriptInServer(const ServiceWorkerJobDataIdentifier&, ServiceWorkerRegistrationKey&&, WorkerFetchResult&&) = 0;
@@ -101,6 +105,9 @@ public:
     using GetPushPermissionStateCallback = CompletionHandler<void(ExceptionOr<PushPermissionState>&&)>;
     virtual void getPushPermissionState(ServiceWorkerRegistrationIdentifier, GetPushPermissionStateCallback&&) = 0;
 
+    using GetNotificationsCallback = CompletionHandler<void(ExceptionOr<Vector<NotificationData>>&&)>;
+    virtual void getNotifications(const URL&, const String&, GetNotificationsCallback&&) = 0;
+
     using ExceptionOrVoidCallback = CompletionHandler<void(ExceptionOr<void>&&)>;
     virtual void enableNavigationPreload(ServiceWorkerRegistrationIdentifier, ExceptionOrVoidCallback&&) = 0;
     virtual void disableNavigationPreload(ServiceWorkerRegistrationIdentifier, ExceptionOrVoidCallback&&) = 0;
@@ -117,6 +124,7 @@ protected:
     WEBCORE_EXPORT void jobRejectedInServer(ServiceWorkerJobIdentifier, ExceptionData&&);
     WEBCORE_EXPORT void registrationJobResolvedInServer(ServiceWorkerJobIdentifier, ServiceWorkerRegistrationData&&, ShouldNotifyWhenResolved);
     WEBCORE_EXPORT void startScriptFetchForServer(ServiceWorkerJobIdentifier, ServiceWorkerRegistrationKey&&, FetchOptions::Cache);
+    WEBCORE_EXPORT void refreshImportedScripts(ServiceWorkerJobIdentifier, FetchOptions::Cache, Vector<URL>&&, ServiceWorkerJob::RefreshImportedScriptsCallback&&);
     WEBCORE_EXPORT void postMessageToServiceWorkerClient(ScriptExecutionContextIdentifier destinationContextIdentifier, MessageWithMessagePorts&&, ServiceWorkerData&& source, String&& sourceOrigin);
     WEBCORE_EXPORT void updateRegistrationState(ServiceWorkerRegistrationIdentifier, ServiceWorkerRegistrationState, const std::optional<ServiceWorkerData>&);
     WEBCORE_EXPORT void updateWorkerState(ServiceWorkerIdentifier, ServiceWorkerState);

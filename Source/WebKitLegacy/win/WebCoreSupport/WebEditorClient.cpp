@@ -454,7 +454,7 @@ bool WebEditorClient::doTextFieldCommandFromEvent(Element* e, KeyboardEvent* ke)
         if (domElement) {
             IDOMHTMLInputElement* domInputElement;
             if (SUCCEEDED(domElement->QueryInterface(IID_IDOMHTMLInputElement, (void**)&domInputElement))) {
-                String command = m_webView->interpretKeyEvent(ke);
+                auto command = String::fromLatin1(m_webView->interpretKeyEvent(ke));
                 // We allow empty commands here because the app code actually depends on this being called for all key presses.
                 // We may want to revisit this later because it doesn't really make sense to send an empty command.
                 formDelegate->doPlatformCommand(domInputElement, BString(command), kit(e->document().frame()), &result);
@@ -760,13 +760,6 @@ void WebEditorClient::checkSpellingOfString(StringView text, int* misspellingLoc
 
     initViewSpecificSpelling(m_webView);
     ed->checkSpellingOfString(m_webView, wcharFrom(text.upconvertedCharacters()), text.length(), misspellingLocation, misspellingLength);
-}
-
-String WebEditorClient::getAutoCorrectSuggestionForMisspelledWord(const String& inputWord)
-{
-    // This method can be implemented using customized algorithms for the particular browser.
-    // Currently, it computes an empty string.
-    return String();
 }
 
 void WebEditorClient::checkGrammarOfString(StringView text, Vector<GrammarDetail>& details, int* badGrammarLocation, int* badGrammarLength)

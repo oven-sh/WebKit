@@ -78,8 +78,8 @@ void WebProcessPool::platformInitializeWebProcess(const WebProcessProxy& process
     parameters.isServiceWorkerProcess = process.isRunningServiceWorkers();
 
     if (!parameters.isServiceWorkerProcess) {
-        parameters.hostClientFileDescriptor = wpe_renderer_host_create_client();
-        parameters.implementationLibraryName = FileSystem::fileSystemRepresentation(wpe_loader_get_loaded_implementation_library_name());
+        parameters.hostClientFileDescriptor = IPC::Attachment(UnixFileDescriptor(wpe_renderer_host_create_client(), UnixFileDescriptor::Adopt));
+        parameters.implementationLibraryName = FileSystem::fileSystemRepresentation(String::fromLatin1(wpe_loader_get_loaded_implementation_library_name()));
     }
 #endif
 
@@ -88,8 +88,8 @@ void WebProcessPool::platformInitializeWebProcess(const WebProcessProxy& process
 #if USE(WPE_RENDERER)
         wpe_loader_init("libWPEBackend-fdo-1.0.so.1");
         if (AcceleratedBackingStoreWayland::checkRequirements()) {
-            parameters.hostClientFileDescriptor = wpe_renderer_host_create_client();
-            parameters.implementationLibraryName = FileSystem::fileSystemRepresentation(wpe_loader_get_loaded_implementation_library_name());
+            parameters.hostClientFileDescriptor = IPC::Attachment(UnixFileDescriptor(wpe_renderer_host_create_client(), UnixFileDescriptor::Adopt));
+            parameters.implementationLibraryName = FileSystem::fileSystemRepresentation(String::fromLatin1(wpe_loader_get_loaded_implementation_library_name()));
         }
 #elif USE(EGL)
         parameters.waylandCompositorDisplayName = WaylandCompositor::singleton().displayName();
@@ -116,8 +116,8 @@ void WebProcessPool::platformInitializeWebProcess(const WebProcessProxy& process
 
     GApplication* app = g_application_get_default();
     if (app)
-        parameters.applicationID = g_application_get_application_id(app);
-    parameters.applicationName = g_get_application_name();
+        parameters.applicationID = String::fromLatin1(g_application_get_application_id(app));
+    parameters.applicationName = String::fromLatin1(g_get_application_name());
 
     parameters.inspectorServerAddress = Inspector::RemoteInspector::inspectorServerAddress();
 

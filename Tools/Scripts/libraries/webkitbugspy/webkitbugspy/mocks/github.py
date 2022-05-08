@@ -26,7 +26,7 @@ import time
 
 from .base import Base
 
-from webkitbugspy import User, Issue
+from webkitbugspy import User, Issue, github
 from webkitcorepy import mocks
 
 
@@ -41,7 +41,7 @@ class GitHub(Base, mocks.Requests):
         'help wanted': dict(color='008672', description='Extra attention is needed'),
         'invalid': dict(color='e4e669', description="This doesn't seem right"),
         'question': dict(color='d876e3', description='Further information is requested'),
-        'wontfix': dict(color='ffffff', description='This will not be worked on'),
+        'wontfix': dict(color='fefefe', description='This will not be worked on'),
     }
 
     @classmethod
@@ -57,11 +57,11 @@ class GitHub(Base, mocks.Requests):
         from datetime import datetime, timedelta
         return datetime.utcfromtimestamp(timestamp - timedelta(hours=7).seconds).strftime('%Y-%m-%dT%H:%M:%SZ')
 
-    def __init__(self, hostname='github.example.com/WebKit/WebKit', users=None, issues=None, environment=None, labels=None):
+    def __init__(self, hostname='github.example.com/WebKit/WebKit', users=None, issues=None, environment=None, projects=None, labels=None):
         hostname, repo = hostname.split('/', 1)
         self.api_remote = 'api.{hostname}/repos/{repo}'.format(hostname=hostname, repo=repo)
 
-        Base.__init__(self, users=users, issues=issues)
+        Base.__init__(self, users=users, issues=issues, projects=projects)
         mocks.Requests.__init__(self, hostname, 'api.{}'.format(hostname))
 
         prefix = self.hosts[0].replace('.', '_').upper()
@@ -72,8 +72,7 @@ class GitHub(Base, mocks.Requests):
             '{}_TOKEN'.format(prefix): 'token',
         })
 
-        if not labels:
-            self.labels = self.DEFAULT_LABELS
+        self.labels = labels or self.DEFAULT_LABELS
 
     def __enter__(self):
         self._environment.__enter__()
@@ -94,6 +93,24 @@ class GitHub(Base, mocks.Requests):
             email=user.email,
         ), url=url)
 
+    def _labels_for_issue(self, issue):
+        ref_labels = self._labels(None).json()
+        labels = issue.get('labels', [])
+
+        component = issue.get('component')
+        version = issue.get('version')
+        for label in labels:
+            if label.get('name') == component:
+                component = None
+            if label.get('name') == version:
+                version = None
+        for ref in ref_labels:
+            if component and ref.get('name') == component:
+                labels.append(ref)
+            if version and ref.get('name') == version:
+                labels.append(ref)
+        return labels
+
     def _issue(self, url, id, data=None):
         if id not in self.issues:
             return mocks.Response(
@@ -104,12 +121,20 @@ class GitHub(Base, mocks.Requests):
             )
         issue = self.issues[id]
         if data:
-            if self.users.get(data.get('assignees', [None])[0]):
+            if data.get('assignees') and self.users.get(data.get('assignees', [None])[0]):
                 issue['assignee'] = self.users[data['assignees'][0]]
             if data.get('state') == 'opened':
                 issue['opened'] = True
             if data.get('state') == 'closed':
                 issue['opened'] = False
+
+            if data.get('labels', None) is not None:
+                issue['labels'] = []
+                issue['component'] = None
+                issue['version'] = None
+            for label in self._labels(None).json():
+                if label.get('name') in data.get('labels', []):
+                    issue['labels'].append(label)
 
         return mocks.Response.fromJson(dict(
             title=issue['title'],
@@ -117,6 +142,7 @@ class GitHub(Base, mocks.Requests):
             user=dict(login=self.users[issue['creator'].name].username),
             created_at=self.time_string(issue['timestamp']),
             state='opened' if issue['opened'] else 'closed',
+            labels=self._labels_for_issue(issue),
             assignee=dict(login=self.users[issue['assignee'].name].username) if issue['assignee'] else None,
             assignees=[dict(login=self.users[user.name].username) for user in issue.get('watchers', [])],
         ))
@@ -185,13 +211,26 @@ class GitHub(Base, mocks.Requests):
         ], url=url)
 
     def _labels(self, url):
-        return mocks.Response.fromJson([
-            dict(
-                name=name,
-                color=details['color'],
-                description=details['description'],
-            ) for name, details in self.labels.items()
-        ], url=url)
+        result = [dict(
+            name=name,
+            color=details['color'],
+            description=details['description'],
+        ) for name, details in self.labels.items()]
+
+        for project in self.projects.values():
+            for name in project.get('versions', []):
+                result.append(dict(
+                    name=name,
+                    color=github.Tracker.DEFAULT_VERSION_COLOR,
+                ))
+            for name, details in project.get('components', {}).items():
+                result.append(dict(
+                    name=name,
+                    description=details['description'],
+                    color=github.Tracker.DEFAULT_COMPONENT_COLOR,
+                ))
+
+        return mocks.Response.fromJson(list(sorted(result, key=lambda v: v['name'])), url=url)
 
     def _create(self, url, credentials, data):
         user = self.users.get(credentials.username) if credentials else None
@@ -206,6 +245,11 @@ class GitHub(Base, mocks.Requests):
         while id in self.issues.keys():
             id += 1
 
+        labels = []
+        for label in self._labels(None).json():
+            if label.get('name') in data.get('labels', []):
+                labels.append(label)
+
         issue = dict(
             id=id,
             title=data['title'],
@@ -214,6 +258,7 @@ class GitHub(Base, mocks.Requests):
             creator=user,
             assignee=assignee,
             description=data['body'],
+            labels=labels,
             comments=[], watchers=[user, assignee] if assignee else [user],
         )
         self.issues[id] = issue
@@ -225,6 +270,7 @@ class GitHub(Base, mocks.Requests):
             user=dict(login=self.users[issue['creator'].name].username),
             created_at=self.time_string(issue['timestamp']),
             state='opened' if issue['opened'] else 'closed',
+            labels=self._labels_for_issue(issue),
             assignee=dict(login=self.users[issue['assignee'].name].username) if issue['assignee'] else None,
             assignees=[dict(login=self.users[user.name].username) for user in issue.get('watchers', [])],
         ), url=url)
@@ -252,6 +298,10 @@ class GitHub(Base, mocks.Requests):
         match = re.match(r'{}/issues/(?P<id>\d+)/timeline$'.format(self.api_remote), stripped_url)
         if match and method == 'GET':
             return self._timelines(url, int(match.group('id')))
+
+        match = re.match(r'{}/issues/(?P<id>\d+)/labels$'.format(self.api_remote), stripped_url)
+        if match and method == 'PUT':
+            return self._issue(url, int(match.group('id')), json)
 
         match = re.match(r'{}/labels$'.format(self.api_remote), stripped_url)
         if match and method == 'GET':

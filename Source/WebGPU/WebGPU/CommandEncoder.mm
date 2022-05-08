@@ -31,15 +31,18 @@
 #import "CommandBuffer.h"
 #import "ComputePassEncoder.h"
 #import "Device.h"
+#import "IsValidToUseWith.h"
 #import "QuerySet.h"
 #import "RenderPassEncoder.h"
+#import "Texture.h"
+#import <wtf/CheckedArithmetic.h>
 
 namespace WebGPU {
 
-RefPtr<CommandEncoder> Device::createCommandEncoder(const WGPUCommandEncoderDescriptor& descriptor)
+Ref<CommandEncoder> Device::createCommandEncoder(const WGPUCommandEncoderDescriptor& descriptor)
 {
     if (descriptor.nextInChain)
-        return nullptr;
+        return CommandEncoder::createInvalid(*this);
 
     // https://gpuweb.github.io/gpuweb/#dom-gpudevice-createcommandencoder
 
@@ -47,7 +50,7 @@ RefPtr<CommandEncoder> Device::createCommandEncoder(const WGPUCommandEncoderDesc
     commandBufferDescriptor.errorOptions = MTLCommandBufferErrorOptionEncoderExecutionStatus;
     id<MTLCommandBuffer> commandBuffer = [getQueue().commandQueue() commandBufferWithDescriptor:commandBufferDescriptor];
     if (!commandBuffer)
-        return nullptr;
+        return CommandEncoder::createInvalid(*this);
 
     commandBuffer.label = fromAPI(descriptor.label);
 
@@ -57,6 +60,11 @@ RefPtr<CommandEncoder> Device::createCommandEncoder(const WGPUCommandEncoderDesc
 CommandEncoder::CommandEncoder(id<MTLCommandBuffer> commandBuffer, Device& device)
     : m_commandBuffer(commandBuffer)
     , m_device(device)
+{
+}
+
+CommandEncoder::CommandEncoder(Device& device)
+    : m_device(device)
 {
 }
 
@@ -79,59 +87,55 @@ void CommandEncoder::finalizeBlitCommandEncoder()
     }
 }
 
-RefPtr<ComputePassEncoder> CommandEncoder::beginComputePass(const WGPUComputePassDescriptor& descriptor)
+Ref<ComputePassEncoder> CommandEncoder::beginComputePass(const WGPUComputePassDescriptor& descriptor)
 {
     UNUSED_PARAM(descriptor);
-    return ComputePassEncoder::create(nil);
+    return ComputePassEncoder::createInvalid(m_device);
 }
 
-RefPtr<RenderPassEncoder> CommandEncoder::beginRenderPass(const WGPURenderPassDescriptor& descriptor)
+Ref<RenderPassEncoder> CommandEncoder::beginRenderPass(const WGPURenderPassDescriptor& descriptor)
 {
     UNUSED_PARAM(descriptor);
-    return RenderPassEncoder::create(nil);
+    return RenderPassEncoder::createInvalid(m_device);
 }
 
-static bool validateCopyBufferToBuffer(const Buffer& source, uint64_t sourceOffset, const Buffer& destination, uint64_t destinationOffset, uint64_t size)
+bool CommandEncoder::validateCopyBufferToBuffer(const Buffer& source, uint64_t sourceOffset, const Buffer& destination, uint64_t destinationOffset, uint64_t size)
 {
-    // FIXME: "source is valid to use with this."
+    if (!isValidToUseWith(source, *this))
+        return false;
 
-    // FIXME: "destination is valid to use with this."
+    if (!isValidToUseWith(destination, *this))
+        return false;
 
-    // "source.[[usage]] contains COPY_SRC."
     if (!(source.usage() & WGPUBufferUsage_CopySrc))
         return false;
 
-    // "destination.[[usage]] contains COPY_DST."
     if (!(destination.usage() & WGPUBufferUsage_CopyDst))
         return false;
 
-    // "size is a multiple of 4."
     if (size % 4)
         return false;
 
-    // "sourceOffset is a multiple of 4."
     if (sourceOffset % 4)
         return false;
 
-    // "destinationOffset is a multiple of 4."
     if (destinationOffset % 4)
         return false;
 
-    // FIXME: "(sourceOffset + size) does not overflow a GPUSize64."
-
-    // FIXME: "(destinationOffset + size) does not overflow a GPUSize64."
-
-    // FIXME: "source.[[size]] is greater than or equal to (sourceOffset + size)."
-    // FIXME: Use checked arithmetic
-    if (source.size() < sourceOffset + size)
+    auto sourceEnd = checkedSum<uint64_t>(sourceOffset, size);
+    if (sourceEnd.hasOverflowed())
         return false;
 
-    // FIXME: "destination.[[size]] is greater than or equal to (destinationOffset + size)."
-    // FIXME: Use checked arithmetic
-    if (destination.size() < destinationOffset + size)
+    auto destinationEnd = checkedSum<uint64_t>(destinationOffset, size);
+    if (destinationEnd.hasOverflowed())
         return false;
 
-    // FIXME: "source and destination are not the same GPUBuffer."
+    if (source.size() < sourceEnd.value())
+        return false;
+
+    if (destination.size() < destinationEnd.value())
+        return false;
+
     if (&source == &destination)
         return false;
 
@@ -142,13 +146,10 @@ void CommandEncoder::copyBufferToBuffer(const Buffer& source, uint64_t sourceOff
 {
     // https://gpuweb.github.io/gpuweb/#dom-gpucommandencoder-copybuffertobuffer
 
-    // "Prepare the encoder state of this. If it returns false, stop."
     if (!prepareTheEncoderState())
         return;
 
-    // "If any of the following conditions are unsatisfied
     if (!validateCopyBufferToBuffer(source, sourceOffset, destination, destinationOffset, size)) {
-        // "generate a validation error and stop."
         m_device->generateAValidationError("Validation failure."_s);
         return;
     }
@@ -158,46 +159,533 @@ void CommandEncoder::copyBufferToBuffer(const Buffer& source, uint64_t sourceOff
     [m_blitCommandEncoder copyFromBuffer:source.buffer() sourceOffset:static_cast<NSUInteger>(sourceOffset) toBuffer:destination.buffer() destinationOffset:static_cast<NSUInteger>(destinationOffset) size:static_cast<NSUInteger>(size)];
 }
 
+static bool validateImageCopyBuffer(const WGPUImageCopyBuffer& imageCopyBuffer)
+{
+    // https://gpuweb.github.io/gpuweb/#abstract-opdef-validating-gpuimagecopybuffer
+
+    if (!fromAPI(imageCopyBuffer.buffer).isValid())
+        return false;
+
+    if (imageCopyBuffer.layout.bytesPerRow % 256)
+        return false;
+
+    return false;
+}
+
+static bool refersToAllAspects(WGPUTextureFormat format, WGPUTextureAspect aspect)
+{
+    switch (aspect) {
+    case WGPUTextureAspect_All:
+        return true;
+    case WGPUTextureAspect_StencilOnly:
+        return Texture::containsStencilAspect(format) && !Texture::containsDepthAspect(format);
+    case WGPUTextureAspect_DepthOnly:
+        return Texture::containsDepthAspect(format) && !Texture::containsStencilAspect(format);
+    case WGPUTextureAspect_Force32:
+        ASSERT_NOT_REACHED();
+        return false;
+    }
+}
+
+static bool validateCopyBufferToTexture(const WGPUImageCopyBuffer& source, const WGPUImageCopyTexture& destination, const WGPUExtent3D& copySize)
+{
+    const auto& dstTextureDesc = fromAPI(destination.texture).descriptor();
+
+    if (!validateImageCopyBuffer(source))
+        return false;
+
+    if (!(fromAPI(source.buffer).usage() & WGPUBufferUsage_CopySrc))
+        return false;
+
+    if (!Texture::validateImageCopyTexture(destination, copySize))
+        return false;
+
+    if (!(dstTextureDesc.usage & WGPUTextureUsage_CopyDst))
+        return false;
+
+    if (dstTextureDesc.sampleCount != 1)
+        return false;
+
+    WGPUTextureFormat aspectSpecificFormat = dstTextureDesc.format;
+
+    if (Texture::isDepthOrStencilFormat(dstTextureDesc.format)) {
+        if (!Texture::refersToSingleAspect(dstTextureDesc.format, destination.aspect))
+            return false;
+
+        if (!Texture::isValidImageCopyDestination(dstTextureDesc.format, destination.aspect))
+            return false;
+
+        aspectSpecificFormat = Texture::aspectSpecificFormat(dstTextureDesc.format, destination.aspect);
+    }
+
+    if (!Texture::validateTextureCopyRange(destination, copySize))
+        return false;
+
+    if (!Texture::isDepthOrStencilFormat(dstTextureDesc.format)) {
+        auto texelBlockSize = Texture::texelBlockSize(dstTextureDesc.format);
+        if (source.layout.offset % texelBlockSize)
+            return false;
+    }
+
+    if (Texture::isDepthOrStencilFormat(dstTextureDesc.format)) {
+        if (source.layout.offset % 4)
+            return false;
+    }
+
+    if (!Texture::validateLinearTextureData(source.layout, fromAPI(source.buffer).size(), aspectSpecificFormat, copySize))
+        return false;
+
+    return true;
+}
+
 void CommandEncoder::copyBufferToTexture(const WGPUImageCopyBuffer& source, const WGPUImageCopyTexture& destination, const WGPUExtent3D& copySize)
 {
-    UNUSED_PARAM(source);
-    UNUSED_PARAM(destination);
-    UNUSED_PARAM(copySize);
+    if (source.nextInChain || source.layout.nextInChain || destination.nextInChain)
+        return;
+
+    // https://gpuweb.github.io/gpuweb/#dom-gpucommandencoder-copybuffertotexture
+
+    if (!prepareTheEncoderState())
+        return;
+
+    if (!validateCopyBufferToTexture(source, destination, copySize)) {
+        m_device->generateAValidationError("Validation failure."_s);
+        return;
+    }
+
+    ensureBlitCommandEncoder();
+
+    NSUInteger sourceBytesPerRow = source.layout.bytesPerRow;
+
+    NSUInteger sourceBytesPerImage = source.layout.rowsPerImage * source.layout.bytesPerRow;
+
+    MTLBlitOption options = MTLBlitOptionNone;
+    switch (destination.aspect) {
+    case WGPUTextureAspect_All:
+        options = MTLBlitOptionNone;
+        break;
+    case WGPUTextureAspect_StencilOnly:
+        options = MTLBlitOptionStencilFromDepthStencil;
+        break;
+    case WGPUTextureAspect_DepthOnly:
+        options = MTLBlitOptionDepthFromDepthStencil;
+        break;
+    case WGPUTextureAspect_Force32:
+        ASSERT_NOT_REACHED();
+        return;
+    }
+
+    auto logicalSize = fromAPI(destination.texture).logicalMiplevelSpecificTextureExtent(destination.mipLevel);
+    auto widthForMetal = std::min(copySize.width, logicalSize.width);
+    auto heightForMetal = std::min(copySize.height, logicalSize.height);
+    auto depthForMetal = std::min(copySize.depthOrArrayLayers, logicalSize.depthOrArrayLayers);
+
+    auto& destinationDescriptor = fromAPI(destination.texture).descriptor();
+    switch (destinationDescriptor.dimension) {
+    case WGPUTextureDimension_1D: {
+        // https://developer.apple.com/documentation/metal/mtlblitcommandencoder/1400771-copyfrombuffer?language=objc
+        // "When you copy to a 1D texture, height and depth must be 1."
+        auto sourceSize = MTLSizeMake(widthForMetal, 1, 1);
+        auto destinationOrigin = MTLOriginMake(destination.origin.x, 1, 1);
+        for (uint32_t layer = 0; layer < copySize.depthOrArrayLayers; ++layer) {
+            auto sourceOffset = static_cast<NSUInteger>(source.layout.offset + layer * sourceBytesPerImage);
+            NSUInteger destinationSlice = destination.origin.z + layer;
+            [m_blitCommandEncoder
+                copyFromBuffer:fromAPI(source.buffer).buffer()
+                sourceOffset:sourceOffset
+                sourceBytesPerRow:sourceBytesPerRow
+                sourceBytesPerImage:sourceBytesPerImage
+                sourceSize:sourceSize
+                toTexture:fromAPI(destination.texture).texture()
+                destinationSlice:destinationSlice
+                destinationLevel:destination.mipLevel
+                destinationOrigin:destinationOrigin
+                options:options];
+        }
+        break;
+    }
+    case WGPUTextureDimension_2D: {
+        // https://developer.apple.com/documentation/metal/mtlblitcommandencoder/1400771-copyfrombuffer?language=objc
+        // "When you copy to a 2D texture, depth must be 1."
+        auto sourceSize = MTLSizeMake(widthForMetal, heightForMetal, 1);
+        auto destinationOrigin = MTLOriginMake(destination.origin.x, destination.origin.y, 1);
+        for (uint32_t layer = 0; layer < copySize.depthOrArrayLayers; ++layer) {
+            auto sourceOffset = static_cast<NSUInteger>(source.layout.offset + layer * sourceBytesPerImage);
+            NSUInteger destinationSlice = destination.origin.z + layer;
+            [m_blitCommandEncoder
+                copyFromBuffer:fromAPI(source.buffer).buffer()
+                sourceOffset:sourceOffset
+                sourceBytesPerRow:sourceBytesPerRow
+                sourceBytesPerImage:sourceBytesPerImage
+                sourceSize:sourceSize
+                toTexture:fromAPI(destination.texture).texture()
+                destinationSlice:destinationSlice
+                destinationLevel:destination.mipLevel
+                destinationOrigin:destinationOrigin
+                options:options];
+        }
+        break;
+    }
+    case WGPUTextureDimension_3D: {
+        auto sourceSize = MTLSizeMake(widthForMetal, heightForMetal, depthForMetal);
+        auto destinationOrigin = MTLOriginMake(destination.origin.x, destination.origin.y, destination.origin.z);
+        auto sourceOffset = static_cast<NSUInteger>(source.layout.offset);
+        [m_blitCommandEncoder
+            copyFromBuffer:fromAPI(source.buffer).buffer()
+            sourceOffset:sourceOffset
+            sourceBytesPerRow:sourceBytesPerRow
+            sourceBytesPerImage:sourceBytesPerImage
+            sourceSize:sourceSize
+            toTexture:fromAPI(destination.texture).texture()
+            destinationSlice:0
+            destinationLevel:destination.mipLevel
+            destinationOrigin:destinationOrigin
+            options:options];
+        break;
+    }
+    case WGPUTextureDimension_Force32:
+        ASSERT_NOT_REACHED();
+        return;
+    }
+}
+
+static bool validateCopyTextureToBuffer(const WGPUImageCopyTexture& source, const WGPUImageCopyBuffer& destination, const WGPUExtent3D& copySize)
+{
+    const auto& srcTextureDesc = fromAPI(source.texture).descriptor();
+
+    if (!Texture::validateImageCopyTexture(source, copySize))
+        return false;
+
+    if (!(srcTextureDesc.usage & WGPUBufferUsage_CopySrc))
+        return false;
+
+    if (srcTextureDesc.sampleCount != 1)
+        return false;
+
+    WGPUTextureFormat aspectSpecificFormat = srcTextureDesc.format;
+
+    if (Texture::isDepthOrStencilFormat(srcTextureDesc.format)) {
+        if (!Texture::refersToSingleAspect(srcTextureDesc.format, source.aspect))
+            return false;
+
+        if (!Texture::isValidImageCopySource(srcTextureDesc.format, source.aspect))
+            return false;
+
+        aspectSpecificFormat = Texture::aspectSpecificFormat(srcTextureDesc.format, source.aspect);
+    }
+
+    if (!validateImageCopyBuffer(destination))
+        return false;
+
+    if (!(fromAPI(destination.buffer).usage() & WGPUBufferUsage_CopyDst))
+        return false;
+
+    if (!Texture::validateTextureCopyRange(source, copySize))
+        return false;
+
+    if (!Texture::isDepthOrStencilFormat(srcTextureDesc.format)) {
+        auto texelBlockSize = Texture::texelBlockSize(srcTextureDesc.format);
+        if (destination.layout.offset % texelBlockSize)
+            return false;
+    }
+
+    if (Texture::isDepthOrStencilFormat(srcTextureDesc.format)) {
+        if (destination.layout.offset % 4)
+            return false;
+    }
+
+    if (!Texture::validateLinearTextureData(destination.layout, fromAPI(destination.buffer).size(), aspectSpecificFormat, copySize))
+        return false;
+
+    return true;
 }
 
 void CommandEncoder::copyTextureToBuffer(const WGPUImageCopyTexture& source, const WGPUImageCopyBuffer& destination, const WGPUExtent3D& copySize)
 {
-    UNUSED_PARAM(source);
-    UNUSED_PARAM(destination);
-    UNUSED_PARAM(copySize);
+    if (source.nextInChain || destination.nextInChain || destination.layout.nextInChain)
+        return;
+
+    // https://gpuweb.github.io/gpuweb/#dom-gpucommandencoder-copytexturetobuffer
+
+    if (!prepareTheEncoderState())
+        return;
+
+    if (!validateCopyTextureToBuffer(source, destination, copySize)) {
+        m_device->generateAValidationError("Validation failure."_s);
+        return;
+    }
+
+    ensureBlitCommandEncoder();
+
+    NSUInteger destinationBytesPerRow = destination.layout.bytesPerRow;
+
+    NSUInteger destinationBytesPerImage = destination.layout.rowsPerImage * destination.layout.bytesPerRow;
+
+    MTLBlitOption options = MTLBlitOptionNone;
+    switch (source.aspect) {
+    case WGPUTextureAspect_All:
+        options = MTLBlitOptionNone;
+        break;
+    case WGPUTextureAspect_StencilOnly:
+        options = MTLBlitOptionStencilFromDepthStencil;
+        break;
+    case WGPUTextureAspect_DepthOnly:
+        options = MTLBlitOptionDepthFromDepthStencil;
+        break;
+    case WGPUTextureAspect_Force32:
+        ASSERT_NOT_REACHED();
+        return;
+    }
+
+    auto logicalSize = fromAPI(source.texture).logicalMiplevelSpecificTextureExtent(source.mipLevel);
+    auto widthForMetal = std::min(copySize.width, logicalSize.width);
+    auto heightForMetal = std::min(copySize.height, logicalSize.height);
+    auto depthForMetal = std::min(copySize.depthOrArrayLayers, logicalSize.depthOrArrayLayers);
+
+    auto& sourceDescriptor = fromAPI(source.texture).descriptor();
+    switch (sourceDescriptor.dimension) {
+    case WGPUTextureDimension_1D: {
+        // https://developer.apple.com/documentation/metal/mtlblitcommandencoder/1400756-copyfromtexture?language=objc
+        // "When you copy to a 1D texture, height and depth must be 1."
+        auto sourceSize = MTLSizeMake(widthForMetal, 1, 1);
+        auto sourceOrigin = MTLOriginMake(source.origin.x, 1, 1);
+        for (uint32_t layer = 0; layer < copySize.depthOrArrayLayers; ++layer) {
+            auto destinationOffset = static_cast<NSUInteger>(destination.layout.offset + layer * destinationBytesPerImage);
+            NSUInteger sourceSlice = source.origin.z + layer;
+            [m_blitCommandEncoder
+                copyFromTexture:fromAPI(source.texture).texture()
+                sourceSlice:sourceSlice
+                sourceLevel:source.mipLevel
+                sourceOrigin:sourceOrigin
+                sourceSize:sourceSize
+                toBuffer:fromAPI(destination.buffer).buffer()
+                destinationOffset:destinationOffset
+                destinationBytesPerRow:destinationBytesPerRow
+                destinationBytesPerImage:destinationBytesPerImage
+                options:options];
+        }
+        break;
+    }
+    case WGPUTextureDimension_2D: {
+        // https://developer.apple.com/documentation/metal/mtlblitcommandencoder/1400756-copyfromtexture?language=objc
+        // "When you copy to a 2D texture, depth must be 1."
+        auto sourceSize = MTLSizeMake(widthForMetal, heightForMetal, 1);
+        auto sourceOrigin = MTLOriginMake(source.origin.x, source.origin.y, 1);
+        for (uint32_t layer = 0; layer < copySize.depthOrArrayLayers; ++layer) {
+            auto destinationOffset = static_cast<NSUInteger>(destination.layout.offset + layer * destinationBytesPerImage);
+            NSUInteger sourceSlice = source.origin.z + layer;
+            [m_blitCommandEncoder
+                copyFromTexture:fromAPI(source.texture).texture()
+                sourceSlice:sourceSlice
+                sourceLevel:source.mipLevel
+                sourceOrigin:sourceOrigin
+                sourceSize:sourceSize
+                toBuffer:fromAPI(destination.buffer).buffer()
+                destinationOffset:destinationOffset
+                destinationBytesPerRow:destinationBytesPerRow
+                destinationBytesPerImage:destinationBytesPerImage
+                options:options];
+        }
+        break;
+    }
+    case WGPUTextureDimension_3D: {
+        auto sourceSize = MTLSizeMake(widthForMetal, heightForMetal, depthForMetal);
+        auto sourceOrigin = MTLOriginMake(source.origin.x, source.origin.y, source.origin.z);
+        auto destinationOffset = static_cast<NSUInteger>(destination.layout.offset);
+            [m_blitCommandEncoder
+                copyFromTexture:fromAPI(source.texture).texture()
+                sourceSlice:0
+                sourceLevel:source.mipLevel
+                sourceOrigin:sourceOrigin
+                sourceSize:sourceSize
+                toBuffer:fromAPI(destination.buffer).buffer()
+                destinationOffset:destinationOffset
+                destinationBytesPerRow:destinationBytesPerRow
+                destinationBytesPerImage:destinationBytesPerImage
+                options:options];
+        break;
+    }
+    case WGPUTextureDimension_Force32:
+        ASSERT_NOT_REACHED();
+        return;
+    }
+}
+
+static bool areCopyCompatible(WGPUTextureFormat format1, WGPUTextureFormat format2)
+{
+    // https://gpuweb.github.io/gpuweb/#copy-compatible
+
+    if (format1 == format2)
+        return true;
+
+    return Texture::removeSRGBSuffix(format1) == Texture::removeSRGBSuffix(format2);
+}
+
+static bool validateCopyTextureToTexture(const WGPUImageCopyTexture& source, const WGPUImageCopyTexture& destination, const WGPUExtent3D& copySize)
+{
+    const auto& srcTextureDesc = fromAPI(source.texture).descriptor();
+
+    const auto& dstTextureDesc = fromAPI(destination.texture).descriptor();
+
+    if (!Texture::validateImageCopyTexture(source, copySize))
+        return false;
+
+    if (!(srcTextureDesc.usage & WGPUTextureUsage_CopySrc))
+        return false;
+
+    if (!Texture::validateImageCopyTexture(destination, copySize))
+        return false;
+
+    if (!(dstTextureDesc.usage & WGPUTextureUsage_CopyDst))
+        return false;
+
+    if (srcTextureDesc.sampleCount != dstTextureDesc.sampleCount)
+        return false;
+
+    if (!areCopyCompatible(srcTextureDesc.format, dstTextureDesc.format))
+        return false;
+
+    if (Texture::isDepthOrStencilFormat(srcTextureDesc.format)) {
+        if (!refersToAllAspects(srcTextureDesc.format, source.aspect)
+            || !refersToAllAspects(dstTextureDesc.format, destination.aspect))
+            return false;
+    }
+
+    if (!Texture::validateTextureCopyRange(source, copySize))
+        return false;
+
+    if (!Texture::validateTextureCopyRange(destination, copySize))
+        return false;
+
+    // https://gpuweb.github.io/gpuweb/#abstract-opdef-set-of-subresources-for-texture-copy
+    if (source.texture == destination.texture) {
+        // Mip levels are never ranges.
+        if (source.mipLevel == destination.mipLevel) {
+            switch (fromAPI(source.texture).descriptor().dimension) {
+            case WGPUTextureDimension_1D:
+                return false;
+            case WGPUTextureDimension_2D: {
+                Range<uint32_t> sourceRange(source.origin.z, source.origin.z + copySize.depthOrArrayLayers);
+                Range<uint32_t> destinationRange(destination.origin.z, source.origin.z + copySize.depthOrArrayLayers);
+                if (sourceRange.overlaps(destinationRange))
+                    return false;
+                break;
+            }
+            case WGPUTextureDimension_3D:
+                return false;
+            case WGPUTextureDimension_Force32:
+                ASSERT_NOT_REACHED();
+                return false;
+            }
+        }
+    }
+
+    return true;
 }
 
 void CommandEncoder::copyTextureToTexture(const WGPUImageCopyTexture& source, const WGPUImageCopyTexture& destination, const WGPUExtent3D& copySize)
 {
-    UNUSED_PARAM(source);
-    UNUSED_PARAM(destination);
-    UNUSED_PARAM(copySize);
+    if (source.nextInChain || destination.nextInChain)
+        return;
+
+    // https://gpuweb.github.io/gpuweb/#dom-gpucommandencoder-copytexturetotexture
+
+    if (!prepareTheEncoderState())
+        return;
+
+    if (!validateCopyTextureToTexture(source, destination, copySize)) {
+        m_device->generateAValidationError("Validation failure."_s);
+        return;
+    }
+
+    ensureBlitCommandEncoder();
+
+    auto& sourceDescriptor = fromAPI(source.texture).descriptor();
+    // FIXME(PERFORMANCE): Is it actually faster to use the -[MTLBlitCommandEncoder copyFromTexture:...toTexture:...levelCount:]
+    // variant, where possible, rather than calling the other variant in a loop?
+    switch (sourceDescriptor.dimension) {
+    case WGPUTextureDimension_1D: {
+        // https://developer.apple.com/documentation/metal/mtlblitcommandencoder/1400756-copyfromtexture?language=objc
+        // "When you copy to a 1D texture, height and depth must be 1."
+        auto sourceSize = MTLSizeMake(copySize.width, 1, 1);
+        auto sourceOrigin = MTLOriginMake(source.origin.x, 1, 1);
+        auto destinationOrigin = MTLOriginMake(destination.origin.x, 1, 1);
+        for (uint32_t layer = 0; layer < copySize.depthOrArrayLayers; ++layer) {
+            NSUInteger sourceSlice = source.origin.z + layer;
+            NSUInteger destinationSlice = destination.origin.z + layer;
+            [m_blitCommandEncoder
+                copyFromTexture:fromAPI(source.texture).texture()
+                sourceSlice:sourceSlice
+                sourceLevel:source.mipLevel
+                sourceOrigin:sourceOrigin
+                sourceSize:sourceSize
+                toTexture:fromAPI(destination.texture).texture()
+                destinationSlice:destinationSlice
+                destinationLevel:destination.mipLevel
+                destinationOrigin:destinationOrigin];
+        }
+        break;
+    }
+    case WGPUTextureDimension_2D: {
+        // https://developer.apple.com/documentation/metal/mtlblitcommandencoder/1400756-copyfromtexture?language=objc
+        // "When you copy to a 2D texture, depth must be 1."
+        auto sourceSize = MTLSizeMake(copySize.width, copySize.height, 1);
+        auto sourceOrigin = MTLOriginMake(source.origin.x, source.origin.y, 1);
+        auto destinationOrigin = MTLOriginMake(destination.origin.x, destination.origin.y, 1);
+        for (uint32_t layer = 0; layer < copySize.depthOrArrayLayers; ++layer) {
+            NSUInteger sourceSlice = source.origin.z + layer;
+            NSUInteger destinationSlice = destination.origin.z + layer;
+            [m_blitCommandEncoder
+                copyFromTexture:fromAPI(source.texture).texture()
+                sourceSlice:sourceSlice
+                sourceLevel:source.mipLevel
+                sourceOrigin:sourceOrigin
+                sourceSize:sourceSize
+                toTexture:fromAPI(destination.texture).texture()
+                destinationSlice:destinationSlice
+                destinationLevel:destination.mipLevel
+                destinationOrigin:destinationOrigin];
+        }
+        break;
+    }
+    case WGPUTextureDimension_3D: {
+        auto sourceSize = MTLSizeMake(copySize.width, copySize.height, copySize.depthOrArrayLayers);
+        auto sourceOrigin = MTLOriginMake(source.origin.x, source.origin.y, source.origin.z);
+        auto destinationOrigin = MTLOriginMake(destination.origin.x, destination.origin.y, destination.origin.z);
+        [m_blitCommandEncoder
+            copyFromTexture:fromAPI(source.texture).texture()
+            sourceSlice:0
+            sourceLevel:source.mipLevel
+            sourceOrigin:sourceOrigin
+            sourceSize:sourceSize
+            toTexture:fromAPI(destination.texture).texture()
+            destinationSlice:0
+            destinationLevel:destination.mipLevel
+            destinationOrigin:destinationOrigin];
+        break;
+    }
+    case WGPUTextureDimension_Force32:
+        ASSERT_NOT_REACHED();
+        return;
+    }
 }
 
-static bool validateClearBuffer(const Buffer& buffer, uint64_t offset, uint64_t size)
+bool CommandEncoder::validateClearBuffer(const Buffer& buffer, uint64_t offset, uint64_t size)
 {
-    // FIXME: "buffer is valid to use with this."
+    if (!isValidToUseWith(buffer, *this))
+        return false;
 
-    // "buffer.[[usage]] contains COPY_DST."
     if (!(buffer.usage() & WGPUBufferUsage_CopyDst))
         return false;
 
-    // "size is a multiple of 4."
     if (size % 4)
         return false;
 
-    // "offset is a multiple of 4."
     if (offset % 4)
         return false;
 
-    // "buffer.[[size]] is greater than or equal to (offset + size)."
-    // FIXME: Use checked arithmetic.
-    if (buffer.size() < offset + size)
+    auto end = checkedSum<uint64_t>(offset, size);
+    if (end.hasOverflowed() || buffer.size() < end.value())
         return false;
 
     return true;
@@ -207,19 +695,19 @@ void CommandEncoder::clearBuffer(const Buffer& buffer, uint64_t offset, uint64_t
 {
     // https://gpuweb.github.io/gpuweb/#dom-gpucommandencoder-clearbuffer
 
-    // "Prepare the encoder state of this. If it returns false, stop."
     if (!prepareTheEncoderState())
         return;
 
-    // "If size is missing, set size to max(0, |buffer|.{{GPUBuffer/[[size]]}} - |offset|)."
     if (size == WGPU_WHOLE_SIZE) {
-        // FIXME: Use checked arithmetic.
-        size = buffer.size() - offset;
+        auto localSize = checkedDifference<uint64_t>(buffer.size(), offset);
+        if (localSize.hasOverflowed()) {
+            m_device->generateAValidationError("CommandEncoder::clearBuffer(): offset > buffer.size"_s);
+            return;
+        }
+        size = localSize.value();
     }
 
-    // "If any of the following conditions are unsatisfied"
     if (!validateClearBuffer(buffer, offset, size)) {
-        // "generate a validation error and stop."
         m_device->generateAValidationError("Validation failure."_s);
         return;
     }
@@ -231,11 +719,9 @@ void CommandEncoder::clearBuffer(const Buffer& buffer, uint64_t offset, uint64_t
 
 bool CommandEncoder::validateFinish() const
 {
-    // "Let validationSucceeded be true if all of the following requirements are met, and false otherwise."
+    if (!isValid())
+        return false;
 
-    // FIXME: "this must be valid."
-
-    // "this.[[state]] must be "open"."
     if (m_state != EncoderState::Open)
         return false;
 
@@ -246,44 +732,36 @@ bool CommandEncoder::validateFinish() const
     return true;
 }
 
-RefPtr<CommandBuffer> CommandEncoder::finish(const WGPUCommandBufferDescriptor& descriptor)
+Ref<CommandBuffer> CommandEncoder::finish(const WGPUCommandBufferDescriptor& descriptor)
 {
     if (descriptor.nextInChain)
-        return nullptr;
+        return CommandBuffer::createInvalid(m_device);
 
     // https://gpuweb.github.io/gpuweb/#dom-gpucommandencoder-finish
 
-    // "Let validationSucceeded be true if all of the following requirements are met, and false otherwise."
     auto validationFailed = !validateFinish();
 
-    // "Set this.[[state]] to "ended"."
     m_state = EncoderState::Ended;
 
-    // "If validationSucceeded is false, then:"
     if (validationFailed) {
-        // "Generate a validation error."
         m_device->generateAValidationError("Validation failure."_s);
-
-        // FIXME: "Return a new invalid GPUCommandBuffer."
-        return nullptr;
+        return CommandBuffer::createInvalid(m_device);
     }
 
     finalizeBlitCommandEncoder();
 
-    // "Set commandBuffer.[[command_list]] to this.[[commands]]."
     auto *commandBuffer = m_commandBuffer;
     m_commandBuffer = nil;
 
     commandBuffer.label = fromAPI(descriptor.label);
 
-    return CommandBuffer::create(commandBuffer);
+    return CommandBuffer::create(commandBuffer, m_device);
 }
 
 void CommandEncoder::insertDebugMarker(String&& markerLabel)
 {
     // https://gpuweb.github.io/gpuweb/#dom-gpudebugcommandsmixin-insertdebugmarker
 
-    // "Prepare the encoder state of this. If it returns false, stop."
     if (!prepareTheEncoderState())
         return;
 
@@ -296,7 +774,6 @@ void CommandEncoder::insertDebugMarker(String&& markerLabel)
 
 bool CommandEncoder::validatePopDebugGroup() const
 {
-    // "this.[[debug_group_stack]] must not be empty."
     if (!m_debugGroupStackSize)
         return false;
 
@@ -307,19 +784,16 @@ void CommandEncoder::popDebugGroup()
 {
     // https://gpuweb.github.io/gpuweb/#dom-gpudebugcommandsmixin-popdebuggroup
 
-    // "Prepare the encoder state of this. If it returns false, stop."
     if (!prepareTheEncoderState())
         return;
 
-    // "If any of the following requirements are unmet"
     if (!validatePopDebugGroup()) {
-        // FIXME: "make this invalid, and stop."
+        makeInvalid();
         return;
     }
 
     finalizeBlitCommandEncoder();
 
-    // "Pop an entry off of this.[[debug_group_stack]]."
     --m_debugGroupStackSize;
     [m_commandBuffer popDebugGroup];
 }
@@ -328,13 +802,11 @@ void CommandEncoder::pushDebugGroup(String&& groupLabel)
 {
     // https://gpuweb.github.io/gpuweb/#dom-gpudebugcommandsmixin-pushdebuggroup
 
-    // "Prepare the encoder state of this. If it returns false, stop."
     if (!prepareTheEncoderState())
         return;
     
     finalizeBlitCommandEncoder();
 
-    // "Push groupLabel onto this.[[debug_group_stack]]."
     ++m_debugGroupStackSize;
     [m_commandBuffer pushDebugGroup:groupLabel];
 }

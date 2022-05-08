@@ -47,6 +47,7 @@
 #import <WebCore/GraphicsContextCG.h>
 #import <WebCore/HTMLBodyElement.h>
 #import <WebCore/HTMLConverter.h>
+#import <WebCore/HTMLImageElement.h>
 #import <WebCore/HTMLOListElement.h>
 #import <WebCore/HTMLUListElement.h>
 #import <WebCore/HitTestResult.h>
@@ -164,8 +165,7 @@ DictionaryPopupInfo WebPage::dictionaryPopupInfoForRange(Frame& frame, const Sim
     Editor& editor = frame.editor();
     editor.setIsGettingDictionaryPopupInfo(true);
 
-    // FIXME: Inefficient to call stripWhiteSpace to detect whether a string has a non-whitespace character in it.
-    if (plainText(range).stripWhiteSpace().isEmpty()) {
+    if (plainText(range).find(isNotSpaceOrNewline) == notFound) {
         editor.setIsGettingDictionaryPopupInfo(false);
         return { };
     }
@@ -541,7 +541,7 @@ void WebPage::handleClickForDataDetectionResult(const DataDetectorElementInfo& i
 
 static String& replaceSelectionPasteboardName()
 {
-    static NeverDestroyed<String> string("ReplaceSelectionPasteboard");
+    static NeverDestroyed<String> string("ReplaceSelectionPasteboard"_s);
     return string;
 }
 
@@ -566,7 +566,9 @@ private:
     Vector<String> m_types;
 };
 
-void WebPage::replaceWithPasteboardData(const ElementContext& elementContext, const Vector<String>& types, const IPC::DataReference& data)
+#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+
+void WebPage::replaceImageWithMarkupResults(const ElementContext& elementContext, const Vector<String>& types, const IPC::DataReference& data)
 {
     Ref frame = CheckedRef(m_page->focusController())->focusedOrMainFrame();
     auto element = elementForContext(elementContext);
@@ -594,7 +596,17 @@ void WebPage::replaceWithPasteboardData(const ElementContext& elementContext, co
     {
         OverridePasteboardForSelectionReplacement overridePasteboard { types, data };
         IgnoreSelectionChangeForScope ignoreSelectionChanges { frame.get() };
-        frame->editor().replaceNodeFromPasteboard(*element, replaceSelectionPasteboardName());
+        frame->editor().replaceNodeFromPasteboard(*element, replaceSelectionPasteboardName(), EditAction::MarkupImage);
+
+        auto position = frame->selection().selection().visibleStart();
+        if (auto imageRange = makeSimpleRange(WebCore::VisiblePositionRange { position.previous(), position })) {
+            for (WebCore::TextIterator iterator { *imageRange, { } }; !iterator.atEnd(); iterator.advance()) {
+                if (RefPtr image = dynamicDowncast<HTMLImageElement>(iterator.node())) {
+                    m_elementsToExcludeFromMarkup.add(*image);
+                    break;
+                }
+            }
+        }
     }
 
     constexpr auto restoreSelectionOptions = FrameSelection::defaultSetSelectionOptions(UserTriggered);
@@ -620,6 +632,8 @@ void WebPage::replaceWithPasteboardData(const ElementContext& elementContext, co
     auto newSelectionRange = resolveCharacterRange(selectionHostRange, *rangeToRestore, iteratorOptions);
     frame->selection().setSelection(newSelectionRange, restoreSelectionOptions);
 }
+
+#endif // ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
 
 void WebPage::replaceSelectionWithPasteboardData(const Vector<String>& types, const IPC::DataReference& data)
 {

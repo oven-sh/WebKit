@@ -45,7 +45,7 @@ TEST(WTF, StringViewStartsWithEmptyVsNull)
 {
     StringView nullView;
     StringView emptyView = StringView::empty();
-    String stringWithCharacters("hello");
+    String stringWithCharacters("hello"_s);
     StringView viewWithCharacters(stringWithCharacters);
 
     EXPECT_TRUE(viewWithCharacters.startsWith(nullView));
@@ -84,7 +84,7 @@ TEST(WTF, StringViewEmptyVsNull)
     else
         SUCCEED();
 
-    StringView viewWithCharacters(String("hello"));
+    StringView viewWithCharacters(String("hello"_s));
     EXPECT_FALSE(viewWithCharacters.isNull());
     EXPECT_FALSE(viewWithCharacters.isEmpty());
 
@@ -141,7 +141,7 @@ TEST(WTF, StringViewIterators)
     EXPECT_TRUE(compareLoopIterations(StringView::empty().codeUnits(), { }));
     EXPECT_TRUE(compareLoopIterations(StringView::empty().graphemeClusters(), { }));
 
-    String helo("helo");
+    String helo("helo"_s);
     StringView heloView(helo);
 
     auto codePoints = heloView.codePoints();
@@ -156,7 +156,7 @@ TEST(WTF, StringViewIterators)
     EXPECT_EQ(*codePointsIterator, 'h');
     codePointsIterator = savedIterator;
     EXPECT_EQ(*codePointsIterator, 'l');
-    String webkit("webkit");
+    String webkit("webkit"_s);
     auto webkitCodePoints = StringView(webkit).codePoints();
     codePointsIterator = webkitCodePoints.begin();
     ++codePointsIterator;
@@ -266,32 +266,32 @@ TEST(WTF, StringViewSplitBasic)
 
     // Simple
     Vector<String> actual = vectorFromSplitResult(a.split('T'));
-    Vector<String> expected({ "his is a sentence." });
+    Vector<String> expected({ "his is a sentence."_s });
     ASSERT_EQ(expected.size(), actual.size());
     for (size_t i = 0; i < actual.size(); ++i)
         EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
 
     actual = vectorFromSplitResult(a.split('.'));
-    expected = { "This is a sentence" };
+    expected = { "This is a sentence"_s };
     ASSERT_EQ(expected.size(), actual.size());
     for (size_t i = 0; i < actual.size(); ++i)
         EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
 
     actual = vectorFromSplitResult(a.split('a'));
-    expected = { "This is ", " sentence." };
+    expected = { "This is "_s, " sentence."_s };
     ASSERT_EQ(expected.size(), actual.size());
     for (size_t i = 0; i < actual.size(); ++i)
         EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
 
     actual = vectorFromSplitResult(a.split(' '));
-    expected = { "This", "is", "a", "sentence." };
+    expected = { "This"_s, "is"_s, "a"_s, "sentence."_s };
     ASSERT_EQ(expected.size(), actual.size());
     for (size_t i = 0; i < actual.size(); ++i)
         EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
 
     // Non-existent separator
     actual = vectorFromSplitResult(a.split('z'));
-    expected = { "This is a sentence." };
+    expected = { "This is a sentence."_s };
     ASSERT_EQ(expected.size(), actual.size());
     for (size_t i = 0; i < actual.size(); ++i)
         EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
@@ -303,13 +303,13 @@ TEST(WTF, StringViewSplitWithConsecutiveSeparators)
     StringView a = stringViewFromUTF8(referenceHolder, " This     is  a       sentence. ");
 
     Vector<String> actual = vectorFromSplitResult(a.split(' '));
-    Vector<String> expected({ "This", "is", "a", "sentence." });
+    Vector<String> expected({ "This"_s, "is"_s, "a"_s, "sentence."_s });
     ASSERT_EQ(expected.size(), actual.size());
     for (size_t i = 0; i < actual.size(); ++i)
         EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
 
     actual = vectorFromSplitResult(a.splitAllowingEmptyEntries(' '));
-    expected = { "", "This", "", "", "", "", "is", "", "a", "", "", "", "", "", "", "sentence.", "" };
+    expected = { ""_s, "This"_s, ""_s, ""_s, ""_s, ""_s, "is"_s, ""_s, "a"_s, ""_s, ""_s, ""_s, ""_s, ""_s, ""_s, "sentence."_s, ""_s };
     ASSERT_EQ(expected.size(), actual.size());
     for (size_t i = 0; i < actual.size(); ++i)
         EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
@@ -335,13 +335,13 @@ TEST(WTF, StringViewEqualBasic)
 
 TEST(WTF, StringViewEqualIgnoringASCIICaseBasic)
 {
-    RefPtr<StringImpl> a = StringImpl::createFromLiteral("aBcDeFG"_s);
-    RefPtr<StringImpl> b = StringImpl::createFromLiteral("ABCDEFG"_s);
-    RefPtr<StringImpl> c = StringImpl::createFromLiteral("abcdefg"_s);
-    const char d[] = "aBcDeFG";
-    RefPtr<StringImpl> empty = StringImpl::create(reinterpret_cast<const LChar*>(""));
-    RefPtr<StringImpl> shorter = StringImpl::createFromLiteral("abcdef"_s);
-    RefPtr<StringImpl> different = StringImpl::createFromLiteral("abcrefg"_s);
+    RefPtr<StringImpl> a = StringImpl::create("aBcDeFG"_s);
+    RefPtr<StringImpl> b = StringImpl::create("ABCDEFG"_s);
+    RefPtr<StringImpl> c = StringImpl::create("abcdefg"_s);
+    constexpr auto d = "aBcDeFG"_s;
+    RefPtr<StringImpl> empty = StringImpl::create(reinterpret_cast<const LChar*>(""), 0);
+    RefPtr<StringImpl> shorter = StringImpl::create("abcdef"_s);
+    RefPtr<StringImpl> different = StringImpl::create("abcrefg"_s);
 
     StringView stringViewA(*a.get());
     StringView stringViewB(*b.get());
@@ -384,8 +384,8 @@ TEST(WTF, StringViewEqualIgnoringASCIICaseBasic)
 
 TEST(WTF, StringViewEqualIgnoringASCIICaseWithEmpty)
 {
-    RefPtr<StringImpl> a = StringImpl::create(reinterpret_cast<const LChar*>(""));
-    RefPtr<StringImpl> b = StringImpl::create(reinterpret_cast<const LChar*>(""));
+    RefPtr<StringImpl> a = StringImpl::create(reinterpret_cast<const LChar*>(""), 0);
+    RefPtr<StringImpl> b = StringImpl::create(reinterpret_cast<const LChar*>(""), 0);
     StringView stringViewA(*a.get());
     StringView stringViewB(*b.get());
     ASSERT_TRUE(equalIgnoringASCIICase(stringViewA, stringViewB));
@@ -394,11 +394,10 @@ TEST(WTF, StringViewEqualIgnoringASCIICaseWithEmpty)
 
 TEST(WTF, StringViewEqualIgnoringASCIICaseWithLatin1Characters)
 {
-    RefPtr<StringImpl> a = StringImpl::create(reinterpret_cast<const LChar*>("aBcéeFG"));
-    RefPtr<StringImpl> b = StringImpl::create(reinterpret_cast<const LChar*>("ABCÉEFG"));
-    RefPtr<StringImpl> c = StringImpl::create(reinterpret_cast<const LChar*>("ABCéEFG"));
-    RefPtr<StringImpl> d = StringImpl::create(reinterpret_cast<const LChar*>("abcéefg"));
-    const char e[] = "aBcéeFG";
+    RefPtr<StringImpl> a = StringImpl::create(reinterpret_cast<const LChar*>("aBcéeFG"), 7);
+    RefPtr<StringImpl> b = StringImpl::create(reinterpret_cast<const LChar*>("ABCÉEFG"), 7);
+    RefPtr<StringImpl> c = StringImpl::create(reinterpret_cast<const LChar*>("ABCéEFG"), 7);
+    RefPtr<StringImpl> d = StringImpl::create(reinterpret_cast<const LChar*>("abcéefg"), 7);
     StringView stringViewA(*a.get());
     StringView stringViewB(*b.get());
     StringView stringViewC(*c.get());
@@ -417,10 +416,6 @@ TEST(WTF, StringViewEqualIgnoringASCIICaseWithLatin1Characters)
     ASSERT_FALSE(equalIgnoringASCIICase(stringViewB, stringViewC));
     ASSERT_FALSE(equalIgnoringASCIICase(stringViewB, stringViewD));
     ASSERT_TRUE(equalIgnoringASCIICase(stringViewC, stringViewD));
-    ASSERT_FALSE(equalIgnoringASCIICase(stringViewA, e));
-    ASSERT_FALSE(equalIgnoringASCIICase(stringViewB, e));
-    ASSERT_FALSE(equalIgnoringASCIICase(stringViewC, e));
-    ASSERT_FALSE(equalIgnoringASCIICase(stringViewD, e));
 }
 
 TEST(WTF, StringViewFindIgnoringASCIICaseBasic)
@@ -983,11 +978,11 @@ TEST(WTF, StringViewStripLeadingAndTrailingMatchedCharacters)
 
 TEST(WTF, StringViewIsAllASCII)
 {
-    EXPECT_TRUE(StringView(String("Hello")).isAllASCII());
-    EXPECT_TRUE(StringView(String("Cocoa")).isAllASCII());
-    EXPECT_FALSE(StringView(String("📱")).isAllASCII());
-    EXPECT_FALSE(StringView(String("\u0080")).isAllASCII());
-    EXPECT_TRUE(StringView(String(bitwise_cast<const UChar*>(u"Hello"))).isAllASCII());
+    EXPECT_TRUE(StringView(String("Hello"_s)).isAllASCII());
+    EXPECT_TRUE(StringView(String("Cocoa"_s)).isAllASCII());
+    EXPECT_FALSE(StringView(String::fromLatin1("📱")).isAllASCII());
+    EXPECT_FALSE(StringView(String::fromLatin1("\u0080")).isAllASCII());
+    EXPECT_TRUE(StringView(String(bitwise_cast<const UChar*>(u"Hello"), 0)).isAllASCII());
 }
 
 } // namespace TestWebKitAPI

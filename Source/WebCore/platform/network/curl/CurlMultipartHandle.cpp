@@ -57,12 +57,12 @@ std::optional<String> CurlMultipartHandle::extractBoundary(const CurlResponse& r
             continue;
 
         auto key = header.left(splitPosition).stripWhiteSpace();
-        if (!equalIgnoringASCIICase(key, "Content-Type"))
+        if (!equalIgnoringASCIICase(key, "Content-Type"_s))
             continue;
 
         auto contentType = header.substring(splitPosition + 1).stripWhiteSpace();
         auto mimeType = extractMIMETypeFromMediaType(contentType);
-        if (!equalIgnoringASCIICase(mimeType, "multipart/x-mixed-replace"))
+        if (!equalLettersIgnoringASCIICase(mimeType, "multipart/x-mixed-replace"_s))
             continue;
 
         auto boundary = extractBoundaryFromContentType(contentType);

@@ -1,3 +1,223 @@
+2022-04-27  Ross Kirsling  <rkirsling@gmail.com>
+
+        Unreviewed libpas build fix for PlayStation.
+        https://bugs.webkit.org/show_bug.cgi?id=239834
+
+        * libpas/src/libpas/pas_random.h:
+        (pas_get_random):
+        Temporarily disable path on PlayStation.
+
+2022-04-25  Brandon Stewart  <brandonstewart@apple.com>
+
+        [libpas] Implement secure random numbers
+        https://bugs.webkit.org/show_bug.cgi?id=239735
+
+        Reviewed by Yusuke Suzuki.
+
+        We currently have a cheesy random and secure random, which use the same implementation for generating
+        random numbers. (We are going to ignore the mock testing code here). This patch introduces a fast random and
+        secure random. The fast random maintains the same properties as the previous implementation, while secure random
+        will use the cryptographically secure arc4random_uniform to give better randomness. arc4random() can be quite an
+        expensive operation and based on discussing with Yusuke he found heavy performance penalties when using this in
+        JSC. Our secure random shall only be used in cases where true randomness is needed. We have 2 spots where we
+        currently use secure random we shall just migrate those over to using fast random.
+
+        * libpas/src/libpas/pas_baseline_allocator_table.c:
+        (pas_baseline_allocator_table_get_random_index):
+        * libpas/src/libpas/pas_dynamic_primitive_heap_map.c:
+        (pas_dynamic_primitive_heap_map_find_slow):
+        * libpas/src/libpas/pas_random.c:
+        * libpas/src/libpas/pas_random.h:
+        (pas_get_random):
+        * libpas/src/libpas/pas_segregated_shared_page_directory.c:
+        (find_first_eligible_consider_view):
+        * libpas/src/test/IsoHeapPartialAndBaselineTests.cpp:
+        (std::testTwoBaselinesEvictions):
+
+2022-04-18  Elliott Williams  <emw@apple.com>
+
+        [XCBuild] Use XCBuild for all command-line and project builds
+        https://bugs.webkit.org/show_bug.cgi?id=238916
+
+        Reviewed by Alexey Proskuryakov.
+
+        * bmalloc.xcodeproj/project.pbxproj:
+
+2022-04-12  Elliott Williams  <emw@apple.com>
+
+        [Xcode] In open-source builds, disable bitcode in xcconfigs instead of build-webkit
+        https://bugs.webkit.org/show_bug.cgi?id=239262
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/Base.xcconfig:
+
+2022-04-12  Elliott Williams  <emw@apple.com>
+
+        Reland "[XCBuild] Enable dependency validation by default"
+        https://bugs.webkit.org/show_bug.cgi?id=238901
+        <rdar://problem/91379968>
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/DebugRelease.xcconfig: In open-source builds, disable
+        VALIDATE_DEPENDENCIES when there is no PRODUCT_TYPE (i.e. not building
+        a native target).
+
+2022-04-12  Brandon Stewart  <brandonstewart@apple.com>
+
+        [libpas] Update macOS build to c++20 and add bmalloc api test cases
+        https://bugs.webkit.org/show_bug.cgi?id=239105
+
+        Reviewed by Yusuke Suzuki and Yusuke Suzuki.
+
+        Update libpas build config to c++20.
+        Add several basic bmalloc api tests.
+
+        * libpas/CMakeLists.txt:
+        * libpas/libpas.xcodeproj/project.pbxproj:
+        * libpas/src/test/BmallocTests.cpp: Added.
+        (std::testBmallocAllocate):
+        (std::testBmallocDeallocate):
+        (addBmallocTests):
+        * libpas/src/test/PGMTests.cpp:
+        * libpas/src/test/TestHarness.cpp:
+        (main):
+
+2022-04-08  Elliott Williams  <emw@apple.com>
+
+        [Xcode] Avoid targeting 32-bit iOS and Mac architectures
+        https://bugs.webkit.org/show_bug.cgi?id=238971
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/DebugRelease.xcconfig:
+
+2022-04-08  Elliott Williams  <emw@apple.com>
+
+        Unreviewed, reverting r292591.
+
+        Causing spurious EWS errors
+
+        Reverted changeset:
+
+        "[XCBuild] Enable dependency validation by default"
+        https://bugs.webkit.org/show_bug.cgi?id=238901
+        https://commits.webkit.org/r292591
+
+2022-04-07  Elliott Williams  <emw@apple.com>
+
+        [XCBuild] Enable dependency validation by default
+        https://bugs.webkit.org/show_bug.cgi?id=238901
+        <rdar://problem/91379968>
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/DebugRelease.xcconfig:
+
+2022-04-06  Yusuke Suzuki  <ysuzuki@apple.com>
+
+        [libpas] Run TLC decommit rarely
+        https://bugs.webkit.org/show_bug.cgi?id=238855
+
+        Reviewed by Saam Barati.
+
+        We were running libpas TLC decommit every time. But it is too frequent. We should capture IsoHeap allocation pattern
+        with much more longer period, and perform TLC decommit in such a low-frequency rate.
+        This patch changes it so that we run it only once a 128 scavenger run. It is roughly once a 13 seconds.
+
+        * libpas/src/libpas/pas_scavenger.c:
+        (scavenger_thread_main):
+        (pas_scavenger_clear_all_caches):
+        * libpas/src/libpas/pas_thread_local_cache.c:
+        (pas_thread_local_cache_for_all):
+        * libpas/src/libpas/pas_thread_local_cache.h:
+        * libpas/src/test/TLCDecommitTests.cpp:
+        (std::testTLCDecommit):
+        (std::testTLCDecommitThenDestroyImpl):
+        (std::testTLCDecommitThenDeallocate):
+
+2022-04-06  Commit Queue  <commit-queue@webkit.org>
+
+        Unreviewed, reverting r292450.
+        https://bugs.webkit.org/show_bug.cgi?id=238883
+
+        Membuster regression
+
+        Reverted changeset:
+
+        "[libpas] Run TLC decommit rarely"
+        https://bugs.webkit.org/show_bug.cgi?id=238855
+        https://commits.webkit.org/r292450
+
+2022-04-05  Yusuke Suzuki  <ysuzuki@apple.com>
+
+        [libpas] Run TLC decommit rarely
+        https://bugs.webkit.org/show_bug.cgi?id=238855
+
+        Reviewed by Saam Barati.
+
+        We were running libpas TLC decommit every time. But it is too frequent. We should capture IsoHeap allocation pattern
+        with much more longer period, and perform TLC decommit in such a low-frequency rate.
+        This patch changes it so that we run it only once a 128 scavenger run. It is roughly once a 13 seconds.
+
+        * libpas/src/libpas/pas_scavenger.c:
+        (scavenger_thread_main):
+        (pas_scavenger_clear_all_caches):
+        * libpas/src/libpas/pas_thread_local_cache.c:
+        (pas_thread_local_cache_for_all):
+        * libpas/src/libpas/pas_thread_local_cache.h:
+        * libpas/src/test/TLCDecommitTests.cpp:
+        (std::testTLCDecommit):
+        (std::testTLCDecommitThenDestroyImpl):
+        (std::testTLCDecommitThenDeallocate):
+
+2022-04-05  Basuke Suzuki  <basuke.suzuki@sony.com>
+
+        [PlayStation] Enable libpas.
+        https://bugs.webkit.org/show_bug.cgi?id=238753
+
+        Reviewed by Yusuke Suzuki.
+
+        PlayStation platform is ready to enable it finally.
+
+        * PlatformPlayStation.cmake:
+        * bmalloc/BPlatform.h:
+        * libpas/src/libpas/pas_config.h:
+        * libpas/src/libpas/pas_page_malloc.c:
+        (pas_page_malloc_try_allocate_without_deallocating_padding):
+        (commit_impl):
+        * libpas/src/libpas/pas_platform.h:
+        * libpas/src/libpas/pas_thread_local_cache.c:
+
+2022-04-04  Yusuke Suzuki  <ysuzuki@apple.com>
+
+        [libpas] Do not need to call pthread_set_qos_class_self_np repeatedly
+        https://bugs.webkit.org/show_bug.cgi?id=238785
+
+        Reviewed by Mark Lam.
+
+        Let's remember previously set QOS class and avoid resetting it if the value is not changed.
+
+        * bmalloc/bmalloc.cpp:
+        (bmalloc::api::setScavengerThreadQOSClass):
+        * libpas/src/libpas/pas_scavenger.c:
+        (pas_scavenger_set_requested_qos_class):
+        (scavenger_thread_main):
+        * libpas/src/libpas/pas_scavenger.h:
+
+2022-03-29  Brandon Stewart  <brandonstewart@apple.com>
+
+        Rename Libpas README to README.md
+        https://bugs.webkit.org/show_bug.cgi?id=238517
+
+        Reviewed by Yusuke Suzuki.
+
+        Libpas README does not correctly display markdown output on github.com
+        without .md file extension.
+
+        * libpas/ReadMe.md: Renamed from Source/bmalloc/libpas/README.
+
 2022-03-26  Yusuke Suzuki  <ysuzuki@apple.com>
 
         Use unary static_assert

@@ -16,7 +16,7 @@ if (window.IPC) { // For compiles with !ENABLE(IPC_TESTING_API)
             { type: 'StreamConnectionBuffer', value: streamConnection.streamBuffer() },
         ]);
         const arguments = IPC.waitForMessage(processTarget, streamTesterID, IPC.messages.IPCStreamTesterProxy_WasCreated.name, defaultTimeout);
-        streamConnection.setWakeUpSemaphore(arguments[0].value);
+        streamConnection.setSemaphores(arguments[0].value, arguments[1].value);
 
         // Test starts here.
         try {

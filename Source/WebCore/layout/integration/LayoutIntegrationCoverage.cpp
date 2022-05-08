@@ -219,10 +219,10 @@ static void printTextForSubtree(const RenderElement& renderer, unsigned& charact
     for (auto& child : childrenOfType<RenderObject>(downcast<RenderElement>(renderer))) {
         if (is<RenderText>(child)) {
             String text = downcast<RenderText>(child).text();
-            text = text.stripWhiteSpace();
-            auto len = std::min(charactersLeft, text.length());
-            stream << text.left(len);
-            charactersLeft -= len;
+            auto textView = StringView(text).stripWhiteSpace();
+            auto length = std::min(charactersLeft, textView.length());
+            stream << textView.left(length);
+            charactersLeft -= length;
             continue;
         }
         printTextForSubtree(downcast<RenderElement>(child), charactersLeft, stream);
@@ -553,13 +553,13 @@ OptionSet<AvoidanceReason> canUseForLineLayoutWithReason(const RenderBlockFlow& 
 #ifndef NDEBUG
     static std::once_flag onceFlag;
     std::call_once(onceFlag, [] {
-        PAL::registerNotifyCallback("com.apple.WebKit.showModernLineLayoutCoverage", Function<void()> { printModernLineLayoutCoverage });
-        PAL::registerNotifyCallback("com.apple.WebKit.showModernLineLayoutReasons", Function<void()> { printModernLineLayoutBlockList });
+        PAL::registerNotifyCallback("com.apple.WebKit.showModernLineLayoutCoverage"_s, Function<void()> { printModernLineLayoutCoverage });
+        PAL::registerNotifyCallback("com.apple.WebKit.showModernLineLayoutReasons"_s, Function<void()> { printModernLineLayoutBlockList });
     });
 #endif
     OptionSet<AvoidanceReason> reasons;
     // FIXME: For tests that disable SLL and expect to get CLL.
-    if (!flow.settings().simpleLineLayoutEnabled())
+    if (!RuntimeEnabledFeatures::sharedFeatures().inlineFormattingContextIntegrationEnabled())
         SET_REASON_AND_RETURN_IF_NEEDED(FeatureIsDisabled, reasons, includeReasons);
     auto establishesInlineFormattingContext = [&] {
         if (flow.isRenderView()) {
@@ -672,6 +672,14 @@ bool canUseForLineLayoutAfterStyleChange(const RenderBlockFlow& blockContainer, 
 bool canUseForLineLayoutAfterInlineBoxStyleChange(const RenderInline& renderer, StyleDifference)
 {
     return canUseForRenderInlineChild(renderer, IncludeReasons::First).isEmpty();
+}
+
+bool canUseForFlexLayout(const RenderFlexibleBox& flexBox)
+{
+    if (!flexBox.document().settings().flexFormattingContextIntegrationEnabled())
+        return false;
+    ASSERT_NOT_IMPLEMENTED_YET();
+    return false;
 }
 
 }

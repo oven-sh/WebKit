@@ -25,11 +25,11 @@
 
 #pragma once
 
-#include <WebKit/WKMutableDictionary.h>
 #include <WebKit/WKNotificationManager.h>
 #include <WebKit/WKNotificationProvider.h>
 #include <WebKit/WKRetainPtr.h>
 #include <wtf/FastMalloc.h>
+#include <wtf/HashMap.h>
 #include <wtf/Vector.h>
 
 namespace TestWebKitAPI {
@@ -40,13 +40,19 @@ public:
     explicit TestNotificationProvider(Vector<WKNotificationManagerRef>&&);
     ~TestNotificationProvider();
 
-    WKDictionaryRef notificationPermissions() const;
     void setPermission(const String& origin, bool allowed);
+    void resetPermission(const String& origin);
+
+    WKDictionaryRef notificationPermissions() const;
+    void showWebNotification(WKPageRef, WKNotificationRef);
+    void simulateNotificationClick();
 
 private:
     Vector<WKNotificationManagerRef> m_managers;
-    WKRetainPtr<WKMutableDictionaryRef> m_permissions;
+    HashMap<String, bool> m_permissions;
     WKNotificationProviderV0 m_provider;
+
+    std::pair<WKNotificationManagerRef, uint64_t> m_pendingNotification;
 };
 
 }

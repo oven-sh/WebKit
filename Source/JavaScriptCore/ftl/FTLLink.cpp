@@ -59,7 +59,7 @@ void link(State& state)
     std::unique_ptr<LinkBuffer> linkBuffer;
 
     CCallHelpers::Address frame = CCallHelpers::Address(
-        CCallHelpers::stackPointerRegister, -static_cast<int32_t>(AssemblyHelpers::prologueStackPointerDelta()));
+        CCallHelpers::stackPointerRegister, -static_cast<int32_t>(prologueStackPointerDelta()));
     
     switch (graph.m_plan.mode()) {
     case JITCompilationMode::FTL: {
@@ -150,6 +150,7 @@ void link(State& state)
 
         state.jitCode->initializeB3Code(b3CodeRef);
         state.jitCode->initializeArityCheckEntrypoint(arityCheckCodeRef);
+        state.jitCode->common.m_jumpReplacements = WTFMove(state.jumpReplacements);
     }
 
     state.finalizer->entrypointLinkBuffer = WTFMove(linkBuffer);

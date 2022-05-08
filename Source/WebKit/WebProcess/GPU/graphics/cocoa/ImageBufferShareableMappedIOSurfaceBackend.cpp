@@ -30,6 +30,7 @@
 
 #include "Logging.h"
 #include <WebCore/GraphicsContextCG.h>
+#include <WebCore/IOSurfacePool.h>
 #include <pal/spi/cocoa/IOSurfaceSPI.h>
 #include <wtf/IsoMallocInlines.h>
 #include <wtf/StdLibExtras.h>
@@ -39,13 +40,13 @@ using namespace WebCore;
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(ImageBufferShareableMappedIOSurfaceBackend);
 
-std::unique_ptr<ImageBufferShareableMappedIOSurfaceBackend> ImageBufferShareableMappedIOSurfaceBackend::create(const Parameters& parameters, const HostWindow*)
+std::unique_ptr<ImageBufferShareableMappedIOSurfaceBackend> ImageBufferShareableMappedIOSurfaceBackend::create(const Parameters& parameters, const ImageBuffer::CreationContext& creationContext)
 {
     IntSize backendSize = calculateSafeBackendSize(parameters);
     if (backendSize.isEmpty())
         return nullptr;
 
-    auto surface = IOSurface::create(backendSize, backendSize, parameters.colorSpace, IOSurface::formatForPixelFormat(parameters.pixelFormat));
+    auto surface = IOSurface::create(creationContext.surfacePool, backendSize, backendSize, parameters.colorSpace, IOSurface::formatForPixelFormat(parameters.pixelFormat));
     if (!surface)
         return nullptr;
 
@@ -55,7 +56,7 @@ std::unique_ptr<ImageBufferShareableMappedIOSurfaceBackend> ImageBufferShareable
 
     CGContextClearRect(cgContext.get(), FloatRect(FloatPoint::zero(), backendSize));
 
-    return makeUnique<ImageBufferShareableMappedIOSurfaceBackend>(parameters, WTFMove(surface));
+    return makeUnique<ImageBufferShareableMappedIOSurfaceBackend>(parameters, WTFMove(surface), creationContext.surfacePool);
 }
 
 std::unique_ptr<ImageBufferShareableMappedIOSurfaceBackend> ImageBufferShareableMappedIOSurfaceBackend::create(const Parameters& parameters, ImageBufferBackendHandle handle)
@@ -69,18 +70,17 @@ std::unique_ptr<ImageBufferShareableMappedIOSurfaceBackend> ImageBufferShareable
     if (!surface)
         return nullptr;
 
-    return makeUnique<ImageBufferShareableMappedIOSurfaceBackend>(parameters, WTFMove(surface));
+    return makeUnique<ImageBufferShareableMappedIOSurfaceBackend>(parameters, WTFMove(surface), nullptr);
 }
 
-ImageBufferBackendHandle ImageBufferShareableMappedIOSurfaceBackend::createBackendHandle() const
+ImageBufferBackendHandle ImageBufferShareableMappedIOSurfaceBackend::createBackendHandle(SharedMemory::Protection) const
 {
     return ImageBufferBackendHandle(m_surface->createSendRight());
 }
 
 void ImageBufferShareableMappedIOSurfaceBackend::setOwnershipIdentity(const WebCore::ProcessIdentity& resourceOwner)
 {
-    ASSERT(surface());
-    surface()->setOwnershipIdentity(resourceOwner);
+    m_surface->setOwnershipIdentity(resourceOwner);
 }
 
 } // namespace WebKit

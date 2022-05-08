@@ -627,7 +627,6 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     bytecode/DataFormat.h
     bytecode/DirectEvalCodeCache.h
     bytecode/ExecutableInfo.h
-    bytecode/ExecutableToCodeBlockEdge.h
     bytecode/ExecutionCounter.h
     bytecode/ExitKind.h
     bytecode/ExitingInlineKind.h
@@ -868,15 +867,14 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     jit/RegisterAtOffsetList.h
     jit/RegisterMap.h
     jit/RegisterSet.h
+    jit/ScratchRegisterAllocator.h
     jit/Snippet.h
     jit/SnippetParams.h
     jit/SnippetReg.h
     jit/SnippetSlowPathCalls.h
     jit/SpillRegistersMode.h
     jit/TagRegistersMode.h
-    jit/TempRegisterSet.h
     jit/ThunkGenerator.h
-    jit/UnusedPointer.h
 
     llint/LLIntOpcode.h
 
@@ -1154,6 +1152,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/ScopedArgumentsTable.h
     runtime/Scribble.h
     runtime/ScriptExecutable.h
+    runtime/ScriptExecutableInlines.h
     runtime/ScriptFetchParameters.h
     runtime/ScriptFetcher.h
     runtime/ShadowRealmObject.h
@@ -1244,7 +1243,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     wasm/WasmOSREntryData.h
     wasm/WasmPageCount.h
     wasm/WasmSections.h
-    wasm/WasmSignature.h
+    wasm/WasmTypeDefinition.h
     wasm/WasmStreamingCompiler.h
     wasm/WasmStreamingParser.h
     wasm/WasmTierUpCount.h
@@ -1510,29 +1509,6 @@ else ()
 endif ()
 
 WEBKIT_COMPUTE_SOURCES(JavaScriptCore)
-list(APPEND JavaScriptCore_SOURCES
-    disassembler/zydis/Zydis/Zycore.c
-    disassembler/zydis/Zydis/ZycoreAllocator.c
-    disassembler/zydis/Zydis/ZycoreBitset.c
-    disassembler/zydis/Zydis/ZycoreFormat.c
-    disassembler/zydis/Zydis/ZycoreList.c
-    disassembler/zydis/Zydis/ZycoreString.c
-    disassembler/zydis/Zydis/ZycoreVector.c
-    disassembler/zydis/Zydis/Zydis.c
-    disassembler/zydis/Zydis/ZydisDecoder.c
-    disassembler/zydis/Zydis/ZydisDecoderData.c
-    disassembler/zydis/Zydis/ZydisFormatter.c
-    disassembler/zydis/Zydis/ZydisFormatterATT.c
-    disassembler/zydis/Zydis/ZydisFormatterBase.c
-    disassembler/zydis/Zydis/ZydisFormatterBuffer.c
-    disassembler/zydis/Zydis/ZydisFormatterIntel.c
-    disassembler/zydis/Zydis/ZydisMetaInfo.c
-    disassembler/zydis/Zydis/ZydisMnemonic.c
-    disassembler/zydis/Zydis/ZydisRegister.c
-    disassembler/zydis/Zydis/ZydisSharedData.c
-    disassembler/zydis/Zydis/ZydisString.c
-    disassembler/zydis/Zydis/ZydisUtils.c
-)
 WEBKIT_FRAMEWORK(JavaScriptCore)
 WEBKIT_FRAMEWORK_TARGET(JavaScriptCore)
 

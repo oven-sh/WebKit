@@ -78,9 +78,6 @@ enum class ClientDataType : bool {
     Get
 };
 
-// rdar://88104045 - Remove once staged change completed
-const char LocalAuthenticatiorAccessGroup[] = "com.apple.webkit.webauthn";
-
 constexpr const char LocalAuthenticatorAccessGroup[] = "com.apple.webkit.webauthn";
 
 // User entity extension
@@ -92,6 +89,12 @@ constexpr const char keyTypeKey[] = "key_type";
 constexpr const char keySizeKey[] = "key_size";
 constexpr const char relyingPartyKey[] = "rp";
 constexpr const char applicationTagKey[] = "tag";
+
+constexpr auto authenticatorTransportUsb = "usb"_s;
+constexpr auto authenticatorTransportNfc = "nfc"_s;
+constexpr auto authenticatorTransportBle = "ble"_s;
+constexpr auto authenticatorTransportInternal = "internal"_s;
+constexpr auto authenticatorTransportCable = "cable"_s;
 
 } // namespace WebCore
 

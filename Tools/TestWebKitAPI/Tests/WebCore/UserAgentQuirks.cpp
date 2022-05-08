@@ -34,7 +34,7 @@ namespace TestWebKitAPI {
 
 static void assertUserAgentForURLHasChromeBrowserQuirk(const char* url)
 {
-    String uaString = standardUserAgentForURL(URL({ }, url));
+    String uaString = standardUserAgentForURL(URL(String::fromLatin1(url)));
 
     EXPECT_TRUE(uaString.contains("Chrome"));
     EXPECT_TRUE(uaString.contains("Safari"));
@@ -45,7 +45,7 @@ static void assertUserAgentForURLHasChromeBrowserQuirk(const char* url)
 
 static void assertUserAgentForURLHasFirefoxBrowserQuirk(const char* url)
 {
-    String uaString = standardUserAgentForURL(URL({ }, url));
+    String uaString = standardUserAgentForURL(URL(String::fromLatin1(url)));
 
     EXPECT_FALSE(uaString.contains("Chrome"));
     EXPECT_FALSE(uaString.contains("Safari"));
@@ -56,7 +56,7 @@ static void assertUserAgentForURLHasFirefoxBrowserQuirk(const char* url)
 
 static void assertUserAgentForURLHasMacPlatformQuirk(const char* url)
 {
-    String uaString = standardUserAgentForURL(URL({ }, url));
+    String uaString = standardUserAgentForURL(URL(String::fromLatin1(url)));
 
     EXPECT_TRUE(uaString.contains("Macintosh"));
     EXPECT_TRUE(uaString.contains("Mac OS X"));
@@ -72,14 +72,14 @@ static void assertUserAgentForURLHasMacPlatformQuirk(const char* url)
 // that the standard user agent should be used.)
 static void assertUserAgentForURLHasEmptyQuirk(const char* url)
 {
-    String uaString = standardUserAgentForURL(URL({ }, url));
+    String uaString = standardUserAgentForURL(URL(String::fromLatin1(url)));
     EXPECT_FALSE(uaString.isNull());
 }
 
 TEST(UserAgentTest, Quirks)
 {
     // A site with no quirks should return a null String.
-    String uaString = standardUserAgentForURL(URL({ }, "http://www.webkit.org/"));
+    String uaString = standardUserAgentForURL(URL("http://www.webkit.org/"_s));
     EXPECT_TRUE(uaString.isNull());
 
     assertUserAgentForURLHasChromeBrowserQuirk("http://typekit.com/");
@@ -104,6 +104,7 @@ TEST(UserAgentTest, Quirks)
     assertUserAgentForURLHasMacPlatformQuirk("http://outlook.office.com/");
     assertUserAgentForURLHasMacPlatformQuirk("http://mail.ntu.edu.tw/");
     assertUserAgentForURLHasMacPlatformQuirk("http://exchange.tu-berlin.de/");
+    assertUserAgentForURLHasMacPlatformQuirk("http://www.sspa.juntadeandalucia.es/");
 
     assertUserAgentForURLHasEmptyQuirk("http://accounts.google.com/");
     assertUserAgentForURLHasEmptyQuirk("http://docs.google.com/");

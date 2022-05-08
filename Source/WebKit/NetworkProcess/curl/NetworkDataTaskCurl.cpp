@@ -265,10 +265,10 @@ void NetworkDataTaskCurl::willPerformHTTPRedirection()
         request.clearHTTPReferrer();
 
     bool isCrossOrigin = !protocolHostAndPortAreEqual(m_firstRequest.url(), request.url());
-    if (!equalLettersIgnoringASCIICase(request.httpMethod(), "get")) {
+    if (!equalLettersIgnoringASCIICase(request.httpMethod(), "get"_s)) {
         // Change request method to GET if change was made during a previous redirection or if current redirection says so.
         if (!request.url().protocolIsInHTTPFamily() || shouldRedirectAsGET(request, isCrossOrigin)) {
-            request.setHTTPMethod("GET");
+            request.setHTTPMethod("GET"_s);
             request.setHTTPBody(nullptr);
             request.clearHTTPContentType();
         }

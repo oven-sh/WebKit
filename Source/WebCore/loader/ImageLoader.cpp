@@ -192,6 +192,7 @@ void ImageLoader::updateFromElement(RelevantMutation relevantMutation)
         options.contentSecurityPolicyImposition = element().isInUserAgentShadowTree() ? ContentSecurityPolicyImposition::SkipPolicyCheck : ContentSecurityPolicyImposition::DoPolicyCheck;
         options.loadedFromPluginElement = is<HTMLPlugInElement>(element()) ? LoadedFromPluginElement::Yes : LoadedFromPluginElement::No;
         options.sameOriginDataURLFlag = SameOriginDataURLFlag::Set;
+        options.serviceWorkersMode = is<HTMLPlugInElement>(element()) ? ServiceWorkersMode::None : ServiceWorkersMode::All;
         bool isImageElement = is<HTMLImageElement>(element());
         if (isImageElement)
             options.referrerPolicy = downcast<HTMLImageElement>(element()).referrerPolicy();
@@ -297,11 +298,14 @@ void ImageLoader::didUpdateCachedImage(RelevantMutation relevantMutation, Cached
             // If newImage is cached, addClient() will result in the load event
             // being queued to fire. Ensure this happens after beforeload is
             // dispatched.
-            newImage->addClient(*this);
+            if (!loadHasNowLazilyStarted)
+                newImage->addClient(*this);
         } else
             resetLazyImageLoading(element().document());
+
         if (oldImage) {
-            oldImage->removeClient(*this);
+            if (!loadHasNowLazilyStarted)
+                oldImage->removeClient(*this);
             updateRenderer();
         }
     }
@@ -328,7 +332,7 @@ static inline void resolvePromises(Vector<RefPtr<DeferredPromise>>& promises)
         promise->resolve();
 }
 
-static inline void rejectPromises(Vector<RefPtr<DeferredPromise>>& promises, const char* message)
+static inline void rejectPromises(Vector<RefPtr<DeferredPromise>>& promises, ASCIILiteral message)
 {
     ASSERT(!promises.isEmpty());
     auto promisesToBeRejected = std::exchange(promises, { });
@@ -341,7 +345,7 @@ inline void ImageLoader::resolveDecodePromises()
     resolvePromises(m_decodingPromises);
 }
 
-inline void ImageLoader::rejectDecodePromises(const char* message)
+inline void ImageLoader::rejectDecodePromises(ASCIILiteral message)
 {
     rejectPromises(m_decodingPromises, message);
 }
@@ -375,7 +379,7 @@ void ImageLoader::notifyFinished(CachedResource& resource, const NetworkLoadMetr
         element().document().addConsoleMessage(MessageSource::Security, MessageLevel::Error, message);
 
         if (hasPendingDecodePromises())
-            rejectDecodePromises("Access control error.");
+            rejectDecodePromises("Access control error."_s);
         
         ASSERT(!m_hasPendingLoadEvent);
 
@@ -387,7 +391,7 @@ void ImageLoader::notifyFinished(CachedResource& resource, const NetworkLoadMetr
 
     if (m_image->wasCanceled()) {
         if (hasPendingDecodePromises())
-            rejectDecodePromises("Loading was canceled.");
+            rejectDecodePromises("Loading was canceled."_s);
         m_hasPendingLoadEvent = false;
         // Only consider updating the protection ref-count of the Element immediately before returning
         // from this function as doing so might result in the destruction of this ImageLoader.
@@ -464,13 +468,13 @@ void ImageLoader::decode(Ref<DeferredPromise>&& promise)
     m_decodingPromises.append(WTFMove(promise));
 
     if (!element().document().domWindow()) {
-        rejectDecodePromises("Inactive document.");
+        rejectDecodePromises("Inactive document."_s);
         return;
     }
 
     AtomString attr = element().imageSourceURL();
     if (stripLeadingAndTrailingHTMLSpaces(attr).isEmpty()) {
-        rejectDecodePromises("Missing source URL.");
+        rejectDecodePromises("Missing source URL."_s);
         return;
     }
 
@@ -483,12 +487,12 @@ void ImageLoader::decode()
     ASSERT(hasPendingDecodePromises());
     
     if (!element().document().domWindow()) {
-        rejectDecodePromises("Inactive document.");
+        rejectDecodePromises("Inactive document."_s);
         return;
     }
 
     if (!m_image || !m_image->image() || m_image->errorOccurred()) {
-        rejectDecodePromises("Loading error.");
+        rejectDecodePromises("Loading error."_s);
         return;
     }
 

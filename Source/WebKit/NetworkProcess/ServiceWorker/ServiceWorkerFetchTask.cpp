@@ -153,7 +153,7 @@ void ServiceWorkerFetchTask::startFetch()
     cleanHTTPRequestHeadersForAccessControl(request, m_loader.parameters().httpHeadersToKeep);
 
     String clientIdentifier;
-    if (m_loader.parameters().options.mode != FetchOptions::Mode::Navigate) {
+    if (m_loader.parameters().options.mode != FetchOptions::Mode::Navigate && m_loader.parameters().options.destination != FetchOptions::Destination::Worker) {
         if (auto identifier = m_loader.parameters().options.clientIdentifier)
             clientIdentifier = identifier->toString();
     }
@@ -188,7 +188,8 @@ void ServiceWorkerFetchTask::processRedirectResponse(ResourceResponse&& response
 
 void ServiceWorkerFetchTask::didReceiveResponse(WebCore::ResourceResponse&& response, bool needsContinueDidReceiveResponseMessage)
 {
-    cancelPreloadIfNecessary();
+    if (m_preloader && !m_preloader->isServiceWorkerNavigationPreloadEnabled())
+        cancelPreloadIfNecessary();
 
     processResponse(WTFMove(response), needsContinueDidReceiveResponseMessage, ShouldSetSource::Yes);
 }
@@ -198,7 +199,7 @@ void ServiceWorkerFetchTask::processResponse(ResourceResponse&& response, bool n
     if (m_isDone)
         return;
 
-    SWFETCH_RELEASE_LOG("processResponse: (httpStatusCode=%d, MIMEType=%" PUBLIC_LOG_STRING ", expectedContentLength=%" PRId64 ", needsContinueDidReceiveResponseMessage=%d, source=%u)", response.httpStatusCode(), response.mimeType().utf8().data(), response.expectedContentLength(), needsContinueDidReceiveResponseMessage, static_cast<unsigned>(response.source()));
+    SWFETCH_RELEASE_LOG("processResponse: (httpStatusCode=%d, MIMEType=%" PUBLIC_LOG_STRING ", expectedContentLength=%" PRId64 ", needsContinueDidReceiveResponseMessage=%d, source=%u)", response.httpStatusCode(), response.mimeType().string().utf8().data(), response.expectedContentLength(), needsContinueDidReceiveResponseMessage, static_cast<unsigned>(response.source()));
     m_wasHandled = true;
     if (m_timeoutTimer)
         m_timeoutTimer->stop();
@@ -258,6 +259,8 @@ void ServiceWorkerFetchTask::didFinish(const NetworkLoadMetrics& networkLoadMetr
     if (m_timeoutTimer)
         m_timeoutTimer->stop();
     sendToClient(Messages::WebResourceLoader::DidFinishResourceLoad { networkLoadMetrics });
+
+    cancelPreloadIfNecessary();
 }
 
 void ServiceWorkerFetchTask::didFail(const ResourceError& error)

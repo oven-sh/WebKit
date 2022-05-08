@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2019-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -68,6 +68,11 @@
 #include "IPCTester.h"
 #endif
 
+namespace WTF {
+enum class Critical : bool;
+enum class Synchronous : bool;
+}
+
 namespace WebCore {
 class SecurityOrigin;
 struct SecurityOriginData;
@@ -115,7 +120,7 @@ class GPUConnectionToWebProcess
     , public WebCore::NowPlayingManager::Client
     , IPC::Connection::Client {
 public:
-    static Ref<GPUConnectionToWebProcess> create(GPUProcess&, WebCore::ProcessIdentifier, IPC::Connection::Identifier, PAL::SessionID, GPUProcessConnectionParameters&&);
+    static Ref<GPUConnectionToWebProcess> create(GPUProcess&, WebCore::ProcessIdentifier, PAL::SessionID, IPC::Connection::Identifier&&, GPUProcessConnectionParameters&&);
     virtual ~GPUConnectionToWebProcess();
 
     using WebCore::NowPlayingManager::Client::weakPtrFactory;
@@ -129,6 +134,8 @@ public:
     RemoteMediaResourceManager& remoteMediaResourceManager();
 
     PAL::SessionID sessionID() const { return m_sessionID; }
+
+    bool isCaptivePortalModeEnabled() const { return m_isCaptivePortalModeEnabled; }
 
     Logger& logger();
 
@@ -188,8 +195,10 @@ public:
     void updateSupportedRemoteCommands();
 
     bool allowsExitUnderMemoryPressure() const;
-
     void terminateWebProcess();
+
+    void lowMemoryHandler(WTF::Critical, WTF::Synchronous);
+
 #if ENABLE(WEBGL)
     void releaseGraphicsContextGLForTesting(GraphicsContextGLIdentifier);
 #endif
@@ -204,7 +213,7 @@ public:
 #endif
 
 private:
-    GPUConnectionToWebProcess(GPUProcess&, WebCore::ProcessIdentifier, IPC::Connection::Identifier, PAL::SessionID, GPUProcessConnectionParameters&&);
+    GPUConnectionToWebProcess(GPUProcess&, WebCore::ProcessIdentifier, PAL::SessionID, IPC::Connection::Identifier&&, GPUProcessConnectionParameters&&);
 
 #if ENABLE(WEB_AUDIO)
     RemoteAudioDestinationManager& remoteAudioDestinationManager();
@@ -217,7 +226,7 @@ private:
     RemoteMediaRecorderManager& mediaRecorderManager();
 #endif
 
-    void createRenderingBackend(RemoteRenderingBackendCreationParameters&&, IPC::StreamConnectionBuffer&&);
+    void createRenderingBackend(RemoteRenderingBackendCreationParameters&&, IPC::Attachment&&, IPC::StreamConnectionBuffer&&);
     void releaseRenderingBackend(RenderingBackendIdentifier);
 
 #if ENABLE(WEBGL)
@@ -358,6 +367,7 @@ private:
 
     RefPtr<RemoteRemoteCommandListenerProxy> m_remoteRemoteCommandListener;
     bool m_isActiveNowPlayingProcess { false };
+    bool m_isCaptivePortalModeEnabled { false };
 
 #if ENABLE(ROUTING_ARBITRATION) && HAVE(AVAUDIO_ROUTING_ARBITER)
     UniqueRef<LocalAudioSessionRoutingArbitrator> m_routingArbitrator;

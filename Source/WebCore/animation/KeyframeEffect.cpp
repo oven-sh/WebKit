@@ -92,7 +92,7 @@ String KeyframeEffect::CSSPropertyIDToIDLAttributeName(CSSPropertyID cssProperty
     return getJSPropertyName(cssPropertyId);
 }
 
-static inline CSSPropertyID IDLAttributeNameToAnimationPropertyName(const String& idlAttributeName)
+static inline CSSPropertyID IDLAttributeNameToAnimationPropertyName(const AtomString& idlAttributeName)
 {
     // https://drafts.csswg.org/web-animations-1/#idl-attribute-name-to-animation-property-name
     // 1. If attribute conforms to the <custom-property-name> production, return attribute.
@@ -238,7 +238,7 @@ static inline ExceptionOr<KeyframeEffect::KeyframeLikeObject> processKeyframeLik
 
     // 5. Sort animation properties in ascending order by the Unicode codepoints that define each property name.
     std::sort(animationProperties.begin(), animationProperties.end(), [](auto& lhs, auto& rhs) {
-        return lhs.string().utf8() < rhs.string().utf8();
+        return lhs.string().string().utf8() < rhs.string().string().utf8();
     });
 
     // 6. For each property name in animation properties,
@@ -443,7 +443,7 @@ static inline ExceptionOr<void> processPropertyIndexedKeyframes(JSGlobalObject& 
 
     // 8. If easings is an empty sequence, let it be a sequence of length one containing the single value “linear”, i.e. « "linear" ».
     if (easings.isEmpty())
-        easings.append("linear");
+        easings.append("linear"_s);
 
     // 9. If easings has fewer items than property keyframes, repeat the elements in easings successively starting from the beginning of the list until easings has as many
     //    items as property keyframes.
@@ -536,7 +536,7 @@ ExceptionOr<Ref<KeyframeEffect>> KeyframeEffect::create(JSGlobalObject& lexicalG
     return keyframeEffect;
 }
 
-ExceptionOr<Ref<KeyframeEffect>> KeyframeEffect::create(Ref<KeyframeEffect>&& source)
+Ref<KeyframeEffect> KeyframeEffect::create(Ref<KeyframeEffect>&& source)
 {
     auto keyframeEffect = adoptRef(*new KeyframeEffect(nullptr, PseudoId::None));
     keyframeEffect->copyPropertiesFromSource(WTFMove(source));
@@ -585,7 +585,7 @@ void KeyframeEffect::copyPropertiesFromSource(Ref<KeyframeEffect>&& source)
     setIterationDuration(source->iterationDuration());
     updateStaticTimingProperties();
 
-    KeyframeList keyframeList("keyframe-effect-" + createVersion4UUIDString());
+    KeyframeList keyframeList(makeAtomString("keyframe-effect-"_s, UUID::createVersion4Weak()));
     keyframeList.copyKeyframes(source->m_blendingKeyframes);
     setBlendingKeyframes(keyframeList);
 }
@@ -783,7 +783,7 @@ ExceptionOr<void> KeyframeEffect::processKeyframes(JSGlobalObject& lexicalGlobal
         keyframe.timingFunction = timingFunctionResult.returnValue();
 
         for (auto& [property, value] : keyframe.styleStrings) {
-            if (equalLettersIgnoringASCIICase(value, "inherit"))
+            if (equalLettersIgnoringASCIICase(value, "inherit"_s))
                 m_inheritedProperties.add(property);
         }
     }
@@ -811,7 +811,7 @@ void KeyframeEffect::updateBlendingKeyframes(RenderStyle& elementStyle, const St
     if (!m_blendingKeyframes.isEmpty() || !m_target)
         return;
 
-    KeyframeList keyframeList("keyframe-effect-" + createVersion4UUIDString());
+    KeyframeList keyframeList(makeAtomString("keyframe-effect-"_s, UUID::createVersion4Weak()));
     auto& styleResolver = m_target->styleResolver();
 
     for (auto& keyframe : m_parsedKeyframes) {
@@ -1009,7 +1009,7 @@ void KeyframeEffect::computeCSSAnimationBlendingKeyframes(const RenderStyle& una
     auto cssAnimation = downcast<CSSAnimation>(animation());
     auto& backingAnimation = cssAnimation->backingAnimation();
 
-    KeyframeList keyframeList(backingAnimation.name().string);
+    KeyframeList keyframeList(AtomString { backingAnimation.name().string });
     if (auto* styleScope = Style::Scope::forOrdinal(*m_target, backingAnimation.nameStyleScopeOrdinal()))
         styleScope->resolver().keyframeStylesForAnimation(*m_target, unanimatedStyle, resolutionContext, keyframeList);
 
@@ -1037,7 +1037,7 @@ void KeyframeEffect::computeCSSTransitionBlendingKeyframes(const RenderStyle* ol
     if (m_target)
         Style::loadPendingResources(*toStyle, *document(), m_target.get());
 
-    KeyframeList keyframeList("keyframe-effect-" + createVersion4UUIDString());
+    KeyframeList keyframeList(makeAtomString("keyframe-effect-"_s, UUID::createVersion4Weak()));
     keyframeList.addProperty(property);
 
     KeyframeValue fromKeyframeValue(0, RenderStyle::clonePtr(*oldStyle));
@@ -1185,7 +1185,7 @@ ExceptionOr<void> KeyframeEffect::setPseudoElement(const String& pseudoElement)
         auto isLegacy = pseudoElement == ":before" || pseudoElement == ":after" || pseudoElement == ":first-letter" || pseudoElement == ":first-line";
         if (!isLegacy && !pseudoElement.startsWith("::"))
             return Exception { SyntaxError };
-        auto pseudoType = CSSSelector::parsePseudoElementType(pseudoElement.substring(isLegacy ? 1 : 2));
+        auto pseudoType = CSSSelector::parsePseudoElementType(StringView(pseudoElement).substring(isLegacy ? 1 : 2));
         if (pseudoType == CSSSelector::PseudoElementUnknown || pseudoType == CSSSelector::PseudoElementWebKitCustom)
             return Exception { SyntaxError };
         pseudoId = CSSSelector::pseudoId(pseudoType);

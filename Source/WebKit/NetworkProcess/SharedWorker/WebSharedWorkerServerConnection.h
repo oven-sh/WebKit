@@ -63,7 +63,7 @@ public:
 
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
 
-    void fetchScriptInClient(const WebSharedWorker&, WebCore::SharedWorkerObjectIdentifier, CompletionHandler<void(WebCore::WorkerFetchResult&&)>&&);
+    void fetchScriptInClient(const WebSharedWorker&, WebCore::SharedWorkerObjectIdentifier, CompletionHandler<void(WebCore::WorkerFetchResult&&, WebCore::WorkerInitializationData&&)>&&);
     void notifyWorkerObjectOfLoadCompletion(WebCore::SharedWorkerObjectIdentifier, const WebCore::ResourceError&);
     void postExceptionToWorkerObject(WebCore::SharedWorkerObjectIdentifier, const String& errorMessage, int lineNumber, int columnNumber, const String& sourceURL);
 
@@ -75,6 +75,8 @@ private:
     // IPC messages.
     void requestSharedWorker(WebCore::SharedWorkerKey&&, WebCore::SharedWorkerObjectIdentifier, WebCore::TransferredMessagePort&&, WebCore::WorkerOptions&&);
     void sharedWorkerObjectIsGoingAway(WebCore::SharedWorkerKey&&, WebCore::SharedWorkerObjectIdentifier);
+    void suspendForBackForwardCache(WebCore::SharedWorkerKey&&, WebCore::SharedWorkerObjectIdentifier);
+    void resumeForBackForwardCache(WebCore::SharedWorkerKey&&, WebCore::SharedWorkerObjectIdentifier);
 
     Ref<IPC::Connection> m_contentConnection;
     Ref<NetworkProcess> m_networkProcess;

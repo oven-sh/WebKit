@@ -33,6 +33,7 @@
 #include "NetworkCacheFileSystem.h"
 #include "SharedMemory.h"
 #include "WebCompiledContentRuleList.h"
+#include <WebCore/CommonAtomStrings.h>
 #include <WebCore/ContentExtensionCompiler.h>
 #include <WebCore/ContentExtensionError.h>
 #include <WebCore/ContentExtensionParser.h>
@@ -232,7 +233,7 @@ static std::optional<MappedData> openAndMapContentRuleList(const WTF::String& pa
 {
     if (!FileSystem::makeSafeToUseMemoryMapForPath(path))
         return std::nullopt;
-    WebKit::NetworkCache::Data fileData = mapFile(fileSystemRepresentation(path).data());
+    auto fileData = mapFile(path);
     if (fileData.isNull())
         return std::nullopt;
     auto metaData = decodeContentRuleListMetaData(fileData);
@@ -366,7 +367,7 @@ static Expected<MappedData, std::error_code> compiledToFile(WTF::String&& json, 
     };
 
     auto temporaryFileHandle = invalidPlatformFileHandle;
-    WTF::String temporaryFilePath = openTemporaryFile("ContentRuleList", temporaryFileHandle);
+    WTF::String temporaryFilePath = openTemporaryFile("ContentRuleList"_s, temporaryFileHandle);
     if (temporaryFileHandle == invalidPlatformFileHandle) {
         WTFLogAlways("Content Rule List compiling failed: Opening temporary file failed.");
         return makeUnexpected(ContentRuleListStore::Error::CompileFailed);
@@ -545,7 +546,7 @@ void ContentRuleListStore::getAvailableContentRuleListIdentifiers(CompletionHand
 void ContentRuleListStore::compileContentRuleList(WTF::String&& identifier, WTF::String&& json, CompletionHandler<void(RefPtr<API::ContentRuleList>, std::error_code)> completionHandler)
 {
     ASSERT(RunLoop::isMain());
-    AtomString::init();
+    WebCore::initializeCommonAtomStrings();
     WebCore::QualifiedName::init();
     
     auto parsedRules = WebCore::ContentExtensions::parseRuleList(json);

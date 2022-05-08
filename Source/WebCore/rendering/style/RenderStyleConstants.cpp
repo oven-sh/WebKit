@@ -882,6 +882,8 @@ TextStream& operator<<(TextStream& ts, Resize resize)
     case Resize::Both: ts << "both"; break;
     case Resize::Horizontal: ts << "horizontal"; break;
     case Resize::Vertical: ts << "vertical"; break;
+    case Resize::Block: ts << "block"; break;
+    case Resize::Inline: ts << "inline"; break;
     }
     return ts;
 }
@@ -1004,7 +1006,6 @@ TextStream& operator<<(TextStream& ts, TextCombine textCombine)
 TextStream& operator<<(TextStream& ts, TextDecorationLine line)
 {
     switch (line) {
-    case TextDecorationLine::None: ts << "none"; break;
     case TextDecorationLine::Underline: ts << "underline"; break;
     case TextDecorationLine::Overline: ts << "overline"; break;
     case TextDecorationLine::LineThrough: ts << "line-through"; break;
@@ -1241,6 +1242,22 @@ TextStream& operator<<(TextStream& ts, MathStyle mathStyle)
     switch (mathStyle) {
     case MathStyle::Normal: ts << "normal"; break;
     case MathStyle::Compact: ts << "compact"; break;
+    }
+    return ts;
+}
+
+TextStream& operator<<(TextStream& ts, ContainIntrinsicSizeType containIntrinsicSizeType)
+{
+    switch (containIntrinsicSizeType) {
+    case ContainIntrinsicSizeType::None:
+        ts << "none";
+        break;
+    case ContainIntrinsicSizeType::Length:
+        ts << "length";
+        break;
+    case ContainIntrinsicSizeType::AutoAndLength:
+        ts << "autoandlength";
+        break;
     }
     return ts;
 }

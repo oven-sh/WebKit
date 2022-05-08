@@ -53,8 +53,8 @@ public:
 
     WEBCORE_EXPORT String title() const final;
 
-    WEBCORE_EXPORT ExceptionOr<void> setInnerText(const String&);
-    WEBCORE_EXPORT ExceptionOr<void> setOuterText(const String&);
+    WEBCORE_EXPORT ExceptionOr<void> setInnerText(String&&);
+    WEBCORE_EXPORT ExceptionOr<void> setOuterText(String&&);
 
     virtual bool hasCustomFocusLogic() const;
     bool supportsFocus() const override;
@@ -130,7 +130,7 @@ public:
 
     WEBCORE_EXPORT EnterKeyHint canonicalEnterKeyHint() const;
     String enterKeyHint() const;
-    void setEnterKeyHint(const String& value);
+    void setEnterKeyHint(const AtomString& value);
 
     WEBCORE_EXPORT static bool shouldExtendSelectionToTargetNode(const Node& targetNode, const VisibleSelection& selectionBeforeUpdate);
 

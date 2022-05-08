@@ -154,7 +154,7 @@
 namespace WebCore {
 using namespace Inspector;
 
-static const Seconds defaultTransientActivationDuration { 2_s };
+static constexpr Seconds defaultTransientActivationDuration { 5_s };
 
 static WeakHashSet<DOMWindow>& windowsInterestedInStorageEvents()
 {
@@ -297,12 +297,13 @@ void DOMWindow::dispatchAllPendingUnloadEvents()
         return Ref<DOMWindow>(*(keyValue.key));
     });
 
+    auto& eventNames = WebCore::eventNames();
     for (auto& window : windows) {
         if (!set.contains(window.ptr()))
             continue;
 
-        window->dispatchEvent(PageTransitionEvent::create(eventNames().pagehideEvent, false), window->document());
-        window->dispatchEvent(Event::create(eventNames().unloadEvent, Event::CanBubble::No, Event::IsCancelable::No), window->document());
+        window->dispatchEvent(PageTransitionEvent::create(eventNames.pagehideEvent, false), window->document());
+        window->dispatchEvent(Event::create(eventNames.unloadEvent, Event::CanBubble::No, Event::IsCancelable::No), window->document());
 
         window->enableSuddenTermination();
     }
@@ -836,7 +837,7 @@ ExceptionOr<Storage*> DOMWindow::sessionStorage()
     if (!document)
         return nullptr;
 
-    if (!document->securityOrigin().canAccessSessionStorage(document->topOrigin()))
+    if (document->canAccessResource(ScriptExecutionContext::ResourceType::SessionStorage) == ScriptExecutionContext::HasResourceAccess::No)
         return Exception { SecurityError };
 
     if (m_sessionStorage)
@@ -862,7 +863,7 @@ ExceptionOr<Storage*> DOMWindow::localStorage()
     if (!document)
         return nullptr;
 
-    if (!document->securityOrigin().canAccessLocalStorage(nullptr))
+    if (document->canAccessResource(ScriptExecutionContext::ResourceType::LocalStorage) == ScriptExecutionContext::HasResourceAccess::No)
         return Exception { SecurityError };
 
     auto* page = document->page();
@@ -1094,7 +1095,7 @@ void DOMWindow::print()
         return;
 
     if (!page->arePromptsAllowed()) {
-        printErrorMessage("Use of window.print is not allowed while unloading a page.");
+        printErrorMessage("Use of window.print is not allowed while unloading a page."_s);
         return;
     }
 
@@ -1128,7 +1129,7 @@ void DOMWindow::alert(const String& message)
 
     RefPtr document = this->document();
     if (document->isSandboxed(SandboxModals)) {
-        printErrorMessage("Use of window.alert is not allowed in a sandboxed frame when the allow-modals flag is not set.");
+        printErrorMessage("Use of window.alert is not allowed in a sandboxed frame when the allow-modals flag is not set."_s);
         return;
     }
 
@@ -1137,7 +1138,7 @@ void DOMWindow::alert(const String& message)
         return;
 
     if (!page->arePromptsAllowed()) {
-        printErrorMessage("Use of window.alert is not allowed while unloading a page.");
+        printErrorMessage("Use of window.alert is not allowed while unloading a page."_s);
         return;
     }
 
@@ -1157,7 +1158,7 @@ bool DOMWindow::confirmForBindings(const String& message)
 
     RefPtr document = this->document();
     if (document->isSandboxed(SandboxModals)) {
-        printErrorMessage("Use of window.confirm is not allowed in a sandboxed frame when the allow-modals flag is not set.");
+        printErrorMessage("Use of window.confirm is not allowed in a sandboxed frame when the allow-modals flag is not set."_s);
         return false;
     }
 
@@ -1166,7 +1167,7 @@ bool DOMWindow::confirmForBindings(const String& message)
         return false;
 
     if (!page->arePromptsAllowed()) {
-        printErrorMessage("Use of window.confirm is not allowed while unloading a page.");
+        printErrorMessage("Use of window.confirm is not allowed while unloading a page."_s);
         return false;
     }
 
@@ -1186,7 +1187,7 @@ String DOMWindow::prompt(const String& message, const String& defaultValue)
 
     RefPtr document = this->document();
     if (document->isSandboxed(SandboxModals)) {
-        printErrorMessage("Use of window.prompt is not allowed in a sandboxed frame when the allow-modals flag is not set.");
+        printErrorMessage("Use of window.prompt is not allowed in a sandboxed frame when the allow-modals flag is not set."_s);
         return String();
     }
 
@@ -1195,7 +1196,7 @@ String DOMWindow::prompt(const String& message, const String& defaultValue)
         return String();
 
     if (!page->arePromptsAllowed()) {
-        printErrorMessage("Use of window.prompt is not allowed while unloading a page.");
+        printErrorMessage("Use of window.prompt is not allowed while unloading a page."_s);
         return String();
     }
 
@@ -1423,16 +1424,16 @@ unsigned DOMWindow::length() const
     return frame()->tree().scopedChildCount();
 }
 
-String DOMWindow::name() const
+AtomString DOMWindow::name() const
 {
     RefPtr frame = this->frame();
     if (!frame)
-        return String();
+        return nullAtom();
 
     return frame->tree().name();
 }
 
-void DOMWindow::setName(const String& string)
+void DOMWindow::setName(const AtomString& string)
 {
     RefPtr frame = this->frame();
     if (!frame)
@@ -1737,6 +1738,7 @@ void DOMWindow::scrollTo(const ScrollToOptions& options, ScrollClamping clamping
         return;
     }
 
+    view->cancelScheduledScrollToFocusedElement();
     document()->updateLayoutIgnorePendingStylesheets();
 
     IntPoint layoutPos(view->mapFromCSSToLayoutUnits(scrollToOptions.left.value()), view->mapFromCSSToLayoutUnits(scrollToOptions.top.value()));
@@ -1972,40 +1974,41 @@ bool DOMWindow::addEventListener(const AtomString& eventType, Ref<EventListener>
         return false;
 
     RefPtr document = this->document();
+    auto& eventNames = WebCore::eventNames();
     if (document) {
         document->addListenerTypeIfNeeded(eventType);
-        if (eventNames().isWheelEventType(eventType))
+        if (eventNames.isWheelEventType(eventType))
             document->didAddWheelEventHandler(*document);
-        else if (eventNames().isTouchRelatedEventType(eventType, *document))
+        else if (eventNames.isTouchRelatedEventType(eventType, *document))
             document->didAddTouchEventHandler(*document);
-        else if (eventType == eventNames().storageEvent)
+        else if (eventType == eventNames.storageEvent)
             didAddStorageEventListener(*this);
     }
 
-    if (eventType == eventNames().unloadEvent)
+    if (eventType == eventNames.unloadEvent)
         addUnloadEventListener(this);
-    else if (eventType == eventNames().beforeunloadEvent && allowsBeforeUnloadListeners(this))
+    else if (eventType == eventNames.beforeunloadEvent && allowsBeforeUnloadListeners(this))
         addBeforeUnloadEventListener(this);
 #if PLATFORM(IOS_FAMILY)
-    else if (eventType == eventNames().scrollEvent)
+    else if (eventType == eventNames.scrollEvent)
         incrementScrollEventListenersCount();
 #endif
 #if ENABLE(IOS_TOUCH_EVENTS)
-    else if (document && eventNames().isTouchRelatedEventType(eventType, *document))
+    else if (document && eventNames.isTouchRelatedEventType(eventType, *document))
         ++m_touchAndGestureEventListenerCount;
 #endif
 #if ENABLE(IOS_GESTURE_EVENTS)
-    else if (eventNames().isGestureEventType(eventType))
+    else if (eventNames.isGestureEventType(eventType))
         ++m_touchAndGestureEventListenerCount;
 #endif
 #if ENABLE(GAMEPAD)
-    else if (eventNames().isGamepadEventType(eventType))
+    else if (eventNames.isGamepadEventType(eventType))
         incrementGamepadEventListenerCount();
 #endif
 #if ENABLE(DEVICE_ORIENTATION)
-    else if (eventType == eventNames().deviceorientationEvent)
+    else if (eventType == eventNames.deviceorientationEvent)
         startListeningForDeviceOrientationIfNecessary();
-    else if (eventType == eventNames().devicemotionEvent)
+    else if (eventType == eventNames.devicemotionEvent)
         startListeningForDeviceMotionIfNecessary();
 #endif
 
@@ -2215,41 +2218,42 @@ bool DOMWindow::removeEventListener(const AtomString& eventType, EventListener& 
         return false;
 
     RefPtr document = this->document();
+    auto& eventNames = WebCore::eventNames();
     if (document) {
-        if (eventNames().isWheelEventType(eventType))
+        if (eventNames.isWheelEventType(eventType))
             document->didRemoveWheelEventHandler(*document);
-        else if (eventNames().isTouchRelatedEventType(eventType, *document))
+        else if (eventNames.isTouchRelatedEventType(eventType, *document))
             document->didRemoveTouchEventHandler(*document);
     }
 
-    if (eventType == eventNames().unloadEvent)
+    if (eventType == eventNames.unloadEvent)
         removeUnloadEventListener(this);
-    else if (eventType == eventNames().beforeunloadEvent && allowsBeforeUnloadListeners(this))
+    else if (eventType == eventNames.beforeunloadEvent && allowsBeforeUnloadListeners(this))
         removeBeforeUnloadEventListener(this);
 #if PLATFORM(IOS_FAMILY)
-    else if (eventType == eventNames().scrollEvent)
+    else if (eventType == eventNames.scrollEvent)
         decrementScrollEventListenersCount();
 #endif
 #if ENABLE(IOS_TOUCH_EVENTS)
-    else if (document && eventNames().isTouchRelatedEventType(eventType, *document)) {
+    else if (document && eventNames.isTouchRelatedEventType(eventType, *document)) {
         ASSERT(m_touchAndGestureEventListenerCount > 0);
         --m_touchAndGestureEventListenerCount;
     }
 #endif
 #if ENABLE(IOS_GESTURE_EVENTS)
-    else if (eventNames().isGestureEventType(eventType)) {
+    else if (eventNames.isGestureEventType(eventType)) {
         ASSERT(m_touchAndGestureEventListenerCount > 0);
         --m_touchAndGestureEventListenerCount;
     }
 #endif
 #if ENABLE(GAMEPAD)
-    else if (eventNames().isGamepadEventType(eventType))
+    else if (eventNames.isGamepadEventType(eventType))
         decrementGamepadEventListenerCount();
 #endif
 #if ENABLE(DEVICE_ORIENTATION)
-    else if (eventType == eventNames().deviceorientationEvent)
+    else if (eventType == eventNames.deviceorientationEvent)
         stopListeningForDeviceOrientationIfNecessary();
-    else if (eventType == eventNames().devicemotionEvent)
+    else if (eventType == eventNames.devicemotionEvent)
         stopListeningForDeviceMotionIfNecessary();
 #endif
 
@@ -2690,7 +2694,7 @@ void DOMWindow::showModalDialog(const String& urlString, const String& dialogFea
         return;
 
     if (!page->arePromptsAllowed()) {
-        printErrorMessage("Use of window.showModalDialog is not allowed while unloading a page.");
+        printErrorMessage("Use of window.showModalDialog is not allowed while unloading a page."_s);
         return;
     }
 

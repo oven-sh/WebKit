@@ -7,7 +7,6 @@ PASS align-content
 PASS align-items
 PASS align-self
 PASS alignment-baseline
-PASS all
 PASS alt
 PASS animation-composition
 PASS animation-delay
@@ -97,6 +96,10 @@ PASS column-rule-width
 PASS column-span
 PASS column-width
 PASS contain
+PASS contain-intrinsic-block-size
+PASS contain-intrinsic-height
+PASS contain-intrinsic-inline-size
+PASS contain-intrinsic-width
 PASS container-name
 PASS container-type
 PASS content
@@ -219,6 +222,8 @@ PASS outline-width
 PASS overflow-wrap
 PASS overflow-x
 PASS overflow-y
+PASS overscroll-behavior-block
+PASS overscroll-behavior-inline
 PASS overscroll-behavior-x
 PASS overscroll-behavior-y
 PASS padding-block-end
@@ -249,15 +254,19 @@ PASS rx
 PASS ry
 PASS scale
 PASS scroll-behavior
-PASS scroll-margin-block
+PASS scroll-margin-block-end
+PASS scroll-margin-block-start
 PASS scroll-margin-bottom
-PASS scroll-margin-inline
+PASS scroll-margin-inline-end
+PASS scroll-margin-inline-start
 PASS scroll-margin-left
 PASS scroll-margin-right
 PASS scroll-margin-top
-PASS scroll-padding-block
+PASS scroll-padding-block-end
+PASS scroll-padding-block-start
 PASS scroll-padding-bottom
-PASS scroll-padding-inline
+PASS scroll-padding-inline-end
+PASS scroll-padding-inline-start
 PASS scroll-padding-left
 PASS scroll-padding-right
 PASS scroll-padding-top
@@ -318,6 +327,7 @@ PASS transition-property
 PASS transition-timing-function
 PASS translate
 PASS unicode-bidi
+PASS user-select
 PASS vector-effect
 PASS vertical-align
 PASS visibility
@@ -327,7 +337,6 @@ PASS width
 PASS will-change
 PASS word-break
 PASS word-spacing
-PASS word-wrap
 PASS writing-mode
 PASS x
 PASS y
@@ -339,7 +348,6 @@ PASS -webkit-background-clip
 PASS -webkit-background-origin
 PASS -webkit-background-size
 PASS -webkit-border-horizontal-spacing
-PASS -webkit-border-image
 PASS -webkit-border-vertical-spacing
 PASS -webkit-box-align
 PASS -webkit-box-decoration-break
@@ -392,8 +400,6 @@ PASS -webkit-text-security
 PASS -webkit-text-stroke-color
 PASS -webkit-text-stroke-width
 PASS -webkit-text-zoom
-PASS -webkit-transform-style
 PASS -webkit-user-drag
 PASS -webkit-user-modify
-PASS -webkit-user-select
 

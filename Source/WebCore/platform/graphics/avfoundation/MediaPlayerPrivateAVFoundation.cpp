@@ -48,6 +48,7 @@
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/SoftLinking.h>
+#include <wtf/SortedArrayMap.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/URL.h>
 #include <wtf/text/CString.h>
@@ -205,7 +206,7 @@ void MediaPlayerPrivateAVFoundation::load(const String& url)
 }
 
 #if ENABLE(MEDIA_SOURCE)
-void MediaPlayerPrivateAVFoundation::load(const URL&, const ContentType&, MediaSourcePrivateClient*)
+void MediaPlayerPrivateAVFoundation::load(const URL&, const ContentType&, MediaSourcePrivateClient&)
 {
     setNetworkState(MediaPlayer::NetworkState::FormatError);
 }
@@ -1070,19 +1071,9 @@ bool MediaPlayerPrivateAVFoundation::isUnsupportedMIMEType(const String& type)
         return true;
 
     // Reject types we know AVFoundation does not support that sites commonly ask about.
-    if (lowerCaseType == "video/webm" || lowerCaseType == "audio/webm" || lowerCaseType == "video/x-webm")
-        return true;
-
-    if (lowerCaseType == "video/x-flv")
-        return true;
-
-    if (lowerCaseType == "audio/ogg" || lowerCaseType == "video/ogg" || lowerCaseType == "application/ogg")
-        return true;
-
-    if (lowerCaseType == "video/h264")
-        return true;
-
-    return false;
+    static constexpr ComparableASCIILiteral unsupportedTypesArray[] = { "application/ogg", "audio/ogg", "audio/webm", "video/h264", "video/ogg", "video/webm", "video/x-flv", "video/x-webm" };
+    static constexpr SortedArraySet unsupportedTypesSet { unsupportedTypesArray };
+    return unsupportedTypesSet.contains(lowerCaseType);
 }
 
 bool MediaPlayerPrivateAVFoundation::shouldEnableInheritURIQueryComponent() const

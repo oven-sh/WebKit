@@ -125,7 +125,6 @@ MESSAGE_RECEIVERS = \
 	NetworkProcess/NetworkBroadcastChannelRegistry \
 	NetworkProcess/NetworkConnectionToWebProcess \
 	NetworkProcess/NetworkContentRuleListManager \
-	NetworkProcess/WebStorage/StorageManagerSet \
 	NetworkProcess/cache/CacheStorageEngineConnection \
 	NetworkProcess/CustomProtocols/LegacyCustomProtocolManager \
 	NetworkProcess/NetworkSocketChannel \
@@ -150,6 +149,7 @@ MESSAGE_RECEIVERS = \
 	Shared/Authentication/AuthenticationManager \
 	Shared/Notifications/NotificationManagerMessageHandler \
 	Shared/WebConnection \
+	Shared/IPCConnectionTester \
 	Shared/IPCStreamTester \
 	Shared/IPCStreamTesterProxy \
 	Shared/IPCTester \

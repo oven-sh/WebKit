@@ -1,3 +1,303 @@
+2022-05-04  Brent Fulgham  <bfulgham@apple.com>
+
+        Remove deprecated 'JavaEnabled' feature flag and related code
+        https://bugs.webkit.org/show_bug.cgi?id=240044
+
+        Reviewed by Darin Adler.
+
+        We removed support for Java Plug-Ins in macOS 10.15, but never removed the preference. To reduce code complexity
+        and build times we should remove this unused preference, leaving non-functional stubs to avoid breaking binaries
+        that expect to call their accessor methods.
+
+        * WebCoreSupport/WebInspectorClient.cpp:
+        (WebInspectorClient::openLocalFrontend):
+        * WebPreferenceKeysPrivate.h:
+        * WebPreferences.cpp:
+        (WebPreferences::initializeDefaultSettings):
+        (WebPreferences::isJavaEnabled):
+        (WebPreferences::setJavaEnabled):
+        * WebView.cpp:
+        (WebView::notifyPreferencesChanged):
+
+2022-04-22  Chris Dumez  <cdumez@apple.com>
+
+        Move global AtomStrings to a common header to promote reuse
+        https://bugs.webkit.org/show_bug.cgi?id=239585
+
+        Reviewed by Geoff Garen and Darin Adler.
+
+        * WebKitGraphics.cpp:
+        (makeFont):
+
+2022-04-21  Brent Fulgham  <bfulgham@apple.com>
+
+        Unreviewed build fix after r293199.
+        https://bugs.webkit.org/show_bug.cgi?id=239628
+
+        Remove unused references to XSS Auditor.
+
+        * WebPreferenceKeysPrivate.h:
+        * WebPreferences.cpp:
+        (WebPreferences::initializeDefaultSettings):
+        (WebPreferences::isXSSAuditorEnabled):
+        (WebPreferences::setXSSAuditorEnabled):
+        * WebView.cpp:
+        (WebView::notifyPreferencesChanged):
+
+2022-04-16  Chris Dumez  <cdumez@apple.com>
+
+        Drop String::truncate() and use String::left() instead
+        https://bugs.webkit.org/show_bug.cgi?id=239412
+
+        Reviewed by Darin Adler.
+
+        * WebDownloadCFNet.cpp:
+        (WebDownload::initToResumeWithBundle):
+
+2022-04-15  Yusuke Suzuki  <ysuzuki@apple.com>
+
+        [JSC] Remove VM& parameter from structure related code including jsDyamicCast
+        https://bugs.webkit.org/show_bug.cgi?id=239362
+
+        Reviewed by Darin Adler.
+
+        * WebFrame.cpp:
+        (WebFrame::stringByEvaluatingJavaScriptInScriptWorld):
+        * WebView.cpp:
+        (WebView::reportException):
+
+2022-04-14  Chris Dumez  <cdumez@apple.com>
+
+        Drop inefficient String::append() overloads
+        https://bugs.webkit.org/show_bug.cgi?id=239289
+
+        Reviewed by Sam Weinig.
+
+        * WebDownload.cpp:
+        (WebDownload::bundlePathForTargetPath):
+
+2022-04-07  Chris Dumez  <cdumez@apple.com>
+
+        Drop unused EditorClient::getAutoCorrectSuggestionForMisspelledWord()
+        https://bugs.webkit.org/show_bug.cgi?id=238897
+
+        Reviewed by Wenson Hsieh.
+
+        * WebCoreSupport/WebEditorClient.cpp:
+        (WebEditorClient::getAutoCorrectSuggestionForMisspelledWord): Deleted.
+        * WebCoreSupport/WebEditorClient.h:
+
+2022-04-06  Chris Dumez  <cdumez@apple.com>
+
+        Reduce number of conversions from StringView to String
+        https://bugs.webkit.org/show_bug.cgi?id=238841
+
+        Reviewed by Geoffrey Garen.
+
+        * WebCoreSupport/WebFrameLoaderClient.cpp:
+        (WebFrameLoaderClient::representationExistsForURLScheme const):
+        (WebFrameLoaderClient::generatedMIMETypeForURLScheme const):
+        * WebCoreSupport/WebFrameLoaderClient.h:
+
+2022-04-05  Chris Dumez  <cdumez@apple.com>
+
+        Unreviewed WinCairo build fix after r292408.
+
+        * WebCoreSupport/AcceleratedCompositingContext.cpp:
+        (AcceleratedCompositingContext::initialize):
+
+2022-04-05  Chris Dumez  <cdumez@apple.com>
+
+        Unreviewed WinCairo build fix after r292408.
+
+        * WebView.cpp:
+        (imeNotificationName):
+        (imeRequestName):
+
+2022-04-05  Chris Dumez  <cdumez@apple.com>
+
+        Mark String(const char*) constructor as explicit
+        https://bugs.webkit.org/show_bug.cgi?id=238693
+
+        Reviewed by Geoffrey Garen.
+
+        * AccessibleBase.cpp:
+        (AccessibleBase::AccessibleBase):
+        (AccessibleBase::~AccessibleBase):
+        * CFDictionaryPropertyBag.cpp:
+        (CFDictionaryPropertyBag::CFDictionaryPropertyBag):
+        (CFDictionaryPropertyBag::~CFDictionaryPropertyBag):
+        * DefaultDownloadDelegate.cpp:
+        (DefaultDownloadDelegate::DefaultDownloadDelegate):
+        (DefaultDownloadDelegate::~DefaultDownloadDelegate):
+        * DefaultPolicyDelegate.cpp:
+        (DefaultPolicyDelegate::DefaultPolicyDelegate):
+        (DefaultPolicyDelegate::~DefaultPolicyDelegate):
+        * MemoryStream.cpp:
+        (MemoryStream::MemoryStream):
+        (MemoryStream::~MemoryStream):
+        * WebActionPropertyBag.cpp:
+        (WebActionPropertyBag::WebActionPropertyBag):
+        (WebActionPropertyBag::~WebActionPropertyBag):
+        * WebApplicationCache.cpp:
+        (WebApplicationCache::WebApplicationCache):
+        (WebApplicationCache::~WebApplicationCache):
+        (WebApplicationCache::storage):
+        * WebArchive.cpp:
+        (WebArchive::WebArchive):
+        (WebArchive::~WebArchive):
+        * WebBackForwardList.cpp:
+        (WebBackForwardList::WebBackForwardList):
+        (WebBackForwardList::~WebBackForwardList):
+        * WebCache.cpp:
+        (WebCache::WebCache):
+        (WebCache::~WebCache):
+        * WebCoreStatistics.cpp:
+        (WebCoreStatistics::WebCoreStatistics):
+        (WebCoreStatistics::~WebCoreStatistics):
+        (WebCoreStatistics::javaScriptProtectedObjectTypeCounts):
+        (WebCoreStatistics::javaScriptObjectTypeCounts):
+        (WebCoreStatistics::memoryStatistics):
+        * WebCoreSupport/WebEditorClient.cpp:
+        (WebEditorClient::doTextFieldCommandFromEvent):
+        * WebDataSource.cpp:
+        (WebDataSource::~WebDataSource):
+        * WebDatabaseManager.cpp:
+        (WebDatabaseManager::WebDatabaseManager):
+        (WebDatabaseManager::~WebDatabaseManager):
+        * WebDocumentLoader.cpp:
+        (WebDocumentLoader::WebDocumentLoader):
+        (WebDocumentLoader::~WebDocumentLoader):
+        * WebDownload.cpp:
+        (WebDownload::WebDownload):
+        (WebDownload::~WebDownload):
+        * WebDownloadCFNet.cpp:
+        (WebDownload::cancelAuthenticationChallenge):
+        * WebDropSource.cpp:
+        (WebDropSource::WebDropSource):
+        (WebDropSource::~WebDropSource):
+        * WebElementPropertyBag.cpp:
+        (WebElementPropertyBag::WebElementPropertyBag):
+        (WebElementPropertyBag::~WebElementPropertyBag):
+        * WebError.cpp:
+        (WebError::WebError):
+        (WebError::~WebError):
+        * WebFrame.cpp:
+        (WebFrame::WebFrame):
+        (WebFrame::~WebFrame):
+        (WebFrame::loadData):
+        (WebFrame::selectAll):
+        * WebFramePolicyListener.cpp:
+        (WebFramePolicyListener::WebFramePolicyListener):
+        (WebFramePolicyListener::~WebFramePolicyListener):
+        * WebGeolocationPolicyListener.cpp:
+        (WebGeolocationPolicyListener::WebGeolocationPolicyListener):
+        (WebGeolocationPolicyListener::~WebGeolocationPolicyListener):
+        * WebGeolocationPosition.cpp:
+        (WebGeolocationPosition::WebGeolocationPosition):
+        (WebGeolocationPosition::~WebGeolocationPosition):
+        * WebHTMLRepresentation.cpp:
+        (WebHTMLRepresentation::WebHTMLRepresentation):
+        (WebHTMLRepresentation::~WebHTMLRepresentation):
+        * WebHistory.cpp:
+        (WebHistory::WebHistory):
+        (WebHistory::~WebHistory):
+        * WebHistoryItem.cpp:
+        (WebHistoryItem::WebHistoryItem):
+        (WebHistoryItem::~WebHistoryItem):
+        * WebInspector.cpp:
+        (WebInspector::WebInspector):
+        (WebInspector::~WebInspector):
+        * WebJavaScriptCollector.cpp:
+        (WebJavaScriptCollector::WebJavaScriptCollector):
+        (WebJavaScriptCollector::~WebJavaScriptCollector):
+        * WebKitClassFactory.cpp:
+        (WebKitClassFactory::WebKitClassFactory):
+        (WebKitClassFactory::~WebKitClassFactory):
+        * WebKitMessageLoop.cpp:
+        (WebKitMessageLoop::WebKitMessageLoop):
+        (WebKitMessageLoop::~WebKitMessageLoop):
+        * WebKitStatistics.cpp:
+        (WebKitStatistics::WebKitStatistics):
+        (WebKitStatistics::~WebKitStatistics):
+        * WebMutableURLRequest.cpp:
+        (WebMutableURLRequest::WebMutableURLRequest):
+        (WebMutableURLRequest::~WebMutableURLRequest):
+        * WebNavigationData.cpp:
+        (WebNavigationData::WebNavigationData):
+        (WebNavigationData::~WebNavigationData):
+        * WebNotification.cpp:
+        (WebNotification::WebNotification):
+        (WebNotification::~WebNotification):
+        * WebNotificationCenter.cpp:
+        (WebNotificationCenter::WebNotificationCenter):
+        (WebNotificationCenter::~WebNotificationCenter):
+        * WebPreferences.cpp:
+        (WebPreferences::WebPreferences):
+        (WebPreferences::~WebPreferences):
+        * WebResource.cpp:
+        (WebResource::WebResource):
+        (WebResource::~WebResource):
+        * WebScriptObject.cpp:
+        (WebScriptObject::WebScriptObject):
+        (WebScriptObject::~WebScriptObject):
+        * WebScriptWorld.cpp:
+        (WebScriptWorld::WebScriptWorld):
+        (WebScriptWorld::~WebScriptWorld):
+        * WebSecurityOrigin.cpp:
+        (WebSecurityOrigin::WebSecurityOrigin):
+        (WebSecurityOrigin::~WebSecurityOrigin):
+        * WebSerializedJSValue.cpp:
+        (WebSerializedJSValue::WebSerializedJSValue):
+        (WebSerializedJSValue::~WebSerializedJSValue):
+        * WebTextRenderer.cpp:
+        (WebTextRenderer::WebTextRenderer):
+        (WebTextRenderer::~WebTextRenderer):
+        * WebURLAuthenticationChallenge.cpp:
+        (WebURLAuthenticationChallenge::WebURLAuthenticationChallenge):
+        (WebURLAuthenticationChallenge::~WebURLAuthenticationChallenge):
+        * WebURLAuthenticationChallengeSender.cpp:
+        (WebURLAuthenticationChallengeSender::WebURLAuthenticationChallengeSender):
+        (WebURLAuthenticationChallengeSender::~WebURLAuthenticationChallengeSender):
+        * WebURLCredential.cpp:
+        (WebURLCredential::WebURLCredential):
+        (WebURLCredential::~WebURLCredential):
+        * WebURLProtectionSpace.cpp:
+        (WebURLProtectionSpace::WebURLProtectionSpace):
+        (WebURLProtectionSpace::~WebURLProtectionSpace):
+        * WebURLResponse.cpp:
+        (WebURLResponse::WebURLResponse):
+        (WebURLResponse::~WebURLResponse):
+        (WebURLResponse::createInstance):
+        * WebUserContentURLPattern.cpp:
+        (WebUserContentURLPattern::WebUserContentURLPattern):
+        (WebUserContentURLPattern::~WebUserContentURLPattern):
+        * WebView.cpp:
+        (WebView::WebView):
+        (WebView::~WebView):
+        (WebView::execCommand):
+        (WebView::handleEditingKeyboardEvent):
+        (WebView::copy):
+        (WebView::cut):
+        (WebView::paste):
+        (WebView::copyURL):
+        (WebView::delete_):
+        * WebWorkersPrivate.cpp:
+        (WebWorkersPrivate::WebWorkersPrivate):
+        (WebWorkersPrivate::~WebWorkersPrivate):
+
+2022-04-04  Gabriel Nava Marino  <gnavamarino@apple.com>
+
+        Use Ref and RefPtr pattern when handling document close calls
+        https://bugs.webkit.org/show_bug.cgi?id=238747
+
+        Reviewed by Sam Weinig.
+
+        Ensure document object remains for the scope of the call.
+
+        * DOMHTMLClasses.cpp:
+        (DOMHTMLDocument::close):
+
 2022-03-24  Chris Dumez  <cdumez@apple.com>
 
         String's find() / reverseFind() / replace() should take in a StringView instead of a String

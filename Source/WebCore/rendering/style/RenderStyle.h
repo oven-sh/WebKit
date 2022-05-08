@@ -536,13 +536,19 @@ public:
     }
     bool hasAspectRatio() const { return aspectRatioType() == AspectRatioType::Ratio || aspectRatioType() == AspectRatioType::AutoAndRatio; }
     OptionSet<Containment> contain() const { return m_rareNonInheritedData->contain; }
-    OptionSet<Containment> effectiveContainment() const;
+    OptionSet<Containment> effectiveContainment() const { return m_rareNonInheritedData->effectiveContainment(); }
     bool containsLayout() const { return effectiveContainment().contains(Containment::Layout); }
     bool containsSize() const { return effectiveContainment().contains(Containment::Size); }
     bool containsStyle() const { return effectiveContainment().contains(Containment::Style); }
     bool containsPaint() const { return effectiveContainment().contains(Containment::Paint); }
     ContainerType containerType() const { return static_cast<ContainerType>(m_rareNonInheritedData->containerType); }
     const Vector<AtomString>& containerNames() const { return m_rareNonInheritedData->containerNames; }
+
+    ContainIntrinsicSizeType containIntrinsicWidthType() const { return static_cast<ContainIntrinsicSizeType>(m_rareNonInheritedData->containIntrinsicWidthType); }
+    ContainIntrinsicSizeType containIntrinsicHeightType() const { return static_cast<ContainIntrinsicSizeType>(m_rareNonInheritedData->containIntrinsicHeightType); }
+    std::optional<Length> containIntrinsicWidth() const { return m_rareNonInheritedData->containIntrinsicWidth; }
+    std::optional<Length> containIntrinsicHeight() const { return m_rareNonInheritedData->containIntrinsicHeight; }
+
     BoxAlignment boxAlign() const { return static_cast<BoxAlignment>(m_rareNonInheritedData->deprecatedFlexibleBox->align); }
     BoxDirection boxDirection() const { return static_cast<BoxDirection>(m_inheritedFlags.boxDirection); }
     float boxFlex() const { return m_rareNonInheritedData->deprecatedFlexibleBox->flex; }
@@ -567,30 +573,32 @@ public:
     const StyleSelfAlignmentData& justifyItems() const { return m_rareNonInheritedData->justifyItems; }
     const StyleSelfAlignmentData& justifySelf() const { return m_rareNonInheritedData->justifySelf; }
 
-    const Vector<GridTrackSize>& gridColumns() const { return m_rareNonInheritedData->grid->gridColumns; }
-    const Vector<GridTrackSize>& gridRows() const { return m_rareNonInheritedData->grid->gridRows; }
-    const Vector<GridTrackSize>& gridAutoRepeatColumns() const { return m_rareNonInheritedData->grid->gridAutoRepeatColumns; }
-    const Vector<GridTrackSize>& gridAutoRepeatRows() const { return m_rareNonInheritedData->grid->gridAutoRepeatRows; }
-    unsigned gridAutoRepeatColumnsInsertionPoint() const { return m_rareNonInheritedData->grid->autoRepeatColumnsInsertionPoint; }
-    unsigned gridAutoRepeatRowsInsertionPoint() const { return m_rareNonInheritedData->grid->autoRepeatRowsInsertionPoint; }
-    AutoRepeatType gridAutoRepeatColumnsType() const  { return m_rareNonInheritedData->grid->autoRepeatColumnsType; }
-    AutoRepeatType gridAutoRepeatRowsType() const  { return m_rareNonInheritedData->grid->autoRepeatRowsType; }
-    const NamedGridLinesMap& namedGridColumnLines() const { return m_rareNonInheritedData->grid->namedGridColumnLines; }
-    const NamedGridLinesMap& namedGridRowLines() const { return m_rareNonInheritedData->grid->namedGridRowLines; }
-    const OrderedNamedGridLinesMap& orderedNamedGridColumnLines() const { return m_rareNonInheritedData->grid->orderedNamedGridColumnLines; }
-    const OrderedNamedGridLinesMap& orderedNamedGridRowLines() const { return m_rareNonInheritedData->grid->orderedNamedGridRowLines; }
-    const NamedGridLinesMap& autoRepeatNamedGridColumnLines() const { return m_rareNonInheritedData->grid->autoRepeatNamedGridColumnLines; }
-    const NamedGridLinesMap& autoRepeatNamedGridRowLines() const { return m_rareNonInheritedData->grid->autoRepeatNamedGridRowLines; }
-    const OrderedNamedGridLinesMap& autoRepeatOrderedNamedGridColumnLines() const { return m_rareNonInheritedData->grid->autoRepeatOrderedNamedGridColumnLines; }
-    const OrderedNamedGridLinesMap& autoRepeatOrderedNamedGridRowLines() const { return m_rareNonInheritedData->grid->autoRepeatOrderedNamedGridRowLines; }
+    const Vector<GridTrackSize>& gridColumns() const { return m_rareNonInheritedData->grid->gridColumns(); }
+    const Vector<GridTrackSize>& gridRows() const { return m_rareNonInheritedData->grid->gridRows(); }
+    const GridTrackList& gridColumnList() const { return m_rareNonInheritedData->grid->columns(); }
+    const GridTrackList& gridRowList() const { return m_rareNonInheritedData->grid->rows(); }
+    const Vector<GridTrackSize>& gridAutoRepeatColumns() const { return m_rareNonInheritedData->grid->gridAutoRepeatColumns(); }
+    const Vector<GridTrackSize>& gridAutoRepeatRows() const { return m_rareNonInheritedData->grid->gridAutoRepeatRows(); }
+    unsigned gridAutoRepeatColumnsInsertionPoint() const { return m_rareNonInheritedData->grid->autoRepeatColumnsInsertionPoint(); }
+    unsigned gridAutoRepeatRowsInsertionPoint() const { return m_rareNonInheritedData->grid->autoRepeatRowsInsertionPoint(); }
+    AutoRepeatType gridAutoRepeatColumnsType() const  { return m_rareNonInheritedData->grid->autoRepeatColumnsType(); }
+    AutoRepeatType gridAutoRepeatRowsType() const  { return m_rareNonInheritedData->grid->autoRepeatRowsType(); }
+    const NamedGridLinesMap& namedGridColumnLines() const { return m_rareNonInheritedData->grid->namedGridColumnLines(); }
+    const NamedGridLinesMap& namedGridRowLines() const { return m_rareNonInheritedData->grid->namedGridRowLines(); }
+    const OrderedNamedGridLinesMap& orderedNamedGridColumnLines() const { return m_rareNonInheritedData->grid->orderedNamedGridColumnLines(); }
+    const OrderedNamedGridLinesMap& orderedNamedGridRowLines() const { return m_rareNonInheritedData->grid->orderedNamedGridRowLines(); }
+    const NamedGridLinesMap& autoRepeatNamedGridColumnLines() const { return m_rareNonInheritedData->grid->autoRepeatNamedGridColumnLines(); }
+    const NamedGridLinesMap& autoRepeatNamedGridRowLines() const { return m_rareNonInheritedData->grid->autoRepeatNamedGridRowLines(); }
+    const OrderedNamedGridLinesMap& autoRepeatOrderedNamedGridColumnLines() const { return m_rareNonInheritedData->grid->autoRepeatOrderedNamedGridColumnLines(); }
+    const OrderedNamedGridLinesMap& autoRepeatOrderedNamedGridRowLines() const { return m_rareNonInheritedData->grid->autoRepeatOrderedNamedGridRowLines(); }
     const NamedGridLinesMap& implicitNamedGridColumnLines() const { return m_rareNonInheritedData->grid->implicitNamedGridColumnLines; }
     const NamedGridLinesMap& implicitNamedGridRowLines() const { return m_rareNonInheritedData->grid->implicitNamedGridRowLines; }
     const NamedGridAreaMap& namedGridArea() const { return m_rareNonInheritedData->grid->namedGridArea; }
     size_t namedGridAreaRowCount() const { return m_rareNonInheritedData->grid->namedGridAreaRowCount; }
     size_t namedGridAreaColumnCount() const { return m_rareNonInheritedData->grid->namedGridAreaColumnCount; }
     GridAutoFlow gridAutoFlow() const { return static_cast<GridAutoFlow>(m_rareNonInheritedData->grid->gridAutoFlow); }
-    bool gridSubgridRows() const { return m_rareNonInheritedData->grid->subgridRows; }
-    bool gridSubgridColumns() const { return m_rareNonInheritedData->grid->subgridColumns; }
+    bool gridSubgridRows() const { return m_rareNonInheritedData->grid->subgridRows(); }
+    bool gridSubgridColumns() const { return m_rareNonInheritedData->grid->subgridColumns(); }
     bool isGridAutoFlowDirectionRow() const { return (m_rareNonInheritedData->grid->gridAutoFlow & InternalAutoFlowDirectionRow); }
     bool isGridAutoFlowDirectionColumn() const { return (m_rareNonInheritedData->grid->gridAutoFlow & InternalAutoFlowDirectionColumn); }
     bool isGridAutoFlowAlgorithmSparse() const { return (m_rareNonInheritedData->grid->gridAutoFlow & InternalAutoFlowAlgorithmSparse); }
@@ -625,7 +633,7 @@ public:
     UserModify effectiveUserModify() const { return effectiveInert() ? UserModify::ReadOnly : userModify(); }
     UserModify userModify() const { return static_cast<UserModify>(m_rareInheritedData->userModify); }
     UserDrag userDrag() const { return static_cast<UserDrag>(m_rareNonInheritedData->userDrag); }
-    UserSelect effectiveUserSelect() const { return effectiveInert() ? UserSelect::None : userSelect(); }
+    WEBCORE_EXPORT UserSelect effectiveUserSelect() const;
     UserSelect userSelect() const { return static_cast<UserSelect>(m_rareInheritedData->userSelect); }
     TextOverflow textOverflow() const { return static_cast<TextOverflow>(m_rareNonInheritedData->textOverflow); }
     WordBreak wordBreak() const { return static_cast<WordBreak>(m_rareInheritedData->wordBreak); }
@@ -934,6 +942,7 @@ public:
     void setBorderImageSliceFill(bool);
     void setBorderImageSlices(LengthBox&&);
     void setBorderImageWidth(LengthBox&&);
+    void setBorderImageWidthOverridesBorderWidths(bool);
     void setBorderImageOutset(LengthBox&&);
     void setBorderImageHorizontalRule(NinePieceImageRule);
     void setBorderImageVerticalRule(NinePieceImageRule);
@@ -1088,6 +1097,11 @@ public:
     void setContainerType(ContainerType containerType) { SET_VAR(m_rareNonInheritedData, containerType, static_cast<unsigned>(containerType)); }
     void setContainerNames(const Vector<AtomString>& names) { SET_VAR(m_rareNonInheritedData, containerNames, names); }
 
+    void setContainIntrinsicWidthType(ContainIntrinsicSizeType containIntrinsicWidthType) { SET_VAR(m_rareNonInheritedData, containIntrinsicWidthType, static_cast<unsigned>(containIntrinsicWidthType)); }
+    void setContainIntrinsicHeightType(ContainIntrinsicSizeType containIntrinsicHeightType) { SET_VAR(m_rareNonInheritedData, containIntrinsicHeightType, static_cast<unsigned>(containIntrinsicHeightType)); }
+    void setContainIntrinsicWidth(std::optional<Length> width) { SET_VAR(m_rareNonInheritedData, containIntrinsicWidth, width); }
+    void setContainIntrinsicHeight(std::optional<Length> height) { SET_VAR(m_rareNonInheritedData, containIntrinsicHeight, height); }
+
     void setListStyleStringValue(const AtomString& value) { SET_VAR(m_rareInheritedData, listStyleStringValue, value); }
     void setListStyleType(ListStyleType v) { m_inheritedFlags.listStyleType = static_cast<unsigned>(v); }
     void setListStyleImage(RefPtr<StyleImage>&&);
@@ -1204,32 +1218,24 @@ public:
     void setBoxDecorationBreak(BoxDecorationBreak b) { SET_VAR(m_boxData, m_boxDecorationBreak, static_cast<unsigned>(b)); }
 #endif
 
+    void setGridColumnList(const GridTrackList& list)
+    {
+        if (!compareEqual(m_rareNonInheritedData->grid->columns(), list))
+            m_rareNonInheritedData.access().grid.access().setColumns(list);
+    }
+    void setGridRowList(const GridTrackList& list)
+    {
+        if (!compareEqual(m_rareNonInheritedData->grid->rows(), list))
+            m_rareNonInheritedData.access().grid.access().setRows(list);
+    }
     void setGridAutoColumns(const Vector<GridTrackSize>& trackSizeList) { SET_NESTED_VAR(m_rareNonInheritedData, grid, gridAutoColumns, trackSizeList); }
     void setGridAutoRows(const Vector<GridTrackSize>& trackSizeList) { SET_NESTED_VAR(m_rareNonInheritedData, grid, gridAutoRows, trackSizeList); }
-    void setGridColumns(const Vector<GridTrackSize>& lengths) { SET_NESTED_VAR(m_rareNonInheritedData, grid, gridColumns, lengths); }
-    void setGridRows(const Vector<GridTrackSize>& lengths) { SET_NESTED_VAR(m_rareNonInheritedData, grid, gridRows, lengths); }
-    void setGridAutoRepeatColumns(const Vector<GridTrackSize>& lengths) { SET_NESTED_VAR(m_rareNonInheritedData, grid, gridAutoRepeatColumns, lengths); }
-    void setGridAutoRepeatRows(const Vector<GridTrackSize>& lengths) { SET_NESTED_VAR(m_rareNonInheritedData, grid, gridAutoRepeatRows, lengths); }
-    void setGridAutoRepeatColumnsInsertionPoint(const unsigned insertionPoint) { SET_NESTED_VAR(m_rareNonInheritedData, grid, autoRepeatColumnsInsertionPoint, insertionPoint); }
-    void setGridAutoRepeatRowsInsertionPoint(const unsigned insertionPoint) { SET_NESTED_VAR(m_rareNonInheritedData, grid, autoRepeatRowsInsertionPoint, insertionPoint); }
-    void setGridAutoRepeatColumnsType(const AutoRepeatType autoRepeatType) { SET_NESTED_VAR(m_rareNonInheritedData, grid, autoRepeatColumnsType, autoRepeatType); }
-    void setGridAutoRepeatRowsType(const AutoRepeatType autoRepeatType) { SET_NESTED_VAR(m_rareNonInheritedData, grid, autoRepeatRowsType, autoRepeatType); }
-    void setNamedGridColumnLines(const NamedGridLinesMap& namedGridColumnLines) { SET_NESTED_VAR(m_rareNonInheritedData, grid, namedGridColumnLines, namedGridColumnLines); }
-    void setNamedGridRowLines(const NamedGridLinesMap& namedGridRowLines) { SET_NESTED_VAR(m_rareNonInheritedData, grid, namedGridRowLines, namedGridRowLines); }
-    void setOrderedNamedGridColumnLines(const OrderedNamedGridLinesMap& orderedNamedGridColumnLines) { SET_NESTED_VAR(m_rareNonInheritedData, grid, orderedNamedGridColumnLines, orderedNamedGridColumnLines); }
-    void setOrderedNamedGridRowLines(const OrderedNamedGridLinesMap& orderedNamedGridRowLines) { SET_NESTED_VAR(m_rareNonInheritedData, grid, orderedNamedGridRowLines, orderedNamedGridRowLines); }
-    void setAutoRepeatNamedGridColumnLines(const NamedGridLinesMap& namedGridColumnLines) { SET_NESTED_VAR(m_rareNonInheritedData, grid, autoRepeatNamedGridColumnLines, namedGridColumnLines); }
-    void setAutoRepeatNamedGridRowLines(const NamedGridLinesMap& namedGridRowLines) { SET_NESTED_VAR(m_rareNonInheritedData, grid, autoRepeatNamedGridRowLines, namedGridRowLines); }
-    void setAutoRepeatOrderedNamedGridColumnLines(const OrderedNamedGridLinesMap& orderedNamedGridColumnLines) { SET_NESTED_VAR(m_rareNonInheritedData, grid, autoRepeatOrderedNamedGridColumnLines, orderedNamedGridColumnLines); }
-    void setAutoRepeatOrderedNamedGridRowLines(const OrderedNamedGridLinesMap& orderedNamedGridRowLines) { SET_NESTED_VAR(m_rareNonInheritedData, grid, autoRepeatOrderedNamedGridRowLines, orderedNamedGridRowLines); }
     void setImplicitNamedGridColumnLines(const NamedGridLinesMap& namedGridColumnLines) { SET_NESTED_VAR(m_rareNonInheritedData, grid, implicitNamedGridColumnLines, namedGridColumnLines); }
     void setImplicitNamedGridRowLines(const NamedGridLinesMap& namedGridRowLines) { SET_NESTED_VAR(m_rareNonInheritedData, grid, implicitNamedGridRowLines, namedGridRowLines); }
     void setNamedGridArea(const NamedGridAreaMap& namedGridArea) { SET_NESTED_VAR(m_rareNonInheritedData, grid, namedGridArea, namedGridArea); }
     void setNamedGridAreaRowCount(size_t rowCount) { SET_NESTED_VAR(m_rareNonInheritedData, grid, namedGridAreaRowCount, rowCount); }
     void setNamedGridAreaColumnCount(size_t columnCount) { SET_NESTED_VAR(m_rareNonInheritedData, grid, namedGridAreaColumnCount, columnCount); }
     void setGridAutoFlow(GridAutoFlow flow) { SET_NESTED_VAR(m_rareNonInheritedData, grid, gridAutoFlow, flow); }
-    void setGridSubgridRows(bool subgrid) { SET_NESTED_VAR(m_rareNonInheritedData, grid, subgridRows, subgrid); }
-    void setGridSubgridColumns(bool subgrid) { SET_NESTED_VAR(m_rareNonInheritedData, grid, subgridColumns, subgrid); }
     void setGridItemColumnStart(const GridPosition& columnStartPosition) { SET_NESTED_VAR(m_rareNonInheritedData, gridItem, gridColumnStart, columnStartPosition); }
     void setGridItemColumnEnd(const GridPosition& columnEndPosition) { SET_NESTED_VAR(m_rareNonInheritedData, gridItem, gridColumnEnd, columnEndPosition); }
     void setGridItemRowStart(const GridPosition& rowStartPosition) { SET_NESTED_VAR(m_rareNonInheritedData, gridItem, gridRowStart, rowStartPosition); }
@@ -1396,7 +1402,7 @@ public:
 #endif
 
 #if ENABLE(CSS_PAINTING_API)
-    void addCustomPaintWatchProperty(const String& name);
+    void addCustomPaintWatchProperty(const AtomString& name);
 #endif
 
     // Support for paint-order, stroke-linecap, stroke-linejoin, and stroke-miterlimit from https://drafts.fxtf.org/paint/.
@@ -1707,6 +1713,12 @@ public:
     static Vector<AtomString> initialContainerNames() { return { }; }
     static double initialAspectRatioWidth() { return 1.0; }
     static double initialAspectRatioHeight() { return 1.0; }
+
+    static ContainIntrinsicSizeType initialContainIntrinsicWidthType() { return ContainIntrinsicSizeType::None; }
+    static ContainIntrinsicSizeType initialContainIntrinsicHeightType() { return ContainIntrinsicSizeType::None; }
+    static std::optional<Length> initialContainIntrinsicWidth() { return std::nullopt; }
+    static std::optional<Length> initialContainIntrinsicHeight() { return std::nullopt; }
+
     static Order initialRTLOrdering() { return Order::Logical; }
     static float initialTextStrokeWidth() { return 0; }
     static unsigned short initialColumnCount() { return 1; }

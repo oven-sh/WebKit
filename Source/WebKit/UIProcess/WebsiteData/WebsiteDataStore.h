@@ -160,6 +160,12 @@ public:
     uint64_t perThirdPartyOriginStorageQuota() const;
     const String& cacheStorageDirectory() const { return m_resolvedConfiguration->cacheStorageDirectory(); }
 
+#if PLATFORM(IOS_FAMILY)
+    const String& cookieStorageDirectory() const { return m_cookieStorageDirectory; }
+    const String& containerCachesDirectory() const { return m_containerCachesDirectory; }
+    const String& containerTemporaryDirectory() const { return m_containerTemporaryDirectory; }
+#endif
+
 #if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
     void clearResourceLoadStatisticsInWebProcesses(CompletionHandler<void()>&&);
 #endif
@@ -379,6 +385,8 @@ public:
     void clearServiceWorkerNotification(const UUID& notificationID);
     void didDestroyServiceWorkerNotification(const UUID& notificationID);
 
+    void openWindowFromServiceWorker(const String& urlString, const WebCore::SecurityOriginData& serviceWorkerOrigin, CompletionHandler<void(std::optional<WebCore::PageIdentifier>)>&&);
+
 private:
     enum class ForceReinitialization : bool { No, Yes };
 #if ENABLE(APP_BOUND_DOMAINS)
@@ -424,8 +432,12 @@ private:
     Ref<WebsiteDataStoreConfiguration> m_resolvedConfiguration;
     Ref<const WebsiteDataStoreConfiguration> m_configuration;
     bool m_hasResolvedDirectories { false };
-
     const Ref<DeviceIdHashSaltStorage> m_deviceIdHashSaltStorage;
+#if PLATFORM(IOS_FAMILY)
+    String m_cookieStorageDirectory;
+    String m_containerCachesDirectory;
+    String m_containerTemporaryDirectory;
+#endif
 
 #if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
     bool m_resourceLoadStatisticsDebugMode { false };

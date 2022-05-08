@@ -22,7 +22,7 @@
 #include "libANGLE/ResourceManager.h"
 #include "libANGLE/renderer/GLImplFactory.h"
 #include "libANGLE/renderer/ShaderImpl.h"
-#include "platform/FrontendFeatures.h"
+#include "platform/FrontendFeatures_autogen.h"
 
 namespace gl
 {
@@ -104,7 +104,7 @@ const char *GetShaderTypeString(ShaderType type)
     }
 }
 
-class ScopedExit final : angle::NonCopyable
+class ANGLE_NO_DISCARD ScopedExit final : angle::NonCopyable
 {
   public:
     ScopedExit(std::function<void()> exit) : mExit(exit) {}

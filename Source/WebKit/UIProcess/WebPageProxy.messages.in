@@ -242,7 +242,7 @@ messages -> WebPageProxy {
     DidFindString(String string, Vector<WebCore::IntRect> matchRect, uint32_t matchCount, int32_t matchIndex, bool didWrapAround)
     DidFailToFindString(String string)
     DidFindStringMatches(String string, Vector<Vector<WebCore::IntRect>> matches, int32_t firstIndexAfterSelection)
-    DidGetImageForFindMatch(WebKit::ShareableBitmap::Handle contentImageHandle, uint32_t matchIndex)
+    DidGetImageForFindMatch(struct WebCore::ImageBufferBackend::Parameters parameters, WebKit::ShareableBitmap::Handle contentImageHandle, uint32_t matchIndex)
 
     # PopupMenu messages
     ShowPopupMenu(WebCore::IntRect rect, uint64_t textDirection, Vector<WebKit::WebPopupItem> items, int32_t selectedIndex, struct WebKit::PlatformPopupMenuData data)
@@ -378,6 +378,9 @@ messages -> WebPageProxy {
     DictationAlternatives(WebCore::DictationContext dictationContext) -> (Vector<String> alternatives) Synchronous
 #endif
 
+    ExtractVideoInElementFullScreen(WebCore::MediaPlayerIdentifier identifier, WebCore::FloatRect videoBounds)
+    CancelVideoExtractionInElementFullScreen()
+
 #if PLATFORM(IOS_FAMILY)
     CouldNotRestorePageState()
     RestorePageState(std::optional<WebCore::FloatPoint> scrollPosition, WebCore::FloatPoint scrollOrigin, WebCore::RectEdges<float> obscuredInsetsOnSave, double scale)
@@ -388,8 +391,8 @@ messages -> WebPageProxy {
     ElementDidBlur()
     UpdateInputContextAfterBlurringAndRefocusingElement()
     FocusedElementDidChangeInputMode(enum:uint8_t WebCore::InputMode mode)
-    ScrollingNodeScrollWillStartScroll()
-    ScrollingNodeScrollDidEndScroll()
+    ScrollingNodeScrollWillStartScroll(uint64_t nodeID)
+    ScrollingNodeScrollDidEndScroll(uint64_t nodeID)
     ShowInspectorHighlight(struct WebCore::InspectorOverlay::Highlight highlight)
     HideInspectorHighlight()
 
@@ -594,10 +597,12 @@ messages -> WebPageProxy {
 #if ENABLE(ARKIT_INLINE_PREVIEW_MAC)
     ModelElementCreateRemotePreview(String uuid, WebCore::FloatSize size) -> (Expected<std::pair<String, uint32_t>, WebCore::ResourceError> result)
     ModelElementLoadRemotePreview(String uuid, URL url) -> (std::optional<WebCore::ResourceError> error)
+    ModelElementDestroyRemotePreview(String uuid)
     ModelElementSizeDidChange(String uuid, WebCore::FloatSize size) -> (Expected<MachSendRight, WebCore::ResourceError> result)
     HandleMouseDownForModelElement(String uuid, WebCore::LayoutPoint flippedLocationInElement, MonotonicTime timestamp)
     HandleMouseMoveForModelElement(String uuid, WebCore::LayoutPoint flippedLocationInElement, MonotonicTime timestamp)
     HandleMouseUpForModelElement(String uuid, WebCore::LayoutPoint flippedLocationInElement, MonotonicTime timestamp)
+    ModelInlinePreviewUUIDs() -> (Vector<String> uuids)
 #endif
 #if ENABLE(ARKIT_INLINE_PREVIEW)
     ModelElementGetCamera(struct WebKit::ModelIdentifier modelIdentifier) -> (Expected<WebCore::HTMLModelElementCamera, WebCore::ResourceError> result)

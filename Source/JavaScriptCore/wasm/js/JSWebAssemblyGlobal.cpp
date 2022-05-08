@@ -64,7 +64,7 @@ JSWebAssemblyGlobal::JSWebAssemblyGlobal(VM& vm, Structure* structure, Ref<Wasm:
 void JSWebAssemblyGlobal::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    ASSERT(inherits(vm, info()));
+    ASSERT(inherits(info()));
 }
 
 void JSWebAssemblyGlobal::destroy(JSCell* cell)
@@ -88,7 +88,7 @@ JSObject* JSWebAssemblyGlobal::type(JSGlobalObject* globalObject)
 
     JSObject* result = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
 
-    result->putDirect(vm, Identifier::fromString(vm, "mutable"), jsBoolean(m_global->mutability() == Wasm::GlobalInformation::Mutable));
+    result->putDirect(vm, Identifier::fromString(vm, "mutable"_s), jsBoolean(m_global->mutability() == Wasm::Mutable));
 
     Wasm::Type valueType = m_global->type();
     JSString* valueString = nullptr;
@@ -114,7 +114,7 @@ JSObject* JSWebAssemblyGlobal::type(JSGlobalObject* globalObject)
             RELEASE_ASSERT_NOT_REACHED();
     }
     }
-    result->putDirect(vm, Identifier::fromString(vm, "value"), valueString);
+    result->putDirect(vm, Identifier::fromString(vm, "value"_s), valueString);
 
     return result;
 }

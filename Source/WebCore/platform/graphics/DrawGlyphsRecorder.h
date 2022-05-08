@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2020-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -52,10 +52,12 @@ class GlyphBuffer;
 class GraphicsContext;
 
 class DrawGlyphsRecorder {
+    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_NONCOPYABLE(DrawGlyphsRecorder);
 public:
     enum class DeconstructDrawGlyphs : bool { No, Yes };
     enum class DeriveFontFromContext : bool { No, Yes };
-    explicit DrawGlyphsRecorder(GraphicsContext&, DeconstructDrawGlyphs = DeconstructDrawGlyphs::No, DeriveFontFromContext = DeriveFontFromContext::No);
+    explicit DrawGlyphsRecorder(GraphicsContext&, float scaleFactor = 1, DeconstructDrawGlyphs = DeconstructDrawGlyphs::No, DeriveFontFromContext = DeriveFontFromContext::No);
 
     void drawGlyphs(const Font&, const GlyphBufferGlyph*, const GlyphBufferAdvance*, unsigned numGlyphs, const FloatPoint& anchorPoint, FontSmoothingMode);
 
@@ -82,6 +84,7 @@ private:
     void populateInternalState(const GraphicsContextState&);
     void populateInternalContext(const GraphicsContextState&);
     void prepareInternalContext(const Font&, FontSmoothingMode);
+    void recordInitialColors();
     void concludeInternalContext();
 
     void updateFillBrush(const SourceBrush&);
@@ -95,6 +98,8 @@ private:
     void updateShadow(const DropShadow&, ShadowsIgnoreTransforms);
 
 #if USE(CORE_TEXT) && !PLATFORM(WIN)
+    void updateFillColor(CGColorRef);
+    void updateStrokeColor(CGColorRef);
     void updateShadow(CGStyleRef);
 #endif
 
@@ -118,6 +123,11 @@ private:
         bool ignoreTransforms { false };
     };
     State m_originalState;
+
+#if USE(CORE_TEXT) && !PLATFORM(WIN)
+    RetainPtr<CGColorRef> m_initialFillColor;
+    RetainPtr<CGColorRef> m_initialStrokeColor;
+#endif
 };
 
 } // namespace WebCore

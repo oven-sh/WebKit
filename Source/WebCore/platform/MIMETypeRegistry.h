@@ -42,7 +42,7 @@ struct MIMETypeRegistryThreadGlobalData {
     WTF_MAKE_FAST_ALLOCATED;
 public:
     MIMETypeRegistryThreadGlobalData(HashSet<String, ASCIICaseInsensitiveHash>&& supportedImageMIMETypesForEncoding)
-        : m_supportedImageMIMETypesForEncoding(supportedImageMIMETypesForEncoding)
+        : m_supportedImageMIMETypesForEncoding(WTFMove(supportedImageMIMETypesForEncoding))
     { }
 
     const HashSet<String, ASCIICaseInsensitiveHash>& supportedImageMIMETypesForEncoding() const { return m_supportedImageMIMETypesForEncoding; }
@@ -56,7 +56,7 @@ public:
     WEBCORE_EXPORT static String mimeTypeForExtension(StringView);
     WEBCORE_EXPORT static Vector<String> extensionsForMIMEType(const String& type);
     WEBCORE_EXPORT static String preferredExtensionForMIMEType(const String& type);
-    WEBCORE_EXPORT static String mediaMIMETypeForExtension(const String& extension);
+    WEBCORE_EXPORT static String mediaMIMETypeForExtension(StringView extension);
 
     WEBCORE_EXPORT static String mimeTypeForPath(StringView);
 
@@ -132,13 +132,13 @@ public:
     // makes this test is after many other tests are done on the MIME type.
     WEBCORE_EXPORT static bool isTextMIMEType(const String& mimeType);
 
-    WEBCORE_EXPORT static FixedVector<const char*> supportedImageMIMETypes();
+    WEBCORE_EXPORT static FixedVector<ASCIILiteral> supportedImageMIMETypes();
     static HashSet<String, ASCIICaseInsensitiveHash>& additionalSupportedImageMIMETypes();
     WEBCORE_EXPORT static HashSet<String, ASCIICaseInsensitiveHash>& supportedNonImageMIMETypes();
     WEBCORE_EXPORT static const HashSet<String, ASCIICaseInsensitiveHash>& supportedMediaMIMETypes();
-    WEBCORE_EXPORT static FixedVector<const char*> pdfMIMETypes();
-    WEBCORE_EXPORT static FixedVector<const char*> unsupportedTextMIMETypes();
-    WEBCORE_EXPORT static FixedVector<const char*> usdMIMETypes();
+    WEBCORE_EXPORT static FixedVector<ASCIILiteral> pdfMIMETypes();
+    WEBCORE_EXPORT static FixedVector<ASCIILiteral> unsupportedTextMIMETypes();
+    WEBCORE_EXPORT static FixedVector<ASCIILiteral> usdMIMETypes();
 
     WEBCORE_EXPORT static String appendFileExtensionIfNecessary(const String& filename, const String& mimeType);
 

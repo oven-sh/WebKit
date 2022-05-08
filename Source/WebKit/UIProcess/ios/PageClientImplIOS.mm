@@ -72,7 +72,6 @@
 #import <WebCore/SharedBuffer.h>
 #import <WebCore/TextIndicator.h>
 #import <WebCore/ValidationBubble.h>
-#import <WebCore/WebCoreUIColorExtras.h>
 #import <wtf/BlockPtr.h>
 #import <wtf/cocoa/Entitlements.h>
 
@@ -760,24 +759,24 @@ void PageClientImpl::didFinishLoadingDataForCustomContentProvider(const String& 
     [m_webView _didFinishLoadingDataForCustomContentProviderWithSuggestedFilename:suggestedFilename data:data.get()];
 }
 
-void PageClientImpl::scrollingNodeScrollViewWillStartPanGesture()
+void PageClientImpl::scrollingNodeScrollViewWillStartPanGesture(ScrollingNodeID)
 {
     [m_contentView scrollViewWillStartPanOrPinchGesture];
 }
 
-void PageClientImpl::scrollingNodeScrollViewDidScroll()
+void PageClientImpl::scrollingNodeScrollViewDidScroll(ScrollingNodeID)
 {
     [m_contentView _didScroll];
 }
 
-void PageClientImpl::scrollingNodeScrollWillStartScroll()
+void PageClientImpl::scrollingNodeScrollWillStartScroll(ScrollingNodeID nodeID)
 {
-    [m_contentView _scrollingNodeScrollingWillBegin];
+    [m_contentView _scrollingNodeScrollingWillBegin:nodeID];
 }
 
-void PageClientImpl::scrollingNodeScrollDidEndScroll()
+void PageClientImpl::scrollingNodeScrollDidEndScroll(ScrollingNodeID nodeID)
 {
-    [m_contentView _scrollingNodeScrollingDidEnd];
+    [m_contentView _scrollingNodeScrollingDidEnd:nodeID];
 }
 
 Vector<String> PageClientImpl::mimeTypesWithCustomContentProviders()
@@ -1029,7 +1028,7 @@ WebCore::Color PageClientImpl::contentViewBackgroundColor()
     if (color.isValid())
         return color;
 #if HAVE(OS_DARK_MODE_SUPPORT)
-    return WebCore::roundAndClampToSRGBALossy(WebCore::systemBackgroundColor().CGColor);
+    return WebCore::roundAndClampToSRGBALossy(UIColor.systemBackgroundColor.CGColor);
 #else
     return { };
 #endif
@@ -1058,6 +1057,25 @@ void PageClientImpl::cancelFullscreenVideoExtraction(AVPlayerViewController *con
 bool PageClientImpl::isFullscreenVideoExtractionEnabled() const
 {
     return [m_contentView isFullscreenVideoExtractionEnabled];
+}
+
+void PageClientImpl::beginElementFullscreenVideoExtraction(const ShareableBitmap::Handle& bitmapHandle, FloatRect bounds)
+{
+    [m_contentView beginElementFullscreenVideoExtraction:bitmapHandle bounds:bounds];
+}
+
+void PageClientImpl::cancelElementFullscreenVideoExtraction()
+{
+    [m_contentView cancelElementFullscreenVideoExtraction];
+}
+
+bool PageClientImpl::isInMultitaskingMode() const
+{
+#if HAVE(MULTITASKING_MODE)
+    return [m_webView _isInMultitaskingMode];
+#else
+    return false;
+#endif
 }
 
 } // namespace WebKit

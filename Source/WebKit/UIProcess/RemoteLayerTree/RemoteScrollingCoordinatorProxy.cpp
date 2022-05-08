@@ -227,7 +227,7 @@ void RemoteScrollingCoordinatorProxy::scrollingTreeNodeDidScroll(ScrollingNodeID
         return;
 
 #if PLATFORM(IOS_FAMILY)
-    m_webPageProxy.scrollingNodeScrollViewDidScroll();
+    m_webPageProxy.scrollingNodeScrollViewDidScroll(scrolledNodeID);
 #endif
 
     if (m_scrollingTree->isHandlingProgrammaticScroll())
@@ -277,7 +277,7 @@ bool RemoteScrollingCoordinatorProxy::hasScrollableOrZoomedMainFrame() const
         return false;
 
 #if PLATFORM(IOS_FAMILY)
-    if (WebCore::IOSApplication::isEventbrite() && !linkedOnOrAfter(SDKVersion::FirstThatSupportsOverflowHiddenOnMainFrame))
+    if (WebCore::IOSApplication::isEventbrite() && !linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::SupportsOverflowHiddenOnMainFrame))
         return true;
 #endif
 

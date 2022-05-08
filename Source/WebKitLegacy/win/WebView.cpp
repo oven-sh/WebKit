@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2019 Apple, Inc. All rights reserved.
+ * Copyright (C) 2006-2022 Apple, Inc. All rights reserved.
  * Copyright (C) 2009, 2010, 2011 Appcelerator, Inc. All rights reserved.
  * Copyright (C) 2011 Brent Fulgham. All rights reserved.
  *
@@ -173,7 +173,6 @@
 #include <WebCore/UserStyleSheet.h>
 #include <WebCore/WebCoreJITOperations.h>
 #include <WebCore/WebCoreTextRenderer.h>
-#include <WebCore/WebLockRegistry.h>
 #include <WebCore/WindowMessageBroadcaster.h>
 #include <WebCore/WindowsTouch.h>
 #include <comdef.h>
@@ -446,7 +445,7 @@ WebView::WebView()
 
     WebViewCount++;
     gClassCount++;
-    gClassNameCount().add("WebView");
+    gClassNameCount().add("WebView"_s);
 }
 
 WebView::~WebView()
@@ -469,7 +468,7 @@ WebView::~WebView()
 
     WebViewCount--;
     gClassCount--;
-    gClassNameCount().remove("WebView");
+    gClassNameCount().remove("WebView"_s);
 }
 
 WebView* WebView::createInstance()
@@ -1995,11 +1994,11 @@ bool WebView::execCommand(WPARAM wParam, LPARAM /*lParam*/)
     Frame& frame = m_page->focusController().focusedOrMainFrame();
     switch (LOWORD(wParam)) {
         case SelectAll:
-            return frame.editor().command("SelectAll").execute();
+            return frame.editor().command("SelectAll"_s).execute();
         case Undo:
-            return frame.editor().command("Undo").execute();
+            return frame.editor().command("Undo"_s).execute();
         case Redo:
-            return frame.editor().command("Redo").execute();
+            return frame.editor().command("Redo"_s).execute();
     }
     return false;
 }
@@ -2147,7 +2146,7 @@ bool WebView::handleEditingKeyboardEvent(KeyboardEvent& event)
     if (event.type() != eventNames().keydownEvent && event.type() != eventNames().keypressEvent)
         return false;
 
-    auto command = frame->editor().command(interpretKeyEvent(&event));
+    auto command = frame->editor().command(String::fromLatin1(interpretKeyEvent(&event)));
 
     if (keyEvent->type() == PlatformEvent::RawKeyDown) {
         // WebKit doesn't have enough information about mode to decide how commands that just insert text if executed via Editor should be treated,
@@ -2839,16 +2838,6 @@ bool WebView::shouldInitializeTrackPointHack()
     return shouldCreateScrollbars;
 }
 
-static Ref<WebCore::LocalWebLockRegistry> getOrCreateWebLockRegistry()
-{
-    static NeverDestroyed<WeakPtr<WebCore::LocalWebLockRegistry>> existingRegistry;
-    if (existingRegistry.get())
-        return *existingRegistry.get();
-    auto registry = WebCore::LocalWebLockRegistry::create();
-    existingRegistry.get() = registry;
-    return registry;
-}
-
 HRESULT WebView::initWithFrame(RECT frame, _In_ BSTR frameName, _In_ BSTR groupName)
 {
     HRESULT hr = S_OK;
@@ -2922,7 +2911,6 @@ HRESULT WebView::initWithFrame(RECT frame, _In_ BSTR frameName, _In_ BSTR groupN
         makeUniqueRef<DummySpeechRecognitionProvider>(),
         makeUniqueRef<MediaRecorderProvider>(),
         WebBroadcastChannelRegistry::getOrCreate(false),
-        getOrCreateWebLockRegistry(),
         WebCore::DummyPermissionController::create(),
         makeUniqueRef<WebCore::DummyStorageProvider>(),
         makeUniqueRef<WebCore::DummyModelPlayerProvider>()
@@ -2957,7 +2945,7 @@ HRESULT WebView::initWithFrame(RECT frame, _In_ BSTR frameName, _In_ BSTR groupN
     m_mainFrame = webFrame;
     webFrame->Release(); // The WebFrame is owned by the Frame, so release our reference to it.
 
-    m_page->mainFrame().tree().setName(toString(frameName));
+    m_page->mainFrame().tree().setName(toAtomString(frameName));
     m_page->mainFrame().init();
     setGroupName(groupName);
 
@@ -4725,7 +4713,7 @@ HRESULT WebView::copy(_In_opt_ IUnknown* /*sender*/)
     if (!m_page)
         return E_FAIL;
 
-    m_page->focusController().focusedOrMainFrame().editor().command("Copy").execute();
+    m_page->focusController().focusedOrMainFrame().editor().command("Copy"_s).execute();
     return S_OK;
 }
 
@@ -4734,7 +4722,7 @@ HRESULT WebView::cut(_In_opt_ IUnknown* /*sender*/)
     if (!m_page)
         return E_FAIL;
 
-    m_page->focusController().focusedOrMainFrame().editor().command("Cut").execute();
+    m_page->focusController().focusedOrMainFrame().editor().command("Cut"_s).execute();
     return S_OK;
 }
 
@@ -4743,7 +4731,7 @@ HRESULT WebView::paste(_In_opt_ IUnknown* /*sender*/)
     if (!m_page)
         return E_FAIL;
 
-    m_page->focusController().focusedOrMainFrame().editor().command("Paste").execute();
+    m_page->focusController().focusedOrMainFrame().editor().command("Paste"_s).execute();
     return S_OK;
 }
 
@@ -4752,7 +4740,7 @@ HRESULT WebView::copyURL(_In_ BSTR url)
     if (!m_page)
         return E_FAIL;
 
-    m_page->focusController().focusedOrMainFrame().editor().copyURL(MarshallingHelpers::BSTRToKURL(url), "");
+    m_page->focusController().focusedOrMainFrame().editor().copyURL(MarshallingHelpers::BSTRToKURL(url), emptyString());
     return S_OK;
 }
 
@@ -4773,7 +4761,7 @@ HRESULT WebView::delete_(_In_opt_ IUnknown* /*sender*/)
     if (!m_page)
         return E_FAIL;
 
-    m_page->focusController().focusedOrMainFrame().editor().command("Delete").execute();
+    m_page->focusController().focusedOrMainFrame().editor().command("Delete"_s).execute();
     return S_OK;
 }
     
@@ -4997,11 +4985,6 @@ HRESULT WebView::notifyPreferencesChanged(IWebNotification* notification)
         return hr;
     settings.setPictographFontFamily(toAtomString(str));
     str.clear();
-
-    hr = preferences->isJavaEnabled(&enabled);
-    if (FAILED(hr))
-        return hr;
-    settings.setJavaEnabled(!!enabled);
 
     hr = preferences->isJavaScriptEnabled(&enabled);
     if (FAILED(hr))
@@ -5266,11 +5249,6 @@ HRESULT WebView::notifyPreferencesChanged(IWebNotification* notification)
     if (FAILED(hr))
         return hr;
     settings.setJavaScriptCanAccessClipboard(!!enabled);
-
-    hr = prefsPrivate->isXSSAuditorEnabled(&enabled);
-    if (FAILED(hr))
-        return hr;
-    settings.setXSSAuditorEnabled(!!enabled);
 
     hr = prefsPrivate->shouldUseHighResolutionTimers(&enabled);
     if (FAILED(hr))
@@ -6079,31 +6057,31 @@ static String imeNotificationName(WPARAM wparam)
 {
     switch (wparam) {
     case IMN_CHANGECANDIDATE:
-        return "IMN_CHANGECANDIDATE";
+        return "IMN_CHANGECANDIDATE"_s;
     case IMN_CLOSECANDIDATE:
-        return "IMN_CLOSECANDIDATE";
+        return "IMN_CLOSECANDIDATE"_s;
     case IMN_CLOSESTATUSWINDOW:
-        return "IMN_CLOSESTATUSWINDOW";
+        return "IMN_CLOSESTATUSWINDOW"_s;
     case IMN_GUIDELINE:
-        return "IMN_GUIDELINE";
+        return "IMN_GUIDELINE"_s;
     case IMN_OPENCANDIDATE:
-        return "IMN_OPENCANDIDATE";
+        return "IMN_OPENCANDIDATE"_s;
     case IMN_OPENSTATUSWINDOW:
-        return "IMN_OPENSTATUSWINDOW";
+        return "IMN_OPENSTATUSWINDOW"_s;
     case IMN_SETCANDIDATEPOS:
-        return "IMN_SETCANDIDATEPOS";
+        return "IMN_SETCANDIDATEPOS"_s;
     case IMN_SETCOMPOSITIONFONT:
-        return "IMN_SETCOMPOSITIONFONT";
+        return "IMN_SETCOMPOSITIONFONT"_s;
     case IMN_SETCOMPOSITIONWINDOW:
-        return "IMN_SETCOMPOSITIONWINDOW";
+        return "IMN_SETCOMPOSITIONWINDOW"_s;
     case IMN_SETCONVERSIONMODE:
-        return "IMN_SETCONVERSIONMODE";
+        return "IMN_SETCONVERSIONMODE"_s;
     case IMN_SETOPENSTATUS:
-        return "IMN_SETOPENSTATUS";
+        return "IMN_SETOPENSTATUS"_s;
     case IMN_SETSENTENCEMODE:
-        return "IMN_SETSENTENCEMODE";
+        return "IMN_SETSENTENCEMODE"_s;
     case IMN_SETSTATUSWINDOWPOS:
-        return "IMN_SETSTATUSWINDOWPOS";
+        return "IMN_SETSTATUSWINDOWPOS"_s;
     default:
         return "Unknown (" + String::number(wparam) + ")";
     }
@@ -6113,19 +6091,19 @@ static String imeRequestName(WPARAM wparam)
 {
     switch (wparam) {
     case IMR_CANDIDATEWINDOW:
-        return "IMR_CANDIDATEWINDOW";
+        return "IMR_CANDIDATEWINDOW"_s;
     case IMR_COMPOSITIONFONT:
-        return "IMR_COMPOSITIONFONT";
+        return "IMR_COMPOSITIONFONT"_s;
     case IMR_COMPOSITIONWINDOW:
-        return "IMR_COMPOSITIONWINDOW";
+        return "IMR_COMPOSITIONWINDOW"_s;
     case IMR_CONFIRMRECONVERTSTRING:
-        return "IMR_CONFIRMRECONVERTSTRING";
+        return "IMR_CONFIRMRECONVERTSTRING"_s;
     case IMR_DOCUMENTFEED:
-        return "IMR_DOCUMENTFEED";
+        return "IMR_DOCUMENTFEED"_s;
     case IMR_QUERYCHARPOSITION:
-        return "IMR_QUERYCHARPOSITION";
+        return "IMR_QUERYCHARPOSITION"_s;
     case IMR_RECONVERTSTRING:
-        return "IMR_RECONVERTSTRING";
+        return "IMR_RECONVERTSTRING"_s;
     default:
         return "Unknown (" + String::number(wparam) + ")";
     }
@@ -6383,7 +6361,7 @@ HRESULT WebView::reportException(_In_ JSContextRef context, _In_ JSValueRef exce
     JSC::JSLockHolder lock(globalObject);
 
     // Make sure the context has a DOMWindow global object, otherwise this context didn't originate from a WebView.
-    if (!globalObject->inherits<JSDOMWindow>(globalObject->vm()))
+    if (!globalObject->inherits<JSDOMWindow>())
         return E_FAIL;
 
     WebCore::reportException(globalObject, toJS(globalObject, exception));

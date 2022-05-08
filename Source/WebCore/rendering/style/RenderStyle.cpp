@@ -41,6 +41,7 @@
 #include "RenderBlock.h"
 #include "RenderObject.h"
 #include "RenderTheme.h"
+#include "SVGPathData.h"
 #include "ScaleTransformOperation.h"
 #include "ShadowData.h"
 #include "StyleBuilderConverter.h"
@@ -775,6 +776,10 @@ static bool rareNonInheritedDataChangeRequiresLayout(const StyleRareNonInherited
     if (first.inputSecurity != second.inputSecurity)
         return true;
 
+    if (first.effectiveContainment().contains(Containment::Size) != second.effectiveContainment().contains(Containment::Size)
+        || first.effectiveContainment().contains(Containment::InlineSize) != second.effectiveContainment().contains(Containment::InlineSize))
+        return true;
+
     return false;
 }
 
@@ -1104,28 +1109,23 @@ static bool rareInheritedDataChangeRequiresRepaint(const StyleRareInheritedData&
 }
 
 #if ENABLE(CSS_PAINTING_API)
-void RenderStyle::addCustomPaintWatchProperty(const String& name)
+void RenderStyle::addCustomPaintWatchProperty(const AtomString& name)
 {
     auto& data = m_rareNonInheritedData.access();
-    if (!data.customPaintWatchedProperties)
-        data.customPaintWatchedProperties = makeUnique<HashSet<String>>();
-    data.customPaintWatchedProperties->add(name);
+    data.customPaintWatchedProperties.add(name);
 }
 
 inline static bool changedCustomPaintWatchedProperty(const RenderStyle& a, const StyleRareNonInheritedData& aData, const RenderStyle& b, const StyleRareNonInheritedData& bData)
 {
-    auto* propertiesA = aData.customPaintWatchedProperties.get();
-    auto* propertiesB = bData.customPaintWatchedProperties.get();
+    auto& propertiesA = aData.customPaintWatchedProperties;
+    auto& propertiesB = bData.customPaintWatchedProperties;
 
-    if (UNLIKELY(propertiesA || propertiesB)) {
+    if (UNLIKELY(!propertiesA.isEmpty() || !propertiesB.isEmpty())) {
         // FIXME: We should not need to use ComputedStyleExtractor here.
         ComputedStyleExtractor extractor((Element*) nullptr);
 
-        for (auto* watchPropertiesMap : { propertiesA, propertiesB }) {
-            if (!watchPropertiesMap)
-                continue;
-
-            for (auto& name : *watchPropertiesMap) {
+        for (auto& watchPropertiesMap : { propertiesA, propertiesB }) {
+            for (auto& name : watchPropertiesMap) {
                 RefPtr<CSSValue> valueA;
                 RefPtr<CSSValue> valueB;
                 if (isCustomPropertyName(name)) {
@@ -1523,12 +1523,20 @@ void RenderStyle::applyCSSTransform(TransformationMatrix& transform, const Float
 
 static std::optional<Path> getPathFromPathOperation(const FloatRect& box, const PathOperation& operation)
 {
-    if (operation.type() == PathOperation::Shape)
+    switch (operation.type()) {
+    case PathOperation::Shape:
         return downcast<ShapePathOperation>(operation).pathForReferenceRect(box);
-
-    // FIXME: support Reference and Box type.
-    // https://bugs.webkit.org/show_bug.cgi?id=233382
-    return std::nullopt;
+    case PathOperation::Reference:
+        if (!downcast<ReferencePathOperation>(operation).element() || (!is<SVGPathElement>(downcast<ReferencePathOperation>(operation).element()) && !is<SVGGeometryElement>(downcast<ReferencePathOperation>(operation).element())))
+            return std::nullopt;
+        return pathFromGraphicsElement(downcast<ReferencePathOperation>(operation).element());
+    case PathOperation::Box:
+        return downcast<BoxPathOperation>(operation).getPath();
+    case PathOperation::Ray:
+        // FIXME: implement ray- https://bugs.webkit.org/show_bug.cgi?id=233344
+        return std::nullopt;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static PathTraversalState getTraversalStateAtDistance(const Path& path, const Length& distance)
@@ -2499,6 +2507,13 @@ void RenderStyle::setBorderImageWidth(LengthBox&& slices)
     m_surroundData.access().border.m_image.setBorderSlices(WTFMove(slices));
 }
 
+void RenderStyle::setBorderImageWidthOverridesBorderWidths(bool overridesBorderWidths)
+{
+    if (m_surroundData->border.m_image.overridesBorderWidths() == overridesBorderWidths)
+        return;
+    m_surroundData.access().border.m_image.setOverridesBorderWidths(overridesBorderWidths);
+}
+
 void RenderStyle::setBorderImageOutset(LengthBox&& outset)
 {
     if (m_surroundData->border.m_image.outset() == outset)
@@ -2878,23 +2893,16 @@ UsedFloat RenderStyle::usedFloat(const RenderObject& renderer)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-OptionSet<Containment> RenderStyle::effectiveContainment() const
+UserSelect RenderStyle::effectiveUserSelect() const
 {
-    auto containment = contain();
+    if (effectiveInert())
+        return UserSelect::None;
 
-    switch (containerType()) {
-    case ContainerType::None:
-        break;
-    case ContainerType::Size:
-        containment.add({ Containment::Layout, Containment::Style, Containment::Size });
-        break;
-    case ContainerType::InlineSize:
-        containment.add({ Containment::Layout, Containment::Style, Containment::InlineSize });
-        break;
-    };
+    auto value = userSelect();
+    if (userModify() != UserModify::ReadOnly && userDrag() != UserDrag::Element)
+        return value == UserSelect::None ? UserSelect::Text : value;
 
-    return containment;
+    return value;
 }
-
 
 } // namespace WebCore

@@ -36,7 +36,7 @@
 #include <wtf/UniqueRef.h>
 
 namespace WebCore {
-class FragmentedSharedBuffer;
+class SharedBuffer;
 enum class CDMRequirement : uint8_t;
 enum class CDMSessionType : uint8_t;
 struct CDMKeySystemConfiguration;
@@ -58,8 +58,8 @@ public:
 
     RemoteCDMFactoryProxy* factory() const { return m_factory.get(); }
 
-    bool supportsInitData(const AtomString&, const WebCore::FragmentedSharedBuffer&);
-    RefPtr<WebCore::FragmentedSharedBuffer> sanitizeResponse(const WebCore::FragmentedSharedBuffer& response);
+    bool supportsInitData(const AtomString&, const WebCore::SharedBuffer&);
+    RefPtr<WebCore::SharedBuffer> sanitizeResponse(const WebCore::SharedBuffer& response);
     std::optional<String> sanitizeSessionId(const String& sessionId);
 
 #if !RELEASE_LOG_DISABLED
@@ -76,7 +76,7 @@ private:
     bool didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&) final;
 
     // Messages
-    void getSupportedConfiguration(WebCore::CDMKeySystemConfiguration&&, WebCore::CDMPrivate::LocalStorageAccess, WebCore::CDMPrivate::SupportedConfigurationCallback&&);
+    void getSupportedConfiguration(WebCore::CDMKeySystemConfiguration&&, WebCore::CDMPrivate::LocalStorageAccess, CompletionHandler<void(std::optional<WebCore::CDMKeySystemConfiguration>)>&&);
     void createInstance(CompletionHandler<void(RemoteCDMInstanceIdentifier, RemoteCDMInstanceConfiguration&&)>&&);
     void loadAndInitialize();
     void setLogIdentifier(uint64_t);

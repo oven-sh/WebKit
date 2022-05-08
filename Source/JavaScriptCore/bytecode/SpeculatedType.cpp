@@ -557,10 +557,10 @@ SpeculatedType speculationFromStructure(Structure* structure)
         filteredResult = SpecObjectOther;
         break;
     default:
-        return speculationFromClassInfoInheritance(structure->classInfo());
+        return speculationFromClassInfoInheritance(structure->classInfoForCells());
     }
     ASSERT(filteredResult);
-    ASSERT(isSubtypeSpeculation(filteredResult, speculationFromClassInfoInheritance(structure->classInfo())));
+    ASSERT(isSubtypeSpeculation(filteredResult, speculationFromClassInfoInheritance(structure->classInfoForCells())));
     return filteredResult;
 }
 
@@ -596,7 +596,13 @@ SpeculatedType speculationFromCell(JSCell* cell)
         }
         return SpecString;
     }
-    return speculationFromStructure(cell->structure());
+    // FIXME: rdar://69036888: undo this when no longer needed.
+    auto* structure = cell->structureID().tryDecode();
+    if (UNLIKELY(!isSanePointer(structure))) {
+        ASSERT_NOT_REACHED();
+        return SpecNone;
+    }
+    return speculationFromStructure(structure);
 }
 
 SpeculatedType speculationFromValue(JSValue value)

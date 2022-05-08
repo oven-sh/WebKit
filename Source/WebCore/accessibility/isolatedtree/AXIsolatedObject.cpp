@@ -38,23 +38,28 @@
 
 namespace WebCore {
 
-AXIsolatedObject::AXIsolatedObject(AXCoreObject& object, AXIsolatedTree* tree, AXID parentID)
+AXIsolatedObject::AXIsolatedObject(AXCoreObject& axObject, AXIsolatedTree* tree)
     : m_cachedTree(tree)
-    , m_parentID(parentID)
-    , m_id(object.objectID())
+    , m_id(axObject.objectID())
 {
     ASSERT(isMainThread());
-    if (m_id.isValid())
-        initializeAttributeData(object, !parentID.isValid());
-    else {
+    ASSERT(is<AccessibilityObject>(axObject));
+
+    auto* axParent = axObject.parentObjectUnignored();
+    m_parentID = axParent ? axParent->objectID() : AXID();
+
+    if (m_id.isValid()) {
+        auto isRoot = !axParent && axObject.isScrollView() ? IsRoot::Yes : IsRoot::No;
+        initializeProperties(axObject, isRoot);
+    } else {
         // Should never happen under normal circumstances.
         ASSERT_NOT_REACHED();
     }
 }
 
-Ref<AXIsolatedObject> AXIsolatedObject::create(AXCoreObject& object, AXIsolatedTree* tree, AXID parentID)
+Ref<AXIsolatedObject> AXIsolatedObject::create(AXCoreObject& object, AXIsolatedTree* tree)
 {
-    return adoptRef(*new AXIsolatedObject(object, tree, parentID));
+    return adoptRef(*new AXIsolatedObject(object, tree));
 }
 
 AXIsolatedObject::~AXIsolatedObject()
@@ -67,7 +72,7 @@ void AXIsolatedObject::init()
     ASSERT_NOT_REACHED();
 }
 
-void AXIsolatedObject::initializeAttributeData(AXCoreObject& coreObject, bool isRoot)
+void AXIsolatedObject::initializeProperties(AXCoreObject& coreObject, IsRoot isRoot)
 {
     ASSERT(is<AccessibilityObject>(coreObject));
     auto& object = downcast<AccessibilityObject>(coreObject);
@@ -215,7 +220,7 @@ void AXIsolatedObject::initializeAttributeData(AXCoreObject& coreObject, bool is
     setProperty(AXPropertyName::HierarchicalLevel, object.hierarchicalLevel());
     setProperty(AXPropertyName::Language, object.language().isolatedCopy());
     setProperty(AXPropertyName::CanHaveSelectedChildren, object.canHaveSelectedChildren());
-    setProperty(AXPropertyName::TagName, object.tagName().isolatedCopy());
+    setProperty(AXPropertyName::TagName, object.tagName().string().isolatedCopy());
     setProperty(AXPropertyName::SupportsLiveRegion, object.supportsLiveRegion());
     setProperty(AXPropertyName::IsInsideLiveRegion, object.isInsideLiveRegion());
     setProperty(AXPropertyName::LiveRegionStatus, object.liveRegionStatus().isolatedCopy());
@@ -285,11 +290,7 @@ void AXIsolatedObject::initializeAttributeData(AXCoreObject& coreObject, bool is
 
     if (object.isTreeItem()) {
         setProperty(AXPropertyName::IsTreeItem, true);
-
-        AccessibilityChildrenVector ariaTreeItemContent;
-        object.ariaTreeItemContent(ariaTreeItemContent);
-        setObjectVectorProperty(AXPropertyName::ARIATreeItemContent, ariaTreeItemContent);
-
+        setObjectVectorProperty(AXPropertyName::ARIATreeItemContent, object.ariaTreeItemContent());
         setObjectVectorProperty(AXPropertyName::DisclosedRows, object.disclosedRows());
     }
 
@@ -328,29 +329,14 @@ void AXIsolatedObject::initializeAttributeData(AXCoreObject& coreObject, bool is
     object.tabChildren(tabChildren);
     setObjectVectorProperty(AXPropertyName::TabChildren, tabChildren);
 
-    AccessibilityChildrenVector linkedUIElements;
-    object.linkedUIElements(linkedUIElements);
-    setObjectVectorProperty(AXPropertyName::LinkedUIElements, linkedUIElements);
+    setObjectVectorProperty(AXPropertyName::LinkedObjects, object.linkedObjects());
 
-    AccessibilityChildrenVector ariaControlsElements;
-    object.ariaControlsElements(ariaControlsElements);
-    setObjectVectorProperty(AXPropertyName::ARIAControlsElements, ariaControlsElements);
-
-    AccessibilityChildrenVector ariaDetailsElements;
-    object.ariaDetailsElements(ariaDetailsElements);
-    setObjectVectorProperty(AXPropertyName::ARIADetailsElements, ariaDetailsElements);
-
-    AccessibilityChildrenVector ariaErrorMessageElements;
-    object.ariaErrorMessageElements(ariaErrorMessageElements);
-    setObjectVectorProperty(AXPropertyName::ARIAErrorMessageElements, ariaErrorMessageElements);
-
-    AccessibilityChildrenVector ariaFlowToElements;
-    object.ariaFlowToElements(ariaFlowToElements);
-    setObjectVectorProperty(AXPropertyName::ARIAFlowToElements, ariaFlowToElements);
-
-    AccessibilityChildrenVector ariaOwnsElements;
-    object.ariaOwnsElements(ariaOwnsElements);
-    setObjectVectorProperty(AXPropertyName::ARIAOwnsElements, ariaOwnsElements);
+    // Relations.
+    setObjectVectorProperty(AXPropertyName::ControlledObjects, object.controlledObjects());
+    setObjectVectorProperty(AXPropertyName::DetailedByObjects, object.detailedByObjects());
+    setObjectVectorProperty(AXPropertyName::ErrorMessageObjects, object.errorMessageObjects());
+    setObjectVectorProperty(AXPropertyName::FlowToObjects, object.flowToObjects());
+    setObjectVectorProperty(AXPropertyName::OwnedObjects, object.ownedObjects());
 
     // Spin button support.
     setObjectProperty(AXPropertyName::DecrementButton, object.decrementButton());
@@ -359,12 +345,12 @@ void AXIsolatedObject::initializeAttributeData(AXCoreObject& coreObject, bool is
 
     Vector<String> classList;
     object.classList(classList);
-    String combinedClassList;
+    StringBuilder combinedClassList;
     for (auto it = classList.begin(), end = classList.end(); it != end; ++it) {
         combinedClassList.append(*it);
-        combinedClassList.append(" "_s);
+        combinedClassList.append(' ');
     }
-    setProperty(AXPropertyName::ClassList, combinedClassList);
+    setProperty(AXPropertyName::ClassList, combinedClassList.toString());
 
     setProperty(AXPropertyName::ColorValue, object.colorValue());
 
@@ -412,7 +398,7 @@ void AXIsolatedObject::initializeAttributeData(AXCoreObject& coreObject, bool is
         setMathscripts(AXPropertyName::MathPostscripts, object);
     }
 
-    if (isRoot) {
+    if (isRoot == IsRoot::Yes) {
         setObjectProperty(AXPropertyName::WebArea, object.webAreaObject());
         setProperty(AXPropertyName::SessionID, object.sessionID().isolatedCopy());
         setProperty(AXPropertyName::DocumentURI, object.documentURI().isolatedCopy());
@@ -466,15 +452,11 @@ void AXIsolatedObject::setObjectProperty(AXPropertyName propertyName, AXCoreObje
         setProperty(propertyName, nullptr, true);
 }
 
-void AXIsolatedObject::setObjectVectorProperty(AXPropertyName propertyName, const AccessibilityChildrenVector& children)
+void AXIsolatedObject::setObjectVectorProperty(AXPropertyName propertyName, const AccessibilityChildrenVector& objects)
 {
-    if (children.isEmpty())
+    if (objects.isEmpty())
         return;
-
-    auto childIDs = children.map([](auto& child) {
-        return child->objectID();
-    });
-    setProperty(propertyName, WTFMove(childIDs));
+    setProperty(propertyName, axIDs(objects));
 }
 
 void AXIsolatedObject::setProperty(AXPropertyName propertyName, AXPropertyValueVariant&& value, bool shouldRemove)
@@ -483,12 +465,6 @@ void AXIsolatedObject::setProperty(AXPropertyName propertyName, AXPropertyValueV
         m_propertyMap.remove(propertyName);
     else
         m_propertyMap.set(propertyName, value);
-}
-
-void AXIsolatedObject::setParent(AXID parent)
-{
-    ASSERT(isMainThread());
-    m_parentID = parent;
 }
 
 void AXIsolatedObject::detachRemoteParts(AccessibilityDetachmentType)
@@ -555,8 +531,7 @@ void AXIsolatedObject::setSelectedChildren(const AccessibilityChildrenVector& se
         if (!axObjectCache)
             return;
 
-        auto axIDs = tree()->idsForObjects(selectedChildren);
-        auto axSelectedChildren = axObjectCache->objectsForIDs(axIDs);
+        auto axSelectedChildren = axObjectCache->objectsForIDs(axIDs(selectedChildren));
         object->setSelectedChildren(axSelectedChildren);
     });
 }
@@ -1310,12 +1285,6 @@ bool AXIsolatedObject::performDefaultAction()
     return false;
 }
 
-bool AXIsolatedObject::isAccessibilityObject() const
-{
-    ASSERT_NOT_REACHED();
-    return false;
-}
-
 bool AXIsolatedObject::isAccessibilityNodeObject() const
 {
     ASSERT_NOT_REACHED();
@@ -1890,54 +1859,64 @@ AXCoreObject* AXIsolatedObject::selectedListItem()
     return nullptr;
 }
 
-void AXIsolatedObject::ariaActiveDescendantReferencingElements(AccessibilityChildrenVector&) const
+AXCoreObject::AccessibilityChildrenVector AXIsolatedObject::activeDescendantOfObjects() const
 {
     ASSERT_NOT_REACHED();
+    return { };
 }
 
-void AXIsolatedObject::ariaControlsReferencingElements(AccessibilityChildrenVector&) const
+AXCoreObject::AccessibilityChildrenVector AXIsolatedObject::controllers() const
 {
     ASSERT_NOT_REACHED();
+    return { };
 }
 
-void AXIsolatedObject::ariaDescribedByElements(AccessibilityChildrenVector&) const
+AXCoreObject::AccessibilityChildrenVector AXIsolatedObject::describedByObjects() const
 {
     ASSERT_NOT_REACHED();
+    return { };
 }
 
-void AXIsolatedObject::ariaDescribedByReferencingElements(AccessibilityChildrenVector&) const
+AXCoreObject::AccessibilityChildrenVector AXIsolatedObject::descriptionForObjects() const
 {
     ASSERT_NOT_REACHED();
+    return { };
 }
 
-void AXIsolatedObject::ariaDetailsReferencingElements(AccessibilityChildrenVector&) const
+AXCoreObject::AccessibilityChildrenVector AXIsolatedObject::detailsForObjects() const
 {
     ASSERT_NOT_REACHED();
+    return { };
 }
 
-void AXIsolatedObject::ariaErrorMessageReferencingElements(AccessibilityChildrenVector&) const
+AXCoreObject::AccessibilityChildrenVector AXIsolatedObject::errorMessageForObjects() const
 {
     ASSERT_NOT_REACHED();
+    return { };
 }
 
-void AXIsolatedObject::ariaFlowToReferencingElements(AccessibilityChildrenVector&) const
+AXCoreObject::AccessibilityChildrenVector AXIsolatedObject::flowFromObjects() const
 {
     ASSERT_NOT_REACHED();
+    return { };
 }
 
-void AXIsolatedObject::ariaLabelledByElements(AccessibilityChildrenVector&) const
+AXCoreObject::AccessibilityChildrenVector AXIsolatedObject::labelledByObjects() const
 {
     ASSERT_NOT_REACHED();
+    return { };
 }
 
-void AXIsolatedObject::ariaLabelledByReferencingElements(AccessibilityChildrenVector&) const
+AXCoreObject::AccessibilityChildrenVector AXIsolatedObject::labelForObjects() const
 {
     ASSERT_NOT_REACHED();
+    return { };
 }
 
-void AXIsolatedObject::ariaOwnsReferencingElements(AccessibilityChildrenVector&) const
+AXCoreObject::AccessibilityChildrenVector AXIsolatedObject::owners() const
 {
     ASSERT_NOT_REACHED();
+    return { };
 }
 
 bool AXIsolatedObject::hasDatalist() const
@@ -2081,11 +2060,6 @@ bool AXIsolatedObject::accessibleNameDerivesFromContent() const
 {
     ASSERT_NOT_REACHED();
     return false;
-}
-
-void AXIsolatedObject::elementsFromAttribute(Vector<Element*>&, const QualifiedName&) const
-{
-    ASSERT_NOT_REACHED();
 }
 
 AXObjectCache* AXIsolatedObject::axObjectCache() const

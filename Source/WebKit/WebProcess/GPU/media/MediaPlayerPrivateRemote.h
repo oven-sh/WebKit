@@ -92,7 +92,6 @@ public:
 
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
 
-    void invalidate() { m_invalid = true; }
     WebCore::MediaPlayerEnums::MediaEngineIdentifier remoteEngineIdentifier() const { return m_remoteEngineIdentifier; }
     WebCore::MediaPlayerIdentifier itentifier() const { return m_id; }
     IPC::Connection& connection() const { return m_manager.gpuProcessConnection().connection(); }
@@ -199,7 +198,7 @@ private:
     void prepareForPlayback(bool privateMode, WebCore::MediaPlayer::Preload, bool preservesPitch, bool prepare) final;
 
 #if ENABLE(MEDIA_SOURCE)
-    void load(const URL&, const WebCore::ContentType&, WebCore::MediaSourcePrivateClient*) final;
+    void load(const URL&, const WebCore::ContentType&, WebCore::MediaSourcePrivateClient&) final;
 #endif
 #if ENABLE(MEDIA_STREAM)
     void load(WebCore::MediaStreamPrivate&) final;
@@ -415,7 +414,7 @@ private:
     void playerContentBoxRectChanged(const WebCore::LayoutRect&) final;
 
 #if PLATFORM(COCOA)
-    void pushVideoFrameMetadata(WebCore::VideoFrameMetadata&&, RetainPtr<CVPixelBufferRef>&&);
+    void pushVideoFrameMetadata(WebCore::VideoFrameMetadata&&);
 #endif
     RemoteVideoFrameObjectHeapProxy& videoFrameObjectHeapProxy() const { return m_manager.gpuProcessConnection().videoFrameObjectHeapProxy(); }
 
@@ -462,15 +461,12 @@ private:
     bool m_muted { false };
     bool m_seeking { false };
     bool m_isCurrentPlaybackTargetWireless { false };
-    bool m_invalid { false };
     bool m_waitingForKey { false };
     bool m_timeIsProgressing { false };
     bool m_renderingCanBeAccelerated { false };
+    std::optional<bool> m_shouldMaintainAspectRatio;
+    std::optional<bool> m_pageIsVisible;
     RefPtr<RemoteVideoFrameProxy> m_videoFrameForCurrentTime;
-#if PLATFORM(COCOA)
-    RetainPtr<CVPixelBufferRef> m_pixelBufferGatheredWithVideoFrameMetadata;
-    std::unique_ptr<WebCore::PixelBufferConformerCV> m_pixelBufferConformer;
-#endif
     std::optional<WebCore::VideoFrameMetadata> m_videoFrameMetadata;
     bool m_isGatheringVideoFrameMetadata { false };
 };

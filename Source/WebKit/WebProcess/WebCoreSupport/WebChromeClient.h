@@ -34,6 +34,7 @@ class RegistrableDomain;
 enum class CookieConsentDecisionResult : uint8_t;
 enum class StorageAccessPromptWasShown : bool;
 enum class StorageAccessWasGranted : bool;
+struct TextRecognitionOptions;
 }
 
 namespace WebKit {
@@ -99,6 +100,7 @@ private:
     void setResizable(bool) final;
     
     void addMessageToConsole(JSC::MessageSource, JSC::MessageLevel, const String& message, unsigned lineNumber, unsigned columnNumber, const String& sourceID) final;
+    void addMessageWithArgumentsToConsole(JSC::MessageSource, JSC::MessageLevel, const String& message, Span<const String> messageArguments, unsigned lineNumber, unsigned columnNumber, const String& sourceID) final;
     
     bool canRunBeforeUnloadConfirmPanel() final;
     bool runBeforeUnloadConfirmPanel(const String& message, WebCore::Frame&) final;
@@ -434,7 +436,7 @@ private:
 #endif
 
 #if ENABLE(IMAGE_ANALYSIS)
-    void requestTextRecognition(WebCore::Element&, const String& identifier = { }, CompletionHandler<void(RefPtr<WebCore::Element>&&)>&& = { }) final;
+    void requestTextRecognition(WebCore::Element&, WebCore::TextRecognitionOptions&&, CompletionHandler<void(RefPtr<WebCore::Element>&&)>&& = { }) final;
 #endif
 
     bool needsImageOverlayControllerForSelectionPainting() const final

@@ -39,7 +39,7 @@
 #include <pal/graphics/WebGPU/WebGPUAdapter.h>
 
 #if HAVE(WEBGPU_IMPLEMENTATION)
-#import <pal/graphics/WebGPU/Impl/WebGPUImpl.h>
+#import <pal/graphics/WebGPU/Impl/WebGPUCreateImpl.h>
 #endif
 
 namespace WebKit {
@@ -60,6 +60,7 @@ RemoteGPU::~RemoteGPU() = default;
 void RemoteGPU::initialize()
 {
     assertIsMainRunLoop();
+    m_streamConnection->open();
     workQueue().dispatch([protectedThis = Ref { *this }]() mutable {
         protectedThis->workQueueInitialize();
     });
@@ -69,6 +70,7 @@ void RemoteGPU::initialize()
 void RemoteGPU::stopListeningForIPC(Ref<RemoteGPU>&& refFromConnection)
 {
     assertIsMainRunLoop();
+    m_streamConnection->invalidate();
     m_streamConnection->stopReceivingMessages(Messages::RemoteGPU::messageReceiverName(), m_identifier.toUInt64());
     workQueue().dispatch([protectedThis = WTFMove(refFromConnection)]() {
         protectedThis->workQueueUninitialize();
@@ -84,7 +86,7 @@ void RemoteGPU::workQueueInitialize()
     // The retain cycle is required because callbacks need to execute even if this is disowned
     // (because the callbacks handle resource cleanup, etc.).
     // The retain cycle is broken in workQueueUninitialize().
-    auto backing = PAL::WebGPU::GPUImpl::create([protectedThis = Ref { *this }](PAL::WebGPU::GPUImpl::WorkItem&& workItem) {
+    auto backing = PAL::WebGPU::create([protectedThis = Ref { *this }](PAL::WebGPU::WorkItem&& workItem) {
         protectedThis->workQueue().dispatch(WTFMove(workItem));
     });
 #else
@@ -92,9 +94,9 @@ void RemoteGPU::workQueueInitialize()
 #endif
     if (backing) {
         m_backing = backing.releaseNonNull();
-        send(Messages::RemoteGPUProxy::WasCreated(true, workQueue().wakeUpSemaphore()));
+        send(Messages::RemoteGPUProxy::WasCreated(true, workQueue().wakeUpSemaphore(), m_streamConnection->clientWaitSemaphore()));
     } else
-        send(Messages::RemoteGPUProxy::WasCreated(false, workQueue().wakeUpSemaphore()));
+        send(Messages::RemoteGPUProxy::WasCreated(false, { }, { }));
 }
 
 void RemoteGPU::workQueueUninitialize()

@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "LayoutIntegrationFlexLayout.h"
 #include "OrderIterator.h"
 #include "RenderBlock.h"
 
@@ -46,7 +47,7 @@ public:
 
     bool isFlexibleBox() const override { return true; }
 
-    const char* renderName() const override;
+    ASCIILiteral renderName() const override;
 
     bool avoidsFloats() const final { return true; }
     bool canDropAnonymousBlockChild() const final { return false; }
@@ -208,6 +209,10 @@ private:
 
     void resetHasDefiniteHeight() { m_hasDefiniteHeight = SizeDefiniteness::Unknown; }
 
+#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
+    void layoutUsingFlexFormattingContext();
+#endif
+
     // This is used to cache the preferred size for orthogonal flow children so we
     // don't have to relayout to get it
     HashMap<const RenderBox*, LayoutUnit> m_intrinsicSizeAlongMainAxis;
@@ -230,6 +235,9 @@ private:
     SizeDefiniteness m_hasDefiniteHeight { SizeDefiniteness::Unknown };
     bool m_inLayout { false };
     bool m_shouldResetChildLogicalHeightBeforeLayout { false };
+#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
+    std::unique_ptr<LayoutIntegration::FlexLayout> m_flexLayout;
+#endif
 };
 
 } // namespace WebCore

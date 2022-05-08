@@ -1,3 +1,1474 @@
+2022-05-06  Megan Gardner  <megan_gardner@apple.com>
+
+        Fix flakey test by using the old API on old systems.
+        https://bugs.webkit.org/show_bug.cgi?id=240195
+
+        Reviewed by Tim Horton.
+
+        * wtf/PlatformHave.h:
+
+2022-05-06  Brent Fulgham  <bfulgham@apple.com>
+
+        Remove unused ApplePayRemoteUIEnabled preference
+        https://bugs.webkit.org/show_bug.cgi?id=240177
+
+        Reviewed by Devin Rousso.
+
+        Remove the internal WKPreference for ApplePayRemoteUIEnabled now that
+        we always use the high-security remote ApplePay UI.
+
+        * Scripts/Preferences/WebPreferencesInternal.yaml:
+
+2022-05-06  Brent Fulgham  <bfulgham@apple.com>
+
+        Remove abandoned WKPreference for SelectionPaintingWithoutSelectionGaps
+        https://bugs.webkit.org/show_bug.cgi?id=240129
+
+        Reviewed by Alan Bujtas.
+
+        Remove the abandoned WKPreference 'SelectionPaintingWithoutSelectionGaps', which was added to support
+        the EFL port. As the EFL port is no longer buildable, and this code is never used outside of EFL, we
+        should remove this dead code.
+
+        * Scripts/Preferences/WebPreferences.yaml:
+
+2022-05-06  Brent Fulgham  <bfulgham@apple.com>
+
+        Remove internal WKPreference for non-iTunesAVOutput now that all platform support it 
+        https://bugs.webkit.org/show_bug.cgi?id=240141
+
+        Reviewed by Eric Carlson.
+
+        WebKit on macOS has used a different AV Output target than IOS_FAMILY targets because those platforms lacked
+        the AVOutput option. Now that all platforms share this target, we can consolidate on the correct endpoint and
+        remove this preference code.
+
+        * Scripts/Preferences/WebPreferencesInternal.yaml:
+
+2022-05-06  Brent Fulgham  <bfulgham@apple.com>
+
+        Remove the viewportFitEnabled WKPreference now that it is always on 
+        https://bugs.webkit.org/show_bug.cgi?id=240147
+
+        Reviewed by Tim Horton.
+
+        Remove the WKPreference 'ViewportFitEnabled' now that it is always enabled on all platforms, and
+        we do not wish to turn it off in testing or in other debugging circumstances.
+
+        * Scripts/Preferences/WebPreferences.yaml:
+
+2022-05-05  Chris Dumez  <cdumez@apple.com>
+
+        Identifier::string() should return an AtomString
+        https://bugs.webkit.org/show_bug.cgi?id=240122
+
+        Reviewed by Yusuke Suzuki.
+
+        * wtf/PrintStream.cpp:
+        (WTF::printInternal):
+        * wtf/PrintStream.h:
+
+2022-05-05  Brent Fulgham  <bfulgham@apple.com>
+
+        Remove abandoned WKPreference for AlwaysUseAcceleratedOverflowScroll
+        https://bugs.webkit.org/show_bug.cgi?id=240130
+
+        Reviewed by Simon Fraser.
+
+        The preference 'AlwaysUseAcceleratedOverflowScroll' and related code are no longer used. We should remove this dead code.
+
+        * Scripts/Preferences/WebPreferences.yaml:
+
+2022-05-05  Manuel Rego Casasnovas  <rego@igalia.com>
+
+        ARIA reflection for Element attributes
+        https://bugs.webkit.org/show_bug.cgi?id=239852
+
+        Reviewed by Chris Dumez.
+
+        Add new runtime flag AriaReflectionForElementReferencesEnabled.
+
+        * Scripts/Preferences/WebPreferencesExperimental.yaml:
+
+2022-05-05  Sihui Liu  <sihui_liu@apple.com>
+
+        SuspendableWorkQueue::suspend should invoke callback immediately when queue is suspended
+        https://bugs.webkit.org/show_bug.cgi?id=240070
+
+        Reviewed by Chris Dumez.
+
+        With current implementation, if suspend() is called when queue is suspended, the completionHandler is not 
+        invoked unitl the queue is resumed and suspended again. This might cause confusion for callers. To fix it,
+        now SuspendableWorkQueue will invoke callback immediately when queue is already suspended.
+
+        API test: WTF_SuspendableWorkQueue.SuspendTwice
+
+        * wtf/SuspendableWorkQueue.cpp:
+        (WTF::SuspendableWorkQueue::suspend):
+        (WTF::SuspendableWorkQueue::resume):
+        (WTF::SuspendableWorkQueue::dispatchSync):
+        (WTF::SuspendableWorkQueue::suspendIfNeeded):
+        * wtf/SuspendableWorkQueue.h:
+
+2022-05-04  Kimmo Kinnunen  <kkinnunen@apple.com>
+
+        SharedMemory::systemPageSize is redundant function
+        https://bugs.webkit.org/show_bug.cgi?id=240057
+
+        Reviewed by Antti Koivisto.
+
+        * wtf/PageBlock.cpp:
+        (WTF::systemPageSize):
+        Remove pointless static variable from OS(WINDOWS) variant.
+        * wtf/linux/CurrentProcessMemoryStatus.cpp:
+        (WTF::currentProcessMemoryStatus):
+        Remove another redundant implementation.
+
+2022-05-04  Brent Fulgham  <bfulgham@apple.com>
+
+        Remove deprecated 'JavaEnabled' feature flag and related code
+        https://bugs.webkit.org/show_bug.cgi?id=240044
+
+        Reviewed by Darin Adler.
+
+        We removed support for Java Plug-Ins in macOS 10.15, but never removed the preference. To reduce code complexity
+        and build times we should remove this unused preference, leaving non-functional stubs to avoid breaking binaries
+        that expect to call their accessor methods.
+
+        * Scripts/Preferences/WebPreferences.yaml:
+
+2022-05-04  Joonghun Park  <jh718.park@samsung.com>
+
+        Unreviewed. Remove the build warning below since r293729.
+        warning: redundant move in return statement [-Wredundant-move]
+
+        * wtf/DateMath.cpp:
+        (WTF::validateTimeZone):
+
+2022-05-03  Yusuke Suzuki  <ysuzuki@apple.com>
+
+        [WTF] Initialize emptyString and nullString data at compile time
+        https://bugs.webkit.org/show_bug.cgi?id=240054
+
+        Reviewed by Mark Lam.
+
+        As we did for AtomString in r293757, we can initialize emptyString() and nullString()
+        data at compile time. This patch does that for WTF::String.
+
+        * wtf/text/WTFString.cpp:
+        (WTF::emptyString): Deleted.
+        (WTF::nullString): Deleted.
+        * wtf/text/WTFString.h:
+        (WTF::StaticString::StaticString):
+        (WTF::nullString):
+        (WTF::emptyString):
+
+2022-05-03  Yusuke Suzuki  <ysuzuki@apple.com>
+
+        [JSC] Initialize empty and null AtomString at compile time
+        https://bugs.webkit.org/show_bug.cgi?id=240031
+
+        Reviewed by Mark Lam.
+
+        Because they are initialized from static data, we can just initialize them
+        at compile time, and we do not need to have `AtomString::init`.
+
+        * wtf/Threading.cpp:
+        (WTF::initialize):
+        * wtf/text/AtomString.cpp:
+        (WTF::AtomString::init): Deleted.
+        * wtf/text/AtomString.h:
+        (WTF::StaticAtomString::StaticAtomString):
+        (WTF::nullAtom):
+        (WTF::emptyAtom):
+
+2022-05-03  Chris Dumez  <cdumez@apple.com>
+
+        REGRESSION (r293703): 358 JSC tests failing
+        https://bugs.webkit.org/show_bug.cgi?id=240023
+        <rdar://problem/92676663>
+
+        Reviewed by Yusuke Suzuki.
+
+        Make sure WTF::initialize() calls AtomString::init() given that JSC now relies on
+        emptyAtom().
+
+        * wtf/Threading.cpp:
+        (WTF::initialize):
+        * wtf/text/AtomString.cpp:
+        (WTF::AtomString::init):
+
+2022-05-03  Philippe Normand  <pnormand@igalia.com> and Pavel Feldman <pavel.feldman@gmail.com> and Yury Semikhatsky <yurys@chromium.org>
+
+        [WK2] Add API to allow embedder to set a timezone override
+        https://bugs.webkit.org/show_bug.cgi?id=213884
+
+        Reviewed by Yusuke Suzuki.
+
+        * wtf/DateMath.cpp: New APIs to control and query the timezone override.
+        (WTF::innerTimeZoneOverride): Static storage of the override informations.
+        (WTF::WTF_REQUIRES_LOCK):
+        (WTF::validateTimeZone): New function allowing to check if a timezone identifier is valid according to ICU's database and covert it
+        to UChar buffer suitable for passing to ucal.
+        (WTF::isTimeZoneValid):
+        (WTF::setTimeZoneOverride): New API to set the timezone override, this is meant to be
+        used on newly created WebProcesses. In addition to providing alternative name for the code
+        that calls into ICU library, on POSIX systems writes new timezone to "TZ" environement
+        variable to adjust result of strftime (called in formatDateTime).
+        (WTF::getTimeZoneOverride): Query the timezone override.
+        * wtf/DateMath.h:
+
+2022-05-02  Justin Michaud  <justin_michaud@apple.com>
+
+        Add option to JSC shell to wait for a USR2 signal before exiting to aid in collection of vmmaps
+        https://bugs.webkit.org/show_bug.cgi?id=239919
+
+        Reviewed by Yusuke Suzuki.
+
+        * wtf/threads/Signals.h:
+        (WTF::toSystemSignal):
+
+2022-05-02  Eric Carlson  <eric.carlson@apple.com>
+
+        [Cocoa] Allow more mime types in captive portal mode
+        https://bugs.webkit.org/show_bug.cgi?id=239859
+        rdar://91830683
+
+        Reviewed by Brent Fulgham.
+
+        * Scripts/Preferences/WebPreferences.yaml:
+
+2022-04-29  Chris Dumez  <cdumez@apple.com>
+
+        Unreviewed, reverting r293621.
+
+        Reverting patch while we fix internal EWS issues, will reland
+        after
+
+        Reverted changeset:
+
+        https://commits.webkit.org/r293621
+
+2022-04-29  Philippe Normand  <philn@igalia.com>
+
+        REGRESSION(r293608): [GTK][WPE] Broke clang builds
+        https://bugs.webkit.org/show_bug.cgi?id=239899
+
+        Reviewed by Michael Catanzaro.
+
+        * wtf/StdLibExtras.h: Restrict std::remove_cvref hacks to GCC.
+
+2022-04-29  Diego Pino Garcia  <dpino@igalia.com>
+
+        [GCC] std::remove_cvref is undefined in GCC8.4
+        https://bugs.webkit.org/show_bug.cgi?id=239881
+
+        Reviewed by Žan Doberšek.
+
+        r293505 changed the guard that added std::remove_cvref if not defined
+        by GCC, checking __cplusplus <= 201703L.
+
+        However in Ubuntu GCC8.4 this flag's value is 201709L. Thus, the
+        evaluation of this flag cannot reliably determine whether the compiler
+        has to define std::remove_cvref or not.
+
+        Instead of relying on a predefined compiler flag, what the patch does is
+        to attempt to compile a small snippet of code to check whether std::remove_cvref
+        is supported by the compiler. If successful, the flag 'HAVE_STD_REMOVE_CVREF' is defined.
+
+        * wtf/StdLibExtras.h: Define std::remove_cvref if not defined by GCC.
+
+2022-04-27  Yusuke Suzuki  <ysuzuki@apple.com>
+
+        [JSC] Make DFG::OSRExit data unlinked
+        https://bugs.webkit.org/show_bug.cgi?id=239828
+
+        Reviewed by Saam Barati.
+
+        * wtf/FixedVector.h:
+
+2022-04-28  Brent Fulgham  <bfulgham@apple.com>
+
+        Remove the AVFoundationNSURLSessionEnabled preference
+        https://bugs.webkit.org/show_bug.cgi?id=239632
+
+        Reviewed by Eric Carlson.
+
+        All supported operating systems have supported AVFoundationNSURLSession
+        for several years. Since we expect AVFoundation to always use WebKit
+        for network loading (and indeed, expect improper behavior if we do not)
+        we should remove this toggle to simplify the code and reduce the chance
+        for users to mistakenly activate it.
+
+        * Scripts/Preferences/WebPreferences.yaml:
+
+2022-04-28  Yusuke Suzuki  <ysuzuki@apple.com>
+
+        Support C files in Unified Builds
+        https://bugs.webkit.org/show_bug.cgi?id=239873
+
+        Reviewed by Mark Lam.
+
+        Fix a bug that we always generate empty UnifiedSource-1.xxx.
+        It also fixes a bug that this script cannot handle 0 max bundle count.
+
+        * Scripts/generate-unified-source-bundles.rb:
+
+2022-04-28  Wenson Hsieh  <wenson_hsieh@apple.com>
+
+        REGRESSION (DOM GPUP): Rich HTML emails on watchOS no longer show up
+        https://bugs.webkit.org/show_bug.cgi?id=239870
+        rdar://91311606
+
+        Reviewed by Tim Horton.
+
+        Temporarily turn GPU process for DOM off by default on watchOS.
+
+        * Scripts/Preferences/WebPreferencesExperimental.yaml:
+
+2022-04-28  Per Arne Vollan  <pvollan@apple.com>
+
+        Dynamically switch message filter
+        https://bugs.webkit.org/show_bug.cgi?id=238577
+        <rdar://69263324>
+
+        Reviewed by Geoffrey Garen.
+
+        Add SPI to set sandbox state variable.
+
+        * wtf/spi/darwin/SandboxSPI.h:
+
+2022-04-28  Yusuke Suzuki  <ysuzuki@apple.com>
+
+        [WTF] Use quadratic-probing instead of double-hashing
+        https://bugs.webkit.org/show_bug.cgi?id=239813
+
+        Reviewed by Geoffrey Garen.
+
+        If table size is always power-of-two, we can safely use quadratic-probing[1] even if the load exceeds 50%.
+        Quadratic-probing and double-hashing have different tradeoff between clustering possibility and CPU cache
+        friendliness. Double-hashing can avoid clustering more, but it is not CPU cache friendly. Quadratic-probing
+        can cause clustering more but better for CPU cache. And while linear-probing caused a lot of trouble and not
+        practical, quadratic-probing with 75% load factor is practical configuration which is used in production-ready
+        hashtables e.g. Google's sparsetable / densetable[2].
+
+        This patch replaces WTF::HashTable's probing algorithm from double-hashing to quadratic-probing to make it more
+        cache friendly while keeping reasonable clustering characteristics (compared to linear-probing etc.). Due to
+        this cache friendliness, we get large performance improvements.
+
+        1. 0.52% improvement in Speedometer2 with 95% probability.
+        2. 0.72% improvement in JetStream2 with 98% probability.
+
+        [1]: https://fgiesen.wordpress.com/2015/02/22/triangular-numbers-mod-2n/
+        [2]: http://goog-sparsehash.sourceforge.net/doc/implementation.html
+
+        * wtf/HashTable.h:
+        (WTF::KeyTraits>::inlineLookup):
+        (WTF::KeyTraits>::lookupForWriting):
+        (WTF::KeyTraits>::fullLookupForWriting):
+        (WTF::KeyTraits>::addUniqueForInitialization):
+        (WTF::KeyTraits>::add):
+        (WTF::doubleHash): Deleted.
+
+2022-04-28  Per Arne Vollan  <pvollan@apple.com>
+
+        [iOS] Enable IOKit blocking in GPUP by default
+        https://bugs.webkit.org/show_bug.cgi?id=239615
+
+        Reviewed by Darin Adler.
+
+        * Scripts/Preferences/WebPreferencesInternal.yaml:
+
+2022-04-26  Justin Michaud  <justin_michaud@apple.com>
+
+        [PGO] Allow collecting other kinds of pgo profiles
+        https://bugs.webkit.org/show_bug.cgi?id=239776
+
+        Reviewed by Saam Barati.
+
+        Update the way we collect PGO profiles to use LLVM's file handling, because
+        it really seems to care about that. This allowws us to try out other kinds
+        of profile generation, like the IR-based -fcs-profile-generate.
+
+        * wtf/GenerateProfiles.h:
+        (WTF::registerProfileGenerationCallback):
+
+2022-04-27  Diego Pino Garcia  <dpino@igalia.com>
+
+        [GCC] GCC9.3 defines 'remove_cvref_t' but not '__cpp_lib_remove_cvref'
+        https://bugs.webkit.org/show_bug.cgi?id=239805
+
+        Reviewed by Žan Doberšek.
+
+        GCC9.3 defines 'remove_cvref_t' but not '__cpp_lib_remove_cvref'. The
+        latter was introduced in GCC9.4:
+        
+          https://github.com/gcc-mirror/gcc/blob/releases/gcc-9.4.0/libstdc%2B%2B-v3/include/std/type_traits#L3024
+        
+        The flag '__cpp_lib_remove_cvref' is used to check whether 'remove_cvref_t'
+        is defined, but it's not posible to rely on it for GCC9.3 as explained on the
+        paragraph above.
+        
+        Instead we check whether __cplusplus is <= 201703L since the GCC commit
+        that defined 'remove_cvref_t' does it if __cplusplus > 201703L. See:
+        
+          https://github.com/gcc-mirror/gcc/commit/6791489ee5214b0181aa22adc250cbbde1897a5c
+
+        * wtf/StdLibExtras.h:
+
+2022-04-26  Manuel Rego Casasnovas  <rego@igalia.com>
+
+        Remove AriaReflectionEnabled runtime flag
+        https://bugs.webkit.org/show_bug.cgi?id=239532
+
+        Reviewed by Chris Fleizach.
+
+        * Scripts/Preferences/WebPreferencesInternal.yaml:
+
+2022-04-26  Kate Cheney  <katherine_cheney@apple.com>
+
+        Remove WebArchiveDebugMode
+        https://bugs.webkit.org/show_bug.cgi?id=239738
+        <rdar://problem/88406961>
+
+        Reviewed by Tim Horton.
+
+        * Scripts/Preferences/WebPreferences.yaml:
+
+2022-04-23  Wenson Hsieh  <wenson_hsieh@apple.com>
+
+        Remove the `PreferInlineTextSelectionInImages` internal feature flag
+        https://bugs.webkit.org/show_bug.cgi?id=234849
+
+        Reviewed by Sam Weinig.
+
+        See WebKit/ChangeLog for more details.
+
+        * Scripts/Preferences/WebPreferencesInternal.yaml:
+
+2022-04-22  Chris Dumez  <cdumez@apple.com>
+
+        Move global AtomStrings to a common header to promote reuse
+        https://bugs.webkit.org/show_bug.cgi?id=239585
+
+        Reviewed by Geoff Garen and Darin Adler.
+
+        * wtf/text/AtomString.cpp:
+        (WTF::AtomString::init):
+        * wtf/text/AtomString.h:
+        (WTF::xmlnsAtom):
+        (WTF::trueAtom): Deleted.
+        (WTF::falseAtom): Deleted.
+
+2022-04-22  Diego Pino Garcia  <dpino@igalia.com>
+
+        Unreviewed, non-unified build fixes after r293203
+
+        * wtf/RobinHoodHashTable.h:
+
+2022-04-22  Alan Bujtas  <zalan@apple.com>
+
+        [LFC][Integration] Add FlexFormattingContextIntegrationEnabled setting
+        https://bugs.webkit.org/show_bug.cgi?id=239654
+
+        Reviewed by Antti Koivisto.
+
+        * Scripts/Preferences/WebPreferencesInternal.yaml:
+
+2022-04-20  Yusuke Suzuki  <ysuzuki@apple.com>
+
+        [WTF] Add string concatenate adapter for UUID
+        https://bugs.webkit.org/show_bug.cgi?id=239590
+
+        Reviewed by Chris Dumez and Darin Adler.
+
+        This patch adds string concatenate adapter for UUID.
+        UUID's stringifier consists of multiple string concatenate adapters.
+        This patch adds WTF::handleWithAdapters so that we can define adapters
+        once, and we can semi-automatically define length() and writeTo method for UUID.
+
+        And we use UUID + makeString instead of createVersion4UUIDString. This is more
+        efficient since we do not need to allocate string twice.
+
+        * wtf/URL.cpp:
+        (WTF::URL::fakeURLWithRelativePart):
+        * wtf/UUID.cpp:
+        (WTF::UUID::generateWeakRandomUUIDVersion4):
+        (WTF::UUID::toString const):
+        (WTF::createVersion4UUIDString):
+        (WTF::generateWeakRandomUUIDVersion4): Deleted.
+        (WTF::createVersion4UUIDStringWeak): Deleted.
+        * wtf/UUID.h:
+        (WTF::UUID::createVersion4Weak):
+        (WTF::UUID::data const):
+        (WTF::StringTypeAdapter<UUID>::StringTypeAdapter):
+        (WTF::StringTypeAdapter<UUID>::handle const):
+        (WTF::StringTypeAdapter<UUID>::length const):
+        (WTF::StringTypeAdapter<UUID>::is8Bit const):
+        (WTF::StringTypeAdapter<UUID>::writeTo const):
+        * wtf/text/StringConcatenate.h:
+        (WTF::handleWithAdapters):
+
+2022-04-21  Brent Fulgham  <bfulgham@apple.com>
+
+        Remove XSS Auditor: Part 4 (Settings)
+        https://bugs.webkit.org/show_bug.cgi?id=239628
+
+        Reviewed by Alex Christensen.
+
+        This change is a follow-up to Bug 230661 that removes the unused
+        WebPreferences.yaml content.
+
+        * Scripts/Preferences/WebPreferences.yaml:
+
+2022-04-21  Chris Dumez  <cdumez@apple.com>
+
+        Adopt RobinHoodHashMap / RobinHoodHashSet more broadly in WebCore
+        https://bugs.webkit.org/show_bug.cgi?id=239576
+
+        Reviewed by Yusuke Suzuki.
+
+        Allow using RobinHoodHashMap / RobinHoodHashSet with URL keys since a URL wraps a String
+        and uses its internal String's cached hash as hash.
+
+        * wtf/URLHash.h:
+
+2022-04-21  Diego Pino Garcia  <dpino@igalia.com>
+
+        REGRESSION(r292863): std::remove_cvref_t not defined in GCC9<
+        https://bugs.webkit.org/show_bug.cgi?id=239482
+
+        Reviewed by Žan Doberšek.
+
+        std::remove_cvref_t is only available since GCC9 onwards:
+          https://en.cppreference.com/w/cpp/compiler_support/20
+
+        * wtf/StdLibExtras.h: add remove_cvref_t to std namespace if not defined.
+
+2022-04-20  Chris Dumez  <cdumez@apple.com>
+
+        Move true / false AtomStrings to a central location and reuse them
+        https://bugs.webkit.org/show_bug.cgi?id=239530
+
+        Reviewed by Sam Weinig.
+
+        * wtf/text/AtomString.cpp:
+        (WTF::AtomString::init):
+        * wtf/text/AtomString.h:
+        (WTF::trueAtom):
+        (WTF::falseAtom):
+
+2022-04-20  Alan Bujtas  <zalan@apple.com>
+
+        [IFC][Integration] Do not call WebPreferences::simpleLineLayoutEnabled in canUseForLineLayoutWithReason
+        https://bugs.webkit.org/show_bug.cgi?id=239540
+
+        Reviewed by Antti Koivisto.
+
+        * Scripts/Preferences/WebPreferencesInternal.yaml:
+
+2022-04-20  Cathie Chen  <cathiechen@igalia.com>
+
+        Parsing of contain-intrinsic-size and adding a runtime flag for it
+        https://bugs.webkit.org/show_bug.cgi?id=238181
+
+        Reviewed by Simon Fraser.
+
+        * Scripts/Preferences/WebPreferencesExperimental.yaml:
+
+2022-04-19  Chris Dumez  <cdumez@apple.com>
+
+        Use more r-value references for Text / CharacterData classes
+        https://bugs.webkit.org/show_bug.cgi?id=239481
+
+        Reviewed by Sam Weinig.
+
+        Add a function to AtomString to release its String. This is convenient when you have an AtomString
+        and need a String&&.
+
+        * wtf/text/AtomString.h:
+
+2022-04-19  Chris Dumez  <cdumez@apple.com>
+
+        Replace String::replaceWithLiteral() with a String::replace() overload that takes in an ASCIILiteral
+        https://bugs.webkit.org/show_bug.cgi?id=239500
+
+        Reviewed by Darin Adler.
+
+        Replace String::replaceWithLiteral() with a String::replace() overload that takes in an ASCIILiteral.
+        replaceWithLiteral() was encouraging people not to use ASCIILiteral and the ""_s suffix and calling
+        replace() with an ASCIILiteral would result in less efficient code, which goes against the idea of
+        ASCIILiteral.
+
+        To address this, String::replaceWithLiteral() is removed. Now, callers can call String::replace()
+        with an ASCIILiteral instead and it will result in code that is as efficient. I have verified that
+        this change is perf-neutral on Speedometer on both Apple Silicon and Intel.
+
+        * wtf/text/WTFString.h:
+        (WTF::String::replace):
+        (WTF::String::replaceWithLiteral): Deleted.
+
+2022-04-19  Chris Dumez  <cdumez@apple.com>
+
+        Introduce makeAtomString()
+        https://bugs.webkit.org/show_bug.cgi?id=239464
+
+        Reviewed by Sam Weinig.
+
+        Introduce makeAtomString() which is an optimized version of makeString() when the caller knows it wants an
+        AtomString. It may avoid a StringImpl allocation when the string is already in the AtomStringTable.
+
+        * wtf/text/StringConcatenate.h:
+        (WTF::tryMakeAtomStringFromAdapters):
+        (WTF::tryMakeAtomString):
+        (WTF::makeAtomString):
+
+2022-04-18  Elliott Williams  <emw@apple.com>
+
+        [XCBuild] Use XCBuild for all command-line and project builds
+        https://bugs.webkit.org/show_bug.cgi?id=238916
+
+        Reviewed by Alexey Proskuryakov.
+
+        * WTF.xcodeproj/project.pbxproj:
+
+2022-04-17  Chris Dumez  <cdumez@apple.com>
+
+        Leverage StringView in more places
+        https://bugs.webkit.org/show_bug.cgi?id=239426
+
+        Reviewed by Sam Weinig.
+
+        Leverage StringView in more places, to reduce the number of String allocations.
+
+        * wtf/text/StringImpl.cpp:
+        * wtf/text/StringImpl.h:
+        (WTF::isNotSpaceOrNewline):
+        * wtf/text/WTFString.h:
+
+2022-04-16  Chris Dumez  <cdumez@apple.com>
+
+        Drop String::truncate() and use String::left() instead
+        https://bugs.webkit.org/show_bug.cgi?id=239412
+
+        Reviewed by Darin Adler.
+
+        String::truncate() and String::left() have identical behavior. The only difference is that truncate()
+        modifies the String in place (which is a bit confusing), while left() returns a new String, without
+        modifying the original. To simplify our API, I am dropping String::truncate().
+
+        * wtf/text/WTFString.cpp:
+        (WTF::String::truncate): Deleted.
+        * wtf/text/WTFString.h:
+        * wtf/unix/LanguageUnix.cpp:
+        (WTF::platformLanguage):
+        * wtf/win/LanguageWin.cpp:
+        (WTF::localeInfo):
+
+2022-04-16  Chris Dumez  <cdumez@apple.com>
+
+        Replace complex String::insert() with a simplified makeStringByInserting() free function
+        https://bugs.webkit.org/show_bug.cgi?id=239370
+
+        Reviewed by Darin Adler.
+
+        * wtf/text/WTFString.cpp:
+        (WTF::makeStringByInserting):
+        (WTF::String::insert): Deleted.
+        (WTF::String::append): Deleted.
+        * wtf/text/WTFString.h:
+
+2022-04-15  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Implement hardware limits
+        https://bugs.webkit.org/show_bug.cgi?id=239377
+
+        Reviewed by Darin Adler.
+
+        Add missing #include.
+
+        * wtf/PageBlock.h:
+
+2022-04-15  Michael Catanzaro  <mcatanzaro@redhat.com>
+
+        IGNORE_WARNINGS_BEGIN should not warn about unrecognized warnings
+        https://bugs.webkit.org/show_bug.cgi?id=239344
+
+        Reviewed by Darin Adler.
+
+        If the compiler does not support __has_warning(), then let's also
+        suppress -Wpragmas to avoid warnings about unrecognized warnings.
+
+        Let's make a couple drive-by cleanups as well. Notably,
+        IGNORE_WARNINGS_BEGIN_IMPL_ is unused and can be removed.
+
+        * wtf/Compiler.h:
+
+2022-04-15  Zan Dobersek  <zdobersek@igalia.com>
+
+        [GTK][WPE] Remove exclusive build guards around GPU process preferences, code
+        https://bugs.webkit.org/show_bug.cgi?id=239331
+
+        Reviewed by Philippe Normand.
+
+        * Scripts/Preferences/WebPreferencesExperimental.yaml:
+        Make the UseGPUProcessForWebGLEnabled option also usable for the GTK and
+        WPE ports.
+
+2022-04-14  J Pascoe  <j_pascoe@apple.com>
+
+        [WebAuthn] Clean up WebAuthenticationModern and WebAuthnProcess
+        https://bugs.webkit.org/show_bug.cgi?id=239073
+        rdar://problem/91571030
+
+        Reviewed by Brent Fulgham.
+
+        * Scripts/Preferences/WebPreferencesExperimental.yaml:
+
+2022-04-14  Chris Dumez  <cdumez@apple.com>
+
+        Drop inefficient String::append() overloads
+        https://bugs.webkit.org/show_bug.cgi?id=239289
+
+        Reviewed by Sam Weinig.
+
+        * wtf/Assertions.cpp:
+        * wtf/text/StringBuilder.h:
+        (WTF::StringBuilder::append):
+        * wtf/text/WTFString.cpp:
+        (WTF::String::insert):
+        (WTF::String::append):
+        * wtf/text/WTFString.h:
+
+2022-04-14  Justin Michaud  <justin_michaud@apple.com>
+
+        [PGO] We should be able to build WebKit to collect PGO profiles easily
+        https://bugs.webkit.org/show_bug.cgi?id=238776
+
+        Reviewed by Wenson Hsieh.
+
+        Build WebKit as follows: make release WK_LTO_MODE=thin ENABLE_LLVM_PROFILE_GENERATION=ON
+        Then, follow the directions in the log output at runtime to collect your raw PGO profiles!
+
+        We add a new compile flag plus WTF::registerProfileGenerationCallback, allowing llvm profiles
+        to be collected by sending a notifyutil signal. The files are written to the temp directory,
+        and it seems like the sandbox permits this by default. You may need to disable the sandbox if
+        you encounter issues, either by editing the *.sb files or by using an inserted dylib to interpose
+        the sandbox initialization calls. 
+
+        * WTF.xcodeproj/project.pbxproj:
+        * wtf/CMakeLists.txt:
+        * wtf/GenerateProfiles.h: Added.
+        (WTF::registerProfileGenerationCallback):
+        * wtf/PlatformEnable.h:
+
+2022-04-14  Zan Dobersek  <zdobersek@igalia.com>
+
+        [WK2] Enable more efficient encoding of synchronous-message reply arguments
+        https://bugs.webkit.org/show_bug.cgi?id=238740
+        <rdar://problem/91567779>
+
+        Reviewed by Kimmo Kinnunen.
+
+        Add two helper types, OutType and InTypes, on both CompletionHandler
+        classes. OutType is an alias against the return type of the invokable
+        handler, InTypes is a tuple with types corresponding to the parameter
+        types of the invokable handler.
+
+        These are especially helpful in various templates dealing with the
+        CompletionHandler types.
+
+        * wtf/CompletionHandler.h:
+        (WTF::CompletionHandler):
+        (WTF::CompletionHandlerWithFinalizer):
+
+2022-04-13  Chris Dumez  <cdumez@apple.com>
+
+        Replace calls to substring(0, x) with the more concise left(x)
+        https://bugs.webkit.org/show_bug.cgi?id=239306
+
+        Reviewed by Darin Adler.
+
+        * wtf/URL.cpp:
+        (WTF::URL::protocol const):
+        (WTF::URL::protocolHostAndPort const):
+        (WTF::URL::setProtocol):
+        (WTF::URL::setHost):
+        (WTF::URL::setHostAndPort):
+        (WTF::URL::strippedForUseAsReferrer const):
+        * wtf/URLParser.cpp:
+        (WTF::URLParser::addNonSpecialDotSlash):
+        (WTF::URLParser::parseURLEncodedForm):
+        * wtf/UUID.cpp:
+        (WTF::UUID::parse):
+        * wtf/text/WTFString.cpp:
+        (WTF::String::insert):
+        * wtf/text/WTFString.h:
+
+2022-04-13  Alex Christensen  <achristensen@webkit.org>
+
+        Punycode encode U+15AF when not in context of other Canadian aboriginal code points
+        https://bugs.webkit.org/show_bug.cgi?id=239316
+        <rdar://91248059>
+
+        Reviewed by Darin Adler.
+
+        * wtf/URLHelpers.cpp:
+        (WTF::URLHelpers::isLookalikeCharacterOfScriptType<USCRIPT_CANADIAN_ABORIGINAL>):
+        (WTF::URLHelpers::isLookalikeCharacter):
+
+2022-04-13  Chris Dumez  <cdumez@apple.com>
+
+        Drop unused AtomString(const LChar*) constructor
+        https://bugs.webkit.org/show_bug.cgi?id=239274
+
+        Reviewed by Darin Adler.
+
+        * wtf/text/AtomString.h:
+
+2022-04-13  Wenson Hsieh  <wenson_hsieh@apple.com>
+
+        MSE video is not drawn onto canvas
+        https://bugs.webkit.org/show_bug.cgi?id=206812
+        rdar://31763425
+
+        Reviewed by Eric Carlson.
+
+        Enable MediaSource inline painting by default on all platforms where `AVSampleBufferVideoOutput` has been tuned
+        with a more aggressive pruning interval; this avoids significant increases in memory and power use when
+        utilizing the sample buffer to snapshot videos with MSE.
+
+        * Scripts/Preferences/WebPreferencesExperimental.yaml:
+
+2022-04-13  Chris Dumez  <cdumez@apple.com>
+
+        Replace AtomString(const char*) with AtomString::fromLatin1(const char*)
+        https://bugs.webkit.org/show_bug.cgi?id=239127
+
+        Reviewed by Darin Adler.
+
+        * wtf/text/AtomString.cpp:
+        (WTF::AtomString::init):
+        * wtf/text/AtomString.h:
+        (WTF::operator==):
+        (WTF::operator!=):
+
+2022-04-12  Elliott Williams  <emw@apple.com>
+
+        [Xcode] In open-source builds, disable bitcode in xcconfigs instead of build-webkit
+        https://bugs.webkit.org/show_bug.cgi?id=239262
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/Base.xcconfig:
+
+2022-04-12  Tim Horton  <timothy_horton@apple.com>
+
+        Adopt "version set"-based linked-on-or-after checks instead of platform-specific ones
+        https://bugs.webkit.org/show_bug.cgi?id=239054
+        <rdar://problem/83436715>
+
+        Reviewed by Wenson Hsieh.
+
+        Switch to `dyld_program_sdk_at_least`, which correctly handles SDK
+        checks for binaries built for one SDK running on another platform
+        (e.g. iOS apps running on macOS).
+
+        Because `dyld_program_sdk_at_least` is based off more than a simple
+        integer comparison like our old SDK check, we move it into the
+        application process, and just transmit the computed behaviors to
+        subprocesses.
+
+        Remove functions that expose/transmit platform-specific SDK versions,
+        so that usage isn't accidentally reintroduced.
+
+        Re-frame the naming of our linked-on-or-after checks as being about
+        specific behaviors instead of SDK versions.
+
+        * wtf/Bitmap.h:
+        (WTF::WordType>::setAll):
+        Add `setAll`, which sets all the bits in the Bitmap, like FastBitVector has.
+        Expose the length of the data in bytes to make transmitting the Bitmap simple.
+
+        * wtf/cocoa/LanguageCocoa.mm:
+        (WTF::canMinimizeLanguages):
+        Adopt the new naming.
+
+        * wtf/spi/darwin/dyldSPI.h:
+        Because of the nature of dyld_build_version_t values, we can't forward
+        declare them. Thus, maintain a fallback to the legacy platform-specific
+        SDK checks for use when building against the internal SDK, or when
+        back-deploying to older SDKs that don't yet have values for newer version sets.
+
+        * wtf/cocoa/RuntimeApplicationChecksCocoa.cpp:
+        (disableAdditionalSDKAlignedBehaviors):
+        (WTF::computeSDKAlignedBehaviors):
+        (WTF::sdkAlignedBehaviorsValue):
+        (WTF::sdkAlignedBehaviors):
+        (WTF::setSDKAlignedBehaviors):
+        (WTF::enableAllSDKAlignedBehaviors):
+        (WTF::disableAllSDKAlignedBehaviors):
+        (WTF::linkedOnOrAfterSDKWithBehavior):
+        (WTF::applicationSDKVersionOverride): Deleted.
+        (WTF::setApplicationSDKVersion): Deleted.
+        (WTF::applicationSDKVersion): Deleted.
+        (WTF::linkedOnOrAfterOverrideValue): Deleted.
+        (WTF::setLinkedOnOrAfterOverride): Deleted.
+        (WTF::linkedOnOrAfterOverride): Deleted.
+        (WTF::linkedOnOrAfter): Deleted.
+        * wtf/cocoa/RuntimeApplicationChecksCocoa.h:
+
+2022-04-12  Elliott Williams  <emw@apple.com>
+
+        Reland "[XCBuild] Enable dependency validation by default"
+        https://bugs.webkit.org/show_bug.cgi?id=238901
+        <rdar://problem/91379968>
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/DebugRelease.xcconfig: In open-source builds, disable
+        VALIDATE_DEPENDENCIES when there is no PRODUCT_TYPE (i.e. not building
+        a native target).
+
+2022-04-12  Kimmo Kinnunen  <kkinnunen@apple.com>
+
+        FunctionDispatcher should not be RefCounted
+        https://bugs.webkit.org/show_bug.cgi?id=231940
+
+        Reviewed by Chris Dumez.
+
+        Remove ThreadSafeRefCounted from FunctionDispatcher. There is nothing inherently
+        refcountable about FunctionDispatcher. It is better to put the refcount to the
+        abstraction that needs it.
+
+        This makes it possible to build FunctionDispatchers that are not refcounted. This
+        lets the reader infer more about the API when such a dispatcher is passed to a
+        function. The reader understands that the passed dispatcher would not be kept alive.
+
+        * wtf/FunctionDispatcher.h:
+        * wtf/RunLoop.h:
+        Export ~RunLoop. For some reason this is a requirement on G++, MSVC based compilers (?).
+        This has most likely something to do with the multiple inheritance moving to RunLoop
+        from FunctionDispatcher. ~FunctionDispacher was exported before, and still is.
+        * wtf/WorkQueue.h:
+
+2022-04-11  Don Olmstead  <don.olmstead@sony.com>
+
+        Fix PlayStation build after r292696
+        https://bugs.webkit.org/show_bug.cgi?id=239098
+
+        Unreviewed build fix.
+
+        * wtf/playstation/LanguagePlayStation.cpp:
+        (WTF::platformUserPreferredLanguages):
+
+2022-04-11  Yusuke Suzuki  <ysuzuki@apple.com>
+
+        [JSC] Reduce use of unnecessary cryptographicallyRandom numbers
+        https://bugs.webkit.org/show_bug.cgi?id=239026
+
+        Reviewed by Saam Barati.
+
+        We add createVersion4UUIDStringWeak, which can generate UUID with WeakRandom numbers.
+
+        * wtf/UUID.cpp:
+        (WTF::convertRandomUInt128ToUUIDVersion4):
+        (WTF::generateCryptographicallyRandomUUIDVersion4):
+        (WTF::generateWeakRandomUUIDVersion4):
+        (WTF::UUID::UUID):
+        (WTF::createVersion4UUIDStringWeak):
+        * wtf/UUID.h:
+        * wtf/WeakRandom.h:
+
+2022-04-10  Chris Dumez  <cdumez@apple.com>
+
+        Unreviewed Windows build fix after r292696.
+
+        * wtf/win/LoggingWin.cpp:
+        (WTF::logLevelString):
+
+2022-04-10  Chris Dumez  <cdumez@apple.com>
+
+        Finish porting code base to String::fromLatin1() and make String(const char*) private
+        https://bugs.webkit.org/show_bug.cgi?id=238977
+
+        Reviewed by Darin Adler.
+
+        * wtf/text/WTFString.h:
+        * wtf/unix/LanguageUnix.cpp:
+        (WTF::platformLanguage):
+        * wtf/unix/LoggingUnix.cpp:
+        (WTF::logLevelString):
+
+2022-04-08  Truitt Savell  <tsavell@apple.com>
+
+        Unreviewed, reverting r292586.
+
+        Caused 50+ test failures on Mac wk1
+
+        Reverted changeset:
+
+        "Move long-enabled preferences away from experimental"
+        https://bugs.webkit.org/show_bug.cgi?id=238929
+        https://commits.webkit.org/r292586
+
+2022-04-08  Elliott Williams  <emw@apple.com>
+
+        [Xcode] Avoid targeting 32-bit iOS and Mac architectures
+        https://bugs.webkit.org/show_bug.cgi?id=238971
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/DebugRelease.xcconfig:
+
+2022-04-08  Chris Dumez  <cdumez@apple.com>
+
+        static_pointer_cast<>() may cause some unnecessary ref-counting churn
+        https://bugs.webkit.org/show_bug.cgi?id=238961
+
+        Reviewed by Darin Adler.
+
+        * wtf/RefPtr.h:
+        (WTF::adoptRef):
+        (WTF::static_pointer_cast):
+
+2022-04-08  Elliott Williams  <emw@apple.com>
+
+        Unreviewed, reverting r292591.
+
+        Causing spurious EWS errors
+
+        Reverted changeset:
+
+        "[XCBuild] Enable dependency validation by default"
+        https://bugs.webkit.org/show_bug.cgi?id=238901
+        https://commits.webkit.org/r292591
+
+2022-04-08  Chris Dumez  <cdumez@apple.com>
+
+        Reduce number of StringView to String conversions in JSC
+        https://bugs.webkit.org/show_bug.cgi?id=238911
+
+        Reviewed by Darin Adler.
+
+        Provide a reverseFind(StringView, unsigned) overload on StringView, for consistency
+        with String and to facilitate the converting of code from String to StringView.
+
+        * wtf/text/StringCommon.h:
+        (WTF::reverseFindInner):
+        * wtf/text/StringImpl.cpp:
+        (WTF::reverseFindInner): Deleted.
+        * wtf/text/StringView.cpp:
+        (WTF::StringView::reverseFind const):
+        * wtf/text/StringView.h:
+
+2022-04-08  Keith Miller  <keith_miller@apple.com>
+
+        Broaden TypedArray API fix to all apps not just Bleacher Report
+        https://bugs.webkit.org/show_bug.cgi?id=238955
+
+        Reviewed by Saam Barati.
+
+        * wtf/cocoa/RuntimeApplicationChecksCocoa.h:
+
+2022-04-07  Elliott Williams  <emw@apple.com>
+
+        [XCBuild] Enable dependency validation by default
+        https://bugs.webkit.org/show_bug.cgi?id=238901
+        <rdar://problem/91379968>
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/DebugRelease.xcconfig:
+
+2022-04-07  Sam Sneddon  <gsnedders@apple.com>
+
+        Move long-enabled preferences away from experimental
+        https://bugs.webkit.org/show_bug.cgi?id=238929
+
+        Reviewed by Tim Horton.
+
+        This only moves things which have a simple `default: true` and
+        have since Safari 15's release; there are likely other things
+        which could be moved.
+
+        It does, however, leave GoogleAntiFlickerOptimizationQuirkEnabled
+        as an experimental feature, as this seems something it is more
+        likely a developer may wish to toggle.
+
+        * Scripts/Preferences/WebPreferences.yaml:
+        * Scripts/Preferences/WebPreferencesExperimental.yaml:
+
+2022-04-07  Brent Fulgham  <bfulgham@apple.com>
+
+        [WebKitLegacy] Remove NPAPIPlugInsEnabledForTestingInWebKitLegacy
+        https://bugs.webkit.org/show_bug.cgi?id=238882
+
+        Reviewed by Tim Horton.
+
+        We have completely removed the NPAPI code and no longer run the tests. We no longer need this setting
+        and should remove it to reduce complexity and build time.
+
+        The specific skipped tests will be removed in a follow-up patch.
+
+        * Scripts/Preferences/WebPreferencesInternal.yaml:
+
+2022-04-07  Geza Lore  <glore@igalia.com>
+
+        [JSC][ARMv7] Support proper near calls and JUMP_ISLANDS
+        https://bugs.webkit.org/show_bug.cgi?id=238143
+
+        Reviewed by Yusuke Suzuki.
+
+        Support constructor arguments for FixedVector element initialization.
+
+        * wtf/EmbeddedFixedVector.h:
+        * wtf/FixedVector.h:
+        (WTF::FixedVector::FixedVector):
+        * wtf/PlatformEnable.h:
+        * wtf/TrailingArray.h:
+        (WTF::TrailingArray::TrailingArray):
+        * wtf/Vector.h:
+        (WTF::VectorTypeOperations::initializeWithArgs):
+
+2022-04-06  Chris Dumez  <cdumez@apple.com>
+
+        Start replacing String(const char*) constructor with a String::fromLatin1(const char*) function
+        https://bugs.webkit.org/show_bug.cgi?id=238701
+
+        Reviewed by Geoffrey Garen.
+
+        * wtf/Logger.h:
+        (WTF::LogArgument::toString):
+        * wtf/text/WTFString.cpp:
+        (string):
+        * wtf/text/WTFString.h:
+
+2022-04-06  Chris Dumez  <cdumez@apple.com>
+
+        Reduce number of conversions from StringView to String
+        https://bugs.webkit.org/show_bug.cgi?id=238841
+
+        Reviewed by Geoffrey Garen.
+
+        * wtf/URL.cpp:
+        (WTF::defaultPortForProtocol):
+        * wtf/text/StringHash.h:
+        (WTF::StringViewHashTranslator::hash):
+        (WTF::StringViewHashTranslator::equal):
+
+2022-04-05  Chris Dumez  <cdumez@apple.com>
+
+        Mark String(const char*) constructor as explicit
+        https://bugs.webkit.org/show_bug.cgi?id=238693
+
+        Reviewed by Geoffrey Garen.
+
+        * wtf/FileSystem.cpp:
+        (WTF::FileSystemImpl::filesHaveSameVolume):
+        * wtf/FileSystem.h:
+        * wtf/glib/FileSystemGlib.cpp:
+        (WTF::FileSystemImpl::getFileDeviceId):
+        * wtf/posix/FileSystemPOSIX.cpp:
+        (WTF::FileSystemImpl::getFileDeviceId):
+        * wtf/text/WTFString.h:
+        * wtf/unix/LoggingUnix.cpp:
+        (WTF::logLevelString):
+        * wtf/win/FileSystemWin.cpp:
+        (WTF::FileSystemImpl::getFileDeviceId):
+        * wtf/win/LanguageWin.cpp:
+        (WTF::platformLanguage):
+
+2022-04-05  Stephan Szabo  <stephan.szabo@sony.com>
+
+        [PlayStation] Build fix after r292389
+        https://bugs.webkit.org/show_bug.cgi?id=238816
+
+        Unreviewed build fix
+
+        Add UnixFileDescriptor.h to PlatformPlayStation.cmake
+        as per the changes to PlatformGTK and PlatformWPE.
+
+        * wtf/PlatformPlayStation.cmake:
+
+2022-04-05  Zan Dobersek  <zdobersek@igalia.com>
+
+        [Unix] Add UnixFileDescriptor, use it in IPC::Semaphore
+        https://bugs.webkit.org/show_bug.cgi?id=238726
+
+        Reviewed by Carlos Garcia Campos.
+
+        Add the UnixFileDescriptor class, intended as a wrapper for a file
+        descriptor integer. Construction is a matter of adopting or duplicating
+        the passed-in file descriptor value. UnixFileDescriptor objects can be
+        moved around and explicitly duplicated, and the contained fd value can
+        be released.
+
+        The wrapper class makes it easier to handle file descriptor values when
+        embedded into other types as member variables. It also allows to specify
+        custom encoding and decoding in the WebKit IPC infrastructure.
+
+        * wtf/PlatformGTK.cmake:
+        * wtf/PlatformWPE.cmake:
+        * wtf/unix/UnixFileDescriptor.h: Added.
+        (WTF::UnixFileDescriptor::UnixFileDescriptor):
+        (WTF::UnixFileDescriptor::operator=):
+        (WTF::UnixFileDescriptor::~UnixFileDescriptor):
+        (WTF::UnixFileDescriptor::operator bool const):
+        (WTF::UnixFileDescriptor::value const):
+        (WTF::UnixFileDescriptor::duplicate const):
+
+2022-04-04  Tim Horton  <timothy_horton@apple.com>
+
+        Remove GPU process system feature flags
+        https://bugs.webkit.org/show_bug.cgi?id=238766
+
+        Reviewed by Simon Fraser.
+
+        * Scripts/Preferences/WebPreferencesExperimental.yaml:
+        * Scripts/Preferences/WebPreferencesInternal.yaml:
+
+2022-04-04  Tim Horton  <timothy_horton@apple.com>
+
+        Remove VP8/9 and WebM-related system feature flags
+        https://bugs.webkit.org/show_bug.cgi?id=238757
+
+        Reviewed by Eric Carlson.
+
+        * Scripts/Preferences/WebPreferences.yaml:
+        * Scripts/Preferences/WebPreferencesExperimental.yaml:
+        Demote these to standard preferences, and stop using system feature flags to control their defaults.
+
+2022-04-04  Tim Horton  <timothy_horton@apple.com>
+
+        Remove the 'sw_vp9_decoder_on_battery' system feature flag
+        https://bugs.webkit.org/show_bug.cgi?id=238761
+
+        Reviewed by Eric Carlson.
+
+        * Scripts/Preferences/WebPreferencesExperimental.yaml:
+        Switch this to a standard experimental feature.
+        Also, remove the WebKitLegacy case, as it is not used there.
+
+2022-04-04  Tim Horton  <timothy_horton@apple.com>
+
+        Remove the 'async frame and overflow scrolling' system feature flag
+        https://bugs.webkit.org/show_bug.cgi?id=238758
+
+        Reviewed by Simon Fraser.
+
+        * Scripts/Preferences/WebPreferencesInternal.yaml:
+
+2022-04-04  Tim Horton  <timothy_horton@apple.com>
+
+        Remove the incremental_pdf system feature flag
+        https://bugs.webkit.org/show_bug.cgi?id=238754
+
+        Reviewed by Wenson Hsieh.
+
+        * Scripts/Preferences/WebPreferences.yaml:
+        * Scripts/Preferences/WebPreferencesExperimental.yaml:
+        Demote incremental PDF rendering from a developer-exposed experimental feature
+        to a standard web preference now that it's been on and shipping for a while.
+
+2022-04-04  Tim Horton  <timothy_horton@apple.com>
+
+        Remove the 'RB_full_manage_WK_jetsam' system feature flag and simplify adjacent logic
+        https://bugs.webkit.org/show_bug.cgi?id=238760
+
+        Reviewed by Chris Dumez.
+
+        * wtf/PlatformHave.h:
+
+2022-04-04  Chris Dumez  <cdumez@apple.com>
+
+        Drop mostly unused String(const LChar*) constructor
+        https://bugs.webkit.org/show_bug.cgi?id=238716
+
+        Reviewed by Geoffrey Garen.
+
+        * wtf/text/WTFString.cpp:
+        * wtf/text/WTFString.h:
+
+2022-04-04  Cathie Chen  <cathiechen@igalia.com>
+
+        REGRESSION(r291797): [wk1] 5 contain-intrinsic-size* tests are constant text failures
+        https://bugs.webkit.org/show_bug.cgi?id=238584
+
+        Reviewed by Simon Fraser.
+
+        Enable ResizeObserver for legacy WebKit.
+
+        * Scripts/Preferences/WebPreferencesExperimental.yaml:
+
+2022-04-03  Tim Horton  <timothy_horton@apple.com>
+
+        _WKDataTask doesn't work in macCatalyst
+        https://bugs.webkit.org/show_bug.cgi?id=238655
+
+        Reviewed by Alexey Proskuryakov.
+
+        * wtf/PlatformHave.h:
+        Enable HAVE(NSURLSESSION_TASK_DELEGATE) on macCatalyst.
+        Drive-by enable a few other things on macCatalyst.
+        Remove and simplify some always-true version checks.
+        Leave some comments about ones I'm not sure about.
+
+2022-04-02  Chris Dumez  <cdumez@apple.com>
+
+        Add default constructor to ASCIILiteral
+        https://bugs.webkit.org/show_bug.cgi?id=238700
+
+        Reviewed by Geoffrey Garen.
+
+        Add default constructor to ASCIILiteral, to replace the more verbose ASCIILiteral::null().
+
+        * wtf/cocoa/ResourceUsageCocoa.cpp:
+        (WTF::displayNameForVMTag):
+        * wtf/text/ASCIILiteral.h:
+
+2022-04-01  Chris Dumez  <cdumez@apple.com>
+
+        Unreviewed, drop unnecessary WTF_EXPORT_PRIVATE on String(ASCIILiteral)
+
+        This constructor was recently inlined.
+
+        * wtf/text/WTFString.h:
+
+2022-03-31  Chris Dumez  <cdumez@apple.com>
+
+        Prepare WebKit/ & WebKitLegacy/ for making the String(const char*) constructor explicit
+        https://bugs.webkit.org/show_bug.cgi?id=238525
+
+        Reviewed by Darin Adler.
+
+        * wtf/FileSystem.h:
+        (WTF::FileSystemImpl::openTemporaryFile):
+        * wtf/cocoa/FileSystemCocoa.mm:
+        (WTF::FileSystemImpl::openTemporaryFile):
+        * wtf/glib/FileSystemGlib.cpp:
+        (WTF::FileSystemImpl::openTemporaryFile):
+        * wtf/posix/FileSystemPOSIX.cpp:
+        (WTF::FileSystemImpl::openTemporaryFile):
+        * wtf/win/FileSystemWin.cpp:
+        (WTF::FileSystemImpl::openTemporaryFile):
+
+2022-03-31  Alex Christensen  <achristensen@webkit.org>
+
+        Remove EXPERIMENTAL_FEATURES flag use on Cocoa platforms
+        https://bugs.webkit.org/show_bug.cgi?id=238565
+
+        Reviewed by Darin Adler.
+
+        It was used to enable some experimental features in places like Safari Technology Preview,
+        but we don't want Safari Technology Preview to be this fundamentally different than WebKit
+        everywhere else.  This removes the flag and treats code accordingly as if it were always false.
+
+        * Scripts/Preferences/WebPreferencesExperimental.yaml:
+        * Scripts/Preferences/WebPreferencesInternal.yaml:
+
+2022-03-31  Per Arne Vollan  <pvollan@apple.com>
+
+        Add runtime flag for blocking IOKit resources in the WebContent process' sandbox
+        https://bugs.webkit.org/show_bug.cgi?id=238528
+
+        Reviewed by Simon Fraser.
+
+        * Scripts/Preferences/WebPreferencesInternal.yaml:
+
+2022-03-30  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [Cocoa] Link WebCore with WebGPU.framework 🎉
+        https://bugs.webkit.org/show_bug.cgi?id=236751
+
+        Reviewed by Dean Jackson.
+
+        Apple's build system has been configured, so it's now safe to
+        link WebCore.framework and WebGPU.framework.
+
+        We correctly handle the situation where the framework isn't present
+        at runtime.
+
+        * wtf/PlatformHave.h:
+
+2022-03-30  Chris Dumez  <cdumez@apple.com>
+
+        Add HashTranslator for ASCIILiteral for faster lookup in HashMaps / HashSets
+        https://bugs.webkit.org/show_bug.cgi?id=238521
+
+        Reviewed by Geoffrey Garen.
+
+        Add HashTranslator for ASCIILiteral for faster lookup in HashMaps / HashSets using an ASCIILiteral,
+        without the need for allocating a String.
+
+        * wtf/text/StringImpl.h:
+        * wtf/text/WTFString.h:
+        (WTF::HashTranslatorASCIILiteral::hash):
+        (WTF::HashTranslatorASCIILiteral::equal):
+        (WTF::HashTranslatorASCIILiteral::translate):
+
+2022-03-30  Youenn Fablet  <youenn@apple.com>
+
+        Implement ServiceWorker WindowClient.ancestorOrigins
+        https://bugs.webkit.org/show_bug.cgi?id=238441
+
+        Reviewed by Chris Dumez.
+
+        Update UniqueRef and HashTraits to not use a private constructor when creating empty values.
+
+        * wtf/HashTraits.h:
+        * wtf/UniqueRef.h:
+
+2022-03-28  Sihui Liu  <sihui_liu@apple.com>
+
+        Disable custom storage paths for IndexedDB and LocalStorage by default
+        https://bugs.webkit.org/show_bug.cgi?id=236977
+        <rdar://problem/89559929>
+
+        Reviewed by Geoffrey Garen.
+
+        Add an internal debug feature for using genreal directory for storage.
+
+        * Scripts/Preferences/WebPreferencesInternal.yaml:
+
+2022-03-28  Chris Dumez  <cdumez@apple.com>
+
+        Prepare WebCore for making the String(const char*) constructor explicit
+        https://bugs.webkit.org/show_bug.cgi?id=238408
+
+        Reviewed by Geoff Garen.
+
+        Prepare WebCore for making the String(const char*) constructor explicit.
+        Making this constructor explicit helps findings cases where a String is constructed
+        from a literal without the ""_s suffix.
+
+        * wtf/text/WTFString.h:
+        (WTF::equalIgnoringASCIICase):
+
+2022-03-28  Brady Eidson  <beidson@apple.com>
+
+        Support ServiceWorkerClients.openWindow.
+        <rdar://90616651> and https://bugs.webkit.org/show_bug.cgi?id=238400
+
+        Reviewed by Youenn Fablet.
+
+        * wtf/HashTable.h:
+        (WTF::KeyTraits>::inlineLookup): Relax this value size requirement for now.
+        The required refactoring is best left as a seperate task with a seperate patch.
+
+2022-03-28  Chris Dumez  <cdumez@apple.com>
+
+        Use StringView for Yarr / RegularExpression parsing
+        https://bugs.webkit.org/show_bug.cgi?id=238420
+
+        Reviewed by Sam Weinig.
+
+        Add convenience characters() templated function to StringView, to match String and StringImpl.
+
+        * wtf/text/StringView.h:
+        (WTF::StringView::characters<LChar> const):
+        (WTF::StringView::characters<UChar> const):
+
 2022-03-27  Alexander Mikhaylenko  <alexm@gnome.org>
 
         [GTK][WPE] Support CSS accent-color

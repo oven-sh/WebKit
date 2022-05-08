@@ -79,12 +79,30 @@ static std::atomic<bool> hasInitializedAppBoundDomains = false;
 static std::atomic<bool> keyExists = false;
 #endif
 
+// FIXME: we should not read the values from NSUserDefaults; we should let clients who set the values to pass them via configuration.
+static bool internalFeatureEnabled(const String& key, bool defaultValue = false)
+{
+    auto defaultsKey = adoptNS([[NSString alloc] initWithFormat:@"InternalDebug%@", static_cast<NSString *>(key)]);
+    if ([[NSUserDefaults standardUserDefaults] objectForKey:defaultsKey.get()] != nil)
+        return [[NSUserDefaults standardUserDefaults] boolForKey:defaultsKey.get()];
+
+    return defaultValue;
+}
+
+static bool experimentalFeatureEnabled(const String& key, bool defaultValue = false)
+{
+    auto defaultsKey = adoptNS([[NSString alloc] initWithFormat:@"WebKitExperimental%@", static_cast<NSString *>(key)]);
+    if ([[NSUserDefaults standardUserDefaults] objectForKey:defaultsKey.get()] != nil)
+        return [[NSUserDefaults standardUserDefaults] boolForKey:defaultsKey.get()];
+
+    return defaultValue;
+}
+
 #if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
 WebCore::ThirdPartyCookieBlockingMode WebsiteDataStore::thirdPartyCookieBlockingMode() const
 {
     if (!m_thirdPartyCookieBlockingMode) {
-        NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
-        if ([defaults boolForKey:[NSString stringWithFormat:@"Experimental%@", WebPreferencesKey::isThirdPartyCookieBlockingDisabledKey().createCFString().get()]])
+        if (experimentalFeatureEnabled(WebPreferencesKey::isThirdPartyCookieBlockingDisabledKey()))
             m_thirdPartyCookieBlockingMode = WebCore::ThirdPartyCookieBlockingMode::AllOnSitesWithoutUserInteraction;
         else
             m_thirdPartyCookieBlockingMode = WebCore::ThirdPartyCookieBlockingMode::All;
@@ -92,17 +110,6 @@ WebCore::ThirdPartyCookieBlockingMode WebsiteDataStore::thirdPartyCookieBlocking
     return *m_thirdPartyCookieBlockingMode;
 }
 #endif
-
-static bool experimentalFeatureEnabled(const String& key)
-{
-#if PLATFORM(MAC)
-    constexpr NSString *format = @"Experimental%@";
-#else
-    constexpr NSString *format = @"WebKitExperimental%@";
-#endif
-    auto defaultsKey = adoptNS([[NSString alloc] initWithFormat:format, static_cast<NSString *>(key)]);
-    return [[NSUserDefaults standardUserDefaults] boolForKey:defaultsKey.get()];
-}
 
 void WebsiteDataStore::platformSetNetworkParameters(WebsiteDataStoreParameters& parameters)
 {
@@ -117,10 +124,10 @@ void WebsiteDataStore::platformSetNetworkParameters(WebsiteDataStoreParameters& 
 #if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
     enableResourceLoadStatisticsDebugMode = [defaults boolForKey:@"ITPDebugMode"];
 
-    if ([defaults boolForKey:[NSString stringWithFormat:@"Experimental%@", WebPreferencesKey::isSameSiteStrictEnforcementEnabledKey().createCFString().get()]])
+    if (experimentalFeatureEnabled(WebPreferencesKey::isSameSiteStrictEnforcementEnabledKey()))
         sameSiteStrictEnforcementEnabled = WebCore::SameSiteStrictEnforcementEnabled::Yes;
 
-    if ([defaults boolForKey:[NSString stringWithFormat:@"Experimental%@", WebPreferencesKey::isFirstPartyWebsiteDataRemovalDisabledKey().createCFString().get()]])
+    if (experimentalFeatureEnabled(WebPreferencesKey::isFirstPartyWebsiteDataRemovalDisabledKey()))
         firstPartyWebsiteDataRemovalMode = WebCore::FirstPartyWebsiteDataRemovalMode::None;
     else {
         if ([defaults boolForKey:[NSString stringWithFormat:@"InternalDebug%@", WebPreferencesKey::isFirstPartyWebsiteDataRemovalReproTestingEnabledKey().createCFString().get()]])
@@ -265,26 +272,26 @@ String WebsiteDataStore::defaultApplicationCacheDirectory()
     if (WebCore::IOSApplication::isMobileSafari() || WebCore::IOSApplication::isWebBookmarksD()) {
         NSString *cachePath = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Caches/com.apple.WebAppCache"];
 
-        return WebKit::stringByResolvingSymlinksInPath(cachePath.stringByStandardizingPath);
+        return WebKit::stringByResolvingSymlinksInPath(String { cachePath.stringByStandardizingPath });
     }
 #endif
 
-    return cacheDirectoryFileSystemRepresentation("OfflineWebApplicationCache");
+    return cacheDirectoryFileSystemRepresentation("OfflineWebApplicationCache"_s);
 }
 
 String WebsiteDataStore::defaultCacheStorageDirectory()
 {
-    return cacheDirectoryFileSystemRepresentation("CacheStorage");
+    return cacheDirectoryFileSystemRepresentation("CacheStorage"_s);
 }
 
 String WebsiteDataStore::defaultGeneralStorageDirectory()
 {
-    auto directory = websiteDataDirectoryFileSystemRepresentation("Default");
+    auto directory = websiteDataDirectoryFileSystemRepresentation("Default"_s);
 
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         // This is the old storage directory, and there might be files left here.
-        auto oldDirectory = cacheDirectoryFileSystemRepresentation("Storage", ShouldCreateDirectory::No);
+        auto oldDirectory = cacheDirectoryFileSystemRepresentation("Storage"_s, ShouldCreateDirectory::No);
         NSFileManager *fileManager = [NSFileManager defaultManager];
         NSArray *files = [fileManager contentsOfDirectoryAtPath:oldDirectory error:0];
         if (files) {
@@ -305,63 +312,63 @@ String WebsiteDataStore::defaultGeneralStorageDirectory()
 
 String WebsiteDataStore::defaultNetworkCacheDirectory()
 {
-    return cacheDirectoryFileSystemRepresentation("NetworkCache");
+    return cacheDirectoryFileSystemRepresentation("NetworkCache"_s);
 }
 
 String WebsiteDataStore::defaultAlternativeServicesDirectory()
 {
-    return cacheDirectoryFileSystemRepresentation("AlternativeServices", ShouldCreateDirectory::No);
+    return cacheDirectoryFileSystemRepresentation("AlternativeServices"_s, ShouldCreateDirectory::No);
 }
 
 String WebsiteDataStore::defaultMediaCacheDirectory()
 {
-    return tempDirectoryFileSystemRepresentation("MediaCache");
+    return tempDirectoryFileSystemRepresentation("MediaCache"_s);
 }
 
 String WebsiteDataStore::defaultIndexedDBDatabaseDirectory()
 {
-    return websiteDataDirectoryFileSystemRepresentation("IndexedDB");
+    return websiteDataDirectoryFileSystemRepresentation("IndexedDB"_s);
 }
 
 String WebsiteDataStore::defaultServiceWorkerRegistrationDirectory()
 {
-    return cacheDirectoryFileSystemRepresentation("ServiceWorkers");
+    return cacheDirectoryFileSystemRepresentation("ServiceWorkers"_s);
 }
 
 String WebsiteDataStore::defaultLocalStorageDirectory()
 {
-    return websiteDataDirectoryFileSystemRepresentation("LocalStorage");
+    return websiteDataDirectoryFileSystemRepresentation("LocalStorage"_s);
 }
 
 String WebsiteDataStore::defaultMediaKeysStorageDirectory()
 {
-    return websiteDataDirectoryFileSystemRepresentation("MediaKeys");
+    return websiteDataDirectoryFileSystemRepresentation("MediaKeys"_s);
 }
 
 String WebsiteDataStore::defaultDeviceIdHashSaltsStorageDirectory()
 {
-    return websiteDataDirectoryFileSystemRepresentation("DeviceIdHashSalts");
+    return websiteDataDirectoryFileSystemRepresentation("DeviceIdHashSalts"_s);
 }
 
 String WebsiteDataStore::defaultWebSQLDatabaseDirectory()
 {
-    return websiteDataDirectoryFileSystemRepresentation("WebSQL");
+    return websiteDataDirectoryFileSystemRepresentation("WebSQL"_s);
 }
 
 String WebsiteDataStore::defaultResourceLoadStatisticsDirectory()
 {
-    return websiteDataDirectoryFileSystemRepresentation("ResourceLoadStatistics");
+    return websiteDataDirectoryFileSystemRepresentation("ResourceLoadStatistics"_s);
 }
 
 String WebsiteDataStore::defaultJavaScriptConfigurationDirectory()
 {
-    return tempDirectoryFileSystemRepresentation("JavaScriptCoreDebug", ShouldCreateDirectory::No);
+    return tempDirectoryFileSystemRepresentation("JavaScriptCoreDebug"_s, ShouldCreateDirectory::No);
 }
 
 #if ENABLE(ARKIT_INLINE_PREVIEW)
 String WebsiteDataStore::defaultModelElementCacheDirectory()
 {
-    return tempDirectoryFileSystemRepresentation("ModelElement", ShouldCreateDirectory::No);
+    return tempDirectoryFileSystemRepresentation("ModelElement"_s, ShouldCreateDirectory::No);
 }
 #endif
 
@@ -391,7 +398,7 @@ String WebsiteDataStore::tempDirectoryFileSystemRepresentation(const String& dir
         && (![[NSFileManager defaultManager] createDirectoryAtURL:url withIntermediateDirectories:YES attributes:nil error:nullptr]))
         LOG_ERROR("Failed to create directory %@", url);
     
-    return url.absoluteURL.path.fileSystemRepresentation;
+    return url.absoluteURL.path;
 }
 
 String WebsiteDataStore::cacheDirectoryFileSystemRepresentation(const String& directoryName, ShouldCreateDirectory shouldCreateDirectory)
@@ -419,7 +426,7 @@ String WebsiteDataStore::cacheDirectoryFileSystemRepresentation(const String& di
         && ![[NSFileManager defaultManager] createDirectoryAtURL:url withIntermediateDirectories:YES attributes:nil error:nullptr])
         LOG_ERROR("Failed to create directory %@", url);
 
-    return url.absoluteURL.path.fileSystemRepresentation;
+    return url.absoluteURL.path;
 }
 
 String WebsiteDataStore::websiteDataDirectoryFileSystemRepresentation(const String& directoryName)
@@ -448,7 +455,7 @@ String WebsiteDataStore::websiteDataDirectoryFileSystemRepresentation(const Stri
     if (![[NSFileManager defaultManager] createDirectoryAtURL:url withIntermediateDirectories:YES attributes:nil error:nullptr])
         LOG_ERROR("Failed to create directory %@", url);
 
-    return url.absoluteURL.path.fileSystemRepresentation;
+    return url.absoluteURL.path;
 }
 
 #if ENABLE(APP_BOUND_DOMAINS)
@@ -619,8 +626,7 @@ bool WebsiteDataStore::networkProcessHasEntitlementForTesting(const String& enti
 
 bool WebsiteDataStore::defaultShouldUseCustomStoragePaths()
 {
-    static const bool useGeneralStorageDirectory = isFeatureFlagEnabled("general_directory_for_storage"_s);
-    return !useGeneralStorageDirectory;
+    return !internalFeatureEnabled(WebPreferencesKey::useGeneralDirectoryForStorageKey(), true);
 }
 
 }

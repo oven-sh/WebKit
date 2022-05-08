@@ -24,15 +24,16 @@
 from buildbot.process import factory
 from buildbot.steps import trigger
 
-from steps import (ApplyPatch, ApplyWatchList, CheckOutPullRequest, CheckOutSource, CheckOutSpecificRevision, CheckChangeRelevance,
+from steps import (AddAuthorToCommitMessage, AddReviewerToCommitMessage, AddReviewerToChangeLog, ApplyPatch, ApplyWatchList, Canonicalize,
+                   CheckOutPullRequest, CheckOutSource, CheckOutSpecificRevision, CheckChangeRelevance,
                    CheckPatchStatusOnEWSQueues, CheckStyle, CleanGitRepo, CompileJSC, CompileWebKit, ConfigureBuild, CreateLocalGITCommit,
-                   DownloadBuiltProduct, ExtractBuiltProduct, FetchBranches, FindModifiedChangeLogs, FindModifiedLayoutTests,
+                   DownloadBuiltProduct, ExtractBuiltProduct, FetchBranches, FindModifiedChangeLogs, FindModifiedLayoutTests, GitSvnFetch,
                    InstallGtkDependencies, InstallWpeDependencies, KillOldProcesses, PrintConfiguration, PushCommitToWebKitRepo,
                    RunAPITests, RunBindingsTests, RunBuildWebKitOrgUnitTests, RunBuildbotCheckConfigForBuildWebKit, RunBuildbotCheckConfigForEWS,
                    RunEWSUnitTests, RunResultsdbpyTests, RunJavaScriptCoreTests, RunWebKit1Tests, RunWebKitPerlTests, RunWebKitPyPython2Tests,
                    RunWebKitPyPython3Tests, RunWebKitTests, RunWebKitTestsRedTree, RunWebKitTestsInStressMode, RunWebKitTestsInStressGuardmallocMode,
                    SetBuildSummary, ShowIdentifier, TriggerCrashLogSubmission, UpdateWorkingDirectory,
-                   ValidateChange, ValidateChangeLogAndReviewer, ValidateCommitterAndReviewer, WaitForCrashCollection,
+                   ValidateCommitMessage, ValidateChange, ValidateChangeLogAndReviewer, ValidateCommitterAndReviewer, WaitForCrashCollection,
                    InstallBuiltProduct, VerifyGitHubIntegrity, ValidateSquashed)
 
 
@@ -316,18 +317,48 @@ class CommitQueueFactory(factory.BuildFactory):
         self.addStep(SetBuildSummary())
 
 
-class MergeQueueFactory(factory.BuildFactory):
+class MergeQueueFactoryBase(factory.BuildFactory):
     def __init__(self, platform, configuration=None, architectures=None, additionalArguments=None, **kwargs):
-        factory.BuildFactory.__init__(self)
+        super(MergeQueueFactoryBase, self).__init__()
         self.addStep(ConfigureBuild(platform=platform, configuration=configuration, architectures=architectures, buildOnly=False, triggers=None, remotes=None, additionalArguments=additionalArguments))
         self.addStep(ValidateChange(verifyMergeQueue=True, verifyNoDraftForMergeQueue=True))
         self.addStep(ValidateCommitterAndReviewer())
         self.addStep(PrintConfiguration())
         self.addStep(CleanGitRepo())
         self.addStep(CheckOutSource())
+        self.addStep(GitSvnFetch())  # FIXME: Remove when migrating to pure git
         self.addStep(FetchBranches())
         self.addStep(ShowIdentifier())
         self.addStep(VerifyGitHubIntegrity())
         self.addStep(UpdateWorkingDirectory())
         self.addStep(CheckOutPullRequest())
         self.addStep(ValidateSquashed())
+        self.addStep(AddReviewerToCommitMessage())
+        self.addStep(AddAuthorToCommitMessage())
+        self.addStep(AddReviewerToChangeLog())
+        self.addStep(ValidateCommitMessage())
+        self.addStep(ValidateChangeLogAndReviewer())
+
+
+class MergeQueueFactory(MergeQueueFactoryBase):
+    def __init__(self, platform, **kwargs):
+        super(MergeQueueFactory, self).__init__(platform, **kwargs)
+
+        self.addStep(KillOldProcesses())
+        self.addStep(CompileWebKit(skipUpload=True))
+        self.addStep(KillOldProcesses())
+
+        self.addStep(ValidateChange(verifyMergeQueue=True, verifyNoDraftForMergeQueue=True))
+        self.addStep(Canonicalize())
+        self.addStep(PushCommitToWebKitRepo())
+        self.addStep(SetBuildSummary())
+
+
+class UnsafeMergeQueueFactory(MergeQueueFactoryBase):
+    def __init__(self, platform, **kwargs):
+        super(UnsafeMergeQueueFactory, self).__init__(platform, **kwargs)
+
+        self.addStep(ValidateChange(verifyMergeQueue=True, verifyNoDraftForMergeQueue=True))
+        self.addStep(Canonicalize())
+        self.addStep(PushCommitToWebKitRepo())
+        self.addStep(SetBuildSummary())

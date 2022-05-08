@@ -84,7 +84,7 @@ PARALLEL_REMOTE_WRAPPER_MARK_BEGIN = "5d65329bd1a3"
 PARALLEL_REMOTE_WRAPPER_MARK_END = "a9aea5c3b843"
 PARALLEL_REMOTE_STATE_LOST_MARKER = "709fb7a77c45231918eb118a"
 ITERATION_LIMITS = OpenStruct.new(:infraIterationsFloor => 3,
-                                  :iterationsCeiling => 10)
+                                  :iterationsCeiling => 50)
 
 REMOTE_TIMEOUT = 120
 SSH_OPTIONS_DEFAULT = [
@@ -623,7 +623,7 @@ BASE_OPTIONS = ["--useFTLJIT=false", "--useFunctionDotArguments=true", "--valida
 EAGER_OPTIONS = ["--thresholdForJITAfterWarmUp=10", "--thresholdForJITSoon=10", "--thresholdForOptimizeAfterWarmUp=20", "--thresholdForOptimizeAfterLongWarmUp=20", "--thresholdForOptimizeSoon=20", "--thresholdForFTLOptimizeAfterWarmUp=20", "--thresholdForFTLOptimizeSoon=20", "--thresholdForOMGOptimizeAfterWarmUp=20", "--thresholdForOMGOptimizeSoon=20", "--maximumEvalCacheableSourceLength=150000", "--useEagerCodeBlockJettisonTiming=true", "--repatchBufferingCountdown=0"]
 # NOTE: Tests rely on this using scribbleFreeCells.
 NO_CJIT_OPTIONS = ["--useConcurrentJIT=false", "--thresholdForJITAfterWarmUp=100", "--scribbleFreeCells=true"]
-B3O1_OPTIONS = ["--defaultB3OptLevel=1", "--useDataICInOptimizingJIT=1"]
+B3O1_OPTIONS = ["--defaultB3OptLevel=1", "--useDataICInOptimizingJIT=1", "--forceUnlinkedDFG=1"]
 B3O0_OPTIONS = ["--maxDFGNodesInBasicBlockForPreciseAnalysis=100", "--defaultB3OptLevel=0"]
 FTL_OPTIONS = ["--useFTLJIT=true"]
 FORCE_LLINT_EXIT_OPTIONS = ["--forceOSRExitToLLInt=true"]
@@ -1118,6 +1118,7 @@ BASE_MODES = [
             "--useSamplingProfiler=true",
             "--airForceIRCAllocator=true",
             "--useDataICInOptimizingJIT=true",
+            "--forceUnlinkedDFG=true",
         ] +
         FTL_OPTIONS +
         NO_CJIT_OPTIONS
@@ -1318,6 +1319,7 @@ BASE_MODES = [
             "--validateGraphAtEachPhase=true",
             "--useSourceProviderCache=false",
             "--useRandomizingExecutableIslandAllocation=true",
+            "--useLLIntICs=false",
         ] +
         NO_CJIT_OPTIONS
     ],
@@ -2749,8 +2751,11 @@ STATUS_RE = /^[.]\/#{STATUS_FILE_PREFIX}(?<index>\d+)\s(?<runId>\h+)\s(?<exitCod
 def processStatusLine(map, line)
     md = STATUS_RE.match(line)
     if md.nil?
-        $stderr.puts("Could not parse line `#{line}`")
-        exit(1)
+        # Malfromed lines can legitimately occur when the remote fails at an
+        # inopportune moment. Ignore those lines but print them out, so that we
+        # can easily diagnose actual issues with the remote output.
+        $stderr.puts("Ignoring malformed status line `#{line}`")
+        return
     end
     index = md[:index].to_i
     runId = md[:runId]
@@ -2812,7 +2817,8 @@ def detectFailures(statusMap={})
     end
 
     evaluator = TestResultEvaluatorFinal.new($runlist, statusMap)
-    evaluator.visit!
+    evaluator.visit!({:treatIncompleteAsFailed => true})
+    evaluator.validate
 
     if evaluator.noresult > 0
         $stderr.puts("Could not get the exit status for #{evaluator.noresult} tests")
@@ -3050,8 +3056,22 @@ if test "x$1" != "x--"; then
 fi
 shift
 EOF
+        extraOptions = [
+            # Many of our jobs are short, ensure GNU parallel won't need to set
+            # up an ssh connection from scratch.
+            "ControlPath=./%C",
+            "ControlMaster=auto",
+            "ControlPersist=10m",
+            # Treat remote boards as volatile. Don't check the host keys, don't
+            # save them locally.
+            "StrictHostKeyChecking=no",
+            "UserKnownHostsFile=/dev/null"
+        ].collect { |opt|
+            ["-o", opt]
+        }.flatten
+        sshOptions = (SSH_OPTIONS_DEFAULT + extraOptions).join(" ")
         wrapper.puts(head +
-                     "echo \"$@\" | ssh -o ControlPath=./%C -o ControlMaster=auto -o ControlPersist=10m -o NoHostAuthenticationForLocalhost=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p \"$remoteport\" -l \"$remoteuser\" -o RemoteCommand=\"if test -d '$remotedir'; then cd '$remotedir'; else echo '#{PARALLEL_REMOTE_WRAPPER_MARK_BEGIN}${remotehost}#{PARALLEL_REMOTE_WRAPPER_MARK_END}'; false; fi && sh -s\" \"$remotehost\""
+                     "echo \"$@\" | ssh #{sshOptions} -p \"$remoteport\" -l \"$remoteuser\" -o RemoteCommand=\"if test -d '$remotedir'; then cd '$remotedir'; else echo '#{PARALLEL_REMOTE_WRAPPER_MARK_BEGIN}${remotehost}#{PARALLEL_REMOTE_WRAPPER_MARK_END}'; false; fi && sh -s\" \"$remotehost\""
         )
         FileUtils.chmod("ugo=rx", wrapper.path)
         wrapper.close # Avoid ETXTBUSY

@@ -365,14 +365,19 @@ bool PlatformMediaSession::canProduceAudio() const
     return m_client.canProduceAudio();
 }
 
+bool PlatformMediaSession::hasMediaStreamSource() const
+{
+    return m_client.hasMediaStreamSource();
+}
+
 void PlatformMediaSession::canProduceAudioChanged()
 {
     PlatformMediaSessionManager::sharedManager().sessionCanProduceAudioChanged();
 }
 
-void PlatformMediaSession::clientCharacteristicsChanged()
+void PlatformMediaSession::clientCharacteristicsChanged(bool positionChanged)
 {
-    PlatformMediaSessionManager::sharedManager().clientCharacteristicsChanged(*this);
+    PlatformMediaSessionManager::sharedManager().clientCharacteristicsChanged(*this, positionChanged);
 }
 
 static inline bool isPlayingAudio(PlatformMediaSession::MediaType mediaType)

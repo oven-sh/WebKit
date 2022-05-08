@@ -1017,7 +1017,7 @@ bool ArgumentCoder<Credential>::decode(Decoder& decoder, Credential& credential)
 
 static void encodeImage(Encoder& encoder, Image& image)
 {
-    RefPtr<ShareableBitmap> bitmap = ShareableBitmap::createShareable(IntSize(image.size()), { });
+    RefPtr<ShareableBitmap> bitmap = ShareableBitmap::create(IntSize(image.size()), { });
     auto graphicsContext = bitmap->createGraphicsContext();
     encoder << !!graphicsContext;
     if (!graphicsContext)
@@ -3219,7 +3219,7 @@ void ArgumentCoder<WebCore::CDMInstanceSession::Message>::encode(Encoder& encode
 {
     encoder << message.first;
 
-    RefPtr<FragmentedSharedBuffer> messageData = message.second.copyRef();
+    RefPtr<SharedBuffer> messageData = message.second.copyRef();
     encoder << messageData;
 }
 
@@ -3229,7 +3229,7 @@ std::optional<WebCore::CDMInstanceSession::Message>  ArgumentCoder<WebCore::CDMI
     if (!decoder.decode(type))
         return std::nullopt;
 
-    RefPtr<FragmentedSharedBuffer> buffer;
+    RefPtr<SharedBuffer> buffer;
     if (!decoder.decode(buffer) || !buffer)
         return std::nullopt;
 
@@ -3290,5 +3290,27 @@ std::optional<TextRecognitionDataDetector> ArgumentCoder<TextRecognitionDataDete
 }
 
 #endif // ENABLE(IMAGE_ANALYSIS) && ENABLE(DATA_DETECTION)
+
+#if USE(UNIX_DOMAIN_SOCKETS)
+
+void ArgumentCoder<UnixFileDescriptor>::encode(Encoder& encoder, const UnixFileDescriptor& fd)
+{
+    encoder.addAttachment(Attachment(fd.duplicate()));
+}
+
+void ArgumentCoder<UnixFileDescriptor>::encode(Encoder& encoder, UnixFileDescriptor&& fd)
+{
+    encoder.addAttachment(Attachment(WTFMove(fd)));
+}
+
+std::optional<UnixFileDescriptor> ArgumentCoder<UnixFileDescriptor>::decode(Decoder& decoder)
+{
+    auto attachment = decoder.takeLastAttachment();
+    if (!attachment)
+        return std::nullopt;
+    return std::optional<UnixFileDescriptor> { std::in_place, attachment->release() };
+}
+
+#endif
 
 } // namespace IPC

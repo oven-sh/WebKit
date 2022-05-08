@@ -85,7 +85,7 @@ void CurlCacheManager::setCacheDirectory(const String& directory)
         }
     }
 
-    m_cacheDir.append("/");
+    m_cacheDir = makeString(m_cacheDir, '/');
 
     m_disabled = false;
     loadIndex();
@@ -101,7 +101,7 @@ void CurlCacheManager::loadIndex()
     if (m_disabled)
         return;
 
-    String indexFilePath = FileSystem::pathByAppendingComponent(m_cacheDir, "index.dat");
+    String indexFilePath = FileSystem::pathByAppendingComponent(m_cacheDir, "index.dat"_s);
     auto buffer = FileSystem::readEntireFile(indexFilePath);
     if (!buffer) {
         LOG(Network, "Cache Error: Could not read %s\n", indexFilePath.latin1().data());
@@ -138,8 +138,7 @@ void CurlCacheManager::saveIndex()
     if (m_disabled)
         return;
 
-    String indexFilePath(m_cacheDir);
-    indexFilePath.append("index.dat");
+    auto indexFilePath = makeString(m_cacheDir, "index.dat"_s);
 
     FileSystem::deleteFile(indexFilePath);
     FileSystem::PlatformFileHandle indexFile = FileSystem::openFile(indexFilePath, FileSystem::FileOpenMode::Write);

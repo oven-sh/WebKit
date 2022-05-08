@@ -44,6 +44,7 @@
 #include <wtf/MathExtras.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/text/AtomStringHash.h>
+#include <wtf/text/TextStream.h>
 
 #if ENABLE(OPENTYPE_VERTICAL)
 #include "OpenTypeVerticalData.h"
@@ -523,7 +524,7 @@ bool Font::isProbablyOnlyUsedToRenderIcons() const
 String Font::description() const
 {
     if (origin() == Origin::Remote)
-        return "[custom font]";
+        return "[custom font]"_s;
 
     return platformData().description();
 }
@@ -709,5 +710,13 @@ const Path& Font::pathForGlyph(Glyph glyph) const
     m_glyphPathMap.setMetricsForGlyph(glyph, path);
     return *m_glyphPathMap.existingMetricsForGlyph(glyph);
 }
+
+#if !LOG_DISABLED
+TextStream& operator<<(TextStream& ts, const Font& font)
+{
+    ts << font.description();
+    return ts;
+}
+#endif
 
 } // namespace WebCore

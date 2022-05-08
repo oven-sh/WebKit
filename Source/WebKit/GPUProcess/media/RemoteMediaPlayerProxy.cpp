@@ -171,7 +171,7 @@ void RemoteMediaPlayerProxy::loadMediaSource(URL&& url, const WebCore::ContentTy
     }
 
     m_mediaSourceProxy = adoptRef(*new RemoteMediaSourceProxy(*m_manager->gpuConnectionToWebProcess(), mediaSourceIdentifier, webMParserEnabled, *this));
-    m_player->load(url, contentType, m_mediaSourceProxy.get());
+    m_player->load(url, contentType, *m_mediaSourceProxy);
     getConfiguration(configuration);
     completionHandler(WTFMove(configuration));
 }
@@ -743,6 +743,7 @@ void RemoteMediaPlayerProxy::setWirelessVideoPlaybackDisabled(bool disabled)
 {
     m_player->setWirelessVideoPlaybackDisabled(disabled);
     m_cachedState.wirelessVideoPlaybackDisabled = m_player->wirelessVideoPlaybackDisabled();
+    sendCachedState();
 }
 
 void RemoteMediaPlayerProxy::setShouldPlayToPlaybackTarget(bool shouldPlay)

@@ -110,7 +110,7 @@ JSObject* constructDate(JSGlobalObject* globalObject, JSValue newTarget, const A
         value = jsCurrentTime();
     else if (numArgs == 1) {
         JSValue arg0 = args.at(0);
-        if (auto* dateInstance = jsDynamicCast<DateInstance*>(vm, arg0))
+        if (auto* dateInstance = jsDynamicCast<DateInstance*>(arg0))
             value = dateInstance->internalNumber();
         else {
             JSValue primitive = arg0.toPrimitive(globalObject);
@@ -150,7 +150,7 @@ JSC_DEFINE_HOST_FUNCTION(callDate, (JSGlobalObject* globalObject, CallFrame*))
     VM& vm = globalObject->vm();
     GregorianDateTime ts;
     vm.dateCache.msToGregorianDateTime(WallTime::now().secondsSinceEpoch().milliseconds(), WTF::LocalTime, ts);
-    return JSValue::encode(jsNontrivialString(vm, formatDateTime(ts, DateTimeFormatDateAndTime, false)));
+    return JSValue::encode(jsNontrivialString(vm, formatDateTime(ts, DateTimeFormatDateAndTime, false, vm.dateCache)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(dateParse, (JSGlobalObject* globalObject, CallFrame* callFrame))

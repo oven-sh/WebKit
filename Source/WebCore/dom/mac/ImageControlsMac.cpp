@@ -28,8 +28,10 @@
 
 #include "Chrome.h"
 #include "ChromeClient.h"
+#include "CommonAtomStrings.h"
 #include "ContextMenuController.h"
 #include "ElementInlines.h"
+#include "ElementRareData.h"
 #include "Event.h"
 #include "EventHandler.h"
 #include "EventNames.h"
@@ -52,13 +54,13 @@ namespace ImageControlsMac {
 
 static const AtomString& imageControlsElementIdentifier()
 {
-    static MainThreadNeverDestroyed<const AtomString> identifier("image-controls", AtomString::ConstructFromLiteral);
+    static MainThreadNeverDestroyed<const AtomString> identifier("image-controls"_s);
     return identifier;
 }
 
 static const AtomString& imageControlsButtonIdentifier()
 {
-    static MainThreadNeverDestroyed<const AtomString> identifier("image-controls-button", AtomString::ConstructFromLiteral);
+    static MainThreadNeverDestroyed<const AtomString> identifier("image-controls-button"_s);
     return identifier;
 }
 
@@ -90,11 +92,12 @@ void createImageControls(HTMLElement& element)
     Ref shadowRoot = element.ensureUserAgentShadowRoot();
     auto controlLayer = HTMLDivElement::create(document.get());
     controlLayer->setIdAttribute(imageControlsElementIdentifier());
+    controlLayer->setAttributeWithoutSynchronization(HTMLNames::contenteditableAttr, falseAtom());
     shadowRoot->appendChild(controlLayer);
     
     static MainThreadNeverDestroyed<const String> shadowStyle(StringImpl::createWithoutCopying(imageControlsMacUserAgentStyleSheet, sizeof(imageControlsMacUserAgentStyleSheet)));
     auto style = HTMLStyleElement::create(HTMLNames::styleTag, document.get(), false);
-    style->setTextContent(shadowStyle);
+    style->setTextContent(String { shadowStyle });
     shadowRoot->appendChild(WTFMove(style));
     
     auto button = HTMLButtonElement::create(HTMLNames::buttonTag, element.document(), nullptr);
@@ -146,7 +149,17 @@ bool handleEvent(HTMLElement& element, Event& event)
         if (!image)
             return false;
 
-        page->chrome().client().handleImageServiceClick(roundedIntPoint(mouseEvent.absoluteLocation()), *image, *shadowHost);
+        Ref element = downcast<Element>(node);
+        auto* renderer = element->renderer();
+        if (!renderer)
+            return false;
+
+        RefPtr view = frame->view();
+        if (!view)
+            return false;
+
+        auto point = view->contentsToWindow(renderer->absoluteBoundingBoxRect()).minXMaxYCorner();
+        page->chrome().client().handleImageServiceClick(point, *image, *shadowHost);
         event.setDefaultHandled();
         return true;
     }

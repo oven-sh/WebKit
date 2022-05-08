@@ -205,8 +205,6 @@ set(WebKit_MESSAGES_IN_FILES
     NetworkProcess/SharedWorker/WebSharedWorkerServerConnection
     NetworkProcess/SharedWorker/WebSharedWorkerServerToContextConnection
 
-    NetworkProcess/WebStorage/StorageManagerSet
-
     NetworkProcess/cache/CacheStorageEngineConnection
 
     NetworkProcess/storage/NetworkStorageManager
@@ -217,6 +215,7 @@ set(WebKit_MESSAGES_IN_FILES
     NetworkProcess/webrtc/RTCDataChannelRemoteManagerProxy
 
     Shared/AuxiliaryProcess
+    Shared/IPCConnectionTester
     Shared/IPCStreamTester
     Shared/IPCStreamTesterProxy
     Shared/IPCTester

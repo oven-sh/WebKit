@@ -40,13 +40,13 @@ TEST(WTF, StringCreationFromLiteral)
     EXPECT_EQ(strlen("Explicit construction syntax"), stringFromLiteralViaASCII.length());
     EXPECT_EQ("Explicit construction syntax", stringFromLiteralViaASCII);
     EXPECT_TRUE(stringFromLiteralViaASCII.is8Bit());
-    EXPECT_EQ(String("Explicit construction syntax"), stringFromLiteralViaASCII);
+    EXPECT_EQ(String("Explicit construction syntax"_s), stringFromLiteralViaASCII);
 
     String stringFromLiteral = "String Literal"_str;
     EXPECT_EQ(strlen("String Literal"), stringFromLiteral.length());
     EXPECT_EQ("String Literal", stringFromLiteral);
     EXPECT_TRUE(stringFromLiteral.is8Bit());
-    EXPECT_EQ(String("String Literal"), stringFromLiteral);
+    EXPECT_EQ(String("String Literal"_s), stringFromLiteral);
 }
 
 TEST(WTF, StringASCII)
@@ -70,7 +70,7 @@ TEST(WTF, StringStartsWithEmptyVsNull)
 {
     String nullString;
     String emptyString = WTF::emptyString();
-    String stringWithCharacters("hello");
+    String stringWithCharacters("hello"_s);
 
     EXPECT_TRUE(stringWithCharacters.startsWith(nullString));
     EXPECT_TRUE(stringWithCharacters.startsWith(emptyString));
@@ -231,52 +231,52 @@ TEST(WTF, StringNumberIntMin)
     std::string expectedString;
     stringStream >> expectedString;
 
-    EXPECT_TRUE(result == String(expectedString.c_str()));
+    EXPECT_TRUE(result == String::fromLatin1(expectedString.c_str()));
 }
 
 TEST(WTF, StringReplaceWithLiteral)
 {
     // Cases for 8Bit source.
-    String testString = "1224";
+    String testString = "1224"_s;
     EXPECT_TRUE(testString.is8Bit());
-    testString.replaceWithLiteral('2', "");
+    testString = makeStringByReplacingAll(testString, '2', ""_s);
     EXPECT_STREQ("14", testString.utf8().data());
 
-    testString = "1224";
+    testString = "1224"_s;
     EXPECT_TRUE(testString.is8Bit());
-    testString.replaceWithLiteral('2', "3");
+    testString = makeStringByReplacingAll(testString, '2', "3"_s);
     EXPECT_STREQ("1334", testString.utf8().data());
 
-    testString = "1224";
+    testString = "1224"_s;
     EXPECT_TRUE(testString.is8Bit());
-    testString.replaceWithLiteral('2', "555");
+    testString = makeStringByReplacingAll(testString, '2', "555"_s);
     EXPECT_STREQ("15555554", testString.utf8().data());
 
-    testString = "1224";
+    testString = "1224"_s;
     EXPECT_TRUE(testString.is8Bit());
-    testString.replaceWithLiteral('3', "NotFound");
+    testString = makeStringByReplacingAll(testString, '3', "NotFound"_s);
     EXPECT_STREQ("1224", testString.utf8().data());
 
     // Cases for 16Bit source.
     testString = String::fromUTF8("résumé");
     EXPECT_FALSE(testString.is8Bit());
-    testString.replaceWithLiteral(UChar(0x00E9 /*U+00E9 is 'é'*/), "e");
+    testString = makeStringByReplacingAll(testString, UChar(0x00E9 /*U+00E9 is 'é'*/), "e"_s);
     EXPECT_STREQ("resume", testString.utf8().data());
 
     testString = String::fromUTF8("résumé");
     EXPECT_FALSE(testString.is8Bit());
-    testString.replaceWithLiteral(UChar(0x00E9 /*U+00E9 is 'é'*/), "");
+    testString = makeStringByReplacingAll(testString, UChar(0x00E9 /*U+00E9 is 'é'*/), ""_s);
     EXPECT_STREQ("rsum", testString.utf8().data());
 
     testString = String::fromUTF8("résumé");
     EXPECT_FALSE(testString.is8Bit());
-    testString.replaceWithLiteral('3', "NotFound");
+    testString = makeStringByReplacingAll(testString, '3', "NotFound"_s);
     EXPECT_STREQ("résumé", testString.utf8().data());
 }
 
 TEST(WTF, StringIsolatedCopy)
 {
-    String original = "1234";
+    String original = "1234"_s;
     auto copy = WTFMove(original).isolatedCopy();
     EXPECT_FALSE(original.impl() == copy.impl());
 }
@@ -293,51 +293,51 @@ TEST(WTF, StringToDouble)
     EXPECT_EQ(0.0, emptyString().toDouble(&ok));
     EXPECT_FALSE(ok);
 
-    EXPECT_EQ(0.0, String("0").toDouble());
-    EXPECT_EQ(0.0, String("0").toDouble(&ok));
+    EXPECT_EQ(0.0, String("0"_s).toDouble());
+    EXPECT_EQ(0.0, String("0"_s).toDouble(&ok));
     EXPECT_TRUE(ok);
 
-    EXPECT_EQ(1.0, String("1").toDouble());
-    EXPECT_EQ(1.0, String("1").toDouble(&ok));
+    EXPECT_EQ(1.0, String("1"_s).toDouble());
+    EXPECT_EQ(1.0, String("1"_s).toDouble(&ok));
     EXPECT_TRUE(ok);
 
     // fail if we see leading junk
-    EXPECT_EQ(0.0, String("x1").toDouble());
-    EXPECT_EQ(0.0, String("x1").toDouble(&ok));
+    EXPECT_EQ(0.0, String("x1"_s).toDouble());
+    EXPECT_EQ(0.0, String("x1"_s).toDouble(&ok));
     EXPECT_FALSE(ok);
 
     // succeed if we see leading spaces
-    EXPECT_EQ(1.0, String(" 1").toDouble());
-    EXPECT_EQ(1.0, String(" 1").toDouble(&ok));
+    EXPECT_EQ(1.0, String(" 1"_s).toDouble());
+    EXPECT_EQ(1.0, String(" 1"_s).toDouble(&ok));
     EXPECT_TRUE(ok);
 
     // ignore trailing junk, but return false for "ok"
     // FIXME: This is an inconsistency with toInt, which always guarantees
     // it will return 0 if it's also going to return false for ok.
-    EXPECT_EQ(1.0, String("1x").toDouble());
-    EXPECT_EQ(1.0, String("1x").toDouble(&ok));
+    EXPECT_EQ(1.0, String("1x"_s).toDouble());
+    EXPECT_EQ(1.0, String("1x"_s).toDouble(&ok));
     EXPECT_FALSE(ok);
 
     // parse only numbers, not special values such as "infinity"
-    EXPECT_EQ(0.0, String("infinity").toDouble());
-    EXPECT_EQ(0.0, String("infinity").toDouble(&ok));
+    EXPECT_EQ(0.0, String("infinity"_s).toDouble());
+    EXPECT_EQ(0.0, String("infinity"_s).toDouble(&ok));
     EXPECT_FALSE(ok);
 
     // parse only numbers, not special values such as "nan"
-    EXPECT_EQ(0.0, String("nan").toDouble());
-    EXPECT_EQ(0.0, String("nan").toDouble(&ok));
+    EXPECT_EQ(0.0, String("nan"_s).toDouble());
+    EXPECT_EQ(0.0, String("nan"_s).toDouble(&ok));
     EXPECT_FALSE(ok);
 }
 
 TEST(WTF, StringhasInfixStartingAt)
 {
-    EXPECT_TRUE(String("Test").is8Bit());
-    EXPECT_TRUE(String("Te").is8Bit());
-    EXPECT_TRUE(String("st").is8Bit());
-    EXPECT_TRUE(String("Test").hasInfixStartingAt(String("Te"), 0));
-    EXPECT_FALSE(String("Test").hasInfixStartingAt(String("Te"), 2));
-    EXPECT_TRUE(String("Test").hasInfixStartingAt(String("st"), 2));
-    EXPECT_FALSE(String("Test").hasInfixStartingAt(String("ST"), 2));
+    EXPECT_TRUE(String("Test"_s).is8Bit());
+    EXPECT_TRUE(String("Te"_s).is8Bit());
+    EXPECT_TRUE(String("st"_s).is8Bit());
+    EXPECT_TRUE(String("Test"_s).hasInfixStartingAt("Te"_s, 0));
+    EXPECT_FALSE(String("Test"_s).hasInfixStartingAt("Te"_s, 2));
+    EXPECT_TRUE(String("Test"_s).hasInfixStartingAt("st"_s, 2));
+    EXPECT_FALSE(String("Test"_s).hasInfixStartingAt("ST"_s, 2));
 
     EXPECT_FALSE(String::fromUTF8("中国").is8Bit());
     EXPECT_FALSE(String::fromUTF8("中").is8Bit());
@@ -346,13 +346,13 @@ TEST(WTF, StringhasInfixStartingAt)
     EXPECT_FALSE(String::fromUTF8("中国").hasInfixStartingAt(String::fromUTF8("中"), 1));
     EXPECT_TRUE(String::fromUTF8("中国").hasInfixStartingAt(String::fromUTF8("国"), 1));
 
-    EXPECT_FALSE(String::fromUTF8("中国").hasInfixStartingAt(String("Te"), 0));
-    EXPECT_FALSE(String("Test").hasInfixStartingAt(String::fromUTF8("中"), 2));
+    EXPECT_FALSE(String::fromUTF8("中国").hasInfixStartingAt("Te"_s, 0));
+    EXPECT_FALSE(String("Test"_s).hasInfixStartingAt(String::fromUTF8("中"), 2));
 }
 
 TEST(WTF, StringExistingHash)
 {
-    String string1("Template Literal");
+    String string1("Template Literal"_s);
     EXPECT_FALSE(string1.isNull());
     EXPECT_FALSE(string1.impl()->hasHash());
     string1.impl()->hash();
@@ -363,7 +363,7 @@ TEST(WTF, StringExistingHash)
 
 TEST(WTF, StringUnicodeEqualUCharArray)
 {
-    String string1("abc");
+    String string1("abc"_s);
     EXPECT_FALSE(string1.isNull());
     EXPECT_TRUE(string1.is8Bit());
     UChar ab[] = { 'a', 'b' };
@@ -432,16 +432,16 @@ TEST(WTF, StringReverseFindBasic)
 
 TEST(WTF, StringSplitWithConsecutiveSeparators)
 {
-    String string { " This     is  a       sentence. " };
+    String string { " This     is  a       sentence. "_s };
 
     Vector<String> actual = string.split(' ');
-    Vector<String> expected { "This", "is", "a", "sentence." };
+    Vector<String> expected { "This"_s, "is"_s, "a"_s, "sentence."_s };
     ASSERT_EQ(expected.size(), actual.size());
     for (auto i = 0u; i < actual.size(); ++i)
         EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;
 
     actual = string.splitAllowingEmptyEntries(' ');
-    expected = { "", "This", "", "", "", "", "is", "", "a", "", "", "", "", "", "", "sentence.", "" };
+    expected = { ""_s, "This"_s, ""_s, ""_s, ""_s, ""_s, "is"_s, ""_s, "a"_s, ""_s, ""_s, ""_s, ""_s, ""_s, ""_s, "sentence."_s, ""_s };
     ASSERT_EQ(expected.size(), actual.size());
     for (auto i = 0u; i < actual.size(); ++i)
         EXPECT_STREQ(expected[i].utf8().data(), actual[i].utf8().data()) << "Vectors differ at index " << i;

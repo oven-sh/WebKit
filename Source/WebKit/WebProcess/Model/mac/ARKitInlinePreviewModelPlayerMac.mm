@@ -55,6 +55,10 @@ ARKitInlinePreviewModelPlayerMac::ARKitInlinePreviewModelPlayerMac(WebPage& page
 
 ARKitInlinePreviewModelPlayerMac::~ARKitInlinePreviewModelPlayerMac()
 {
+    if (m_inlinePreview) {
+        if (auto* page = this->page())
+            page->send(Messages::WebPageProxy::ModelElementDestroyRemotePreview([m_inlinePreview uuid].UUIDString));
+    }
     clearFile();
 }
 
@@ -103,7 +107,7 @@ void ARKitInlinePreviewModelPlayerMac::createFile(WebCore::Model& modelSource)
     }
 
     // We need to support .reality files as well, https://bugs.webkit.org/show_bug.cgi?id=227568.
-    String fileName = FileSystem::encodeForFileName(createVersion4UUIDString()) + ".usdz";
+    String fileName = makeString(UUID::createVersion4(), ".usdz"_s);
     auto filePath = FileSystem::pathByAppendingComponent(pathToDirectory, fileName);
     auto file = FileSystem::openFile(filePath, FileSystem::FileOpenMode::Write);
     if (file <= 0)
@@ -293,6 +297,13 @@ void ARKitInlinePreviewModelPlayerMac::handleMouseUp(const LayoutPoint& flippedL
 {
     if (auto* page = this->page())
         page->send(Messages::WebPageProxy::HandleMouseUpForModelElement([m_inlinePreview uuid].UUIDString, flippedLocationInElement, timestamp));
+}
+
+String ARKitInlinePreviewModelPlayerMac::inlinePreviewUUIDForTesting() const
+{
+    if (!m_inlinePreview)
+        return emptyString();
+    return [m_inlinePreview uuid].UUIDString;
 }
 
 }

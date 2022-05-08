@@ -122,7 +122,7 @@ void LocalStorageDatabase::startTransactionIfNecessary()
 bool LocalStorageDatabase::migrateItemTableIfNeeded()
 {
     ASSERT(!RunLoop::isMain());
-    if (!m_database.tableExists("ItemTable"))
+    if (!m_database.tableExists("ItemTable"_s))
         return true;
 
     auto query = m_database.prepareStatement("SELECT value FROM ItemTable LIMIT 1"_s);
@@ -138,7 +138,7 @@ bool LocalStorageDatabase::migrateItemTableIfNeeded()
         "INSERT INTO ItemTable2 SELECT * from ItemTable"_s,
         "DROP TABLE ItemTable"_s,
         "ALTER TABLE ItemTable2 RENAME TO ItemTable"_s,
-        ASCIILiteral::null(),
+        { },
     };
 
     SQLiteTransaction transaction(m_database);

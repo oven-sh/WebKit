@@ -132,7 +132,7 @@ private:
 
 #if ENABLE(IMAGE_ANALYSIS)
     void requestTextRecognition(const URL& imageURL, const ShareableBitmap::Handle& imageData, const String& identifier, CompletionHandler<void(WebCore::TextRecognitionResult&&)>&&) override;
-    void computeHasImageAnalysisResults(const URL&, ShareableBitmap&, ImageAnalysisType, CompletionHandler<void(bool)>&&) override;
+    void computeHasVisualSearchResults(const URL&, ShareableBitmap&, CompletionHandler<void(bool)>&&) override;
 #endif
 
     RefPtr<WebPopupMenuProxy> createPopupMenuProxy(WebPageProxy&) override;
@@ -255,6 +255,10 @@ private:
     WebCore::UserInterfaceLayoutDirection userInterfaceLayoutDirection() override;
     bool effectiveAppearanceIsDark() const override;
     bool effectiveUserInterfaceLevelIsElevated() const override;
+
+    bool isFullscreenVideoExtractionEnabled() const final { return true; }
+    void beginElementFullscreenVideoExtraction(const ShareableBitmap::Handle&, WebCore::FloatRect) final;
+    void cancelElementFullscreenVideoExtraction() final;
 
 #if ENABLE(DRAG_SUPPORT)
     void didPerformDragOperation(bool handled) final;

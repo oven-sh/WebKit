@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2012 Google Inc. All rights reserved.
- * Copyright (C) 2013-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2021 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -157,6 +157,10 @@ class MockMediaSessionCoordinator;
 #endif
 #endif
 
+#if ENABLE(ARKIT_INLINE_PREVIEW_MAC)
+class HTMLModelElement;
+#endif
+
 namespace ImageOverlay {
 class CroppedImage;
 }
@@ -240,8 +244,8 @@ public:
     Node* ensureUserAgentShadowRoot(Element& host);
     Node* shadowRoot(Element& host);
     ExceptionOr<String> shadowRootType(const Node&) const;
-    String shadowPseudoId(Element&);
-    void setShadowPseudoId(Element&, const String&);
+    const AtomString& shadowPseudoId(Element&);
+    void setShadowPseudoId(Element&, const AtomString&);
 
     // CSS Deferred Parsing Testing
     unsigned deferredStyleRulesCount(StyleSheet&);
@@ -292,8 +296,8 @@ public:
     void removeTextPlaceholder(Element&);
 
     void selectColorInColorChooser(HTMLInputElement&, const String& colorValue);
-    ExceptionOr<Vector<String>> formControlStateOfPreviousHistoryItem();
-    ExceptionOr<void> setFormControlStateOfPreviousHistoryItem(const Vector<String>&);
+    ExceptionOr<Vector<AtomString>> formControlStateOfPreviousHistoryItem();
+    ExceptionOr<void> setFormControlStateOfPreviousHistoryItem(const Vector<AtomString>&);
 
     ExceptionOr<Ref<DOMRect>> absoluteLineRectFromPoint(int x, int y);
 
@@ -315,7 +319,6 @@ public:
 
     void invalidateFontCache();
     void setFontSmoothingEnabled(bool);
-    void setOverrideEnhanceTextLegibility(bool);
 
     ExceptionOr<void> setLowPowerModeEnabled(bool);
     ExceptionOr<void> setOutsideViewportThrottlingEnabled(bool);
@@ -425,7 +428,7 @@ public:
 
     ExceptionOr<bool> isPageBoxVisible(int pageNumber);
 
-    static const char* internalsId;
+    static constexpr ASCIILiteral internalsId = "internals"_s;
 
     InternalSettings* settings() const;
     unsigned workerThreadCount() const;
@@ -478,6 +481,9 @@ public:
     };
     ExceptionOr<String> displayListForElement(Element&, unsigned short flags);
     ExceptionOr<String> replayDisplayListForElement(Element&, unsigned short flags);
+
+    void setForceUseGlyphDisplayListForTesting(bool enabled);
+    ExceptionOr<String> cachedGlyphDisplayListsForTextNode(Node&, unsigned short flags);
 
     ExceptionOr<void> garbageCollectDocumentResources() const;
 
@@ -776,6 +782,8 @@ public:
     ExceptionOr<bool> pageDefersLoading();
 
     RefPtr<File> createFile(const String&);
+    String createTemporaryFile(const String& name, const String& contents);
+
     void queueMicroTask(int);
     bool testPreloaderSettingViewport();
 
@@ -897,6 +905,7 @@ public:
 
 #if USE(AUDIO_SESSION)
     using AudioSessionCategory = WebCore::AudioSessionCategory;
+    using RouteSharingPolicy = WebCore::RouteSharingPolicy;
 #else
     enum class AudioSessionCategory : uint8_t {
         None,
@@ -907,10 +916,18 @@ public:
         PlayAndRecord,
         AudioProcessing,
     };
+
+    enum class RouteSharingPolicy : uint8_t {
+        Default,
+        LongFormAudio,
+        Independent,
+        LongFormVideo
+    };
 #endif
 
     bool supportsAudioSession() const;
     AudioSessionCategory audioSessionCategory() const;
+    RouteSharingPolicy routeSharingPolicy() const;
 #if ENABLE(VIDEO)
     AudioSessionCategory categoryAtMostRecentPlayback(HTMLMediaElement&) const;
 #endif
@@ -984,8 +1001,6 @@ public:
     };
 
     void installImageOverlay(Element&, Vector<ImageOverlayLine>&&, Vector<ImageOverlayBlock>&& = { }, Vector<ImageOverlayDataDetector>&& = { });
-    void installCroppedImageOverlay(Element&, Ref<DOMRectReadOnly>&&);
-    void uninstallCroppedImageOverlay();
     bool hasActiveDataDetectorHighlight() const;
 
 #if ENABLE(IMAGE_ANALYSIS)
@@ -1196,7 +1211,7 @@ public:
     bool hasSandboxMachLookupAccessToXPCServiceName(const String& process, const String& service);
     bool hasSandboxIOKitOpenAccessToClass(const String& process, const String& ioKitClass);
 
-    String highlightPseudoElementColor(const String& highlightName, Element&);
+    String highlightPseudoElementColor(const AtomString& highlightName, Element&);
 
     String windowLocationHost(DOMWindow&);
 
@@ -1295,7 +1310,13 @@ public:
     RefPtr<PushSubscription> createPushSubscription(const String& endpoint, std::optional<EpochTimeStamp> expirationTime, const ArrayBuffer& serverVAPIDPublicKey, const ArrayBuffer& clientECDHPublicKey, const ArrayBuffer& auth);
 #endif
 
-    void overrideModalContainerSearchTermForTesting(const String& term);
+    void overrideModalContainerSearchTermForTesting(AtomString&& term);
+
+#if ENABLE(ARKIT_INLINE_PREVIEW_MAC)
+    using ModelInlinePreviewUUIDsPromise = DOMPromiseDeferred<IDLSequence<IDLDOMString>>;
+    void modelInlinePreviewUUIDs(ModelInlinePreviewUUIDsPromise&&) const;
+    String modelInlinePreviewUUIDForModelElement(const HTMLModelElement&) const;
+#endif
 
 private:
     explicit Internals(Document&);
@@ -1351,8 +1372,6 @@ private:
 #if ENABLE(VIDEO)
     std::unique_ptr<CaptionUserPreferencesTestingModeToken> m_testingModeToken;
 #endif
-
-    std::unique_ptr<ImageOverlay::CroppedImage> m_croppedImageOverlay;
 };
 
 } // namespace WebCore

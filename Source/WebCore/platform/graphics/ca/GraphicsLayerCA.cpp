@@ -274,7 +274,7 @@ static ASCIILiteral propertyIdToString(AnimatedPropertyID property)
         ASSERT_NOT_REACHED();
     }
     ASSERT_NOT_REACHED();
-    return ASCIILiteral::null();
+    return { };
 }
 
 static bool animationHasStepsTimingFunction(const KeyframeValueList& valueList, const Animation* anim)
@@ -3102,11 +3102,11 @@ void GraphicsLayerCA::updateAnimations()
     auto currentTime = Seconds(CACurrentMediaTime());
 
     auto addAnimationGroup = [&](AnimatedPropertyID property, const Vector<RefPtr<PlatformCAAnimation>>& animations) {
-        auto caAnimationGroup = createPlatformCAAnimation(PlatformCAAnimation::Group, "");
+        auto caAnimationGroup = createPlatformCAAnimation(PlatformCAAnimation::Group, emptyString());
         caAnimationGroup->setDuration(infiniteDuration);
         caAnimationGroup->setAnimations(animations);
 
-        auto animationGroup = LayerPropertyAnimation(WTFMove(caAnimationGroup), "group-" + createVersion4UUIDString(), property, 0, 0, 0_s);
+        auto animationGroup = LayerPropertyAnimation(WTFMove(caAnimationGroup), makeString("group-"_s, UUID::createVersion4()), property, 0, 0, 0_s);
         animationGroup.m_beginTime = animationGroupBeginTime;
 
         setAnimationOnLayer(animationGroup);
@@ -3154,7 +3154,7 @@ void GraphicsLayerCA::updateAnimations()
         caAnimation->setFromValue(matrix);
         caAnimation->setToValue(matrix);
 
-        auto animation = LayerPropertyAnimation(WTFMove(caAnimation), "base-transform-" + createVersion4UUIDString(), property, 0, 0, 0_s);
+        auto animation = LayerPropertyAnimation(WTFMove(caAnimation), makeString("base-transform-"_s, UUID::createVersion4()), property, 0, 0, 0_s);
         if (delay)
             animation.m_beginTime = currentTime - animationGroupBeginTime;
 
@@ -4820,22 +4820,22 @@ static String animatedPropertyIDAsString(AnimatedPropertyID property)
     case AnimatedPropertyScale:
     case AnimatedPropertyRotate:
     case AnimatedPropertyTransform:
-        return "transform";
+        return "transform"_s;
     case AnimatedPropertyOpacity:
-        return "opacity";
+        return "opacity"_s;
     case AnimatedPropertyBackgroundColor:
-        return "background-color";
+        return "background-color"_s;
     case AnimatedPropertyFilter:
-        return "filter";
+        return "filter"_s;
 #if ENABLE(FILTERS_LEVEL_2)
     case AnimatedPropertyWebkitBackdropFilter:
-        return "backdrop-filter";
+        return "backdrop-filter"_s;
 #endif
     case AnimatedPropertyInvalid:
-        return "invalid";
+        return "invalid"_s;
     }
     ASSERT_NOT_REACHED();
-    return "";
+    return ""_s;
 }
 
 Vector<std::pair<String, double>> GraphicsLayerCA::acceleratedAnimationsForTesting() const

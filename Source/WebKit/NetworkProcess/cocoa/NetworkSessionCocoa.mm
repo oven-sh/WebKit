@@ -250,9 +250,9 @@ static String stringForSSLProtocol(SSLProtocol protocol)
     case kTLSProtocol13:
         return "TLS 1.3"_s;
     case kSSLProtocolAll:
-        return "All";
+        return "All"_s;
     case kSSLProtocolUnknown:
-        return "Unknown";
+        return "Unknown"_s;
     case kTLSProtocolMaxSupported:
     default:
         ASSERT_NOT_REACHED();
@@ -837,7 +837,8 @@ ALLOW_DEPRECATED_DECLARATIONS_END
             networkLoadMetrics.secureConnectionStart = dateToMonotonicTime(m.secureConnectionStartDate);
         networkLoadMetrics.connectEnd = dateToMonotonicTime(m.connectEndDate);
         networkLoadMetrics.requestStart = dateToMonotonicTime(m.requestStartDate);
-        networkLoadMetrics.responseStart = dateToMonotonicTime(m.responseStartDate);
+        // Sometimes, likely because of <rdar://90997689>, responseStart is before requestStart. If this happens, use the later of the two.
+        networkLoadMetrics.responseStart = std::max(networkLoadMetrics.requestStart, dateToMonotonicTime(m.responseStartDate));
         networkLoadMetrics.responseEnd = dateToMonotonicTime(m.responseEndDate);
         networkLoadMetrics.markComplete();
         networkLoadMetrics.redirectCount = metrics.redirectCount;
@@ -902,6 +903,9 @@ ALLOW_DEPRECATED_DECLARATIONS_END
             additionalMetrics->requestHeaderBytesSent = requestHeaderBytesSent;
             additionalMetrics->requestBodyBytesSent = task.countOfBytesSent;
             additionalMetrics->responseHeaderBytesReceived = responseHeaderBytesReceived;
+
+            additionalMetrics->isProxyConnection = m.proxyConnection;
+
             networkLoadMetrics.additionalNetworkLoadMetricsForWebInspector = WTFMove(additionalMetrics);
         }
 #if HAVE(CFNETWORK_METRICS_APIS_V4)
@@ -932,7 +936,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
         NSURLSessionTaskTransactionMetrics *metrics = taskMetrics.transactionMetrics.lastObject;
 #if HAVE(NETWORK_CONNECTION_PRIVACY_STANCE)
-        auto privateRelayed = metrics._privacyStance == nw_connection_privacy_stance_failed ? PrivateRelayed::No : PrivateRelayed::Yes;
+        auto privateRelayed = metrics._privacyStance == nw_connection_privacy_stance_direct ? PrivateRelayed::No : PrivateRelayed::Yes;
 #else
         auto privateRelayed = PrivateRelayed::No;
 #endif
@@ -1008,15 +1012,6 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     if (!download)
         return;
     download->didReceiveData(bytesWritten, totalBytesWritten, totalBytesExpectedToWrite);
-}
-
-- (void)URLSession:(NSURLSession *)session downloadTask:(NSURLSessionDownloadTask *)downloadTask didResumeAtOffset:(int64_t)fileOffset expectedTotalBytes:(int64_t)expectedTotalBytes
-{
-#if HAVE(BROKEN_DOWNLOAD_RESUME_UNLINK)
-    // This is to work around rdar://problem/63249830
-    if ([downloadTask respondsToSelector:@selector(downloadFile)] && [downloadTask.downloadFile respondsToSelector:@selector(setSkipUnlink:)])
-        downloadTask.downloadFile.skipUnlink = YES;
-#endif
 }
 
 - (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)dataTask didBecomeDownloadTask:(NSURLSessionDownloadTask *)downloadTask
@@ -1097,7 +1092,7 @@ static NSURLSessionConfiguration *configurationForSessionID(PAL::SessionID sessi
         configuration = [NSURLSessionConfiguration defaultSessionConfiguration];
 
 #if PLATFORM(MAC)
-    bool preventCFNetworkClientCertificateLookup = linkedOnOrAfter(SDKVersion::FirstWithoutClientCertificateLookup) || session.isEphemeral();
+    bool preventCFNetworkClientCertificateLookup = linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::NoClientCertificateLookup) || session.isEphemeral();
 #else
     bool preventCFNetworkClientCertificateLookup = true;
 #endif
@@ -1173,12 +1168,12 @@ static RetainPtr<NSDictionary> proxyDictionary(const URL& httpProxy, const URL& 
 
     auto dictionary = adoptNS([[NSMutableDictionary alloc] init]);
     if (httpProxy.isValid()) {
-        [dictionary setObject:httpProxy.host().toString() forKey:(NSString *)kCFStreamPropertyHTTPProxyHost];
+        [dictionary setObject:httpProxy.host().createNSString().get() forKey:(NSString *)kCFStreamPropertyHTTPProxyHost];
         if (auto port = httpProxy.port())
             [dictionary setObject:@(*port) forKey:(NSString *)kCFStreamPropertyHTTPProxyPort];
     }
     if (httpsProxy.isValid()) {
-        [dictionary setObject:httpsProxy.host().toString() forKey:(NSString *)kCFStreamPropertyHTTPSProxyHost];
+        [dictionary setObject:httpsProxy.host().createNSString().get() forKey:(NSString *)kCFStreamPropertyHTTPSProxyHost];
         if (auto port = httpsProxy.port())
             [dictionary setObject:@(*port) forKey:(NSString *)kCFStreamPropertyHTTPSProxyPort];
     }
@@ -1940,7 +1935,7 @@ void NetworkSessionCocoa::removeNetworkWebsiteData(std::optional<WallTime> modif
     }
 
     if (isActingOnBehalfOfAFullWebBrowser(bundleID))
-        bundleID = "com.apple.mobilesafari";
+        bundleID = "com.apple.mobilesafari"_s;
 
     NSDictionary *options = @{
         (id)getkSymptomAnalyticsServiceDomainTrackingClearHistoryKey(): @{

@@ -161,7 +161,6 @@ extern NSString *WebPreferencesCacheModelChangedInternalNotification WEBKIT_DEPR
 @property (nonatomic) BOOL acceleratedCompositingEnabled;
 @property (nonatomic) BOOL subpixelAntialiasedLayerTextEnabled;
 @property (nonatomic) BOOL showDebugBorders;
-@property (nonatomic) BOOL simpleLineLayoutEnabled;
 @property (nonatomic) BOOL legacyLineLayoutVisualCoverageEnabled;
 @property (nonatomic) BOOL showRepaintCounter;
 @property (nonatomic) BOOL webAudioEnabled;
@@ -245,13 +244,11 @@ extern NSString *WebPreferencesCacheModelChangedInternalNotification WEBKIT_DEPR
 @property (nonatomic) BOOL legacyEncryptedMediaAPIEnabled;
 @property (nonatomic) BOOL encryptedMediaAPIEnabled;
 @property (nonatomic) BOOL pictureInPictureAPIEnabled;
-@property (nonatomic) BOOL viewportFitEnabled;
 @property (nonatomic) BOOL constantPropertiesEnabled;
 @property (nonatomic) BOOL colorFilterEnabled;
 @property (nonatomic) BOOL punchOutWhiteBackgroundsInDarkMode;
 @property (nonatomic) BOOL inspectorAdditionsEnabled;
 @property (nonatomic) BOOL allowMediaContentTypesRequiringHardwareSupportAsFallback;
-@property (nonatomic) BOOL ariaReflectionEnabled;
 @property (nonatomic) BOOL mediaCapabilitiesEnabled;
 @property (nonatomic) BOOL sourceBufferChangeTypeEnabled;
 @property (nonatomic) NSString *mediaContentTypesRequiringHardwareSupport;
@@ -282,7 +279,6 @@ extern NSString *WebPreferencesCacheModelChangedInternalNotification WEBKIT_DEPR
 @property (nonatomic, setter=_setTelephoneNumberParsingEnabled:) BOOL _telephoneNumberParsingEnabled;
 @property (nonatomic, setter=_setAllowMultiElementImplicitFormSubmission:) BOOL _allowMultiElementImplicitFormSubmission;
 @property (nonatomic, setter=_setAlwaysRequestGeolocationPermission:) BOOL _alwaysRequestGeolocationPermission;
-@property (nonatomic, setter=_setAlwaysUseAcceleratedOverflowScroll:) BOOL _alwaysUseAcceleratedOverflowScroll;
 @property (nonatomic, setter=_setMaxParseDuration:) float _maxParseDuration;
 @property (nonatomic, setter=_setInterpolationQuality:) int _interpolationQuality;
 @property (nonatomic, readonly) BOOL _allowPasswordEcho;

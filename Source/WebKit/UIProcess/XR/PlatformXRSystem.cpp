@@ -73,7 +73,7 @@ void PlatformXRSystem::enumerateImmersiveXRDevices(CompletionHandler<void(Vector
     });
 }
 
-void PlatformXRSystem::requestPermissionOnSessionFeatures(const WebCore::SecurityOriginData& securityOriginData, PlatformXR::SessionMode mode, const Vector<PlatformXR::ReferenceSpaceType>& granted, const Vector<PlatformXR::ReferenceSpaceType>& consentRequired, const Vector<PlatformXR::ReferenceSpaceType>& consentOptional,  CompletionHandler<void(std::optional<PlatformXR::Device::FeatureList>&&)>&& completionHandler)
+void PlatformXRSystem::requestPermissionOnSessionFeatures(const WebCore::SecurityOriginData& securityOriginData, PlatformXR::SessionMode mode, const PlatformXR::Device::FeatureList& granted, const PlatformXR::Device::FeatureList& consentRequired, const PlatformXR::Device::FeatureList& consentOptional,  CompletionHandler<void(std::optional<PlatformXR::Device::FeatureList>&&)>&& completionHandler)
 {
     auto* xrCoordinator = PlatformXRSystem::xrCoordinator();
     if (!xrCoordinator) {
@@ -84,7 +84,7 @@ void PlatformXRSystem::requestPermissionOnSessionFeatures(const WebCore::Securit
     xrCoordinator->requestPermissionOnSessionFeatures(m_page, securityOriginData, mode, granted, consentRequired, consentOptional, WTFMove(completionHandler));
 }
 
-void PlatformXRSystem::initializeTrackingAndRendering()
+void PlatformXRSystem::initializeTrackingAndRendering(const WebCore::SecurityOriginData& securityOriginData, PlatformXR::SessionMode mode, const PlatformXR::Device::FeatureList& requestedFeatures)
 {
     auto* xrCoordinator = PlatformXRSystem::xrCoordinator();
     if (!xrCoordinator)
@@ -93,7 +93,7 @@ void PlatformXRSystem::initializeTrackingAndRendering()
     m_immersiveSessionActivity = m_page.process().throttler().foregroundActivity("XR immersive session"_s).moveToUniquePtr();
 
     WeakPtr weakThis { *this };
-    xrCoordinator->startSession(m_page, weakThis);
+    xrCoordinator->startSession(m_page, weakThis, securityOriginData, mode, requestedFeatures);
 }
 
 void PlatformXRSystem::shutDownTrackingAndRendering()

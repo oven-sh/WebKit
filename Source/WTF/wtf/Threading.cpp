@@ -34,6 +34,7 @@
 #include <wtf/ThreadGroup.h>
 #include <wtf/ThreadingPrimitives.h>
 #include <wtf/WTFConfig.h>
+#include <wtf/text/AtomString.h>
 #include <wtf/threads/Signals.h>
 
 #if HAVE(QOS_CLASSES)

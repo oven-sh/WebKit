@@ -22,7 +22,9 @@
 
 import json
 import re
+import sys
 import time
+import urllib
 
 from .base import Base
 
@@ -54,7 +56,7 @@ class Bugzilla(Base, mocks.Requests):
 
         prefix = self.hosts[0].replace('.', '_').upper()
         self._environment = environment or mocks.Environment(**{
-            '{}_USERNAME'.format(prefix): 'usernmae',
+            '{}_USERNAME'.format(prefix): 'username',
             '{}_PASSWORD'.format(prefix): 'password',
         })
 
@@ -136,6 +138,12 @@ class Bugzilla(Base, mocks.Requests):
                 issue['comments'].append(
                     Issue.Comment(user=user, timestamp=int(time.time()), content=data['comment']['body']),
                 )
+            if data.get('project'):
+                issue['product'] = data['project']
+            if data.get('component'):
+                issue['component'] = data['component']
+            if data.get('version'):
+                issue['version'] = data['version']
 
         return mocks.Response.fromJson(dict(
             bugs=[dict(
@@ -145,6 +153,9 @@ class Bugzilla(Base, mocks.Requests):
                 status='REOPENED' if issue['opened'] else 'RESOLVED',
                 resolution='' if issue['opened'] else 'FIXED',
                 creator=self.users[issue['creator'].name].username,
+                product=issue.get('project'),
+                component=issue.get('component'),
+                version=issue.get('version'),
                 creator_detail=dict(
                     email=issue['creator'].email,
                     name=self.users[issue['creator'].name].username,
@@ -296,6 +307,9 @@ class Bugzilla(Base, mocks.Requests):
             creator=user,
             assignee=assignee,
             description=data['description'],
+            project=data.get('product'),
+            component=data.get('component'),
+            version=data.get('version'),
             comments=[], watchers=[user, assignee] if assignee else [user],
         )
 
@@ -309,7 +323,10 @@ class Bugzilla(Base, mocks.Requests):
         if not url.startswith('http://') and not url.startswith('https://'):
             return mocks.Response.create404(url)
 
-        stripped_url = url.split('://')[-1]
+        if sys.version_info >= (3, 0):
+            stripped_url = urllib.parse.unquote(url).split('://')[-1]
+        else:
+            stripped_url = urllib.unquote(url).split('://')[-1]
 
         match = re.match(r'{}/rest/user\?(?P<credentials>login=\S+\&password=\S+\&)?names=(?P<username>\S+)$'.format(self.hosts[0]), stripped_url)
         if match and method == 'GET':

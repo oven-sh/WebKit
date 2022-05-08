@@ -30,6 +30,7 @@
 
 #include "GraphicsContextCG.h"
 #include "IOSurface.h"
+#include "IOSurfacePool.h"
 #include "IntRect.h"
 #include "PixelBuffer.h"
 #include <CoreGraphics/CoreGraphics.h>
@@ -57,7 +58,8 @@ IntSize ImageBufferIOSurfaceBackend::calculateSafeBackendSize(const Parameters& 
 unsigned ImageBufferIOSurfaceBackend::calculateBytesPerRow(const IntSize& backendSize)
 {
     unsigned bytesPerRow = ImageBufferCGBackend::calculateBytesPerRow(backendSize);
-    return IOSurfaceAlignProperty(kIOSurfaceBytesPerRow, bytesPerRow);
+    size_t alignmentMask = IOSurface::bytesPerRowAlignment() - 1;
+    return (bytesPerRow + alignmentMask) & ~alignmentMask;
 }
 
 size_t ImageBufferIOSurfaceBackend::calculateMemoryCost(const Parameters& parameters)
@@ -81,23 +83,23 @@ RetainPtr<CGColorSpaceRef> ImageBufferIOSurfaceBackend::contextColorSpace(const 
     return ImageBufferCGBackend::contextColorSpace(context);
 }
 
-std::unique_ptr<ImageBufferIOSurfaceBackend> ImageBufferIOSurfaceBackend::create(const Parameters& parameters, const HostWindow* hostWindow)
+std::unique_ptr<ImageBufferIOSurfaceBackend> ImageBufferIOSurfaceBackend::create(const Parameters& parameters, const ImageBuffer::CreationContext& creationContext)
 {
     IntSize backendSize = calculateSafeBackendSize(parameters);
     if (backendSize.isEmpty())
         return nullptr;
 
-    auto surface = IOSurface::create(backendSize, backendSize, parameters.colorSpace, IOSurface::formatForPixelFormat(parameters.pixelFormat));
+    auto surface = IOSurface::create(creationContext.surfacePool, backendSize, backendSize, parameters.colorSpace, IOSurface::formatForPixelFormat(parameters.pixelFormat));
     if (!surface)
         return nullptr;
 
-    RetainPtr<CGContextRef> cgContext = surface->ensurePlatformContext(hostWindow);
+    RetainPtr<CGContextRef> cgContext = surface->ensurePlatformContext(creationContext.hostWindow);
     if (!cgContext)
         return nullptr;
 
     CGContextClearRect(cgContext.get(), FloatRect(FloatPoint::zero(), backendSize));
 
-    return makeUnique<ImageBufferIOSurfaceBackend>(parameters, WTFMove(surface));
+    return makeUnique<ImageBufferIOSurfaceBackend>(parameters, WTFMove(surface), creationContext.surfacePool);
 }
 
 std::unique_ptr<ImageBufferIOSurfaceBackend> ImageBufferIOSurfaceBackend::create(const Parameters& parameters, const GraphicsContext& context)
@@ -112,12 +114,18 @@ std::unique_ptr<ImageBufferIOSurfaceBackend> ImageBufferIOSurfaceBackend::create
     return ImageBufferIOSurfaceBackend::create(parameters, nullptr);
 }
 
-ImageBufferIOSurfaceBackend::ImageBufferIOSurfaceBackend(const Parameters& parameters, std::unique_ptr<IOSurface>&& surface)
+ImageBufferIOSurfaceBackend::ImageBufferIOSurfaceBackend(const Parameters& parameters, std::unique_ptr<IOSurface>&& surface, IOSurfacePool* ioSurfacePool)
     : ImageBufferCGBackend(parameters)
     , m_surface(WTFMove(surface))
+    , m_ioSurfacePool(ioSurfacePool)
 {
     ASSERT(m_surface);
     applyBaseTransformToContext();
+}
+
+ImageBufferIOSurfaceBackend::~ImageBufferIOSurfaceBackend()
+{
+    IOSurface::moveToPool(WTFMove(m_surface), m_ioSurfacePool.get());
 }
 
 GraphicsContext& ImageBufferIOSurfaceBackend::context() const
@@ -258,11 +266,6 @@ VolatilityState ImageBufferIOSurfaceBackend::volatilityState() const
 void ImageBufferIOSurfaceBackend::setVolatilityState(VolatilityState volatilityState)
 {
     m_volatilityState = volatilityState;
-}
-
-void ImageBufferIOSurfaceBackend::releaseBufferToPool()
-{
-    IOSurface::moveToPool(WTFMove(m_surface));
 }
 
 void ImageBufferIOSurfaceBackend::ensureNativeImagesHaveCopiedBackingStore()

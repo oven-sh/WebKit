@@ -411,7 +411,23 @@ void DisplayVk::populateFeatureList(angle::FeatureList *features)
 
 ShareGroupVk::ShareGroupVk()
 {
-    mLastPruneTime = angle::GetCurrentSystemTime();
+    mLastPruneTime             = angle::GetCurrentSystemTime();
+    mOrphanNonEmptyBufferBlock = false;
+}
+
+void ShareGroupVk::addContext(ContextVk *contextVk)
+{
+    mContexts.insert(contextVk);
+
+    if (contextVk->getState().hasDisplayTextureShareGroup())
+    {
+        mOrphanNonEmptyBufferBlock = true;
+    }
+}
+
+void ShareGroupVk::removeContext(ContextVk *contextVk)
+{
+    mContexts.erase(contextVk);
 }
 
 void ShareGroupVk::onDestroy(const egl::Display *display)
@@ -422,13 +438,13 @@ void ShareGroupVk::onDestroy(const egl::Display *display)
     {
         if (pool)
         {
-            pool->destroy(renderer);
+            pool->destroy(renderer, mOrphanNonEmptyBufferBlock);
         }
     }
 
     if (mSmallBufferPool)
     {
-        mSmallBufferPool->destroy(renderer);
+        mSmallBufferPool->destroy(renderer, mOrphanNonEmptyBufferBlock);
     }
 
     mPipelineLayoutCache.destroy(renderer);

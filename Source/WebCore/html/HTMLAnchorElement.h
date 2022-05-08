@@ -60,7 +60,7 @@ public:
     WEBCORE_EXPORT String origin() const;
 
     WEBCORE_EXPORT String text();
-    void setText(const String&);
+    void setText(String&&);
 
     bool isLiveLink() const;
 
@@ -93,12 +93,12 @@ private:
     void setActive(bool active, bool pause, Style::InvalidationScope) final;
     bool isURLAttribute(const Attribute&) const final;
     bool canStartSelection() const final;
-    String target() const override;
+    AtomString target() const override;
     int defaultTabIndex() const final;
     bool draggable() const final;
     bool isInteractiveContent() const final;
 
-    String effectiveTarget() const;
+    AtomString effectiveTarget() const;
 
     void sendPings(const URL& destinationURL);
 
@@ -123,7 +123,7 @@ private:
     void clearRootEditableElementForSelectionOnMouseDown();
 
     URL fullURL() const final { return href(); }
-    void setFullURL(const URL& fullURL) final { setHref(fullURL.string()); }
+    void setFullURL(const URL& fullURL) final { setHref(AtomString { fullURL.string() }); }
 
     bool m_hasRootEditableElementForSelectionOnMouseDown { false };
     bool m_wasShiftKeyDownOnMouseDown { false };

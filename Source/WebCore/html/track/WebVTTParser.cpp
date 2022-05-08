@@ -35,6 +35,7 @@
 
 #if ENABLE(VIDEO)
 
+#include "CommonAtomStrings.h"
 #include "Document.h"
 #include "HTMLParserIdioms.h"
 #include "ISOVTTCue.h"
@@ -92,7 +93,7 @@ bool WebVTTParser::parseFloatPercentageValuePair(VTTScanner& valueScanner, char 
 
 WebVTTParser::WebVTTParser(WebVTTParserClient& client, Document& document)
     : m_document(document)
-    , m_decoder(TextResourceDecoder::create("text/plain", PAL::UTF8Encoding()))
+    , m_decoder(TextResourceDecoder::create(textPlainContentTypeAtom(), PAL::UTF8Encoding()))
     , m_client(client)
 {
 }
@@ -279,7 +280,7 @@ WebVTTParser::ParseState WebVTTParser::collectWebVTTBlock(const String& line)
         if (!m_styleSheets.isEmpty())
             m_client.newStyleSheetsParsed();
         if (!m_previousLine.isEmpty() && !m_previousLine.contains("-->"))
-            m_currentId = m_previousLine;
+            m_currentId = AtomString { m_previousLine };
         
         return state;
     }
@@ -315,7 +316,7 @@ WebVTTParser::ParseState WebVTTParser::collectStyleSheet(const String& line)
     return Style;
 }
 
-bool WebVTTParser::checkAndCreateRegion(const String& line)
+bool WebVTTParser::checkAndCreateRegion(StringView line)
 {
     if (m_previousLine.contains("-->"))
         return false;
@@ -329,7 +330,7 @@ bool WebVTTParser::checkAndCreateRegion(const String& line)
     return false;
 }
 
-bool WebVTTParser::checkAndStoreRegion(const String& line)
+bool WebVTTParser::checkAndStoreRegion(StringView line)
 {
     if (!line.isEmpty() && !line.contains("-->"))
         return false;
@@ -344,7 +345,7 @@ bool WebVTTParser::checkAndStoreRegion(const String& line)
     return true;
 }
 
-bool WebVTTParser::checkStyleSheet(const String& line)
+bool WebVTTParser::checkStyleSheet(StringView line)
 {
     if (m_previousLine.contains("-->"))
         return false;
@@ -357,12 +358,13 @@ bool WebVTTParser::checkStyleSheet(const String& line)
     return false;
 }
 
-bool WebVTTParser::checkAndStoreStyleSheet(const String& line)
+bool WebVTTParser::checkAndStoreStyleSheet(StringView line)
 {
     if (!line.isEmpty() && !line.contains("-->"))
         return false;
     
-    auto styleSheetText = WTFMove(m_currentSourceStyleSheet);
+    auto styleSheetText = m_currentSourceStyleSheet.toString();
+    m_currentSourceStyleSheet.clear();
 
     // WebVTTMode disallows non-data URLs.
     auto contents = StyleSheetContents::create(CSSParserContext(WebVTTMode));
@@ -415,7 +417,7 @@ WebVTTParser::ParseState WebVTTParser::collectCueId(const String& line)
 {
     if (line.contains("-->"))
         return collectTimingsAndSettings(line);
-    m_currentId = line;
+    m_currentId = AtomString { line };
     return TimingsAndSettings;
 }
 
@@ -518,7 +520,7 @@ Ref<DocumentFragment> WebVTTTreeBuilder::buildFromString(const String& cueText)
     auto fragment = DocumentFragment::create(m_document);
 
     if (cueText.isEmpty()) {
-        fragment->parserAppendChild(Text::create(m_document, emptyString()));
+        fragment->parserAppendChild(Text::create(m_document, String { emptyString() }));
         return fragment;
     }
 
@@ -554,7 +556,7 @@ void WebVTTParser::createNewCue()
 
 void WebVTTParser::resetCueValues()
 {
-    m_currentId = emptyString();
+    m_currentId = emptyAtom();
     m_currentSettings = emptyString();
     m_currentStartTime = MediaTime::zeroTime();
     m_currentEndTime = MediaTime::zeroTime();
@@ -649,7 +651,7 @@ void WebVTTTreeBuilder::constructTreeFromToken(Document& document)
 
     switch (m_token.type()) {
     case WebVTTTokenTypes::Character: {
-        m_currentNode->parserAppendChild(Text::create(document, m_token.characters()));
+        m_currentNode->parserAppendChild(Text::create(document, String { m_token.characters() }));
         break;
     }
     case WebVTTTokenTypes::StartTag: {
@@ -708,7 +710,7 @@ void WebVTTTreeBuilder::constructTreeFromToken(Document& document)
         String charactersString = m_token.characters();
         MediaTime parsedTimeStamp;
         if (WebVTTParser::collectTimeStamp(charactersString, parsedTimeStamp))
-            m_currentNode->parserAppendChild(ProcessingInstruction::create(document, "timestamp", charactersString));
+            m_currentNode->parserAppendChild(ProcessingInstruction::create(document, "timestamp"_s, WTFMove(charactersString)));
         break;
     }
     default:

@@ -268,17 +268,11 @@ void HTMLPlugInElement::didAddUserAgentShadowRoot(ShadowRoot& root)
         return;
     
     root.setResetStyleInheritance(true);
-    auto result = m_pluginReplacement->installReplacement(root);
 
-#if PLATFORM(COCOA)
-    RELEASE_ASSERT(result.success || !result.scriptObject);
-    m_pluginReplacementScriptObject.setWeakly(result.scriptObject);
-#endif
+    m_pluginReplacement->installReplacement(root);
 
-    if (result.success) {
-        setDisplayState(DisplayingPluginReplacement);
-        invalidateStyleAndRenderersForSubtree();
-    }
+    setDisplayState(DisplayingPluginReplacement);
+    invalidateStyleAndRenderersForSubtree();
 }
 
 #if PLATFORM(COCOA)
@@ -314,11 +308,11 @@ static ReplacementPlugin* pluginReplacementForType(const URL& url, const String&
     if (replacements.isEmpty())
         return nullptr;
 
-    String extension;
+    StringView extension;
     auto lastPathComponent = url.lastPathComponent();
     size_t dotOffset = lastPathComponent.reverseFind('.');
     if (dotOffset != notFound)
-        extension = lastPathComponent.substring(dotOffset + 1).toString();
+        extension = lastPathComponent.substring(dotOffset + 1);
 
     String type = mimeType;
     if (type.isEmpty() && url.protocolIsData())
@@ -348,7 +342,7 @@ static ReplacementPlugin* pluginReplacementForType(const URL& url, const String&
     return nullptr;
 }
 
-bool HTMLPlugInElement::requestObject(const String& relativeURL, const String& mimeType, const Vector<String>& paramNames, const Vector<String>& paramValues)
+bool HTMLPlugInElement::requestObject(const String& relativeURL, const String& mimeType, const Vector<AtomString>& paramNames, const Vector<AtomString>& paramValues)
 {
     if (m_pluginReplacement)
         return true;
@@ -366,18 +360,6 @@ bool HTMLPlugInElement::requestObject(const String& relativeURL, const String& m
     m_pluginReplacement = replacement->create(*this, paramNames, paramValues);
     setDisplayState(PreparingPluginReplacement);
     return true;
-}
-
-JSC::JSObject* HTMLPlugInElement::scriptObjectForPluginReplacement()
-{
-#if PLATFORM(COCOA)
-    JSC::JSValue value = m_pluginReplacementScriptObject.getValue();
-    if (!value)
-        return nullptr;
-    return value.getObject();
-#else
-    return nullptr;
-#endif
 }
 
 bool HTMLPlugInElement::isBelowSizeThreshold() const

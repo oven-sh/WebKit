@@ -27,6 +27,7 @@
 #include "config.h"
 #include "HTMLTreeBuilder.h"
 
+#include "CommonAtomStrings.h"
 #include "DocumentFragment.h"
 #include "HTMLDocument.h"
 #include "HTMLDocumentParser.h"
@@ -241,7 +242,7 @@ private:
         skipLeading<characterPredicate>();
         if (start.length() == m_text.length())
             return String();
-        return makeString(start.substring(0, start.length() - m_text.length()));
+        return makeString(start.left(start.length() - m_text.length()));
     }
 
     String makeString(StringView stringView) const
@@ -533,18 +534,18 @@ static MemoryCompactLookupOnlyRobinHoodHashMap<AtomString, QualifiedName> create
         for (unsigned i = 0; i < length; ++i) {
             const QualifiedName& name = *names[i];
             const AtomString& localName = name.localName();
-            map.add(prefix + ':' + localName, QualifiedName(prefix, localName, name.namespaceURI()));
+            map.add(makeAtomString(prefix, ':', localName), QualifiedName(prefix, localName, name.namespaceURI()));
         }
     };
 
     MemoryCompactLookupOnlyRobinHoodHashMap<AtomString, QualifiedName> map;
 
-    AtomString xlinkName("xlink", AtomString::ConstructFromLiteral);
+    AtomString xlinkName("xlink"_s);
     addNamesWithPrefix(map, xlinkName, XLinkNames::getXLinkAttrs(), XLinkNames::XLinkAttrsCount);
     addNamesWithPrefix(map, xmlAtom(), XMLNames::getXMLAttrs(), XMLNames::XMLAttrsCount);
 
     map.add(xmlnsAtom(), XMLNSNames::xmlnsAttr);
-    map.add("xmlns:xlink", QualifiedName(xmlnsAtom(), xlinkName, XMLNSNames::xmlnsNamespaceURI));
+    map.add("xmlns:xlink"_s, QualifiedName(xmlnsAtom(), xlinkName, XMLNSNames::xmlnsNamespaceURI));
 
     return map;
 }
@@ -752,7 +753,7 @@ void HTMLTreeBuilder::processStartTagForInBody(AtomHTMLToken&& token)
     if (token.name() == inputTag) {
         m_tree.reconstructTheActiveFormattingElements();
         auto* typeAttribute = findAttribute(token.attributes(), typeAttr);
-        bool shouldClearFramesetOK = !typeAttribute || !equalLettersIgnoringASCIICase(typeAttribute->value(), "hidden");
+        bool shouldClearFramesetOK = !typeAttribute || !equalLettersIgnoringASCIICase(typeAttribute->value(), "hidden"_s);
         m_tree.insertSelfClosingHTMLElement(WTFMove(token));
         if (shouldClearFramesetOK)
             m_framesetOk = false;
@@ -994,7 +995,7 @@ void HTMLTreeBuilder::processStartTagForInTable(AtomHTMLToken&& token)
     }
     if (token.name() == inputTag) {
         auto* typeAttribute = findAttribute(token.attributes(), typeAttr);
-        if (typeAttribute && equalLettersIgnoringASCIICase(typeAttribute->value(), "hidden")) {
+        if (typeAttribute && equalLettersIgnoringASCIICase(typeAttribute->value(), "hidden"_s)) {
             parseError(token);
             m_tree.insertSelfClosingHTMLElement(WTFMove(token));
             return;
@@ -2200,7 +2201,7 @@ void HTMLTreeBuilder::processCharacter(AtomHTMLToken&& token)
 // From the string 4089961010, creates a link of the form <a href="tel:4089961010">4089961010</a> and inserts it.
 void HTMLTreeBuilder::insertPhoneNumberLink(const String& string)
 {
-    Attribute attribute(HTMLNames::hrefAttr, makeString("tel:"_s, string));
+    Attribute attribute(HTMLNames::hrefAttr, makeAtomString("tel:"_s, string));
 
     const AtomString& aTagLocalName = aTag->localName();
     AtomHTMLToken aStartToken(HTMLToken::StartTag, aTagLocalName, { WTFMove(attribute) });

@@ -31,19 +31,39 @@
 #if ENABLE(CSS_TYPED_OM)
 
 #include <wtf/IsoMallocInlines.h>
+#include <wtf/text/StringBuilder.h>
 
 namespace WebCore {
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(CSSMathNegate);
 
+static CSSNumericType copyType(const CSSNumberish& numberish)
+{
+    return WTF::switchOn(numberish,
+        [] (double) { return CSSNumericType(); },
+        [] (const RefPtr<CSSNumericValue>& value) {
+            if (!value)
+                return CSSNumericType();
+            return value->type();
+        }
+    );
+}
+
 CSSMathNegate::CSSMathNegate(CSSNumberish&& numberish)
-    : m_value(CSSNumericValue::rectifyNumberish(WTFMove(numberish)))
+    : CSSMathValue(copyType(numberish))
+    , m_value(CSSNumericValue::rectifyNumberish(WTFMove(numberish)))
 {
 }
 
-CSSMathNegate::CSSMathNegate(Ref<CSSNumericValue>&& value)
-    : m_value(WTFMove(value))
+void CSSMathNegate::serialize(StringBuilder& builder, OptionSet<SerializationArguments> arguments) const
 {
+    // https://drafts.css-houdini.org/css-typed-om/#calc-serialization
+    if (!arguments.contains(SerializationArguments::WithoutParentheses))
+        builder.append(arguments.contains(SerializationArguments::Nested) ? "(" : "calc(");
+    builder.append('-');
+    m_value->serialize(builder, arguments);
+    if (!arguments.contains(SerializationArguments::WithoutParentheses))
+        builder.append(')');
 }
 
 } // namespace WebCore

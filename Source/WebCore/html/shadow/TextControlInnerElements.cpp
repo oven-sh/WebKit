@@ -29,6 +29,7 @@
 
 #include "CSSPrimitiveValue.h"
 #include "CSSToLengthConversionData.h"
+#include "CommonAtomStrings.h"
 #include "Document.h"
 #include "EventNames.h"
 #include "Frame.h"
@@ -150,9 +151,7 @@ Ref<TextControlInnerTextElement> TextControlInnerTextElement::create(Document& d
 
 void TextControlInnerTextElement::updateInnerTextElementEditabilityImpl(bool isEditable, bool initialization)
 {
-    static MainThreadNeverDestroyed<const AtomString> plainTextOnlyName("plaintext-only", AtomString::ConstructFromLiteral);
-    static MainThreadNeverDestroyed<const AtomString> falseName("false", AtomString::ConstructFromLiteral);
-    const auto& value = isEditable ? plainTextOnlyName.get() : falseName.get();
+    const auto& value = isEditable ? plaintextOnlyAtom() : falseAtom();
     if (initialization) {
         Vector<Attribute> attributes { Attribute(contenteditableAttr, value) };
         parserSetAttributes(attributes);
@@ -297,12 +296,11 @@ Ref<SearchFieldCancelButtonElement> SearchFieldCancelButtonElement::create(Docum
 {
     auto element = adoptRef(*new SearchFieldCancelButtonElement(document));
 
-    static MainThreadNeverDestroyed<const AtomString> buttonName("button", AtomString::ConstructFromLiteral);
     element->setPseudo(ShadowPseudoIds::webkitSearchCancelButton());
 #if !PLATFORM(IOS_FAMILY)
-    element->setAttributeWithoutSynchronization(aria_labelAttr, AXSearchFieldCancelButtonText());
+    element->setAttributeWithoutSynchronization(aria_labelAttr, AtomString { AXSearchFieldCancelButtonText() });
 #endif
-    element->setAttributeWithoutSynchronization(roleAttr, buttonName);
+    element->setAttributeWithoutSynchronization(roleAttr, HTMLNames::buttonTag->localName());
     return element;
 }
 

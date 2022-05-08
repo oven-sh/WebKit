@@ -165,6 +165,7 @@ http/tests/referrer-policy-img/unsafe-url/cross-origin-http-http.html [ Skip ]
 http/tests/referrer-policy-img/unsafe-url/cross-origin-http.https.html [ Skip ]
 
 # Shared workers are only implemented for WebKit2.
+http/tests/navigation/page-cache-shared-worker.html [ Skip ]
 imported/w3c/web-platform-tests/content-security-policy/connect-src/shared-worker-connect-src-allowed.sub.html [ Skip ]
 imported/w3c/web-platform-tests/content-security-policy/connect-src/shared-worker-connect-src-blocked.sub.html [ Skip ]
 imported/w3c/web-platform-tests/content-security-policy/gen/top.http-rp/script-src-self/sharedworker-classic.http.html [ Skip ]
@@ -460,6 +461,10 @@ fast/events/mouseover-button.html [ Skip ]
 # TODO Accept header is handled by the browser
 http/tests/misc/image-checks-for-accept.html [ Skip ]
 
+# Probably wrong role after adding children to list (AXGroup instead of AXList).
+accessibility/list-with-dynamically-changing-content.html [ Skip ]
+accessibility/ignored-aria-role-description.html [ Skip ]
+
 # Need to implement AccessibilityUIElement::clearSelectedChildren()
 accessibility/aria-listbox-clear-selection-crash.html [ Skip ]
 accessibility/listbox-clear-selection.html [ Skip ]
@@ -479,9 +484,17 @@ accessibility/ancestor-computation.html [ Skip ]
 
 # Missing AccessibilityUIElement::uiElementForSearchPredicate implementation.
 accessibility/display-contents-search-traversal.html [ Skip ]
+accessibility/search-traversal-after-role-change.html [ Skip ]
 accessibility/table-search-traversal.html [ Skip ]
 accessibility/dynamically-changing-iframe-remains-accessible.html [ Skip ]
 accessibility/ignore-modals-without-any-content.html [ Skip ]
+
+# Missing AccessibilityUIElement::isAttributeSettable implementation.
+accessibility/aria-readonly-updates-after-dynamic-change.html [ Skip ]
+# Missing AccessibilityUIElement::isRequired implementation.
+accessibility/aria-required-updates-after-dynamic-change.html [ Skip ]
+# Missing AccessibilityUIElement::isBusy implementation.
+accessibility/aria-busy-updates-after-dynamic-change.html [ Skip ]
 
 # TODO Conic gradients
 http/wpt/css/css-images-4/conic-gradient-parsing.html [ Skip ]
@@ -521,6 +534,9 @@ webkit.org/b/208559 fast/scrolling/arrow-key-scroll-in-rtl-document.html [ Skip 
 webkit.org/b/208559 fast/scrolling/programmatic-scroll-to-zero-zero.html [ Skip ]
 webkit.org/b/208559 fast/scrolling/rtl-point-in-iframe.html [ Skip ]
 fast/scrolling/rtl-scrollbars-alternate-iframe-body-dir-attr-does-not-update-scrollbar-placement.html [ ImageOnlyFailure ]
+
+# waitForScrollCompletion() not supported
+fast/scrolling/programmatic-smooth-scroll-after-focus.html [ Skip ]
 
 # TODO Needs testRunner.enableAutoResizeMode()
 fast/autoresize/ [ Skip ]
@@ -1860,8 +1876,10 @@ webkit.org/b/140869 [ Debug ] accessibility/aria-combobox.html [ Skip ]
 [ Debug ] accessibility/table-one-cell.html [ Skip ] # Debug assertion
 [ Release ] accessibility/table-roles-hierarchy.html [ Failure ]
 [ Debug ] accessibility/table-roles-hierarchy.html [ Skip ] # Debug assertion
-[ Release ] accessibility/table-sections.html [ Failure ]
-[ Debug ] accessibility/table-sections.html [ Skip ] # Debug assertion
+[ Release ] accessibility/table-multiple-tbodies.html [ Skip ]
+[ Debug ] accessibility/table-multiple-tbodies.html [ Skip ] # Debug assertion
+[ Release ] accessibility/table-thead-tfoot.html [ Skip ]
+[ Debug ] accessibility/table-thead-tfoot.html [ Skip ] # Debug assertion
 [ Release ] accessibility/table-with-rules.html [ Failure ]
 [ Debug ] accessibility/table-with-rules.html [ Skip ] # Debug assertion
 [ Release ] accessibility/transformed-element.html [ Failure ]
@@ -1924,7 +1942,7 @@ webkit.org/b/140869 [ Debug ] accessibility/aria-combobox.html [ Skip ]
 [ Debug ] accessibility/selection-states.html [ Skip ] # Debug assertion
 [ Debug ] accessibility/svg-image.html [ Skip ] # Debug assertion
 [ Debug ] accessibility/table-destroyed-crash.html [ Skip ] # Debug assertion
-[ Debug ] accessibility/table-modification-crash.html [ Skip ] # Debug assertion
+accessibility/table-add-remove-row.html [ Skip ]
 [ Debug ] accessibility/table-notbody.html [ Skip ] # Debug assertion
 [ Debug ] accessibility/table-nofirstbody.html [ Skip ] # Debug assertion
 [ Debug ] accessibility/table-remove-cell-crash.html [ Skip ] # Debug assertion
@@ -3900,6 +3918,7 @@ wasm/iframe-parent-postmessage.html [ Skip ]
 wasm/window-postmessage.html [ Skip ]
 imported/w3c/web-platform-tests/wasm/wasm_stream_instantiate_test.html  [ Skip ]
 imported/w3c/web-platform-tests/wasm/wasm_stream_compile_test.html  [ Skip ]
+http/tests/security/contentSecurityPolicy/allow-wasm-after-window-open.html [ Skip ]
 
 # Animated image throttling behaves differently on WK1.
 svg/animations/animated-svg-image-outside-viewport-paused.html [ Skip ]
@@ -4898,6 +4917,8 @@ storage/indexeddb/structured-clone-image-data-display-p3.html [ Skip ]
 
 # WebXR is not enabled on windows.
 webxr [ Skip ]
+imported/w3c/web-platform-tests/webxr [ Skip ]
+http/wpt/webxr [ Skip ]
 
 # https://bugs.webkit.org/show_bug.cgi?id=226970
 fast/css/parse-border-image-repeat-null-crash.html [ Failure ]

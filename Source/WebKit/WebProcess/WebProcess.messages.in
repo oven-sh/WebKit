@@ -58,8 +58,6 @@ messages -> WebProcess LegacyReceiver NotRefCounted {
     SetHasStylusDevice(bool hasStylusDevice)
 #endif
 
-    RefreshPlugins()
-
     void StartMemorySampler(WebKit::SandboxExtension::Handle sampleLogFileHandle, String sampleLogFilePath, double interval);
     void StopMemorySampler();
 
@@ -202,5 +200,9 @@ messages -> WebProcess LegacyReceiver NotRefCounted {
 
 #if HAVE(MEDIA_ACCESSIBILITY_FRAMEWORK)
     SetMediaAccessibilityPreferences(WebCore::CaptionUserPreferences::CaptionDisplayMode displayMode, Vector<String> languages)
+#endif
+
+#if PLATFORM(MAC)
+    OpenDirectoryCacheInvalidated(WebKit::SandboxExtension::Handle handle)
 #endif
 }

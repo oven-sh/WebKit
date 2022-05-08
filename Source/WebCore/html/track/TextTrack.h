@@ -53,7 +53,6 @@ public:
     static TextTrack& captionMenuOffItem();
     static TextTrack& captionMenuAutomaticItem();
 
-    static const AtomString& subtitlesKeyword();
     static bool isValidKindKeyword(const AtomString&);
 
     TextTrackList* textTrackList() const;
@@ -67,7 +66,7 @@ public:
     const AtomString& kindKeyword() const;
     void setKindKeywordIgnoringASCIICase(StringView);
 
-    virtual AtomString inBandMetadataTrackDispatchType() const { return emptyString(); }
+    virtual AtomString inBandMetadataTrackDispatchType() const { return emptyAtom(); }
 
     enum class Mode { Disabled, Hidden, Showing };
     Mode mode() const;

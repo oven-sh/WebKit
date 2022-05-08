@@ -54,6 +54,7 @@
 #include "RenderTheme.h"
 #include "RuntimeEnabledFeatures.h"
 #include "SVGElement.h"
+#include "SVGGraphicsElement.h"
 #include "SVGNames.h"
 #include "SVGURIReference.h"
 #include "Settings.h"
@@ -364,13 +365,29 @@ void Adjuster::adjust(RenderStyle& style, const RenderStyle* userAgentAppearance
     else
         style.setUsedZIndex(style.specifiedZIndex());
 
+    // For SVG compatibility purposes we have to consider the 'animatedLocalTransform' besides the RenderStyle to query
+    // if an element has a transform. SVG transforms are not stored on the RenderStyle, and thus we need a special case here.
+    auto hasTransformRelatedProperty = [](const RenderStyle& style, const Element* element) {
+        if (style.hasTransformRelatedProperty())
+            return true;
+
+#if ENABLE(LAYER_BASED_SVG_ENGINE)
+        if (element && element->document().settings().layerBasedSVGEngineEnabled() && is<SVGGraphicsElement>(element))
+            return !downcast<SVGGraphicsElement>(*element).animatedLocalTransform().isIdentity();
+#else
+        UNUSED_PARAM(element);
+#endif
+
+        return false;
+    };
+
     // Auto z-index becomes 0 for the root element and transparent objects. This prevents
     // cases where objects that should be blended as a single unit end up with a non-transparent
     // object wedged in between them. Auto z-index also becomes 0 for objects that specify transforms/masks/reflections.
     if (style.hasAutoUsedZIndex()) {
         if ((m_element && m_document.documentElement() == m_element)
             || style.hasOpacity()
-            || style.hasTransformRelatedProperty()
+            || hasTransformRelatedProperty(style, m_element)
             || style.hasMask()
             || style.clipPath()
             || style.boxReflect()
@@ -457,12 +474,6 @@ void Adjuster::adjust(RenderStyle& style, const RenderStyle* userAgentAppearance
             style.setOverflowX(Overflow::Visible);
         if (style.overflowY() != Overflow::Visible && style.overflowY() != Overflow::Hidden)
             style.setOverflowY(Overflow::Visible);
-    }
-
-    // Menulists should have visible overflow
-    if (style.effectiveAppearance() == MenulistPart) {
-        style.setOverflowX(Overflow::Visible);
-        style.setOverflowY(Overflow::Visible);
     }
 
 #if ENABLE(OVERFLOW_SCROLLING_TOUCH)
@@ -702,19 +713,19 @@ void Adjuster::adjustForSiteSpecificQuirks(RenderStyle& style) const
 
     if (m_document.quirks().needsGMailOverflowScrollQuirk()) {
         // This turns sidebar scrollable without mouse move event.
-        static MainThreadNeverDestroyed<const AtomString> roleValue("navigation", AtomString::ConstructFromLiteral);
+        static MainThreadNeverDestroyed<const AtomString> roleValue("navigation"_s);
         if (style.overflowY() == Overflow::Hidden && m_element->attributeWithoutSynchronization(roleAttr) == roleValue)
             style.setOverflowY(Overflow::Auto);
     }
     if (m_document.quirks().needsYouTubeOverflowScrollQuirk()) {
         // This turns sidebar scrollable without hover.
-        static MainThreadNeverDestroyed<const AtomString> idValue("guide-inner-content", AtomString::ConstructFromLiteral);
+        static MainThreadNeverDestroyed<const AtomString> idValue("guide-inner-content"_s);
         if (style.overflowY() == Overflow::Hidden && m_element->idForStyleResolution() == idValue)
             style.setOverflowY(Overflow::Auto);
     }
     if (m_document.quirks().needsWeChatScrollingQuirk()) {
-        static MainThreadNeverDestroyed<const AtomString> class1("tree-select", AtomString::ConstructFromLiteral);
-        static MainThreadNeverDestroyed<const AtomString> class2("v-tree-select", AtomString::ConstructFromLiteral);
+        static MainThreadNeverDestroyed<const AtomString> class1("tree-select"_s);
+        static MainThreadNeverDestroyed<const AtomString> class2("v-tree-select"_s);
         const auto& flexBasis = style.flexBasis();
         if (style.minHeight().isAuto()
             && style.display() == DisplayType::Flex
@@ -729,8 +740,8 @@ void Adjuster::adjustForSiteSpecificQuirks(RenderStyle& style) const
 #if ENABLE(VIDEO)
     if (m_document.quirks().needsFullscreenDisplayNoneQuirk()) {
         if (is<HTMLDivElement>(m_element) && style.display() == DisplayType::None) {
-            static MainThreadNeverDestroyed<const AtomString> instreamNativeVideoDivClass("instream-native-video--mobile", AtomString::ConstructFromLiteral);
-            static MainThreadNeverDestroyed<const AtomString> videoElementID("vjs_video_3_html5_api", AtomString::ConstructFromLiteral);
+            static MainThreadNeverDestroyed<const AtomString> instreamNativeVideoDivClass("instream-native-video--mobile"_s);
+            static MainThreadNeverDestroyed<const AtomString> videoElementID("vjs_video_3_html5_api"_s);
 
             auto& div = downcast<HTMLDivElement>(*m_element);
             if (div.hasClass() && div.classNames().contains(instreamNativeVideoDivClass)) {

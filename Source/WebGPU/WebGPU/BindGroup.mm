@@ -50,10 +50,12 @@ static bool textureViewIsPresent(const WGPUBindGroupEntry& entry)
     return entry.textureView;
 }
 
-RefPtr<BindGroup> Device::createBindGroup(const WGPUBindGroupDescriptor& descriptor)
+Ref<BindGroup> Device::createBindGroup(const WGPUBindGroupDescriptor& descriptor)
 {
     if (descriptor.nextInChain)
-        return nullptr;
+        return BindGroup::createInvalid(*this);
+
+    // FIXME: Validate this according to the spec.
 
     const BindGroupLayout& bindGroupLayout = WebGPU::fromAPI(descriptor.layout);
 
@@ -63,7 +65,7 @@ RefPtr<BindGroup> Device::createBindGroup(const WGPUBindGroupDescriptor& descrip
     id<MTLBuffer> fragmentArgumentBuffer = safeCreateBuffer(bindGroupLayout.encodedLength(), MTLStorageModeShared);
     id<MTLBuffer> computeArgumentBuffer = safeCreateBuffer(bindGroupLayout.encodedLength(), MTLStorageModeShared);
     if (!vertexArgumentBuffer || !fragmentArgumentBuffer || !computeArgumentBuffer)
-        return nullptr;
+        return BindGroup::createInvalid(*this);
 
     auto label = fromAPI(descriptor.label);
     vertexArgumentBuffer.label = label;
@@ -81,17 +83,16 @@ RefPtr<BindGroup> Device::createBindGroup(const WGPUBindGroupDescriptor& descrip
         const WGPUBindGroupEntry& entry = descriptor.entries[i];
 
         if (entry.nextInChain)
-            return nullptr;
+            return BindGroup::createInvalid(*this);
 
         bool bufferIsPresent = WebGPU::bufferIsPresent(entry);
         bool samplerIsPresent = WebGPU::samplerIsPresent(entry);
         bool textureViewIsPresent = WebGPU::textureViewIsPresent(entry);
         if (static_cast<int>(bufferIsPresent) + static_cast<int>(samplerIsPresent) + static_cast<int>(textureViewIsPresent) != 1)
-            return nullptr;
+            return BindGroup::createInvalid(*this);
 
         if (bufferIsPresent) {
             id<MTLBuffer> buffer = WebGPU::fromAPI(entry.buffer).buffer();
-            // FIXME: Use checked casts.
             [vertexArgumentEncoder setBuffer:buffer offset:static_cast<NSUInteger>(entry.offset) atIndex:entry.binding];
             [fragmentArgumentEncoder setBuffer:buffer offset:static_cast<NSUInteger>(entry.offset) atIndex:entry.binding];
             [computeArgumentEncoder setBuffer:buffer offset:static_cast<NSUInteger>(entry.offset) atIndex:entry.binding];
@@ -107,17 +108,23 @@ RefPtr<BindGroup> Device::createBindGroup(const WGPUBindGroupDescriptor& descrip
             [computeArgumentEncoder setTexture:texture atIndex:entry.binding];
         } else {
             ASSERT_NOT_REACHED();
-            return nullptr;
+            return BindGroup::createInvalid(*this);
         }
     }
 
-    return BindGroup::create(vertexArgumentBuffer, fragmentArgumentBuffer, computeArgumentBuffer);
+    return BindGroup::create(vertexArgumentBuffer, fragmentArgumentBuffer, computeArgumentBuffer, *this);
 }
 
-BindGroup::BindGroup(id<MTLBuffer> vertexArgumentBuffer, id<MTLBuffer> fragmentArgumentBuffer, id<MTLBuffer> computeArgumentBuffer)
+BindGroup::BindGroup(id<MTLBuffer> vertexArgumentBuffer, id<MTLBuffer> fragmentArgumentBuffer, id<MTLBuffer> computeArgumentBuffer, Device& device)
     : m_vertexArgumentBuffer(vertexArgumentBuffer)
     , m_fragmentArgumentBuffer(fragmentArgumentBuffer)
     , m_computeArgumentBuffer(computeArgumentBuffer)
+    , m_device(device)
+{
+}
+
+BindGroup::BindGroup(Device& device)
+    : m_device(device)
 {
 }
 

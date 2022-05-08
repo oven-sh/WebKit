@@ -81,7 +81,7 @@ public:
     WEBCORE_EXPORT void setHeight(unsigned);
 
     URL src() const;
-    void setSrc(const String&);
+    void setSrc(const AtomString&);
 
     WEBCORE_EXPORT void setCrossOrigin(const AtomString&);
     WEBCORE_EXPORT String crossOrigin() const;
@@ -93,7 +93,7 @@ public:
 
     WEBCORE_EXPORT bool complete() const;
 
-    void setDecoding(String&&);
+    void setDecoding(AtomString&&);
     String decoding() const;
 
     DecodingMode decodingMode() const;
@@ -164,6 +164,8 @@ private:
     void collectPresentationalHintsForAttribute(const QualifiedName&, const AtomString&, MutableStyleProperties&) override;
     void collectExtraStyleForPresentationalHints(MutableStyleProperties&) override;
     void invalidateAttributeMapping();
+
+    Ref<Element> cloneElementWithoutAttributesAndChildren(Document& targetDocument) final;
 
     // ActiveDOMObject.
     const char* activeDOMObjectName() const final;

@@ -108,7 +108,7 @@ JSDOMWindowBase::~JSDOMWindowBase() = default;
 
 SUPPRESS_ASAN inline void JSDOMWindowBase::initStaticGlobals(JSC::VM& vm)
 {
-    auto& builtinNames = static_cast<JSVMClientData*>(vm.clientData)->builtinNames();
+    auto& builtinNames = WebCore::builtinNames(vm);
 
     GlobalPropertyInfo staticGlobals[] = {
         GlobalPropertyInfo(builtinNames.documentPublicName(), jsNull(), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
@@ -121,14 +121,14 @@ SUPPRESS_ASAN inline void JSDOMWindowBase::initStaticGlobals(JSC::VM& vm)
 void JSDOMWindowBase::finishCreation(VM& vm, JSWindowProxy* proxy)
 {
     Base::finishCreation(vm, proxy);
-    ASSERT(inherits(vm, info()));
+    ASSERT(inherits(info()));
 
     initStaticGlobals(vm);
 
     if (m_wrapped && m_wrapped->frame() && m_wrapped->frame()->settings().needsSiteSpecificQuirks())
         setNeedsSiteSpecificQuirks(true);
 
-    putDirectCustomAccessor(vm, static_cast<JSVMClientData*>(vm.clientData)->builtinNames().showModalDialogPublicName(), CustomGetterSetter::create(vm, showModalDialogGetter, nullptr), static_cast<unsigned>(PropertyAttribute::CustomValue));
+    putDirectCustomAccessor(vm, builtinNames(vm).showModalDialogPublicName(), CustomGetterSetter::create(vm, showModalDialogGetter, nullptr), static_cast<unsigned>(PropertyAttribute::CustomValue));
 }
 
 void JSDOMWindowBase::destroy(JSCell* cell)
@@ -149,7 +149,7 @@ void JSDOMWindowBase::updateDocument()
     bool shouldThrowReadOnlyError = false;
     bool ignoreReadOnlyErrors = true;
     bool putResult = false;
-    symbolTablePutTouchWatchpointSet(this, lexicalGlobalObject, static_cast<JSVMClientData*>(vm.clientData)->builtinNames().documentPublicName(), toJS(lexicalGlobalObject, this, m_wrapped->document()), shouldThrowReadOnlyError, ignoreReadOnlyErrors, putResult);
+    symbolTablePutTouchWatchpointSet(this, lexicalGlobalObject, builtinNames(vm).documentPublicName(), toJS(lexicalGlobalObject, this, m_wrapped->document()), shouldThrowReadOnlyError, ignoreReadOnlyErrors, putResult);
     EXCEPTION_ASSERT_UNUSED(scope, !scope.exception());
 }
 
@@ -272,7 +272,10 @@ void JSDOMWindowBase::reportViolationForUnsafeEval(JSGlobalObject* object, JSStr
     if (!contentSecurityPolicy)
         return;
 
-    contentSecurityPolicy->allowEval(object, LogToConsole::No, source ? source->tryGetValue() : StringView());
+    String sourceString;
+    if (source)
+        sourceString = source->tryGetValue();
+    contentSecurityPolicy->allowEval(object, LogToConsole::No, sourceString);
 }
 
 void JSDOMWindowBase::willRemoveFromWindowProxy()

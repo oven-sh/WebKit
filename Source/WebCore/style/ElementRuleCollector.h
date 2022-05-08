@@ -80,7 +80,7 @@ public:
 
     void setMode(SelectorChecker::Mode mode) { m_mode = mode; }
     void setPseudoElementRequest(const PseudoElementRequest& request) { m_pseudoElementRequest = request; }
-    void setMedium(const MediaQueryEvaluator* medium) { m_isPrintStyle = medium->mediaTypeMatchSpecific("print"); }
+    void setMedium(const MediaQueryEvaluator* medium) { m_isPrintStyle = medium->mediaTypeMatchSpecific("print"_s); }
 
     bool hasAnyMatchingRules(const RuleSet&);
 
@@ -114,7 +114,7 @@ private:
     void collectMatchingRules(const MatchRequest&);
     void collectMatchingRulesForList(const RuleSet::RuleDataVector*, const MatchRequest&);
     bool ruleMatches(const RuleData&, unsigned& specificity, ScopeOrdinal);
-    bool containerQueriesMatch(const Vector<const FilteredContainerQuery*>&);
+    bool containerQueriesMatch(const RuleData&, const MatchRequest&);
 
     void sortMatchedRules();
 

@@ -210,11 +210,6 @@ def message_to_struct_declaration(receiver, message):
             result.append('    static constexpr auto callbackThread = WTF::CompletionHandlerCallThread::MainThread;\n')
         else:
             result.append('    static constexpr auto callbackThread = WTF::CompletionHandlerCallThread::ConstructionThread;\n')
-        if not receiver.has_attribute(STREAM_ATTRIBUTE):
-            result.append('    static void send(UniqueRef<IPC::Encoder>&&, IPC::Connection&')
-            if len(send_parameters):
-                result.append(', %s' % completion_handler_parameters)
-            result.append(');\n')
         result.append('    using Reply = %s;\n' % reply_tuple(message))
         result.append('    using ReplyArguments = %s;\n' % reply_arguments_type(message))
 
@@ -264,6 +259,7 @@ def types_that_cannot_be_forward_declared():
         'MachSendRight',
         'MediaTime',
         'PlatformXR::ReferenceSpaceType',
+        'PlatformXR::SessionFeature',
         'PlatformXR::SessionMode',
         'PlatformXR::VisibilityState',
         'String',
@@ -295,6 +291,7 @@ def types_that_cannot_be_forward_declared():
         'WebCore::ProcessIdentifier',
         'WebCore::RealtimeMediaSourceIdentifier',
         'WebCore::RenderingMode',
+        'WebCore::RenderingPurpose',
         'WebCore::RenderingResourceIdentifier',
         'WebCore::ResourceLoaderIdentifier',
         'WebCore::SWServerConnectionIdentifier',
@@ -327,11 +324,13 @@ def types_that_cannot_be_forward_declared():
         'WebKit::GeolocationIdentifier',
         'WebKit::GraphicsContextGLIdentifier',
         'WebKit::ImageBufferBackendHandle',
+        'WebKit::IPCConnectionTesterIdentifier',
         'WebKit::IPCStreamTesterIdentifier',
         'WebKit::LayerHostingContextID',
         'WebKit::LegacyCustomProtocolID',
         'WebKit::LibWebRTCResolverIdentifier',
         'WebKit::MDNSRegisterIdentifier',
+        'WebKit::MarkSurfacesAsVolatileRequestIdentifier',
         'WebKit::MediaRecorderIdentifier',
         'WebKit::NetworkResourceLoadIdentifier',
         'WebKit::PDFPluginIdentifier',
@@ -637,6 +636,7 @@ def class_template_headers(template_string):
         'std::optional': {'headers': ['<optional>'], 'argument_coder_headers': ['"ArgumentCoders.h"']},
         'std::pair': {'headers': ['<utility>'], 'argument_coder_headers': ['"ArgumentCoders.h"']},
         'IPC::ArrayReference': {'headers': ['"ArrayReference.h"'], 'argument_coder_headers': ['"ArgumentCoders.h"']},
+        'IPC::ArrayReferenceTuple': {'headers': ['"ArrayReferenceTuple.h"'], 'argument_coder_headers': ['"ArgumentCoders.h"']},
         'Ref': {'headers': ['<wtf/Ref.h>'], 'argument_coder_headers': ['"ArgumentCoders.h"']},
         'RefPtr': {'headers': ['<wtf/RefCounted.h>'], 'argument_coder_headers': ['"ArgumentCoders.h"']},
         'RetainPtr': {'headers': ['<wtf/RetainPtr.h>'], 'argument_coder_headers': ['"ArgumentCodersCF.h"']},
@@ -754,6 +754,7 @@ def headers_for_type(type):
         'PAL::WebGPU::VertexStepMode': ['<pal/graphics/WebGPU/WebGPUVertexStepMode.h>'],
         'PlatformXR::Device::FrameData': ['<WebCore/PlatformXR.h>'],
         'PlatformXR::ReferenceSpaceType': ['<WebCore/PlatformXR.h>'],
+        'PlatformXR::SessionFeature': ['<WebCore/PlatformXR.h>'],
         'PlatformXR::SessionMode': ['<WebCore/PlatformXR.h>'],
         'PlatformXR::VisibilityState': ['<WebCore/PlatformXR.h>'],
         'Seconds': ['<wtf/Seconds.h>'],
@@ -833,6 +834,7 @@ def headers_for_type(type):
         'WebCore::PushSubscriptionIdentifier': ['<WebCore/PushSubscriptionIdentifier.h>'],
         'WebCore::QuadCurveData': ['<WebCore/InlinePathData.h>'],
         'WebCore::RecentSearch': ['<WebCore/SearchPopupMenu.h>'],
+        'WebCore::RenderingPurpose': ['<WebCore/RenderingMode.h>'],
         'WebCore::RequestStorageAccessResult': ['<WebCore/DocumentStorageAccess.h>'],
         'WebCore::RouteSharingPolicy': ['<WebCore/AudioSession.h>'],
         'WebCore::SWServerConnectionIdentifier': ['<WebCore/ServiceWorkerTypes.h>'],
@@ -1108,15 +1110,6 @@ def generate_message_handler(receiver):
                 result.append(', '.join(['IPC::AsyncReplyError<' + x.type + '>::create()' for x in message.reply_parameters]))
                 result.append(');\n}\n\n')
 
-            result.append('void %s::send(UniqueRef<IPC::Encoder>&& encoder, IPC::Connection& connection' % (message.name))
-            if len(send_parameters):
-                result.append(', %s' % ', '.join([' '.join(x) for x in send_parameters]))
-            result.append(')\n{\n')
-            result += ['    encoder.get() << %s;\n' % x.name for x in message.reply_parameters]
-            result.append('    connection.sendSyncReply(WTFMove(encoder));\n')
-            result.append('}\n')
-            result.append('\n')
-
             if message.condition:
                 result.append('#endif\n\n')
 
@@ -1133,7 +1126,7 @@ def generate_message_handler(receiver):
             async_messages.append(message)
 
     if receiver.has_attribute(STREAM_ATTRIBUTE):
-        result.append('void %s::didReceiveStreamMessage(IPC::StreamServerConnectionBase& connection, IPC::Decoder& decoder)\n' % (receiver.name))
+        result.append('void %s::didReceiveStreamMessage(IPC::StreamServerConnection& connection, IPC::Decoder& decoder)\n' % (receiver.name))
         result.append('{\n')
         assert(receiver.has_attribute(NOT_REFCOUNTED_RECEIVER_ATTRIBUTE))
         assert(not receiver.has_attribute(WANTS_DISPATCH_MESSAGE_ATTRIBUTE))

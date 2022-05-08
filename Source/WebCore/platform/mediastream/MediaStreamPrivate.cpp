@@ -208,7 +208,7 @@ bool MediaStreamPrivate::isProducingData() const
 bool MediaStreamPrivate::hasVideo() const
 {
     for (auto& track : m_trackSet.values()) {
-        if (track->type() == RealtimeMediaSource::Type::Video && track->isActive())
+        if (track->isVideo() && track->isActive())
             return true;
     }
     return false;
@@ -217,7 +217,7 @@ bool MediaStreamPrivate::hasVideo() const
 bool MediaStreamPrivate::hasAudio() const
 {
     for (auto& track : m_trackSet.values()) {
-        if (track->type() == RealtimeMediaSource::Type::Audio && track->isActive())
+        if (track->isAudio() && track->isActive())
             return true;
     }
     return false;
@@ -235,7 +235,6 @@ bool MediaStreamPrivate::muted() const
 FloatSize MediaStreamPrivate::intrinsicSize() const
 {
     FloatSize size;
-
     if (m_activeVideoTrack) {
         const RealtimeMediaSourceSettings& setting = m_activeVideoTrack->settings();
         size.setWidth(setting.width());
@@ -249,7 +248,7 @@ void MediaStreamPrivate::updateActiveVideoTrack()
 {
     m_activeVideoTrack = nullptr;
     for (auto& track : m_trackSet.values()) {
-        if (!track->ended() && track->type() == RealtimeMediaSource::Type::Video) {
+        if (!track->ended() && track->isVideo()) {
             m_activeVideoTrack = track.get();
             break;
         }
@@ -314,7 +313,7 @@ void MediaStreamPrivate::trackEnded(MediaStreamTrackPrivate& track)
 void MediaStreamPrivate::monitorOrientation(OrientationNotifier& notifier)
 {
     for (auto& track : m_trackSet.values()) {
-        if (track->source().isCaptureSource() && track->type() == RealtimeMediaSource::Type::Video)
+        if (track->source().isCaptureSource() && track->deviceType() == CaptureDevice::DeviceType::Camera)
             track->source().monitorOrientation(notifier);
     }
 }

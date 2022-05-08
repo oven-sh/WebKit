@@ -599,8 +599,8 @@ static std::optional<NSInteger> toTag(WebCore::ContextMenuAction action)
         return WebMenuItemTagToggleVideoEnhancedFullscreen;
     case ContextMenuItemTagTranslate:
         return WebMenuItemTagTranslate;
-    case ContextMenuItemTagQuickLookImage:
     case ContextMenuItemTagCopyCroppedImage:
+    case ContextMenuItemTagLookUpImage:
         return std::nullopt;
 
     case ContextMenuItemBaseCustomTag ... ContextMenuItemLastCustomTag:
@@ -2608,13 +2608,13 @@ static const SelectorNameMap* createSelectorExceptionMap()
 {
     SelectorNameMap* map = new HashMap<SEL, String>;
 
-    map->add(@selector(insertNewlineIgnoringFieldEditor:), "InsertNewline");
-    map->add(@selector(insertParagraphSeparator:), "InsertNewline");
-    map->add(@selector(insertTabIgnoringFieldEditor:), "InsertTab");
-    map->add(@selector(pageDown:), "MovePageDown");
-    map->add(@selector(pageDownAndModifySelection:), "MovePageDownAndModifySelection");
-    map->add(@selector(pageUp:), "MovePageUp");
-    map->add(@selector(pageUpAndModifySelection:), "MovePageUpAndModifySelection");
+    map->add(@selector(insertNewlineIgnoringFieldEditor:), "InsertNewline"_s);
+    map->add(@selector(insertParagraphSeparator:), "InsertNewline"_s);
+    map->add(@selector(insertTabIgnoringFieldEditor:), "InsertTab"_s);
+    map->add(@selector(pageDown:), "MovePageDown"_s);
+    map->add(@selector(pageDownAndModifySelection:), "MovePageDownAndModifySelection"_s);
+    map->add(@selector(pageUp:), "MovePageUp"_s);
+    map->add(@selector(pageUpAndModifySelection:), "MovePageUpAndModifySelection"_s);
 
     return map;
 }
@@ -2650,7 +2650,7 @@ static String commandNameForSelector(SEL selector)
     auto* coreFrame = core([self _frame]);
     if (!coreFrame)
         return WebCore::Editor::Command();
-    return coreFrame->editor().command(name);
+    return coreFrame->editor().command(String::fromLatin1(name));
 }
 
 - (void)executeCoreCommandBySelector:(SEL)selector
@@ -2888,7 +2888,7 @@ IGNORE_WARNINGS_END
 
         NSMenuItem *menuItem = (NSMenuItem *)item;
         if ([menuItem isKindOfClass:[NSMenuItem class]]) {
-            String direction = writingDirection == NSWritingDirectionLeftToRight ? "ltr" : "rtl";
+            String direction = writingDirection == NSWritingDirectionLeftToRight ? "ltr"_s : "rtl"_s;
             [menuItem setState:(frame->editor().selectionHasStyle(WebCore::CSSPropertyDirection, direction) != TriState::False)];
         }
         return [self _canEdit];
@@ -2906,7 +2906,7 @@ IGNORE_WARNINGS_END
         if ([menuItem isKindOfClass:[NSMenuItem class]]) {
             // Take control of the title of the menu item instead of just checking/unchecking it because
             // a check would be ambiguous.
-            [menuItem setTitle:(frame->editor().selectionHasStyle(WebCore::CSSPropertyDirection, "rtl") != TriState::False)
+            [menuItem setTitle:(frame->editor().selectionHasStyle(WebCore::CSSPropertyDirection, "rtl"_s) != TriState::False)
                 ? UI_STRING_INTERNAL("Left to Right", "Left to Right context menu item")
                 : UI_STRING_INTERNAL("Right to Left", "Right to Left context menu item")];
         }
@@ -4683,7 +4683,7 @@ static RefPtr<WebCore::KeyboardEvent> currentKeyboardEvent(WebCore::Frame* coreF
     auto* coreFrame = core([self _frame]);
     if (coreFrame) {
         if (auto* coreView = coreFrame->view())
-            coreView->setMediaType(_private->printing ? "print" : "screen");
+            coreView->setMediaType(_private->printing ? "print"_s : "screen"_s);
         if (auto* document = coreFrame->document()) {
             // In setting printing, we should not validate resources already cached for the document.
             // See https://bugs.webkit.org/show_bug.cgi?id=43704
@@ -6672,7 +6672,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
         })();
 
         if (!isFunctionKeyCommandWithMatchingMenuItem)
-            event->keypressCommands().append(WebCore::KeypressCommand("insertText:", text));
+            event->keypressCommands().append(WebCore::KeypressCommand("insertText:"_s, text));
         return;
     }
 
@@ -6699,8 +6699,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
     }
 
     bool eventHandled = false;
-    String eventText = text;
-    eventText.replace(NSBackTabCharacter, NSTabCharacter); // same thing is done in KeyEventMac.mm in WebCore
+    String eventText = makeStringByReplacingAll(text, NSBackTabCharacter, NSTabCharacter); // same thing is done in KeyEventMac.mm in WebCore
     if (!coreFrame->editor().hasComposition()) {
         // An insertText: might be handled by other responders in the chain if we don't handle it.
         // One example is space bar that results in scrolling down the page.

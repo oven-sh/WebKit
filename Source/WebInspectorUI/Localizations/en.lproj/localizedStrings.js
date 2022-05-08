@@ -56,6 +56,8 @@ localizedStrings["%s (%s)"] = "%s (%s)";
 localizedStrings["%s (%s, %s)"] = "%s (%s, %s)";
 /* Label for case-insensitive URL match pattern of a local override. */
 localizedStrings["%s (Case Insensitive) @ Local Override"] = "%s (Case Insensitive)";
+/* Label for the IP address of a proxy server used to retrieve a network resource. */
+localizedStrings["%s (Proxy) @ Resource Remote Address"] = "%s (Proxy)";
 localizedStrings["%s (default)"] = "%s (default)";
 localizedStrings["%s (hidden)"] = "%s (hidden)";
 localizedStrings["%s Callback"] = "%s Callback";
@@ -103,6 +105,8 @@ localizedStrings["1 match"] = "1 match";
 localizedStrings["1080p"] = "1080p";
 localizedStrings["2D"] = "2D";
 localizedStrings["720p"] = "720p";
+/* Text indicating that the local override intercepts the request phase of network activity. */
+localizedStrings["Access Control @ Local Override Type"] = "Access Control";
 localizedStrings["Accessibility"] = "Accessibility";
 localizedStrings["Action"] = "Action";
 /* Tooltip for a time range bar that represents when a CSS animation/transition is running */
@@ -231,6 +235,10 @@ localizedStrings["Blackbox Script"] = "Blackbox Script";
 localizedStrings["Blackbox script to ignore it when debugging"] = "Blackbox script to ignore it when debugging";
 /* Part of the 'Blackboxed - %d call frames' label shown in the debugger call stack when paused instead of subsequent call frames that have been blackboxed. */
 localizedStrings["Blackboxed @ Debugger Call Stack"] = "Blackboxed";
+/* Text indicating that the local override will always block the network activity. */
+localizedStrings["Block @ Local Override Type"] = "Block";
+localizedStrings["Block Request URL"] = "Block Request URL";
+localizedStrings["Block URL with %s error"] = "Block URL with %s error";
 localizedStrings["Block Variables"] = "Block Variables";
 /* Input label for the blur radius of a CSS box shadow */
 localizedStrings["Blur @ Box Shadow Editor"] = "Blur";
@@ -272,6 +280,8 @@ localizedStrings["Cancel Automatic Continue"] = "Cancel Automatic Continue";
 localizedStrings["Cancel comparison"] = "Cancel comparison";
 /* Tooltip for a timestamp marker that represents when a CSS animation/transition is canceled */
 localizedStrings["Canceled"] = "Canceled";
+/* Text indicating that the local override will always block the network activity. */
+localizedStrings["Cancellation @ Local Override Type"] = "Cancellation";
 localizedStrings["Canvas"] = "Canvas";
 localizedStrings["Canvas %d"] = "Canvas %d";
 localizedStrings["Canvas %s"] = "Canvas %s";
@@ -722,6 +732,8 @@ localizedStrings["Function Name Variable"] = "Function Name Variable";
 localizedStrings["GIF"] = "GIF";
 localizedStrings["Garbage Collection"] = "Garbage Collection";
 localizedStrings["General"] = "General";
+/* Text indicating that the local override intercepts the response phase of network activity. */
+localizedStrings["General @ Local Override Type"] = "General";
 localizedStrings["Getter"] = "Getter";
 localizedStrings["Global Code"] = "Global Code";
 localizedStrings["Global Lexical Environment"] = "Global Lexical Environment";
@@ -887,6 +899,7 @@ localizedStrings["Loaded in %s"] = "Loaded in %s";
 localizedStrings["Loading for %s"] = "Loading for %s";
 localizedStrings["Local File"] = "Local File";
 localizedStrings["Local Override"] = "Local Override";
+localizedStrings["Local Override: could not load \u201C%s\u201D"] = "Local Override: could not load \u201C%s\u201D";
 localizedStrings["Local Override\u2026"] = "Local Override\u2026";
 localizedStrings["Local Overrides"] = "Local Overrides";
 localizedStrings["Local Storage"] = "Local Storage";
@@ -920,6 +933,8 @@ localizedStrings["MSE Logging:"] = "MSE Logging:";
 localizedStrings["Main Thread"] = "Main Thread";
 localizedStrings["Main: %s"] = "Main: %s";
 localizedStrings["Manifest URL"] = "Manifest URL";
+localizedStrings["Map to File"] = "Map to File";
+localizedStrings["Mapped to \u201C%s\u201D"] = "Mapped to \u201C%s\u201D";
 localizedStrings["Mass"] = "Mass";
 localizedStrings["Matching"] = "Matching";
 localizedStrings["Max Comparison"] = "Max Comparison";
@@ -1210,8 +1225,8 @@ localizedStrings["Request @ Local Override Type"] = "Request";
 localizedStrings["Request Cookies"] = "Request Cookies";
 localizedStrings["Request Data"] = "Request Data";
 localizedStrings["Request Headers"] = "Request Headers";
-/* Label indicating that the shown content is from a request local override. */
-localizedStrings["Request Override @ Local Override Content View"] = "Request Override";
+/* Text indicating that the local override replaces the request of the network activity. */
+localizedStrings["Request Override @ Local Override Network Stage"] = "Request Override";
 localizedStrings["Requesting: %s"] = "Requesting: %s";
 localizedStrings["Required"] = "Required";
 /* Context menu action for resetting the breakpoint to its initial configuration. */
@@ -1238,8 +1253,8 @@ localizedStrings["Response (skip network) @ Local Override Type"] = "Response (s
 localizedStrings["Response @ Local Override Type"] = "Response";
 localizedStrings["Response Cookies"] = "Response Cookies";
 localizedStrings["Response Headers"] = "Response Headers";
-/* Label indicating that the shown content is from a response local override. */
-localizedStrings["Response Override @ Local Override Content View"] = "Response Override";
+/* Text indicating that the local override replaces the response of the network activity. */
+localizedStrings["Response Override @ Local Override Network Stage"] = "Response Override";
 localizedStrings["Response:"] = "Response:";
 localizedStrings["Restart (%s)"] = "Restart (%s)";
 localizedStrings["Restart animation"] = "Restart animation";
@@ -1556,6 +1571,7 @@ localizedStrings["This is what the result of an unsupported test with no data lo
 localizedStrings["This object is a root"] = "This object is a root";
 localizedStrings["This object is referenced by internal objects"] = "This object is referenced by internal objects";
 localizedStrings["This resource came from a local override"] = "This resource came from a local override";
+localizedStrings["This resource was blocked by a local override"] = "This resource was blocked by a local override";
 localizedStrings["This resource was loaded from a local override"] = "This resource was loaded from a local override";
 localizedStrings["This resource was loaded from a service worker"] = "This resource was loaded from a service worker";
 localizedStrings["This resource was loaded from the disk cache"] = "This resource was loaded from the disk cache";
@@ -1570,6 +1586,8 @@ localizedStrings["Timeline Recording %d"] = "Timeline Recording %d";
 localizedStrings["Timeline Recording Import Error: %s"] = "Timeline Recording Import Error: %s";
 /* Name of Timelines Tab */
 localizedStrings["Timelines Tab Name"] = "Timelines";
+/* Text indicating that the local override will skip all network activity and instead immediately serve the response. */
+localizedStrings["Timeout @ Local Override Type"] = "Timeout";
 localizedStrings["Timer %d Fired"] = "Timer %d Fired";
 localizedStrings["Timer %d Installed"] = "Timer %d Installed";
 localizedStrings["Timer %d Removed"] = "Timer %d Removed";

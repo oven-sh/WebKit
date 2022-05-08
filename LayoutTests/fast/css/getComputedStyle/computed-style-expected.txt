@@ -193,6 +193,7 @@ transition-duration: 0s;
 transition-property: all;
 transition-timing-function: ease;
 unicode-bidi: normal;
+user-select: text;
 vector-effect: none;
 vertical-align: baseline;
 visibility: visible;
@@ -202,7 +203,6 @@ width: 784px;
 will-change: auto;
 word-break: normal;
 word-spacing: 0px;
-word-wrap: normal;
 writing-mode: horizontal-tb;
 z-index: auto;
 zoom: 1;
@@ -210,7 +210,6 @@ zoom: 1;
 -webkit-background-origin: padding-box;
 -webkit-background-size: auto;
 -webkit-border-horizontal-spacing: 0px;
--webkit-border-image: none;
 -webkit-border-vertical-spacing: 0px;
 -webkit-box-align: stretch;
 -webkit-box-decoration-break: slice;
@@ -254,10 +253,8 @@ zoom: 1;
 -webkit-text-security: none;
 -webkit-text-stroke-color: rgb(0, 0, 0);
 -webkit-text-stroke-width: 0px;
--webkit-transform-style: flat;
 -webkit-user-drag: auto;
 -webkit-user-modify: read-only;
--webkit-user-select: text;
 
 Other attributes that the computed style class supports:
 

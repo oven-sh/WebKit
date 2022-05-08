@@ -340,7 +340,7 @@ void StructureStubInfo::visitWeakReferences(const ConcurrentJSLockerBase& locker
     }
 
     bool isValid = true;
-    if (Structure* structure = inlineAccessBaseStructure(vm))
+    if (Structure* structure = inlineAccessBaseStructure())
         isValid &= vm.heap.isMarked(structure);
     if (m_cacheType == CacheType::Stub)
         isValid &= m_stub->visitWeak(vm);
@@ -355,7 +355,7 @@ void StructureStubInfo::visitWeakReferences(const ConcurrentJSLockerBase& locker
 template<typename Visitor>
 void StructureStubInfo::propagateTransitions(Visitor& visitor)
 {
-    if (Structure* structure = inlineAccessBaseStructure(visitor.vm()))
+    if (Structure* structure = inlineAccessBaseStructure())
         structure->markIfCheap(visitor);
 
     if (m_cacheType == CacheType::Stub)
@@ -562,7 +562,7 @@ void StructureStubInfo::initializeFromUnlinkedStructureStubInfo(CodeBlock*, Unli
         baseGPR = BaselineJITRegisters::Instanceof::valueJSR.payloadGPR();
         valueGPR = BaselineJITRegisters::Instanceof::resultJSR.payloadGPR();
         regs.prototypeGPR = BaselineJITRegisters::Instanceof::protoJSR.payloadGPR();
-        m_stubInfoGPR = BaselineJITRegisters::Instanceof::stubInfoGPR;
+        m_stubInfoGPR = BaselineJITRegisters::Instanceof::FastPath::stubInfoGPR;
 #if USE(JSVALUE32_64)
         baseTagGPR = BaselineJITRegisters::Instanceof::valueJSR.tagGPR();
         valueTagGPR = InvalidGPRReg;
@@ -639,7 +639,7 @@ void StructureStubInfo::initializeFromUnlinkedStructureStubInfo(CodeBlock*, Unli
         baseGPR = BaselineJITRegisters::PutByVal::baseJSR.payloadGPR();
         regs.propertyGPR = BaselineJITRegisters::PutByVal::propertyJSR.payloadGPR();
         valueGPR = BaselineJITRegisters::PutByVal::valueJSR.payloadGPR();
-        m_stubInfoGPR = BaselineJITRegisters::PutByVal::FastPath::stubInfoGPR;
+        m_stubInfoGPR = BaselineJITRegisters::PutByVal::stubInfoGPR;
         if (accessType == AccessType::PutByVal)
             m_arrayProfileGPR = BaselineJITRegisters::PutByVal::profileGPR;
 #if USE(JSVALUE32_64)

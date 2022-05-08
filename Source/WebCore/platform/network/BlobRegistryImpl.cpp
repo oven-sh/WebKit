@@ -67,8 +67,9 @@ static void registerBlobResourceHandleConstructor()
 {
     static bool didRegister = false;
     if (!didRegister) {
-        ResourceHandle::registerBuiltinConstructor("blob", createBlobResourceHandle);
-        ResourceHandle::registerBuiltinSynchronousLoader("blob", loadBlobResourceSynchronously);
+        AtomString blob = "blob"_s;
+        ResourceHandle::registerBuiltinConstructor(blob, createBlobResourceHandle);
+        ResourceHandle::registerBuiltinSynchronousLoader(blob, loadBlobResourceSynchronously);
         didRegister = true;
     }
 }
@@ -230,7 +231,7 @@ BlobData* BlobRegistryImpl::getBlobDataFromURL(const URL& url) const
 {
     ASSERT(isMainThread());
     if (url.hasFragmentIdentifier())
-        return m_blobs.get(url.viewWithoutFragmentIdentifier().toStringWithoutCopying());
+        return m_blobs.get<StringViewHashTranslator>(url.viewWithoutFragmentIdentifier());
     return m_blobs.get(url.string());
 }
 

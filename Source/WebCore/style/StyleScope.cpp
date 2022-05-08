@@ -32,6 +32,7 @@
 #include "CSSStyleSheet.h"
 #include "Element.h"
 #include "ElementChildIterator.h"
+#include "ElementRareData.h"
 #include "ExtensionStyleSheets.h"
 #include "HTMLHeadElement.h"
 #include "HTMLIFrameElement.h"
@@ -499,7 +500,7 @@ void Scope::updateActiveStyleSheets(UpdateType updateType)
 
     updateResolver(activeCSSStyleSheets, styleSheetChange.resolverUpdateType);
 
-    m_weakCopyOfActiveStyleSheetListForFastLookup = nullptr;
+    m_weakCopyOfActiveStyleSheetListForFastLookup.clear();
     m_activeStyleSheets.swap(activeCSSStyleSheets);
     m_styleSheetsForStyleSheetList.swap(activeStyleSheets);
 
@@ -587,12 +588,14 @@ const Vector<RefPtr<CSSStyleSheet>> Scope::activeStyleSheetsForInspector()
 
 bool Scope::activeStyleSheetsContains(const CSSStyleSheet* sheet) const
 {
-    if (!m_weakCopyOfActiveStyleSheetListForFastLookup) {
-        m_weakCopyOfActiveStyleSheetListForFastLookup = makeUnique<HashSet<const CSSStyleSheet*>>();
+    if (m_activeStyleSheets.isEmpty())
+        return false;
+
+    if (m_weakCopyOfActiveStyleSheetListForFastLookup.isEmpty()) {
         for (auto& activeStyleSheet : m_activeStyleSheets)
-            m_weakCopyOfActiveStyleSheetListForFastLookup->add(activeStyleSheet.get());
+            m_weakCopyOfActiveStyleSheetListForFastLookup.add(activeStyleSheet.get());
     }
-    return m_weakCopyOfActiveStyleSheetListForFastLookup->contains(sheet);
+    return m_weakCopyOfActiveStyleSheetListForFastLookup.contains(sheet);
 }
 
 void Scope::flushPendingSelfUpdate()
@@ -684,14 +687,14 @@ auto Scope::collectResolverScopes() -> ResolverScopes
 
     ResolverScopes resolverScopes;
 
-    resolverScopes.add(*resolverIfExists(), Vector<CheckedPtr<Scope>> { this });
+    resolverScopes.add(*resolverIfExists(), Vector<WeakPtr<Scope>> { this });
 
     for (auto* shadowRoot : m_document.inDocumentShadowRoots()) {
         auto& scope = shadowRoot->styleScope();
         auto* resolver = scope.resolverIfExists();
         if (!resolver)
             continue;
-        resolverScopes.add(*resolver, Vector<CheckedPtr<Scope>> { }).iterator->value.append(&scope);
+        resolverScopes.add(*resolver, Vector<WeakPtr<Scope>> { }).iterator->value.append(&scope);
     }
     return resolverScopes;
 }

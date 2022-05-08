@@ -1385,13 +1385,13 @@ bool WebFrameLoaderClient::canShowMIMETypeAsHTML(const String& /*MIMEType*/) con
     return true;
 }
 
-bool WebFrameLoaderClient::representationExistsForURLScheme(const String& /*URLScheme*/) const
+bool WebFrameLoaderClient::representationExistsForURLScheme(StringView /*URLScheme*/) const
 {
     notImplemented();
     return false;
 }
 
-String WebFrameLoaderClient::generatedMIMETypeForURLScheme(const String& /*URLScheme*/) const
+String WebFrameLoaderClient::generatedMIMETypeForURLScheme(StringView /*URLScheme*/) const
 {
     notImplemented();
     return String();
@@ -1524,9 +1524,15 @@ void WebFrameLoaderClient::transitionToCommittedForNewPage()
     bool shouldHideScrollbars = shouldDisableScrolling;
     IntRect fixedVisibleContentRect;
 
+    auto oldView = m_frame->coreFrame()->view();
+
+    auto overrideSizeForCSSDefaultViewportUnits = oldView ? oldView->overrideSizeForCSSDefaultViewportUnits() : std::nullopt;
+    auto overrideSizeForCSSSmallViewportUnits = oldView ? oldView->overrideSizeForCSSSmallViewportUnits() : std::nullopt;
+    auto overrideSizeForCSSLargeViewportUnits = oldView ? oldView->overrideSizeForCSSLargeViewportUnits() : std::nullopt;
+
 #if USE(COORDINATED_GRAPHICS)
-    if (m_frame->coreFrame()->view())
-        fixedVisibleContentRect = m_frame->coreFrame()->view()->fixedVisibleContentRect();
+    if (oldView)
+        fixedVisibleContentRect = oldView->fixedVisibleContentRect();
     if (shouldUseFixedLayout)
         shouldHideScrollbars = true;
 #endif
@@ -1549,6 +1555,16 @@ void WebFrameLoaderClient::transitionToCommittedForNewPage()
         horizontalScrollbarMode, horizontalLock, verticalScrollbarMode, verticalLock);
 
     RefPtr<FrameView> view = m_frame->coreFrame()->view();
+
+    if (overrideSizeForCSSDefaultViewportUnits)
+        view->setOverrideSizeForCSSDefaultViewportUnits(*overrideSizeForCSSDefaultViewportUnits);
+
+    if (overrideSizeForCSSSmallViewportUnits)
+        view->setOverrideSizeForCSSSmallViewportUnits(*overrideSizeForCSSSmallViewportUnits);
+
+    if (overrideSizeForCSSLargeViewportUnits)
+        view->setOverrideSizeForCSSLargeViewportUnits(*overrideSizeForCSSLargeViewportUnits);
+
     if (int width = webPage->minimumSizeForAutoLayout().width()) {
         int height = std::max(webPage->minimumSizeForAutoLayout().height(), 1);
         view->enableFixedWidthAutoSizeMode(true, { width, height });
@@ -1567,7 +1583,7 @@ void WebFrameLoaderClient::transitionToCommittedForNewPage()
     }
 
     if (auto viewportSizeForViewportUnits = webPage->viewportSizeForCSSViewportUnits())
-        view->setSizeForCSSLargeViewportUnits(*viewportSizeForViewportUnits);
+        view->setSizeForCSSDefaultViewportUnits(*viewportSizeForViewportUnits);
     view->setProhibitsScrolling(shouldDisableScrolling);
     view->setVisualUpdatesAllowedByClient(!webPage->shouldExtendIncrementalRenderingSuppression());
 #if PLATFORM(COCOA)
@@ -1608,7 +1624,7 @@ void WebFrameLoaderClient::convertMainResourceLoadToDownload(DocumentLoader *doc
     m_frame->convertMainResourceLoadToDownload(documentLoader, request, response);
 }
 
-RefPtr<Frame> WebFrameLoaderClient::createFrame(const String& name, HTMLFrameOwnerElement& ownerElement)
+RefPtr<Frame> WebFrameLoaderClient::createFrame(const AtomString& name, HTMLFrameOwnerElement& ownerElement)
 {
     auto* webPage = m_frame->page();
 
@@ -1624,7 +1640,7 @@ RefPtr<Frame> WebFrameLoaderClient::createFrame(const String& name, HTMLFrameOwn
     return coreSubframe;
 }
 
-RefPtr<Widget> WebFrameLoaderClient::createPlugin(const IntSize&, HTMLPlugInElement& pluginElement, const URL& url, const Vector<String>& paramNames, const Vector<String>& paramValues, const String& mimeType, bool loadManually)
+RefPtr<Widget> WebFrameLoaderClient::createPlugin(const IntSize&, HTMLPlugInElement& pluginElement, const URL& url, const Vector<AtomString>& paramNames, const Vector<AtomString>& paramValues, const String& mimeType, bool loadManually)
 {
     ASSERT(paramNames.size() == paramValues.size());
     ASSERT(m_frame->page());
@@ -1997,6 +2013,19 @@ bool WebFrameLoaderClient::isParentProcessAFullWebBrowser() const
     auto* page = m_frame->page();
     return page && page->isParentProcessAWebBrowser();
 }
+
+#if ENABLE(ARKIT_INLINE_PREVIEW_MAC)
+void WebFrameLoaderClient::modelInlinePreviewUUIDs(CompletionHandler<void(Vector<String>)>&& completionHandler) const
+{
+    auto* webPage = m_frame->page();
+    if (!webPage) {
+        completionHandler({ });
+        return;
+    }
+
+    webPage->sendWithAsyncReply(Messages::WebPageProxy::ModelInlinePreviewUUIDs(), WTFMove(completionHandler));
+}
+#endif
 
 } // namespace WebKit
 

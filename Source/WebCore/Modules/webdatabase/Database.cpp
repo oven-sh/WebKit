@@ -56,6 +56,7 @@
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/RefPtr.h>
+#include <wtf/RobinHoodHashMap.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/CString.h>
 
@@ -112,29 +113,29 @@ static String formatErrorMessage(const char* message, int sqliteErrorCode, const
     return makeString(message, " (", sqliteErrorCode, ' ', sqliteErrorMessage, ')');
 }
 
-static bool setTextValueInDatabase(SQLiteDatabase& db, const String& query, const String& value)
+static bool setTextValueInDatabase(SQLiteDatabase& db, StringView query, const String& value)
 {
     auto statement = db.prepareStatementSlow(query);
     if (!statement) {
-        LOG_ERROR("Failed to prepare statement to set value in database (%s)", query.ascii().data());
+        LOG_ERROR("Failed to prepare statement to set value in database (%s)", query.utf8().data());
         return false;
     }
 
     statement->bindText(1, value);
 
     if (statement->step() != SQLITE_DONE) {
-        LOG_ERROR("Failed to step statement to set value in database (%s)", query.ascii().data());
+        LOG_ERROR("Failed to step statement to set value in database (%s)", query.utf8().data());
         return false;
     }
 
     return true;
 }
 
-static bool retrieveTextResultFromDatabase(SQLiteDatabase& db, const String& query, String& resultString)
+static bool retrieveTextResultFromDatabase(SQLiteDatabase& db, StringView query, String& resultString)
 {
     auto statement = db.prepareStatementSlow(query);
     if (!statement) {
-        LOG_ERROR("Error (%i) preparing statement to read text result from database (%s)", statement.error(), query.ascii().data());
+        LOG_ERROR("Error (%i) preparing statement to read text result from database (%s)", statement.error(), query.utf8().data());
         return false;
     }
 
@@ -148,7 +149,7 @@ static bool retrieveTextResultFromDatabase(SQLiteDatabase& db, const String& que
         return true;
     }
 
-    LOG_ERROR("Error (%i) reading text result from database (%s)", result, query.ascii().data());
+    LOG_ERROR("Error (%i) reading text result from database (%s)", result, query.utf8().data());
     return false;
 }
 
@@ -181,7 +182,7 @@ static HashMap<DatabaseGUID, HashSet<Database*>>& guidToDatabaseMap() WTF_REQUIR
 
 static inline DatabaseGUID guidForOriginAndName(const String& origin, const String& name) WTF_REQUIRES_LOCK(guidLock)
 {
-    static NeverDestroyed<HashMap<String, DatabaseGUID>> map;
+    static MainThreadNeverDestroyed<MemoryCompactRobinHoodHashMap<String, DatabaseGUID>> map;
     return map.get().ensure(makeString(origin, '/', name), [] {
         static DatabaseGUID lastUsedGUID;
         return ++lastUsedGUID;
@@ -198,7 +199,7 @@ Database::Database(DatabaseContext& context, const String& name, const String& e
     , m_displayName(displayName.isolatedCopy())
     , m_estimatedSize(estimatedSize)
     , m_filename(DatabaseManager::singleton().fullPathForDatabase(m_document->securityOrigin(), m_name))
-    , m_databaseAuthorizer(DatabaseAuthorizer::create(String { unqualifiedInfoTableName }))
+    , m_databaseAuthorizer(DatabaseAuthorizer::create(String::fromLatin1(unqualifiedInfoTableName)))
 {
     {
         Locker locker { guidLock };
@@ -366,11 +367,10 @@ ExceptionOr<void> Database::performOpenAndVerify(bool shouldSetVersionInNewDatab
                 return Exception { InvalidStateError, WTFMove(message) };
             }
 
-            String tableName(unqualifiedInfoTableName);
-            if (!m_sqliteDatabase.tableExists(tableName)) {
+            if (!m_sqliteDatabase.tableExists(unqualifiedInfoTableName)) {
                 m_new = true;
 
-                if (!m_sqliteDatabase.executeCommandSlow("CREATE TABLE " + tableName + " (key TEXT NOT NULL ON CONFLICT FAIL UNIQUE ON CONFLICT REPLACE,value TEXT NOT NULL ON CONFLICT FAIL);")) {
+                if (!m_sqliteDatabase.executeCommandSlow(makeString("CREATE TABLE ", unqualifiedInfoTableName, " (key TEXT NOT NULL ON CONFLICT FAIL UNIQUE ON CONFLICT REPLACE,value TEXT NOT NULL ON CONFLICT FAIL);"))) {
                     String message = formatErrorMessage("unable to open database, failed to create 'info' table", m_sqliteDatabase.lastError(), m_sqliteDatabase.lastErrorMsg());
                     transaction.rollback();
                     m_sqliteDatabase.close();
@@ -452,7 +452,7 @@ void Database::closeDatabase()
 
 bool Database::getVersionFromDatabase(String& version, bool shouldCacheVersion)
 {
-    String query(String("SELECT value FROM ") + fullyQualifiedInfoTableName() +  " WHERE key = '" + versionKey + "';");
+    auto query = makeString("SELECT value FROM ", fullyQualifiedInfoTableName(),  " WHERE key = '", versionKey, "';");
 
     m_databaseAuthorizer->disable();
 
@@ -472,7 +472,7 @@ bool Database::setVersionInDatabase(const String& version, bool shouldCacheVersi
 {
     // The INSERT will replace an existing entry for the database with the new version number, due to the UNIQUE ON CONFLICT REPLACE
     // clause in the CREATE statement (see Database::performOpenAndVerify()).
-    String query(String("INSERT INTO ") + fullyQualifiedInfoTableName() +  " (key, value) VALUES ('" + versionKey + "', ?);");
+    auto query = makeString("INSERT INTO ", fullyQualifiedInfoTableName(),  " (key, value) VALUES ('", versionKey, "', ?);");
 
     m_databaseAuthorizer->disable();
 

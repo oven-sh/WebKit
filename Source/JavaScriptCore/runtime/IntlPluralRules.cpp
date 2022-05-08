@@ -76,7 +76,7 @@ IntlPluralRules::IntlPluralRules(VM& vm, Structure* structure)
 void IntlPluralRules::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    ASSERT(inherits(vm, info()));
+    ASSERT(inherits(info()));
 }
 
 template<typename Visitor>
@@ -230,7 +230,7 @@ JSObject* IntlPluralRules::resolvedOptions(JSGlobalObject* globalObject) const
         categories->putDirectIndex(globalObject, index++, jsNontrivialString(vm, String(result, resultLength)));
         RETURN_IF_EXCEPTION(scope, { });
     }
-    options->putDirect(vm, Identifier::fromString(vm, "pluralCategories"), categories);
+    options->putDirect(vm, Identifier::fromString(vm, "pluralCategories"_s), categories);
     options->putDirect(vm, vm.propertyNames->roundingMode, jsNontrivialString(vm, IntlNumberFormat::roundingPriorityString(m_roundingType)));
 
     return options;

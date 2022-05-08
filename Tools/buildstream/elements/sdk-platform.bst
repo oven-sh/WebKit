@@ -10,7 +10,6 @@ depends:
 # replaced (patched) elements:
 - sdk/adwaita-icon-theme.bst
 - sdk/apitrace.bst
-- sdk/bubblewrap.bst
 - sdk/capnp.bst
 - sdk/cargo-c.bst
 - sdk/ccls.bst
@@ -75,6 +74,7 @@ depends:
 - freedesktop-sdk.bst:components/at-spi2-core.bst
 - freedesktop-sdk.bst:components/atk.bst
 - freedesktop-sdk.bst:components/brotli.bst
+- freedesktop-sdk.bst:components/bubblewrap.bst
 - freedesktop-sdk.bst:components/ca-certificates.bst
 - freedesktop-sdk.bst:components/cairo.bst
 - freedesktop-sdk.bst:components/ccache.bst

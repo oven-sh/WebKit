@@ -20,6 +20,7 @@
 #include "config.h"
 #include "QualifiedName.h"
 
+#include "CommonAtomStrings.h"
 #include "QualifiedNameCache.h"
 #include "ThreadGlobalData.h"
 #include <wtf/Assertions.h>
@@ -48,7 +49,6 @@ void QualifiedName::init()
     if (initialized)
         return;
 
-    ASSERT_WITH_MESSAGE(WTF::nullAtomData.isConstructed(), "AtomString::init should have been called");
     anyName.construct(nullAtom(), starAtom(), starAtom());
     initialized = true;
 }

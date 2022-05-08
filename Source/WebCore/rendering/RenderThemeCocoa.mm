@@ -35,6 +35,7 @@
 #import "UserAgentStyleSheets.h"
 #import <algorithm>
 #import <pal/spi/cf/CoreTextSPI.h>
+#import <wtf/Language.h>
 
 #if ENABLE(VIDEO)
 #import "LocalizedStrings.h"
@@ -114,7 +115,10 @@ bool RenderThemeCocoa::paintApplePayButton(const RenderObject& renderer, const P
         floatValueForLength(style.borderBottomRightRadius().height, paintRect.height()),
         floatValueForLength(style.borderBottomRightRadius().width, paintRect.width())
     });
-    paintInfo.context().drawSystemImage(ApplePayButtonSystemImage::create(style.applePayButtonType(), style.applePayButtonStyle(), style.computedLocale(), largestCornerRadius), paintRect);
+    String locale = style.computedLocale();
+    if (locale.isEmpty())
+        locale = defaultLanguage(ShouldMinimizeLanguages::No);
+    paintInfo.context().drawSystemImage(ApplePayButtonSystemImage::create(style.applePayButtonType(), style.applePayButtonStyle(), locale, largestCornerRadius), paintRect);
     return false;
 }
 
@@ -322,22 +326,22 @@ void RenderThemeCocoa::updateCachedSystemFontDescription(CSSValueID valueID, Fon
         fontDescriptor = adoptCF(CTFontDescriptorCreateWithTextStyle(textStyle, contentSizeCategory(), nullptr));
         break;
     case CSSValueSmallCaption: {
-        style = AtomString("system-ui", AtomString::ConstructFromLiteral);
+        style = "system-ui"_s;
         auto font = [cocoaFontClass() systemFontOfSize:[cocoaFontClass() smallSystemFontSize]];
         fontDescriptor = static_cast<CTFontDescriptorRef>(font.fontDescriptor);
         break;
     }
     case CSSValueMenu:
-        style = AtomString("-apple-menu", AtomString::ConstructFromLiteral);
+        style = "-apple-menu"_s;
         fontDescriptor = adoptCF(CTFontDescriptorCreateForUIType(kCTFontUIFontMenuItem, [cocoaFontClass() systemFontSize], nullptr));
         break;
     case CSSValueStatusBar: {
-        style = AtomString("-apple-status-bar", AtomString::ConstructFromLiteral);
+        style = "-apple-status-bar"_s;
         fontDescriptor = adoptCF(CTFontDescriptorCreateForUIType(kCTFontUIFontSystem, [cocoaFontClass() labelFontSize], nullptr));
         break;
     }
     case CSSValueWebkitMiniControl: {
-        style = AtomString("system-ui", AtomString::ConstructFromLiteral);
+        style = "system-ui"_s;
 #if PLATFORM(IOS_FAMILY)
         fontDescriptor = adoptCF(CTFontDescriptorCreateForUIType(kCTFontUIFontMiniSystem, 0, nullptr));
 #else
@@ -347,7 +351,7 @@ void RenderThemeCocoa::updateCachedSystemFontDescription(CSSValueID valueID, Fon
         break;
     }
     case CSSValueWebkitSmallControl: {
-        style = AtomString("system-ui", AtomString::ConstructFromLiteral);
+        style = "system-ui"_s;
 #if PLATFORM(IOS_FAMILY)
         fontDescriptor = adoptCF(CTFontDescriptorCreateForUIType(kCTFontUIFontSmallSystem, 0, nullptr));
 #else
@@ -357,7 +361,7 @@ void RenderThemeCocoa::updateCachedSystemFontDescription(CSSValueID valueID, Fon
         break;
     }
     case CSSValueWebkitControl: {
-        style = AtomString("system-ui", AtomString::ConstructFromLiteral);
+        style = "system-ui"_s;
 #if PLATFORM(IOS_FAMILY)
         fontDescriptor = adoptCF(CTFontDescriptorCreateForUIType(kCTFontUIFontSystem, 0, nullptr));
 #else
@@ -367,7 +371,7 @@ void RenderThemeCocoa::updateCachedSystemFontDescription(CSSValueID valueID, Fon
         break;
     }
     default:
-        style = AtomString("system-ui", AtomString::ConstructFromLiteral);
+        style = "system-ui"_s;
         fontDescriptor = adoptCF(CTFontDescriptorCreateForUIType(kCTFontUIFontSystem, 0, nullptr));
     }
 

@@ -26,6 +26,7 @@
 #pragma once
 
 #include "ClassInfo.h"
+#include "Concurrency.h"
 #include "ConcurrentJSLock.h"
 #include "DeletePropertySlot.h"
 #include "IndexingType.h"
@@ -44,6 +45,7 @@
 #include "Watchpoint.h"
 #include "WriteBarrierInlines.h"
 #include <wtf/Atomics.h>
+#include <wtf/CompactPointerTuple.h>
 #include <wtf/PrintStream.h>
 
 namespace WTF {
@@ -76,26 +78,79 @@ static constexpr unsigned initialOutOfLineCapacity = 4;
 // initial allocation.
 static constexpr unsigned outOfLineGrowthFactor = 2;
 
-struct PropertyMapEntry {
-    UniquedStringImpl* key;
-    PropertyOffset offset;
-    uint8_t attributes;
+class PropertyTableEntry;
+class CompactPropertyTableEntry {
+public:
+    CompactPropertyTableEntry()
+        : m_data(nullptr, 0)
+    {
+    }
 
-    PropertyMapEntry()
-        : key(nullptr)
-        , offset(invalidOffset)
-        , attributes(0)
+    CompactPropertyTableEntry(UniquedStringImpl* key, PropertyOffset offset, unsigned attributes)
+        : m_data(key, ((offset << 8) | attributes))
     {
+        ASSERT(this->attributes() == attributes);
+        ASSERT(this->offset() == offset);
     }
-    
-    PropertyMapEntry(UniquedStringImpl* key, PropertyOffset offset, unsigned attributes)
-        : key(key)
-        , offset(offset)
-        , attributes(attributes)
+
+    CompactPropertyTableEntry(const PropertyTableEntry&);
+
+    UniquedStringImpl* key() const { return m_data.pointer(); }
+    void setKey(UniquedStringImpl* key) { m_data.setPointer(key); }
+    PropertyOffset offset() const { return m_data.type() >> 8; }
+    void setOffset(PropertyOffset offset)
     {
-        ASSERT(this->attributes == attributes);
+        m_data.setType((m_data.type() & 0x00ffU) | (offset << 8));
+        ASSERT(this->offset() == offset);
     }
+    uint8_t attributes() const { return m_data.type(); }
+    void setAttributes(uint8_t attributes)
+    {
+        m_data.setType((m_data.type() & 0xff00U) | attributes);
+        ASSERT(this->attributes() == attributes);
+    }
+
+private:
+    CompactPointerTuple<UniquedStringImpl*, uint16_t> m_data;
 };
+
+class PropertyTableEntry {
+public:
+    PropertyTableEntry() = default;
+
+    PropertyTableEntry(UniquedStringImpl* key, PropertyOffset offset, unsigned attributes)
+        : m_key(key)
+        , m_offset(offset)
+        , m_attributes(attributes)
+    {
+        ASSERT(this->attributes() == attributes);
+    }
+
+    PropertyTableEntry(const CompactPropertyTableEntry& entry)
+        : m_key(entry.key())
+        , m_offset(entry.offset())
+        , m_attributes(entry.attributes())
+    {
+    }
+
+    UniquedStringImpl* key() const { return m_key; }
+    void setKey(UniquedStringImpl* key) { m_key = key; }
+    PropertyOffset offset() const { return m_offset; }
+    void setOffset(PropertyOffset offset) { m_offset = offset; }
+    uint8_t attributes() const { return m_attributes; }
+    void setAttributes(uint8_t attributes) { m_attributes = attributes; }
+
+private:
+    UniquedStringImpl* m_key { nullptr };
+    PropertyOffset m_offset { 0 };
+    uint8_t m_attributes { 0 };
+};
+
+
+inline CompactPropertyTableEntry::CompactPropertyTableEntry(const PropertyTableEntry& entry)
+    : m_data(entry.key(), ((entry.offset() << 8) | entry.attributes()))
+{
+}
 
 class StructureFireDetail final : public FireDetail {
 public:
@@ -119,7 +174,12 @@ public:
     typedef JSCell Base;
     static constexpr unsigned StructureFlags = Base::StructureFlags | StructureIsImmortal;
     static constexpr uint8_t numberOfLowerTierCells = 0;
-    
+
+#if ENABLE(STRUCTURE_ID_WITH_SHIFT)
+    static constexpr size_t atomSize = 32;
+#endif
+    static_assert(JSCell::atomSize >= MarkedBlock::atomSize);
+
     enum PolyProtoTag { PolyProto };
     static Structure* create(VM&, JSGlobalObject*, JSValue prototype, const TypeInfo&, const ClassInfo*, IndexingType = NonArray, unsigned inlineCapacity = 0);
     static Structure* create(PolyProtoTag, VM&, JSGlobalObject*, JSObject* prototype, const TypeInfo&, const ClassInfo*, IndexingType = NonArray, unsigned inlineCapacity = 0);
@@ -135,7 +195,7 @@ public:
     JS_EXPORT_PRIVATE static bool isValidPrototype(JSValue);
 
 protected:
-    void finishCreation(VM& vm, const Structure* previous)
+    void finishCreation(VM& vm, const Structure* previous, DeferredStructureTransitionWatchpointFire* deferred)
     {
         this->finishCreation(vm);
         if (previous->hasRareData()) {
@@ -145,6 +205,7 @@ protected:
                 rareData()->setSharedPolyProtoWatchpoint(previousRareData->copySharedPolyProtoWatchpoint());
             }
         }
+        previous->fireStructureTransitionWatchpoint(deferred);
     }
 
 private:
@@ -265,9 +326,12 @@ public:
     // Type accessors.
     TypeInfo typeInfo() const { return m_blob.typeInfo(m_outOfLineTypeFlags); }
     bool isObject() const { return typeInfo().isObject(); }
+    const ClassInfo* classInfoForCells() const { return m_classInfo; }
 protected:
     // You probably want typeInfo().type()
     JSType type() { return JSCell::type(); }
+    // You probably want classInfoForCell()
+    const ClassInfo* classInfo() const = delete;
 public:
 
     IndexingType indexingType() const { return m_blob.indexingModeIncludingHistory() & AllWritableArrayTypes; }
@@ -282,7 +346,7 @@ public:
         
     inline bool mayInterceptIndexedAccesses() const;
     
-    bool holesMustForwardToPrototype(VM&, JSObject*) const;
+    bool holesMustForwardToPrototype(JSObject*) const;
         
     JSGlobalObject* globalObject() const { return m_globalObject.get(); }
 
@@ -368,7 +432,7 @@ public:
     
     Structure* previousID() const
     {
-        ASSERT(structure()->classInfo() == info());
+        ASSERT(structure()->classInfoForCells() == info());
         // This is so written because it's used concurrently. We only load from m_previousOrRareData
         // once, and this load is guaranteed atomic.
         JSCell* cell = m_previousOrRareData.get();
@@ -475,7 +539,7 @@ public:
     }
     unsigned totalStorageCapacity() const
     {
-        ASSERT(structure()->classInfo() == info());
+        ASSERT(structure()->classInfoForCells() == info());
         return outOfLineCapacity() + inlineCapacity();
     }
 
@@ -512,11 +576,37 @@ public:
 
     template<typename Functor>
     void forEachProperty(VM&, const Functor&);
+
+    IGNORE_RETURN_TYPE_WARNINGS_BEGIN
+    ALWAYS_INLINE PropertyOffset get(VM& vm, Concurrency concurrency, UniquedStringImpl* uid, unsigned& attributes)
+    {
+        switch (concurrency) {
+        case Concurrency::MainThread:
+            ASSERT(!isCompilationThread() && !Thread::mayBeGCThread());
+            return get(vm, uid, attributes);
+        case Concurrency::ConcurrentThread:
+            return getConcurrently(uid, attributes);
+        }
+    }
+    IGNORE_RETURN_TYPE_WARNINGS_END
+
+    IGNORE_RETURN_TYPE_WARNINGS_BEGIN
+    ALWAYS_INLINE PropertyOffset get(VM& vm, Concurrency concurrency, UniquedStringImpl* uid)
+    {
+        switch (concurrency) {
+        case Concurrency::MainThread:
+            ASSERT(!isCompilationThread() && !Thread::mayBeGCThread());
+            return get(vm, uid);
+        case Concurrency::ConcurrentThread:
+            return getConcurrently(uid);
+        }
+    }
+    IGNORE_RETURN_TYPE_WARNINGS_END
     
     PropertyOffset getConcurrently(UniquedStringImpl* uid);
     PropertyOffset getConcurrently(UniquedStringImpl* uid, unsigned& attributes);
     
-    Vector<PropertyMapEntry> getPropertiesConcurrently();
+    Vector<PropertyTableEntry> getPropertiesConcurrently();
     
     void setHasGetterSetterPropertiesWithProtoCheck(bool is__proto__)
     {
@@ -554,8 +644,6 @@ public:
         return rareData()->cachedSpecialProperty(key);
     }
     void cacheSpecialProperty(JSGlobalObject*, VM&, JSValue, CachedSpecialPropertyKey, const PropertySlot&);
-
-    const ClassInfo* classInfo() const { return m_classInfo; }
 
     static ptrdiff_t structureIDOffset()
     {
@@ -651,6 +739,10 @@ public:
         m_transitionWatchpointSet.add(watchpoint);
     }
     
+    void didTransitionFromThisStructureWithoutFiringWatchpoint() const;
+    void fireStructureTransitionWatchpoint(DeferredStructureTransitionWatchpointFire*) const;
+
+    // This function does the both didTransitionFromThisStructureWithoutFiringWatchpoint and fireStructureTransitionWatchpoint.
     void didTransitionFromThisStructure(DeferredStructureTransitionWatchpointFire* = nullptr) const;
     
     InlineWatchpointSet& transitionWatchpointSet() const
@@ -741,7 +833,7 @@ public:
     static_assert(s_bitWidthOfTransitionKind <= sizeof(TransitionKind) * 8);
 
 protected:
-    Structure(VM&, Structure*, DeferredStructureTransitionWatchpointFire*);
+    Structure(VM&, Structure*);
 
 private:
     friend class LLIntOffsetsExtractor;

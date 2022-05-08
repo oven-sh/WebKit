@@ -54,11 +54,11 @@ static inline bool isClassicPhone()
     return isClassic() && [PAL::getUIApplicationClass() _classicMode] != UIApplicationSceneClassicModeOriginalPad;
 }
 
-String osNameForUserAgent()
+ASCIILiteral osNameForUserAgent()
 {
     if (deviceHasIPadCapability() && !isClassicPhone())
-        return "OS";
-    return "iPhone OS";
+        return "OS"_s;
+    return "iPhone OS"_s;
 }
 
 static StringView deviceNameForUserAgent()
@@ -74,7 +74,7 @@ static StringView deviceNameForUserAgent()
 #if PLATFORM(IOS_FAMILY_SIMULATOR)
         size_t location = name.find(" Simulator");
         if (location != notFound)
-            return name.substring(0, location);
+            return name.left(location);
 #endif
         return name;
     }();

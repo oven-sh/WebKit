@@ -30,6 +30,7 @@
 #include "WebContextSupplement.h"
 #include "WebPageProxyIdentifier.h"
 #include <WebCore/NotificationClient.h>
+#include <pal/SessionID.h>
 #include <wtf/HashMap.h>
 #include <wtf/UUID.h>
 #include <wtf/text/StringHash.h>
@@ -67,6 +68,8 @@ public:
     void clearNotifications(WebPageProxy*);
     void clearNotifications(WebPageProxy*, const Vector<UUID>& pageNotificationIDs);
     void didDestroyNotification(WebPageProxy*, const UUID& pageNotificationID);
+
+    void getNotifications(const URL&, const String&, PAL::SessionID, CompletionHandler<void(Vector<WebCore::NotificationData>&&)>&&);
 
     void providerDidShowNotification(uint64_t notificationID);
     void providerDidClickNotification(uint64_t notificationID);

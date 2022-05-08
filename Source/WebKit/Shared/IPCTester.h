@@ -28,6 +28,7 @@
 
 #if ENABLE(IPC_TESTING_API)
 
+#include "IPCConnectionTesterIdentifier.h"
 #include "IPCStreamTesterIdentifier.h"
 #include "MessageReceiver.h"
 #include "ScopedActiveMessageReceiveQueue.h"
@@ -44,7 +45,7 @@
 
 namespace WebKit {
 
-#define ASSERT_IS_TESTING_IPC() ASSERT(isTestingIPC(), "Untrusted connection sent invalid data. Should only happen when testing IPC.")
+#define ASSERT_IS_TESTING_IPC() ASSERT(WebKit::isTestingIPC(), "Untrusted connection sent invalid data. Should only happen when testing IPC.")
 
 #if ENABLE(IPC_TESTING_API)
 
@@ -52,6 +53,7 @@ namespace WebKit {
 // and exposes bugs underneath.
 bool isTestingIPC();
 
+class IPCConnectionTester;
 class IPCStreamTester;
 
 // Main test interface for initiating various IPC test activities.
@@ -69,6 +71,11 @@ private:
     void stopMessageTesting(CompletionHandler<void()>);
     void createStreamTester(IPC::Connection&, IPCStreamTesterIdentifier, IPC::StreamConnectionBuffer&&);
     void releaseStreamTester(IPCStreamTesterIdentifier, CompletionHandler<void()>&&);
+    void createConnectionTester(IPC::Connection&, IPCConnectionTesterIdentifier, IPC::Attachment&&);
+    void createConnectionTesterAndSendAsyncMessages(IPC::Connection&, IPCConnectionTesterIdentifier, IPC::Attachment&&, uint32_t messageCount);
+    void releaseConnectionTester(IPCConnectionTesterIdentifier, CompletionHandler<void()>&&);
+    void sendSameSemaphoreBack(IPC::Connection&, IPC::Semaphore&&);
+    void sendSemaphoreBackAndSignalProtocol(IPC::Connection&, IPC::Semaphore&&);
 
     void stopIfNeeded();
 
@@ -77,6 +84,9 @@ private:
 
     using StreamTesterMap = HashMap<IPCStreamTesterIdentifier, IPC::ScopedActiveMessageReceiveQueue<IPCStreamTester>>;
     StreamTesterMap m_streamTesters;
+
+    using ConnectionTesterMap = HashMap<IPCConnectionTesterIdentifier, IPC::ScopedActiveMessageReceiveQueue<IPCConnectionTester>>;
+    ConnectionTesterMap m_connectionTesters;
 };
 
 #else

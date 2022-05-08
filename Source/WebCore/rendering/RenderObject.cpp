@@ -111,6 +111,7 @@ struct SameSizeAsRenderObject {
     virtual ~SameSizeAsRenderObject() = default; // Allocate vtable pointer.
 #if ASSERT_ENABLED
     bool weakPtrFactorWasConstructedOnMainThread;
+    HashSet<void*> cachedResourceClientAssociatedResources;
 #endif
     void* pointers[5];
 #if ASSERT_ENABLED
@@ -193,6 +194,17 @@ bool RenderObject::isFieldset() const
 bool RenderObject::isHTMLMarquee() const
 {
     return node() && node()->renderer() == this && node()->hasTagName(marqueeTag);
+}
+
+bool RenderObject::isBlockContainer() const
+{
+    auto display = style().display();
+    return (display == DisplayType::Block
+        || display == DisplayType::InlineBlock
+        || display == DisplayType::FlowRoot
+        || display == DisplayType::ListItem
+        || display == DisplayType::TableCell
+        || display == DisplayType::TableCaption) && !isRenderReplaced();
 }
 
 void RenderObject::setFragmentedFlowStateIncludingDescendants(FragmentedFlowState state, const RenderElement* fragmentedFlowRoot)
@@ -500,7 +512,7 @@ static inline bool objectIsRelayoutBoundary(const RenderElement* object)
     if (object->isTextControl())
         return true;
 
-    if (shouldApplyLayoutContainment(*object) && shouldApplySizeContainment(*object))
+    if (object->shouldApplyLayoutContainment() && object->shouldApplySizeContainment())
         return true;
 
     if (object->isSVGRootOrLegacySVGRoot())
@@ -1226,13 +1238,14 @@ void RenderObject::outputRenderObject(TextStream& stream, bool mark, int depth) 
     if (node())
         stream << node()->nodeName().utf8().data() << " ";
 
-    String name = renderName();
+    ASCIILiteral name = renderName();
+    StringView nameView { name };
     // FIXME: Renderer's name should not include property value listing.
-    int pos = name.find('(');
+    int pos = nameView.find('(');
     if (pos > 0)
-        stream << name.left(pos - 1).utf8().data();
+        stream << nameView.left(pos - 1);
     else
-        stream << name.utf8().data();
+        stream << nameView;
 
     if (is<RenderBox>(*this)) {
         auto& renderBox = downcast<RenderBox>(*this);
@@ -1252,12 +1265,12 @@ void RenderObject::outputRenderObject(TextStream& stream, bool mark, int depth) 
             String value = node()->nodeValue();
             stream << " length->(" << value.length() << ")";
 
-            value.replaceWithLiteral('\\', "\\\\");
-            value.replaceWithLiteral('\n', "\\n");
+            value = makeStringByReplacingAll(value, '\\', "\\\\"_s);
+            value = makeStringByReplacingAll(value, '\n', "\\n"_s);
             
             const int maxPrintedLength = 80;
             if (value.length() > maxPrintedLength) {
-                String substring = value.substring(0, maxPrintedLength);
+                auto substring = StringView(value).left(maxPrintedLength);
                 stream << " \"" << substring.utf8().data() << "\"...";
             } else
                 stream << " \"" << value.utf8().data() << "\"";
@@ -1975,6 +1988,14 @@ void RenderObject::setHasOutlineAutoAncestor(bool hasOutlineAutoAncestor)
         ensureRareData().setHasOutlineAutoAncestor(hasOutlineAutoAncestor);
 }
 
+#if ENABLE(LAYER_BASED_SVG_ENGINE)
+void RenderObject::setHasSVGTransform(bool hasSVGTransform)
+{
+    if (hasSVGTransform || hasRareData())
+        ensureRareData().setHasSVGTransform(hasSVGTransform);
+}
+#endif
+
 void RenderObject::setPaintContainmentApplies(bool paintContainmentApplies)
 {
     if (paintContainmentApplies || hasRareData())
@@ -2010,6 +2031,9 @@ RenderObject::RenderObjectRareData::RenderObjectRareData()
     , m_isRenderFragmentedFlow(false)
     , m_hasOutlineAutoAncestor(false)
     , m_paintContainmentApplies(false)
+#if ENABLE(LAYER_BASED_SVG_ENGINE)
+    , m_hasSVGTransform(false)
+#endif
 {
 }
 
@@ -2592,40 +2616,3 @@ void showRenderTree(const WebCore::RenderObject* object)
 }
 
 #endif
-
-bool WebCore::shouldApplyLayoutContainment(const WebCore::RenderObject& renderer)
-{
-    return renderer.style().containsLayout() && (!renderer.isInline() || renderer.isAtomicInlineLevelBox()) && !renderer.isRubyText() && (!renderer.isTablePart() || renderer.isRenderBlockFlow());
-}
-
-bool WebCore::shouldApplySizeContainment(const WebCore::RenderObject& renderer)
-{
-    return renderer.style().containsSize() && (!renderer.isInline() || renderer.isAtomicInlineLevelBox()) && !renderer.isRubyText() && (!renderer.isTablePart() || renderer.isTableCaption()) && !renderer.isTable();
-}
-
-bool WebCore::shouldApplyInlineSizeContainment(const WebCore::RenderObject& renderer)
-{
-    return renderer.style().effectiveContainment().contains(Containment::InlineSize) && (!renderer.isInline() || renderer.isAtomicInlineLevelBox()) && !renderer.isRubyText() && (!renderer.isTablePart() || renderer.isTableCaption()) && !renderer.isTable();
-}
-
-bool WebCore::shouldApplyStyleContainment(const WebCore::RenderObject& renderer)
-{
-    if (!renderer.style().containsStyle())
-        return false;
-    return (!renderer.isInline() || renderer.isAtomicInlineLevelBox()) && !renderer.isRubyText() && (!renderer.isTablePart() || renderer.isTableCaption()) && !renderer.isTable();
-}
-
-bool WebCore::shouldApplyPaintContainment(const WebCore::RenderObject& renderer)
-{
-    return renderer.style().containsPaint() && (!renderer.isInline() || renderer.isAtomicInlineLevelBox()) && !renderer.isRubyText() && (!renderer.isTablePart() || renderer.isRenderBlockFlow());
-}
-
-bool WebCore::shouldApplyAnyContainment(const WebCore::RenderObject& renderer)
-{
-    if (renderer.style().effectiveContainment().isEmpty())
-        return false;
-    if ((renderer.style().containsLayout() || renderer.style().containsPaint()) && (!renderer.isInline() || renderer.isAtomicInlineLevelBox()) && !renderer.isRubyText() && (!renderer.isTablePart() || renderer.isRenderBlockFlow()))
-        return true;
-    return (renderer.style().containsSize() || renderer.style().containsStyle()) && (!renderer.isInline() || renderer.isAtomicInlineLevelBox()) && !renderer.isRubyText() && (!renderer.isTablePart() || renderer.isTableCaption()) && !renderer.isTable();
-}
-

@@ -384,7 +384,7 @@ public:
 
     static GPRReg toArgumentRegister(unsigned)
     {
-        UNREACHABLE_FOR_PLATFORM();
+        ASSERT_NOT_REACHED();
         return InvalidGPRReg;
     }
 
@@ -393,8 +393,7 @@ public:
         ASSERT(reg != InvalidGPRReg);
         ASSERT(static_cast<int>(reg) < 8);
         static const unsigned indexForRegister[8] = { 0, 2, 1, 3, InvalidIndex, InvalidIndex, 4, 5 };
-        unsigned result = indexForRegister[reg];
-        return result;
+        return indexForRegister[reg];
     }
 
     static const char* debugName(GPRReg reg)
@@ -420,13 +419,14 @@ public:
 class GPRInfo {
 public:
     typedef GPRReg RegisterType;
-    static constexpr unsigned numberOfRegisters = 11;
+    static constexpr unsigned numberOfRegisters = 10;
     static constexpr unsigned numberOfArgumentRegisters = NUMBER_OF_ARGUMENT_REGISTERS;
 
     // These registers match the baseline JIT.
     static constexpr GPRReg callFrameRegister = X86Registers::ebp;
     static constexpr GPRReg numberTagRegister = X86Registers::r14;
     static constexpr GPRReg notCellMaskRegister = X86Registers::r15;
+    static constexpr GPRReg constantsRegister = X86Registers::r13;
 
     // Temporary registers.
     static constexpr GPRReg regT0 = X86Registers::eax;
@@ -450,16 +450,16 @@ public:
 
 #if !OS(WINDOWS)
     static constexpr GPRReg regCS1 = X86Registers::r12;
-    static constexpr GPRReg regCS2 = X86Registers::r13;
-    static constexpr GPRReg regCS3 = X86Registers::r14;
-    static constexpr GPRReg regCS4 = X86Registers::r15;
+    static constexpr GPRReg regCS2 = X86Registers::r13; // constantsRegister
+    static constexpr GPRReg regCS3 = X86Registers::r14; // numberTagRegister
+    static constexpr GPRReg regCS4 = X86Registers::r15; // notCellMaskRegister
 #else
     static constexpr GPRReg regCS1 = X86Registers::esi;
     static constexpr GPRReg regCS2 = X86Registers::edi;
     static constexpr GPRReg regCS3 = X86Registers::r12;
-    static constexpr GPRReg regCS4 = X86Registers::r13;
-    static constexpr GPRReg regCS5 = X86Registers::r14;
-    static constexpr GPRReg regCS6 = X86Registers::r15;
+    static constexpr GPRReg regCS4 = X86Registers::r13; // constantsRegister
+    static constexpr GPRReg regCS5 = X86Registers::r14; // numberTagRegister
+    static constexpr GPRReg regCS6 = X86Registers::r15; // notCellMaskRegister
 #endif
 
     // These constants provide the names for the general purpose argument & return value registers.
@@ -497,9 +497,9 @@ public:
     {
         ASSERT(index < numberOfRegisters);
 #if !OS(WINDOWS)
-        static const GPRReg registerForIndex[numberOfRegisters] = { regT0, regT1, regT2, regT3, regT4, regT5, regT6, regT7, regCS0, regCS1, regCS2 };
+        static const GPRReg registerForIndex[numberOfRegisters] = { regT0, regT1, regT2, regT3, regT4, regT5, regT6, regT7, regCS0, regCS1 };
 #else
-        static const GPRReg registerForIndex[numberOfRegisters] = { regT0, regT1, regT2, regT3, regT4, regT5, regCS0, regCS1, regCS2, regCS3, regCS4 };
+        static const GPRReg registerForIndex[numberOfRegisters] = { regT0, regT1, regT2, regT3, regT4, regT5, regCS0, regCS1, regCS2, regCS3 };
 #endif
         return registerForIndex[index];
     }
@@ -520,9 +520,9 @@ public:
         ASSERT(reg != InvalidGPRReg);
         ASSERT(static_cast<int>(reg) < 16);
 #if !OS(WINDOWS)
-        static const unsigned indexForRegister[16] = { 0, 3, 2, 8, InvalidIndex, InvalidIndex, 1, 6, 4, 7, 5, InvalidIndex, 9, 10, InvalidIndex, InvalidIndex };
+        static const unsigned indexForRegister[16] = { 0, 3, 2, 8, InvalidIndex, InvalidIndex, 1, 6, 4, 7, 5, InvalidIndex, 9, InvalidIndex, InvalidIndex, InvalidIndex };
 #else
-        static const unsigned indexForRegister[16] = { 0, 5, 1, 6, InvalidIndex, InvalidIndex, 7, 8, 2, 3, 4, InvalidIndex, 9, 10, InvalidIndex, InvalidIndex };
+        static const unsigned indexForRegister[16] = { 0, 5, 1, 6, InvalidIndex, InvalidIndex, 7, 8, 2, 3, 4, InvalidIndex, 9, InvalidIndex, InvalidIndex, InvalidIndex };
 #endif
         return indexForRegister[reg];
     }
@@ -566,12 +566,12 @@ public:
     static constexpr GPRReg regT1 = ARMRegisters::r1;
     static constexpr GPRReg regT2 = ARMRegisters::r2;
     static constexpr GPRReg regT3 = ARMRegisters::r3;
-    static constexpr GPRReg regT4 = ARMRegisters::r8;
-    static constexpr GPRReg regT5 = ARMRegisters::r9;
-    static constexpr GPRReg regT6 = ARMRegisters::r5;
-    static constexpr GPRReg regT7 = ARMRegisters::r4;
-    static constexpr GPRReg regCS0 = ARMRegisters::r11;
-    static constexpr GPRReg regCS1 = ARMRegisters::r10;
+    static constexpr GPRReg regT4 = ARMRegisters::r4;
+    static constexpr GPRReg regT5 = ARMRegisters::r5;
+    static constexpr GPRReg regT6 = ARMRegisters::r8;
+    static constexpr GPRReg regT7 = ARMRegisters::r9;
+    static constexpr GPRReg regCS0 = ARMRegisters::r10;
+    static constexpr GPRReg regCS1 = ARMRegisters::r11;
     // These registers match the baseline JIT.
     static constexpr GPRReg callFrameRegister = ARMRegisters::fp;
     // These constants provide the names for the general purpose argument & return value registers.
@@ -579,7 +579,7 @@ public:
     static constexpr GPRReg argumentGPR1 = ARMRegisters::r1; // regT1
     static constexpr GPRReg argumentGPR2 = ARMRegisters::r2; // regT2
     static constexpr GPRReg argumentGPR3 = ARMRegisters::r3; // regT3
-    static constexpr GPRReg nonArgGPR0 = ARMRegisters::r4; // regT7
+    static constexpr GPRReg nonArgGPR0 = ARMRegisters::r4; // regT4
     static constexpr GPRReg returnValueGPR = ARMRegisters::r0; // regT0
     static constexpr GPRReg returnValueGPR2 = ARMRegisters::r1; // regT1
     static constexpr GPRReg nonPreservedNonReturnGPR = ARMRegisters::r5;
@@ -603,7 +603,7 @@ public:
         ASSERT(reg != InvalidGPRReg);
         ASSERT(static_cast<int>(reg) < 16);
         static const unsigned indexForRegister[16] =
-            { 0, 1, 2, 3, 7, 6, InvalidIndex, InvalidIndex, 4, 5, 9, 8, InvalidIndex, InvalidIndex, InvalidIndex, InvalidIndex };
+            { 0, 1, 2, 3, 4, 5, InvalidIndex, InvalidIndex, 6, 7, 8, 9, InvalidIndex, InvalidIndex, InvalidIndex, InvalidIndex };
         unsigned result = indexForRegister[reg];
         return result;
     }
@@ -634,6 +634,7 @@ public:
     static constexpr GPRReg callFrameRegister = ARM64Registers::fp;
     static constexpr GPRReg numberTagRegister = ARM64Registers::x27;
     static constexpr GPRReg notCellMaskRegister = ARM64Registers::x28;
+    static constexpr GPRReg constantsRegister = ARM64Registers::x26;
     static constexpr GPRReg dataTempRegister = MacroAssembler::dataTempRegister;
     static constexpr GPRReg memoryTempRegister = MacroAssembler::memoryTempRegister;
     // Temporary registers.
@@ -660,7 +661,7 @@ public:
     static constexpr GPRReg regCS4 = ARM64Registers::x23; // Used by FTL only
     static constexpr GPRReg regCS5 = ARM64Registers::x24; // Used by FTL only
     static constexpr GPRReg regCS6 = ARM64Registers::x25;
-    static constexpr GPRReg regCS7 = ARM64Registers::x26;
+    static constexpr GPRReg regCS7 = ARM64Registers::x26; // constants
     static constexpr GPRReg regCS8 = ARM64Registers::x27; // numberTag
     static constexpr GPRReg regCS9 = ARM64Registers::x28; // notCellMask
     // These constants provide the names for the general purpose argument & return value registers.
@@ -777,7 +778,7 @@ public:
     static constexpr GPRReg returnValueGPR2 = regT1;
     static constexpr GPRReg nonPreservedNonReturnGPR = regT2;
     static constexpr GPRReg regCS0 = MIPSRegisters::s0;
-    static constexpr GPRReg regCS1 = MIPSRegisters::s1;
+    static constexpr GPRReg regCS1 = MIPSRegisters::s1; // constants
 
     static GPRReg toRegister(unsigned index)
     {
@@ -803,8 +804,7 @@ public:
             InvalidIndex, InvalidIndex, InvalidIndex, InvalidIndex, InvalidIndex, InvalidIndex, InvalidIndex, InvalidIndex,
             InvalidIndex, InvalidIndex, InvalidIndex, InvalidIndex, InvalidIndex, InvalidIndex, InvalidIndex, InvalidIndex
         };
-        unsigned result = indexForRegister[reg];
-        return result;
+        return indexForRegister[reg];
     }
 
     static const char* debugName(GPRReg reg)
@@ -832,6 +832,7 @@ public:
     static constexpr GPRReg callFrameRegister = RISCV64Registers::fp;
     static constexpr GPRReg numberTagRegister = RISCV64Registers::x25;
     static constexpr GPRReg notCellMaskRegister = RISCV64Registers::x26;
+    static constexpr GPRReg constantsRegister = RISCV64Registers::x24;
 
     static constexpr GPRReg regT0 = RISCV64Registers::x10;
     static constexpr GPRReg regT1 = RISCV64Registers::x11;
@@ -854,7 +855,7 @@ public:
     static constexpr GPRReg regCS4 = RISCV64Registers::x21;
     static constexpr GPRReg regCS5 = RISCV64Registers::x22;
     static constexpr GPRReg regCS6 = RISCV64Registers::x23;
-    static constexpr GPRReg regCS7 = RISCV64Registers::x24;
+    static constexpr GPRReg regCS7 = RISCV64Registers::x24; // constants
     static constexpr GPRReg regCS8 = RISCV64Registers::x25; // numberTag
     static constexpr GPRReg regCS9 = RISCV64Registers::x26; // notCellMask
     static constexpr GPRReg regCS10 = RISCV64Registers::x27;
@@ -1136,8 +1137,8 @@ public:
         // the link register as a temporary.
         return pickJSR<OperationType, ArgNum>(
             GPRInfo::argumentGPR0, GPRInfo::argumentGPR1, GPRInfo::argumentGPR2,
-            GPRInfo::argumentGPR3, GPRInfo::regT7,        GPRInfo::regT6,
-            GPRInfo::regT4,        GPRInfo::regT5,        ARMRegisters::lr);
+            GPRInfo::argumentGPR3, GPRInfo::regT4,        GPRInfo::regT5,
+            GPRInfo::regT6,        GPRInfo::regT7,        ARMRegisters::lr);
 #elif CPU(MIPS)
         return pickJSR<OperationType, ArgNum>(
             GPRInfo::argumentGPR0, GPRInfo::argumentGPR1, GPRInfo::argumentGPR2,

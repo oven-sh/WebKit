@@ -134,6 +134,7 @@ public:
     Ref<MutableStyleProperties> copyPropertiesInSet(const CSSPropertyID* set, unsigned length) const;
     
     String asText() const;
+    AtomString asTextAtom() const;
 
     bool hasCSSOMWrapper() const;
     bool isMutable() const { return type() == MutablePropertiesType; }
@@ -162,10 +163,12 @@ protected:
 
 private:
     String getGridShorthandValue(const StylePropertyShorthand&) const;
+    String getGridTemplateValue() const;
+    String getGridValue() const;
     String getShorthandValue(const StylePropertyShorthand&, const char* separator = " ") const;
     String getCommonValue(const StylePropertyShorthand&) const;
     String getAlignmentShorthandValue(const StylePropertyShorthand&) const;
-    String borderImagePropertyValue() const;
+    String borderImagePropertyValue(CSSPropertyID) const;
     String borderPropertyValue(const StylePropertyShorthand&, const StylePropertyShorthand&, const StylePropertyShorthand&) const;
     String pageBreakPropertyValue(const StylePropertyShorthand&) const;
     String getLayeredShorthandValue(const StylePropertyShorthand&) const;
@@ -178,6 +181,7 @@ private:
     String offsetValue() const;
     void appendFontLonghandValueIfExplicit(CSSPropertyID, StringBuilder& result, String& value) const;
     bool shorthandHasVariableReference(CSSPropertyID, String&) const;
+    StringBuilder asTextInternal() const;
 
     friend class PropertySetCSSStyleDeclaration;
 };

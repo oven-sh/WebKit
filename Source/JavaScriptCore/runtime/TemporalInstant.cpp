@@ -141,11 +141,11 @@ TemporalInstant* TemporalInstant::toInstant(JSGlobalObject* globalObject, JSValu
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (itemValue.inherits<TemporalInstant>(vm))
+    if (itemValue.inherits<TemporalInstant>())
         return jsCast<TemporalInstant*>(itemValue);
 
     // FIXME: when Temporal.ZonedDateTime lands
-    // if (itemValue.inherits<TemporalZonedDateTime>(vm))
+    // if (itemValue.inherits<TemporalZonedDateTime>())
     //    return TemporalInstant::create(vm, globalObject->instantStructure(), jsCast<TemporalZonedDateTime*>(itemValue)->epochTime());
 
     String string = itemValue.toWTFString(globalObject);
@@ -166,7 +166,7 @@ TemporalInstant* TemporalInstant::from(JSGlobalObject* globalObject, JSValue ite
 {
     VM& vm = globalObject->vm();
 
-    if (itemValue.inherits<TemporalInstant>(vm)) {
+    if (itemValue.inherits<TemporalInstant>()) {
         ISO8601::ExactTime exactTime = jsCast<TemporalInstant*>(itemValue)->exactTime();
         return TemporalInstant::create(vm, globalObject->instantStructure(), exactTime);
     }
@@ -295,18 +295,20 @@ JSValue TemporalInstant::compare(JSGlobalObject* globalObject, JSValue oneValue,
 
 ISO8601::Duration TemporalInstant::difference(JSGlobalObject* globalObject, TemporalInstant* other, JSValue optionsValue) const
 {
+    // https://tc39.es/proposal-temporal/#sec-temporal.instant.prototype.since
+    // https://tc39.es/proposal-temporal/#sec-temporal.instant.prototype.until
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSObject* options = intlGetOptionsObject(globalObject, optionsValue);
     RETURN_IF_EXCEPTION(scope, { });
 
-    auto smallest = temporalSmallestUnit(globalObject, options, { });
+    auto smallest = temporalSmallestUnit(globalObject, options, { TemporalUnit::Year, TemporalUnit::Month, TemporalUnit::Week, TemporalUnit::Day });
     RETURN_IF_EXCEPTION(scope, { });
     TemporalUnit smallestUnit = smallest.value_or(TemporalUnit::Nanosecond);
 
     TemporalUnit defaultLargestUnit = std::min(smallestUnit, TemporalUnit::Second);
-    auto largest = temporalLargestUnit(globalObject, options, { }, defaultLargestUnit);
+    auto largest = temporalLargestUnit(globalObject, options, { TemporalUnit::Year, TemporalUnit::Month, TemporalUnit::Week, TemporalUnit::Day }, defaultLargestUnit);
     RETURN_IF_EXCEPTION(scope, { });
     TemporalUnit largestUnit = largest.value_or(defaultLargestUnit);
 

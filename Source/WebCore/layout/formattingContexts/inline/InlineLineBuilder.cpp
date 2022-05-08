@@ -49,7 +49,7 @@ static inline StringBuilder toString(const Line::RunList& runs)
         if (!run.isText())
             continue;
         auto& textContent = run.textContent();
-        lineContentBuilder.append(downcast<InlineTextBox>(run.layoutBox()).content().substring(textContent->start, textContent->length));
+        lineContentBuilder.append(StringView(downcast<InlineTextBox>(run.layoutBox()).content()).substring(textContent->start, textContent->length));
     }
     return lineContentBuilder;
 }
@@ -378,9 +378,10 @@ LineBuilder::LineContent LineBuilder::layoutInlineContent(const InlineItemRange&
     };
 
     auto isLastLine = isLastLineWithInlineContent(committedRange, needsLayoutRange.end, committedContent.partialTrailingContentLength);
+    auto partialOverflowingContent = committedContent.partialTrailingContentLength ? std::make_optional<PartialContent>(committedContent.partialTrailingContentLength, committedContent.overflowLogicalWidth) : std::nullopt;
     return LineContent { committedRange
-        , committedContent.partialTrailingContentLength
-        , committedContent.overflowLogicalWidth
+        , partialOverflowingContent
+        , partialOverflowingContent ? std::nullopt : committedContent.overflowLogicalWidth
         , m_floats
         , m_contentIsConstrainedByFloat
         , m_lineMarginStart
@@ -406,7 +407,10 @@ LineBuilder::IntrinsicContent LineBuilder::computedIntrinsicWidth(const InlineIt
     auto committedContent = placeInlineContent(needsLayoutRange);
     auto committedRange = close(needsLayoutRange, committedContent);
     auto lineWidth = lineConstraints.logicalRect.left() + lineConstraints.marginStart + m_line.contentLogicalWidth();
-    return { committedRange, lineWidth, m_floats };
+    auto overflow = std::optional<PartialContent> { };
+    if (committedContent.partialTrailingContentLength)
+        overflow = { committedContent.partialTrailingContentLength, committedContent.overflowLogicalWidth };
+    return { committedRange, lineWidth, overflow, m_floats };
 }
 
 void LineBuilder::initialize(const UsedConstraints& lineConstraints, size_t leadingInlineItemIndex, const std::optional<PreviousLine>& previousLine)
@@ -459,13 +463,14 @@ void LineBuilder::initialize(const UsedConstraints& lineConstraints, size_t lead
     m_lineLogicalRect.expandHorizontally(-m_lineMarginStart);
     m_contentIsConstrainedByFloat = lineConstraints.isConstrainedByFloat;
 
-    if (previousLine && previousLine->overflowContent) {
-        if (previousLine->overflowContent->partialContentLength) {
+    if (previousLine) {
+        if (previousLine->partialOverflowingContent) {
             // Turn previous line's overflow content length into the next line's leading content partial length.
             // "sp[<-line break->]lit_content" -> overflow length: 11 -> leading partial content length: 11.
-            m_partialLeadingTextItem = downcast<InlineTextItem>(m_inlineItems[leadingInlineItemIndex]).right(previousLine->overflowContent->partialContentLength, previousLine->overflowContent->width);
-        } else
-            m_overflowingLogicalWidth = previousLine->overflowContent->width;
+            m_partialLeadingTextItem = downcast<InlineTextItem>(m_inlineItems[leadingInlineItemIndex]).right(previousLine->partialOverflowingContent->length, previousLine->partialOverflowingContent->width);
+            ASSERT(!previousLine->trailingOverflowingContentWidth);
+        }
+        m_overflowingLogicalWidth = previousLine->trailingOverflowingContentWidth;
     }
 }
 
@@ -542,7 +547,7 @@ LineBuilder::InlineItemRange LineBuilder::close(const InlineItemRange& needsLayo
     // Legacy line layout quirk: keep the trailing whitespace around when it is followed by a line break, unless the content overflows the line.
     // This quirk however should not be applied when running intrinsic width computation.
     // FIXME: webkit.org/b/233261
-    auto shouldApplyTrailingWhiteSpaceFollowedByBRQuirk = isInIntrinsicWidthMode || !RuntimeEnabledFeatures::sharedFeatures().layoutFormattingContextIntegrationEnabled()
+    auto shouldApplyTrailingWhiteSpaceFollowedByBRQuirk = isInIntrinsicWidthMode || !RuntimeEnabledFeatures::sharedFeatures().inlineFormattingContextIntegrationEnabled()
         ? Line::ShouldApplyTrailingWhiteSpaceFollowedByBRQuirk::No
         : Line::ShouldApplyTrailingWhiteSpaceFollowedByBRQuirk::Yes;
     m_line.removeTrailingTrimmableContent(shouldApplyTrailingWhiteSpaceFollowedByBRQuirk);

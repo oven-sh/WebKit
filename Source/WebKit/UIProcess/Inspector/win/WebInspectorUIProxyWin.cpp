@@ -197,7 +197,7 @@ WebPageProxy* WebInspectorUIProxy::platformCreateFrontendPage()
 {
     ASSERT(inspectedPage());
 
-    auto preferences = WebPreferences::create(String(), "WebKit2.", "WebKit2.");
+    auto preferences = WebPreferences::create(String(), "WebKit2."_s, "WebKit2."_s);
 #if ENABLE(DEVELOPER_MODE)
     // Allow developers to inspect the Web Inspector in debug builds without changing settings.
     preferences->setDeveloperExtrasEnabled(true);
@@ -398,6 +398,11 @@ void WebInspectorUIProxy::platformSetForcedAppearance(WebCore::InspectorFrontend
     notImplemented();
 }
 
+void WebInspectorUIProxy::platformRevealFileExternally(const String&)
+{
+    notImplemented();
+}
+
 void WebInspectorUIProxy::platformInspectedURLChanged(const String& /* url */)
 {
     notImplemented();
@@ -416,6 +421,12 @@ void WebInspectorUIProxy::platformSave(const String&, const String&, bool, bool)
 void WebInspectorUIProxy::platformAppend(const String&, const String&)
 {
     notImplemented();
+}
+
+void WebInspectorUIProxy::platformLoad(const String&, CompletionHandler<void(const String&)>&& completionHandler)
+{
+    notImplemented();
+    completionHandler(nullString());
 }
 
 void WebInspectorUIProxy::platformAttachAvailabilityChanged(bool /* available */)

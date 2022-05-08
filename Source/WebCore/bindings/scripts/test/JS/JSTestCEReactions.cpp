@@ -162,7 +162,7 @@ JSTestCEReactions::JSTestCEReactions(Structure* structure, JSDOMGlobalObject& gl
 void JSTestCEReactions::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    ASSERT(inherits(vm, info()));
+    ASSERT(inherits(info()));
 
     static_assert(!std::is_base_of<ActiveDOMObject, TestCEReactions>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
 
@@ -193,7 +193,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTestCEReactionsConstructor, (JSGlobalObject* lexicalG
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSTestCEReactionsPrototype*>(vm, JSValue::decode(thisValue));
+    auto* prototype = jsDynamicCast<JSTestCEReactionsPrototype*>(JSValue::decode(thisValue));
     if (UNLIKELY(!prototype))
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSTestCEReactions::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -236,7 +236,7 @@ static inline JSValue jsTestCEReactions_reflectAttributeWithCEReactionsGetter(JS
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = thisObject.wrapped();
-    RELEASE_AND_RETURN(throwScope, (toJS<IDLDOMString>(lexicalGlobalObject, throwScope, impl.attributeWithoutSynchronization(WebCore::HTMLNames::reflectattributewithcereactionsAttr))));
+    RELEASE_AND_RETURN(throwScope, (toJS<IDLAtomStringAdaptor<IDLDOMString>>(lexicalGlobalObject, throwScope, impl.attributeWithoutSynchronization(WebCore::HTMLNames::reflectattributewithcereactionsAttr))));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsTestCEReactions_reflectAttributeWithCEReactions, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -250,7 +250,7 @@ static inline bool setJSTestCEReactions_reflectAttributeWithCEReactionsSetter(JS
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     CustomElementReactionStack customElementReactionStack(lexicalGlobalObject);
     auto& impl = thisObject.wrapped();
-    auto nativeValue = convert<IDLDOMString>(lexicalGlobalObject, value);
+    auto nativeValue = convert<IDLAtomStringAdaptor<IDLDOMString>>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, false);
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
         return impl.setAttributeWithoutSynchronization(WebCore::HTMLNames::reflectattributewithcereactionsAttr, WTFMove(nativeValue));
@@ -280,16 +280,16 @@ static inline bool setJSTestCEReactions_stringifierAttributeSetter(JSGlobalObjec
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto id = Identifier::fromString(vm, reinterpret_cast<const LChar*>("stringifierAttribute"), strlen("stringifierAttribute"));
+    auto id = Identifier::fromString(vm, "stringifierAttribute"_s);
     auto valueToForwardTo = thisObject.get(&lexicalGlobalObject, id);
     RETURN_IF_EXCEPTION(throwScope, false);
     if (UNLIKELY(!valueToForwardTo.isObject())) {
         throwTypeError(&lexicalGlobalObject, throwScope);
         return false;
     }
-    auto forwardId = Identifier::fromString(vm, reinterpret_cast<const LChar*>("value"), strlen("value"));
+    auto forwardId = Identifier::fromString(vm, "value"_s);
     PutPropertySlot slot(valueToForwardTo, false);
-    asObject(valueToForwardTo)->methodTable(vm)->put(asObject(valueToForwardTo), &lexicalGlobalObject, forwardId, value, slot);
+    asObject(valueToForwardTo)->methodTable()->put(asObject(valueToForwardTo), &lexicalGlobalObject, forwardId, value, slot);
     RETURN_IF_EXCEPTION(throwScope, false);
     return true;
 }
@@ -336,7 +336,7 @@ static inline JSValue jsTestCEReactions_reflectAttributeWithCEReactionsNotNeeded
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = thisObject.wrapped();
-    RELEASE_AND_RETURN(throwScope, (toJS<IDLDOMString>(lexicalGlobalObject, throwScope, impl.attributeWithoutSynchronization(WebCore::HTMLNames::reflectattributewithcereactionsnotneededAttr))));
+    RELEASE_AND_RETURN(throwScope, (toJS<IDLAtomStringAdaptor<IDLDOMString>>(lexicalGlobalObject, throwScope, impl.attributeWithoutSynchronization(WebCore::HTMLNames::reflectattributewithcereactionsnotneededAttr))));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsTestCEReactions_reflectAttributeWithCEReactionsNotNeeded, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -350,7 +350,7 @@ static inline bool setJSTestCEReactions_reflectAttributeWithCEReactionsNotNeeded
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     CustomElementReactionDisallowedScope customElementReactionDisallowedScope;
     auto& impl = thisObject.wrapped();
-    auto nativeValue = convert<IDLDOMString>(lexicalGlobalObject, value);
+    auto nativeValue = convert<IDLAtomStringAdaptor<IDLDOMString>>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, false);
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
         return impl.setAttributeWithoutSynchronization(WebCore::HTMLNames::reflectattributewithcereactionsnotneededAttr, WTFMove(nativeValue));
@@ -380,16 +380,16 @@ static inline bool setJSTestCEReactions_stringifierAttributeNotNeededSetter(JSGl
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto id = Identifier::fromString(vm, reinterpret_cast<const LChar*>("stringifierAttributeNotNeeded"), strlen("stringifierAttributeNotNeeded"));
+    auto id = Identifier::fromString(vm, "stringifierAttributeNotNeeded"_s);
     auto valueToForwardTo = thisObject.get(&lexicalGlobalObject, id);
     RETURN_IF_EXCEPTION(throwScope, false);
     if (UNLIKELY(!valueToForwardTo.isObject())) {
         throwTypeError(&lexicalGlobalObject, throwScope);
         return false;
     }
-    auto forwardId = Identifier::fromString(vm, reinterpret_cast<const LChar*>("valueWithoutReactions"), strlen("valueWithoutReactions"));
+    auto forwardId = Identifier::fromString(vm, "valueWithoutReactions"_s);
     PutPropertySlot slot(valueToForwardTo, false);
-    asObject(valueToForwardTo)->methodTable(vm)->put(asObject(valueToForwardTo), &lexicalGlobalObject, forwardId, value, slot);
+    asObject(valueToForwardTo)->methodTable()->put(asObject(valueToForwardTo), &lexicalGlobalObject, forwardId, value, slot);
     RETURN_IF_EXCEPTION(throwScope, false);
     return true;
 }
@@ -501,9 +501,9 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
     return wrap(lexicalGlobalObject, globalObject, impl);
 }
 
-TestCEReactions* JSTestCEReactions::toWrapped(JSC::VM& vm, JSC::JSValue value)
+TestCEReactions* JSTestCEReactions::toWrapped(JSC::VM&, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSTestCEReactions*>(vm, value))
+    if (auto* wrapper = jsDynamicCast<JSTestCEReactions*>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

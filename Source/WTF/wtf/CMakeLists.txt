@@ -82,6 +82,7 @@ set(WTF_PUBLIC_HEADERS
     Function.h
     FunctionDispatcher.h
     FunctionTraits.h
+    GenerateProfiles.h
     GenericHashKey.h
     GenericTimeMixin.h
     GetPtr.h
@@ -319,6 +320,7 @@ set(WTF_PUBLIC_HEADERS
     WTFConfig.h
     WTFSemaphore.h
     WallTime.h
+    WeakHashCountedSet.h
     WeakHashMap.h
     WeakHashSet.h
     WeakPtr.h

@@ -93,24 +93,24 @@ public:
     WEBCORE_EXPORT const URL& url() const;
     WEBCORE_EXPORT void setURL(const URL&);
 
-    WEBCORE_EXPORT const String& mimeType() const;
-    WEBCORE_EXPORT void setMimeType(const String& mimeType);
+    WEBCORE_EXPORT const AtomString& mimeType() const;
+    WEBCORE_EXPORT void setMimeType(const AtomString&);
 
     WEBCORE_EXPORT long long expectedContentLength() const;
     WEBCORE_EXPORT void setExpectedContentLength(long long expectedContentLength);
 
-    WEBCORE_EXPORT const String& textEncodingName() const;
-    WEBCORE_EXPORT void setTextEncodingName(const String& name);
+    WEBCORE_EXPORT const AtomString& textEncodingName() const;
+    WEBCORE_EXPORT void setTextEncodingName(AtomString&&);
 
     WEBCORE_EXPORT int httpStatusCode() const;
     WEBCORE_EXPORT void setHTTPStatusCode(int);
     WEBCORE_EXPORT bool isRedirection() const;
 
-    WEBCORE_EXPORT const String& httpStatusText() const;
-    WEBCORE_EXPORT void setHTTPStatusText(const String&);
+    WEBCORE_EXPORT const AtomString& httpStatusText() const;
+    WEBCORE_EXPORT void setHTTPStatusText(const AtomString&);
 
-    WEBCORE_EXPORT const String& httpVersion() const;
-    WEBCORE_EXPORT void setHTTPVersion(const String&);
+    WEBCORE_EXPORT const AtomString& httpVersion() const;
+    WEBCORE_EXPORT void setHTTPVersion(const AtomString&);
     WEBCORE_EXPORT bool isHTTP09() const;
 
     WEBCORE_EXPORT const HTTPHeaderMap& httpHeaderFields() const;
@@ -119,13 +119,15 @@ public:
     enum class SanitizationType { Redirection, RemoveCookies, CrossOriginSafe };
     WEBCORE_EXPORT void sanitizeHTTPHeaderFields(SanitizationType);
 
-    String httpHeaderField(const String& name) const;
+    String httpHeaderField(StringView name) const;
     WEBCORE_EXPORT String httpHeaderField(HTTPHeaderName) const;
     WEBCORE_EXPORT void setHTTPHeaderField(const String& name, const String& value);
+    WEBCORE_EXPORT void setUncommonHTTPHeaderField(const String& name, const String& value);
     WEBCORE_EXPORT void setHTTPHeaderField(HTTPHeaderName, const String& value);
 
     WEBCORE_EXPORT void addHTTPHeaderField(HTTPHeaderName, const String& value);
     WEBCORE_EXPORT void addHTTPHeaderField(const String& name, const String& value);
+    WEBCORE_EXPORT void addUncommonHTTPHeaderField(const String& name, const String& value);
 
     // Instead of passing a string literal to any of these functions, just use a HTTPHeaderName instead.
     template<size_t length> String httpHeaderField(const char (&)[length]) const = delete;
@@ -336,7 +338,7 @@ bool ResourceResponseBase::decode(Decoder& decoder, ResourceResponseBase& respon
         return false;
     response.m_url = WTFMove(*url);
 
-    std::optional<String> mimeType;
+    std::optional<AtomString> mimeType;
     decoder >> mimeType;
     if (!mimeType)
         return false;

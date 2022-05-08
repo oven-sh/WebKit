@@ -31,6 +31,7 @@
 #if ENABLE(CSS_TYPED_OM)
 
 #include <wtf/IsoMallocInlines.h>
+#include <wtf/text/StringBuilder.h>
 
 namespace WebCore {
 
@@ -41,9 +42,46 @@ Ref<CSSMathInvert> CSSMathInvert::create(CSSNumberish&& numberish)
     return adoptRef(*new CSSMathInvert(WTFMove(numberish)));
 }
 
-CSSMathInvert::CSSMathInvert(CSSNumberish&& numberish)
-    : m_value(CSSNumericValue::rectifyNumberish(WTFMove(numberish)))
+static CSSNumericType negatedType(const CSSNumberish& numberish)
 {
+    // https://drafts.css-houdini.org/css-typed-om/#type-of-a-cssmathvalue
+    return WTF::switchOn(numberish,
+        [] (double) { return CSSNumericType(); },
+        [] (const RefPtr<CSSNumericValue>& value) {
+            if (!value)
+                return CSSNumericType();
+            CSSNumericType type = value->type();
+            auto negate = [] (auto& optional) {
+                if (optional)
+                    optional = *optional * -1;
+            };
+            negate(type.length);
+            negate(type.angle);
+            negate(type.time);
+            negate(type.frequency);
+            negate(type.resolution);
+            negate(type.flex);
+            negate(type.percent);
+            return type;
+        }
+    );
+}
+
+CSSMathInvert::CSSMathInvert(CSSNumberish&& numberish)
+    : CSSMathValue(negatedType(numberish))
+    , m_value(CSSNumericValue::rectifyNumberish(WTFMove(numberish)))
+{
+}
+
+void CSSMathInvert::serialize(StringBuilder& builder, OptionSet<SerializationArguments> arguments) const
+{
+    // https://drafts.css-houdini.org/css-typed-om/#calc-serialization
+    if (!arguments.contains(SerializationArguments::WithoutParentheses))
+        builder.append(arguments.contains(SerializationArguments::Nested) ? "(" : "calc(");
+    builder.append("1 / ");
+    m_value->serialize(builder, arguments);
+    if (!arguments.contains(SerializationArguments::WithoutParentheses))
+        builder.append(')');
 }
 
 } // namespace WebCore

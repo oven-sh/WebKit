@@ -32,27 +32,23 @@
 
 namespace WebGPU {
 
-static bool validateCreateSampler(Device&, const WGPUSamplerDescriptor& descriptor)
+static bool validateCreateSampler(Device& device, const WGPUSamplerDescriptor& descriptor)
 {
     // https://gpuweb.github.io/gpuweb/#abstract-opdef-validating-gpusamplerdescriptor
 
-    // FIXME: "device is valid."
+    if (!device.isValid())
+        return false;
 
-    // "descriptor.lodMinClamp is greater than or equal to 0."
     if (std::isnan(descriptor.lodMinClamp) || descriptor.lodMinClamp < 0)
         return false;
 
-    // "descriptor.lodMaxClamp is greater than or equal to descriptor.lodMinClamp."
     if (std::isnan(descriptor.lodMaxClamp) || descriptor.lodMaxClamp < descriptor.lodMinClamp)
         return false;
 
-    // "descriptor.maxAnisotropy is greater than or equal to 1."
     if (descriptor.maxAnisotropy < 1)
         return false;
 
-    // "When descriptor.maxAnisotropy is greater than 1"
     if (descriptor.maxAnisotropy > 1) {
-        // "descriptor.magFilter, descriptor.minFilter, and descriptor.mipmapFilter must be equal to "linear"."
         if (descriptor.magFilter != WGPUFilterMode_Linear
             || descriptor.minFilter != WGPUFilterMode_Linear
             || descriptor.mipmapFilter != WGPUFilterMode_Linear)
@@ -62,7 +58,7 @@ static bool validateCreateSampler(Device&, const WGPUSamplerDescriptor& descript
     return true;
 }
 
-static std::optional<MTLSamplerAddressMode> addressMode(WGPUAddressMode addressMode)
+static MTLSamplerAddressMode addressMode(WGPUAddressMode addressMode)
 {
     switch (addressMode) {
     case WGPUAddressMode_Repeat:
@@ -72,11 +68,12 @@ static std::optional<MTLSamplerAddressMode> addressMode(WGPUAddressMode addressM
     case WGPUAddressMode_ClampToEdge:
         return MTLSamplerAddressModeClampToEdge;
     case WGPUAddressMode_Force32:
-        return std::nullopt;
+        ASSERT_NOT_REACHED();
+        return MTLSamplerAddressModeClampToEdge;
     }
 }
 
-static std::optional<MTLSamplerMinMagFilter> minMagFilter(WGPUFilterMode filterMode)
+static MTLSamplerMinMagFilter minMagFilter(WGPUFilterMode filterMode)
 {
     switch (filterMode) {
     case WGPUFilterMode_Nearest:
@@ -84,11 +81,12 @@ static std::optional<MTLSamplerMinMagFilter> minMagFilter(WGPUFilterMode filterM
     case WGPUFilterMode_Linear:
         return MTLSamplerMinMagFilterLinear;
     case WGPUFilterMode_Force32:
-        return std::nullopt;
+        ASSERT_NOT_REACHED();
+        return MTLSamplerMinMagFilterNearest;
     }
 }
 
-static std::optional<MTLSamplerMipFilter> mipFilter(WGPUFilterMode filterMode)
+static MTLSamplerMipFilter mipFilter(WGPUFilterMode filterMode)
 {
     switch (filterMode) {
     case WGPUFilterMode_Nearest:
@@ -96,15 +94,14 @@ static std::optional<MTLSamplerMipFilter> mipFilter(WGPUFilterMode filterMode)
     case WGPUFilterMode_Linear:
         return MTLSamplerMipFilterLinear;
     case WGPUFilterMode_Force32:
-        return std::nullopt;
+        ASSERT_NOT_REACHED();
+        return MTLSamplerMipFilterNearest;
     }
 }
 
-static std::optional<MTLCompareFunction> compareFunction(WGPUCompareFunction compareFunction)
+static MTLCompareFunction compareFunction(WGPUCompareFunction compareFunction)
 {
     switch (compareFunction) {
-    case WGPUCompareFunction_Undefined:
-        return std::nullopt;
     case WGPUCompareFunction_Never:
         return MTLCompareFunctionNever;
     case WGPUCompareFunction_Less:
@@ -121,69 +118,37 @@ static std::optional<MTLCompareFunction> compareFunction(WGPUCompareFunction com
         return MTLCompareFunctionNotEqual;
     case WGPUCompareFunction_Always:
         return MTLCompareFunctionAlways;
+    case WGPUCompareFunction_Undefined:
     case WGPUCompareFunction_Force32:
-        return std::nullopt;
+        ASSERT_NOT_REACHED();
+        return MTLCompareFunctionAlways;
     }
 }
 
-RefPtr<Sampler> Device::createSampler(const WGPUSamplerDescriptor& descriptor)
+Ref<Sampler> Device::createSampler(const WGPUSamplerDescriptor& descriptor)
 {
     if (descriptor.nextInChain)
-        return nullptr;
+        return Sampler::createInvalid(*this);
 
     // https://gpuweb.github.io/gpuweb/#dom-gpudevice-createsampler
 
-    // "If validating GPUSamplerDescriptor(this, descriptor) returns false:"
     if (!validateCreateSampler(*this, descriptor)) {
-        // "Generate a validation error."
         generateAValidationError("Validation failure."_s);
-
-        // "Create a new invalid GPUSampler and return the result."
-        return nullptr;
+        return Sampler::createInvalid(*this);
     }
 
     MTLSamplerDescriptor *samplerDescriptor = [MTLSamplerDescriptor new];
 
-    if (auto addressMode = WebGPU::addressMode(descriptor.addressModeU))
-        samplerDescriptor.rAddressMode = addressMode.value();
-    else
-        return nullptr;
-
-    if (auto addressMode = WebGPU::addressMode(descriptor.addressModeV))
-        samplerDescriptor.sAddressMode = addressMode.value();
-    else
-        return nullptr;
-
-    if (auto addressMode = WebGPU::addressMode(descriptor.addressModeW))
-        samplerDescriptor.tAddressMode = addressMode.value();
-    else
-        return nullptr;
-
-    if (auto minMagFilter = WebGPU::minMagFilter(descriptor.magFilter))
-        samplerDescriptor.magFilter = minMagFilter.value();
-    else
-        return nullptr;
-
-    if (auto minMagFilter = WebGPU::minMagFilter(descriptor.minFilter))
-        samplerDescriptor.minFilter = minMagFilter.value();
-    else
-        return nullptr;
-
-    if (auto mipFilter = WebGPU::mipFilter(descriptor.mipmapFilter))
-        samplerDescriptor.mipFilter = mipFilter.value();
-    else
-        return nullptr;
-
+    samplerDescriptor.rAddressMode = addressMode(descriptor.addressModeU);
+    samplerDescriptor.sAddressMode = addressMode(descriptor.addressModeV);
+    samplerDescriptor.tAddressMode = addressMode(descriptor.addressModeW);
+    samplerDescriptor.magFilter = minMagFilter(descriptor.magFilter);
+    samplerDescriptor.minFilter = minMagFilter(descriptor.minFilter);
+    samplerDescriptor.mipFilter = mipFilter(descriptor.mipmapFilter);
     samplerDescriptor.lodMinClamp = descriptor.lodMinClamp;
-
     samplerDescriptor.lodMaxClamp = descriptor.lodMaxClamp;
+    samplerDescriptor.compareFunction = compareFunction(descriptor.compare);
 
-    if (auto compareFunction = WebGPU::compareFunction(descriptor.compare))
-        samplerDescriptor.compareFunction = compareFunction.value();
-    else
-        return nullptr;
-
-    // "The used value of maxAnisotropy will be clamped to the maximum value that the platform supports."
     // https://developer.apple.com/documentation/metal/mtlsamplerdescriptor/1516164-maxanisotropy?language=objc
     // "Values must be between 1 and 16, inclusive."
     samplerDescriptor.maxAnisotropy = std::min<uint16_t>(descriptor.maxAnisotropy, 16);
@@ -192,13 +157,7 @@ RefPtr<Sampler> Device::createSampler(const WGPUSamplerDescriptor& descriptor)
 
     id<MTLSamplerState> samplerState = [m_device newSamplerStateWithDescriptor:samplerDescriptor];
     if (!samplerState)
-        return nullptr;
-
-    // "Let s be a new GPUSampler object."
-    // "Set s.[[descriptor]] to descriptor."
-    // "Set s.[[isComparison]] to false if the compare attribute of s.[[descriptor]] is null or undefined. Otherwise, set it to true."
-    // "Set s.[[isFiltering]] to false if none of minFilter, magFilter, or mipmapFilter has the value of "linear". Otherwise, set it to true."
-    // "Return s."
+        return Sampler::createInvalid(*this);
 
     return Sampler::create(samplerState, descriptor, *this);
 }
@@ -207,6 +166,11 @@ Sampler::Sampler(id<MTLSamplerState> samplerState, const WGPUSamplerDescriptor& 
     : m_samplerState(samplerState)
     , m_descriptor(descriptor)
     , m_device(device)
+{
+}
+
+Sampler::Sampler(Device& device)
+    : m_device(device)
 {
 }
 

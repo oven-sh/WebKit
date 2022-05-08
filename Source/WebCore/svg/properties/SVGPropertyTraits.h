@@ -24,6 +24,7 @@
 #include "CSSParser.h"
 #include "Color.h"
 #include "ColorSerialization.h"
+#include "CommonAtomStrings.h"
 #include "FloatPoint.h"
 #include "FloatRect.h"
 #include "QualifiedName.h"
@@ -39,7 +40,7 @@ struct SVGPropertyTraits<bool> {
     static bool initialValue() { return false; }
     static bool fromString(const String& string) { return string == "true"; }
     static std::optional<bool> parse(const QualifiedName&, const String&) { ASSERT_NOT_REACHED(); return initialValue(); }
-    static String toString(bool type) { return type ? "true"_s : "false"_s; }
+    static String toString(bool type) { return type ? trueAtom() : falseAtom(); }
 };
 
 template<>

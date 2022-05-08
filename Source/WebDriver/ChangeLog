@@ -1,3 +1,107 @@
+2022-04-18  Chris Dumez  <cdumez@apple.com>
+
+        Use convertToASCIILowercase() less and more SortedArrayMap / SortedArraySet
+        https://bugs.webkit.org/show_bug.cgi?id=239453
+
+        Reviewed by Darin Adler.
+
+        * WebDriverService.cpp:
+        (WebDriver::WebDriverService::toCommandHTTPMethod):
+
+2022-04-13  Chris Dumez  <cdumez@apple.com>
+
+        Replace calls to substring(0, x) with the more concise left(x)
+        https://bugs.webkit.org/show_bug.cgi?id=239306
+
+        Reviewed by Darin Adler.
+
+        * CommandResult.cpp:
+        (WebDriver::CommandResult::CommandResult):
+
+2022-04-11  Don Olmstead  <don.olmstead@sony.com>
+
+        Fix PlayStation build after r292696
+        https://bugs.webkit.org/show_bug.cgi?id=239098
+
+        Unreviewed build fix.
+
+        * playstation/WebDriverServicePlayStation.cpp:
+        (WebDriver::WebDriverService::platformCapabilities):
+
+2022-04-10  Chris Dumez  <cdumez@apple.com>
+
+        Finish porting code base to String::fromLatin1() and make String(const char*) private
+        https://bugs.webkit.org/show_bug.cgi?id=238977
+
+        Reviewed by Darin Adler.
+
+        * Session.cpp:
+        (WebDriver::Session::pageLoadStrategyString const):
+        * WebDriverService.cpp:
+        (WebDriver::WebDriverService::run):
+        (WebDriver::WebDriverService::findSessionOrCompleteWithError):
+        (WebDriver::WebDriverService::processCapabilities const):
+        (WebDriver::WebDriverService::newSession):
+        (WebDriver::WebDriverService::connectToBrowser):
+        (WebDriver::processPauseAction):
+        (WebDriver::processNullAction):
+        (WebDriver::processKeyAction):
+        (WebDriver::processPointerMoveAction):
+        (WebDriver::processPointerAction):
+        (WebDriver::processWheelAction):
+        (WebDriver::processPointerParameters):
+        (WebDriver::processInputActionSequence):
+        (WebDriver::WebDriverService::performActions):
+        * gtk/WebDriverServiceGtk.cpp:
+        (WebDriver::WebDriverService::platformCapabilities):
+        (WebDriver::WebDriverService::platformParseCapabilities const):
+        * wpe/WebDriverServiceWPE.cpp:
+        (WebDriver::WebDriverService::platformCapabilities):
+        (WebDriver::WebDriverService::platformParseCapabilities const):
+
+2022-04-05  Chris Dumez  <cdumez@apple.com>
+
+        Mark String(const char*) constructor as explicit
+        https://bugs.webkit.org/show_bug.cgi?id=238693
+
+        Reviewed by Geoffrey Garen.
+
+        * CommandResult.cpp:
+        (WebDriver::CommandResult::CommandResult):
+        * Session.cpp:
+        (WebDriver::Session::handleUserPrompts):
+        (WebDriver::Session::getCurrentURL):
+        (WebDriver::Session::setWindowRect):
+        (WebDriver::Session::elementIsFileUpload):
+        (WebDriver::Session::elementIsEditable):
+        (WebDriver::Session::elementSendKeys):
+        (WebDriver::builtAutomationCookie):
+        (WebDriver::automationSourceType):
+        (WebDriver::automationOriginType):
+        * WebDriverService.cpp:
+        (WebDriver::WebDriverService::run):
+        (WebDriver::deserializeProxy):
+        (WebDriver::WebDriverService::createSession):
+        * socket/CapabilitiesSocket.cpp:
+        (WebDriver::CapabilitiesSocket::parseCapabilities):
+        * socket/HTTPServerSocket.cpp:
+        (WebDriver::HTTPRequestHandler::didReceive):
+
+2022-03-31  Don Olmstead  <don.olmstead@sony.com>
+
+        [PlayStation] Enable WebDriver
+        https://bugs.webkit.org/show_bug.cgi?id=238615
+
+        Reviewed by Alex Christensen.
+
+        Fix compilation errors due to interface changes. Load up JSC when its built as a shared
+        library.
+
+        * playstation/WebDriverServicePlayStation.cpp:
+        (WebDriver::WebDriverService::platformInit):
+        (WebDriver::WebDriverService::platformValidateCapability const):
+        (WebDriver::WebDriverService::platformMatchCapability const):
+
 2022-02-09  Carlos Garcia Campos  <cgarcia@igalia.com>
 
         WebDriver: add a javascript atom to get the visible text

@@ -73,6 +73,7 @@ GPUProcess/mac/GPUProcessMac.mm
 GPUProcess/mac/LocalAudioSessionRoutingArbitrator.cpp
 GPUProcess/media/RemoteAudioSourceProviderProxy.cpp
 GPUProcess/media/RemoteImageDecoderAVFProxy.cpp
+GPUProcess/media/RemoteVideoFrameObjectHeap.mm
 GPUProcess/media/cocoa/RemoteMediaPlayerProxyCocoa.mm
 GPUProcess/media/ios/RemoteMediaSessionHelperProxy.cpp
 GPUProcess/webrtc/LibWebRTCCodecsProxy.mm @no-unify
@@ -267,6 +268,7 @@ UIProcess/API/C/WKUserScriptRef.cpp
 UIProcess/API/C/cg/WKIconDatabaseCG.cpp
 
 UIProcess/API/C/mac/WKContextPrivateMac.mm
+UIProcess/API/C/mac/WKNotificationPrivateMac.mm
 UIProcess/API/C/mac/WKPagePrivateMac.mm
 UIProcess/API/C/mac/WKProtectionSpaceNS.mm
 
@@ -618,6 +620,7 @@ WebProcess/ApplePay/cocoa/WebPaymentCoordinatorCocoa.mm
 WebProcess/cocoa/PlaybackSessionManager.mm
 WebProcess/cocoa/RemoteCaptureSampleManager.cpp
 WebProcess/cocoa/RemoteRealtimeAudioSource.cpp
+WebProcess/cocoa/RemoteRealtimeMediaSource.cpp
 WebProcess/cocoa/RemoteRealtimeMediaSourceProxy.cpp
 WebProcess/cocoa/RemoteRealtimeVideoSource.cpp
 WebProcess/cocoa/UserMediaCaptureManager.cpp
@@ -637,7 +640,6 @@ WebProcess/GPU/media/cocoa/MediaPlayerPrivateRemoteCocoa.mm
 WebProcess/GPU/media/cocoa/VideoLayerRemoteCocoa.mm
 WebProcess/GPU/media/ios/RemoteMediaSessionHelper.cpp
 WebProcess/GPU/webrtc/AudioMediaStreamTrackRendererInternalUnitManager.cpp
-WebProcess/GPU/webrtc/LibWebRTCCodecs.mm
 
 WebProcess/InjectedBundle/API/c/WKBundlePageBanner.cpp
 

@@ -35,6 +35,13 @@ using PlatformBuffer = struct wpe_fdo_shm_exported_buffer*;
 using PlatformViewBackend = struct wpe_view_backend_exportable_fdo*;
 #endif
 
+#if defined(WPE_BACKEND_PLAYSTATION)
+#include <wpe/playstation.h>
+
+using PlatformBuffer = void*;
+using PlatformViewBackend = wpe_playstation_view_backend_exportable*;
+#endif
+
 #if defined(USE_CAIRO) && USE_CAIRO
 #include <cairo.h>
 

@@ -50,7 +50,7 @@ SWServerWorker* SWServerWorker::existingWorkerForIdentifier(ServiceWorkerIdentif
 }
 
 // FIXME: Use r-value references for script and contentSecurityPolicy
-SWServerWorker::SWServerWorker(SWServer& server, SWServerRegistration& registration, const URL& scriptURL, const ScriptBuffer& script, const CertificateInfo& certificateInfo, const ContentSecurityPolicyResponseHeaders& contentSecurityPolicy, const CrossOriginEmbedderPolicy& crossOriginEmbedderPolicy, String&& referrerPolicy, WorkerType type, ServiceWorkerIdentifier identifier, HashMap<URL, ServiceWorkerContextData::ImportedScript>&& scriptResourceMap)
+SWServerWorker::SWServerWorker(SWServer& server, SWServerRegistration& registration, const URL& scriptURL, const ScriptBuffer& script, const CertificateInfo& certificateInfo, const ContentSecurityPolicyResponseHeaders& contentSecurityPolicy, const CrossOriginEmbedderPolicy& crossOriginEmbedderPolicy, String&& referrerPolicy, WorkerType type, ServiceWorkerIdentifier identifier, MemoryCompactRobinHoodHashMap<URL, ServiceWorkerContextData::ImportedScript>&& scriptResourceMap)
     : m_server(server)
     , m_registrationKey(registration.key())
     , m_registration(registration)
@@ -268,7 +268,7 @@ void SWServerWorker::setScriptResource(URL&& url, ServiceWorkerContextData::Impo
     m_scriptResourceMap.set(WTFMove(url), WTFMove(script));
 }
 
-void SWServerWorker::didSaveScriptsToDisk(ScriptBuffer&& mainScript, HashMap<URL, ScriptBuffer>&& importedScripts)
+void SWServerWorker::didSaveScriptsToDisk(ScriptBuffer&& mainScript, MemoryCompactRobinHoodHashMap<URL, ScriptBuffer>&& importedScripts)
 {
     // Send mmap'd version of the scripts to the ServiceWorker process so we can save dirty memory.
     if (auto* contextConnection = this->contextConnection())
@@ -397,10 +397,10 @@ std::optional<ScriptExecutionContextIdentifier> SWServerWorker::serviceWorkerPag
     return m_registration->serviceWorkerPageIdentifier();
 }
 
-void SWServerWorker::decrementPushEventCounter()
+void SWServerWorker::decrementFunctionalEventCounter()
 {
-    ASSERT(m_pushEventCounter);
-    --m_pushEventCounter;
+    ASSERT(m_functionalEventCounter);
+    --m_functionalEventCounter;
     terminateIfPossible();
 }
 
@@ -412,11 +412,34 @@ void SWServerWorker::setAsInspected(bool isInspected)
 
 void SWServerWorker::terminateIfPossible()
 {
-    if (m_pushEventCounter || m_isInspected || !m_server || m_server->hasClientsWithOrigin(origin()))
+    if (m_functionalEventCounter || m_isInspected || !m_server || m_server->hasClientsWithOrigin(origin()))
         return;
 
     terminate();
     m_server->removeContextConnectionIfPossible(registrableDomain());
+}
+
+bool SWServerWorker::isClientActiveServiceWorker(ScriptExecutionContextIdentifier clientIdentifier) const
+{
+    if (!m_server)
+        return false;
+    auto registrationIdentifier = m_server->clientIdentifierToControllingRegistration(clientIdentifier);
+    return registrationIdentifier == m_data.registrationIdentifier;
+}
+
+Vector<URL> SWServerWorker::importedScriptURLs() const
+{
+    return copyToVector(m_scriptResourceMap.keys());
+}
+
+bool SWServerWorker::matchingImportedScripts(const Vector<std::pair<URL, ScriptBuffer>>& scripts) const
+{
+    for (auto& script : scripts) {
+        auto iterator = m_scriptResourceMap.find(script.first);
+        if (iterator == m_scriptResourceMap.end() || iterator->value.script != script.second)
+            return false;
+    }
+    return true;
 }
 
 } // namespace WebCore

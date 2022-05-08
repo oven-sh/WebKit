@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2021-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -86,7 +86,7 @@ std::unique_ptr<CGDisplayListImageBufferBackend> CGDisplayListImageBufferBackend
     return std::unique_ptr<CGDisplayListImageBufferBackend>(new CGDisplayListImageBufferBackend(parameters, WTFMove(context)));
 }
 
-std::unique_ptr<CGDisplayListImageBufferBackend> CGDisplayListImageBufferBackend::create(const Parameters& parameters, const WebCore::HostWindow*)
+std::unique_ptr<CGDisplayListImageBufferBackend> CGDisplayListImageBufferBackend::create(const Parameters& parameters, const WebCore::ImageBuffer::CreationContext&)
 {
     return CGDisplayListImageBufferBackend::create(parameters);
 }
@@ -97,7 +97,7 @@ CGDisplayListImageBufferBackend::CGDisplayListImageBufferBackend(const Parameter
 {
 }
 
-ImageBufferBackendHandle CGDisplayListImageBufferBackend::createBackendHandle() const
+ImageBufferBackendHandle CGDisplayListImageBufferBackend::createBackendHandle(SharedMemory::Protection) const
 {
     auto data = adoptCF(WKCGCommandsContextCopyEncodedData(m_context->platformContext()));
     ASSERT(data);

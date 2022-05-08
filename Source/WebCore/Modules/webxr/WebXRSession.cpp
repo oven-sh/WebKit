@@ -66,7 +66,7 @@ WebXRSession::WebXRSession(Document& document, WebXRSystem& system, XRSessionMod
     , m_views(device.views(mode))
 {
     m_device->setTrackingAndRenderingClient(*this);
-    m_device->initializeTrackingAndRendering(mode);
+    m_device->initializeTrackingAndRendering(document.securityOrigin().data(), mode, m_requestedFeatures);
 
     // https://immersive-web.github.io/webxr/#ref-for-dom-xrreferencespacetype-viewer%E2%91%A2
     // Every session MUST support viewer XRReferenceSpaces.
@@ -166,7 +166,7 @@ ExceptionOr<void> WebXRSession::updateRenderState(const XRRenderStateInit& newSt
 bool WebXRSession::referenceSpaceIsSupported(XRReferenceSpaceType type) const
 {
     // 1. If type is not contained in session’s XR device's list of enabled features for mode return false.
-    if (!m_requestedFeatures.contains(type))
+    if (!m_requestedFeatures.contains(sessionFeatureFromReferenceSpaceType(type)))
         return false;
 
     // 2. If type is viewer, return true.
@@ -644,6 +644,14 @@ bool WebXRSession::posesCanBeReported(const Document& document) const
     // We're going to apply them so let's just return true.
     return true;
 }
+
+#if ENABLE(WEBXR_HANDS)
+bool WebXRSession::isHandTrackingEnabled() const
+{
+    return m_requestedFeatures.contains(PlatformXR::SessionFeature::HandTracking);
+}
+#endif
+
 
 } // namespace WebCore
 

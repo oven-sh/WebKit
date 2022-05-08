@@ -89,9 +89,6 @@ public:
     void setAccessibilityObjectModelEnabled(bool isEnabled) { m_accessibilityObjectModelEnabled = isEnabled; }
     bool accessibilityObjectModelEnabled() const { return m_accessibilityObjectModelEnabled; }
 
-    void setAriaReflectionEnabled(bool isEnabled) { m_ariaReflectionEnabled = isEnabled; }
-    bool ariaReflectionEnabled() const { return m_ariaReflectionEnabled; }
-
     void setItpDebugModeEnabled(bool isEnabled) { m_itpDebugMode = isEnabled; }
     bool itpDebugModeEnabled() const { return m_itpDebugMode; }
 
@@ -111,8 +108,8 @@ public:
     void setLayoutFormattingContextEnabled(bool isEnabled) { m_layoutFormattingContextEnabled = isEnabled; }
     bool layoutFormattingContextEnabled() const { return m_layoutFormattingContextEnabled; }
 
-    void setLayoutFormattingContextIntegrationEnabled(bool isEnabled) { m_layoutFormattingContextIntegrationEnabled = isEnabled; }
-    bool layoutFormattingContextIntegrationEnabled() const { return m_layoutFormattingContextIntegrationEnabled; }
+    void setInlineFormattingContextIntegrationEnabled(bool isEnabled) { m_inlineFormattingContextIntegrationEnabled = isEnabled; }
+    bool inlineFormattingContextIntegrationEnabled() const { return m_inlineFormattingContextIntegrationEnabled; }
 #endif
 
 #if ENABLE(CSS_PAINTING_API)
@@ -287,7 +284,6 @@ private:
     bool m_webXREnabled { false };
 #endif
     bool m_accessibilityObjectModelEnabled { false };
-    bool m_ariaReflectionEnabled { true };
     bool m_itpDebugMode { false };
     bool m_isRestrictedHTTPResponseAccess { true };
     bool m_isServerTimingEnabled { false };
@@ -301,7 +297,7 @@ private:
 
 #if ENABLE(LAYOUT_FORMATTING_CONTEXT)
     bool m_layoutFormattingContextEnabled { false };
-    bool m_layoutFormattingContextIntegrationEnabled { true };
+    bool m_inlineFormattingContextIntegrationEnabled { true };
 #endif
 
 #if ENABLE(CSS_PAINTING_API)

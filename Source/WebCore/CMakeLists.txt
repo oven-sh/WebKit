@@ -121,6 +121,8 @@ set(WebCore_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBCORE_DIR}/layout/formattingContexts/inline/invalidation"
     "${WEBCORE_DIR}/layout/formattingContexts/inline/text"
     "${WEBCORE_DIR}/layout/integration"
+    "${WEBCORE_DIR}/layout/integration/flex"
+    "${WEBCORE_DIR}/layout/integration/inline"
     "${WEBCORE_DIR}/layout/layouttree"
     "${WEBCORE_DIR}/layout/formattingContexts/table"
     "${WEBCORE_DIR}/loader"
@@ -763,6 +765,7 @@ set(WebCore_NON_SVG_IDL_FILES
     crypto/parameters/RsaPssParams.idl
 
     css/CSSConditionRule.idl
+    css/CSSContainerRule.idl
     css/CSSCounterStyleRule.idl
     css/CSSFontFaceRule.idl
     css/CSSFontPaletteValuesRule.idl
@@ -910,6 +913,7 @@ set(WebCore_NON_SVG_IDL_FILES
     dom/DocumentType.idl
     dom/DragEvent.idl
     dom/Element+CSSOMView.idl
+    dom/Element+ComputedStyleMap.idl
     dom/Element+DOMParsing.idl
     dom/Element+Fullscreen.idl
     dom/Element+PointerEvents.idl

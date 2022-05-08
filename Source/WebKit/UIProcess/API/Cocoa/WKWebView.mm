@@ -242,13 +242,13 @@ RetainPtr<NSError> nsErrorFromExceptionDetails(const WebCore::ExceptionDetails& 
 
 static bool shouldAllowPictureInPictureMediaPlayback()
 {
-    static bool shouldAllowPictureInPictureMediaPlayback = linkedOnOrAfter(SDKVersion::FirstWithPictureInPictureMediaPlayback);
+    static bool shouldAllowPictureInPictureMediaPlayback = linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::PictureInPictureMediaPlayback);
     return shouldAllowPictureInPictureMediaPlayback;
 }
 
 static bool shouldAllowSettingAnyXHRHeaderFromFileURLs()
 {
-    static bool shouldAllowSettingAnyXHRHeaderFromFileURLs = (WebCore::IOSApplication::isCardiogram() || WebCore::IOSApplication::isNike()) && !linkedOnOrAfter(SDKVersion::FirstThatDisallowsSettingAnyXHRHeaderFromFileURLs);
+    static bool shouldAllowSettingAnyXHRHeaderFromFileURLs = (WebCore::IOSApplication::isCardiogram() || WebCore::IOSApplication::isNike()) && !linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::DisallowsSettingAnyXHRHeaderFromFileURLs);
     return shouldAllowSettingAnyXHRHeaderFromFileURLs;
 }
 
@@ -257,7 +257,7 @@ static bool shouldAllowSettingAnyXHRHeaderFromFileURLs()
 static bool shouldRequireUserGestureToLoadVideo()
 {
 #if PLATFORM(IOS_FAMILY)
-    static bool shouldRequireUserGestureToLoadVideo = linkedOnOrAfter(SDKVersion::FirstThatRequiresUserGestureToLoadVideo);
+    static bool shouldRequireUserGestureToLoadVideo = linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::RequiresUserGestureToLoadVideo);
     return shouldRequireUserGestureToLoadVideo;
 #else
     return false;
@@ -266,7 +266,7 @@ static bool shouldRequireUserGestureToLoadVideo()
 
 static bool shouldRestrictBaseURLSchemes()
 {
-    static bool shouldRestrictBaseURLSchemes = linkedOnOrAfter(SDKVersion::FirstThatRestrictsBaseURLSchemes);
+    static bool shouldRestrictBaseURLSchemes = linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::RestrictsBaseURLSchemes);
     return shouldRestrictBaseURLSchemes;
 }
 
@@ -335,6 +335,8 @@ static void hardwareKeyboardAvailabilityChangedCallback(CFNotificationCenterRef,
     if (!configuration)
         [NSException raise:NSInvalidArgumentException format:@"Configuration cannot be nil"];
 
+    if (!configuration.websiteDataStore)
+        [NSException raise:NSInvalidArgumentException format:@"Configuration websiteDataStore cannot be nil"];
     _configuration = adoptNS([configuration copy]);
 
     if (WKWebView *relatedWebView = [_configuration _relatedWebView]) {
@@ -342,7 +344,7 @@ static void hardwareKeyboardAvailabilityChangedCallback(CFNotificationCenterRef,
         WKProcessPool *relatedWebViewProcessPool = [relatedWebView->_configuration processPool];
         if (processPool && processPool != relatedWebViewProcessPool)
             [NSException raise:NSInvalidArgumentException format:@"Related web view %@ has process pool %@ but configuration specifies a different process pool %@", relatedWebView, relatedWebViewProcessPool, configuration.processPool];
-        if ([relatedWebView->_configuration websiteDataStore] != [_configuration websiteDataStore] && linkedOnOrAfter(SDKVersion::FirstWithExceptionsForRelatedWebViewsUsingDifferentDataStores))
+        if ([relatedWebView->_configuration websiteDataStore] != [_configuration websiteDataStore] && linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::ExceptionsForRelatedWebViewsUsingDifferentDataStores))
             [NSException raise:NSInvalidArgumentException format:@"Related web view %@ has data store %@ but configuration specifies a different data store %@", relatedWebView, [relatedWebView->_configuration websiteDataStore], [_configuration websiteDataStore]];
 
         [_configuration setProcessPool:relatedWebViewProcessPool];
@@ -366,11 +368,8 @@ static void hardwareKeyboardAvailabilityChangedCallback(CFNotificationCenterRef,
     _viewportMetaTagWidth = WebCore::ViewportArguments::ValueAuto;
     _initialScaleFactor = 1;
     _allowsViewportShrinkToFit = defaultAllowsViewportShrinkToFit;
-    _allowsLinkPreview = linkedOnOrAfter(SDKVersion::FirstWithLinkPreviewEnabledByDefault);
-
-#if HAVE(UIFINDINTERACTION)
+    _allowsLinkPreview = linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::LinkPreviewEnabledByDefault);
     _findInteractionEnabled = NO;
-#endif
 
     auto fastClickingEnabled = []() {
         if (NSNumber *enabledValue = [[NSUserDefaults standardUserDefaults] objectForKey:@"WebKitFastClickingDisabled"])
@@ -513,7 +512,7 @@ static void hardwareKeyboardAvailabilityChangedCallback(CFNotificationCenterRef,
     pageConfiguration->preferences()->setAllowSettingAnyXHRHeaderFromFileURLs(shouldAllowSettingAnyXHRHeaderFromFileURLs());
     pageConfiguration->preferences()->setShouldDecidePolicyBeforeLoadingQuickLookPreview(!![_configuration _shouldDecidePolicyBeforeLoadingQuickLookPreview]);
 #if ENABLE(DEVICE_ORIENTATION)
-    pageConfiguration->preferences()->setDeviceOrientationPermissionAPIEnabled(linkedOnOrAfter(SDKVersion::FirstWithDeviceOrientationAndMotionPermissionAPI));
+    pageConfiguration->preferences()->setDeviceOrientationPermissionAPIEnabled(linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::SupportsDeviceOrientationAndMotionPermissionAPI));
 #endif
 #if USE(SYSTEM_PREVIEW)
     pageConfiguration->preferences()->setSystemPreviewEnabled(!![_configuration _systemPreviewEnabled]);
@@ -568,7 +567,7 @@ static void hardwareKeyboardAvailabilityChangedCallback(CFNotificationCenterRef,
     pageConfiguration->preferences()->setSampledPageTopColorMaxDifference([_configuration _sampledPageTopColorMaxDifference]);
     pageConfiguration->preferences()->setSampledPageTopColorMinHeight([_configuration _sampledPageTopColorMinHeight]);
 
-    if (!linkedOnOrAfter(SDKVersion::FirstWhereSiteSpecificQuirksAreEnabledByDefault))
+    if (!linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::SiteSpecificQuirksAreEnabledByDefault))
         pageConfiguration->preferences()->setNeedsSiteSpecificQuirks(false);
 
 #if PLATFORM(IOS_FAMILY)
@@ -603,6 +602,10 @@ static void hardwareKeyboardAvailabilityChangedCallback(CFNotificationCenterRef,
     self.magnification = [coder decodeDoubleForKey:@"magnification"];
 #endif
 
+#if PLATFORM(IOS) || PLATFORM(MACCATALYST)
+    self.findInteractionEnabled = [coder decodeBoolForKey:@"findInteractionEnabled"];
+#endif
+
     return self;
 }
 
@@ -619,6 +622,10 @@ static void hardwareKeyboardAvailabilityChangedCallback(CFNotificationCenterRef,
 #if PLATFORM(MAC)
     [coder encodeBool:self.allowsMagnification forKey:@"allowsMagnification"];
     [coder encodeDouble:self.magnification forKey:@"magnification"];
+#endif
+
+#if PLATFORM(IOS) || PLATFORM(MACCATALYST)
+    [coder encodeBool:self.isFindInteractionEnabled forKey:@"findInteractionEnabled"];
 #endif
 }
 
@@ -878,7 +885,7 @@ static void hardwareKeyboardAvailabilityChangedCallback(CFNotificationCenterRef,
 {
     THROW_IF_SUSPENDED;
     OptionSet<WebCore::ReloadOption> reloadOptions;
-    if (linkedOnOrAfter(SDKVersion::FirstWithExpiredOnlyReloadBehavior))
+    if (linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::ExpiredOnlyReloadBehavior))
         reloadOptions.add(WebCore::ReloadOption::ExpiredOnly);
 
     return wrapper(_page->reload(reloadOptions));
@@ -1248,7 +1255,7 @@ static WKMediaPlaybackState toWKMediaPlaybackState(WebKit::MediaPlaybackState me
         }];
     };
 
-    if ((snapshotConfiguration && !snapshotConfiguration.afterScreenUpdates) || !linkedOnOrAfter(SDKVersion::FirstWithSnapshotAfterScreenUpdates)) {
+    if ((snapshotConfiguration && !snapshotConfiguration.afterScreenUpdates) || !linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::SnapshotAfterScreenUpdates)) {
         callSnapshotRect();
         return;
     }
@@ -1426,10 +1433,52 @@ inline OptionSet<WebKit::FindOptions> toFindOptions(WKFindConfiguration *configu
 #pragma mark - iOS API
 
 #if PLATFORM(IOS_FAMILY)
+
 - (UIScrollView *)scrollView
 {
     return _scrollView.get();
 }
+
+#if !PLATFORM(WATCHOS) && !PLATFORM(APPLETV)
+
+- (BOOL)findInteractionEnabled
+{
+    return _findInteractionEnabled;
+}
+
+- (void)setFindInteractionEnabled:(BOOL)enabled
+{
+#if HAVE(UIFINDINTERACTION)
+    if (_findInteractionEnabled != enabled) {
+        _findInteractionEnabled = enabled;
+
+        if (enabled) {
+            if (!_findInteraction)
+                _findInteraction = adoptNS([[UIFindInteraction alloc] initWithSessionDelegate:self]);
+
+            [self addInteraction:_findInteraction.get()];
+        } else {
+            [self removeInteraction:_findInteraction.get()];
+            _findInteraction = nil;
+        }
+    }
+#else
+    UNUSED_PARAM(enabled);
+    UNUSED_VARIABLE(_findInteractionEnabled);
+#endif
+}
+
+- (UIFindInteraction *)findInteraction
+{
+#if HAVE(UIFINDINTERACTION)
+    return _findInteraction.get();
+#else
+    return nil;
+#endif
+}
+
+#endif // !PLATFORM(WATCHOS) && !PLATFORM(APPLETV)
+
 #endif // PLATFORM(IOS_FAMILY)
 
 #pragma mark - macOS API
@@ -1549,6 +1598,41 @@ inline OptionSet<WebKit::FindOptions> toFindOptions(WKFindConfiguration *configu
     });
 }
 
+- (void)_recalculateViewportSizesWithMinimumViewportInset:(CocoaEdgeInsets)minimumViewportInset maximumViewportInset:(CocoaEdgeInsets)maximumViewportInset throwOnInvalidInput:(BOOL)throwOnInvalidInput
+{
+    auto frame = WebCore::FloatSize(self.frame.size);
+
+    auto minimumUnobscuredSize = frame - WebCore::FloatSize(maximumViewportInset.left + maximumViewportInset.right, maximumViewportInset.top + maximumViewportInset.bottom);
+    if (minimumUnobscuredSize.isEmpty()) {
+        if (throwOnInvalidInput) {
+            [NSException raise:NSInvalidArgumentException format:@"maximumViewportInset cannot be larger than frame"];
+            return;
+        }
+
+        RELEASE_LOG_ERROR(ViewportSizing, "maximumViewportInset cannot be larger than frame");
+        minimumUnobscuredSize = frame;
+    }
+
+    auto maximumUnobscuredSize = frame - WebCore::FloatSize(minimumViewportInset.left + minimumViewportInset.right, minimumViewportInset.top + minimumViewportInset.bottom);
+    if (maximumUnobscuredSize.isEmpty()) {
+        if (throwOnInvalidInput) {
+            [NSException raise:NSInvalidArgumentException format:@"minimumViewportInset cannot be larger than frame"];
+            return;
+        }
+
+        RELEASE_LOG_ERROR(ViewportSizing, "minimumViewportInset cannot be larger than frame");
+        maximumUnobscuredSize = frame;
+    }
+
+#if PLATFORM(IOS_FAMILY)
+    if (_viewLayoutSizeOverride || _minimumUnobscuredSizeOverride || _maximumUnobscuredSizeOverride)
+        return;
+#endif
+
+    _page->setMinimumUnobscuredSize(minimumUnobscuredSize);
+    _page->setMaximumUnobscuredSize(maximumUnobscuredSize);
+}
+
 #if ENABLE(ATTACHMENT_ELEMENT)
 
 - (void)_didInsertAttachment:(API::Attachment&)attachment withSource:(NSString *)source
@@ -1663,6 +1747,14 @@ inline OptionSet<WebKit::FindOptions> toFindOptions(WKFindConfiguration *configu
 {
     THROW_IF_SUSPENDED;
     _page->getWebArchiveOfFrame(_page->mainFrame(), [completionHandler = makeBlockPtr(completionHandler)](API::Data* data) {
+        completionHandler(wrapper(data), nil);
+    });
+}
+
+- (void)retrieveAccessibilityTreeData:(void (^)(NSData *, NSError *))completionHandler
+{
+    THROW_IF_SUSPENDED;
+    _page->getAccessibilityTreeData([completionHandler = makeBlockPtr(completionHandler)] (API::Data* data) {
         completionHandler(wrapper(data), nil);
     });
 }
@@ -1828,6 +1920,23 @@ static _WKSelectionAttributes selectionAttributes(const WebKit::EditorState& edi
 #else
     return WKFullscreenStateNotInFullscreen;
 #endif
+}
+
+- (void)setMinimumViewportInset:(CocoaEdgeInsets)minimumViewportInset maximumViewportInset:(CocoaEdgeInsets)maximumViewportInset
+{
+    if (minimumViewportInset.top < 0 || minimumViewportInset.left < 0 || minimumViewportInset.bottom < 0 || minimumViewportInset.right < 0)
+        [NSException raise:NSInvalidArgumentException format:@"minimumViewportInset cannot be negative"];
+
+    if (maximumViewportInset.top < 0 || maximumViewportInset.left < 0 || maximumViewportInset.bottom < 0 || maximumViewportInset.right < 0)
+        [NSException raise:NSInvalidArgumentException format:@"maximumViewportInset cannot be negative"];
+
+    if (minimumViewportInset.top + minimumViewportInset.bottom > maximumViewportInset.top + maximumViewportInset.bottom || minimumViewportInset.right + minimumViewportInset.left > maximumViewportInset.right + maximumViewportInset.left)
+        [NSException raise:NSInvalidArgumentException format:@"minimumViewportInset cannot be larger than maximumViewportInset"];
+
+    [self _recalculateViewportSizesWithMinimumViewportInset:minimumViewportInset maximumViewportInset:maximumViewportInset throwOnInvalidInput:YES];
+
+    _minimumViewportInset = minimumViewportInset;
+    _maximumViewportInset = maximumViewportInset;
 }
 
 @end

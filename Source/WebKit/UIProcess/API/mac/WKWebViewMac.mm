@@ -140,6 +140,8 @@ std::optional<WebCore::ScrollbarOverlayStyle> toCoreScrollbarStyle(_WKOverlayScr
     [_safeBrowsingWarning setFrame:self.bounds];
     if (_impl)
         _impl->setFrameSize(NSSizeToCGSize(size));
+
+    [self _recalculateViewportSizesWithMinimumViewportInset:_minimumViewportInset maximumViewportInset:_maximumViewportInset throwOnInvalidInput:NO];
 }
 
 - (void)setUserInterfaceLayoutDirection:(NSUserInterfaceLayoutDirection)userInterfaceLayoutDirection
@@ -1184,7 +1186,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
     if ([uiDelegate respondsToSelector:@selector(_webView:dragDestinationActionMaskForDraggingInfo:)])
         return [uiDelegate _webView:self dragDestinationActionMaskForDraggingInfo:draggingInfo];
 
-    if (!linkedOnOrAfter(SDKVersion::FirstWithDropToNavigateDisallowedByDefault))
+    if (!linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::DropToNavigateDisallowedByDefault))
         return WKDragDestinationActionAny;
 
     return WKDragDestinationActionAny & ~WKDragDestinationActionLoad;

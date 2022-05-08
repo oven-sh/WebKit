@@ -44,6 +44,7 @@
 #include <wtf/SafeStrerror.h>
 #include <wtf/UniStdExtras.h>
 #include <wtf/text/CString.h>
+#include <wtf/text/StringConcatenateNumbers.h>
 #include <wtf/text/WTFString.h>
 
 #if HAVE(LINUX_MEMFD_H)
@@ -75,7 +76,7 @@ void SharedMemory::Handle::clear()
 
 bool SharedMemory::Handle::isNull() const
 {
-    return m_attachment.fileDescriptor() == -1;
+    return m_attachment.isNull();
 }
 
 void SharedMemory::IPCHandle::encode(IPC::Encoder& encoder) const
@@ -153,7 +154,7 @@ static int createSharedMemory()
 #else
     CString tempName;
     for (int tries = 0; fileDescriptor == -1 && tries < 10; ++tries) {
-        String name = String("/WK2SharedMemory.") + String::number(static_cast<unsigned>(WTF::randomNumber() * (std::numeric_limits<unsigned>::max() + 1.0)));
+        auto name = makeString("/WK2SharedMemory.", static_cast<unsigned>(WTF::randomNumber() * (std::numeric_limits<unsigned>::max() + 1.0)));
         tempName = name.utf8();
 
         do {
@@ -200,9 +201,9 @@ RefPtr<SharedMemory> SharedMemory::map(const Handle& handle, Protection protecti
 {
     ASSERT(!handle.isNull());
 
-    int fd = handle.m_attachment.releaseFileDescriptor();
-    void* data = mmap(0, handle.m_attachment.size(), accessModeMMap(protection), MAP_SHARED, fd, 0);
-    closeWithRetry(fd);
+    UnixFileDescriptor fd = handle.m_attachment.release();
+    void* data = mmap(0, handle.m_attachment.size(), accessModeMMap(protection), MAP_SHARED, fd.value(), 0);
+    fd = { };
     if (data == MAP_FAILED)
         return nullptr;
 
@@ -240,23 +241,13 @@ bool SharedMemory::createHandle(Handle& handle, Protection)
     // FIXME: Handle the case where the passed Protection is ReadOnly.
     // See https://bugs.webkit.org/show_bug.cgi?id=131542.
 
-    int duplicatedHandle = dupCloseOnExec(m_fileDescriptor.value());
-    if (duplicatedHandle == -1) {
+    UnixFileDescriptor duplicate { m_fileDescriptor.value(), UnixFileDescriptor::Duplicate };
+    if (!duplicate) {
         ASSERT_NOT_REACHED();
         return false;
     }
-    handle.m_attachment = IPC::Attachment(duplicatedHandle, m_size);
+    handle.m_attachment = IPC::Attachment(WTFMove(duplicate), m_size);
     return true;
-}
-
-unsigned SharedMemory::systemPageSize()
-{
-    static unsigned pageSize = 0;
-
-    if (!pageSize)
-        pageSize = getpagesize();
-
-    return pageSize;
 }
 
 } // namespace WebKit

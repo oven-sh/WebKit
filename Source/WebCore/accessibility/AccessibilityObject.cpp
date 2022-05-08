@@ -441,7 +441,7 @@ unsigned AccessibilityObject::blockquoteLevel() const
     return level;
 }
 
-AXCoreObject* AccessibilityObject::parentObjectUnignored() const
+AccessibilityObject* AccessibilityObject::parentObjectUnignored() const
 {
     return Accessibility::findAncestor<AccessibilityObject>(*this, false, [] (const AccessibilityObject& object) {
         return !object.accessibilityIsIgnored();
@@ -1440,32 +1440,28 @@ static RenderListItem* renderListItemContainerForNode(Node* node)
     return nullptr;
 }
 
-static String listMarkerTextForNode(Node* node)
+static StringView listMarkerTextForNode(Node* node)
 {
     RenderListItem* listItem = renderListItemContainerForNode(node);
     if (!listItem)
-        return String();
+        return { };
     
     // If this is in a list item, we need to manually add the text for the list marker
     // because a RenderListMarker does not have a Node equivalent and thus does not appear
     // when iterating text.
-    return listItem->markerTextWithSuffix().toString();
+    return listItem->markerTextWithSuffix();
 }
 
 // Returns the text associated with a list marker if this node is contained within a list item.
-String AccessibilityObject::listMarkerTextForNodeAndPosition(Node* node, const VisiblePosition& visiblePositionStart)
+StringView AccessibilityObject::listMarkerTextForNodeAndPosition(Node* node, const VisiblePosition& visiblePositionStart)
 {
-    // If the range does not contain the start of the line, the list marker text should not be included.
-    if (!isStartOfLine(visiblePositionStart))
-        return String();
-
-    // We should speak the list marker only for the first line.
-    RenderListItem* listItem = renderListItemContainerForNode(node);
+    auto* listItem = renderListItemContainerForNode(node);
     if (!listItem)
-        return String();
-    if (!inSameLine(visiblePositionStart, firstPositionInNode(&listItem->element())))
-        return String();
-    
+        return { };
+    // Only include the list marker if the range includes the line start (where the marker would be), and is in the same line as the marker.
+    if (!isStartOfLine(visiblePositionStart) || !inSameLine(visiblePositionStart, firstPositionInNode(&listItem->element())))
+        return { };
+
     return listMarkerTextForNode(node);
 }
 
@@ -1752,9 +1748,9 @@ bool AccessibilityObject::supportsAutoComplete() const
 String AccessibilityObject::autoCompleteValue() const
 {
     const AtomString& autoComplete = getAttribute(aria_autocompleteAttr);
-    if (equalLettersIgnoringASCIICase(autoComplete, "inline")
-        || equalLettersIgnoringASCIICase(autoComplete, "list")
-        || equalLettersIgnoringASCIICase(autoComplete, "both"))
+    if (equalLettersIgnoringASCIICase(autoComplete, "inline"_s)
+        || equalLettersIgnoringASCIICase(autoComplete, "list"_s)
+        || equalLettersIgnoringASCIICase(autoComplete, "both"_s))
         return autoComplete;
 
     return "none"_s;
@@ -1770,7 +1766,7 @@ bool AccessibilityObject::contentEditableAttributeIsEnabled(Element* element)
         return false;
     
     // Both "true" (case-insensitive) and the empty string count as true.
-    return contentEditableValue.isEmpty() || equalLettersIgnoringASCIICase(contentEditableValue, "true");
+    return contentEditableValue.isEmpty() || equalLettersIgnoringASCIICase(contentEditableValue, "true"_s);
 }
     
 #if ENABLE(ACCESSIBILITY)
@@ -1982,8 +1978,7 @@ AccessibilityObject* AccessibilityObject::headingElementForNode(Node* node)
 
 void AccessibilityObject::ariaTreeRows(AccessibilityChildrenVector& rows, AccessibilityChildrenVector& ancestors)
 {
-    AccessibilityChildrenVector ariaOwns;
-    ariaOwnsElements(ariaOwns);
+    auto ownedObjects = this->ownedObjects();
 
     ancestors.append(this);
 
@@ -1994,9 +1989,9 @@ void AccessibilityObject::ariaTreeRows(AccessibilityChildrenVector& rows, Access
         if (child->roleValue() == AccessibilityRole::TreeItem) {
             // Child appears both as a direct child and aria-owns, we should use the ordering as
             // described in aria-owns for this child.
-            if (ariaOwns.contains(child))
+            if (ownedObjects.contains(child))
                 continue;
-            
+
             // The result set may already contain the child through aria-owns. For example,
             // a treeitem sitting under the tree root, which is owned elsewhere in the tree.
             if (rows.contains(child))
@@ -2011,13 +2006,13 @@ void AccessibilityObject::ariaTreeRows(AccessibilityChildrenVector& rows, Access
     }
 
     // Now go through the aria-owns elements.
-    for (const auto& child : ariaOwns) {
+    for (const auto& child : ownedObjects) {
         // Avoid a circular reference via aria-owns by checking if our parent
         // path includes this child. Currently, looking up the aria-owns parent
         // path itself could be expensive, so we track it separately.
         if (ancestors.contains(child))
             continue;
-        
+
         // Add tree items as the rows.
         if (child->roleValue() == AccessibilityRole::TreeItem) {
             // Hopefully a flow that does not occur often in practice, but if someone were to include
@@ -2025,7 +2020,7 @@ void AccessibilityObject::ariaTreeRows(AccessibilityChildrenVector& rows, Access
             // move it to the right place.
             if (rows.contains(child))
                 rows.removeFirst(child);
-            
+
             rows.append(child);
         }
 
@@ -2033,7 +2028,7 @@ void AccessibilityObject::ariaTreeRows(AccessibilityChildrenVector& rows, Access
         if (is<AccessibilityObject>(*child))
             downcast<AccessibilityObject>(*child).ariaTreeRows(rows, ancestors);
     }
-    
+
     ancestors.removeLast();
 }
 
@@ -2043,13 +2038,15 @@ void AccessibilityObject::ariaTreeRows(AccessibilityChildrenVector& rows)
     ariaTreeRows(rows, ancestors);
 }
     
-void AccessibilityObject::ariaTreeItemContent(AccessibilityChildrenVector& result)
+AXCoreObject::AccessibilityChildrenVector AccessibilityObject::ariaTreeItemContent()
 {
-    // The ARIA tree item content are the item that are not other tree items or their containing groups.
+    AccessibilityChildrenVector result;
+    // The content of a treeitem excludes other treeitems or their containing groups.
     for (const auto& child : children()) {
         if (!child->isGroup() && child->roleValue() != AccessibilityRole::TreeItem)
             result.append(child);
     }
+    return result;
 }
 
 AXCoreObject::AccessibilityChildrenVector AccessibilityObject::disclosedRows()
@@ -2162,7 +2159,7 @@ String AccessibilityObject::actionVerb() const
 
 bool AccessibilityObject::ariaIsMultiline() const
 {
-    return equalLettersIgnoringASCIICase(getAttribute(aria_multilineAttr), "true");
+    return equalLettersIgnoringASCIICase(getAttribute(aria_multilineAttr), "true"_s);
 }
 
 String AccessibilityObject::invalidStatus() const
@@ -2706,14 +2703,29 @@ String AccessibilityObject::ariaLandmarkRoleDescription() const
     }
 }
 
+// ARIA spec: User agents must not expose the aria-roledescription property if the element to which aria-roledescription is applied does not have a valid WAI-ARIA role or does not have an implicit WAI-ARIA role semantic.
+bool AccessibilityObject::supportsARIARoleDescription() const
+{
+    auto role = this->roleValue();
+    switch (role) {
+    case AccessibilityRole::Div:
+    case AccessibilityRole::Unknown:
+        return false;
+    default:
+        return true;
+    }
+}
+
 String AccessibilityObject::roleDescription() const
 {
     // aria-roledescription takes precedence over any other rule.
-    String roleDescription = stripLeadingAndTrailingHTMLSpaces(getAttribute(aria_roledescriptionAttr));
-    if (!roleDescription.isEmpty())
-        return roleDescription;
+    if (supportsARIARoleDescription()) {
+        auto roleDescription = stripLeadingAndTrailingHTMLSpaces(getAttribute(aria_roledescriptionAttr));
+        if (!roleDescription.isEmpty())
+            return roleDescription;
+    }
 
-    roleDescription = rolePlatformDescription();
+    auto roleDescription = rolePlatformDescription();
     if (!roleDescription.isEmpty())
         return roleDescription;
 
@@ -2873,13 +2885,13 @@ bool AccessibilityObject::supportsARIAAttributes() const
     
 bool AccessibilityObject::liveRegionStatusIsEnabled(const AtomString& liveRegionStatus)
 {
-    return equalLettersIgnoringASCIICase(liveRegionStatus, "polite") || equalLettersIgnoringASCIICase(liveRegionStatus, "assertive");
+    return equalLettersIgnoringASCIICase(liveRegionStatus, "polite"_s) || equalLettersIgnoringASCIICase(liveRegionStatus, "assertive"_s);
 }
     
 bool AccessibilityObject::supportsLiveRegion(bool excludeIfOff) const
 {
-    const AtomString& liveRegionStatusValue = liveRegionStatus();
-    return excludeIfOff ? liveRegionStatusIsEnabled(liveRegionStatusValue) : !liveRegionStatusValue.isEmpty();
+    auto liveRegionStatusValue = liveRegionStatus();
+    return excludeIfOff ? liveRegionStatusIsEnabled(AtomString { liveRegionStatusValue }) : !liveRegionStatusValue.isEmpty();
 }
 
 AXCoreObject* AccessibilityObject::elementAccessibilityHitTest(const IntPoint& point) const
@@ -2977,11 +2989,11 @@ AccessibilitySortDirection AccessibilityObject::sortDirection() const
     if (sortAttribute.isNull())
         return AccessibilitySortDirection::None;
 
-    if (equalLettersIgnoringASCIICase(sortAttribute, "ascending"))
+    if (equalLettersIgnoringASCIICase(sortAttribute, "ascending"_s))
         return AccessibilitySortDirection::Ascending;
-    if (equalLettersIgnoringASCIICase(sortAttribute, "descending"))
+    if (equalLettersIgnoringASCIICase(sortAttribute, "descending"_s))
         return AccessibilitySortDirection::Descending;
-    if (equalLettersIgnoringASCIICase(sortAttribute, "other"))
+    if (equalLettersIgnoringASCIICase(sortAttribute, "other"_s))
         return AccessibilitySortDirection::Other;
 
     return AccessibilitySortDirection::None;
@@ -3014,12 +3026,12 @@ String AccessibilityObject::popupValue() const
 
     for (auto& value : { "menu"_s, "listbox"_s, "tree"_s, "grid"_s, "dialog"_s }) {
         // FIXME: Should fix ambiguity so we don't have to write "characters", but also don't create/destroy a String when passing an ASCIILiteral to equalIgnoringASCIICase.
-        if (equalIgnoringASCIICase(hasPopup, value.characters()))
+        if (equalIgnoringASCIICase(hasPopup, value))
             return value;
     }
 
     // aria-haspopup specification states that true must be treated as menu.
-    if (equalLettersIgnoringASCIICase(hasPopup, "true"))
+    if (equalLettersIgnoringASCIICase(hasPopup, "true"_s))
         return "menu"_s;
 
     // The spec states that "User agents must treat any value of aria-haspopup that is not
@@ -3087,7 +3099,7 @@ void AccessibilityObject::classList(Vector<String>& classList) const
 bool AccessibilityObject::supportsPressed() const
 {
     const AtomString& expanded = getAttribute(aria_pressedAttr);
-    return equalLettersIgnoringASCIICase(expanded, "true") || equalLettersIgnoringASCIICase(expanded, "false");
+    return equalLettersIgnoringASCIICase(expanded, "true"_s) || equalLettersIgnoringASCIICase(expanded, "false"_s);
 }
     
 bool AccessibilityObject::supportsExpanded() const
@@ -3113,7 +3125,7 @@ bool AccessibilityObject::supportsExpanded() const
     case AccessibilityRole::WebApplication: {
         // Undefined values should not result in this attribute being exposed to ATs according to ARIA.
         const AtomString& expanded = getAttribute(aria_expandedAttr);
-        return equalLettersIgnoringASCIICase(expanded, "true") || equalLettersIgnoringASCIICase(expanded, "false");
+        return equalLettersIgnoringASCIICase(expanded, "true"_s) || equalLettersIgnoringASCIICase(expanded, "false"_s);
     }
     default:
         return false;
@@ -3134,7 +3146,7 @@ bool AccessibilityObject::isExpanded() const
     }
 
     if (supportsExpanded())
-        return equalLettersIgnoringASCIICase(getAttribute(aria_expandedAttr), "true");
+        return equalLettersIgnoringASCIICase(getAttribute(aria_expandedAttr), "true"_s);
 
     return false;  
 }
@@ -3175,17 +3187,17 @@ AccessibilityButtonState AccessibilityObject::checkboxOrRadioValue() const
 
     if (isToggleButton()) {
         const AtomString& ariaPressed = getAttribute(aria_pressedAttr);
-        if (equalLettersIgnoringASCIICase(ariaPressed, "true"))
+        if (equalLettersIgnoringASCIICase(ariaPressed, "true"_s))
             return AccessibilityButtonState::On;
-        if (equalLettersIgnoringASCIICase(ariaPressed, "mixed"))
+        if (equalLettersIgnoringASCIICase(ariaPressed, "mixed"_s))
             return AccessibilityButtonState::Mixed;
         return AccessibilityButtonState::Off;
     }
     
     const AtomString& result = getAttribute(aria_checkedAttr);
-    if (equalLettersIgnoringASCIICase(result, "true"))
+    if (equalLettersIgnoringASCIICase(result, "true"_s))
         return AccessibilityButtonState::On;
-    if (equalLettersIgnoringASCIICase(result, "mixed")) {
+    if (equalLettersIgnoringASCIICase(result, "mixed"_s)) {
         // ARIA says that radio, menuitemradio, and switch elements must NOT expose button state mixed.
         AccessibilityRole ariaRole = ariaRoleAttribute();
         if (ariaRole == AccessibilityRole::RadioButton || ariaRole == AccessibilityRole::MenuItemRadio || ariaRole == AccessibilityRole::Switch)
@@ -3665,7 +3677,7 @@ bool AccessibilityObject::isAXHidden() const
         return false;
     
     return Accessibility::findAncestor<AccessibilityObject>(*this, true, [] (const AccessibilityObject& object) {
-        return equalLettersIgnoringASCIICase(object.getAttribute(aria_hiddenAttr), "true") && !object.isFocused();
+        return equalLettersIgnoringASCIICase(object.getAttribute(aria_hiddenAttr), "true"_s) && !object.isFocused();
     }) != nullptr;
 }
 
@@ -3745,23 +3757,25 @@ bool AccessibilityObject::accessibilityIsIgnored() const
     return ignored;
 }
 
-void AccessibilityObject::elementsFromAttribute(Vector<Element*>& elements, const QualifiedName& attribute) const
+Vector<Element*> AccessibilityObject::elementsFromAttribute(const QualifiedName& attribute) const
 {
     Node* node = this->node();
     if (!node || !node->isElementNode())
-        return;
+        return { };
 
     auto& idsString = getAttribute(attribute);
     if (idsString.isEmpty())
-        return;
+        return { };
 
+    Vector<Element*> elements;
     auto& treeScope = node->treeScope();
-    auto spaceSplitString = SpaceSplitString(idsString, false);
+    SpaceSplitString spaceSplitString(idsString, SpaceSplitString::ShouldFoldCase::No);
     size_t length = spaceSplitString.size();
     for (size_t i = 0; i < length; ++i) {
         if (auto* element = treeScope.getElementById(spaceSplitString[i]))
             elements.append(element);
     }
+    return elements;
 }
 
 #if PLATFORM(COCOA)
@@ -3842,12 +3856,12 @@ PAL::SessionID AccessibilityObject::sessionID() const
     return PAL::SessionID(PAL::SessionID::SessionConstants::HashTableEmptyValueID);
 }
 
-String AccessibilityObject::tagName() const
+AtomString AccessibilityObject::tagName() const
 {
     if (Element* element = this->element())
         return element->localName();
 
-    return String();
+    return nullAtom();
 }
 
 bool AccessibilityObject::isStyleFormatGroup() const
@@ -3905,41 +3919,43 @@ AXCoreObject* AccessibilityObject::selectedListItem()
     return nullptr;
 }
 
-void AccessibilityObject::ariaElementsFromAttribute(AccessibilityChildrenVector& children, const QualifiedName& attributeName) const
+AXCoreObject::AccessibilityChildrenVector AccessibilityObject::ariaElementsFromAttribute(const QualifiedName& attribute) const
 {
-    Vector<Element*> elements;
-    elementsFromAttribute(elements, attributeName);
-    AXObjectCache* cache = axObjectCache();
-    for (const auto& element : elements) {
-        if (AccessibilityObject* axObject = cache->getOrCreate(element))
-            children.append(axObject);
-    }
+    auto* cache = axObjectCache();
+    if (!cache)
+        return { };
+    return elementsFromAttribute(attribute).map([cache] (auto* element) -> RefPtr<AXCoreObject> {
+        return cache->getOrCreate(element);
+    });
 }
 
-void AccessibilityObject::ariaElementsReferencedByAttribute(AccessibilityChildrenVector& elements, const QualifiedName& attribute) const
+// FIXME: This function iterates the whole DOM tree and tries to match every Element in the tree, which is very expensive.
+// We should find a better way to achieve this.
+AXCoreObject::AccessibilityChildrenVector AccessibilityObject::ariaElementsReferencedByAttribute(const QualifiedName& attribute) const
 {
     auto id = identifierAttribute();
     if (id.isEmpty())
-        return;
+        return { };
 
-    AXObjectCache* cache = axObjectCache();
+    auto* cache = axObjectCache();
     if (!cache)
-        return;
+        return { };
 
+    AccessibilityChildrenVector objects;
     for (auto& element : descendantsOfType<Element>(node()->treeScope().rootNode())) {
-        const AtomString& idList = element.attributeWithoutSynchronization(attribute);
-        if (!SpaceSplitString(idList, false).contains(id))
+        auto& idList = element.attributeWithoutSynchronization(attribute);
+        if (!SpaceSplitString::spaceSplitStringContainsValue(idList, id, SpaceSplitString::ShouldFoldCase::No))
             continue;
 
-        if (AccessibilityObject* axObject = cache->getOrCreate(&element))
-            elements.append(axObject);
+        if (auto* object = cache->getOrCreate(&element))
+            objects.append(object);
     }
+    return objects;
 }
 
 bool AccessibilityObject::isActiveDescendantOfFocusedContainer() const
 {
-    AccessibilityChildrenVector containers;
-    ariaActiveDescendantReferencingElements(containers);
+    auto containers = activeDescendantOfObjects();
     for (auto& container : containers) {
         if (container->isFocused())
             return true;
@@ -3948,83 +3964,85 @@ bool AccessibilityObject::isActiveDescendantOfFocusedContainer() const
     return false;
 }
 
-void AccessibilityObject::ariaActiveDescendantReferencingElements(AccessibilityChildrenVector& containers) const
+AXCoreObject::AccessibilityChildrenVector AccessibilityObject::activeDescendantOfObjects() const
 {
-    ariaElementsReferencedByAttribute(containers, aria_activedescendantAttr);
+    return ariaElementsReferencedByAttribute(aria_activedescendantAttr);
 }
 
-void AccessibilityObject::ariaControlsElements(AccessibilityChildrenVector& ariaControls) const
+AXCoreObject::AccessibilityChildrenVector AccessibilityObject::controlledObjects() const
 {
-    ariaElementsFromAttribute(ariaControls, aria_controlsAttr);
+    return ariaElementsFromAttribute(aria_controlsAttr);
 }
 
-void AccessibilityObject::ariaControlsReferencingElements(AccessibilityChildrenVector& controllers) const
+AXCoreObject::AccessibilityChildrenVector AccessibilityObject::controllers() const
 {
-    ariaElementsReferencedByAttribute(controllers, aria_controlsAttr);
+    return ariaElementsReferencedByAttribute(aria_controlsAttr);
 }
 
-void AccessibilityObject::ariaDescribedByElements(AccessibilityChildrenVector& ariaDescribedBy) const
+AXCoreObject::AccessibilityChildrenVector AccessibilityObject::describedByObjects() const
 {
-    ariaElementsFromAttribute(ariaDescribedBy, aria_describedbyAttr);
+    return ariaElementsFromAttribute(aria_describedbyAttr);
 }
 
-void AccessibilityObject::ariaDescribedByReferencingElements(AccessibilityChildrenVector& describers) const
+AXCoreObject::AccessibilityChildrenVector AccessibilityObject::descriptionForObjects() const
 {
-    ariaElementsReferencedByAttribute(describers, aria_describedbyAttr);
+    return ariaElementsReferencedByAttribute(aria_describedbyAttr);
 }
 
-void AccessibilityObject::ariaDetailsElements(AccessibilityChildrenVector& ariaDetails) const
+AXCoreObject::AccessibilityChildrenVector AccessibilityObject::detailedByObjects() const
 {
-    ariaElementsFromAttribute(ariaDetails, aria_detailsAttr);
+    return ariaElementsFromAttribute(aria_detailsAttr);
 }
 
-void AccessibilityObject::ariaDetailsReferencingElements(AccessibilityChildrenVector& detailsFor) const
+AXCoreObject::AccessibilityChildrenVector AccessibilityObject::detailsForObjects() const
 {
-    ariaElementsReferencedByAttribute(detailsFor, aria_detailsAttr);
+    return ariaElementsReferencedByAttribute(aria_detailsAttr);
 }
 
-void AccessibilityObject::ariaErrorMessageElements(AccessibilityChildrenVector& ariaErrorMessage) const
+AXCoreObject::AccessibilityChildrenVector AccessibilityObject::errorMessageObjects() const
 {
-    ariaElementsFromAttribute(ariaErrorMessage, aria_errormessageAttr);
+    return ariaElementsFromAttribute(aria_errormessageAttr);
 }
 
-void AccessibilityObject::ariaErrorMessageReferencingElements(AccessibilityChildrenVector& errorMessageFor) const
+AXCoreObject::AccessibilityChildrenVector AccessibilityObject::errorMessageForObjects() const
 {
-    ariaElementsReferencedByAttribute(errorMessageFor, aria_errormessageAttr);
+    return ariaElementsReferencedByAttribute(aria_errormessageAttr);
 }
 
-void AccessibilityObject::ariaFlowToElements(AccessibilityChildrenVector& flowTo) const
+AXCoreObject::AccessibilityChildrenVector AccessibilityObject::flowToObjects() const
 {
-    ariaElementsFromAttribute(flowTo, aria_flowtoAttr);
+    return ariaElementsFromAttribute(aria_flowtoAttr);
 }
 
-void AccessibilityObject::ariaFlowToReferencingElements(AccessibilityChildrenVector& flowFrom) const
+AXCoreObject::AccessibilityChildrenVector AccessibilityObject::flowFromObjects() const
 {
-    ariaElementsReferencedByAttribute(flowFrom, aria_flowtoAttr);
+    return ariaElementsReferencedByAttribute(aria_flowtoAttr);
 }
 
-void AccessibilityObject::ariaLabelledByElements(AccessibilityChildrenVector& ariaLabelledBy) const
+AXCoreObject::AccessibilityChildrenVector AccessibilityObject::labelledByObjects() const
 {
-    ariaElementsFromAttribute(ariaLabelledBy, aria_labelledbyAttr);
-    if (!ariaLabelledBy.size())
-        ariaElementsFromAttribute(ariaLabelledBy, aria_labeledbyAttr);
+    auto labelledByObjects = ariaElementsFromAttribute(aria_labelledbyAttr);
+    if (labelledByObjects.isEmpty())
+        labelledByObjects = ariaElementsFromAttribute(aria_labeledbyAttr);
+    return labelledByObjects;
 }
 
-void AccessibilityObject::ariaLabelledByReferencingElements(AccessibilityChildrenVector& labels) const
+AXCoreObject::AccessibilityChildrenVector AccessibilityObject::labelForObjects() const
 {
-    ariaElementsReferencedByAttribute(labels, aria_labelledbyAttr);
-    if (!labels.size())
-        ariaElementsReferencedByAttribute(labels, aria_labeledbyAttr);
+    auto objects = ariaElementsReferencedByAttribute(aria_labelledbyAttr);
+    if (objects.isEmpty())
+        objects = ariaElementsReferencedByAttribute(aria_labeledbyAttr);
+    return objects;
 }
 
-void AccessibilityObject::ariaOwnsElements(AccessibilityChildrenVector& axObjects) const
+AXCoreObject::AccessibilityChildrenVector AccessibilityObject::ownedObjects() const
 {
-    ariaElementsFromAttribute(axObjects, aria_ownsAttr);
+    return ariaElementsFromAttribute(aria_ownsAttr);
 }
 
-void AccessibilityObject::ariaOwnsReferencingElements(AccessibilityChildrenVector& owners) const
+AXCoreObject::AccessibilityChildrenVector AccessibilityObject::owners() const
 {
-    ariaElementsReferencedByAttribute(owners, aria_ownsAttr);
+    return ariaElementsReferencedByAttribute(aria_ownsAttr);
 }
 
 void AccessibilityObject::setIsIgnoredFromParentDataForChild(AXCoreObject* child)
@@ -4039,7 +4057,7 @@ void AccessibilityObject::setIsIgnoredFromParentDataForChild(AXCoreObject* child
 
     AccessibilityIsIgnoredFromParentData result = AccessibilityIsIgnoredFromParentData(this);
     if (!m_isIgnoredFromParentData.isNull()) {
-        result.isAXHidden = (m_isIgnoredFromParentData.isAXHidden || equalLettersIgnoringASCIICase(downcast<AccessibilityObject>(child)->getAttribute(aria_hiddenAttr), "true")) && !child->isFocused();
+        result.isAXHidden = (m_isIgnoredFromParentData.isAXHidden || equalLettersIgnoringASCIICase(downcast<AccessibilityObject>(child)->getAttribute(aria_hiddenAttr), "true"_s)) && !child->isFocused();
         result.isPresentationalChildOfAriaRole = m_isIgnoredFromParentData.isPresentationalChildOfAriaRole || ariaRoleHasPresentationalChildren();
         result.isDescendantOfBarrenParent = m_isIgnoredFromParentData.isDescendantOfBarrenParent || !canHaveChildren();
     } else {

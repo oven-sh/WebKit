@@ -59,7 +59,6 @@ struct SecurityOriginData;
 namespace WebKit {
 
 class GPUConnectionToWebProcess;
-struct GPUProcessConnectionInitializationParameters;
 struct GPUProcessConnectionParameters;
 struct GPUProcessCreationParameters;
 struct GPUProcessSessionParameters;
@@ -139,7 +138,7 @@ private:
 
     // Message Handlers
     void initializeGPUProcess(GPUProcessCreationParameters&&);
-    void createGPUConnectionToWebProcess(WebCore::ProcessIdentifier, PAL::SessionID, GPUProcessConnectionParameters&&, CompletionHandler<void(std::optional<IPC::Attachment>&&, GPUProcessConnectionInitializationParameters&&)>&&);
+    void createGPUConnectionToWebProcess(WebCore::ProcessIdentifier, PAL::SessionID, IPC::Attachment&&, GPUProcessConnectionParameters&&, CompletionHandler<void()>&&);
     void addSession(PAL::SessionID, GPUProcessSessionParameters&&);
     void removeSession(PAL::SessionID);
 
@@ -200,6 +199,10 @@ private:
 #if ENABLE(CFPREFS_DIRECT_MODE)
     void notifyPreferencesChanged(const String& domain, const String& key, const std::optional<String>& encodedValue);
     void dispatchSimulatedNotificationsForPreferenceChange(const String& key) final;
+#endif
+
+#if PLATFORM(MAC)
+    void openDirectoryCacheInvalidated(SandboxExtension::Handle&&);
 #endif
 
     // Connections to WebProcesses.

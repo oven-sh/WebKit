@@ -138,10 +138,12 @@
 #include <WebCore/ServiceWorkerContextData.h>
 #include <WebCore/Settings.h>
 #include <WebCore/SharedWorkerContextManager.h>
+#include <WebCore/SharedWorkerThreadProxy.h>
 #include <WebCore/UserGestureIndicator.h>
 #include <pal/Logging.h>
 #include <wtf/Algorithms.h>
 #include <wtf/CallbackAggregator.h>
+#include <wtf/DateMath.h>
 #include <wtf/Language.h>
 #include <wtf/ProcessPrivilege.h>
 #include <wtf/RunLoop.h>
@@ -166,6 +168,10 @@
 #include "UserMediaCaptureManager.h"
 #endif
 
+#if USE(CG)
+#include <WebCore/ImageDecoderCG.h>
+#endif
+
 #if PLATFORM(MAC)
 #include <WebCore/DisplayRefreshMonitorManager.h>
 #endif
@@ -185,7 +191,6 @@
 #if ENABLE(GPU_PROCESS)
 #include "GPUConnectionToWebProcessMessages.h"
 #include "GPUProcessConnection.h"
-#include "GPUProcessConnectionInfo.h"
 #endif
 
 #if ENABLE(WEB_AUTHN)
@@ -234,6 +239,10 @@
 
 #if ENABLE(CONTENT_FILTERING_IN_NETWORKING_PROCESS)
 #include "WebMockContentFilterManager.h"
+#endif
+
+#if HAVE(LSDATABASECONTEXT)
+#include "LaunchServicesDatabaseManager.h"
 #endif
 
 #undef WEBPROCESS_RELEASE_LOG
@@ -289,7 +298,6 @@ WebProcess::WebProcess()
     , m_webLoaderStrategy(*new WebLoaderStrategy)
     , m_cacheStorageProvider(WebCacheStorageProvider::create())
     , m_broadcastChannelRegistry(WebBroadcastChannelRegistry::create())
-    , m_webLockRegistry(RemoteWebLockRegistry::create(*this))
     , m_cookieJar(WebCookieJar::create())
     , m_dnsPrefetchHystereris([this](PAL::HysteresisState state) { if (state == PAL::HysteresisState::Stopped) m_dnsPrefetchedHosts.clear(); })
     , m_nonVisibleProcessGraphicsCleanupTimer(*this, &WebProcess::nonVisibleProcessGraphicsCleanupTimerFired)
@@ -349,6 +357,8 @@ WebProcess::WebProcess()
 #if ENABLE(CONTENT_FILTERING_IN_NETWORKING_PROCESS)
     WebMockContentFilterManager::singleton().startObservingSettings();
 #endif
+
+    WebCore::WebLockRegistry::setSharedRegistry(RemoteWebLockRegistry::create(*this));
 }
 
 WebProcess::~WebProcess()
@@ -485,7 +495,7 @@ void WebProcess::initializeWebProcess(WebProcessCreationParameters&& parameters)
         });
         memoryPressureHandler.install();
 
-        PAL::registerNotifyCallback("com.apple.WebKit.logMemStats", [] {
+        PAL::registerNotifyCallback("com.apple.WebKit.logMemStats"_s, [] {
             WebCore::logMemoryStatistics(LogMemoryStatisticsReason::DebugNotification);
         });
     }
@@ -499,6 +509,9 @@ void WebProcess::initializeWebProcess(WebProcessCreationParameters&& parameters)
         supplement->initialize(parameters);
 
     setCacheModel(parameters.cacheModel);
+
+    if (!parameters.timeZoneOverride.isEmpty())
+        setTimeZoneOverride(parameters.timeZoneOverride);
 
     if (!parameters.overrideLanguages.isEmpty()) {
         LOG_WITH_STREAM(Language, stream << "Web Process initialization is setting overrideLanguages: " << parameters.overrideLanguages);
@@ -1025,10 +1038,6 @@ void WebProcess::isJITEnabled(CompletionHandler<void(bool)>&& completionHandler)
     completionHandler(JSC::Options::useJIT());
 }
 
-void WebProcess::refreshPlugins()
-{
-}
-
 void WebProcess::garbageCollectJavaScriptObjects()
 {
     GCController::singleton().garbageCollectNow();
@@ -1123,6 +1132,20 @@ void WebProcess::setInjectedBundleParameters(const IPC::DataReference& value)
     injectedBundle->setBundleParameters(value);
 }
 
+NO_RETURN inline void failedToSendSyncMessage()
+{
+#if PLATFORM(GTK) || PLATFORM(WPE)
+    // GTK and WPE ports don't exit on send sync message failure.
+    // In this particular case, the network process can be terminated by the UI process while the
+    // Web process is still initializing, so we always want to exit instead of crashing. This can
+    // happen when the WebView is created and then destroyed quickly.
+    // See https://bugs.webkit.org/show_bug.cgi?id=183348.
+    exit(0);
+#else
+    CRASH();
+#endif
+}
+
 static NetworkProcessConnectionInfo getNetworkProcessConnection(IPC::Connection& connection)
 {
     NetworkProcessConnectionInfo connectionInfo;
@@ -1142,7 +1165,7 @@ static NetworkProcessConnectionInfo getNetworkProcessConnection(IPC::Connection&
     unsigned failedAttempts = 0;
     while (!requestConnection()) {
         if (++failedAttempts >= maxFailedAttempts)
-            CRASH();
+            failedToSendSyncMessage();
 
         RELEASE_LOG_ERROR(Process, "getNetworkProcessConnection: Failed to get connection to network process, will retry...");
 
@@ -1169,8 +1192,14 @@ NetworkProcessConnection& WebProcess::ensureNetworkProcessConnection()
         m_networkProcessConnection->connection().send(Messages::NetworkConnectionToWebProcess::RegisterURLSchemesAsCORSEnabled(WebCore::LegacySchemeRegistry::allURLSchemesRegisteredAsCORSEnabled()), 0);
 
 #if ENABLE(SERVICE_WORKER)
-        if (!Document::allDocuments().isEmpty())
+        if (!Document::allDocuments().isEmpty() || SharedWorkerThreadProxy::hasInstances())
             m_networkProcessConnection->serviceWorkerConnection().registerServiceWorkerClients();
+#endif
+
+#if HAVE(LSDATABASECONTEXT)
+        // On Mac, this needs to be called before NSApplication is being initialized.
+        // The NSApplication initialization is being done in [NSApplication _accessibilityInitialize]
+        LaunchServicesDatabaseManager::singleton().waitForDatabaseUpdate();
 #endif
 
         // This can be called during a WebPage's constructor, so wait until after the constructor returns to touch the WebPage.
@@ -1277,55 +1306,13 @@ WebLoaderStrategy& WebProcess::webLoaderStrategy()
 
 #if ENABLE(GPU_PROCESS)
 
-#if !PLATFORM(COCOA)
-void WebProcess::platformInitializeGPUProcessConnectionParameters(GPUProcessConnectionParameters&)
-{
-}
-#endif
-
-GPUProcessConnectionInfo WebProcess::getGPUProcessConnection(IPC::Connection& connection)
-{
-    GPUProcessConnectionParameters parameters;
-    platformInitializeGPUProcessConnectionParameters(parameters);
-
-    IPC::UnboundedSynchronousIPCScope unboundedSynchronousIPCScope;
-
-    GPUProcessConnectionInfo connectionInfo;
-    if (!connection.sendSync(Messages::WebProcessProxy::GetGPUProcessConnection(parameters), Messages::WebProcessProxy::GetGPUProcessConnection::Reply(connectionInfo), 0)) {
-        // If we failed the first time, retry once. The attachment may have become invalid
-        // before it was received by the web process if the network process crashed.
-        if (!connection.sendSync(Messages::WebProcessProxy::GetGPUProcessConnection(parameters), Messages::WebProcessProxy::GetGPUProcessConnection::Reply(connectionInfo), 0))
-            CRASH();
-    }
-
-    return connectionInfo;
-}
-
 GPUProcessConnection& WebProcess::ensureGPUProcessConnection()
 {
     RELEASE_ASSERT(RunLoop::isMain());
 
     // If we've lost our connection to the GPU process (e.g. it crashed) try to re-establish it.
     if (!m_gpuProcessConnection) {
-        auto connectionInfo = getGPUProcessConnection(*parentProcessConnection());
-
-        // Retry once if the IPC to get the connectionIdentifier succeeded but the connectionIdentifier we received
-        // is invalid. This may indicate that the GPU process has crashed.
-        if (!IPC::Connection::identifierIsValid(connectionInfo.identifier()))
-            connectionInfo = getGPUProcessConnection(*parentProcessConnection());
-
-        if (!IPC::Connection::identifierIsValid(connectionInfo.identifier()))
-            CRASH();
-
-        m_gpuProcessConnection = GPUProcessConnection::create(connectionInfo.releaseIdentifier(), connectionInfo.parameters);
-#if HAVE(AUDIT_TOKEN)
-        ASSERT(connectionInfo.auditToken);
-        m_gpuProcessConnection->setAuditToken(WTFMove(connectionInfo.auditToken));
-#endif
-#if ENABLE(IPC_TESTING_API)
-        if (parentProcessConnection()->ignoreInvalidMessageForTesting())
-            m_gpuProcessConnection->connection().setIgnoreInvalidMessageForTesting();
-#endif
+        m_gpuProcessConnection = GPUProcessConnection::create(*parentProcessConnection());
 
         for (auto& page : m_pageMap.values()) {
             // If page is null, then it is currently being constructed.
@@ -1380,7 +1367,7 @@ static WebAuthnProcessConnectionInfo getWebAuthnProcessConnection(IPC::Connectio
         // before it was received by the web process if the network process crashed.
         if (!connection.sendSync(Messages::WebProcessProxy::GetWebAuthnProcessConnection(), Messages::WebProcessProxy::GetWebAuthnProcessConnection::Reply(connectionInfo), 0)) {
             RELEASE_LOG_ERROR(WebAuthn, "getWebAuthnProcessConnection: Unable to connect to WebAuthn process (Terminating)");
-            CRASH();
+            failedToSendSyncMessage();
         }
     }
 
@@ -2102,7 +2089,14 @@ void WebProcess::setUseGPUProcessForCanvasRendering(bool useGPUProcessForCanvasR
 
 void WebProcess::setUseGPUProcessForDOMRendering(bool useGPUProcessForDOMRendering)
 {
+    if (useGPUProcessForDOMRendering == m_useGPUProcessForDOMRendering)
+        return;
+
     m_useGPUProcessForDOMRendering = useGPUProcessForDOMRendering;
+#if USE(CG)
+    if (m_useGPUProcessForDOMRendering)
+        ImageDecoderCG::disableHardwareAcceleratedDecoding();
+#endif
 }
 
 void WebProcess::setUseGPUProcessForMedia(bool useGPUProcessForMedia)
@@ -2182,6 +2176,9 @@ bool WebProcess::shouldUseRemoteRenderingFor(RenderingPurpose purpose)
     case RenderingPurpose::Canvas:
         return m_useGPUProcessForCanvasRendering;
     case RenderingPurpose::DOM:
+    case RenderingPurpose::LayerBacking:
+    case RenderingPurpose::Snapshot:
+    case RenderingPurpose::ShareableSnapshot:
         return m_useGPUProcessForDOMRendering;
     case RenderingPurpose::MediaPainting:
         return m_useGPUProcessForMedia;
@@ -2201,10 +2198,9 @@ bool WebProcess::shouldUseRemoteRenderingForWebGL() const
 {
     return m_useGPUProcessForWebGL;
 }
+#endif // ENABLE(WEBGL)
 
-#endif
-
-#endif
+#endif // ENABLE(GPU_PROCESS)
 
 #if ENABLE(MEDIA_STREAM)
 SpeechRecognitionRealtimeMediaSourceManager& WebProcess::ensureSpeechRecognitionRealtimeMediaSourceManager()

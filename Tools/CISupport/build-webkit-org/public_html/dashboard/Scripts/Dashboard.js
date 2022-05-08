@@ -44,10 +44,11 @@ Dashboard = {
         LinuxWPE: { name : "linux-wpe", readableName: "Linux WPE", order: 90 },
         LinuxGTK: { name : "linux-gtk", readableName: "Linux GTK", order: 91 },
         LinuxJSCOnly: { name : "linux-jsconly", readableName: "Linux JSCOnly", order: 92 },
+        PlayStation: { name : "playstation", readableName: "PlayStation", order: 100 },
     },
     Branch: {},
     Repository: {
-        OpenSource: { name: "openSource", isSVN: true, order: 0 },
+        OpenSource: { name: "openSource", isGit: true, order: 0 },
     },
     get sortedPlatforms()
     {

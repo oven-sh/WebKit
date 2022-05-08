@@ -32,10 +32,10 @@
 
 namespace WebGPU {
 
-RefPtr<PipelineLayout> Device::createPipelineLayout(const WGPUPipelineLayoutDescriptor& descriptor)
+Ref<PipelineLayout> Device::createPipelineLayout(const WGPUPipelineLayoutDescriptor& descriptor)
 {
     if (descriptor.nextInChain)
-        return nullptr;
+        return PipelineLayout::createInvalid(*this);
 
     Vector<Ref<BindGroupLayout>> bindGroupLayouts;
     bindGroupLayouts.reserveInitialCapacity(descriptor.bindGroupLayoutCount);
@@ -43,11 +43,17 @@ RefPtr<PipelineLayout> Device::createPipelineLayout(const WGPUPipelineLayoutDesc
         auto* bindGroupLayout = descriptor.bindGroupLayouts[i];
         bindGroupLayouts.uncheckedAppend(WebGPU::fromAPI(bindGroupLayout));
     }
-    return PipelineLayout::create(WTFMove(bindGroupLayouts));
+    return PipelineLayout::create(WTFMove(bindGroupLayouts), *this);
 }
 
-PipelineLayout::PipelineLayout(Vector<Ref<BindGroupLayout>>&& bindGroupLayouts)
+PipelineLayout::PipelineLayout(Vector<Ref<BindGroupLayout>>&& bindGroupLayouts, Device& device)
     : m_bindGroupLayouts(WTFMove(bindGroupLayouts))
+    , m_device(device)
+{
+}
+
+PipelineLayout::PipelineLayout(Device& device)
+    : m_device(device)
 {
 }
 

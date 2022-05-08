@@ -36,12 +36,16 @@ namespace WebDriver {
 void WebDriverService::platformInit()
 {
     dlopen("PosixWebKit", RTLD_NOW);
+
+#if defined(ENABLE_STATIC_JSC) && !ENABLE_STATIC_JSC
+    dlopen("libJavaScriptCore", RTLD_NOW);
+#endif
 }
 
 Capabilities WebDriverService::platformCapabilities()
 {
     Capabilities capabilities;
-    capabilities.platformName = String("playstation");
+    capabilities.platformName = String::fromLatin1("playstation");
     capabilities.setWindowRect = true;
     return capabilities;
 }
@@ -51,12 +55,12 @@ bool WebDriverService::platformCompareBrowserVersions(const String& requiredVers
     return true;
 }
 
-bool WebDriverService::platformValidateCapability(const String&, const RefPtr<JSON::Value>&) const
+bool WebDriverService::platformValidateCapability(const String&, const Ref<JSON::Value>&) const
 {
     return true;
 }
 
-bool WebDriverService::platformMatchCapability(const String&, const RefPtr<JSON::Value>&) const
+bool WebDriverService::platformMatchCapability(const String&, const Ref<JSON::Value>&) const
 {
     return true;
 }

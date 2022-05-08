@@ -308,7 +308,7 @@ inline Parser::Token Parser::nextTokenInternal()
         if (isBinaryOperatorContext())
             return makeTokenAndAdvance(MULOP, NumericOp::OP_Mul);
         ++m_nextPos;
-        return Token(NAMETEST, "*");
+        return Token(NAMETEST, "*"_s);
     case '$': { // $ QName
         m_nextPos++;
         String name;
@@ -429,7 +429,7 @@ int Parser::lex(YYSTYPE& yylval)
     return token.type;
 }
 
-bool Parser::expandQualifiedName(const String& qualifiedName, String& localName, String& namespaceURI)
+bool Parser::expandQualifiedName(const String& qualifiedName, AtomString& localName, AtomString& namespaceURI)
 {
     size_t colon = qualifiedName.find(':');
     if (colon != notFound) {
@@ -437,14 +437,14 @@ bool Parser::expandQualifiedName(const String& qualifiedName, String& localName,
             m_sawNamespaceError = true;
             return false;
         }
-        namespaceURI = m_resolver->lookupNamespaceURI(qualifiedName.left(colon));
+        namespaceURI = m_resolver->lookupNamespaceURI(StringView(qualifiedName).left(colon).toAtomString());
         if (namespaceURI.isNull()) {
             m_sawNamespaceError = true;
             return false;
         }
-        localName = qualifiedName.substring(colon + 1);
+        localName = StringView(qualifiedName).substring(colon + 1).toAtomString();
     } else
-        localName = qualifiedName;
+        localName = AtomString { qualifiedName };
     return true;
 }
 

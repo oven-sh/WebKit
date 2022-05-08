@@ -451,7 +451,8 @@ static NSString *testCanvasPage = @"<body> \n"
     "</script> \n"
     "</body>";
 
-TEST(GPUProcess, CanvasBasicCrashHandling)
+// FIXME: https://bugs.webkit.org/show_bug.cgi?id=239303
+TEST(GPUProcess, DISABLED_CanvasBasicCrashHandling)
 {
     auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
     WKPreferencesSetBoolValueForKeyForTesting((__bridge WKPreferencesRef)[configuration preferences], true, WKStringCreateWithUTF8CString("UseGPUProcessForCanvasRenderingEnabled"));
@@ -681,6 +682,45 @@ static bool waitUntilCaptureState(WKWebView *webView, _WKMediaCaptureStateDeprec
     return false;
 }
 
+#if PLATFORM(MAC)
+// FIXME: https://bugs.webkit.org/show_bug.cgi?id=237854 is disabled for IOS
+TEST(GPUProcess, ExitsUnderMemoryPressureGetUserMediaAudioCase)
+{
+    runMemoryPressureExitTest([](WKWebView *webView) {
+        auto delegate = adoptNS([[UserMediaCaptureUIDelegate alloc] init]);
+        webView.UIDelegate = delegate.get();
+
+        [webView loadTestPageNamed:@"getUserMedia"];
+        EXPECT_TRUE(waitUntilCaptureState(webView, _WKMediaCaptureStateDeprecatedActiveCamera));
+        [webView stringByEvaluatingJavaScript:@"captureAudio(true)"];
+    }, [](WKWebViewConfiguration* configuration) {
+        auto preferences = configuration.preferences;
+        preferences._mediaCaptureRequiresSecureConnection = NO;
+        configuration._mediaCaptureEnabled = YES;
+        preferences._mockCaptureDevicesEnabled = YES;
+        preferences._getUserMediaRequiresFocus = NO;
+    });
+}
+#endif
+
+TEST(GPUProcess, ExitsUnderMemoryPressureGetUserMediaVideoCase)
+{
+    runMemoryPressureExitTest([](WKWebView *webView) {
+        auto delegate = adoptNS([[UserMediaCaptureUIDelegate alloc] init]);
+        webView.UIDelegate = delegate.get();
+
+        [webView loadTestPageNamed:@"getUserMedia"];
+        EXPECT_TRUE(waitUntilCaptureState(webView, _WKMediaCaptureStateDeprecatedActiveCamera));
+        [webView stringByEvaluatingJavaScript:@"captureVideo(true)"];
+    }, [](WKWebViewConfiguration* configuration) {
+        auto preferences = configuration.preferences;
+        preferences._mediaCaptureRequiresSecureConnection = NO;
+        configuration._mediaCaptureEnabled = YES;
+        preferences._mockCaptureDevicesEnabled = YES;
+        preferences._getUserMediaRequiresFocus = NO;
+    });
+}
+
 TEST(GPUProcess, ExitsUnderMemoryPressureWebRTCCase)
 {
     runMemoryPressureExitTest([](WKWebView *webView) {
@@ -689,7 +729,7 @@ TEST(GPUProcess, ExitsUnderMemoryPressureWebRTCCase)
 
         [webView loadTestPageNamed:@"getUserMedia"];
         EXPECT_TRUE(waitUntilCaptureState(webView, _WKMediaCaptureStateDeprecatedActiveCamera));
-        [webView stringByEvaluatingJavaScript:@"captureAudioAndVideo(true)"];
+        [webView stringByEvaluatingJavaScript:@"captureVideo(true)"];
         [webView stringByEvaluatingJavaScript:@"createConnection()"];
     }, [](WKWebViewConfiguration* configuration) {
         auto preferences = configuration.preferences;

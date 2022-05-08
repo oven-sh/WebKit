@@ -54,7 +54,7 @@
 
 namespace WebCore {
 
-static const char* packedDepthStencilExtensionName = "GL_OES_packed_depth_stencil";
+static constexpr auto packedDepthStencilExtensionName = "GL_OES_packed_depth_stencil"_s;
 
 static Seconds maxFrameDuration = 5_s;
 
@@ -83,10 +83,10 @@ bool GraphicsContextGLANGLE::initialize()
 {
     if (!platformInitializeContext())
         return false;
-    String extensionsString = String(reinterpret_cast<const char*>(GL_GetString(GL_EXTENSIONS)));
+    String extensionsString = String::fromLatin1(reinterpret_cast<const char*>(GL_GetString(GL_EXTENSIONS)));
     for (auto& extension : extensionsString.split(' '))
         m_availableExtensions.add(extension);
-    extensionsString = String(reinterpret_cast<const char*>(GL_GetString(GL_REQUESTABLE_EXTENSIONS_ANGLE)));
+    extensionsString = String::fromLatin1(reinterpret_cast<const char*>(GL_GetString(GL_REQUESTABLE_EXTENSIONS_ANGLE)));
     for (auto& extension : extensionsString.split(' '))
         m_requestableExtensions.add(extension);
     return platformInitialize();
@@ -505,7 +505,7 @@ void GraphicsContextGLANGLE::readnPixelsImpl(GCGLint x, GCGLint y, GCGLsizei wid
 
 // The contents of GraphicsContextGLANGLECommon follow, ported to use ANGLE.
 
-void GraphicsContextGLANGLE::validateDepthStencil(const char* packedDepthStencilExtension)
+void GraphicsContextGLANGLE::validateDepthStencil(ASCIILiteral packedDepthStencilExtension)
 {
     // FIXME: Since the constructors of various platforms are not shared, we initialize this here.
     // Upon constructing the context, always initialize the extensions that the WebGLRenderingContext* will
@@ -1302,7 +1302,7 @@ String GraphicsContextGLANGLE::getString(GCGLenum name)
     if (!makeContextCurrent())
         return String();
 
-    return String(reinterpret_cast<const char*>(GL_GetString(name)));
+    return String::fromLatin1(reinterpret_cast<const char*>(GL_GetString(name)));
 }
 
 void GraphicsContextGLANGLE::hint(GCGLenum target, GCGLenum mode)
@@ -1903,7 +1903,7 @@ String GraphicsContextGLANGLE::getUnmangledInfoLog(PlatformGLObject shaders[2], 
     // is causing it.
     static constexpr char angleWarning[] = "WARNING: 0:1: extension 'GL_ARB_gpu_shader5' is not supported\n";
     int startFrom = log.startsWith(angleWarning) ? strlen(angleWarning) : 0;
-    processedLog.append(log.substring(startFrom, log.length() - startFrom));
+    processedLog.append(StringView(log).substring(startFrom, log.length() - startFrom));
 
     LOG(WebGL, "Unmangled ShaderInfoLog:\n%s", processedLog.toString().utf8().data());
     return processedLog.toString();
@@ -2831,46 +2831,48 @@ void GraphicsContextGLANGLE::getActiveUniformBlockiv(GCGLuint program, GCGLuint 
     GL_GetActiveUniformBlockivRobustANGLE(program, uniformBlockIndex, pname, params.bufSize, nullptr, params.data);
 }
 
-void GraphicsContextGLANGLE::multiDrawArraysANGLE(GCGLenum mode, GCGLSpan<const GCGLint> firsts, GCGLSpan<const GCGLsizei> counts, GCGLsizei drawcount)
+void GraphicsContextGLANGLE::multiDrawArraysANGLE(GCGLenum mode, GCGLSpanTuple<const GCGLint, const GCGLsizei> firstsAndCounts)
 {
     if (!makeContextCurrent())
         return;
 
-    GL_MultiDrawArraysANGLE(mode, firsts.data, counts.data, drawcount);
+    GL_MultiDrawArraysANGLE(mode, firstsAndCounts.data0, firstsAndCounts.data1, firstsAndCounts.bufSize);
 }
 
-void GraphicsContextGLANGLE::multiDrawArraysInstancedANGLE(GCGLenum mode, GCGLSpan<const GCGLint> firsts, GCGLSpan<const GCGLsizei> counts, GCGLSpan<const GCGLsizei> instanceCounts, GCGLsizei drawcount)
+void GraphicsContextGLANGLE::multiDrawArraysInstancedANGLE(GCGLenum mode, GCGLSpanTuple<const GCGLint, const GCGLsizei, const GCGLsizei> firstsCountsAndInstanceCounts)
 {
     if (!makeContextCurrent())
         return;
 
-    GL_MultiDrawArraysInstancedANGLE(mode, firsts.data, counts.data, instanceCounts.data, drawcount);
+    GL_MultiDrawArraysInstancedANGLE(mode, firstsCountsAndInstanceCounts.data0, firstsCountsAndInstanceCounts.data1, firstsCountsAndInstanceCounts.data2, firstsCountsAndInstanceCounts.bufSize);
 }
 
-void GraphicsContextGLANGLE::multiDrawElementsANGLE(GCGLenum mode, GCGLSpan<const GCGLsizei> counts, GCGLenum type, GCGLSpan<const GCGLint> offsets, GCGLsizei drawcount)
+void GraphicsContextGLANGLE::multiDrawElementsANGLE(GCGLenum mode, GCGLSpanTuple<const GCGLsizei, const GCGLint> countsAndOffsets, GCGLenum type)
 {
     if (!makeContextCurrent())
         return;
 
     // Must perform conversion from integer offsets to void* pointers before passing down to ANGLE.
-    Vector<void*> pointers;
-    for (size_t i = 0; i < offsets.bufSize; ++i)
-        pointers.append(reinterpret_cast<void*>(offsets[i]));
+    Vector<void*> offsetsPointers;
+    offsetsPointers.reserveInitialCapacity(countsAndOffsets.bufSize);
+    for (size_t i = 0; i < countsAndOffsets.bufSize; ++i)
+        offsetsPointers.append(reinterpret_cast<void*>(countsAndOffsets.data1[i]));
 
-    GL_MultiDrawElementsANGLE(mode, counts.data, type, pointers.data(), drawcount);
+    GL_MultiDrawElementsANGLE(mode, countsAndOffsets.data0, type, offsetsPointers.data(), countsAndOffsets.bufSize);
 }
 
-void GraphicsContextGLANGLE::multiDrawElementsInstancedANGLE(GCGLenum mode, GCGLSpan<const GCGLsizei> counts, GCGLenum type, GCGLSpan<const GCGLint> offsets, GCGLSpan<const GCGLsizei> instanceCounts, GCGLsizei drawcount)
+void GraphicsContextGLANGLE::multiDrawElementsInstancedANGLE(GCGLenum mode, GCGLSpanTuple<const GCGLsizei, const GCGLint, const GCGLsizei> countsOffsetsAndInstanceCounts, GCGLenum type)
 {
     if (!makeContextCurrent())
         return;
 
     // Must perform conversion from integer offsets to void* pointers before passing down to ANGLE.
-    Vector<void*> pointers;
-    for (size_t i = 0; i < offsets.bufSize; ++i)
-        pointers.append(reinterpret_cast<void*>(offsets[i]));
+    Vector<void*> offsetsPointers;
+    offsetsPointers.reserveInitialCapacity(countsOffsetsAndInstanceCounts.bufSize);
+    for (size_t i = 0; i < countsOffsetsAndInstanceCounts.bufSize; ++i)
+        offsetsPointers.append(reinterpret_cast<void*>(countsOffsetsAndInstanceCounts.data1[i]));
 
-    GL_MultiDrawElementsInstancedANGLE(mode, counts.data, type, pointers.data(), instanceCounts.data, drawcount);
+    GL_MultiDrawElementsInstancedANGLE(mode, countsOffsetsAndInstanceCounts.data0, type, offsetsPointers.data(), countsOffsetsAndInstanceCounts.data2, countsOffsetsAndInstanceCounts.bufSize);
 }
 
 bool GraphicsContextGLANGLE::supportsExtension(const String& name)

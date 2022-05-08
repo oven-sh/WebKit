@@ -39,7 +39,7 @@ struct SimpleRange;
 enum class AutoFillButtonType : uint8_t { None, Credentials, Contacts, StrongPassword, CreditCard };
 enum TextFieldSelectionDirection { SelectionHasNoDirection, SelectionHasForwardDirection, SelectionHasBackwardDirection };
 enum TextFieldEventBehavior { DispatchNoEvent, DispatchChangeEvent, DispatchInputAndChangeEvent };
-enum TextControlSetValueSelection { SetSelectionToEnd, DoNotSet };
+enum TextControlSetValueSelection { SetSelectionToEnd, Clamp, DoNotSet };
 
 class HTMLTextFormControlElement : public HTMLFormControlElementWithState {
     WTF_MAKE_ISO_ALLOCATED(HTMLTextFormControlElement);
@@ -80,12 +80,13 @@ public:
     WEBCORE_EXPORT virtual ExceptionOr<void> setRangeText(const String& replacement);
     WEBCORE_EXPORT virtual ExceptionOr<void> setRangeText(const String& replacement, unsigned start, unsigned end, const String& selectionMode);
     void setSelectionRange(unsigned start, unsigned end, const String& direction, const AXTextStateChangeIntent& = AXTextStateChangeIntent());
-    WEBCORE_EXPORT void setSelectionRange(unsigned start, unsigned end, TextFieldSelectionDirection = SelectionHasNoDirection, SelectionRevealMode = SelectionRevealMode::DoNotReveal, const AXTextStateChangeIntent& = AXTextStateChangeIntent());
+    WEBCORE_EXPORT bool setSelectionRange(unsigned start, unsigned end, TextFieldSelectionDirection = SelectionHasNoDirection, SelectionRevealMode = SelectionRevealMode::DoNotReveal, const AXTextStateChangeIntent& = AXTextStateChangeIntent());
 
     std::optional<SimpleRange> selection() const;
     String selectedText() const;
 
     void dispatchFormControlChangeEvent() final;
+    void scheduleSelectEvent();
 
     virtual String value() const = 0;
 
@@ -96,7 +97,7 @@ public:
 
     void selectionChanged(bool shouldFireSelectEvent);
     WEBCORE_EXPORT bool lastChangeWasUserEdit() const;
-    void setInnerTextValue(const String&);
+    void setInnerTextValue(String&&);
     String innerTextValue() const;
 
     String directionForFormData() const;
@@ -117,16 +118,13 @@ protected:
 
     void updateInnerTextElementEditability();
 
-    void cacheSelection(int start, int end, TextFieldSelectionDirection direction)
-    {
-        m_cachedSelectionStart = start;
-        m_cachedSelectionEnd = end;
-        m_cachedSelectionDirection = direction;
-        m_hasCachedSelection = true;
-    }
+    bool cacheSelection(unsigned start, unsigned end, TextFieldSelectionDirection);
 
     void restoreCachedSelection(SelectionRevealMode, const AXTextStateChangeIntent& = AXTextStateChangeIntent());
     bool hasCachedSelection() const { return m_hasCachedSelection; }
+
+    unsigned computeSelectionStart() const;
+    unsigned computeSelectionEnd() const;
 
     virtual void subtreeHasChanged() = 0;
 
@@ -144,8 +142,6 @@ private:
 
     bool isTextFormControlElement() const final { return true; }
 
-    unsigned computeSelectionStart() const;
-    unsigned computeSelectionEnd() const;
     TextFieldSelectionDirection computeSelectionDirection() const;
 
     void dispatchFocusEvent(RefPtr<Element>&& oldFocusedElement, const FocusOptions&) final;

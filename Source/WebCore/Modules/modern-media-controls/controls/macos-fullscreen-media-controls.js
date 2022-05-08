@@ -37,6 +37,10 @@ class MacOSFullscreenMediaControls extends MediaControls
         this.element.classList.add("mac");
         this.element.classList.add("fullscreen");
 
+        this.timeControl.scrubber.knobStyle = Slider.KnobStyle.Bar;
+
+        this.playPauseButton.scaleFactor = 2;
+
         // Set up fullscreen-specific buttons.
         this.rewindButton = new RewindButton(this);
         this.forwardButton = new ForwardButton(this);
@@ -110,7 +114,7 @@ class MacOSFullscreenMediaControls extends MediaControls
             return;
 
         this._rightContainer.children.forEach(button => delete button.dropped)
-        this.overflowButton.clearContextMenuOptions();
+        this.overflowButton.clearExtraContextMenuOptions();
 
         this._leftContainer.visible = this.muteButton.enabled;
         this._leftContainer.children = this._volumeControlsForCurrentDirection();
@@ -124,7 +128,7 @@ class MacOSFullscreenMediaControls extends MediaControls
                 continue;
 
             button.dropped = true;
-            this.overflowButton.addContextMenuOptions(button.contextMenuOptions);
+            this.overflowButton.addExtraContextMenuOptions(button.contextMenuOptions);
         }
 
         this._leftContainer.layout();

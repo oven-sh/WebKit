@@ -81,7 +81,7 @@ ExceptionOr<void> AudioWorkletGlobalScope::registerProcessor(String&& name, Ref<
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (!jsConstructor->isConstructor(vm))
+    if (!jsConstructor->isConstructor())
         return Exception { TypeError, "Class definition passed to registerProcessor() is not a constructor"_s };
 
     auto prototype = jsConstructor->getPrototype(vm, globalObject);
@@ -90,7 +90,7 @@ ExceptionOr<void> AudioWorkletGlobalScope::registerProcessor(String&& name, Ref<
     if (!prototype.isObject())
         return Exception { TypeError, "Class definition passed to registerProcessor() has invalid prototype"_s };
 
-    auto parameterDescriptorsValue = jsConstructor->get(globalObject, JSC::Identifier::fromString(vm, "parameterDescriptors"));
+    auto parameterDescriptorsValue = jsConstructor->get(globalObject, JSC::Identifier::fromString(vm, "parameterDescriptors"_s));
     RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
 
     Vector<AudioParamDescriptor> parameterDescriptors;
@@ -150,7 +150,7 @@ RefPtr<AudioWorkletProcessor> AudioWorkletGlobalScope::createProcessor(const Str
     ASSERT(!!scope.exception() == !object);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    auto* jsProcessor = JSC::jsDynamicCast<JSAudioWorkletProcessor*>(vm, object);
+    auto* jsProcessor = JSC::jsDynamicCast<JSAudioWorkletProcessor*>(object);
     if (!jsProcessor)
         return nullptr;
 

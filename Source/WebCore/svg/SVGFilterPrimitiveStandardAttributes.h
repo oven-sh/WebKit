@@ -31,7 +31,7 @@ namespace WebCore {
 
 class Filter;
 class FilterEffect;
-class SVGFilterBuilder;
+class SVGFilter;
 
 class SVGFilterPrimitiveStandardAttributes : public SVGElement {
     WTF_MAKE_ISO_ALLOCATED(SVGFilterPrimitiveStandardAttributes);
@@ -53,7 +53,8 @@ public:
     // Returns true, if the new value is different from the old one.
     virtual bool setFilterEffectAttribute(FilterEffect*, const QualifiedName&);
     virtual Vector<AtomString> filterEffectInputsNames() const { return { }; }
-    virtual RefPtr<FilterEffect> filterEffect(const SVGFilterBuilder&, const FilterEffectVector&) const = 0;
+    virtual IntOutsets outsets(const FloatRect&, SVGUnitTypes::SVGUnitType) const { return { }; }
+    virtual RefPtr<FilterEffect> filterEffect(const SVGFilter&, const FilterEffectVector&, const GraphicsContext& destinationContext) const = 0;
 
     static void invalidateFilterPrimitiveParent(SVGElement*);
 

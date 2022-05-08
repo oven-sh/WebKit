@@ -120,6 +120,11 @@ struct VisiblePositionIndexRange {
     bool isNull() const { return startIndex.value == -1 || endIndex.value == -1; }
 };
 
+struct AXTreeData {
+    String liveTree;
+    String isolatedTree;
+};
+
 class AccessibilityReplacedText {
 public:
     AccessibilityReplacedText() = default;
@@ -181,6 +186,7 @@ public:
     void childrenChanged(RenderObject*, RenderObject* newChild = nullptr);
     void childrenChanged(AccessibilityObject*);
     void checkedStateChanged(Node*);
+    void handleRoleChange(AccessibilityObject*);
     // Called when a node has just been attached, so we can make sure we have the right subclass of AccessibilityObject.
     void updateCacheAfterNodeIsAttached(Node*);
     void updateLoadingProgress(double);
@@ -190,6 +196,7 @@ public:
     void deferFocusedUIElementChangeIfNeeded(Node* oldFocusedNode, Node* newFocusedNode);
     void deferModalChange(Element*);
     void deferMenuListValueChange(Element*);
+    void deferNodeAddedOrRemoved(Node*);
     void handleScrolledToAnchor(const Node* anchorNode);
     void handleScrollbarUpdate(ScrollView*);
     
@@ -363,7 +370,9 @@ public:
 
     std::optional<SimpleRange> rangeMatchesTextNearRange(const SimpleRange&, const String&);
 
-    static String notificationPlatformName(AXNotification);
+    static ASCIILiteral notificationPlatformName(AXNotification);
+
+    AXTreeData treeData();
 
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
     WEBCORE_EXPORT static bool isIsolatedTreeEnabled();
@@ -460,7 +469,6 @@ private:
     // Called by a node when text or a text equivalent (e.g. alt) attribute is changed.
     void textChanged(Node*);
     void handleActiveDescendantChanged(Node*);
-    void handleAriaRoleChanged(Node*);
     void handleAriaExpandedChange(Node*);
     void handleFocusedUIElementChanged(Node* oldFocusedNode, Node* newFocusedNode);
     void handleMenuListValueChanged(Element&);
@@ -516,7 +524,7 @@ private:
     ListHashSet<Node*> m_deferredTextChangedList;
     WeakHashSet<Element> m_deferredSelectedChildredChangedList;
     ListHashSet<RefPtr<AccessibilityObject>> m_deferredChildrenChangedList;
-    ListHashSet<Node*> m_deferredChildrenChangedNodeList;
+    ListHashSet<Node*> m_deferredNodeAddedOrRemovedList;
     WeakHashSet<Element> m_deferredModalChangedList;
     WeakHashSet<Element> m_deferredMenuListChange;
     HashMap<Element*, String> m_deferredTextFormControlValue;
@@ -543,7 +551,7 @@ private:
 #endif
 };
 
-bool nodeHasRole(Node*, const String& role);
+bool nodeHasRole(Node*, StringView role);
 // This will let you know if aria-hidden was explicitly set to false.
 bool isNodeAriaVisible(Node*);
     
@@ -567,7 +575,7 @@ inline AccessibilityObject* AXObjectCache::focusedObjectForPage(const Page*) { r
 inline void AXObjectCache::enableAccessibility() { }
 inline void AXObjectCache::disableAccessibility() { }
 inline void AXObjectCache::setEnhancedUserInterfaceAccessibility(bool) { }
-inline bool nodeHasRole(Node*, const String&) { return false; }
+inline bool nodeHasRole(Node*, StringView) { return false; }
 inline void AXObjectCache::startCachingComputedObjectAttributesUntilTreeMutates() { }
 inline void AXObjectCache::stopCachingComputedObjectAttributes() { }
 inline bool isNodeAriaVisible(Node*) { return true; }
@@ -595,7 +603,7 @@ inline void AXObjectCache::handleActiveDescendantChanged(Node*) { }
 inline void AXObjectCache::handleAriaExpandedChange(Node*) { }
 inline void AXObjectCache::handleModalChange(Element&) { }
 inline void AXObjectCache::deferModalChange(Element*) { }
-inline void AXObjectCache::handleAriaRoleChanged(Node*) { }
+inline void AXObjectCache::handleRoleChange(AccessibilityObject*) { }
 inline void AXObjectCache::deferAttributeChangeIfNeeded(const QualifiedName&, Element*) { }
 inline void AXObjectCache::handleAttributeChange(const QualifiedName&, Element*) { }
 inline bool AXObjectCache::shouldProcessAttributeChange(const QualifiedName&, Element*) { return false; }
@@ -644,11 +652,11 @@ inline void AXObjectCache::postTextReplacementPlatformNotification(Accessibility
 inline AXTextChange AXObjectCache::textChangeForEditType(AXTextEditType) { return AXTextInserted; }
 inline void AXObjectCache::nodeTextChangePlatformNotification(AccessibilityObject*, AXTextChange, unsigned, const String&) { }
 #endif
+inline AXTreeData AXObjectCache::treeData() { return { }; }
 
 inline AXAttributeCacheEnabler::AXAttributeCacheEnabler(AXObjectCache*) { }
 inline AXAttributeCacheEnabler::~AXAttributeCacheEnabler() { }
-
-#endif
+#endif // !ENABLE(ACCESSIBILITY)
 
 WTF::TextStream& operator<<(WTF::TextStream&, AXObjectCache::AXNotification);
 

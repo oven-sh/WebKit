@@ -29,7 +29,6 @@
 #if ENABLE(GPU_PROCESS)
 
 #include "DrawingAreaProxy.h"
-#include "GPUProcessConnectionInfo.h"
 #include "GPUProcessConnectionParameters.h"
 #include "GPUProcessCreationParameters.h"
 #include "GPUProcessMessages.h"
@@ -81,19 +80,6 @@ static bool shouldCreateAppleCameraServiceSandboxExtension()
 }
 #endif
 
-#if PLATFORM(IOS_FAMILY)
-static const Vector<ASCIILiteral>& nonBrowserServices()
-{
-    ASSERT(isMainRunLoop());
-    static NeverDestroyed services = Vector<ASCIILiteral> {
-        "com.apple.iconservices"_s,
-        "com.apple.PowerManagement.control"_s,
-        "com.apple.frontboard.systemappservices"_s
-    };
-    return services;
-}
-#endif
-
 static WeakPtr<GPUProcessProxy>& singleton()
 {
     static NeverDestroyed<WeakPtr<GPUProcessProxy>> singleton;
@@ -130,7 +116,7 @@ static String gpuProcessCachesDirectory()
 
 GPUProcessProxy::GPUProcessProxy()
     : AuxiliaryProcessProxy()
-    , m_throttler(*this, false)
+    , m_throttler(*this, WebProcessPool::anyProcessPoolNeedsUIBackgroundAssertion())
 #if ENABLE(MEDIA_STREAM)
     , m_useMockCaptureDevices(MockRealtimeMediaSourceCenter::mockRealtimeMediaSourceCenterEnabled())
 #endif
@@ -173,9 +159,6 @@ GPUProcessProxy::GPUProcessProxy()
         parameters.compilerServiceExtensionHandles = SandboxExtension::createHandlesForMachLookup(WebCore::agxCompilerServices(), std::nullopt);
         parameters.dynamicIOKitExtensionHandles = SandboxExtension::createHandlesForIOKitClassExtensions(WebCore::agxCompilerClasses(), std::nullopt);
     }
-
-    if (!WebCore::IOSApplication::isMobileSafari())
-        parameters.dynamicMachExtensionHandles = SandboxExtension::createHandlesForMachLookup(nonBrowserServices(), std::nullopt);
 #endif
 
     platformInitializeGPUProcessParameters(parameters);
@@ -385,49 +368,36 @@ void GPUProcessProxy::processWillShutDown(IPC::Connection& connection)
         singleton() = nullptr;
 }
 
-void GPUProcessProxy::getGPUProcessConnection(WebProcessProxy& webProcessProxy, const GPUProcessConnectionParameters& parameters, Messages::WebProcessProxy::GetGPUProcessConnection::DelayedReply&& reply)
+void GPUProcessProxy::createGPUProcessConnection(WebProcessProxy& webProcessProxy, IPC::Attachment&& connectionIdentifier, GPUProcessConnectionParameters&& parameters)
 {
     addSession(webProcessProxy.websiteDataStore());
-
     RELEASE_LOG(ProcessSuspension, "%p - GPUProcessProxy is taking a background assertion because a web process is requesting a connection", this);
     startResponsivenessTimer(UseLazyStop::No);
-    sendWithAsyncReply(Messages::GPUProcess::CreateGPUConnectionToWebProcess { webProcessProxy.coreProcessIdentifier(), webProcessProxy.sessionID(), parameters }, [this, weakThis = WeakPtr { *this }, reply = WTFMove(reply)](auto&& identifier, auto&& connectionParameters) mutable {
-        if (!weakThis) {
-            RELEASE_LOG_ERROR(Process, "GPUProcessProxy::getGPUProcessConnection: GPUProcessProxy deallocated during connection establishment");
-            return reply({ });
-        }
-
+    sendWithAsyncReply(Messages::GPUProcess::CreateGPUConnectionToWebProcess { webProcessProxy.coreProcessIdentifier(), webProcessProxy.sessionID(), connectionIdentifier, parameters }, [this, weakThis = WeakPtr { *this }]() mutable {
+        if (!weakThis)
+            return;
         stopResponsivenessTimer();
-        if (!identifier) {
-            RELEASE_LOG_ERROR(Process, "GPUProcessProxy::getGPUProcessConnection: connection identifier is empty");
-            return reply({ });
-        }
-
-#if USE(UNIX_DOMAIN_SOCKETS) || OS(WINDOWS)
-        reply(GPUProcessConnectionInfo { WTFMove(*identifier) });
-        UNUSED_VARIABLE(this);
-#elif OS(DARWIN)
-        MESSAGE_CHECK(MACH_PORT_VALID(identifier->port()));
-        reply(GPUProcessConnectionInfo { IPC::Attachment { identifier->port(), MACH_MSG_TYPE_MOVE_SEND }, this->connection()->getAuditToken(), WTFMove(connectionParameters) });
-#else
-        notImplemented();
-#endif
     }, 0, IPC::SendOption::DispatchMessageEvenWhenWaitingForSyncReply);
 }
 
-void GPUProcessProxy::gpuProcessExited(GPUProcessTerminationReason reason)
+void GPUProcessProxy::gpuProcessExited(ProcessTerminationReason reason)
 {
     Ref protectedThis { *this };
 
     switch (reason) {
-    case GPUProcessTerminationReason::Crash:
-        RELEASE_LOG_ERROR(Process, "%p - GPUProcessProxy::gpuProcessExited: reason=crash", this);
+    case ProcessTerminationReason::ExceededMemoryLimit:
+    case ProcessTerminationReason::ExceededCPULimit:
+    case ProcessTerminationReason::RequestedByClient:
+    case ProcessTerminationReason::IdleExit:
+    case ProcessTerminationReason::Unresponsive:
+    case ProcessTerminationReason::Crash:
+        RELEASE_LOG_ERROR(Process, "%p - GPUProcessProxy::gpuProcessExited: reason=%{public}s", this, processTerminationReasonToString(reason));
         break;
-    case GPUProcessTerminationReason::IdleExit:
-        RELEASE_LOG(Process, "%p - GPUProcessProxy::gpuProcessExited: reason=idle-exit", this);
-        break;
-    case GPUProcessTerminationReason::Unresponsive:
-        RELEASE_LOG(Process, "%p - GPUProcessProxy::gpuProcessExited: reason=unresponsive", this);
+    case ProcessTerminationReason::ExceededProcessCountLimit:
+    case ProcessTerminationReason::NavigationSwap:
+    case ProcessTerminationReason::RequestedByNetworkProcess:
+    case ProcessTerminationReason::RequestedByGPUProcess:
+        ASSERT_NOT_REACHED();
         break;
     }
 
@@ -442,7 +412,7 @@ void GPUProcessProxy::processIsReadyToExit()
 {
     RELEASE_LOG(Process, "%p - GPUProcessProxy::processIsReadyToExit:", this);
     terminate();
-    gpuProcessExited(GPUProcessTerminationReason::IdleExit); // May cause |this| to get deleted.
+    gpuProcessExited(ProcessTerminationReason::IdleExit); // May cause |this| to get deleted.
 }
 
 void GPUProcessProxy::terminateForTesting()
@@ -458,7 +428,7 @@ void GPUProcessProxy::webProcessConnectionCountForTesting(CompletionHandler<void
 void GPUProcessProxy::didClose(IPC::Connection&)
 {
     RELEASE_LOG_ERROR(Process, "%p - GPUProcessProxy::didClose:", this);
-    gpuProcessExited(GPUProcessTerminationReason::Crash); // May cause |this| to get deleted.
+    gpuProcessExited(ProcessTerminationReason::Crash); // May cause |this| to get deleted.
 }
 
 void GPUProcessProxy::didReceiveInvalidMessage(IPC::Connection& connection, IPC::MessageName messageName)
@@ -480,7 +450,7 @@ void GPUProcessProxy::didFinishLaunching(ProcessLauncher* launcher, IPC::Connect
     AuxiliaryProcessProxy::didFinishLaunching(launcher, connectionIdentifier);
 
     if (!IPC::Connection::identifierIsValid(connectionIdentifier)) {
-        gpuProcessExited(GPUProcessTerminationReason::Crash);
+        gpuProcessExited(ProcessTerminationReason::Crash);
         return;
     }
     
@@ -578,7 +548,7 @@ void GPUProcessProxy::sendPrepareToSuspend(IsSuspensionImminent isSuspensionImmi
     sendWithAsyncReply(Messages::GPUProcess::PrepareToSuspend(isSuspensionImminent == IsSuspensionImminent::Yes), WTFMove(completionHandler), 0, { }, ShouldStartProcessThrottlerActivity::No);
 }
 
-void GPUProcessProxy::sendProcessDidResume()
+void GPUProcessProxy::sendProcessDidResume(ResumeReason)
 {
     if (canSendMessage())
         send(Messages::GPUProcess::ProcessDidResume(), 0);
@@ -707,7 +677,7 @@ void GPUProcessProxy::didBecomeUnresponsive()
 {
     RELEASE_LOG_ERROR(Process, "GPUProcessProxy::didBecomeUnresponsive: GPUProcess with PID %d became unresponsive, terminating it", processIdentifier());
     terminate();
-    gpuProcessExited(GPUProcessTerminationReason::Unresponsive);
+    gpuProcessExited(ProcessTerminationReason::Unresponsive);
 }
 
 #if !PLATFORM(COCOA)

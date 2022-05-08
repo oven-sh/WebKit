@@ -38,6 +38,7 @@
 #include "DOMFormData.h"
 #include "Editor.h"
 #include "ElementInlines.h"
+#include "ElementRareData.h"
 #include "EventNames.h"
 #include "Frame.h"
 #include "FrameSelection.h"
@@ -235,8 +236,9 @@ void TextFieldInputType::forwardEvent(Event& event)
             return;
     }
 
-    bool isFocusEvent = event.type() == eventNames().focusEvent;
-    bool isBlurEvent = event.type() == eventNames().blurEvent;
+    auto& eventNames = WebCore::eventNames();
+    bool isFocusEvent = event.type() == eventNames.focusEvent;
+    bool isBlurEvent = event.type() == eventNames.blurEvent;
     if (isFocusEvent || isBlurEvent)
         capsLockStateMayHaveChanged();
     if (event.isMouseEvent() || isFocusEvent || isBlurEvent)
@@ -619,14 +621,14 @@ void TextFieldInputType::handleBeforeTextInsertedEvent(BeforeTextInsertedEvent& 
     unsigned appendableLength = maxLength > baseLength ? maxLength - baseLength : 0;
 
     // Truncate the inserted text to avoid violating the maxLength and other constraints.
+    // FIXME: This may cause a lot of String allocations in the worst case scenario.
     String eventText = event.text();
     unsigned textLength = eventText.length();
     while (textLength > 0 && isHTMLLineBreak(eventText[textLength - 1]))
         textLength--;
-    eventText.truncate(textLength);
-    eventText.replace("\r\n", " ");
-    eventText.replace('\r', ' ');
-    eventText.replace('\n', ' ');
+    eventText = makeStringByReplacingAll(eventText.left(textLength), "\r\n", " ");
+    eventText = makeStringByReplacingAll(eventText, '\r', ' ');
+    eventText = makeStringByReplacingAll(eventText, '\n', ' ');
     event.setText(limitLength(eventText, appendableLength));
 }
 
@@ -661,7 +663,7 @@ void TextFieldInputType::updatePlaceholderText()
         m_placeholder = TextControlPlaceholderElement::create(element()->document());
         element()->userAgentShadowRoot()->insertBefore(*m_placeholder, m_container ? m_container.get() : innerTextElement().get());
     }
-    m_placeholder->setInnerText(placeholderText);
+    m_placeholder->setInnerText(WTFMove(placeholderText));
 }
 
 bool TextFieldInputType::appendFormData(DOMFormData& formData) const
@@ -814,7 +816,7 @@ void TextFieldInputType::createContainer()
     ASSERT(!m_container);
     ASSERT(element());
 
-    static MainThreadNeverDestroyed<const AtomString> webkitTextfieldDecorationContainerName("-webkit-textfield-decoration-container", AtomString::ConstructFromLiteral);
+    static MainThreadNeverDestroyed<const AtomString> webkitTextfieldDecorationContainerName("-webkit-textfield-decoration-container"_s);
 
     ScriptDisallowedScope::EventAllowedScope allowedScope(*element()->userAgentShadowRoot());
 
@@ -834,12 +836,11 @@ void TextFieldInputType::createAutoFillButton(AutoFillButtonType autoFillButtonT
     if (autoFillButtonType == AutoFillButtonType::None)
         return;
 
-    static MainThreadNeverDestroyed<const AtomString> buttonName("button", AtomString::ConstructFromLiteral);
     ASSERT(element());
     m_autoFillButton = AutoFillButtonElement::create(element()->document(), *this);
     m_autoFillButton->setPseudo(autoFillButtonTypeToAutoFillButtonPseudoClassName(autoFillButtonType));
-    m_autoFillButton->setAttributeWithoutSynchronization(roleAttr, buttonName);
-    m_autoFillButton->setAttributeWithoutSynchronization(aria_labelAttr, autoFillButtonTypeToAccessibilityLabel(autoFillButtonType));
+    m_autoFillButton->setAttributeWithoutSynchronization(roleAttr, HTMLNames::buttonTag->localName());
+    m_autoFillButton->setAttributeWithoutSynchronization(aria_labelAttr, AtomString { autoFillButtonTypeToAccessibilityLabel(autoFillButtonType) });
     m_autoFillButton->setTextContent(autoFillButtonTypeToAutoFillButtonText(autoFillButtonType));
     m_container->appendChild(*m_autoFillButton);
 }
@@ -865,7 +866,7 @@ void TextFieldInputType::updateAutoFillButton()
         bool shouldUpdateAutoFillButtonType = isAutoFillButtonTypeChanged(attribute, autoFillButtonType);
         if (shouldUpdateAutoFillButtonType) {
             m_autoFillButton->setPseudo(autoFillButtonTypeToAutoFillButtonPseudoClassName(autoFillButtonType));
-            m_autoFillButton->setAttributeWithoutSynchronization(aria_labelAttr, autoFillButtonTypeToAccessibilityLabel(autoFillButtonType));
+            m_autoFillButton->setAttributeWithoutSynchronization(aria_labelAttr, AtomString { autoFillButtonTypeToAccessibilityLabel(autoFillButtonType) });
             m_autoFillButton->setTextContent(autoFillButtonTypeToAutoFillButtonText(autoFillButtonType));
         }
         m_autoFillButton->setInlineStyleProperty(CSSPropertyDisplay, CSSValueBlock, true);

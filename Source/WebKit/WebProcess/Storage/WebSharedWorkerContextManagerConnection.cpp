@@ -47,6 +47,7 @@
 #include <WebCore/SharedWorkerThreadProxy.h>
 #include <WebCore/UserAgent.h>
 #include <WebCore/WorkerFetchResult.h>
+#include <WebCore/WorkerInitializationData.h>
 
 namespace WebKit {
 
@@ -89,7 +90,7 @@ void WebSharedWorkerContextManagerConnection::updatePreferencesStore(const WebPr
     m_preferencesStore = store;
 }
 
-void WebSharedWorkerContextManagerConnection::launchSharedWorker(WebCore::ClientOrigin&& origin, WebCore::SharedWorkerIdentifier sharedWorkerIdentifier, WebCore::WorkerOptions&& workerOptions, WebCore::WorkerFetchResult&& workerFetchResult)
+void WebSharedWorkerContextManagerConnection::launchSharedWorker(WebCore::ClientOrigin&& origin, WebCore::SharedWorkerIdentifier sharedWorkerIdentifier, WebCore::WorkerOptions&& workerOptions, WebCore::WorkerFetchResult&& workerFetchResult, WebCore::WorkerInitializationData&& initializationData)
 {
     RELEASE_LOG(SharedWorker, "WebSharedWorkerContextManagerConnection::launchSharedWorker: sharedWorkerIdentifier=%" PRIu64, sharedWorkerIdentifier.toUInt64());
     auto pageConfiguration = WebCore::pageConfigurationWithEmptyClients(WebProcess::singleton().sessionID());
@@ -97,7 +98,6 @@ void WebSharedWorkerContextManagerConnection::launchSharedWorker(WebCore::Client
     pageConfiguration.databaseProvider = WebDatabaseProvider::getOrCreate(m_pageGroupID);
     pageConfiguration.socketProvider = WebSocketProvider::create(m_webPageProxyID);
     pageConfiguration.broadcastChannelRegistry = WebProcess::singleton().broadcastChannelRegistry();
-    pageConfiguration.webLockRegistry = WebProcess::singleton().webLockRegistry();
     pageConfiguration.userContentProvider = m_userContentController;
 #if ENABLE(WEB_RTC)
     pageConfiguration.libWebRTCProvider = makeUniqueRef<RemoteWorkerLibWebRTCProvider>();
@@ -110,15 +110,25 @@ void WebSharedWorkerContextManagerConnection::launchSharedWorker(WebCore::Client
         WebPage::updateSettingsGenerated(*m_preferencesStore, page->settings());
         page->settings().setStorageBlockingPolicy(static_cast<WebCore::StorageBlockingPolicy>(m_preferencesStore->getUInt32ValueForKey(WebPreferencesKey::storageBlockingPolicyKey())));
     }
+
+    if (!initializationData.userAgent.isEmpty())
+        initializationData.userAgent = m_userAgent;
+
+    if (!initializationData.clientIdentifier)
+        initializationData.clientIdentifier = ScriptExecutionContextIdentifier::generate();
+
     page->setupForRemoteWorker(workerFetchResult.lastRequestURL, origin.topOrigin, workerFetchResult.referrerPolicy);
-    auto sharedWorkerThreadProxy = WebCore::SharedWorkerThreadProxy::create(WTFMove(page), sharedWorkerIdentifier, origin, WTFMove(workerFetchResult), WTFMove(workerOptions), m_userAgent, WebProcess::singleton().cacheStorageProvider());
+    auto sharedWorkerThreadProxy = WebCore::SharedWorkerThreadProxy::create(WTFMove(page), sharedWorkerIdentifier, origin, WTFMove(workerFetchResult), WTFMove(workerOptions), WTFMove(initializationData), WebProcess::singleton().cacheStorageProvider());
 
     WebCore::SharedWorkerContextManager::singleton().registerSharedWorkerThread(WTFMove(sharedWorkerThreadProxy));
 }
 
 void WebSharedWorkerContextManagerConnection::close()
 {
-    RELEASE_LOG(SharedWorker, "WebSharedWorkerContextManagerConnection::close: Shared worker process is requested to stop all shared workers");
+    RELEASE_LOG(SharedWorker, "WebSharedWorkerContextManagerConnection::close: Shared worker process is requested to stop all shared workers (already stopped = %d)", isClosed());
+    if (isClosed())
+        return;
+
     setAsClosed();
 
     m_connectionToNetworkProcess->send(Messages::NetworkConnectionToWebProcess::CloseSharedWorkerContextConnection { }, 0);

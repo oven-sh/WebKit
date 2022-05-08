@@ -179,13 +179,12 @@ MediaList::MediaList(MediaQuerySet* mediaQueries, CSSRule* parentRule)
 
 MediaList::~MediaList() = default;
 
-ExceptionOr<void> MediaList::setMediaText(const String& value)
+void MediaList::setMediaText(const String& value)
 {
     CSSStyleSheet::RuleMutationScope mutationScope(m_parentRule);
     m_mediaQueries->set(value);
     if (m_parentStyleSheet)
         m_parentStyleSheet->didMutate();
-    return { };
 }
 
 String MediaList::item(unsigned index) const
@@ -241,7 +240,7 @@ void reportMediaQueryWarningIfNeeded(Document* document, const MediaQuerySet* me
         return;
 
     for (auto& query : mediaQuerySet->queryVector()) {
-        if (!query.ignored() && !equalLettersIgnoringASCIICase(query.mediaType(), "print")) {
+        if (!query.ignored() && !equalLettersIgnoringASCIICase(query.mediaType(), "print"_s)) {
             auto& expressions = query.expressions();
             for (auto& expression : expressions) {
                 if (expression.mediaFeature() == MediaFeatureNames::resolution || expression.mediaFeature() == MediaFeatureNames::maxResolution || expression.mediaFeature() == MediaFeatureNames::minResolution) {

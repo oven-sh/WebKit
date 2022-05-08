@@ -344,6 +344,7 @@ class CommandBuffer : public WrappedObject<CommandBuffer, VkCommandBuffer>
     void writeTimestamp(VkPipelineStageFlagBits pipelineStage,
                         const QueryPool &queryPool,
                         uint32_t query);
+    void setShadingRate(const VkExtent2D *fragmentSize, VkFragmentShadingRateCombinerOpKHR ops[2]);
 
     // VK_EXT_transform_feedback
     void beginTransformFeedback(uint32_t firstCounterBuffer,
@@ -515,7 +516,7 @@ class Buffer final : public WrappedObject<Buffer, VkBuffer>
     void destroy(VkDevice device);
 
     VkResult init(VkDevice device, const VkBufferCreateInfo &createInfo);
-    VkResult bindMemory(VkDevice device, const DeviceMemory &deviceMemory);
+    VkResult bindMemory(VkDevice device, const DeviceMemory &deviceMemory, VkDeviceSize offset);
     void getMemoryRequirements(VkDevice device, VkMemoryRequirements *memoryRequirementsOut);
 
   private:
@@ -1034,6 +1035,13 @@ ANGLE_INLINE void CommandBuffer::writeTimestamp(VkPipelineStageFlagBits pipeline
     vkCmdWriteTimestamp(mHandle, pipelineStage, queryPool.getHandle(), query);
 }
 
+ANGLE_INLINE void CommandBuffer::setShadingRate(const VkExtent2D *fragmentSize,
+                                                VkFragmentShadingRateCombinerOpKHR ops[2])
+{
+    ASSERT(valid() && fragmentSize != nullptr);
+    vkCmdSetFragmentShadingRateKHR(mHandle, fragmentSize, ops);
+}
+
 ANGLE_INLINE void CommandBuffer::draw(uint32_t vertexCount,
                                       uint32_t instanceCount,
                                       uint32_t firstVertex,
@@ -1488,10 +1496,12 @@ ANGLE_INLINE VkResult Buffer::init(VkDevice device, const VkBufferCreateInfo &cr
     return vkCreateBuffer(device, &createInfo, nullptr, &mHandle);
 }
 
-ANGLE_INLINE VkResult Buffer::bindMemory(VkDevice device, const DeviceMemory &deviceMemory)
+ANGLE_INLINE VkResult Buffer::bindMemory(VkDevice device,
+                                         const DeviceMemory &deviceMemory,
+                                         VkDeviceSize offset)
 {
     ASSERT(valid() && deviceMemory.valid());
-    return vkBindBufferMemory(device, mHandle, deviceMemory.getHandle(), 0);
+    return vkBindBufferMemory(device, mHandle, deviceMemory.getHandle(), offset);
 }
 
 ANGLE_INLINE void Buffer::getMemoryRequirements(VkDevice device,

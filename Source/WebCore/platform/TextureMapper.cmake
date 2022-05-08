@@ -150,3 +150,15 @@ if (USE_GRAPHICS_LAYER_WC)
         platform/graphics/texmap/TextureMapperSparseBackingStore.h
     )
 endif ()
+
+if (USE_LIBGBM)
+    list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
+        platform/graphics/gbm/DMABufFormat.h
+        platform/graphics/gbm/DMABufObject.h
+        platform/graphics/gbm/DMABufReleaseFlag.h
+        platform/graphics/gbm/GBMBufferSwapchain.h
+        platform/graphics/gbm/GBMDevice.h
+        platform/graphics/gbm/GraphicsContextGLGBM.h
+        platform/graphics/gbm/GraphicsContextGLGBMTextureMapper.h
+    )
+endif ()

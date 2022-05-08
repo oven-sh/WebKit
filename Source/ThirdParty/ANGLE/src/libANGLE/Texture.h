@@ -503,6 +503,11 @@ class Texture final : public RefCountObject<TextureID>,
 
     angle::Result setEGLImageTarget(Context *context, TextureType type, egl::Image *imageTarget);
 
+    angle::Result setStorageEGLImageTarget(Context *context,
+                                           TextureType type,
+                                           egl::Image *image,
+                                           const GLint *attrib_list);
+
     angle::Result generateMipmap(Context *context);
 
     void onBindAsImageTexture();
@@ -567,9 +572,9 @@ class Texture final : public RefCountObject<TextureID>,
 
     // Needed for robust resource init.
     angle::Result ensureInitialized(const Context *context);
-    InitState initState(const ImageIndex &imageIndex) const override;
+    InitState initState(GLenum binding, const ImageIndex &imageIndex) const override;
     InitState initState() const { return mState.mInitState; }
-    void setInitState(const ImageIndex &imageIndex, InitState initState) override;
+    void setInitState(GLenum binding, const ImageIndex &imageIndex, InitState initState) override;
     void setInitState(InitState initState);
 
     bool isBoundToFramebuffer(rx::Serial framebufferSerial) const
@@ -664,6 +669,11 @@ class Texture final : public RefCountObject<TextureID>,
                                             const Box &area);
 
     angle::Result handleMipmapGenerationHint(Context *context, int level);
+
+    angle::Result setEGLImageTargetImpl(Context *context,
+                                        TextureType type,
+                                        GLuint levels,
+                                        egl::Image *imageTarget);
 
     void signalDirtyState(size_t dirtyBit);
 

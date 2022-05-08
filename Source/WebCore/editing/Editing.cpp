@@ -820,16 +820,16 @@ static Ref<Element> createTabSpanElement(Document& document, Text& tabTextNode)
     auto spanElement = HTMLSpanElement::create(document);
 
     spanElement->setAttributeWithoutSynchronization(classAttr, AppleTabSpanClass);
-    spanElement->setAttribute(styleAttr, "white-space:pre");
+    spanElement->setAttribute(styleAttr, "white-space:pre"_s);
 
     spanElement->appendChild(tabTextNode);
 
     return spanElement;
 }
 
-Ref<Element> createTabSpanElement(Document& document, const String& tabText)
+Ref<Element> createTabSpanElement(Document& document, String&& tabText)
 {
-    return createTabSpanElement(document, document.createTextNode(tabText));
+    return createTabSpanElement(document, document.createTextNode(WTFMove(tabText)));
 }
 
 Ref<Element> createTabSpanElement(Document& document)

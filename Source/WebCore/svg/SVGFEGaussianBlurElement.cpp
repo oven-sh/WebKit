@@ -94,7 +94,13 @@ void SVGFEGaussianBlurElement::svgAttributeChanged(const QualifiedName& attrName
     SVGFilterPrimitiveStandardAttributes::svgAttributeChanged(attrName);
 }
 
-RefPtr<FilterEffect> SVGFEGaussianBlurElement::filterEffect(const SVGFilterBuilder&, const FilterEffectVector&) const
+IntOutsets SVGFEGaussianBlurElement::outsets(const FloatRect& targetBoundingBox, SVGUnitTypes::SVGUnitType primitiveUnits) const
+{
+    auto stdDeviation = SVGFilter::calculateResolvedSize({ stdDeviationX(), stdDeviationY() }, targetBoundingBox, primitiveUnits);
+    return FEGaussianBlur::calculateOutsets(stdDeviation);
+}
+
+RefPtr<FilterEffect> SVGFEGaussianBlurElement::filterEffect(const SVGFilter&, const FilterEffectVector&, const GraphicsContext&) const
 {
     if (stdDeviationX() < 0 || stdDeviationY() < 0)
         return nullptr;

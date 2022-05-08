@@ -781,7 +781,7 @@ void CSSCalcOperationNode::combineChildren()
         m_children = WTFMove(newChildren);
     }
 
-    if ((isMinOrMaxNode() || isHypotNode()) && canCombineAllChildren()) {
+    if ((isMinOrMaxNode() || isHypotNode() || isClampNode()) && canCombineAllChildren()) {
         auto combinedUnitType = m_children[0]->primitiveType();
         auto involvesPercentageComparisons = [&]() {
             return combinedUnitType == CSSUnitType::CSS_PERCENTAGE && m_children.size() > 1;
@@ -866,6 +866,13 @@ Ref<CSSCalcExpressionNode> CSSCalcOperationNode::simplifyRecursive(Ref<CSSCalcEx
     return simplifyNode(WTFMove(rootNode), depth);
 }
 
+inline void CSSCalcOperationNode::makeTopLevelCalc()
+{
+    // Top level calc nodes where we need not preserve the function are changed into add nodes because
+    // that’s the best way to make them serialize as "calc(xxx)".
+    m_operator = CalcOperator::Add;
+}
+
 Ref<CSSCalcExpressionNode> CSSCalcOperationNode::simplifyNode(Ref<CSSCalcExpressionNode>&& rootNode, int depth)
 {
     if (is<CSSCalcPrimitiveValueNode>(rootNode)) {
@@ -901,7 +908,7 @@ Ref<CSSCalcExpressionNode> CSSCalcOperationNode::simplifyNode(Ref<CSSCalcExpress
             calcOperationNode.combineChildren();
 
         // If only one child remains, return the child (except at the root).
-        auto shouldCombineParentWithOnlyChild = [](const CSSCalcOperationNode& parent, int depth)
+        auto shouldCombineParentWithOnlyChild = [](CSSCalcOperationNode& parent, int depth)
         {
             if (parent.children().size() != 1)
                 return false;
@@ -909,6 +916,11 @@ Ref<CSSCalcExpressionNode> CSSCalcOperationNode::simplifyNode(Ref<CSSCalcExpress
             // Always simplify below the root.
             if (depth)
                 return true;
+            
+            if (parent.shouldNotPreserveFunction() && is<CSSCalcPrimitiveValueNode>(parent.children()[0])) {
+                parent.makeTopLevelCalc();
+                return false;
+            }
 
             // At the root, preserve the root function by only merging nodes with the same function.
             auto& child = parent.children().first();
@@ -1303,16 +1315,22 @@ double CSSCalcOperationNode::evaluateOperator(CalcOperator op, const Vector<doub
         if (children.isEmpty())
             return std::numeric_limits<double>::quiet_NaN();
         double minimum = children[0];
-        for (auto child : children)
+        for (auto child : children) {
+            if (std::isnan(child))
+                return child;
             minimum = std::min(minimum, child);
+        }
         return minimum;
     }
     case CalcOperator::Max: {
         if (children.isEmpty())
             return std::numeric_limits<double>::quiet_NaN();
         double maximum = children[0];
-        for (auto child : children)
+        for (auto child : children) {
+            if (std::isnan(child))
+                return child;
             maximum = std::max(maximum, child);
+        }
         return maximum;
     }
     case CalcOperator::Clamp: {
@@ -1321,6 +1339,8 @@ double CSSCalcOperationNode::evaluateOperator(CalcOperator op, const Vector<doub
         double min = children[0];
         double value = children[1];
         double max = children[2];
+        if (std::isnan(min) || std::isnan(value) || std::isnan(max))
+            return std::numeric_limits<double>::quiet_NaN();
         return std::max(min, std::min(value, max));
     }
     case CalcOperator::Pow:
@@ -1338,8 +1358,11 @@ double CSSCalcOperationNode::evaluateOperator(CalcOperator op, const Vector<doub
         if (children.size() == 1)
             return std::abs(children[0]);
         double sum = 0;
-        for (auto child : children)
+        for (auto child : children) {
+            if (std::isnan(child))
+                return child;
             sum += (child * child);
+        }
         return std::sqrt(sum);
     }
     case CalcOperator::Sin: {

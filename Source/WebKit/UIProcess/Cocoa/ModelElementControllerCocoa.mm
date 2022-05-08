@@ -81,7 +81,7 @@ ASVInlinePreview * ModelElementController::previewForModelIdentifier(ModelIdenti
     return [modelViewForModelIdentifier(modelIdentifier) preview];
 }
 
-void ModelElementController::takeModelElementFullscreen(ModelIdentifier modelIdentifier)
+void ModelElementController::takeModelElementFullscreen(ModelIdentifier modelIdentifier, const URL& originatingPageURL)
 {
     auto *presentingViewController = m_webPageProxy.uiClient().presentingViewController();
     if (!presentingViewController)
@@ -94,6 +94,8 @@ void ModelElementController::takeModelElementFullscreen(ModelIdentifier modelIde
     CGRect initialFrame = [modelView convertRect:modelView.frame toView:nil];
 
     ASVInlinePreview *preview = [modelView preview];
+    [preview setCanonicalWebPageURL:originatingPageURL];
+    [preview setUrlFragment:originatingPageURL.fragmentIdentifier().createNSString().get()];
     NSDictionary *previewOptions = @{@"WebKit": @"Model element fullscreen"};
     [preview createFullscreenInstanceWithInitialFrame:initialFrame previewOptions:previewOptions completionHandler:^(UIViewController *remoteViewController, CAFenceHandle *fenceHandle, NSError *creationError) {
         if (creationError) {
@@ -140,7 +142,7 @@ void ModelElementController::setInteractionEnabledForModelElement(ModelIdentifie
         modelView.userInteractionEnabled = isInteractionEnabled;
 }
 
-#endif
+#endif // ENABLE(ARKIT_INLINE_PREVIEW_IOS)
 
 #if ENABLE(ARKIT_INLINE_PREVIEW_MAC)
 
@@ -240,6 +242,11 @@ void ModelElementController::modelElementLoadRemotePreview(String uuid, URL file
     }).get()];
 }
 
+void ModelElementController::modelElementDestroyRemotePreview(String uuid)
+{
+    m_inlinePreviews.remove(uuid);
+}
+
 RetainPtr<ASVInlinePreview> ModelElementController::previewForUUID(const String& uuid)
 {
     return m_inlinePreviews.get(uuid);
@@ -299,7 +306,13 @@ void ModelElementController::modelElementSizeDidChange(const String& uuid, WebCo
     }).get()];
 }
 
-#endif
+void ModelElementController::inlinePreviewUUIDs(CompletionHandler<void(Vector<String>&&)>&& completionHandler)
+{
+    completionHandler(WTF::map(m_inlinePreviews, [](auto& entry) {
+        return entry.key;
+    }));
+}
+#endif // ENABLE(ARKIT_INLINE_PREVIEW_MAC)
 
 #if ENABLE(ARKIT_INLINE_PREVIEW)
 
@@ -532,8 +545,8 @@ void ModelElementController::setIsMutedForModelElement(ModelIdentifier modelIden
 #endif
 }
 
-#endif
+#endif // ENABLE(ARKIT_INLINE_PREVIEW)
 
-}
+} // namespace WebKit
 
-#endif
+#endif // ENABLE(ARKIT_INLINE_PREVIEW)

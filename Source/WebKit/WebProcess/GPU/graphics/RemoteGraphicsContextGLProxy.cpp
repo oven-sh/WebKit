@@ -47,6 +47,26 @@ using namespace WebCore;
 
 static constexpr size_t defaultStreamSize = 1 << 21;
 
+namespace {
+template<typename T0, typename T1, typename S0, typename S1>
+IPC::ArrayReferenceTuple<T0, T1> toArrayReferenceTuple(GCGLSpanTuple<const S0, const S1> spanTuple)
+{
+    return IPC::ArrayReferenceTuple {
+        reinterpret_cast<const T0*>(spanTuple.data0),
+        reinterpret_cast<const T1*>(spanTuple.data1),
+        spanTuple.bufSize };
+}
+template<typename T0, typename T1, typename T2, typename S0, typename S1, typename S2>
+IPC::ArrayReferenceTuple<T0, T1, T2> toArrayReferenceTuple(GCGLSpanTuple<const S0, const S1, const S2> spanTuple)
+{
+    return IPC::ArrayReferenceTuple {
+        reinterpret_cast<const T0*>(spanTuple.data0),
+        reinterpret_cast<const T1*>(spanTuple.data1),
+        reinterpret_cast<const T2*>(spanTuple.data2),
+        spanTuple.bufSize };
+}
+}
+
 RemoteGraphicsContextGLProxy::RemoteGraphicsContextGLProxy(GPUProcessConnection& gpuProcessConnection, const GraphicsContextGLAttributes& attributes, RenderingBackendIdentifier renderingBackend)
     : GraphicsContextGL(attributes)
     , m_gpuProcessConnection(&gpuProcessConnection)
@@ -54,7 +74,8 @@ RemoteGraphicsContextGLProxy::RemoteGraphicsContextGLProxy(GPUProcessConnection&
 {
     m_gpuProcessConnection->addClient(*this);
     m_gpuProcessConnection->messageReceiverMap().addMessageReceiver(Messages::RemoteGraphicsContextGLProxy::messageReceiverName(), m_graphicsContextGLIdentifier.toUInt64(), *this);
-    connection().send(Messages::GPUConnectionToWebProcess::CreateGraphicsContextGL(attributes, m_graphicsContextGLIdentifier, renderingBackend, m_streamConnection.streamBuffer()), 0, IPC::SendOption::DispatchMessageEvenWhenWaitingForSyncReply);
+    m_gpuProcessConnection->connection().send(Messages::GPUConnectionToWebProcess::CreateGraphicsContextGL(attributes, m_graphicsContextGLIdentifier, renderingBackend, m_streamConnection.streamBuffer()), 0, IPC::SendOption::DispatchMessageEvenWhenWaitingForSyncReply);
+    m_streamConnection.open();
     // TODO: We must wait until initialized, because at the moment we cannot receive IPC messages
     // during wait while in synchronous stream send. Should be fixed as part of https://bugs.webkit.org/show_bug.cgi?id=217211.
     waitUntilInitialized();
@@ -259,7 +280,44 @@ void RemoteGraphicsContextGLProxy::readnPixels(GCGLint x, GCGLint y, GCGLsizei w
     }
 }
 
-void RemoteGraphicsContextGLProxy::wasCreated(bool didSucceed, IPC::Semaphore&& semaphore, String&& availableExtensions, String&& requestedExtensions)
+
+void RemoteGraphicsContextGLProxy::multiDrawArraysANGLE(GCGLenum mode, GCGLSpanTuple<const GCGLint, const GCGLsizei> firstsAndCounts)
+{
+    if (!isContextLost()) {
+        auto sendResult = send(Messages::RemoteGraphicsContextGL::MultiDrawArraysANGLE(mode, toArrayReferenceTuple<int32_t, int32_t>(firstsAndCounts)));
+        if (!sendResult)
+            markContextLost();
+    }
+}
+
+void RemoteGraphicsContextGLProxy::multiDrawArraysInstancedANGLE(GCGLenum mode, GCGLSpanTuple<const GCGLint, const GCGLsizei, const GCGLsizei> firstsCountsAndInstanceCounts)
+{
+    if (!isContextLost()) {
+        auto sendResult = send(Messages::RemoteGraphicsContextGL::MultiDrawArraysInstancedANGLE(mode, toArrayReferenceTuple<int32_t, int32_t, int32_t>(firstsCountsAndInstanceCounts)));
+        if (!sendResult)
+            markContextLost();
+    }
+}
+
+void RemoteGraphicsContextGLProxy::multiDrawElementsANGLE(GCGLenum mode, GCGLSpanTuple<const GCGLsizei, const GCGLint> countsAndOffsets, GCGLenum type)
+{
+    if (!isContextLost()) {
+        auto sendResult = send(Messages::RemoteGraphicsContextGL::MultiDrawElementsANGLE(mode, toArrayReferenceTuple<int32_t, int32_t>(countsAndOffsets), type));
+        if (!sendResult)
+            markContextLost();
+    }
+}
+
+void RemoteGraphicsContextGLProxy::multiDrawElementsInstancedANGLE(GCGLenum mode, GCGLSpanTuple<const GCGLsizei, const GCGLint, const GCGLsizei> countsOffsetsAndInstanceCounts, GCGLenum type)
+{
+    if (!isContextLost()) {
+        auto sendResult = send(Messages::RemoteGraphicsContextGL::MultiDrawElementsInstancedANGLE(mode, toArrayReferenceTuple<int32_t, int32_t, int32_t>(countsOffsetsAndInstanceCounts), type));
+        if (!sendResult)
+            markContextLost();
+    }
+}
+
+void RemoteGraphicsContextGLProxy::wasCreated(bool didSucceed, IPC::Semaphore&& wakeUpSemaphore, IPC::Semaphore&& clientWaitSemaphore, String&& availableExtensions, String&& requestedExtensions)
 {
     if (isContextLost())
         return;
@@ -268,7 +326,7 @@ void RemoteGraphicsContextGLProxy::wasCreated(bool didSucceed, IPC::Semaphore&& 
         return;
     }
     ASSERT(!m_didInitialize);
-    m_streamConnection.setWakeUpSemaphore(WTFMove(semaphore));
+    m_streamConnection.setSemaphores(WTFMove(wakeUpSemaphore), WTFMove(clientWaitSemaphore));
     m_didInitialize = true;
     initialize(availableExtensions, requestedExtensions);
 }
@@ -314,7 +372,7 @@ void RemoteGraphicsContextGLProxy::waitUntilInitialized()
         return;
     if (m_didInitialize)
         return;
-    if (connection().waitForAndDispatchImmediately<Messages::RemoteGraphicsContextGLProxy::WasCreated>(m_graphicsContextGLIdentifier, defaultSendTimeout))
+    if (m_streamConnection.waitForAndDispatchImmediately<Messages::RemoteGraphicsContextGLProxy::WasCreated>(m_graphicsContextGLIdentifier, defaultSendTimeout))
         return;
     markContextLost();
 }
@@ -337,6 +395,7 @@ void RemoteGraphicsContextGLProxy::abandonGpuProcess()
 void RemoteGraphicsContextGLProxy::disconnectGpuProcessIfNeeded()
 {
     if (auto gpuProcessConnection = std::exchange(m_gpuProcessConnection, nullptr)) {
+        m_streamConnection.invalidate();
         gpuProcessConnection->removeClient(*this);
         gpuProcessConnection->messageReceiverMap().removeMessageReceiver(Messages::RemoteGraphicsContextGLProxy::messageReceiverName(), m_graphicsContextGLIdentifier.toUInt64());
         gpuProcessConnection->connection().send(Messages::GPUConnectionToWebProcess::ReleaseGraphicsContextGL(m_graphicsContextGLIdentifier), 0, IPC::SendOption::DispatchMessageEvenWhenWaitingForSyncReply);

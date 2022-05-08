@@ -34,11 +34,13 @@
 #import "CharacterData.h"
 #import "ColorCocoa.h"
 #import "ColorMac.h"
+#import "CommonAtomStrings.h"
 #import "ComposedTreeIterator.h"
 #import "Document.h"
 #import "DocumentLoader.h"
 #import "Editing.h"
 #import "ElementInlines.h"
+#import "ElementRareData.h"
 #import "ElementTraversal.h"
 #import "File.h"
 #import "FontCascade.h"
@@ -596,7 +598,7 @@ String HTMLConverterCaches::propertyValueForNode(Node& node, CSSPropertyID prope
     switch (propertyId) {
     case CSSPropertyDisplay:
         if (element.hasTagName(headTag) || element.hasTagName(scriptTag) || element.hasTagName(appletTag) || element.hasTagName(noframesTag))
-            return "none"_s;
+            return noneAtom();
         else if (element.hasTagName(addressTag) || element.hasTagName(blockquoteTag) || element.hasTagName(bodyTag) || element.hasTagName(centerTag)
              || element.hasTagName(ddTag) || element.hasTagName(dirTag) || element.hasTagName(divTag) || element.hasTagName(dlTag)
              || element.hasTagName(dtTag) || element.hasTagName(fieldsetTag) || element.hasTagName(formTag) || element.hasTagName(frameTag)
@@ -1016,7 +1018,7 @@ NSDictionary *HTMLConverter::computedAttributesForElement(Element& element)
     String fontKerning = _caches->propertyValueForNode(element, CSSPropertyFontKerning);
     String letterSpacing = _caches->propertyValueForNode(element, CSSPropertyLetterSpacing);
     if (fontKerning.length() || letterSpacing.length()) {
-        if (fontKerning == "none")
+        if (fontKerning == noneAtom())
             [attrs setObject:@0.0 forKey:NSKernAttributeName];
         else {
             double kernVal = letterSpacing.length() ? letterSpacing.toDouble() : 0.0;
@@ -1109,7 +1111,7 @@ NSDictionary *HTMLConverter::computedAttributesForElement(Element& element)
 
         String hyphenation = _caches->propertyValueForNode(coreBlockElement, CSSPropertyWebkitHyphens);
         if (hyphenation.length()) {
-            if (hyphenation == "auto")
+            if (hyphenation == autoAtom())
                 [paragraphStyle setHyphenationFactor:1.0];
             else
                 [paragraphStyle setHyphenationFactor:0.0];
@@ -1609,7 +1611,7 @@ BOOL HTMLConverter::_enterElement(Element& element, BOOL embedded)
 
     if (element.hasTagName(headTag) && !embedded)
         _processHeadElement(element);
-    else if (!displayValue.length() || !(displayValue == "none" || displayValue == "table-column" || displayValue == "table-column-group")) {
+    else if (!displayValue.length() || !(displayValue == noneAtom() || displayValue == "table-column" || displayValue == "table-column-group")) {
         if (_caches->isBlockElement(element) && !element.hasTagName(brTag) && !(displayValue == "table-cell" && [_textTables count] == 0)
             && !([_textLists count] > 0 && displayValue == "block" && !element.hasTagName(liTag) && !element.hasTagName(ulTag) && !element.hasTagName(olTag)))
             _newParagraphForElement(element, element.tagName(), NO, YES);
@@ -1864,7 +1866,7 @@ BOOL HTMLConverter::_processElement(Element& element, NSInteger depth)
     } else if (element.hasTagName(inputTag)) {
         if (is<HTMLInputElement>(element)) {
             HTMLInputElement& inputElement = downcast<HTMLInputElement>(element);
-            if (inputElement.type() == "text") {
+            if (inputElement.type() == textAtom()) {
                 NSString *value = inputElement.value();
                 if (value && [value length] > 0)
                     _addValue(value, element);
@@ -2440,7 +2442,7 @@ AttributedString editingAttributedString(const SimpleRange& range, IncludeImages
         if (style.nbspMode() == NBSPMode::Normal)
             text = it.text().createNSStringWithoutCopying();
         else
-            text = it.text().toString().replace(noBreakSpace, ' ');
+            text = makeStringByReplacingAll(it.text(), noBreakSpace, ' ');
 
         [string replaceCharactersInRange:NSMakeRange(stringLength, 0) withString:text.get()];
         [string setAttributes:attrs.get() range:NSMakeRange(stringLength, currentTextLength)];

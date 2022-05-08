@@ -1,3 +1,524 @@
+2022-05-07  Ryosuke Niwa  <rniwa@webkit.org>
+
+        Explain now node reference counting works in Introduction.md
+        https://bugs.webkit.org/show_bug.cgi?id=240202
+
+        Unreviewed. Fix an obvious typo.
+
+        * Introduction.md:
+
+2022-05-07  Ryosuke Niwa  <rniwa@webkit.org>
+
+        Explain now node reference counting works in Introduction.md
+        https://bugs.webkit.org/show_bug.cgi?id=240202
+
+        Reviewed by Chris Dumez.
+
+        Added explanation on how Node reference counting works.
+
+        * Introduction.md:
+
+2022-05-06  Kate Cheney  <katherine_cheney@apple.com>
+
+        Unreviewed, add github info to contributors.json.
+
+        * metadata/contributors.json:
+
+2022-05-05  Per Arne Vollan  <pvollan@apple.com>
+
+        Add GitHub user name
+        https://bugs.webkit.org/show_bug.cgi?id=240144
+
+        Unreviewed, add github user name to contributors.json.
+
+        * metadata/contributors.json:
+
+2022-05-05  Megan Gardner  <megan_gardner@apple.com>
+
+        Add github info for myself to contributors.json
+        https://bugs.webkit.org/show_bug.cgi?id=240140
+
+        Unreviewed metadata addition.
+
+        * metadata/contributors.json:
+
+2022-05-02  Yijia Huang  <yijia_huang@apple.com>
+
+        Update yijia's info in constributors
+        https://bugs.webkit.org/show_bug.cgi?id=239994
+
+        Unreviewed.
+
+        * metadata/contributors.json:
+
+2022-04-30  Philippe Normand  <philn@igalia.com>
+
+        [WPE][GTK] Enable MEDIA_SESSION by default
+        https://bugs.webkit.org/show_bug.cgi?id=239931
+
+        Reviewed by Michael Catanzaro.
+
+        * Source/cmake/OptionsGTK.cmake:
+        * Source/cmake/OptionsWPE.cmake:
+
+2022-04-29  Wenson Hsieh  <wenson_hsieh@apple.com>
+
+        Unreviewed, add my GitHub account name to contributors.json
+
+        I also ran `validate-committer-lists --canonicalize` to fix up some minor style inconsistencies in this file
+        after some other recent additions.
+
+        * metadata/contributors.json:
+
+2022-04-29  Diego Pino Garcia  <dpino@igalia.com>
+
+        [GCC] std::remove_cvref is undefined in GCC8.4
+        https://bugs.webkit.org/show_bug.cgi?id=239881
+
+        Reviewed by Žan Doberšek.
+
+        r293505 changed the guard that added std::remove_cvref if not defined
+        by GCC, checking __cplusplus <= 201703L.
+
+        However in Ubuntu GCC8.4 this flag's value is 201709L. Thus, the
+        evaluation of this flag cannot reliably determine whether the compiler
+        has to define std::remove_cvref or not.
+
+        Instead of relying on a predefined compiler flag, what the patch does is
+        to attempt to compile a small snippet of code to check whether std::remove_cvref
+        is supported by the compiler. If successful, the flag 'HAVE_STD_REMOVE_CVREF' is defined.
+
+        * Source/cmake/OptionsCommon.cmake: Set and expose HAVE_STD_REMOVE_CVREF if needed.
+        * Source/cmake/WebKitCompilerFlags.cmake: Check whether GCC supports std::remove_cvref.
+
+2022-04-28  Jer Noble  <jer.noble@apple.com>
+
+        Unreviewed; add github account for Jer Noble to contributors.json.
+
+        * metadata/contributors.json:
+
+2022-04-27  Jonathan Bedard  <jbedard@apple.com>
+
+        [git-webkit] Run style checker
+        https://bugs.webkit.org/show_bug.cgi?id=239730
+        <rdar://problem/92428565>
+
+        Reviewed by Chris Dumez.
+
+        * metadata/git_config_extension: Add style-checker as pre-pr check.
+
+2022-04-26  Michael Catanzaro  <mcatanzaro@redhat.com>
+
+        Unreviewed, add my @redhat.com email
+
+        Since I switched from SVN -> GitHub I wound up committing using a different email address
+        than I had been using before. This wasn't intentional, but I like it, so whatever.
+
+        * metadata/contributors.json:
+
+2022-04-26  Manuel Rego Casasnovas  <rego@igalia.com>
+
+        Remove usage of makeWeakPtr() on Introduction.md
+        https://bugs.webkit.org/show_bug.cgi?id=239768
+
+        Reviewed by Chris Dumez.
+
+        * Introduction.md:
+
+2022-04-24  Zan Dobersek  <zdobersek@igalia.com>
+
+        [RISCV64] Enable Baseline JIT
+        https://bugs.webkit.org/show_bug.cgi?id=239708
+
+        Reviewed by Yusuke Suzuki.
+
+        Turn on the CMake defaults for ENABLE(JIT) and ENABLE(FTL_JIT) options
+        for RISCV64. These are enabled together to avoid having to worry about
+        a 64-bit platform that would want to allow compiling with Baseline JIT
+        enabled and FTL JIT disabled at the same time. But because FTL JIT
+        support for RISCV64 isn't complete yet, it's still disabled at runtime.
+
+        * Source/cmake/WebKitFeatures.cmake:
+
+2022-04-22  Alex Christensen  <achristensen@webkit.org>
+
+        Add my github account name
+        https://bugs.webkit.org/show_bug.cgi?id=239671
+
+        Reviewed by Chris Dumez.
+
+        * metadata/contributors.json:
+
+2022-04-22  Chris Dumez  <cdumez@apple.com>
+
+        Unreviewed, add Geoff's github username to contributors.json so he can review patches
+
+        * metadata/contributors.json:
+
+2022-04-20  Yusuke Suzuki  <ysuzuki@apple.com>
+
+        Unreviewed, add github accounts of Apple JSC reviewers
+
+        * metadata/contributors.json:
+
+2022-04-19  Mark Lam  <mark.lam@apple.com>
+
+        Update my GitHub login.
+
+        * metadata/contributors.json:
+
+2022-04-19  Mark Lam  <mark.lam@apple.com>
+
+        Adding my GitHub credentials.
+
+        * metadata/contributors.json:
+
+2022-04-19  Karl Rackler  <rackler@apple.com>
+
+        Coreection to botwatcher github username to contributors json
+
+        Reviewed by Jonathan Bedard.
+
+        * metadata/contributors.json:
+
+2022-04-19  Dean Jackson  <dino@apple.com>
+
+        Adding GitHub username.
+
+        * metadata/contributors.json:
+
+2022-04-15  Justin Michaud  <justin_michaud@apple.com>
+
+        [PGO] Fix build on intel machines
+        https://bugs.webkit.org/show_bug.cgi?id=239396
+
+        Reviewed by Jonathan Bedard.
+
+        We should use the correct comparison operator for Perl strings when checking
+        if we are building with PGO profile generation enabled.
+
+2022-04-12  Jonathan Bedard  <jbedard@apple.com>
+
+        [git-webkit] Allow projects to declare alternate remotes
+        https://bugs.webkit.org/show_bug.cgi?id=239261
+        <rdar://problem/91654752>
+
+        Reviewed by Dewei Zhu.
+
+        * metadata/git_config_extension: Add expected remotes.
+
+2022-04-15  Justin Michaud  <justin_michaud@apple.com>
+
+        Add GitHub info to contributors.json
+        https://bugs.webkit.org/show_bug.cgi?id=239410
+
+        Reviewed by Yusuke Suzuki.
+
+        * metadata/contributors.json:
+
+2022-04-15  Saam Barati  <sbarati@apple.com>
+
+        Unreviewed. Add my github into to contributors.json.
+
+        * metadata/contributors.json:
+
+2022-04-14  Jonathan Bedard  <jbedard@apple.com>
+
+        Add .github/pull_request_template.md
+        https://bugs.webkit.org/show_bug.cgi?id=239347
+        <rdar://problem/91763594>
+
+        Reviewed by Michael Catanzaro.
+
+        * .github/pull_request_template.md: Added.
+
+2022-04-14  Justin Michaud  <justin_michaud@apple.com>
+
+        [PGO] We should be able to build WebKit to collect PGO profiles easily
+        https://bugs.webkit.org/show_bug.cgi?id=238776
+
+        Reviewed by Wenson Hsieh.
+
+        * Makefile.shared:
+        * Source/cmake/WebKitFeatures.cmake:
+
+2022-04-14  Zan Dobersek  <zdobersek@igalia.com>
+
+        [GTK][WPE] Make the ENABLE_GPU_PROCESS CMake option depend on USE_ANGLE_WEBGL
+        https://bugs.webkit.org/show_bug.cgi?id=239330
+
+        Reviewed by Adrian Perez de Castro.
+
+        For the GTK and WPE ports, the ENABLE_GPU_PROCESS CMake option should
+        depend on the USE_ANGLE_WEBGL option being enabled. There's no plans
+        to support 'direct' GL execution in that process, and the ANGLE usage
+        also implies (for these two ports) usage of generic buffer solutions
+        that are shareable across process boundaries, as is necessary for a
+        functioning GPUProcess implementation.
+
+        * Source/cmake/OptionsGTK.cmake:
+        * Source/cmake/OptionsWPE.cmake:
+
+2022-04-13  Elliott Williams  <emw@apple.com>
+
+        [Xcode] Fix public watchOS workspace build by updating scheme and build settings
+        https://bugs.webkit.org/show_bug.cgi?id=239301
+
+        Reviewed by Alexey Proskuryakov.
+
+        Add AD_HOC_CODE_SIGNING_ALLOWED=YES (similar to
+        https://commits.webkit.org/249449@main) and
+        DISABLE_SDK_METADATA_PARSING=YES in various places to work around
+        open-source workspace build failures when building for watchOS.
+
+        * WebKit.xcworkspace/xcshareddata/xcschemes/All Source.xcscheme:
+        - Remove libwebrtc from the "All Source" scheme. On watchOS, it doesn't
+        build, and on other platforms, it is an implicit dependency, so
+        removing it lets the build system determine whether or not it should
+        build.
+        - Remove MiniBrowser from the "All Source" scheme, as it's part of "All
+        Tools". "All Tools" probably shouldn't be built for embedded
+        platforms, as it contains some Mac-only tools, but we do not enforce
+        this.
+
+2022-04-12  Elliott Williams  <emw@apple.com>
+
+        Reland "[XCBuild] Enable dependency validation by default"
+        https://bugs.webkit.org/show_bug.cgi?id=238901
+        <rdar://problem/91379968>
+
+        Reviewed by Alexey Proskuryakov.
+
+        Addresses two problems that impacted the previous attempt at landing:
+
+        Derived Sources scripts which use generated xcfilelists contain
+        "optional" inputs which are only available in internal builds. These
+        inputs lead to spurious dependency validation errors. These scripts
+        are unique in that they run from script-only targets, not as a phase
+        in one of the project's native targets. So, in open-source builds,
+        restrict VALIDATE_DEPENDENCIES to only run on native targets.
+
+        When building an individual project, and not a workspace, it's
+        expected that many input dependencies in the build directory will be
+        missing from XCBuild's graph. Disable dependency validation unless we
+        _know_ we're building from a workspace, defined as when the
+        USE_WORKSPACE Make flag or --use-workspace build-webkit flag is
+        passed.
+
+        * Makefile.shared: Turn on validation errors when USE_WORKSPACE=YES.
+        Use a new build setting, WK_VALIDATE_DEPENDENCIES, which is the
+        "requested" validation level. The actual validation level set in
+        VALIDATE_DEPENDENCIES may be lower (see above).
+
+2022-04-11  Zan Dobersek  <zdobersek@igalia.com>
+
+        Unreviewed, removing one of my email addresses.
+
+        * metadata/contributors.json:
+
+2022-04-09  Adrian Perez de Castro  <aperez@igalia.com>
+
+        [GTK][WPE] Missing inter-module documentation links
+        https://bugs.webkit.org/show_bug.cgi?id=239016
+
+        Reviewed by Michael Catanzaro.
+
+        Add JS snippets to be used in the gi-docgen output to setup links to
+        other modules. Take advantage of being able to compute the documentation
+        API version suffix from the currently loaded page URL, which avoids having
+        a number of templates depending on the API version and having to deal with
+        the documentation API version being sometimes different than the actual API
+        version of the library. The URLs for GTK3 vs. GTK4 documentation cannot be
+        handled in the same way, and instead the JS snippet is also a template
+        expanded by CMake to allows using the ${GTK_API_VERSION} variable there.
+
+        * Source/cmake/FindGIDocgen.cmake: Add a new CONTENT_TEMPLATES option
+        to GI_DOCGEN(), which allows setting up files to be expanded as CMake
+        @ONLY templates and then be used as documentation content files.
+
+2022-04-08  Elliott Williams  <emw@apple.com>
+
+        Unreviewed, reverting r292591.
+
+        Causing spurious EWS errors
+
+        Reverted changeset:
+
+        "[XCBuild] Enable dependency validation by default"
+        https://bugs.webkit.org/show_bug.cgi?id=238901
+        https://commits.webkit.org/r292591
+
+2022-04-07  Elliott Williams  <emw@apple.com>
+
+        [XCBuild] Enable dependency validation by default
+        https://bugs.webkit.org/show_bug.cgi?id=238901
+        <rdar://problem/91379968>
+
+        Reviewed by Alexey Proskuryakov.
+
+        Set VALIDATE_DEPENDENCIES=YES_ERROR everywhere, so that builds fail
+        when task outputs are missing.
+
+        The only interesting detail is that we need to set an extended
+        attribute on the user's build directory in order for XCBuild to
+        validate dependencies _within_ that directory. Since a users' build
+        directory may not be created by XCBuild, have build-webkit and
+        set-webkit-configuration set the attribute manually.
+
+        * Makefile.shared: Remove the VALIDATE_DEPENDENCIES opt-in logic.
+        Always call through to set-webkit-configuration, because that's where
+        we verify that CreatedByBuildSystem is set on the build directory.
+        Don't pass -EnableBuildDebugging=1; it's not actually needed to enable
+        dependency validation.
+
+2022-04-07  Martin Robinson  <mrobinson@webkit.org>
+
+        [GTK] Turning on the address sanitizer should disable GIR and documentation
+        https://bugs.webkit.org/show_bug.cgi?id=238868
+
+        Reviewed by Adrian Perez de Castro.
+
+        * Source/cmake/OptionsGTK.cmake: Disable documentation when the address
+        sanitizer is on. Documentation depends on GIR. Also fix the adjustment
+        of the documentation setting when building on Mac. This also has to
+        happen before the call to find_package(GI).
+
+2022-04-04  Stephan Szabo  <stephan.szabo@sony.com>
+
+        [PlayStation] Re-disable WebDriver
+        https://bugs.webkit.org/show_bug.cgi?id=238756
+
+        Unreviewed build fix
+
+        * Source/cmake/OptionsPlayStation.cmake:
+
+2022-04-04  Adrian Perez de Castro  <aperez@igalia.com>
+
+        [WPE][GTK] REGRESSION(r292263): Cannot make release tarballs
+        https://bugs.webkit.org/show_bug.cgi?id=238698
+
+        Reviewed by Carlos Garcia Campos.
+
+        * Source/cmake/WebKitDist.cmake: Make "dist" and "distcheck" targets depend on "doc-all".
+
+2022-04-04  Adrian Perez de Castro  <aperez@igalia.com>
+
+        [CMake] Provide better messages when gi-docgen cannot be found
+        https://bugs.webkit.org/show_bug.cgi?id=238729
+
+        Reviewed by Carlos Garcia Campos.
+
+        When gi-docgen cannot be found, or cannot be executed, provide better error messages
+        than those provided by CMake. While at it, make the messages mention how gi-docgen
+        can be installed inside the WebKit source tree to be used for the build.
+
+        * Source/cmake/FindGIDocgen.cmake:
+
+2022-04-04  Miguel Gomez  <magomez@igalia.com>
+
+        Change contributor status of Miguel Gomez from committer to reviewer
+        https://bugs.webkit.org/show_bug.cgi?id=238730
+
+        Unreviewed.
+
+        * metadata/contributors.json:
+
+2022-04-02  Adrian Perez de Castro  <aperez@igalia.com>
+
+        [GTK] Replace gtk-doc with gi-docgen
+        https://bugs.webkit.org/show_bug.cgi?id=226662
+
+        Reviewed by Michael Catanzaro.
+
+        Import two new CMake modules which define commands to easy setup of GObject-Introspection
+        and gi-docgen. These in turn allow to remove a bunch of duplicated CMake code, reuse
+        the same for both the WPE and GTK ports, and remove the gnarly DocBook templates and
+        other auxiliary files previously used by gtk-doc (which amount to a sizeable amount of
+        code).
+
+        While at it, do a quick pass to fix the most egregious issues reported by gi-docgen's
+        linting mode and that all public symbols end up with at least some documentation in
+        the generated output. Follow-up patches will be needed to keep adapting to the style
+        encouraged by gi-docgen, fix linking between documented entities, make code examples
+        display properly, and a few other things.
+
+        * Source/PlatformGTK.cmake: Adapted to use the new CMake modules.
+        * Source/PlatformWPE.cmake: Ditto.
+        * Source/cmake/FindGI.cmake: Added.
+        * Source/cmake/FindGIDocgen.cmake: Added.
+        * Source/cmake/FindGObjectIntrospection.cmake: Removed.
+        * Source/cmake/OptionsGTK.cmake: Adapted to use the new CMake modules.
+        * Source/cmake/OptionsWPE.cmake: Ditto.
+
+2022-04-01  Carlos Garcia Campos  <cgarcia@igalia.com>
+
+        [GTK][WPE] Enable CSS Typed OM by default
+        https://bugs.webkit.org/show_bug.cgi?id=238659
+
+        Reviewed by Adrian Perez de Castro.
+
+        Always build with Typed OM enabled, it's handled by an off by default setting.
+
+        * Source/cmake/OptionsGTK.cmake:
+        * Source/cmake/OptionsWPE.cmake:
+
+2022-03-31  Don Olmstead  <don.olmstead@sony.com>
+
+        [PlayStation] Enable more features by default
+        https://bugs.webkit.org/show_bug.cgi?id=238628
+
+        Reviewed by Fujii Hironori.
+
+        Move ENABLE_WEB_CRYPTO and add ENABLE_NETWORK_CACHE_SPECULATIVE_REVALIDATION
+        and ENABLE_NETWORK_CACHE_STALE_WHILE_REVALIDATE to the list of features on by default.
+
+        * Source/cmake/OptionsPlayStation.cmake:
+
+2022-03-31  Don Olmstead  <don.olmstead@sony.com>
+
+        [PlayStation] Enable WebDriver
+        https://bugs.webkit.org/show_bug.cgi?id=238615
+
+        Reviewed by Alex Christensen.
+
+        Enable WebDriver by default. Set values for input interactions.
+
+        * Source/cmake/OptionsPlayStation.cmake:
+
+2022-03-30  Don Olmstead  <don.olmstead@sony.com>
+
+        Turn DEVELOPER_MODE ON for all non-Apple ports in build-webkit
+        https://bugs.webkit.org/show_bug.cgi?id=238556
+
+        Reviewed by Alex Christensen.
+
+        Use DEVELOPER_MODE to determine what the defaults of ENABLE_API_TESTS and
+        ENABLE_MINIBROWSER should be. Make ENABLE_WEBKIT the default of ENABLE_MINIBROWSER.
+
+        * Source/cmake/OptionsPlayStation.cmake:
+
+2022-03-29  Ryosuke Niwa  <rniwa@webkit.org>
+
+        Add descriptions on how to start WPT and http test servers to Introduction.md
+        https://bugs.webkit.org/show_bug.cgi?id=238523
+
+        Reviewed by Chris Dumez.
+
+        * Introduction.md:
+
+2022-03-29  Don Olmstead  <don.olmstead@sony.com>
+
+        [LibWPE] Guard libxkbcommon code with WPE_ENABLE_XKB
+        https://bugs.webkit.org/show_bug.cgi?id=238510
+
+        Reviewed by Adrian Perez de Castro.
+
+        Post v1.12.0 introduces the WPE_ENABLE_XKB definition to libwpe. For v1.12.0 and earlier
+        the define is added to the WPE::libwpe target's compile options. For later versions the
+        pkg-config for the library will determine the presence of this definition.
+
+        * Source/cmake/FindWPE.cmake:
+
 2022-03-26  Aakash Jain  <aakash_jain@apple.com>
 
         Update my github username.

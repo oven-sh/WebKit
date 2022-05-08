@@ -43,15 +43,15 @@ static inline void fillRTCStats(RTCStatsReport::Stats& stats, const GstStructure
     double timestamp;
     if (gst_structure_get_double(structure, "timestamp", &timestamp))
         stats.timestamp = timestamp;
-    stats.id = gst_structure_get_string(structure, "id");
+    stats.id = String::fromLatin1(gst_structure_get_string(structure, "id"));
 }
 
 static inline void fillRTCRTPStreamStats(RTCStatsReport::RtpStreamStats& stats, const GstStructure* structure)
 {
     fillRTCStats(stats, structure);
 
-    stats.transportId = gst_structure_get_string(structure, "transport-id");
-    stats.codecId = gst_structure_get_string(structure, "codec-id");
+    stats.transportId = String::fromLatin1(gst_structure_get_string(structure, "transport-id"));
+    stats.codecId = String::fromLatin1(gst_structure_get_string(structure, "codec-id"));
 
     unsigned value;
     if (gst_structure_get_uint(structure, "ssrc", &value))
@@ -91,18 +91,47 @@ static inline void fillInboundRTPStreamStats(RTCStatsReport::InboundRtpStreamSta
     if (gst_structure_get_uint64(structure, "bytes-received", &value))
         stats.bytesReceived = value;
 
+#if GST_CHECK_VERSION(1, 21, 0)
+    int64_t packetsLost;
+    if (gst_structure_get_int64(structure, "packets-lost", &packetsLost))
+        stats.packetsLost = packetsLost;
+#else
     unsigned packetsLost;
     if (gst_structure_get_uint(structure, "packets-lost", &packetsLost))
         stats.packetsLost = packetsLost;
+#endif
 
     double jitter;
     if (gst_structure_get_double(structure, "jitter", &jitter))
         stats.jitter = jitter;
 
+    if (gst_structure_get_uint64(structure, "packets-repaired", &value))
+        stats.packetsRepaired = value;
+
+    if (gst_structure_get_uint64(structure, "packets-discarded", &value))
+        stats.packetsDiscarded = value;
+
+    if (gst_structure_get_uint64(structure, "packets-duplicated", &value))
+        stats.packetsDuplicated = value;
+
+    unsigned firCount;
+    if (gst_structure_get_uint(structure, "fir-count", &firCount))
+        stats.firCount = firCount;
+
+    unsigned pliCount;
+    if (gst_structure_get_uint(structure, "pli-count", &pliCount))
+        stats.pliCount = pliCount;
+
+    unsigned nackCount;
+    if (gst_structure_get_uint(structure, "nack-count", &nackCount))
+        stats.nackCount = nackCount;
+
+    uint64_t bytesReceived;
+    if (gst_structure_get_uint64(structure, "bytes-received", &bytesReceived))
+        stats.bytesReceived = bytesReceived;
+
     // FIXME:
     // stats.fractionLost =
-    // stats.packetsDiscarded =
-    // stats.packetsRepaired =
     // stats.burstPacketsLost =
     // stats.burstPacketsDiscarded =
     // stats.burstLossCount =
@@ -123,6 +152,21 @@ static inline void fillOutboundRTPStreamStats(RTCStatsReport::OutboundRtpStreamS
         stats.packetsSent = value;
     if (gst_structure_get_uint64(structure, "bytes-sent", &value))
         stats.bytesSent = value;
+
+    unsigned firCount;
+    if (gst_structure_get_uint(structure, "fir-count", &firCount))
+        stats.firCount = firCount;
+
+    unsigned pliCount;
+    if (gst_structure_get_uint(structure, "pli-count", &pliCount))
+        stats.pliCount = pliCount;
+
+    unsigned nackCount;
+    if (gst_structure_get_uint(structure, "nack-count", &nackCount))
+        stats.nackCount = nackCount;
+
+    if (const char* remoteId = gst_structure_get_string(structure, "remote-id"))
+        stats.remoteId = String::fromLatin1(remoteId);
 
     // FIXME
     // stats.targetBitrate =

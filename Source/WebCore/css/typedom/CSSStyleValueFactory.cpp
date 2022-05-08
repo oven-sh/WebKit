@@ -40,6 +40,7 @@
 #include "CSSPropertyParser.h"
 #include "CSSStyleImageValue.h"
 #include "CSSStyleValue.h"
+#include "CSSTokenizer.h"
 #include "CSSUnitValue.h"
 #include "CSSUnparsedValue.h"
 #include "CSSValueList.h"
@@ -87,7 +88,7 @@ ExceptionOr<void> CSSStyleValueFactory::extractShorthandCSSValues(Vector<Ref<CSS
     return { };
 }
 
-ExceptionOr<void> CSSStyleValueFactory::extractCustomCSSValues(Vector<Ref<CSSValue>>& cssValues, const String& customPropertyName, const String& cssText)
+ExceptionOr<void> CSSStyleValueFactory::extractCustomCSSValues(Vector<Ref<CSSValue>>& cssValues, const AtomString& customPropertyName, const String& cssText)
 {
     auto styleDeclaration = MutableStyleProperties::create();
     
@@ -103,7 +104,7 @@ ExceptionOr<void> CSSStyleValueFactory::extractCustomCSSValues(Vector<Ref<CSSVal
     return { };
 }
 
-ExceptionOr<Vector<Ref<CSSStyleValue>>> CSSStyleValueFactory::parseStyleValue(const String& cssProperty, const String& cssText, bool parseMultiple)
+ExceptionOr<Vector<Ref<CSSStyleValue>>> CSSStyleValueFactory::parseStyleValue(const AtomString& cssProperty, const String& cssText, bool parseMultiple)
 {
     // https://www.w3.org/TR/css-typed-om-1/#cssstylevalue
     
@@ -115,7 +116,7 @@ ExceptionOr<Vector<Ref<CSSStyleValue>>> CSSStyleValueFactory::parseStyleValue(co
         if (result.hasException())
             return result.releaseException();
     } else {
-        String property = cssProperty.convertToASCIILowercase();
+        auto property = cssProperty.convertToASCIILowercase();
         
         auto propertyID = cssPropertyID(property);
 
@@ -150,7 +151,7 @@ ExceptionOr<Vector<Ref<CSSStyleValue>>> CSSStyleValueFactory::parseStyleValue(co
     return results;
 }
 
-ExceptionOr<Ref<CSSStyleValue>> CSSStyleValueFactory::reifyValue(Ref<CSSValue>&& cssValue, Document* document)
+ExceptionOr<Ref<CSSStyleValue>> CSSStyleValueFactory::reifyValue(Ref<CSSValue> cssValue, Document* document)
 {
     if (is<CSSPrimitiveValue>(cssValue)) {
         auto primitiveValue = downcast<CSSPrimitiveValue>(cssValue.ptr());
@@ -250,13 +251,17 @@ ExceptionOr<Ref<CSSStyleValue>> CSSStyleValueFactory::reifyValue(Ref<CSSValue>&&
         return Ref<CSSStyleValue> { CSSUnparsedValue::create(downcast<CSSPendingSubstitutionValue>(cssValue.get()).shorthandValue().data().tokenRange()) };
     } else if (is<CSSCustomPropertyValue>(cssValue)) {
         // FIXME: remove CSSStyleValue::create(WTFMove(cssValue)), add reification control flow
-        return WTF::switchOn(downcast<CSSCustomPropertyValue>(cssValue.get()).value(), [&](const Ref<CSSVariableReferenceValue>& value) {
-            return reifyValue(value.copyRef(), document);
+        return WTF::switchOn(downcast<CSSCustomPropertyValue>(cssValue.get()).value(), [&](const std::monostate&) {
+            return ExceptionOr<Ref<CSSStyleValue>> { CSSStyleValue::create(WTFMove(cssValue)) };
+        }, [&](const Ref<CSSVariableReferenceValue>& value) {
+            return reifyValue(value, document);
         }, [&](Ref<CSSVariableData>& value) {
             return reifyValue(CSSVariableReferenceValue::create(WTFMove(value)));
-        }, [&](auto&) {
-            // FIXME: Property reify the other cases.
+        }, [&](const CSSValueID&) {
             return ExceptionOr<Ref<CSSStyleValue>> { CSSStyleValue::create(WTFMove(cssValue)) };
+        }, [&](auto&) {
+            CSSTokenizer tokenizer(downcast<CSSCustomPropertyValue>(cssValue.get()).customCSSText());
+            return ExceptionOr<Ref<CSSStyleValue>> { CSSUnparsedValue::create(tokenizer.tokenRange()) };
         });
     } else if (is<CSSValueList>(cssValue)) {
         // Reifying the first value in value list.
@@ -266,7 +271,7 @@ ExceptionOr<Ref<CSSStyleValue>> CSSStyleValueFactory::reifyValue(Ref<CSSValue>&&
         if (!valueList->length())
             return Exception { TypeError, "The CSSValueList should not be empty."_s };
         
-        return reifyValue(WTFMove(*valueList->begin()), document);
+        return reifyValue(*valueList->begin(), document);
     }
     
     return CSSStyleValue::create(WTFMove(cssValue));

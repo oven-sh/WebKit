@@ -36,6 +36,7 @@
 #include "URLSchemeTaskParameters.h"
 #include "WebBackForwardCacheEntry.h"
 #include "WebBackForwardList.h"
+#include "WebBackForwardListCounts.h"
 #include "WebBackForwardListItem.h"
 #include "WebErrors.h"
 #include "WebNavigationDataStore.h"
@@ -238,8 +239,10 @@ void ProvisionalPageProxy::didCreateMainFrame(FrameIdentifier frameID)
 
     // Restore the main frame's committed URL as some clients may rely on it until the next load is committed.
     RefPtr previousMainFrame = m_page.mainFrame();
-    if (previousMainFrame)
+    if (previousMainFrame) {
         m_mainFrame->frameLoadState().setURL(previousMainFrame->url());
+        previousMainFrame->transferNavigationCallbackToFrame(*m_mainFrame);
+    }
 
     // Normally, notification of a server redirect comes from the WebContent process.
     // If we are process swapping in response to a server redirect then that notification will not come from the new WebContent process.

@@ -120,19 +120,19 @@ void LinkLoader::loadLinksFromHeader(const String& headerValue, const URL& baseU
 
 std::optional<CachedResource::Type> LinkLoader::resourceTypeFromAsAttribute(const String& as, Document& document)
 {
-    if (equalLettersIgnoringASCIICase(as, "fetch"))
+    if (equalLettersIgnoringASCIICase(as, "fetch"_s))
         return CachedResource::Type::RawResource;
-    if (equalLettersIgnoringASCIICase(as, "image"))
+    if (equalLettersIgnoringASCIICase(as, "image"_s))
         return CachedResource::Type::ImageResource;
-    if (equalLettersIgnoringASCIICase(as, "script"))
+    if (equalLettersIgnoringASCIICase(as, "script"_s))
         return CachedResource::Type::Script;
-    if (equalLettersIgnoringASCIICase(as, "style"))
+    if (equalLettersIgnoringASCIICase(as, "style"_s))
         return CachedResource::Type::CSSStyleSheet;
-    if (document.settings().mediaPreloadingEnabled() && (equalLettersIgnoringASCIICase(as, "video") || equalLettersIgnoringASCIICase(as, "audio")))
+    if (document.settings().mediaPreloadingEnabled() && (equalLettersIgnoringASCIICase(as, "video"_s) || equalLettersIgnoringASCIICase(as, "audio"_s)))
         return CachedResource::Type::MediaResource;
-    if (equalLettersIgnoringASCIICase(as, "font"))
+    if (equalLettersIgnoringASCIICase(as, "font"_s))
         return CachedResource::Type::FontResource;
-    if (equalLettersIgnoringASCIICase(as, "track"))
+    if (equalLettersIgnoringASCIICase(as, "track"_s))
         return CachedResource::Type::TextTrackResource;
     return std::nullopt;
 }
@@ -214,7 +214,7 @@ void LinkLoader::preconnectIfNeeded(const LinkLoadParameters& params, Document& 
         return;
     ASSERT(document.settings().linkPreconnectEnabled());
     StoredCredentialsPolicy storageCredentialsPolicy = StoredCredentialsPolicy::Use;
-    if (equalIgnoringASCIICase(params.crossOrigin, "anonymous") && document.securityOrigin().isSameOriginDomain(SecurityOrigin::create(href)))
+    if (equalLettersIgnoringASCIICase(params.crossOrigin, "anonymous"_s) && !document.securityOrigin().isSameOriginDomain(SecurityOrigin::create(href)))
         storageCredentialsPolicy = StoredCredentialsPolicy::DoNotUse;
     ASSERT(document.frame()->loader().networkingContext());
     platformStrategies()->loaderStrategy()->preconnectTo(document.frame()->loader(), href, storageCredentialsPolicy, LoaderStrategy::ShouldPreconnectAsFirstParty::No, [weakDocument = WeakPtr { document }, href](ResourceError error) {
@@ -242,7 +242,7 @@ std::unique_ptr<LinkPreloadResourceClient> LinkLoader::preloadIfNeeded(const Lin
     URL url;
     if (document.settings().linkPreloadResponsiveImagesEnabled() && type == CachedResource::Type::ImageResource && !params.imageSrcSet.isEmpty()) {
         auto sourceSize = SizesAttributeParser(params.imageSizes, document).length();
-        auto candidate = bestFitSourceForImageAttributes(document.deviceScaleFactor(), params.href.string(), params.imageSrcSet, sourceSize);
+        auto candidate = bestFitSourceForImageAttributes(document.deviceScaleFactor(), AtomString { params.href.string() }, AtomString { params.imageSrcSet }, sourceSize);
         url = document.completeURL(URL({ }, candidate.string.toString()).string());
     } else
         url = document.completeURL(params.href.string());
@@ -263,7 +263,7 @@ std::unique_ptr<LinkPreloadResourceClient> LinkLoader::preloadIfNeeded(const Lin
     options.referrerPolicy = params.referrerPolicy;
     auto linkRequest = createPotentialAccessControlRequest(url, WTFMove(options), document, params.crossOrigin);
     linkRequest.setPriority(DefaultResourceLoadPriority::forResourceType(type.value()));
-    linkRequest.setInitiator("link");
+    linkRequest.setInitiator("link"_s);
     linkRequest.setIgnoreForRequestCount(true);
     linkRequest.setIsLinkPreload();
 

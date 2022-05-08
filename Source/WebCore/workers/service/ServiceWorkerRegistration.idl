@@ -29,7 +29,7 @@
 [
     ActiveDOMObject,
     SecureContext,
-    Exposed=(Window,ServiceWorker),
+    Exposed=(Window,Worker),
     Conditional=SERVICE_WORKER,
     EnabledBySetting=ServiceWorkersEnabled,
     GenerateIsReachable=Impl,
@@ -46,7 +46,7 @@
     [NewObject] Promise<boolean> unregister();
 
     [Conditional=NOTIFICATION_EVENT, EnabledAtRuntime=NotificationEventEnabled, CallWith=CurrentScriptExecutionContext] Promise<undefined> showNotification(DOMString title, optional NotificationOptions options);
-    [Conditional=NOTIFICATION_EVENT, EnabledAtRuntime=NotificationEventEnabled, CallWith=CurrentScriptExecutionContext] Promise<sequence<Notification>> getNotifications(optional GetNotificationOptions filter);
+    [Conditional=NOTIFICATION_EVENT, EnabledAtRuntime=NotificationEventEnabled] Promise<sequence<Notification>> getNotifications(optional GetNotificationOptions filter);
 
     // event
     attribute EventHandler onupdatefound;

@@ -1,3 +1,467 @@
+2022-05-06  Jer Noble  <jer.noble@apple.com>
+
+        [Cocoa] Seeking into a xHE-AAC track backed by a SourceBuffer can stall playback
+        https://bugs.webkit.org/show_bug.cgi?id=239750
+        <rdar://91922569>
+
+        Reviewed by Eric Carlson.
+
+        Fix a spelling error in the CoreMediaSoftLink macros.
+
+        * pal/cf/CoreMediaSoftLink.cpp:
+        * pal/cf/CoreMediaSoftLink.h:
+
+2022-05-05  Cameron McCormack  <heycam@apple.com>
+
+        Avoid using WebCore::Colors created with out-of-line components in DrawGlyphsRecorder
+        https://bugs.webkit.org/show_bug.cgi?id=235604
+        rdar://88345680
+
+        Reviewed by Simon Fraser.
+
+        * pal/spi/cg/CoreGraphicsSPI.h: Add CGContextGetStrokeColorAsColor.
+
+2022-04-22  Alex Christensen  <achristensen@webkit.org>
+
+        Adjust SPI headers to fix build with non-internal SDK
+        https://bugs.webkit.org/show_bug.cgi?id=239626
+
+        Reviewed by Chris Dumez.
+
+        * pal/spi/cocoa/PassKitSPI.h:
+        * pal/spi/mac/ScreenCaptureKitSPI.h:
+
+2022-04-20  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] WebKit and WebKitLegacy shouldn't need to know about WebGPU.framework
+        https://bugs.webkit.org/show_bug.cgi?id=239528
+        <rdar://problem/91740931>
+
+        Unreviewed build fix.
+
+        WebKit and WebKitLegacy create a WebGPU implementation from pal/graphics/WebGPU/Impl. This implementation
+        knows about WebGPU.framework. However, the create() function doesn't need to know about WebGPU.framework,
+        and its header doesn't need to include <WebGPU/WebGPU.h>. Only the .cpp files need to know about
+        <WebGPU/WebGPU.h>, and those .cpp files are invisible from WebKit and WebKitLegacy's points of view. So,
+        this patch splits the PAL header into:
+        1. A header which includes a creation function, but doesn't know about WebGPU.framework, and
+        2. A header which knows about WebGPU.framework, but doesn't hold the creation function used by WebKit or
+               WebKitLegacy.
+
+        This fixes one of Apple's internal builds.
+
+        * PAL.xcodeproj/project.pbxproj:
+        * pal/graphics/WebGPU/Impl/WebGPUCreateImpl.cpp: Copied from Source/WebCore/PAL/pal/graphics/WebGPU/Impl/WebGPUImpl.cpp.
+        (PAL::WebGPU::create):
+        * pal/graphics/WebGPU/Impl/WebGPUCreateImpl.h: Copied from Source/WebCore/PAL/pal/graphics/WebGPU/Impl/WebGPUImpl.h.
+        * pal/graphics/WebGPU/Impl/WebGPUImpl.cpp:
+        (PAL::WebGPU::GPUImpl::create): Deleted.
+        * pal/graphics/WebGPU/Impl/WebGPUImpl.h:
+
+2022-04-20  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Fix texture conversion format typo
+        https://bugs.webkit.org/show_bug.cgi?id=239446
+
+        Reviewed by Kimmo Kinnunen.
+
+        I mixed up "plus" and "unorm".
+
+        * pal/graphics/WebGPU/Impl/WebGPUConvertToBackingContext.cpp:
+        (PAL::WebGPU::ConvertToBackingContext::convertToBacking):
+
+2022-04-19  Antoine Quint  <graouts@apple.com>
+
+        [model] set canonicalWebPageURL and urlFragment on ASVInlinePreview on iOS
+        https://bugs.webkit.org/show_bug.cgi?id=239502
+        rdar://87352281
+
+        Reviewed by Dean Jackson.
+
+        Add the `canonicalWebPageURL` and `urlFragment` properties to the SPI declarations.
+
+        * pal/spi/ios/SystemPreviewSPI.h:
+
+2022-04-15  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Implement hardware limits
+        https://bugs.webkit.org/show_bug.cgi?id=239377
+
+        Reviewed by Darin Adler.
+
+        This patch adds support for "limits" as described in https://gpuweb.github.io/gpuweb/#limits.
+        Various operations query the limits of the device to know whether the requested operation is
+        within range. E.g. if content tries to make a texture too big, this is how we catch it ahead of
+        time.
+
+        * pal/graphics/WebGPU/Impl/WebGPUAdapterImpl.cpp:
+        (PAL::WebGPU::AdapterImpl::requestDevice):
+
+2022-04-14  Wenson Hsieh  <wenson_hsieh@apple.com>
+
+        [iOS] [WK2] Managed pasteboard should function for all managed domains
+        https://bugs.webkit.org/show_bug.cgi?id=239319
+        rdar://80059355
+
+        Reviewed by Kate Cheney.
+
+        Add an SPI method on `MCProfileConnection`.
+
+        * pal/spi/ios/ManagedConfigurationSPI.h:
+
+2022-04-13  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        Revert r291846 because it caused a 3% performance regression
+        https://bugs.webkit.org/show_bug.cgi?id=239323
+        <rdar://problem/91046238>
+
+        Rubber-stamped by Stephanie Lewis.
+
+        * pal/spi/cf/CoreTextSPI.h:
+        * pal/spi/cocoa/AccessibilitySupportSPI.h:
+
+2022-04-12  Elliott Williams  <emw@apple.com>
+
+        [Xcode] In open-source builds, disable bitcode in xcconfigs instead of build-webkit
+        https://bugs.webkit.org/show_bug.cgi?id=239262
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/Base.xcconfig:
+
+2022-04-12  Elliott Williams  <emw@apple.com>
+
+        Reland "[XCBuild] Enable dependency validation by default"
+        https://bugs.webkit.org/show_bug.cgi?id=238901
+        <rdar://problem/91379968>
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/DebugRelease.xcconfig: In open-source builds, disable
+        VALIDATE_DEPENDENCIES when there is no PRODUCT_TYPE (i.e. not building
+        a native target).
+
+2022-04-11  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Unspecified texture size values should be set to 1, not 0
+        https://bugs.webkit.org/show_bug.cgi?id=239052
+
+        Reviewed by Kimmo Kinnunen.
+
+        If content says "Please create a texture of size [32, 32]" then we need to pad that
+        to [32, 32, 1] rather than [32, 32, 0].
+
+        Test: http/tests/webgpu/webgpu/api/validation/createTexture.html
+
+        * pal/graphics/WebGPU/Impl/WebGPUConvertToBackingContext.cpp:
+        (PAL::WebGPU::ConvertToBackingContext::convertToBacking):
+
+2022-04-11  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Implement correct ownership for WGPUQueues
+        https://bugs.webkit.org/show_bug.cgi?id=239050
+
+        Reviewed by Kimmo Kinnunen.
+
+        WGPUQueues and WGPUDevices have a somewhat interesting relationship: neither is
+        reference-counted, and the WGPUDevice owns its WGPUQueue. This means that, if client
+        code wants to extend the lifetime of a WGPUQueue, it has to do this by extending the
+        lifetime of its owning WGPUDevice. Both objects are Javascript objects, so there has to
+        be some mechanism for a queue to extend the lifetime of its owning device. And yet, a
+        device owns a queue, so a queue can't have a queue have a Ref<> to its owning device,
+        because that would be a circular depndency.
+
+        Here's the old ownership graph:
+
+              J    A    V    A    S    C    R    I    P    T
+             ------------------------------------------------
+                  |                                     |
+                  |                                     |
+                  V                                     |
+        PAL::WebGPU::DeviceImpl                         |
+                  |            \                        |
+                  |             -----                   |
+                  |                   \                 V
+                  |                    -----> PAL::WebGPU::QueueImpl
+                  |                                     |
+                  |                                     |
+                  V                                     |
+              WGPUDevice                                |
+                        \                               |
+                         -------------                  |
+                                      \                 V
+                                       ------------> WGPUQueue
+
+        You can see that there's a problem here: WGPUQueue has 2 owners, but it's not a
+        reference-counted object.
+
+        The solution is to add a new node into the ownership graph, like this:
+
+              J    A    V    A    S    C    R    I    P    T
+             ------------------------------------------------
+                  |                                     |
+                  |                                     |
+                  V                                     |
+        PAL::WebGPU::DeviceImpl                         |
+                   \           \                        |
+                    \           -----                   |
+                     \                \                 V
+                      \                 -----> PAL::WebGPU::QueueImpl
+                       \                              / 
+                        \                            /
+                         \                          /
+                          V                        V 
+                          PAL::WebGPU::DeviceHolder
+                          /
+                         /
+                        /
+                       /
+                      V
+              WGPUDevice
+                        \
+                         -------------
+                                      \
+                                       ------------> WGPUQueue
+
+        This way, both WGPUDevice and WGPUQueue have a single owner, there are no cycles,
+        and there is a path from PAL::WebGPU::QueueImpl to WGPUDevice.
+
+        * PAL.xcodeproj/project.pbxproj:
+        * pal/graphics/WebGPU/Impl/WebGPUDeviceHolderImpl.cpp: Added.
+        (PAL::WebGPU::DeviceHolderImpl::DeviceHolderImpl):
+        (PAL::WebGPU::DeviceHolderImpl::~DeviceHolderImpl):
+        * pal/graphics/WebGPU/Impl/WebGPUDeviceHolderImpl.h: Copied from Source/WebCore/PAL/pal/graphics/WebGPU/Impl/WebGPUQueueImpl.h.
+        * pal/graphics/WebGPU/Impl/WebGPUDeviceImpl.cpp:
+        (PAL::WebGPU::DeviceImpl::DeviceImpl):
+        (PAL::WebGPU::DeviceImpl::destroy):
+        (PAL::WebGPU::DeviceImpl::createBuffer):
+        (PAL::WebGPU::DeviceImpl::createTexture):
+        (PAL::WebGPU::DeviceImpl::createSampler):
+        (PAL::WebGPU::DeviceImpl::createBindGroupLayout):
+        (PAL::WebGPU::DeviceImpl::createPipelineLayout):
+        (PAL::WebGPU::DeviceImpl::createBindGroup):
+        (PAL::WebGPU::DeviceImpl::createShaderModule):
+        (PAL::WebGPU::DeviceImpl::createComputePipeline):
+        (PAL::WebGPU::DeviceImpl::createRenderPipeline):
+        (PAL::WebGPU::DeviceImpl::createComputePipelineAsync):
+        (PAL::WebGPU::DeviceImpl::createRenderPipelineAsync):
+        (PAL::WebGPU::DeviceImpl::createCommandEncoder):
+        (PAL::WebGPU::DeviceImpl::createRenderBundleEncoder):
+        (PAL::WebGPU::DeviceImpl::createQuerySet):
+        (PAL::WebGPU::DeviceImpl::pushErrorScope):
+        (PAL::WebGPU::DeviceImpl::popErrorScope):
+        (PAL::WebGPU::DeviceImpl::setLabelInternal):
+        (PAL::WebGPU::DeviceImpl::~DeviceImpl): Deleted.
+        * pal/graphics/WebGPU/Impl/WebGPUDeviceImpl.h:
+        * pal/graphics/WebGPU/Impl/WebGPUQueueImpl.cpp:
+        (PAL::WebGPU::QueueImpl::QueueImpl):
+        (PAL::WebGPU::QueueImpl::submit):
+        (PAL::WebGPU::QueueImpl::onSubmittedWorkDone):
+        (PAL::WebGPU::QueueImpl::writeBuffer):
+        (PAL::WebGPU::QueueImpl::writeTexture):
+        (PAL::WebGPU::QueueImpl::setLabelInternal):
+        (PAL::WebGPU::QueueImpl::~QueueImpl): Deleted.
+        * pal/graphics/WebGPU/Impl/WebGPUQueueImpl.h:
+
+2022-04-11  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        [WebGPU] Hook up device.queue to the IDL
+        https://bugs.webkit.org/show_bug.cgi?id=239043
+
+        Reviewed by Kimmo Kinnunen.
+
+        * pal/graphics/WebGPU/Impl/WebGPUDeviceImpl.cpp:
+        (PAL::WebGPU::DeviceImpl::DeviceImpl):
+        (PAL::WebGPU::DeviceImpl::queue):
+        * pal/graphics/WebGPU/Impl/WebGPUDeviceImpl.h:
+        * pal/graphics/WebGPU/WebGPUDevice.h:
+
+2022-04-11  Myles C. Maxfield  <mmaxfield@apple.com>
+
+        Sort PAL.xcodeproj.
+        https://bugs.webkit.org/show_bug.cgi?id=239050
+
+        Reviewed by Kimmo Kinnunen.
+
+        * PAL.xcodeproj/project.pbxproj:
+
+2022-04-10  Chris Dumez  <cdumez@apple.com>
+
+        Unreviewed Windows build fix after r292696.
+
+        * pal/win/LoggingWin.cpp:
+        (PAL::logLevelString):
+
+2022-04-08  Elliott Williams  <emw@apple.com>
+
+        [Xcode] Avoid targeting 32-bit iOS and Mac architectures
+        https://bugs.webkit.org/show_bug.cgi?id=238971
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/DebugRelease.xcconfig:
+
+2022-04-08  Elliott Williams  <emw@apple.com>
+
+        Unreviewed, reverting r292591.
+
+        Causing spurious EWS errors
+
+        Reverted changeset:
+
+        "[XCBuild] Enable dependency validation by default"
+        https://bugs.webkit.org/show_bug.cgi?id=238901
+        https://commits.webkit.org/r292591
+
+2022-04-07  Elliott Williams  <emw@apple.com>
+
+        [XCBuild] Enable dependency validation by default
+        https://bugs.webkit.org/show_bug.cgi?id=238901
+        <rdar://problem/91379968>
+
+        Reviewed by Alexey Proskuryakov.
+
+        * Configurations/DebugRelease.xcconfig:
+
+2022-04-07  Chris Dumez  <cdumez@apple.com>
+
+        Add PAL::TextEncoding() constructor that takes in a StringView
+        https://bugs.webkit.org/show_bug.cgi?id=238905
+
+        Reviewed by Darin Adler.
+
+        This allows some call sites to be a bit more efficient.
+
+        * pal/text/TextEncoding.cpp:
+        (PAL::TextEncoding::TextEncoding):
+        * pal/text/TextEncoding.h:
+        (PAL::TextEncoding::TextEncoding):
+        * pal/text/TextEncodingRegistry.cpp:
+        (PAL::atomCanonicalTextEncodingName):
+        * pal/text/TextEncodingRegistry.h:
+
+2022-04-06  Chris Dumez  <cdumez@apple.com>
+
+        Start replacing String(const char*) constructor with a String::fromLatin1(const char*) function
+        https://bugs.webkit.org/show_bug.cgi?id=238701
+
+        Reviewed by Geoffrey Garen.
+
+        * pal/graphics/WebGPU/Impl/WebGPUAdapterImpl.cpp:
+        (PAL::WebGPU::adapterName):
+        * pal/graphics/WebGPU/Impl/WebGPUDeviceImpl.cpp:
+        (PAL::WebGPU::DeviceImpl::popErrorScope):
+
+2022-04-05  Jonathan Bedard  <jbedard@apple.com>
+
+        Support PKShippingMethods on iOS
+        https://bugs.webkit.org/show_bug.cgi?id=238845
+        <rdar://problem/91320467>
+
+        Reviewed by Devin Rousso.
+
+        * pal/spi/cocoa/PassKitSPI.h: Move PKShippingMethods SPI declarations out of MacOS specific #ifdefs.
+
+2022-04-05  Elliott Williams  <emw@apple.com>
+
+        [XCBuild] PAL: Add headers-only dependency on WebGPU
+        https://bugs.webkit.org/show_bug.cgi?id=238646
+
+        Reviewed by Alexey Proskuryakov.
+
+        Lots of includes of WebGPU in pal/graphics/WebGPU/Impl, so the build system needs to know to
+        copy its headers before building PAL.
+
+        Clean up a file reference to a header that was removed in
+        https://commits.webkit.org/247364@main
+
+        * PAL.xcodeproj/project.pbxproj:
+
+2022-04-05  Chris Dumez  <cdumez@apple.com>
+
+        Mark String(const char*) constructor as explicit
+        https://bugs.webkit.org/show_bug.cgi?id=238693
+
+        Reviewed by Geoffrey Garen.
+
+        * pal/graphics/WebGPU/Impl/WebGPUAdapterImpl.cpp:
+        (PAL::WebGPU::adapterName):
+        * pal/graphics/WebGPU/Impl/WebGPUDeviceImpl.cpp:
+        (PAL::WebGPU::DeviceImpl::popErrorScope):
+
+2022-04-04  Wenson Hsieh  <wenson_hsieh@apple.com>
+
+        [macOS] Add helper methods to install and uninstall VKCImageAnalysisOverlayView
+        https://bugs.webkit.org/show_bug.cgi?id=238714
+
+        Reviewed by Tim Horton.
+
+        Add soft-linking support for VKCImageAnalysisOverlayView. See WebKit/ChangeLog for more details.
+
+        * pal/cocoa/VisionKitCoreSoftLink.h:
+        * pal/cocoa/VisionKitCoreSoftLink.mm:
+
+2022-04-03  Tim Horton  <timothy_horton@apple.com>
+
+        _WKDataTask doesn't work in macCatalyst
+        https://bugs.webkit.org/show_bug.cgi?id=238655
+
+        Reviewed by Alexey Proskuryakov.
+
+        * pal/spi/cf/CFNetworkSPI.h:
+
+2022-03-31  Wenson Hsieh  <wenson_hsieh@apple.com>
+
+        [iOS] Add support for temporarily installing VKCImageAnalysisInteraction on WKContentView
+        https://bugs.webkit.org/show_bug.cgi?id=238582
+
+        Reviewed by Tim Horton.
+
+        Soft link against the image analysis interaction class.
+
+        * pal/cocoa/VisionKitCoreSoftLink.h:
+        * pal/cocoa/VisionKitCoreSoftLink.mm:
+
+2022-03-28  Simon Fraser  <simon.fraser@apple.com>
+
+        [iOS GPUProcess] Image decoding should not trigger IOSurface usage in the web process
+        https://bugs.webkit.org/show_bug.cgi?id=238489
+        <rdar://88717577>
+
+        Reviewed by Per Arne Vollan.
+
+        Expose kCGImageSourceUseHardwareAcceleration.
+
+        * pal/spi/cg/ImageIOSPI.h:
+
+2022-03-28  Chris Dumez  <cdumez@apple.com>
+
+        Prepare WebCore for making the String(const char*) constructor explicit
+        https://bugs.webkit.org/show_bug.cgi?id=238408
+
+        Reviewed by Geoff Garen.
+
+        Prepare WebCore for making the String(const char*) constructor explicit.
+        Making this constructor explicit helps findings cases where a String is constructed
+        from a literal without the ""_s suffix.
+
+        * pal/Logging.cpp:
+        (PAL::registerNotifyCallback):
+        * pal/Logging.h:
+        * pal/system/SleepDisabler.cpp:
+        (PAL::SleepDisabler::create):
+        (PAL::SleepDisabler::SleepDisabler):
+        * pal/system/SleepDisabler.h:
+        * pal/system/cocoa/SleepDisablerCocoa.cpp:
+        (PAL::SleepDisabler::create):
+        (PAL::SleepDisablerCocoa::SleepDisablerCocoa):
+        * pal/system/cocoa/SleepDisablerCocoa.h:
+        * pal/system/glib/SleepDisablerGLib.cpp:
+        (PAL::SleepDisabler::create):
+        (PAL::SleepDisablerGLib::SleepDisablerGLib):
+        (PAL::SleepDisablerGLib::acquireInhibitor):
+        * pal/system/glib/SleepDisablerGLib.h:
+
 2022-03-24  Myles C. Maxfield  <mmaxfield@apple.com>
 
         [Cocoa] REGRESSION(r281291): When accessibility bold is enabled, font-family:system-ui is supposed to be bold

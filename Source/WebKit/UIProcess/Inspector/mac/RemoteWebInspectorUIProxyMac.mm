@@ -233,6 +233,14 @@ void RemoteWebInspectorUIProxy::platformAppend(const String& suggestedURL, const
     inspectorPage->send(Messages::RemoteWebInspectorUI::DidAppend([actualURL absoluteString]));
 }
 
+void RemoteWebInspectorUIProxy::platformLoad(const String& path, CompletionHandler<void(const String&)>&& completionHandler)
+{
+    if (auto contents = FileSystem::readEntireFile(path))
+        completionHandler(String::adopt(WTFMove(*contents)));
+    else
+        completionHandler(nullString());
+}
+
 void RemoteWebInspectorUIProxy::platformSetSheetRect(const FloatRect& rect)
 {
     m_sheetRect = rect;
@@ -270,6 +278,11 @@ void RemoteWebInspectorUIProxy::platformStartWindowDrag()
 void RemoteWebInspectorUIProxy::platformOpenURLExternally(const String& url)
 {
     [[NSWorkspace sharedWorkspace] openURL:[NSURL URLWithString:url]];
+}
+
+void RemoteWebInspectorUIProxy::platformRevealFileExternally(const String& path)
+{
+    [[NSWorkspace sharedWorkspace] activateFileViewerSelectingURLs:@[ [NSURL URLWithString:path] ]];
 }
 
 void RemoteWebInspectorUIProxy::platformShowCertificate(const CertificateInfo& certificateInfo)
