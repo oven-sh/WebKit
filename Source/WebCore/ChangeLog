@@ -1,3 +1,250 @@
+2022-05-09  Youenn Fablet  <youenn@apple.com>
+
+        CoreAudioCaptureSource::settingsDidChange should not reconfigure the audio unit if CoreAudioCaptureSource is not started
+        https://bugs.webkit.org/show_bug.cgi?id=240059
+
+        Reviewed by Eric Carlson.
+
+        We should only ask to reconfigure when source settings change if the source is actually started.
+        Otherwise, we can wait for the source to start to actually set the unit values and reconfigure if needed.
+        To make sure to correctly expose settings, we reset them in CoreAudioCaptureSource::settingsDidChange and in
+        CoreAudioCaptureSource::initializeToStartProducingData.
+        We also only use the audio unit sample rate if it is rendering audio, otherwise we can change the sample rate at will.
+
+        Manually tested.
+
+        * platform/mediastream/mac/CoreAudioCaptureSource.cpp:
+
+2022-05-09  Miguel Gomez  <magomez@igalia.com>
+
+        [Nicosia] Canvas animations don't work with threaded rendering
+        https://bugs.webkit.org/show_bug.cgi?id=227760
+        <rdar://problem/80588913>
+
+        Reviewed by Adrian Perez de Castro.
+
+        Implement Nicosia::CairoOperationRecorder::draImageBuffer(), which is required in order to paint
+        canvas contents into a GraphicsContext.
+
+        * platform/graphics/nicosia/cairo/NicosiaCairoOperationRecorder.cpp:
+        (Nicosia::CairoOperationRecorder::drawImageBuffer):
+
+2022-05-09  Manuel Rego Casasnovas  <rego@igalia.com>
+
+        [WinCairo][WK1] accessibility/aria-combobox-control-owns-elements.html is crashing after 250325@main
+        https://bugs.webkit.org/show_bug.cgi?id=240218
+        <rdar://problem/92929718>
+
+        Reviewed by Joanmarie Diggs.
+
+        Fix a wrong ASSERT for AriaReflectionForElementReferencesEnabled.
+        If AriaReflectionForElementReferencesEnabled is disabled, and you set
+        one of the attributes that have reflection under that flag,
+        we'll hit an ASSERT in Element::attributeChanged().
+
+        The fact that we set such attribute doesn't mean that the flag
+        has to be enabled.
+
+        Removed the ASSERT and added an if to check if the flag is enabled,
+        otherwise we don't need to do anything with the map.
+
+        * dom/Element.cpp:
+        (WebCore::Element::attributeChanged):
+
+2022-05-09  Diego Pino Garcia  <dpino@igalia.com>
+
+        Unreviewed, non-unified build fixes after r293562
+
+        * workers/shared/context/SharedWorkerThread.cpp:
+        * workers/shared/context/SharedWorkerThreadProxy.cpp:
+
+2022-05-08  Said Abou-Hallawa  <said@apple.com>
+
+        [macOS] REGRESSION (r293825): Find highlight snapshots are incorrectly scaled
+        https://bugs.webkit.org/show_bug.cgi?id=240203
+        rdar://92892014
+
+        Reviewed by Tim Horton.
+
+        takeSnapshots() depends on the snapshot ImageBuffer::resolutionScale() to
+        set the size of the TextIndicatorData image. r293825 scaled the size of 
+        the ImageBuffer before creation and moved the scaling to the GraphicsContext.
+        So we have correct scaled pixels but the resolutionScale is 1. So we get
+        enlarged incorrect image.
+
+        The fix is to revert r293825 and fix the iOS snapshot without having to
+        change snapshotFrameRectWithClip().
+
+        * page/FrameSnapshotting.cpp:
+        (WebCore::snapshotFrameRectWithClip):
+
+2022-05-07  Yusuke Suzuki  <ysuzuki@apple.com>
+
+        Introduce EventTrackingRegions::Event enum
+        https://bugs.webkit.org/show_bug.cgi?id=240206
+
+        Reviewed by Mark Lam.
+
+        We noticed that EventNames 260~ AtomStrings are allocated in scrolling thread only because we are using
+        eventNames() for EventTrackingRegions. But since use of it is limited, we can just use enum instead.
+
+            1. We can make EventTrackingRegions more efficient by using enum instead of String.
+            2. We can save memory by avoiding EventNames string allocations & AtomStringTable registration.
+            3. We can make this parameter more strictly typed compared to accepting any kind of Strings
+
+        * page/DebugPageOverlays.cpp:
+        (WebCore::NonFastScrollableRegionOverlay::drawRect):
+        * page/Page.cpp:
+        (WebCore::Page::touchEventRectsForEventForTesting):
+        * page/Page.h:
+        * page/scrolling/ScrollingCoordinator.cpp:
+        (WebCore::ScrollingCoordinator::absoluteEventTrackingRegionsForFrame const):
+        * page/scrolling/ScrollingStateFrameScrollingNode.cpp:
+        (WebCore::ScrollingStateFrameScrollingNode::dumpProperties const):
+        * page/scrolling/ScrollingTree.cpp:
+        (WebCore::ScrollingTree::computeWheelProcessingSteps):
+        (WebCore::ScrollingTree::eventTrackingTypeForPoint):
+        * page/scrolling/ScrollingTree.h:
+        * platform/EventTrackingRegions.cpp:
+        (WebCore::EventTrackingRegions::eventName):
+        (WebCore::EventTrackingRegions::trackingTypeForPoint):
+        (WebCore::EventTrackingRegions::uniteSynchronousRegion):
+        * platform/EventTrackingRegions.h:
+        * testing/Internals.cpp:
+        (WebCore::Internals::touchEventRectsForEvent):
+        * testing/Internals.h:
+
+2022-05-08  Antti Koivisto  <antti@apple.com>
+
+        Avoid resolving style for elements that only inherit changes from parent
+        https://bugs.webkit.org/show_bug.cgi?id=240132
+        <rdar://problem/92867346>
+
+        Reviewed by Sam Weinig.
+
+        When an inherited property changes we need to update all descendant styles too. Currently this
+        is done by simply running the full style resolution for them including selector matching and
+        style building steps.
+
+        In the common case nothing changes in descendants expect the inherited properties. This patch implements
+        a fast-path mechanism that allows us to simply copy the relevant properties from the parent, skipping
+        all the other work. This is possible if we can prove that the value of these properties is not changed
+        by any rules targeting the child and that there are no other properties affected by this value change.
+
+        The mechanism is only implemented for the 'color' property for now. It can be expanded for other properties later.
+        It would be especially useful for custom properties.
+
+        * css/CSSProperties.json:
+        * css/makeprop.pl:
+
+        Add "fast-path-inherited" codegen property that disables the fast-path if the property is explicitly mutated.
+
+        (generateInitialValueSetter):
+        (generateValueSetter):
+        * rendering/style/RenderStyle.cpp:
+        (WebCore::RenderStyle::RenderStyle):
+        (WebCore::RenderStyle::fastPathInheritFrom):
+
+        Inherit fast path properties.
+
+        (WebCore::RenderStyle::fastPathInheritedEqual const):
+        (WebCore::RenderStyle::nonFastPathInheritedEqual const):
+
+        Test for fast-path property changes.
+
+        * rendering/style/RenderStyle.h:
+        (WebCore::RenderStyle::disallowsFastPathInheritance const):
+        (WebCore::RenderStyle::setDisallowsFastPathInheritance):
+
+        Track if can use the mechanism.
+
+        (WebCore::RenderStyle::NonInheritedFlags::operator== const):
+        * rendering/style/StyleInheritedData.cpp:
+        (WebCore::StyleInheritedData::operator== const):
+        (WebCore::StyleInheritedData::fastPathInheritedEqual const):
+        (WebCore::StyleInheritedData::nonFastPathInheritedEqual const):
+        (WebCore::StyleInheritedData::fastPathInheritFrom):
+        * rendering/style/StyleInheritedData.h:
+        * style/StyleBuilderCustom.h:
+        (WebCore::Style::BuilderCustom::applyValueFill):
+        (WebCore::Style::BuilderCustom::applyValueStroke):
+        * style/StyleBuilderState.cpp:
+        (WebCore::Style::BuilderState::colorFromPrimitiveValueWithResolvedCurrentColor const):
+
+        Color value 'currentcolor' is mostly resolved during use time but in the few places we still resolve it during style building
+        we need to disable the fast-path, since it makes other properties depend on 'color' property.
+
+        * style/StyleChange.cpp:
+        (WebCore::Style::determineChange):
+
+        New style change type for fast-path inheritance.
+
+        * style/StyleChange.h:
+        * style/StyleTreeResolver.cpp:
+        (WebCore::Style::TreeResolver::styleForStyleable):
+
+        Resolve by just copying properties from the parent.
+
+        (WebCore::Style::TreeResolver::computeDescendantsToResolve):
+        (WebCore::Style::TreeResolver::resolveElement):
+        (WebCore::Style::TreeResolver::determineResolutionType):
+
+        Use fast-path if the only reason we are resolving this element is that some supported inherited property changed.
+
+        (WebCore::Style::TreeResolver::resolveComposedTree):
+        (WebCore::Style::TreeResolver::shouldResolveElement): Deleted.
+        * style/StyleTreeResolver.h:
+
+2022-05-07  Ryosuke Niwa  <rniwa@webkit.org>
+
+        Add helper functions to queue task on Node with GCReachableRef
+        https://bugs.webkit.org/show_bug.cgi?id=240204
+
+        Reviewed by Chris Dumez.
+
+        Added Node::queueTaskKeepingThisNodeAlive, which queues a task to the event loop while keeping "this" Node
+        and its JS wrapper alive, and Node::queueTaskToDispatchEvent, which queues a task to the event loop to
+        dispatch an event on "this" Node while keeping it and its JS wrapper alive, and deployed them in elements.
+
+        * Modules/model-element/HTMLModelElement.cpp:
+        (WebCore::HTMLModelElement::setSourceURL): Need to disambiguate which queueTaskToDispatchEvent to use
+        between Node and ActiveDOMObject.
+        (WebCore::HTMLModelElement::notifyFinished): Ditto.
+        * dom/Node.cpp:
+        (WebCore::Node::queueTaskKeepingThisNodeAlive): Added.
+        (WebCore::Node::queueTaskToDispatchEvent): Added.
+        * dom/Node.h:
+        * html/HTMLDetailsElement.cpp:
+        (WebCore::HTMLDetailsElement::parseAttribute): Use newly added functions.
+        * html/HTMLDialogElement.cpp:
+        (WebCore::HTMLDialogElement::close): Ditto.
+        (WebCore::HTMLDialogElement::queueCancelTask): Ditto.
+        * html/HTMLTextFormControlElement.cpp:
+        (WebCore::HTMLTextFormControlElement::scheduleSelectEvent): Ditto.
+
+2022-05-07  Cameron McCormack  <heycam@apple.com>
+
+        Use an OptionSet iterator to skip directly to GraphicsContextState::Change bits to handle
+        https://bugs.webkit.org/show_bug.cgi?id=239954
+        <rdar://problem/92593424>
+
+        Reviewed by Simon Fraser.
+
+        It would be rare for display list SetState items to have many Change
+        bits set on them. Instead of checking for all 15 bits in mergeChanges,
+        we can use OptionSet's iterator to skip directly to each changed bit.
+
+        Using ctz to turn the Change bit into a bit position helps the
+        compiler generate compact code to jump to each case in the switch
+        statement.
+
+        On an iPad I tested with, this is a ~2% win on the MotionMark Design
+        subtest, 5.5% on Leaves, and 1.4% overall.
+
+        * platform/graphics/GraphicsContextState.cpp:
+        (WebCore::toIndex):
+        (WebCore::GraphicsContextState::mergeChanges):
+
 2022-05-07  Cameron McCormack  <heycam@apple.com>
 
         Don't propagate GraphicsContextState change bits into TextPainter's glyph display list recorder
