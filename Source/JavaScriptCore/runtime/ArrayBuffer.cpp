@@ -223,8 +223,7 @@ Ref<ArrayBuffer> ArrayBuffer::createFromBytes(const void* data, size_t byteLengt
     if (data && !Gigacage::isCaged(Gigacage::Primitive, data))
         Gigacage::disablePrimitiveGigacage();
     
-    ArrayBufferContents contents(const_cast<void*>(data), byteLength, WTFMove(destructor));
-    return create(WTFMove(contents));
+    return adoptRef(*new ArrayBuffer(const_cast<void*>(data), byteLength, WTFMove(destructor)));
 }
 
 RefPtr<ArrayBuffer> ArrayBuffer::tryCreate(size_t numElements, unsigned elementByteSize)
@@ -285,6 +284,14 @@ RefPtr<ArrayBuffer> ArrayBuffer::tryCreate(size_t numElements, unsigned elementB
 
 ArrayBuffer::ArrayBuffer(ArrayBufferContents&& contents)
     : m_contents(WTFMove(contents))
+    , m_pinCount(0)
+    , m_isWasmMemory(false)
+    , m_locked(false)
+{
+}
+
+ArrayBuffer::ArrayBuffer(void* ptr, size_t length, ArrayBufferDestructorFunction&& destructor)
+    : m_contents(ptr, length, WTFMove(destructor))
     , m_pinCount(0)
     , m_isWasmMemory(false)
     , m_locked(false)

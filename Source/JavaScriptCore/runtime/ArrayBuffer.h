@@ -178,6 +178,7 @@ private:
     static Ref<ArrayBuffer> createInternal(ArrayBufferContents&&, const void*, size_t);
     static RefPtr<ArrayBuffer> tryCreate(size_t numElements, unsigned elementByteSize, ArrayBufferContents::InitializationPolicy);
     ArrayBuffer(ArrayBufferContents&&);
+    ArrayBuffer(void*, size_t, ArrayBufferDestructorFunction&&);
     inline size_t clampIndex(double index) const;
     static inline size_t clampValue(double x, size_t left, size_t right);
 
