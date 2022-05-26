@@ -53,8 +53,8 @@ void JSWeakObjectMapSet(JSContextRef ctx, JSWeakObjectMapRef map, void* key, JSO
         ASSERT_NOT_REACHED();
         return;
     }
-    JSGlobalObject* globalObject = toJS(ctx);
-    VM& vm = globalObject->vm();
+//    JSGlobalObject* globalObject = toJS(ctx);
+//    VM& vm = globalObject->vm();
     
     JSObject* obj = toJS(object);
     if (!obj)
