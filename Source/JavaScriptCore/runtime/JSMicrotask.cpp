@@ -35,6 +35,24 @@
 
 namespace JSC {
 
+static inline void runMicrotaskWithCount(JSGlobalObject* globalObject, JSValue job, MarkedArgumentBuffer&& handlerArguments)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    auto handlerCallData = JSC::getCallData(job);
+    ASSERT(handlerCallData.type != CallData::Type::None);
+
+    if (UNLIKELY(globalObject->hasDebugger()))
+        globalObject->debugger()->willRunMicrotask();
+
+    profiledCall(globalObject, ProfilingReason::Microtask, job, handlerCallData, jsUndefined(), handlerArguments);
+    scope.clearException();
+
+    if (UNLIKELY(globalObject->hasDebugger()))
+        globalObject->debugger()->didRunMicrotask();
+}
+
 class JSMicrotask final : public Microtask {
 public:
     static constexpr unsigned maxArguments = 4;
@@ -54,37 +72,157 @@ private:
     Strong<Unknown> m_arguments[maxArguments];
 };
 
+class JSMicrotaskNoArguments final : public Microtask {
+    static constexpr unsigned maxArguments = 0;
+
+public:
+    JSMicrotaskNoArguments(VM& vm, JSValue job)
+    {
+        m_job.set(vm, job);
+    }
+
+private:
+    void run(JSGlobalObject* globalObject)
+    {
+        VM& vm = globalObject->vm();
+        auto scope = DECLARE_CATCH_SCOPE(vm);
+
+        JSC::JSValue job = m_job.get();
+        auto handlerCallData = JSC::getCallData(job);
+        ASSERT(handlerCallData.type != CallData::Type::None);
+
+        MarkedArgumentBuffer handlerArguments;
+
+        if (UNLIKELY(globalObject->hasDebugger()))
+            globalObject->debugger()->willRunMicrotask();
+
+        profiledCall(globalObject, ProfilingReason::Microtask, job, handlerCallData, jsUndefined(), handlerArguments);
+        scope.clearException();
+
+        if (UNLIKELY(globalObject->hasDebugger()))
+            globalObject->debugger()->didRunMicrotask();
+    }
+
+    Strong<Unknown> m_job;
+};
+
+class JSMicrotask1Argument final : public Microtask {
+    static constexpr unsigned maxArguments = 2;
+
+public:
+    JSMicrotask1Argument(VM& vm, JSValue job, JSValue argument0)
+    {
+        m_args[0].set(vm, job);
+        m_args[1].set(vm, argument0);
+    }
+
+private:
+    void run(JSGlobalObject* globalObject)
+    {
+        MarkedArgumentBuffer handlerArguments;
+        JSC::JSValue job = m_args[0].get();
+        handlerArguments.append(m_args[1].get());
+        m_args[0].clear();
+        m_args[1].clear();
+        runMicrotaskWithCount(globalObject, job, WTFMove(handlerArguments));
+    }
+
+    Strong<Unknown> m_args[maxArguments];
+};
+
+class JSMicrotask2Argument final : public Microtask {
+    static constexpr unsigned maxArguments = 3;
+
+public:
+    JSMicrotask2Argument(VM& vm, JSValue job, JSValue argument0, JSValue argument1)
+    {
+        m_args[0].set(vm, job);
+        m_args[1].set(vm, argument0);
+        m_args[2].set(vm, argument1);
+    }
+
+private:
+    void run(JSGlobalObject* globalObject)
+    {
+        MarkedArgumentBuffer handlerArguments;
+        JSValue job = m_args[0].get();
+        m_args[0].clear();
+
+        handlerArguments.append(m_args[1].get());
+        m_args[1].clear();
+
+        handlerArguments.append(m_args[2].get());
+        m_args[2].clear();
+
+        runMicrotaskWithCount(globalObject, job, WTFMove(handlerArguments));
+    }
+
+    Strong<Unknown> m_args[maxArguments];
+};
+
+class JSMicrotask3Argument final : public Microtask {
+    static constexpr unsigned maxArguments = 4;
+
+public:
+    JSMicrotask3Argument(VM& vm, JSValue job, JSValue argument0, JSValue argument1, JSValue argument2)
+    {
+        m_args[0].set(vm, job);
+        m_args[1].set(vm, argument0);
+        m_args[2].set(vm, argument1);
+        m_args[3].set(vm, argument2);
+    }
+
+private:
+    void run(JSGlobalObject* globalObject)
+    {
+        MarkedArgumentBuffer handlerArguments;
+        JSValue job = m_args[0].get();
+        m_args[0].clear();
+        handlerArguments.append(m_args[1].get());
+        m_args[1].clear();
+        handlerArguments.append(m_args[2].get());
+        m_args[2].clear();
+        handlerArguments.append(m_args[3].get());
+        m_args[3].clear();
+
+        runMicrotaskWithCount(globalObject, job, WTFMove(handlerArguments));
+    }
+
+    Strong<Unknown> m_args[maxArguments];
+};
+
 Ref<Microtask> createJSMicrotask(VM& vm, JSValue job, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3)
 {
+    if (!argument3 || argument3.isUndefined()) {
+        if (!argument2 || argument2.isUndefined()) {
+            if (!argument1 || argument1.isUndefined()) {
+                if (!argument0 || argument0.isUndefined()) {
+                    return adoptRef(*new JSMicrotaskNoArguments(vm, job));
+                }
+                return adoptRef(*new JSMicrotask1Argument(vm, job, argument0));
+            }
+            return adoptRef(*new JSMicrotask2Argument(vm, job, argument0, argument1));
+        }
+        return adoptRef(*new JSMicrotask3Argument(vm, job, argument0, argument1, argument2));
+    }
+
     return adoptRef(*new JSMicrotask(vm, job, argument0, argument1, argument2, argument3));
 }
 
 void JSMicrotask::run(JSGlobalObject* globalObject)
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_CATCH_SCOPE(vm);
-
-    auto handlerCallData = JSC::getCallData(m_job.get());
-    ASSERT(handlerCallData.type != CallData::Type::None);
-
     MarkedArgumentBuffer handlerArguments;
     for (unsigned index = 0; index < maxArguments; ++index) {
         JSValue arg = m_arguments[index].get();
         if (!arg)
             break;
         handlerArguments.append(arg);
+        m_arguments[index].clear();
     }
-    if (UNLIKELY(handlerArguments.hasOverflowed()))
-        return;
+    JSC::JSValue job = m_job.get();
+    m_job.clear();
 
-    if (UNLIKELY(globalObject->hasDebugger()))
-        globalObject->debugger()->willRunMicrotask();
-
-    profiledCall(globalObject, ProfilingReason::Microtask, m_job.get(), handlerCallData, jsUndefined(), handlerArguments);
-    scope.clearException();
-
-    if (UNLIKELY(globalObject->hasDebugger()))
-        globalObject->debugger()->didRunMicrotask();
+    runMicrotaskWithCount(globalObject, job, WTFMove(handlerArguments));
 }
 
 } // namespace JSC
