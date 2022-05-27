@@ -120,6 +120,8 @@
 #include <wtf/Threading.h>
 #include <wtf/text/AtomStringTable.h>
 
+#include "JSMicrotask.h"
+
 #if ENABLE(C_LOOP)
 #include "CLoopStackInlines.h"
 #endif
@@ -1473,6 +1475,10 @@ void VM::removeLoopHintExecutionCounter(const JSInstruction* instruction)
     --iter->value.first;
     if (!iter->value.first)
         m_loopHintExecutionCounts.remove(iter);
+}
+
+JSMicrotaskPoolAllocator& VM::microtaskPool() {
+    return m_microtaskPoolAllocator;
 }
 
 } // namespace JSC

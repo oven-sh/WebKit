@@ -74,6 +74,8 @@
 #include <wtf/ListHashSet.h>
 #endif
 
+#include "JSMicrotask.h"
+
 // Enable the Objective-C API for platforms with a modern runtime. This has to match exactly what we
 // have in JSBase.h.
 #if !defined(JSC_OBJC_API_ENABLED)
@@ -141,6 +143,9 @@ class TypeProfiler;
 class TypeProfilerLog;
 class Watchdog;
 class WatchpointSet;
+
+
+
 
 #if ENABLE(DFG_JIT) && ASSERT_ENABLED
 #define ENABLE_DFG_DOES_GC_VALIDATION 1
@@ -329,6 +334,8 @@ public:
 
     void throwTerminationException();
 
+    JSMicrotaskPoolAllocator& microtaskPool();
+
 private:
     unsigned nextID();
 
@@ -341,6 +348,7 @@ private:
     WeakRandom m_random;
     WeakRandom m_heapRandom;
     Integrity::Random m_integrityRandom;
+    JSMicrotaskPoolAllocator m_microtaskPoolAllocator { };
 
 public:
     Heap heap;
@@ -934,6 +942,7 @@ public:
     #if ENABLE(SINGLE_THREADED_VM_ENTRY_SCOPE)
         void *entryScopeID { nullptr };
     #endif
+
 private:
     bool m_failNextNewCodeBlock { false };
     bool m_globalConstRedeclarationShouldThrow { true };

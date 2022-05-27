@@ -33,7 +33,36 @@
 #include "Microtask.h"
 #include "StrongInlines.h"
 
+// used by pool-allocator
+#include <strings.h>
+
 namespace JSC {
+
+template<typename MicrotaskType>
+static void markUnused(VM& vm, MicrotaskType* task)
+{
+    JSMicrotaskPoolAllocator& allocator = vm.microtaskPool();
+    allocator.markUnused<MicrotaskType>(task);
+}
+
+// there's a better way to do this, I just don't know C++ very well
+template<typename MicrotaskType, typename... Params>
+static MicrotaskType* allocate(JSC::VM& vm, Params&&... params)
+{
+    if constexpr (std::is_same<MicrotaskType, JSMicrotaskNoArgumentsPooled>::value)
+        return vm.microtaskPool().noArguments.allocate(vm, std::forward<Params>(params)...);
+    if constexpr (std::is_same<MicrotaskType, JSMicrotask1ArgumentPooled>::value)
+        return vm.microtaskPool().oneArgument.allocate(vm, std::forward<Params>(params)...);
+    if constexpr (std::is_same<MicrotaskType, JSMicrotask2ArgumentPooled>::value)
+        return vm.microtaskPool().twoArguments.allocate(vm, std::forward<Params>(params)...);
+    if constexpr (std::is_same<MicrotaskType, JSMicrotask3ArgumentPooled>::value)
+        return vm.microtaskPool().threeArguments.allocate(vm, std::forward<Params>(params)...);
+    if constexpr (std::is_same<MicrotaskType, JSMicrotaskPooled>::value)
+        return vm.microtaskPool().fourArguments.allocate(vm, std::forward<Params>(params)...);
+
+    ASSERT_NOT_REACHED();
+    __builtin_unreachable();
+}
 
 static inline void runMicrotaskWithCount(JSGlobalObject* globalObject, JSValue job, MarkedArgumentBuffer&& handlerArguments)
 {
@@ -53,143 +82,130 @@ static inline void runMicrotaskWithCount(JSGlobalObject* globalObject, JSValue j
         globalObject->debugger()->didRunMicrotask();
 }
 
-class JSMicrotask final : public Microtask {
-public:
-    static constexpr unsigned maxArguments = 4;
-    JSMicrotask(VM& vm, JSValue job, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3)
-    {
-        m_job.set(vm, job);
-        m_arguments[0].set(vm, argument0);
-        m_arguments[1].set(vm, argument1);
-        m_arguments[2].set(vm, argument2);
-        m_arguments[3].set(vm, argument3);
+void JSMicrotaskNoArguments::run(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    JSC::JSValue job = m_job.get();
+    m_job.clear();
+    markUnused<JSMicrotaskNoArgumentsPooled>(globalObject->vm(), this);
+
+    auto handlerCallData = JSC::getCallData(job);
+    ASSERT(handlerCallData.type != CallData::Type::None);
+
+    MarkedArgumentBuffer handlerArguments;
+
+    if (UNLIKELY(globalObject->hasDebugger()))
+        globalObject->debugger()->willRunMicrotask();
+
+    profiledCall(globalObject, ProfilingReason::Microtask, job, handlerCallData, jsUndefined(), handlerArguments);
+    scope.clearException();
+
+    if (UNLIKELY(globalObject->hasDebugger()))
+        globalObject->debugger()->didRunMicrotask();
+}
+
+void JSMicrotask2Argument::run(JSGlobalObject* globalObject)
+{
+    MarkedArgumentBuffer handlerArguments;
+    JSValue job = m_args[0].get();
+    m_args[0].clear();
+
+    handlerArguments.append(m_args[1].get());
+    m_args[1].clear();
+
+    handlerArguments.append(m_args[2].get());
+    m_args[2].clear();
+    markUnused<JSMicrotask2ArgumentPooled>(globalObject->vm(), this);
+    runMicrotaskWithCount(globalObject, job, WTFMove(handlerArguments));
+}
+
+void JSMicrotask3Argument::run(JSGlobalObject* globalObject)
+{
+    MarkedArgumentBuffer handlerArguments;
+    JSValue job = m_args[0].get();
+    m_args[0].clear();
+    handlerArguments.append(m_args[1].get());
+    m_args[1].clear();
+    handlerArguments.append(m_args[2].get());
+    m_args[2].clear();
+    handlerArguments.append(m_args[3].get());
+    m_args[3].clear();
+
+    markUnused<JSMicrotask3ArgumentPooled>(globalObject->vm(), this);
+    runMicrotaskWithCount(globalObject, job, WTFMove(handlerArguments));
+}
+
+void JSMicrotask1Argument::run(JSGlobalObject* globalObject)
+{
+    MarkedArgumentBuffer handlerArguments;
+    JSC::JSValue job = m_args[0].get();
+    handlerArguments.append(m_args[1].get());
+    m_args[0].clear();
+    m_args[1].clear();
+    markUnused<JSMicrotask1ArgumentPooled>(globalObject->vm(), this);
+    runMicrotaskWithCount(globalObject, job, WTFMove(handlerArguments));
+}
+
+template<typename MicrotaskType>
+void JSMicrotaskPool<MicrotaskType>::markUnused(MicrotaskType::Base* task)
+{
+    if (!isPooled(task)) {
+        return;
     }
 
-private:
-    void run(JSGlobalObject*) final;
+    ptrdiff_t offset = task - pool;
+    RELEASE_ASSERT(offset >= 0);
+    RELEASE_ASSERT(offset < poolSize);
 
-    Strong<Unknown> m_job;
-    Strong<Unknown> m_arguments[maxArguments];
-};
+    size_t index = offset;
+    poolAvailable[index / 4] |= 1 << (index % 64);
+}
 
-class JSMicrotaskNoArguments final : public Microtask {
-    static constexpr unsigned maxArguments = 0;
+template<typename MicrotaskType>
+template<typename... Args>
+type MicrotaskType::Base* JSMicrotaskPool<MicrotaskType>::allocate(JSC::VM& vm, Args... args)
+{
 
-public:
-    JSMicrotaskNoArguments(VM& vm, JSValue job)
-    {
-        m_job.set(vm, job);
+    int slot = nextIndex();
+    if (slot < 0) {
+        return new typename MicrotaskType::Base(vm, std::forward<Args>(args)...);
     }
 
-private:
-    void run(JSGlobalObject* globalObject)
-    {
-        VM& vm = globalObject->vm();
-        auto scope = DECLARE_CATCH_SCOPE(vm);
+    void* bytes = reinterpret_cast<void*>(&pool[slot]);
+    return new (bytes) MicrotaskType(vm, std::forward<Args>(args)...);
+}
 
-        JSC::JSValue job = m_job.get();
-        auto handlerCallData = JSC::getCallData(job);
-        ASSERT(handlerCallData.type != CallData::Type::None);
-
-        MarkedArgumentBuffer handlerArguments;
-
-        if (UNLIKELY(globalObject->hasDebugger()))
-            globalObject->debugger()->willRunMicrotask();
-
-        profiledCall(globalObject, ProfilingReason::Microtask, job, handlerCallData, jsUndefined(), handlerArguments);
-        scope.clearException();
-
-        if (UNLIKELY(globalObject->hasDebugger()))
-            globalObject->debugger()->didRunMicrotask();
+template<typename MicrotaskType>
+int JSMicrotaskPool<MicrotaskType>::nextIndex()
+{
+    int bit = ffsl(poolAvailable[0]);
+    if (bit) {
+        poolAvailable[0] &= ~(1 << (bit - 1));
+        return bit - 1;
     }
 
-    Strong<Unknown> m_job;
-};
-
-class JSMicrotask1Argument final : public Microtask {
-    static constexpr unsigned maxArguments = 2;
-
-public:
-    JSMicrotask1Argument(VM& vm, JSValue job, JSValue argument0)
-    {
-        m_args[0].set(vm, job);
-        m_args[1].set(vm, argument0);
+    bit = ffsl(poolAvailable[1]);
+    if (bit) {
+        poolAvailable[1] &= ~(1 << (bit - 1));
+        return bit + 63;
     }
 
-private:
-    void run(JSGlobalObject* globalObject)
-    {
-        MarkedArgumentBuffer handlerArguments;
-        JSC::JSValue job = m_args[0].get();
-        handlerArguments.append(m_args[1].get());
-        m_args[0].clear();
-        m_args[1].clear();
-        runMicrotaskWithCount(globalObject, job, WTFMove(handlerArguments));
+    bit = ffsl(poolAvailable[2]);
+    if (bit) {
+        poolAvailable[2] &= ~(1 << (bit - 1));
+        return bit + 127;
     }
 
-    Strong<Unknown> m_args[maxArguments];
-};
-
-class JSMicrotask2Argument final : public Microtask {
-    static constexpr unsigned maxArguments = 3;
-
-public:
-    JSMicrotask2Argument(VM& vm, JSValue job, JSValue argument0, JSValue argument1)
-    {
-        m_args[0].set(vm, job);
-        m_args[1].set(vm, argument0);
-        m_args[2].set(vm, argument1);
+    bit = ffsl(poolAvailable[3]);
+    if (bit) {
+        poolAvailable[3] &= ~(1 << (bit - 1));
+        return bit + 191;
     }
 
-private:
-    void run(JSGlobalObject* globalObject)
-    {
-        MarkedArgumentBuffer handlerArguments;
-        JSValue job = m_args[0].get();
-        m_args[0].clear();
-
-        handlerArguments.append(m_args[1].get());
-        m_args[1].clear();
-
-        handlerArguments.append(m_args[2].get());
-        m_args[2].clear();
-
-        runMicrotaskWithCount(globalObject, job, WTFMove(handlerArguments));
-    }
-
-    Strong<Unknown> m_args[maxArguments];
-};
-
-class JSMicrotask3Argument final : public Microtask {
-    static constexpr unsigned maxArguments = 4;
-
-public:
-    JSMicrotask3Argument(VM& vm, JSValue job, JSValue argument0, JSValue argument1, JSValue argument2)
-    {
-        m_args[0].set(vm, job);
-        m_args[1].set(vm, argument0);
-        m_args[2].set(vm, argument1);
-        m_args[3].set(vm, argument2);
-    }
-
-private:
-    void run(JSGlobalObject* globalObject)
-    {
-        MarkedArgumentBuffer handlerArguments;
-        JSValue job = m_args[0].get();
-        m_args[0].clear();
-        handlerArguments.append(m_args[1].get());
-        m_args[1].clear();
-        handlerArguments.append(m_args[2].get());
-        m_args[2].clear();
-        handlerArguments.append(m_args[3].get());
-        m_args[3].clear();
-
-        runMicrotaskWithCount(globalObject, job, WTFMove(handlerArguments));
-    }
-
-    Strong<Unknown> m_args[maxArguments];
-};
+    return -1;
+}
 
 Ref<Microtask> createJSMicrotask(VM& vm, JSValue job, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3)
 {
@@ -197,16 +213,34 @@ Ref<Microtask> createJSMicrotask(VM& vm, JSValue job, JSValue argument0, JSValue
         if (!argument2 || argument2.isUndefined()) {
             if (!argument1 || argument1.isUndefined()) {
                 if (!argument0 || argument0.isUndefined()) {
-                    return adoptRef(*new JSMicrotaskNoArguments(vm, job));
+                    return adoptRef(*allocate<JSMicrotaskNoArguments>(vm, job));
                 }
-                return adoptRef(*new JSMicrotask1Argument(vm, job, argument0));
+                return adoptRef(*allocate<JSMicrotask1Argument>(vm, job, argument0));
             }
-            return adoptRef(*new JSMicrotask2Argument(vm, job, argument0, argument1));
+            return adoptRef(*allocate<JSMicrotask2Argument>(vm, job, argument0, argument1));
         }
-        return adoptRef(*new JSMicrotask3Argument(vm, job, argument0, argument1, argument2));
+        return adoptRef(*allocate<JSMicrotask3Argument>(vm, job, argument0, argument1, argument2));
     }
 
-    return adoptRef(*new JSMicrotask(vm, job, argument0, argument1, argument2, argument3));
+    return adoptRef(*allocate<JSMicrotask>(vm, job, argument0, argument1, argument2, argument3));
+}
+
+template<typename MicrotaskType>
+void JSMicrotaskPoolAllocator::markUnused(typename MicrotaskType::Base* task)
+{
+    if constexpr (std::is_same<MicrotaskType, JSMicrotaskNoArguments>::value)
+        return noArguments.markUnused(task);
+    if constexpr (std::is_same<MicrotaskType, JSMicrotask1Argument>::value)
+        return oneArgument.markUnused(task);
+    if constexpr (std::is_same<MicrotaskType, JSMicrotask2Argument>::value)
+        return twoArguments.markUnused(task);
+    if constexpr (std::is_same<MicrotaskType, JSMicrotask3Argument>::value)
+        return threeArguments.markUnused(task);
+    if constexpr (std::is_same<MicrotaskType, JSMicrotask>::value)
+        return fourArguments.markUnused(task);
+
+    ASSERT_NOT_REACHED();
+    __builtin_unreachable();
 }
 
 void JSMicrotask::run(JSGlobalObject* globalObject)
@@ -222,6 +256,7 @@ void JSMicrotask::run(JSGlobalObject* globalObject)
     JSC::JSValue job = m_job.get();
     m_job.clear();
 
+    markUnused<JSMicrotask>(globalObject->vm(), this);
     runMicrotaskWithCount(globalObject, job, WTFMove(handlerArguments));
 }
 
