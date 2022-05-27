@@ -163,8 +163,12 @@ struct HandlerInfo;
 
         JSValue execute(CallFrameClosure&);
 
+
         template<bool isJSCall>
         JSValue executeCallImpl(JSGlobalObject*, JSObject* function, const CallData&, JSValue thisValue, const ArgList&);
+        template<bool isJSConstruct>
+        JSObject* executeConstructImpl(JSGlobalObject*, JSObject* function, const CallData&, const ArgList&, JSValue newTarget);
+
         VM& m_vm;
 #if ENABLE(C_LOOP)
         CLoopStack m_cloopStack;
