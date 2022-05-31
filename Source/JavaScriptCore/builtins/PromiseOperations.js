@@ -183,6 +183,12 @@ function resolvePromise(promise, resolution)
     if (!@isObject(resolution))
         return @fulfillPromise(promise, resolution);
 
+    if (@isPromise(resolution)) {
+        if (resolution.constructor === @Promise || resolution.constructor === @InternalPromise) {
+           return @performPromiseThen(resolution, @undefined, @undefined, promise);
+        }
+    }
+
     var then;
     try {
         then = resolution.then;
@@ -324,6 +330,12 @@ function resolveWithoutPromise(resolution, onFulfilled, onRejected)
     if (!@isObject(resolution)) {
         @fulfillWithoutPromise(resolution, onFulfilled, onRejected);
         return;
+    }
+
+    if (@isPromise(resolution)) {
+        if (resolution.constructor === @Promise || resolution.constructor === @InternalPromise) {
+           return @performPromiseThen(resolution, onFulfilled, onRejected, @undefined);
+        }
     }
 
     var then;
