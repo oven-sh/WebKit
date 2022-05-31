@@ -30,7 +30,6 @@
 #import <wtf/FastMalloc.h>
 #import <wtf/Lock.h>
 #import <wtf/Ref.h>
-#import <wtf/RefPtr.h>
 #import <wtf/ThreadSafeRefCounted.h>
 
 struct WGPUInstanceImpl {
@@ -41,16 +40,23 @@ namespace WebGPU {
 class Adapter;
 class Surface;
 
+// https://gpuweb.github.io/gpuweb/#gpu
 class Instance : public WGPUInstanceImpl, public ThreadSafeRefCounted<Instance> {
     WTF_MAKE_FAST_ALLOCATED;
 public:
-    static RefPtr<Instance> create(const WGPUInstanceDescriptor&);
+    static Ref<Instance> create(const WGPUInstanceDescriptor&);
+    static Ref<Instance> createInvalid()
+    {
+        return adoptRef(*new Instance());
+    }
 
     ~Instance();
 
-    RefPtr<Surface> createSurface(const WGPUSurfaceDescriptor&);
+    Ref<Surface> createSurface(const WGPUSurfaceDescriptor&);
     void processEvents();
-    void requestAdapter(const WGPURequestAdapterOptions&, CompletionHandler<void(WGPURequestAdapterStatus, RefPtr<Adapter>&&, String&&)>&& callback);
+    void requestAdapter(const WGPURequestAdapterOptions&, CompletionHandler<void(WGPURequestAdapterStatus, Ref<Adapter>&&, String&&)>&& callback);
+
+    bool isValid() const { return m_isValid; }
 
     // This can be called on a background thread.
     using WorkItem = CompletionHandler<void(void)>;
@@ -58,6 +64,7 @@ public:
 
 private:
     Instance(WGPUScheduleWorkBlock);
+    Instance();
 
     // This can be called on a background thread.
     void defaultScheduleWork(WGPUWorkItem&&);
@@ -66,6 +73,7 @@ private:
     Deque<WGPUWorkItem> m_pendingWork WTF_GUARDED_BY_LOCK(m_lock);
     const WGPUScheduleWorkBlock m_scheduleWorkBlock;
     Lock m_lock;
+    bool m_isValid { true };
 };
 
 } // namespace WebGPU

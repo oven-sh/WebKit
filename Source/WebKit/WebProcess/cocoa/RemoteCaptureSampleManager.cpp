@@ -54,7 +54,7 @@ RemoteCaptureSampleManager::~RemoteCaptureSampleManager()
 void RemoteCaptureSampleManager::stopListeningForIPC()
 {
     if (m_isRegisteredToParentProcessConnection)
-        WebProcess::singleton().parentProcessConnection()->removeThreadMessageReceiver(Messages::RemoteCaptureSampleManager::messageReceiverName());
+        WebProcess::singleton().parentProcessConnection()->removeWorkQueueMessageReceiver(Messages::RemoteCaptureSampleManager::messageReceiverName());
     setConnection(nullptr);
 }
 
@@ -67,23 +67,23 @@ void RemoteCaptureSampleManager::setConnection(IPC::Connection* connection)
     if (connection == parentConnection) {
         if (!m_isRegisteredToParentProcessConnection) {
             m_isRegisteredToParentProcessConnection = true;
-            parentConnection->addThreadMessageReceiver(Messages::RemoteCaptureSampleManager::messageReceiverName(), this);
+            parentConnection->addWorkQueueMessageReceiver(Messages::RemoteCaptureSampleManager::messageReceiverName(), m_queue, *this);
         }
         return;
     }
     if (m_connection)
-        m_connection->removeThreadMessageReceiver(Messages::RemoteCaptureSampleManager::messageReceiverName());
+        m_connection->removeWorkQueueMessageReceiver(Messages::RemoteCaptureSampleManager::messageReceiverName());
 
     m_connection = WTFMove(connection);
 
     if (m_connection)
-        m_connection->addThreadMessageReceiver(Messages::RemoteCaptureSampleManager::messageReceiverName(), this);
+        m_connection->addWorkQueueMessageReceiver(Messages::RemoteCaptureSampleManager::messageReceiverName(), m_queue, *this);
 }
 
 void RemoteCaptureSampleManager::addSource(Ref<RemoteRealtimeAudioSource>&& source)
 {
     ASSERT(WTF::isMainRunLoop());
-    setConnection(source->connection());
+    setConnection(&source->connection());
 
     m_queue->dispatch([this, protectedThis = Ref { *this }, source = WTFMove(source)]() mutable {
         auto identifier = source->identifier();
@@ -96,7 +96,7 @@ void RemoteCaptureSampleManager::addSource(Ref<RemoteRealtimeAudioSource>&& sour
 void RemoteCaptureSampleManager::addSource(Ref<RemoteRealtimeVideoSource>&& source)
 {
     ASSERT(WTF::isMainRunLoop());
-    setConnection(source->connection());
+    setConnection(&source->connection());
 
     m_queue->dispatch([this, protectedThis = Ref { *this }, source = WTFMove(source)]() mutable {
         auto identifier = source->identifier();
@@ -116,21 +116,16 @@ void RemoteCaptureSampleManager::removeSource(WebCore::RealtimeMediaSourceIdenti
     });
 }
 
-void RemoteCaptureSampleManager::didUpdateSourceConnection(IPC::Connection* connection)
+void RemoteCaptureSampleManager::didUpdateSourceConnection(IPC::Connection& connection)
 {
     ASSERT(WTF::isMainRunLoop());
-    setConnection(connection);
+    setConnection(&connection);
 }
 
 void RemoteCaptureSampleManager::setVideoFrameObjectHeapProxy(RemoteVideoFrameObjectHeapProxy* proxy)
 {
     Locker lock(m_videoFrameObjectHeapProxyLock);
     m_videoFrameObjectHeapProxy = proxy;
-}
-
-void RemoteCaptureSampleManager::dispatchToThread(Function<void()>&& callback)
-{
-    m_queue->dispatch(WTFMove(callback));
 }
 
 void RemoteCaptureSampleManager::audioStorageChanged(WebCore::RealtimeMediaSourceIdentifier identifier, const SharedMemory::IPCHandle& ipcHandle, const WebCore::CAAudioStreamDescription& description, uint64_t numberOfFrames, IPC::Semaphore&& semaphore, const MediaTime& mediaTime, size_t frameChunkSize)

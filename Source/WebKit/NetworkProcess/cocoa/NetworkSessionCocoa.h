@@ -68,7 +68,6 @@ struct IsolatedSession {
     WTF_MAKE_FAST_ALLOCATED;
 public:
     SessionWrapper sessionWithCredentialStorage;
-    SessionWrapper sessionWithoutCredentialStorage;
     WallTime lastUsed;
 };
 
@@ -87,7 +86,6 @@ public:
     std::unique_ptr<IsolatedSession> appBoundSession;
 
     SessionWrapper sessionWithCredentialStorage;
-    SessionWrapper sessionWithoutCredentialStorage;
     SessionWrapper ephemeralStatelessSession;
 
 private:
@@ -121,7 +119,6 @@ public:
     bool fastServerTrustEvaluationEnabled() const { return m_fastServerTrustEvaluationEnabled; }
     bool deviceManagementRestrictionsEnabled() const { return m_deviceManagementRestrictionsEnabled; }
     bool allLoadsBlockedByDeviceManagementRestrictionsForTesting() const { return m_allLoadsBlockedByDeviceManagementRestrictionsForTesting; }
-    bool webPushDaemonUsesMockBundlesForTesting() const final { return m_webPushDaemonUsesMockBundlesForTesting; }
 
     DMFWebsitePolicyMonitor *deviceManagementPolicyMonitor();
 
@@ -188,7 +185,6 @@ private:
     RetainPtr<DMFWebsitePolicyMonitor> m_deviceManagementPolicyMonitor;
     bool m_deviceManagementRestrictionsEnabled { false };
     bool m_allLoadsBlockedByDeviceManagementRestrictionsForTesting { false };
-    bool m_webPushDaemonUsesMockBundlesForTesting { false };
     bool m_shouldLogCookieInformation { false };
     bool m_fastServerTrustEvaluationEnabled { false };
     String m_dataConnectionServiceType;

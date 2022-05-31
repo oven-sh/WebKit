@@ -38,10 +38,17 @@ namespace JSC {
 using Assembler = TARGET_ASSEMBLER;
 
 class MacroAssemblerARMv7 : public AbstractMacroAssembler<Assembler> {
+public:
+    static constexpr size_t nearJumpRange = 16 * MB;
+
     static constexpr RegisterID dataTempRegister = ARMRegisters::ip;
     static constexpr RegisterID addressTempRegister = ARMRegisters::r6;
 
-    static constexpr ARMRegisters::FPDoubleRegisterID fpTempRegister = ARMRegisters::d7;
+    // d15 is host/C ABI callee save, but is volatile in the VM/JS ABI. We use
+    // this as scratch register so we can use the full range of d0-d7 as
+    // temporary, and in particular as Wasm argument/return register.
+    static constexpr ARMRegisters::FPDoubleRegisterID fpTempRegister = ARMRegisters::d15;
+private:
     inline ARMRegisters::FPSingleRegisterID fpTempRegisterAsSingle() { return ARMRegisters::asSingle(fpTempRegister); }
 
     // In the Thumb-2 instruction set, instructions operating only on registers r0-r7 can often
@@ -1054,12 +1061,12 @@ public:
         store8(src, setupArmAddress(address));
     }
     
-    void store8(RegisterID src, const void *address)
+    void store8(RegisterID src, const void* address)
     {
         store8(src, setupArmAddress(AbsoluteAddress(address)));
     }
     
-    void store8(TrustedImm32 imm, const void *address)
+    void store8(TrustedImm32 imm, const void* address)
     {
         TrustedImm32 imm8(static_cast<int8_t>(imm.m_value));
         move(imm8, dataTempRegister);
@@ -1099,6 +1106,34 @@ public:
         store16(dataTempRegister, address);
     }
 
+    void storePair32(RegisterID src1, TrustedImm32 imm, Address address)
+    {
+        RegisterID scratch = getCachedDataTempRegisterIDAndInvalidate();
+        move(imm, scratch);
+        storePair32(src1, scratch, address);
+    }
+
+    void storePair32(TrustedImmPtr immPtr, TrustedImm32 imm32, Address address)
+    {
+        RegisterID scratch1 = getCachedAddressTempRegisterIDAndInvalidate();
+        move(immPtr, scratch1);
+        RegisterID scratch2 = getCachedDataTempRegisterIDAndInvalidate();
+        move(imm32, scratch2);
+        storePair32(scratch1, scratch2, address);
+    }
+
+    void storePair32(TrustedImm32 imm1, TrustedImm32 imm2, Address address)
+    {
+        RegisterID scratch1 = getCachedAddressTempRegisterIDAndInvalidate();
+        move(imm1, scratch1);
+        RegisterID scratch2 = scratch1;
+        if (imm1.m_value != imm2.m_value) {
+            scratch2 = getCachedDataTempRegisterIDAndInvalidate();
+            move(imm2, scratch2);
+        }
+        storePair32(scratch1, scratch2, address);
+    }
+
     void storePair32(RegisterID src1, RegisterID src2, RegisterID dest)
     {
         storePair32(src1, src2, dest, TrustedImm32(0));
@@ -1134,6 +1169,22 @@ public:
             m_assembler.add(scratch, address.base, address.index, shift);
         }
         storePair32(src1, src2, Address(scratch, address.offset));
+    }
+
+    void storePair32(TrustedImm32 imm1, TrustedImm32 imm2, BaseIndex address)
+    {
+        // We don't have enough temp registers to move both imm and calculate the address
+        store32(imm1, address);
+        store32(imm2, address.withOffset(4));
+    }
+
+    void storePair32(RegisterID src1, TrustedImm32 imm, const void* address)
+    {
+        ArmAddress armAddress = setupArmAddress(AbsoluteAddress(address));
+        ASSERT(armAddress.type == ArmAddress::HasOffset);
+        RegisterID scratch = getCachedDataTempRegisterIDAndInvalidate();
+        move(imm, scratch);
+        storePair32(src1, scratch, Address(armAddress.base, armAddress.u.offset));
     }
 
     void storePair32(RegisterID src1, RegisterID src2, const void* address)
@@ -2237,16 +2288,14 @@ public:
 
     ALWAYS_INLINE Call nearCall()
     {
-        moveFixedWidthEncoding(TrustedImm32(0), dataTempRegister);
         invalidateAllTempRegisters();
-        return Call(m_assembler.blx(dataTempRegister), Call::LinkableNear);
+        return Call(m_assembler.bl(), Call::LinkableNear);
     }
 
     ALWAYS_INLINE Call nearTailCall()
     {
-        moveFixedWidthEncoding(TrustedImm32(0), dataTempRegister);
         invalidateAllTempRegisters();
-        return Call(m_assembler.bx(dataTempRegister), Call::LinkableNearTail);
+        return Call(m_assembler.b(), Call::LinkableNearTail);
     }
 
     ALWAYS_INLINE Call call(PtrTag)
@@ -2654,10 +2703,12 @@ private:
     template<PtrTag tag>
     static void linkCall(void* code, Call call, FunctionPtr<tag> function)
     {
-        if (call.isFlagSet(Call::Tail))
-            ARMv7Assembler::linkJump(code, call.m_label, function.executableAddress());
+        if (!call.isFlagSet(Call::Near))
+            Assembler::linkPointer(code, call.m_label.labelAtOffset(-2), function.executableAddress());
+        else if (call.isFlagSet(Call::Tail))
+            Assembler::linkTailCall(code, call.m_label, function.executableAddress());
         else
-            ARMv7Assembler::linkCall(code, call.m_label, function.executableAddress());
+            Assembler::linkCall(code, call.m_label, function.executableAddress());
     }
 
     bool m_makeJumpPatchable;

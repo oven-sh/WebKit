@@ -56,9 +56,14 @@ const CFStringRef kCGImageSourceShouldPreferRGB32 = CFSTR("kCGImageSourceShouldP
 const CFStringRef kCGImageSourceSkipMetadata = CFSTR("kCGImageSourceSkipMetadata");
 const CFStringRef kCGImageSourceSubsampleFactor = CFSTR("kCGImageSourceSubsampleFactor");
 const CFStringRef kCGImageSourceShouldCacheImmediately = CFSTR("kCGImageSourceShouldCacheImmediately");
+const CFStringRef kCGImageSourceUseHardwareAcceleration = CFSTR("kCGImageSourceUseHardwareAcceleration");
 #endif
 
 const CFStringRef kCGImageSourceEnableRestrictedDecoding = CFSTR("kCGImageSourceEnableRestrictedDecoding");
+
+#if HAVE(IMAGEIO_CREATE_UNPREMULTIPLIED_PNG)
+const CFStringRef kCGImageSourceCreateUnpremultipliedPNG = CFSTR("kCGImageSourceCreateUnpremultipliedPNG");
+#endif
 
 static RetainPtr<CFMutableDictionaryRef> createImageSourceOptions()
 {
@@ -66,9 +71,17 @@ static RetainPtr<CFMutableDictionaryRef> createImageSourceOptions()
     CFDictionarySetValue(options.get(), kCGImageSourceShouldCache, kCFBooleanTrue);
     CFDictionarySetValue(options.get(), kCGImageSourceShouldPreferRGB32, kCFBooleanTrue);
     CFDictionarySetValue(options.get(), kCGImageSourceSkipMetadata, kCFBooleanTrue);
+
+    if (ImageDecoderCG::hardwareAcceleratedDecodingDisabled())
+        CFDictionarySetValue(options.get(), kCGImageSourceUseHardwareAcceleration, kCFBooleanFalse);
+
 #if HAVE(IMAGE_RESTRICTED_DECODING) && USE(APPLE_INTERNAL_SDK)
     if (ImageDecoderCG::restrictedDecodingEnabled())
         CFDictionarySetValue(options.get(), kCGImageSourceEnableRestrictedDecoding, kCFBooleanTrue);
+#endif
+
+#if HAVE(IMAGEIO_CREATE_UNPREMULTIPLIED_PNG)
+    CFDictionarySetValue(options.get(), kCGImageSourceCreateUnpremultipliedPNG, kCFBooleanTrue);
 #endif
     return options;
 }
@@ -256,6 +269,7 @@ void sharedBufferRelease(void* info)
 #endif
 
 bool ImageDecoderCG::s_enableRestrictedDecoding = false;
+bool ImageDecoderCG::s_hardwareAcceleratedDecodingDisabled = false;
 
 ImageDecoderCG::ImageDecoderCG(FragmentedSharedBuffer& data, AlphaOption, GammaAndColorProfileOption)
 {
@@ -605,6 +619,16 @@ void ImageDecoderCG::enableRestrictedDecoding()
 bool ImageDecoderCG::restrictedDecodingEnabled()
 {
     return s_enableRestrictedDecoding;
+}
+
+void ImageDecoderCG::disableHardwareAcceleratedDecoding()
+{
+    s_hardwareAcceleratedDecodingDisabled = true;
+}
+
+bool ImageDecoderCG::hardwareAcceleratedDecodingDisabled()
+{
+    return s_hardwareAcceleratedDecodingDisabled;
 }
 
 }

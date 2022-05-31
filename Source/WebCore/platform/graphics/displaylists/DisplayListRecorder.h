@@ -51,12 +51,13 @@ class Recorder : public GraphicsContext {
     WTF_MAKE_FAST_ALLOCATED;
     WTF_MAKE_NONCOPYABLE(Recorder);
 public:
-    WEBCORE_EXPORT Recorder(const GraphicsContextState&, const FloatRect& initialClip, const AffineTransform&, DrawGlyphsRecorder::DeconstructDrawGlyphs = DrawGlyphsRecorder::DeconstructDrawGlyphs::Yes);
+    enum class DeconstructDrawGlyphs : bool { No, Yes };
+
+    WEBCORE_EXPORT Recorder(const GraphicsContextState&, const FloatRect& initialClip, const AffineTransform&, DeconstructDrawGlyphs = DeconstructDrawGlyphs::No);
     WEBCORE_EXPORT virtual ~Recorder();
 
     virtual void convertToLuminanceMask() = 0;
     virtual void transformToColorSpace(const DestinationColorSpace&) = 0;
-    virtual void flushContext(GraphicsContextFlushIdentifier) = 0;
 
 protected:
     virtual void recordSave() = 0;
@@ -90,7 +91,7 @@ protected:
     virtual void recordEndTransparencyLayer() = 0;
     virtual void recordDrawRect(const FloatRect&, float) = 0;
     virtual void recordDrawLine(const FloatPoint& point1, const FloatPoint& point2) = 0;
-    virtual void recordDrawLinesForText(const FloatPoint& blockLocation, const FloatSize& localAnchor, float thickness, const DashArray& widths, bool printing, bool doubleLines) = 0;
+    virtual void recordDrawLinesForText(const FloatPoint& blockLocation, const FloatSize& localAnchor, float thickness, const DashArray& widths, bool printing, bool doubleLines, StrokeStyle) = 0;
     virtual void recordDrawDotsForDocumentMarker(const FloatRect&, const DocumentMarkerLineStyle&) = 0;
     virtual void recordDrawEllipse(const FloatRect&) = 0;
     virtual void recordDrawPath(const Path&) = 0;
@@ -270,7 +271,9 @@ private:
     const AffineTransform& ctm() const;
 
     Vector<ContextState, 4> m_stateStack;
-    DrawGlyphsRecorder m_drawGlyphsRecorder;
+    std::unique_ptr<DrawGlyphsRecorder> m_drawGlyphsRecorder;
+    float m_initialScale { 1 };
+    const DeconstructDrawGlyphs m_deconstructDrawGlyphs { DeconstructDrawGlyphs::No };
 };
 
 } // namespace DisplayList

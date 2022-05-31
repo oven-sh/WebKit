@@ -30,6 +30,7 @@
 
 #include "GraphicsContextCG.h"
 #include "IOSurface.h"
+#include "IOSurfacePool.h"
 #include "IntRect.h"
 #include "PixelBuffer.h"
 #include <CoreGraphics/CoreGraphics.h>
@@ -57,7 +58,8 @@ IntSize ImageBufferIOSurfaceBackend::calculateSafeBackendSize(const Parameters& 
 unsigned ImageBufferIOSurfaceBackend::calculateBytesPerRow(const IntSize& backendSize)
 {
     unsigned bytesPerRow = ImageBufferCGBackend::calculateBytesPerRow(backendSize);
-    return IOSurfaceAlignProperty(kIOSurfaceBytesPerRow, bytesPerRow);
+    size_t alignmentMask = IOSurface::bytesPerRowAlignment() - 1;
+    return (bytesPerRow + alignmentMask) & ~alignmentMask;
 }
 
 size_t ImageBufferIOSurfaceBackend::calculateMemoryCost(const Parameters& parameters)
@@ -81,23 +83,23 @@ RetainPtr<CGColorSpaceRef> ImageBufferIOSurfaceBackend::contextColorSpace(const 
     return ImageBufferCGBackend::contextColorSpace(context);
 }
 
-std::unique_ptr<ImageBufferIOSurfaceBackend> ImageBufferIOSurfaceBackend::create(const Parameters& parameters, const HostWindow* hostWindow)
+std::unique_ptr<ImageBufferIOSurfaceBackend> ImageBufferIOSurfaceBackend::create(const Parameters& parameters, const ImageBuffer::CreationContext& creationContext)
 {
     IntSize backendSize = calculateSafeBackendSize(parameters);
     if (backendSize.isEmpty())
         return nullptr;
 
-    auto surface = IOSurface::create(backendSize, backendSize, parameters.colorSpace, IOSurface::formatForPixelFormat(parameters.pixelFormat));
+    auto surface = IOSurface::create(creationContext.surfacePool, backendSize, parameters.colorSpace, IOSurface::formatForPixelFormat(parameters.pixelFormat));
     if (!surface)
         return nullptr;
 
-    RetainPtr<CGContextRef> cgContext = surface->ensurePlatformContext(hostWindow);
+    RetainPtr<CGContextRef> cgContext = surface->ensurePlatformContext(creationContext.hostWindow);
     if (!cgContext)
         return nullptr;
 
     CGContextClearRect(cgContext.get(), FloatRect(FloatPoint::zero(), backendSize));
 
-    return makeUnique<ImageBufferIOSurfaceBackend>(parameters, WTFMove(surface));
+    return makeUnique<ImageBufferIOSurfaceBackend>(parameters, WTFMove(surface), creationContext.surfacePool);
 }
 
 std::unique_ptr<ImageBufferIOSurfaceBackend> ImageBufferIOSurfaceBackend::create(const Parameters& parameters, const GraphicsContext& context)
@@ -112,12 +114,18 @@ std::unique_ptr<ImageBufferIOSurfaceBackend> ImageBufferIOSurfaceBackend::create
     return ImageBufferIOSurfaceBackend::create(parameters, nullptr);
 }
 
-ImageBufferIOSurfaceBackend::ImageBufferIOSurfaceBackend(const Parameters& parameters, std::unique_ptr<IOSurface>&& surface)
+ImageBufferIOSurfaceBackend::ImageBufferIOSurfaceBackend(const Parameters& parameters, std::unique_ptr<IOSurface>&& surface, IOSurfacePool* ioSurfacePool)
     : ImageBufferCGBackend(parameters)
     , m_surface(WTFMove(surface))
+    , m_ioSurfacePool(ioSurfacePool)
 {
     ASSERT(m_surface);
     applyBaseTransformToContext();
+}
+
+ImageBufferIOSurfaceBackend::~ImageBufferIOSurfaceBackend()
+{
+    IOSurface::moveToPool(WTFMove(m_surface), m_ioSurfacePool.get());
 }
 
 GraphicsContext& ImageBufferIOSurfaceBackend::context() const
@@ -145,16 +153,6 @@ unsigned ImageBufferIOSurfaceBackend::bytesPerRow() const
     return m_surface->bytesPerRow();
 }
 
-void ImageBufferIOSurfaceBackend::prepareToDrawIntoContext(GraphicsContext& destContext)
-{
-    auto currentSeed = m_surface->seed();
-    if (std::exchange(m_lastSeedWhenDrawingImage, currentSeed) == currentSeed)
-        return;
-
-    if (destContext.renderingMode() == RenderingMode::Unaccelerated)
-        invalidateCachedNativeImage();
-}
-
 void ImageBufferIOSurfaceBackend::invalidateCachedNativeImage() const
 {
     // Force QuartzCore to invalidate its cached CGImageRef for this IOSurface.
@@ -175,24 +173,12 @@ RefPtr<NativeImage> ImageBufferIOSurfaceBackend::sinkIntoNativeImage()
     return NativeImage::create(IOSurface::sinkIntoImage(WTFMove(m_surface)));
 }
 
-void ImageBufferIOSurfaceBackend::draw(GraphicsContext& destContext, const FloatRect& destRect, const FloatRect& srcRect, const ImagePaintingOptions& options)
+void ImageBufferIOSurfaceBackend::finalizeDrawIntoContext(GraphicsContext& destinationContext)
 {
-    ImageBufferCGBackend::draw(destContext, destRect, srcRect, options);
-    // Accelerated to/from unaccelerated image buffers need complex caching. We trust that
+    // Accelerated to unaccelerated image buffers need complex caching. We trust that
     // this is a one-off draw, and as such we clear the caches of the source image after each draw.
-    if (destContext.renderingMode() != context().renderingMode())
+    if (destinationContext.renderingMode() == RenderingMode::Unaccelerated)
         invalidateCachedNativeImage();
-}
-void ImageBufferIOSurfaceBackend::drawConsuming(GraphicsContext& destContext, const FloatRect& destRect, const FloatRect& srcRect, const ImagePaintingOptions& options)
-{
-    prepareToDrawIntoContext(destContext);
-
-    FloatRect adjustedSrcRect = srcRect;
-    adjustedSrcRect.scale(resolutionScale());
-
-    auto backendSize = this->backendSize();
-    if (auto image = sinkIntoNativeImage())
-        destContext.drawNativeImage(*image, backendSize, destRect, adjustedSrcRect, options);
 }
 
 RetainPtr<CGImageRef> ImageBufferIOSurfaceBackend::copyCGImageForEncoding(CFStringRef destinationUTI, PreserveResolution preserveResolution) const
@@ -258,11 +244,6 @@ VolatilityState ImageBufferIOSurfaceBackend::volatilityState() const
 void ImageBufferIOSurfaceBackend::setVolatilityState(VolatilityState volatilityState)
 {
     m_volatilityState = volatilityState;
-}
-
-void ImageBufferIOSurfaceBackend::releaseBufferToPool()
-{
-    IOSurface::moveToPool(WTFMove(m_surface));
 }
 
 void ImageBufferIOSurfaceBackend::ensureNativeImagesHaveCopiedBackingStore()

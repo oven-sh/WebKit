@@ -5,7 +5,9 @@
 <div id="content">
 
 <div id="test" data="some data">
-
+  <div id="firstChild"></div>
+  <div id="secondChild"></div>
+  <div id="thirdChild"></div>
 </div>
 
 <p id="description"></p>
@@ -21,22 +23,87 @@
     var currentProperty;
     var currentAttribute;
 
+    function isElementReflectionProperty(property) {
+        switch (property) {
+            case "ariaActiveDescendantElement":
+            case "ariaErrorMessageElement":
+                return true;
+        }
+        return false;
+    }
+
+    function isElementsArrayReflectionProperty(property) {
+        switch (property) {
+            case "ariaControlsElements":
+            case "ariaDescribedByElements":
+            case "ariaDetailsElements":
+            case "ariaFlowToElements":
+            case "ariaLabelledByElements":
+            case "ariaOwnsElements":
+                return true;
+        }
+        return false;
+    }
+
+    function convertPropertyToAttribute(property) {
+        if (isElementReflectionProperty(property))
+          property = property.replace("Element", "");
+        else if (isElementsArrayReflectionProperty(property))
+          property = property.replace("Elements", "");
+        return property.replace("aria", "aria-").toLowerCase();
+    }
+
+    function getDataProperty(property) {
+        if (isElementReflectionProperty(property))
+          return firstChild;
+        else if (isElementsArrayReflectionProperty(property))
+          return [firstChild, secondChild];
+        return data;
+    }
+
+    function getDataAttribute(property) {
+        if (isElementReflectionProperty(property))
+          return firstChild.id;
+        else if (isElementsArrayReflectionProperty(property))
+          return firstChild.id + " " + secondChild.id;
+        return data;
+    }
+
+    function getOtherDataProperty(property) {
+        if (isElementReflectionProperty(property))
+          return secondChild;
+        else if (isElementsArrayReflectionProperty(property))
+          return [thirdChild];
+        return otherData;
+    }
+
+    function getOtherDataAttribute(property) {
+        if (isElementReflectionProperty(property))
+          return secondChild.id;
+        else if (isElementsArrayReflectionProperty(property))
+          return thirdChild.id;
+        return otherData;
+    }
+
     function testElement() {
-        currentAttribute = currentProperty.replace("aria", "aria-").toLowerCase();
-        
+        currentAttribute = convertPropertyToAttribute(currentProperty);
+
         debug("\nTest " + currentProperty + " < - > " + currentAttribute);
         shouldBeNull("element[currentProperty]");
         shouldBeNull("element.getAttribute(currentAttribute)");
-        
+
         // Set the property value
-        debug("element[\"" + currentProperty + "\"] = data;");
-        element[currentProperty] = data;
-        shouldBe("element.getAttribute(currentAttribute)", "data");
+        dataProperty = getDataProperty(currentProperty);
+        dataAttribute = getDataAttribute(currentProperty);
+        element[currentProperty] = dataProperty;
+        shouldBe("element.getAttribute(currentAttribute)", "dataAttribute");
 
         // Set the attribute value
+        otherDataProperty = getOtherDataProperty(currentProperty);
+        otherDataAttribute = getOtherDataAttribute(currentProperty);
         debug("element.setAttribute(\"" + currentAttribute + "\", otherData);");
-        element.setAttribute(currentAttribute, otherData);
-        shouldBe("element[currentProperty]", "otherData");
+        element.setAttribute(currentAttribute, otherDataAttribute);
+        shouldBe("element[currentProperty]", "otherDataProperty");
     }
 
     function testRole() {
@@ -59,7 +126,7 @@
         }
 
         debug("\n");
-        shouldBe("count", "38");
+        shouldBe("count", "46");
 
     } else {
         testFailed("Could not load accessibility controller");

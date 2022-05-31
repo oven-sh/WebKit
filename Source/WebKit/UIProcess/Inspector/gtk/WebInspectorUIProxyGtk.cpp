@@ -140,21 +140,21 @@ static void getContextMenuFromProposedMenu(WKPageRef pageRef, WKArrayRef propose
 
 static Ref<WebsiteDataStore> inspectorWebsiteDataStore()
 {
-    static const char* versionedDirectory = "webkitgtk-" WEBKITGTK_API_VERSION_STRING G_DIR_SEPARATOR_S "WebInspector" G_DIR_SEPARATOR_S;
+    static constexpr auto versionedDirectory = "webkitgtk-" WEBKITGTK_API_VERSION_STRING G_DIR_SEPARATOR_S "WebInspector" G_DIR_SEPARATOR_S ""_s;
     String baseCacheDirectory = FileSystem::pathByAppendingComponent(FileSystem::userCacheDirectory(), versionedDirectory);
     String baseDataDirectory = FileSystem::pathByAppendingComponent(FileSystem::userDataDirectory(), versionedDirectory);
 
     auto configuration = WebsiteDataStoreConfiguration::create(IsPersistent::Yes, WillCopyPathsFromExistingConfiguration::Yes);
-    configuration->setNetworkCacheDirectory(FileSystem::pathByAppendingComponent(baseCacheDirectory, "WebKitCache"));
-    configuration->setApplicationCacheDirectory(FileSystem::pathByAppendingComponent(baseCacheDirectory, "applications"));
+    configuration->setNetworkCacheDirectory(FileSystem::pathByAppendingComponent(baseCacheDirectory, "WebKitCache"_s));
+    configuration->setApplicationCacheDirectory(FileSystem::pathByAppendingComponent(baseCacheDirectory, "applications"_s));
     configuration->setHSTSStorageDirectory(String(baseCacheDirectory));
-    configuration->setCacheStorageDirectory(FileSystem::pathByAppendingComponent(baseCacheDirectory, "CacheStorage"));
-    configuration->setLocalStorageDirectory(FileSystem::pathByAppendingComponent(baseDataDirectory, "localstorage"));
-    configuration->setIndexedDBDatabaseDirectory(FileSystem::pathByAppendingComponent(baseDataDirectory, "indexeddb"));
-    configuration->setWebSQLDatabaseDirectory(FileSystem::pathByAppendingComponent(baseDataDirectory, "databases"));
-    configuration->setResourceLoadStatisticsDirectory(FileSystem::pathByAppendingComponent(baseDataDirectory, "itp"));
-    configuration->setServiceWorkerRegistrationDirectory(FileSystem::pathByAppendingComponent(baseDataDirectory, "serviceworkers"));
-    configuration->setDeviceIdHashSaltsStorageDirectory(FileSystem::pathByAppendingComponent(baseDataDirectory, "deviceidhashsalts"));
+    configuration->setCacheStorageDirectory(FileSystem::pathByAppendingComponent(baseCacheDirectory, "CacheStorage"_s));
+    configuration->setLocalStorageDirectory(FileSystem::pathByAppendingComponent(baseDataDirectory, "localstorage"_s));
+    configuration->setIndexedDBDatabaseDirectory(FileSystem::pathByAppendingComponent(baseDataDirectory, "indexeddb"_s));
+    configuration->setWebSQLDatabaseDirectory(FileSystem::pathByAppendingComponent(baseDataDirectory, "databases"_s));
+    configuration->setResourceLoadStatisticsDirectory(FileSystem::pathByAppendingComponent(baseDataDirectory, "itp"_s));
+    configuration->setServiceWorkerRegistrationDirectory(FileSystem::pathByAppendingComponent(baseDataDirectory, "serviceworkers"_s));
+    configuration->setDeviceIdHashSaltsStorageDirectory(FileSystem::pathByAppendingComponent(baseDataDirectory, "deviceidhashsalts"_s));
     return WebsiteDataStore::create(WTFMove(configuration), PAL::SessionID::generatePersistentSessionID());
 }
 
@@ -163,7 +163,7 @@ WebPageProxy* WebInspectorUIProxy::platformCreateFrontendPage()
     ASSERT(inspectedPage());
     ASSERT(!m_inspectorView);
 
-    auto preferences = WebPreferences::create(String(), "WebKit2.", "WebKit2.");
+    auto preferences = WebPreferences::create(String(), "WebKit2."_s, "WebKit2."_s);
 #if ENABLE(DEVELOPER_MODE)
     // Allow developers to inspect the Web Inspector in debug builds without changing settings.
     preferences->setDeveloperExtrasEnabled(true);
@@ -368,6 +368,11 @@ void WebInspectorUIProxy::platformSetForcedAppearance(WebCore::InspectorFrontend
     notImplemented();
 }
 
+void WebInspectorUIProxy::platformRevealFileExternally(const String&)
+{
+    notImplemented();
+}
+
 void WebInspectorUIProxy::platformInspectedURLChanged(const String& url)
 {
     m_inspectedURLString = url;
@@ -509,7 +514,7 @@ static void fileReplaceContentsCallback(GObject* sourceObject, GAsyncResult* res
 
     auto* page = static_cast<WebPageProxy*>(userData);
     GUniquePtr<char> path(g_file_get_path(file));
-    page->send(Messages::WebInspectorUI::DidSave(path.get()));
+    page->send(Messages::WebInspectorUI::DidSave(String::fromUTF8(path.get())));
 }
 
 void WebInspectorUIProxy::platformSave(const String& suggestedURL, const String& content, bool base64Encoded, bool forceSaveDialog)
@@ -560,6 +565,12 @@ void WebInspectorUIProxy::platformSave(const String& suggestedURL, const String&
 void WebInspectorUIProxy::platformAppend(const String&, const String&)
 {
     notImplemented();
+}
+
+void WebInspectorUIProxy::platformLoad(const String&, CompletionHandler<void(const String&)>&& completionHandler)
+{
+    notImplemented();
+    completionHandler(nullString());
 }
 
 void WebInspectorUIProxy::platformAttachAvailabilityChanged(bool available)

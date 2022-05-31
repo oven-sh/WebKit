@@ -151,7 +151,7 @@ static WebCore::RegistrableDomain lastCNAMEDomain(NSArray<NSString *> *cnames)
     if (auto* lastResolvedCNAMEInChain = [cnames lastObject]) {
         auto cname = String(lastResolvedCNAMEInChain);
         if (cname.endsWith('.'))
-            cname.remove(cname.length() - 1);
+            cname = cname.left(cname.length() - 1);
         return WebCore::RegistrableDomain::uncheckedCreateFromHost(cname);
     }
 
@@ -341,9 +341,8 @@ NetworkDataTaskCocoa::NetworkDataTaskCocoa(NetworkSession& session, NetworkDataT
     RetainPtr<NSMutableURLRequest> mutableRequest = adoptNS([nsRequest.get() mutableCopy]);
 
     if (parameters.isMainFrameNavigation
-        || parameters.hadMainFrameMainResourcePrivateRelayed // This means it did not fail. FIXME: adjust names to reflect this.
-        || !parameters.topOrigin
-        || request.url().host() == parameters.topOrigin->host()) {
+        || parameters.hadMainFrameMainResourcePrivateRelayed
+        || request.url().host() == request.firstPartyForCookies().host()) {
         if ([mutableRequest respondsToSelector:@selector(_setPrivacyProxyFailClosedForUnreachableNonMainHosts:)])
             [mutableRequest _setPrivacyProxyFailClosedForUnreachableNonMainHosts:YES];
     }
@@ -363,6 +362,27 @@ NetworkDataTaskCocoa::NetworkDataTaskCocoa(NetworkSession& session, NetworkDataT
     applySniffingPoliciesAndBindRequestToInferfaceIfNeeded(nsRequest, parameters.contentSniffingPolicy == WebCore::ContentSniffingPolicy::SniffContent && !url.isLocalFile(), parameters.contentEncodingSniffingPolicy == WebCore::ContentEncodingSniffingPolicy::Sniff);
 
     m_task = [m_sessionWrapper->session dataTaskWithRequest:nsRequest.get()];
+
+    switch (parameters.storedCredentialsPolicy) {
+    case WebCore::StoredCredentialsPolicy::Use:
+        ASSERT(m_sessionWrapper->session.get().configuration.URLCredentialStorage);
+        break;
+    case WebCore::StoredCredentialsPolicy::EphemeralStateless:
+        ASSERT(!m_sessionWrapper->session.get().configuration.URLCredentialStorage);
+        break;
+    case WebCore::StoredCredentialsPolicy::DoNotUse:
+#if HAVE(NSURLSESSION_EFFECTIVE_CONFIGURATION_OBJECT)
+        NSURLSessionConfiguration *copiedConfiguration = m_sessionWrapper->session.get().configuration;
+        copiedConfiguration.URLCredentialStorage = nil;
+        auto effectiveConfiguration = adoptNS([[NSURLSessionEffectiveConfiguration alloc] _initWithConfiguration:copiedConfiguration]);
+        [m_task _adoptEffectiveConfiguration:effectiveConfiguration.get()];
+#else
+        NSURLSessionConfiguration *effectiveConfiguration = m_sessionWrapper->session.get().configuration;
+        effectiveConfiguration.URLCredentialStorage = nil;
+        [m_task _adoptEffectiveConfiguration:effectiveConfiguration];
+#endif
+        break;
+    };
 
     WTFBeginSignpost(m_task.get(), "DataTask", "%{public}s pri: %.2f preconnect: %d", url.string().ascii().data(), toNSURLSessionTaskPriority(request.priority()), parameters.shouldPreconnectOnly == PreconnectOnly::Yes);
 
@@ -480,17 +500,17 @@ void NetworkDataTaskCocoa::willPerformHTTPRedirection(WebCore::ResourceResponse&
     if (redirectResponse.httpStatusCode() == 307 || redirectResponse.httpStatusCode() == 308) {
         ASSERT(m_lastHTTPMethod == request.httpMethod());
         WebCore::FormData* body = m_firstRequest.httpBody();
-        if (body && !body->isEmpty() && !equalLettersIgnoringASCIICase(m_lastHTTPMethod, "get"))
+        if (body && !body->isEmpty() && !equalLettersIgnoringASCIICase(m_lastHTTPMethod, "get"_s))
             request.setHTTPBody(body);
         
         String originalContentType = m_firstRequest.httpContentType();
         if (!originalContentType.isEmpty())
             request.setHTTPHeaderField(WebCore::HTTPHeaderName::ContentType, originalContentType);
-    } else if (redirectResponse.httpStatusCode() == 303 && equalLettersIgnoringASCIICase(m_firstRequest.httpMethod(), "head")) // FIXME: (rdar://problem/13706454).
+    } else if (redirectResponse.httpStatusCode() == 303 && equalLettersIgnoringASCIICase(m_firstRequest.httpMethod(), "head"_s)) // FIXME: (rdar://problem/13706454).
         request.setHTTPMethod("HEAD"_s);
     
     // Should not set Referer after a redirect from a secure resource to non-secure one.
-    if (m_shouldClearReferrerOnHTTPSToHTTPRedirect && !request.url().protocolIs("https") && WTF::protocolIs(request.httpReferrer(), "https"))
+    if (m_shouldClearReferrerOnHTTPSToHTTPRedirect && !request.url().protocolIs("https"_s) && WTF::protocolIs(request.httpReferrer(), "https"_s))
         request.clearHTTPReferrer();
     
     const auto& url = request.url();
@@ -506,7 +526,7 @@ void NetworkDataTaskCocoa::willPerformHTTPRedirection(WebCore::ResourceResponse&
         request.clearHTTPOrigin();
 
     } else {
-        if (auto authorization = m_firstRequest.httpHeaderField(WebCore::HTTPHeaderName::Authorization); !authorization.isNull() && linkedOnOrAfter(SDKVersion::FirstWithAuthorizationHeaderOnSameOriginRedirects))
+        if (auto authorization = m_firstRequest.httpHeaderField(WebCore::HTTPHeaderName::Authorization); !authorization.isNull() && linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::AuthorizationHeaderOnSameOriginRedirects))
             request.setHTTPHeaderField(WebCore::HTTPHeaderName::Authorization, authorization);
 
 #if USE(CREDENTIAL_STORAGE_WITH_NETWORK_SESSION)

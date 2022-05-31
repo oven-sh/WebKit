@@ -94,23 +94,23 @@ public:
     WEBCORE_EXPORT void setURL(const URL&);
 
     WEBCORE_EXPORT const String& mimeType() const;
-    WEBCORE_EXPORT void setMimeType(const String& mimeType);
+    WEBCORE_EXPORT void setMimeType(String&&);
 
     WEBCORE_EXPORT long long expectedContentLength() const;
     WEBCORE_EXPORT void setExpectedContentLength(long long expectedContentLength);
 
     WEBCORE_EXPORT const String& textEncodingName() const;
-    WEBCORE_EXPORT void setTextEncodingName(const String& name);
+    WEBCORE_EXPORT void setTextEncodingName(String&&);
 
     WEBCORE_EXPORT int httpStatusCode() const;
     WEBCORE_EXPORT void setHTTPStatusCode(int);
     WEBCORE_EXPORT bool isRedirection() const;
 
     WEBCORE_EXPORT const String& httpStatusText() const;
-    WEBCORE_EXPORT void setHTTPStatusText(const String&);
+    WEBCORE_EXPORT void setHTTPStatusText(String&&);
 
     WEBCORE_EXPORT const String& httpVersion() const;
-    WEBCORE_EXPORT void setHTTPVersion(const String&);
+    WEBCORE_EXPORT void setHTTPVersion(String&&);
     WEBCORE_EXPORT bool isHTTP09() const;
 
     WEBCORE_EXPORT const HTTPHeaderMap& httpHeaderFields() const;
@@ -119,18 +119,20 @@ public:
     enum class SanitizationType { Redirection, RemoveCookies, CrossOriginSafe };
     WEBCORE_EXPORT void sanitizeHTTPHeaderFields(SanitizationType);
 
-    String httpHeaderField(const String& name) const;
+    String httpHeaderField(StringView name) const;
     WEBCORE_EXPORT String httpHeaderField(HTTPHeaderName) const;
     WEBCORE_EXPORT void setHTTPHeaderField(const String& name, const String& value);
+    WEBCORE_EXPORT void setUncommonHTTPHeaderField(const String& name, const String& value);
     WEBCORE_EXPORT void setHTTPHeaderField(HTTPHeaderName, const String& value);
 
     WEBCORE_EXPORT void addHTTPHeaderField(HTTPHeaderName, const String& value);
     WEBCORE_EXPORT void addHTTPHeaderField(const String& name, const String& value);
+    WEBCORE_EXPORT void addUncommonHTTPHeaderField(const String& name, const String& value);
 
     // Instead of passing a string literal to any of these functions, just use a HTTPHeaderName instead.
-    template<size_t length> String httpHeaderField(const char (&)[length]) const = delete;
-    template<size_t length> void setHTTPHeaderField(const char (&)[length], const String&) = delete;
-    template<size_t length> void addHTTPHeaderField(const char (&)[length], const String&) = delete;
+    template<size_t length> String httpHeaderField(ASCIILiteral) const = delete;
+    template<size_t length> void setHTTPHeaderField(ASCIILiteral, const String&) = delete;
+    template<size_t length> void addHTTPHeaderField(ASCIILiteral, const String&) = delete;
 
     bool isMultipart() const { return mimeType() == "multipart/x-mixed-replace"; }
 
@@ -247,11 +249,11 @@ private:
 
 protected:
     URL m_url;
-    AtomString m_mimeType;
+    String m_mimeType;
     long long m_expectedContentLength { 0 };
-    AtomString m_textEncodingName;
-    AtomString m_httpStatusText;
-    AtomString m_httpVersion;
+    String m_textEncodingName;
+    String m_httpStatusText;
+    String m_httpVersion;
     HTTPHeaderMap m_httpHeaderFields;
     Box<NetworkLoadMetrics> m_networkLoadMetrics;
 
@@ -348,19 +350,19 @@ bool ResourceResponseBase::decode(Decoder& decoder, ResourceResponseBase& respon
         return false;
     response.m_expectedContentLength = *expectedContentLength;
 
-    std::optional<AtomString> textEncodingName;
+    std::optional<String> textEncodingName;
     decoder >> textEncodingName;
     if (!textEncodingName)
         return false;
     response.m_textEncodingName = WTFMove(*textEncodingName);
 
-    std::optional<AtomString> httpStatusText;
+    std::optional<String> httpStatusText;
     decoder >> httpStatusText;
     if (!httpStatusText)
         return false;
     response.m_httpStatusText = WTFMove(*httpStatusText);
 
-    std::optional<AtomString> httpVersion;
+    std::optional<String> httpVersion;
     decoder >> httpVersion;
     if (!httpVersion)
         return false;

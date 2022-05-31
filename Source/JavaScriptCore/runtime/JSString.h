@@ -49,6 +49,14 @@ class LLIntOffsetsExtractor;
 
 JSString* jsEmptyString(VM&);
 JSString* jsString(VM&, const String&); // returns empty string if passed null string
+JSString* jsString(VM&, String&&); // returns empty string if passed null string
+JSString* jsString(VM&, const AtomString&); // returns empty string if passed null string
+JSString* jsString(VM&, AtomString&&); // returns empty string if passed null string
+JSString* jsString(VM&, StringView); // returns empty string if passed null string
+
+JSString* jsString(VM&, RefPtr<AtomStringImpl>&&);
+JSString* jsString(VM&, Ref<AtomStringImpl>&&);
+JSString* jsString(VM&, Ref<StringImpl>&&);
 
 JSString* jsSingleCharacterString(VM&, UChar);
 JSString* jsSubstring(VM&, const String&, unsigned offset, unsigned length);
@@ -191,7 +199,7 @@ public:
 
     Identifier toIdentifier(JSGlobalObject*) const;
     AtomString toAtomString(JSGlobalObject*) const;
-    RefPtr<AtomStringImpl> toExistingAtomString(JSGlobalObject*) const;
+    AtomString toExistingAtomString(JSGlobalObject*) const;
 
     StringViewWithUnderlyingString viewWithUnderlyingString(JSGlobalObject*) const;
 
@@ -251,6 +259,8 @@ private:
     void swapToAtomString(VM&, RefPtr<AtomStringImpl>&&) const;
 
     friend JSString* jsString(VM&, const String&);
+    friend JSString* jsString(VM&, String&&);
+    friend JSString* jsString(VM&, StringView);
     friend JSString* jsString(JSGlobalObject*, JSString*, JSString*);
     friend JSString* jsString(JSGlobalObject*, const String&, JSString*);
     friend JSString* jsString(JSGlobalObject*, JSString*, const String&);
@@ -569,6 +579,10 @@ public:
         return newString;
     }
 
+    // If nullOrExecForOOM is null, resolveRope() will be do nothing in the event of an OOM error.
+    // The rope value will remain a null string in that case.
+    JS_EXPORT_PRIVATE const String& resolveRope(JSGlobalObject* nullOrGlobalObjectForOOM) const;
+
 private:
     static JSRopeString* create(VM& vm, JSString* s1, JSString* s2)
     {
@@ -598,9 +612,6 @@ private:
 
     friend JSValue jsStringFromRegisterArray(JSGlobalObject*, Register*, unsigned);
 
-    // If nullOrExecForOOM is null, resolveRope() will be do nothing in the event of an OOM error.
-    // The rope value will remain a null string in that case.
-    JS_EXPORT_PRIVATE const String& resolveRope(JSGlobalObject* nullOrGlobalObjectForOOM) const;
     template<typename Function> const String& resolveRopeWithFunction(JSGlobalObject* nullOrGlobalObjectForOOM, Function&&) const;
     JS_EXPORT_PRIVATE AtomString resolveRopeToAtomString(JSGlobalObject*) const;
     JS_EXPORT_PRIVATE RefPtr<AtomStringImpl> resolveRopeToExistingAtomString(JSGlobalObject*) const;
@@ -608,8 +619,7 @@ private:
     template<typename CharacterType> void resolveRopeInternalNoSubstring(CharacterType*) const;
     Identifier toIdentifier(JSGlobalObject*) const;
     void outOfMemory(JSGlobalObject* nullOrGlobalObjectForOOM) const;
-    void resolveRopeInternal8(LChar*) const;
-    void resolveRopeInternal16(UChar*) const;
+    template<typename CharacterType> void resolveRopeInternal(CharacterType*) const;
     StringView unsafeView(JSGlobalObject*) const;
     StringViewWithUnderlyingString viewWithUnderlyingString(JSGlobalObject*) const;
 
@@ -820,7 +830,7 @@ ALWAYS_INLINE AtomString JSString::toAtomString(JSGlobalObject* globalObject) co
     return atom;
 }
 
-ALWAYS_INLINE RefPtr<AtomStringImpl> JSString::toExistingAtomString(JSGlobalObject* globalObject) const
+ALWAYS_INLINE AtomString JSString::toExistingAtomString(JSGlobalObject* globalObject) const
 {
     if constexpr (validateDFGDoesGC)
         vm().verifyCanGC();
@@ -875,6 +885,58 @@ inline JSString* jsString(VM& vm, const String& s)
             return vm.smallStrings.singleCharacterString(c);
     }
     return JSString::create(vm, *s.impl());
+}
+
+inline JSString* jsString(VM& vm, String&& s)
+{
+    int size = s.length();
+    if (!size)
+        return vm.smallStrings.emptyString();
+    if (size == 1) {
+        UChar c = s.characterAt(0);
+        if (c <= maxSingleCharacterString)
+            return vm.smallStrings.singleCharacterString(c);
+    }
+    return JSString::create(vm, s.releaseImpl().releaseNonNull());
+}
+
+ALWAYS_INLINE JSString* jsString(VM& vm, const AtomString& s)
+{
+    return jsString(vm, s.string());
+}
+
+ALWAYS_INLINE JSString* jsString(VM& vm, AtomString&& s)
+{
+    return jsString(vm, s.releaseString());
+}
+
+inline JSString* jsString(VM& vm, StringView s)
+{
+    int size = s.length();
+    if (!size)
+        return vm.smallStrings.emptyString();
+    if (size == 1) {
+        UChar c = s.characterAt(0);
+        if (c <= maxSingleCharacterString)
+            return vm.smallStrings.singleCharacterString(c);
+    }
+    auto impl = s.is8Bit() ? StringImpl::create(s.characters8(), s.length()) : StringImpl::create(s.characters16(), s.length());
+    return JSString::create(vm, WTFMove(impl));
+}
+
+ALWAYS_INLINE JSString* jsString(VM& vm, RefPtr<AtomStringImpl>&& s)
+{
+    return jsString(vm, String { WTFMove(s) });
+}
+
+ALWAYS_INLINE JSString* jsString(VM& vm, Ref<AtomStringImpl>&& s)
+{
+    return jsString(vm, String { WTFMove(s) });
+}
+
+ALWAYS_INLINE JSString* jsString(VM& vm, Ref<StringImpl>&& s)
+{
+    return jsString(vm, String { WTFMove(s) });
 }
 
 inline JSString* jsSubstring(VM& vm, JSGlobalObject* globalObject, JSString* base, unsigned offset, unsigned length)

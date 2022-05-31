@@ -166,9 +166,9 @@ static CachedResourceHandle<CachedResource> createResource(CachedResourceRequest
     case CachedResource::Type::Script:
         return new CachedScript(WTFMove(request), resource.sessionID(), resource.cookieJar());
     case CachedResource::Type::SVGDocumentResource:
-        return new CachedSVGDocument(WTFMove(request), static_cast<CachedSVGDocument&>(resource));
+        return new CachedSVGDocument(WTFMove(request), downcast<CachedSVGDocument>(resource));
     case CachedResource::Type::SVGFontResource:
-        return new CachedSVGFont(WTFMove(request), static_cast<CachedSVGFont&>(resource));
+        return new CachedSVGFont(WTFMove(request), downcast<CachedSVGFont>(resource));
     case CachedResource::Type::FontResource:
         return new CachedFont(WTFMove(request), resource.sessionID(), resource.cookieJar());
     case CachedResource::Type::Beacon:
@@ -891,7 +891,7 @@ ResourceErrorOr<CachedResourceHandle<CachedResource>> CachedResourceLoader::requ
 
     if (request.options().destination == FetchOptions::Destination::Document || request.options().destination == FetchOptions::Destination::Iframe) {
         // FIXME: Identify HSTS cases and avoid adding the header. <https://bugs.webkit.org/show_bug.cgi?id=157885>
-        if (!url.protocolIs("https"))
+        if (!url.protocolIs("https"_s))
             request.resourceRequest().setHTTPHeaderField(HTTPHeaderName::UpgradeInsecureRequests, "1"_s);
     }
 
@@ -1202,8 +1202,8 @@ CachedResourceLoader::RevalidationPolicy CachedResourceLoader::determineRevalida
 
 #if ENABLE(SERVICE_WORKER)
     // FIXME: We should validate/specify this behavior.
-    if (cachedResourceRequest.options().serviceWorkerRegistrationIdentifier != existingResource->options().serviceWorkerRegistrationIdentifier) {
-        LOG(ResourceLoading, "CachedResourceLoader::determineRevalidationPolicy reloading because selected service worker differs");
+    if (cachedResourceRequest.options().serviceWorkerRegistrationIdentifier != existingResource->options().serviceWorkerRegistrationIdentifier || cachedResourceRequest.options().serviceWorkersMode != existingResource->options().serviceWorkersMode) {
+        LOG(ResourceLoading, "CachedResourceLoader::determineRevalidationPolicy reloading because selected service worker may differ");
         return Reload;
     }
 #endif

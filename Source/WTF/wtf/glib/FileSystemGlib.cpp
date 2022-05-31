@@ -140,7 +140,7 @@ std::optional<WallTime> fileCreationTime(const String&)
     return std::nullopt;
 }
 
-String openTemporaryFile(const String& prefix, PlatformFileHandle& handle, const String& suffix)
+String openTemporaryFile(StringView prefix, PlatformFileHandle& handle, StringView suffix)
 {
     // FIXME: Suffix is not supported, but OK for now since the code using it is macOS-port-only.
     ASSERT_UNUSED(suffix, suffix.isEmpty());
@@ -247,8 +247,12 @@ int readFromFile(PlatformFileHandle handle, void* data, int length)
     return -1;
 }
 
-std::optional<int32_t> getFileDeviceId(const CString& fsFile)
+std::optional<int32_t> getFileDeviceId(const String& path)
 {
+    auto fsFile = fileSystemRepresentation(path);
+    if (fsFile.isNull())
+        return std::nullopt;
+
     GRefPtr<GFile> file = adoptGRef(g_file_new_for_path(fsFile.data()));
     GRefPtr<GFileInfo> fileInfo = adoptGRef(g_file_query_filesystem_info(file.get(), G_FILE_ATTRIBUTE_UNIX_DEVICE, nullptr, nullptr));
     if (!fileInfo)

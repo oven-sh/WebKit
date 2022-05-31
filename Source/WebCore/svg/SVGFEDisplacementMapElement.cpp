@@ -102,7 +102,7 @@ void SVGFEDisplacementMapElement::svgAttributeChanged(const QualifiedName& attrN
     if (PropertyRegistry::isKnownAttribute(attrName)) {
         InstanceInvalidationGuard guard(*this);
         if (attrName == SVGNames::inAttr || attrName == SVGNames::in2Attr)
-            setSVGResourcesInAncestorChainAreDirty();
+            updateSVGRendererForElementChange();
         else {
             ASSERT(attrName == SVGNames::xChannelSelectorAttr || attrName == SVGNames::yChannelSelectorAttr || attrName == SVGNames::scaleAttr);
             primitiveAttributeChanged(attrName);
@@ -113,7 +113,7 @@ void SVGFEDisplacementMapElement::svgAttributeChanged(const QualifiedName& attrN
     SVGFilterPrimitiveStandardAttributes::svgAttributeChanged(attrName);
 }
 
-RefPtr<FilterEffect> SVGFEDisplacementMapElement::filterEffect(const SVGFilterBuilder&, const FilterEffectVector&) const
+RefPtr<FilterEffect> SVGFEDisplacementMapElement::filterEffect(const SVGFilter&, const FilterEffectVector&, const GraphicsContext&) const
 {
     return FEDisplacementMap::create(xChannelSelector(), yChannelSelector(), scale());
 }

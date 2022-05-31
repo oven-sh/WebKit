@@ -30,7 +30,6 @@ import subprocess
 import sys
 import time
 
-from datetime import datetime, timedelta
 from collections import defaultdict
 
 from webkitcorepy import run, decorators, NestedFuzzyDict
@@ -71,7 +70,7 @@ class Git(Scm):
 
         @property
         def path(self):
-            return os.path.join(self.repo.root_path, '.git', 'identifiers.json')
+            return os.path.join(self.repo.common_directory, 'identifiers.json')
 
         def _fill(self, branch):
             default_branch = self.repo.default_branch
@@ -130,7 +129,7 @@ class Git(Scm):
                     kwargs = dict(encoding='utf-8')
                 self._last_populated[branch] = time.time()
                 log = subprocess.Popen(
-                    [self.repo.executable(), 'log', branch],
+                    [self.repo.executable(), 'log', branch, '--no-decorate', '--date=unix'],
                     cwd=self.repo.root_path,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
@@ -301,13 +300,14 @@ class Git(Scm):
     SSH_REMOTE = re.compile('(ssh://)?git@(?P<host>[^:/]+)[:/](?P<path>.+).git')
     HTTP_REMOTE = re.compile(r'(?P<protocol>https?)://(?P<host>[^\/]+)/(?P<path>.+).git')
     REMOTE_BRANCH = re.compile(r'remotes\/(?P<remote>[^\/]+)\/(?P<branch>.+)')
-    USER_REMOTE = re.compile(r'(?P<username>[^:/]+):(?P<branch>.+)')
+    USER_REMOTE = re.compile(r'(?P<name>[^:]+):(?P<branch>.+)')
     GIT_CONFIG_EXTENSION = 'git_config_extension'
     PROJECT_CONFIG_OPTIONS = {
         'pull.rebase': ['true', 'false'],
         'webkitscmpy.pull-request': ['overwrite', 'append'],
         'webkitscmpy.history': ['when-user-owned', 'disabled', 'always', 'never'],
         'webkitscmpy.update-fork': ['true', 'false'],
+        'webkitscmpy.auto-check': ['true', 'false'],
     }
     CONFIG_LOCATIONS = ['global', 'repository', 'project']
 
@@ -396,7 +396,7 @@ class Git(Scm):
     @property
     @decorators.Memoize()
     def is_svn(self):
-        config = os.path.join(self.root_path, '.git/config')
+        config = os.path.join(self.common_directory, 'config')
         if not os.path.isfile(config):
             return False
 
@@ -420,16 +420,29 @@ class Git(Scm):
 
     @property
     @decorators.Memoize()
-    def default_branch(self):
-        result = run([self.executable(), 'rev-parse', '--abbrev-ref', 'origin/HEAD'], cwd=self.path, capture_output=True, encoding='utf-8')
+    def common_directory(self):
+        result = run([self.executable(), 'rev-parse', '--git-common-dir'], cwd=self.path, capture_output=True, encoding='utf-8')
         if result.returncode:
-            candidates = self.branches
-            if 'master' in candidates:
-                return 'master'
-            if 'main' in candidates:
-                return 'main'
-            return None
-        return '/'.join(result.stdout.rstrip().split('/')[1:])
+            return os.path.join(self.root_path, '.git')
+        return os.path.join(self.root_path, result.stdout.rstrip())
+
+    @property
+    @decorators.Memoize()
+    def default_branch(self):
+        for name in ['HEAD', 'main', 'master']:
+            result = run([self.executable(), 'rev-parse', '--symbolic-full-name', 'refs/remotes/origin/{}'.format(name)],
+                         cwd=self.path, capture_output=True, encoding='utf-8')
+            s = result.stdout.strip()
+            if result.returncode == 0 and s:
+                assert s.startswith('refs/remotes/origin/')
+                return s[len('refs/remotes/origin/'):]
+
+        candidates = self.branches
+        if 'main' in candidates:
+            return 'main'
+        if 'master' in candidates:
+            return 'master'
+        return None
 
     @property
     def branch(self):
@@ -482,18 +495,11 @@ class Git(Scm):
         elif http_match:
             url = '{}://{}/{}'.format(http_match.group('protocol'), http_match.group('host'), http_match.group('path'))
 
-        if remote.GitHub.is_webserver(url):
-            return remote.GitHub(url, contributors=self.contributors)
-        if 'bitbucket' in url or 'stash' in url:
-            match = re.match(r'(?P<protocol>https?)://(?P<host>.+)/(?P<project>.+)/(?P<repo>.+)', url)
-            return remote.BitBucket(
-                '{}://{}/projects/{}/repos/{}'.format(
-                    match.group('protocol'),
-                    match.group('host'),
-                    match.group('project').upper(),
-                    match.group('repo'),
-                ), contributors=self.contributors,
-            )
+        try:
+            return remote.Scm.from_url(url)
+        except OSError:
+            pass
+
         return None
 
     def _commit_count(self, native_parameter):
@@ -505,6 +511,7 @@ class Git(Scm):
             raise self.Exception('Failed to retrieve revision count for {}'.format(native_parameter))
         return int(revision_count.stdout)
 
+    @decorators.Memoize(cached=False)
     def branches_for(self, hash=None, remote=True):
         branch = run(
             [self.executable(), 'branch'] + (['--contains', hash] if hash else ['-a']),
@@ -560,7 +567,7 @@ class Git(Scm):
 
         default_branch = self.default_branch
         parsed_branch_point = None
-        log_format = ['-1'] if include_log else ['-1', '--format=short']
+        log_format = ['-1', '--no-decorate', '--date=unix'] if include_log else ['-1', '--no-decorate', '--date=unix', '--format=short']
 
         # Determine the `git log` output and branch for a given identifier
         if identifier is not None:
@@ -717,13 +724,7 @@ class Git(Scm):
             if split[0] == 'Author':
                 author = Contributor.from_scm_log(line.lstrip(), self.contributors)
             elif split[0] == 'CommitDate':
-                tz_diff = line.split(' ')[-1]
-                date = datetime.strptime(split[1].lstrip()[:-len(tz_diff)], '%a %b %d %H:%M:%S %Y ')
-                date += timedelta(
-                    hours=int(tz_diff[1:3]),
-                    minutes=int(tz_diff[3:5]),
-                ) * (1 if tz_diff[0] == '-' else -1)
-                timestamp = int(calendar.timegm(date.timetuple())) - time.timezone
+                timestamp = int(line.split(' ')[-1])
 
         message = ''
         for line in content.splitlines()[5:]:
@@ -743,7 +744,7 @@ class Git(Scm):
         try:
             log = None
             log = subprocess.Popen(
-                [self.executable(), 'log', '--format=fuller', '{}...{}'.format(end.hash, begin.hash)],
+                [self.executable(), 'log', '--format=fuller', '--no-decorate', '--date=unix', '{}...{}'.format(end.hash, begin.hash)],
                 cwd=self.root_path,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -870,34 +871,38 @@ class Git(Scm):
         match = self.USER_REMOTE.match(argument)
         rmt = self.remote()
         if match and isinstance(rmt, remote.GitHub):
-            username = match.group('username')
-            if not self.url(match.group('username')):
+            name = match.group('name')
+            username = name.split('/')[0]
+            repo_name = rmt.name if '/' not in name else name.split('/', 1)[-1]
+            name = username + repo_name[len(rmt.name):]
+
+            if not self.url(name):
                 url = self.url()
                 if '://' in url:
-                    rmt = '{}://{}/{}/{}.git'.format(url.split(':')[0], url.split('/')[2], username, rmt.name)
+                    rmt = '{}://{}/{}/{}.git'.format(url.split(':')[0], url.split('/')[2], username, repo_name)
                 elif ':' in url:
-                    rmt = '{}:{}/{}.git'.format(url.split(':')[0], username, rmt.name)
+                    rmt = '{}:{}/{}.git'.format(url.split(':')[0], username, repo_name)
                 else:
                     sys.stderr.write("Failed to convert '{}' to '{}' remote\n".format(url, username))
                     return None
                 if run(
-                    [self.executable(), 'remote', 'add', username, rmt],
+                    [self.executable(), 'remote', 'add', name, rmt],
                     capture_output=True, cwd=self.root_path,
                 ).returncode:
-                    sys.stderr.write("Failed to add remote '{}' as '{}'\n".format(rmt, username))
+                    sys.stderr.write("Failed to add remote '{}' as '{}'\n".format(rmt, name))
                     return None
                 self.config.clear()
             branch = match.group('branch')
             rc = run(
-                [self.executable(), 'checkout'] + ['-B', branch, '{}/{}'.format(username, branch)] + log_arg,
+                [self.executable(), 'checkout'] + ['-B', branch, '{}/{}'.format(name, branch)] + log_arg,
                 cwd=self.root_path,
             ).returncode
             if not rc:
                 return self.commit()
             if rc == 128:
-                run([self.executable(), 'fetch', username], cwd=self.root_path)
+                run([self.executable(), 'fetch', name], cwd=self.root_path)
             return None if run(
-                [self.executable(), 'checkout'] + ['-B', branch, '{}/{}'.format(username, branch)] + log_arg,
+                [self.executable(), 'checkout'] + ['-B', branch, '{}/{}'.format(name, branch)] + log_arg,
                 cwd=self.root_path,
             ).returncode else self.commit()
 

@@ -418,7 +418,7 @@ void URLParser::appendWindowsDriveLetter(CodePointIterator<CharacterType>& itera
 
 bool URLParser::copyBaseWindowsDriveLetter(const URL& base)
 {
-    if (base.protocolIs("file")) {
+    if (base.protocolIs("file"_s)) {
         RELEASE_ASSERT(base.m_hostEnd + base.m_portLength < base.m_string.length());
         if (base.m_string.is8Bit()) {
             const LChar* begin = base.m_string.characters8();
@@ -1081,7 +1081,7 @@ URLParser::URLParser(String&& input, const URL& base, const URLTextEncoding* non
     ASSERT(!m_url.m_isValid
         || m_didSeeSyntaxViolation == (m_url.string() != m_inputString)
         || (m_inputString.isAllSpecialCharacters<isC0ControlOrSpace>() && m_url.m_string == base.m_string.left(base.m_queryEnd))
-        || (base.isValid() && base.protocolIs("file")));
+        || (base.isValid() && base.protocolIs("file"_s)));
     ASSERT(internalValuesConsistent(m_url));
 #if ASSERT_ENABLED
     if (!m_didSeeSyntaxViolation) {
@@ -1271,7 +1271,7 @@ void URLParser::parse(const CharacterType* input, const unsigned length, const U
                 ++c;
                 break;
             }
-            if (!base.protocolIs("file")) {
+            if (!base.protocolIs("file"_s)) {
                 state = State::Relative;
                 break;
             }
@@ -1493,7 +1493,7 @@ void URLParser::parse(const CharacterType* input, const unsigned length, const U
                 break;
             case '?':
                 syntaxViolation(c);
-                if (base.isValid() && base.protocolIs("file")) {
+                if (base.isValid() && base.protocolIs("file"_s)) {
                     copyURLPartsUntil(base, URLPart::PathEnd, c, nonUTF8QueryEncoding);
                     appendToASCIIBuffer('?');
                     ++c;
@@ -1516,7 +1516,7 @@ void URLParser::parse(const CharacterType* input, const unsigned length, const U
                 break;
             case '#':
                 syntaxViolation(c);
-                if (base.isValid() && base.protocolIs("file")) {
+                if (base.isValid() && base.protocolIs("file"_s)) {
                     copyURLPartsUntil(base, URLPart::QueryEnd, c, nonUTF8QueryEncoding);
                     appendToASCIIBuffer('#');
                 } else {
@@ -1535,11 +1535,11 @@ void URLParser::parse(const CharacterType* input, const unsigned length, const U
                 break;
             default:
                 syntaxViolation(c);
-                if (base.isValid() && base.protocolIs("file") && shouldCopyFileURL(c))
+                if (base.isValid() && base.protocolIs("file"_s) && shouldCopyFileURL(c))
                     copyURLPartsUntil(base, URLPart::PathAfterLastSlash, c, nonUTF8QueryEncoding);
                 else {
                     bool copiedHost = false;
-                    if (base.isValid() && base.protocolIs("file")) {
+                    if (base.isValid() && base.protocolIs("file"_s)) {
                         if (base.host().isEmpty()) {
                             copyURLPartsUntil(base, URLPart::SchemeEnd, c, nonUTF8QueryEncoding);
                             appendToASCIIBuffer(":///", 4);
@@ -1570,7 +1570,7 @@ void URLParser::parse(const CharacterType* input, const unsigned length, const U
             if (LIKELY(*c == '/' || *c == '\\')) {
                 if (UNLIKELY(*c == '\\'))
                     syntaxViolation(c);
-                if (base.isValid() && base.protocolIs("file")) {
+                if (base.isValid() && base.protocolIs("file"_s)) {
                     copyURLPartsUntil(base, URLPart::SchemeEnd, c, nonUTF8QueryEncoding);
                     appendToASCIIBuffer(":/", 2);
                 }
@@ -1587,7 +1587,7 @@ void URLParser::parse(const CharacterType* input, const unsigned length, const U
             }
             {
                 bool copiedHost = false;
-                if (base.isValid() && base.protocolIs("file")) {
+                if (base.isValid() && base.protocolIs("file"_s)) {
                     if (base.host().isEmpty()) {
                         copyURLPartsUntil(base, URLPart::SchemeEnd, c, nonUTF8QueryEncoding);
                         appendToASCIIBuffer(":///", 4);
@@ -1881,7 +1881,7 @@ void URLParser::parse(const CharacterType* input, const unsigned length, const U
         break;
     case State::File:
         LOG_FINAL_STATE("File");
-        if (base.isValid() && base.protocolIs("file")) {
+        if (base.isValid() && base.protocolIs("file"_s)) {
             copyURLPartsUntil(base, URLPart::QueryEnd, c, nonUTF8QueryEncoding);
             break;
         }
@@ -1901,7 +1901,7 @@ void URLParser::parse(const CharacterType* input, const unsigned length, const U
         syntaxViolation(c);
         {
             bool copiedHost = false;
-            if (base.isValid() && base.protocolIs("file")) {
+            if (base.isValid() && base.protocolIs("file"_s)) {
                 if (base.host().isEmpty()) {
                     copyURLPartsUntil(base, URLPart::SchemeEnd, c, nonUTF8QueryEncoding);
                     appendToASCIIBuffer(":/", 2);
@@ -2512,7 +2512,7 @@ void URLParser::addNonSpecialDotSlash()
 {
     auto oldPathStart = m_url.m_hostEnd + m_url.m_portLength;
     auto& oldString = m_url.m_string;
-    m_url.m_string = makeString(oldString.substring(0, oldPathStart + 1), "./", oldString.substring(oldPathStart + 1));
+    m_url.m_string = makeString(StringView(oldString).left(oldPathStart + 1), "./", StringView(oldString).substring(oldPathStart + 1));
     m_url.m_pathAfterLastSlash += 2;
     m_url.m_pathEnd += 2;
     m_url.m_queryEnd += 2;
@@ -2887,12 +2887,12 @@ auto URLParser::parseURLEncodedForm(StringView input) -> URLEncodedForm
     for (StringView bytes : input.split('&')) {
         auto equalIndex = bytes.find('=');
         if (equalIndex == notFound) {
-            auto name = formURLDecode(bytes.toString().replace('+', 0x20));
+            auto name = formURLDecode(makeStringByReplacingAll(bytes, '+', 0x20));
             if (name)
                 output.append({ name.value(), emptyString() });
         } else {
-            auto name = formURLDecode(bytes.substring(0, equalIndex).toString().replace('+', 0x20));
-            auto value = formURLDecode(bytes.substring(equalIndex + 1).toString().replace('+', 0x20));
+            auto name = formURLDecode(makeStringByReplacingAll(bytes.left(equalIndex), '+', 0x20));
+            auto value = formURLDecode(makeStringByReplacingAll(bytes.substring(equalIndex + 1), '+', 0x20));
             if (name && value)
                 output.append({ name.value(), value.value() });
         }

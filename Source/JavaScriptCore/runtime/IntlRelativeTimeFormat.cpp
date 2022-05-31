@@ -60,7 +60,7 @@ IntlRelativeTimeFormat::IntlRelativeTimeFormat(VM& vm, Structure* structure)
 void IntlRelativeTimeFormat::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    ASSERT(inherits(vm, info()));
+    ASSERT(inherits(info()));
 }
 
 template<typename Visitor>
@@ -96,7 +96,7 @@ void IntlRelativeTimeFormat::initializeRelativeTimeFormat(JSGlobalObject* global
     LocaleMatcher localeMatcher = intlOption<LocaleMatcher>(globalObject, options, vm.propertyNames->localeMatcher, { { "lookup"_s, LocaleMatcher::Lookup }, { "best fit"_s, LocaleMatcher::BestFit } }, "localeMatcher must be either \"lookup\" or \"best fit\""_s, LocaleMatcher::BestFit);
     RETURN_IF_EXCEPTION(scope, void());
 
-    String numberingSystem = intlStringOption(globalObject, options, vm.propertyNames->numberingSystem, { }, ASCIILiteral::null(), ASCIILiteral::null());
+    String numberingSystem = intlStringOption(globalObject, options, vm.propertyNames->numberingSystem, { }, { }, { });
     RETURN_IF_EXCEPTION(scope, void());
     if (!numberingSystem.isNull()) {
         if (!isUnicodeLocaleIdentifierType(numberingSystem)) {
@@ -185,7 +185,7 @@ ASCIILiteral IntlRelativeTimeFormat::styleString(Style style)
         return "narrow"_s;
     }
     ASSERT_NOT_REACHED();
-    return ASCIILiteral::null();
+    return { };
 }
 
 // https://tc39.es/ecma402/#sec-intl.relativetimeformat.prototype.resolvedoptions
@@ -270,7 +270,7 @@ JSValue IntlRelativeTimeFormat::format(JSGlobalObject* globalObject, double valu
     String result = formatInternal(globalObject, value, unit);
     RETURN_IF_EXCEPTION(scope, { });
 
-    return jsString(vm, result);
+    return jsString(vm, WTFMove(result));
 }
 
 // https://tc39.es/ecma402/#sec-FormatRelativeTimeToParts
@@ -318,7 +318,7 @@ JSValue IntlRelativeTimeFormat::formatToParts(JSGlobalObject* globalObject, doub
         }
 
         IntlFieldIterator fieldIterator(*iterator.get());
-        IntlNumberFormat::formatToPartsInternal(globalObject, IntlNumberFormat::Style::Decimal, std::signbit(absValue), IntlMathematicalValue::numberTypeFromDouble(absValue), formattedNumber, fieldIterator, parts, nullptr, jsString(vm, singularUnit(unit).toString()));
+        IntlNumberFormat::formatToPartsInternal(globalObject, IntlNumberFormat::Style::Decimal, std::signbit(absValue), IntlMathematicalValue::numberTypeFromDouble(absValue), formattedNumber, fieldIterator, parts, nullptr, jsString(vm, singularUnit(unit)));
         RETURN_IF_EXCEPTION(scope, { });
     }
 

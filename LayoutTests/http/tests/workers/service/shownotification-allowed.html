@@ -37,7 +37,7 @@ async function registerServiceWorker() {
 
     installingWorker.addEventListener("statechange", () => {
         if (installingWorker.state === "activated") {
-            installingWorker.postMessage("tryshow");
+            installingWorker.postMessage("tryshow|title|body|tag|foobar");
         }
     });
 }
@@ -45,13 +45,19 @@ async function registerServiceWorker() {
 var gotClicked = false;
 var gotClosed = false;
 
-navigator.serviceWorker.addEventListener('message', event => {
+navigator.serviceWorker.addEventListener('message', async event => {
     if (event.data == "showFailed") {
         failTheTest("Unexpectedly received the failed-to-show message");
     } else if (event.data == "shown") {
+        // We simulate a network process crash so that we make sure that a notification click ensures restarting a service worker
+        if (window.internals)
+            await internals.storeRegistrationsOnDisk();
+        if (window.testRunner)
+            testRunner.terminateNetworkProcess();
+
         if (testRunner)
             testRunner.simulateWebNotificationClickForServiceWorkerNotifications();
-    } else if (event.data == "clicked") {
+    } else if (event.data == "clicked|data:foobar") {
         shouldBeFalse("gotClicked");
         shouldBeFalse("gotClosed");
         gotClicked = true;

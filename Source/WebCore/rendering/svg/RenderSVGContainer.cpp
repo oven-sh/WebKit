@@ -52,6 +52,36 @@ RenderSVGContainer::RenderSVGContainer(SVGElement& element, RenderStyle&& style)
 
 RenderSVGContainer::~RenderSVGContainer() = default;
 
+// Helper class, move to its own file once utilized in more than one place.
+class SVGLayerTransformUpdater {
+    WTF_MAKE_NONCOPYABLE(SVGLayerTransformUpdater);
+public:
+    SVGLayerTransformUpdater(RenderLayerModelObject& renderer)
+        : m_renderer(renderer)
+    {
+        if (!m_renderer.hasLayer())
+            return;
+
+        m_transformReferenceBox = m_renderer.transformReferenceBoxRect();
+        m_renderer.updateLayerTransform();
+    }
+
+
+    ~SVGLayerTransformUpdater()
+    {
+        if (!m_renderer.hasLayer())
+            return;
+        if (m_renderer.transformReferenceBoxRect() == m_transformReferenceBox)
+            return;
+
+        m_renderer.updateLayerTransform();
+    }
+
+private:
+    RenderLayerModelObject& m_renderer;
+    FloatRect m_transformReferenceBox;
+};
+
 void RenderSVGContainer::layout()
 {
     StackStats::LayoutCheckPoint layoutCheckPoint;
@@ -64,12 +94,9 @@ void RenderSVGContainer::layout()
     // Update layer transform before laying out children (SVG needs access to the transform matrices during layout for on-screen text font-size calculations).
     // Eventually re-update if the transform reference box, relevant for transform-origin, has changed during layout.
     {
-        // FIXME: [LBSE] Upstream SVGLayerTransformUpdater
-        // SVGLayerTransformUpdater transformUpdater(*this);
+        SVGLayerTransformUpdater updateTransform(*this);
         layoutChildren();
     }
-
-    updateLayerInformation();
 
     // Invalidate all resources of this client if our layout changed.
     if (everHadLayout() && needsLayout())
@@ -92,19 +119,14 @@ void RenderSVGContainer::layoutChildren()
 
     SVGBoundingBoxComputation boundingBoxComputation(*this);
     m_objectBoundingBox = boundingBoxComputation.computeDecoratedBoundingBox(SVGBoundingBoxComputation::objectBoundingBoxDecoration, &m_objectBoundingBoxValid);
+
+    constexpr auto objectBoundingBoxDecorationWithoutTransformations = SVGBoundingBoxComputation::objectBoundingBoxDecoration | SVGBoundingBoxComputation::DecorationOption::IgnoreTransformations;
+    m_objectBoundingBoxWithoutTransformations = boundingBoxComputation.computeDecoratedBoundingBox(objectBoundingBoxDecorationWithoutTransformations);
+
     m_strokeBoundingBox = boundingBoxComputation.computeDecoratedBoundingBox(SVGBoundingBoxComputation::strokeBoundingBoxDecoration);
-    setLayoutRect(enclosingLayoutRect(m_objectBoundingBox));
+    setCurrentSVGLayoutRect(enclosingLayoutRect(m_objectBoundingBoxWithoutTransformations));
 
     containerLayout.positionChildrenRelativeToContainer();
-}
-
-void RenderSVGContainer::styleDidChange(StyleDifference diff, const RenderStyle* oldStyle)
-{
-    RenderSVGModelObject::styleDidChange(diff, oldStyle);
-
-    // FIXME: [LBSE] Upstream RenderLayer changes
-    // if (hasLayer())
-    //     layer()->setIsOpportunisticStackingContext(true);
 }
 
 bool RenderSVGContainer::selfWillPaint()
@@ -138,7 +160,7 @@ void RenderSVGContainer::paint(PaintInfo& paintInfo, const LayoutPoint& paintOff
         return;
     }
 
-    auto adjustedPaintOffset = paintOffset + layoutLocation();
+    auto adjustedPaintOffset = paintOffset + currentSVGLayoutLocation();
     if (paintInfo.phase == PaintPhase::Mask) {
         // FIXME: [LBSE] Upstream SVGRenderSupport changes
         // SVGRenderSupport::paintSVGMask(*this, paintInfo, adjustedPaintOffset);
@@ -158,7 +180,7 @@ void RenderSVGContainer::paint(PaintInfo& paintInfo, const LayoutPoint& paintOff
 
 bool RenderSVGContainer::nodeAtPoint(const HitTestRequest& request, HitTestResult& result, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction hitTestAction)
 {
-    auto adjustedLocation = accumulatedOffset + layoutLocation();
+    auto adjustedLocation = accumulatedOffset + currentSVGLayoutLocation();
 
     auto visualOverflowRect = visualOverflowRectEquivalent();
     visualOverflowRect.moveBy(adjustedLocation);
@@ -166,8 +188,7 @@ bool RenderSVGContainer::nodeAtPoint(const HitTestRequest& request, HitTestResul
         return false;
 
     auto localPoint = locationInContainer.point();
-    auto boundingBoxTopLeftCorner = flooredLayoutPoint(objectBoundingBox().minXMinYCorner());
-    auto coordinateSystemOriginTranslation = boundingBoxTopLeftCorner - adjustedLocation;
+    auto coordinateSystemOriginTranslation = nominalSVGLayoutLocation() - adjustedLocation;
     localPoint.move(coordinateSystemOriginTranslation);
 
     if (!SVGRenderSupport::pointInClippingArea(*this, localPoint))

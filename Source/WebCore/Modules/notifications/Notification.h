@@ -38,8 +38,10 @@
 #include "NotificationDirection.h"
 #include "NotificationPermission.h"
 #include "ScriptExecutionContextIdentifier.h"
-#include <wtf/Identified.h>
+#include "SerializedScriptValue.h"
+#include <wtf/CompletionHandler.h>
 #include <wtf/URL.h>
+#include <wtf/UUID.h>
 #include "WritingMode.h"
 
 namespace WebCore {
@@ -51,7 +53,7 @@ class NotificationPermissionCallback;
 
 struct NotificationData;
 
-class Notification final : public ThreadSafeRefCounted<Notification>, public ActiveDOMObject, public EventTargetWithInlineData, public UUIDIdentified<Notification> {
+class Notification final : public ThreadSafeRefCounted<Notification>, public ActiveDOMObject, public EventTargetWithInlineData {
     WTF_MAKE_ISO_ALLOCATED_EXPORT(Notification, WEBCORE_EXPORT);
 public:
     using Permission = NotificationPermission;
@@ -63,12 +65,17 @@ public:
         String body;
         String tag;
         String icon;
+        JSC::JSValue data;
     };
-    static Ref<Notification> create(ScriptExecutionContext&, String&& title, Options&&);
-    
+    // For JS constructor only.
+    static ExceptionOr<Ref<Notification>> create(ScriptExecutionContext&, String&& title, Options&&);
+
+    static ExceptionOr<Ref<Notification>> createForServiceWorker(ScriptExecutionContext&, String&& title, Options&&, const URL&);
+    static Ref<Notification> create(ScriptExecutionContext&, NotificationData&&);
+
     WEBCORE_EXPORT virtual ~Notification();
 
-    void show();
+    void show(CompletionHandler<void()>&& = [] { });
     void close();
 
     const String& title() const { return m_title; }
@@ -77,6 +84,7 @@ public:
     const String& lang() const { return m_lang; }
     const String& tag() const { return m_tag; }
     const URL& icon() const { return m_icon; }
+    JSC::JSValue dataForBindings(JSC::JSGlobalObject&);
 
     TextDirection direction() const { return m_direction == Direction::Rtl ? TextDirection::RTL : TextDirection::LTR; }
 
@@ -94,21 +102,21 @@ public:
 
     WEBCORE_EXPORT NotificationData data() const;
 
-    Ref<Notification> copyForGetNotifications() const;
-
     using ThreadSafeRefCounted::ref;
     using ThreadSafeRefCounted::deref;
 
-private:
-    Notification(ScriptExecutionContext&, String&& title, Options&&);
-    Notification(const Notification&);
+    void markAsShown();
+    void showSoon();
 
-    void contextDestroyed() final;
+    UUID identifier() const { return m_identifier; }
+
+    bool isPersistent() const { return !m_serviceWorkerRegistrationURL.isNull(); }
+
+private:
+    Notification(ScriptExecutionContext&, UUID, String&& title, Options&&, Ref<SerializedScriptValue>&&);
 
     NotificationClient* clientFromContext();
     EventTargetInterface eventTargetInterface() const final { return NotificationEventTargetInterfaceType; }
-
-    void showSoon();
 
     // ActiveDOMObject
     const char* activeDOMObjectName() const final;
@@ -121,12 +129,15 @@ private:
     void derefEventTarget() final { deref(); }
     void eventListenersDidChange() final;
 
+    UUID m_identifier;
+
     String m_title;
     Direction m_direction;
     String m_lang;
     String m_body;
     String m_tag;
     URL m_icon;
+    Ref<SerializedScriptValue> m_dataForBindings;
 
     enum State { Idle, Showing, Closed };
     State m_state { Idle };
@@ -138,6 +149,7 @@ private:
     };
     NotificationSource m_notificationSource;
     ScriptExecutionContextIdentifier m_contextIdentifier;
+    URL m_serviceWorkerRegistrationURL;
 };
 
 } // namespace WebCore

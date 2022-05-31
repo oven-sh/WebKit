@@ -111,6 +111,7 @@ struct SameSizeAsRenderObject {
     virtual ~SameSizeAsRenderObject() = default; // Allocate vtable pointer.
 #if ASSERT_ENABLED
     bool weakPtrFactorWasConstructedOnMainThread;
+    HashSet<void*> cachedResourceClientAssociatedResources;
 #endif
     void* pointers[5];
 #if ASSERT_ENABLED
@@ -193,6 +194,17 @@ bool RenderObject::isFieldset() const
 bool RenderObject::isHTMLMarquee() const
 {
     return node() && node()->renderer() == this && node()->hasTagName(marqueeTag);
+}
+
+bool RenderObject::isBlockContainer() const
+{
+    auto display = style().display();
+    return (display == DisplayType::Block
+        || display == DisplayType::InlineBlock
+        || display == DisplayType::FlowRoot
+        || display == DisplayType::ListItem
+        || display == DisplayType::TableCell
+        || display == DisplayType::TableCaption) && !isRenderReplaced();
 }
 
 void RenderObject::setFragmentedFlowStateIncludingDescendants(FragmentedFlowState state, const RenderElement* fragmentedFlowRoot)
@@ -500,7 +512,7 @@ static inline bool objectIsRelayoutBoundary(const RenderElement* object)
     if (object->isTextControl())
         return true;
 
-    if (shouldApplyLayoutContainment(*object) && shouldApplySizeContainment(*object))
+    if (object->shouldApplyLayoutContainment() && object->shouldApplySizeContainment())
         return true;
 
     if (object->isSVGRootOrLegacySVGRoot())
@@ -508,6 +520,11 @@ static inline bool objectIsRelayoutBoundary(const RenderElement* object)
 
     if (!object->hasNonVisibleOverflow())
         return false;
+
+#if ENABLE(LAYER_BASED_SVG_ENGINE)
+    if (object->document().settings().layerBasedSVGEngineEnabled() && object->isSVGLayerAwareRenderer())
+        return false;
+#endif
 
     if (object->style().width().isIntrinsicOrAuto() || object->style().height().isIntrinsicOrAuto() || object->style().height().isPercentOrCalculated())
         return false;
@@ -840,22 +857,27 @@ LayoutRect RenderObject::paintingRootRect(LayoutRect& topLevelRect)
     return result;
 }
 
-RenderLayerModelObject* RenderObject::containerForRepaint() const
+RenderObject::RepaintContainerStatus RenderObject::containerForRepaint() const
 {
     RenderLayerModelObject* repaintContainer = nullptr;
+    auto fullRepaintAlreadyScheduled = false;
 
     if (view().usesCompositing()) {
-        if (RenderLayer* parentLayer = enclosingLayer()) {
-            RenderLayer* compLayer = parentLayer->enclosingCompositingLayerForRepaint();
-            if (compLayer)
-                repaintContainer = &compLayer->renderer();
+        if (auto* parentLayer = enclosingLayer()) {
+            auto compLayerStatus = parentLayer->enclosingCompositingLayerForRepaint();
+            if (compLayerStatus.layer) {
+                repaintContainer = &compLayerStatus.layer->renderer();
+                fullRepaintAlreadyScheduled = compLayerStatus.fullRepaintAlreadyScheduled;
+            }
         }
     }
     if (view().hasSoftwareFilters()) {
-        if (RenderLayer* parentLayer = enclosingLayer()) {
-            RenderLayer* enclosingFilterLayer = parentLayer->enclosingFilterLayer();
-            if (enclosingFilterLayer)
-                return &enclosingFilterLayer->renderer();
+        if (auto* parentLayer = enclosingLayer()) {
+            auto* enclosingFilterLayer = parentLayer->enclosingFilterLayer();
+            if (enclosingFilterLayer) {
+                fullRepaintAlreadyScheduled = parentLayer->needsFullRepaint();
+                return { fullRepaintAlreadyScheduled, &enclosingFilterLayer->renderer() };
+            }
         }
     }
 
@@ -870,7 +892,7 @@ RenderLayerModelObject* RenderObject::containerForRepaint() const
         if (!repaintContainerFragmentedFlow || repaintContainerFragmentedFlow != parentRenderFragmentedFlow)
             repaintContainer = parentRenderFragmentedFlow;
     }
-    return repaintContainer;
+    return { fullRepaintAlreadyScheduled, repaintContainer };
 }
 
 void RenderObject::propagateRepaintToParentWithOutlineAutoIfNeeded(const RenderLayerModelObject& repaintContainer, const LayoutRect& repaintRect) const
@@ -944,6 +966,17 @@ void RenderObject::repaintUsingContainer(const RenderLayerModelObject* repaintCo
     }
 }
 
+static inline bool fullRepaintIsScheduled(const RenderObject& renderer)
+{
+    if (!renderer.view().usesCompositing() && !renderer.document().ownerElement())
+        return false;
+    for (auto* ancestorLayer = renderer.enclosingLayer(); ancestorLayer; ancestorLayer = ancestorLayer->paintOrderParent()) {
+        if (ancestorLayer->needsFullRepaint())
+            return true;
+    }
+    return false;
+}
+
 void RenderObject::repaint() const
 {
     // Don't repaint if we're unrooted (note that view() still returns the view when unrooted)
@@ -954,8 +987,12 @@ void RenderObject::repaint() const
     if (view.printing())
         return;
 
-    RenderLayerModelObject* repaintContainer = containerForRepaint();
-    repaintUsingContainer(repaintContainer, clippedOverflowRectForRepaint(repaintContainer));
+    auto repaintContainer = containerForRepaint();
+    if (!repaintContainer.renderer)
+        repaintContainer = { fullRepaintIsScheduled(*this), &view };
+
+    if (!repaintContainer.fullRepaintIsScheduled)
+        repaintUsingContainer(repaintContainer.renderer, clippedOverflowRectForRepaint(repaintContainer.renderer));
 }
 
 void RenderObject::repaintRectangle(const LayoutRect& r, bool shouldClipToLayer) const
@@ -973,8 +1010,12 @@ void RenderObject::repaintRectangle(const LayoutRect& r, bool shouldClipToLayer)
     // repaint containers. https://bugs.webkit.org/show_bug.cgi?id=23308
     dirtyRect.move(view.frameView().layoutContext().layoutDelta());
 
-    RenderLayerModelObject* repaintContainer = containerForRepaint();
-    repaintUsingContainer(repaintContainer, computeRectForRepaint(dirtyRect, repaintContainer), shouldClipToLayer);
+    auto repaintContainer = containerForRepaint();
+    if (!repaintContainer.renderer)
+        repaintContainer = { fullRepaintIsScheduled(*this), &view };
+
+    if (!repaintContainer.fullRepaintIsScheduled)
+        repaintUsingContainer(repaintContainer.renderer, computeRectForRepaint(dirtyRect, repaintContainer.renderer), shouldClipToLayer);
 }
 
 void RenderObject::repaintSlowRepaintObject() const
@@ -987,7 +1028,7 @@ void RenderObject::repaintSlowRepaintObject() const
     if (view.printing())
         return;
 
-    const RenderLayerModelObject* repaintContainer = containerForRepaint();
+    auto* repaintContainer = containerForRepaint().renderer;
 
     bool shouldClipToLayer = true;
     IntRect repaintRect;
@@ -1226,13 +1267,14 @@ void RenderObject::outputRenderObject(TextStream& stream, bool mark, int depth) 
     if (node())
         stream << node()->nodeName().utf8().data() << " ";
 
-    String name = renderName();
+    ASCIILiteral name = renderName();
+    StringView nameView { name };
     // FIXME: Renderer's name should not include property value listing.
-    int pos = name.find('(');
+    int pos = nameView.find('(');
     if (pos > 0)
-        stream << name.left(pos - 1).utf8().data();
+        stream << nameView.left(pos - 1);
     else
-        stream << name.utf8().data();
+        stream << nameView;
 
     if (is<RenderBox>(*this)) {
         auto& renderBox = downcast<RenderBox>(*this);
@@ -1252,12 +1294,12 @@ void RenderObject::outputRenderObject(TextStream& stream, bool mark, int depth) 
             String value = node()->nodeValue();
             stream << " length->(" << value.length() << ")";
 
-            value.replaceWithLiteral('\\', "\\\\");
-            value.replaceWithLiteral('\n', "\\n");
+            value = makeStringByReplacingAll(value, '\\', "\\\\"_s);
+            value = makeStringByReplacingAll(value, '\n', "\\n"_s);
             
             const int maxPrintedLength = 80;
             if (value.length() > maxPrintedLength) {
-                String substring = value.substring(0, maxPrintedLength);
+                auto substring = StringView(value).left(maxPrintedLength);
                 stream << " \"" << substring.utf8().data() << "\"...";
             } else
                 stream << " \"" << value.utf8().data() << "\"";
@@ -1975,6 +2017,14 @@ void RenderObject::setHasOutlineAutoAncestor(bool hasOutlineAutoAncestor)
         ensureRareData().setHasOutlineAutoAncestor(hasOutlineAutoAncestor);
 }
 
+#if ENABLE(LAYER_BASED_SVG_ENGINE)
+void RenderObject::setHasSVGTransform(bool hasSVGTransform)
+{
+    if (hasSVGTransform || hasRareData())
+        ensureRareData().setHasSVGTransform(hasSVGTransform);
+}
+#endif
+
 void RenderObject::setPaintContainmentApplies(bool paintContainmentApplies)
 {
     if (paintContainmentApplies || hasRareData())
@@ -2010,6 +2060,9 @@ RenderObject::RenderObjectRareData::RenderObjectRareData()
     , m_isRenderFragmentedFlow(false)
     , m_hasOutlineAutoAncestor(false)
     , m_paintContainmentApplies(false)
+#if ENABLE(LAYER_BASED_SVG_ENGINE)
+    , m_hasSVGTransform(false)
+#endif
 {
 }
 
@@ -2592,40 +2645,3 @@ void showRenderTree(const WebCore::RenderObject* object)
 }
 
 #endif
-
-bool WebCore::shouldApplyLayoutContainment(const WebCore::RenderObject& renderer)
-{
-    return renderer.style().containsLayout() && (!renderer.isInline() || renderer.isAtomicInlineLevelBox()) && !renderer.isRubyText() && (!renderer.isTablePart() || renderer.isRenderBlockFlow());
-}
-
-bool WebCore::shouldApplySizeContainment(const WebCore::RenderObject& renderer)
-{
-    return renderer.style().containsSize() && (!renderer.isInline() || renderer.isAtomicInlineLevelBox()) && !renderer.isRubyText() && (!renderer.isTablePart() || renderer.isTableCaption()) && !renderer.isTable();
-}
-
-bool WebCore::shouldApplyInlineSizeContainment(const WebCore::RenderObject& renderer)
-{
-    return renderer.style().effectiveContainment().contains(Containment::InlineSize) && (!renderer.isInline() || renderer.isAtomicInlineLevelBox()) && !renderer.isRubyText() && (!renderer.isTablePart() || renderer.isTableCaption()) && !renderer.isTable();
-}
-
-bool WebCore::shouldApplyStyleContainment(const WebCore::RenderObject& renderer)
-{
-    if (!renderer.style().containsStyle())
-        return false;
-    return (!renderer.isInline() || renderer.isAtomicInlineLevelBox()) && !renderer.isRubyText() && (!renderer.isTablePart() || renderer.isTableCaption()) && !renderer.isTable();
-}
-
-bool WebCore::shouldApplyPaintContainment(const WebCore::RenderObject& renderer)
-{
-    return renderer.style().containsPaint() && (!renderer.isInline() || renderer.isAtomicInlineLevelBox()) && !renderer.isRubyText() && (!renderer.isTablePart() || renderer.isRenderBlockFlow());
-}
-
-bool WebCore::shouldApplyAnyContainment(const WebCore::RenderObject& renderer)
-{
-    if (renderer.style().effectiveContainment().isEmpty())
-        return false;
-    if ((renderer.style().containsLayout() || renderer.style().containsPaint()) && (!renderer.isInline() || renderer.isAtomicInlineLevelBox()) && !renderer.isRubyText() && (!renderer.isTablePart() || renderer.isRenderBlockFlow()))
-        return true;
-    return (renderer.style().containsSize() || renderer.style().containsStyle()) && (!renderer.isInline() || renderer.isAtomicInlineLevelBox()) && !renderer.isRubyText() && (!renderer.isTablePart() || renderer.isTableCaption()) && !renderer.isTable();
-}
-

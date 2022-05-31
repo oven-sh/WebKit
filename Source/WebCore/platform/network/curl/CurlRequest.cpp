@@ -116,9 +116,10 @@ void CurlRequest::start()
         [[fallthrough]];
     case StartState::StartSuspended:
         return;
+    case StartState::WaitingForStart:
+        m_startState = StartState::DidStart;
+        break;
     }
-
-    m_startState = StartState::DidStart;
 
     if (m_request.url().isLocalFile())
         invokeDidReceiveResponseForFile(m_request.url());
@@ -530,7 +531,7 @@ int CurlRequest::didReceiveDebugInfo(curl_infotype type, char* data, size_t size
 
     if (type == CURLINFO_HEADER_OUT) {
         String requestHeader(data, size);
-        auto headerFields = requestHeader.split("\r\n");
+        auto headerFields = requestHeader.split("\r\n"_s);
         // Remove the request line
         if (headerFields.size())
             headerFields.remove(0);
@@ -559,7 +560,7 @@ void CurlRequest::setupPUT()
     m_curlHandle->enableHttpPutRequest();
 
     // Disable the Expect: 100 continue header
-    m_curlHandle->removeRequestHeader("Expect");
+    m_curlHandle->removeRequestHeader("Expect"_s);
 
     auto elementSize = m_formDataStream.elementSize();
     if (!elementSize)
@@ -593,7 +594,7 @@ void CurlRequest::setupSendData(bool forPutMethod)
 {
     // curl guesses that we want chunked encoding as long as we specify the header
     if (m_formDataStream.shouldUseChunkTransfer())
-        m_curlHandle->appendRequestHeader("Transfer-Encoding: chunked");
+        m_curlHandle->appendRequestHeader("Transfer-Encoding: chunked"_s);
     else {
         if (forPutMethod)
             m_curlHandle->setInFileSizeLarge(static_cast<curl_off_t>(m_formDataStream.totalSize()));
@@ -786,7 +787,7 @@ void CurlRequest::writeDataToDownloadFileIfEnabled(const FragmentedSharedBuffer&
             return;
 
         if (m_downloadFilePath.isEmpty())
-            m_downloadFilePath = FileSystem::openTemporaryFile("download", m_downloadFileHandle);
+            m_downloadFilePath = FileSystem::openTemporaryFile("download"_s, m_downloadFileHandle);
     }
 
     if (m_downloadFileHandle != FileSystem::invalidPlatformFileHandle)

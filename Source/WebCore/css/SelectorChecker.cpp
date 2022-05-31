@@ -31,8 +31,10 @@
 
 #include "CSSSelector.h"
 #include "CSSSelectorList.h"
+#include "CommonAtomStrings.h"
 #include "Document.h"
 #include "ElementInlines.h"
+#include "ElementRareData.h"
 #include "ElementTraversal.h"
 #include "Frame.h"
 #include "FrameSelection.h"
@@ -1130,8 +1132,8 @@ bool SelectorChecker::checkOne(CheckingContext& checkingContext, const LocalCont
             return hasAttachment(element);
 #endif
 
-        case CSSSelector::PseudoClassModalDialog:
-            return matchesModalDialogPseudoClass(element);
+        case CSSSelector::PseudoClassModal:
+            return matchesModalPseudoClass(element);
 
         case CSSSelector::PseudoClassUnknown:
             ASSERT_NOT_REACHED();

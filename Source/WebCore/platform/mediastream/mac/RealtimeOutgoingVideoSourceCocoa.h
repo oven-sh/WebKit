@@ -28,8 +28,10 @@
 #if USE(LIBWEBRTC)
 
 #include "RealtimeOutgoingVideoSource.h"
-#include "PixelBufferConformerCV.h"
 #include <webrtc/api/video/video_rotation.h>
+
+using CVPixelBufferPoolRef = struct __CVPixelBufferPool*;
+using CVPixelBufferRef = struct __CVBuffer*;
 
 namespace WebCore {
 
@@ -47,10 +49,9 @@ private:
     // RealtimeMediaSource::VideoFrameObserver API
     void videoFrameAvailable(VideoFrame&, VideoFrameTimeMetadata) final;
 
-    RetainPtr<CVPixelBufferRef> convertToYUV(CVPixelBufferRef);
     RetainPtr<CVPixelBufferRef> rotatePixelBuffer(CVPixelBufferRef, webrtc::VideoRotation);
+    CVPixelBufferPoolRef pixelBufferPool(size_t width, size_t height);
 
-    std::unique_ptr<PixelBufferConformerCV> m_pixelBufferConformer;
     std::unique_ptr<ImageRotationSessionVT> m_rotationSession;
     webrtc::VideoRotation m_currentRotationSessionAngle { webrtc::kVideoRotation_0 };
     size_t m_rotatedWidth { 0 };

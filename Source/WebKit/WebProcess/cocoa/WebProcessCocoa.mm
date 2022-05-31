@@ -27,8 +27,7 @@
 #import "WebProcess.h"
 
 #import "AccessibilitySupportSPI.h"
-#import "GPUProcessConnectionParameters.h"
-#import "LaunchServicesDatabaseManager.h"
+#import "DefaultWebBrowserChecks.h"
 #import "LegacyCustomProtocolManager.h"
 #import "LogInitialization.h"
 #import "Logging.h"
@@ -38,7 +37,7 @@
 #import "ProcessAssertion.h"
 #import "SandboxExtension.h"
 #import "SandboxInitializationParameters.h"
-#import "SharedBufferCopy.h"
+#import "SharedBufferReference.h"
 #import "WKAPICast.h"
 #import "WKBrowsingContextHandleInternal.h"
 #import "WKFullKeyboardAccessWatcher.h"
@@ -95,6 +94,7 @@
 #import <pal/spi/cg/CoreGraphicsSPI.h>
 #import <pal/spi/cocoa/AVFoundationSPI.h>
 #import <pal/spi/cocoa/CoreServicesSPI.h>
+#import <pal/spi/cocoa/DataDetectorsCoreSPI.h>
 #import <pal/spi/cocoa/LaunchServicesSPI.h>
 #import <pal/spi/cocoa/NSAccessibilitySPI.h>
 #import <pal/spi/cocoa/QuartzCoreSPI.h>
@@ -159,6 +159,7 @@
 #import <pal/cf/AudioToolboxSoftLink.h>
 #import <pal/cf/VideoToolboxSoftLink.h>
 #import <pal/cocoa/AVFoundationSoftLink.h>
+#import <pal/cocoa/DataDetectorsCoreSoftLink.h>
 #import <pal/cocoa/MediaToolboxSoftLink.h>
 
 #if USE(APPLE_INTERNAL_SDK)
@@ -278,11 +279,6 @@ void WebProcess::platformInitializeWebProcess(WebProcessCreationParameters& para
 #if ENABLE(MEDIA_STREAM)
     SandboxExtension::consumePermanently(parameters.audioCaptureExtensionHandle);
 #endif
-#if PLATFORM(IOS_FAMILY)
-    SandboxExtension::consumePermanently(parameters.cookieStorageDirectoryExtensionHandle);
-    SandboxExtension::consumePermanently(parameters.containerCachesDirectoryExtensionHandle);
-    SandboxExtension::consumePermanently(parameters.containerTemporaryDirectoryExtensionHandle);
-#endif
 #if PLATFORM(COCOA) && ENABLE(REMOTE_INSPECTOR)
     Inspector::RemoteInspector::setNeedMachSandboxExtension(!SandboxExtension::consumePermanently(parameters.enableRemoteWebInspectorExtensionHandle));
 #endif
@@ -336,12 +332,6 @@ void WebProcess::platformInitializeWebProcess(WebProcessCreationParameters& para
     method_setImplementation(methodToPatch, (IMP)NSApplicationAccessibilityFocusedUIElement);
 #endif
 
-#if HAVE(LSDATABASECONTEXT)
-    // On Mac, this needs to be called before NSApplication is being initialized.
-    // The NSApplication initialization is being done in [NSApplication _accessibilityInitialize]
-    LaunchServicesDatabaseManager::singleton().waitForDatabaseUpdate();
-#endif
-
 #if PLATFORM(MAC) && ENABLE(WEBPROCESS_NSRUNLOOP)
     RefPtr<SandboxExtension> launchServicesExtension;
     if (parameters.launchServicesExtensionHandle) {
@@ -351,12 +341,9 @@ void WebProcess::platformInitializeWebProcess(WebProcessCreationParameters& para
         }
     }
 
-    // Need to initialize accessibility for VoiceOver to work when the WebContent process is using NSRunLoop.
-    // Currently, it is also needed to allocate and initialize an NSApplication object.
-    // This method call will also call RegisterApplication, so there is no need for us to call this or
-    // check in with Launch Services
-    [NSApplication _accessibilityInitialize];
-
+    // Register the application. This will also check in with Launch Services.
+    _RegisterApplication(nullptr, nullptr);
+    
     // Update process name while holding the Launch Services sandbox extension
     updateProcessName(IsInProcessInitialization::Yes);
 
@@ -426,7 +413,6 @@ void WebProcess::platformInitializeWebProcess(WebProcessCreationParameters& para
 #endif
 
 #if PLATFORM(IOS_FAMILY)
-    SandboxExtension::consumePermanently(parameters.dynamicMachExtensionHandles);
     SandboxExtension::consumePermanently(parameters.dynamicIOKitExtensionHandles);
 #endif
     
@@ -462,6 +448,9 @@ void WebProcess::platformInitializeWebProcess(WebProcessCreationParameters& para
     WebCore::IOSurface::setBytesPerRowAlignment(parameters.bytesPerRowIOSurfaceAlignment);
 
     accessibilityPreferencesDidChange(parameters.accessibilityPreferences);
+
+    if (!isParentProcessAFullWebBrowser(*this))
+        disableURLSchemeCheckInDataDetectors();
 }
 
 void WebProcess::platformSetWebsiteDataStoreParameters(WebProcessDataStoreParameters&& parameters)
@@ -474,6 +463,15 @@ void WebProcess::platformSetWebsiteDataStoreParameters(WebProcessDataStoreParame
 #if ENABLE(ARKIT_INLINE_PREVIEW)
     SandboxExtension::consumePermanently(parameters.modelElementCacheDirectoryExtensionHandle);
 #endif
+#endif
+#if PLATFORM(IOS_FAMILY)
+    // FIXME: Does the web process still need access to the cookie storage directory? Probably not.
+    if (auto& handle = parameters.cookieStorageDirectoryExtensionHandle)
+        SandboxExtension::consumePermanently(*handle);
+    if (auto& handle = parameters.containerCachesDirectoryExtensionHandle)
+        SandboxExtension::consumePermanently(*handle);
+    if (auto& handle = parameters.containerTemporaryDirectoryExtensionHandle)
+        SandboxExtension::consumePermanently(*handle);
 #endif
 
     if (!parameters.javaScriptConfigurationDirectory.isEmpty()) {
@@ -634,17 +632,17 @@ void WebProcess::platformInitializeProcess(const AuxiliaryProcessInitializationP
     MainThreadSharedTimer::shouldSetupPowerObserver() = false;
 #endif // PLATFORM(MAC)
 
-    if (parameters.extraInitializationData.get("inspector-process"_s) == "1")
+    if (parameters.extraInitializationData.get<HashTranslatorASCIILiteral>("inspector-process"_s) == "1")
         m_processType = ProcessType::Inspector;
 #if ENABLE(SERVICE_WORKER)
-    else if (parameters.extraInitializationData.get("service-worker-process"_s) == "1") {
+    else if (parameters.extraInitializationData.get<HashTranslatorASCIILiteral>("service-worker-process"_s) == "1") {
         m_processType = ProcessType::ServiceWorker;
 #if PLATFORM(MAC)
-        m_registrableDomain = RegistrableDomain::uncheckedCreateFromRegistrableDomainString(parameters.extraInitializationData.get("registrable-domain"_s));
+        m_registrableDomain = RegistrableDomain::uncheckedCreateFromRegistrableDomainString(parameters.extraInitializationData.get<HashTranslatorASCIILiteral>("registrable-domain"_s));
 #endif
     }
 #endif
-    else if (parameters.extraInitializationData.get("is-prewarmed"_s) == "1")
+    else if (parameters.extraInitializationData.get<HashTranslatorASCIILiteral>("is-prewarmed"_s) == "1")
         m_processType = ProcessType::PrewarmedWebContent;
     else
         m_processType = ProcessType::WebContent;
@@ -1171,6 +1169,14 @@ void WebProcess::revokeAccessToAssetServices()
     m_assetServiceV2Extension = nullptr;
 }
 
+void WebProcess::disableURLSchemeCheckInDataDetectors() const
+{
+#if HAVE(DDRESULT_DISABLE_URL_SCHEME_CHECKING)
+    if (PAL::canLoad_DataDetectorsCore_DDResultDisableURLSchemeChecking())
+        PAL::softLinkDataDetectorsCoreDDResultDisableURLSchemeChecking();
+#endif
+}
+
 void WebProcess::switchFromStaticFontRegistryToUserFontRegistry(WebKit::SandboxExtension::Handle&& fontMachExtensionHandle)
 {
     SandboxExtension::consumePermanently(fontMachExtensionHandle);
@@ -1242,15 +1248,6 @@ void WebProcess::waitForPendingPasteboardWritesToFinish(const String& pasteboard
     }
 }
 
-#if ENABLE(GPU_PROCESS)
-void WebProcess::platformInitializeGPUProcessConnectionParameters(GPUProcessConnectionParameters& parameters)
-{
-    parameters.webProcessIdentity = ProcessIdentity { ProcessIdentity::CurrentProcess };
-
-    parameters.overrideLanguages = userPreferredLanguagesOverride();
-}
-#endif
-
 #if PLATFORM(MAC)
 void WebProcess::systemWillPowerOn()
 {
@@ -1270,21 +1267,28 @@ void WebProcess::systemDidWake()
 }
 #endif
 
-void WebProcess::consumeAudioComponentRegistrations(const IPC::SharedBufferCopy& data)
+void WebProcess::consumeAudioComponentRegistrations(const IPC::SharedBufferReference& data)
 {
     using namespace PAL;
 
     if (!PAL::isAudioToolboxCoreFrameworkAvailable() || !PAL::canLoad_AudioToolboxCore_AudioComponentApplyServerRegistrations())
         return;
 
-    if (!data.buffer())
+    if (data.isNull())
         return;
-    auto registrations = data.buffer()->createCFData();
+    auto registrations = data.unsafeBuffer()->createCFData();
 
     auto err = AudioComponentApplyServerRegistrations(registrations.get());
     if (noErr != err)
         WEBPROCESS_RELEASE_LOG_ERROR(Process, "Could not apply AudioComponent registrations, err(%ld)", static_cast<long>(err));
 }
+
+#if PLATFORM(MAC)
+void WebProcess::openDirectoryCacheInvalidated(SandboxExtension::Handle&& handle)
+{
+    AuxiliaryProcess::openDirectoryCacheInvalidated(WTFMove(handle));
+}
+#endif
 
 } // namespace WebKit
 

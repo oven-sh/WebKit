@@ -27,6 +27,7 @@
 
 #import "HTTPServer.h"
 #import "PlatformUtilities.h"
+#import "Test.h"
 #import "TestWKWebView.h"
 #import "Utilities.h"
 #import <WebKit/WKProcessPoolPrivate.h>
@@ -93,7 +94,7 @@ TEST(NetworkProcess, LaunchOnlyWhenNecessary)
 
     @autoreleasepool {
         auto webView = adoptNS([WKWebView new]);
-        websiteDataStore = adoptNS([webView configuration].websiteDataStore);
+        websiteDataStore = [webView configuration].websiteDataStore;
         [websiteDataStore _setResourceLoadStatisticsEnabled:YES];
         [[webView configuration].processPool _registerURLSchemeAsSecure:@"test"];
         [[webView configuration].processPool _registerURLSchemeAsBypassingContentSecurityPolicy:@"test"];
@@ -158,6 +159,21 @@ TEST(NetworkProcess, TerminateWhenUnused)
         TestWebKitAPI::Util::spinRunLoop();
 }
 
+TEST(NetworkProcess, DoNotLaunchOnDataStoreDestruction)
+{
+    auto storeConfiguration1 = adoptNS([[_WKWebsiteDataStoreConfiguration alloc] initNonPersistentConfiguration]);
+    auto websiteDataStore1 = adoptNS([[WKWebsiteDataStore alloc] _initWithConfiguration: storeConfiguration1.get()]);
+
+    EXPECT_FALSE([WKWebsiteDataStore _defaultNetworkProcessExists]);
+    @autoreleasepool {
+        auto storeConfiguration2 = adoptNS([[_WKWebsiteDataStoreConfiguration alloc] initNonPersistentConfiguration]);
+        auto websiteDataStore2 = adoptNS([[WKWebsiteDataStore alloc] _initWithConfiguration: storeConfiguration2.get()]);
+    }
+
+    TestWebKitAPI::Util::spinRunLoop(10);
+    EXPECT_FALSE([WKWebsiteDataStore _defaultNetworkProcessExists]);
+}
+
 TEST(NetworkProcess, CORSPreflightCachePartitioned)
 {
     using namespace TestWebKitAPI;
@@ -169,20 +185,20 @@ TEST(NetworkProcess, CORSPreflightCachePartitioned)
             EXPECT_TRUE(strnstr(request.data(), "Origin: http://example.com\r\n", request.size()));
             EXPECT_TRUE(strnstr(request.data(), "Access-Control-Request-Method: DELETE\r\n", request.size()));
             
-            const char* response =
+            constexpr auto response =
             "HTTP/1.1 204 No Content\r\n"
             "Access-Control-Allow-Origin: http://example.com\r\n"
             "Access-Control-Allow-Methods: OPTIONS, GET, POST, DELETE\r\n"
-            "Cache-Control: max-age=604800\r\n\r\n";
+            "Cache-Control: max-age=604800\r\n\r\n"_s;
             connection.send(response, [&, connection] {
                 connection.receiveHTTPRequest([&, connection] (Vector<char>&& request) {
                     const char* expectedRequestBegin = "DELETE / HTTP/1.1\r\n";
                     EXPECT_TRUE(!memcmp(request.data(), expectedRequestBegin, strlen(expectedRequestBegin)));
                     EXPECT_TRUE(strnstr(request.data(), "Origin: http://example.com\r\n", request.size()));
-                    const char* response =
+                    constexpr auto response =
                     "HTTP/1.1 200 OK\r\n"
                     "Content-Length: 2\r\n\r\n"
-                    "hi";
+                    "hi"_s;
                     connection.send(response, [&, connection] {
                         preflightRequestsReceived++;
                     });
@@ -409,8 +425,8 @@ TEST(NetworkProcess, BroadcastChannelCrashRecovery)
 TEST(_WKDataTask, Basic)
 {
     using namespace TestWebKitAPI;
-    auto html = "<script>document.cookie='testkey=value'</script>";
-    auto secondResponse = "second response";
+    constexpr auto html = "<script>document.cookie='testkey=value'</script>"_s;
+    constexpr auto secondResponse = "second response"_s;
     Vector<char> secondRequest;
     auto server = HTTPServer([&](const Connection& connection) {
         connection.receiveHTTPRequest([&, connection](Vector<char>&& request) {
@@ -546,7 +562,7 @@ TEST(_WKDataTask, Cancel)
     bool sentWithError { false };
     HTTPServer server([&] (Connection connection) {
         connection.receiveHTTPRequest([&, connection] (Vector<char>&&) {
-            auto* header = "HTTP/1.1 200 OK\r\n\r\n";
+            constexpr auto header = "HTTP/1.1 200 OK\r\n\r\n"_s;
             connection.send(header, [&, connection] {
                 sendLoop(connection, sentWithError);
             });
@@ -588,8 +604,8 @@ TEST(_WKDataTask, Redirect)
 {
     using namespace TestWebKitAPI;
     HTTPServer server { {
-        { "/", { 301, { { "Location", "/redirectTarget" }, { "Custom-Name", "Custom-Value" } } } },
-        { "/redirectTarget", { "hi" } },
+        { "/"_s, { 301, { { "Location"_s, "/redirectTarget"_s }, { "Custom-Name"_s, "Custom-Value"_s } } } },
+        { "/redirectTarget"_s, { "hi"_s } },
     } };
     auto webView = adoptNS([WKWebView new]);
     RetainPtr<NSURLRequest> serverRequest = server.request();

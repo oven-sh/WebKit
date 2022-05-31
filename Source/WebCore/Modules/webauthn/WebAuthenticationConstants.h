@@ -78,9 +78,6 @@ enum class ClientDataType : bool {
     Get
 };
 
-// rdar://88104045 - Remove once staged change completed
-const char LocalAuthenticatiorAccessGroup[] = "com.apple.webkit.webauthn";
-
 constexpr const char LocalAuthenticatorAccessGroup[] = "com.apple.webkit.webauthn";
 
 // User entity extension
@@ -92,6 +89,12 @@ constexpr const char keyTypeKey[] = "key_type";
 constexpr const char keySizeKey[] = "key_size";
 constexpr const char relyingPartyKey[] = "rp";
 constexpr const char applicationTagKey[] = "tag";
+
+constexpr auto authenticatorTransportUsb = "usb"_s;
+constexpr auto authenticatorTransportNfc = "nfc"_s;
+constexpr auto authenticatorTransportBle = "ble"_s;
+constexpr auto authenticatorTransportInternal = "internal"_s;
+constexpr auto authenticatorTransportCable = "cable"_s;
 
 } // namespace WebCore
 
@@ -107,5 +110,8 @@ enum class Scope {
 constexpr uint8_t userPresenceFlag = 0b00000001;
 constexpr uint8_t userVerifiedFlag = 0b00000100;
 constexpr uint8_t attestedCredentialDataIncludedFlag = 0b01000000;
+// https://github.com/w3c/webauthn/pull/1695
+constexpr uint8_t backupEligibilityFlag = 0b00001000;
+constexpr uint8_t backupStateFlag = 0b00010000;
 
 } // namespace WebAuthn

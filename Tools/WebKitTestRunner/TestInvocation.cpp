@@ -86,7 +86,7 @@ TestInvocation::TestInvocation(WKURLRef url, const TestOptions& options)
     m_urlString = toWTFString(adoptWK(WKURLCopyString(m_url.get())).get());
 
     // FIXME: Avoid mutating the setting via a test directory like this.
-    m_dumpFrameLoadCallbacks = urlContains("loading/") && !urlContains("://localhost");
+    m_dumpFrameLoadCallbacks = urlContains("loading/"_s) && !urlContains("://localhost"_s);
 }
 
 TestInvocation::~TestInvocation()
@@ -100,7 +100,7 @@ WKURLRef TestInvocation::url() const
     return m_url.get();
 }
 
-bool TestInvocation::urlContains(const char* searchString) const
+bool TestInvocation::urlContains(StringView searchString) const
 {
     return m_urlString.containsIgnoringASCIICase(searchString);
 }
@@ -127,12 +127,15 @@ WTF::Seconds TestInvocation::shortTimeout() const
 
 bool TestInvocation::shouldLogHistoryClientCallbacks() const
 {
-    return urlContains("globalhistory/");
+    return urlContains("globalhistory/"_s);
 }
 
 WKRetainPtr<WKMutableDictionaryRef> TestInvocation::createTestSettingsDictionary()
 {
     auto beginTestMessageBody = adoptWK(WKMutableDictionaryCreate());
+#if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+    setValue(beginTestMessageBody, "IsAccessibilityIsolatedTreeEnabled", options().accessibilityIsolatedTreeMode());
+#endif
     setValue(beginTestMessageBody, "UseFlexibleViewport", options().useFlexibleViewport());
     setValue(beginTestMessageBody, "DumpPixels", m_dumpPixels);
     setValue(beginTestMessageBody, "Timeout", static_cast<uint64_t>(m_timeout.milliseconds()));
@@ -1374,7 +1377,12 @@ WKRetainPtr<WKTypeRef> TestInvocation::didReceiveSynchronousMessageFromInjectedB
         dumpPrivateClickMeasurement();
         return nullptr;
     }
-    
+
+    if (WKStringIsEqualToUTF8CString(messageName, "ClearMemoryCache")) {
+        TestController::singleton().clearMemoryCache();
+        return nullptr;
+    }
+
     if (WKStringIsEqualToUTF8CString(messageName, "ClearPrivateClickMeasurement")) {
         TestController::singleton().clearPrivateClickMeasurement();
         return nullptr;
@@ -1681,7 +1689,7 @@ void TestInvocation::waitToDumpWatchdogTimerFired()
 {
     invalidateWaitToDumpWatchdogTimer();
     
-    outputText("FAIL: Timed out waiting for notifyDone to be called\n\n");
+    outputText("FAIL: Timed out waiting for notifyDone to be called\n\n"_s);
 
     postPageMessage("ForceImmediateCompletion");
 
@@ -1708,7 +1716,7 @@ void TestInvocation::waitForPostDumpWatchdogTimerFired()
 #if PLATFORM(COCOA)
     char buffer[1024];
     snprintf(buffer, sizeof(buffer), "#PID UNRESPONSIVE - %s (pid %d)\n", getprogname(), getpid());
-    outputText(buffer);
+    outputText(String::fromLatin1(buffer));
 #endif
     done();
 }

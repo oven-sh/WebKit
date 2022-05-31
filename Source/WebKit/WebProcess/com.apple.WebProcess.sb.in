@@ -1,4 +1,4 @@
-; Copyright (C) 2010-2021 Apple Inc. All rights reserved.
+; Copyright (C) 2010-2022 Apple Inc. All rights reserved.
 ;
 ; Redistribution and use in source and binary forms, with or without
 ; modification, are permitted provided that the following conditions
@@ -26,6 +26,10 @@
 (deny nvram*)
 (deny system-privilege)
 (allow system-audit file-read-metadata)
+
+;; We can remove the catch once we no longer need to support older macOS
+(catch (lambda)
+    (import "dyld-support.sb"))
 
 ;; Silence spurious logging due to rdar://20117923 and rdar://72366475
 (deny system-privilege (privilege-id PRIV_GLOBAL_PROC_INFO) (with no-report))
@@ -174,6 +178,7 @@
                 41
                 42
                 43
+                46
                 48
                 49
                 256
@@ -221,7 +226,7 @@
             iokit-external-method
         )
         (allow iokit-async-external-method
-#if __MAC_OS_X_VERSION_MIN_REQUIRED >= 120000
+#if __MAC_OS_X_VERSION_MIN_REQUIRED >= 120000 && __MAC_OS_X_VERSION_MIN_REQUIRED < 130000
             (iokit-method-number
                 17
                 40
@@ -229,7 +234,7 @@
 #endif
         )
         (allow iokit-external-method
-#if __MAC_OS_X_VERSION_MIN_REQUIRED >= 120000
+#if __MAC_OS_X_VERSION_MIN_REQUIRED >= 120000 && __MAC_OS_X_VERSION_MIN_REQUIRED < 130000
             (iokit-method-number
                 0
                 1
@@ -252,6 +257,7 @@
                 36
                 38
                 39
+                43
                 44
             )
 #endif
@@ -454,28 +460,16 @@
     )
 
     ;; QuartzCore
-    (if (equal? (param "ENABLE_SANDBOX_MESSAGE_FILTER") "YES")
-        (allow iokit-open
-            (require-all
-                (extension "com.apple.webkit.extension.iokit")
-                (iokit-registry-entry-class "AGPMClient")
-            )
-            (apply-message-filter
-                (deny (with telemetry)
-                    iokit-async-external-method
-                    iokit-external-trap
-                    iokit-external-method
-                )
-            )
-        )
-        ; else
-        (allow iokit-open
-            (require-all
-                (extension "com.apple.webkit.extension.iokit")
-                (iokit-registry-entry-class "AGPMClient")
-            )
-        )
-    )
+#if PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED > 110000
+    (deny iokit-open (with no-log)
+        (iokit-registry-entry-class "AGPMClient"))
+#else
+    (allow iokit-open
+        (require-all
+            (extension "com.apple.webkit.extension.iokit")
+            (iokit-registry-entry-class "AGPMClient")))
+#endif
+
     (if (equal? (param "ENABLE_SANDBOX_MESSAGE_FILTER") "YES")
         (allow iokit-open
             (require-all
@@ -1474,6 +1468,10 @@
        (global-name "com.apple.system.opendirectoryd.libinfo")
        (global-name "com.apple.system.opendirectoryd.membership"))
 )
+(allow mach-lookup
+    (require-all
+        (extension "com.apple.webkit.extension.mach")
+        (global-name "com.apple.system.opendirectoryd.libinfo")))
 #else
 (allow file-read* file-write* (subpath "/private/var/db/mds/system")) ;; FIXME: This should be removed when <rdar://problem/9538414> is fixed.
 #endif
@@ -1844,10 +1842,6 @@
 (when (defined? 'socket-option-get)
     ;; getsockopt
     (deny socket-option-get (with telemetry))
-    (allow socket-option-get
-        (require-all
-            (socket-option-level SOL_SOCKET)
-            (socket-option-name SO_ERROR))) ;; libwebrtc; physical_socket_server.cc, ProcessEvents.  Called with fd=-1, so it fails.  Not technically needed, but the code needs changing
 )
 
 (when (defined? 'socket-option-set)
@@ -2052,8 +2046,8 @@
     (if (defined? 'SYS_objc_bp_assist_cfg_np)
         (allow syscall-unix (syscall-number SYS_objc_bp_assist_cfg_np)))
 #endif
-    (when (defined? 'SYS__map_with_linking_np)
-        (allow syscall-unix (syscall-number SYS__map_with_linking_np)))
+    (when (defined? 'SYS_map_with_linking_np)
+        (allow syscall-unix (syscall-number SYS_map_with_linking_np)))
 )
 
 (with-filter (uid 0)
@@ -2064,27 +2058,42 @@
 #endif
 
 #if HAVE(SANDBOX_MESSAGE_FILTERING)
-(if (and (equal? (param "ENABLE_SANDBOX_MESSAGE_FILTER") "YES") (defined? 'mach-bootstrap))
+(define (mach-bootstrap-message-numbers)
+    (message-number 204 207 301 711 800 804))
+
+(define (allow-mach-bootstrap-with-filter)
     (allow mach-bootstrap
         (apply-message-filter
-#if __MAC_OS_X_VERSION_MIN_REQUIRED >= 120000
             (deny mach-message-send (with telemetry))
-            (allow mach-message-send (message-number
+            (allow mach-message-send
+                (mach-bootstrap-message-numbers)))))
+
+(if (and (equal? (param "ENABLE_SANDBOX_MESSAGE_FILTER") "YES") (defined? 'mach-bootstrap))
+#if __MAC_OS_X_VERSION_MIN_REQUIRED >= 120000
+#if HAVE(SANDBOX_STATE_FLAGS)
+    (begin
+        (if (require-ancestor-with-entitlement "com.apple.private.security.enable-state-flags")
+            (allow mach-bootstrap
+                (apply-message-filter
+                    (allow mach-message-send (with telemetry-backtrace))))
+        ;; else
+            (allow-mach-bootstrap-with-filter))
+
+        (with-filter
+            (require-any
+                (require-not (state-flag "WebContentProcessLaunched"))
+                (state-flag "EnableMachBootstrap"))
+            (allow-mach-bootstrap-with-filter))))
 #else
+    (allow-mach-bootstrap-with-filter))
+#endif // HAVE(SANDBOX_STATE_FLAGS)
+#else
+    (allow mach-bootstrap
+        (apply-message-filter
             (deny xpc-message-send (with telemetry))
-            (allow xpc-message-send (message-number
+            (allow xpc-message-send
+                (mach-bootstrap-message-numbers)))))
 #endif
-                204
-                207
-                301
-                711
-                800
-                804
-                )
-            )
-        )
-    )
-)
 
 (if (and (equal? (param "ENABLE_SANDBOX_MESSAGE_FILTER") "YES") (defined? 'mach-kernel-endpoint))
     (allow mach-kernel-endpoint
@@ -2191,6 +2200,9 @@
         MSC__kernelrpc_mach_vm_purgable_control_trap
         MSC_host_create_mach_voucher_trap
         MSC_host_self_trap
+#if PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 130000
+        MSC_iokit_user_client_trap
+#endif
         MSC_mach_generate_activity_id
         MSC_mach_msg_trap
         MSC_mach_reply_port

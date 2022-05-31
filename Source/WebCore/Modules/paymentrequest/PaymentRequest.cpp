@@ -31,6 +31,7 @@
 #include "ApplePayPaymentHandler.h"
 #include "Document.h"
 #include "EventNames.h"
+#include "FrameDestructionObserverInlines.h"
 #include "JSDOMPromise.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSPaymentDetailsUpdate.h"
@@ -169,7 +170,7 @@ static bool isValidStandardizedPaymentMethodIdentifier(StringView identifier)
 // https://www.w3.org/TR/payment-method-id/#validation
 static bool isValidURLBasedPaymentMethodIdentifier(const URL& url)
 {
-    return url.protocolIs("https") && !url.hasCredentials();
+    return url.protocolIs("https"_s) && !url.hasCredentials();
 }
 
 // Implements "validate a payment method identifier"

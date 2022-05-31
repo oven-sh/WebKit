@@ -44,12 +44,12 @@ enum ClipboardDataType {
 
 std::unique_ptr<Pasteboard> Pasteboard::createForCopyAndPaste(std::unique_ptr<PasteboardContext>&& context)
 {
-    return makeUnique<Pasteboard>(WTFMove(context), "CLIPBOARD");
+    return makeUnique<Pasteboard>(WTFMove(context), "CLIPBOARD"_s);
 }
 
 std::unique_ptr<Pasteboard> Pasteboard::createForGlobalSelection(std::unique_ptr<PasteboardContext>&& context)
 {
-    return makeUnique<Pasteboard>(WTFMove(context), "PRIMARY");
+    return makeUnique<Pasteboard>(WTFMove(context), "PRIMARY"_s);
 }
 
 #if ENABLE(DRAG_SUPPORT)
@@ -403,7 +403,7 @@ String Pasteboard::readOrigin()
 String Pasteboard::readString(const String& type)
 {
     if (!m_selectionData) {
-        if (type.startsWith("text/plain"))
+        if (type.startsWith("text/plain"_s))
             return platformStrategies()->pasteboardStrategy()->readTextFromClipboard(m_name);
 
         auto buffer = platformStrategies()->pasteboardStrategy()->readBufferFromClipboard(m_name, type);

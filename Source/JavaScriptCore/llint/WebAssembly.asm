@@ -147,7 +147,7 @@ macro checkSwitchToJITForPrologue(codeBlockRegister)
                 jmp ws0, WasmEntryPtrTag
             end
         .recover:
-            notFunctionCodeBlockGetter(codeBlockRegister)
+            loadp CodeBlock[cfr], codeBlockRegister
         end)
     end
 end
@@ -283,7 +283,7 @@ macro restoreStackPointerAfterCall()
     subp cfr, ws1, sp
 end
 
-macro wasmPrologue(codeBlockGetter, codeBlockSetter, loadWasmInstance)
+macro wasmPrologue(loadWasmInstance)
     # Set up the call frame and check if we should OSR.
     preserveCallerPCAndCFR()
     preserveCalleeSavesUsedByWasm()
@@ -293,8 +293,9 @@ macro wasmPrologue(codeBlockGetter, codeBlockSetter, loadWasmInstance)
     loadp Wasm::Instance::m_owner[wasmInstance], ws0
     storep ws0, ThisArgumentOffset[cfr]
 
-    codeBlockGetter(ws0)
-    codeBlockSetter(ws0)
+    loadp Callee[cfr], ws0
+    andp ~3, ws0
+    storep ws0, CodeBlock[cfr]
 
     # Get new sp in ws1 and check stack height.
     loadi Wasm::LLIntCallee::m_numCalleeLocals[ws0], ws1
@@ -514,7 +515,7 @@ op(wasm_function_prologue, macro ()
         error
     end
 
-    wasmPrologue(wasmCodeBlockGetter, functionCodeBlockSetter, loadWasmInstanceFromTLS)
+    wasmPrologue(loadWasmInstanceFromTLS)
     wasmNextInstruction()
 end)
 
@@ -523,7 +524,7 @@ op(wasm_function_prologue_no_tls, macro ()
         error
     end
 
-    wasmPrologue(wasmCodeBlockGetter, functionCodeBlockSetter, macro () end)
+    wasmPrologue(macro () end)
     wasmNextInstruction()
 end)
 
@@ -601,6 +602,7 @@ slowWasmOp(set_global_ref_portable_binding)
 slowWasmOp(memory_atomic_wait32)
 slowWasmOp(memory_atomic_wait64)
 slowWasmOp(memory_atomic_notify)
+slowWasmOp(rtt_canon)
 
 wasmOp(grow_memory, WasmGrowMemory, macro(ctx)
     callWasmSlowPath(_slow_path_wasm_grow_memory)

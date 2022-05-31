@@ -64,6 +64,7 @@
 #include "DFGStoreBarrierClusteringPhase.h"
 #include "DFGStoreBarrierInsertionPhase.h"
 #include "DFGStrengthReductionPhase.h"
+#include "DFGThunks.h"
 #include "DFGTierUpCheckInjectionPhase.h"
 #include "DFGTypeCheckHoistingPhase.h"
 #include "DFGUnificationPhase.h"
@@ -553,8 +554,9 @@ CompilationResult Plan::finalize()
             m_codeBlock->shrinkToFit(locker, CodeBlock::ShrinkMode::LateShrink);
         }
 
-        // Since Plan::reallyAdd could fire watchpoints (see ArrayBufferViewWatchpointAdaptor::add), it is possible that the current CodeBlock is now invalidated.
-        if (!m_codeBlock->jitCode()->dfgCommon()->isStillValid) {
+        // Since Plan::reallyAdd could fire watchpoints (see ArrayBufferViewWatchpointAdaptor::add),
+        // it is possible that the current CodeBlock is now invalidated & jettisoned.
+        if (m_codeBlock->isJettisoned()) {
             CODEBLOCK_LOG_EVENT(m_codeBlock, "dfgFinalize", ("invalidated"));
             return CompilationInvalidated;
         }
@@ -679,6 +681,14 @@ void Plan::cleanMustHandleValuesIfNecessary()
         if (!liveness[local])
             m_mustHandleValues.local(local) = std::nullopt;
     }
+}
+
+std::unique_ptr<JITData> Plan::finalizeJITData(const JITCode& jitCode)
+{
+    auto osrExitThunk = m_vm->getCTIStub(osrExitGenerationThunkGenerator).retagged<OSRExitPtrTag>();
+    auto exits = JITData::ExitVector::createWithSizeAndConstructorArguments(jitCode.m_osrExit.size(), osrExitThunk);
+    auto jitData = JITData::create(jitCode, WTFMove(exits));
+    return jitData;
 }
 
 } } // namespace JSC::DFG

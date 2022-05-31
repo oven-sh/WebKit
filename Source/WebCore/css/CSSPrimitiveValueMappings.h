@@ -466,92 +466,20 @@ template<> inline CSSPrimitiveValue::CSSPrimitiveValue(ControlPart e)
     case ButtonPart:
         m_value.valueID = CSSValueButton;
         break;
-    case ButtonBevelPart:
-        m_value.valueID = CSSValueButtonBevel;
-        break;
     case DefaultButtonPart:
         m_value.valueID = CSSValueDefaultButton;
-        break;
-    case InnerSpinButtonPart:
-        m_value.valueID = CSSValueInnerSpinButton;
         break;
     case ListboxPart:
         m_value.valueID = CSSValueListbox;
         break;
-    case ListItemPart:
-        m_value.valueID = CSSValueListitem;
-        break;
-    case MediaEnterFullscreenButtonPart:
-        m_value.valueID = CSSValueMediaEnterFullscreenButton;
-        break;
-    case MediaExitFullscreenButtonPart:
-        m_value.valueID = CSSValueMediaExitFullscreenButton;
-        break;
-    case MediaPlayButtonPart:
-        m_value.valueID = CSSValueMediaPlayButton;
-        break;
-    case MediaOverlayPlayButtonPart:
-        m_value.valueID = CSSValueMediaOverlayPlayButton;
-        break;
-    case MediaMuteButtonPart:
-        m_value.valueID = CSSValueMediaMuteButton;
-        break;
-    case MediaSeekBackButtonPart:
-        m_value.valueID = CSSValueMediaSeekBackButton;
-        break;
-    case MediaSeekForwardButtonPart:
-        m_value.valueID = CSSValueMediaSeekForwardButton;
-        break;
-    case MediaRewindButtonPart:
-        m_value.valueID = CSSValueMediaRewindButton;
-        break;
-    case MediaReturnToRealtimeButtonPart:
-        m_value.valueID = CSSValueMediaReturnToRealtimeButton;
-        break;
-    case MediaToggleClosedCaptionsButtonPart:
-        m_value.valueID = CSSValueMediaToggleClosedCaptionsButton;
-        break;
     case MediaSliderPart:
         m_value.valueID = CSSValueMediaSlider;
-        break;
-    case MediaSliderThumbPart:
-        m_value.valueID = CSSValueMediaSliderthumb;
-        break;
-    case MediaVolumeSliderContainerPart:
-        m_value.valueID = CSSValueMediaVolumeSliderContainer;
         break;
     case MediaVolumeSliderPart:
         m_value.valueID = CSSValueMediaVolumeSlider;
         break;
-    case MediaVolumeSliderMuteButtonPart:
-        m_value.valueID = CSSValueMediaVolumeSliderMuteButton;
-        break;
-    case MediaVolumeSliderThumbPart:
-        m_value.valueID = CSSValueMediaVolumeSliderthumb;
-        break;
-    case MediaControlsBackgroundPart:
-        m_value.valueID = CSSValueMediaControlsBackground;
-        break;
-    case MediaControlsFullscreenBackgroundPart:
-        m_value.valueID = CSSValueMediaControlsFullscreenBackground;
-        break;
     case MediaFullScreenVolumeSliderPart:
         m_value.valueID = CSSValueMediaFullscreenVolumeSlider;
-        break;
-    case MediaFullScreenVolumeSliderThumbPart:
-        m_value.valueID = CSSValueMediaFullscreenVolumeSliderThumb;
-        break;
-    case MediaCurrentTimePart:
-        m_value.valueID = CSSValueMediaCurrentTimeDisplay;
-        break;
-    case MediaTimeRemainingPart:
-        m_value.valueID = CSSValueMediaTimeRemainingDisplay;
-        break;
-    case MediaControlsLightBarBackgroundPart:
-        m_value.valueID = CSSValueMediaControlsLightBarBackground;
-        break;
-    case MediaControlsDarkBarBackgroundPart:
-        m_value.valueID = CSSValueMediaControlsDarkBarBackground;
         break;
     case MenulistPart:
         m_value.valueID = CSSValueMenulist;
@@ -559,32 +487,11 @@ template<> inline CSSPrimitiveValue::CSSPrimitiveValue(ControlPart e)
     case MenulistButtonPart:
         m_value.valueID = CSSValueMenulistButton;
         break;
-    case MenulistTextPart:
-        m_value.valueID = CSSValueMenulistText;
-        break;
-    case MenulistTextFieldPart:
-        m_value.valueID = CSSValueMenulistTextfield;
-        break;
     case MeterPart:
         m_value.valueID = CSSValueMeter;
         break;
-    case RelevancyLevelIndicatorPart:
-        m_value.valueID = CSSValueRelevancyLevelIndicator;
-        break;
-    case ContinuousCapacityLevelIndicatorPart:
-        m_value.valueID = CSSValueContinuousCapacityLevelIndicator;
-        break;
-    case DiscreteCapacityLevelIndicatorPart:
-        m_value.valueID = CSSValueDiscreteCapacityLevelIndicator;
-        break;
-    case RatingLevelIndicatorPart:
-        m_value.valueID = CSSValueRatingLevelIndicator;
-        break;
     case ProgressBarPart:
         m_value.valueID = CSSValueProgressBar;
-        break;
-    case ProgressBarValuePart:
-        m_value.valueID = CSSValueProgressBarValue;
         break;
     case SliderHorizontalPart:
         m_value.valueID = CSSValueSliderHorizontal;
@@ -592,38 +499,14 @@ template<> inline CSSPrimitiveValue::CSSPrimitiveValue(ControlPart e)
     case SliderVerticalPart:
         m_value.valueID = CSSValueSliderVertical;
         break;
-    case SliderThumbHorizontalPart:
-        m_value.valueID = CSSValueSliderthumbHorizontal;
-        break;
-    case SliderThumbVerticalPart:
-        m_value.valueID = CSSValueSliderthumbVertical;
-        break;
-    case CaretPart:
-        m_value.valueID = CSSValueCaret;
-        break;
     case SearchFieldPart:
         m_value.valueID = CSSValueSearchfield;
-        break;
-    case SearchFieldDecorationPart:
-        m_value.valueID = CSSValueSearchfieldDecoration;
-        break;
-    case SearchFieldResultsDecorationPart:
-        m_value.valueID = CSSValueSearchfieldResultsDecoration;
-        break;
-    case SearchFieldResultsButtonPart:
-        m_value.valueID = CSSValueSearchfieldResultsButton;
-        break;
-    case SearchFieldCancelButtonPart:
-        m_value.valueID = CSSValueSearchfieldCancelButton;
         break;
     case TextFieldPart:
         m_value.valueID = CSSValueTextfield;
         break;
     case TextAreaPart:
         m_value.valueID = CSSValueTextarea;
-        break;
-    case CapsLockIndicatorPart:
-        m_value.valueID = CSSValueCapsLockIndicator;
         break;
 #if ENABLE(ATTACHMENT_ELEMENT)
     case AttachmentPart:
@@ -633,27 +516,34 @@ template<> inline CSSPrimitiveValue::CSSPrimitiveValue(ControlPart e)
         m_value.valueID = CSSValueBorderlessAttachment;
         break;
 #endif
-#if ENABLE(SERVICE_CONTROLS)
-    case ImageControlsButtonPart:
-        ASSERT_NOT_REACHED();
-        m_value.valueID = CSSValueNone;
-        break;
-#endif
 #if ENABLE(APPLE_PAY)
     case ApplePayButtonPart:
         m_value.valueID = CSSValueApplePayButton;
         break;
 #endif
+    case CapsLockIndicatorPart:
 #if ENABLE(INPUT_TYPE_COLOR)
     case ColorWellPart:
-        m_value.valueID = CSSValueColorWell;
-        break;
 #endif
+#if ENABLE(SERVICE_CONTROLS)
+    case ImageControlsButtonPart:
+#endif
+    case InnerSpinButtonPart:
 #if ENABLE(DATALIST_ELEMENT)
     case ListButtonPart:
-        m_value.valueID = CSSValueListButton;
-        break;
 #endif
+    case MediaFullScreenVolumeSliderThumbPart:
+    case MediaSliderThumbPart:
+    case MediaVolumeSliderThumbPart:
+    case SearchFieldDecorationPart:
+    case SearchFieldResultsDecorationPart:
+    case SearchFieldResultsButtonPart:
+    case SearchFieldCancelButtonPart:
+    case SliderThumbHorizontalPart:
+    case SliderThumbVerticalPart:
+        ASSERT_NOT_REACHED();
+        m_value.valueID = CSSValueNone;
+        break;
     }
 }
 
@@ -2202,6 +2092,12 @@ template<> inline CSSPrimitiveValue::CSSPrimitiveValue(Resize e)
     case Resize::Vertical:
         m_value.valueID = CSSValueVertical;
         break;
+    case Resize::Block:
+        m_value.valueID = CSSValueBlock;
+        break;
+    case Resize::Inline:
+        m_value.valueID = CSSValueInline;
+        break;
     case Resize::None:
         m_value.valueID = CSSValueNone;
         break;
@@ -2219,6 +2115,10 @@ template<> inline CSSPrimitiveValue::operator Resize() const
         return Resize::Horizontal;
     case CSSValueVertical:
         return Resize::Vertical;
+    case CSSValueBlock:
+        return Resize::Block;
+    case CSSValueInline:
+        return Resize::Inline;
     case CSSValueAuto:
         ASSERT_NOT_REACHED(); // Depends on settings, thus should be handled by the caller.
         return Resize::None;
@@ -2313,7 +2213,6 @@ template<> inline CSSPrimitiveValue::operator TextAlignMode() const
     }
 }
 
-#if ENABLE(CSS3_TEXT)
 template<> inline CSSPrimitiveValue::CSSPrimitiveValue(TextAlignLast e)
     : CSSValue(PrimitiveClass)
 {
@@ -2410,7 +2309,6 @@ template<> inline CSSPrimitiveValue::operator TextJustify() const
     ASSERT_NOT_REACHED();
     return TextJustify::Auto;
 }
-#endif // CSS3_TEXT
 
 template<> inline CSSPrimitiveValue::operator OptionSet<TextDecorationLine>() const
 {
@@ -3304,10 +3202,6 @@ template<> inline CSSPrimitiveValue::operator TextOrientation() const
     switch (m_value.valueID) {
     case CSSValueSideways:
         return TextOrientation::Sideways;
-    case CSSValueSidewaysRight:
-        return TextOrientation::Sideways;
-    case CSSValueVerticalRight:
-        return TextOrientation::Mixed;
     case CSSValueMixed:
         return TextOrientation::Mixed;
     case CSSValueUpright:

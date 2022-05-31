@@ -130,10 +130,10 @@ void ResourceRequestBase::setURL(const URL& url)
 
 static bool shouldUseGet(const ResourceRequestBase& request, const ResourceResponse& redirectResponse)
 {
-    if (equalLettersIgnoringASCIICase(request.httpMethod(), "get") || equalLettersIgnoringASCIICase(request.httpMethod(), "head"))
+    if (equalLettersIgnoringASCIICase(request.httpMethod(), "get"_s) || equalLettersIgnoringASCIICase(request.httpMethod(), "head"_s))
         return false;
     if (redirectResponse.httpStatusCode() == 301 || redirectResponse.httpStatusCode() == 302)
-        return equalLettersIgnoringASCIICase(request.httpMethod(), "post");
+        return equalLettersIgnoringASCIICase(request.httpMethod(), "post"_s);
     return redirectResponse.httpStatusCode() == 303;
 }
 
@@ -164,7 +164,7 @@ ResourceRequest ResourceRequestBase::redirectedRequest(const ResourceResponse& r
 
     request.redirectAsGETIfNeeded(*this, redirectResponse);
 
-    if (shouldClearReferrerOnHTTPSToHTTPRedirect && !request.url().protocolIs("https") && WTF::protocolIs(request.httpReferrer(), "https"))
+    if (shouldClearReferrerOnHTTPSToHTTPRedirect && !request.url().protocolIs("https"_s) && WTF::protocolIs(request.httpReferrer(), "https"_s))
         request.clearHTTPReferrer();
 
     if (!protocolHostAndPortAreEqual(request.url(), redirectResponse.url()))
@@ -308,10 +308,10 @@ const HTTPHeaderMap& ResourceRequestBase::httpHeaderFields() const
     return m_httpHeaderFields; 
 }
 
-String ResourceRequestBase::httpHeaderField(const String& name) const
+String ResourceRequestBase::httpHeaderField(StringView name) const
 {
-    updateResourceRequest(); 
-    
+    updateResourceRequest();
+
     return m_httpHeaderFields.get(name);
 }
 

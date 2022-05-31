@@ -62,12 +62,12 @@ void SWContextManager::registerServiceWorkerThreadForInstall(Ref<ServiceWorkerTh
     threadProxy->thread().start([jobDataIdentifier, serviceWorkerIdentifier](const String& exceptionMessage, bool doesHandleFetch) {
         SWContextManager::singleton().startedServiceWorker(jobDataIdentifier, serviceWorkerIdentifier, exceptionMessage, doesHandleFetch);
     });
+    if (m_serviceWorkerCreationCallback)
+        m_serviceWorkerCreationCallback(serviceWorkerIdentifier.toUInt64());
 }
 
 void SWContextManager::startedServiceWorker(std::optional<ServiceWorkerJobDataIdentifier> jobDataIdentifier, ServiceWorkerIdentifier serviceWorkerIdentifier, const String& exceptionMessage, bool doesHandleFetch)
 {
-    if (m_serviceWorkerCreationCallback)
-        m_serviceWorkerCreationCallback(serviceWorkerIdentifier.toUInt64());
     if (!exceptionMessage.isEmpty()) {
         connection()->serviceWorkerFailedToStart(jobDataIdentifier, serviceWorkerIdentifier, exceptionMessage);
         return;
@@ -128,6 +128,14 @@ void SWContextManager::firePushSubscriptionChangeEvent(ServiceWorkerIdentifier i
     serviceWorker->firePushSubscriptionChangeEvent(WTFMove(newSubscriptionData), WTFMove(oldSubscriptionData));
 }
 
+void SWContextManager::fireNotificationEvent(ServiceWorkerIdentifier identifier, NotificationData&& data, NotificationEventType eventType, CompletionHandler<void(bool)>&& callback)
+{
+    auto* serviceWorker = m_workerMap.get(identifier);
+    if (!serviceWorker)
+        return;
+
+    serviceWorker->fireNotificationEvent(WTFMove(data), eventType, WTFMove(callback));
+}
 
 void SWContextManager::terminateWorker(ServiceWorkerIdentifier identifier, Seconds timeout, Function<void()>&& completionHandler)
 {
@@ -169,10 +177,10 @@ void SWContextManager::stopWorker(ServiceWorkerThreadProxy& serviceWorker, Secon
     });
 }
 
-void SWContextManager::forEachServiceWorkerThread(const Function<void(ServiceWorkerThreadProxy&)>& apply)
+void SWContextManager::forEachServiceWorker(const Function<Function<void(ScriptExecutionContext&)>()>& createTask)
 {
-    for (auto& workerThread : m_workerMap.values())
-        apply(workerThread);
+    for (auto& worker : m_workerMap.values())
+        worker->thread().runLoop().postTask(createTask());
 }
 
 bool SWContextManager::postTaskToServiceWorker(ServiceWorkerIdentifier identifier, Function<void(ServiceWorkerGlobalScope&)>&& task)

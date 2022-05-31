@@ -57,13 +57,13 @@ enum class ExampleFlags {
 
 static void testSummaryProviders()
 {
-    String aNullString { "" };
+    String aNullString { ""_s };
     StringImpl* aNullStringImpl = aNullString.impl();
 
-    String anEmptyString { "" };
+    String anEmptyString { ""_s };
     StringImpl* anEmptyStringImpl = anEmptyString.impl();
 
-    String an8BitString { "résumé" };
+    auto an8BitString = String::fromLatin1("résumé");
     StringImpl* an8BitStringImpl = an8BitString.impl();
 
     String a16BitString = utf16String(u"\u1680Cappuccino\u1680");
@@ -93,7 +93,7 @@ static void testSummaryProviders()
     CompactPointerTuple<String*, uint8_t> exampleCompactPointerTupleMaxTypeValue { &an8BitString, 255 };
     CompactPointerTuple<String*, bool> exampleCompactPointerTupleSimpleBool { &an8BitString, true };
     
-    URL aURL({ }, "https://www.example.com");
+    URL aURL("https://www.example.com"_s);
 
     breakForTestingSummaryProviders();
 }

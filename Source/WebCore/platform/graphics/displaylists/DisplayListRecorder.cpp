@@ -46,10 +46,12 @@
 namespace WebCore {
 namespace DisplayList {
 
-Recorder::Recorder(const GraphicsContextState& state, const FloatRect& initialClip, const AffineTransform& initialCTM, DrawGlyphsRecorder::DeconstructDrawGlyphs deconstructDrawGlyphs)
+Recorder::Recorder(const GraphicsContextState& state, const FloatRect& initialClip, const AffineTransform& initialCTM, DeconstructDrawGlyphs deconstructDrawGlyphs)
     : GraphicsContext(state)
-    , m_drawGlyphsRecorder(*this, deconstructDrawGlyphs)
+    , m_initialScale(initialCTM.xScale())
+    , m_deconstructDrawGlyphs(deconstructDrawGlyphs)
 {
+    ASSERT(!state.changes());
     m_stateStack.append({ state, initialCTM, initialCTM.mapRect(initialClip) });
 }
 
@@ -161,14 +163,22 @@ void Recorder::drawFilteredImageBuffer(ImageBuffer* sourceImage, const FloatRect
 
 void Recorder::drawGlyphs(const Font& font, const GlyphBufferGlyph* glyphs, const GlyphBufferAdvance* advances, unsigned numGlyphs, const FloatPoint& startPoint, FontSmoothingMode smoothingMode)
 {
-    m_drawGlyphsRecorder.drawGlyphs(font, glyphs, advances, numGlyphs, startPoint, smoothingMode);
+    if (m_deconstructDrawGlyphs == DeconstructDrawGlyphs::Yes) {
+        if (!m_drawGlyphsRecorder)
+            m_drawGlyphsRecorder = makeUnique<DrawGlyphsRecorder>(*this, m_initialScale);
+
+        m_drawGlyphsRecorder->drawGlyphs(font, glyphs, advances, numGlyphs, startPoint, smoothingMode);
+        return;
+    }
+
+    drawGlyphsAndCacheFont(font, glyphs, advances, numGlyphs, startPoint, smoothingMode);
 }
 
-void Recorder::drawGlyphsAndCacheFont(const Font& font, const GlyphBufferGlyph* glyphs, const GlyphBufferAdvance* advances, unsigned count, const FloatPoint& localAnchor, FontSmoothingMode smoothingMode)
+void Recorder::drawGlyphsAndCacheFont(const Font& font, const GlyphBufferGlyph* glyphs, const GlyphBufferAdvance* advances, unsigned numGlyphs, const FloatPoint& localAnchor, FontSmoothingMode smoothingMode)
 {
     appendStateChangeItemIfNecessary();
     recordResourceUse(const_cast<Font&>(font));
-    recordDrawGlyphs(font, glyphs, advances, count, localAnchor, smoothingMode);
+    recordDrawGlyphs(font, glyphs, advances, numGlyphs, localAnchor, smoothingMode);
 }
 
 void Recorder::drawImageBuffer(ImageBuffer& imageBuffer, const FloatRect& destRect, const FloatRect& srcRect, const ImagePaintingOptions& options)
@@ -194,8 +204,12 @@ void Recorder::drawSystemImage(SystemImage& systemImage, const FloatRect& destin
 {
 #if USE(SYSTEM_PREVIEW)
     if (is<ARKitBadgeSystemImage>(systemImage)) {
-        if (auto image = downcast<ARKitBadgeSystemImage>(systemImage).image())
-            recordResourceUse(*image->nativeImage());
+        if (auto image = downcast<ARKitBadgeSystemImage>(systemImage).image()) {
+            auto nativeImage = image->nativeImage();
+            if (!nativeImage)
+                return;
+            recordResourceUse(*nativeImage);
+        }
     }
 #endif
     recordDrawSystemImage(systemImage, destinationRect);
@@ -310,10 +324,10 @@ void Recorder::drawLine(const FloatPoint& point1, const FloatPoint& point2)
     recordDrawLine(point1, point2);
 }
 
-void Recorder::drawLinesForText(const FloatPoint& point, float thickness, const DashArray& widths, bool printing, bool doubleLines, StrokeStyle)
+void Recorder::drawLinesForText(const FloatPoint& point, float thickness, const DashArray& widths, bool printing, bool doubleLines, StrokeStyle style)
 {
     appendStateChangeItemIfNecessary();
-    recordDrawLinesForText(FloatPoint(), toFloatSize(point), thickness, widths, printing, doubleLines);
+    recordDrawLinesForText(FloatPoint(), toFloatSize(point), thickness, widths, printing, doubleLines, style);
 }
 
 void Recorder::drawDotsForDocumentMarker(const FloatRect& rect, DocumentMarkerLineStyle style)

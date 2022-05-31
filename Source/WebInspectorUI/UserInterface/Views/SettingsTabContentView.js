@@ -386,18 +386,13 @@ WI.SettingsTabContentView = class SettingsTabContentView extends WI.TabContentVi
 
         let initialValues = new Map;
 
-        let canShowPreviewFeatures = WI.canShowPreviewFeatures();
-        if (canShowPreviewFeatures) {
-            experimentalSettingsView.addSetting(WI.UIString("Staging:"), WI.settings.experimentalEnablePreviewFeatures, WI.UIString("Enable Preview Features"));
-            experimentalSettingsView.addSeparator();
-        }
-
         let hasCSSDomain = InspectorBackend.hasDomain("CSS");
         if (hasCSSDomain) {
             let stylesGroup = experimentalSettingsView.addGroup(WI.UIString("Styles:"));
             stylesGroup.addSetting(WI.settings.experimentalEnableStylesJumpToEffective, WI.UIString("Show jump to effective property button"));
             stylesGroup.addSetting(WI.settings.experimentalEnableStylesJumpToVariableDeclaration, WI.UIString("Show jump to variable declaration button"));
             stylesGroup.addSetting(WI.settings.experimentalCSSCompletionFuzzyMatching, WI.UIString("Use fuzzy matching for completion suggestions"));
+            stylesGroup.addSetting(WI.settings.experimentalCSSSortPropertyNameAutocompletionByUsage, WI.UIString("Suggest property names based on usage"));
 
             experimentalSettingsView.addSeparator();
         }
@@ -405,6 +400,9 @@ WI.SettingsTabContentView = class SettingsTabContentView extends WI.TabContentVi
         let diagnosticsGroup = experimentalSettingsView.addGroup(WI.UIString("Diagnostics:", "Diagnostics: @ Experimental Settings", "Category label for experimental settings related to Web Inspector diagnostics."));
         diagnosticsGroup.addSetting(WI.settings.experimentalAllowInspectingInspector, WI.UIString("Allow Inspecting Web Inspector", "Allow Inspecting Web Inspector @ Experimental Settings", "Label for setting that allows the user to inspect the Web Inspector user interface."));
         experimentalSettingsView.addSeparator();
+
+        let timelinesGroup = experimentalSettingsView.addGroup(WI.UIString("Timelines:"));
+        timelinesGroup.addSetting(WI.settings.experimentalShowScreenshotsTimeline, WI.UIString("Show Screenshots"));
 
         let reloadInspectorButton = document.createElement("button");
         reloadInspectorButton.textContent = WI.UIString("Reload Web Inspector");
@@ -422,8 +420,7 @@ WI.SettingsTabContentView = class SettingsTabContentView extends WI.TabContentVi
             }, reloadInspectorContainerElement);
         }
 
-        if (canShowPreviewFeatures)
-            listenForChange(WI.settings.experimentalEnablePreviewFeatures);
+        listenForChange(WI.settings.experimentalShowScreenshotsTimeline);
 
         if (hasCSSDomain) {
             listenForChange(WI.settings.experimentalEnableStylesJumpToEffective);

@@ -756,6 +756,12 @@ public:
     static constexpr GCGLenum COMPRESSED_SRGB8_ALPHA8_ASTC_12x10_KHR = 0x93DC;
     static constexpr GCGLenum COMPRESSED_SRGB8_ALPHA8_ASTC_12x12_KHR = 0x93DD;
 
+    // GL_EXT_texture_compression_bptc
+    static constexpr GCGLenum COMPRESSED_RGBA_BPTC_UNORM_EXT = 0x8E8C;
+    static constexpr GCGLenum COMPRESSED_SRGB_ALPHA_BPTC_UNORM_EXT = 0x8E8D;
+    static constexpr GCGLenum COMPRESSED_RGB_BPTC_SIGNED_FLOAT_EXT = 0x8E8E;
+    static constexpr GCGLenum COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT_EXT = 0x8E8F;
+
     // GL_EXT_texture_compression_rgtc
     static constexpr GCGLenum COMPRESSED_RED_RGTC1_EXT = 0x8DBB;
     static constexpr GCGLenum COMPRESSED_SIGNED_RED_RGTC1_EXT = 0x8DBC;
@@ -765,6 +771,16 @@ public:
     // GL_EXT_texture_filter_anisotropic
     static constexpr GCGLenum TEXTURE_MAX_ANISOTROPY_EXT = 0x84FE;
     static constexpr GCGLenum MAX_TEXTURE_MAX_ANISOTROPY_EXT = 0x84FF;
+
+    // GL_EXT_texture_norm16
+    static constexpr GCGLenum R16_EXT = 0x822A;
+    static constexpr GCGLenum RG16_EXT = 0x822C;
+    static constexpr GCGLenum RGB16_EXT = 0x8054;
+    static constexpr GCGLenum RGBA16_EXT = 0x805B;
+    static constexpr GCGLenum R16_SNORM_EXT = 0x8F98;
+    static constexpr GCGLenum RG16_SNORM_EXT = 0x8F99;
+    static constexpr GCGLenum RGB16_SNORM_EXT = 0x8F9A;
+    static constexpr GCGLenum RGBA16_SNORM_EXT = 0x8F9B;
 
     // GL_ARB_draw_buffers / GL_EXT_draw_buffers
     static constexpr GCGLenum MAX_DRAW_BUFFERS_EXT = 0x8824;
@@ -1360,10 +1376,10 @@ public:
     // ========== Extension related entry points.
 
     // GL_ANGLE_multi_draw
-    virtual void multiDrawArraysANGLE(GCGLenum mode, GCGLSpan<const GCGLint> firsts, GCGLSpan<const GCGLsizei> counts, GCGLsizei drawcount) = 0;
-    virtual void multiDrawArraysInstancedANGLE(GCGLenum mode, GCGLSpan<const GCGLint> firsts, GCGLSpan<const GCGLsizei> counts, GCGLSpan<const GCGLsizei> instanceCounts, GCGLsizei drawcount) = 0;
-    virtual void multiDrawElementsANGLE(GCGLenum mode, GCGLSpan<const GCGLsizei> counts, GCGLenum type, GCGLSpan<const GCGLint> offsets, GCGLsizei drawcount) = 0;
-    virtual void multiDrawElementsInstancedANGLE(GCGLenum mode, GCGLSpan<const GCGLsizei> counts, GCGLenum type, GCGLSpan<const GCGLint> offsets, GCGLSpan<const GCGLsizei> instanceCounts, GCGLsizei drawcount) = 0;
+    virtual void multiDrawArraysANGLE(GCGLenum mode, GCGLSpanTuple<const GCGLint, const GCGLsizei> firstsAndCounts) = 0;
+    virtual void multiDrawArraysInstancedANGLE(GCGLenum mode, GCGLSpanTuple<const GCGLint, const GCGLsizei, const GCGLsizei> firstsCountsAndInstanceCounts) = 0;
+    virtual void multiDrawElementsANGLE(GCGLenum mode, GCGLSpanTuple<const GCGLsizei, const GCGLint> countsAndOffsets, GCGLenum type) = 0;
+    virtual void multiDrawElementsInstancedANGLE(GCGLenum mode, GCGLSpanTuple<const GCGLsizei, const GCGLint, const GCGLsizei> countsOffsetsAndInstanceCounts, GCGLenum type) = 0;
 
     virtual bool supportsExtension(const String&) = 0;
 

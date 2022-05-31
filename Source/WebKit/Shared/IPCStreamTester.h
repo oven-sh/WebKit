@@ -31,6 +31,7 @@
 #include "ScopedActiveMessageReceiveQueue.h"
 #include "SharedMemory.h"
 #include "StreamMessageReceiver.h"
+#include <memory>
 #include <wtf/HashMap.h>
 
 namespace IPC {
@@ -49,7 +50,7 @@ public:
     void stopListeningForIPC(Ref<IPCStreamTester>&& refFromConnection);
 
     // IPC::StreamMessageReceiver overrides.
-    void didReceiveStreamMessage(IPC::StreamServerConnectionBase&, IPC::Decoder&) final;
+    void didReceiveStreamMessage(IPC::StreamServerConnection&, IPC::Decoder&) final;
 private:
     IPCStreamTester(IPC::Connection&, IPCStreamTesterIdentifier, IPC::StreamConnectionBuffer&&);
     ~IPCStreamTester();
@@ -58,10 +59,13 @@ private:
 
     // Messages.
     void syncMessageReturningSharedMemory1(uint32_t byteCount, CompletionHandler<void(SharedMemory::IPCHandle)>&&);
+    void syncCrashOnZero(int32_t, CompletionHandler<void(int32_t)>&&);
+    void checkAutoreleasePool(CompletionHandler<void(int32_t)>&&);
 
     const Ref<IPC::StreamConnectionWorkQueue> m_workQueue;
     const Ref<IPC::StreamServerConnection> m_streamConnection;
     const IPCStreamTesterIdentifier m_identifier;
+    std::shared_ptr<bool> m_autoreleasePoolCheckValue;
 };
 
 }

@@ -31,7 +31,6 @@
 #include "FontCascade.h"
 #include "LayoutBoxGeometry.h"
 #include "LayoutInitialContainingBlock.h"
-#include "RuntimeEnabledFeatures.h"
 #include "TextUtil.h"
 #include <wtf/ListHashSet.h>
 #include <wtf/Range.h>
@@ -107,19 +106,34 @@ DisplayBoxes InlineDisplayContentBuilder::build(const LineBuilder::LineContent& 
     return boxes;
 }
 
-static inline bool computeBoxShadowInkOverflow(const RenderStyle& style, FloatRect& inkOverflow)
+static inline bool computeInkOverflowForInlineLevelBox(const RenderStyle& style, FloatRect& inkOverflow)
 {
-    auto topBoxShadow = LayoutUnit { };
-    auto bottomBoxShadow = LayoutUnit { };
-    style.getBoxShadowBlockDirectionExtent(topBoxShadow, bottomBoxShadow);
+    auto hasVisualOverflow = false;
 
-    auto leftBoxShadow = LayoutUnit { };
-    auto rightBoxShadow = LayoutUnit { };
-    style.getBoxShadowInlineDirectionExtent(leftBoxShadow, rightBoxShadow);
-    if (!topBoxShadow && !bottomBoxShadow && !leftBoxShadow && !rightBoxShadow)
-        return false;
-    inkOverflow.inflate(leftBoxShadow.toFloat(), topBoxShadow.toFloat(), rightBoxShadow.toFloat(), bottomBoxShadow.toFloat());
-    return true;
+    auto inflateWithOutline = [&] {
+        if (!style.hasOutlineInVisualOverflow())
+            return;
+        inkOverflow.inflate(style.outlineSize());
+        hasVisualOverflow = true;
+    };
+    inflateWithOutline();
+
+    auto inflateWithBoxShadow = [&] {
+        auto topBoxShadow = LayoutUnit { };
+        auto bottomBoxShadow = LayoutUnit { };
+        style.getBoxShadowBlockDirectionExtent(topBoxShadow, bottomBoxShadow);
+
+        auto leftBoxShadow = LayoutUnit { };
+        auto rightBoxShadow = LayoutUnit { };
+        style.getBoxShadowInlineDirectionExtent(leftBoxShadow, rightBoxShadow);
+        if (!topBoxShadow && !bottomBoxShadow && !leftBoxShadow && !rightBoxShadow)
+            return;
+        inkOverflow.inflate(leftBoxShadow.toFloat(), topBoxShadow.toFloat(), rightBoxShadow.toFloat(), bottomBoxShadow.toFloat());
+        hasVisualOverflow = true;
+    };
+    inflateWithBoxShadow();
+
+    return hasVisualOverflow;
 }
 
 void InlineDisplayContentBuilder::appendTextDisplayBox(const Line::Run& lineRun, const InlineRect& textRunRect, DisplayBoxes& boxes)
@@ -130,7 +144,7 @@ void InlineDisplayContentBuilder::appendTextDisplayBox(const Line::Run& lineRun,
     auto& style = !m_lineIndex ? layoutBox.firstLineStyle() : layoutBox.style();
 
     auto inkOverflow = [&] {
-        auto initialContaingBlockSize = RuntimeEnabledFeatures::sharedFeatures().layoutFormattingContextIntegrationEnabled()
+        auto initialContaingBlockSize = formattingState().layoutState().isInlineFormattingContextIntegration()
             ? formattingState().layoutState().viewportSize()
             : formattingState().layoutState().geometryForBox(layoutBox.initialContainingBlock()).contentBox().size();
         auto strokeOverflow = ceilf(style.computedStrokeWidth(ceiledIntSize(initialContaingBlockSize)));
@@ -148,10 +162,10 @@ void InlineDisplayContentBuilder::appendTextDisplayBox(const Line::Run& lineRun,
 
         return inkOverflow;
     };
-    auto content = downcast<InlineTextBox>(layoutBox).content();
-    auto text = lineRun.textContent();
+    auto& content = downcast<InlineTextBox>(layoutBox).content();
+    auto& text = lineRun.textContent();
     auto adjustedContentToRender = [&] {
-        return text->needsHyphen ? makeString(content.substring(text->start, text->length), style.hyphenString()) : String();
+        return text->needsHyphen ? makeString(StringView(content).substring(text->start, text->length), style.hyphenString()) : String();
     };
     boxes.append({ m_lineIndex
         , lineRun.isWordSeparator() ? InlineDisplay::Box::Type::WordSeparator : InlineDisplay::Box::Type::Text
@@ -210,7 +224,7 @@ void InlineDisplayContentBuilder::appendAtomicInlineLevelDisplayBox(const Line::
     auto& layoutBox = lineRun.layoutBox();
     auto inkOverflow = [&] {
         auto inkOverflow = FloatRect { borderBoxRect };
-        computeBoxShadowInkOverflow(!m_lineIndex ? layoutBox.firstLineStyle() : layoutBox.style(), inkOverflow);
+        computeInkOverflowForInlineLevelBox(!m_lineIndex ? layoutBox.firstLineStyle() : layoutBox.style(), inkOverflow);
         // Atomic inline box contribute to their inline box parents ink overflow at all times (e.g. <span><img></span>).
         m_contentHasInkOverflow = m_contentHasInkOverflow || &layoutBox.parent() != &root();
         return inkOverflow;
@@ -260,7 +274,7 @@ void InlineDisplayContentBuilder::appendInlineBoxDisplayBox(const Line::Run& lin
 
     auto inkOverflow = [&] {
         auto inkOverflow = FloatRect { inlineBoxBorderBox };
-        m_contentHasInkOverflow = computeBoxShadowInkOverflow(!m_lineIndex ? layoutBox.firstLineStyle() : layoutBox.style(), inkOverflow) || m_contentHasInkOverflow;
+        m_contentHasInkOverflow = computeInkOverflowForInlineLevelBox(!m_lineIndex ? layoutBox.firstLineStyle() : layoutBox.style(), inkOverflow) || m_contentHasInkOverflow;
         return inkOverflow;
     };
     ASSERT(inlineBox.isInlineBox());
@@ -287,7 +301,7 @@ void InlineDisplayContentBuilder::appendSpanningInlineBoxDisplayBox(const Line::
     auto& layoutBox = lineRun.layoutBox();
     auto inkOverflow = [&] {
         auto inkOverflow = FloatRect { inlineBoxBorderBox };
-        m_contentHasInkOverflow = computeBoxShadowInkOverflow(!m_lineIndex ? layoutBox.firstLineStyle() : layoutBox.style(), inkOverflow) || m_contentHasInkOverflow;
+        m_contentHasInkOverflow = computeInkOverflowForInlineLevelBox(!m_lineIndex ? layoutBox.firstLineStyle() : layoutBox.style(), inkOverflow) || m_contentHasInkOverflow;
         return inkOverflow;
     };
     ASSERT(!inlineBox.isFirstBox());
@@ -532,7 +546,7 @@ void InlineDisplayContentBuilder::adjustVisualGeometryForDisplayBox(size_t displ
 
     auto computeInkOverflow = [&] {
         auto inkOverflow = FloatRect { displayBox.visualRectIgnoringBlockDirection() };
-        m_contentHasInkOverflow = computeBoxShadowInkOverflow(!m_lineIndex ? layoutBox.firstLineStyle() : layoutBox.style(), inkOverflow) || m_contentHasInkOverflow;
+        m_contentHasInkOverflow = computeInkOverflowForInlineLevelBox(!m_lineIndex ? layoutBox.firstLineStyle() : layoutBox.style(), inkOverflow) || m_contentHasInkOverflow;
         displayBox.adjustInkOverflow(inkOverflow);
     };
     computeInkOverflow();

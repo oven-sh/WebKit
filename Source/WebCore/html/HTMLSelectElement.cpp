@@ -100,8 +100,8 @@ void HTMLSelectElement::didRecalcStyle(Style::Change styleChange)
 
 const AtomString& HTMLSelectElement::formControlType() const
 {
-    static MainThreadNeverDestroyed<const AtomString> selectMultiple("select-multiple", AtomString::ConstructFromLiteral);
-    static MainThreadNeverDestroyed<const AtomString> selectOne("select-one", AtomString::ConstructFromLiteral);
+    static MainThreadNeverDestroyed<const AtomString> selectMultiple("select-multiple"_s);
+    static MainThreadNeverDestroyed<const AtomString> selectOne("select-one"_s);
     return m_multiple ? selectMultiple : selectOne;
 }
 
@@ -531,12 +531,13 @@ bool HTMLSelectElement::isRequiredFormControl() const
     return isRequired();
 }
 
-bool HTMLSelectElement::willRespondToMouseClickEvents()
+bool HTMLSelectElement::willRespondToMouseClickEventsWithEditability(Editability editability) const
 {
 #if PLATFORM(IOS_FAMILY)
+    UNUSED_PARAM(editability);
     return !isDisabledFormControl();
 #else
-    return HTMLFormControlElementWithState::willRespondToMouseClickEvents();
+    return HTMLFormControlElementWithState::willRespondToMouseClickEventsWithEditability(editability);
 #endif
 }
 
@@ -1144,7 +1145,8 @@ void HTMLSelectElement::menuListDefaultEventHandler(Event& event)
     ASSERT(renderer());
     ASSERT(renderer()->isMenuList());
 
-    if (event.type() == eventNames().keydownEvent) {
+    auto& eventNames = WebCore::eventNames();
+    if (event.type() == eventNames.keydownEvent) {
         if (!is<KeyboardEvent>(event))
             return;
 
@@ -1196,7 +1198,7 @@ void HTMLSelectElement::menuListDefaultEventHandler(Event& event)
 
     // Use key press event here since sending simulated mouse events
     // on key down blocks the proper sending of the key press event.
-    if (event.type() == eventNames().keypressEvent) {
+    if (event.type() == eventNames.keypressEvent) {
         if (!is<KeyboardEvent>(event))
             return;
 
@@ -1258,7 +1260,7 @@ void HTMLSelectElement::menuListDefaultEventHandler(Event& event)
             keyboardEvent.setDefaultHandled();
     }
 
-    if (event.type() == eventNames().mousedownEvent && is<MouseEvent>(event) && downcast<MouseEvent>(event).button() == LeftButton) {
+    if (event.type() == eventNames.mousedownEvent && is<MouseEvent>(event) && downcast<MouseEvent>(event).button() == LeftButton) {
         focus();
 #if !PLATFORM(IOS_FAMILY)
         document().updateStyleIfNeeded();
@@ -1280,7 +1282,7 @@ void HTMLSelectElement::menuListDefaultEventHandler(Event& event)
     }
 
 #if !PLATFORM(IOS_FAMILY)
-    if (event.type() == eventNames().blurEvent && !focused()) {
+    if (event.type() == eventNames.blurEvent && !focused()) {
         auto& menuList = downcast<RenderMenuList>(*renderer());
         if (menuList.popupIsVisible())
             menuList.hidePopup();
@@ -1345,7 +1347,8 @@ void HTMLSelectElement::listBoxDefaultEventHandler(Event& event)
 {
     auto& listItems = this->listItems();
 
-    if (event.type() == eventNames().mousedownEvent && is<MouseEvent>(event) && downcast<MouseEvent>(event).button() == LeftButton) {
+    auto& eventNames = WebCore::eventNames();
+    if (event.type() == eventNames.mousedownEvent && is<MouseEvent>(event) && downcast<MouseEvent>(event).button() == LeftButton) {
         focus();
         document().updateStyleIfNeeded();
 
@@ -1372,7 +1375,7 @@ void HTMLSelectElement::listBoxDefaultEventHandler(Event& event)
 
             mouseEvent.setDefaultHandled();
         }
-    } else if (event.type() == eventNames().mousemoveEvent && is<MouseEvent>(event) && !downcast<RenderListBox>(*renderer()).canBeScrolledAndHasScrollableArea()) {
+    } else if (event.type() == eventNames.mousemoveEvent && is<MouseEvent>(event) && !downcast<RenderListBox>(*renderer()).canBeScrolledAndHasScrollableArea()) {
         MouseEvent& mouseEvent = downcast<MouseEvent>(event);
         if (mouseEvent.button() != LeftButton || !mouseEvent.buttonDown())
             return;
@@ -1397,7 +1400,7 @@ void HTMLSelectElement::listBoxDefaultEventHandler(Event& event)
             }
             mouseEvent.setDefaultHandled();
         }
-    } else if (event.type() == eventNames().mouseupEvent && is<MouseEvent>(event) && downcast<MouseEvent>(event).button() == LeftButton && document().frame()->eventHandler().autoscrollRenderer() != renderer()) {
+    } else if (event.type() == eventNames.mouseupEvent && is<MouseEvent>(event) && downcast<MouseEvent>(event).button() == LeftButton && document().frame()->eventHandler().autoscrollRenderer() != renderer()) {
         // This click or drag event was not over any of the options.
         if (m_lastOnChangeSelection.isEmpty())
             return;
@@ -1405,7 +1408,7 @@ void HTMLSelectElement::listBoxDefaultEventHandler(Event& event)
         // click. For drag selection, onChange will fire when the autoscroll
         // timer stops.
         listBoxOnChange();
-    } else if (event.type() == eventNames().keydownEvent) {
+    } else if (event.type() == eventNames.keydownEvent) {
         if (!is<KeyboardEvent>(event))
             return;
 
@@ -1496,7 +1499,7 @@ void HTMLSelectElement::listBoxDefaultEventHandler(Event& event)
 
             keyboardEvent.setDefaultHandled();
         }
-    } else if (event.type() == eventNames().keypressEvent) {
+    } else if (event.type() == eventNames.keypressEvent) {
         if (!is<KeyboardEvent>(event))
             return;
         KeyboardEvent& keyboardEvent = downcast<KeyboardEvent>(event);

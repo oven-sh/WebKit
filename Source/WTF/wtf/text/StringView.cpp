@@ -109,6 +109,34 @@ size_t StringView::find(StringView matchString, unsigned start) const
     return findCommon(*this, matchString, start);
 }
 
+size_t StringView::find(const LChar* match, unsigned matchLength, unsigned start) const
+{
+    ASSERT(matchLength);
+    auto length = this->length();
+    if (start > length)
+        return notFound;
+
+    unsigned searchLength = length - start;
+    if (matchLength > searchLength)
+        return notFound;
+
+    if (is8Bit())
+        return findInner(characters8() + start, match, start, searchLength, matchLength);
+    return findInner(characters16() + start, match, start, searchLength, matchLength);
+}
+
+size_t StringView::reverseFind(const LChar* match, unsigned matchLength, unsigned start) const
+{
+    ASSERT(matchLength);
+    auto length = this->length();
+    if (matchLength > length)
+        return notFound;
+
+    if (is8Bit())
+        return reverseFindInner(characters8(), match, start, length, matchLength);
+    return reverseFindInner(characters16(), match, start, length, matchLength);
+}
+
 void StringView::SplitResult::Iterator::findNextSubstring()
 {
     for (size_t separatorPosition; (separatorPosition = m_result.m_string.find(m_result.m_separator, m_position)) != notFound; ++m_position) {
@@ -253,14 +281,8 @@ template<typename CharacterType>
 static AtomString convertASCIILowercaseAtom(const CharacterType* input, unsigned length)
 {
     for (unsigned i = 0; i < length; ++i) {
-        if (UNLIKELY(isASCIIUpper(input[i]))) {
-            CharacterType* characters;
-            auto result = String::createUninitialized(length, characters);
-            StringImpl::copyCharacters(characters, input, i);
-            for (; i < length; ++i)
-                characters[i] = toASCIILower(input[i]);
-            return result;
-        }
+        if (UNLIKELY(isASCIIUpper(input[i])))
+            return makeAtomString(asASCIILowercase(StringView { input, length }));
     }
     // Fast path when the StringView is already all lowercase.
     return AtomString(input, length);
@@ -349,14 +371,66 @@ bool equalRespectingNullity(StringView a, StringView b)
     return equalCommon(a, b);
 }
 
-bool StringView::contains(const char* string) const
-{
-    return find(string) != notFound;
-}
-
 StringView StringView::stripWhiteSpace() const
 {
     return stripLeadingAndTrailingMatchedCharacters(isASCIISpace<UChar>);
+}
+
+size_t StringView::reverseFind(StringView matchString, unsigned start) const
+{
+    if (isNull())
+        return notFound;
+
+    unsigned matchLength = matchString.length();
+    unsigned ourLength = length();
+    if (!matchLength)
+        return std::min(start, ourLength);
+
+    // Check start & matchLength are in range.
+    if (matchLength > ourLength)
+        return notFound;
+
+    if (is8Bit()) {
+        if (matchString.is8Bit())
+            return reverseFindInner(characters8(), matchString.characters8(), start, ourLength, matchLength);
+        return reverseFindInner(characters8(), matchString.characters16(), start, ourLength, matchLength);
+    }
+
+    if (matchString.is8Bit())
+        return reverseFindInner(characters16(), matchString.characters8(), start, ourLength, matchLength);
+    return reverseFindInner(characters16(), matchString.characters16(), start, ourLength, matchLength);
+}
+
+String makeStringByReplacingAll(StringView string, UChar target, UChar replacement)
+{
+    if (string.is8Bit()) {
+        if (!isLatin1(target)) {
+            // Looking for a 16-bit character in an 8-bit string, so we're done.
+            return string.toString();
+        }
+
+        auto* characters = string.characters8();
+        unsigned i;
+        unsigned length = string.length();
+        for (i = 0; i != length; ++i) {
+            if (characters[i] == target)
+                break;
+        }
+        if (i == length)
+            return string.toString();
+        return StringImpl::createByReplacingInCharacters(characters, length, target, replacement, i);
+    }
+
+    auto* characters = string.characters16();
+    unsigned i;
+    unsigned length = string.length();
+    for (i = 0; i != length; ++i) {
+        if (characters[i] == target)
+            break;
+    }
+    if (i == length)
+        return string.toString();
+    return StringImpl::createByReplacingInCharacters(characters, length, target, replacement, i);
 }
 
 int codePointCompare(StringView lhs, StringView rhs)

@@ -1,4 +1,4 @@
-# Copyright (c) 2020-2021 Apple Inc. All rights reserved.
+# Copyright (c) 2020-2022 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -31,17 +31,6 @@ AVFoundationEnabled:
       default: true
     WebKit:
       "PLATFORM(WATCHOS)": false
-      default: true
-
-AVFoundationNSURLSessionEnabled:
-  type: bool
-  getter: isAVFoundationNSURLSessionEnabled
-  webcoreBinding: DeprecatedGlobalSettings
-  condition: USE(AVFOUNDATION)
-  defaultValue:
-    WebKitLegacy:
-      default: true
-    WebKit:
       default: true
 
 AcceleratedCompositingEnabled:
@@ -235,16 +224,6 @@ AllowsPictureInPictureMediaPlayback:
 AlternateFormControlDesignEnabled:
   type: bool
   condition: PLATFORM(IOS_FAMILY)
-  defaultValue:
-    WebKitLegacy:
-      default: false
-    WebKit:
-      default: false
-    WebCore:
-      default: false
-
-AlwaysUseAcceleratedOverflowScroll:
-  type: bool
   defaultValue:
     WebKitLegacy:
       default: false
@@ -600,16 +579,6 @@ DefaultTextEncodingName:
     WebCore:
       default: '{ }'
 
-DeferredCSSParserEnabled:
-  type: bool
-  defaultValue:
-    WebKitLegacy:
-      default: false
-    WebKit:
-      default: false
-    WebCore:
-      default: false
-
 DeviceHeight:
   type: uint32_t
   defaultValue:
@@ -929,6 +898,18 @@ IncompleteImageBorderEnabled:
     WebCore:
       default: false
 
+IncrementalPDFLoadingEnabled:
+  type: bool
+  condition: HAVE(INCREMENTAL_PDF_APIS)
+  webcoreBinding: RuntimeEnabledFeatures
+  defaultValue:
+    WebKitLegacy:
+      "PLATFORM(MAC)": true
+      default: false
+    WebKit:
+      "PLATFORM(MAC)": true
+      default: false
+
 IncrementalRenderingSuppressionTimeout:
   type: double
   webKitLegacyPreferenceKey: WebKitIncrementalRenderingSuppressionTimeoutInSeconds
@@ -1069,29 +1050,6 @@ ItpDebugModeEnabled:
       default: false
     WebKit:
       default: false
-
-JavaEnabled:
-  type: bool
-  webcoreGetter: isJavaEnabled
-  defaultValue:
-    WebKitLegacy:
-      "PLATFORM(IOS_FAMILY)": false
-      default: true
-    WebKit:
-      default: false
-    WebCore:
-      default: false
-
-JavaEnabledForLocalFiles:
-  type: bool
-  webcoreGetter: isJavaEnabledForLocalFiles
-  defaultValue:
-    WebKitLegacy:
-      default: true
-    WebKit:
-      default: false
-    WebCore:
-      default: true
 
 JavaScriptCanAccessClipboard:
   type: bool
@@ -1366,7 +1324,7 @@ MediaContainerTypesAllowedInCaptivePortalMode:
   exposed: [ WebKit ]
   defaultValue:
     WebKit:
-      default: '"video/mp4,audio/mp4,video/x-m4v,audio/x-m4a,audio/mp3,application/x-mpegURL,vnd.apple.mpegURL"'
+      default: '"video/mp4,audio/mp4,video/x-m4v,audio/x-m4a,audio/mp3,application/x-mpegURL,application/vnd.apple.mpegURL,video/mp2t,video/iso.segment,audio/aac,audio/mpeg,audio/ac3,audio/eac3"'
 
 MediaContentTypesRequiringHardwareSupport:
   type: String
@@ -1931,16 +1889,6 @@ SelectTrailingWhitespaceEnabled:
     WebCore:
       default: false
 
-SelectionPaintingWithoutSelectionGapsEnabled:
-  type: bool
-  defaultValue:
-    WebKitLegacy:
-      default: false
-    WebKit:
-      default: false
-    WebCore:
-      default: false
-
 SerifFontFamily:
   type: String
   webKitLegacyPreferenceKey: WebKitSerifFont
@@ -2447,6 +2395,27 @@ UsesEncodingDetector:
     WebCore:
       default: false
 
+VP8DecoderEnabled:
+  type: bool
+  webcoreBinding: none
+  condition: ENABLE(VP9)
+  defaultValue:
+    WebKitLegacy:
+      default: true
+    WebKit:
+      default: true
+
+VP9DecoderEnabled:
+  type: bool
+  condition: ENABLE(VP9)
+  defaultValue:
+    WebCore:
+      default: false
+    WebKitLegacy:
+      default: true
+    WebKit:
+      default: true
+
 VideoQualityIncludesDisplayCompositingEnabled:
   type: bool
   condition: ENABLE(VIDEO)
@@ -2464,18 +2433,6 @@ ViewGestureDebuggingEnabled:
   exposed: [ WebKit ]
   defaultValue:
     WebKit:
-      default: false
-
-ViewportFitEnabled:
-  type: bool
-  humanReadableName: "Viewport Fit"
-  humanReadableDescription: "Enable viewport-fit viewport parameter"
-  defaultValue:
-    WebKitLegacy:
-      default: true
-    WebKit:
-      default: true
-    WebCore:
       default: false
 
 VisualViewportEnabled:
@@ -2503,6 +2460,17 @@ WantsBalancedSetDefersLoadingBehavior:
 WebArchiveDebugModeEnabled:
   type: bool
   webKitLegacyPreferenceKey: WebKitWebArchiveDebugModeEnabledPreferenceKey
+  condition: ENABLE(WEB_ARCHIVE)
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
+WebArchiveTestingModeEnabled:
+  type: bool
   condition: ENABLE(WEB_ARCHIVE)
   defaultValue:
     WebKitLegacy:
@@ -2544,6 +2512,25 @@ WebGPU:
     WebCore:
       default: false
 
+WebMFormatReaderEnabled:
+  type: bool
+  webcoreBinding: RuntimeEnabledFeatures
+  condition: ENABLE(WEBM_FORMAT_READER)
+  defaultValue:
+    WebKit:
+      default: true
+
+# FIXME: Is this implemented for WebKitLegacy? If not, this should be excluded from WebKitLegacy entirely.
+WebMParserEnabled:
+  type: bool
+  webcoreBinding: RuntimeEnabledFeatures
+  condition: ENABLE(MEDIA_SOURCE)
+  defaultValue:
+    WebKitLegacy:
+      default: true
+    WebKit:
+      default: true
+
 WebSecurityEnabled:
   type: bool
   inspectorOverride: true
@@ -2581,13 +2568,3 @@ WindowFocusRestricted:
       default: true
     WebCore:
       default: true
-
-XSSAuditorEnabled:
-  type: bool
-  defaultValue:
-    WebKitLegacy:
-      default: false
-    WebKit:
-      default: false
-    WebCore:
-      default: false

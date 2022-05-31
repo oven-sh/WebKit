@@ -306,6 +306,22 @@ static BOOL areEssentiallyEqual(double a, double b)
         [[SFCertificateTrustPanel sharedCertificateTrustPanel] beginSheetForWindow:self.window modalDelegate:nil didEndSelector:nil contextInfo:NULL trust:_webView.serverTrust message:@"TLS Certificate Details"];
 }
 
+- (IBAction)logAccessibilityTrees:(id)sender
+{
+    NSSavePanel *panel = [NSSavePanel savePanel];
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    panel.allowedFileTypes = @[ @"axtree" ];
+#pragma clang diagnostic pop
+    [panel beginSheetModalForWindow:self.window completionHandler:^(NSInteger result) {
+        if (result == NSModalResponseOK) {
+            [_webView _retrieveAccessibilityTreeData:^(NSData *data, NSError *error) {
+                [data writeToURL:[panel URL] options:0 error:nil];
+            }];
+        }
+    }];
+}
+
 - (IBAction)forceRepaint:(id)sender
 {
     // FIXME: This doesn't actually force a repaint.
@@ -521,6 +537,8 @@ static BOOL areEssentiallyEqual(double a, double b)
         visibleOverlayRegions |= _WKNonFastScrollableRegion;
     if (settings.wheelEventHandlerRegionOverlayVisible)
         visibleOverlayRegions |= _WKWheelEventHandlerRegion;
+    if (settings.interactionRegionOverlayVisible)
+        visibleOverlayRegions |= _WKInteractionRegion;
     
     preferences._visibleDebugOverlayRegions = visibleOverlayRegions;
 

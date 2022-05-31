@@ -46,13 +46,12 @@ public:
     using Type = WebCore::ContextMenuContext::Type;
 
     ContextMenuContextData();
-    ContextMenuContextData(const WebCore::IntPoint& menuLocation, std::optional<WebCore::ElementContext>&& hitTestedElementContext, const Vector<WebKit::WebContextMenuItemData>& menuItems, const WebCore::ContextMenuContext&);
+    ContextMenuContextData(const WebCore::IntPoint& menuLocation, const Vector<WebKit::WebContextMenuItemData>& menuItems, const WebCore::ContextMenuContext&);
 
     Type type() const { return m_type; }
     const WebCore::IntPoint& menuLocation() const { return m_menuLocation; }
     const Vector<WebKit::WebContextMenuItemData>& menuItems() const { return m_menuItems; }
 
-    std::optional<WebCore::ElementContext> hitTestedElementContext() const { return m_hitTestedElementContext; }
     const std::optional<WebHitTestResultData>& webHitTestResultData() const { return m_webHitTestResultData; }
     const String& selectedText() const { return m_selectedText; }
 
@@ -65,7 +64,17 @@ public:
         , m_selectionIsEditable(isEditable)
     {
     }
-    
+
+    ContextMenuContextData(const WebCore::IntPoint& menuLocation, bool isEditable, const WebCore::IntRect& imageRect, const String& attachmentID, const String& sourceImageMIMEType)
+        : m_type(Type::ServicesMenu)
+        , m_menuLocation(menuLocation)
+        , m_selectionIsEditable(isEditable)
+        , m_controlledImageBounds(imageRect)
+        , m_controlledImageAttachmentID(attachmentID)
+        , m_controlledImageMIMEType(sourceImageMIMEType)
+    {
+    }
+
     ContextMenuContextData(const WebCore::IntPoint& menuLocation, WebCore::Image&, bool isEditable, const WebCore::IntRect& imageRect, const String& attachmentID, std::optional<WebCore::ElementContext>&&, const String& sourceImageMIMEType);
 
     ShareableBitmap* controlledImage() const { return m_controlledImage.get(); }
@@ -87,7 +96,6 @@ private:
     Type m_type;
 
     WebCore::IntPoint m_menuLocation;
-    std::optional<WebCore::ElementContext> m_hitTestedElementContext;
     Vector<WebKit::WebContextMenuItemData> m_menuItems;
 
     std::optional<WebHitTestResultData> m_webHitTestResultData;

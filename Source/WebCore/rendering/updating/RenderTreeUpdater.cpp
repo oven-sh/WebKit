@@ -42,6 +42,7 @@
 #include "RenderInline.h"
 #include "RenderMultiColumnFlow.h"
 #include "RenderMultiColumnSet.h"
+#include "RenderSVGResource.h"
 #include "RenderTreeUpdaterGeneratedContent.h"
 #include "RenderView.h"
 #include "RuntimeEnabledFeatures.h"
@@ -99,18 +100,6 @@ static ContainerNode* findRenderingRoot(ContainerNode& node)
     return nullptr;
 }
 
-static ListHashSet<ContainerNode*> findRenderingRoots(const Style::Update& update)
-{
-    ListHashSet<ContainerNode*> renderingRoots;
-    for (auto& root : update.roots()) {
-        auto* renderingRoot = findRenderingRoot(*root);
-        if (!renderingRoot)
-            continue;
-        renderingRoots.add(renderingRoot);
-    }
-    return renderingRoots;
-}
-
 void RenderTreeUpdater::commit(std::unique_ptr<const Style::Update> styleUpdate)
 {
     ASSERT(&m_document == &styleUpdate->document());
@@ -122,8 +111,12 @@ void RenderTreeUpdater::commit(std::unique_ptr<const Style::Update> styleUpdate)
 
     m_styleUpdate = WTFMove(styleUpdate);
 
-    for (auto* root : findRenderingRoots(*m_styleUpdate))
-        updateRenderTree(*root);
+    for (auto& root : m_styleUpdate->roots()) {
+        auto* renderingRoot = findRenderingRoot(*root);
+        if (!renderingRoot)
+            continue;
+        updateRenderTree(*renderingRoot);
+    }
 
     generatedContent().updateRemainingQuotes();
 
@@ -192,9 +185,6 @@ void RenderTreeUpdater::updateRenderTree(ContainerNode& root)
 
         if (elementUpdate)
             updateElementRenderer(element, *elementUpdate);
-
-        if (is<SVGElement>(element))
-            downcast<SVGElement>(element).invalidateSVGResourcesInAncestorChainIfNeeded();
 
         storePreviousRenderer(element);
 
@@ -306,6 +296,12 @@ void RenderTreeUpdater::updateRendererStyle(RenderElement& renderer, RenderStyle
 
 void RenderTreeUpdater::updateElementRenderer(Element& element, const Style::ElementUpdate& elementUpdate)
 {
+    if (elementUpdate.updateSVGRenderer && element.renderer())
+        RenderSVGResource::markForLayoutAndParentResourceInvalidation(*element.renderer());
+
+    if (!elementUpdate.style)
+        return;
+
 #if ENABLE(CONTENT_CHANGE_OBSERVER)
     ContentChangeObserver::StyleChangeScope observingScope(m_document, element);
 #endif

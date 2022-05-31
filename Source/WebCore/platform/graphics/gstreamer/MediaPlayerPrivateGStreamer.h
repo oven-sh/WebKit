@@ -138,7 +138,7 @@ public:
     bool hasAudio() const final { return m_hasAudio; }
     void load(const String &url) override;
 #if ENABLE(MEDIA_SOURCE)
-    void load(const URL&, const ContentType&, MediaSourcePrivateClient*) override;
+    void load(const URL&, const ContentType&, MediaSourcePrivateClient&) override;
 #endif
 #if ENABLE(MEDIA_STREAM)
     void load(MediaStreamPrivate&) override;
@@ -471,7 +471,7 @@ private:
     void processTableOfContents(GstMessage*);
     void processTableOfContentsEntry(GstTocEntry*);
 
-    String engineDescription() const override { return "GStreamer"; }
+    String engineDescription() const override { return "GStreamer"_s; }
     bool didPassCORSAccessCheck() const override;
     bool canSaveMediaData() const override;
 
@@ -483,7 +483,7 @@ private:
 
     void setPlaybinURL(const URL& urlString);
 
-    void updateTracks(const GRefPtr<GstStreamCollection>&);
+    void updateTracks(const GRefPtr<GstObject>& collectionOwner);
     void videoSinkCapsChanged(GstPad*);
     void updateVideoSizeAndOrientationFromCaps(const GstCaps*);
     bool hasFirstVideoSampleReachedSink() const;
@@ -543,19 +543,23 @@ private:
     bool m_waitingForStreamsSelectedEvent { true };
     AtomString m_currentAudioStreamId; // Currently playing.
     AtomString m_currentVideoStreamId;
+    AtomString m_currentTextStreamId;
     AtomString m_wantedAudioStreamId; // Set in JavaScript.
     AtomString m_wantedVideoStreamId;
+    AtomString m_wantedTextStreamId;
     AtomString m_requestedAudioStreamId; // Expected in the next STREAMS_SELECTED message.
     AtomString m_requestedVideoStreamId;
+    AtomString m_requestedTextStreamId;
 
 #if ENABLE(WEB_AUDIO)
     std::unique_ptr<AudioSourceProviderGStreamer> m_audioSourceProvider;
 #endif
     GRefPtr<GstElement> m_downloadBuffer;
     Vector<RefPtr<MediaPlayerRequestInstallMissingPluginsCallback>> m_missingPluginCallbacks;
-    HashMap<AtomString, RefPtr<AudioTrackPrivateGStreamer>> m_audioTracks;
-    HashMap<AtomString, RefPtr<InbandTextTrackPrivateGStreamer>> m_textTracks;
-    HashMap<AtomString, RefPtr<VideoTrackPrivateGStreamer>> m_videoTracks;
+
+    HashMap<AtomString, Ref<AudioTrackPrivateGStreamer>> m_audioTracks;
+    HashMap<AtomString, Ref<VideoTrackPrivateGStreamer>> m_videoTracks;
+    HashMap<AtomString, Ref<InbandTextTrackPrivateGStreamer>> m_textTracks;
     RefPtr<InbandMetadataTextTrackPrivateGStreamer> m_chaptersTrack;
 #if USE(GSTREAMER_MPEGTS)
     HashMap<AtomString, RefPtr<InbandMetadataTextTrackPrivateGStreamer>> m_metadataTracks;
@@ -592,6 +596,8 @@ private:
 #if USE(TEXTURE_MAPPER_DMABUF)
     RefPtr<GBMBufferSwapchain> m_swapchain;
 #endif
+
+    GRefPtr<GstStreamCollection> m_streamCollection;
 };
 
 }

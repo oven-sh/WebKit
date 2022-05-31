@@ -114,6 +114,7 @@ Modules/model-element/scenekit/SceneKitModelLoader.mm
 Modules/model-element/scenekit/SceneKitModelLoaderClient.mm
 Modules/model-element/scenekit/SceneKitModelLoaderUSD.mm
 Modules/model-element/scenekit/SceneKitModelPlayer.mm
+Modules/notifications/NotificationDataCocoa.mm
 Modules/push-api/cocoa/PushCryptoCocoa.cpp
 Modules/plugins/YouTubePluginReplacement.cpp
 Modules/speech/cocoa/SpeechRecognizerCocoa.mm
@@ -482,7 +483,6 @@ platform/ios/WebAVPlayerController.mm
 platform/ios/WebBackgroundTaskController.mm
 platform/ios/WebCoreMotionManager.mm
 platform/ios/WebEvent.mm @no-unify
-platform/ios/WebCoreUIColorExtras.mm
 platform/ios/WebItemProviderPasteboard.mm @no-unify
 platform/ios/WebSQLiteDatabaseTrackerClient.mm
 platform/ios/WebVideoFullscreenControllerAVKit.mm @no-unify
@@ -565,6 +565,7 @@ platform/mediastream/mac/CGDisplayStreamScreenCaptureSource.mm
 platform/mediastream/mac/CoreAudioCaptureDevice.cpp
 platform/mediastream/mac/CoreAudioCaptureDeviceManager.cpp
 platform/mediastream/mac/CoreAudioCaptureSource.cpp
+platform/mediastream/mac/CoreAudioSharedUnit.cpp
 platform/mediastream/mac/DisplayCaptureManagerCocoa.cpp
 platform/mediastream/mac/MediaStreamTrackAudioSourceProviderCocoa.cpp
 platform/mediastream/mac/MockAudioSharedUnit.mm

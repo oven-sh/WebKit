@@ -34,6 +34,8 @@
 #include "ResourceRequest.h"
 #include "ResourceResponse.h"
 #include "ScriptBuffer.h"
+#include "ScriptExecutionContextIdentifier.h"
+#include "ServiceWorkerRegistrationData.h"
 #include "ThreadableLoader.h"
 #include "ThreadableLoaderClient.h"
 #include <memory>
@@ -49,6 +51,7 @@ class Exception;
 class ScriptExecutionContext;
 class TextResourceDecoder;
 class WorkerScriptLoaderClient;
+struct ServiceWorkerRegistrationData;
 struct WorkerFetchResult;
 enum class CertificateInfoPolicy : uint8_t;
 
@@ -63,7 +66,7 @@ public:
     enum class Source : uint8_t { ClassicWorkerScript, ClassicWorkerImport, ModuleScript };
 
     std::optional<Exception> loadSynchronously(ScriptExecutionContext*, const URL&, Source, FetchOptions::Mode, FetchOptions::Cache, ContentSecurityPolicyEnforcement, const String& initiatorIdentifier);
-    void loadAsynchronously(ScriptExecutionContext&, ResourceRequest&&, Source, FetchOptions&&, ContentSecurityPolicyEnforcement, ServiceWorkersMode, WorkerScriptLoaderClient&, String&& taskMode);
+    void loadAsynchronously(ScriptExecutionContext&, ResourceRequest&&, Source, FetchOptions&&, ContentSecurityPolicyEnforcement, ServiceWorkersMode, WorkerScriptLoaderClient&, String&& taskMode, ScriptExecutionContextIdentifier clientIdentifier = { });
 
     void notifyError();
 
@@ -93,6 +96,16 @@ public:
     void cancel();
 
     WEBCORE_EXPORT static ResourceError validateWorkerResponse(const ResourceResponse&, Source, FetchOptions::Destination);
+
+    WEBCORE_EXPORT static WorkerScriptLoader* fromScriptExecutionContextIdentifier(ScriptExecutionContextIdentifier);
+
+#if ENABLE(SERVICE_WORKER)
+    WEBCORE_EXPORT bool setControllingServiceWorker(ServiceWorkerData&&);
+    std::optional<ServiceWorkerData> takeServiceWorkerData() { return std::exchange(m_activeServiceWorkerData, { }); }
+#endif
+
+    ScriptExecutionContextIdentifier clientIdentifier() const { return m_clientIdentifier; }
+    const String& userAgentForSharedWorker() const { return m_userAgentForSharedWorker; }
 
 private:
     friend class RefCounted<WorkerScriptLoader>;
@@ -125,6 +138,11 @@ private:
     bool m_isCOEPEnabled { false };
     ResourceResponse::Source m_responseSource { ResourceResponse::Source::Unknown };
     ResourceError m_error;
+    ScriptExecutionContextIdentifier m_clientIdentifier;
+#if ENABLE(SERVICE_WORKER)
+    std::optional<ServiceWorkerData> m_activeServiceWorkerData;
+#endif
+    String m_userAgentForSharedWorker;
 };
 
 } // namespace WebCore

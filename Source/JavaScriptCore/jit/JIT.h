@@ -47,7 +47,6 @@
 #include "JSInterfaceJIT.h"
 #include "LLIntData.h"
 #include "PCToCodeOriginMap.h"
-#include "UnusedPointer.h"
 #include <wtf/UniqueRef.h>
 
 namespace JSC {
@@ -169,16 +168,10 @@ namespace JSC {
         using MacroAssembler::JumpList;
         using MacroAssembler::Label;
 
-        static constexpr uintptr_t patchGetByIdDefaultStructure = unusedPointer;
-        static constexpr int patchGetByIdDefaultOffset = 0;
-        // Magic number - initial offset cannot be representable as a signed 8bit value, or the X86Assembler
-        // will compress the displacement, and we may not be able to fit a patched offset.
-        static constexpr int patchPutByIdDefaultOffset = 256;
-
         using Base = JSInterfaceJIT;
 
     public:
-        JIT(VM&, CodeBlock* = nullptr, BytecodeIndex loopOSREntryBytecodeOffset = BytecodeIndex(0));
+        JIT(VM&, CodeBlock*, BytecodeIndex loopOSREntryBytecodeOffset);
         ~JIT();
 
         VM& vm() { return *JSInterfaceJIT::vm(); }
@@ -189,9 +182,9 @@ namespace JSC {
 
         void doMainThreadPreparationBeforeCompile();
         
-        static CompilationResult compile(VM& vm, CodeBlock* codeBlock, JITCompilationEffort effort, BytecodeIndex bytecodeOffset = BytecodeIndex(0))
+        static CompilationResult compile(VM& vm, CodeBlock* codeBlock, JITCompilationEffort effort)
         {
-            return JIT(vm, codeBlock, bytecodeOffset).privateCompile(codeBlock, effort);
+            return JIT(vm, codeBlock, BytecodeIndex(0)).privateCompile(codeBlock, effort);
         }
 
         static unsigned frameRegisterCountFor(UnlinkedCodeBlock*);
@@ -204,6 +197,7 @@ namespace JSC {
 
         static constexpr GPRReg s_metadataGPR = LLInt::Registers::metadataTableGPR;
         static constexpr GPRReg s_constantsGPR = LLInt::Registers::pbGPR;
+        static constexpr JITConstantPool::Constant s_globalObjectConstant { 0 };
 
     private:
         void privateCompileMainPass();
@@ -256,13 +250,16 @@ namespace JSC {
         void loadConstant(unsigned constantIndex, GPRReg);
     private:
         void loadGlobalObject(GPRReg);
+
+        // Assuming s_constantsGPR is available.
+        static void loadGlobalObject(CCallHelpers&, GPRReg);
+        static void loadConstant(CCallHelpers&, unsigned constantIndex, GPRReg);
+
         void loadCodeBlockConstant(VirtualRegister, JSValueRegs);
         void loadCodeBlockConstantPayload(VirtualRegister, RegisterID);
 #if USE(JSVALUE32_64)
         void loadCodeBlockConstantTag(VirtualRegister, RegisterID);
 #endif
-
-        void emitPutCodeBlockToFrameInPrologue(GPRReg result = regT0);
 
         void exceptionCheck(Jump jumpToHandler)
         {
@@ -390,8 +387,6 @@ namespace JSC {
         void emit_compareAndJumpSlow(const JSInstruction*, DoubleCondition, SlowOperation, bool invert, Vector<SlowCaseEntry>::iterator&);
         template<typename SlowOperation>
         void emit_compareAndJumpSlowImpl(VirtualRegister op1, VirtualRegister op2, unsigned target, size_t instructionSize, DoubleCondition, SlowOperation, bool invert, Vector<SlowCaseEntry>::iterator&);
-
-        void assertStackPointerOffset();
 
         void emit_op_add(const JSInstruction*);
         void emit_op_bitand(const JSInstruction*);
@@ -887,13 +882,18 @@ namespace JSC {
         void emitSaveCalleeSaves();
         void emitRestoreCalleeSaves();
 
+#if ASSERT_ENABLED
+        static MacroAssemblerCodeRef<JITThunkPtrTag> consistencyCheckGenerator(VM&);
+        void emitConsistencyCheck();
+#endif
+
         static bool reportCompileTimes();
         static bool computeCompileTimes();
 
         void resetSP();
 
         JITConstantPool::Constant addToConstantPool(JITConstantPool::Type, void* payload = nullptr);
-        std::tuple<UnlinkedStructureStubInfo*, JITConstantPool::Constant> addUnlinkedStructureStubInfo();
+        std::tuple<BaselineUnlinkedStructureStubInfo*, JITConstantPool::Constant> addUnlinkedStructureStubInfo();
         UnlinkedCallLinkInfo* addUnlinkedCallLinkInfo();
 
         Interpreter* m_interpreter;
@@ -924,6 +924,10 @@ namespace JSC {
 
         JumpList m_exceptionChecks;
         JumpList m_exceptionChecksWithCallFrameRollback;
+#if ASSERT_ENABLED
+        Label m_consistencyCheckLabel;
+        Vector<Call> m_consistencyCheckCalls;
+#endif
 
         unsigned m_getByIdIndex { UINT_MAX };
         unsigned m_getByValIndex { UINT_MAX };
@@ -962,9 +966,8 @@ namespace JSC {
         RefPtr<BaselineJITCode> m_jitCode;
 
         Vector<JITConstantPool::Value> m_constantPool;
-        JITConstantPool::Constant m_globalObjectConstant { std::numeric_limits<unsigned>::max() };
         SegmentedVector<UnlinkedCallLinkInfo> m_unlinkedCalls;
-        SegmentedVector<UnlinkedStructureStubInfo> m_unlinkedStubInfos;
+        SegmentedVector<BaselineUnlinkedStructureStubInfo> m_unlinkedStubInfos;
         FixedVector<SimpleJumpTable> m_switchJumpTables;
         FixedVector<StringJumpTable> m_stringSwitchJumpTables;
 

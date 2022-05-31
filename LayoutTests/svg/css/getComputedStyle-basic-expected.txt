@@ -74,6 +74,12 @@ rect: style.getPropertyValue(box-shadow) : none
 rect: style.getPropertyCSSValue(box-shadow) : [object CSSPrimitiveValue]
 rect: style.getPropertyValue(box-sizing) : content-box
 rect: style.getPropertyCSSValue(box-sizing) : [object CSSPrimitiveValue]
+rect: style.getPropertyValue(break-after) : auto
+rect: style.getPropertyCSSValue(break-after) : [object CSSPrimitiveValue]
+rect: style.getPropertyValue(break-before) : auto
+rect: style.getPropertyCSSValue(break-before) : [object CSSPrimitiveValue]
+rect: style.getPropertyValue(break-inside) : auto
+rect: style.getPropertyCSSValue(break-inside) : [object CSSPrimitiveValue]
 rect: style.getPropertyValue(buffered-rendering) : auto
 rect: style.getPropertyCSSValue(buffered-rendering) : [object CSSPrimitiveValue]
 rect: style.getPropertyValue(caption-side) : top
@@ -286,16 +292,12 @@ rect: style.getPropertyValue(padding-right) : 0px
 rect: style.getPropertyCSSValue(padding-right) : [object CSSPrimitiveValue]
 rect: style.getPropertyValue(padding-top) : 0px
 rect: style.getPropertyCSSValue(padding-top) : [object CSSPrimitiveValue]
-rect: style.getPropertyValue(page-break-after) : auto
-rect: style.getPropertyCSSValue(page-break-after) : [object CSSPrimitiveValue]
-rect: style.getPropertyValue(page-break-before) : auto
-rect: style.getPropertyCSSValue(page-break-before) : [object CSSPrimitiveValue]
-rect: style.getPropertyValue(page-break-inside) : auto
-rect: style.getPropertyCSSValue(page-break-inside) : [object CSSPrimitiveValue]
 rect: style.getPropertyValue(paint-order) : normal
 rect: style.getPropertyCSSValue(paint-order) : [object CSSPrimitiveValue]
 rect: style.getPropertyValue(perspective) : none
 rect: style.getPropertyCSSValue(perspective) : [object CSSPrimitiveValue]
+rect: style.getPropertyValue(perspective-origin) : 150px 75px
+rect: style.getPropertyCSSValue(perspective-origin) : [object CSSValueList]
 rect: style.getPropertyValue(pointer-events) : auto
 rect: style.getPropertyCSSValue(pointer-events) : [object CSSPrimitiveValue]
 rect: style.getPropertyValue(position) : static
@@ -360,6 +362,8 @@ rect: style.getPropertyValue(text-emphasis-style) : none
 rect: style.getPropertyCSSValue(text-emphasis-style) : [object CSSPrimitiveValue]
 rect: style.getPropertyValue(text-indent) : 0px
 rect: style.getPropertyCSSValue(text-indent) : [object CSSPrimitiveValue]
+rect: style.getPropertyValue(text-orientation) : mixed
+rect: style.getPropertyCSSValue(text-orientation) : [object CSSPrimitiveValue]
 rect: style.getPropertyValue(text-overflow) : clip
 rect: style.getPropertyCSSValue(text-overflow) : [object CSSPrimitiveValue]
 rect: style.getPropertyValue(text-rendering) : auto
@@ -372,6 +376,8 @@ rect: style.getPropertyValue(top) : auto
 rect: style.getPropertyCSSValue(top) : [object CSSPrimitiveValue]
 rect: style.getPropertyValue(transform) : none
 rect: style.getPropertyCSSValue(transform) : [object CSSPrimitiveValue]
+rect: style.getPropertyValue(transform-origin) : 0px 0px
+rect: style.getPropertyCSSValue(transform-origin) : [object CSSValueList]
 rect: style.getPropertyValue(transform-style) : flat
 rect: style.getPropertyCSSValue(transform-style) : [object CSSPrimitiveValue]
 rect: style.getPropertyValue(transition-delay) : 0s
@@ -384,6 +390,8 @@ rect: style.getPropertyValue(transition-timing-function) : ease
 rect: style.getPropertyCSSValue(transition-timing-function) : [object CSSValueList]
 rect: style.getPropertyValue(unicode-bidi) : normal
 rect: style.getPropertyCSSValue(unicode-bidi) : [object CSSPrimitiveValue]
+rect: style.getPropertyValue(user-select) : text
+rect: style.getPropertyCSSValue(user-select) : [object CSSPrimitiveValue]
 rect: style.getPropertyValue(vector-effect) : none
 rect: style.getPropertyCSSValue(vector-effect) : [object CSSPrimitiveValue]
 rect: style.getPropertyValue(vertical-align) : baseline
@@ -402,8 +410,6 @@ rect: style.getPropertyValue(word-break) : normal
 rect: style.getPropertyCSSValue(word-break) : [object CSSPrimitiveValue]
 rect: style.getPropertyValue(word-spacing) : 0px
 rect: style.getPropertyCSSValue(word-spacing) : [object CSSPrimitiveValue]
-rect: style.getPropertyValue(word-wrap) : normal
-rect: style.getPropertyCSSValue(word-wrap) : [object CSSPrimitiveValue]
 rect: style.getPropertyValue(writing-mode) : horizontal-tb
 rect: style.getPropertyCSSValue(writing-mode) : [object CSSPrimitiveValue]
 rect: style.getPropertyValue(z-index) : auto
@@ -418,8 +424,6 @@ rect: style.getPropertyValue(-webkit-background-size) : auto
 rect: style.getPropertyCSSValue(-webkit-background-size) : [object CSSPrimitiveValue]
 rect: style.getPropertyValue(-webkit-border-horizontal-spacing) : 0px
 rect: style.getPropertyCSSValue(-webkit-border-horizontal-spacing) : [object CSSPrimitiveValue]
-rect: style.getPropertyValue(-webkit-border-image) : none
-rect: style.getPropertyCSSValue(-webkit-border-image) : [object CSSPrimitiveValue]
 rect: style.getPropertyValue(-webkit-border-vertical-spacing) : 0px
 rect: style.getPropertyCSSValue(-webkit-border-vertical-spacing) : [object CSSPrimitiveValue]
 rect: style.getPropertyValue(-webkit-box-align) : stretch
@@ -446,12 +450,6 @@ rect: style.getPropertyValue(-webkit-box-shadow) : none
 rect: style.getPropertyCSSValue(-webkit-box-shadow) : [object CSSPrimitiveValue]
 rect: style.getPropertyValue(-webkit-column-axis) : auto
 rect: style.getPropertyCSSValue(-webkit-column-axis) : [object CSSPrimitiveValue]
-rect: style.getPropertyValue(-webkit-column-break-after) : auto
-rect: style.getPropertyCSSValue(-webkit-column-break-after) : [object CSSPrimitiveValue]
-rect: style.getPropertyValue(-webkit-column-break-before) : auto
-rect: style.getPropertyCSSValue(-webkit-column-break-before) : [object CSSPrimitiveValue]
-rect: style.getPropertyValue(-webkit-column-break-inside) : auto
-rect: style.getPropertyCSSValue(-webkit-column-break-inside) : [object CSSPrimitiveValue]
 rect: style.getPropertyValue(-webkit-font-smoothing) : auto
 rect: style.getPropertyCSSValue(-webkit-font-smoothing) : [object CSSPrimitiveValue]
 rect: style.getPropertyValue(-webkit-hyphenate-character) : auto
@@ -498,22 +496,16 @@ rect: style.getPropertyValue(-webkit-rtl-ordering) : logical
 rect: style.getPropertyCSSValue(-webkit-rtl-ordering) : [object CSSPrimitiveValue]
 rect: style.getPropertyValue(-webkit-text-fill-color) : rgb(0, 0, 0)
 rect: style.getPropertyCSSValue(-webkit-text-fill-color) : [object CSSPrimitiveValue]
-rect: style.getPropertyValue(-webkit-text-orientation) : mixed
-rect: style.getPropertyCSSValue(-webkit-text-orientation) : [object CSSPrimitiveValue]
 rect: style.getPropertyValue(-webkit-text-security) : none
 rect: style.getPropertyCSSValue(-webkit-text-security) : [object CSSPrimitiveValue]
 rect: style.getPropertyValue(-webkit-text-stroke-color) : rgb(0, 0, 0)
 rect: style.getPropertyCSSValue(-webkit-text-stroke-color) : [object CSSPrimitiveValue]
 rect: style.getPropertyValue(-webkit-text-stroke-width) : 0px
 rect: style.getPropertyCSSValue(-webkit-text-stroke-width) : [object CSSPrimitiveValue]
-rect: style.getPropertyValue(-webkit-transform-style) : flat
-rect: style.getPropertyCSSValue(-webkit-transform-style) : [object CSSPrimitiveValue]
 rect: style.getPropertyValue(-webkit-user-drag) : auto
 rect: style.getPropertyCSSValue(-webkit-user-drag) : [object CSSPrimitiveValue]
 rect: style.getPropertyValue(-webkit-user-modify) : read-only
 rect: style.getPropertyCSSValue(-webkit-user-modify) : [object CSSPrimitiveValue]
-rect: style.getPropertyValue(-webkit-user-select) : text
-rect: style.getPropertyCSSValue(-webkit-user-select) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(align-content) : normal
 g: style.getPropertyCSSValue(align-content) : [object CSSValueList]
 g: style.getPropertyValue(align-items) : normal
@@ -590,6 +582,12 @@ g: style.getPropertyValue(box-shadow) : none
 g: style.getPropertyCSSValue(box-shadow) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(box-sizing) : content-box
 g: style.getPropertyCSSValue(box-sizing) : [object CSSPrimitiveValue]
+g: style.getPropertyValue(break-after) : auto
+g: style.getPropertyCSSValue(break-after) : [object CSSPrimitiveValue]
+g: style.getPropertyValue(break-before) : auto
+g: style.getPropertyCSSValue(break-before) : [object CSSPrimitiveValue]
+g: style.getPropertyValue(break-inside) : auto
+g: style.getPropertyCSSValue(break-inside) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(buffered-rendering) : auto
 g: style.getPropertyCSSValue(buffered-rendering) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(caption-side) : top
@@ -802,16 +800,12 @@ g: style.getPropertyValue(padding-right) : 0px
 g: style.getPropertyCSSValue(padding-right) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(padding-top) : 0px
 g: style.getPropertyCSSValue(padding-top) : [object CSSPrimitiveValue]
-g: style.getPropertyValue(page-break-after) : auto
-g: style.getPropertyCSSValue(page-break-after) : [object CSSPrimitiveValue]
-g: style.getPropertyValue(page-break-before) : auto
-g: style.getPropertyCSSValue(page-break-before) : [object CSSPrimitiveValue]
-g: style.getPropertyValue(page-break-inside) : auto
-g: style.getPropertyCSSValue(page-break-inside) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(paint-order) : normal
 g: style.getPropertyCSSValue(paint-order) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(perspective) : none
 g: style.getPropertyCSSValue(perspective) : [object CSSPrimitiveValue]
+g: style.getPropertyValue(perspective-origin) : 150px 75px
+g: style.getPropertyCSSValue(perspective-origin) : [object CSSValueList]
 g: style.getPropertyValue(pointer-events) : auto
 g: style.getPropertyCSSValue(pointer-events) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(position) : static
@@ -876,6 +870,8 @@ g: style.getPropertyValue(text-emphasis-style) : none
 g: style.getPropertyCSSValue(text-emphasis-style) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(text-indent) : 0px
 g: style.getPropertyCSSValue(text-indent) : [object CSSPrimitiveValue]
+g: style.getPropertyValue(text-orientation) : mixed
+g: style.getPropertyCSSValue(text-orientation) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(text-overflow) : clip
 g: style.getPropertyCSSValue(text-overflow) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(text-rendering) : auto
@@ -888,6 +884,8 @@ g: style.getPropertyValue(top) : auto
 g: style.getPropertyCSSValue(top) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(transform) : none
 g: style.getPropertyCSSValue(transform) : [object CSSPrimitiveValue]
+g: style.getPropertyValue(transform-origin) : 0px 0px
+g: style.getPropertyCSSValue(transform-origin) : [object CSSValueList]
 g: style.getPropertyValue(transform-style) : flat
 g: style.getPropertyCSSValue(transform-style) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(transition-delay) : 0s
@@ -900,6 +898,8 @@ g: style.getPropertyValue(transition-timing-function) : ease
 g: style.getPropertyCSSValue(transition-timing-function) : [object CSSValueList]
 g: style.getPropertyValue(unicode-bidi) : normal
 g: style.getPropertyCSSValue(unicode-bidi) : [object CSSPrimitiveValue]
+g: style.getPropertyValue(user-select) : text
+g: style.getPropertyCSSValue(user-select) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(vector-effect) : none
 g: style.getPropertyCSSValue(vector-effect) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(vertical-align) : baseline
@@ -918,8 +918,6 @@ g: style.getPropertyValue(word-break) : normal
 g: style.getPropertyCSSValue(word-break) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(word-spacing) : 0px
 g: style.getPropertyCSSValue(word-spacing) : [object CSSPrimitiveValue]
-g: style.getPropertyValue(word-wrap) : normal
-g: style.getPropertyCSSValue(word-wrap) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(writing-mode) : horizontal-tb
 g: style.getPropertyCSSValue(writing-mode) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(z-index) : auto
@@ -934,8 +932,6 @@ g: style.getPropertyValue(-webkit-background-size) : auto
 g: style.getPropertyCSSValue(-webkit-background-size) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(-webkit-border-horizontal-spacing) : 0px
 g: style.getPropertyCSSValue(-webkit-border-horizontal-spacing) : [object CSSPrimitiveValue]
-g: style.getPropertyValue(-webkit-border-image) : none
-g: style.getPropertyCSSValue(-webkit-border-image) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(-webkit-border-vertical-spacing) : 0px
 g: style.getPropertyCSSValue(-webkit-border-vertical-spacing) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(-webkit-box-align) : stretch
@@ -962,12 +958,6 @@ g: style.getPropertyValue(-webkit-box-shadow) : none
 g: style.getPropertyCSSValue(-webkit-box-shadow) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(-webkit-column-axis) : auto
 g: style.getPropertyCSSValue(-webkit-column-axis) : [object CSSPrimitiveValue]
-g: style.getPropertyValue(-webkit-column-break-after) : auto
-g: style.getPropertyCSSValue(-webkit-column-break-after) : [object CSSPrimitiveValue]
-g: style.getPropertyValue(-webkit-column-break-before) : auto
-g: style.getPropertyCSSValue(-webkit-column-break-before) : [object CSSPrimitiveValue]
-g: style.getPropertyValue(-webkit-column-break-inside) : auto
-g: style.getPropertyCSSValue(-webkit-column-break-inside) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(-webkit-font-smoothing) : auto
 g: style.getPropertyCSSValue(-webkit-font-smoothing) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(-webkit-hyphenate-character) : auto
@@ -1014,20 +1004,14 @@ g: style.getPropertyValue(-webkit-rtl-ordering) : logical
 g: style.getPropertyCSSValue(-webkit-rtl-ordering) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(-webkit-text-fill-color) : rgb(0, 0, 0)
 g: style.getPropertyCSSValue(-webkit-text-fill-color) : [object CSSPrimitiveValue]
-g: style.getPropertyValue(-webkit-text-orientation) : mixed
-g: style.getPropertyCSSValue(-webkit-text-orientation) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(-webkit-text-security) : none
 g: style.getPropertyCSSValue(-webkit-text-security) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(-webkit-text-stroke-color) : rgb(0, 0, 0)
 g: style.getPropertyCSSValue(-webkit-text-stroke-color) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(-webkit-text-stroke-width) : 0px
 g: style.getPropertyCSSValue(-webkit-text-stroke-width) : [object CSSPrimitiveValue]
-g: style.getPropertyValue(-webkit-transform-style) : flat
-g: style.getPropertyCSSValue(-webkit-transform-style) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(-webkit-user-drag) : auto
 g: style.getPropertyCSSValue(-webkit-user-drag) : [object CSSPrimitiveValue]
 g: style.getPropertyValue(-webkit-user-modify) : read-only
 g: style.getPropertyCSSValue(-webkit-user-modify) : [object CSSPrimitiveValue]
-g: style.getPropertyValue(-webkit-user-select) : text
-g: style.getPropertyCSSValue(-webkit-user-select) : [object CSSPrimitiveValue]
 

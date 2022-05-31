@@ -116,13 +116,13 @@ ResourceResponse ResourceResponseBase::fromCrossThreadData(CrossThreadData&& dat
     ResourceResponse response;
 
     response.setURL(data.url);
-    response.setMimeType(data.mimeType);
+    response.setMimeType(WTFMove(data.mimeType));
     response.setExpectedContentLength(data.expectedContentLength);
-    response.setTextEncodingName(data.textEncodingName);
+    response.setTextEncodingName(WTFMove(data.textEncodingName));
 
     response.setHTTPStatusCode(data.httpStatusCode);
-    response.setHTTPStatusText(data.httpStatusText);
-    response.setHTTPVersion(data.httpVersion);
+    response.setHTTPStatusText(WTFMove(data.httpStatusText));
+    response.setHTTPVersion(WTFMove(data.httpVersion));
 
     response.m_httpHeaderFields = WTFMove(data.httpHeaderFields);
     if (data.networkLoadMetrics)
@@ -193,7 +193,7 @@ ResourceResponse ResourceResponseBase::filter(const ResourceResponse& response, 
     filteredResponse.setType(Type::Cors);
 
     auto accessControlExposeHeaderSet = valueOrDefault(parseAccessControlAllowList<ASCIICaseInsensitiveHash>(response.httpHeaderField(HTTPHeaderName::AccessControlExposeHeaders)));
-    if (performCheck == PerformExposeAllHeadersCheck::Yes && accessControlExposeHeaderSet.contains("*"))
+    if (performCheck == PerformExposeAllHeadersCheck::Yes && accessControlExposeHeaderSet.contains<HashTranslatorASCIILiteral>("*"_s))
         return filteredResponse;
 
     filteredResponse.m_httpHeaderFields.uncommonHeaders().removeAllMatching([&](auto& entry) {
@@ -237,13 +237,13 @@ const String& ResourceResponseBase::mimeType() const
     return m_mimeType; 
 }
 
-void ResourceResponseBase::setMimeType(const String& mimeType)
+void ResourceResponseBase::setMimeType(String&& mimeType)
 {
     lazyInit(CommonFieldsOnly);
     m_isNull = false;
 
     // FIXME: MIME type is determined by HTTP Content-Type header. We should update the header, so that it doesn't disagree with m_mimeType.
-    m_mimeType = mimeType;
+    m_mimeType = WTFMove(mimeType);
 
     // FIXME: Should invalidate or update platform response if present.
 }
@@ -273,13 +273,13 @@ const String& ResourceResponseBase::textEncodingName() const
     return m_textEncodingName;
 }
 
-void ResourceResponseBase::setTextEncodingName(const String& encodingName)
+void ResourceResponseBase::setTextEncodingName(String&& encodingName)
 {
     lazyInit(CommonFieldsOnly);
     m_isNull = false;
 
     // FIXME: Text encoding is determined by HTTP Content-Type header. We should update the header, so that it doesn't disagree with m_textEncodingName.
-    m_textEncodingName = encodingName;
+    m_textEncodingName = WTFMove(encodingName);
 
     // FIXME: Should invalidate or update platform response if present.
 }
@@ -309,7 +309,8 @@ String ResourceResponseBase::sanitizeSuggestedFilename(const String& suggestedFi
 
     ResourceResponse response { { { }, "http://example.com/"_s }, { }, -1, { } };
     response.setHTTPStatusCode(200);
-    String escapedSuggestedFilename = String(suggestedFilename).replace('\\', "\\\\").replace('"', "\\\"");
+    String escapedSuggestedFilename = makeStringByReplacingAll(suggestedFilename, '\\', "\\\\"_s);
+    escapedSuggestedFilename = makeStringByReplacingAll(escapedSuggestedFilename, '"', "\\\""_s);
     response.setHTTPHeaderField(HTTPHeaderName::ContentDisposition, makeString("attachment; filename=\"", escapedSuggestedFilename, '"'));
     return response.suggestedFilename();
 }
@@ -342,18 +343,18 @@ bool ResourceResponseBase::isRedirection() const
     return isRedirectionStatusCode(m_httpStatusCode);
 }
 
-const String& ResourceResponseBase::httpStatusText() const 
+const String& ResourceResponseBase::httpStatusText() const
 {
     lazyInit(AllFields);
 
     return m_httpStatusText; 
 }
 
-void ResourceResponseBase::setHTTPStatusText(const String& statusText) 
+void ResourceResponseBase::setHTTPStatusText(String&& statusText)
 {
     lazyInit(AllFields);
 
-    m_httpStatusText = statusText; 
+    m_httpStatusText = WTFMove(statusText);
 
     // FIXME: Should invalidate or update platform response if present.
 }
@@ -365,7 +366,7 @@ const String& ResourceResponseBase::httpVersion() const
     return m_httpVersion;
 }
 
-void ResourceResponseBase::setHTTPVersion(const String& versionText)
+void ResourceResponseBase::setHTTPVersion(String&& versionText)
 {
     lazyInit(AllFields);
     
@@ -459,11 +460,11 @@ void ResourceResponseBase::sanitizeHTTPHeaderFieldsAccordingToTainting()
         break;
     case ResourceResponse::Tainting::Cors: {
         auto corsSafeHeaderSet = valueOrDefault(parseAccessControlAllowList<ASCIICaseInsensitiveHash>(httpHeaderField(HTTPHeaderName::AccessControlExposeHeaders)));
-        if (corsSafeHeaderSet.contains("*"_str))
+        if (corsSafeHeaderSet.contains<HashTranslatorASCIILiteral>("*"_s))
             return;
 
         m_httpHeaderFields.commonHeaders().removeAllMatching([&corsSafeHeaderSet](auto& header) {
-            return !isSafeCrossOriginResponseHeader(header.key) && !corsSafeHeaderSet.contains(httpHeaderNameString(header.key).toStringWithoutCopying());
+            return !isSafeCrossOriginResponseHeader(header.key) && !corsSafeHeaderSet.contains<ASCIICaseInsensitiveStringViewHashTranslator>(httpHeaderNameString(header.key));
         });
         m_httpHeaderFields.uncommonHeaders().removeAllMatching([&corsSafeHeaderSet](auto& header) { return !corsSafeHeaderSet.contains(header.key); });
         break;
@@ -500,10 +501,10 @@ bool ResourceResponseBase::isHTTP09() const
 {
     lazyInit(AllFields);
 
-    return m_httpVersion.startsWith("HTTP/0.9");
+    return m_httpVersion.startsWith("HTTP/0.9"_s);
 }
 
-String ResourceResponseBase::httpHeaderField(const String& name) const
+String ResourceResponseBase::httpHeaderField(StringView name) const
 {
     lazyInit(CommonFieldsOnly);
 
@@ -566,13 +567,18 @@ void ResourceResponseBase::updateHeaderParsedState(HTTPHeaderName name)
 
 void ResourceResponseBase::setHTTPHeaderField(const String& name, const String& value)
 {
-    lazyInit(AllFields);
-
     HTTPHeaderName headerName;
     if (findHTTPHeaderName(name, headerName))
-        updateHeaderParsedState(headerName);
+        setHTTPHeaderField(headerName, value);
+    else
+        setUncommonHTTPHeaderField(name, value);
+}
 
-    m_httpHeaderFields.set(name, value);
+void ResourceResponseBase::setUncommonHTTPHeaderField(const String& name, const String& value)
+{
+    lazyInit(AllFields);
+
+    m_httpHeaderFields.setUncommonHeader(name, value);
 
     // FIXME: Should invalidate or update platform response if present.
 }
@@ -607,10 +613,14 @@ void ResourceResponseBase::addHTTPHeaderField(const String& name, const String& 
     HTTPHeaderName headerName;
     if (findHTTPHeaderName(name, headerName))
         addHTTPHeaderField(headerName, value);
-    else {
-        lazyInit(AllFields);
-        m_httpHeaderFields.add(name, value);
-    }
+    else
+        addUncommonHTTPHeaderField(name, value);
+}
+
+void ResourceResponseBase::addUncommonHTTPHeaderField(const String& name, const String& value)
+{
+    lazyInit(AllFields);
+    m_httpHeaderFields.addUncommonHeader(name, value);
 }
 
 const HTTPHeaderMap& ResourceResponseBase::httpHeaderFields() const
@@ -772,7 +782,7 @@ bool ResourceResponseBase::isAttachment() const
     lazyInit(AllFields);
 
     auto value = m_httpHeaderFields.get(HTTPHeaderName::ContentDisposition);
-    return equalLettersIgnoringASCIICase(value.left(value.find(';')).stripWhiteSpace(), "attachment");
+    return equalLettersIgnoringASCIICase(StringView(value).left(value.find(';')).stripWhiteSpace(), "attachment"_s);
 }
 
 bool ResourceResponseBase::isAttachmentWithFilename() const
@@ -784,11 +794,10 @@ bool ResourceResponseBase::isAttachmentWithFilename() const
         return false;
 
     StringView contentDispositionView { contentDisposition };
-    if (!equalLettersIgnoringASCIICase(contentDispositionView.left(contentDispositionView.find(';')).stripWhiteSpace(), "attachment"))
+    if (!equalLettersIgnoringASCIICase(contentDispositionView.left(contentDispositionView.find(';')).stripWhiteSpace(), "attachment"_s))
         return false;
 
-    String filename = filenameFromHTTPContentDisposition(contentDispositionView);
-    return !filename.isNull();
+    return !filenameFromHTTPContentDisposition(contentDispositionView).isNull();
 }
 
 ResourceResponseBase::Source ResourceResponseBase::source() const

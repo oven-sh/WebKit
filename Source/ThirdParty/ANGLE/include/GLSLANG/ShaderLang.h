@@ -26,7 +26,7 @@
 
 // Version number for shader translation API.
 // It is incremented every time the API changes.
-#define ANGLE_SH_VERSION 271
+#define ANGLE_SH_VERSION 273
 
 enum ShShaderSpec
 {
@@ -247,7 +247,9 @@ const ShCompileOptions SH_SELECT_VIEW_IN_NV_GLSL_VERTEX_SHADER = UINT64_C(1) << 
 // ShBuiltInResources in vertex shaders.
 const ShCompileOptions SH_CLAMP_POINT_SIZE = UINT64_C(1) << 32;
 
-// Bit 33 is available.
+// This flag indicates whether advanced blend equation should be emulated.  Currently only
+// implemented for the Vulkan backend.
+const ShCompileOptions SH_ADD_ADVANCED_BLEND_EQUATIONS_EMULATION = UINT64_C(1) << 33;
 
 // Don't use loops to initialize uninitialized variables. Only has an effect if some kind of
 // variable initialization is turned on.
@@ -348,6 +350,10 @@ const ShCompileOptions SH_GENERATE_SPIRV_THROUGH_GLSLANG = UINT64_C(1) << 58;
 
 // Insert explicit casts for float/double/unsigned/signed int on macOS 10.15 with Intel driver
 const ShCompileOptions SH_ADD_EXPLICIT_BOOL_CASTS = UINT64_C(1) << 59;
+
+// Add round() after applying dither.  This works around a Qualcomm quirk where values can get
+// ceil()ed instead.
+const ShCompileOptions SH_ROUND_OUTPUT_AFTER_DITHERING = UINT64_C(1) << 60;
 
 // The 64 bits hash function. The first parameter is the input string; the
 // second parameter is the string length.
@@ -720,6 +726,9 @@ sh::WorkGroupSize GetComputeShaderLocalGroupSize(const ShHandle handle);
 int GetVertexShaderNumViews(const ShHandle handle);
 // Returns true if compiler has injected instructions for early fragment tests as an optimization
 bool HasEarlyFragmentTestsOptimization(const ShHandle handle);
+// Returns true if the shader has specified the |sample| qualifier, implying that per-sample shading
+// should be enabled
+bool EnablesPerSampleShading(const ShHandle handle);
 
 // Returns specialization constant usage bits
 uint32_t GetShaderSpecConstUsageBits(const ShHandle handle);

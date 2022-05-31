@@ -58,7 +58,7 @@ void AppBundleRequest::start()
 #if ENABLE(INSTALL_COORDINATION_BUNDLES)
         m_appBundle = ICAppBundle::create(*m_connection, m_originString, *this);
 #else
-        m_connection->broadcastDebugMessage("Client is trying to initiate app bundle request without having configured mock app bundles for testing. About to crash...");
+        m_connection->broadcastDebugMessage("Client is trying to initiate app bundle request without having configured mock app bundles for testing. About to crash..."_s);
         RELEASE_ASSERT_NOT_REACHED();
 #endif
     }
@@ -136,7 +136,7 @@ void AppBundleDeletionRequest::didDeleteExistingBundleWithError(PushAppBundle& b
     if (error)
         m_connection->broadcastDebugMessage(makeString("Failed to delete app bundle: ", String([error description])));
 
-    callCompletionHandlerAndCleanup(error ? String([error description]) : "");
+    callCompletionHandlerAndCleanup(error ? String([error description]) : emptyString());
 }
 
 } // namespace WebPushD

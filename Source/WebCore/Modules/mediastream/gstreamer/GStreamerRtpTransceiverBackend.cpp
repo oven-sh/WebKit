@@ -79,7 +79,7 @@ String GStreamerRtpTransceiverBackend::mid()
 {
     GUniqueOutPtr<char> mid;
     g_object_get(m_rtcTransceiver.get(), "mid", &mid.outPtr(), nullptr);
-    return mid.get();
+    return String::fromLatin1(mid.get());
 }
 
 void GStreamerRtpTransceiverBackend::stop()
@@ -96,8 +96,8 @@ bool GStreamerRtpTransceiverBackend::stopped() const
 
 static inline WARN_UNUSED_RETURN ExceptionOr<GstCaps*> toRtpCodecCapability(const RTCRtpCodecCapability& codec)
 {
-    if (!codec.mimeType.startsWith("video/") && !codec.mimeType.startsWith("audio/"))
-        return Exception { InvalidModificationError, "RTCRtpCodecCapability bad mimeType" };
+    if (!codec.mimeType.startsWith("video/"_s) && !codec.mimeType.startsWith("audio/"_s))
+        return Exception { InvalidModificationError, "RTCRtpCodecCapability bad mimeType"_s };
 
     auto components = codec.mimeType.split('/');
     auto* caps = gst_caps_new_simple("application/x-rtp", "media", G_TYPE_STRING, components[0].ascii().data(), "encoding-name", G_TYPE_STRING, components[1].ascii().data(), nullptr);

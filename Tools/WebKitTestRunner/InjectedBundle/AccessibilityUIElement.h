@@ -166,6 +166,7 @@ public:
     JSRetainPtr<JSStringRef> valueDescription();
     int insertionPointLineNumber();
     JSRetainPtr<JSStringRef> selectedTextRange();
+    bool isBusy() const;
     bool isEnabled();
     bool isRequired() const;
 
@@ -401,6 +402,7 @@ private:
 
 #if PLATFORM(MAC)
     RetainPtr<id> attributeValueForParameter(NSString *, id) const;
+    unsigned arrayAttributeCount(NSString *) const;
     RetainPtr<NSString> descriptionOfValue(id valueObject) const;
     bool boolAttributeValue(NSString *attribute) const;
     JSRetainPtr<JSStringRef> stringAttributeValue(NSString *attribute) const;

@@ -53,13 +53,10 @@ class OffscreenCanvas;
 class VideoFrame;
 class WebGLRenderingContextBase;
 class GPUCanvasContext;
+class WebCoreOpaqueRoot;
 struct CanvasRenderingContext2DSettings;
 struct ImageBitmapRenderingContextSettings;
 struct UncachedString;
-
-namespace DisplayList {
-using AsTextFlags = unsigned;
-}
 
 class HTMLCanvasElement final : public HTMLElement, public CanvasBase, public ActiveDOMObject {
     WTF_MAKE_ISO_ALLOCATED(HTMLCanvasElement);
@@ -200,6 +197,8 @@ private:
     mutable bool m_mustGuardAgainstUseByPendingLayerTransaction { false };
 #endif
 };
+
+WebCoreOpaqueRoot root(HTMLCanvasElement*);
 
 } // namespace WebCore
 

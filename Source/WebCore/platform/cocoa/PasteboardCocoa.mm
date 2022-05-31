@@ -109,13 +109,13 @@ static ASCIILiteral imageTypeToFakeFilename(ImageType type)
     switch (type) {
     case ImageType::Invalid:
         ASSERT_NOT_REACHED();
-        return ASCIILiteral::null();
+        return { };
     case ImageType::TIFF:
 #if PLATFORM(MAC)
         return "image.png"_s; // For Web compatibility, we pretend to have PNG instead.
 #else
         ASSERT_NOT_REACHED();
-        return ASCIILiteral::null();
+        return { };
 #endif
     case ImageType::PNG:
         return "image.png"_s;
@@ -234,7 +234,7 @@ void Pasteboard::read(PasteboardFileReader& reader, std::optional<size_t> itemIn
         for (auto cocoaType : info.platformTypesByFidelity) {
             auto imageType = cocoaTypeToImageType(cocoaType);
             auto* mimeType = imageTypeToMIMEType(imageType);
-            if (!mimeType || !reader.shouldReadBuffer(String { mimeType }))
+            if (!mimeType || !reader.shouldReadBuffer(String::fromLatin1(mimeType)))
                 continue;
             auto buffer = readBuffer(itemIndex, cocoaType);
 #if PLATFORM(MAC)
@@ -242,7 +242,7 @@ void Pasteboard::read(PasteboardFileReader& reader, std::optional<size_t> itemIn
                 buffer = convertTIFFToPNG(buffer.releaseNonNull());
 #endif
             if (buffer) {
-                reader.readBuffer(imageTypeToFakeFilename(imageType), String { mimeType }, buffer.releaseNonNull());
+                reader.readBuffer(imageTypeToFakeFilename(imageType), String::fromLatin1(mimeType), buffer.releaseNonNull());
                 break;
             }
         }

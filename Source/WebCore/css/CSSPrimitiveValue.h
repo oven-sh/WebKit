@@ -190,12 +190,12 @@ public:
 
     template<typename T> inline operator T() const; // Defined in CSSPrimitiveValueMappings.h
 
-    String customCSSText() const;
+    String customCSSText(Document* = nullptr) const;
 
     bool equals(const CSSPrimitiveValue&) const;
 
     static std::optional<double> conversionToCanonicalUnitsScaleFactor(CSSUnitType);
-    static String unitTypeString(CSSUnitType);
+    static ASCIILiteral unitTypeString(CSSUnitType);
 
     static double computeUnzoomedNonCalcLengthDouble(CSSUnitType, double value, CSSPropertyID, const FontMetrics* = nullptr, const FontCascadeDescription* = nullptr, const FontCascadeDescription* rootFontDescription = nullptr, const RenderView* = nullptr);
     static double computeNonCalcLengthDouble(const CSSToLengthConversionData&, CSSUnitType, double value);
@@ -253,9 +253,9 @@ private:
     double computeLengthDouble(const CSSToLengthConversionData&) const;
 
     ALWAYS_INLINE String formatNumberForCustomCSSText() const;
-    NEVER_INLINE String formatNumberValue(StringView) const;
-    NEVER_INLINE String formatIntegerValue(StringView) const;
-    NEVER_INLINE String formatInfiniteOrNanValue(StringView suffix) const;
+    NEVER_INLINE String formatNumberValue(ASCIILiteral suffix) const;
+    NEVER_INLINE String formatIntegerValue(ASCIILiteral suffix) const;
+    NEVER_INLINE String formatInfiniteOrNanValue(ASCIILiteral suffix) const;
     static constexpr bool isFontIndependentLength(CSSUnitType);
     static constexpr bool isFontRelativeLength(CSSUnitType);
     static constexpr bool isResolution(CSSUnitType);

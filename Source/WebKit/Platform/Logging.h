@@ -59,7 +59,7 @@ extern "C" {
     M(IPCMessages) \
     M(ITPDebug) \
     M(IconDatabase) \
-    M(Images) \
+    M(ImageAnalysis) \
     M(IncrementalPDF) \
     M(IncrementalPDFVerbose) \
     M(IndexedDB) \
@@ -69,7 +69,6 @@ extern "C" {
     M(Layers) \
     M(Layout) \
     M(Loading) \
-    M(LocalStorageDatabaseTracker) \
     M(Media) \
     M(MemoryPressure) \
     M(ModelElement) \
@@ -93,6 +92,7 @@ extern "C" {
     M(RemoteLayerTree) \
     M(Resize) \
     M(ResourceLoadStatistics) \
+    M(Sandbox) \
     M(ScrollAnimations) \
     M(Scrolling) \
     M(Selection) \

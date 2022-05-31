@@ -24,6 +24,7 @@ import re
 import sys
 
 from .command import Command
+from .commit import Commit
 
 from webkitbugspy import Tracker
 from webkitcorepy import run, string_utils, Terminal
@@ -54,7 +55,18 @@ class Branch(Command):
     def editable(cls, branch, repository=None):
         if (repository or local.Scm).DEV_BRANCHES.match(branch):
             return True
-        return False
+        if branch in (repository or local.Scm).DEFAULT_BRANCHES:
+            return False
+        if (repository or local.Scm).PROD_BRANCHES.match(branch):
+            return False
+        if not repository or not isinstance(repository, local.Git):
+            return False
+
+        # FIXME: Need to consider alternate remotes
+        for remote in ['origin']:
+            if branch in repository.branches_for(remote=remote, cached=True):
+                return False
+        return True
 
     @classmethod
     def branch_point(cls, repository):
@@ -81,22 +93,51 @@ class Branch(Command):
         return string_utils.encode(result, target_type=str)
 
     @classmethod
-    def main(cls, args, repository, why=None, **kwargs):
+    def main(cls, args, repository, why=None, redact=False, **kwargs):
         if not isinstance(repository, local.Git):
             sys.stderr.write("Can only 'branch' on a native Git repository\n")
             return 1
 
         if not args.issue:
-            args.issue = Terminal.input('{}nter name of new branch (or bug URL): '.format('{}, e'.format(why) if why else 'E'))
+            if Tracker.instance():
+                prompt = '{}nter issue URL or title of new issue: '.format('{}, e'.format(why) if why else 'E')
+            else:
+                prompt = '{}nter name of new branch (or issue URL): '.format('{}, e'.format(why) if why else 'E')
+            args.issue = Terminal.input(prompt)
 
-        if string_utils.decode(args.issue).isnumeric() and Tracker.instance():
+        if string_utils.decode(args.issue).isnumeric() and Tracker.instance() and not redact:
             issue = Tracker.instance().issue(int(args.issue))
             if issue and issue.title:
                 args.issue = cls.to_branch_name(issue.title)
         else:
             issue = Tracker.from_string(args.issue)
-            if issue and issue.title:
+            if issue and issue.title and not redact:
                 args.issue = cls.to_branch_name(issue.title)
+            elif issue:
+                args.issue = str(issue.id)
+
+        if not issue and Tracker.instance():
+            if ' ' in args.issue:
+                if getattr(Tracker.instance(), 'credentials', None):
+                    Tracker.instance().credentials(required=True, validate=True)
+                issue = Tracker.instance().create(
+                    title=args.issue,
+                    description=Terminal.input('Issue description: '),
+                )
+                if not issue:
+                    sys.stderr.write('Failed to create new issue\n')
+                    return 1
+                print("Created '{}'".format(issue))
+                if issue and issue.title and not redact:
+                    args.issue = cls.to_branch_name(issue.title)
+                elif issue:
+                    args.issue = str(issue.id)
+            else:
+                log.warning("'{}' has no spaces, assuming user intends it to be a branch name".format(args.issue))
+
+        if issue:
+            args._title = issue.title
+            args._bug_urls = Commit.bug_urls(issue)
 
         args.issue = cls.normalize_branch_name(args.issue)
 

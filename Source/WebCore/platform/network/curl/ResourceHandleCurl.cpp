@@ -143,7 +143,7 @@ Ref<CurlRequest> ResourceHandle::createCurlRequest(ResourceRequest&& request, Re
     if (status == RequestStatus::NewRequest) {
         addCacheValidationHeaders(request);
 
-        auto includeSecureCookies = request.url().protocolIs("https") ? IncludeSecureCookies::Yes : IncludeSecureCookies::No;
+        auto includeSecureCookies = request.url().protocolIs("https"_s) ? IncludeSecureCookies::Yes : IncludeSecureCookies::No;
         String cookieHeaderField = d->m_context->storageSession()->cookieRequestHeaderFieldValue(request.firstPartyForCookies(), SameSiteInfo::create(request), request.url(), std::nullopt, std::nullopt, includeSecureCookies, ShouldAskITP::Yes, ShouldRelaxThirdPartyCookieBlocking::No).first;
         if (!cookieHeaderField.isEmpty())
             request.addHTTPHeaderField(HTTPHeaderName::Cookie, cookieHeaderField);
@@ -462,13 +462,13 @@ void ResourceHandle::willSendRequest()
     newRequest.setURL(newURL);
 
     if (shouldRedirectAsGET(newRequest, crossOrigin)) {
-        newRequest.setHTTPMethod("GET");
+        newRequest.setHTTPMethod("GET"_s);
         newRequest.setHTTPBody(nullptr);
         newRequest.clearHTTPContentType();
     }
 
     // Should not set Referer after a redirect from a secure resource to non-secure one.
-    if (!newURL.protocolIs("https") && protocolIs(newRequest.httpReferrer(), "https") && context()->shouldClearReferrerOnHTTPSToHTTPRedirect())
+    if (!newURL.protocolIs("https"_s) && protocolIs(newRequest.httpReferrer(), "https"_s) && context()->shouldClearReferrerOnHTTPSToHTTPRedirect())
         newRequest.clearHTTPReferrer();
 
     d->m_user = newURL.user();
@@ -530,22 +530,22 @@ void ResourceHandle::handleDataURL()
     String data = url.substring(index + 1);
     auto originalSize = data.length();
 
-    bool base64 = mediaType.endsWithIgnoringASCIICase(";base64");
+    bool base64 = mediaType.endsWithIgnoringASCIICase(";base64"_s);
     if (base64)
         mediaType = mediaType.left(mediaType.length() - 7);
 
     if (mediaType.isEmpty())
         mediaType = "text/plain"_s;
 
-    String mimeType = extractMIMETypeFromMediaType(mediaType);
-    String charset = extractCharsetFromMediaType(mediaType);
+    auto mimeType = extractMIMETypeFromMediaType(mediaType);
+    auto charset = extractCharsetFromMediaType(mediaType);
 
     if (charset.isEmpty())
         charset = "US-ASCII"_s;
 
     ResourceResponse response;
-    response.setMimeType(mimeType);
-    response.setTextEncodingName(charset);
+    response.setMimeType(WTFMove(mimeType));
+    response.setTextEncodingName(charset.toString());
     response.setURL(d->m_firstRequest.url());
 
     if (base64) {

@@ -79,7 +79,7 @@ RenderEmbeddedObject* HTMLPlugInImageElement::renderEmbeddedObject() const
 
 bool HTMLPlugInImageElement::isImageType()
 {
-    if (m_serviceType.isEmpty() && protocolIs(m_url, "data"))
+    if (m_serviceType.isEmpty() && protocolIs(m_url, "data"_s))
         m_serviceType = mimeTypeFromDataURL(m_url);
 
     if (RefPtr frame = document().frame())
@@ -180,9 +180,8 @@ void HTMLPlugInImageElement::didAttachRenderers()
 
 void HTMLPlugInImageElement::willDetachRenderers()
 {
-    RefPtr widget = pluginWidget(PluginLoadingPolicy::DoNotLoad);
-    if (is<PluginViewBase>(widget))
-        downcast<PluginViewBase>(*widget).willDetachRenderer();
+    if (RefPtr widget = pluginWidget(PluginLoadingPolicy::DoNotLoad))
+        widget->willDetachRenderer();
 
     HTMLPlugInElement::willDetachRenderers();
 }
@@ -305,7 +304,7 @@ bool HTMLPlugInImageElement::canLoadPlugInContent(const String& relativeURL, con
     return contentSecurityPolicy.allowPluginType(mimeType, declaredMimeType, completedURL);
 }
 
-bool HTMLPlugInImageElement::requestObject(const String& relativeURL, const String& mimeType, const Vector<String>& paramNames, const Vector<String>& paramValues)
+bool HTMLPlugInImageElement::requestObject(const String& relativeURL, const String& mimeType, const Vector<AtomString>& paramNames, const Vector<AtomString>& paramValues)
 {
     ASSERT(document().frame());
 

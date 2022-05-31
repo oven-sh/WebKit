@@ -64,11 +64,13 @@ void AuxiliaryProcessProxy::getLaunchOptions(ProcessLauncher::LaunchOptions& lau
 {
     launchOptions.processIdentifier = m_processIdentifier;
 
-    if (const char* userDirectorySuffix = getenv("DIRHELPER_USER_DIR_SUFFIX"))
-        launchOptions.extraInitializationData.add("user-directory-suffix"_s, userDirectorySuffix);
+    if (const char* userDirectorySuffix = getenv("DIRHELPER_USER_DIR_SUFFIX")) {
+        if (auto userDirectorySuffixString = String::fromUTF8(userDirectorySuffix); !userDirectorySuffixString.isNull())
+            launchOptions.extraInitializationData.add<HashTranslatorASCIILiteral>("user-directory-suffix"_s, userDirectorySuffixString);
+    }
 
     if (m_alwaysRunsAtBackgroundPriority)
-        launchOptions.extraInitializationData.add("always-runs-at-background-priority"_s, "true");
+        launchOptions.extraInitializationData.add<HashTranslatorASCIILiteral>("always-runs-at-background-priority"_s, "true"_s);
 
 #if ENABLE(DEVELOPER_MODE) && (PLATFORM(GTK) || PLATFORM(WPE))
     const char* varname;
@@ -82,11 +84,6 @@ void AuxiliaryProcessProxy::getLaunchOptions(ProcessLauncher::LaunchOptions& lau
 #if ENABLE(GPU_PROCESS)
     case ProcessLauncher::ProcessType::GPU:
         varname = "GPU_PROCESS_CMD_PREFIX";
-        break;
-#endif
-#if ENABLE(WEB_AUTHN)
-    case ProcessLauncher::ProcessType::WebAuthn:
-        varname = "WEBAUTHN_PROCESS_CMD_PREFIX";
         break;
 #endif
 #if ENABLE(BUBBLEWRAP_SANDBOX)
@@ -106,6 +103,7 @@ void AuxiliaryProcessProxy::getLaunchOptions(ProcessLauncher::LaunchOptions& lau
 void AuxiliaryProcessProxy::connect()
 {
     ASSERT(!m_processLauncher);
+    m_processStart = MonotonicTime::now();
     ProcessLauncher::LaunchOptions launchOptions;
     getLaunchOptions(launchOptions);
     m_processLauncher = ProcessLauncher::create(this, WTFMove(launchOptions));
@@ -189,7 +187,7 @@ bool AuxiliaryProcessProxy::sendMessage(UniqueRef<IPC::Encoder>&& encoder, Optio
 
     if (asyncReplyInfo && canSendMessage() && shouldStartProcessThrottlerActivity == ShouldStartProcessThrottlerActivity::Yes) {
         auto completionHandler = std::exchange(asyncReplyInfo->first, nullptr);
-        asyncReplyInfo->first = [activity = throttler().backgroundActivity(ASCIILiteral::null()), completionHandler = WTFMove(completionHandler)](IPC::Decoder* decoder) mutable {
+        asyncReplyInfo->first = [activity = throttler().backgroundActivity({ }), completionHandler = WTFMove(completionHandler)](IPC::Decoder* decoder) mutable {
             completionHandler(decoder);
         };
     }
@@ -255,6 +253,10 @@ void AuxiliaryProcessProxy::didFinishLaunching(ProcessLauncher*, IPC::Connection
     ASSERT(!m_connection);
     ASSERT(isMainRunLoop());
 
+    auto launchTime = MonotonicTime::now() - m_processStart;
+    if (launchTime > 1_s)
+        RELEASE_LOG_FAULT(Process, "%s process (%p) took %f seconds to launch", processName().characters(), this, launchTime.value());
+    
     if (!IPC::Connection::identifierIsValid(connectionIdentifier))
         return;
 

@@ -28,6 +28,7 @@
 #include "Filter.h"
 #include "FilterImage.h"
 #include "FilterResults.h"
+#include "GraphicsContext.h"
 #include "ImageBuffer.h"
 #include "PixelBuffer.h"
 
@@ -37,22 +38,28 @@ template<typename BackendType>
 class ConcreteImageBuffer : public ImageBuffer {
 public:
     template<typename ImageBufferType = ConcreteImageBuffer, typename... Arguments>
-    static RefPtr<ImageBufferType> create(const FloatSize& size, float resolutionScale, const DestinationColorSpace& colorSpace, PixelFormat pixelFormat, const HostWindow* hostWindow, Arguments&&... arguments)
+    static RefPtr<ImageBufferType> create(const FloatSize& size, float resolutionScale, const DestinationColorSpace& colorSpace, PixelFormat pixelFormat, RenderingPurpose purpose, const CreationContext& creationContext, Arguments&&... arguments)
     {
-        auto parameters = ImageBufferBackend::Parameters { size, resolutionScale, colorSpace, pixelFormat };
-        auto backend = BackendType::create(parameters, hostWindow);
+        auto parameters = ImageBufferBackend::Parameters { size, resolutionScale, colorSpace, pixelFormat, purpose };
+        auto backend = BackendType::create(parameters, creationContext);
         if (!backend)
             return nullptr;
-        return adoptRef(new ImageBufferType(parameters, WTFMove(backend), std::forward<Arguments>(arguments)...));
+        return create<ImageBufferType>(parameters, WTFMove(backend), std::forward<Arguments>(arguments)...);
     }
 
     template<typename ImageBufferType = ConcreteImageBuffer, typename... Arguments>
-    static RefPtr<ImageBufferType> create(const FloatSize& size, const GraphicsContext& context, Arguments&&... arguments)
+    static RefPtr<ImageBufferType> create(const FloatSize& size, const GraphicsContext& context, RenderingPurpose purpose, Arguments&&... arguments)
     {
-        auto parameters = ImageBufferBackend::Parameters { size, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8 };
+        auto parameters = ImageBufferBackend::Parameters { size, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8, purpose };
         auto backend = BackendType::create(parameters, context);
         if (!backend)
             return nullptr;
+        return create<ImageBufferType>(parameters, WTFMove(backend), std::forward<Arguments>(arguments)...);
+    }
+
+    template<typename ImageBufferType = ConcreteImageBuffer, typename... Arguments>
+    static RefPtr<ImageBufferType> create(const ImageBufferBackend::Parameters& parameters, std::unique_ptr<BackendType>&& backend, Arguments&&... arguments)
+    {
         return adoptRef(new ImageBufferType(parameters, WTFMove(backend), std::forward<Arguments>(arguments)...));
     }
 
@@ -82,6 +89,7 @@ protected:
     GraphicsContext& context() const override
     {
         ASSERT(m_backend);
+        ASSERT(volatilityState() == VolatilityState::NonVolatile);
         return m_backend->context();
     }
 
@@ -97,6 +105,7 @@ protected:
     IntSize truncatedLogicalSize() const override { return IntSize(m_parameters.logicalSize); } // You probably should be calling logicalSize() instead.
     float resolutionScale() const override { return m_parameters.resolutionScale; }
     DestinationColorSpace colorSpace() const override { return m_parameters.colorSpace; }
+    RenderingPurpose renderingPurpose() const override { return m_parameters.purpose; }
     PixelFormat pixelFormat() const override { return m_parameters.pixelFormat; }
     const ImageBufferBackend::Parameters& parameters() const override { return m_parameters; }
 
@@ -162,17 +171,24 @@ protected:
 
     void draw(GraphicsContext& destContext, const FloatRect& destRect, const FloatRect& srcRect, const ImagePaintingOptions& options) override
     {
+        FloatRect srcRectScaled = srcRect;
+        srcRectScaled.scale(resolutionScale());
+
         if (auto* backend = ensureBackendCreated()) {
-            flushDrawingContext();
-            backend->draw(destContext, destRect, srcRect, options);
+            if (auto image = copyNativeImage(&destContext == &context() ? CopyBackingStore : DontCopyBackingStore))
+                destContext.drawNativeImage(*image, backendSize(), destRect, srcRectScaled, options);
+            backend->finalizeDrawIntoContext(destContext);
         }
     }
 
     void drawPattern(GraphicsContext& destContext, const FloatRect& destRect, const FloatRect& srcRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, const ImagePaintingOptions& options) override
     {
+        FloatRect adjustedSrcRect = srcRect;
+        adjustedSrcRect.scale(resolutionScale());
+
         if (auto* backend = ensureBackendCreated()) {
-            flushDrawingContext();
-            backend->drawPattern(destContext, destRect, srcRect, patternTransform, phase, spacing, options);
+            if (auto image = copyImage(&destContext == &context() ? CopyBackingStore : DontCopyBackingStore))
+                image->drawPattern(destContext, destRect, adjustedSrcRect, patternTransform, phase, spacing, options);
         }
     }
 
@@ -196,13 +212,17 @@ protected:
 
     void drawConsuming(GraphicsContext& destContext, const FloatRect& destRect, const FloatRect& srcRect, const ImagePaintingOptions& options) override
     {
+        FloatRect adjustedSrcRect = srcRect;
+        adjustedSrcRect.scale(resolutionScale());
+
         ASSERT(&destContext != &context());
         if (auto* backend = ensureBackendCreated()) {
-            flushDrawingContext();
-            backend->drawConsuming(destContext, destRect, srcRect, options);
+            auto backendSize = backend->backendSize();
+            if (auto image = sinkIntoNativeImage())
+                destContext.drawNativeImage(*image, backendSize, destRect, adjustedSrcRect, options);
         }
     }
-    
+
     void clipToMask(GraphicsContext& destContext, const FloatRect& destRect) override
     {
         if (auto* backend = ensureBackendCreated()) {
@@ -277,6 +297,26 @@ protected:
         return false;
     }
 
+#if USE(CAIRO)
+    RefPtr<cairo_surface_t> createCairoSurface() override
+    {
+        auto* backend = ensureBackendCreated();
+        if (!backend)
+            return nullptr;
+        
+        auto surface = backend->createCairoSurface();
+
+        ref(); // Balanced by deref below.
+
+        static cairo_user_data_key_t dataKey;
+        cairo_surface_set_user_data(surface.get(), &dataKey, this, [](void *buffer) {
+            static_cast<ConcreteImageBuffer*>(buffer)->deref();
+        });
+
+        return surface;
+    }
+#endif
+
     bool isInUse() const override
     {
         if (auto* backend = ensureBackendCreated())
@@ -323,12 +363,6 @@ protected:
         if (auto* backend = ensureBackendCreated())
             return backend->createFlusher();
         return nullptr;
-    }
-
-    void releaseBufferToPool() override
-    {
-        if (auto* backend = ensureBackendCreated())
-            backend->releaseBufferToPool();
     }
 
     ImageBufferBackend::Parameters m_parameters;

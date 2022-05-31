@@ -28,9 +28,11 @@
 #include "ChildChangeInvalidation.h"
 #include "ChildListMutationScope.h"
 #include "ClassCollection.h"
+#include "CommonAtomStrings.h"
 #include "CommonVM.h"
 #include "ContainerNodeAlgorithms.h"
 #include "Editor.h"
+#include "ElementRareData.h"
 #include "EventNames.h"
 #include "FloatRect.h"
 #include "FrameView.h"
@@ -724,9 +726,9 @@ void ContainerNode::replaceAll(Node* node)
 }
 
 // https://dom.spec.whatwg.org/#string-replace-all
-void ContainerNode::stringReplaceAll(const String& string)
+void ContainerNode::stringReplaceAll(String&& string)
 {
-    replaceAll(string.isEmpty() ? nullptr : document().createTextNode(string).ptr());
+    replaceAll(string.isEmpty() ? nullptr : document().createTextNode(WTFMove(string)).ptr());
 }
 
 inline void ContainerNode::rebuildSVGExtensionsElementsIfNecessary()
@@ -947,7 +949,7 @@ Ref<HTMLCollection> ContainerNode::getElementsByTagNameNS(const AtomString& name
     return ensureRareData().ensureNodeLists().addCachedTagCollectionNS(*this, namespaceURI.isEmpty() ? nullAtom() : namespaceURI, localName);
 }
 
-Ref<NodeList> ContainerNode::getElementsByName(const String& elementName)
+Ref<NodeList> ContainerNode::getElementsByName(const AtomString& elementName)
 {
     return ensureRareData().ensureNodeLists().addCacheWithAtomName<NameNodeList>(*this, elementName);
 }

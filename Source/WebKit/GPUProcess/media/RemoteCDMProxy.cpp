@@ -66,12 +66,12 @@ RemoteCDMProxy::RemoteCDMProxy(RemoteCDMFactoryProxy& factory, std::unique_ptr<C
 
 RemoteCDMProxy::~RemoteCDMProxy() = default;
 
-bool RemoteCDMProxy::supportsInitData(const AtomString& type, const FragmentedSharedBuffer& data)
+bool RemoteCDMProxy::supportsInitData(const AtomString& type, const SharedBuffer& data)
 {
     return m_private->supportsInitData(type, data);
 }
 
-RefPtr<FragmentedSharedBuffer> RemoteCDMProxy::sanitizeResponse(const FragmentedSharedBuffer& response)
+RefPtr<SharedBuffer> RemoteCDMProxy::sanitizeResponse(const SharedBuffer& response)
 {
     return m_private->sanitizeResponse(response);
 }
@@ -81,7 +81,7 @@ std::optional<String> RemoteCDMProxy::sanitizeSessionId(const String& sessionId)
     return m_private->sanitizeSessionId(sessionId);
 }
 
-void RemoteCDMProxy::getSupportedConfiguration(WebCore::CDMKeySystemConfiguration&& configuration, WebCore::CDMPrivate::LocalStorageAccess access, WebCore::CDMPrivate::SupportedConfigurationCallback&& callback)
+void RemoteCDMProxy::getSupportedConfiguration(WebCore::CDMKeySystemConfiguration&& configuration, WebCore::CDMPrivate::LocalStorageAccess access, CompletionHandler<void(std::optional<WebCore::CDMKeySystemConfiguration>)>&& callback)
 {
     m_private->getSupportedConfiguration(WTFMove(configuration), access, WTFMove(callback));
 }

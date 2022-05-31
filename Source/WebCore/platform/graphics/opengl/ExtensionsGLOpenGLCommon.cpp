@@ -74,17 +74,17 @@ ExtensionsGLOpenGLCommon::ExtensionsGLOpenGLCommon(GraphicsContextGLOpenGL* cont
     , m_requiresRestrictedMaximumTextureSize(false)
     , m_useIndexedGetString(useIndexedGetString)
 {
-    m_vendor = String(reinterpret_cast<const char*>(::glGetString(GL_VENDOR)));
-    m_renderer = String(reinterpret_cast<const char*>(::glGetString(GL_RENDERER)));
+    m_vendor = String::fromLatin1(reinterpret_cast<const char*>(::glGetString(GL_VENDOR)));
+    m_renderer = String::fromLatin1(reinterpret_cast<const char*>(::glGetString(GL_RENDERER)));
 
     Vector<String> vendorComponents = m_vendor.convertToASCIILowercase().split(' ');
-    if (vendorComponents.contains("nvidia"))
+    if (vendorComponents.contains("nvidia"_s))
         m_isNVIDIA = true;
-    if (vendorComponents.contains("ati") || vendorComponents.contains("amd"))
+    if (vendorComponents.contains("ati"_s) || vendorComponents.contains("amd"_s))
         m_isAMD = true;
-    if (vendorComponents.contains("intel"))
+    if (vendorComponents.contains("intel"_s))
         m_isIntel = true;
-    if (vendorComponents.contains("imagination"))
+    if (vendorComponents.contains("imagination"_s))
         m_isImagination = true;
 
 #if PLATFORM(MAC)
@@ -174,12 +174,12 @@ String ExtensionsGLOpenGLCommon::getTranslatedShaderSourceANGLE(PlatformGLObject
     else if (GLshaderType == GraphicsContextGL::FRAGMENT_SHADER)
         shaderType = SHADER_TYPE_FRAGMENT;
     else
-        return ""; // Invalid shader type.
+        return emptyString(); // Invalid shader type.
 
     HashMap<PlatformGLObject, GraphicsContextGLOpenGL::ShaderSourceEntry>::iterator result = m_context->m_shaderSourceMap.find(shader);
 
     if (result == m_context->m_shaderSourceMap.end())
-        return "";
+        return emptyString();
 
     GraphicsContextGLOpenGL::ShaderSourceEntry& entry = result->value;
 
@@ -203,7 +203,7 @@ String ExtensionsGLOpenGLCommon::getTranslatedShaderSourceANGLE(PlatformGLObject
     }
 
     if (!isValid)
-        return "";
+        return emptyString();
 
     return translatedShaderSource;
 }
@@ -215,7 +215,7 @@ void ExtensionsGLOpenGLCommon::initializeAvailableExtensions()
         GLint numExtensions = 0;
         ::glGetIntegerv(GL_NUM_EXTENSIONS, &numExtensions);
         for (GLint i = 0; i < numExtensions; ++i)
-            m_availableExtensions.add(glGetStringi(GL_EXTENSIONS, i));
+            m_availableExtensions.add(String::fromLatin1(reinterpret_cast<const char*>(glGetStringi(GL_EXTENSIONS, i))));
 
         if (!m_availableExtensions.contains("GL_ARB_texture_storage"_s)) {
             GLint majorVersion;

@@ -66,7 +66,6 @@ my (
     $contentExtensionsSupport,
     $contentFilteringSupport,
     $contextMenusSupport,
-    $css3TextSupport,
     $cssBoxDecorationBreakSupport,
     $cssCompositingSupport,
     $cssConicGradientsSupport,
@@ -108,6 +107,7 @@ my (
     $jitSupport,
     $layerBasedSVGEngineSupport,
     $layoutFormattingContextSupport,
+    $llvmProfileGenerationSupport,
     $legacyCustomProtocolManagerSupport,
     $legacyEncryptedMediaSupport,
     $letterpressSupport,
@@ -235,9 +235,6 @@ my @features = (
     { option => "context-menus", desc => "Toggle Context Menu support",
       define => "ENABLE_CONTEXT_MENUS", value => \$contextMenusSupport },
 
-    { option => "css3-text", desc => "Toggle CSS3 Text support",
-      define => "ENABLE_CSS3_TEXT", value => \$css3TextSupport },
-
     { option => "css-box-decoration-break", desc => "Toggle CSS box-decoration-break support",
       define => "ENABLE_CSS_BOX_DECORATION_BREAK", value => \$cssBoxDecorationBreakSupport },
 
@@ -354,6 +351,9 @@ my @features = (
 
     { option => "layout-formatting-context", desc => "Toggle Layout Formatting Context support",
       define => "ENABLE_LAYOUT_FORMATTING_CONTEXT", value => \$layoutFormattingContextSupport },
+
+    { option => "llvm-profile-generation", desc => "Include LLVM's instrumentation to generate profiles for PGO",
+      define => "ENABLE_LLVM_PROFILE_GENERATION", value => \$llvmProfileGenerationSupport },
 
     { option => "legacy-custom-protocol-manager", desc => "Toggle legacy protocol manager support",
       define => "ENABLE_LEGACY_CUSTOM_PROTOCOL_MANAGER", value => \$legacyCustomProtocolManagerSupport },

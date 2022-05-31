@@ -76,8 +76,8 @@ void WebPopupMenu::setUpPlatformData(const WebCore::IntRect& pageCoordinates, Pl
     int backingStoreWidth = std::max(pageCoordinates.width() - m_popupClient->clientInsetLeft() - m_popupClient->clientInsetRight(), popupWidth);
 
     IntSize backingStoreSize(backingStoreWidth, (itemCount * data.m_itemHeight));
-    data.m_notSelectedBackingStore = ShareableBitmap::createShareable(backingStoreSize, { });
-    data.m_selectedBackingStore = ShareableBitmap::createShareable(backingStoreSize, { });
+    data.m_notSelectedBackingStore = ShareableBitmap::create(backingStoreSize, { });
+    data.m_selectedBackingStore = ShareableBitmap::create(backingStoreSize, { });
 
     std::unique_ptr<GraphicsContext> notSelectedBackingStoreContext = data.m_notSelectedBackingStore->createGraphicsContext();
     std::unique_ptr<GraphicsContext> selectedBackingStoreContext = data.m_selectedBackingStore->createGraphicsContext();
@@ -111,7 +111,7 @@ void WebPopupMenu::setUpPlatformData(const WebCore::IntRect& pageCoordinates, Pl
 
         String itemText = m_popupClient->itemText(index);
 
-        TextRun textRun(itemText, 0, 0, AllowRightExpansion, itemStyle.textDirection(), itemStyle.hasTextDirectionOverride());
+        TextRun textRun(itemText, 0, 0, ExpansionBehavior::allowRightOnly(), itemStyle.textDirection(), itemStyle.hasTextDirectionOverride());
 
         notSelectedBackingStoreContext->setFillColor(optionTextColor);
         selectedBackingStoreContext->setFillColor(activeOptionTextColor);

@@ -118,7 +118,7 @@ void SVGFECompositeElement::svgAttributeChanged(const QualifiedName& attrName)
     if (PropertyRegistry::isKnownAttribute(attrName)) {
         InstanceInvalidationGuard guard(*this);
         if (attrName == SVGNames::inAttr || attrName == SVGNames::in2Attr)
-            setSVGResourcesInAncestorChainAreDirty();
+            updateSVGRendererForElementChange();
         else {
             ASSERT(attrName == SVGNames::k1Attr || attrName == SVGNames::k2Attr || attrName == SVGNames::k3Attr || attrName == SVGNames::k4Attr || attrName == SVGNames::operatorAttr);
             primitiveAttributeChanged(attrName);
@@ -129,7 +129,7 @@ void SVGFECompositeElement::svgAttributeChanged(const QualifiedName& attrName)
     SVGFilterPrimitiveStandardAttributes::svgAttributeChanged(attrName);
 }
 
-RefPtr<FilterEffect> SVGFECompositeElement::filterEffect(const SVGFilterBuilder&, const FilterEffectVector&) const
+RefPtr<FilterEffect> SVGFECompositeElement::filterEffect(const SVGFilter&, const FilterEffectVector&, const GraphicsContext&) const
 {
     return FEComposite::create(svgOperator(), k1(), k2(), k3(), k4());
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2010-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -104,6 +104,10 @@
 namespace WTF {
 class MachSendRight;
 }
+#endif
+
+#if USE(UNIX_DOMAIN_SOCKETS)
+#include <wtf/unix/UnixFileDescriptor.h>
 #endif
 
 OBJC_CLASS VKCImageAnalysis;
@@ -394,15 +398,11 @@ template<> struct ArgumentCoder<WebCore::Cursor> {
     static WARN_UNUSED_RETURN bool decode(Decoder&, WebCore::Cursor&);
 };
 
-template<> struct ArgumentCoder<RefPtr<WebCore::Font>> {
-    static void encode(Encoder&, const RefPtr<WebCore::Font>&);
-    static std::optional<RefPtr<WebCore::Font>> decode(Decoder&);
-};
 
-template<> struct ArgumentCoder<Ref<WebCore::Font>> {
-    static void encode(Encoder&, const Ref<WebCore::Font>&);
+template<> struct ArgumentCoder<WebCore::Font> {
+    static void encode(Encoder&, const WebCore::Font&);
     static std::optional<Ref<WebCore::Font>> decode(Decoder&);
-    static void encodePlatformData(Encoder&, const Ref<WebCore::Font>&);
+    static void encodePlatformData(Encoder&, const WebCore::Font&);
     static std::optional<WebCore::FontPlatformData> decodePlatformData(Decoder&);
 };
 
@@ -772,9 +772,9 @@ template<> struct ArgumentCoder<WebCore::ScriptBuffer> {
     static std::optional<WebCore::ScriptBuffer> decode(Decoder&);
 };
 
-template<> struct ArgumentCoder<Ref<WebCore::SystemImage>> {
+template<> struct ArgumentCoder<WebCore::SystemImage> {
     template<typename Encoder>
-    static void encode(Encoder&, const Ref<WebCore::SystemImage>&);
+    static void encode(Encoder&, const WebCore::SystemImage&);
     static std::optional<Ref<WebCore::SystemImage>> decode(Decoder&);
 };
 
@@ -839,6 +839,16 @@ template<> struct ArgumentCoder<RetainPtr<CVPixelBufferRef>> {
 
 #endif
 
+#if USE(UNIX_DOMAIN_SOCKETS)
+
+template<> struct ArgumentCoder<UnixFileDescriptor> {
+    static void encode(Encoder&, const UnixFileDescriptor&);
+    static void encode(Encoder&, UnixFileDescriptor&&);
+    static std::optional<UnixFileDescriptor> decode(Decoder&);
+};
+
+#endif
+
 } // namespace IPC
 
 namespace WTF {
@@ -848,6 +858,19 @@ template<> struct EnumTraits<WebCore::RenderingMode> {
         WebCore::RenderingMode,
         WebCore::RenderingMode::Unaccelerated,
         WebCore::RenderingMode::Accelerated
+    >;
+};
+
+template<> struct EnumTraits<WebCore::RenderingPurpose> {
+    using values = EnumValues<
+        WebCore::RenderingPurpose,
+        WebCore::RenderingPurpose::Unspecified,
+        WebCore::RenderingPurpose::Canvas,
+        WebCore::RenderingPurpose::DOM,
+        WebCore::RenderingPurpose::LayerBacking,
+        WebCore::RenderingPurpose::Snapshot,
+        WebCore::RenderingPurpose::ShareableSnapshot,
+        WebCore::RenderingPurpose::MediaPainting
     >;
 };
 
@@ -919,7 +942,6 @@ template<> struct EnumTraits<WebCore::IndexedDB::GetAllType> {
 template<> struct EnumTraits<WebCore::RealtimeMediaSource::Type> {
     using values = EnumValues<
         WebCore::RealtimeMediaSource::Type,
-        WebCore::RealtimeMediaSource::Type::None,
         WebCore::RealtimeMediaSource::Type::Audio,
         WebCore::RealtimeMediaSource::Type::Video
     >;

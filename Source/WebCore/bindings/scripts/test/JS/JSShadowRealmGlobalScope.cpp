@@ -70,8 +70,8 @@ static const struct CompactHashIndex JSShadowRealmGlobalScopeTableIndex[5] = {
 
 static const HashTableValue JSShadowRealmGlobalScopeTableValues[] =
 {
-    { "ExposedStar", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t)static_cast<PropertySlot::GetValueFunc>(jsShadowRealmGlobalScope_ExposedStarConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
-    { "ShadowRealmGlobalScope", static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t)static_cast<PropertySlot::GetValueFunc>(jsShadowRealmGlobalScope_ShadowRealmGlobalScopeConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
+    { "ExposedStar"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t)static_cast<PropertySlot::GetValueFunc>(jsShadowRealmGlobalScope_ExposedStarConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
+    { "ShadowRealmGlobalScope"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { (intptr_t)static_cast<PropertySlot::GetValueFunc>(jsShadowRealmGlobalScope_ShadowRealmGlobalScopeConstructor), (intptr_t) static_cast<PutPropertySlot::PutValueFunc>(0) } },
 };
 
 static const HashTable JSShadowRealmGlobalScopeTable = { 2, 3, true, JSShadowRealmGlobalScope::info(), JSShadowRealmGlobalScopeTableValues, JSShadowRealmGlobalScopeTableIndex };
@@ -89,7 +89,7 @@ template<> void JSShadowRealmGlobalScopeDOMConstructor::initializeProperties(VM&
     JSString* nameString = jsNontrivialString(vm, "ShadowRealmGlobalScope"_s);
     m_originalName.set(vm, this, nameString);
     putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, globalObject.getPrototypeDirect(vm), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    putDirect(vm, vm.propertyNames->prototype, globalObject.getPrototypeDirect(), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
 }
 
 const ClassInfo JSShadowRealmGlobalScope::s_info = { "ShadowRealmGlobalScope"_s, &Base::s_info, &JSShadowRealmGlobalScopeTable, nullptr, CREATE_METHOD_TABLE(JSShadowRealmGlobalScope) };
@@ -122,7 +122,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsShadowRealmGlobalScopeConstructor, (JSGlobalObject* l
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* prototype = jsDynamicCast<JSShadowRealmGlobalScopePrototype*>(vm, JSValue::decode(thisValue));
+    auto* prototype = jsDynamicCast<JSShadowRealmGlobalScopePrototype*>(JSValue::decode(thisValue));
     if (UNLIKELY(!prototype))
         return throwVMTypeError(lexicalGlobalObject, throwScope);
     return JSValue::encode(JSShadowRealmGlobalScope::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
@@ -185,9 +185,9 @@ void JSShadowRealmGlobalScopeOwner::finalize(JSC::Handle<JSC::Unknown> handle, v
     uncacheWrapper(world, &jsShadowRealmGlobalScope->wrapped(), jsShadowRealmGlobalScope);
 }
 
-ShadowRealmGlobalScope* JSShadowRealmGlobalScope::toWrapped(JSC::VM& vm, JSC::JSValue value)
+ShadowRealmGlobalScope* JSShadowRealmGlobalScope::toWrapped(JSC::VM&, JSC::JSValue value)
 {
-    if (auto* wrapper = jsDynamicCast<JSShadowRealmGlobalScope*>(vm, value))
+    if (auto* wrapper = jsDynamicCast<JSShadowRealmGlobalScope*>(value))
         return &wrapper->wrapped();
     return nullptr;
 }

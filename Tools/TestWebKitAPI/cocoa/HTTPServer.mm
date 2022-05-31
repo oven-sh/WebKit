@@ -46,10 +46,11 @@ struct HTTPServer::RequestData : public ThreadSafeRefCounted<RequestData, WTF::D
             map.add(pair.first, pair.second);
         return map;
     }(responses)) { }
-    
+
     size_t requestCount { 0 };
     HashMap<String, HTTPResponse> requestMap;
     Vector<Connection> connections;
+    Vector<CoroutineHandle<Task::promise_type>> coroutineHandles;
 };
 
 static RetainPtr<nw_protocol_definition_t> proxyDefinition(HTTPServer::Protocol protocol)
@@ -214,6 +215,21 @@ HTTPServer::HTTPServer(Function<void(Connection)>&& connectionHandler, Protocol 
     startListening(m_listener.get());
 }
 
+HTTPServer::HTTPServer(UseCoroutines, WTF::Function<Task(Connection)>&& connectionHandler, Protocol protocol)
+    : m_requestData(adoptRef(*new RequestData({ })))
+    , m_listener(adoptNS(nw_listener_create(listenerParameters(protocol, nullptr, nullptr, { }).get())))
+    , m_protocol(protocol)
+{
+    nw_listener_set_queue(m_listener.get(), dispatch_get_main_queue());
+    nw_listener_set_new_connection_handler(m_listener.get(), makeBlockPtr([requestData = m_requestData, connectionHandler = WTFMove(connectionHandler)] (nw_connection_t connection) {
+        requestData->connections.append(Connection(connection));
+        nw_connection_set_queue(connection, dispatch_get_main_queue());
+        nw_connection_start(connection);
+        requestData->coroutineHandles.append(connectionHandler(Connection(connection)).handle);
+    }).get());
+    startListening(m_listener.get());
+}
+
 HTTPServer::~HTTPServer() = default;
 
 void HTTPServer::addResponse(String&& path, HTTPResponse&& response)
@@ -222,16 +238,30 @@ void HTTPServer::addResponse(String&& path, HTTPResponse&& response)
     m_requestData->requestMap.add(WTFMove(path), WTFMove(response));
 }
 
+void HTTPServer::setResponse(String&& path, HTTPResponse&& response)
+{
+    ASSERT(m_requestData->requestMap.contains(path));
+    m_requestData->requestMap.set(WTFMove(path), WTFMove(response));
+}
+
 void HTTPServer::respondWithChallengeThenOK(Connection connection)
 {
     connection.receiveHTTPRequest([connection] (Vector<char>&&) {
-        const char* challengeHeader =
+        constexpr auto challengeHeader =
         "HTTP/1.1 401 Unauthorized\r\n"
         "Date: Sat, 23 Mar 2019 06:29:01 GMT\r\n"
         "Content-Length: 0\r\n"
-        "WWW-Authenticate: Basic realm=\"testrealm\"\r\n\r\n";
+        "WWW-Authenticate: Basic realm=\"testrealm\"\r\n\r\n"_s;
         connection.send(challengeHeader, [connection] {
-            respondWithOK(connection);
+            connection.receiveHTTPRequest([connection] (Vector<char>&&) {
+                connection.send(
+                    "HTTP/1.1 200 OK\r\n"
+                    "Content-Length: 34\r\n\r\n"
+                    "<script>alert('success!')</script>"_s, [connection] {
+                        respondWithChallengeThenOK(connection);
+                    }
+                );
+            });
         });
     });
 }
@@ -242,7 +272,7 @@ void HTTPServer::respondWithOK(Connection connection)
         connection.send(
             "HTTP/1.1 200 OK\r\n"
             "Content-Length: 34\r\n\r\n"
-            "<script>alert('success!')</script>"
+            "<script>alert('success!')</script>"_s
         );
     });
 }
@@ -381,14 +411,14 @@ String HTTPServer::origin() const
     return [NSString stringWithFormat:@"%s://127.0.0.1:%d", scheme(), port()];
 }
 
-NSURLRequest *HTTPServer::request(const String& path) const
+NSURLRequest *HTTPServer::request(StringView path) const
 {
-    return [NSURLRequest requestWithURL:[NSURL URLWithString:[NSString stringWithFormat:@"%s://127.0.0.1:%d%@", scheme(), port(), path.createCFString().get()]]];
+    return [NSURLRequest requestWithURL:[NSURL URLWithString:[NSString stringWithFormat:@"%s://127.0.0.1:%d%@", scheme(), port(), path.createNSString().get()]]];
 }
 
-NSURLRequest *HTTPServer::requestWithLocalhost(const String& path) const
+NSURLRequest *HTTPServer::requestWithLocalhost(StringView path) const
 {
-    return [NSURLRequest requestWithURL:[NSURL URLWithString:[NSString stringWithFormat:@"%s://localhost:%d%@", scheme(), port(), path.createCFString().get()]]];
+    return [NSURLRequest requestWithURL:[NSURL URLWithString:[NSString stringWithFormat:@"%s://localhost:%d%@", scheme(), port(), path.createNSString().get()]]];
 }
 
 void Connection::receiveBytes(CompletionHandler<void(Vector<uint8_t>&&)>&& completionHandler, size_t minimumSize) const
@@ -415,6 +445,31 @@ void Connection::receiveHTTPRequest(CompletionHandler<void(Vector<char>&&)>&& co
         } else
             connection.receiveHTTPRequest(WTFMove(completionHandler), WTFMove(buffer));
     });
+}
+
+ReceiveOperation Connection::awaitableReceiveHTTPRequest() const
+{
+    return { *this };
+}
+
+void ReceiveOperation::await_suspend(std::experimental::coroutine_handle<> handle)
+{
+    m_connection.receiveHTTPRequest([this, handle](Vector<char>&& result) mutable {
+        m_result = WTFMove(result);
+        handle();
+    });
+}
+
+void SendOperation::await_suspend(std::experimental::coroutine_handle<> handle)
+{
+    m_connection.send(WTFMove(m_data), [handle] (bool) mutable {
+        handle();
+    });
+}
+
+SendOperation Connection::awaitableSend(String&& message)
+{
+    return { dataFromString(WTFMove(message)), *this };
 }
 
 void Connection::send(String&& message, CompletionHandler<void()>&& completionHandler) const
@@ -467,9 +522,9 @@ void Connection::webSocketHandshake(CompletionHandler<void()>&& connectionHandle
         };
 
         connection.send(HTTPResponse(101, {
-            { "Upgrade", "websocket" },
-            { "Connection", "Upgrade" },
-            { "Sec-WebSocket-Accept", webSocketAcceptValue(request) }
+            { "Upgrade"_s, "websocket"_s },
+            { "Connection"_s, "Upgrade"_s },
+            { "Sec-WebSocket-Accept"_s, webSocketAcceptValue(request) }
         }).serialize(HTTPResponse::IncludeContentLength::No), WTFMove(connectionHandler));
     });
 }
@@ -633,7 +688,7 @@ Vector<uint8_t> HTTPServer::testCertificate()
     "q7+Tfk1MRkJlL1PH6Yu/IPhZiNh4tyIqDOtlYfzp577A+OUU+q5PPRFRIsqheOxt"
     "mNlHx4Uzd4U3ITfmogJazjqwYO2viBZY4jUQmyZs75eH/jiUFHWRsha3AdnW5LWa"
     "G3PFnYbW8urH0NSJG/W+/9DA+Y7Aa0cs4TPpuBGZ0NU1W94OoCMo4lkO6H/y6Leu"
-    "3vjZD3y9kZk7mre9XHwkI8MdK5s=");
+    "3vjZD3y9kZk7mre9XHwkI8MdK5s="_s);
     
     auto decodedCertificate = base64Decode(pemEncodedCertificate);
     return WTFMove(*decodedCertificate);
@@ -691,7 +746,7 @@ Vector<uint8_t> HTTPServer::testPrivateKey()
     "bkUbiHIbQ8dJ5yj8SKr0bHzqEtOy9/JeRjkYGHC6bVWpq5FA2MBhf4dNjJ4UDlnT"
     "vuePcTjr7nnfY1sztvfVl9D8dmgT+TBnOOV6yWj1gm5bS1DxQSLgNmtKxJ8tAh2u"
     "dEObvcpShP22ItOVjSampRuAuRG26ZemEbGCI3J6Mqx3y6m+6HwultsgtdzDgrFe"
-    "qJfU8bbdbu2pi47Y4FdJK0HLffl5Rw==");
+    "qJfU8bbdbu2pi47Y4FdJK0HLffl5Rw=="_s);
 
     auto decodedPrivateKey = base64Decode(pemEncodedPrivateKey);
     return WTFMove(*decodedPrivateKey);

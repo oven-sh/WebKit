@@ -224,6 +224,9 @@ WI.NetworkTableContentView = class NetworkTableContentView extends WI.ContentVie
         case WI.Resource.Type.WebSocket:
             return WI.UIString("socket", "socket @ Network Tab Resource Type Column Value", "Shown in the 'Type' column of the Network Table for WebSocket resources.");
 
+        case WI.Resource.Type.EventSource:
+            return WI.UIString("eventsource", "eventsource @ Network Tab Resource Type Column Value", "Shown in the 'Type' column of the Network Table for resources loaded via the EventSource API.");
+
         case WI.Resource.Type.Other:
             return WI.UIString("other", "other @ Network Tab Resource Type Column Value", "Shown in the 'Type' column of the Network Table for resources that don't fall into any of the other known types/categories.");
         }
@@ -1650,6 +1653,9 @@ WI.NetworkTableContentView = class NetworkTableContentView extends WI.ContentVie
                 } else {
                     for (let entry of collection.entries)
                         entry.currentSession = false;
+
+                    for (let resource of collection.pendingInsertions)
+                        resource[WI.NetworkTableContentView._currentSessionSymbol] = false;
                 }
             }
 
@@ -1898,10 +1904,10 @@ WI.NetworkTableContentView = class NetworkTableContentView extends WI.ContentVie
             protocol: resource.protocol,
             initiator: resource.initiatorSourceCodeLocation ? resource.initiatorSourceCodeLocation.displayLocationString() : "",
             priority: resource.priority,
-            remoteAddress: resource.remoteAddress,
+            remoteAddress: resource.displayRemoteAddress,
             connectionIdentifier: resource.connectionIdentifier,
             startTime: resource.firstTimestamp,
-            currentSession: true,
+            currentSession: resource[WI.NetworkTableContentView._currentSessionSymbol] ?? true,
         };
     }
 
@@ -2530,3 +2536,5 @@ WI.NetworkTableContentView = class NetworkTableContentView extends WI.ContentVie
         this._transitioningPageTarget = true;
     }
 };
+
+WI.NetworkTableContentView._currentSessionSymbol = Symbol("current-session");

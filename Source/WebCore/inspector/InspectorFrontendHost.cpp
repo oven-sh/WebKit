@@ -39,6 +39,7 @@
 #include "Document.h"
 #include "Editor.h"
 #include "Event.h"
+#include "File.h"
 #include "FloatRect.h"
 #include "FocusController.h"
 #include "Frame.h"
@@ -49,6 +50,7 @@
 #include "InspectorFrontendClient.h"
 #include "JSDOMConvertInterface.h"
 #include "JSDOMExceptionHandling.h"
+#include "JSDOMPromiseDeferred.h"
 #include "JSExecState.h"
 #include "JSInspectorFrontendHost.h"
 #include "MouseEvent.h"
@@ -62,6 +64,7 @@
 #include "UserGestureIndicator.h"
 #include <JavaScriptCore/ScriptFunctionCall.h>
 #include <pal/system/Sound.h>
+#include <wtf/CompletionHandler.h>
 #include <wtf/JSONValues.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/persistence/PersistentDecoder.h>
@@ -111,7 +114,7 @@ private:
             UserGestureIndicator gestureIndicator(ProcessingUserGesture, dynamicDowncast<Document>(executionContext(m_frontendApiObject.globalObject())));
             int itemNumber = action - ContextMenuItemBaseCustomTag;
 
-            Deprecated::ScriptFunctionCall function(m_frontendApiObject, "contextMenuItemSelected", WebCore::functionCallHandlerFromAnyThread);
+            Deprecated::ScriptFunctionCall function(m_frontendApiObject, "contextMenuItemSelected"_s, WebCore::functionCallHandlerFromAnyThread);
             function.appendArgument(itemNumber);
             function.call();
         }
@@ -120,7 +123,7 @@ private:
     void contextMenuCleared() override
     {
         if (m_frontendHost) {
-            Deprecated::ScriptFunctionCall function(m_frontendApiObject, "contextMenuCleared", WebCore::functionCallHandlerFromAnyThread);
+            Deprecated::ScriptFunctionCall function(m_frontendApiObject, "contextMenuCleared"_s, WebCore::functionCallHandlerFromAnyThread);
             function.call();
 
             m_frontendHost->m_menuProvider = nullptr;
@@ -166,7 +169,7 @@ void InspectorFrontendHost::addSelfToGlobalObjectInWorld(DOMWrapperWorld& world)
     auto& vm = globalObject.vm();
     JSC::JSLockHolder lock(vm);
     auto scope = DECLARE_CATCH_SCOPE(vm);
-    globalObject.putDirect(vm, JSC::Identifier::fromString(vm, "InspectorFrontendHost"), toJS<IDLInterface<InspectorFrontendHost>>(globalObject, globalObject, *this));
+    globalObject.putDirect(vm, JSC::Identifier::fromString(vm, "InspectorFrontendHost"_s), toJS<IDLInterface<InspectorFrontendHost>>(globalObject, globalObject, *this));
     if (UNLIKELY(scope.exception()))
         reportException(&globalObject, scope.exception());
 }
@@ -441,6 +444,15 @@ void InspectorFrontendHost::openURLExternally(const String& url)
         m_client->openURLExternally(url);
 }
 
+void InspectorFrontendHost::revealFileExternally(const String& path)
+{
+    if (!WTF::protocolIs(path, "file"_s))
+        return;
+
+    if (m_client)
+        m_client->revealFileExternally(path);
+}
+
 bool InspectorFrontendHost::canSave()
 {
     if (m_client)
@@ -460,8 +472,35 @@ void InspectorFrontendHost::append(const String& url, const String& content)
         m_client->append(url, content);
 }
 
+bool InspectorFrontendHost::canLoad()
+{
+    if (m_client)
+        return m_client->canLoad();
+    return false;
+}
+
+void InspectorFrontendHost::load(const String& path, Ref<DeferredPromise>&& promise)
+{
+    if (!m_client) {
+        promise->reject(InvalidStateError);
+        return;
+    }
+
+    m_client->load(path, [promise = WTFMove(promise)](const String& content) {
+        if (!content)
+            promise->reject(NotFoundError);
+        else
+            promise->resolve<IDLDOMString>(content);
+    });
+}
+
 void InspectorFrontendHost::close(const String&)
 {
+}
+
+String InspectorFrontendHost::getPath(const File& file)
+{
+    return file.path();
 }
 
 void InspectorFrontendHost::sendMessageToBackend(const String& message)
@@ -508,7 +547,7 @@ void InspectorFrontendHost::showContextMenu(Event& event, Vector<ContextMenuItem
     ASSERT(m_frontendPage);
     auto& globalObject = *m_frontendPage->mainFrame().script().globalObject(debuggerWorld());
     auto& vm = globalObject.vm();
-    auto value = globalObject.get(&globalObject, JSC::Identifier::fromString(vm, "InspectorFrontendAPI"));
+    auto value = globalObject.get(&globalObject, JSC::Identifier::fromString(vm, "InspectorFrontendAPI"_s));
     ASSERT(value);
     ASSERT(value.isObject());
     auto* frontendAPIObject = asObject(value);
@@ -542,15 +581,6 @@ void InspectorFrontendHost::dispatchEventAsContextMenuEvent(Event& event)
 bool InspectorFrontendHost::isUnderTest()
 {
     return m_client && m_client->isUnderTest();
-}
-
-bool InspectorFrontendHost::isExperimentalBuild()
-{
-#if ENABLE(EXPERIMENTAL_FEATURES)
-    return true;
-#else
-    return false;
-#endif
 }
 
 void InspectorFrontendHost::unbufferedLog(const String& message)

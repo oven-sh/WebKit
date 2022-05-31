@@ -29,11 +29,16 @@
 #include "Connection.h"
 #include "RemoteVideoFrameProxy.h"
 #include "ThreadSafeObjectHeap.h"
+#include <WebCore/DestinationColorSpace.h>
 #include <WebCore/VideoFrame.h>
 
 #if PLATFORM(COCOA)
 #include "SharedVideoFrame.h"
 #endif
+
+namespace WebCore {
+class PixelBufferConformerCV;
+}
 
 namespace WebKit {
 
@@ -61,12 +66,19 @@ private:
 #if PLATFORM(COCOA)
     void getVideoFrameBuffer(RemoteVideoFrameReadReference&&, bool canSendIOSurface);
     void pixelBuffer(RemoteVideoFrameReadReference&&, CompletionHandler<void(RetainPtr<CVPixelBufferRef>)>&&);
+    void convertFrameBuffer(SharedVideoFrame&&, CompletionHandler<void(WebCore::DestinationColorSpace)>&&);
+    void setSharedVideoFrameSemaphore(IPC::Semaphore&&);
+    void setSharedVideoFrameMemory(const SharedMemory::IPCHandle&);
 #endif
+
+    void createPixelConformerIfNeeded();
 
     const Ref<IPC::Connection> m_connection;
     ThreadSafeObjectHeap<RemoteVideoFrameIdentifier, RefPtr<WebCore::VideoFrame>> m_heap;
 #if PLATFORM(COCOA)
     SharedVideoFrameWriter m_sharedVideoFrameWriter;
+    SharedVideoFrameReader m_sharedVideoFrameReader;
+    std::unique_ptr<WebCore::PixelBufferConformerCV> m_pixelBufferConformer;
 #endif
     bool m_isClosed { false };
 };

@@ -30,6 +30,7 @@
 
 #include "CSSParser.h"
 #include "CSSSelectorList.h"
+#include "CommonAtomStrings.h"
 #include "ContentExtensionError.h"
 #include "ContentExtensionRule.h"
 #include "ContentExtensionsBackend.h"
@@ -81,22 +82,22 @@ static Expected<Vector<String>, std::error_code> getDomainList(const JSON::Array
             domain = domain.substring(1);
         }
 
-        std::array<std::pair<UChar, const char*>, 9> escapeTable { {
-            { '\\', "\\\\" },
-            { '{', "\\{" },
-            { '}', "\\}" },
-            { '[', "\\[" },
-            { '[', "\\[" },
-            { '.', "\\." },
-            { '?', "\\?" },
-            { '*', "\\*" },
-            { '$', "\\$" }
+        std::array<std::pair<UChar, ASCIILiteral>, 9> escapeTable { {
+            { '\\', "\\\\"_s },
+            { '{', "\\{"_s },
+            { '}', "\\}"_s },
+            { '[', "\\["_s },
+            { '[', "\\["_s },
+            { '.', "\\."_s },
+            { '?', "\\?"_s },
+            { '*', "\\*"_s },
+            { '$', "\\$"_s }
         } };
         for (auto& pair : escapeTable)
-            domain = domain.replace(pair.first, String { pair.second });
+            domain = makeStringByReplacingAll(domain, pair.first, pair.second);
 
         const char* protocolRegex = "[a-z][a-z+.-]*:\\/\\/";
-        const char* allowSubdomainsRegex = "(.*\\.)*";
+        const char* allowSubdomainsRegex = "([^/]*\\.)*";
         regexes.uncheckedAppend(makeString(protocolRegex, allowSubdomains ? allowSubdomainsRegex : "", domain, "[:/]"));
     }
     return regexes;
@@ -203,7 +204,7 @@ static Expected<Trigger, std::error_code> loadTrigger(const JSON::Object& ruleOb
 bool isValidCSSSelector(const String& selector)
 {
     ASSERT(isMainThread());
-    AtomString::init();
+    initializeCommonAtomStrings();
     QualifiedName::init();
     CSSParserContext context(HTMLQuirksMode);
     CSSParser parser(context);

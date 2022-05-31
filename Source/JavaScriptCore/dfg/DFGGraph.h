@@ -473,7 +473,7 @@ public:
     JSObject* globalThisObjectFor(CodeOrigin codeOrigin)
     {
         JSGlobalObject* object = globalObjectFor(codeOrigin);
-        return jsCast<JSObject*>(object->methodTable(m_vm)->toThis(object, object, ECMAMode::sloppy()));
+        return jsCast<JSObject*>(object->methodTable()->toThis(object, object, ECMAMode::sloppy()));
     }
     
     CodeBlock* baselineCodeBlockFor(InlineCallFrame* inlineCallFrame)
@@ -828,6 +828,15 @@ public:
 
         JSGlobalObject* globalObject = globalObjectFor(node->origin.semantic);
         InlineWatchpointSet& set = globalObject->numberToStringWatchpointSet();
+        return isWatchingGlobalObjectWatchpoint(globalObject, set);
+    }
+
+    bool isWatchingStructureCacheClearedWatchpoint(JSGlobalObject* globalObject)
+    {
+        if (m_plan.isUnlinked())
+            return false;
+
+        InlineWatchpointSet& set = globalObject->structureCacheClearedWatchpoint();
         return isWatchingGlobalObjectWatchpoint(globalObject, set);
     }
 

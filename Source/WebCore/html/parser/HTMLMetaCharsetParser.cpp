@@ -45,7 +45,7 @@ static StringView extractCharset(const String& value)
 {
     unsigned length = value.length();
     for (size_t pos = 0; pos < length; ) {
-        pos = value.findIgnoringASCIICase("charset", pos);
+        pos = value.findIgnoringASCIICase("charset"_s, pos);
         if (pos == notFound)
             break;
 
@@ -86,9 +86,7 @@ static StringView extractCharset(const String& value)
 bool HTMLMetaCharsetParser::processMeta(HTMLToken& token)
 {
     auto attributes = token.attributes().map([](auto& attribute) {
-        String attributeName = StringImpl::create8BitIfPossible(attribute.name);
-        String attributeValue = StringImpl::create8BitIfPossible(attribute.value);
-        return std::pair { WTFMove(attributeName), WTFMove(attributeValue) };
+        return std::pair { AtomString(attribute.name), AtomString(attribute.value) };
     });
 
     m_encoding = encodingFromMetaAttributes(attributes);
@@ -102,11 +100,11 @@ PAL::TextEncoding HTMLMetaCharsetParser::encodingFromMetaAttributes(const Attrib
     StringView charset;
 
     for (auto& attribute : attributes) {
-        const String& attributeName = attribute.first;
-        const String& attributeValue = attribute.second;
+        auto& attributeName = attribute.first;
+        auto& attributeValue = attribute.second;
 
         if (attributeName == http_equivAttr) {
-            if (equalLettersIgnoringASCIICase(attributeValue, "content-type"))
+            if (equalLettersIgnoringASCIICase(attributeValue, "content-type"_s))
                 gotPragma = true;
         } else if (attributeName == charsetAttr) {
             charset = attributeValue;
@@ -121,7 +119,7 @@ PAL::TextEncoding HTMLMetaCharsetParser::encodingFromMetaAttributes(const Attrib
     }
 
     if (mode == Charset || (mode == Pragma && gotPragma))
-        return PAL::TextEncoding(stripLeadingAndTrailingHTMLSpaces(charset.toStringWithoutCopying()));
+        return PAL::TextEncoding(charset.stripLeadingAndTrailingMatchedCharacters(isHTMLSpace<UChar>));
 
     return PAL::TextEncoding();
 }

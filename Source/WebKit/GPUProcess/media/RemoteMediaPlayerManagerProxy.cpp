@@ -34,6 +34,7 @@
 #include "RemoteMediaPlayerManagerProxyMessages.h"
 #include "RemoteMediaPlayerProxy.h"
 #include "RemoteMediaPlayerProxyConfiguration.h"
+#include "ScopedRenderingResourcesRequest.h"
 #include "WebCoreArgumentCoders.h"
 #include <WebCore/MediaPlayer.h>
 #include <WebCore/MediaPlayerPrivate.h>
@@ -78,7 +79,7 @@ void RemoteMediaPlayerManagerProxy::deleteMediaPlayer(MediaPlayerIdentifier iden
     if (auto proxy = m_proxies.take(identifier))
         proxy->invalidate();
 
-    if (m_gpuConnectionToWebProcess && allowsExitUnderMemoryPressure())
+    if (m_gpuConnectionToWebProcess && !hasOutstandingRenderingResourceUsage())
         m_gpuConnectionToWebProcess->gpuProcess().tryExitIfUnusedAndUnderMemoryPressure();
 }
 
@@ -183,11 +184,6 @@ RefPtr<MediaPlayer> RemoteMediaPlayerManagerProxy::mediaPlayer(const MediaPlayer
     return nullptr;
 }
 
-bool RemoteMediaPlayerManagerProxy::allowsExitUnderMemoryPressure() const
-{
-    return m_proxies.isEmpty();
-}
-
 #if !RELEASE_LOG_DISABLED
 Logger& RemoteMediaPlayerManagerProxy::logger()
 {
@@ -211,7 +207,7 @@ ShareableBitmap::Handle RemoteMediaPlayerManagerProxy::bitmapImageForCurrentTime
         return { };
 
     auto imageSize = image->size();
-    auto bitmap = ShareableBitmap::createShareable(imageSize, { player->colorSpace() });
+    auto bitmap = ShareableBitmap::create(imageSize, { player->colorSpace() });
     if (!bitmap)
         return { };
 

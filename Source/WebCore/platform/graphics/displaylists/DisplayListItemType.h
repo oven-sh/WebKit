@@ -28,6 +28,11 @@
 namespace WebCore {
 namespace DisplayList {
 
+enum class AsTextFlag : uint8_t {
+    IncludePlatformOperations      = 1 << 0,
+    IncludeResourceIdentifiers     = 1 << 1,
+};
+
 enum class ItemType : uint8_t {
     Save,
     Restore,
@@ -78,7 +83,6 @@ enum class ItemType : uint8_t {
 #endif
     FillPath,
     FillEllipse,
-    FlushContext,
 #if ENABLE(VIDEO)
     PaintFrameForMedia,
 #endif

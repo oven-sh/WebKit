@@ -85,7 +85,7 @@ WTF_MAKE_ISO_ALLOCATED_IMPL(CanvasRenderingContext2DBase);
 static constexpr ImageSmoothingQuality defaultSmoothingQuality = ImageSmoothingQuality::Low;
 
 const int CanvasRenderingContext2DBase::DefaultFontSize = 10;
-const char* const CanvasRenderingContext2DBase::DefaultFontFamily = "sans-serif";
+const ASCIILiteral CanvasRenderingContext2DBase::DefaultFontFamily = "sans-serif"_s;
 static constexpr ASCIILiteral DefaultFont = "10px sans-serif"_s;
 
 static CanvasLineCap toCanvasLineCap(LineCap lineCap)
@@ -306,7 +306,7 @@ String CanvasRenderingContext2DBase::State::fontString() const
 
     for (unsigned i = 0; i < font.familyCount(); ++i) {
         StringView family = font.familyAt(i);
-        if (family.startsWith("-webkit-"))
+        if (family.startsWith("-webkit-"_s))
             family = family.substring(8);
 
         auto separator = i ? ", " : " ";
@@ -1545,8 +1545,11 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(Document& document, Ca
 
     if (image->isBitmapImage()) {
         // Drawing an animated image to a canvas should draw the first frame (except for a few layout tests)
-        if (image->isAnimated() && !document.settings().animatedImageDebugCanvasDrawingEnabled())
+        if (image->isAnimated() && !document.settings().animatedImageDebugCanvasDrawingEnabled()) {
             image = BitmapImage::create(image->nativeImage());
+            if (!image)
+                return { };
+        }
         downcast<BitmapImage>(*image).updateFromSettings(document.settings());
     }
 
@@ -1654,7 +1657,7 @@ ExceptionOr<void> CanvasRenderingContext2DBase::drawImage(HTMLVideoElement& vide
     bool repaintEntireCanvas = rectContainsCanvas(dstRect);
 
 #if USE(CG)
-    if (c->hasPlatformContext()) {
+    if (c->hasPlatformContext() && video.shouldGetNativeImageForCanvasDrawing()) {
         if (auto image = video.nativeImageForCurrentTime()) {
             c->drawNativeImage(*image, FloatSize(video.videoWidth(), video.videoHeight()), dstRect, srcRect);
 
@@ -2395,7 +2398,7 @@ void CanvasRenderingContext2DBase::drawText(const String& text, double x, double
 
     String normalizedText = normalizeSpaces(text);
     auto direction = (state().direction == Direction::Rtl) ? TextDirection::RTL : TextDirection::LTR;
-    TextRun textRun(normalizedText, 0, 0, AllowRightExpansion, direction, false, true);
+    TextRun textRun(normalizedText, 0, 0, ExpansionBehavior::allowRightOnly(), direction, false, true);
     drawTextUnchecked(textRun, x, y, fill, maxWidth);
 }
 
@@ -2517,7 +2520,7 @@ Ref<TextMetrics> CanvasRenderingContext2DBase::measureTextInternal(const String&
 {
     String normalizedText = normalizeSpaces(text);
     auto direction = (state().direction == Direction::Rtl) ? TextDirection::RTL : TextDirection::LTR;
-    TextRun textRun(normalizedText, 0, 0, AllowRightExpansion, direction, false, true);
+    TextRun textRun(normalizedText, 0, 0, ExpansionBehavior::allowRightOnly(), direction, false, true);
     return measureTextInternal(textRun);
 }
 

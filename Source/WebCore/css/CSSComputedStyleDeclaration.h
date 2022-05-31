@@ -57,10 +57,11 @@ public:
     ComputedStyleExtractor(Node*, bool allowVisitedStyle = false, PseudoId = PseudoId::None);
     ComputedStyleExtractor(Element*, bool allowVisitedStyle = false, PseudoId = PseudoId::None);
 
-    RefPtr<CSSValue> propertyValue(CSSPropertyID, EUpdateLayout = UpdateLayout);
+    enum class PropertyValueType : bool { Resolved, Computed };
+    RefPtr<CSSValue> propertyValue(CSSPropertyID, EUpdateLayout = UpdateLayout, PropertyValueType = PropertyValueType::Resolved);
     RefPtr<CSSValue> valueForPropertyInStyle(const RenderStyle&, CSSPropertyID, RenderElement* = nullptr);
-    String customPropertyText(const String& propertyName);
-    RefPtr<CSSValue> customPropertyValue(const String& propertyName);
+    String customPropertyText(const AtomString& propertyName);
+    RefPtr<CSSValue> customPropertyValue(const AtomString& propertyName);
 
     // Helper methods for HTML editing.
     Ref<MutableStyleProperties> copyPropertiesInSet(const CSSPropertyID* set, unsigned length);

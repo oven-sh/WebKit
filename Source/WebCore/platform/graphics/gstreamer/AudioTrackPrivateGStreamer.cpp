@@ -40,23 +40,27 @@ AudioTrackPrivateGStreamer::AudioTrackPrivateGStreamer(WeakPtr<MediaPlayerPrivat
 {
 }
 
-AudioTrackPrivateGStreamer::AudioTrackPrivateGStreamer(WeakPtr<MediaPlayerPrivateGStreamer> player, unsigned index, GRefPtr<GstStream>&& stream)
-    : TrackPrivateBaseGStreamer(TrackPrivateBaseGStreamer::TrackType::Audio, this, index, WTFMove(stream))
+AudioTrackPrivateGStreamer::AudioTrackPrivateGStreamer(WeakPtr<MediaPlayerPrivateGStreamer> player, unsigned index, GstStream* stream)
+    : TrackPrivateBaseGStreamer(TrackPrivateBaseGStreamer::TrackType::Audio, this, index, stream)
     , m_player(player)
 {
     int kind;
-    auto tags = adoptGRef(gst_stream_get_tags(m_stream.get()));
+    auto tags = adoptGRef(gst_stream_get_tags(m_stream));
 
     if (tags && gst_tag_list_get_int(tags.get(), "webkit-media-stream-kind", &kind) && kind == static_cast<int>(AudioTrackPrivate::Kind::Main)) {
-        auto streamFlags = gst_stream_get_stream_flags(m_stream.get());
-        gst_stream_set_stream_flags(m_stream.get(), static_cast<GstStreamFlags>(streamFlags | GST_STREAM_FLAG_SELECT));
+        auto streamFlags = gst_stream_get_stream_flags(m_stream);
+        gst_stream_set_stream_flags(m_stream, static_cast<GstStreamFlags>(streamFlags | GST_STREAM_FLAG_SELECT));
     }
 
-    g_signal_connect_swapped(m_stream.get(), "notify::caps", G_CALLBACK(+[](AudioTrackPrivateGStreamer* track) {
-        track->updateConfigurationFromCaps();
+    g_signal_connect_swapped(m_stream, "notify::caps", G_CALLBACK(+[](AudioTrackPrivateGStreamer* track) {
+        track->m_taskQueue.enqueueTask([track]() {
+            track->updateConfigurationFromCaps();
+        });
     }), this);
-    g_signal_connect_swapped(m_stream.get(), "notify::tags", G_CALLBACK(+[](AudioTrackPrivateGStreamer* track) {
-        track->updateConfigurationFromTags();
+    g_signal_connect_swapped(m_stream, "notify::tags", G_CALLBACK(+[](AudioTrackPrivateGStreamer* track) {
+        track->m_taskQueue.enqueueTask([track]() {
+            track->updateConfigurationFromTags();
+        });
     }), this);
 
     updateConfigurationFromCaps();
@@ -65,21 +69,21 @@ AudioTrackPrivateGStreamer::AudioTrackPrivateGStreamer(WeakPtr<MediaPlayerPrivat
 
 void AudioTrackPrivateGStreamer::updateConfigurationFromTags()
 {
-    auto tags = adoptGRef(gst_stream_get_tags(m_stream.get()));
+    ASSERT(isMainThread());
+    auto tags = adoptGRef(gst_stream_get_tags(m_stream));
     unsigned bitrate;
     if (!tags || !gst_tag_list_get_uint(tags.get(), GST_TAG_BITRATE, &bitrate))
         return;
 
     auto configuration = this->configuration();
     configuration.bitrate = bitrate;
-    callOnMainThreadAndWait([&] {
-        setConfiguration(WTFMove(configuration));
-    });
+    setConfiguration(WTFMove(configuration));
 }
 
 void AudioTrackPrivateGStreamer::updateConfigurationFromCaps()
 {
-    auto caps = adoptGRef(gst_stream_get_caps(m_stream.get()));
+    ASSERT(isMainThread());
+    auto caps = adoptGRef(gst_stream_get_caps(m_stream));
     if (!caps || !gst_caps_is_fixed(caps.get()))
         return;
 
@@ -92,17 +96,15 @@ void AudioTrackPrivateGStreamer::updateConfigurationFromCaps()
 
 #if GST_CHECK_VERSION(1, 20, 0)
     GUniquePtr<char> codec(gst_codec_utils_caps_get_mime_codec(caps.get()));
-    configuration.codec = codec.get();
+    configuration.codec = String::fromLatin1(codec.get());
 #endif
 
-    callOnMainThreadAndWait([&] {
-        setConfiguration(WTFMove(configuration));
-    });
+    setConfiguration(WTFMove(configuration));
 }
 
 AudioTrackPrivate::Kind AudioTrackPrivateGStreamer::kind() const
 {
-    if (m_stream.get() && gst_stream_get_stream_flags(m_stream.get()) & GST_STREAM_FLAG_SELECT)
+    if (m_stream && gst_stream_get_stream_flags(m_stream) & GST_STREAM_FLAG_SELECT)
         return AudioTrackPrivate::Kind::Main;
 
     return AudioTrackPrivate::kind();
@@ -110,11 +112,15 @@ AudioTrackPrivate::Kind AudioTrackPrivateGStreamer::kind() const
 
 void AudioTrackPrivateGStreamer::disconnect()
 {
+    m_taskQueue.startAborting();
+
     if (m_stream)
-        g_signal_handlers_disconnect_matched(m_stream.get(), G_SIGNAL_MATCH_DATA, 0, 0, nullptr, nullptr, this);
+        g_signal_handlers_disconnect_matched(m_stream, G_SIGNAL_MATCH_DATA, 0, 0, nullptr, nullptr, this);
 
     m_player = nullptr;
     TrackPrivateBaseGStreamer::disconnect();
+
+    m_taskQueue.finishAborting();
 }
 
 void AudioTrackPrivateGStreamer::setEnabled(bool enabled)

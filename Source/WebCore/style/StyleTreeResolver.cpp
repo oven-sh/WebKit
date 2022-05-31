@@ -45,7 +45,6 @@
 #include "Quirks.h"
 #include "RenderElement.h"
 #include "RenderStyle.h"
-#include "RenderView.h"
 #include "RuntimeEnabledFeatures.h"
 #include "Settings.h"
 #include "ShadowRoot.h"
@@ -88,6 +87,7 @@ TreeResolver::Scope::Scope(ShadowRoot& shadowRoot, Scope& enclosingScope)
     , shadowRoot(&shadowRoot)
     , enclosingScope(&enclosingScope)
 {
+    selectorMatchingState.queryContainers = enclosingScope.selectorMatchingState.queryContainers;
 }
 
 TreeResolver::Scope::~Scope()
@@ -126,7 +126,7 @@ void TreeResolver::popScope()
     return m_scopeStack.removeLast();
 }
 
-std::unique_ptr<RenderStyle> TreeResolver::styleForStyleable(const Styleable& styleable, const ResolutionContext& resolutionContext)
+std::unique_ptr<RenderStyle> TreeResolver::styleForStyleable(const Styleable& styleable, ResolutionType resolutionType, const ResolutionContext& resolutionContext)
 {
     auto& element = styleable.element;
 
@@ -138,6 +138,14 @@ std::unique_ptr<RenderStyle> TreeResolver::styleForStyleable(const Styleable& st
 
             return WTFMove(customStyle->renderStyle);
         }
+    }
+
+    if (resolutionType == ResolutionType::FastPathInherit) {
+        // If the only reason we are computing the style is that some parent inherited properties changed, we can just copy them.
+        auto& existingStyle = *element.renderOrDisplayContentsStyle();
+        auto style = RenderStyle::clonePtr(existingStyle);
+        style->fastPathInheritFrom(parent().style);
+        return style;
     }
 
     if (auto style = scope().sharingResolver.resolve(styleable, *m_update))
@@ -188,6 +196,7 @@ auto TreeResolver::computeDescendantsToResolve(Change change, Validity validity,
         return DescendantsToResolve::None;
     case Change::NonInherited:
         return DescendantsToResolve::ChildrenWithExplicitInherit;
+    case Change::FastPathInherited:
     case Change::Inherited:
         return DescendantsToResolve::Children;
     case Change::Renderer:
@@ -197,7 +206,7 @@ auto TreeResolver::computeDescendantsToResolve(Change change, Validity validity,
     return DescendantsToResolve::None;
 };
 
-auto TreeResolver::resolveElement(Element& element) -> std::pair<ElementUpdate, DescendantsToResolve>
+auto TreeResolver::resolveElement(Element& element, ResolutionType resolutionType) -> std::pair<ElementUpdate, DescendantsToResolve>
 {
     if (m_didSeePendingStylesheet && !element.renderer() && !m_document.isIgnoringPendingStylesheets()) {
         m_document.setHasNodesWithMissingStyle();
@@ -210,7 +219,7 @@ auto TreeResolver::resolveElement(Element& element) -> std::pair<ElementUpdate, 
     auto resolutionContext = makeResolutionContext();
 
     Styleable styleable { element, PseudoId::None };
-    auto newStyle = styleForStyleable(styleable, resolutionContext);
+    auto newStyle = styleForStyleable(styleable, resolutionType, resolutionContext);
 
     if (!affectsRenderedSubtree(element, *newStyle))
         return { };
@@ -252,10 +261,17 @@ auto TreeResolver::resolveElement(Element& element) -> std::pair<ElementUpdate, 
 
     auto resolveAndAddPseudoElementStyle = [&](PseudoId pseudoId) {
         auto pseudoElementUpdate = resolvePseudoElement(element, pseudoId, update);
+        auto pseudoElementChange = [&] {
+            if (pseudoElementUpdate)
+                return pseudoElementUpdate->change == Change::None ? Change::None : Change::NonInherited;
+            if (!existingStyle || !existingStyle->getCachedPseudoStyle(pseudoId))
+                return Change::None;
+            // If ::first-letter goes aways rebuild the renderers.
+            return pseudoId == PseudoId::FirstLetter ? Change::Renderer : Change::NonInherited;
+        }();
+        update.change = std::max(update.change, pseudoElementChange);
         if (!pseudoElementUpdate)
-            return Change::None;
-        if (pseudoElementUpdate->change != Change::None)
-            update.change = std::max(update.change, Change::NonInherited);
+            return pseudoElementChange;
         if (pseudoElementUpdate->recompositeLayer)
             update.recompositeLayer = true;
         update.style->addCachedPseudoStyle(WTFMove(pseudoElementUpdate->style));
@@ -263,6 +279,8 @@ auto TreeResolver::resolveElement(Element& element) -> std::pair<ElementUpdate, 
     };
     
     if (resolveAndAddPseudoElementStyle(PseudoId::FirstLine) != Change::None)
+        descendantsToResolve = DescendantsToResolve::All;
+    if (resolveAndAddPseudoElementStyle(PseudoId::FirstLetter) != Change::None)
         descendantsToResolve = DescendantsToResolve::All;
 
     resolveAndAddPseudoElementStyle(PseudoId::Marker);
@@ -283,7 +301,7 @@ auto TreeResolver::resolveElement(Element& element) -> std::pair<ElementUpdate, 
     return { WTFMove(update), descendantsToResolve };
 }
 
-inline bool supportsFirstLinePseudoElement(const RenderStyle& style)
+inline bool supportsFirstLineAndLetterPseudoElement(const RenderStyle& style)
 {
     auto display = style.display();
     return display == DisplayType::Block
@@ -302,52 +320,92 @@ std::optional<ElementUpdate> TreeResolver::resolvePseudoElement(Element& element
         return { };
     if (pseudoId == PseudoId::FirstLine && !scope().resolver->usesFirstLineRules())
         return { };
+    if (pseudoId == PseudoId::FirstLetter && !scope().resolver->usesFirstLetterRules())
+        return { };
     if (elementUpdate.style->display() == DisplayType::None)
         return { };
 
-    if (!elementUpdate.style->hasPseudoStyle(pseudoId)) {
-        if (pseudoId == PseudoId::FirstLine) {
-            auto firstLineStyle = resolveInheritedFirstLinePseudoElement(element, elementUpdate);
-            if (!firstLineStyle)
-                return { };
+    if (!elementUpdate.style->hasPseudoStyle(pseudoId))
+        return resolveAncestorPseudoElement(element, pseudoId, elementUpdate);
 
-            auto* oldStyle = element.renderOrDisplayContentsStyle(PseudoId::FirstLine);
-            auto change = oldStyle ? determineChange(*oldStyle, *firstLineStyle) : Change::Renderer;
-            return ElementUpdate { WTFMove(firstLineStyle), change };
-        }
-        return { };
-    }
-
-    if (pseudoId == PseudoId::FirstLine && !supportsFirstLinePseudoElement(*elementUpdate.style))
+    if ((pseudoId == PseudoId::FirstLine || pseudoId == PseudoId::FirstLetter) && !supportsFirstLineAndLetterPseudoElement(*elementUpdate.style))
         return { };
 
-    auto resolutionContext = makeResolutionContextForPseudoElement(elementUpdate);
+    auto resolutionContext = makeResolutionContextForPseudoElement(elementUpdate, pseudoId);
 
     auto pseudoStyle = scope().resolver->pseudoStyleForElement(element, { pseudoId }, resolutionContext);
     if (!pseudoStyle)
         return { };
 
     // FIXME: This test shouldn't be needed.
-    bool hasAnimations = pseudoStyle->hasAnimationsOrTransitions() || element.hasKeyframeEffects(pseudoId);
-    if (pseudoId != PseudoId::FirstLine && !pseudoElementRendererIsNeeded(pseudoStyle.get()) && !hasAnimations)
+    bool alwaysNeedsPseudoElement = pseudoStyle->hasAnimationsOrTransitions()
+        || element.hasKeyframeEffects(pseudoId)
+        || pseudoId == PseudoId::FirstLine
+        || pseudoId == PseudoId::FirstLetter;
+    if (!alwaysNeedsPseudoElement && !pseudoElementRendererIsNeeded(pseudoStyle.get()))
         return { };
 
     auto animatedUpdate = createAnimatedElementUpdate(WTFMove(pseudoStyle), { element, pseudoId }, elementUpdate.change, resolutionContext);
 
     if (pseudoId == PseudoId::Before || pseudoId == PseudoId::After) {
-        // ::first-line can inherit to ::before/::after
-        auto firstLineContext = makeResolutionContextForInheritedFirstLine(elementUpdate, *elementUpdate.style);
-        if (firstLineContext) {
-            auto firstLineStyle = scope().resolver->pseudoStyleForElement(element, { pseudoId }, *firstLineContext);
-            firstLineStyle->setStyleType(PseudoId::FirstLine);
-            animatedUpdate.style->addCachedPseudoStyle(WTFMove(firstLineStyle));
+        if (scope().resolver->usesFirstLineRules()) {
+            // ::first-line can inherit to ::before/::after
+            if (auto firstLineContext = makeResolutionContextForInheritedFirstLine(elementUpdate, *elementUpdate.style)) {
+                auto firstLineStyle = scope().resolver->pseudoStyleForElement(element, { pseudoId }, *firstLineContext);
+                firstLineStyle->setStyleType(PseudoId::FirstLine);
+                animatedUpdate.style->addCachedPseudoStyle(WTFMove(firstLineStyle));
+            }
+        }
+        if (scope().resolver->usesFirstLetterRules()) {
+            auto beforeAfterContext = makeResolutionContextForPseudoElement(animatedUpdate, PseudoId::FirstLetter);
+            if (auto firstLetterStyle = resolveAncestorFirstLetterPseudoElement(element, elementUpdate, beforeAfterContext))
+                animatedUpdate.style->addCachedPseudoStyle(WTFMove(firstLetterStyle));
         }
     }
 
     return animatedUpdate;
 }
 
-std::unique_ptr<RenderStyle> TreeResolver::resolveInheritedFirstLinePseudoElement(Element& element, const ElementUpdate& elementUpdate)
+std::optional<ElementUpdate> TreeResolver::resolveAncestorPseudoElement(Element& element, PseudoId pseudoId, const ElementUpdate& elementUpdate)
+{
+    ASSERT(!elementUpdate.style->hasPseudoStyle(pseudoId));
+
+    auto pseudoElementStyle = [&]() -> std::unique_ptr<RenderStyle> {
+        // ::first-line and ::first-letter defined on an ancestor element may need to be resolved for the current element.
+        if (pseudoId == PseudoId::FirstLine)
+            return resolveAncestorFirstLinePseudoElement(element, elementUpdate);
+        if (pseudoId == PseudoId::FirstLetter) {
+            auto resolutionContext = makeResolutionContextForPseudoElement(elementUpdate, PseudoId::FirstLetter);
+            return resolveAncestorFirstLetterPseudoElement(element, elementUpdate, resolutionContext);
+        }
+        return nullptr;
+    }();
+
+    if (!pseudoElementStyle)
+        return { };
+
+    auto* oldStyle = element.renderOrDisplayContentsStyle(pseudoId);
+    auto change = oldStyle ? determineChange(*oldStyle, *pseudoElementStyle) : Change::Renderer;
+    auto resolutionContext = makeResolutionContextForPseudoElement(elementUpdate, pseudoId);
+
+    return createAnimatedElementUpdate(WTFMove(pseudoElementStyle), { element, pseudoId }, change, resolutionContext);
+}
+
+static bool isChildInBlockFormattingContext(const RenderStyle& style)
+{
+    // FIXME: Incomplete. There should be shared code with layout for this.
+    if (style.display() != DisplayType::Block && style.display() != DisplayType::ListItem)
+        return false;
+    if (style.hasOutOfFlowPosition())
+        return false;
+    if (style.floating() != Float::None)
+        return false;
+    if (style.overflowX() != Overflow::Visible || style.overflowY() != Overflow::Visible)
+        return false;
+    return true;
+};
+
+std::unique_ptr<RenderStyle> TreeResolver::resolveAncestorFirstLinePseudoElement(Element& element, const ElementUpdate& elementUpdate)
 {
     if (elementUpdate.style->display() == DisplayType::Inline) {
         auto* parent = boxGeneratingParent();
@@ -365,31 +423,18 @@ std::unique_ptr<RenderStyle> TreeResolver::resolveInheritedFirstLinePseudoElemen
         return firstLineStyle;
     }
 
-    auto isChildInBlockFormattingContext = [](const RenderStyle& style) {
-        // FIXME: Incomplete. There should be shared code with layout for this.
-        if (style.display() != DisplayType::Block)
-            return false;
-        if (style.hasOutOfFlowPosition())
-            return false;
-        if (style.floating() != Float::None)
-            return false;
-        if (style.overflowX() != Overflow::Visible || style.overflowY() != Overflow::Visible)
-            return false;
-        return true;
-    };
-
-    auto firstLineElementForBlock = [&]() -> Element* {
+    auto findFirstLineElementForBlock = [&]() -> Element* {
         if (!isChildInBlockFormattingContext(*elementUpdate.style))
             return nullptr;
 
         // ::first-line is only propagated to the first block.
-        if (parent().resolvedFirstBoxGeneratingChild)
+        if (parent().resolvedFirstLineAndLetterChild)
             return nullptr;
 
         for (auto& parent : makeReversedRange(m_parentStack)) {
             if (parent.style.display() == DisplayType::Contents)
                 continue;
-            if (!supportsFirstLinePseudoElement(parent.style))
+            if (!supportsFirstLineAndLetterPseudoElement(parent.style))
                 return nullptr;
             if (parent.style.hasPseudoStyle(PseudoId::FirstLine))
                 return parent.element;
@@ -399,15 +444,56 @@ std::unique_ptr<RenderStyle> TreeResolver::resolveInheritedFirstLinePseudoElemen
         return nullptr;
     };
 
-    auto firstLineElement = firstLineElementForBlock();
+    auto firstLineElement = findFirstLineElementForBlock();
     if (!firstLineElement)
         return { };
 
-    auto resolutionContext = makeResolutionContextForPseudoElement(elementUpdate);
+    auto resolutionContext = makeResolutionContextForPseudoElement(elementUpdate, PseudoId::FirstLine);
     // Can't use the cached state since the element being resolved is not the current one.
     resolutionContext.selectorMatchingState = nullptr;
 
     return scope().resolver->pseudoStyleForElement(*firstLineElement, { PseudoId::FirstLine }, resolutionContext);
+}
+
+std::unique_ptr<RenderStyle> TreeResolver::resolveAncestorFirstLetterPseudoElement(Element& element, const ElementUpdate& elementUpdate, ResolutionContext& resolutionContext)
+{
+    auto findFirstLetterElement = [&]() -> Element* {
+        if (elementUpdate.style->hasPseudoStyle(PseudoId::FirstLetter) && supportsFirstLineAndLetterPseudoElement(*elementUpdate.style))
+            return &element;
+
+        // ::first-letter is only propagated to the first box.
+        if (parent().resolvedFirstLineAndLetterChild)
+            return nullptr;
+
+        bool skipInlines = elementUpdate.style->display() == DisplayType::Inline;
+        if (!skipInlines && !isChildInBlockFormattingContext(*elementUpdate.style))
+            return nullptr;
+
+        for (auto& parent : makeReversedRange(m_parentStack)) {
+            if (parent.style.display() == DisplayType::Contents)
+                continue;
+            if (skipInlines && parent.style.display() == DisplayType::Inline)
+                continue;
+            skipInlines = false;
+
+            if (!supportsFirstLineAndLetterPseudoElement(parent.style))
+                return nullptr;
+            if (parent.style.hasPseudoStyle(PseudoId::FirstLetter))
+                return parent.element;
+            if (!isChildInBlockFormattingContext(parent.style))
+                return nullptr;
+        }
+        return nullptr;
+    };
+
+    auto firstLetterElement = findFirstLetterElement();
+    if (!firstLetterElement)
+        return { };
+
+    // Can't use the cached state since the element being resolved is not the current one.
+    resolutionContext.selectorMatchingState = nullptr;
+
+    return scope().resolver->pseudoStyleForElement(*firstLetterElement, { PseudoId::FirstLetter }, resolutionContext);
 }
 
 ResolutionContext TreeResolver::makeResolutionContext()
@@ -420,10 +506,18 @@ ResolutionContext TreeResolver::makeResolutionContext()
     };
 }
 
-ResolutionContext TreeResolver::makeResolutionContextForPseudoElement(const ElementUpdate& elementUpdate)
+ResolutionContext TreeResolver::makeResolutionContextForPseudoElement(const ElementUpdate& elementUpdate, PseudoId pseudoId)
 {
+    auto parentStyle = [&] {
+        if (pseudoId == PseudoId::FirstLetter) {
+            if (auto* firstLineStyle = elementUpdate.style->getCachedPseudoStyle(PseudoId::FirstLine))
+                return firstLineStyle;
+        }
+        return elementUpdate.style.get();
+    };
+
     return {
-        elementUpdate.style.get(),
+        parentStyle(),
         parentBoxStyleForPseudoElement(elementUpdate),
         m_documentElementStyle.get(),
         &scope().selectorMatchingState
@@ -432,9 +526,6 @@ ResolutionContext TreeResolver::makeResolutionContextForPseudoElement(const Elem
 
 std::optional<ResolutionContext> TreeResolver::makeResolutionContextForInheritedFirstLine(const ElementUpdate& elementUpdate, const RenderStyle& inheritStyle)
 {
-    if (!scope().resolver->usesFirstLineRules())
-        return { };
-
     auto parentFirstLineStyle = inheritStyle.getCachedPseudoStyle(PseudoId::FirstLine);
     if (!parentFirstLineStyle)
         return { };
@@ -489,7 +580,7 @@ ElementUpdate TreeResolver::createAnimatedElementUpdate(std::unique_ptr<RenderSt
 
     // First, we need to make sure that any new CSS animation occuring on this element has a matching WebAnimation
     // on the document timeline.
-    if (document.backForwardCacheState() == Document::NotInBackForwardCache && !document.renderView()->printing()) {
+    if (document.backForwardCacheState() == Document::NotInBackForwardCache && !document.printing()) {
         if (oldStyle && (oldStyle->hasTransitions() || newStyle->hasTransitions()))
             styleable.updateCSSTransitions(*oldStyle, *newStyle);
 
@@ -584,27 +675,35 @@ static bool shouldResolvePseudoElement(const PseudoElement* pseudoElement)
     return pseudoElement->needsStyleRecalc();
 }
 
-bool TreeResolver::shouldResolveElement(const Element& element, DescendantsToResolve parentDescendantsToResolve)
+auto TreeResolver::determineResolutionType(const Element& element, DescendantsToResolve parentDescendantsToResolve, Change parentChange) -> std::optional<ResolutionType>
 {
     if (element.styleValidity() != Validity::Valid)
-        return true;
+        return ResolutionType::Full;
     if (shouldResolvePseudoElement(element.beforePseudoElement()))
-        return true;
+        return ResolutionType::Full;
     if (shouldResolvePseudoElement(element.afterPseudoElement()))
-        return true;
+        return ResolutionType::Full;
 
     switch (parentDescendantsToResolve) {
     case DescendantsToResolve::None:
-        return false;
+        return { };
     case DescendantsToResolve::Children:
+        if (parentChange == Change::FastPathInherited) {
+            auto* existingStyle = element.renderOrDisplayContentsStyle();
+            if (existingStyle && !existingStyle->disallowsFastPathInheritance())
+                return ResolutionType::FastPathInherit;
+        }
+        return ResolutionType::Full;
     case DescendantsToResolve::All:
-        return true;
+        return ResolutionType::Full;
     case DescendantsToResolve::ChildrenWithExplicitInherit:
         auto* existingStyle = element.renderOrDisplayContentsStyle();
-        return existingStyle && existingStyle->hasExplicitlyInheritedProperties();
+        if (existingStyle && existingStyle->hasExplicitlyInheritedProperties())
+            return ResolutionType::Full;
+        return { };
     };
     ASSERT_NOT_REACHED();
-    return false;
+    return { };
 }
 
 static void clearNeedsStyleResolution(Element& element)
@@ -688,7 +787,7 @@ void TreeResolver::resolveComposedTree()
             }
 
             if (!text.data().isAllSpecialCharacters<isHTMLSpace>())
-                parent.resolvedFirstBoxGeneratingChild = true;
+                parent.resolvedFirstLineAndLetterChild = true;
 
             text.setHasValidStyle();
             it.traverseNextSkippingChildren();
@@ -708,8 +807,8 @@ void TreeResolver::resolveComposedTree()
         auto descendantsToResolve = DescendantsToResolve::None;
         auto previousContainerType = style ? style->containerType() : ContainerType::None;
 
-        bool shouldResolve = shouldResolveElement(element, parent.descendantsToResolve);
-        if (shouldResolve) {
+        auto resolutionType = determineResolutionType(element, parent.descendantsToResolve, parent.change);
+        if (resolutionType) {
             if (!element.hasDisplayContents())
                 element.resetComputedStyle();
             element.resetStyleRelations();
@@ -717,7 +816,7 @@ void TreeResolver::resolveComposedTree()
             if (element.hasCustomStyleResolveCallbacks())
                 element.willRecalcStyle(parent.change);
 
-            auto [elementUpdate, elementDescendantsToResolve] = resolveElement(element);
+            auto [elementUpdate, elementDescendantsToResolve] = resolveElement(element, *resolutionType);
 
             if (element.hasCustomStyleResolveCallbacks())
                 element.didRecalcStyle(elementUpdate.change);
@@ -745,8 +844,8 @@ void TreeResolver::resolveComposedTree()
         if (!m_didSeePendingStylesheet)
             m_didSeePendingStylesheet = hasLoadingStylesheet(m_document.styleScope(), element, !shouldIterateChildren);
 
-        if (style && generatesBox(*style))
-            parent.resolvedFirstBoxGeneratingChild = true;
+        if (!parent.resolvedFirstLineAndLetterChild && style && generatesBox(*style) && supportsFirstLineAndLetterPseudoElement(*style))
+            parent.resolvedFirstLineAndLetterChild = true;
 
         if (!shouldIterateChildren) {
             it.traverseNextSkippingChildren();
@@ -786,8 +885,6 @@ auto TreeResolver::updateQueryContainer(Element& element, const RenderStyle& sty
 
 std::unique_ptr<Update> TreeResolver::resolve()
 {
-    auto& renderView = *m_document.renderView();
-
     Element* documentElement = m_document.documentElement();
     if (!documentElement) {
         m_document.styleScope().resolver();
@@ -808,16 +905,7 @@ std::unique_ptr<Update> TreeResolver::resolve()
     m_scopeStack.append(adoptRef(*new Scope(m_document)));
     m_parentStack.append(Parent(m_document));
 
-    auto rootResolver = scope().resolver;
-
-    // Pseudo element removal and similar may only work with these flags still set. Reset them after the style recalc.
-    renderView.setUsesFirstLineRules(renderView.usesFirstLineRules() || rootResolver->usesFirstLineRules());
-    renderView.setUsesFirstLetterRules(renderView.usesFirstLetterRules() || rootResolver->usesFirstLetterRules());
-
     resolveComposedTree();
-
-    renderView.setUsesFirstLineRules(rootResolver->usesFirstLineRules());
-    renderView.setUsesFirstLetterRules(rootResolver->usesFirstLetterRules());
 
     ASSERT(m_scopeStack.size() == 1);
     ASSERT(m_parentStack.size() == 1);

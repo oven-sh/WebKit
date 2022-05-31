@@ -29,15 +29,19 @@
 #include "config.h"
 #include "NicosiaGCGLANGLELayer.h"
 
-#if USE(NICOSIA) && USE(TEXTURE_MAPPER)
+#if USE(NICOSIA) && USE(TEXTURE_MAPPER) && USE(LIBGBM) && USE(ANGLE)
 
-#include "ANGLEHeaders.h"
-#include "GraphicsContextGLTextureMapperANGLE.h"
+#include "GraphicsContextGLGBM.h"
 #include "ImageBuffer.h"
 #include "Logging.h"
 #include "TextureMapperGL.h"
-#include "TextureMapperPlatformLayerDmabuf.h"
+#include "TextureMapperPlatformLayerBuffer.h"
+#include "TextureMapperPlatformLayerProxyDMABuf.h"
 #include "TextureMapperPlatformLayerProxyGL.h"
+
+#if USE(LIBEPOXY)
+#include <epoxy/gl.h>
+#endif
 
 namespace Nicosia {
 
@@ -48,24 +52,29 @@ void GCGLANGLELayer::swapBuffersIfNeeded()
     auto& proxy = downcast<Nicosia::ContentLayerTextureMapperImpl>(contentLayer().impl()).proxy();
     auto size = m_context.getInternalFramebufferSize();
 
-    if (m_context.m_compositorTextureBacking) {
-        if (m_context.m_compositorTextureBacking->isReleased())
-            return;
-
-        auto format = m_context.m_compositorTextureBacking->format();
-        auto stride = m_context.m_compositorTextureBacking->stride();
-        auto fd = m_context.m_compositorTextureBacking->fd();
-
-        {
+#if USE(TEXTURE_MAPPER_DMABUF)
+    if (is<TextureMapperPlatformLayerProxyDMABuf>(proxy)) {
+        auto& swapchain = m_context.swapchain();
+        auto bo = WTFMove(swapchain.displayBO);
+        if (bo) {
             Locker locker { proxy.lock() };
-            ASSERT(is<TextureMapperPlatformLayerProxyGL>(proxy));
-            downcast<TextureMapperPlatformLayerProxyGL>(proxy).pushNextBuffer(makeUnique<TextureMapperPlatformLayerDmabuf>(size, format, stride, fd));
+
+            TextureMapperGL::Flags flags = TextureMapperGL::ShouldFlipTexture;
+            if (m_context.contextAttributes().alpha)
+                flags |= TextureMapperGL::ShouldBlend;
+
+            downcast<TextureMapperPlatformLayerProxyDMABuf>(proxy).pushDMABuf(
+                DMABufObject(reinterpret_cast<uintptr_t>(swapchain.swapchain.get()) + bo->handle()),
+                [&](auto&& object) {
+                    return bo->createDMABufObject(object.handle);
+                }, flags);
         }
         return;
     }
+#endif
 
     // Fallback path, read back texture to main memory
-    RefPtr<WebCore::ImageBuffer> imageBuffer = ImageBuffer::create(size, RenderingMode::Unaccelerated, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8);
+    RefPtr<WebCore::ImageBuffer> imageBuffer = ImageBuffer::create(size, RenderingPurpose::Unspecified, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8);
     if (!imageBuffer)
         return;
     m_context.paintRenderingResultsToCanvas(*imageBuffer.get());
@@ -85,9 +94,15 @@ void GCGLANGLELayer::swapBuffersIfNeeded()
     }
 }
 
-GCGLANGLELayer::GCGLANGLELayer(GraphicsContextGLTextureMapperANGLE& context)
+#if USE(TEXTURE_MAPPER_DMABUF)
+using PlatformLayerProxyType = TextureMapperPlatformLayerProxyDMABuf;
+#else
+using PlatformLayerProxyType = TextureMapperPlatformLayerProxyGL;
+#endif
+
+GCGLANGLELayer::GCGLANGLELayer(GraphicsContextGLGBM& context)
     : m_context(context)
-    , m_contentLayer(Nicosia::ContentLayer::create(Nicosia::ContentLayerTextureMapperImpl::createFactory(*this)))
+    , m_contentLayer(Nicosia::ContentLayer::create(Nicosia::ContentLayerTextureMapperImpl::createFactory(*this, adoptRef(*new PlatformLayerProxyType))))
 {
 }
 
@@ -98,4 +113,4 @@ GCGLANGLELayer::~GCGLANGLELayer()
 
 } // namespace Nicosia
 
-#endif // USE(NICOSIA) && USE(TEXTURE_MAPPER)
+#endif // USE(NICOSIA) && USE(TEXTURE_MAPPER) && USE(LIBGBM) && USE(ANGLE)

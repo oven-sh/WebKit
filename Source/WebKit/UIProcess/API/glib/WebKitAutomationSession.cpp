@@ -32,9 +32,9 @@
 using namespace WebKit;
 
 /**
- * SECTION: WebKitAutomationSession
- * @Short_description: Automation Session
- * @Title: WebKitAutomationSession
+ * WebKitAutomationSession:
+ *
+ * Automation Session.
  *
  * WebKitAutomationSession represents an automation session of a WebKitWebContext.
  * When a new session is requested, a WebKitAutomationSession is created and the signal
@@ -378,7 +378,7 @@ String webkitAutomationSessionGetBrowserName(WebKitAutomationSession* session)
     if (session->priv->applicationInfo)
         return String::fromUTF8(webkit_application_info_get_name(session->priv->applicationInfo));
 
-    return g_get_prgname();
+    return String::fromUTF8(g_get_prgname());
 }
 
 String webkitAutomationSessionGetBrowserVersion(WebKitAutomationSession* session)

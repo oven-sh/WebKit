@@ -47,6 +47,7 @@
 #import <WebCore/GraphicsContextCG.h>
 #import <WebCore/HTMLBodyElement.h>
 #import <WebCore/HTMLConverter.h>
+#import <WebCore/HTMLImageElement.h>
 #import <WebCore/HTMLOListElement.h>
 #import <WebCore/HTMLUListElement.h>
 #import <WebCore/HitTestResult.h>
@@ -117,10 +118,12 @@ void WebPage::requestActiveNowPlayingSessionInfo(CompletionHandler<void(bool, bo
     
 void WebPage::performDictionaryLookupAtLocation(const FloatPoint& floatPoint)
 {
-    if (auto* pluginView = pluginViewForFrame(&m_page->mainFrame())) {
+#if ENABLE(PDFKIT_PLUGIN)
+    if (auto* pluginView = mainFramePlugIn()) {
         if (pluginView->performDictionaryLookupAtLocation(floatPoint))
             return;
     }
+#endif
     
     // Find the frame the point is over.
     constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent, HitTestRequest::Type::AllowChildFrameContent };
@@ -164,8 +167,7 @@ DictionaryPopupInfo WebPage::dictionaryPopupInfoForRange(Frame& frame, const Sim
     Editor& editor = frame.editor();
     editor.setIsGettingDictionaryPopupInfo(true);
 
-    // FIXME: Inefficient to call stripWhiteSpace to detect whether a string has a non-whitespace character in it.
-    if (plainText(range).stripWhiteSpace().isEmpty()) {
+    if (plainText(range).find(isNotSpaceOrNewline) == notFound) {
         editor.setIsGettingDictionaryPopupInfo(false);
         return { };
     }
@@ -511,23 +513,19 @@ void WebPage::consumeNetworkExtensionSandboxExtensions(const Vector<SandboxExten
 
 void WebPage::getPDFFirstPageSize(WebCore::FrameIdentifier frameID, CompletionHandler<void(WebCore::FloatSize)>&& completionHandler)
 {
+#if !ENABLE(PDFKIT_PLUGIN)
+    return completionHandler({ });
+#else
     auto* webFrame = WebProcess::singleton().webFrame(frameID);
     if (!webFrame)
         return completionHandler({ });
 
-    auto* coreFrame = webFrame->coreFrame();
-    if (!coreFrame)
-        return completionHandler({ });
-
-    auto* pluginView = pluginViewForFrame(coreFrame);
+    auto* pluginView = pluginViewForFrame(webFrame->coreFrame());
     if (!pluginView)
         return completionHandler({ });
     
-    auto* plugin = pluginView->plugin();
-    if (!plugin)
-        return completionHandler({ });
-
-    completionHandler(FloatSize(plugin->pdfDocumentSizeForPrinting()));
+    completionHandler(FloatSize(pluginView->pdfDocumentSizeForPrinting()));
+#endif
 }
 
 #if ENABLE(DATA_DETECTION)
@@ -541,7 +539,7 @@ void WebPage::handleClickForDataDetectionResult(const DataDetectorElementInfo& i
 
 static String& replaceSelectionPasteboardName()
 {
-    static NeverDestroyed<String> string("ReplaceSelectionPasteboard");
+    static NeverDestroyed<String> string("ReplaceSelectionPasteboard"_s);
     return string;
 }
 
@@ -566,7 +564,9 @@ private:
     Vector<String> m_types;
 };
 
-void WebPage::replaceWithPasteboardData(const ElementContext& elementContext, const Vector<String>& types, const IPC::DataReference& data)
+#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+
+void WebPage::replaceImageWithMarkupResults(const ElementContext& elementContext, const Vector<String>& types, const IPC::DataReference& data)
 {
     Ref frame = CheckedRef(m_page->focusController())->focusedOrMainFrame();
     auto element = elementForContext(elementContext);
@@ -594,7 +594,17 @@ void WebPage::replaceWithPasteboardData(const ElementContext& elementContext, co
     {
         OverridePasteboardForSelectionReplacement overridePasteboard { types, data };
         IgnoreSelectionChangeForScope ignoreSelectionChanges { frame.get() };
-        frame->editor().replaceNodeFromPasteboard(*element, replaceSelectionPasteboardName());
+        frame->editor().replaceNodeFromPasteboard(*element, replaceSelectionPasteboardName(), EditAction::MarkupImage);
+
+        auto position = frame->selection().selection().visibleStart();
+        if (auto imageRange = makeSimpleRange(WebCore::VisiblePositionRange { position.previous(), position })) {
+            for (WebCore::TextIterator iterator { *imageRange, { } }; !iterator.atEnd(); iterator.advance()) {
+                if (RefPtr image = dynamicDowncast<HTMLImageElement>(iterator.node())) {
+                    m_elementsToExcludeFromMarkup.add(*image);
+                    break;
+                }
+            }
+        }
     }
 
     constexpr auto restoreSelectionOptions = FrameSelection::defaultSetSelectionOptions(UserTriggered);
@@ -620,6 +630,8 @@ void WebPage::replaceWithPasteboardData(const ElementContext& elementContext, co
     auto newSelectionRange = resolveCharacterRange(selectionHostRange, *rangeToRestore, iteratorOptions);
     frame->selection().setSelection(newSelectionRange, restoreSelectionOptions);
 }
+
+#endif // ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
 
 void WebPage::replaceSelectionWithPasteboardData(const Vector<String>& types, const IPC::DataReference& data)
 {

@@ -39,6 +39,7 @@
 #include "Element.h"
 #include "EventLoop.h"
 #include "EventNames.h"
+#include "HTMLNames.h"
 #include "InspectorInstrumentation.h"
 #include "JSWebAnimation.h"
 #include "KeyframeEffect.h"
@@ -1474,12 +1475,13 @@ ExceptionOr<void> WebAnimation::commitStyles()
 
     auto computedStyleExtractor = ComputedStyleExtractor(&styledElement);
     auto inlineStyle = styledElement.document().createCSSStyleDeclaration();
-    inlineStyle->setCssText(styledElement.getAttribute("style"));
+    inlineStyle->setCssText(styledElement.getAttribute(HTMLNames::styleAttr));
 
     auto& keyframeStack = styledElement.ensureKeyframeEffectStack(PseudoId::None);
-
+    // During iteration resolve() could clear the underlying properties so we use a copy
+    auto properties = effect->animatedProperties();
     // 2.5 For each property, property, in targeted properties:
-    for (auto property : effect->animatedProperties()) {
+    for (auto property : properties) {
         // 1. Let partialEffectStack be a copy of the effect stack for property on target.
         // 2. If animation's replace state is removed, add all animation effects associated with animation whose effect target is target and which include
         // property as a target property to partialEffectStack.
@@ -1506,7 +1508,7 @@ ExceptionOr<void> WebAnimation::commitStyles()
             inlineStyle->setPropertyInternal(property, cssValue->cssText(), false);
     }
 
-    styledElement.setAttribute("style", inlineStyle->cssText());
+    styledElement.setAttribute(HTMLNames::styleAttr, AtomString { inlineStyle->cssText() });
 
     return { };
 }

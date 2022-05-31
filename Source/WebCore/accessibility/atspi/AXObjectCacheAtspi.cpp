@@ -195,6 +195,12 @@ void AXObjectCache::postPlatformNotification(AXCoreObject* coreObject, AXNotific
         break;
     case AXDraggingExitedDropZone:
         break;
+    case AXGrabbedStateChanged:
+        break;
+    case AXPositionInSetChanged:
+        break;
+    case AXDescribedByChanged:
+        break;
     }
 }
 

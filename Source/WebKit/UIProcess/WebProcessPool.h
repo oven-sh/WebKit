@@ -236,6 +236,7 @@ public:
 #if PLATFORM(IOS_FAMILY)
     void applicationIsAboutToSuspend();
     static void notifyProcessPoolsApplicationIsAboutToSuspend();
+    void setProcessesShouldSuspend(bool);
 #endif
 
     void handleMemoryPressureWarning(Critical);
@@ -361,20 +362,15 @@ public:
 
 #if ENABLE(GPU_PROCESS)
     void gpuProcessDidFinishLaunching(ProcessID);
-    void gpuProcessExited(ProcessID, GPUProcessTerminationReason);
+    void gpuProcessExited(ProcessID, ProcessTerminationReason);
 
-    void getGPUProcessConnection(WebProcessProxy&, GPUProcessConnectionParameters&&, Messages::WebProcessProxy::GetGPUProcessConnectionDelayedReply&&);
+    void createGPUProcessConnection(WebProcessProxy&, IPC::Attachment&&, WebKit::GPUProcessConnectionParameters&&);
 
     GPUProcessProxy& ensureGPUProcess();
     GPUProcessProxy* gpuProcess() const { return m_gpuProcess.get(); }
 #endif
-
-#if ENABLE(WEB_AUTHN)
-    void getWebAuthnProcessConnection(WebProcessProxy&, Messages::WebProcessProxy::GetWebAuthnProcessConnectionDelayedReply&&);
-#endif
-
     // Network Process Management
-    void networkProcessDidTerminate(NetworkProcessProxy&, NetworkProcessProxy::TerminationReason);
+    void networkProcessDidTerminate(NetworkProcessProxy&, ProcessTerminationReason);
 
     bool isServiceWorkerPageID(WebPageProxyIdentifier) const;
     void removeFromRemoteWorkerProcesses(WebProcessProxy&);
@@ -384,7 +380,7 @@ public:
     bool hasServiceWorkerForegroundActivityForTesting() const;
     bool hasServiceWorkerBackgroundActivityForTesting() const;
 #endif
-    void serviceWorkerProcessCrashed(WebProcessProxy&);
+    void serviceWorkerProcessCrashed(WebProcessProxy&, ProcessTerminationReason);
 
     void updateRemoteWorkerUserAgent(const String& userAgent);
     UserContentControllerIdentifier userContentControllerIdentifierForRemoteWorkers();
@@ -435,6 +431,7 @@ public:
 
     bool alwaysRunsAtBackgroundPriority() const { return m_alwaysRunsAtBackgroundPriority; }
     bool shouldTakeUIBackgroundAssertion() const { return m_shouldTakeUIBackgroundAssertion; }
+    static bool anyProcessPoolNeedsUIBackgroundAssertion();
 
 #if ENABLE(GAMEPAD)
     void gamepadConnected(const UIGamepad&, WebCore::EventMakesGamepadsVisible);
@@ -514,15 +511,6 @@ public:
 
     static void platformInitializeNetworkProcess(NetworkProcessCreationParameters&);
     static Vector<String> urlSchemesWithCustomProtocolHandlers();
-
-#if PLATFORM(IOS_FAMILY)
-    static String cacheDirectoryInContainerOrHomeDirectory(const String& subpath);
-    static String cookieStorageDirectory();
-    static String parentBundleDirectory();
-    static String networkingCachesDirectory();
-    static String webContentCachesDirectory();
-    static String containerTemporaryDirectory();
-#endif
 
     Ref<WebProcessProxy> createNewWebProcess(WebsiteDataStore*, WebProcessProxy::CaptivePortalMode, WebProcessProxy::IsPrewarmed = WebProcessProxy::IsPrewarmed::No, WebCore::CrossOriginMode = WebCore::CrossOriginMode::Shared);
 
@@ -748,12 +736,6 @@ private:
         String injectedBundlePath;
         String uiProcessBundleResourcePath;
 
-#if PLATFORM(IOS_FAMILY)
-        String cookieStorageDirectory;
-        String containerCachesDirectory;
-        String containerTemporaryDirectory;
-#endif
-
 #if PLATFORM(PLAYSTATION)
         String webProcessPath;
         String networkProcessPath;
@@ -816,6 +798,7 @@ private:
 #if PLATFORM(MAC)
     std::unique_ptr<WebCore::PowerObserver> m_powerObserver;
     std::unique_ptr<PAL::SystemSleepListener> m_systemSleepListener;
+    Vector<int> m_openDirectoryNotifyTokens;
 #endif
 #if ENABLE(IPC_TESTING_API)
     IPCTester m_ipcTester;

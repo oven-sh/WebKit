@@ -39,14 +39,19 @@ bool WebInspectorUI::canSave()
     return true;
 }
 
+bool WebInspectorUI::canLoad()
+{
+    return false;
+}
+
 String WebInspectorUI::localizedStringsURL() const
 {
-    return String("resource:///org/webkit/inspector/Localizations/en.lproj/localizedStrings.js");
+    return "resource:///org/webkit/inspector/Localizations/en.lproj/localizedStrings.js"_s;
 }
 
 String RemoteWebInspectorUI::localizedStringsURL() const
 {
-    return String("resource:///org/webkit/inspector/Localizations/en.lproj/localizedStrings.js");
+    return "resource:///org/webkit/inspector/Localizations/en.lproj/localizedStrings.js"_s;
 }
 
 } // namespace WebKit

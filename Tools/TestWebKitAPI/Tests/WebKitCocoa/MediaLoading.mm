@@ -37,8 +37,8 @@ namespace TestWebKitAPI {
 
 static String parseUserAgent(const Vector<char>& request)
 {
-    auto headers = String::fromUTF8(request.data(), request.size()).split("\r\n");
-    auto index = headers.findIf([] (auto& header) { return header.startsWith("User-Agent:"); });
+    auto headers = String::fromUTF8(request.data(), request.size()).split("\r\n"_s);
+    auto index = headers.findIf([] (auto& header) { return header.startsWith("User-Agent:"_s); });
     if (index != notFound)
         return headers[index];
     return emptyString();
@@ -117,7 +117,7 @@ TEST(MediaLoading, UserAgentStringHLS)
     Util::run(&receivedMediaRequest);
 }
 
-const char* videoPlayTestHTML ="<script>"
+constexpr auto videoPlayTestHTML ="<script>"
     "function createVideoElement() {"
         "let video = document.createElement('video');"
         "video.addEventListener('error', ()=>{alert('error')});"
@@ -127,7 +127,7 @@ const char* videoPlayTestHTML ="<script>"
         "document.body.appendChild(video);"
     "}"
 "</script>"
-"<body onload='createVideoElement()'></body>";
+"<body onload='createVideoElement()'></body>"_s;
 
 static Vector<uint8_t> testVideoBytes()
 {
@@ -149,8 +149,8 @@ static void runVideoTest(NSURLRequest *request, const char* expectedMessage)
 TEST(MediaLoading, RangeRequestSynthesisWithContentLength)
 {
     HTTPServer server({
-        {"/", { videoPlayTestHTML }},
-        {"/video.mp4", { testVideoBytes() }}
+        {"/"_s, { videoPlayTestHTML }},
+        {"/video.mp4"_s, { testVideoBytes() }}
     });
     runVideoTest(server.request(), "playing");
     EXPECT_EQ(server.totalRequests(), 2u);
@@ -183,6 +183,60 @@ TEST(MediaLoading, RangeRequestSynthesisWithoutContentLength)
     });
     runVideoTest(server.request(), "error");
     EXPECT_EQ(totalRequests, 2u);
+}
+
+TEST(MediaLoading, CaptivePortalHLS)
+{
+    constexpr auto hlsPlayTestHTML = "<script>"
+        "function createVideoElement() {"
+            "let video = document.createElement('video');"
+            "video.addEventListener('error', () => { alert('error') });"
+            "video.addEventListener('playing', () => { alert('playing') });"
+            "video.src='video.m3u8';"
+            "video.autoplay=1;"
+            "document.body.appendChild(video);"
+        "}"
+    "</script>"
+    "<body onload='createVideoElement()'></body>"_s;
+
+    auto testTransportStreamBytes = [&] () -> Vector<uint8_t> {
+        NSData *data = [NSData dataWithContentsOfURL:[[NSBundle mainBundle] URLForResource:@"start-offset" withExtension:@"ts" subdirectory:@"TestWebKitAPI.resources"]];
+        Vector<uint8_t> vector;
+        vector.append(static_cast<const uint8_t*>(data.bytes), data.length);
+        return vector;
+    };
+
+    HTTPServer server({
+        { "/"_s, { hlsPlayTestHTML } },
+        { "/start-offset.ts"_s, { testTransportStreamBytes() } }
+    });
+    auto serverPort = server.port();
+    auto m3u8Source = makeString(
+        "#EXTM3U\n",
+        "#EXT-X-PLAYLIST-TYPE:EVENT\n",
+        "#EXT-X-VERSION:3\n",
+        "#EXT-X-MEDIA-SEQUENCE:0\n",
+        "#EXT-X-TARGETDURATION:8\n",
+        "#EXT-X-PROGRAM-DATE-TIME:1970-01-01T00:00:00.001Z\n",
+        "#EXTINF:6.0272,\n",
+        "http://127.0.0.1:", serverPort, "/start-offset.ts\n",
+        "#EXTINF:6.0272,\n",
+        "http://127.0.0.1:", serverPort, "/start-offset.ts\n",
+        "#EXTINF:6.0272,\n",
+        "http://127.0.0.1:", serverPort, "/start-offset.ts\n",
+        "#EXTINF:6.0272,\n",
+        "http://127.0.0.1:", serverPort, "/start-offset.ts\n",
+        "#EXTINF:6.0272,\n",
+        "http://127.0.0.1:", serverPort, "/start-offset.ts\n"
+    );
+    server.addResponse("/video.m3u8"_s, { m3u8Source });
+
+    auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+    [configuration setMediaTypesRequiringUserActionForPlayback:WKAudiovisualMediaTypeNone];
+    [[configuration defaultWebpagePreferences] _setCaptivePortalModeEnabled:YES];
+    auto webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 300, 300) configuration:configuration.get() addToWindow:YES]);
+    [webView loadRequest:server.request()];
+    EXPECT_WK_STREQ([webView _test_waitForAlert], "playing");
 }
 
 } // namespace TestWebKitAPI

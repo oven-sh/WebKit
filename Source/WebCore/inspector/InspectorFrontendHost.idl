@@ -71,10 +71,15 @@
     undefined copyText(DOMString text);
     undefined killText(DOMString text, boolean shouldPrependToKillRing, boolean shouldStartNewSequence);
     undefined openURLExternally(DOMString url);
+    undefined revealFileExternally(DOMString path);
     boolean canSave();
     undefined save(DOMString url, DOMString content, boolean base64Encoded, boolean forceSaveAs);
     undefined append(DOMString url, DOMString content);
+    boolean canLoad();
+    [NewObject] Promise<DOMString> load(DOMString path);
     undefined close(DOMString url);
+
+    DOMString getPath(File file);
 
     readonly attribute DOMString port;
     readonly attribute DOMString platform;
@@ -86,7 +91,6 @@
     undefined unbufferedLog(DOMString message);
 
     boolean isUnderTest();
-    boolean isExperimentalBuild();
 
     undefined beep();
     undefined inspectInspector();

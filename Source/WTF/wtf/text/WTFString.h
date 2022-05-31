@@ -73,16 +73,10 @@ public:
     template<size_t inlineCapacity, typename OverflowHandler>
     explicit String(const Vector<UChar, inlineCapacity, OverflowHandler>&);
 
-    // Construct a string with UTF-16 data, from a null-terminated source.
-    WTF_EXPORT_PRIVATE String(const UChar*);
-
-    // Construct a string with latin1 data.
+    // Construct a string with Latin-1 data.
     WTF_EXPORT_PRIVATE String(const LChar* characters, unsigned length);
     WTF_EXPORT_PRIVATE String(const char* characters, unsigned length);
-
-    // Construct a string with latin1 data, from a null-terminated source.
-    WTF_EXPORT_PRIVATE String(const LChar* characters);
-    WTF_EXPORT_PRIVATE String(const char* characters);
+    ALWAYS_INLINE static String fromLatin1(const char* characters) { return String { characters }; }
 
     // Construct a string referencing an existing StringImpl.
     String(StringImpl&);
@@ -97,7 +91,7 @@ public:
     String(StaticStringImpl*);
 
     // Construct a string from a constant string literal.
-    WTF_EXPORT_PRIVATE String(ASCIILiteral);
+    String(ASCIILiteral);
 
     String(const String&) = default;
     String(String&&) = default;
@@ -156,6 +150,8 @@ public:
     WTF_EXPORT_PRIVATE static String numberToStringFixedWidth(float, unsigned decimalPlaces);
     WTF_EXPORT_PRIVATE static String numberToStringFixedWidth(double, unsigned decimalPlaces);
 
+    AtomString toExistingAtomString() const;
+
     // Find a single character or string, also with match function & latin1 forms.
     size_t find(UChar character, unsigned start = 0) const { return m_impl ? m_impl->find(character, start) : notFound; }
 
@@ -164,11 +160,13 @@ public:
     size_t findIgnoringASCIICase(StringView) const;
     size_t findIgnoringASCIICase(StringView, unsigned start) const;
 
+    template<typename CodeUnitMatchFunction, std::enable_if_t<std::is_invocable_r_v<bool, CodeUnitMatchFunction, UChar>>* = nullptr>
     size_t find(CodeUnitMatchFunction matchFunction, unsigned start = 0) const { return m_impl ? m_impl->find(matchFunction, start) : notFound; }
-    size_t find(const LChar* string, unsigned start = 0) const { return m_impl ? m_impl->find(string, start) : notFound; }
+    size_t find(ASCIILiteral literal, unsigned start = 0) const { return m_impl ? m_impl->find(literal, start) : notFound; }
 
     // Find the last instance of a single character or string.
     size_t reverseFind(UChar character, unsigned start = MaxLength) const { return m_impl ? m_impl->reverseFind(character, start) : notFound; }
+    size_t reverseFind(ASCIILiteral literal, unsigned start = MaxLength) const { return m_impl ? m_impl->reverseFind(literal, start) : notFound; }
     size_t reverseFind(StringView, unsigned start = MaxLength) const;
 
     WTF_EXPORT_PRIVATE Vector<UChar> charactersWithNullTermination() const;
@@ -177,8 +175,10 @@ public:
     WTF_EXPORT_PRIVATE UChar32 characterStartingAt(unsigned) const;
 
     bool contains(UChar character) const { return find(character) != notFound; }
-    bool contains(const LChar* string) const { return find(string) != notFound; }
+    bool contains(ASCIILiteral literal) const { return find(literal) != notFound; }
     bool contains(StringView) const;
+    template<typename CodeUnitMatchFunction, std::enable_if_t<std::is_invocable_r_v<bool, CodeUnitMatchFunction, UChar>>* = nullptr>
+    bool contains(CodeUnitMatchFunction matchFunction) const { return find(matchFunction, 0) != notFound; }
     bool containsIgnoringASCIICase(StringView) const;
     bool containsIgnoringASCIICase(StringView, unsigned start) const;
 
@@ -193,46 +193,29 @@ public:
     bool endsWith(char character) const { return endsWith(static_cast<UChar>(character)); }
     bool hasInfixEndingAt(StringView suffix, unsigned end) const;
 
-    WTF_EXPORT_PRIVATE void append(const String&);
-    WTF_EXPORT_PRIVATE void append(LChar);
-    void append(char character) { append(static_cast<LChar>(character)); };
-    WTF_EXPORT_PRIVATE void append(UChar);
-    WTF_EXPORT_PRIVATE void append(const LChar*, unsigned length);
-    WTF_EXPORT_PRIVATE void append(const UChar*, unsigned length);
-    WTF_EXPORT_PRIVATE void insert(const String&, unsigned position);
+    WTF_EXPORT_PRIVATE String WARN_UNUSED_RETURN substring(unsigned position, unsigned length = MaxLength) const;
+    WTF_EXPORT_PRIVATE String WARN_UNUSED_RETURN substringSharingImpl(unsigned position, unsigned length = MaxLength) const;
+    String WARN_UNUSED_RETURN left(unsigned length) const { return substring(0, length); }
+    String WARN_UNUSED_RETURN right(unsigned length) const { return substring(this->length() - length, length); }
 
-    String& replace(UChar target, UChar replacement);
-    String& replace(UChar target, StringView replacement);
-    String& replace(StringView target, StringView replacement);
-    String& replace(unsigned start, unsigned length, StringView replacement);
-    template<unsigned characterCount> String& replaceWithLiteral(UChar target, const char (&replacement)[characterCount]);
+    WTF_EXPORT_PRIVATE String WARN_UNUSED_RETURN convertToASCIILowercase() const;
+    WTF_EXPORT_PRIVATE String WARN_UNUSED_RETURN convertToASCIIUppercase() const;
+    WTF_EXPORT_PRIVATE String WARN_UNUSED_RETURN convertToLowercaseWithoutLocale() const;
+    WTF_EXPORT_PRIVATE String WARN_UNUSED_RETURN convertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned) const;
+    WTF_EXPORT_PRIVATE String WARN_UNUSED_RETURN convertToUppercaseWithoutLocale() const;
+    WTF_EXPORT_PRIVATE String WARN_UNUSED_RETURN convertToLowercaseWithLocale(const AtomString& localeIdentifier) const;
+    WTF_EXPORT_PRIVATE String WARN_UNUSED_RETURN convertToUppercaseWithLocale(const AtomString& localeIdentifier) const;
 
-    WTF_EXPORT_PRIVATE void truncate(unsigned length);
-    WTF_EXPORT_PRIVATE void remove(unsigned position, unsigned length = 1);
+    WTF_EXPORT_PRIVATE String WARN_UNUSED_RETURN stripWhiteSpace() const;
+    WTF_EXPORT_PRIVATE String WARN_UNUSED_RETURN simplifyWhiteSpace() const;
+    WTF_EXPORT_PRIVATE String WARN_UNUSED_RETURN simplifyWhiteSpace(CodeUnitMatchFunction) const;
 
-    WTF_EXPORT_PRIVATE String substring(unsigned position, unsigned length = MaxLength) const;
-    WTF_EXPORT_PRIVATE String substringSharingImpl(unsigned position, unsigned length = MaxLength) const;
-    String left(unsigned length) const { return substring(0, length); }
-    String right(unsigned length) const { return substring(this->length() - length, length); }
-
-    WTF_EXPORT_PRIVATE String convertToASCIILowercase() const;
-    WTF_EXPORT_PRIVATE String convertToASCIIUppercase() const;
-    WTF_EXPORT_PRIVATE String convertToLowercaseWithoutLocale() const;
-    WTF_EXPORT_PRIVATE String convertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned) const;
-    WTF_EXPORT_PRIVATE String convertToUppercaseWithoutLocale() const;
-    WTF_EXPORT_PRIVATE String convertToLowercaseWithLocale(const AtomString& localeIdentifier) const;
-    WTF_EXPORT_PRIVATE String convertToUppercaseWithLocale(const AtomString& localeIdentifier) const;
-
-    WTF_EXPORT_PRIVATE String stripWhiteSpace() const;
-    WTF_EXPORT_PRIVATE String simplifyWhiteSpace() const;
-    WTF_EXPORT_PRIVATE String simplifyWhiteSpace(CodeUnitMatchFunction) const;
-
-    WTF_EXPORT_PRIVATE String stripLeadingAndTrailingCharacters(CodeUnitMatchFunction) const;
-    template<typename Predicate> String removeCharacters(const Predicate&) const;
+    WTF_EXPORT_PRIVATE String WARN_UNUSED_RETURN stripLeadingAndTrailingCharacters(CodeUnitMatchFunction) const;
+    template<typename Predicate> String WARN_UNUSED_RETURN removeCharacters(const Predicate&) const;
 
     // Returns the string with case folded for case insensitive comparison.
     // Use convertToASCIILowercase instead if ASCII case insensitive comparison is desired.
-    WTF_EXPORT_PRIVATE String foldCase() const;
+    WTF_EXPORT_PRIVATE String WARN_UNUSED_RETURN foldCase() const;
 
     // Returns an uninitialized string. The characters needs to be written
     // into the buffer returned in data before the returned string is used.
@@ -242,18 +225,18 @@ public:
     using SplitFunctor = WTF::Function<void(StringView)>;
 
     WTF_EXPORT_PRIVATE void split(UChar separator, const SplitFunctor&) const;
-    WTF_EXPORT_PRIVATE Vector<String> split(UChar separator) const;
-    WTF_EXPORT_PRIVATE Vector<String> split(StringView separator) const;
+    WTF_EXPORT_PRIVATE Vector<String> WARN_UNUSED_RETURN split(UChar separator) const;
+    WTF_EXPORT_PRIVATE Vector<String> WARN_UNUSED_RETURN split(StringView separator) const;
 
     WTF_EXPORT_PRIVATE void splitAllowingEmptyEntries(UChar separator, const SplitFunctor&) const;
-    WTF_EXPORT_PRIVATE Vector<String> splitAllowingEmptyEntries(UChar separator) const;
-    WTF_EXPORT_PRIVATE Vector<String> splitAllowingEmptyEntries(StringView separator) const;
+    WTF_EXPORT_PRIVATE Vector<String> WARN_UNUSED_RETURN splitAllowingEmptyEntries(UChar separator) const;
+    WTF_EXPORT_PRIVATE Vector<String> WARN_UNUSED_RETURN splitAllowingEmptyEntries(StringView separator) const;
 
     WTF_EXPORT_PRIVATE double toDouble(bool* ok = nullptr) const;
     WTF_EXPORT_PRIVATE float toFloat(bool* ok = nullptr) const;
 
-    WTF_EXPORT_PRIVATE String isolatedCopy() const &;
-    WTF_EXPORT_PRIVATE String isolatedCopy() &&;
+    WTF_EXPORT_PRIVATE String WARN_UNUSED_RETURN isolatedCopy() const &;
+    WTF_EXPORT_PRIVATE String WARN_UNUSED_RETURN isolatedCopy() &&;
 
     WTF_EXPORT_PRIVATE bool isSafeToSendToAnotherThread() const;
 
@@ -288,7 +271,7 @@ public:
         : String(ucharFrom(characters), length) { }
 
     String(const wchar_t* characters)
-        : String(ucharFrom(characters)) { }
+        : String(characters, characters ? wcslen(characters) : 0) { }
 
     WTF_EXPORT_PRIVATE Vector<wchar_t> wideCharacters() const;
 #endif
@@ -339,11 +322,12 @@ public:
     static constexpr unsigned MaxLength = StringImpl::MaxLength;
 
 private:
-    template<typename CharacterType> void removeInternal(const CharacterType*, unsigned, unsigned);
-
     template<bool allowEmptyEntries> void splitInternal(UChar separator, const SplitFunctor&) const;
     template<bool allowEmptyEntries> Vector<String> splitInternal(UChar separator) const;
     template<bool allowEmptyEntries> Vector<String> splitInternal(StringView separator) const;
+
+    // This is intentionally private. Use fromLatin1() / fromUTF8() / String(ASCIILiteral) instead.
+    WTF_EXPORT_PRIVATE explicit String(const char* characters);
 
     RefPtr<StringImpl> m_impl;
 };
@@ -351,30 +335,28 @@ private:
 static_assert(sizeof(String) == sizeof(void*), "String should effectively be a pointer to a StringImpl, and efficient to pass by value");
 
 inline bool operator==(const String& a, const String& b) { return equal(a.impl(), b.impl()); }
-inline bool operator==(const String& a, const LChar* b) { return equal(a.impl(), b); }
 inline bool operator==(const String& a, const char* b) { return equal(a.impl(), reinterpret_cast<const LChar*>(b)); }
-inline bool operator==(const String& a, ASCIILiteral b) { return equal(a.impl(), reinterpret_cast<const LChar*>(b.characters())); }
+inline bool operator==(const String& a, ASCIILiteral b) { return equal(a.impl(), b); }
 inline bool operator==(const LChar* a, const String& b) { return equal(a, b.impl()); }
 inline bool operator==(const char* a, const String& b) { return equal(reinterpret_cast<const LChar*>(a), b.impl()); }
-inline bool operator==(ASCIILiteral a, const String& b) { return equal(reinterpret_cast<const LChar*>(a.characters()), b.impl()); }
+inline bool operator==(ASCIILiteral a, const String& b) { return equal(b.impl(), a); }
 template<size_t inlineCapacity> inline bool operator==(const Vector<char, inlineCapacity>& a, const String& b) { return equal(b.impl(), a.data(), a.size()); }
 template<size_t inlineCapacity> inline bool operator==(const String& a, const Vector<char, inlineCapacity>& b) { return b == a; }
 
 inline bool operator!=(const String& a, const String& b) { return !equal(a.impl(), b.impl()); }
-inline bool operator!=(const String& a, const LChar* b) { return !equal(a.impl(), b); }
 inline bool operator!=(const String& a, const char* b) { return !equal(a.impl(), reinterpret_cast<const LChar*>(b)); }
-inline bool operator!=(const String& a, ASCIILiteral b) { return !equal(a.impl(), reinterpret_cast<const LChar*>(b.characters())); }
+inline bool operator!=(const String& a, ASCIILiteral b) { return !equal(a.impl(), b); }
 inline bool operator!=(const LChar* a, const String& b) { return !equal(a, b.impl()); }
 inline bool operator!=(const char* a, const String& b) { return !equal(reinterpret_cast<const LChar*>(a), b.impl()); }
-inline bool operator!=(ASCIILiteral a, const String& b) { return !equal(reinterpret_cast<const LChar*>(a.characters()), b.impl()); }
+inline bool operator!=(ASCIILiteral a, const String& b) { return !equal(b.impl(), a); }
 template<size_t inlineCapacity> inline bool operator!=(const Vector<char, inlineCapacity>& a, const String& b) { return !(a == b); }
 template<size_t inlineCapacity> inline bool operator!=(const String& a, const Vector<char, inlineCapacity>& b) { return b != a; }
 
 bool equalIgnoringASCIICase(const String&, const String&);
-bool equalIgnoringASCIICase(const String&, const char*);
+bool equalIgnoringASCIICase(const String&, ASCIILiteral);
 
-template<unsigned length> bool equalLettersIgnoringASCIICase(const String&, const char (&lowercaseLetters)[length]);
-template<unsigned length> bool startsWithLettersIgnoringASCIICase(const String&, const char (&lowercaseLetters)[length]);
+bool equalLettersIgnoringASCIICase(const String&, ASCIILiteral);
+bool startsWithLettersIgnoringASCIICase(const String&, ASCIILiteral);
 
 inline bool equalIgnoringNullity(const String& a, const String& b) { return equalIgnoringNullity(a.impl(), b.impl()); }
 template<size_t inlineCapacity> inline bool equalIgnoringNullity(const Vector<UChar, inlineCapacity>& a, const String& b) { return equalIgnoringNullity(a, b.impl()); }
@@ -393,11 +375,21 @@ NSString * nsStringNilIfEmpty(const String&);
 WTF_EXPORT_PRIVATE int codePointCompare(const String&, const String&);
 bool codePointCompareLessThan(const String&, const String&);
 
-template<typename CharacterType> void appendNumber(Vector<CharacterType>&, unsigned char number);
-
 // Shared global empty and null string.
-WTF_EXPORT_PRIVATE const String& emptyString();
-WTF_EXPORT_PRIVATE const String& nullString();
+struct StaticString {
+    constexpr StaticString(StringImpl::StaticStringImpl* pointer)
+        : m_pointer(pointer)
+    {
+    }
+
+    StringImpl::StaticStringImpl* m_pointer;
+};
+static_assert(sizeof(String) == sizeof(StaticString), "String and StaticString must be the same size!");
+extern WTF_EXPORT_PRIVATE const StaticString nullStringData;
+extern WTF_EXPORT_PRIVATE const StaticString emptyStringData;
+
+inline const String& nullString() { return *reinterpret_cast<const String*>(&nullStringData); }
+inline const String& emptyString() { return *reinterpret_cast<const String*>(&emptyStringData); }
 
 template<typename> struct DefaultHash;
 template<> struct DefaultHash<String>;
@@ -418,8 +410,6 @@ WTF_EXPORT_PRIVATE RetainPtr<id> makeNSArrayElement(const String&);
 WTF_EXPORT_PRIVATE std::optional<String> makeVectorElement(const String*, id);
 
 #endif
-
-WTF_EXPORT_PRIVATE String replaceUnpairedSurrogatesWithReplacementCharacter(String&&);
 
 // Definitions of string operations
 
@@ -464,7 +454,7 @@ inline String::String(StaticStringImpl* string)
 }
 
 inline String::String(ASCIILiteral characters)
-    : m_impl(characters.isNull() ? nullptr : RefPtr<StringImpl> { StringImpl::createFromLiteral(characters) })
+    : m_impl(characters.isNull() ? nullptr : RefPtr<StringImpl> { StringImpl::create(characters) })
 {
 }
 
@@ -490,19 +480,21 @@ inline UChar String::characterAt(unsigned index) const
     return (*m_impl)[index];
 }
 
-inline String& String::replace(UChar target, UChar replacement)
+inline String WARN_UNUSED_RETURN makeStringByReplacingAll(const String& string, UChar target, UChar replacement)
 {
-    if (m_impl)
-        m_impl = m_impl->replace(target, replacement);
-    return *this;
+    if (auto impl = string.impl())
+        return String { impl->replace(target, replacement) };
+    return string;
 }
 
-template<unsigned characterCount> ALWAYS_INLINE String& String::replaceWithLiteral(UChar target, const char (&characters)[characterCount])
+ALWAYS_INLINE String WARN_UNUSED_RETURN makeStringByReplacingAll(const String& string, UChar target, ASCIILiteral literal)
 {
-    if (m_impl)
-        m_impl = m_impl->replace(target, characters, characterCount - 1);
-    return *this;
+    if (auto impl = string.impl())
+        return String { impl->replace(target, literal.characters(), literal.length()) };
+    return string;
 }
+
+WTF_EXPORT_PRIVATE String WARN_UNUSED_RETURN makeStringByRemoving(const String&, unsigned position, unsigned lengthToRemove);
 
 template<size_t inlineCapacity> inline String String::make8BitFrom16BitSource(const Vector<UChar, inlineCapacity>& buffer)
 {
@@ -547,29 +539,6 @@ inline bool codePointCompareLessThan(const String& a, const String& b)
     return codePointCompare(a.impl(), b.impl()) < 0;
 }
 
-template<typename CharacterType>
-inline void appendNumber(Vector<CharacterType>& vector, unsigned char number)
-{
-    int numberLength = number > 99 ? 3 : (number > 9 ? 2 : 1);
-    size_t vectorSize = vector.size();
-    vector.grow(vectorSize + numberLength);
-
-    switch (numberLength) {
-    case 3:
-        vector[vectorSize + 2] = number % 10 + '0';
-        number /= 10;
-        FALLTHROUGH;
-
-    case 2:
-        vector[vectorSize + 1] = number % 10 + '0';
-        number /= 10;
-        FALLTHROUGH;
-
-    case 1:
-        vector[vectorSize] = number % 10 + '0';
-    }
-}
-
 inline String String::fromUTF8(const Vector<LChar>& characters)
 {
     if (characters.isEmpty())
@@ -583,9 +552,9 @@ String String::removeCharacters(const Predicate& findMatch) const
     return m_impl ? m_impl->removeCharacters(findMatch) : String { };
 }
 
-template<unsigned length> inline bool equalLettersIgnoringASCIICase(const String& string, const char (&lowercaseLetters)[length])
+inline bool equalLettersIgnoringASCIICase(const String& string, ASCIILiteral literal)
 {
-    return equalLettersIgnoringASCIICase(string.impl(), lowercaseLetters);
+    return equalLettersIgnoringASCIICase(string.impl(), literal);
 }
 
 inline bool equalIgnoringASCIICase(const String& a, const String& b)
@@ -593,15 +562,33 @@ inline bool equalIgnoringASCIICase(const String& a, const String& b)
     return equalIgnoringASCIICase(a.impl(), b.impl());
 }
 
-inline bool equalIgnoringASCIICase(const String& a, const char* b)
+inline bool equalIgnoringASCIICase(const String& a, ASCIILiteral b)
 {
     return equalIgnoringASCIICase(a.impl(), b);
 }
 
-template<unsigned length> inline bool startsWithLettersIgnoringASCIICase(const String& string, const char (&lowercaseLetters)[length])
+inline bool startsWithLettersIgnoringASCIICase(const String& string, ASCIILiteral literal)
 {
-    return startsWithLettersIgnoringASCIICase(string.impl(), lowercaseLetters);
+    return startsWithLettersIgnoringASCIICase(string.impl(), literal);
 }
+
+struct HashTranslatorASCIILiteral {
+    static unsigned hash(ASCIILiteral literal)
+    {
+        return StringHasher::computeHashAndMaskTop8Bits(literal.characters(), literal.length());
+    }
+
+    static bool equal(const String& a, ASCIILiteral b)
+    {
+        return a == b;
+    }
+
+    static void translate(String& location, ASCIILiteral literal, unsigned hash)
+    {
+        location = literal;
+        location.impl()->setHash(hash);
+    }
+};
 
 inline namespace StringLiterals {
 
@@ -614,17 +601,18 @@ inline String operator"" _str(const char* characters, size_t)
 
 } // namespace WTF
 
+using WTF::HashTranslatorASCIILiteral;
 using WTF::KeepTrailingZeros;
 using WTF::String;
-using WTF::appendNumber;
 using WTF::charactersToDouble;
 using WTF::charactersToFloat;
 using WTF::emptyString;
+using WTF::makeStringByRemoving;
+using WTF::makeStringByReplacingAll;
 using WTF::nullString;
 using WTF::equal;
 using WTF::find;
 using WTF::isAllSpecialCharacters;
-using WTF::isSpaceOrNewline;
 using WTF::reverseFind;
 
 #include <wtf/text/AtomString.h>

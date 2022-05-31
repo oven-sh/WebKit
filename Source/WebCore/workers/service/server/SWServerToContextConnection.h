@@ -28,6 +28,8 @@
 #if ENABLE(SERVICE_WORKER)
 
 #include "ExceptionData.h"
+#include "NotificationEventType.h"
+#include "PageIdentifier.h"
 #include "RegistrableDomain.h"
 #include "ScriptExecutionContextIdentifier.h"
 #include "ServiceWorkerClientQueryOptions.h"
@@ -38,6 +40,7 @@
 
 namespace WebCore {
 
+struct NotificationData;
 class SWServer;
 struct ServiceWorkerClientData;
 struct ServiceWorkerContextData;
@@ -62,9 +65,10 @@ public:
     virtual void fireInstallEvent(ServiceWorkerIdentifier) = 0;
     virtual void fireActivateEvent(ServiceWorkerIdentifier) = 0;
     virtual void terminateWorker(ServiceWorkerIdentifier) = 0;
-    virtual void didSaveScriptsToDisk(ServiceWorkerIdentifier, const ScriptBuffer&, const HashMap<URL, ScriptBuffer>& importedScripts) = 0;
+    virtual void didSaveScriptsToDisk(ServiceWorkerIdentifier, const ScriptBuffer&, const MemoryCompactRobinHoodHashMap<URL, ScriptBuffer>& importedScripts) = 0;
     virtual void matchAllCompleted(uint64_t requestIdentifier, const Vector<ServiceWorkerClientData>&) = 0;
-    virtual void firePushEvent(ServiceWorkerIdentifier, const std::optional<Vector<uint8_t>>&, CompletionHandler<void(bool)>&& callback) = 0;
+    virtual void firePushEvent(ServiceWorkerIdentifier, const std::optional<Vector<uint8_t>>&, CompletionHandler<void(bool)>&&) = 0;
+    virtual void fireNotificationEvent(ServiceWorkerIdentifier, const NotificationData&, NotificationEventType, CompletionHandler<void(bool)>&&) = 0;
     virtual ProcessIdentifier webProcessIdentifier() const = 0;
 
     // Messages back from the SW host process
@@ -81,6 +85,9 @@ public:
     WEBCORE_EXPORT void didFailHeartBeatCheck(ServiceWorkerIdentifier);
     WEBCORE_EXPORT void setAsInspected(ServiceWorkerIdentifier, bool);
     WEBCORE_EXPORT void findClientByVisibleIdentifier(ServiceWorkerIdentifier, const String& clientIdentifier, CompletionHandler<void(std::optional<WebCore::ServiceWorkerClientData>&&)>&&);
+
+    using OpenWindowCallback = CompletionHandler<void(Expected<std::optional<ServiceWorkerClientData>, ExceptionData>&&)>;
+    virtual void openWindow(ServiceWorkerIdentifier, const URL&, OpenWindowCallback&&) = 0;
 
     const RegistrableDomain& registrableDomain() const { return m_registrableDomain; }
     std::optional<ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier() const { return m_serviceWorkerPageIdentifier; }

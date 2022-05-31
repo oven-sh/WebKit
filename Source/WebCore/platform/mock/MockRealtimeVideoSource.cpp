@@ -50,7 +50,7 @@
 namespace WebCore {
 
 #if !PLATFORM(MAC) && !PLATFORM(IOS_FAMILY) && !USE(GSTREAMER)
-CaptureSourceOrError MockRealtimeVideoSource::create(String&& deviceID, String&& name, String&& hashSalt, const MediaConstraints* constraints, PageIdentifier pageIdentifier)
+CaptureSourceOrError MockRealtimeVideoSource::create(String&& deviceID, AtomString&& name, String&& hashSalt, const MediaConstraints* constraints, PageIdentifier pageIdentifier)
 {
 #ifndef NDEBUG
     auto device = MockRealtimeMediaSourceCenter::mockDeviceWithPersistentID(deviceID);
@@ -69,15 +69,14 @@ CaptureSourceOrError MockRealtimeVideoSource::create(String&& deviceID, String&&
 
 static HashSet<MockRealtimeVideoSource*>& allMockRealtimeVideoSource()
 {
-    static NeverDestroyed<HashSet<MockRealtimeVideoSource*>> videoSources;
+    static MainThreadNeverDestroyed<HashSet<MockRealtimeVideoSource*>> videoSources;
     return videoSources;
 }
 
-MockRealtimeVideoSource::MockRealtimeVideoSource(String&& deviceID, String&& name, String&& hashSalt, PageIdentifier pageIdentifier)
+MockRealtimeVideoSource::MockRealtimeVideoSource(String&& deviceID, AtomString&& name, String&& hashSalt, PageIdentifier pageIdentifier)
     : RealtimeVideoCaptureSource(WTFMove(name), WTFMove(deviceID), WTFMove(hashSalt), pageIdentifier)
     , m_emitFrameTimer(RunLoop::current(), this, &MockRealtimeVideoSource::generateFrame)
 {
-    ASSERT(isMainThread());
     allMockRealtimeVideoSource().add(this);
 
     auto device = MockRealtimeMediaSourceCenter::mockDeviceWithPersistentID(persistentID());
@@ -104,7 +103,6 @@ MockRealtimeVideoSource::MockRealtimeVideoSource(String&& deviceID, String&& nam
 
 MockRealtimeVideoSource::~MockRealtimeVideoSource()
 {
-    ASSERT(isMainThread());
     allMockRealtimeVideoSource().remove(this);
 }
 
@@ -145,7 +143,6 @@ const RealtimeMediaSourceCapabilities& MockRealtimeVideoSource::capabilities()
             capabilities.addFacingMode(std::get<MockCameraProperties>(m_device.properties).facingMode);
             capabilities.setDeviceId(hashedId());
             updateCapabilities(capabilities);
-            capabilities.setDeviceId(hashedId());
         } else if (mockDisplay()) {
             capabilities.setWidth(CapabilityValueOrRange(72, std::get<MockDisplayProperties>(m_device.properties).defaultSize.width()));
             capabilities.setHeight(CapabilityValueOrRange(45, std::get<MockDisplayProperties>(m_device.properties).defaultSize.height()));
@@ -348,7 +345,7 @@ void MockRealtimeVideoSource::drawText(GraphicsContext& context)
     unsigned hours = minutes / 60 % 60;
 
     FontCascadeDescription fontDescription;
-    fontDescription.setOneFamily("Courier");
+    fontDescription.setOneFamily("Courier"_s);
     fontDescription.setWeight(FontSelectionValue(500));
 
     fontDescription.setSpecifiedSize(m_baseFontSize);
@@ -415,10 +412,10 @@ void MockRealtimeVideoSource::drawText(GraphicsContext& context)
         }
         string = makeString("Camera: ", camera);
         statsLocation.move(0, m_statsFontSize);
-        context.drawText(statsFont, TextRun((StringView(string))), statsLocation);
+        context.drawText(statsFont, TextRun(string), statsLocation);
     } else if (!name().isNull()) {
         statsLocation.move(0, m_statsFontSize);
-        context.drawText(statsFont, TextRun { name() }, statsLocation);
+        context.drawText(statsFont, TextRun { name().string() }, statsLocation);
     }
 
     FloatPoint bipBopLocation(captureSize.width() * .6, captureSize.height() * .6);
@@ -473,7 +470,7 @@ ImageBuffer* MockRealtimeVideoSource::imageBuffer() const
     if (m_imageBuffer)
         return m_imageBuffer.get();
 
-    m_imageBuffer = ImageBuffer::create(captureSize(), RenderingMode::Unaccelerated, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8);
+    m_imageBuffer = ImageBuffer::create(captureSize(), RenderingPurpose::Unspecified, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8);
     if (!m_imageBuffer)
         return nullptr;
 

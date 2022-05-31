@@ -33,6 +33,9 @@ imported/w3c/web-platform-tests/html/browsers/browsing-the-web/history-traversal
 imported/w3c/web-platform-tests/webrtc/RTCPeerConnection-setLocalDescription-offer.html [ Failure ]
 
 webkit.org/b/235765 webrtc/canvas-to-peer-connection.html [ Failure ]
+webkit.org/b/235765 webrtc/canvas-to-peer-connection-2d.html [ Failure ]
+webkit.org/b/235765 webrtc/canvas-to-peer-connection-vp8.html [ Failure ]
+webkit.org/b/235765 webrtc/canvas-to-peer-connection-vp8-2d.html [ Failure ]
 
 # Simulator doesn't support WebAssembly.
 imported/w3c/web-platform-tests/wasm/wasm_stream_instantiate_test.html  [ Skip ]
@@ -64,14 +67,6 @@ imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.s
 imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.toDataURL.jpeg.p3.canvas.html [ Failure ]
 imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.toDataURL.with.putImageData.html [ Failure ]
 storage/indexeddb/structured-clone-image-data-display-p3.html [ Failure ]
-
-# These fail due to color space issues in the specific iPad simulator used <rdar://84527732>
-webkit.org/b/232090 fast/canvas/canvas-createPattern-video-loading.html [ Failure ]
-webkit.org/b/232090 imported/w3c/web-platform-tests/html/canvas/element/manual/imagebitmap/canvas-createImageBitmap-video-resize.html [ Failure ]
-webkit.org/b/292090 fast/canvas/canvas-createPattern-video-modify.html [ Failure ]
-webkit.org/b/292090 imported/w3c/web-platform-tests/html/canvas/element/manual/imagebitmap/createImageBitmap-drawImage.html [ Failure ]
-webkit.org/b/292090 imported/w3c/web-platform-tests/html/canvas/element/manual/imagebitmap/createImageBitmap-flipY.html [ Failure ]
-webkit.org/b/292090 media/video-canvas-createPattern.html [ Failure ]
 
 # Imported css-text test suite from WPT
 webkit.org/b/183258 imported/w3c/web-platform-tests/css/css-text/white-space/textarea-pre-wrap-001.html [ ImageOnlyFailure ]
@@ -134,3 +129,5 @@ model-element/model-element-ready.html [ Skip ]
 [ arm64 ] webaudio/Analyser/realtimeanalyser-freq-data.html [ Failure ]
 [ arm64 ] webaudio/OfflineAudioContext-bad-buffer-crash.html [ Failure ]
 [ arm64 ] webaudio/OfflineAudioContext/bad-buffer-length.html [ Failure ]
+
+webkit.org/b/239990 css3/calc/transitions-dependent.html [ Pass Failure ]

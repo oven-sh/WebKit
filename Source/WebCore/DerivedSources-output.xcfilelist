@@ -8,7 +8,8 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/CSSStyleDeclaration+PropertyNames.i
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/CSSValueKeywords.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/CSSValueKeywords.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/ColorData.cpp
-$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/CommandLineAPIModuleSource.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/CommandLineAPIModuleSourceBuiltins.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/CommandLineAPIModuleSourceBuiltins.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/CountQueuingStrategyBuiltins.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/CountQueuingStrategyBuiltins.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/DOMClientIsoSubspaces.h
@@ -299,6 +300,8 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSColorValue.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSColorValue.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSConditionRule.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSConditionRule.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSContainerRule.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSContainerRule.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSCounterStyleRule.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSCounterStyleRule.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSFontFaceRule.cpp
@@ -771,10 +774,14 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSEXTFragDepth.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSEXTFragDepth.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSEXTShaderTextureLOD.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSEXTShaderTextureLOD.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSEXTTextureCompressionBPTC.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSEXTTextureCompressionBPTC.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSEXTTextureCompressionRGTC.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSEXTTextureCompressionRGTC.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSEXTTextureFilterAnisotropic.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSEXTTextureFilterAnisotropic.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSEXTTextureNorm16.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSEXTTextureNorm16.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSEXTsRGB.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSEXTsRGB.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSEcKeyParams.cpp
@@ -787,6 +794,8 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSEffectTiming.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSEffectTiming.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSElement+CSSOMView.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSElement+CSSOMView.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSElement+ComputedStyleMap.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSElement+ComputedStyleMap.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSElement+DOMParsing.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSElement+DOMParsing.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSElement+Fullscreen.cpp
@@ -831,6 +840,8 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSFakeXRButtonStateInit.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSFakeXRButtonStateInit.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSFakeXRInputSourceInit.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSFakeXRInputSourceInit.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSFakeXRJointStateInit.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSFakeXRJointStateInit.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSFakeXRRigidTransformInit.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSFakeXRRigidTransformInit.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSFakeXRViewInit.cpp

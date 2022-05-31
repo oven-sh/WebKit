@@ -170,7 +170,10 @@ public:
         typename Adaptor::Type value = toNativeFromValue<Adaptor>(globalObject, jsValue);
         RETURN_IF_EXCEPTION(scope, false);
 
-        if (isDetached() || i >= m_length)
+        if (isDetached())
+            return true;
+
+        if (i >= m_length)
             return false;
 
         setIndexQuicklyToNativeValue(i, value);
@@ -381,9 +384,9 @@ private:
 };
 
 template<typename Adaptor>
-inline RefPtr<typename Adaptor::ViewType> toPossiblySharedNativeTypedView(VM& vm, JSValue value)
+inline RefPtr<typename Adaptor::ViewType> toPossiblySharedNativeTypedView(VM&, JSValue value)
 {
-    typename Adaptor::JSViewType* wrapper = jsDynamicCast<typename Adaptor::JSViewType*>(vm, value);
+    typename Adaptor::JSViewType* wrapper = jsDynamicCast<typename Adaptor::JSViewType*>(value);
     if (!wrapper)
         return nullptr;
     return wrapper->possiblySharedTypedImpl();

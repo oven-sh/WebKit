@@ -531,7 +531,7 @@ static MemoryCompactLookupOnlyRobinHoodHashSet<AtomString> createSVGLayerAwareEl
     // List of all SVG elements whose renderers support the layer aware layout / painting / hit-testing mode ('LBSE-mode').
     using namespace SVGNames;
     MemoryCompactLookupOnlyRobinHoodHashSet<AtomString> set;
-    for (auto& tag : { gTag.get(), rectTag.get() })
+    for (auto& tag : { circleTag.get(), ellipseTag.get(), gTag.get(), rectTag.get(), textTag.get() })
         set.add(tag.localName());
     return set;
 }
@@ -591,7 +591,7 @@ void SVGElement::synchronizeAttribute(const QualifiedName& name)
 {
     // If the value of the property has changed, serialize the new value to the attribute.
     if (auto value = propertyRegistry().synchronize(name))
-        setSynchronizedLazyAttribute(name, *value);
+        setSynchronizedLazyAttribute(name, AtomString { *value });
 }
     
 void SVGElement::synchronizeAllAttributes()
@@ -600,7 +600,7 @@ void SVGElement::synchronizeAllAttributes()
     // the properties which have changed but not committed yet.
     auto map = propertyRegistry().synchronizeAllAttributes();
     for (const auto& entry : map)
-        setSynchronizedLazyAttribute(entry.key, entry.value);
+        setSynchronizedLazyAttribute(entry.key, AtomString { entry.value });
 }
 
 void SVGElement::commitPropertyChange(SVGProperty* property)
@@ -624,7 +624,7 @@ void SVGElement::commitPropertyChange(SVGAnimatedProperty& animatedProperty)
     if (!propertyRegistry().isAnimatedStylePropertyAttribute(attributeName))
         propertyRegistry().setAnimatedPropertyDirty(attributeName, animatedProperty);
     else
-        setSynchronizedLazyAttribute(attributeName, animatedProperty.baseValAsString());
+        setSynchronizedLazyAttribute(attributeName, AtomString { animatedProperty.baseValAsString() });
 
     setAnimatedSVGAttributesAreDirty();
     svgAttributeChanged(attributeName);
@@ -883,20 +883,9 @@ void SVGElement::collectPresentationalHintsForAttribute(const QualifiedName& nam
         addPropertyToPresentationalHintStyle(style, propertyID, value);
 }
 
-void SVGElement::setSVGResourcesInAncestorChainAreDirty()
+void SVGElement::updateSVGRendererForElementChange()
 {
-    ensureUniqueElementData().setSVGResourcesInAncestorChainAreDirty(true);
-    invalidateStyle();
-}
-
-void SVGElement::invalidateSVGResourcesInAncestorChainIfNeeded()
-{
-    if (!elementData() || !elementData()->svgResourcesInAncestorChainAreDirty())
-        return;
-
-    if (auto renderer = this->renderer())
-        RenderSVGResource::markForLayoutAndParentResourceInvalidation(*renderer);
-    elementData()->setSVGResourcesInAncestorChainAreDirty(false);
+    document().updateSVGRenderer(*this);
 }
 
 void SVGElement::svgAttributeChanged(const QualifiedName& attrName)
@@ -932,7 +921,7 @@ Node::InsertedIntoAncestorResult SVGElement::insertedIntoAncestor(InsertionType 
 
     if (needsPendingResourceHandling() && insertionType.connectedToDocument && !isInShadowTree()) {
         SVGDocumentExtensions& extensions = document().accessSVGExtensions();
-        String resourceId = getIdAttribute();
+        auto& resourceId = getIdAttribute();
         if (extensions.isIdOfPendingResource(resourceId))
             return InsertedIntoAncestorResult::NeedsPostInsertionCallback;
     }
@@ -953,7 +942,7 @@ void SVGElement::buildPendingResourcesIfNeeded()
         return;
 
     SVGDocumentExtensions& extensions = document().accessSVGExtensions();
-    String resourceId = getIdAttribute();
+    auto resourceId = getIdAttribute();
     if (!extensions.isIdOfPendingResource(resourceId))
         return;
 

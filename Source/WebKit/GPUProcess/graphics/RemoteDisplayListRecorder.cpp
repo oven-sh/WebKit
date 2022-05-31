@@ -68,6 +68,11 @@ void RemoteDisplayListRecorder::stopListeningForIPC()
         renderingBackend->streamConnection().stopReceivingMessages(Messages::RemoteDisplayListRecorder::messageReceiverName(), m_imageBufferIdentifier.object().toUInt64());
 }
 
+void RemoteDisplayListRecorder::clearImageBufferReference()
+{
+    m_imageBuffer.clear();
+}
+
 void RemoteDisplayListRecorder::save()
 {
     handleItem(DisplayList::Save());
@@ -297,7 +302,7 @@ void RemoteDisplayListRecorder::drawSystemImage(SystemImage& systemImage, const 
             ASSERT_NOT_REACHED();
             return;
         }
-        badge.setImage(BitmapImage::create(WTFMove(nativeImage)));
+        badge.setImage(BitmapImage::create(nativeImage.releaseNonNull()));
     }
 #endif
     handleItem(DisplayList::DrawSystemImage(systemImage, destinationRect));

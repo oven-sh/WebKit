@@ -29,18 +29,60 @@
 
 #include "CSSNumericBaseType.h"
 #include <optional>
+#include <wtf/Markable.h>
+#include <wtf/text/StringConcatenateNumbers.h>
 
 namespace WebCore {
 
-struct CSSNumericType {
-    long length { 0 };
-    long angle { 0 };
-    long time { 0 };
-    long frequency { 0 };
-    long resolution { 0 };
-    long flex { 0 };
-    long percent { 0 };
-    std::optional<CSSNumericBaseType> percentHint;
+class CSSNumericValue;
+
+// https://drafts.css-houdini.org/css-typed-om/#dom-cssnumericvalue-type
+class CSSNumericType {
+public:
+    using BaseTypeStorage = Markable<int, IntegralMarkableTraits<int, std::numeric_limits<int>::min()>>;
+    BaseTypeStorage length;
+    BaseTypeStorage angle;
+    BaseTypeStorage time;
+    BaseTypeStorage frequency;
+    BaseTypeStorage resolution;
+    BaseTypeStorage flex;
+    BaseTypeStorage percent;
+    Markable<CSSNumericBaseType, EnumMarkableTraits<CSSNumericBaseType>> percentHint;
+
+    bool operator==(const CSSNumericType& other) const;
+    static std::optional<CSSNumericType> addTypes(const Vector<Ref<CSSNumericValue>>&);
+    static std::optional<CSSNumericType> multiplyTypes(const Vector<Ref<CSSNumericValue>>&);
+    BaseTypeStorage& valueForType(CSSNumericBaseType);
+    const BaseTypeStorage& valueForType(CSSNumericBaseType type) const { return const_cast<CSSNumericType*>(this)->valueForType(type); }
+    void applyPercentHint(CSSNumericBaseType);
+    size_t nonZeroEntryCount() const;
+
+    template<CSSNumericBaseType type>
+    bool matches() const
+    {
+        // https://drafts.css-houdini.org/css-typed-om/#cssnumericvalue-match
+        return (type == CSSNumericBaseType::Percent || !percentHint)
+            && nonZeroEntryCount() == 1
+            && valueForType(type)
+            && *valueForType(type);
+    }
+
+    bool matchesNumber() const
+    {
+        // https://drafts.css-houdini.org/css-typed-om/#cssnumericvalue-match
+        return !nonZeroEntryCount() && !percentHint;
+    }
+
+    template<CSSNumericBaseType type>
+    bool matchesTypeOrPercentage() const
+    {
+        return matches<type>() || matches<CSSNumericBaseType::Percent>();
+    }
+
+    String debugString() const;
+private:
+    static std::optional<CSSNumericType> addTypes(CSSNumericType, CSSNumericType);
+    static std::optional<CSSNumericType> multiplyTypes(const CSSNumericType&, const CSSNumericType&);
 };
 
 } // namespace WebCore

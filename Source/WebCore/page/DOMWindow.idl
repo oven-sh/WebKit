@@ -49,7 +49,7 @@
     [DoNotCheckSecurity, LegacyUnforgeable, CustomGetter] readonly attribute WindowProxy window;
     [Replaceable, DoNotCheckSecurityOnGetter, CustomGetter] readonly attribute WindowProxy self;
     [LegacyUnforgeable] readonly attribute Document document;
-    attribute DOMString name;
+    attribute [AtomString] DOMString name;
     [DoNotCheckSecurity, PutForwards=href, LegacyUnforgeable] readonly attribute Location location;
     readonly attribute History history;
     [ImplementedAs=ensureCustomElementRegistry] readonly attribute CustomElementRegistry customElements;
@@ -73,12 +73,12 @@
     [DoNotCheckSecurityOnGetter, CustomSetter] attribute WindowProxy? opener;
     [Replaceable, DoNotCheckSecurityOnGetter] readonly attribute WindowProxy? parent;
     [CheckSecurityForNode] readonly attribute Element? frameElement;
-    [CallWith=ActiveWindow&FirstWindow] WindowProxy? open(optional USVString url = "", optional DOMString target = "_blank", optional [LegacyNullToEmptyString] DOMString features = "");
+    [CallWith=ActiveWindow&FirstWindow] WindowProxy? open(optional USVString url = "", optional [AtomString] DOMString target = "_blank", optional [LegacyNullToEmptyString] DOMString features = "");
 
     // the user agent
     readonly attribute Navigator navigator;
     // FIXME: This is specified to be [SecureContext]
-    readonly attribute DOMApplicationCache applicationCache;
+    [EnabledBySetting=OfflineWebApplicationCacheEnabled] readonly attribute DOMApplicationCache applicationCache;
 
     // user prompts
     undefined alert();

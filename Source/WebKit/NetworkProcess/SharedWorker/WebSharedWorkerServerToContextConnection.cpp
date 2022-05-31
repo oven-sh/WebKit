@@ -32,9 +32,11 @@
 #include "NetworkProcessProxyMessages.h"
 #include "RemoteWorkerType.h"
 #include "WebCoreArgumentCoders.h"
+#include "WebSWServerConnection.h"
 #include "WebSharedWorker.h"
 #include "WebSharedWorkerContextManagerConnectionMessages.h"
 #include "WebSharedWorkerServer.h"
+#include <WebCore/ScriptExecutionContextIdentifier.h>
 #include <wtf/MemoryPressureHandler.h>
 
 namespace WebKit {
@@ -99,10 +101,37 @@ void WebSharedWorkerServerToContextConnection::launchSharedWorker(WebSharedWorke
 {
     CONTEXT_CONNECTION_RELEASE_LOG("launchSharedWorker: sharedWorkerIdentifier=%" PRIu64, sharedWorker.identifier().toUInt64());
     sharedWorker.markAsRunning();
-    send(Messages::WebSharedWorkerContextManagerConnection::LaunchSharedWorker { sharedWorker.origin(), sharedWorker.identifier(), sharedWorker.workerOptions(), sharedWorker.fetchResult() });
+    auto initializationData = sharedWorker.initializationData();
+    if (auto contextIdentifier = initializationData.clientIdentifier) {
+        initializationData.clientIdentifier = WebCore::ScriptExecutionContextIdentifier { contextIdentifier->object(), webProcessIdentifier() };
+#if ENABLE(SERVICE_WORKER)
+        if (auto* serviceWorkerOldConnection = m_connection.networkProcess().webProcessConnection(contextIdentifier->processIdentifier())) {
+            if (auto* swOldConnection = serviceWorkerOldConnection->swConnection()) {
+                if (auto clientData = swOldConnection->gatherClientData(*contextIdentifier)) {
+                    swOldConnection->unregisterServiceWorkerClient(*contextIdentifier);
+                    if (auto* swNewConnection = m_connection.swConnection()) {
+                        clientData->serviceWorkerClientData.identifier = *initializationData.clientIdentifier;
+                        swNewConnection->registerServiceWorkerClient(WTFMove(clientData->clientOrigin), WTFMove(clientData->serviceWorkerClientData), clientData->controllingServiceWorkerRegistrationIdentifier, WTFMove(clientData->userAgent));
+                    }
+                }
+            }
+        }
+#endif
+    }
+    send(Messages::WebSharedWorkerContextManagerConnection::LaunchSharedWorker { sharedWorker.origin(), sharedWorker.identifier(), sharedWorker.workerOptions(), sharedWorker.fetchResult(), initializationData });
     sharedWorker.forEachSharedWorkerObject([&](auto, auto& port) {
         postConnectEvent(sharedWorker, port);
     });
+}
+
+void WebSharedWorkerServerToContextConnection::suspendSharedWorker(WebCore::SharedWorkerIdentifier identifier)
+{
+    send(Messages::WebSharedWorkerContextManagerConnection::SuspendSharedWorker { identifier });
+}
+
+void WebSharedWorkerServerToContextConnection::resumeSharedWorker(WebCore::SharedWorkerIdentifier identifier)
+{
+    send(Messages::WebSharedWorkerContextManagerConnection::ResumeSharedWorker { identifier });
 }
 
 void WebSharedWorkerServerToContextConnection::postConnectEvent(const WebSharedWorker& sharedWorker, const WebCore::TransferredMessagePort& port)

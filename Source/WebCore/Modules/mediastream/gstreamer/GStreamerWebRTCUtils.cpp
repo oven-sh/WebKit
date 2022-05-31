@@ -85,7 +85,7 @@ RefPtr<RTCError> toRTCError(GError* rtcError)
     auto detail = toRTCErrorDetailType(static_cast<GstWebRTCError>(rtcError->code));
     if (!detail)
         return nullptr;
-    return RTCError::create(*detail, rtcError->message);
+    return RTCError::create(*detail, String::fromUTF8(rtcError->message));
 }
 
 static inline double toWebRTCBitRatePriority(RTCPriorityType priority)
@@ -156,7 +156,7 @@ static inline RTCRtpEncodingParameters toRTCEncodingParameters(const GstStructur
     if (gst_structure_get_uint64(rtcParameters, "max-framerate", &maxFramerate))
         parameters.maxFramerate = maxFramerate;
 
-    parameters.rid = gst_structure_get_string(rtcParameters, "rid");
+    parameters.rid = String::fromLatin1(gst_structure_get_string(rtcParameters, "rid"));
 
     double scaleResolutionDownBy;
     if (gst_structure_get_double(rtcParameters, "scale-resolution-down-by", &scaleResolutionDownBy))
@@ -203,7 +203,7 @@ std::optional<RTCIceCandidate::Fields> parseIceCandidateSDP(const String& sdp)
 {
     ensureDebugCategoryInitialized();
     GST_DEBUG("Parsing ICE Candidate: %s", sdp.utf8().data());
-    if (!sdp.startsWith("candidate:"))
+    if (!sdp.startsWith("candidate:"_s))
         return { };
 
     String foundation;

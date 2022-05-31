@@ -360,7 +360,7 @@ LayoutUnit LegacyRootInlineBox::lineSnapAdjustment(LayoutUnit delta) const
     // FIXME: Need to handle crazy line-box-contain values that cause the root line box to not be considered. I assume
     // the grid should honor line-box-contain.
     LayoutUnit gridLineHeight = lineGridBox->lineBoxBottom() - lineGridBox->lineBoxTop();
-    if (!gridLineHeight)
+    if (!roundToInt(gridLineHeight))
         return 0;
 
     LayoutUnit lineGridFontAscent = lineGrid->style().metricsOfPrimaryFont().ascent(baselineType());
@@ -798,8 +798,6 @@ LayoutUnit LegacyRootInlineBox::verticalPositionForBox(LegacyInlineBox* box, Ver
 
     // This method determines the vertical position for inline elements.
     bool firstLine = isFirstLine();
-    if (firstLine && !blockFlow().view().usesFirstLineRules())
-        firstLine = false;
 
     // Check the cache.
     bool isRenderInline = renderer->isRenderInline();

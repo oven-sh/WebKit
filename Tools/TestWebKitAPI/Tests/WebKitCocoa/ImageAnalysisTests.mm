@@ -30,14 +30,18 @@
 #import "ImageAnalysisTestingUtilities.h"
 #import "InstanceMethodSwizzler.h"
 #import "PlatformUtilities.h"
+#import "Test.h"
 #import "TestInputDelegate.h"
 #import "TestUIMenuBuilder.h"
 #import "TestWKWebView.h"
 #import "UIKitSPI.h"
 #import "WKWebViewConfigurationExtras.h"
+#import <WebCore/Color.h>
 #import <WebCore/LocalizedStrings.h>
+#import <WebKit/WKPreferencesPrivate.h>
 #import <WebKit/WKWebViewPrivate.h>
 #import <WebKit/WKWebViewPrivateForTesting.h>
+#import <WebKit/_WKInternalDebugFeature.h>
 #import <pal/cocoa/VisionKitCoreSoftLink.h>
 #import <pal/spi/cocoa/VisionKitCoreSPI.h>
 
@@ -100,6 +104,45 @@ static CGPoint swizzledLocationInView(id, SEL, UIView *)
 
 namespace TestWebKitAPI {
 
+// FIXME: We can unify most of this helper class with the logic in `TestPDFPage::colorAtPoint`, and deploy this
+// helper class in several other tests that read pixel data from CGImages.
+class CGImagePixelReader {
+    WTF_MAKE_FAST_ALLOCATED; WTF_MAKE_NONCOPYABLE(CGImagePixelReader);
+public:
+    CGImagePixelReader(CGImageRef image)
+        : m_width(CGImageGetWidth(image))
+        , m_height(CGImageGetHeight(image))
+    {
+        auto colorSpace = adoptCF(CGColorSpaceCreateWithName(kCGColorSpaceSRGB));
+        auto bytesPerPixel = 4;
+        auto bytesPerRow = bytesPerPixel * CGImageGetWidth(image);
+        auto bitsPerComponent = 8;
+        auto bitmapInfo = kCGImageAlphaPremultipliedLast | kCGImageByteOrder32Big;
+        m_context = adoptCF(CGBitmapContextCreateWithData(nullptr, m_width, m_height, bitsPerComponent, bytesPerRow, colorSpace.get(), bitmapInfo, nullptr, nullptr));
+        CGContextDrawImage(m_context.get(), CGRectMake(0, 0, m_width, m_height), image);
+    }
+
+    bool isTransparentBlack(unsigned x, unsigned y) const
+    {
+        return at(x, y) == WebCore::Color::transparentBlack;
+    }
+
+    WebCore::Color at(unsigned x, unsigned y) const
+    {
+        auto* data = reinterpret_cast<uint8_t*>(CGBitmapContextGetData(m_context.get()));
+        auto offset = 4 * (width() * y + x);
+        return WebCore::makeFromComponentsClampingExceptAlpha<WebCore::SRGBA<uint8_t>>(data[offset], data[offset + 1], data[offset + 2], data[offset + 3]);
+    }
+
+    unsigned width() const { return m_width; }
+    unsigned height() const { return m_height; }
+
+private:
+    unsigned m_width { 0 };
+    unsigned m_height { 0 };
+    RetainPtr<CGContextRef> m_context;
+};
+
 static Vector<RetainPtr<VKImageAnalyzerRequest>>& processedRequests()
 {
     static NeverDestroyed requests = Vector<RetainPtr<VKImageAnalyzerRequest>> { };
@@ -114,7 +157,18 @@ static RetainPtr<TestWKWebView> createWebViewWithTextRecognitionEnhancements()
         if ([key isEqualToString:@"TextRecognitionEnhancementsEnabled"] || [key isEqualToString:@"ImageAnalysisQueueEnabled"] || [key isEqualToString:@"ImageAnalysisMarkupEnabled"])
             [[configuration preferences] _setEnabled:YES forInternalDebugFeature:feature];
     }
+    [configuration _setAttachmentElementEnabled:YES];
+#if ENABLE(SERVICE_CONTROLS)
+    [configuration _setImageControlsEnabled:YES];
+#endif
     return adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 300, 300) configuration:configuration.get()]);
+}
+
+static void processRequestWithError(id, SEL, VKImageAnalyzerRequest *request, void (^)(double progress), void (^completion)(VKImageAnalysis *analysis, NSError *error))
+{
+    gDidProcessRequestCount++;
+    processedRequests().append({ request });
+    completion(nil, [NSError errorWithDomain:NSCocoaErrorDomain code:1 userInfo:nil]);
 }
 
 static void processRequestWithResults(id, SEL, VKImageAnalyzerRequest *request, void (^)(double progress), void (^completion)(VKImageAnalysis *, NSError *))
@@ -139,13 +193,6 @@ std::pair<std::unique_ptr<InstanceMethodSwizzler>, std::unique_ptr<InstanceMetho
 }
 
 #if PLATFORM(IOS_FAMILY)
-
-static void processRequestWithError(id, SEL, VKImageAnalyzerRequest *request, void (^)(double progress), void (^completion)(VKImageAnalysis *analysis, NSError *error))
-{
-    gDidProcessRequestCount++;
-    processedRequests().append({ request });
-    completion(nil, [NSError errorWithDomain:NSCocoaErrorDomain code:1 userInfo:nil]);
-}
 
 TEST(ImageAnalysisTests, DoNotAnalyzeImagesInEditableContent)
 {
@@ -199,7 +246,7 @@ TEST(ImageAnalysisTests, StartImageAnalysisWithoutIdentifier)
 
     auto webView = createWebViewWithTextRecognitionEnhancements();
     [webView synchronouslyLoadTestPageNamed:@"multiple-images"];
-    [webView _startImageAnalysis:nil];
+    [webView _startImageAnalysis:nil target:nil];
     [webView waitForImageAnalysisRequests:5];
 
     NSArray<NSString *> *overlaysAsText = [webView objectByEvaluatingJavaScript:@"imageOverlaysAsText()"];
@@ -208,13 +255,43 @@ TEST(ImageAnalysisTests, StartImageAnalysisWithoutIdentifier)
         EXPECT_WK_STREQ(overlayText, @"Foo bar");
 }
 
+TEST(ImageAnalysisTests, AnalyzeImagesInSubframes)
+{
+    auto requestSwizzler = makeImageAnalysisRequestSwizzler(processRequestWithResults);
+
+    auto webView = createWebViewWithTextRecognitionEnhancements();
+    [webView synchronouslyLoadTestPageNamed:@"multiple-images"];
+    __block bool doneInsertingFrame = false;
+    [webView callAsyncJavaScript:@"appendAndLoadSubframe(source)" arguments:@{ @"source" : @"multiple-images.html" } inFrame:nil inContentWorld:WKContentWorld.pageWorld completionHandler:^(id, NSError *error) {
+        EXPECT_NULL(error);
+        doneInsertingFrame = true;
+    }];
+    Util::run(&doneInsertingFrame);
+
+    [webView _startImageAnalysis:nil target:nil];
+    [webView waitForImageAnalysisRequests:10];
+}
+
+TEST(ImageAnalysisTests, AnalyzeImageAfterChangingSource)
+{
+    auto requestSwizzler = makeImageAnalysisRequestSwizzler(processRequestWithResults);
+
+    auto webView = createWebViewWithTextRecognitionEnhancements();
+    [webView synchronouslyLoadTestPageNamed:@"image"];
+    [webView _startImageAnalysis:nil target:nil];
+    [webView waitForImageAnalysisRequests:1];
+
+    [webView objectByEvaluatingJavaScript:@"document.querySelector('img').src = 'icon.png'"];
+    [webView waitForImageAnalysisRequests:2];
+}
+
 TEST(ImageAnalysisTests, AnalyzeDynamicallyLoadedImages)
 {
     auto requestSwizzler = makeImageAnalysisRequestSwizzler(processRequestWithResults);
 
     auto webView = createWebViewWithTextRecognitionEnhancements();
     [webView synchronouslyLoadTestPageNamed:@"multiple-images"];
-    [webView _startImageAnalysis:nil];
+    [webView _startImageAnalysis:nil target:nil];
     [webView waitForImageAnalysisRequests:5];
 
     [webView objectByEvaluatingJavaScript:@"appendImage('apple.gif')"];
@@ -236,7 +313,7 @@ TEST(ImageAnalysisTests, ResetImageAnalysisAfterNavigation)
 
     auto webView = createWebViewWithTextRecognitionEnhancements();
     [webView synchronouslyLoadTestPageNamed:@"multiple-images"];
-    [webView _startImageAnalysis:nil];
+    [webView _startImageAnalysis:nil target:nil];
     [webView waitForImageAnalysisRequests:5];
 
     [webView synchronouslyLoadTestPageNamed:@"simple"];
@@ -252,7 +329,7 @@ TEST(ImageAnalysisTests, ImageAnalysisPrioritizesVisibleImages)
     auto requestSwizzler = makeImageAnalysisRequestSwizzler(processRequestWithResults);
     auto webView = createWebViewWithTextRecognitionEnhancements();
     [webView synchronouslyLoadTestPageNamed:@"offscreen-image"];
-    [webView _startImageAnalysis:nil];
+    [webView _startImageAnalysis:nil target:nil];
     [webView waitForImageAnalysisRequests:2];
 
     auto firstRequestedImage = [processedRequests().first() image];
@@ -263,10 +340,90 @@ TEST(ImageAnalysisTests, ImageAnalysisPrioritizesVisibleImages)
     EXPECT_EQ(450U, CGImageGetHeight(lastRequestedImage));
 }
 
+TEST(ImageAnalysisTests, ImageAnalysisWithTransparentImages)
+{
+    auto requestSwizzler = makeImageAnalysisRequestSwizzler(processRequestWithError);
+    auto webView = createWebViewWithTextRecognitionEnhancements();
+    [webView synchronouslyLoadTestPageNamed:@"fade-in-image"];
+    [webView _startImageAnalysis:@"foo" target:@"bar"];
+    [webView waitForImageAnalysisRequests:1];
+
+    CGImagePixelReader reader { [processedRequests().first() image] };
+    EXPECT_TRUE(reader.isTransparentBlack(1, 1));
+    EXPECT_TRUE(reader.isTransparentBlack(reader.width() - 1, 1));
+    EXPECT_TRUE(reader.isTransparentBlack(reader.width() - 1, reader.height() - 1));
+    EXPECT_TRUE(reader.isTransparentBlack(1, reader.height() - 1));
+    EXPECT_FALSE(reader.isTransparentBlack(reader.width() / 2, reader.height() / 2));
+}
+
+#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+
+static RetainPtr<CGImageRef> iconImage()
+{
+    auto iconPath = [NSBundle.mainBundle pathForResource:@"icon" ofType:@"png" inDirectory:@"TestWebKitAPI.resources"];
+#if PLATFORM(IOS_FAMILY)
+    return [UIImage imageWithContentsOfFile:iconPath].CGImage;
+#else
+    auto image = adoptNS([[NSImage alloc] initWithContentsOfFile:iconPath]);
+    return [image CGImageForProposedRect:nil context:nil hints:nil];
+#endif
+}
+
+#endif // ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+
 #if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS) && PLATFORM(IOS_FAMILY)
+
+static void simulateCalloutBarAppearance(TestWKWebView *webView)
+{
+    __block bool done = false;
+    [webView.textInputContentView requestRectsToEvadeForSelectionCommandsWithCompletionHandler:^(NSArray<NSValue *> *) {
+        done = true;
+    }];
+    Util::run(&done);
+}
+
+static BOOL simulateEditContextMenuAppearance(TestWKWebView *webView, CGPoint location)
+{
+    __block BOOL result;
+    __block bool done = false;
+    [webView.textInputContentView prepareSelectionForContextMenuWithLocationInView:location completionHandler:^(BOOL shouldPresent, RVItem *) {
+        result = shouldPresent;
+        done = true;
+    }];
+    Util::run(&done);
+    return result;
+}
+
+static void invokeImageMarkupAction(TestWKWebView *webView)
+{
+    simulateCalloutBarAppearance(webView);
+
+    auto menuBuilder = adoptNS([[TestUIMenuBuilder alloc] init]);
+    [webView buildMenuWithBuilder:menuBuilder.get()];
+    [[menuBuilder actionWithTitle:WebCore::contextMenuItemTitleMarkupImage()] _performActionWithSender:nil];
+    [webView waitForNextPresentationUpdate];
+}
+
+TEST(ImageAnalysisTests, MarkupImageUsingContextMenu)
+{
+    ImageAnalysisMarkupSwizzler swizzler { iconImage().autorelease(), CGRectMake(10, 10, 215, 174) };
+
+    auto webView = createWebViewWithTextRecognitionEnhancements();
+    [webView _setEditable:YES];
+    [webView synchronouslyLoadTestPageNamed:@"image"];
+    [webView waitForNextPresentationUpdate];
+
+    EXPECT_TRUE(simulateEditContextMenuAppearance(webView.get(), CGPointMake(100, 100)));
+
+    auto menuBuilder = adoptNS([[TestUIMenuBuilder alloc] init]);
+    [webView buildMenuWithBuilder:menuBuilder.get()];
+    EXPECT_NOT_NULL([menuBuilder actionWithTitle:WebCore::contextMenuItemTitleMarkupImage()]);
+}
 
 TEST(ImageAnalysisTests, MenuControllerItems)
 {
+    ImageAnalysisMarkupSwizzler swizzler { iconImage().autorelease(), CGRectMake(10, 10, 215, 174) };
+
     auto webView = createWebViewWithTextRecognitionEnhancements();
     auto inputDelegate = adoptNS([TestInputDelegate new]);
     [inputDelegate setFocusStartsInputSessionPolicyHandler:[](WKWebView *, id <_WKFocusedElementInfo>) {
@@ -278,6 +435,7 @@ TEST(ImageAnalysisTests, MenuControllerItems)
     [webView synchronouslyLoadTestPageNamed:@"multiple-images"];
     [webView objectByEvaluatingJavaScript:@"let image = document.images[0]; getSelection().setBaseAndExtent(image, 0, image, 1);"];
     [webView waitForNextPresentationUpdate];
+    simulateCalloutBarAppearance(webView.get());
 
     auto menuBuilder = adoptNS([[TestUIMenuBuilder alloc] init]);
     [webView buildMenuWithBuilder:menuBuilder.get()];
@@ -285,6 +443,7 @@ TEST(ImageAnalysisTests, MenuControllerItems)
 
     [webView selectAll:nil];
     [webView waitForNextPresentationUpdate];
+    simulateCalloutBarAppearance(webView.get());
 
     [menuBuilder reset];
     [webView buildMenuWithBuilder:menuBuilder.get()];
@@ -292,32 +451,16 @@ TEST(ImageAnalysisTests, MenuControllerItems)
 
     [webView objectByEvaluatingJavaScript:@"getSelection().setBaseAndExtent(document.body, 0, document.images[0], 1);"];
     [webView waitForNextPresentationUpdate];
+    simulateCalloutBarAppearance(webView.get());
 
     [menuBuilder reset];
     [webView buildMenuWithBuilder:menuBuilder.get()];
     EXPECT_NOT_NULL([menuBuilder actionWithTitle:WebCore::contextMenuItemTitleMarkupImage()]);
 }
 
-static void invokeImageMarkupAction(TestWKWebView *webView)
+static RetainPtr<TestWKWebView> runMarkupTest(NSString *testPage, NSString *scriptToSelectText, Function<void(TestWKWebView *, NSString *)>&& checkWebView = { })
 {
-    // Simulate callout bar appearance.
-    __block bool done = false;
-    [webView.textInputContentView requestRectsToEvadeForSelectionCommandsWithCompletionHandler:^(NSArray<NSValue *> *) {
-        done = true;
-    }];
-    Util::run(&done);
-
-    auto menuBuilder = adoptNS([[TestUIMenuBuilder alloc] init]);
-    [webView buildMenuWithBuilder:menuBuilder.get()];
-    [[menuBuilder actionWithTitle:WebCore::contextMenuItemTitleMarkupImage()] _performActionWithSender:nil];
-    [webView waitForNextPresentationUpdate];
-}
-
-TEST(ImageAnalysisTests, PerformImageAnalysisMarkup)
-{
-    auto iconPath = [NSBundle.mainBundle pathForResource:@"icon" ofType:@"png" inDirectory:@"TestWebKitAPI.resources"];
-    RetainPtr iconImage = [UIImage imageWithContentsOfFile:iconPath];
-    ImageAnalysisMarkupSwizzler swizzler { [iconImage CGImage], CGRectMake(10, 10, 215, 174) };
+    ImageAnalysisMarkupSwizzler swizzler { iconImage().autorelease(), CGRectMake(10, 10, 215, 174) };
 
     auto webView = createWebViewWithTextRecognitionEnhancements();
     auto inputDelegate = adoptNS([TestInputDelegate new]);
@@ -327,20 +470,91 @@ TEST(ImageAnalysisTests, PerformImageAnalysisMarkup)
 
     [webView _setEditable:YES];
     [webView _setInputDelegate:inputDelegate.get()];
-    [webView synchronouslyLoadTestPageNamed:@"multiple-images"];
-    [webView objectByEvaluatingJavaScript:@"getSelection().setBaseAndExtent(document.body, 0, document.images[0], 1)"];
+    [webView synchronouslyLoadTestPageNamed:testPage];
+    [webView objectByEvaluatingJavaScript:scriptToSelectText];
     [webView waitForNextPresentationUpdate];
 
     NSString *previousSelectedText = [webView selectedText];
     invokeImageMarkupAction(webView.get());
 
-    EXPECT_WK_STREQ(previousSelectedText, [webView selectedText]);
-    Util::waitForConditionWithLogging([&] {
-        return [[webView objectByEvaluatingJavaScript:@"document.images[0].getBoundingClientRect().width"] intValue] == 215;
-    }, 3, @"Expected bounding client rect to become 215.");
+    if (checkWebView)
+        checkWebView(webView.get(), previousSelectedText);
+
+    return webView;
+}
+
+TEST(ImageAnalysisTests, PerformImageAnalysisMarkup)
+{
+    runMarkupTest(@"multiple-images", @"getSelection().setBaseAndExtent(document.body, 0, document.images[0], 1)", [](TestWKWebView *webView, NSString *previousSelectedText) {
+        EXPECT_WK_STREQ(previousSelectedText, webView.selectedText);
+        Util::waitForConditionWithLogging([&] {
+            return [[webView objectByEvaluatingJavaScript:@"document.images[0].getBoundingClientRect().width"] intValue] == 215;
+        }, 3, @"Expected bounding client rect to become 215.");
+
+        NSString *undoTitle = webView.undoManager.undoMenuItemTitle;
+        EXPECT_GT(undoTitle.length, 0U);
+        EXPECT_FALSE([undoTitle containsString:@"Paste"]);
+    });
+}
+
+TEST(ImageAnalysisTests, PerformImageAnalysisMarkupWithWebPImages)
+{
+    runMarkupTest(@"webp-image", @"getSelection().selectAllChildren(document.body)", [](TestWKWebView *webView, NSString *) {
+        Util::waitForConditionWithLogging([&] {
+            return [[webView objectByEvaluatingJavaScript:@"document.images[0].getBoundingClientRect().width"] intValue] == 215;
+        }, 3, @"Expected bounding client rect to become 215.");
+    });
+}
+
+TEST(ImageAnalysisTests, AllowImageAnalysisMarkupOnce)
+{
+    auto webView = runMarkupTest(@"image", @"getSelection().selectAllChildren(document.body)");
+
+    ImageAnalysisMarkupSwizzler swizzler { iconImage().autorelease(), CGRectMake(10, 10, 215, 174) };
+
+    [webView objectByEvaluatingJavaScript:@"let image = document.images[0]; getSelection().setBaseAndExtent(image, 0, image, 1)"];
+    [webView waitForNextPresentationUpdate];
+    simulateCalloutBarAppearance(webView.get());
+
+    auto menuBuilder = adoptNS([TestUIMenuBuilder new]);
+    [webView buildMenuWithBuilder:menuBuilder.get()];
+
+    EXPECT_NULL([menuBuilder actionWithTitle:WebCore::contextMenuItemTitleMarkupImage()]);
 }
 
 #endif // ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS) && PLATFORM(IOS_FAMILY)
+
+#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS) && ENABLE(SERVICE_CONTROLS)
+
+TEST(ImageAnalysisTests, MarkupImageItemInServicesMenu)
+{
+    ImageAnalysisMarkupSwizzler swizzler { iconImage().autorelease(), CGRectMake(10, 10, 215, 174) };
+
+    auto webView = createWebViewWithTextRecognitionEnhancements();
+    [webView _setEditable:YES];
+    [webView synchronouslyLoadTestPageNamed:@"image-controls"];
+    [[webView window] orderFrontRegardless];
+    [webView callAsyncJavaScript:@"waitForAndClickImageControls()" arguments:nil inFrame:nil inContentWorld:WKContentWorld.pageWorld completionHandler:^(id, NSError *error) {
+        EXPECT_NULL(error);
+    }];
+
+    __block bool foundMarkupImageItem = false;
+    RetainPtr timer = [NSTimer timerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *) {
+        NSMenu *menu = [webView _activeMenu];
+        for (NSMenuItem *item in menu.itemArray) {
+            if ([item.title isEqualToString:WebCore::contextMenuItemTitleMarkupImage()]) {
+                foundMarkupImageItem = true;
+                [menu cancelTracking];
+                break;
+            }
+        }
+    }];
+
+    [NSRunLoop.mainRunLoop addTimer:timer.get() forMode:NSEventTrackingRunLoopMode];
+    Util::run(&foundMarkupImageItem);
+}
+
+#endif // ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS) && ENABLE(SERVICE_CONTROLS)
 
 } // namespace TestWebKitAPI
 

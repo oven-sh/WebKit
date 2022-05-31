@@ -35,10 +35,13 @@ public:
     WEBCORE_EXPORT RefPtr<LabelableElement> control() const;
     WEBCORE_EXPORT HTMLFormElement* form() const final;
 
-    bool willRespondToMouseClickEvents() final;
+    bool willRespondToMouseClickEventsWithEditability(Editability) const final;
 
 private:
     HTMLLabelElement(const QualifiedName&, Document&);
+
+    InsertedIntoAncestorResult insertedIntoAncestor(InsertionType, ContainerNode& parentOfInsertedTree) final;
+    void removedFromAncestor(RemovalType, ContainerNode& oldParentOfRemovedTree) final;
 
     bool isEventTargetedAtInteractiveDescendants(Event&) const;
 

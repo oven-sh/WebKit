@@ -38,11 +38,11 @@
 
 namespace WebCore {
 
-static const char privateClickMeasurementTriggerAttributionPath[] = "/.well-known/private-click-measurement/trigger-attribution/";
+static constexpr auto privateClickMeasurementTriggerAttributionPath = "/.well-known/private-click-measurement/trigger-attribution/"_s;
 static const char privateClickMeasurementTokenSignaturePath[] = "/.well-known/private-click-measurement/sign-unlinkable-token/";
 static const char privateClickMeasurementTokenPublicKeyPath[] = "/.well-known/private-click-measurement/get-token-public-key/";
 static const char privateClickMeasurementReportAttributionPath[] = "/.well-known/private-click-measurement/report-attribution/";
-static const char privateClickMeasurementToSKAdNetworkURLPrefix[] = "https://apps.apple.com/app/apple-store/id";
+static constexpr auto privateClickMeasurementToSKAdNetworkURLPrefix = "https://apps.apple.com/app/apple-store/id"_s;
 const size_t privateClickMeasurementAttributionTriggerDataPathSegmentSize = 2;
 const size_t privateClickMeasurementPriorityPathSegmentSize = 2;
 const uint8_t privateClickMeasurementVersion = 3;
@@ -181,7 +181,7 @@ Expected<PrivateClickMeasurement::AttributionTriggerData, String> PrivateClickMe
     if (path.isEmpty() || !path.startsWith(privateClickMeasurementTriggerAttributionPath))
         return makeUnexpected(nullString());
 
-    if (!redirectURL.protocolIs("https") || redirectURL.hasCredentials() || redirectURL.hasFragmentIdentifier())
+    if (!redirectURL.protocolIs("https"_s) || redirectURL.hasCredentials() || redirectURL.hasFragmentIdentifier())
         return makeUnexpected("[Private Click Measurement] Triggering event was not accepted because the URL's protocol is not HTTPS or the URL contains one or more of username, password, and fragment."_s);
 
     auto result = parseAttributionRequestQuery(redirectURL);
@@ -192,7 +192,7 @@ Expected<PrivateClickMeasurement::AttributionTriggerData, String> PrivateClickMe
     }
     auto attributionTriggerData = result.value();
 
-    auto prefixLength = sizeof(privateClickMeasurementTriggerAttributionPath) - 1;
+    auto prefixLength = privateClickMeasurementTriggerAttributionPath.length();
     if (path.length() == prefixLength + privateClickMeasurementAttributionTriggerDataPathSegmentSize) {
         auto attributionTriggerDataUInt64 = parseInteger<uint64_t>(path.substring(prefixLength, privateClickMeasurementAttributionTriggerDataPathSegmentSize));
         if (!attributionTriggerDataUInt64 || *attributionTriggerDataUInt64 > AttributionTriggerData::MaxEntropy)
@@ -422,7 +422,7 @@ std::optional<uint64_t> PrivateClickMeasurement::appStoreURLAdamID(const URL& ur
     StringView stringView { url.string() };
     if (!stringView.startsWith(privateClickMeasurementToSKAdNetworkURLPrefix))
         return std::nullopt;
-    return parseInteger<uint64_t>(stringView.substring(strlen(privateClickMeasurementToSKAdNetworkURLPrefix)));
+    return parseInteger<uint64_t>(stringView.substring(privateClickMeasurementToSKAdNetworkURLPrefix.length()));
 }
 
 } // namespace WebCore

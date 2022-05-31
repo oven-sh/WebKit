@@ -30,10 +30,12 @@
 
 #include "JSDOMPromiseDeferred.h"
 #include "JSServiceWorkerWindowClient.h"
+#include "Logging.h"
 #include "SWContextManager.h"
 #include "ServiceWorker.h"
 #include "ServiceWorkerGlobalScope.h"
 #include "ServiceWorkerThread.h"
+#include "WebCoreOpaqueRoot.h"
 #include <wtf/text/StringToIntegerConversion.h>
 
 namespace WebCore {
@@ -90,10 +92,57 @@ void ServiceWorkerClients::matchAll(ScriptExecutionContext& context, const Clien
     });
 }
 
-void ServiceWorkerClients::openWindow(ScriptExecutionContext&, const String& url, Ref<DeferredPromise>&& promise)
+void ServiceWorkerClients::openWindow(ScriptExecutionContext& context, const String& urlString, Ref<DeferredPromise>&& promise)
 {
-    UNUSED_PARAM(url);
-    promise->reject(Exception { NotSupportedError, "clients.openWindow() is not yet supported"_s });
+    LOG(ServiceWorker, "WebProcess %i service worker calling openWindow to URL %s", getpid(), urlString.utf8().data());
+
+    if (context.settingsValues().serviceWorkersUserGestureEnabled && !downcast<ServiceWorkerGlobalScope>(context).isProcessingUserGesture()) {
+        promise->reject(Exception { InvalidAccessError, "ServiceWorkerClients.openWindow() requires a user gesture"_s });
+        return;
+    }
+
+    auto url = context.completeURL(urlString);
+    if (!url.isValid()) {
+        promise->reject(Exception { TypeError, makeString("URL string ", urlString, " cannot successfully be parsed"_s) });
+        return;
+    }
+
+    if (url.protocolIsAbout()) {
+        promise->reject(Exception { TypeError, makeString("ServiceWorkerClients.openWindow() cannot be called with URL "_s, url.string()) });
+        return;
+    }
+
+    auto serviceWorkerIdentifier = downcast<ServiceWorkerGlobalScope>(context).thread().identifier();
+    callOnMainThread([promiseIdentifier = addPendingPromise(WTFMove(promise)), serviceWorkerIdentifier, url = url.isolatedCopy()] () mutable {
+        auto connection = SWContextManager::singleton().connection();
+        connection->openWindow(serviceWorkerIdentifier, url, [promiseIdentifier, serviceWorkerIdentifier] (auto&& result) mutable {
+            SWContextManager::singleton().postTaskToServiceWorker(serviceWorkerIdentifier, [promiseIdentifier, result = crossThreadCopy(WTFMove(result))] (ServiceWorkerGlobalScope& scope) mutable {
+                LOG(ServiceWorker, "WebProcess %i finished ServiceWorkerClients::openWindow call result is %d.", getpid(), !result.hasException());
+
+                auto promise = scope.clients().takePendingPromise(promiseIdentifier);
+                if (!promise)
+                    return;
+
+                if (result.hasException()) {
+                    promise->reject(result.releaseException());
+                    return;
+                }
+
+                auto clientData = result.releaseReturnValue();
+                if (!clientData) {
+                    promise->resolveWithJSValue(JSC::jsNull());
+                    return;
+                }
+
+#if ASSERT_ENABLED
+                auto originData = SecurityOriginData::fromURL(clientData->url);
+                ClientOrigin clientOrigin { originData, originData };
+#endif
+                ASSERT(scope.clientOrigin() == clientOrigin);
+                promise->template resolve<IDLInterface<ServiceWorkerClient>>(ServiceWorkerClient::create(scope, WTFMove(*clientData)));
+            });
+        });
+    });
 }
 
 void ServiceWorkerClients::claim(ScriptExecutionContext& context, Ref<DeferredPromise>&& promise)
@@ -123,6 +172,11 @@ ServiceWorkerClients::PromiseIdentifier ServiceWorkerClients::addPendingPromise(
 RefPtr<DeferredPromise> ServiceWorkerClients::takePendingPromise(PromiseIdentifier identifier)
 {
     return m_pendingPromises.take(identifier);
+}
+
+WebCoreOpaqueRoot root(ServiceWorkerClients* clients)
+{
+    return WebCoreOpaqueRoot { clients };
 }
 
 } // namespace WebCore

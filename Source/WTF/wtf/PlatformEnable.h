@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2006-2022 Apple Inc. All rights reserved.
  * Copyright (C) 2007-2009 Torch Mobile, Inc.
  * Copyright (C) 2010, 2011 Research In Motion Limited. All rights reserved.
  * Copyright (C) 2013 Samsung Electronics. All rights reserved.
@@ -204,10 +204,6 @@
 #define ENABLE_CONTEXT_MENU_EVENT 1
 #endif
 
-#if !defined(ENABLE_CSS3_TEXT)
-#define ENABLE_CSS3_TEXT 0
-#endif
-
 #if !defined(ENABLE_CSS_BOX_DECORATION_BREAK)
 #define ENABLE_CSS_BOX_DECORATION_BREAK 1
 #endif
@@ -349,6 +345,10 @@
 
 #if !defined(ENABLE_LAYOUT_FORMATTING_CONTEXT)
 #define ENABLE_LAYOUT_FORMATTING_CONTEXT 0
+#endif
+
+#if !defined(ENABLE_LLVM_PROFILE_GENERATION)
+#define ENABLE_LLVM_PROFILE_GENERATION 0
 #endif
 
 #if !defined(ENABLE_MATHML)
@@ -611,8 +611,10 @@
 #endif
 #endif
 
-#if !defined(ENABLE_JUMP_ISLANDS) && CPU(ARM64) && CPU(ADDRESS64) && ENABLE(JIT)
+#if !defined(ENABLE_JUMP_ISLANDS) && ENABLE(JIT)
+#if (CPU(ARM64) && CPU(ADDRESS64)) || CPU(ARM_THUMB2)
 #define ENABLE_JUMP_ISLANDS 1
+#endif
 #endif
 
 /* FIXME: This should be turned into an #error invariant */
@@ -841,6 +843,10 @@
 
 #if OS(DARWIN) && CPU(ADDRESS64) && ENABLE(JIT) && (ENABLE(JIT_CAGE) || ASSERT_ENABLED)
 #define ENABLE_JIT_OPERATION_VALIDATION 1
+#endif
+
+#if USE(APPLE_INTERNAL_SDK) && ENABLE(DISASSEMBLER) && CPU(ARM64E) && HAVE(DLADDR)
+#define ENABLE_JIT_OPERATION_DISASSEMBLY 1
 #endif
 
 #if !defined(ENABLE_BINDING_INTEGRITY) && !OS(WINDOWS)

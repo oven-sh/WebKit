@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2020-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -86,12 +86,12 @@ UniqueRef<GraphicsContext> DrawGlyphsRecorder::createInternalContext()
     return makeUniqueRef<GraphicsContextCG>(context.get());
 }
 
-DrawGlyphsRecorder::DrawGlyphsRecorder(GraphicsContext& owner, DeconstructDrawGlyphs deconstructDrawGlyphs, DeriveFontFromContext deriveFontFromContext)
+DrawGlyphsRecorder::DrawGlyphsRecorder(GraphicsContext& owner, float scaleFactor, DeriveFontFromContext deriveFontFromContext)
     : m_owner(owner)
-    , m_deconstructDrawGlyphs(deconstructDrawGlyphs)
-    , m_deriveFontFromContext(deriveFontFromContext)
     , m_internalContext(createInternalContext())
+    , m_deriveFontFromContext(deriveFontFromContext)
 {
+    m_internalContext->applyDeviceScaleFactor(scaleFactor);
 }
 
 void DrawGlyphsRecorder::populateInternalState(const GraphicsContextState& contextState)
@@ -99,7 +99,7 @@ void DrawGlyphsRecorder::populateInternalState(const GraphicsContextState& conte
     m_originalState.fillBrush = contextState.fillBrush();
     m_originalState.strokeBrush = contextState.strokeBrush();
 
-    m_originalState.ctm = m_owner.getCTM(); // FIXME: Deal with base CTM.
+    m_originalState.ctm = m_owner.getCTM();
 
     m_originalState.dropShadow = contextState.dropShadow();
     m_originalState.ignoreTransforms = contextState.shadowsIgnoreTransforms();
@@ -107,15 +107,25 @@ void DrawGlyphsRecorder::populateInternalState(const GraphicsContextState& conte
 
 void DrawGlyphsRecorder::populateInternalContext(const GraphicsContextState& contextState)
 {
-    m_internalContext->setFillBrush(m_originalState.fillBrush);
-    m_internalContext->setStrokeBrush(m_originalState.strokeBrush);
-
     m_internalContext->setCTM(m_originalState.ctm);
+
+    m_internalContext->setFillBrush(m_originalState.fillBrush);
+    m_internalContext->applyFillPattern();
+
+    m_internalContext->setStrokeBrush(m_originalState.strokeBrush);
+    m_internalContext->applyStrokePattern();
 
     m_internalContext->setShadowsIgnoreTransforms(m_originalState.ignoreTransforms);
     m_internalContext->setDropShadow(m_originalState.dropShadow);
 
     m_internalContext->setTextDrawingMode(contextState.textDrawingMode());
+}
+
+void DrawGlyphsRecorder::recordInitialColors()
+{
+    CGContextRef cgContext = m_internalContext->platformContext();
+    m_initialFillColor = CGContextGetFillColorAsColor(cgContext);
+    m_initialStrokeColor = CGContextGetStrokeColorAsColor(cgContext);
 }
 
 void DrawGlyphsRecorder::prepareInternalContext(const Font& font, FontSmoothingMode smoothingMode)
@@ -132,6 +142,7 @@ void DrawGlyphsRecorder::prepareInternalContext(const Font& font, FontSmoothingM
     auto& contextState = m_owner.state();
     populateInternalState(contextState);
     populateInternalContext(contextState);
+    recordInitialColors();
 }
 
 void DrawGlyphsRecorder::concludeInternalContext()
@@ -142,9 +153,33 @@ void DrawGlyphsRecorder::concludeInternalContext()
     updateShadow(m_originalState.dropShadow, m_originalState.ignoreTransforms ? ShadowsIgnoreTransforms::Yes : ShadowsIgnoreTransforms::No);
 }
 
+void DrawGlyphsRecorder::updateFillColor(CGColorRef fillColor)
+{
+    if (CGColorGetPattern(fillColor)) {
+        ASSERT(m_originalState.fillBrush.pattern());
+        return;
+    }
+    if (fillColor == m_initialFillColor)
+        m_owner.setFillBrush(m_originalState.fillBrush);
+    else
+        m_owner.setFillBrush(Color::createAndPreserveColorSpace(fillColor));
+}
+
 void DrawGlyphsRecorder::updateFillBrush(const SourceBrush& newBrush)
 {
     m_owner.setFillBrush(newBrush);
+}
+
+void DrawGlyphsRecorder::updateStrokeColor(CGColorRef strokeColor)
+{
+    if (CGColorGetPattern(strokeColor)) {
+        ASSERT(m_originalState.strokeBrush.pattern());
+        return;
+    }
+    if (strokeColor == m_initialStrokeColor)
+        m_owner.setStrokeBrush(m_originalState.strokeBrush);
+    else
+        m_owner.setStrokeBrush(Color::createAndPreserveColorSpace(strokeColor));
 }
 
 void DrawGlyphsRecorder::updateStrokeBrush(const SourceBrush& newBrush)
@@ -242,10 +277,8 @@ void DrawGlyphsRecorder::recordDrawGlyphs(CGRenderingStateRef, CGGStateRef gstat
         ctmFixup = AffineTransform();
     m_owner.concatCTM(ctmFixup);
 
-    auto fillColor = CGGStateGetFillColor(gstate);
-    auto strokeColor = CGGStateGetStrokeColor(gstate);
-    updateFillBrush(Color::createAndPreserveColorSpace(fillColor));
-    updateStrokeBrush(Color::createAndPreserveColorSpace(strokeColor));
+    updateFillColor(CGGStateGetFillColor(gstate));
+    updateStrokeColor(CGGStateGetStrokeColor(gstate));
     updateShadow(CGGStateGetStyle(gstate));
 
     auto fontSize = CGGStateGetFontSize(gstate);
@@ -256,12 +289,21 @@ void DrawGlyphsRecorder::recordDrawGlyphs(CGRenderingStateRef, CGGStateRef gstat
     // `FontCascade::drawGlyphs` we need to recalculate the original advances from the resulting
     // positions by inverting the operations applied to the original advances.
     auto textMatrix = m_originalTextMatrix;
+    auto initialPenPosition = textMatrix.mapPoint(positions[0]);
+
     if (font->platformData().orientation() == FontOrientation::Vertical) {
         // Keep this in sync as the inverse of `fillVectorWithVerticalGlyphPositions`.
-        // FIXME: <https://webkit.org/b/232917> (`DrawGlyphsRecorder` should be able to record+replay vertical text)
+        // FIXME: Use rotateLeftTransform(), as fillVectorWithVerticalGlyphPositions() does, instead of using transposedSize().
+        CGSize translation;
+        CTFontGetVerticalTranslationsForGlyphs(font->platformData().ctFont(), glyphs, &translation, 1);
+
+        initialPenPosition += FloatSize(translation).transposedSize();
+
+        auto ascentDelta = font->fontMetrics().floatAscent(IdeographicBaseline) - font->fontMetrics().floatAscent();
+        initialPenPosition.move(0, -ascentDelta);
     }
 
-    m_owner.drawGlyphsAndCacheFont(font, glyphs, computeAdvancesFromPositions(positions, count, textMatrix).data(), count, textMatrix.mapPoint(positions[0]), m_smoothingMode);
+    m_owner.drawGlyphsAndCacheFont(font, glyphs, computeAdvancesFromPositions(positions, count, textMatrix).data(), count, initialPenPosition, m_smoothingMode);
 
     m_owner.concatCTM(inverseCTMFixup);
 }
@@ -355,20 +397,11 @@ void DrawGlyphsRecorder::drawBySplittingIntoOTSVGAndNonOTSVGRuns(const Font& fon
 
 void DrawGlyphsRecorder::drawGlyphs(const Font& font, const GlyphBufferGlyph* glyphs, const GlyphBufferAdvance* advances, unsigned numGlyphs, const FloatPoint& startPoint, FontSmoothingMode smoothingMode)
 {
-    if (m_deconstructDrawGlyphs == DeconstructDrawGlyphs::No) {
-        m_owner.drawGlyphsAndCacheFont(font, glyphs, advances, numGlyphs, startPoint, smoothingMode);
-        return;
-    }
-
-    ASSERT(m_deconstructDrawGlyphs == DeconstructDrawGlyphs::Yes);
-
     drawBySplittingIntoOTSVGAndNonOTSVGRuns(font, glyphs, advances, numGlyphs, startPoint, smoothingMode);
 }
 
 void DrawGlyphsRecorder::drawNativeText(CTFontRef font, CGFloat fontSize, CTLineRef line, CGRect lineRect)
 {
-    ASSERT(m_deconstructDrawGlyphs == DeconstructDrawGlyphs::Yes);
-
     GraphicsContextStateSaver saver(m_owner);
 
     m_owner.translate(lineRect.origin.x, lineRect.origin.y + lineRect.size.height);

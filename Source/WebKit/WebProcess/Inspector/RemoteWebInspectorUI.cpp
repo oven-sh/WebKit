@@ -218,6 +218,11 @@ void RemoteWebInspectorUI::openURLExternally(const String& url)
     WebProcess::singleton().parentProcessConnection()->send(Messages::RemoteWebInspectorUIProxy::OpenURLExternally(url), m_page.identifier());
 }
 
+void RemoteWebInspectorUI::revealFileExternally(const String& path)
+{
+    WebProcess::singleton().parentProcessConnection()->send(Messages::RemoteWebInspectorUIProxy::RevealFileExternally(path), m_page.identifier());
+}
+
 void RemoteWebInspectorUI::save(const String& filename, const String& content, bool base64Encoded, bool forceSaveAs)
 {
     WebProcess::singleton().parentProcessConnection()->send(Messages::RemoteWebInspectorUIProxy::Save(filename, content, base64Encoded, forceSaveAs), m_page.identifier());
@@ -226,6 +231,11 @@ void RemoteWebInspectorUI::save(const String& filename, const String& content, b
 void RemoteWebInspectorUI::append(const String& filename, const String& content)
 {
     WebProcess::singleton().parentProcessConnection()->send(Messages::RemoteWebInspectorUIProxy::Append(filename, content), m_page.identifier());
+}
+
+void RemoteWebInspectorUI::load(const String& path, CompletionHandler<void(const String&)>&& completionHandler)
+{
+    WebProcess::singleton().parentProcessConnection()->sendWithAsyncReply(Messages::RemoteWebInspectorUIProxy::Load(path), WTFMove(completionHandler), m_page.identifier());
 }
 
 void RemoteWebInspectorUI::inspectedURLChanged(const String& urlString)

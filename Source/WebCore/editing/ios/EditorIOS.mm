@@ -90,7 +90,7 @@ void Editor::setTextAlignmentForChangedBaseWritingDirection(WritingDirection dir
     if (!value)
         return;
         
-    const char *newValue = nullptr;
+    ASCIILiteral newValue;
     TextAlignMode textAlign = *value;
     switch (textAlign) {
     case TextAlignMode::Start:
@@ -100,21 +100,21 @@ void Editor::setTextAlignmentForChangedBaseWritingDirection(WritingDirection dir
             // no-op
             break;
         case WritingDirection::LeftToRight:
-            newValue = "left";
+            newValue = "left"_s;
             break;
         case WritingDirection::RightToLeft:
-            newValue = "right";
+            newValue = "right"_s;
             break;
         }
         break;
     }
     case TextAlignMode::Left:
     case TextAlignMode::WebKitLeft:
-        newValue = "right";
+        newValue = "right"_s;
         break;
     case TextAlignMode::Right:
     case TextAlignMode::WebKitRight:
-        newValue = "left";
+        newValue = "left"_s;
         break;
     case TextAlignMode::Center:
     case TextAlignMode::WebKitCenter:
@@ -123,7 +123,7 @@ void Editor::setTextAlignmentForChangedBaseWritingDirection(WritingDirection dir
         break;
     }
 
-    if (!newValue)
+    if (newValue.isNull())
         return;
 
     Element* focusedElement = m_document.focusedElement();
@@ -150,7 +150,7 @@ void Editor::removeUnchangeableStyles()
     auto defaultStyle = editingStyle->style()->mutableCopy();
     
     // Text widgets implement background color via the UIView property. Their body element will not have one.
-    defaultStyle->setProperty(CSSPropertyBackgroundColor, "rgba(255, 255, 255, 0.0)");
+    defaultStyle->setProperty(CSSPropertyBackgroundColor, "rgba(255, 255, 255, 0.0)"_s);
     
     // Remove properties that the user can modify, like font-weight. 
     // Also remove font-family, per HI spec.
@@ -328,7 +328,7 @@ void Editor::confirmMarkedText()
         confirmComposition();
 }
 
-void Editor::setTextAsChildOfElement(const String& text, Element& element)
+void Editor::setTextAsChildOfElement(String&& text, Element& element)
 {
     // Clear the composition
     clear();
@@ -346,7 +346,7 @@ void Editor::setTextAsChildOfElement(const String& text, Element& element)
     // What follows is more expensive if there is a selection, so clear it since it's going to change anyway.
     m_document.selection().clear();
 
-    element.stringReplaceAll(text);
+    element.stringReplaceAll(WTFMove(text));
 
     VisiblePosition afterContents = makeContainerOffsetPosition(&element, element.countChildNodes());
     if (afterContents.isNull())

@@ -35,14 +35,13 @@ class RecorderImpl : public Recorder {
     WTF_MAKE_FAST_ALLOCATED;
     WTF_MAKE_NONCOPYABLE(RecorderImpl);
 public:
-    WEBCORE_EXPORT RecorderImpl(DisplayList&, const GraphicsContextState&, const FloatRect& initialClip, const AffineTransform&, DrawGlyphsRecorder::DeconstructDrawGlyphs = DrawGlyphsRecorder::DeconstructDrawGlyphs::Yes);
+    WEBCORE_EXPORT RecorderImpl(DisplayList&, const GraphicsContextState&, const FloatRect& initialClip, const AffineTransform&, DeconstructDrawGlyphs = DeconstructDrawGlyphs::No);
     WEBCORE_EXPORT virtual ~RecorderImpl();
 
     bool isEmpty() const { return m_displayList.isEmpty(); }
 
     void convertToLuminanceMask() final { }
     void transformToColorSpace(const DestinationColorSpace&) final { }
-    void flushContext(GraphicsContextFlushIdentifier identifier) final { append<FlushContext>(identifier); }
 
 private:
     void recordSave() final;
@@ -76,7 +75,7 @@ private:
     void recordEndTransparencyLayer() final;
     void recordDrawRect(const FloatRect&, float) final;
     void recordDrawLine(const FloatPoint& point1, const FloatPoint& point2) final;
-    void recordDrawLinesForText(const FloatPoint& blockLocation, const FloatSize& localAnchor, float thickness, const DashArray& widths, bool printing, bool doubleLines) final;
+    void recordDrawLinesForText(const FloatPoint& blockLocation, const FloatSize& localAnchor, float thickness, const DashArray& widths, bool printing, bool doubleLines, StrokeStyle) final;
     void recordDrawDotsForDocumentMarker(const FloatRect&, const DocumentMarkerLineStyle&) final;
     void recordDrawEllipse(const FloatRect&) final;
     void recordDrawPath(const Path&) final;

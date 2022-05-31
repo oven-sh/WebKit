@@ -31,6 +31,7 @@
 #include "CachedResourceLoader.h"
 #include "DOMPromiseProxy.h"
 #include "Document.h"
+#include "DocumentInlines.h"
 #include "ElementChildIterator.h"
 #include "ElementInlines.h"
 #include "EventHandler.h"
@@ -141,7 +142,7 @@ void HTMLModelElement::setSourceURL(const URL& url)
     m_shouldCreateModelPlayerUponRendererAttachment = false;
 
     if (m_sourceURL.isEmpty()) {
-        queueTaskToDispatchEvent(*this, TaskSource::DOMManipulation, Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::No));
+        ActiveDOMObject::queueTaskToDispatchEvent(*this, TaskSource::DOMManipulation, Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::No));
         return;
     }
 
@@ -155,7 +156,7 @@ void HTMLModelElement::setSourceURL(const URL& url)
 
     auto resource = document().cachedResourceLoader().requestModelResource(WTFMove(request));
     if (!resource.has_value()) {
-        queueTaskToDispatchEvent(*this, TaskSource::DOMManipulation, Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::No));
+        ActiveDOMObject::queueTaskToDispatchEvent(*this, TaskSource::DOMManipulation, Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::No));
         if (!m_readyPromise->isFulfilled())
             m_readyPromise->reject(Exception { NetworkError });
         return;
@@ -217,7 +218,7 @@ void HTMLModelElement::notifyFinished(CachedResource& resource, const NetworkLoa
     if (resource.loadFailedOrCanceled()) {
         m_data.reset();
 
-        queueTaskToDispatchEvent(*this, TaskSource::DOMManipulation, Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::No));
+        ActiveDOMObject::queueTaskToDispatchEvent(*this, TaskSource::DOMManipulation, Event::create(eventNames().errorEvent, Event::CanBubble::No, Event::IsCancelable::No));
 
         invalidateResourceHandleAndUpdateRenderer();
 
@@ -229,7 +230,7 @@ void HTMLModelElement::notifyFinished(CachedResource& resource, const NetworkLoa
     m_dataComplete = true;
     m_model = Model::create(m_data.takeAsContiguous().get(), resource.mimeType(), resource.url());
 
-    queueTaskToDispatchEvent(*this, TaskSource::DOMManipulation, Event::create(eventNames().loadEvent, Event::CanBubble::No, Event::IsCancelable::No));
+    ActiveDOMObject::queueTaskToDispatchEvent(*this, TaskSource::DOMManipulation, Event::create(eventNames().loadEvent, Event::CanBubble::No, Event::IsCancelable::No));
 
     invalidateResourceHandleAndUpdateRenderer();
 
@@ -667,6 +668,15 @@ LayoutSize HTMLModelElement::contentSize() const
     ASSERT(renderer());
     return downcast<RenderReplaced>(*renderer()).replacedContentRect().size();
 }
+
+#if ENABLE(ARKIT_INLINE_PREVIEW_MAC)
+String HTMLModelElement::inlinePreviewUUIDForTesting() const
+{
+    if (!m_modelPlayer)
+        return emptyString();
+    return m_modelPlayer->inlinePreviewUUIDForTesting();
+}
+#endif
 
 }
 

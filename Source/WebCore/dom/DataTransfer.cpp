@@ -28,6 +28,7 @@
 
 #include "CachedImage.h"
 #include "CachedImageClient.h"
+#include "CommonAtomStrings.h"
 #include "DataTransferItem.h"
 #include "DataTransferItemList.h"
 #include "DocumentFragment.h"
@@ -35,6 +36,7 @@
 #include "Editor.h"
 #include "FileList.h"
 #include "Frame.h"
+#include "FrameDestructionObserverInlines.h"
 #include "FrameLoader.h"
 #include "HTMLImageElement.h"
 #include "HTMLParserIdioms.h"
@@ -126,12 +128,12 @@ static String normalizeType(const String& type)
         return type;
 
     String lowercaseType = stripLeadingAndTrailingHTMLSpaces(type).convertToASCIILowercase();
-    if (lowercaseType == "text" || lowercaseType.startsWith("text/plain;"))
-        return "text/plain";
-    if (lowercaseType == "url" || lowercaseType.startsWith("text/uri-list;"))
-        return "text/uri-list";
-    if (lowercaseType.startsWith("text/html;"))
-        return "text/html";
+    if (lowercaseType == "text"_s || lowercaseType.startsWith("text/plain;"_s))
+        return textPlainContentTypeAtom();
+    if (lowercaseType == "url"_s || lowercaseType.startsWith("text/uri-list;"_s))
+        return "text/uri-list"_s;
+    if (lowercaseType.startsWith("text/html;"_s))
+        return "text/html"_s;
 
     return lowercaseType;
 }
@@ -265,7 +267,7 @@ void DataTransfer::setDataFromItemList(const String& type, const String& data)
         auto url = URL({ }, data);
         if (url.isValid())
             sanitizedData = url.string();
-    } else if (type == "text/plain")
+    } else if (type == textPlainContentTypeAtom())
         sanitizedData = data; // Nothing to sanitize.
 
     if (sanitizedData != data)
@@ -317,9 +319,9 @@ Vector<String> DataTransfer::types(AddFilesType addFilesType) const
     
     if (!RuntimeEnabledFeatures::sharedFeatures().customPasteboardDataEnabled()) {
         auto types = m_pasteboard->typesForLegacyUnsafeBindings();
-        ASSERT(!types.contains("Files"));
+        ASSERT(!types.contains("Files"_s));
         if (m_pasteboard->fileContentState() != Pasteboard::FileContentState::NoFileOrImageData && addFilesType == AddFilesType::Yes)
-            types.append("Files");
+            types.append("Files"_s);
         return types;
     }
 
@@ -339,14 +341,14 @@ Vector<String> DataTransfer::types(AddFilesType addFilesType) const
             return types;
         }
 
-        if (safeTypes.contains("text/uri-list"))
+        if (safeTypes.contains("text/uri-list"_s))
             types.append("text/uri-list"_s);
-        if (safeTypes.contains("text/html") && RuntimeEnabledFeatures::sharedFeatures().customPasteboardDataEnabled())
+        if (safeTypes.contains("text/html"_s) && RuntimeEnabledFeatures::sharedFeatures().customPasteboardDataEnabled())
             types.append("text/html"_s);
         return types;
     }
 
-    ASSERT(!safeTypes.contains("Files"));
+    ASSERT(!safeTypes.contains("Files"_s));
     return safeTypes;
 }
 
@@ -428,7 +430,7 @@ bool DataTransfer::hasStringOfType(const String& type)
 Ref<DataTransfer> DataTransfer::createForInputEvent(const String& plainText, const String& htmlText)
 {
     auto pasteboard = makeUnique<StaticPasteboard>();
-    pasteboard->writeString("text/plain"_s, plainText);
+    pasteboard->writeString(textPlainContentTypeAtom(), plainText);
     pasteboard->writeString("text/html"_s, htmlText);
     return adoptRef(*new DataTransfer(StoreMode::Readonly, WTFMove(pasteboard), Type::InputEvent));
 }
@@ -467,7 +469,7 @@ void DataTransfer::commitToPasteboard(Pasteboard& nativePasteboard)
 
 String DataTransfer::dropEffect() const
 {
-    return "none"_s;
+    return noneAtom();
 }
 
 void DataTransfer::setDropEffect(const String&)
@@ -631,25 +633,25 @@ static OptionSet<DragOperation> dragOpFromIEOp(const String& operation)
     return { DragOperation::Private }; // Really a marker for "no conversion".
 }
 
-static const char* IEOpFromDragOp(OptionSet<DragOperation> operationMask)
+static ASCIILiteral IEOpFromDragOp(OptionSet<DragOperation> operationMask)
 {
     bool isGenericMove = operationMask.containsAny({ DragOperation::Generic, DragOperation::Move });
 
     if ((isGenericMove && operationMask.containsAll({ DragOperation::Copy, DragOperation::Link })) || operationMask.containsAll({ DragOperation::Copy, DragOperation::Link, DragOperation::Generic, DragOperation::Private, DragOperation::Move, DragOperation::Delete }))
-        return "all";
+        return "all"_s;
     if (isGenericMove && operationMask.contains(DragOperation::Copy))
-        return "copyMove";
+        return "copyMove"_s;
     if (isGenericMove && operationMask.contains(DragOperation::Link))
-        return "linkMove";
+        return "linkMove"_s;
     if (operationMask.containsAll({ DragOperation::Copy, DragOperation::Link }))
-        return "copyLink";
+        return "copyLink"_s;
     if (isGenericMove)
-        return "move";
+        return "move"_s;
     if (operationMask.contains(DragOperation::Copy))
-        return "copy";
+        return "copy"_s;
     if (operationMask.contains(DragOperation::Link))
-        return "link";
-    return "none";
+        return "link"_s;
+    return "none"_s;
 }
 
 OptionSet<DragOperation> DataTransfer::sourceOperationMask() const

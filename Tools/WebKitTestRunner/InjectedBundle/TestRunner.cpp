@@ -1346,6 +1346,7 @@ void TestRunner::statisticsCallDidSetVeryPrevalentResourceCallback()
     
 void TestRunner::dumpResourceLoadStatistics()
 {
+    InjectedBundle::singleton().clearResourceLoadStatistics();
     postSynchronousPageMessage("dumpResourceLoadStatistics");
 }
 
@@ -2080,6 +2081,11 @@ void TestRunner::abortModal()
 void TestRunner::dumpPrivateClickMeasurement()
 {
     postSynchronousPageMessage("DumpPrivateClickMeasurement");
+}
+
+void TestRunner::clearMemoryCache()
+{
+    postSynchronousPageMessage("ClearMemoryCache");
 }
 
 void TestRunner::clearPrivateClickMeasurement()

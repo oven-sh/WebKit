@@ -211,7 +211,7 @@ void RenderBoxModelObject::updateFromStyle()
     setHorizontalWritingMode(styleToUse.isHorizontalWritingMode());
     if (styleToUse.isFlippedBlocksWritingMode())
         view().frameView().setHasFlippedBlockRenderers(true);
-    setPaintContainmentApplies(shouldApplyPaintContainment(*this));
+    setPaintContainmentApplies(shouldApplyPaintContainment());
 }
 
 static LayoutSize accumulateInFlowPositionOffsets(const RenderObject* child)
@@ -727,8 +727,15 @@ void RenderBoxModelObject::paintMaskForTextFillBox(ImageBuffer* maskImage, const
         for (auto box = inlineBox->firstLeafBox(), end = inlineBox->endLeafBox(); box != end; box.traverseNextOnLine()) {
             if (!box->isText())
                 continue;
-            TextBoxPainter textBoxPainter(downcast<InlineIterator::TextBoxIterator>(box), maskInfo, paintOffset);
+            if (auto* legacyTextBox = downcast<LegacyInlineTextBox>(box->legacyInlineBox())) {
+                LegacyTextBoxPainter textBoxPainter(*legacyTextBox, maskInfo, paintOffset);
+                textBoxPainter.paint();
+                continue;
+            }
+#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
+            ModernTextBoxPainter textBoxPainter(box->modernPath().inlineContent(), box->modernPath().box(), maskInfo, paintOffset);
             textBoxPainter.paint();
+#endif
         }
         return;
     }
@@ -2706,7 +2713,7 @@ void RenderBoxModelObject::collectAbsoluteQuadsForContinuation(Vector<FloatQuad>
     }
 }
 
-void RenderBoxModelObject::applyTransform(TransformationMatrix&, const FloatRect&, OptionSet<RenderStyle::TransformOperationOption>) const
+void RenderBoxModelObject::applyTransform(TransformationMatrix&, const RenderStyle&, const FloatRect&, OptionSet<RenderStyle::TransformOperationOption>) const
 {
     // applyTransform() is only used through RenderLayer*, which only invokes this for RenderBox derived renderers, thus not for
     // RenderInline/RenderLineBreak - the other two renderers that inherit from RenderBoxModelObject.

@@ -623,11 +623,11 @@ std::optional<LayoutUnit> GridTrackSizingAlgorithm::gridAreaBreadthForChild(cons
     // To determine the column track's size based on an orthogonal grid item we need it's logical
     // height, which may depend on the row track's size. It's possible that the row tracks sizing
     // logic has not been performed yet, so we will need to do an estimation.
-    if (direction == ForRows && (m_sizingState == ColumnSizingFirstIteration || m_sizingState == ColumnSizingSecondIteration)) {
+    if (direction == ForRows && (m_sizingState == ColumnSizingFirstIteration || m_sizingState == ColumnSizingExtraIterationForSizeContainment || m_sizingState == ColumnSizingSecondIteration)) {
         ASSERT(GridLayoutFunctions::isOrthogonalChild(*m_renderGrid, child));
         // FIXME (jfernandez) Content Alignment should account for this heuristic.
         // https://github.com/w3c/csswg-drafts/issues/2697
-        if (m_sizingState == ColumnSizingFirstIteration)
+        if (m_sizingState == ColumnSizingFirstIteration || m_sizingState == ColumnSizingExtraIterationForSizeContainment)
             return estimatedGridAreaBreadthForChild(child, ForRows);
         addContentAlignmentOffset = true;
     }
@@ -783,7 +783,7 @@ void GridTrackSizingAlgorithm::computeGridContainerIntrinsicSizes()
 
     Vector<GridTrack>& allTracks = tracks(m_direction);
     for (auto& track : allTracks) {
-        ASSERT(m_strategy->isComputingSizeContainment() || !track.infiniteGrowthPotential());
+        ASSERT(m_strategy->isComputingSizeContainment() || m_strategy->isComputingInlineSizeContainment() || !track.infiniteGrowthPotential());
         m_minContentSize += track.baseSize();
         m_maxContentSize += track.growthLimitIsInfinite() ? track.baseSize() : track.growthLimit();
         // The growth limit caps must be cleared now in order to properly sort
@@ -815,6 +815,8 @@ LayoutUnit GridTrackSizingAlgorithmStrategy::minContentForChild(RenderBox& child
 {
     GridTrackSizingDirection childInlineDirection = GridLayoutFunctions::flowAwareDirectionForChild(*renderGrid(), child, ForColumns);
     if (direction() == childInlineDirection) {
+        if (isComputingInlineSizeContainment())
+            return { };
         // FIXME: It's unclear if we should return the intrinsic width or the preferred width.
         // See http://lists.w3.org/Archives/Public/www-style/2013Jan/0245.html
         if (child.needsPreferredWidthsRecalculation())
@@ -838,6 +840,8 @@ LayoutUnit GridTrackSizingAlgorithmStrategy::maxContentForChild(RenderBox& child
 {
     GridTrackSizingDirection childInlineDirection = GridLayoutFunctions::flowAwareDirectionForChild(*renderGrid(), child, ForColumns);
     if (direction() == childInlineDirection) {
+        if (isComputingInlineSizeContainment())
+            return { };
         // FIXME: It's unclear if we should return the intrinsic width or the preferred width.
         // See http://lists.w3.org/Archives/Public/www-style/2013Jan/0245.html
         if (child.needsPreferredWidthsRecalculation())
@@ -854,6 +858,8 @@ LayoutUnit GridTrackSizingAlgorithmStrategy::minSizeForChild(RenderBox& child) c
 {
     GridTrackSizingDirection childInlineDirection = GridLayoutFunctions::flowAwareDirectionForChild(*renderGrid(), child, ForColumns);
     bool isRowAxis = direction() == childInlineDirection;
+    if (isRowAxis && isComputingInlineSizeContainment())
+        return { };
     const Length& childSize = isRowAxis ? child.style().logicalWidth() : child.style().logicalHeight();
     if (!childSize.isAuto() && !childSize.isPercentOrCalculated())
         return minContentForChild(child);
@@ -903,6 +909,13 @@ bool GridTrackSizingAlgorithm::canParticipateInBaselineAlignment(const RenderBox
     if (isParallelToBaselineAxis && child.firstLineBaseline())
         return true;
 
+    // FIXME: We don't currently allow items within subgrids that need to
+    // synthesize a baseline, since we need a layout to have been completed
+    // and performGridItemsPreLayout on the outer grid doesn't layout subgrid
+    // items.
+    if (child.parent() != renderGrid())
+        return false;
+
     // Baseline cyclic dependencies only happen in grid areas with
     // intrinsically-sized tracks. 
     if (!isIntrinsicSizedGridArea(child, baselineAxis))
@@ -920,7 +933,6 @@ void GridTrackSizingAlgorithm::updateBaselineAlignmentContext(const RenderBox& c
 {
     ASSERT(wasSetup());
     ASSERT(canParticipateInBaselineAlignment(child, baselineAxis));
-    ASSERT(!child.needsLayout());
 
     ItemPosition align = m_renderGrid->selfAlignmentForChild(baselineAxis, child).position();
     const auto& span = m_renderGrid->gridSpanForChild(child, gridDirectionForAxis(baselineAxis));
@@ -929,6 +941,11 @@ void GridTrackSizingAlgorithm::updateBaselineAlignmentContext(const RenderBox& c
 
 LayoutUnit GridTrackSizingAlgorithm::baselineOffsetForChild(const RenderBox& child, GridAxis baselineAxis) const
 {
+    // If we haven't yet initialized this axis (which can be the case if we're doing
+    // prelayout of a subgrid), then we can't know the baseline offset.
+    if (tracks(gridDirectionForAxis(baselineAxis)).isEmpty())
+        return LayoutUnit();
+
     if (!participateInBaselineAlignment(child, baselineAxis))
         return LayoutUnit();
 
@@ -945,7 +962,11 @@ void GridTrackSizingAlgorithm::clearBaselineItemsCache()
 
 void GridTrackSizingAlgorithm::cacheBaselineAlignedItem(const RenderBox& item, GridAxis axis)
 {
-    ASSERT(m_renderGrid->isBaselineAlignmentForChild(item, axis));
+    ASSERT(downcast<RenderGrid>(item.parent())->isBaselineAlignmentForChild(item, axis));
+
+    if (GridLayoutFunctions::isOrthogonalParent(*m_renderGrid, *item.parent()))
+        axis = axis == GridColumnAxis ? GridRowAxis : GridColumnAxis;
+
     if (axis == GridColumnAxis)
         m_columnBaselineItemsMap.add(&item, true);
     else
@@ -1006,7 +1027,7 @@ LayoutUnit GridTrackSizingAlgorithmStrategy::minLogicalSizeForChild(RenderBox& c
     GridTrackSizingDirection childInlineDirection = GridLayoutFunctions::flowAwareDirectionForChild(*renderGrid(), child, ForColumns);
     bool isRowAxis = direction() == childInlineDirection;
     if (isRowAxis)
-        return child.computeLogicalWidthInFragmentUsing(MinSize, childMinSize, availableSize.value_or(0), *renderGrid(), nullptr) + GridLayoutFunctions::marginLogicalSizeForChild(*renderGrid(), childInlineDirection, child);
+        return isComputingInlineSizeContainment() ? 0_lu : child.computeLogicalWidthInFragmentUsing(MinSize, childMinSize, availableSize.value_or(0), *renderGrid(), nullptr) + GridLayoutFunctions::marginLogicalSizeForChild(*renderGrid(), childInlineDirection, child);
     bool overrideSizeHasChanged = updateOverridingContainingBlockContentSizeForChild(child, childInlineDirection, availableSize);
     layoutGridItemForMinSizeComputation(child, overrideSizeHasChanged);
     GridTrackSizingDirection childBlockDirection = GridLayoutFunctions::flowAwareDirectionForChild(*renderGrid(), child, ForRows);
@@ -1024,7 +1045,8 @@ private:
     double findUsedFlexFraction(Vector<unsigned>& flexibleSizedTracksIndex, GridTrackSizingDirection, std::optional<LayoutUnit> freeSpace) const override;
     bool recomputeUsedFlexFractionIfNeeded(double& flexFraction, LayoutUnit& totalGrowth) const override;
     LayoutUnit freeSpaceForStretchAutoTracksStep() const override;
-    bool isComputingSizeContainment() const override { return shouldApplySizeContainment(*renderGrid()); }
+    bool isComputingSizeContainment() const override { return renderGrid()->shouldApplySizeContainment(); }
+    bool isComputingInlineSizeContainment() const override { return renderGrid()->shouldApplyInlineSizeContainment(); }
     void accumulateFlexFraction(double& flexFraction, GridIterator&, GridTrackSizingDirection outermostDirection, HashSet<RenderBox*>& itemsSet) const;
 };
 
@@ -1137,6 +1159,7 @@ private:
     LayoutUnit minContentForChild(RenderBox&) const override;
     LayoutUnit minLogicalSizeForChild(RenderBox&, const Length& childMinSize, std::optional<LayoutUnit> availableSize) const override;
     bool isComputingSizeContainment() const override { return false; }
+    bool isComputingInlineSizeContainment() const override { return false; }
 };
 
 LayoutUnit IndefiniteSizeStrategy::freeSpaceForStretchAutoTracksStep() const
@@ -1410,6 +1433,9 @@ void GridTrackSizingAlgorithm::advanceNextState()
 {
     switch (m_sizingState) {
     case ColumnSizingFirstIteration:
+        m_sizingState = m_strategy->isComputingSizeContainment() || m_strategy->isComputingInlineSizeContainment() ? ColumnSizingExtraIterationForSizeContainment : RowSizingFirstIteration;
+        return;
+    case ColumnSizingExtraIterationForSizeContainment:
         m_sizingState = RowSizingFirstIteration;
         return;
     case RowSizingFirstIteration:
@@ -1433,6 +1459,7 @@ bool GridTrackSizingAlgorithm::isValidTransition() const
 {
     switch (m_sizingState) {
     case ColumnSizingFirstIteration:
+    case ColumnSizingExtraIterationForSizeContainment:
     case ColumnSizingSecondIteration:
         return m_direction == ForColumns;
     case RowSizingFirstIteration:

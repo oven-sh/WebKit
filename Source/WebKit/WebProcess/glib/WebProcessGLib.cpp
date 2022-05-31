@@ -31,7 +31,10 @@
 #include "WebKitWebExtensionPrivate.h"
 #include "WebPage.h"
 #include "WebProcessCreationParameters.h"
+
+#if ENABLE(REMOTE_INSPECTOR)
 #include <JavaScriptCore/RemoteInspector.h>
+#endif
 
 #if USE(GSTREAMER)
 #include <WebCore/GStreamerCommon.h>
@@ -114,7 +117,7 @@ void WebProcess::platformInitializeWebProcess(WebProcessCreationParameters& para
             wpe_loader_init(parameters.implementationLibraryName.data());
 
         RELEASE_ASSERT(is<PlatformDisplayLibWPE>(PlatformDisplay::sharedDisplay()));
-        downcast<PlatformDisplayLibWPE>(PlatformDisplay::sharedDisplay()).initialize(parameters.hostClientFileDescriptor.releaseFileDescriptor());
+        downcast<PlatformDisplayLibWPE>(PlatformDisplay::sharedDisplay()).initialize(parameters.hostClientFileDescriptor.release().release());
     }
 #endif
 
@@ -122,7 +125,7 @@ void WebProcess::platformInitializeWebProcess(WebProcessCreationParameters& para
     if (PlatformDisplay::sharedDisplay().type() == PlatformDisplay::Type::Wayland) {
 #if USE(WPE_RENDERER)
         if (!parameters.isServiceWorkerProcess) {
-            auto hostClientFileDescriptor = parameters.hostClientFileDescriptor.releaseFileDescriptor();
+            auto hostClientFileDescriptor = parameters.hostClientFileDescriptor.release().release();
             if (hostClientFileDescriptor != -1) {
                 wpe_loader_init(parameters.implementationLibraryName.data());
                 m_wpeDisplay = WebCore::PlatformDisplayLibWPE::create();
@@ -153,8 +156,10 @@ void WebProcess::platformInitializeWebProcess(WebProcessCreationParameters& para
     if (!parameters.applicationName.isEmpty())
         WebCore::setApplicationName(parameters.applicationName);
 
+#if ENABLE(REMOTE_INSPECTOR)
     if (!parameters.inspectorServerAddress.isNull())
         Inspector::RemoteInspector::setInspectorServerAddress(WTFMove(parameters.inspectorServerAddress));
+#endif
 
 #if USE(ATSPI)
     AccessibilityAtspi::singleton().connect(parameters.accessibilityBusAddress);

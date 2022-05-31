@@ -161,17 +161,6 @@ public:
         return jitType == JITType::InterpreterThunk || jitType == JITType::BaselineJIT;
     }
 
-    static bool useDataIC(JITType jitType)
-    {
-        if (JITCode::isBaselineCode(jitType))
-            return true;
-#if CPU(X86_64) || CPU(ARM64) || CPU(RISCV64)
-        return Options::useDataICInOptimizingJIT();
-#else
-        return false;
-#endif
-    }
-
     virtual const DOMJIT::Signature* signature() const { return nullptr; }
     
     enum class ShareAttribute : uint8_t {
@@ -189,6 +178,8 @@ public:
     {
         return m_jitType;
     }
+
+    bool isUnlinked() const;
     
     template<typename PointerType>
     static JITType jitTypeFor(PointerType jitCode)
@@ -232,6 +223,8 @@ public:
     virtual PCToCodeOriginMap* pcToCodeOriginMap() { return nullptr; }
 
     const RegisterAtOffsetList* calleeSaveRegisters() const;
+
+    static ptrdiff_t offsetOfJITType() { return OBJECT_OFFSETOF(JITCode, m_jitType); }
 
 private:
     const JITType m_jitType;

@@ -222,7 +222,8 @@
          "zbujtas@gmail.com",
          "zalan.bujtas@nokia.com"
       ],
-      "expertise" : "Layout and Rendering, subpixel positioning, frame flattening",
+      "expertise" : "Layout",
+      "github" : "alanbujtas",
       "name" : "Alan Bujtas",
       "nicks" : [
          "zalan"
@@ -329,6 +330,7 @@
          "alex.christensen@flexsim.com"
       ],
       "expertise" : "Win64, WebGL",
+      "github" : "achristensen07",
       "name" : "Alex Christensen",
       "nicks" : [
          "alexchristensen"
@@ -485,6 +487,7 @@
          "aboya@igalia.com",
          "ntrrgc@gmail.com"
       ],
+      "github" : "ntrrgc",
       "name" : "Alicia Boya Garcia",
       "nicks" : [
          "ntrrgc",
@@ -946,6 +949,17 @@
    },
    {
       "emails" : [
+         "asumu@igalia.com",
+         "atakikawa@igalia.com"
+      ],
+      "github" : "takikawa",
+      "name" : "Asumu Takikawa",
+      "nicks" : [
+         "asumu"
+      ]
+   },
+   {
+      "emails" : [
          "ayumi_kojima@apple.com"
       ],
       "name" : "Ayumi Kojima",
@@ -1037,6 +1051,7 @@
       "emails" : [
          "nham@apple.com"
       ],
+      "github" : "bnham",
       "name" : "Ben Nham",
       "nicks" : [
          "nham"
@@ -1106,7 +1121,7 @@
       "emails" : [
          "bdakin@apple.com"
       ],
-      "expertise" : "CSS (Cascading Style Sheets), Layout and Rendering, Resolution-Independence, HTML Parsing, Tables, Web Accessibility",
+      "expertise" : "iOS, Inclusive Code, Scrolling, CSS (Cascading Style Sheets), Layout and Rendering, Resolution-Independence, HTML Parsing, Tables, Web Accessibility",
       "github" : "dethbakin",
       "name" : "Beth Dakin",
       "nicks" : [
@@ -1168,6 +1183,7 @@
          "bfulgham@apple.com"
       ],
       "expertise" : "The WinCairo Port, WebKit on Windows",
+      "github" : "brentfulgham",
       "name" : "Brent Fulgham",
       "nicks" : [
          "bfulgham"
@@ -1894,6 +1910,7 @@
       "emails" : [
          "david_quesada@apple.com"
       ],
+      "github" : "davidquesada",
       "name" : "David Quesada",
       "status" : "committer"
    },
@@ -1921,6 +1938,7 @@
          "dino@apple.com"
       ],
       "expertise" : "Transforms, Transitions, Animations, Filters",
+      "github" : "grorg",
       "name" : "Dean Jackson",
       "nicks" : [
          "dino"
@@ -2640,7 +2658,8 @@
       "emails" : [
          "ggaren@apple.com"
       ],
-      "expertise" : "JavaScript/ECMAScript, Performance, Memory Use / Leaks, Memory Cache, Core DOM, HTML DOM, JavaScript DOM Bindings, Web Compatibility (General), JavaScriptCore C API, FastMalloc",
+      "expertise" : "IPC, Process Model, Sandboxing, JavaScript/ECMAScript, Performance, Memory Use / Leaks, Memory Cache, Core DOM, HTML DOM, JavaScript DOM Bindings, Web Compatibility, JavaScriptCore C API, FastMalloc",
+      "github" : "geoffreygaren",
       "name" : "Geoffrey Garen",
       "nicks" : [
          "ggaren"
@@ -2663,6 +2682,17 @@
       "name" : "Gergo Balogh",
       "nicks" : [
          "geryxyz"
+      ]
+   },
+   {
+      "emails" : [
+         "gezalore@gmail.com",
+         "glore@igalia.com"
+      ],
+      "github" : "gezalore",
+      "name" : "Geza Lore",
+      "nicks" : [
+         "gezalore"
       ]
    },
    {
@@ -3292,6 +3322,8 @@
       "emails" : [
          "jfernandez@igalia.com"
       ],
+      "expertise" : "Layout, CSS",
+      "github" : "javifernandez",
       "name" : "Javier Fernandez",
       "nicks" : [
          "lajava"
@@ -3323,6 +3355,7 @@
       "emails" : [
          "jeffm@apple.com"
       ],
+      "github" : "jeffmapple",
       "name" : "Jeff Miller",
       "nicks" : [
          "jeffm7"
@@ -3369,6 +3402,7 @@
       "emails" : [
          "jer.noble@apple.com"
       ],
+      "github" : "jernoble",
       "name" : "Jer Noble",
       "nicks" : [
          "jernoble"
@@ -3683,6 +3717,7 @@
          "web-evangelist@apple.com"
       ],
       "expertise" : "webkit.org, Developer Tools, Web Inspector",
+      "github" : "jdatapple",
       "name" : "Jonathan Davis",
       "nicks" : [
          "JonDavis"
@@ -3744,6 +3779,17 @@
       "name" : "Joost de Valk",
       "nicks" : [
          "Altha"
+      ]
+   },
+   {
+      "emails" : [
+         "jgriego@igalia.com",
+         "joseph.j.griego@gmail.com"
+      ],
+      "github" : "jjgriego",
+      "name" : "Joseph Griego",
+      "nicks" : [
+         "jgriego"
       ]
    },
    {
@@ -3860,6 +3906,8 @@
          "justin_michaud@apple.com",
          "justin@justinmichaud.com"
       ],
+      "expertise" : "JavaScriptCore",
+      "github" : "justinmichaud",
       "name" : "Justin Michaud",
       "status" : "committer"
    },
@@ -3918,6 +3966,7 @@
       "emails" : [
          "rackler@apple.com"
       ],
+      "github" : "karlrackler",
       "name" : "Karl Rackler",
       "status" : "committer"
    },
@@ -3925,10 +3974,8 @@
       "emails" : [
          "katherine_cheney@apple.com"
       ],
+      "github" : "kcheney1",
       "name" : "Kate Cheney",
-      "nicks" : [
-         "kate"
-      ],
       "status" : "reviewer"
    },
    {
@@ -3966,6 +4013,7 @@
          "keith_miller@apple.com"
       ],
       "expertise" : "JavaScript/ECMAScript",
+      "github" : "kmiller68",
       "name" : "Keith Miller",
       "nicks" : [
          "keith_miller",
@@ -4123,6 +4171,17 @@
    },
    {
       "emails" : [
+         "tho22@apple.com",
+         "tuankiet65@gmail.com"
+      ],
+      "github" : "tuankiet65",
+      "name" : "Kiet Ho",
+      "nicks" : [
+         "tuankiet65"
+      ]
+   },
+   {
+      "emails" : [
          "kihong.kwon@samsung.com"
       ],
       "expertise" : "Device APIs(Battery Status, Vibration...), The EFLWebKit Port",
@@ -4142,6 +4201,7 @@
          "kkinnunen@apple.com"
       ],
       "expertise" : "WebGL",
+      "github" : "kkinnunen-apple",
       "name" : "Kimmo Kinnunen",
       "nicks" : [
          "kimmok"
@@ -4562,8 +4622,10 @@
    },
    {
       "emails" : [
-         "mark.lam@apple.com"
+         "mark.lam@apple.com",
+         "menlodorian@outlook.com"
       ],
+      "github" : "MenloDorian",
       "name" : "Mark Lam",
       "nicks" : [
          "mlam"
@@ -4719,6 +4781,7 @@
       "emails" : [
          "mattwoodrow@apple.com"
       ],
+      "github" : "mattwoodrow",
       "name" : "Matt Woodrow",
       "nicks" : [
          "mattwoodrow"
@@ -4780,6 +4843,7 @@
          "megan_gardner@apple.com"
       ],
       "expertise" : "iOS Selection",
+      "github" : "megangardner",
       "name" : "Megan Gardner",
       "nicks" : [
          "GameMaker"
@@ -4800,6 +4864,7 @@
    {
       "emails" : [
          "mcatanzaro@gnome.org",
+         "mcatanzaro@redhat.com",
          "mcatanzaro@igalia.com"
       ],
       "expertise" : "The WebKitGTK Port, Epiphany, Soup HTTP Backend",
@@ -4833,6 +4898,7 @@
          "msaboff@apple.com"
       ],
       "expertise" : "JavaScript/ECMAScript",
+      "github" : "msaboff",
       "name" : "Michael Saboff",
       "nicks" : [
          "msaboff"
@@ -4869,7 +4935,7 @@
       "nicks" : [
          "magomez"
       ],
-      "status" : "committer"
+      "status" : "reviewer"
    },
    {
       "emails" : [
@@ -4974,6 +5040,14 @@
       "nicks" : [
          "mkwst"
       ]
+   },
+   {
+      "emails" : [
+         "mwyrzykowski@apple.com"
+      ],
+      "expertise" : "Graphics",
+      "github" : "mwyrzykowski",
+      "name" : "Mike Wyrzykowski"
    },
    {
       "emails" : [
@@ -5143,6 +5217,7 @@
       "emails" : [
          "nmouchtaris@apple.com"
       ],
+      "github" : "nmoucht",
       "name" : "Nikolaos Mouchtaris",
       "status" : "committer"
    },
@@ -5365,6 +5440,7 @@
          "pvollan@apple.com",
          "peavo@outlook.com"
       ],
+      "github" : "pvollan",
       "name" : "Per Arne Vollan",
       "nicks" : [
          "peavo"
@@ -5457,11 +5533,11 @@
    },
    {
       "emails" : [
+         "philn@igalia.com",
          "pnormand@igalia.com",
-         "philn@webkit.org",
-         "philn@igalia.com"
+         "philn@webkit.org"
       ],
-      "expertise" : "WebKitGTK, WPE, Media support (focused on the GStreamer implementation)",
+      "expertise" : "WebKitGTK, WPE, Media support (focused on the GStreamer implementation), Flatpak SDK",
       "github" : "philn",
       "name" : "Philippe Normand",
       "nicks" : [
@@ -5620,6 +5696,7 @@
       "emails" : [
          "rcaliman@apple.com"
       ],
+      "github" : "rcaliman-apple",
       "name" : "Razvan Caliman",
       "nicks" : [
          "rcaliman"
@@ -5854,6 +5931,7 @@
          "sbarati@apple.com",
          "saambarati1@gmail.com"
       ],
+      "github" : "saambarati",
       "name" : "Saam Barati",
       "nicks" : [
          "saamyjoon"
@@ -5876,6 +5954,7 @@
          "said@apple.com"
       ],
       "expertise" : "SVG/Graphics, Image Decoders",
+      "github" : "shallawa",
       "name" : "Said Abou-Hallawa",
       "nicks" : [
          "sabouhallawa"
@@ -6071,6 +6150,7 @@
       "emails" : [
          "sihui_liu@apple.com"
       ],
+      "github" : "szewai",
       "name" : "Sihui Liu",
       "nicks" : [
          "sihuil"
@@ -6606,6 +6686,7 @@
       "emails" : [
          "tsavell@apple.com"
       ],
+      "github" : "Technose",
       "name" : "Truitt Savell",
       "status" : "committer"
    },
@@ -6801,6 +6882,7 @@
          "wenson_hsieh@apple.com",
          "whsieh@berkeley.edu"
       ],
+      "github" : "whsieh",
       "name" : "Wenson Hsieh",
       "nicks" : [
          "whsieh"
@@ -6925,6 +7007,7 @@
          "yijia_huang@apple.com",
          "hyjorc1@gmail.com"
       ],
+      "github" : "hyjorc1",
       "name" : "Yijia Huang",
       "nicks" : [
          "yijia"
@@ -6991,6 +7074,18 @@
    },
    {
       "emails" : [
+         "y_soliman@apple.com",
+         "youssefdevelops@gmail.com"
+      ],
+      "github" : "youssefsoli",
+      "name" : "Youssef Soliman",
+      "nicks" : [
+         "ys",
+         "youssefsoli"
+      ]
+   },
+   {
+      "emails" : [
          "yousuke.kimoto@sony.com"
       ],
       "github" : "ykimot",
@@ -7012,6 +7107,7 @@
          "yurys@chromium.org"
       ],
       "expertise" : "Developer Tools, Web Inspector",
+      "github" : "yury-s",
       "name" : "Yury Semikhatsky",
       "nicks" : [
          "yurys"
@@ -7090,8 +7186,10 @@
    },
    {
       "emails" : [
-         "zhifei_fang@apple.com"
+         "zhifei_fang@apple.com",
+         "facetothefate@gmail.com"
       ],
+      "github" : "facetothefate",
       "name" : "Zhifei Fang",
       "nicks" : [
          "zhifei_fang",
@@ -7159,8 +7257,7 @@
    {
       "emails" : [
          "zdobersek@igalia.com",
-         "zan@falconsigh.net",
-         "zandobersek@gmail.com"
+         "zan@falconsigh.net"
       ],
       "github" : "zdobersek",
       "name" : "\u017dan Dober\u0161ek",

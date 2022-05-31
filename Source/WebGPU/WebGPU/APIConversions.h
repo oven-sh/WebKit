@@ -171,13 +171,13 @@ inline TextureView& fromAPI(WGPUTextureView textureView)
 
 inline String fromAPI(const char* string)
 {
-    return String(string);
+    return String::fromUTF8(string);
 }
 
 template <typename T>
-inline T* releaseToAPI(RefPtr<T>&& pointer)
+inline T* releaseToAPI(Ref<T>&& pointer)
 {
-    return pointer.leakRef();
+    return &pointer.leakRef();
 }
 
 } // namespace WebGPU

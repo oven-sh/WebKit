@@ -506,7 +506,7 @@ void TextManipulationController::observeParagraphs(const Position& start, const 
 
         if (content.isReplacedContent) {
             if (!unitsInCurrentParagraph.isEmpty())
-                unitsInCurrentParagraph.append(ManipulationUnit { *contentNode, { ManipulationToken { m_tokenIdentifier.generate(), "[]", tokenInfo(content.node.get()), true } } });
+                unitsInCurrentParagraph.append(ManipulationUnit { *contentNode, { ManipulationToken { m_tokenIdentifier.generate(), "[]"_s, tokenInfo(content.node.get()), true } } });
             continue;
         }
 
@@ -774,7 +774,7 @@ auto TextManipulationController::replace(const ManipulationItemData& item, const
         else if (item.attributeName == HTMLNames::valueAttr && is<HTMLInputElement>(*element))
             downcast<HTMLInputElement>(*element).setValue(newValue.toString());
         else
-            element->setAttribute(item.attributeName, newValue.toString());
+            element->setAttribute(item.attributeName, newValue.toAtomString());
 
         m_manipulatedNodes.add(*element);
         return std::nullopt;
@@ -791,10 +791,14 @@ auto TextManipulationController::replace(const ManipulationItemData& item, const
         auto content = iterator.currentContent();
         ASSERT(content.node);
 
+        bool isReplacedOrTextContent = content.isReplacedContent || content.isTextContent;
+        if (!isReplacedOrTextContent && is<ContainerNode>(*content.node) && !content.node->hasChildNodes() && content.text.isEmpty())
+            continue;
+
         lastChildOfCommonAncestorInRange = content.node;
         nodesToRemove.add(*content.node);
 
-        if (!content.isReplacedContent && !content.isTextContent)
+        if (!isReplacedOrTextContent)
             continue;
 
         Vector<ManipulationToken> tokensInCurrentNode;
@@ -881,7 +885,7 @@ auto TextManipulationController::replace(const ManipulationItemData& item, const
             for (RefPtr<Node> descendentNode = NodeTraversal::next(*originalNode, originalNode); descendentNode; descendentNode = NodeTraversal::next(*descendentNode, originalNode))
                 nodesToRemove.remove(*descendentNode);
         } else
-            replacementNode = Text::create(commonAncestor->document(), replacementText);
+            replacementNode = Text::create(commonAncestor->document(), WTFMove(replacementText));
 
         auto topDownPath = getPath(commonAncestor.get(), originalNode);
         updateInsertions(lastTopDownPath, topDownPath, replacementNode.get(), reusedOriginalNodes, insertions);

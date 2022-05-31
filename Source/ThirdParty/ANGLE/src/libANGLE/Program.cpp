@@ -33,7 +33,7 @@
 #include "libANGLE/queryconversions.h"
 #include "libANGLE/renderer/GLImplFactory.h"
 #include "libANGLE/renderer/ProgramImpl.h"
-#include "platform/FrontendFeatures.h"
+#include "platform/FrontendFeatures_autogen.h"
 #include "platform/PlatformMethods.h"
 
 namespace gl
@@ -573,7 +573,7 @@ void InfoLog::getLog(GLsizei bufSize, GLsizei *length, char *infoLog) const
     }
 }
 
-// append a santized message to the program info log.
+// append a sanitized message to the program info log.
 // The D3D compiler includes a fake file path in some of the warning or error
 // messages, so lets remove all occurrences of this fake file path from the log.
 void InfoLog::appendSanitized(const char *message)
@@ -1206,7 +1206,7 @@ angle::Result Program::linkImpl(const Context *context)
     // use the previously linked program if linking the shaders fails.
     mLinked = false;
 
-    mState.mExecutable->getInfoLog().reset();
+    mState.mExecutable->resetInfoLog();
 
     // Validate we have properly attached shaders before checking the cache.
     if (!linkValidateShaders(mState.mExecutable->getInfoLog()))
@@ -1343,7 +1343,10 @@ angle::Result Program::linkImpl(const Context *context)
 
             mState.mExecutable->mUsesEarlyFragmentTestsOptimization =
                 fragmentShader->hasEarlyFragmentTestsOptimization();
-            mState.mAdvancedBlendEquations = fragmentShader->getAdvancedBlendEquations();
+            mState.mExecutable->mEnablesPerSampleShading =
+                fragmentShader->enablesPerSampleShading();
+            mState.mExecutable->mAdvancedBlendEquations =
+                fragmentShader->getAdvancedBlendEquations();
             mState.mSpecConstUsageBits |= fragmentShader->getSpecConstUsageBits();
         }
 
@@ -1356,6 +1359,8 @@ angle::Result Program::linkImpl(const Context *context)
         }
     }
 
+    mState.mExecutable->saveLinkedStateInfo(mState);
+
     mLinkingState                    = std::move(linkingState);
     mLinkingState->linkingFromBinary = false;
     mLinkingState->programHash       = programHash;
@@ -1365,11 +1370,8 @@ angle::Result Program::linkImpl(const Context *context)
     mState.updateProgramInterfaceInputs();
     mState.updateProgramInterfaceOutputs();
 
-    // Linking has succeeded, so we need to save some information that may get overwritten by a
-    // later linkProgram() that could fail.
     if (mState.mSeparable)
     {
-        mState.mExecutable->saveLinkedStateInfo(mState);
         mLinkingState->linkedExecutable = mState.mExecutable;
     }
 
@@ -1392,6 +1394,7 @@ void Program::resolveLinkImpl(const Context *context)
     std::unique_ptr<LinkingState> linkingState = std::move(mLinkingState);
     if (!mLinked)
     {
+        mState.mExecutable->reset(false);
         return;
     }
 
@@ -1523,25 +1526,17 @@ void Program::unlink()
         // the last successfully linked ProgramExecutable, so we don't lose any state information.
         mState.mExecutable.reset(new ProgramExecutable(*mLinkingState->linkedExecutable));
     }
-    mState.mExecutable->reset();
+    mState.mExecutable->reset(true);
 
     mState.mUniformLocations.clear();
     mState.mBufferVariables.clear();
     mState.mComputeShaderLocalSize.fill(1);
-    mState.mNumViews                      = -1;
-    mState.mDrawIDLocation                = -1;
-    mState.mBaseVertexLocation            = -1;
-    mState.mBaseInstanceLocation          = -1;
-    mState.mCachedBaseVertex              = 0;
-    mState.mCachedBaseInstance            = 0;
-    mState.mEarlyFramentTestsOptimization = false;
-    mState.mDrawIDLocation                = -1;
-    mState.mBaseVertexLocation            = -1;
-    mState.mBaseInstanceLocation          = -1;
-    mState.mCachedBaseVertex              = 0;
-    mState.mCachedBaseInstance            = 0;
-    mState.mEarlyFramentTestsOptimization = false;
-    mState.mAdvancedBlendEquations.reset();
+    mState.mNumViews             = -1;
+    mState.mDrawIDLocation       = -1;
+    mState.mBaseVertexLocation   = -1;
+    mState.mBaseInstanceLocation = -1;
+    mState.mCachedBaseVertex     = 0;
+    mState.mCachedBaseInstance   = 0;
     mState.mSpecConstUsageBits.reset();
 
     mValidated = false;
@@ -1558,14 +1553,16 @@ angle::Result Program::loadBinary(const Context *context,
     unlink();
     InfoLog &infoLog = mState.mExecutable->getInfoLog();
 
-#if ANGLE_PROGRAM_BINARY_LOAD != ANGLE_ENABLED
-    return angle::Result::Continue;
-#else
+    if (!angle::GetANGLEHasBinaryLoading())
+    {
+        return angle::Result::Incomplete;
+    }
+
     ASSERT(binaryFormat == GL_PROGRAM_BINARY_ANGLE);
     if (binaryFormat != GL_PROGRAM_BINARY_ANGLE)
     {
         infoLog << "Invalid program binary format.";
-        return angle::Result::Continue;
+        return angle::Result::Incomplete;
     }
 
     BinaryInputStream stream(binary, length);
@@ -1612,7 +1609,6 @@ angle::Result Program::loadBinary(const Context *context,
     mLinkingState = std::move(linkingState);
 
     return result;
-#endif  // #if ANGLE_PROGRAM_BINARY_LOAD == ANGLE_ENABLED
 }
 
 angle::Result Program::saveBinary(Context *context,
@@ -3617,8 +3613,6 @@ angle::Result Program::serialize(const Context *context, angle::MemoryBuffer *bi
     stream.writeInt(computeLocalSize[2]);
 
     stream.writeInt(mState.mNumViews);
-    stream.writeBool(mState.mEarlyFramentTestsOptimization);
-    stream.writeInt(mState.mAdvancedBlendEquations.bits());
     stream.writeInt(mState.mSpecConstUsageBits.bits());
 
     stream.writeInt(mState.getUniformLocations().size());
@@ -3709,11 +3703,7 @@ angle::Result Program::deserialize(const Context *context,
     mState.mComputeShaderLocalSize[1] = stream.readInt<int>();
     mState.mComputeShaderLocalSize[2] = stream.readInt<int>();
 
-    mState.mNumViews                      = stream.readInt<int>();
-    mState.mEarlyFramentTestsOptimization = stream.readBool();
-
-    static_assert(sizeof(mState.mAdvancedBlendEquations.bits()) == sizeof(uint32_t));
-    mState.mAdvancedBlendEquations = BlendEquationBitSet(stream.readInt<uint32_t>());
+    mState.mNumViews = stream.readInt<int>();
 
     static_assert(sizeof(mState.mSpecConstUsageBits.bits()) == sizeof(uint32_t));
     mState.mSpecConstUsageBits = rx::SpecConstUsageBits(stream.readInt<uint32_t>());

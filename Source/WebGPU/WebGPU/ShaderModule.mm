@@ -80,7 +80,7 @@ id<MTLLibrary> ShaderModule::createLibrary(id<MTLDevice> device, const String& m
     return library;
 }
 
-static RefPtr<ShaderModule> earlyCompileShaderModule(id<MTLDevice> device, std::variant<WGSL::SuccessfulCheck, WGSL::FailedCheck>&& checkResult, const WGPUShaderModuleDescriptorHints& suppliedHints, String&& label)
+static RefPtr<ShaderModule> earlyCompileShaderModule(Device& device, std::variant<WGSL::SuccessfulCheck, WGSL::FailedCheck>&& checkResult, const WGPUShaderModuleDescriptorHints& suppliedHints, String&& label)
 {
     HashMap<String, Ref<PipelineLayout>> hints;
     HashMap<String, WGSL::PipelineLayout> wgslHints;
@@ -88,42 +88,56 @@ static RefPtr<ShaderModule> earlyCompileShaderModule(id<MTLDevice> device, std::
         const auto& hint = suppliedHints.hints[i];
         if (hint.nextInChain)
             return nullptr;
-        String hintKey { hint.key };
+        auto hintKey = fromAPI(hint.key);
         hints.add(hintKey, WebGPU::fromAPI(hint.hint.layout));
         auto convertedPipelineLayout = ShaderModule::convertPipelineLayout(WebGPU::fromAPI(hint.hint.layout));
         wgslHints.add(hintKey, WTFMove(convertedPipelineLayout));
     }
     auto prepareResult = WGSL::prepare(std::get<WGSL::SuccessfulCheck>(checkResult).ast, wgslHints);
-    auto library = ShaderModule::createLibrary(device, prepareResult.msl, WTFMove(label));
+    auto library = ShaderModule::createLibrary(device.device(), prepareResult.msl, WTFMove(label));
     if (!library)
         return nullptr;
-    return ShaderModule::create(WTFMove(checkResult), WTFMove(hints), WTFMove(prepareResult.entryPoints), library);
+    return ShaderModule::create(WTFMove(checkResult), WTFMove(hints), WTFMove(prepareResult.entryPoints), library, device);
 }
 
-RefPtr<ShaderModule> Device::createShaderModule(const WGPUShaderModuleDescriptor& descriptor)
+Ref<ShaderModule> Device::createShaderModule(const WGPUShaderModuleDescriptor& descriptor)
 {
     if (!descriptor.nextInChain)
-        return nullptr;
+        return ShaderModule::createInvalid(*this);
 
     auto shaderModuleParameters = findShaderModuleParameters(descriptor);
     if (!shaderModuleParameters)
-        return nullptr;
+        return ShaderModule::createInvalid(*this);
 
-    auto checkResult = WGSL::staticCheck(String(shaderModuleParameters->wgsl.code), std::nullopt);
+    auto checkResult = WGSL::staticCheck(fromAPI(shaderModuleParameters->wgsl.code), std::nullopt);
 
     if (std::holds_alternative<WGSL::SuccessfulCheck>(checkResult) && shaderModuleParameters->hints && shaderModuleParameters->hints->hintsCount) {
-        if (auto result = earlyCompileShaderModule(m_device, WTFMove(checkResult), *shaderModuleParameters->hints, fromAPI(descriptor.label)))
-            return result;
+        if (auto result = earlyCompileShaderModule(*this, WTFMove(checkResult), *shaderModuleParameters->hints, fromAPI(descriptor.label)))
+            return result.releaseNonNull();
     }
 
-    return ShaderModule::create(WTFMove(checkResult), { }, { }, nil);
+    return ShaderModule::create(WTFMove(checkResult), { }, { }, nil, *this);
 }
 
-ShaderModule::ShaderModule(std::variant<WGSL::SuccessfulCheck, WGSL::FailedCheck>&& checkResult, HashMap<String, Ref<PipelineLayout>>&& pipelineLayoutHints, HashMap<String, WGSL::Reflection::EntryPointInformation>&& entryPointInformation, id<MTLLibrary> library)
-    : m_checkResult(WTFMove(checkResult))
+auto ShaderModule::convertCheckResult(std::variant<WGSL::SuccessfulCheck, WGSL::FailedCheck>&& checkResult) -> CheckResult
+{
+    return WTF::switchOn(WTFMove(checkResult), [](auto&& check) -> CheckResult {
+        return WTFMove(check);
+    });
+}
+
+ShaderModule::ShaderModule(std::variant<WGSL::SuccessfulCheck, WGSL::FailedCheck>&& checkResult, HashMap<String, Ref<PipelineLayout>>&& pipelineLayoutHints, HashMap<String, WGSL::Reflection::EntryPointInformation>&& entryPointInformation, id<MTLLibrary> library, Device& device)
+    : m_checkResult(convertCheckResult(WTFMove(checkResult)))
     , m_pipelineLayoutHints(WTFMove(pipelineLayoutHints))
     , m_entryPointInformation(WTFMove(entryPointInformation))
     , m_library(library)
+    , m_device(device)
+{
+}
+
+ShaderModule::ShaderModule(Device& device)
+    : m_checkResult(std::monostate { })
+    , m_device(device)
 {
 }
 
@@ -193,7 +207,9 @@ void ShaderModule::getCompilationInfo(CompletionHandler<void(WGPUCompilationInfo
             static_cast<uint32_t>(compilationMessageData.compilationMessages.size()),
             compilationMessageData.compilationMessages.data(),
         };
-        callback(WGPUCompilationInfoRequestStatus_Success, compilationInfo);
+        m_device->instance().scheduleWork([compilationInfo = WTFMove(compilationInfo), callback = WTFMove(callback)]() mutable {
+            callback(WGPUCompilationInfoRequestStatus_Success, compilationInfo);
+        });
     }, [&](const WGSL::FailedCheck& failedCheck) {
         auto compilationMessageData(convertMessages(
             { failedCheck.errors, WGPUCompilationMessageType_Error },
@@ -203,7 +219,11 @@ void ShaderModule::getCompilationInfo(CompletionHandler<void(WGPUCompilationInfo
             static_cast<uint32_t>(compilationMessageData.compilationMessages.size()),
             compilationMessageData.compilationMessages.data(),
         };
-        callback(WGPUCompilationInfoRequestStatus_Error, compilationInfo);
+        m_device->instance().scheduleWork([compilationInfo = WTFMove(compilationInfo), callback = WTFMove(callback)]() mutable {
+            callback(WGPUCompilationInfoRequestStatus_Error, compilationInfo);
+        });
+    }, [](std::monostate) {
+        ASSERT_NOT_REACHED();
     });
 }
 
@@ -225,6 +245,9 @@ const WGSL::AST::ShaderModule* ShaderModule::ast() const
     return WTF::switchOn(m_checkResult, [&](const WGSL::SuccessfulCheck& successfulCheck) -> const WGSL::AST::ShaderModule* {
         return successfulCheck.ast.ptr();
     }, [&](const WGSL::FailedCheck&) -> const WGSL::AST::ShaderModule* {
+        return nullptr;
+    }, [](std::monostate) -> const WGSL::AST::ShaderModule* {
+        ASSERT_NOT_REACHED();
         return nullptr;
     });
 }

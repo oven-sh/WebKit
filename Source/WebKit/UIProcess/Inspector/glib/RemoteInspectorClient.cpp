@@ -60,14 +60,14 @@ public:
             RemoteInspectorHTTPServer::singleton().targetDidClose(m_connectionID, m_targetID);
     }
 
-    void load(Inspector::DebuggableType debuggableType)
+    void initialize(Inspector::DebuggableType debuggableType)
     {
         m_proxy = RemoteWebInspectorUIProxy::create();
         m_proxy->setClient(this);
         // FIXME <https://webkit.org/b/205536>: this should infer more useful data about the debug target.
         Ref<API::DebuggableInfo> debuggableInfo = API::DebuggableInfo::create(DebuggableInfoData::empty());
         debuggableInfo->setDebuggableType(debuggableType);
-        m_proxy->load(WTFMove(debuggableInfo), m_inspectorClient.backendCommandsURL());
+        m_proxy->initialize(WTFMove(debuggableInfo), m_inspectorClient.backendCommandsURL());
     }
 
     void show()
@@ -167,8 +167,8 @@ const SocketConnection::MessageHandlers& RemoteInspectorClient::messageHandlers(
     return messageHandlers;
 }
 
-RemoteInspectorClient::RemoteInspectorClient(const char* address, unsigned port, RemoteInspectorObserver& observer)
-    : m_hostAndPort(String::fromUTF8(address) + ':' + String::number(port))
+RemoteInspectorClient::RemoteInspectorClient(String&& hostAndPort, RemoteInspectorObserver& observer)
+    : m_hostAndPort(WTFMove(hostAndPort))
     , m_observer(observer)
     , m_cancellable(adoptGRef(g_cancellable_new()))
 {
@@ -243,7 +243,7 @@ void RemoteInspectorClient::inspect(uint64_t connectionID, uint64_t targetID, co
 
     m_socketConnection->sendMessage("Setup", g_variant_new("(tt)", connectionID, targetID));
     if (inspectorType == InspectorType::UI)
-        addResult.iterator->value->load(debuggableType(targetType));
+        addResult.iterator->value->initialize(debuggableType(targetType));
 }
 
 void RemoteInspectorClient::sendMessageToBackend(uint64_t connectionID, uint64_t targetID, const String& message)
@@ -292,6 +292,48 @@ void RemoteInspectorClient::sendMessageToFrontend(uint64_t connectionID, uint64_
     proxy->sendMessageToFrontend(String::fromUTF8(message));
 }
 
+void RemoteInspectorClient::appendTargertList(GString* html, InspectorType inspectorType, ShouldEscapeSingleQuote escapeSingleQuote) const
+{
+    if (m_targets.isEmpty())
+        g_string_append(html, "<p>No targets found</p>");
+    else {
+        g_string_append(html, "<table>");
+        for (auto connectionID : m_targets.keys()) {
+            for (auto& target : m_targets.get(connectionID)) {
+                g_string_append_printf(html,
+                    "<tbody><tr>"
+                    "<td class=\"data\"><div class=\"targetname\">%s</div><div class=\"targeturl\">%s</div></td>"
+                    "<td class=\"input\"><input type=\"button\" value=\"Inspect\" onclick=",
+                    target.name.data(), target.url.data());
+
+                switch (inspectorType) {
+                case InspectorType::UI:
+                    g_string_append(html, "\"window.webkit.messageHandlers.inspector.postMessage(");
+                    if (escapeSingleQuote == ShouldEscapeSingleQuote::Yes)
+                        g_string_append(html, "\\'");
+                    else
+                        g_string_append_c(html, '\'');
+                    g_string_append_printf(html, "%" G_GUINT64_FORMAT ":%" G_GUINT64_FORMAT ":%s", connectionID, target.id, target.type.data());
+                    if (escapeSingleQuote == ShouldEscapeSingleQuote::Yes)
+                        g_string_append(html, "\\')\"");
+                    else
+                        g_string_append(html, "')\"");
+                    break;
+                case InspectorType::HTTP:
+                    g_string_append_printf(html,
+                        "\"window.open('Main.html?ws=' + window.location.host + '/socket/%" G_GUINT64_FORMAT "/%" G_GUINT64_FORMAT "/%s', "
+                        "'_blank', 'location=no,menubar=no,status=no,toolbar=no');\"",
+                        connectionID, target.id, target.type.data());
+                    break;
+                }
+
+                g_string_append(html, "></td></tr></tbody>");
+            }
+        }
+        g_string_append(html, "</table>");
+    }
+}
+
 GString* RemoteInspectorClient::buildTargetListPage(InspectorType inspectorType) const
 {
     GString* html = g_string_new(
@@ -312,38 +354,10 @@ GString* RemoteInspectorClient::buildTargetListPage(InspectorType inspectorType)
         "  td.input { width: 64px; }"
         "  input { width: 100%; padding: 8px; }"
         "</style>"
-        "</head><body><h1>Inspectable targets</h1>");
-    if (m_targets.isEmpty())
-        g_string_append(html, "<p>No targets found</p>");
-    else {
-        g_string_append(html, "<table>");
-        for (auto connectionID : m_targets.keys()) {
-            for (auto& target : m_targets.get(connectionID)) {
-                g_string_append_printf(html,
-                    "<tbody><tr>"
-                    "<td class=\"data\"><div class=\"targetname\">%s</div><div class=\"targeturl\">%s</div></td>"
-                    "<td class=\"input\"><input type=\"button\" value=\"Inspect\" onclick=",
-                    target.name.data(), target.url.data());
-
-                switch (inspectorType) {
-                case InspectorType::UI:
-                    g_string_append_printf(html, "\"window.webkit.messageHandlers.inspector.postMessage('%" G_GUINT64_FORMAT ":%" G_GUINT64_FORMAT ":%s');\"",
-                        connectionID, target.id, target.type.data());
-                    break;
-                case InspectorType::HTTP:
-                    g_string_append_printf(html,
-                        "\"window.open('Main.html?ws=' + window.location.host + '/socket/%" G_GUINT64_FORMAT "/%" G_GUINT64_FORMAT "/%s', "
-                        "'_blank', 'location=no,menubar=no,status=no,toolbar=no');\"",
-                        connectionID, target.id, target.type.data());
-                    break;
-                }
-
-                g_string_append(html, "></td></tr></tbody>");
-            }
-        }
-        g_string_append(html, "</table>");
-    }
-    g_string_append(html, "</body></html>");
+        "</head><body><h1>Inspectable targets</h1>"
+        "<div id='targetlist'>");
+    appendTargertList(html, inspectorType, ShouldEscapeSingleQuote::No);
+    g_string_append(html, "</div></body></html>");
 
     return html;
 }

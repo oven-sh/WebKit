@@ -566,7 +566,6 @@ bindings/js/JSHTMLTemplateElementCustom.cpp
 bindings/js/JSHistoryCustom.cpp
 bindings/js/JSIDBCursorCustom.cpp
 bindings/js/JSIDBCursorWithValueCustom.cpp
-bindings/js/JSIDBIndexCustom.cpp
 bindings/js/JSIDBObjectStoreCustom.cpp
 bindings/js/JSIDBRequestCustom.cpp
 bindings/js/JSIDBTransactionCustom.cpp
@@ -712,9 +711,11 @@ css/CSSAspectRatioValue.cpp
 css/CSSBasicShapes.cpp
 css/CSSBorderImage.cpp
 css/CSSBorderImageSliceValue.cpp
+css/CSSBorderImageWidthValue.cpp
 css/CSSCanvasValue.cpp
 css/CSSComputedStyleDeclaration.cpp
 css/CSSConditionRule.cpp
+css/CSSContainerRule.cpp
 css/CSSContentDistributionValue.cpp
 css/CSSCounterStyleRule.cpp
 css/CSSCrossfadeValue.cpp
@@ -830,7 +831,6 @@ css/calc/CSSCalcPrimitiveValueNode.cpp
 css/calc/CSSCalcSymbolTable.cpp
 css/calc/CSSCalcValue.cpp
 css/parser/CSSAtRuleID.cpp
-css/parser/CSSDeferredParser.cpp
 css/parser/CSSParser.cpp
 css/parser/CSSParserContext.cpp
 css/parser/CSSParserFastPaths.cpp
@@ -852,6 +852,7 @@ css/parser/MediaQueryBlockWatcher.cpp
 css/parser/MediaQueryParser.cpp
 css/parser/SizesAttributeParser.cpp
 css/parser/SizesCalcParser.cpp
+css/typedom/ComputedStylePropertyMapReadOnly.cpp
 css/typedom/StylePropertyMapReadOnly.cpp
 css/typedom/CSSKeywordValue.cpp
 css/typedom/CSSStyleImageValue.cpp
@@ -877,6 +878,7 @@ css/typedom/numeric/CSSMathNegate.cpp
 css/typedom/numeric/CSSMathProduct.cpp
 css/typedom/numeric/CSSMathSum.cpp
 css/typedom/numeric/CSSNumericArray.cpp
+css/typedom/numeric/CSSNumericType.cpp
 css/typedom/transform/CSSMatrixComponent.cpp
 css/typedom/transform/CSSPerspective.cpp
 css/typedom/transform/CSSRotate.cpp
@@ -1208,6 +1210,7 @@ html/GenericCachedHTMLCollection.cpp
 html/HTMLAllCollection.cpp
 html/HTMLAnchorElement.cpp
 html/HTMLAreaElement.cpp
+html/HTMLArticleElement.cpp
 html/HTMLAttachmentElement.cpp
 html/HTMLAudioElement.cpp
 html/HTMLBDIElement.cpp
@@ -1360,8 +1363,10 @@ html/canvas/EXTColorBufferHalfFloat.cpp
 html/canvas/EXTFloatBlend.cpp
 html/canvas/EXTFragDepth.cpp
 html/canvas/EXTShaderTextureLOD.cpp
+html/canvas/EXTTextureCompressionBPTC.cpp
 html/canvas/EXTTextureCompressionRGTC.cpp
 html/canvas/EXTTextureFilterAnisotropic.cpp
+html/canvas/EXTTextureNorm16.cpp
 html/canvas/EXTsRGB.cpp
 html/canvas/GPUBasedCanvasRenderingContext.cpp
 html/canvas/ImageBitmapRenderingContext.cpp
@@ -1583,17 +1588,18 @@ layout/formattingContexts/inline/display/InlineDisplayContentBuilder.cpp
 layout/formattingContexts/inline/display/InlineDisplayLineBuilder.cpp
 layout/formattingContexts/inline/invalidation/InlineInvalidation.cpp
 layout/formattingContexts/inline/text/TextUtil.cpp
-layout/integration/InlineIteratorBox.cpp
-layout/integration/InlineIteratorInlineBox.cpp
-layout/integration/InlineIteratorLineBox.cpp
-layout/integration/InlineIteratorLogicalOrderTraversal.cpp
-layout/integration/InlineIteratorTextBox.cpp
+layout/integration/flex/LayoutIntegrationFlexLayout.cpp
+layout/integration/inline/InlineIteratorBox.cpp
+layout/integration/inline/InlineIteratorInlineBox.cpp
+layout/integration/inline/InlineIteratorLineBox.cpp
+layout/integration/inline/InlineIteratorLogicalOrderTraversal.cpp
+layout/integration/inline/InlineIteratorTextBox.cpp
+layout/integration/inline/LayoutIntegrationInlineContentBuilder.cpp
+layout/integration/inline/LayoutIntegrationInlineContent.cpp
+layout/integration/inline/LayoutIntegrationLineLayout.cpp
+layout/integration/inline/LayoutIntegrationPagination.cpp
 layout/integration/LayoutIntegrationBoxTree.cpp
 layout/integration/LayoutIntegrationCoverage.cpp
-layout/integration/LayoutIntegrationInlineContentBuilder.cpp
-layout/integration/LayoutIntegrationInlineContent.cpp
-layout/integration/LayoutIntegrationLineLayout.cpp
-layout/integration/LayoutIntegrationPagination.cpp
 layout/layouttree/LayoutBox.cpp
 layout/layouttree/LayoutContainerBox.cpp
 layout/layouttree/LayoutBoxGeometry.cpp
@@ -1752,6 +1758,7 @@ page/FrameViewLayoutContext.cpp
 page/History.cpp
 page/ImageAnalysisQueue.cpp
 page/ImageOverlayController.cpp
+page/InteractionRegion.cpp
 page/IntersectionObserver.cpp
 page/IntersectionObserverEntry.cpp
 page/Location.cpp
@@ -1863,6 +1870,7 @@ page/scrolling/ScrollingTreeScrollingNode.cpp
 page/scrolling/ScrollingTreeScrollingNodeDelegate.cpp
 page/scrolling/ScrollingTreeStickyNode.cpp
 page/scrolling/ThreadedScrollingTree.cpp
+platform/CommonAtomStrings.cpp
 platform/ContentType.cpp
 platform/ContextMenu.cpp
 platform/ContextMenuItem.cpp
@@ -2324,6 +2332,7 @@ rendering/LegacyRootInlineBox.cpp
 rendering/LegacyInlineTextBox.cpp
 rendering/MarkedText.cpp
 rendering/OrderIterator.cpp
+rendering/PathOperation.cpp
 rendering/PointerEventsHitRules.cpp
 rendering/ReferencedSVGResources.cpp
 rendering/RenderAttachment.cpp
@@ -2493,6 +2502,7 @@ rendering/svg/LegacyRenderSVGShape.cpp
 rendering/svg/LegacyRenderSVGTransformableContainer.cpp
 rendering/svg/RenderSVGBlock.cpp
 rendering/svg/RenderSVGContainer.cpp
+rendering/svg/LegacyRenderSVGEllipse.cpp
 rendering/svg/RenderSVGEllipse.cpp
 rendering/svg/RenderSVGForeignObject.cpp
 rendering/svg/RenderSVGGradientStop.cpp
@@ -2947,6 +2957,7 @@ JSByteLengthQueuingStrategy.cpp
 JSCDATASection.cpp
 JSCSSAnimation.cpp
 JSCSSConditionRule.cpp
+JSCSSContainerRule.cpp
 JSCSSCounterStyleRule.cpp
 JSCSSFontFaceRule.cpp
 JSCSSFontPaletteValuesRule.cpp
@@ -3113,8 +3124,10 @@ JSEXTColorBufferHalfFloat.cpp
 JSEXTFloatBlend.cpp
 JSEXTFragDepth.cpp
 JSEXTShaderTextureLOD.cpp
+JSEXTTextureCompressionBPTC.cpp
 JSEXTTextureCompressionRGTC.cpp
 JSEXTTextureFilterAnisotropic.cpp
+JSEXTTextureNorm16.cpp
 JSEXTsRGB.cpp
 JSKHRParallelShaderCompile.cpp
 JSEcKeyParams.cpp

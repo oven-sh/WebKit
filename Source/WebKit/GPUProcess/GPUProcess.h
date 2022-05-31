@@ -59,7 +59,6 @@ struct SecurityOriginData;
 namespace WebKit {
 
 class GPUConnectionToWebProcess;
-struct GPUProcessConnectionInitializationParameters;
 struct GPUProcessConnectionParameters;
 struct GPUProcessCreationParameters;
 struct GPUProcessSessionParameters;
@@ -74,7 +73,7 @@ public:
 
     void removeGPUConnectionToWebProcess(GPUConnectionToWebProcess&);
 
-    void prepareToSuspend(bool isSuspensionImminent, CompletionHandler<void()>&&);
+    void prepareToSuspend(bool isSuspensionImminent, MonotonicTime estimatedSuspendTime, CompletionHandler<void()>&&);
     void processDidResume();
     void resume();
 
@@ -139,7 +138,7 @@ private:
 
     // Message Handlers
     void initializeGPUProcess(GPUProcessCreationParameters&&);
-    void createGPUConnectionToWebProcess(WebCore::ProcessIdentifier, PAL::SessionID, GPUProcessConnectionParameters&&, CompletionHandler<void(std::optional<IPC::Attachment>&&, GPUProcessConnectionInitializationParameters&&)>&&);
+    void createGPUConnectionToWebProcess(WebCore::ProcessIdentifier, PAL::SessionID, IPC::Attachment&&, GPUProcessConnectionParameters&&, CompletionHandler<void()>&&);
     void addSession(PAL::SessionID, GPUProcessSessionParameters&&);
     void removeSession(PAL::SessionID);
 
@@ -189,10 +188,6 @@ private:
     void setMediaSourceInlinePaintingEnabled(bool);
 #endif
 
-#if HAVE(SCREEN_CAPTURE_KIT)
-    void setUseScreenCaptureKit(bool);
-#endif
-
 #if HAVE(AVCONTENTKEYSPECIFIER)
     void setSampleBufferContentKeySessionSupportEnabled(bool);
 #endif
@@ -200,6 +195,10 @@ private:
 #if ENABLE(CFPREFS_DIRECT_MODE)
     void notifyPreferencesChanged(const String& domain, const String& key, const std::optional<String>& encodedValue);
     void dispatchSimulatedNotificationsForPreferenceChange(const String& key) final;
+#endif
+
+#if PLATFORM(MAC)
+    void openDirectoryCacheInvalidated(SandboxExtension::Handle&&);
 #endif
 
     // Connections to WebProcesses.
@@ -258,9 +257,6 @@ private:
 #endif
 #if ENABLE(MEDIA_SOURCE) && HAVE(AVSAMPLEBUFFERVIDEOOUTPUT)
     bool m_mediaSourceInlinePaintingEnabled { false };
-#endif
-#if HAVE(SCREEN_CAPTURE_KIT)
-    bool m_useScreenCaptureKit { false };
 #endif
 #if HAVE(AVCONTENTKEYSPECIFIER)
     bool m_sampleBufferContentKeySessionSupportEnabled { false };

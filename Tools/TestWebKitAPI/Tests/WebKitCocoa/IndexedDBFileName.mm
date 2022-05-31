@@ -83,9 +83,9 @@ static void runTest()
     NSString *existingDatabaseName = @"IndexedDBTest";
     NSString *createdDatabaseName = @"IndexedDBOther";
     NSString *unusedDatabaseName = @"IndexedDBUnused";
-    NSString *existingDatbaseHash = WebCore::SQLiteFileSystem::computeHashForFileName(existingDatabaseName);
-    NSString *createdDatabaseHash = WebCore::SQLiteFileSystem::computeHashForFileName(createdDatabaseName);
-    NSString *unusedDatabaseHash = WebCore::SQLiteFileSystem::computeHashForFileName(createdDatabaseName);
+    NSString *existingDatbaseHash = WebCore::SQLiteFileSystem::computeHashForFileName(String { existingDatabaseName });
+    NSString *createdDatabaseHash = WebCore::SQLiteFileSystem::computeHashForFileName(String { createdDatabaseName });
+    NSString *unusedDatabaseHash = WebCore::SQLiteFileSystem::computeHashForFileName(String { createdDatabaseName });
     NSURL *idbRootURL = [websiteDataStoreConfiguration.get() _indexedDBDatabaseDirectory];
     NSURL *oldVersionDirectoryURL = [idbRootURL URLByAppendingPathComponent:@"v0"];
     NSURL *newVersionDirectoryURL = [idbRootURL URLByAppendingPathComponent:@"v1"];
@@ -107,10 +107,10 @@ static void runTest()
     EXPECT_TRUE([defaultFileManager fileExistsAtPath:newVersionCreatedDatabaseDirectoryURL.path]);
 }
 
-static void createDirectories(String testName)
+static void createDirectories(StringView testName)
 {
     auto defaultFileManager = [NSFileManager defaultManager];
-    NSURL *idbRootURL = [[WKWebsiteDataStore defaultDataStore] _indexedDBDatabaseDirectory];
+    NSURL *idbRootURL = [[[WKWebsiteDataStore defaultDataStore] _configuration] _indexedDBDatabaseDirectory];
     [defaultFileManager removeItemAtURL:idbRootURL error:nil];
     
     NSString *existingDatabaseName = @"IndexedDBTest";
@@ -127,8 +127,8 @@ static void createDirectories(String testName)
     if (testName == "none")
         return;
     
-    NSString *existingDatbaseHash = WebCore::SQLiteFileSystem::computeHashForFileName(existingDatabaseName);
-    NSString *createdDatabaseHash = WebCore::SQLiteFileSystem::computeHashForFileName(createdDatabaseName);
+    NSString *existingDatbaseHash = WebCore::SQLiteFileSystem::computeHashForFileName(String { existingDatabaseName });
+    NSString *createdDatabaseHash = WebCore::SQLiteFileSystem::computeHashForFileName(String { createdDatabaseName });
     NSURL *oldVersionDirectoryURL = [idbRootURL URLByAppendingPathComponent:@"v0"];
     NSURL *newVersionDirectoryURL = [idbRootURL URLByAppendingPathComponent:@"v1"];
     NSURL *newVersionOriginDirectoryURL = [newVersionDirectoryURL URLByAppendingPathComponent: @"file__0"];
@@ -160,25 +160,25 @@ static void createDirectories(String testName)
 
 TEST(IndexedDB, IndexedDBFileName)
 {
-    createDirectories("none");
+    createDirectories("none"_s);
     runTest();
 }
 
 TEST(IndexedDB, IndexedDBFileNameV0)
 {
-    createDirectories("v0");
+    createDirectories("v0"_s);
     runTest();
 }
 
 TEST(IndexedDB, IndexedDBFileNameV1)
 {
-    createDirectories("v1");
+    createDirectories("v1"_s);
     runTest();
 }
 
 TEST(IndexedDB, IndexedDBFileNameAPI)
 {
-    createDirectories("API");
+    createDirectories("API"_s);
     
     auto types = adoptNS([[NSSet alloc] initWithObjects:WKWebsiteDataTypeIndexedDBDatabases, nil]);
     auto websiteDataStoreConfiguration = adoptNS([[_WKWebsiteDataStoreConfiguration alloc] init]);
@@ -200,7 +200,7 @@ TEST(IndexedDB, IndexedDBFileNameAPI)
     TestWebKitAPI::Util::run(&readyToContinue);
     
     auto defaultFileManager = [NSFileManager defaultManager];
-    NSURL *idbRootURL = [[WKWebsiteDataStore defaultDataStore] _indexedDBDatabaseDirectory];
+    NSURL *idbRootURL = [[[WKWebsiteDataStore defaultDataStore] _configuration] _indexedDBDatabaseDirectory];
     NSURL *newVersionDirectoryURL = [idbRootURL URLByAppendingPathComponent:@"v1"];
     NSArray *directories = [defaultFileManager contentsOfDirectoryAtPath:idbRootURL.path error:nullptr];
     EXPECT_EQ(2U, [directories count]);
@@ -212,7 +212,7 @@ TEST(IndexedDB, IndexedDBFileNameAPI)
 
 TEST(IndexedDB, IndexedDBFileHashCollision)
 {
-    createDirectories("collision");
+    createDirectories("collision"_s);
     
     auto handler = adoptNS([[IndexedDBFileNameMessageHandler alloc] init]);
     auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);

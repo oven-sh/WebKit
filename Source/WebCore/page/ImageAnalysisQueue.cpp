@@ -36,6 +36,7 @@
 #include "ImageOverlay.h"
 #include "RenderImage.h"
 #include "RenderView.h"
+#include "TextRecognitionOptions.h"
 #include "Timer.h"
 
 namespace WebCore {
@@ -63,10 +64,32 @@ void ImageAnalysisQueue::enqueueIfNeeded(HTMLImageElement& element)
     if (!cachedImage || cachedImage->errorOccurred())
         return;
 
-    if (renderer.size().width() < minimumWidthForAnalysis || renderer.size().height() < minimumHeightForAnalysis)
+    auto* image = cachedImage->image();
+    if (!image || image->width() < minimumWidthForAnalysis || image->height() < minimumHeightForAnalysis)
         return;
 
-    if (!m_queuedElements.add(element).isNewEntry)
+    bool shouldAddToQueue = [&] {
+        auto url = cachedImage->url();
+        auto iterator = m_queuedElements.find(element);
+        if (iterator == m_queuedElements.end()) {
+            m_queuedElements.add(element, url);
+            return true;
+        }
+
+        if (iterator->value == url)
+            return false;
+
+        iterator->value = url;
+
+        for (auto& entry : m_queue) {
+            if (entry.element == &element)
+                return false;
+        }
+
+        return true;
+    }();
+
+    if (!shouldAddToQueue)
         return;
 
     Ref view = renderer.view().frameView();
@@ -86,18 +109,28 @@ void ImageAnalysisQueue::resumeProcessingSoon()
     m_resumeProcessingTimer.startOneShot(resumeProcessingDelay);
 }
 
-void ImageAnalysisQueue::enqueueAllImages(Document& document, const String& identifier)
+void ImageAnalysisQueue::enqueueAllImages(Document& document, const String& source, const String& target)
 {
     if (!m_page)
         return;
 
-    if (m_identifier != identifier) {
+    if (source != m_source || target != m_target)
         clear();
-        m_identifier = identifier;
-    }
 
+    m_source = source;
+    m_target = target;
+    enqueueAllImagesRecursive(document);
+}
+
+void ImageAnalysisQueue::enqueueAllImagesRecursive(Document& document)
+{
     for (auto& image : descendantsOfType<HTMLImageElement>(document))
         enqueueIfNeeded(image);
+
+    for (auto& frameOwner : descendantsOfType<HTMLFrameOwnerElement>(document)) {
+        if (RefPtr contentDocument = frameOwner.contentDocument())
+            enqueueAllImagesRecursive(*contentDocument);
+    }
 }
 
 void ImageAnalysisQueue::resumeProcessing()
@@ -112,7 +145,12 @@ void ImageAnalysisQueue::resumeProcessing()
 
         m_pendingRequestCount++;
         m_page->resetTextRecognitionResult(*element);
-        m_page->chrome().client().requestTextRecognition(*element, m_identifier, [this, page = m_page] (auto&&) {
+
+        if (auto* image = element->cachedImage(); image && !image->errorOccurred())
+            m_queuedElements.set(*element, image->url());
+
+        auto allowSnapshots = m_target.isEmpty() ? TextRecognitionOptions::AllowSnapshots::Yes : TextRecognitionOptions::AllowSnapshots::No;
+        m_page->chrome().client().requestTextRecognition(*element, { m_source, m_target, allowSnapshots }, [this, page = m_page] (auto&&) {
             if (!page || page->imageAnalysisQueueIfExists() != this)
                 return;
 
@@ -131,7 +169,8 @@ void ImageAnalysisQueue::clear()
     m_resumeProcessingTimer.stop();
     m_queue = { };
     m_queuedElements.clear();
-    m_identifier = { };
+    m_source = { };
+    m_target = { };
     m_currentTaskNumber = 0;
 }
 

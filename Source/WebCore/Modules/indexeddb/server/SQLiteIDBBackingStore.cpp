@@ -916,10 +916,7 @@ String SQLiteIDBBackingStore::encodeDatabaseName(const String& databaseName)
     if (databaseName.isEmpty())
         return "%00"_s;
 
-    String filename = FileSystem::encodeForFileName(databaseName);
-    filename.replaceWithLiteral('.', "%2E");
-
-    return filename;
+    return makeStringByReplacingAll(FileSystem::encodeForFileName(databaseName), '.', "%2E"_s);
 }
 
 String SQLiteIDBBackingStore::decodeDatabaseName(const String& encodedName)
@@ -927,15 +924,12 @@ String SQLiteIDBBackingStore::decodeDatabaseName(const String& encodedName)
     if (encodedName == "%00"_s)
         return emptyString();
 
-    String name = encodedName;
-    name.replace("%2E", ".");
-
-    return FileSystem::decodeFromFilename(name);
+    return FileSystem::decodeFromFilename(makeStringByReplacingAll(encodedName, "%2E"_s, "."_s));
 }
 
 String SQLiteIDBBackingStore::fullDatabasePathForDirectory(const String& fullDatabaseDirectory)
 {
-    return FileSystem::pathByAppendingComponent(fullDatabaseDirectory, "IndexedDB.sqlite3");
+    return FileSystem::pathByAppendingComponent(fullDatabaseDirectory, "IndexedDB.sqlite3"_s);
 }
 
 String SQLiteIDBBackingStore::fullDatabasePath() const
@@ -1064,7 +1058,7 @@ uint64_t SQLiteIDBBackingStore::databasesSizeForDirectory(const String& director
     for (auto& dbDirectoryName : FileSystem::listDirectory(directory)) {
         auto dbDirectoryPath = FileSystem::pathByAppendingComponent(directory, dbDirectoryName);
         for (auto& fileName : FileSystem::listDirectory(dbDirectoryPath)) {
-            if (fileName.endsWith(".sqlite3"))
+            if (fileName.endsWith(".sqlite3"_s))
                 diskUsage += SQLiteFileSystem::databaseFileSize(FileSystem::pathByAppendingComponent(dbDirectoryPath, fileName));
         }
     }

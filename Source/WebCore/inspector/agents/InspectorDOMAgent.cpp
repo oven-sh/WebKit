@@ -626,7 +626,7 @@ Protocol::ErrorStringOr<void> InspectorDOMAgent::requestChildNodes(Protocol::DOM
     return { };
 }
 
-Protocol::ErrorStringOr<Protocol::DOM::NodeId> InspectorDOMAgent::querySelector(Protocol::DOM::NodeId nodeId, const String& selector)
+Protocol::ErrorStringOr<std::optional<Protocol::DOM::NodeId>> InspectorDOMAgent::querySelector(Protocol::DOM::NodeId nodeId, const String& selector)
 {
     Protocol::ErrorString errorString;
 
@@ -640,11 +640,15 @@ Protocol::ErrorStringOr<Protocol::DOM::NodeId> InspectorDOMAgent::querySelector(
     if (queryResult.hasException())
         return makeUnexpected(InspectorDOMAgent::toErrorString(queryResult.releaseException()));
 
-    auto resultNodeId = pushNodePathToFrontend(errorString, queryResult.releaseReturnValue());
+    auto* queryResultNode = queryResult.releaseReturnValue();
+    if (!queryResultNode)
+        return { };
+
+    auto resultNodeId = pushNodePathToFrontend(errorString, queryResultNode);
     if (!resultNodeId)
         return makeUnexpected(errorString);
 
-    return resultNodeId;
+    return { resultNodeId };
 }
 
 Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Protocol::DOM::NodeId>>> InspectorDOMAgent::querySelectorAll(Protocol::DOM::NodeId nodeId, const String& selector)
@@ -754,7 +758,7 @@ Protocol::ErrorStringOr<void> InspectorDOMAgent::setAttributeValue(Protocol::DOM
     if (!element)
         return makeUnexpected(errorString);
 
-    if (!m_domEditor->setAttribute(*element, name, value, errorString))
+    if (!m_domEditor->setAttribute(*element, AtomString { name }, AtomString { value }, errorString))
         return makeUnexpected(errorString);
 
     return { };
@@ -779,7 +783,7 @@ Protocol::ErrorStringOr<void> InspectorDOMAgent::setAttributesAsText(Protocol::D
 
     Element* childElement = downcast<Element>(child);
     if (!childElement->hasAttributes() && !!name) {
-        if (!m_domEditor->removeAttribute(*element, name, errorString))
+        if (!m_domEditor->removeAttribute(*element, AtomString { name }, errorString))
             return makeUnexpected(errorString);
         return { };
     }
@@ -787,13 +791,14 @@ Protocol::ErrorStringOr<void> InspectorDOMAgent::setAttributesAsText(Protocol::D
     bool foundOriginalAttribute = false;
     for (const Attribute& attribute : childElement->attributesIterator()) {
         // Add attribute pair
-        foundOriginalAttribute = foundOriginalAttribute || attribute.name().toString() == name;
-        if (!m_domEditor->setAttribute(*element, attribute.name().toString(), attribute.value(), errorString))
+        auto attributeName = attribute.name().toAtomString();
+        foundOriginalAttribute = foundOriginalAttribute || attributeName == name;
+        if (!m_domEditor->setAttribute(*element, attributeName, attribute.value(), errorString))
             return makeUnexpected(errorString);
     }
 
-    if (!foundOriginalAttribute && !name.stripWhiteSpace().isEmpty()) {
-        if (!m_domEditor->removeAttribute(*element, name, errorString))
+    if (!foundOriginalAttribute && name.find(isNotSpaceOrNewline) != notFound) {
+        if (!m_domEditor->removeAttribute(*element, AtomString { name }, errorString))
             return makeUnexpected(errorString);
     }
 
@@ -808,7 +813,7 @@ Protocol::ErrorStringOr<void> InspectorDOMAgent::removeAttribute(Protocol::DOM::
     if (!element)
         return makeUnexpected(errorString);
 
-    if (!m_domEditor->removeAttribute(*element, name, errorString))
+    if (!m_domEditor->removeAttribute(*element, AtomString { name }, errorString))
         return makeUnexpected(errorString);
 
     return { };
@@ -840,7 +845,7 @@ Protocol::ErrorStringOr<Protocol::DOM::NodeId> InspectorDOMAgent::setNodeName(Pr
     if (!oldNode)
         return makeUnexpected(errorString);
 
-    auto createElementResult = oldNode->document().createElementForBindings(tagName);
+    auto createElementResult = oldNode->document().createElementForBindings(AtomString { tagName });
     if (createElementResult.hasException())
         return makeUnexpected(InspectorDOMAgent::toErrorString(createElementResult.releaseException()));
 
@@ -954,7 +959,7 @@ Protocol::ErrorStringOr<Ref<JSON::ArrayOf<String>>> InspectorDOMAgent::getSuppor
 {
     auto eventNames = JSON::ArrayOf<String>::create();
 
-#define DOM_EVENT_NAMES_ADD(name) eventNames->addItem(#name);
+#define DOM_EVENT_NAMES_ADD(name) eventNames->addItem(#name""_s);
     DOM_EVENT_NAMES_FOR_EACH(DOM_EVENT_NAMES_ADD)
 #undef DOM_EVENT_NAMES_ADD
 
@@ -1529,7 +1534,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorDOMAgent::showGridOverlay(Insp
 
     auto parsedColor = parseColor(WTFMove(gridColor));
     if (!parsedColor)
-        return makeUnexpected("Invalid color could not be parsed.");
+        return makeUnexpected("Invalid color could not be parsed."_s);
 
     InspectorOverlay::Grid::Config config;
     config.gridColor = *parsedColor;
@@ -1569,7 +1574,7 @@ Inspector::Protocol::ErrorStringOr<void> InspectorDOMAgent::showFlexOverlay(Insp
 
     auto parsedColor = parseColor(WTFMove(flexColor));
     if (!parsedColor)
-        return makeUnexpected("Invalid color could not be parsed.");
+        return makeUnexpected("Invalid color could not be parsed."_s);
 
     InspectorOverlay::Flex::Config config;
     config.flexColor = *parsedColor;
@@ -1806,10 +1811,8 @@ Ref<Protocol::DOM::Node> InspectorDOMAgent::buildObjectForNode(Node* node, int d
     case Node::COMMENT_NODE:
     case Node::CDATA_SECTION_NODE:
         nodeValue = node->nodeValue();
-        if (nodeValue.length() > maxTextSize) {
-            nodeValue = nodeValue.left(maxTextSize);
-            nodeValue.append(ellipsisUChar);
-        }
+        if (nodeValue.length() > maxTextSize)
+            nodeValue = makeString(StringView(nodeValue).left(maxTextSize), ellipsisUChar);
         break;
     case Node::ATTRIBUTE_NODE:
         localName = node->localName();
@@ -1990,19 +1993,19 @@ Ref<Protocol::DOM::EventListener> InspectorDOMAgent::buildObjectForEventListener
 
         if (handlerObject && globalObject) {
             JSC::VM& vm = globalObject->vm();
-            JSC::JSFunction* handlerFunction = JSC::jsDynamicCast<JSC::JSFunction*>(vm, handlerObject);
+            JSC::JSFunction* handlerFunction = JSC::jsDynamicCast<JSC::JSFunction*>(handlerObject);
 
             if (!handlerFunction) {
                 auto scope = DECLARE_CATCH_SCOPE(vm);
 
                 // If the handler is not actually a function, see if it implements the EventListener interface and use that.
-                auto handleEventValue = handlerObject->get(globalObject, JSC::Identifier::fromString(vm, "handleEvent"));
+                auto handleEventValue = handlerObject->get(globalObject, JSC::Identifier::fromString(vm, "handleEvent"_s));
 
                 if (UNLIKELY(scope.exception()))
                     scope.clearException();
 
                 if (handleEventValue)
-                    handlerFunction = JSC::jsDynamicCast<JSC::JSFunction*>(vm, handleEventValue);
+                    handlerFunction = JSC::jsDynamicCast<JSC::JSFunction*>(handleEventValue);
             }
 
             if (handlerFunction && !handlerFunction->isHostOrBuiltinFunction()) {
@@ -2111,8 +2114,8 @@ Ref<Protocol::DOM::AccessibilityProperties> InspectorDOMAgent::buildObjectForAcc
     unsigned hierarchicalLevel = 0;
     unsigned level = 0;
 
-    if (AXObjectCache* axObjectCache = node.document().axObjectCache()) {
-        if (AXCoreObject* axObject = axObjectCache->getOrCreate(&node)) {
+    if (auto* axObjectCache = node.document().axObjectCache()) {
+        if (auto* axObject = axObjectCache->getOrCreate(&node)) {
 
             if (AXCoreObject* activeDescendant = axObject->activeDescendant())
                 activeDescendantNode = activeDescendant->node();
@@ -2139,9 +2142,8 @@ Ref<Protocol::DOM::AccessibilityProperties> InspectorDOMAgent::buildObjectForAcc
                 childNodeIds = JSON::ArrayOf<Protocol::DOM::NodeId>::create();
                 processAccessibilityChildren(*axObject, *childNodeIds);
             }
-            
-            Vector<Element*> controlledElements;
-            axObject->elementsFromAttribute(controlledElements, aria_controlsAttr);
+
+            auto controlledElements = axObject->elementsFromAttribute(aria_controlsAttr);
             if (controlledElements.size()) {
                 controlledNodeIds = JSON::ArrayOf<Protocol::DOM::NodeId>::create();
                 for (Element* controlledElement : controlledElements) {
@@ -2181,8 +2183,7 @@ Ref<Protocol::DOM::AccessibilityProperties> InspectorDOMAgent::buildObjectForAcc
             if (supportsExpanded)
                 expanded = axObject->isExpanded();
 
-            Vector<Element*> flowedElements;
-            axObject->elementsFromAttribute(flowedElements, aria_flowtoAttr);
+            auto flowedElements = axObject->elementsFromAttribute(aria_flowtoAttr);
             if (flowedElements.size()) {
                 flowedNodeIds = JSON::ArrayOf<Protocol::DOM::NodeId>::create();
                 for (Element* flowedElement : flowedElements) {
@@ -2190,7 +2191,7 @@ Ref<Protocol::DOM::AccessibilityProperties> InspectorDOMAgent::buildObjectForAcc
                         flowedNodeIds->addItem(flowedElementId);
                 }
             }
-            
+
             if (is<Element>(node)) {
                 supportsFocused = axObject->canSetFocusAttribute();
                 if (supportsFocused)
@@ -2219,26 +2220,26 @@ Ref<Protocol::DOM::AccessibilityProperties> InspectorDOMAgent::buildObjectForAcc
                 supportsLiveRegion = true;
                 liveRegionAtomic = axObject->liveRegionAtomic();
 
-                String ariaRelevantAttrValue = axObject->liveRegionRelevant();
+                auto ariaRelevantAttrValue = axObject->liveRegionRelevant();
                 if (!ariaRelevantAttrValue.isEmpty()) {
                     // FIXME: Pass enum values rather than strings once unblocked. http://webkit.org/b/133711
                     String ariaRelevantAdditions = Protocol::Helpers::getEnumConstantValue(Protocol::DOM::LiveRegionRelevant::Additions);
                     String ariaRelevantRemovals = Protocol::Helpers::getEnumConstantValue(Protocol::DOM::LiveRegionRelevant::Removals);
                     String ariaRelevantText = Protocol::Helpers::getEnumConstantValue(Protocol::DOM::LiveRegionRelevant::Text);
                     liveRegionRelevant = JSON::ArrayOf<String>::create();
-                    const SpaceSplitString& values = SpaceSplitString(ariaRelevantAttrValue, true);
+                    SpaceSplitString values(AtomString { ariaRelevantAttrValue }, SpaceSplitString::ShouldFoldCase::Yes);
                     // @aria-relevant="all" is exposed as ["additions","removals","text"], in order.
                     // This order is controlled in WebCore and expected in WebInspectorUI.
-                    if (values.contains("all")) {
+                    if (values.contains("all"_s)) {
                         liveRegionRelevant->addItem(ariaRelevantAdditions);
                         liveRegionRelevant->addItem(ariaRelevantRemovals);
                         liveRegionRelevant->addItem(ariaRelevantText);
                     } else {
-                        if (values.contains(ariaRelevantAdditions))
+                        if (values.contains(AtomString { ariaRelevantAdditions }))
                             liveRegionRelevant->addItem(ariaRelevantAdditions);
-                        if (values.contains(ariaRelevantRemovals))
+                        if (values.contains(AtomString { ariaRelevantRemovals }))
                             liveRegionRelevant->addItem(ariaRelevantRemovals);
-                        if (values.contains(ariaRelevantText))
+                        if (values.contains(AtomString { ariaRelevantText }))
                             liveRegionRelevant->addItem(ariaRelevantText);
                     }
                 }
@@ -2254,8 +2255,7 @@ Ref<Protocol::DOM::AccessibilityProperties> InspectorDOMAgent::buildObjectForAcc
                 mouseEventNode = downcast<AccessibilityNodeObject>(*axObject).mouseButtonListener(MouseButtonListenerResultFilter::IncludeBodyElement);
 
             if (axObject->supportsARIAOwns()) {
-                Vector<Element*> ownedElements;
-                axObject->elementsFromAttribute(ownedElements, aria_ownsAttr);
+                auto ownedElements = axObject->elementsFromAttribute(aria_ownsAttr);
                 if (ownedElements.size()) {
                     ownedNodeIds = JSON::ArrayOf<Protocol::DOM::NodeId>::create();
                     for (Element* ownedElement : ownedElements) {

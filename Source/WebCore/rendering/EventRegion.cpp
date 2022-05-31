@@ -116,6 +116,12 @@ bool EventRegion::operator==(const EventRegion& other) const
     if (m_editableRegion != other.m_editableRegion)
         return false;
 #endif
+
+#if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
+    if (m_interactionRegions != other.m_interactionRegions)
+        return false;
+#endif
+
     return m_region == other.m_region;
 }
 
@@ -162,6 +168,11 @@ void EventRegion::translate(const IntSize& offset)
 #if ENABLE(EDITABLE_REGION)
     if (m_editableRegion)
         m_editableRegion->translate(offset);
+#endif
+
+#if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
+    for (auto& region : m_interactionRegions)
+        region.regionInLayerCoordinates.translate(offset);
 #endif
 }
 
@@ -288,6 +299,8 @@ const Region& EventRegion::eventListenerRegionForType(EventListenerRegionType ty
         return m_wheelEventListenerRegion;
     case EventListenerRegionType::NonPassiveWheel:
         return m_nonPassiveWheelEventListenerRegion;
+    case EventListenerRegionType::MouseClick:
+        break;
     }
     ASSERT_NOT_REACHED();
     return m_wheelEventListenerRegion;
@@ -299,6 +312,21 @@ const Region& EventRegion::eventListenerRegionForType(EventListenerRegionType ty
 bool EventRegion::containsEditableElementsInRect(const IntRect& rect) const
 {
     return m_editableRegion && m_editableRegion->intersects(rect);
+}
+
+#endif
+
+#if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
+
+void EventRegion::uniteInteractionRegions(const Vector<InteractionRegion>& interactionRegions)
+{
+    m_interactionRegions.appendVector(interactionRegions);
+}
+
+void EventRegion::computeInteractionRegions(Page& page, IntRect rect)
+{
+    // FIXME: Collect regions from `EventRegion::unite` instead of hit-testing, so that they are per-layer.
+    uniteInteractionRegions(WebCore::interactionRegions(page, rect));
 }
 
 #endif
@@ -339,6 +367,13 @@ void EventRegion::dump(TextStream& ts) const
     if (m_editableRegion && !m_editableRegion->isEmpty()) {
         ts << indent << "(editable region" << *m_editableRegion;
         ts << indent << ")\n";
+    }
+#endif
+    
+#if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
+    if (!m_interactionRegions.isEmpty()) {
+        ts.dumpProperty("interaction regions", m_interactionRegions);
+        ts << "\n";
     }
 #endif
 }

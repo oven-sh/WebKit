@@ -35,6 +35,12 @@
 
 namespace WebCore {
 
+class LegacyInlineTextBox;
+
+namespace InlineDisplay {
+struct Box;
+}
+
 template<typename LayoutRun>
 class GlyphDisplayListCache {
 public:
@@ -42,6 +48,7 @@ public:
 
     static GlyphDisplayListCache& singleton()
     {
+        static_assert(std::is_same_v<LayoutRun, LegacyInlineTextBox> || std::is_same_v<LayoutRun, InlineDisplay::Box>);
         static NeverDestroyed<GlyphDisplayListCache> cache;
         return cache;
     }
@@ -63,6 +70,11 @@ public:
             return m_glyphRunMap.add(&run, WTFMove(displayList)).iterator->value.get();
 
         return nullptr;
+    }
+
+    DisplayList::DisplayList* getIfExists(const LayoutRun& run)
+    {
+        return m_glyphRunMap.get(&run);
     }
 
     void remove(const LayoutRun& run)

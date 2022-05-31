@@ -67,7 +67,7 @@ void RemoteWebInspectorUIProxy::setDiagnosticLoggingAvailable(bool available)
 #endif
 }
 
-void RemoteWebInspectorUIProxy::load(Ref<API::DebuggableInfo>&& debuggableInfo, const String& backendCommandsURL)
+void RemoteWebInspectorUIProxy::initialize(Ref<API::DebuggableInfo>&& debuggableInfo, const String& backendCommandsURL)
 {
     m_debuggableInfo = WTFMove(debuggableInfo);
     m_backendCommandsURL = backendCommandsURL;
@@ -131,7 +131,7 @@ void RemoteWebInspectorUIProxy::reopen()
     ASSERT(!m_backendCommandsURL.isEmpty());
 
     closeFrontendPageAndWindow();
-    load(m_debuggableInfo.copyRef(), m_backendCommandsURL);
+    initialize(m_debuggableInfo.copyRef(), m_backendCommandsURL);
 }
 
 void RemoteWebInspectorUIProxy::resetState()
@@ -154,6 +154,11 @@ void RemoteWebInspectorUIProxy::append(const String& suggestedURL, const String&
     platformAppend(suggestedURL, content);
 }
 
+void RemoteWebInspectorUIProxy::load(const String& path, CompletionHandler<void(const String&)>&& completionHandler)
+{
+    platformLoad(path, WTFMove(completionHandler));
+}
+
 void RemoteWebInspectorUIProxy::setSheetRect(const FloatRect& rect)
 {
     platformSetSheetRect(rect);
@@ -172,6 +177,11 @@ void RemoteWebInspectorUIProxy::startWindowDrag()
 void RemoteWebInspectorUIProxy::openURLExternally(const String& url)
 {
     platformOpenURLExternally(url);
+}
+
+void RemoteWebInspectorUIProxy::revealFileExternally(const String& path)
+{
+    platformRevealFileExternally(path);
 }
 
 void RemoteWebInspectorUIProxy::showCertificate(const CertificateInfo& certificateInfo)
@@ -233,10 +243,12 @@ void RemoteWebInspectorUIProxy::platformResetState() { }
 void RemoteWebInspectorUIProxy::platformBringToFront() { }
 void RemoteWebInspectorUIProxy::platformSave(const String&, const String&, bool, bool) { }
 void RemoteWebInspectorUIProxy::platformAppend(const String&, const String&) { }
+void RemoteWebInspectorUIProxy::platformLoad(const String&, CompletionHandler<void(const String&)>&& completionHandler) { completionHandler(nullString()); }
 void RemoteWebInspectorUIProxy::platformSetSheetRect(const FloatRect&) { }
 void RemoteWebInspectorUIProxy::platformSetForcedAppearance(InspectorFrontendClient::Appearance) { }
 void RemoteWebInspectorUIProxy::platformStartWindowDrag() { }
 void RemoteWebInspectorUIProxy::platformOpenURLExternally(const String&) { }
+void RemoteWebInspectorUIProxy::platformRevealFileExternally(const String&) { }
 void RemoteWebInspectorUIProxy::platformShowCertificate(const CertificateInfo&) { }
 void RemoteWebInspectorUIProxy::platformCloseFrontendPageAndWindow() { }
 #endif // !ENABLE(REMOTE_INSPECTOR) || (!PLATFORM(MAC) && !PLATFORM(GTK) && !PLATFORM(WIN))

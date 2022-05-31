@@ -44,9 +44,9 @@ using namespace WebCore;
 
 namespace TestWebKitAPI {
     
-const String FileMonitorTestData("This is a test");
-const String FileMonitorRevisedData("This is some changed text for the test");
-const String FileMonitorSecondRevisedData("This is some changed text for the test");
+const String FileMonitorTestData("This is a test"_s);
+const String FileMonitorRevisedData("This is some changed text for the test"_s);
+const String FileMonitorSecondRevisedData("This is some changed text for the test"_s);
 
 class FileMonitorTest : public testing::Test {
 public:
@@ -56,7 +56,7 @@ public:
         
         // create temp file
         FileSystem::PlatformFileHandle handle;
-        m_tempFilePath = FileSystem::openTemporaryFile("tempTestFile", handle);
+        m_tempFilePath = FileSystem::openTemporaryFile("tempTestFile"_s, handle);
         ASSERT_NE(handle, FileSystem::invalidPlatformFileHandle);
         
         int rc = FileSystem::writeToFile(handle, FileMonitorTestData.utf8().data(), FileMonitorTestData.length());
@@ -111,8 +111,8 @@ static String readContentsOfFile(const String& path)
         return emptyString();
 
     String result(static_cast<const LChar*>(buffer->data()), buffer->size());
-    if (result.endsWith("\n"))
-        return result.substring(0, result.length() - 1);
+    if (result.endsWith('\n'))
+        return result.left(result.length() - 1);
 
     return result;
 }

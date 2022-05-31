@@ -71,8 +71,7 @@ static bool isInWebKitChildProcess()
         NSString *bundleIdentifier = [[NSBundle mainBundle] bundleIdentifier];
         isInSubProcess = [bundleIdentifier hasPrefix:@"com.apple.WebKit.WebContent"]
             || [bundleIdentifier hasPrefix:@"com.apple.WebKit.Networking"]
-            || [bundleIdentifier hasPrefix:@"com.apple.WebKit.GPU"]
-            || [bundleIdentifier hasPrefix:@"com.apple.WebKit.WebAuthn"];
+            || [bundleIdentifier hasPrefix:@"com.apple.WebKit.GPU"];
     });
 
     return isInSubProcess;
@@ -125,7 +124,7 @@ void determineITPState()
     if (currentITPState != ITPState::Uninitialized)
         return;
 
-    bool appWasLinkedOnOrAfter = linkedOnOrAfter(SDKVersion::FirstWithSessionCleanupByDefault);
+    bool appWasLinkedOnOrAfter = linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::SessionCleanupByDefault);
 
     itpQueue() = WorkQueue::create("com.apple.WebKit.itpCheckQueue");
     itpQueue()->dispatch([appWasLinkedOnOrAfter, bundleIdentifier = WebCore::applicationBundleIdentifier().isolatedCopy()] {

@@ -542,7 +542,10 @@ extern "C" AXUIElementRef NSAccessibilityCreateAXUIElementRef(id element);
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
 - (void)detachIsolatedObject:(AccessibilityDetachmentType)detachmentType
 {
-    NSAccessibilityUnregisterUniqueIdForUIElement(self);
+    // Only unregister this wrapper if the underlying object or cache is being destroyed. Unregistering it in other cases (like `ElementChanged`)
+    // would cause AX clients to get a notification that this wrapper was destroyed, which wouldn't be true.
+    if (detachmentType == AccessibilityDetachmentType::ElementDestroyed || detachmentType == AccessibilityDetachmentType::CacheDestroyed)
+        NSAccessibilityUnregisterUniqueIdForUIElement(self);
     [super detachIsolatedObject:detachmentType];
 }
 #endif
@@ -1055,7 +1058,7 @@ static NSString* nsStringForReplacedNode(Node* replacedNode)
             // non-zero length means textual node, zero length means replaced node (AKA "attachments" in AX)
             if (it.text().length()) {
                 // Add the text of the list marker item if necessary.
-                String listMarkerText = AccessibilityObject::listMarkerTextForNodeAndPosition(&node, makeContainerOffsetPosition(it.range().start));
+                StringView listMarkerText = AccessibilityObject::listMarkerTextForNodeAndPosition(&node, makeContainerOffsetPosition(it.range().start));
                 if (!listMarkerText.isEmpty())
                     AXAttributedStringAppendText(attrString.get(), &node, listMarkerText, spellCheck);
                 AXAttributedStringAppendText(attrString.get(), &node, it.text(), spellCheck);
@@ -1677,15 +1680,13 @@ static void convertToVector(NSArray* array, AccessibilityObject::AccessibilityCh
         auto* backingObject = protectedSelf.get().axBackingObject;
         if (!backingObject || !backingObject->hasApplePDFAnnotationAttribute())
             return nil;
-
-        if (!backingObject->document()->isPluginDocument())
+        auto* document = dynamicDowncast<PluginDocument>(backingObject->document());
+        if (!document)
             return nil;
-
-        Widget* pluginWidget = static_cast<PluginDocument*>(backingObject->document())->pluginWidget();
-        if (!pluginWidget || !pluginWidget->isPluginViewBase())
+        auto* widget = document->pluginWidget();
+        if (!widget)
             return nil;
-
-        return static_cast<PluginViewBase*>(pluginWidget)->accessibilityAssociatedPluginParentForElement(backingObject->element());
+        return widget->accessibilityAssociatedPluginParentForElement(backingObject->element());
     });
 }
 
@@ -1931,7 +1932,6 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
         return [self computedRoleString];
 
     if ([attributeName isEqualToString: NSAccessibilityParentAttribute]) {
-
         // This will return the parent of the AXWebArea, if this is a web area.
         id scrollViewParent = [self scrollViewParent];
         if (scrollViewParent)
@@ -1982,11 +1982,8 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
             return [self accessibilityAttributeValue:NSAccessibilityRowsAttribute];
 
         // A tree item should only expose its content as its children (not its rows)
-        if (backingObject->isTreeItem()) {
-            AccessibilityObject::AccessibilityChildrenVector contentCopy;
-            backingObject->ariaTreeItemContent(contentCopy);
-            return makeNSArray(contentCopy);
-        }
+        if (backingObject->isTreeItem())
+            return makeNSArray(backingObject->ariaTreeItemContent());
 
         return self.childrenVectorArray;
     }
@@ -2178,7 +2175,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
         return [self windowElement:attributeName];
 
     if ([attributeName isEqualToString:NSAccessibilityAccessKeyAttribute]) {
-        AtomString accessKey = backingObject->accessKey();
+        auto accessKey = backingObject->accessKey();
         if (accessKey.isNull())
             return nil;
         return accessKey;
@@ -2396,11 +2393,8 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
     if ([attributeName isEqualToString:@"AXTableLevel"])
         return @(backingObject->tableLevel());
 
-    if ([attributeName isEqualToString: NSAccessibilityLinkedUIElementsAttribute]) {
-        AccessibilityObject::AccessibilityChildrenVector linkedUIElements;
-        backingObject->linkedUIElements(linkedUIElements);
-        return makeNSArray(linkedUIElements);
-    }
+    if ([attributeName isEqualToString: NSAccessibilityLinkedUIElementsAttribute])
+        return makeNSArray(backingObject->linkedObjects());
 
     if ([attributeName isEqualToString: NSAccessibilitySelectedAttribute])
         return [NSNumber numberWithBool:backingObject->isSelected()];
@@ -2469,11 +2463,8 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
     if ([attributeName isEqualToString:NSAccessibilityInvalidAttribute])
         return backingObject->invalidStatus();
 
-    if ([attributeName isEqualToString:NSAccessibilityOwnsAttribute]) {
-        AccessibilityObject::AccessibilityChildrenVector ariaOwns;
-        backingObject->ariaOwnsElements(ariaOwns);
-        return makeNSArray(ariaOwns);
-    }
+    if ([attributeName isEqualToString:NSAccessibilityOwnsAttribute])
+        return makeNSArray(backingObject->ownedObjects());
 
     if ([attributeName isEqualToString:NSAccessibilityARIAPosInSetAttribute])
         return @(backingObject->posInSet());
@@ -2629,11 +2620,8 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
     if ([attributeName isEqualToString:@"AXIsInCell"])
         return [NSNumber numberWithBool:backingObject->isInCell()];
 
-    if ([attributeName isEqualToString:@"AXDetailsElements"]) {
-        AccessibilityObject::AccessibilityChildrenVector details;
-        backingObject->ariaDetailsElements(details);
-        return makeNSArray(details);
-    }
+    if ([attributeName isEqualToString:@"AXDetailsElements"])
+        return makeNSArray(backingObject->detailedByObjects());
 
     if ([attributeName isEqualToString:NSAccessibilityBrailleLabelAttribute])
         return backingObject->brailleLabel();
@@ -2644,11 +2632,8 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
     if ([attributeName isEqualToString:NSAccessibilityRelativeFrameAttribute])
         return [NSValue valueWithRect:(NSRect)backingObject->relativeFrame()];
 
-    if ([attributeName isEqualToString:@"AXErrorMessageElements"]) {
-        AccessibilityObject::AccessibilityChildrenVector errorMessages;
-        backingObject->ariaErrorMessageElements(errorMessages);
-        return makeNSArray(errorMessages);
-    }
+    if ([attributeName isEqualToString:@"AXErrorMessageElements"])
+        return makeNSArray(backingObject->errorMessageObjects());
 
     // Multi-selectable
     if ([attributeName isEqualToString:NSAccessibilityIsMultiSelectableAttribute])
@@ -2662,11 +2647,8 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
         return backingObject->documentEncoding();
 
     // Aria controls element
-    if ([attributeName isEqualToString:NSAccessibilityAriaControlsAttribute]) {
-        AccessibilityObject::AccessibilityChildrenVector ariaControls;
-        backingObject->ariaControlsElements(ariaControls);
-        return makeNSArray(ariaControls);
-    }
+    if ([attributeName isEqualToString:NSAccessibilityAriaControlsAttribute])
+        return makeNSArray(backingObject->controlledObjects());
 
     if ([attributeName isEqualToString:NSAccessibilityFocusableAncestorAttribute]) {
         AXCoreObject* object = backingObject->focusableAncestor();
@@ -3500,8 +3482,12 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
         textMarker = (AXTextMarkerRef)parameter;
     else if (AXObjectIsTextMarkerRange(parameter))
         textMarkerRange = (AXTextMarkerRangeRef)parameter;
-    else if ([parameter isKindOfClass:[WebAccessibilityObjectWrapper class]])
+    else if ([parameter isKindOfClass:[WebAccessibilityObjectWrapper class]]) {
         uiElement = [(WebAccessibilityObjectWrapper*)parameter axBackingObject];
+        // The parameter wrapper object has lost its AX object since being given to the client, so bail early.
+        if (!uiElement)
+            return nil;
+    }
     else if ([parameter isKindOfClass:[NSNumber class]])
         number = parameter;
     else if ([parameter isKindOfClass:[NSArray class]])
@@ -4151,6 +4137,8 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
 - (NSUInteger)accessibilityArrayAttributeCount:(NSString *)attribute
 {
+    AXTRACE(makeString("WebAccessibilityObjectWrapper accessibilityArrayAttributeCount:", String(attribute)));
+
     auto* backingObject = self.updateObjectBackingStore;
     if (!backingObject)
         return 0;

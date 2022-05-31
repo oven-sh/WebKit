@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2021 Apple Inc. All rights reserved.
+ * Copyright (c) 2018-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -65,6 +65,12 @@ PAS_BEGIN_EXTERN_C;
 #define PAS_BAPI __PAS_BAPI
 
 #define PAS_ALIGNED(amount) __attribute__((aligned(amount)))
+
+#if PAS_PLATFORM(PLAYSTATION) && !defined(alignof)
+#define PAS_ALIGNOF(type) _Alignof(type)
+#else
+#define PAS_ALIGNOF(type) alignof(type)
+#endif
 
 #define PAS_FORMAT_PRINTF(fmt, args) __attribute__((format(__printf__, fmt, args)))
 
@@ -187,15 +193,16 @@ PAS_API PAS_NO_RETURN void pas_assertion_failed(
 static PAS_ALWAYS_INLINE PAS_NO_RETURN void pas_assertion_failed(
     const char* filename, int line, const char* function, const char* expression)
 {
-    PAS_UNUSED_PARAM(filename);
-    PAS_UNUSED_PARAM(line);
-    PAS_UNUSED_PARAM(function);
-    PAS_UNUSED_PARAM(expression);
+#if PAS_COMPILER(GCC) || PAS_COMPILER(CLANG)
+    // Force each assertion crash site to be unique.
+    asm volatile("" : "=r"(filename), "=r"(line), "=r"(function), "=r"(expression));
+#endif
     __builtin_trap();
 }
 #endif /* PAS_ENABLE_TESTING -> so end of !PAS_ENABLE_TESTING */
 
 PAS_API PAS_NO_RETURN PAS_NEVER_INLINE void pas_assertion_failed_no_inline(const char* filename, int line, const char* function, const char* expression);
+PAS_API PAS_NO_RETURN PAS_NEVER_INLINE void pas_assertion_failed_no_inline_with_extra_detail(const char* filename, int line, const char* function, const char* expression, uint64_t extra);
 
 PAS_IGNORE_WARNINGS_BEGIN("missing-noreturn")
 static PAS_ALWAYS_INLINE void pas_assertion_failed_noreturn_silencer(
@@ -233,6 +240,15 @@ PAS_IGNORE_WARNINGS_END
         if (PAS_LIKELY(exp)) \
             break; \
         pas_assertion_failed_no_inline(__FILE__, __LINE__, __PRETTY_FUNCTION__, #exp); \
+    } while (0)
+
+#define PAS_ASSERT_WITH_EXTRA_DETAIL(exp, extra) \
+    do { \
+        if (!PAS_ENABLE_ASSERT) \
+            break; \
+        if (PAS_LIKELY(exp)) \
+            break; \
+        pas_assertion_failed_no_inline_with_extra_detail(__FILE__, __LINE__, __PRETTY_FUNCTION__, #exp, extra); \
     } while (0)
 
 static inline bool pas_is_power_of_2(uintptr_t value)

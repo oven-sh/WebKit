@@ -35,6 +35,7 @@
 #include "MediaQuery.h"
 #include "RenderView.h"
 #include "StyleRule.h"
+#include "StyleScope.h"
 
 namespace WebCore::Style {
 
@@ -43,9 +44,10 @@ struct ContainerQueryEvaluator::SelectedContainer {
     CSSToLengthConversionData conversionData;
 };
 
-ContainerQueryEvaluator::ContainerQueryEvaluator(const Element& element, PseudoId pseudoId, SelectorMatchingState* selectorMatchingState)
+ContainerQueryEvaluator::ContainerQueryEvaluator(const Element& element, SelectionMode selectionMode, ScopeOrdinal scopeOrdinal, SelectorMatchingState* selectorMatchingState)
     : m_element(element)
-    , m_pseudoId(pseudoId)
+    , m_selectionMode(selectionMode)
+    , m_scopeOrdinal(scopeOrdinal)
     , m_selectorMatchingState(selectorMatchingState)
 {
 }
@@ -80,14 +82,14 @@ auto ContainerQueryEvaluator::selectContainer(const FilteredContainerQuery& filt
 
     auto* cachedQueryContainers = m_selectorMatchingState ? &m_selectorMatchingState->queryContainers : nullptr;
 
-    auto* container = selectContainer(filteredContainerQuery.axisFilter, filteredContainerQuery.nameFilter, m_element.get(), cachedQueryContainers, m_pseudoId);
+    auto* container = selectContainer(filteredContainerQuery.axisFilter, filteredContainerQuery.nameFilter, m_element.get(), m_selectionMode, m_scopeOrdinal, cachedQueryContainers);
     if (!container)
         return { };
 
     return makeSelectedContainer(*container);
 }
 
-const Element* ContainerQueryEvaluator::selectContainer(OptionSet<CQ::Axis> axes, const String& name, const Element& element, const CachedQueryContainers* cachedQueryContainers, PseudoId pseudoId)
+const Element* ContainerQueryEvaluator::selectContainer(OptionSet<CQ::Axis> axes, const String& name, const Element& element, SelectionMode selectionMode, ScopeOrdinal scopeOrdinal, const CachedQueryContainers* cachedQueryContainers)
 {
     // "For each element, the query container to be queried is selected from among the element’s
     // ancestor query containers that have a valid container-type for all the container features
@@ -123,6 +125,30 @@ const Element* ContainerQueryEvaluator::selectContainer(OptionSet<CQ::Axis> axes
         return style->containerNames().contains(name);
     };
 
+    auto findOriginatingElement = [&]() -> const Element* {
+        // ::part() selectors can query its originating host, but not internal query containers inside the shadow tree.
+        if (scopeOrdinal <= ScopeOrdinal::ContainingHost)
+            return hostForScopeOrdinal(element, scopeOrdinal);
+        // ::slotted() selectors can query containers inside the shadow tree, including the slot itself.
+        if (scopeOrdinal >= ScopeOrdinal::FirstSlot && scopeOrdinal <= ScopeOrdinal::SlotLimit)
+            return assignedSlotForScopeOrdinal(element, scopeOrdinal);
+        return nullptr;
+    };
+
+    if (auto* originatingElement = findOriginatingElement()) {
+        // For selectors with pseudo elements, query containers can be established by the shadow-including inclusive ancestors of the ultimate originating element.
+        for (auto* ancestor = originatingElement; ancestor; ancestor = ancestor->parentOrShadowHostElement()) {
+            if (isContainerForQuery(*ancestor))
+                return ancestor;
+        }
+        return nullptr;
+    }
+
+    if (selectionMode == SelectionMode::PseudoElement) {
+        if (isContainerForQuery(element))
+            return &element;
+    }
+
     if (cachedQueryContainers) {
         for (auto& container : makeReversedRange(*cachedQueryContainers)) {
             if (isContainerForQuery(container))
@@ -131,14 +157,9 @@ const Element* ContainerQueryEvaluator::selectContainer(OptionSet<CQ::Axis> axes
         return { };
     }
 
-    if (pseudoId != PseudoId::None) {
-        if (isContainerForQuery(element))
-            return &element;
-    }
-
-    for (auto& ancestor : composedTreeAncestors(const_cast<Element&>(element))) {
-        if (isContainerForQuery(ancestor))
-            return &ancestor;
+    for (auto* ancestor = element.parentOrShadowHostElement(); ancestor; ancestor = ancestor->parentOrShadowHostElement()) {
+        if (isContainerForQuery(*ancestor))
+            return ancestor;
     }
     return { };
 }
@@ -147,19 +168,10 @@ auto ContainerQueryEvaluator::evaluateQuery(const CQ::ContainerQuery& containerQ
 {
     return WTF::switchOn(containerQuery, [&](const CQ::ContainerCondition& containerCondition) {
         return evaluateCondition(containerCondition, container);
-    }, [&](const CQ::SizeQuery& sizeQuery) {
-        return evaluateQuery(sizeQuery, container);
-    }, [&](const CQ::UnknownQuery&) {
-        return EvaluationResult::Unknown;
-    });
-}
-
-auto ContainerQueryEvaluator::evaluateQuery(const CQ::SizeQuery& sizeQuery, const SelectedContainer& container) const -> EvaluationResult
-{
-    return WTF::switchOn(sizeQuery, [&](const CQ::SizeCondition& sizeCondition) {
-        return evaluateCondition(sizeCondition, container);
     }, [&](const CQ::SizeFeature& sizeFeature) {
         return evaluateSizeFeature(sizeFeature, container);
+    }, [&](const CQ::UnknownQuery&) {
+        return EvaluationResult::Unknown;
     });
 }
 
@@ -227,16 +239,17 @@ auto ContainerQueryEvaluator::evaluateSizeFeature(const CQ::SizeFeature& sizeFea
     auto& renderer = *container.renderer;
 
     auto hasEligibleContainment = [&] {
-        if (!shouldApplyLayoutContainment(renderer))
+        if (!renderer.shouldApplyLayoutContainment())
             return false;
         switch (renderer.style().containerType()) {
         case ContainerType::InlineSize:
-            return shouldApplyInlineSizeContainment(renderer);
+            return renderer.shouldApplyInlineSizeContainment();
         case ContainerType::Size:
-            return shouldApplySizeContainment(renderer);
+            return renderer.shouldApplySizeContainment();
         case ContainerType::None:
             return true;
         }
+        RELEASE_ASSERT_NOT_REACHED();
     };
 
     if (!hasEligibleContainment())

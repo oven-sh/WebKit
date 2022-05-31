@@ -78,6 +78,7 @@
 #include "RenderView.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGImage.h"
+#include "SVGLengthContext.h"
 #include "SVGRenderSupport.h"
 #include "Settings.h"
 #include "ShadowRoot.h"
@@ -300,20 +301,17 @@ StyleDifference RenderElement::adjustStyleDifference(StyleDifference diff, Optio
     return diff;
 }
 
-inline bool RenderElement::hasImmediateNonWhitespaceTextChildOrBorderOrOutline() const
-{
-    for (auto& child : childrenOfType<RenderObject>(*this)) {
-        if (is<RenderText>(child) && !downcast<RenderText>(child).isAllCollapsibleWhitespace())
-            return true;
-        if (child.style().hasOutline() || child.style().hasBorder())
-            return true;
-    }
-    return false;
-}
 
 inline bool RenderElement::shouldRepaintForStyleDifference(StyleDifference diff) const
 {
-    return diff == StyleDifference::Repaint || (diff == StyleDifference::RepaintIfTextOrBorderOrOutline && hasImmediateNonWhitespaceTextChildOrBorderOrOutline());
+    auto hasImmediateNonWhitespaceTextChild = [&] {
+        for (auto& child : childrenOfType<RenderText>(*this)) {
+            if (!child.isAllCollapsibleWhitespace())
+                return true;
+        }
+        return false;
+    };
+    return diff == StyleDifference::Repaint || (diff == StyleDifference::RepaintIfText && hasImmediateNonWhitespaceTextChild());
 }
 
 void RenderElement::updateFillImages(const FillLayer* oldLayers, const FillLayer& newLayers)
@@ -638,18 +636,18 @@ static RenderLayer* layerNextSiblingRespectingTopLayer(const RenderElement& rend
     return findNextLayer(*renderer.parent(), parentLayer, &renderer);
 }
 
-static void addLayers(const RenderElement& addedRenderer, RenderElement& currentRenderer, RenderLayer& parentLayer, std::optional<RenderLayer*>& beforeChild)
+static void addLayers(const RenderElement& addedRenderer, RenderElement& currentRenderer, RenderLayer* parentLayer)
 {
     if (currentRenderer.hasLayer()) {
-        if (!beforeChild.has_value())
-            beforeChild = layerNextSiblingRespectingTopLayer(addedRenderer, parentLayer);
-
-        parentLayer.addChild(*downcast<RenderLayerModelObject>(currentRenderer).layer(), beforeChild.value());
+        if (isInTopLayerOrBackdrop(currentRenderer.style(), currentRenderer.element()))
+            parentLayer = addedRenderer.view().layer();
+        RenderLayer* beforeChild = layerNextSiblingRespectingTopLayer(addedRenderer, *parentLayer);
+        parentLayer->addChild(*downcast<RenderLayerModelObject>(currentRenderer).layer(), beforeChild);
         return;
     }
 
     for (auto& child : childrenOfType<RenderElement>(currentRenderer))
-        addLayers(addedRenderer, child, parentLayer, beforeChild);
+        addLayers(addedRenderer, child, parentLayer);
 }
 
 void RenderElement::addLayers(RenderLayer* parentLayer)
@@ -657,12 +655,12 @@ void RenderElement::addLayers(RenderLayer* parentLayer)
     if (!parentLayer)
         return;
 
-    std::optional<RenderLayer*> beforeChild;
-    WebCore::addLayers(*this, *this, *parentLayer, beforeChild);
+    WebCore::addLayers(*this, *this, parentLayer);
 }
 
-void RenderElement::removeLayers(RenderLayer* parentLayer)
+void RenderElement::removeLayers()
 {
+    RenderLayer* parentLayer = layerParent();
     if (!parentLayer)
         return;
 
@@ -672,24 +670,24 @@ void RenderElement::removeLayers(RenderLayer* parentLayer)
     }
 
     for (auto& child : childrenOfType<RenderElement>(*this))
-        child.removeLayers(parentLayer);
+        child.removeLayers();
 }
 
-void RenderElement::moveLayers(RenderLayer* oldParent, RenderLayer& newParent)
+void RenderElement::moveLayers(RenderLayer& newParent)
 {
     if (hasLayer()) {
         if (isInTopLayerOrBackdrop(style(), element()))
             return;
         RenderLayer* layer = downcast<RenderLayerModelObject>(*this).layer();
-        ASSERT(oldParent == layer->parent());
-        if (oldParent)
-            oldParent->removeChild(*layer);
+        auto* layerParent = layer->parent();
+        if (layerParent)
+            layerParent->removeChild(*layer);
         newParent.addChild(*layer);
         return;
     }
 
     for (auto& child : childrenOfType<RenderElement>(*this))
-        child.moveLayers(oldParent, newParent);
+        child.moveLayers(newParent);
 }
 
 RenderLayer* RenderElement::layerParent() const
@@ -964,10 +962,8 @@ void RenderElement::willBeRemovedFromTree(IsInternalMove isInternalMove)
             enclosingLayer->dirtyVisibleContentStatus();
     }
     // Keep our layer hierarchy updated.
-    if (firstChild() || hasLayer()) {
-        auto* parentLayer = layerParent();
-        removeLayers(parentLayer);
-    }
+    if (firstChild() || hasLayer())
+        removeLayers();
 
     if (isOutOfFlowPositioned() && parent()->childrenInline())
         parent()->dirtyLinesFromChangedChild(*this);
@@ -1191,29 +1187,35 @@ bool RenderElement::repaintAfterLayoutIfNeeded(const RenderLayerModelObject* rep
     if (newBounds == oldBounds && newOutlineBox == oldOutlineBox)
         return false;
 
-    LayoutUnit deltaLeft = newBounds.x() - oldBounds.x();
-    if (deltaLeft > 0)
-        repaintUsingContainer(repaintContainer, LayoutRect(oldBounds.x(), oldBounds.y(), deltaLeft, oldBounds.height()));
-    else if (deltaLeft < 0)
-        repaintUsingContainer(repaintContainer, LayoutRect(newBounds.x(), newBounds.y(), -deltaLeft, newBounds.height()));
+    if (newBounds.isEmpty() && !oldBounds.isEmpty())
+        repaintUsingContainer(repaintContainer, oldBounds);
+    else if (!newBounds.isEmpty() && oldBounds.isEmpty())
+        repaintUsingContainer(repaintContainer, newBounds);
+    else {
+        LayoutUnit deltaLeft = newBounds.x() - oldBounds.x();
+        if (deltaLeft > 0)
+            repaintUsingContainer(repaintContainer, LayoutRect(oldBounds.x(), oldBounds.y(), deltaLeft, oldBounds.height()));
+        else if (deltaLeft < 0)
+            repaintUsingContainer(repaintContainer, LayoutRect(newBounds.x(), newBounds.y(), -deltaLeft, newBounds.height()));
 
-    LayoutUnit deltaRight = newBounds.maxX() - oldBounds.maxX();
-    if (deltaRight > 0)
-        repaintUsingContainer(repaintContainer, LayoutRect(oldBounds.maxX(), newBounds.y(), deltaRight, newBounds.height()));
-    else if (deltaRight < 0)
-        repaintUsingContainer(repaintContainer, LayoutRect(newBounds.maxX(), oldBounds.y(), -deltaRight, oldBounds.height()));
+        LayoutUnit deltaRight = newBounds.maxX() - oldBounds.maxX();
+        if (deltaRight > 0)
+            repaintUsingContainer(repaintContainer, LayoutRect(oldBounds.maxX(), newBounds.y(), deltaRight, newBounds.height()));
+        else if (deltaRight < 0)
+            repaintUsingContainer(repaintContainer, LayoutRect(newBounds.maxX(), oldBounds.y(), -deltaRight, oldBounds.height()));
 
-    LayoutUnit deltaTop = newBounds.y() - oldBounds.y();
-    if (deltaTop > 0)
-        repaintUsingContainer(repaintContainer, LayoutRect(oldBounds.x(), oldBounds.y(), oldBounds.width(), deltaTop));
-    else if (deltaTop < 0)
-        repaintUsingContainer(repaintContainer, LayoutRect(newBounds.x(), newBounds.y(), newBounds.width(), -deltaTop));
+        LayoutUnit deltaTop = newBounds.y() - oldBounds.y();
+        if (deltaTop > 0)
+            repaintUsingContainer(repaintContainer, LayoutRect(oldBounds.x(), oldBounds.y(), oldBounds.width(), deltaTop));
+        else if (deltaTop < 0)
+            repaintUsingContainer(repaintContainer, LayoutRect(newBounds.x(), newBounds.y(), newBounds.width(), -deltaTop));
 
-    LayoutUnit deltaBottom = newBounds.maxY() - oldBounds.maxY();
-    if (deltaBottom > 0)
-        repaintUsingContainer(repaintContainer, LayoutRect(newBounds.x(), oldBounds.maxY(), newBounds.width(), deltaBottom));
-    else if (deltaBottom < 0)
-        repaintUsingContainer(repaintContainer, LayoutRect(oldBounds.x(), newBounds.maxY(), oldBounds.width(), -deltaBottom));
+        LayoutUnit deltaBottom = newBounds.maxY() - oldBounds.maxY();
+        if (deltaBottom > 0)
+            repaintUsingContainer(repaintContainer, LayoutRect(newBounds.x(), oldBounds.maxY(), newBounds.width(), deltaBottom));
+        else if (deltaBottom < 0)
+            repaintUsingContainer(repaintContainer, LayoutRect(oldBounds.x(), newBounds.maxY(), oldBounds.width(), -deltaBottom));
+    }
 
     if (newOutlineBox == oldOutlineBox)
         return false;
@@ -2110,7 +2112,7 @@ void RenderElement::issueRepaintForOutlineAuto(float outlineSize)
 {
     LayoutRect repaintRect;
     Vector<LayoutRect> focusRingRects;
-    addFocusRingRects(focusRingRects, LayoutPoint(), containerForRepaint());
+    addFocusRingRects(focusRingRects, LayoutPoint(), containerForRepaint().renderer);
     for (auto rect : focusRingRects) {
         rect.inflate(outlineSize);
         repaintRect.unite(rect);
@@ -2387,6 +2389,78 @@ Overflow RenderElement::effectiveOverflowY() const
     if (paintContainmentApplies() && overflowY == Overflow::Visible)
         return Overflow::Clip;
     return overflowY;
+}
+
+bool RenderElement::createsNewFormattingContext() const
+{
+    // Writing-mode changes establish an independent block formatting context
+    // if the box is a block-container.
+    // https://drafts.csswg.org/css-writing-modes/#block-flow
+    if (isWritingModeRoot() && isBlockContainer())
+        return true;
+    return isInlineBlockOrInlineTable() || isFlexItemIncludingDeprecated()
+        || isTableCell() || isTableCaption() || isFieldset() || isDocumentElementRenderer() || isRenderFragmentedFlow()
+        || style().specifiesColumns() || style().columnSpan() == ColumnSpan::All || style().display() == DisplayType::FlowRoot || establishesIndependentFormattingContext();
+}
+
+bool RenderElement::establishesIndependentFormattingContext() const
+{
+    return isFloatingOrOutOfFlowPositioned() || hasPotentiallyScrollableOverflow() || style().containsLayout() || paintContainmentApplies();
+}
+
+FloatRect RenderElement::referenceBoxRect(CSSBoxType boxType) const
+{
+    // CSS box model code is implemented in RenderBox::referenceBoxRect().
+
+    // For the legacy SVG engine, RenderElement is the only class that's
+    // present in the ancestor chain of all SVG renderers. In LBSE the
+    // common class is RenderLayerModelObject. Once the legacy SVG engine
+    // is removed this function should be moved to RenderLayerModelObject.
+    // As this method is used by both SVG engines, we need to place it
+    // here in RenderElement, as temporary solution.
+    if (!is<SVGElement>(element()))
+        return { };
+
+    auto alignReferenceBox = [&](FloatRect referenceBox) {
+        // The CSS borderBoxRect() is defined to start at an origin of (0, 0).
+        // A possible shift of a CSS box (e.g. due to non-static position + top/left properties)
+        // does not effect the borderBoxRect() location. The location information
+        // is propagated upon paint time, e.g. via 'paintOffset' when calling RenderObject::paint(),
+        // or by altering the RenderLayer TransformationMatrix to include the 'offsetFromAncestor'
+        // right in the transformation matrix, when CSS transformations are present (see RenderLayer
+        // paintLayerByApplyingTransform() for details).
+        //
+        // To mimic the expectation for SVG, 'fill-box' must behave the same: if we'd include
+        // the 'referenceBox' location in the returned rect, we'd apply the (x, y) location
+        // information for the SVG renderer twice. We would shift the 'transform-origin' by (x, y)
+        // and at the same time alter the CTM in RenderLayer::paintLayerByApplyingTransform() by
+        // including a translation to the enclosing transformed ancestor ('offsetFromAncestor').
+        // Avoid that, and move by -nominalSVGLayoutLocation().
+#if ENABLE(LAYER_BASED_SVG_ENGINE)
+        if (isSVGLayerAwareRenderer() && !isSVGRoot() && document().settings().layerBasedSVGEngineEnabled())
+            referenceBox.moveBy(-downcast<RenderLayerModelObject>(*this).nominalSVGLayoutLocation());
+#endif
+        return referenceBox;
+    };
+
+    switch (boxType) {
+    case CSSBoxType::BoxMissing:
+    case CSSBoxType::ContentBox:
+    case CSSBoxType::PaddingBox:
+    case CSSBoxType::FillBox:
+        return alignReferenceBox(objectBoundingBox());
+    case CSSBoxType::BorderBox:
+    case CSSBoxType::MarginBox:
+    case CSSBoxType::StrokeBox:
+        return alignReferenceBox(strokeBoundingBox());
+    case CSSBoxType::ViewBox:
+        // FIXME: [LBSE] Upstream: Cache the immutable SVGLengthContext per SVGElement, to avoid the repeated RenderSVGRoot size queries in determineViewport().
+        auto viewportSize = SVGLengthContext(downcast<SVGElement>(element())).viewportSize().value_or(FloatSize { });
+        return alignReferenceBox({ { }, viewportSize });
+    }
+
+    ASSERT_NOT_REACHED();
+    return { };
 }
 
 }

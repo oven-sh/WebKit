@@ -76,8 +76,10 @@ class EXTBlendMinMax;
 class EXTColorBufferFloat;
 class EXTColorBufferHalfFloat;
 class EXTFloatBlend;
+class EXTTextureCompressionBPTC;
 class EXTTextureCompressionRGTC;
 class EXTTextureFilterAnisotropic;
+class EXTTextureNorm16;
 class EXTShaderTextureLOD;
 class EXTsRGB;
 class EXTFragDepth;
@@ -96,6 +98,7 @@ class OESFBORenderMipmap;
 #if ENABLE(OFFSCREEN_CANVAS)
 class OffscreenCanvas;
 #endif
+class WebCoreOpaqueRoot;
 class WebGLActiveInfo;
 class WebGLColorBufferFloat;
 class WebGLCompressedTextureASTC;
@@ -440,6 +443,7 @@ protected:
     WebGLRenderingContextBase(CanvasBase&, WebGLContextAttributes);
     WebGLRenderingContextBase(CanvasBase&, Ref<GraphicsContextGL>&&, WebGLContextAttributes);
 
+    friend class EXTTextureCompressionBPTC;
     friend class EXTTextureCompressionRGTC;
     friend class WebGLDrawBuffers;
     friend class WebGLFramebuffer;
@@ -705,8 +709,10 @@ protected:
     RefPtr<EXTFragDepth> m_extFragDepth;
     RefPtr<EXTBlendMinMax> m_extBlendMinMax;
     RefPtr<EXTsRGB> m_extsRGB;
+    RefPtr<EXTTextureCompressionBPTC> m_extTextureCompressionBPTC;
     RefPtr<EXTTextureCompressionRGTC> m_extTextureCompressionRGTC;
     RefPtr<EXTTextureFilterAnisotropic> m_extTextureFilterAnisotropic;
+    RefPtr<EXTTextureNorm16> m_extTextureNorm16;
     RefPtr<EXTShaderTextureLOD> m_extShaderTextureLOD;
     RefPtr<KHRParallelShaderCompile> m_khrParallelShaderCompile;
     RefPtr<OESTextureFloat> m_oesTextureFloat;
@@ -1195,6 +1201,8 @@ inline unsigned WebGLRenderingContextBase::getMaxIndex(const RefPtr<JSC::ArrayBu
 
     return maxIndex;
 }
+
+WebCoreOpaqueRoot root(WebGLRenderingContextBase*);
 
 } // namespace WebCore
 

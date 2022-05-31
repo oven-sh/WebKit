@@ -37,7 +37,7 @@
 #include "NetworkSession.h"
 #include "PrivateRelayed.h"
 #include "ServiceWorkerNavigationPreloader.h"
-#include "SharedBufferCopy.h"
+#include "SharedBufferReference.h"
 #include "WebCoreArgumentCoders.h"
 #include "WebResourceLoaderMessages.h"
 #include "WebSWContextManagerConnectionMessages.h"
@@ -153,7 +153,7 @@ void ServiceWorkerFetchTask::startFetch()
     cleanHTTPRequestHeadersForAccessControl(request, m_loader.parameters().httpHeadersToKeep);
 
     String clientIdentifier;
-    if (m_loader.parameters().options.mode != FetchOptions::Mode::Navigate) {
+    if (m_loader.parameters().options.mode != FetchOptions::Mode::Navigate && m_loader.parameters().options.destination != FetchOptions::Destination::Worker) {
         if (auto identifier = m_loader.parameters().options.clientIdentifier)
             clientIdentifier = identifier->toString();
     }
@@ -188,7 +188,8 @@ void ServiceWorkerFetchTask::processRedirectResponse(ResourceResponse&& response
 
 void ServiceWorkerFetchTask::didReceiveResponse(WebCore::ResourceResponse&& response, bool needsContinueDidReceiveResponseMessage)
 {
-    cancelPreloadIfNecessary();
+    if (m_preloader && !m_preloader->isServiceWorkerNavigationPreloadEnabled())
+        cancelPreloadIfNecessary();
 
     processResponse(WTFMove(response), needsContinueDidReceiveResponseMessage, ShouldSetSource::Yes);
 }
@@ -231,7 +232,7 @@ void ServiceWorkerFetchTask::processResponse(ResourceResponse&& response, bool n
         m_loader.setResponse(WTFMove(response));
 }
 
-void ServiceWorkerFetchTask::didReceiveData(const IPC::SharedBufferCopy& data, int64_t encodedDataLength)
+void ServiceWorkerFetchTask::didReceiveData(const IPC::SharedBufferReference& data, int64_t encodedDataLength)
 {
     if (m_isDone)
         return;
@@ -258,6 +259,8 @@ void ServiceWorkerFetchTask::didFinish(const NetworkLoadMetrics& networkLoadMetr
     if (m_timeoutTimer)
         m_timeoutTimer->stop();
     sendToClient(Messages::WebResourceLoader::DidFinishResourceLoad { networkLoadMetrics });
+
+    cancelPreloadIfNecessary();
 }
 
 void ServiceWorkerFetchTask::didFail(const ResourceError& error)
@@ -413,7 +416,7 @@ void ServiceWorkerFetchTask::loadBodyFromPreloader()
             didFinish(m_preloader->networkLoadMetrics());
             return;
         }
-        didReceiveData(IPC::SharedBufferCopy(const_cast<WebCore::FragmentedSharedBuffer&>(*chunk)), length);
+        didReceiveData(IPC::SharedBufferReference(const_cast<WebCore::FragmentedSharedBuffer&>(*chunk)), length);
     });
 }
 

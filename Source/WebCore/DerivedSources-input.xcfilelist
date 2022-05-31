@@ -892,6 +892,7 @@ $(PROJECT_DIR)/crypto/parameters/RsaKeyGenParams.idl
 $(PROJECT_DIR)/crypto/parameters/RsaOaepParams.idl
 $(PROJECT_DIR)/crypto/parameters/RsaPssParams.idl
 $(PROJECT_DIR)/css/CSSConditionRule.idl
+$(PROJECT_DIR)/css/CSSContainerRule.idl
 $(PROJECT_DIR)/css/CSSCounterStyleRule.idl
 $(PROJECT_DIR)/css/CSSFontFaceRule.idl
 $(PROJECT_DIR)/css/CSSFontPaletteValuesRule.idl
@@ -1056,6 +1057,7 @@ $(PROJECT_DIR)/dom/DocumentOrShadowRoot.idl
 $(PROJECT_DIR)/dom/DocumentType.idl
 $(PROJECT_DIR)/dom/DragEvent.idl
 $(PROJECT_DIR)/dom/Element+CSSOMView.idl
+$(PROJECT_DIR)/dom/Element+ComputedStyleMap.idl
 $(PROJECT_DIR)/dom/Element+DOMParsing.idl
 $(PROJECT_DIR)/dom/Element+Fullscreen.idl
 $(PROJECT_DIR)/dom/Element+PointerEvents.idl
@@ -1294,8 +1296,10 @@ $(PROJECT_DIR)/html/canvas/EXTColorBufferHalfFloat.idl
 $(PROJECT_DIR)/html/canvas/EXTFloatBlend.idl
 $(PROJECT_DIR)/html/canvas/EXTFragDepth.idl
 $(PROJECT_DIR)/html/canvas/EXTShaderTextureLOD.idl
+$(PROJECT_DIR)/html/canvas/EXTTextureCompressionBPTC.idl
 $(PROJECT_DIR)/html/canvas/EXTTextureCompressionRGTC.idl
 $(PROJECT_DIR)/html/canvas/EXTTextureFilterAnisotropic.idl
+$(PROJECT_DIR)/html/canvas/EXTTextureNorm16.idl
 $(PROJECT_DIR)/html/canvas/EXTsRGB.idl
 $(PROJECT_DIR)/html/canvas/ImageBitmapRenderingContext.idl
 $(PROJECT_DIR)/html/canvas/ImageBitmapRenderingContextSettings.idl
@@ -1620,6 +1624,7 @@ $(PROJECT_DIR)/svg/xlinkattrs.in
 $(PROJECT_DIR)/testing/FakeXRBoundsPoint.idl
 $(PROJECT_DIR)/testing/FakeXRButtonStateInit.idl
 $(PROJECT_DIR)/testing/FakeXRInputSourceInit.idl
+$(PROJECT_DIR)/testing/FakeXRJointStateInit.idl
 $(PROJECT_DIR)/testing/FakeXRRigidTransformInit.idl
 $(PROJECT_DIR)/testing/FakeXRViewInit.idl
 $(PROJECT_DIR)/testing/GCObservation.idl

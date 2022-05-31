@@ -87,7 +87,7 @@ ResourceRequest createAccessControlPreflightRequest(const ResourceRequest& reque
     static const double platformDefaultTimeout = 0;
     preflightRequest.setTimeoutInterval(platformDefaultTimeout);
     updateRequestForAccessControl(preflightRequest, securityOrigin, StoredCredentialsPolicy::DoNotUse);
-    preflightRequest.setHTTPMethod("OPTIONS");
+    preflightRequest.setHTTPMethod("OPTIONS"_s);
     preflightRequest.setHTTPHeaderField(HTTPHeaderName::AccessControlRequestMethod, request.httpMethod());
     preflightRequest.setPriority(request.priority());
     preflightRequest.setFirstPartyForCookies(request.firstPartyForCookies());
@@ -149,8 +149,8 @@ CachedResourceRequest createPotentialAccessControlRequest(ResourceRequest&& requ
         return cachedRequest;
     }
 
-    FetchOptions::Credentials credentials = equalLettersIgnoringASCIICase(crossOriginAttribute, "omit")
-        ? FetchOptions::Credentials::Omit : equalLettersIgnoringASCIICase(crossOriginAttribute, "use-credentials")
+    FetchOptions::Credentials credentials = equalLettersIgnoringASCIICase(crossOriginAttribute, "omit"_s)
+        ? FetchOptions::Credentials::Omit : equalLettersIgnoringASCIICase(crossOriginAttribute, "use-credentials"_s)
         ? FetchOptions::Credentials::Include : FetchOptions::Credentials::SameOrigin;
     options.credentials = credentials;
     switch (credentials) {
@@ -171,7 +171,7 @@ CachedResourceRequest createPotentialAccessControlRequest(ResourceRequest&& requ
 
 String validateCrossOriginRedirectionURL(const URL& redirectURL)
 {
-    if (!LegacySchemeRegistry::shouldTreatURLSchemeAsCORSEnabled(redirectURL.protocol().toStringWithoutCopying()))
+    if (!LegacySchemeRegistry::shouldTreatURLSchemeAsCORSEnabled(redirectURL.protocol()))
         return makeString("not allowed to follow a cross-origin CORS redirection with non CORS scheme");
 
     if (redirectURL.hasCredentials())

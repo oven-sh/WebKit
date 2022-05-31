@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2008-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -72,17 +72,13 @@ void JIT::emit_op_get_by_val(const JSInstruction* currentInstruction)
         emitJumpSlowCaseIfNotJSCell(baseJSR, base);
         emitArrayProfilingSiteWithCell(bytecode, baseJSR.payloadGPR(), scratchGPR);
 
-        JITGetByValGenerator gen(
-            nullptr, nullptr, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), AccessType::GetByVal, RegisterSet::stubUnavailableRegisters(),
-            baseJSR, propertyJSR, resultJSR, stubInfoGPR);
-
         auto [ stubInfo, stubInfoIndex ] = addUnlinkedStructureStubInfo();
-        stubInfo->accessType = AccessType::GetByVal;
-        stubInfo->bytecodeIndex = m_bytecodeIndex;
+        JITGetByValGenerator gen(
+            nullptr, stubInfo, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), AccessType::GetByVal, RegisterSet::stubUnavailableRegisters(),
+            baseJSR, propertyJSR, resultJSR, stubInfoGPR);
         if (isOperandConstantInt(property))
             stubInfo->propertyIsInt32 = true;
         gen.m_unlinkedStubInfoConstantIndex = stubInfoIndex;
-        gen.m_unlinkedStubInfo = stubInfo;
 
         gen.generateBaselineDataICFastPath(*this, stubInfoIndex, stubInfoGPR);
         resetSP(); // We might OSR exit here, so we need to conservatively reset SP
@@ -149,8 +145,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::slow_op_get_by_val_callSlowOperationT
     // Call slow operation
     jit.store32(bytecodeOffsetGPR, tagFor(CallFrameSlot::argumentCountIncludingThis));
     jit.prepareCallOperation(vm);
-    jit.loadPtr(addressFor(CallFrameSlot::codeBlock), globalObjectGPR);
-    jit.loadPtr(Address(globalObjectGPR, CodeBlock::offsetOfGlobalObject()), globalObjectGPR);
+    loadGlobalObject(jit, globalObjectGPR);
     jit.setupArguments<SlowOperation>(globalObjectGPR, stubInfoGPR, profileGPR, baseJSR, propertyJSR);
     static_assert(preferredArgumentGPR<SlowOperation, 1>() == argumentGPR1, "Needed for branch to slow operation via StubInfo");
     jit.call(Address(argumentGPR1, StructureStubInfo::offsetOfSlowOperation()), OperationPtrTag);
@@ -162,7 +157,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::slow_op_get_by_val_callSlowOperationT
 
     LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::ExtraCTIThunk);
     patchBuffer.link(exceptionCheck, CodeLocationLabel(vm.getCTIStub(checkExceptionGenerator).retaggedCode<NoPtrTag>()));
-    return FINALIZE_CODE(patchBuffer, JITThunkPtrTag, "Baseline: slow_op_get_by_val_callSlowOperationThenCheckException");
+    return FINALIZE_THUNK(patchBuffer, JITThunkPtrTag, "Baseline: slow_op_get_by_val_callSlowOperationThenCheckException");
 }
 
 void JIT::emit_op_get_private_name(const JSInstruction* currentInstruction)
@@ -182,15 +177,11 @@ void JIT::emit_op_get_private_name(const JSInstruction* currentInstruction)
 
     emitJumpSlowCaseIfNotJSCell(baseJSR, base);
 
-    JITGetByValGenerator gen(
-        nullptr, nullptr, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), AccessType::GetPrivateName,
-        RegisterSet::stubUnavailableRegisters(), baseJSR, propertyJSR, resultJSR, stubInfoGPR);
-
     auto [ stubInfo, stubInfoIndex ] = addUnlinkedStructureStubInfo();
-    stubInfo->accessType = AccessType::GetPrivateName;
-    stubInfo->bytecodeIndex = m_bytecodeIndex;
+    JITGetByValGenerator gen(
+        nullptr, stubInfo, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), AccessType::GetPrivateName,
+        RegisterSet::stubUnavailableRegisters(), baseJSR, propertyJSR, resultJSR, stubInfoGPR);
     gen.m_unlinkedStubInfoConstantIndex = stubInfoIndex;
-    gen.m_unlinkedStubInfo = stubInfo;
 
     gen.generateBaselineDataICFastPath(*this, stubInfoIndex, stubInfoGPR);
     addSlowCase();
@@ -244,8 +235,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::slow_op_get_private_name_callSlowOper
     // Call slow operation
     jit.store32(bytecodeOffsetGPR, tagFor(CallFrameSlot::argumentCountIncludingThis));
     jit.prepareCallOperation(vm);
-    jit.loadPtr(addressFor(CallFrameSlot::codeBlock), globalObjectGPR);
-    jit.loadPtr(Address(globalObjectGPR, CodeBlock::offsetOfGlobalObject()), globalObjectGPR);
+    loadGlobalObject(jit, globalObjectGPR);
     jit.setupArguments<SlowOperation>(globalObjectGPR, stubInfoGPR, baseJSR, propertyJSR);
     static_assert(preferredArgumentGPR<SlowOperation, 1>() == argumentGPR1, "Needed for branch to slow operation via StubInfo");
     jit.call(Address(argumentGPR1, StructureStubInfo::offsetOfSlowOperation()), OperationPtrTag);
@@ -257,7 +247,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::slow_op_get_private_name_callSlowOper
 
     LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::ExtraCTIThunk);
     patchBuffer.link(exceptionCheck, CodeLocationLabel(vm.getCTIStub(checkExceptionGenerator).retaggedCode<NoPtrTag>()));
-    return FINALIZE_CODE(patchBuffer, JITThunkPtrTag, "Baseline: slow_op_get_private_name_callSlowOperationThenCheckException");
+    return FINALIZE_THUNK(patchBuffer, JITThunkPtrTag, "Baseline: slow_op_get_private_name_callSlowOperationThenCheckException");
 }
 
 void JIT::emit_op_set_private_brand(const JSInstruction* currentInstruction)
@@ -274,15 +264,11 @@ void JIT::emit_op_set_private_brand(const JSInstruction* currentInstruction)
     emitGetVirtualRegister(brand, brandJSR);
     emitJumpSlowCaseIfNotJSCell(baseJSR, base);
 
-    JITPrivateBrandAccessGenerator gen(
-        nullptr, nullptr, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), AccessType::SetPrivateBrand, RegisterSet::stubUnavailableRegisters(),
-        baseJSR, brandJSR, stubInfoGPR);
-
     auto [ stubInfo, stubInfoIndex ] = addUnlinkedStructureStubInfo();
-    stubInfo->accessType = AccessType::SetPrivateBrand;
-    stubInfo->bytecodeIndex = m_bytecodeIndex;
+    JITPrivateBrandAccessGenerator gen(
+        nullptr, stubInfo, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), AccessType::SetPrivateBrand, RegisterSet::stubUnavailableRegisters(),
+        baseJSR, brandJSR, stubInfoGPR);
     gen.m_unlinkedStubInfoConstantIndex = stubInfoIndex;
-    gen.m_unlinkedStubInfo = stubInfo;
 
     gen.generateBaselineDataICFastPath(*this, stubInfoIndex, stubInfoGPR);
     addSlowCase();
@@ -333,15 +319,11 @@ void JIT::emit_op_check_private_brand(const JSInstruction* currentInstruction)
 
     emitJumpSlowCaseIfNotJSCell(baseJSR, base);
 
-    JITPrivateBrandAccessGenerator gen(
-        nullptr, nullptr, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), AccessType::CheckPrivateBrand, RegisterSet::stubUnavailableRegisters(),
-        baseJSR, brandJSR, stubInfoGPR);
-
     auto [ stubInfo, stubInfoIndex ] = addUnlinkedStructureStubInfo();
-    stubInfo->accessType = AccessType::CheckPrivateBrand;
-    stubInfo->bytecodeIndex = m_bytecodeIndex;
+    JITPrivateBrandAccessGenerator gen(
+        nullptr, stubInfo, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), AccessType::CheckPrivateBrand, RegisterSet::stubUnavailableRegisters(),
+        baseJSR, brandJSR, stubInfoGPR);
     gen.m_unlinkedStubInfoConstantIndex = stubInfoIndex;
-    gen.m_unlinkedStubInfo = stubInfo;
 
     gen.generateBaselineDataICFastPath(*this, stubInfoIndex, stubInfoGPR);
     addSlowCase();
@@ -381,7 +363,7 @@ void JIT::emit_op_put_by_val(const JSInstruction* currentInstruction)
     using BaselineJITRegisters::PutByVal::propertyJSR;
     using BaselineJITRegisters::PutByVal::valueJSR;
     using BaselineJITRegisters::PutByVal::profileGPR;
-    using BaselineJITRegisters::PutByVal::FastPath::stubInfoGPR;
+    using BaselineJITRegisters::PutByVal::stubInfoGPR;
 
     emitGetVirtualRegister(base, baseJSR);
     emitGetVirtualRegister(property, propertyJSR);
@@ -392,19 +374,15 @@ void JIT::emit_op_put_by_val(const JSInstruction* currentInstruction)
 
     emitArrayProfilingSiteWithCell(bytecode, baseJSR.payloadGPR(), /* scratchGPR: */ stubInfoGPR);
 
-    JITPutByValGenerator gen(
-        nullptr, nullptr, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), AccessType::PutByVal, RegisterSet::stubUnavailableRegisters(),
-        baseJSR, propertyJSR, valueJSR, profileGPR, stubInfoGPR);
-
+    PutKind putKind = std::is_same_v<Op, OpPutByValDirect> ? PutKind::Direct : PutKind::NotDirect;
+    ECMAMode ecmaMode = this->ecmaMode(bytecode);
     auto [ stubInfo, stubInfoIndex ] = addUnlinkedStructureStubInfo();
-    stubInfo->accessType = AccessType::PutByVal;
-    stubInfo->putKind = std::is_same_v<Op, OpPutByValDirect> ? PutKind::Direct : PutKind::NotDirect;
-    stubInfo->ecmaMode = ecmaMode(bytecode);
-    stubInfo->bytecodeIndex = m_bytecodeIndex;
+    JITPutByValGenerator gen(
+        nullptr, stubInfo, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), AccessType::PutByVal, RegisterSet::stubUnavailableRegisters(),
+        baseJSR, propertyJSR, valueJSR, profileGPR, stubInfoGPR, putKind, ecmaMode, PrivateFieldPutKind::none());
     if (isOperandConstantInt(property))
         stubInfo->propertyIsInt32 = true;
     gen.m_unlinkedStubInfoConstantIndex = stubInfoIndex;
-    gen.m_unlinkedStubInfo = stubInfo;
 
     gen.generateBaselineDataICFastPath(*this, stubInfoIndex, stubInfoGPR);
     resetSP(); // We might OSR exit here, so we need to conservatively reset SP
@@ -430,7 +408,7 @@ void JIT::emitSlow_op_put_by_val(const JSInstruction*, Vector<SlowCaseEntry>::it
     ASSERT(BytecodeIndex(bytecodeOffset) == m_bytecodeIndex);
     JITPutByValGenerator& gen = m_putByVals[m_putByValIndex++];
 
-    using BaselineJITRegisters::PutByVal::SlowPath::stubInfoGPR;
+    using BaselineJITRegisters::PutByVal::stubInfoGPR;
     using BaselineJITRegisters::PutByVal::SlowPath::bytecodeOffsetGPR;
 
     Label coldPathBegin = label();
@@ -458,17 +436,16 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::slow_op_put_by_val_callSlowOperationT
     using BaselineJITRegisters::PutByVal::propertyJSR;
     using BaselineJITRegisters::PutByVal::valueJSR;
     using BaselineJITRegisters::PutByVal::profileGPR;
+    using BaselineJITRegisters::PutByVal::stubInfoGPR;
     using BaselineJITRegisters::PutByVal::SlowPath::globalObjectGPR;
     using BaselineJITRegisters::PutByVal::SlowPath::bytecodeOffsetGPR;
-    using BaselineJITRegisters::PutByVal::SlowPath::stubInfoGPR;
 
     jit.emitCTIThunkPrologue();
 
     // Call slow operation
     jit.store32(bytecodeOffsetGPR, tagFor(CallFrameSlot::argumentCountIncludingThis));
     jit.prepareCallOperation(vm);
-    jit.loadPtr(addressFor(CallFrameSlot::codeBlock), globalObjectGPR);
-    jit.loadPtr(Address(globalObjectGPR, CodeBlock::offsetOfGlobalObject()), globalObjectGPR);
+    loadGlobalObject(jit, globalObjectGPR);
     jit.setupArgumentsForIndirectCall<SlowOperatoin>(stubInfoGPR,
         globalObjectGPR, baseJSR, propertyJSR, valueJSR, stubInfoGPR, profileGPR);
     jit.call(Address(nonArgGPR0, StructureStubInfo::offsetOfSlowOperation()), OperationPtrTag);
@@ -480,7 +457,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::slow_op_put_by_val_callSlowOperationT
 
     LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::ExtraCTIThunk);
     patchBuffer.link(exceptionCheck, CodeLocationLabel(vm.getCTIStub(checkExceptionGenerator).retaggedCode<NoPtrTag>()));
-    return FINALIZE_CODE(patchBuffer, JITThunkPtrTag, "Baseline: slow_op_put_by_val_callSlowOperationThenCheckException");
+    return FINALIZE_THUNK(patchBuffer, JITThunkPtrTag, "Baseline: slow_op_put_by_val_callSlowOperationThenCheckException");
 }
 
 void JIT::emit_op_put_private_name(const JSInstruction* currentInstruction)
@@ -493,7 +470,7 @@ void JIT::emit_op_put_private_name(const JSInstruction* currentInstruction)
     using BaselineJITRegisters::PutByVal::baseJSR;
     using BaselineJITRegisters::PutByVal::propertyJSR;
     using BaselineJITRegisters::PutByVal::valueJSR;
-    using BaselineJITRegisters::PutByVal::FastPath::stubInfoGPR;
+    using BaselineJITRegisters::PutByVal::stubInfoGPR;
 
     emitGetVirtualRegister(base, baseJSR);
     emitGetVirtualRegister(property, propertyJSR);
@@ -501,16 +478,11 @@ void JIT::emit_op_put_private_name(const JSInstruction* currentInstruction)
 
     emitJumpSlowCaseIfNotJSCell(baseJSR, base);
 
-    JITPutByValGenerator gen(
-        nullptr, nullptr, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), AccessType::PutPrivateName, RegisterSet::stubUnavailableRegisters(),
-        baseJSR, propertyJSR, valueJSR, InvalidGPRReg, stubInfoGPR);
-
     auto [ stubInfo, stubInfoIndex ] = addUnlinkedStructureStubInfo();
-    stubInfo->accessType = AccessType::PutPrivateName;
-    stubInfo->privateFieldPutKind = bytecode.m_putKind;
-    stubInfo->bytecodeIndex = m_bytecodeIndex;
+    JITPutByValGenerator gen(
+        nullptr, stubInfo, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), AccessType::PutPrivateName, RegisterSet::stubUnavailableRegisters(),
+        baseJSR, propertyJSR, valueJSR, InvalidGPRReg, stubInfoGPR, PutKind::Direct, ECMAMode::sloppy(), bytecode.m_putKind);
     gen.m_unlinkedStubInfoConstantIndex = stubInfoIndex;
-    gen.m_unlinkedStubInfo = stubInfo;
 
     gen.generateBaselineDataICFastPath(*this, stubInfoIndex, stubInfoGPR);
     addSlowCase();
@@ -529,7 +501,7 @@ void JIT::emitSlow_op_put_private_name(const JSInstruction*, Vector<SlowCaseEntr
     JITPutByValGenerator& gen = m_putByVals[m_putByValIndex++];
 
     using BaselineJITRegisters::PutByVal::SlowPath::bytecodeOffsetGPR;
-    using BaselineJITRegisters::PutByVal::SlowPath::stubInfoGPR;
+    using BaselineJITRegisters::PutByVal::stubInfoGPR;
 
     Label coldPathBegin = label();
     linkAllSlowCases(iter);
@@ -556,17 +528,16 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::slow_op_put_private_name_callSlowOper
     using BaselineJITRegisters::PutByVal::propertyJSR;
     using BaselineJITRegisters::PutByVal::valueJSR;
     using BaselineJITRegisters::PutByVal::profileGPR;
+    using BaselineJITRegisters::PutByVal::stubInfoGPR;
     using BaselineJITRegisters::PutByVal::SlowPath::globalObjectGPR;
     using BaselineJITRegisters::PutByVal::SlowPath::bytecodeOffsetGPR;
-    using BaselineJITRegisters::PutByVal::SlowPath::stubInfoGPR;
 
     jit.emitCTIThunkPrologue();
 
     // Call slow operation
     jit.store32(bytecodeOffsetGPR, tagFor(CallFrameSlot::argumentCountIncludingThis));
     jit.prepareCallOperation(vm);
-    jit.loadPtr(addressFor(CallFrameSlot::codeBlock), globalObjectGPR);
-    jit.loadPtr(Address(globalObjectGPR, CodeBlock::offsetOfGlobalObject()), globalObjectGPR);
+    loadGlobalObject(jit, globalObjectGPR);
     // Loading nullptr to this register is necessary for setupArgumentsForIndirectCall
     // to not clobber globalObjectGPR on ARM_THUMB2, and is otherwise harmless.
     jit.move(TrustedImmPtr(nullptr), profileGPR);
@@ -581,7 +552,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::slow_op_put_private_name_callSlowOper
 
     LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::ExtraCTIThunk);
     patchBuffer.link(exceptionCheck, CodeLocationLabel(vm.getCTIStub(checkExceptionGenerator).retaggedCode<NoPtrTag>()));
-    return FINALIZE_CODE(patchBuffer, JITThunkPtrTag, "Baseline: slow_op_put_private_name_callSlowOperationThenCheckException");
+    return FINALIZE_THUNK(patchBuffer, JITThunkPtrTag, "Baseline: slow_op_put_private_name_callSlowOperationThenCheckException");
 }
 
 void JIT::emit_op_put_getter_by_id(const JSInstruction* currentInstruction)
@@ -591,7 +562,7 @@ void JIT::emit_op_put_getter_by_id(const JSInstruction* currentInstruction)
     int32_t options = bytecode.m_attributes;
     emitGetVirtualRegisterPayload(bytecode.m_accessor, regT1);
     loadGlobalObject(regT2);
-    callOperation(operationPutGetterById, regT2, regT0, m_unlinkedCodeBlock->identifier(bytecode.m_property).impl(), options, regT1);
+    callOperation(operationPutGetterById, regT2, regT0, TrustedImmPtr(m_unlinkedCodeBlock->identifier(bytecode.m_property).impl()), options, regT1);
 }
 
 void JIT::emit_op_put_setter_by_id(const JSInstruction* currentInstruction)
@@ -601,7 +572,7 @@ void JIT::emit_op_put_setter_by_id(const JSInstruction* currentInstruction)
     int32_t options = bytecode.m_attributes;
     emitGetVirtualRegisterPayload(bytecode.m_accessor, regT1);
     loadGlobalObject(regT2);
-    callOperation(operationPutSetterById, regT2, regT0, m_unlinkedCodeBlock->identifier(bytecode.m_property).impl(), options, regT1);
+    callOperation(operationPutSetterById, regT2, regT0, TrustedImmPtr(m_unlinkedCodeBlock->identifier(bytecode.m_property).impl()), options, regT1);
 }
 
 void JIT::emit_op_put_getter_setter_by_id(const JSInstruction* currentInstruction)
@@ -612,7 +583,7 @@ void JIT::emit_op_put_getter_setter_by_id(const JSInstruction* currentInstructio
     emitGetVirtualRegisterPayload(bytecode.m_getter, regT1);
     emitGetVirtualRegisterPayload(bytecode.m_setter, regT2);
     loadGlobalObject(regT3);
-    callOperation(operationPutGetterSetter, regT3, regT0, m_unlinkedCodeBlock->identifier(bytecode.m_property).impl(), attribute, regT1, regT2);
+    callOperation(operationPutGetterSetter, regT3, regT0, TrustedImmPtr(m_unlinkedCodeBlock->identifier(bytecode.m_property).impl()), attribute, regT1, regT2);
 }
 
 void JIT::emit_op_put_getter_by_val(const JSInstruction* currentInstruction)
@@ -663,20 +634,15 @@ void JIT::emit_op_del_by_id(const JSInstruction* currentInstruction)
     using BaselineJITRegisters::DelById::baseJSR;
     using BaselineJITRegisters::DelById::FastPath::resultJSR;
     using BaselineJITRegisters::DelById::FastPath::stubInfoGPR;
-    using BaselineJITRegisters::DelById::FastPath::scratchGPR;
 
     emitGetVirtualRegister(base, baseJSR);
     emitJumpSlowCaseIfNotJSCell(baseJSR, base);
-    JITDelByIdGenerator gen(
-        nullptr, nullptr, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), RegisterSet::stubUnavailableRegisters(),
-        CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_unlinkedCodeBlock, *ident),
-        baseJSR, resultJSR, stubInfoGPR, scratchGPR);
-
     auto [ stubInfo, stubInfoIndex ] = addUnlinkedStructureStubInfo();
-    stubInfo->accessType = AccessType::DeleteByID;
-    stubInfo->bytecodeIndex = m_bytecodeIndex;
+    JITDelByIdGenerator gen(
+        nullptr, stubInfo, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), RegisterSet::stubUnavailableRegisters(),
+        CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_unlinkedCodeBlock, *ident),
+        baseJSR, resultJSR, stubInfoGPR);
     gen.m_unlinkedStubInfoConstantIndex = stubInfoIndex;
-    gen.m_unlinkedStubInfo = stubInfo;
 
     gen.generateBaselineDataICFastPath(*this, stubInfoIndex, stubInfoGPR);
     addSlowCase();
@@ -745,8 +711,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::slow_op_del_by_id_callSlowOperationTh
     // Call slow operation
     jit.store32(bytecodeOffsetGPR, tagFor(CallFrameSlot::argumentCountIncludingThis));
     jit.prepareCallOperation(vm);
-    jit.loadPtr(addressFor(CallFrameSlot::codeBlock), globalObjectGPR);
-    jit.loadPtr(Address(globalObjectGPR, CodeBlock::offsetOfGlobalObject()), globalObjectGPR);
+    loadGlobalObject(jit, globalObjectGPR);
     jit.setupArguments<SlowOperation>(globalObjectGPR, stubInfoGPR, baseJSR, propertyGPR, ecmaModeGPR);
     static_assert(preferredArgumentGPR<SlowOperation, 1>() == argumentGPR1, "Needed for branch to slow operation via StubInfo");
     jit.call(Address(argumentGPR1, StructureStubInfo::offsetOfSlowOperation()), OperationPtrTag);
@@ -759,7 +724,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::slow_op_del_by_id_callSlowOperationTh
 
     LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::ExtraCTIThunk);
     patchBuffer.link(exceptionCheck, CodeLocationLabel(vm.getCTIStub(checkExceptionGenerator).retaggedCode<NoPtrTag>()));
-    return FINALIZE_CODE(patchBuffer, JITThunkPtrTag, "Baseline: slow_op_del_by_id_callSlowOperationThenCheckException");
+    return FINALIZE_THUNK(patchBuffer, JITThunkPtrTag, "Baseline: slow_op_del_by_id_callSlowOperationThenCheckException");
 }
 
 void JIT::emit_op_del_by_val(const JSInstruction* currentInstruction)
@@ -773,22 +738,17 @@ void JIT::emit_op_del_by_val(const JSInstruction* currentInstruction)
     using BaselineJITRegisters::DelByVal::propertyJSR;
     using BaselineJITRegisters::DelByVal::FastPath::resultJSR;
     using BaselineJITRegisters::DelByVal::FastPath::stubInfoGPR;
-    using BaselineJITRegisters::DelByVal::FastPath::scratchGPR;
 
     emitGetVirtualRegister(base, baseJSR);
     emitJumpSlowCaseIfNotJSCell(baseJSR, base);
     emitGetVirtualRegister(property, propertyJSR);
     emitJumpSlowCaseIfNotJSCell(propertyJSR, property);
 
-    JITDelByValGenerator gen(
-        nullptr, nullptr, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), RegisterSet::stubUnavailableRegisters(),
-        baseJSR, propertyJSR, resultJSR, stubInfoGPR, scratchGPR);
-
     auto [ stubInfo, stubInfoIndex ] = addUnlinkedStructureStubInfo();
-    stubInfo->accessType = AccessType::DeleteByVal;
-    stubInfo->bytecodeIndex = m_bytecodeIndex;
+    JITDelByValGenerator gen(
+        nullptr, stubInfo, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), RegisterSet::stubUnavailableRegisters(),
+        baseJSR, propertyJSR, resultJSR, stubInfoGPR);
     gen.m_unlinkedStubInfoConstantIndex = stubInfoIndex;
-    gen.m_unlinkedStubInfo = stubInfo;
 
     gen.generateBaselineDataICFastPath(*this, stubInfoIndex, stubInfoGPR);
     addSlowCase();
@@ -857,8 +817,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::slow_op_del_by_val_callSlowOperationT
     // Call slow operation
     jit.store32(bytecodeOffsetGPR, tagFor(CallFrameSlot::argumentCountIncludingThis));
     jit.prepareCallOperation(vm);
-    jit.loadPtr(addressFor(CallFrameSlot::codeBlock), globalObjectGPR);
-    jit.loadPtr(Address(globalObjectGPR, CodeBlock::offsetOfGlobalObject()), globalObjectGPR);
+    loadGlobalObject(jit, globalObjectGPR);
     jit.setupArguments<SlowOperation>(globalObjectGPR, stubInfoGPR, baseJSR, propertyJSR, ecmaModeGPR);
     static_assert(preferredArgumentGPR<SlowOperation, 1>() == argumentGPR1, "Needed for branch to slow operation via StubInfo");
     jit.call(Address(argumentGPR1, StructureStubInfo::offsetOfSlowOperation()), OperationPtrTag);
@@ -871,7 +830,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::slow_op_del_by_val_callSlowOperationT
 
     LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::ExtraCTIThunk);
     patchBuffer.link(exceptionCheck, CodeLocationLabel(vm.getCTIStub(checkExceptionGenerator).retaggedCode<NoPtrTag>()));
-    return FINALIZE_CODE(patchBuffer, JITThunkPtrTag, "Baseline: slow_op_del_by_val_prepareCall");
+    return FINALIZE_THUNK(patchBuffer, JITThunkPtrTag, "Baseline: slow_op_del_by_val_prepareCall");
 }
 
 void JIT::emit_op_try_get_by_id(const JSInstruction* currentInstruction)
@@ -888,15 +847,11 @@ void JIT::emit_op_try_get_by_id(const JSInstruction* currentInstruction)
     emitGetVirtualRegister(baseVReg, baseJSR);
     emitJumpSlowCaseIfNotJSCell(baseJSR, baseVReg);
 
-    JITGetByIdGenerator gen(
-        nullptr, nullptr, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), RegisterSet::stubUnavailableRegisters(),
-        CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_unlinkedCodeBlock, *ident), baseJSR, resultJSR, stubInfoGPR, AccessType::TryGetById);
-
     auto [ stubInfo, stubInfoIndex ] = addUnlinkedStructureStubInfo();
-    stubInfo->accessType = AccessType::TryGetById;
-    stubInfo->bytecodeIndex = m_bytecodeIndex;
+    JITGetByIdGenerator gen(
+        nullptr, stubInfo, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), RegisterSet::stubUnavailableRegisters(),
+        CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_unlinkedCodeBlock, *ident), baseJSR, resultJSR, stubInfoGPR, AccessType::TryGetById);
     gen.m_unlinkedStubInfoConstantIndex = stubInfoIndex;
-    gen.m_unlinkedStubInfo = stubInfo;
 
     gen.generateBaselineDataICFastPath(*this, stubInfoIndex, stubInfoGPR);
     addSlowCase();
@@ -948,15 +903,11 @@ void JIT::emit_op_get_by_id_direct(const JSInstruction* currentInstruction)
     emitGetVirtualRegister(baseVReg, baseJSR);
     emitJumpSlowCaseIfNotJSCell(baseJSR, baseVReg);
 
-    JITGetByIdGenerator gen(
-        nullptr, nullptr, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), RegisterSet::stubUnavailableRegisters(),
-        CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_unlinkedCodeBlock, *ident), baseJSR, resultJSR, stubInfoGPR, AccessType::GetByIdDirect);
-
     auto [ stubInfo, stubInfoIndex ] = addUnlinkedStructureStubInfo();
-    stubInfo->accessType = AccessType::GetByIdDirect;
-    stubInfo->bytecodeIndex = m_bytecodeIndex;
+    JITGetByIdGenerator gen(
+        nullptr, stubInfo, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), RegisterSet::stubUnavailableRegisters(),
+        CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_unlinkedCodeBlock, *ident), baseJSR, resultJSR, stubInfoGPR, AccessType::GetByIdDirect);
     gen.m_unlinkedStubInfoConstantIndex = stubInfoIndex;
-    gen.m_unlinkedStubInfo = stubInfo;
 
     gen.generateBaselineDataICFastPath(*this, stubInfoIndex, stubInfoGPR);
     addSlowCase();
@@ -1018,15 +969,11 @@ void JIT::emit_op_get_by_id(const JSInstruction* currentInstruction)
         notArrayLengthMode.link(this);
     }
 
-    JITGetByIdGenerator gen(
-        nullptr, nullptr, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), RegisterSet::stubUnavailableRegisters(),
-        CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_unlinkedCodeBlock, *ident), baseJSR, resultJSR, stubInfoGPR, AccessType::GetById);
-
     auto [ stubInfo, stubInfoIndex ] = addUnlinkedStructureStubInfo();
-    stubInfo->accessType = AccessType::GetById;
-    stubInfo->bytecodeIndex = m_bytecodeIndex;
+    JITGetByIdGenerator gen(
+        nullptr, stubInfo, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), RegisterSet::stubUnavailableRegisters(),
+        CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_unlinkedCodeBlock, *ident), baseJSR, resultJSR, stubInfoGPR, AccessType::GetById);
     gen.m_unlinkedStubInfoConstantIndex = stubInfoIndex;
-    gen.m_unlinkedStubInfo = stubInfo;
 
     gen.generateBaselineDataICFastPath(*this, stubInfoIndex, stubInfoGPR);
     resetSP(); // We might OSR exit here, so we need to conservatively reset SP
@@ -1084,8 +1031,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::slow_op_get_by_id_callSlowOperationTh
     // Call slow operation
     jit.store32(bytecodeOffsetGPR, tagFor(CallFrameSlot::argumentCountIncludingThis));
     jit.prepareCallOperation(vm);
-    jit.loadPtr(addressFor(CallFrameSlot::codeBlock), globalObjectGPR);
-    jit.loadPtr(Address(globalObjectGPR, CodeBlock::offsetOfGlobalObject()), globalObjectGPR);
+    loadGlobalObject(jit, globalObjectGPR);
     jit.setupArguments<SlowOperation>(globalObjectGPR, stubInfoGPR, baseJSR, propertyGPR);
     static_assert(preferredArgumentGPR<SlowOperation, 1>() == argumentGPR1, "Needed for branch to slow operation via StubInfo");
     jit.call(Address(argumentGPR1, StructureStubInfo::offsetOfSlowOperation()), OperationPtrTag);
@@ -1097,7 +1043,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::slow_op_get_by_id_callSlowOperationTh
 
     LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::ExtraCTIThunk);
     patchBuffer.link(exceptionCheck, CodeLocationLabel(vm.getCTIStub(checkExceptionGenerator).retaggedCode<NoPtrTag>()));
-    return FINALIZE_CODE(patchBuffer, JITThunkPtrTag, "Baseline: slow_op_get_by_id_callSlowOperationThenCheckException");
+    return FINALIZE_THUNK(patchBuffer, JITThunkPtrTag, "Baseline: slow_op_get_by_id_callSlowOperationThenCheckException");
 }
 
 void JIT::emit_op_get_by_id_with_this(const JSInstruction* currentInstruction)
@@ -1118,15 +1064,11 @@ void JIT::emit_op_get_by_id_with_this(const JSInstruction* currentInstruction)
     emitJumpSlowCaseIfNotJSCell(baseJSR, baseVReg);
     emitJumpSlowCaseIfNotJSCell(thisJSR, thisVReg);
 
-    JITGetByIdWithThisGenerator gen(
-        nullptr, nullptr, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), RegisterSet::stubUnavailableRegisters(),
-        CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_unlinkedCodeBlock, *ident), resultJSR, baseJSR, thisJSR, stubInfoGPR);
-
     auto [ stubInfo, stubInfoIndex ] = addUnlinkedStructureStubInfo();
-    stubInfo->accessType = AccessType::GetByIdWithThis;
-    stubInfo->bytecodeIndex = m_bytecodeIndex;
+    JITGetByIdWithThisGenerator gen(
+        nullptr, stubInfo, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), RegisterSet::stubUnavailableRegisters(),
+        CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_unlinkedCodeBlock, *ident), resultJSR, baseJSR, thisJSR, stubInfoGPR);
     gen.m_unlinkedStubInfoConstantIndex = stubInfoIndex;
-    gen.m_unlinkedStubInfo = stubInfo;
 
     gen.generateBaselineDataICFastPath(*this, stubInfoIndex, stubInfoGPR);
     resetSP(); // We might OSR exit here, so we need to conservatively reset SP
@@ -1185,8 +1127,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::slow_op_get_by_id_with_this_callSlowO
     // Call slow operation
     jit.store32(bytecodeOffsetGPR, tagFor(CallFrameSlot::argumentCountIncludingThis));
     jit.prepareCallOperation(vm);
-    jit.loadPtr(addressFor(CallFrameSlot::codeBlock), globalObjectGPR);
-    jit.loadPtr(Address(globalObjectGPR, CodeBlock::offsetOfGlobalObject()), globalObjectGPR);
+    loadGlobalObject(jit, globalObjectGPR);
     jit.setupArguments<SlowOperation>(globalObjectGPR, stubInfoGPR, baseJSR, thisJSR, propertyGPR);
     static_assert(preferredArgumentGPR<SlowOperation, 1>() == argumentGPR1, "Needed for branch to slow operation via StubInfo");
     jit.call(Address(argumentGPR1, StructureStubInfo::offsetOfSlowOperation()), OperationPtrTag);
@@ -1198,7 +1139,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::slow_op_get_by_id_with_this_callSlowO
 
     LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::ExtraCTIThunk);
     patchBuffer.link(exceptionCheck, CodeLocationLabel(vm.getCTIStub(checkExceptionGenerator).retaggedCode<NoPtrTag>()));
-    return FINALIZE_CODE(patchBuffer, JITThunkPtrTag, "Baseline: slow_op_get_by_id_with_this_callSlowOperationThenCheckException");
+    return FINALIZE_THUNK(patchBuffer, JITThunkPtrTag, "Baseline: slow_op_get_by_id_with_this_callSlowOperationThenCheckException");
 }
 
 void JIT::emit_op_put_by_id(const JSInstruction* currentInstruction)
@@ -1222,19 +1163,13 @@ void JIT::emit_op_put_by_id(const JSInstruction* currentInstruction)
     emitGetVirtualRegister(valueVReg, valueJSR);
     emitJumpSlowCaseIfNotJSCell(baseJSR, baseVReg);
 
+    auto [ stubInfo, stubInfoIndex ] = addUnlinkedStructureStubInfo();
     JITPutByIdGenerator gen(
-        nullptr, nullptr, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), RegisterSet::stubUnavailableRegisters(),
+        nullptr, stubInfo, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), RegisterSet::stubUnavailableRegisters(),
         CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_unlinkedCodeBlock, *ident),
         baseJSR, valueJSR, stubInfoGPR, scratchGPR, ecmaMode(bytecode),
         direct ? PutKind::Direct : PutKind::NotDirect);
-
-    auto [ stubInfo, stubInfoIndex ] = addUnlinkedStructureStubInfo();
-    stubInfo->accessType = AccessType::PutById;
-    stubInfo->putKind = direct ? PutKind::Direct : PutKind::NotDirect;
-    stubInfo->ecmaMode = ecmaMode(bytecode);
-    stubInfo->bytecodeIndex = m_bytecodeIndex;
     gen.m_unlinkedStubInfoConstantIndex = stubInfoIndex;
-    gen.m_unlinkedStubInfo = stubInfo;
 
     gen.generateBaselineDataICFastPath(*this, stubInfoIndex, stubInfoGPR);
     resetSP(); // We might OSR exit here, so we need to conservatively reset SP
@@ -1294,8 +1229,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::slow_op_put_by_id_callSlowOperationTh
     // Call slow operation
     jit.store32(bytecodeOffsetGPR, tagFor(CallFrameSlot::argumentCountIncludingThis));
     jit.prepareCallOperation(vm);
-    jit.loadPtr(addressFor(CallFrameSlot::codeBlock), globalObjectGPR);
-    jit.loadPtr(Address(globalObjectGPR, CodeBlock::offsetOfGlobalObject()), globalObjectGPR);
+    loadGlobalObject(jit, globalObjectGPR);
     jit.setupArguments<SlowOperation>(globalObjectGPR, stubInfoGPR, valueJSR, baseJSR, propertyGPR);
     static_assert(preferredArgumentGPR<SlowOperation, 1>() == argumentGPR1, "Needed for branch to slow operation via StubInfo");
     jit.call(Address(argumentGPR1, StructureStubInfo::offsetOfSlowOperation()), OperationPtrTag);
@@ -1307,7 +1241,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::slow_op_put_by_id_callSlowOperationTh
 
     LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::ExtraCTIThunk);
     patchBuffer.link(exceptionCheck, CodeLocationLabel(vm.getCTIStub(checkExceptionGenerator).retaggedCode<NoPtrTag>()));
-    return FINALIZE_CODE(patchBuffer, JITThunkPtrTag, "Baseline: slow_op_put_by_id_callSlowOperationThenCheckException");
+    return FINALIZE_THUNK(patchBuffer, JITThunkPtrTag, "Baseline: slow_op_put_by_id_callSlowOperationThenCheckException");
 }
 
 void JIT::emit_op_in_by_id(const JSInstruction* currentInstruction)
@@ -1324,15 +1258,11 @@ void JIT::emit_op_in_by_id(const JSInstruction* currentInstruction)
     emitGetVirtualRegister(baseVReg, baseJSR);
     emitJumpSlowCaseIfNotJSCell(baseJSR, baseVReg);
 
-    JITInByIdGenerator gen(
-        nullptr, nullptr, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), RegisterSet::stubUnavailableRegisters(),
-        CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_unlinkedCodeBlock, *ident), baseJSR, resultJSR, stubInfoGPR);
-
     auto [ stubInfo, stubInfoIndex ] = addUnlinkedStructureStubInfo();
-    stubInfo->accessType = AccessType::InById;
-    stubInfo->bytecodeIndex = m_bytecodeIndex;
+    JITInByIdGenerator gen(
+        nullptr, stubInfo, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), RegisterSet::stubUnavailableRegisters(),
+        CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_unlinkedCodeBlock, *ident), baseJSR, resultJSR, stubInfoGPR);
     gen.m_unlinkedStubInfoConstantIndex = stubInfoIndex;
-    gen.m_unlinkedStubInfo = stubInfo;
 
     gen.generateBaselineDataICFastPath(*this, stubInfoIndex, stubInfoGPR);
     addSlowCase();
@@ -1388,15 +1318,11 @@ void JIT::emit_op_in_by_val(const JSInstruction* currentInstruction)
     emitJumpSlowCaseIfNotJSCell(baseJSR, base);
     emitArrayProfilingSiteWithCell(bytecode, baseJSR.payloadGPR(), scratchGPR);
 
-    JITInByValGenerator gen(
-        nullptr, nullptr, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), AccessType::InByVal, RegisterSet::stubUnavailableRegisters(),
-        baseJSR, propertyJSR, resultJSR, stubInfoGPR);
-
     auto [ stubInfo, stubInfoIndex ] = addUnlinkedStructureStubInfo();
-    stubInfo->accessType = AccessType::InByVal;
-    stubInfo->bytecodeIndex = m_bytecodeIndex;
+    JITInByValGenerator gen(
+        nullptr, stubInfo, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), AccessType::InByVal, RegisterSet::stubUnavailableRegisters(),
+        baseJSR, propertyJSR, resultJSR, stubInfoGPR);
     gen.m_unlinkedStubInfoConstantIndex = stubInfoIndex;
-    gen.m_unlinkedStubInfo = stubInfo;
 
     gen.generateBaselineDataICFastPath(*this, stubInfoIndex, stubInfoGPR);
     addSlowCase();
@@ -1444,15 +1370,11 @@ void JIT::emitHasPrivate(VirtualRegister dst, VirtualRegister base, VirtualRegis
     emitGetVirtualRegister(propertyOrBrand, propertyJSR);
     emitJumpSlowCaseIfNotJSCell(baseJSR, base);
 
-    JITInByValGenerator gen(
-        nullptr, nullptr, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), type, RegisterSet::stubUnavailableRegisters(),
-        baseJSR, propertyJSR, resultJSR, stubInfoGPR);
-
     auto [ stubInfo, stubInfoIndex ] = addUnlinkedStructureStubInfo();
-    stubInfo->accessType = type;
-    stubInfo->bytecodeIndex = m_bytecodeIndex;
+    JITInByValGenerator gen(
+        nullptr, stubInfo, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), type, RegisterSet::stubUnavailableRegisters(),
+        baseJSR, propertyJSR, resultJSR, stubInfoGPR);
     gen.m_unlinkedStubInfoConstantIndex = stubInfoIndex;
-    gen.m_unlinkedStubInfo = stubInfo;
 
     gen.generateBaselineDataICFastPath(*this, stubInfoIndex, stubInfoGPR);
     addSlowCase();
@@ -1592,10 +1514,9 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::generateOpResolveScopeThunk(VM& vm)
             return;
         if (globalObjectGPR == InvalidGPRReg) {
             globalObjectGPR = scratchGPR;
-            jit.loadPtr(addressFor(CallFrameSlot::codeBlock), scratchGPR);
-            jit.loadPtr(Address(scratchGPR, CodeBlock::offsetOfGlobalObject()), globalObjectGPR);
+            loadGlobalObject(jit, globalObjectGPR);
         }
-        jit.loadPtr(Address(globalObjectGPR, OBJECT_OFFSETOF(JSGlobalObject, m_varInjectionWatchpoint)), scratchGPR);
+        jit.loadPtr(Address(globalObjectGPR, JSGlobalObject::offsetOfVarInjectionWatchpoint()), scratchGPR);
         slowCase.append(jit.branch8(Equal, Address(scratchGPR, WatchpointSet::offsetOfState()), TrustedImm32(IsInvalidated)));
     };
 
@@ -1617,8 +1538,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::generateOpResolveScopeThunk(VM& vm)
         case GlobalProperty:
         case GlobalPropertyWithVarInjectionChecks: {
             // JSScope::constantScopeForCodeBlock() loads codeBlock->globalObject().
-            jit.loadPtr(addressFor(CallFrameSlot::codeBlock), scratchGPR);
-            jit.loadPtr(Address(scratchGPR, CodeBlock::offsetOfGlobalObject()), returnValueGPR);
+            loadGlobalObject(jit, returnValueGPR);
             doVarInjectionCheck(needsVarInjectionChecks(resolveType), returnValueGPR);
             jit.load32(Address(metadataGPR, Metadata::offsetOfGlobalLexicalBindingEpoch()), scratchGPR);
             slowCase.append(jit.branch32(NotEqual, Address(returnValueGPR, JSGlobalObject::offsetOfGlobalLexicalBindingEpoch()), scratchGPR));
@@ -1631,8 +1551,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::generateOpResolveScopeThunk(VM& vm)
         case GlobalLexicalVarWithVarInjectionChecks: {
             // JSScope::constantScopeForCodeBlock() loads codeBlock->globalObject() for GlobalVar*,
             // and codeBlock->globalObject()->globalLexicalEnvironment() for GlobalLexicalVar*.
-            jit.loadPtr(addressFor(CallFrameSlot::codeBlock), scratchGPR);
-            jit.loadPtr(Address(scratchGPR, CodeBlock::offsetOfGlobalObject()), returnValueGPR);
+            loadGlobalObject(jit, returnValueGPR);
             doVarInjectionCheck(needsVarInjectionChecks(resolveType), returnValueGPR);
             if (resolveType == GlobalLexicalVar || resolveType == GlobalLexicalVarWithVarInjectionChecks)
                 jit.loadPtr(Address(returnValueGPR, JSGlobalObject::offsetOfGlobalLexicalEnvironment()), returnValueGPR);
@@ -1700,7 +1619,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::generateOpResolveScopeThunk(VM& vm)
 
     LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::Thunk);
     patchBuffer.link(slowCase, CodeLocationLabel(vm.getCTIStub(slow_op_resolve_scopeGenerator).retaggedCode<NoPtrTag>()));
-    return FINALIZE_CODE(patchBuffer, JITThunkPtrTag, "resolve_scope thunk");
+    return FINALIZE_THUNK(patchBuffer, JITThunkPtrTag, "resolve_scope thunk");
 }
 
 MacroAssemblerCodeRef<JITThunkPtrTag> JIT::slow_op_resolve_scopeGenerator(VM& vm)
@@ -1738,7 +1657,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::slow_op_resolve_scopeGenerator(VM& vm
     LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::Thunk);
     patchBuffer.link(operation, FunctionPtr<OperationPtrTag>(operationResolveScopeForBaseline));
     patchBuffer.link(exceptionCheck, CodeLocationLabel(vm.getCTIStub(checkExceptionGenerator).retaggedCode<NoPtrTag>()));
-    return FINALIZE_CODE(patchBuffer, JITThunkPtrTag, "Baseline: slow_op_resolve_scope");
+    return FINALIZE_THUNK(patchBuffer, JITThunkPtrTag, "Baseline: slow_op_resolve_scope");
 }
 
 void JIT::emit_op_get_from_scope(const JSInstruction* currentInstruction)
@@ -1809,9 +1728,8 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::generateOpGetFromScopeThunk(VM& vm)
     auto doVarInjectionCheck = [&] (bool needsVarInjectionChecks) {
         if (!needsVarInjectionChecks)
             return;
-        jit.loadPtr(addressFor(CallFrameSlot::codeBlock), scratchGPR);
-        jit.loadPtr(Address(scratchGPR, CodeBlock::offsetOfGlobalObject()), scratchGPR);
-        jit.loadPtr(Address(scratchGPR, OBJECT_OFFSETOF(JSGlobalObject, m_varInjectionWatchpoint)), scratchGPR);
+        loadGlobalObject(jit, scratchGPR);
+        jit.loadPtr(Address(scratchGPR, JSGlobalObject::offsetOfVarInjectionWatchpoint()), scratchGPR);
         slowCase.append(jit.branch8(Equal, Address(scratchGPR, WatchpointSet::offsetOfState()), TrustedImm32(IsInvalidated)));
     };
 
@@ -1822,12 +1740,11 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::generateOpGetFromScopeThunk(VM& vm)
             // Structure check covers var injection since we don't cache structures for anything but the GlobalObject. Additionally, resolve_scope handles checking for the var injection.
             jit.loadPtr(Address(metadataGPR, OpGetFromScope::Metadata::offsetOfStructure()), scratchGPR);
             slowCase.append(jit.branchTestPtr(Zero, scratchGPR));
-            jit.load32(Address(scratchGPR, Structure::structureIDOffset()), scratchGPR);
+            jit.emitEncodeStructureID(scratchGPR, scratchGPR);
             slowCase.append(jit.branch32(NotEqual, Address(scopeGPR, JSCell::structureIDOffset()), scratchGPR));
 
             jit.jitAssert(scopedLambda<Jump(void)>([&] () -> Jump {
-                jit.loadPtr(addressFor(CallFrameSlot::codeBlock), scratchGPR);
-                jit.loadPtr(Address(scratchGPR, CodeBlock::offsetOfGlobalObject()), scratchGPR);
+                loadGlobalObject(jit, scratchGPR);
                 return jit.branchPtr(Equal, scopeGPR, scratchGPR);
             }));
 
@@ -1918,7 +1835,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::generateOpGetFromScopeThunk(VM& vm)
 
     LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::Thunk);
     patchBuffer.link(slowCase, CodeLocationLabel(vm.getCTIStub(slow_op_get_from_scopeGenerator).retaggedCode<NoPtrTag>()));
-    return FINALIZE_CODE(patchBuffer, JITThunkPtrTag, "get_from_scope thunk");
+    return FINALIZE_THUNK(patchBuffer, JITThunkPtrTag, "get_from_scope thunk");
 }
 
 MacroAssemblerCodeRef<JITThunkPtrTag> JIT::slow_op_get_from_scopeGenerator(VM& vm)
@@ -1971,7 +1888,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::slow_op_get_from_scopeGenerator(VM& v
     patchBuffer.link(operation, FunctionPtr<OperationPtrTag>(operationGetFromScope));
     auto handler = vm.getCTIStub(popThunkStackPreservesAndHandleExceptionGenerator);
     patchBuffer.link(jumpToHandler, CodeLocationLabel(handler.retaggedCode<NoPtrTag>()));
-    return FINALIZE_CODE(patchBuffer, JITThunkPtrTag, "Baseline: slow_op_get_from_scope");
+    return FINALIZE_THUNK(patchBuffer, JITThunkPtrTag, "Baseline: slow_op_get_from_scope");
 }
 
 void JIT::emit_op_put_to_scope(const JSInstruction* currentInstruction)
@@ -1996,7 +1913,7 @@ void JIT::emit_op_put_to_scope(const JSInstruction* currentInstruction)
             loadPtrFromMetadata(bytecode, OpPutToScope::Metadata::offsetOfStructure(), scratchGPR1);
             emitGetVirtualRegisterPayload(scope, scopeGPR);
             addSlowCase(branchTestPtr(Zero, scratchGPR1));
-            load32(Address(scratchGPR1, Structure::structureIDOffset()), scratchGPR1);
+            emitEncodeStructureID(scratchGPR1, scratchGPR1);
             addSlowCase(branch32(NotEqual, Address(scopeGPR, JSCell::structureIDOffset()), scratchGPR1));
 
             emitGetVirtualRegister(value, valueJSR);
@@ -2170,7 +2087,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::slow_op_put_to_scopeGenerator(VM& vm)
     LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::ExtraCTIThunk);
     patchBuffer.link(operation, FunctionPtr<OperationPtrTag>(operationPutToScope));
     patchBuffer.link(exceptionCheck, CodeLocationLabel(vm.getCTIStub(checkExceptionGenerator).retaggedCode<NoPtrTag>()));
-    return FINALIZE_CODE(patchBuffer, JITThunkPtrTag, "Baseline: slow_op_put_to_scope");
+    return FINALIZE_THUNK(patchBuffer, JITThunkPtrTag, "Baseline: slow_op_put_to_scope");
 }
 
 void JIT::emit_op_get_from_arguments(const JSInstruction* currentInstruction)
@@ -2394,15 +2311,11 @@ void JIT::emit_op_enumerator_get_by_val(const JSInstruction* currentInstruction)
     isNotIndexed.link(this);
     emitArrayProfilingSiteWithCell(bytecode, baseGPR, scratch1);
 
-    JITGetByValGenerator gen(
-        nullptr, nullptr, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), AccessType::GetByVal, RegisterSet::stubUnavailableRegisters(),
-        JSValueRegs(baseGPR), JSValueRegs(propertyGPR), JSValueRegs(resultGPR), stubInfoGPR);
-
     auto [ stubInfo, stubInfoIndex ] = addUnlinkedStructureStubInfo();
-    stubInfo->accessType = AccessType::GetByVal;
-    stubInfo->bytecodeIndex = m_bytecodeIndex;
+    JITGetByValGenerator gen(
+        nullptr, stubInfo, JITType::BaselineJIT, CodeOrigin(m_bytecodeIndex), CallSiteIndex(m_bytecodeIndex), AccessType::GetByVal, RegisterSet::stubUnavailableRegisters(),
+        JSValueRegs(baseGPR), JSValueRegs(propertyGPR), JSValueRegs(resultGPR), stubInfoGPR);
     gen.m_unlinkedStubInfoConstantIndex = stubInfoIndex;
-    gen.m_unlinkedStubInfo = stubInfo;
 
     gen.generateBaselineDataICFastPath(*this, stubInfoIndex, stubInfoGPR);
     resetSP(); // We might OSR exit here, so we need to conservatively reset SP
@@ -2534,7 +2447,7 @@ void JIT::emitWriteBarrier(VirtualRegister owner, VirtualRegister value, WriteBa
         ownerNotCell = branchIfNotCell(tmpJSR);
 
     Jump ownerIsRememberedOrInEden = barrierBranch(vm(), tmpJSR.payloadGPR(), regT2);
-    callOperationNoExceptionCheck(operationWriteBarrierSlowPath, &vm(), tmpJSR.payloadGPR());
+    callOperationNoExceptionCheck(operationWriteBarrierSlowPath, TrustedImmPtr(&vm()), tmpJSR.payloadGPR());
     ownerIsRememberedOrInEden.link(this);
 
     if (mode == ShouldFilterBase || mode == ShouldFilterBaseAndValue)
@@ -2552,14 +2465,14 @@ void JIT::emitWriteBarrier(VirtualRegister owner, WriteBarrierMode mode)
 void JIT::emitWriteBarrier(JSCell* owner)
 {
     Jump ownerIsRememberedOrInEden = barrierBranch(vm(), owner, regT0);
-    callOperationNoExceptionCheck(operationWriteBarrierSlowPath, &vm(), owner);
+    callOperationNoExceptionCheck(operationWriteBarrierSlowPath, TrustedImmPtr(&vm()), TrustedImmPtr(owner));
     ownerIsRememberedOrInEden.link(this);
 }
 
 void JIT::emitWriteBarrier(GPRReg owner)
 {
     Jump ownerIsRememberedOrInEden = barrierBranch(vm(), owner, selectScratchGPR(owner));
-    callOperationNoExceptionCheck(operationWriteBarrierSlowPath, &vm(), owner);
+    callOperationNoExceptionCheck(operationWriteBarrierSlowPath, TrustedImmPtr(&vm()), owner);
     ownerIsRememberedOrInEden.link(this);
 }
 
@@ -2569,7 +2482,7 @@ void JIT::emitVarInjectionCheck(bool needsVarInjectionChecks, GPRReg scratchGPR)
         return;
 
     loadGlobalObject(scratchGPR);
-    loadPtr(Address(scratchGPR, OBJECT_OFFSETOF(JSGlobalObject, m_varInjectionWatchpoint)), scratchGPR);
+    loadPtr(Address(scratchGPR, JSGlobalObject::offsetOfVarInjectionWatchpoint()), scratchGPR);
     addSlowCase(branch8(Equal, Address(scratchGPR, WatchpointSet::offsetOfState()), TrustedImm32(IsInvalidated)));
 }
 

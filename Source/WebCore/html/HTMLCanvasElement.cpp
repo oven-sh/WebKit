@@ -52,6 +52,7 @@
 #include "InMemoryDisplayList.h"
 #include "InspectorInstrumentation.h"
 #include "JSDOMConvertDictionary.h"
+#include "JSNodeCustom.h"
 #include "MIMETypeRegistry.h"
 #include "OffscreenCanvas.h"
 #include "PlaceholderRenderingContext.h"
@@ -62,6 +63,7 @@
 #include "ScriptController.h"
 #include "Settings.h"
 #include "StringAdaptors.h"
+#include "WebCoreOpaqueRoot.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <math.h>
 #include <wtf/IsoMallocInlines.h>
@@ -886,9 +888,12 @@ void HTMLCanvasElement::createImageBuffer() const
 
     auto hostWindow = (document().view() && document().view()->root()) ? document().view()->root()->hostWindow() : nullptr;
 
-    auto renderingMode = shouldAccelerate(area) ? RenderingMode::Accelerated : RenderingMode::Unaccelerated;
+    OptionSet<ImageBufferOptions> bufferOptions;
+    if (shouldAccelerate(area))
+        bufferOptions.add(ImageBufferOptions::Accelerated);
     // FIXME: Add a new setting for DisplayList drawing on canvas.
-    auto useDisplayList = m_usesDisplayListDrawing.value_or(document().settings().displayListDrawingEnabled()) ? ShouldUseDisplayList::Yes : ShouldUseDisplayList::No;
+    if (m_usesDisplayListDrawing.value_or(document().settings().displayListDrawingEnabled()))
+        bufferOptions.add(ImageBufferOptions::UseDisplayList);
 
     auto [colorSpace, pixelFormat] = [&] {
         if (m_context)
@@ -896,7 +901,7 @@ void HTMLCanvasElement::createImageBuffer() const
         return std::pair { DestinationColorSpace::SRGB(), PixelFormat::BGRA8 };
     }();
 
-    setImageBuffer(ImageBuffer::create(size(), renderingMode, useDisplayList, RenderingPurpose::Canvas, 1, colorSpace, pixelFormat, hostWindow));
+    setImageBuffer(ImageBuffer::create(size(), RenderingPurpose::Canvas, 1, colorSpace, pixelFormat, bufferOptions, { hostWindow }));
 
 #if USE(IOSURFACE_CANVAS_BACKING_STORE)
     if (m_context && m_context->is2d()) {
@@ -982,9 +987,10 @@ bool HTMLCanvasElement::virtualHasPendingActivity() const
 void HTMLCanvasElement::eventListenersDidChange()
 {
 #if ENABLE(WEBGL)
-    m_hasRelevantWebGLEventListener = hasEventListeners(eventNames().webglcontextchangedEvent)
-        || hasEventListeners(eventNames().webglcontextlostEvent)
-        || hasEventListeners(eventNames().webglcontextrestoredEvent);
+    auto& eventNames = WebCore::eventNames();
+    m_hasRelevantWebGLEventListener = hasEventListeners(eventNames.webglcontextchangedEvent)
+        || hasEventListeners(eventNames.webglcontextlostEvent)
+        || hasEventListeners(eventNames.webglcontextrestoredEvent);
 #endif
 }
 
@@ -1054,6 +1060,11 @@ void HTMLCanvasElement::prepareForDisplay()
 bool HTMLCanvasElement::isControlledByOffscreen() const
 {
     return m_context && m_context->isPlaceholder();
+}
+
+WebCoreOpaqueRoot root(HTMLCanvasElement* canvas)
+{
+    return root(static_cast<Node*>(canvas));
 }
 
 #if PLATFORM(COCOA)

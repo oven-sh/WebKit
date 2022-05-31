@@ -97,15 +97,15 @@ void RenderSVGTransformableContainer::updateFromStyle()
 {
     RenderSVGContainer::updateFromStyle();
 
-    // FIXME: [LBSE] Upstream CSS/SVG transform support
-    // if (associatedUseElement(graphicsElement()))
-    //    setHasSVGTransform();
+    if (associatedUseElement(graphicsElement())) {
+        setHasSVGTransform();
+        setHasTransformRelatedProperty();
+    }
 }
 
-void RenderSVGTransformableContainer::applyTransform(TransformationMatrix& transform, const FloatRect& boundingBox, OptionSet<RenderStyle::TransformOperationOption> options) const
+void RenderSVGTransformableContainer::applyTransform(TransformationMatrix& transform, const RenderStyle& style, const FloatRect& boundingBox, OptionSet<RenderStyle::TransformOperationOption> options) const
 {
-    // FIXME: [LBSE] Upstream CSS/SVG transform support
-    RenderSVGContainer::applyTransform(transform, boundingBox, options);
+    applySVGTransform(transform, graphicsElement(), style, boundingBox, options);
 }
 
 void RenderSVGTransformableContainer::styleWillChange(StyleDifference diff, const RenderStyle& newStyle)

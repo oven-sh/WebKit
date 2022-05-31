@@ -66,9 +66,8 @@ public:
 
     bool shouldApplyViewportClip() const;
 
-    void applyTransform(TransformationMatrix&, const FloatRect& boundingBox, OptionSet<RenderStyle::TransformOperationOption> = RenderStyle::allTransformOperations) const final;
-
     FloatRect objectBoundingBox() const final { return m_objectBoundingBox; }
+    FloatRect objectBoundingBoxWithoutTransformations() const final { return m_objectBoundingBoxWithoutTransformations; }
     FloatRect strokeBoundingBox() const final { return m_strokeBoundingBox; }
     FloatRect repaintRectInLocalCoordinates() const final { return SVGBoundingBoxComputation::computeRepaintBoundingBox(*this); }
 
@@ -78,7 +77,7 @@ private:
     void element() const = delete;
 
     bool isSVGRoot() const override { return true; }
-    const char* renderName() const override { return "RenderSVGRoot"; }
+    ASCIILiteral renderName() const override { return "RenderSVGRoot"_s; }
     bool requiresLayer() const override { return true; }
 
     // To prevent certain legacy code paths to hit assertions in debug builds, when switching off LBSE (during the teardown of the LBSE tree).
@@ -125,6 +124,7 @@ private:
 
     IntSize m_containerSize;
     FloatRect m_objectBoundingBox;
+    FloatRect m_objectBoundingBoxWithoutTransformations;
     FloatRect m_strokeBoundingBox;
     AffineTransform m_viewBoxTransform;
     AffineTransform m_supplementalLocalToParentTransform;

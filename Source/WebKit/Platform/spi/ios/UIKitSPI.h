@@ -75,6 +75,7 @@
 #import <UIKit/UITextInput_Private.h>
 #import <UIKit/UITextInteractionAssistant_Private.h>
 #import <UIKit/UITextInteraction_Private.h>
+#import <UIKit/UITouch_Private.h>
 #import <UIKit/UIViewControllerTransitioning_Private.h>
 #import <UIKit/UIViewController_Private.h>
 #import <UIKit/UIViewController_ViewService.h>
@@ -165,6 +166,13 @@ typedef NS_ENUM(NSInteger, UIPreviewItemType) {
     UIPreviewItemTypeImage,
     UIPreviewItemTypeText,
     UIPreviewItemTypeAttachment,
+};
+
+typedef NS_ENUM(NSInteger, _UIDataOwner) {
+    _UIDataOwnerUndefined,
+    _UIDataOwnerUser,
+    _UIDataOwnerEnterprise,
+    _UIDataOwnerShared,
 };
 
 @class UIPreviewItemController;
@@ -378,6 +386,7 @@ typedef enum {
 @interface UIImage ()
 - (id)initWithCGImage:(CGImageRef)CGImage imageOrientation:(UIImageOrientation)imageOrientation;
 - (UIImage *)_flatImageWithColor:(UIColor *)color;
++ (UIImage *)_systemImageNamed:(NSString *)name;
 @end
 
 @interface UIKeyCommand ()
@@ -488,7 +497,10 @@ typedef enum {
 - (void)_wheelChangedWithEvent:(UIEvent *)event;
 - (void)_beginPinningInputViews;
 - (void)_endPinningInputViews;
-
+#if HAVE(PASTEBOARD_DATA_OWNER)
+@property (nonatomic, setter=_setDataOwnerForCopy:) _UIDataOwner _dataOwnerForCopy;
+@property (nonatomic, setter=_setDataOwnerForPaste:) _UIDataOwner _dataOwnerForPaste;
+#endif
 @end
 
 @class FBSDisplayConfiguration;
@@ -967,7 +979,6 @@ struct _UIWebTouchEvent {
 
 typedef NS_ENUM(NSInteger, _UIBackdropViewStylePrivate) {
     _UIBackdropViewStyle_Light = 2020,
-    _UIBackdropViewStyle_Dark = 2030
 };
 
 @interface _UIBackdropViewSettings : NSObject
@@ -984,7 +995,6 @@ typedef NS_ENUM(NSInteger, _UIBackdropViewStylePrivate) {
 @interface _UIBackdropView ()
 - (instancetype)initWithPrivateStyle:(_UIBackdropViewStylePrivate)style;
 - (instancetype)initWithSettings:(_UIBackdropViewSettings *)settings;
-- (instancetype)initWithFrame:(CGRect)frame privateStyle:(_UIBackdropViewStylePrivate)style;
 @property (nonatomic, strong, readonly) UIView *contentView;
 @end
 
@@ -1200,9 +1210,11 @@ WTF_EXTERN_C_END
 @property (nonatomic, readonly) UIKeyboardPreferencesController<TIPreferencesControllerActions> *preferencesActions;
 @end
 
+ALLOW_DEPRECATED_DECLARATIONS_BEGIN
 @interface UIMenuItem (UIMenuController_SPI)
 @property (nonatomic) BOOL dontDismiss;
 @end
+ALLOW_DEPRECATED_DECLARATIONS_END
 
 @interface UICalloutBar : UIView
 + (UICalloutBar *)activeCalloutBar;
@@ -1362,16 +1374,13 @@ typedef NS_ENUM(NSUInteger, _UIContextMenuLayout) {
 @property (nonatomic, readonly) NSString *_sceneIdentifier;
 @end
 
-#endif // USE(APPLE_INTERNAL_SDK)
-
-#if HAVE(PASTEBOARD_DATA_OWNER)
-
-@interface UIResponder (Staging_73852335)
-@property (nonatomic, setter=_setDataOwnerForCopy:) _UIDataOwner _dataOwnerForCopy;
-@property (nonatomic, setter=_setDataOwnerForPaste:) _UIDataOwner _dataOwnerForPaste;
+#if HAVE(UIKIT_WITH_MOUSE_SUPPORT)
+@interface UITouch ()
+@property (nonatomic, readonly) BOOL _isPointerTouch;
 @end
-
 #endif
+
+#endif // USE(APPLE_INTERNAL_SDK)
 
 @interface UITextInteractionAssistant (IPI)
 @property (nonatomic, readonly) BOOL inGesture;

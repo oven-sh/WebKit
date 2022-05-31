@@ -180,17 +180,17 @@ std::optional<ASCIILiteral> FontCache::alternateFamilyName(const String& familyN
 
     switch (familyName.length()) {
     case 5:
-        if (equalLettersIgnoringASCIICase(familyName, "arial"))
+        if (equalLettersIgnoringASCIICase(familyName, "arial"_s))
             return "Helvetica"_s;
-        if (equalLettersIgnoringASCIICase(familyName, "times"))
+        if (equalLettersIgnoringASCIICase(familyName, "times"_s))
             return "Times New Roman"_s;
         break;
     case 7:
-        if (equalLettersIgnoringASCIICase(familyName, "courier"))
+        if (equalLettersIgnoringASCIICase(familyName, "courier"_s))
             return "Courier New"_s;
         break;
     case 9:
-        if (equalLettersIgnoringASCIICase(familyName, "helvetica"))
+        if (equalLettersIgnoringASCIICase(familyName, "helvetica"_s))
             return "Arial"_s;
         break;
 #if !OS(WINDOWS)
@@ -200,12 +200,12 @@ std::optional<ASCIILiteral> FontCache::alternateFamilyName(const String& familyN
     // FIXME: Not sure why this is harmful on Windows, since the alternative will
     // only be tried if Courier New is not found.
     case 11:
-        if (equalLettersIgnoringASCIICase(familyName, "courier new"))
+        if (equalLettersIgnoringASCIICase(familyName, "courier new"_s))
             return "Courier"_s;
         break;
 #endif
     case 15:
-        if (equalLettersIgnoringASCIICase(familyName, "times new roman"))
+        if (equalLettersIgnoringASCIICase(familyName, "times new roman"_s))
             return "Times"_s;
         break;
     }
@@ -223,9 +223,9 @@ FontPlatformData* FontCache::cachedFontPlatformData(const FontDescription& fontD
     // Leading "@" in the font name enables Windows vertical flow flag for the font.
     // Because we do vertical flow by ourselves, we don't want to use the Windows feature.
     // IE disregards "@" regardless of the orientation, so we follow the behavior.
-    const String& familyName = passedFamilyName.substring(passedFamilyName[0] == '@' ? 1 : 0);
+    auto familyName = StringView(passedFamilyName).substring(passedFamilyName[0] == '@' ? 1 : 0).toAtomString();
 #else
-    const String& familyName = passedFamilyName;
+    AtomString familyName { passedFamilyName };
 #endif
 
     static std::once_flag onceFlag;
@@ -489,12 +489,26 @@ void FontCache::invalidate()
     purgeInactiveFontData();
 }
 
+static Function<void()>& fontCacheInvalidationCallback()
+{
+    static NeverDestroyed<Function<void()>> callback;
+    return callback.get();
+}
+
+void FontCache::registerFontCacheInvalidationCallback(Function<void()>&& callback)
+{
+    fontCacheInvalidationCallback() = WTFMove(callback);
+}
+
 void FontCache::invalidateAllFontCaches()
 {
     ASSERT(isMainThread());
 
     // FIXME: Invalidate FontCaches in workers too.
     FontCache::forCurrentThread().invalidate();
+
+    if (fontCacheInvalidationCallback())
+        fontCacheInvalidationCallback()();
 }
 
 #if !PLATFORM(COCOA)

@@ -84,8 +84,7 @@ public:
 
     inline void setAnimatedSVGAttributesAreDirty();
     inline void setPresentationalHintStyleIsDirty();
-    void setSVGResourcesInAncestorChainAreDirty();
-    void invalidateSVGResourcesInAncestorChainIfNeeded();
+    void updateSVGRendererForElementChange();
 
     // The instances of an element are clones made in shadow trees to implement <use>.
     const WeakHashSet<SVGElement>& instances() const;
@@ -152,7 +151,7 @@ public:
     const RenderStyle* computedStyle(PseudoId = PseudoId::None) final;
 
     // These are needed for the RenderTree, animation and DOM.
-    String className() const { return m_className->currentValue(); }
+    AtomString className() const { return AtomString { m_className->currentValue() }; }
     SVGAnimatedString& classNameAnimated() { return m_className; }
 
 protected:

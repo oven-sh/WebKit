@@ -85,6 +85,7 @@ class Screen;
 class Storage;
 class StyleMedia;
 class VisualViewport;
+class WebCoreOpaqueRoot;
 class WebKitNamespace;
 class WebKitPoint;
 
@@ -230,8 +231,8 @@ public:
 
     unsigned length() const;
 
-    String name() const;
-    void setName(const String&);
+    AtomString name() const;
+    void setName(const AtomString&);
 
     String status() const;
     void setStatus(const String&);
@@ -512,6 +513,8 @@ inline String DOMWindow::defaultStatus() const
 {
     return m_defaultStatus;
 }
+
+WebCoreOpaqueRoot root(DOMWindow*);
 
 } // namespace WebCore
 

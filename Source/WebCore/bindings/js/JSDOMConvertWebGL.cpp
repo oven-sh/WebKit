@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,8 +36,10 @@
 #include "JSEXTFloatBlend.h"
 #include "JSEXTFragDepth.h"
 #include "JSEXTShaderTextureLOD.h"
+#include "JSEXTTextureCompressionBPTC.h"
 #include "JSEXTTextureCompressionRGTC.h"
 #include "JSEXTTextureFilterAnisotropic.h"
+#include "JSEXTTextureNorm16.h"
 #include "JSEXTsRGB.h"
 #include "JSKHRParallelShaderCompile.h"
 #include "JSOESElementIndexUint.h"
@@ -91,7 +93,7 @@ JSValue convertToJSValue(JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject&
         }, [] (long long value) -> JSValue {
             return jsNumber(value);
         }, [] (float value) -> JSValue {
-            return jsNumber(value);
+            return jsNumber(purifyNaN(value));
         }, [&] (const String& value) -> JSValue {
             return jsStringWithCache(lexicalGlobalObject.vm(), value);
         }, [&] (const Vector<bool>& values) -> JSValue {
@@ -164,10 +166,14 @@ JSValue convertToJSValue(JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject&
         return toJS(&lexicalGlobalObject, &globalObject, static_cast<WebGLLoseContext&>(extension));
     case WebGLExtension::EXTShaderTextureLODName:
         return toJS(&lexicalGlobalObject, &globalObject, static_cast<EXTShaderTextureLOD&>(extension));
+    case WebGLExtension::EXTTextureCompressionBPTCName:
+        return toJS(&lexicalGlobalObject, &globalObject, static_cast<EXTTextureCompressionBPTC&>(extension));
     case WebGLExtension::EXTTextureCompressionRGTCName:
         return toJS(&lexicalGlobalObject, &globalObject, static_cast<EXTTextureCompressionRGTC&>(extension));
     case WebGLExtension::EXTTextureFilterAnisotropicName:
         return toJS(&lexicalGlobalObject, &globalObject, static_cast<EXTTextureFilterAnisotropic&>(extension));
+    case WebGLExtension::EXTTextureNorm16Name:
+        return toJS(&lexicalGlobalObject, &globalObject, static_cast<EXTTextureNorm16&>(extension));
     case WebGLExtension::EXTsRGBName:
         return toJS(&lexicalGlobalObject, &globalObject, static_cast<EXTsRGB&>(extension));
     case WebGLExtension::EXTFragDepthName:

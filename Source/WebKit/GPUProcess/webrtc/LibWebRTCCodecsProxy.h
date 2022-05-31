@@ -49,6 +49,10 @@ using LocalDecoder = void*;
 using LocalEncoder = void*;
 }
 
+namespace WebCore {
+class PixelBufferConformerCV;
+}
+
 namespace WebKit {
 
 class GPUConnectionToWebProcess;
@@ -56,7 +60,7 @@ class RemoteVideoFrameObjectHeap;
 struct SharedVideoFrame;
 class SharedVideoFrameReader;
 
-class LibWebRTCCodecsProxy final : public IPC::Connection::ThreadMessageReceiverRefCounted {
+class LibWebRTCCodecsProxy final : public IPC::Connection::WorkQueueMessageReceiver {
     WTF_MAKE_FAST_ALLOCATED;
 public:
     static Ref<LibWebRTCCodecsProxy> create(GPUConnectionToWebProcess&);
@@ -70,11 +74,9 @@ private:
     auto createDecoderCallback(RTCDecoderIdentifier, bool useRemoteFrames);
     WorkQueue& workQueue() const { return m_queue; }
 
-    // IPC::Connection::ThreadMessageReceiver
-    void dispatchToThread(Function<void()>&&) final;
-
-    // IPC::MessageReceiver
+    // IPC::Connection::WorkQueueMessageReceiver overrides.
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
+
     void createH264Decoder(RTCDecoderIdentifier, bool useRemoteFrames);
     void createH265Decoder(RTCDecoderIdentifier, bool useRemoteFrames);
     void createVP9Decoder(RTCDecoderIdentifier, bool useRemoteFrames);
@@ -104,6 +106,8 @@ private:
     HashMap<RTCDecoderIdentifier, webrtc::LocalDecoder> m_decoders WTF_GUARDED_BY_CAPABILITY(workQueue());
     HashMap<RTCEncoderIdentifier, Encoder> m_encoders WTF_GUARDED_BY_CAPABILITY(workQueue());
     std::atomic<bool> m_hasEncodersOrDecoders { false };
+
+    std::unique_ptr<WebCore::PixelBufferConformerCV> m_pixelBufferConformer;
 };
 
 }

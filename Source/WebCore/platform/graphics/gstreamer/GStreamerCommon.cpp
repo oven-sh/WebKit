@@ -85,6 +85,24 @@ GstPad* webkitGstGhostPadFromStaticTemplate(GstStaticPadTemplate* staticPadTempl
     return pad;
 }
 
+#if !GST_CHECK_VERSION(1, 18, 0)
+void webkitGstVideoFormatInfoComponent(const GstVideoFormatInfo* info, guint plane, gint components[GST_VIDEO_MAX_COMPONENTS])
+{
+    guint c, i = 0;
+
+    /* Reverse mapping of info->plane. */
+    for (c = 0; c < GST_VIDEO_FORMAT_INFO_N_COMPONENTS(info); c++) {
+        if (GST_VIDEO_FORMAT_INFO_PLANE(info, c) == plane) {
+            components[i] = c;
+            i++;
+        }
+    }
+
+    for (c = i; c < GST_VIDEO_MAX_COMPONENTS; c++)
+        components[c] = -1;
+}
+#endif
+
 #if ENABLE(VIDEO)
 bool getVideoSizeAndFormatFromCaps(const GstCaps* caps, WebCore::IntSize& size, GstVideoFormat& format, int& pixelAspectRatioNumerator, int& pixelAspectRatioDenominator, int& stride)
 {
@@ -232,7 +250,7 @@ Vector<String> extractGStreamerOptionsFromCommandLine()
     Vector<String> options;
     auto optionsString = String::fromUTF8(contents.get(), length);
     optionsString.split('\0', [&options](StringView item) {
-        if (item.startsWith("--gst"))
+        if (item.startsWith("--gst"_s))
             options.append(item.toString());
     });
     return options;
@@ -298,7 +316,7 @@ bool ensureGStreamerInitialized()
 bool isThunderRanked()
 {
     const char* value = g_getenv("WEBKIT_GST_EME_RANK_PRIORITY");
-    return value && equalIgnoringASCIICase(value, "Thunder");
+    return value && equalIgnoringASCIICase(value, "Thunder"_s);
 }
 #endif
 
@@ -353,6 +371,27 @@ void registerWebKitGStreamerElements()
                 if (avAACDecoderFactory)
                     gst_plugin_feature_set_rank(GST_PLUGIN_FEATURE_CAST(avAACDecoderFactory.get()), GST_RANK_MARGINAL);
             }
+        }
+
+        // The new demuxers based on adaptivedemux2 cannot be used in WebKit yet because this new
+        // base class does not abstract away network access. They can't work in a sandboxed
+        // media process, so demote their rank in order to prevent decodebin3 from auto-plugging them.
+        if (webkitGstCheckVersion(1, 21, 0)) {
+            const char* const elementNames[] = { "dashdemux2", "hlsdemux2", "mssdemux2" };
+            for (unsigned i = 0; i < G_N_ELEMENTS(elementNames); i++) {
+                if (auto factory = adoptGRef(gst_element_factory_find(elementNames[i])))
+                    gst_plugin_feature_set_rank(GST_PLUGIN_FEATURE_CAST(factory.get()), GST_RANK_NONE);
+            }
+        }
+
+        // The VAAPI plugin is not much maintained anymore and prone to rendering issues. In the
+        // mid-term we will leverage the new stateless VA decoders. Disable the legacy plugin,
+        // unless the WEBKIT_GST_ENABLE_LEGACY_VAAPI environment variable is set to 1.
+        const char* enableLegacyVAAPIPlugin = getenv("WEBKIT_GST_ENABLE_LEGACY_VAAPI");
+        if (!enableLegacyVAAPIPlugin || !strcmp(enableLegacyVAAPIPlugin, "0")) {
+            auto* registry = gst_registry_get();
+            if (auto vaapiPlugin = adoptGRef(gst_registry_find_plugin(registry, "vaapi")))
+                gst_registry_remove_plugin(registry, vaapiPlugin.get());
         }
     });
 }
@@ -461,9 +500,9 @@ bool isGStreamerPluginAvailable(const char* name)
     return plugin;
 }
 
-bool gstElementFactoryEquals(GstElement* element, const char* name)
+bool gstElementFactoryEquals(GstElement* element, ASCIILiteral name)
 {
-    return equal(GST_OBJECT_NAME(gst_element_get_factory(element)), name);
+    return name == GST_OBJECT_NAME(gst_element_get_factory(element));
 }
 
 GstElement* createAutoAudioSink(const String& role)
@@ -613,7 +652,7 @@ static gboolean parseGstStructureValue(GQuark fieldId, const GValue* value, gpoi
 {
     if (auto jsonValue = gstStructureValueToJSON(value)) {
         auto* object = reinterpret_cast<JSON::Object*>(userData);
-        object->setValue(g_quark_to_string(fieldId), jsonValue->releaseNonNull());
+        object->setValue(String::fromLatin1(g_quark_to_string(fieldId)), jsonValue->releaseNonNull());
     }
     return TRUE;
 }

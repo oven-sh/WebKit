@@ -50,14 +50,18 @@
 #include "FontPalette.h"
 #include "FontSelectionValueInlines.h"
 #include "Frame.h"
+#include "FrameDestructionObserverInlines.h"
 #include "GridPositionsResolver.h"
 #include "Length.h"
 #include "Pair.h"
 #include "QuotesData.h"
 #include "RuntimeEnabledFeatures.h"
+#include "SVGElementTypeHelpers.h"
+#include "SVGPathElement.h"
 #include "SVGURIReference.h"
 #include "Settings.h"
 #include "StyleBuilderState.h"
+#include "StyleGridData.h"
 #include "StyleScrollSnapPoints.h"
 #include "TabSize.h"
 #include "TouchAction.h"
@@ -85,7 +89,6 @@ public:
     template<typename T> static T convertNumber(BuilderState&, const CSSValue&);
     template<typename T> static T convertNumberOrAuto(BuilderState&, const CSSValue&);
     static short convertWebkitHyphenateLimitLines(BuilderState&, const CSSValue&);
-    template<CSSPropertyID> static NinePieceImage convertBorderImage(BuilderState&, CSSValue&);
     template<CSSPropertyID> static NinePieceImage convertBorderMask(BuilderState&, CSSValue&);
     template<CSSPropertyID> static RefPtr<StyleImage> convertStyleImage(BuilderState&, CSSValue&);
     static ImageOrientation convertImageOrientation(BuilderState&, const CSSValue&);
@@ -98,9 +101,12 @@ public:
 #endif
     static String convertString(BuilderState&, const CSSValue&);
     static String convertStringOrAuto(BuilderState&, const CSSValue&);
+    static AtomString convertStringOrAutoAtom(BuilderState& state, const CSSValue& value) { return AtomString { convertStringOrAuto(state, value) }; }
     static String convertStringOrNone(BuilderState&, const CSSValue&);
+    static AtomString convertStringOrNoneAtom(BuilderState& state, const CSSValue& value) { return AtomString { convertStringOrNone(state, value) }; }
     static OptionSet<TextEmphasisPosition> convertTextEmphasisPosition(BuilderState&, const CSSValue&);
     static TextAlignMode convertTextAlign(BuilderState&, const CSSValue&);
+    static TextAlignLast convertTextAlignLast(BuilderState&, const CSSValue&);
     static RefPtr<PathOperation> convertPathOperation(BuilderState&, const CSSValue&);
     static Resize convertResize(BuilderState&, const CSSValue&);
     static int convertMarqueeRepetition(BuilderState&, const CSSValue&);
@@ -191,8 +197,7 @@ private:
 
     static GridLength createGridTrackBreadth(const CSSPrimitiveValue&, BuilderState&);
     static GridTrackSize createGridTrackSize(const CSSValue&, BuilderState&);
-    struct TracksData;
-    static bool createGridTrackList(const CSSValue&, TracksData&, BuilderState&);
+    static bool createGridTrackList(const CSSValue&, GridTrackList&, BuilderState&);
     static bool createGridPosition(const CSSValue&, GridPosition&);
     static void createImplicitNamedGridLinesFromGridArea(const NamedGridAreaMap&, NamedGridLinesMap&, GridTrackSizingDirection);
     static CSSToLengthConversionData csstoLengthConversionDataWithTextZoomFactor(BuilderState&);
@@ -465,18 +470,10 @@ inline short BuilderConverter::convertWebkitHyphenateLimitLines(BuilderState&, c
 }
 
 template<CSSPropertyID property>
-inline NinePieceImage BuilderConverter::convertBorderImage(BuilderState& builderState, CSSValue& value)
-{
-    NinePieceImage image;
-    builderState.styleMap().mapNinePieceImage(property, &value, image);
-    return image;
-}
-
-template<CSSPropertyID property>
 inline NinePieceImage BuilderConverter::convertBorderMask(BuilderState& builderState, CSSValue& value)
 {
     NinePieceImage image(NinePieceImage::Type::Mask);
-    builderState.styleMap().mapNinePieceImage(property, &value, image);
+    builderState.styleMap().mapNinePieceImage(&value, image);
     return image;
 }
 
@@ -624,16 +621,32 @@ inline TextAlignMode BuilderConverter::convertTextAlign(BuilderState& builderSta
         return parentStyle.isLeftToRightDirection() ? TextAlignMode::Right : TextAlignMode::Left;
     return parentStyle.textAlign();
 }
+inline TextAlignLast BuilderConverter::convertTextAlignLast(BuilderState& builderState, const CSSValue& value)
+{
+    auto& primitiveValue = downcast<CSSPrimitiveValue>(value);
+    ASSERT(primitiveValue.isValueID());
+
+    if (primitiveValue.valueID() != CSSValueMatchParent)
+        return primitiveValue;
+
+    auto& parentStyle = builderState.parentStyle();
+    if (parentStyle.textAlignLast() == TextAlignLast::Start)
+        return parentStyle.isLeftToRightDirection() ? TextAlignLast::Left : TextAlignLast::Right;
+    if (parentStyle.textAlignLast() == TextAlignLast::End)
+        return parentStyle.isLeftToRightDirection() ? TextAlignLast::Right : TextAlignLast::Left;
+    return parentStyle.textAlignLast();
+}
 
 inline RefPtr<PathOperation> BuilderConverter::convertPathOperation(BuilderState& builderState, const CSSValue& value)
 {
     if (is<CSSPrimitiveValue>(value)) {
         auto& primitiveValue = downcast<CSSPrimitiveValue>(value);
         if (primitiveValue.primitiveType() == CSSUnitType::CSS_URI) {
-            String cssURLValue = primitiveValue.stringValue();
-            String fragment = SVGURIReference::fragmentIdentifierFromIRIString(cssURLValue, builderState.document());
+            auto cssURLValue = primitiveValue.stringValue();
+            auto fragment = SVGURIReference::fragmentIdentifierFromIRIString(cssURLValue, builderState.document());
             // FIXME: It doesn't work with external SVG references (see https://bugs.webkit.org/show_bug.cgi?id=126133)
-            return ReferencePathOperation::create(cssURLValue, fragment);
+            auto target = SVGURIReference::targetElementFromIRIString(cssURLValue, builderState.document());
+            return ReferencePathOperation::create(cssURLValue, fragment, dynamicDowncast<SVGElement>(target.element.get()));
         }
         ASSERT(primitiveValue.valueID() == CSSValueNone);
         return nullptr;
@@ -809,7 +822,7 @@ inline RefPtr<StyleReflection> BuilderConverter::convertReflection(BuilderState&
     reflection->setOffset(reflectValue.offset().convertToLength<FixedIntegerConversion | PercentConversion | CalculatedConversion>(builderState.cssToLengthConversionData()));
 
     NinePieceImage mask(NinePieceImage::Type::Mask);
-    builderState.styleMap().mapNinePieceImage(CSSPropertyWebkitBoxReflect, reflectValue.mask(), mask);
+    builderState.styleMap().mapNinePieceImage(reflectValue.mask(), mask);
     reflection->setMask(mask);
 
     return reflection;
@@ -979,37 +992,7 @@ inline GridTrackSize BuilderConverter::createGridTrackSize(const CSSValue& value
     return GridTrackSize(minTrackBreadth, maxTrackBreadth);
 }
 
-static void createGridLineNamesList(const CSSValue& value, unsigned currentNamedGridLine, NamedGridLinesMap& namedGridLines, OrderedNamedGridLinesMap& orderedNamedGridLines)
-{
-    ASSERT(value.isGridLineNamesValue());
-    auto orderedResult = orderedNamedGridLines.add(currentNamedGridLine, Vector<String>());
-
-    for (auto& namedGridLineValue : downcast<CSSGridLineNamesValue>(value)) {
-        String namedGridLine = downcast<CSSPrimitiveValue>(namedGridLineValue.get()).stringValue();
-        auto result = namedGridLines.add(namedGridLine, Vector<unsigned>());
-        result.iterator->value.append(currentNamedGridLine);
-
-        orderedResult.iterator->value.append(namedGridLine);
-    }
-}
-
-struct BuilderConverter::TracksData {
-    WTF_MAKE_NONCOPYABLE(TracksData); WTF_MAKE_FAST_ALLOCATED;
-public:
-    TracksData() = default;
-
-    Vector<GridTrackSize> m_trackSizes;
-    NamedGridLinesMap m_namedGridLines;
-    OrderedNamedGridLinesMap m_orderedNamedGridLines;
-    Vector<GridTrackSize> m_autoRepeatTrackSizes;
-    NamedGridLinesMap m_autoRepeatNamedGridLines;
-    OrderedNamedGridLinesMap m_autoRepeatOrderedNamedGridLines;
-    unsigned m_autoRepeatInsertionPoint { RenderStyle::initialGridAutoRepeatInsertionPoint() };
-    AutoRepeatType m_autoRepeatType { RenderStyle::initialGridAutoRepeatType() };
-    bool isSubgrid { false };
-};
-
-inline bool BuilderConverter::createGridTrackList(const CSSValue& value, TracksData& tracksData, BuilderState& builderState)
+inline bool BuilderConverter::createGridTrackList(const CSSValue& value, GridTrackList& trackList, BuilderState& builderState)
 {
     // Handle 'none'.
     if (is<CSSPrimitiveValue>(value))
@@ -1018,62 +1001,73 @@ inline bool BuilderConverter::createGridTrackList(const CSSValue& value, TracksD
     if (!is<CSSValueList>(value))
         return false;
 
-    unsigned currentNamedGridLine = 0;
-    auto handleLineNameOrTrackSize = [&](const CSSValue& currentValue) {
-        if (is<CSSGridLineNamesValue>(currentValue)) {
-            createGridLineNamesList(currentValue, currentNamedGridLine, tracksData.m_namedGridLines, tracksData.m_orderedNamedGridLines);
-            // Subgrids only have line names defined, not track sizes, so we want our count
-            // to be the number of lines named rather than number of sized tracks.
-            if (tracksData.isSubgrid)
-                currentNamedGridLine++;
-        } else {
-            ++currentNamedGridLine;
-            tracksData.m_trackSizes.append(createGridTrackSize(currentValue, builderState));
-        }
-    };
-
-    if (is<CSSSubgridValue>(value))
-        tracksData.isSubgrid = true;
-
-    unsigned autoRepeatIndex = 0;
-    for (auto& currentValue : downcast<CSSValueList>(value)) {
-        if (is<CSSGridAutoRepeatValue>(currentValue)) {
-            ASSERT(!autoRepeatIndex);
-            autoRepeatIndex = 0;
-            CSSValueID autoRepeatID = downcast<CSSGridAutoRepeatValue>(currentValue.get()).autoRepeatID();
-            ASSERT(autoRepeatID == CSSValueAutoFill || autoRepeatID == CSSValueAutoFit);
-            tracksData.m_autoRepeatType = autoRepeatID == CSSValueAutoFill ? AutoRepeatType::Fill : AutoRepeatType::Fit;
-            for (auto& autoRepeatValue : downcast<CSSValueList>(currentValue.get())) {
-                if (is<CSSGridLineNamesValue>(autoRepeatValue)) {
-                    createGridLineNamesList(autoRepeatValue.get(), autoRepeatIndex, tracksData.m_autoRepeatNamedGridLines, tracksData.m_autoRepeatOrderedNamedGridLines);
-                    if (tracksData.isSubgrid)
-                        ++autoRepeatIndex;
-                    continue;
-                }
-                ++autoRepeatIndex;
-                tracksData.m_autoRepeatTrackSizes.append(createGridTrackSize(autoRepeatValue.get(), builderState));
-            }
-            tracksData.m_autoRepeatInsertionPoint = currentNamedGridLine;
-            if (!tracksData.isSubgrid)
-                currentNamedGridLine++;
-            continue;
-        }
-
-        if (is<CSSGridIntegerRepeatValue>(currentValue)) {
-            size_t repetitions = downcast<CSSGridIntegerRepeatValue>(currentValue.get()).repetitions();
-            for (size_t i = 0; i < repetitions; ++i) {
-                for (auto& integerRepeatValue : downcast<CSSValueList>(currentValue.get()))
-                    handleLineNameOrTrackSize(integerRepeatValue);
-            }
-            continue;
-        }
-
-        handleLineNameOrTrackSize(currentValue);
+    bool isSubgrid = false;
+    if (is<CSSSubgridValue>(value)) {
+        isSubgrid = true;
+        trackList.append(GridTrackEntrySubgrid());
     }
 
-    // The parser should have rejected any <track-list> without any <track-size> as
-    // this is not conformant to the syntax.
-    ASSERT(!tracksData.m_trackSizes.isEmpty() || !tracksData.m_autoRepeatTrackSizes.isEmpty() || tracksData.isSubgrid);
+    // https://drafts.csswg.org/css-grid-2/#computed-tracks
+    // The computed track list of a non-subgrid axis is a list alternating between line name sets
+    // and track sections, with the first and last items being line name sets.
+    auto ensureLineNames = [&](auto& list) {
+        if (isSubgrid)
+            return;
+        if (list.isEmpty() || !std::holds_alternative<Vector<String>>(list.last()))
+            list.append(Vector<String>());
+    };
+
+    auto buildRepeatList = [&](const CSSValue& repeatValue, RepeatTrackList& repeatList) {
+        for (auto& currentValue : downcast<CSSValueList>(repeatValue)) {
+            if (is<CSSGridLineNamesValue>(currentValue)) {
+                Vector<String> names;
+                for (auto& namedGridLineValue : downcast<CSSGridLineNamesValue>(currentValue.get()))
+                    names.append(downcast<CSSPrimitiveValue>(namedGridLineValue.get()).stringValue());
+                repeatList.append(WTFMove(names));
+            } else {
+                ensureLineNames(repeatList);
+                repeatList.append(createGridTrackSize(currentValue, builderState));
+            }
+        }
+
+        if (!repeatList.isEmpty())
+            ensureLineNames(repeatList);
+    };
+
+    for (auto& currentValue : downcast<CSSValueList>(value)) {
+        if (is<CSSGridLineNamesValue>(currentValue)) {
+            Vector<String> names;
+            for (auto& namedGridLineValue : downcast<CSSGridLineNamesValue>(currentValue.get()))
+                names.append(downcast<CSSPrimitiveValue>(namedGridLineValue.get()).stringValue());
+            trackList.append(WTFMove(names));
+            continue;
+        }
+
+        ensureLineNames(trackList);
+
+        if (is<CSSGridAutoRepeatValue>(currentValue)) {
+            CSSValueID autoRepeatID = downcast<CSSGridAutoRepeatValue>(currentValue.get()).autoRepeatID();
+            ASSERT(autoRepeatID == CSSValueAutoFill || autoRepeatID == CSSValueAutoFit);
+
+            GridTrackEntryAutoRepeat repeat;
+            repeat.type = autoRepeatID == CSSValueAutoFill ? AutoRepeatType::Fill : AutoRepeatType::Fit;
+
+            buildRepeatList(currentValue, repeat.list);
+            trackList.append(WTFMove(repeat));
+        } else if (is<CSSGridIntegerRepeatValue>(currentValue)) {
+            GridTrackEntryRepeat repeat;
+            repeat.repeats = downcast<CSSGridIntegerRepeatValue>(currentValue.get()).repetitions();
+
+            buildRepeatList(currentValue, repeat.list);
+            trackList.append(WTFMove(repeat));
+        } else {
+            trackList.append(createGridTrackSize(currentValue, builderState));
+        }
+    }
+
+    if (!trackList.isEmpty())
+        ensureLineNames(trackList);
+
     return true;
 }
 
@@ -1393,7 +1387,7 @@ inline FontVariationSettings BuilderConverter::convertFontVariationSettings(Buil
 #if PLATFORM(IOS_FAMILY)
 inline bool BuilderConverter::convertTouchCallout(BuilderState&, const CSSValue& value)
 {
-    return !equalLettersIgnoringASCIICase(downcast<CSSPrimitiveValue>(value).stringValue(), "none");
+    return !equalLettersIgnoringASCIICase(downcast<CSSPrimitiveValue>(value).stringValue(), "none"_s);
 }
 #endif
 
@@ -1632,7 +1626,7 @@ inline FontPalette BuilderConverter::convertFontPalette(BuilderState&, const CSS
         return { FontPalette::Type::Dark, nullAtom() };
     case CSSValueInvalid:
         ASSERT(primitiveValue.isCustomIdent());
-        return { FontPalette::Type::Custom, primitiveValue.stringValue() };
+        return { FontPalette::Type::Custom, AtomString { primitiveValue.stringValue() } };
     default:
         ASSERT_NOT_REACHED();
         return { FontPalette::Type::Normal, nullAtom() };
@@ -1700,8 +1694,8 @@ inline Vector<AtomString> BuilderConverter::convertContainerName(BuilderState&, 
     if (!is<CSSValueList>(value))
         return { };
 
-    return WTF::map(downcast<CSSValueList>(value), [](auto& item) -> AtomString {
-        return downcast<CSSPrimitiveValue>(item.get()).stringValue();
+    return WTF::map(downcast<CSSValueList>(value), [](auto& item) {
+        return AtomString { downcast<CSSPrimitiveValue>(item.get()).stringValue() };
     });
 }
 

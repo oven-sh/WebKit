@@ -68,6 +68,12 @@ static SMILEventSender& smilEndEventSender()
     return sender;
 }
 
+static const AtomString& indefiniteAtom()
+{
+    static MainThreadNeverDestroyed<const AtomString> indefiniteValue("indefinite"_s);
+    return indefiniteValue;
+}
+
 // This is used for duration type time values that can't be negative.
 static const double invalidCachedTime = -1.;
     
@@ -120,7 +126,7 @@ void ConditionEventListener::handleEvent(ScriptExecutionContext&, Event&)
     m_animation->handleConditionEvent(m_condition);
 }
 
-SVGSMILElement::Condition::Condition(Type type, BeginOrEnd beginOrEnd, const String& baseID, const String& name, SMILTime offset, int repeats)
+SVGSMILElement::Condition::Condition(Type type, BeginOrEnd beginOrEnd, const String& baseID, const AtomString& name, SMILTime offset, int repeats)
     : m_type(type)
     , m_beginOrEnd(beginOrEnd)
     , m_baseID(baseID)
@@ -184,7 +190,7 @@ void SVGSMILElement::buildPendingResource()
         return;
     }
 
-    String id;
+    AtomString id;
     RefPtr<Element> target;
     auto& href = getAttribute(SVGNames::hrefAttr, XLinkNames::hrefAttr);
     if (href.isEmpty())
@@ -319,9 +325,9 @@ SMILTime SVGSMILElement::parseOffsetValue(StringView data)
     auto parse = data.stripWhiteSpace();
     if (parse.endsWith('h'))
         result = parse.left(parse.length() - 1).toDouble(ok) * 60 * 60;
-    else if (parse.endsWith("min"))
+    else if (parse.endsWith("min"_s))
         result = parse.left(parse.length() - 3).toDouble(ok) * 60;
-    else if (parse.endsWith("ms"))
+    else if (parse.endsWith("ms"_s))
         result = parse.left(parse.length() - 2).toDouble(ok) / 1000;
     else if (parse.endsWith('s'))
         result = parse.left(parse.length() - 1).toDouble(ok);
@@ -338,9 +344,7 @@ SMILTime SVGSMILElement::parseClockValue(StringView data)
         return SMILTime::unresolved();
 
     auto parse = data.stripWhiteSpace();
-
-    static MainThreadNeverDestroyed<const AtomString> indefiniteValue("indefinite", AtomString::ConstructFromLiteral);
-    if (parse == indefiniteValue.get())
+    if (parse == indefiniteAtom())
         return SMILTime::indefinite();
 
     double result = 0;
@@ -348,13 +352,13 @@ SMILTime SVGSMILElement::parseClockValue(StringView data)
     size_t doublePointOne = parse.find(':');
     size_t doublePointTwo = parse.find(':', doublePointOne + 1);
     if (doublePointOne == 2 && doublePointTwo == 5 && parse.length() >= 8) {
-        auto hour = parseInteger<uint8_t>(parse.substring(0, 2));
+        auto hour = parseInteger<uint8_t>(parse.left(2));
         auto minute = parseInteger<uint8_t>(parse.substring(3, 2));
         if (!hour || !minute)
             return SMILTime::unresolved();
         result = *hour * 60 * 60 + *minute * 60 + parse.substring(6).toDouble(ok);
     } else if (doublePointOne == 2 && doublePointTwo == notFound && parse.length() >= 5) { 
-        auto minute = parseInteger<uint8_t>(parse.substring(0, 2));
+        auto minute = parseInteger<uint8_t>(parse.left(2));
         if (!minute)
             return SMILTime::unresolved();
         result = *minute * 60 + parse.substring(3).toDouble(ok);
@@ -408,10 +412,10 @@ bool SVGSMILElement::parseCondition(StringView value, BeginOrEnd beginOrEnd)
     if (nameView.isEmpty())
         return false;
 
-    String nameString;
+    AtomString nameString;
     Condition::Type type;
     int repeats = -1;
-    if (nameView.startsWith("repeat(") && nameView.endsWith(')')) {
+    if (nameView.startsWith("repeat("_s) && nameView.endsWith(')')) {
         // FIXME: For repeat events we just need to add the data carrying TimeEvent class and fire the events at appropiate times.
         auto parsedRepeat = parseInteger<unsigned>(nameView.substring(7, nameView.length() - 8));
         if (!parsedRepeat)
@@ -424,14 +428,14 @@ bool SVGSMILElement::parseCondition(StringView value, BeginOrEnd beginOrEnd)
         if (baseID.isEmpty())
             return false;
         type = Condition::Syncbase;
-        nameString = nameView.toString();
-    } else if (nameView.startsWith("accesskey(")) {
+        nameString = nameView.toAtomString();
+    } else if (nameView.startsWith("accesskey("_s)) {
         // FIXME: accesskey() support.
         type = Condition::AccessKey;
-        nameString = nameView.toString();
+        nameString = nameView.toAtomString();
     } else {
         type = Condition::EventBase;
-        nameString = nameView.toString();
+        nameString = nameView.toAtomString();
     }
     
     m_conditions.append(Condition(type, beginOrEnd, baseID.toString(), WTFMove(nameString), offset, repeats));
@@ -653,8 +657,8 @@ bool SVGSMILElement::isFrozen() const
     
 SVGSMILElement::Restart SVGSMILElement::restart() const
 {    
-    static MainThreadNeverDestroyed<const AtomString> never("never", AtomString::ConstructFromLiteral);
-    static MainThreadNeverDestroyed<const AtomString> whenNotActive("whenNotActive", AtomString::ConstructFromLiteral);
+    static MainThreadNeverDestroyed<const AtomString> never("never"_s);
+    static MainThreadNeverDestroyed<const AtomString> whenNotActive("whenNotActive"_s);
     const AtomString& value = attributeWithoutSynchronization(SVGNames::restartAttr);
     if (value == never)
         return RestartNever;
@@ -665,7 +669,7 @@ SVGSMILElement::Restart SVGSMILElement::restart() const
     
 SVGSMILElement::FillMode SVGSMILElement::fill() const
 {   
-    static MainThreadNeverDestroyed<const AtomString> freeze("freeze", AtomString::ConstructFromLiteral);
+    static MainThreadNeverDestroyed<const AtomString> freeze("freeze"_s);
     const AtomString& value = attributeWithoutSynchronization(SVGNames::fillAttr);
     return value == freeze ? FillFreeze : FillRemove;
 }
@@ -698,8 +702,7 @@ SMILTime SVGSMILElement::repeatCount() const
     if (value.isNull())
         return SMILTime::unresolved();
 
-    static MainThreadNeverDestroyed<const AtomString> indefiniteValue("indefinite", AtomString::ConstructFromLiteral);
-    if (value == indefiniteValue)
+    if (value == indefiniteAtom())
         return SMILTime::indefinite();
     bool ok;
     double result = value.string().toDouble(&ok);

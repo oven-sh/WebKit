@@ -172,7 +172,7 @@ void SpinButtonElement::forwardEvent(Event& event)
     event.setDefaultHandled();
 }
 
-bool SpinButtonElement::willRespondToMouseMoveEvents()
+bool SpinButtonElement::willRespondToMouseMoveEvents() const
 {
     if (renderBox() && shouldRespondToMouseEvents())
         return true;
@@ -180,12 +180,12 @@ bool SpinButtonElement::willRespondToMouseMoveEvents()
     return HTMLDivElement::willRespondToMouseMoveEvents();
 }
 
-bool SpinButtonElement::willRespondToMouseClickEvents()
+bool SpinButtonElement::willRespondToMouseClickEventsWithEditability(Editability editability) const
 {
     if (renderBox() && shouldRespondToMouseEvents())
         return true;
 
-    return HTMLDivElement::willRespondToMouseClickEvents();
+    return HTMLDivElement::willRespondToMouseClickEventsWithEditability(editability);
 }
 
 void SpinButtonElement::doStepAction(int amount)
@@ -256,7 +256,7 @@ void SpinButtonElement::setHovered(bool flag, Style::InvalidationScope invalidat
     HTMLDivElement::setHovered(flag, invalidationScope, request);
 }
 
-bool SpinButtonElement::shouldRespondToMouseEvents()
+bool SpinButtonElement::shouldRespondToMouseEvents() const
 {
     return !m_spinButtonOwner || m_spinButtonOwner->shouldSpinButtonRespondToMouseEvents();
 }

@@ -364,6 +364,7 @@ set(JavaScriptCore_BUILTINS_SOURCES
     ${JAVASCRIPTCORE_DIR}/builtins/TypedArrayConstructor.js
     ${JAVASCRIPTCORE_DIR}/builtins/TypedArrayPrototype.js
     ${JAVASCRIPTCORE_DIR}/builtins/WebAssembly.js
+    ${JAVASCRIPTCORE_DIR}/inspector/InjectedScriptSource.js
 )
 
 add_custom_command(
@@ -396,6 +397,12 @@ set(LLIntSettingsExtractor_PRIVATE_INCLUDE_DIRECTORIES
 set(LLIntSettingsExtractor_FRAMEWORKS ${JavaScriptCore_FRAMEWORKS})
 set(LLIntSettingsExtractor_DEPENDENCIES JavaScriptCore_CopyHeaders)
 WEBKIT_EXECUTABLE(LLIntSettingsExtractor)
+
+# LLIntSettingsExtractor target needs to have a direct or indirect
+# dependency to Bytecodes target for CMake Visual Studio generator to
+# eliminate duplicated custom commands. Otherwise, Bytecodes.h will be
+# generated in both projects.
+add_dependencies(LLIntSettingsExtractor Bytecodes)
 
 WEBKIT_EXECUTABLE_DECLARE(LLIntOffsetsExtractor)
 set(LLIntOffsetsExtractor_SOURCES
@@ -456,7 +463,7 @@ if (MSVC AND NOT ENABLE_C_LOOP)
         COMMAND ${MASM_EXECUTABLE} ${LLINT_MASM_FLAGS} ${JavaScriptCore_DERIVED_SOURCES_DIR}/LowLevelInterpreterWin.obj ${JavaScriptCore_DERIVED_SOURCES_DIR}/LowLevelInterpreterWin.asm
         VERBATIM)
     list(APPEND JavaScriptCore_SOURCES ${JavaScriptCore_DERIVED_SOURCES_DIR}/LowLevelInterpreterWin.obj)
-    add_library(LowLevelInterpreterLib OBJECT llint/LowLevelInterpreter.cpp)
+    add_library(LowLevelInterpreterLib STATIC llint/LowLevelInterpreter.cpp)
 else ()
     # As there's poor toolchain support for using `.file` directives in
     # inline asm (i.e. there's no way to avoid clashes with the `.file`
@@ -465,7 +472,7 @@ else ()
     # an object file. We only need to do this for LowLevelInterpreter.cpp
     # and cmake doesn't allow us to introduce a compiler wrapper for a
     # single source file, so we need to create a separate target for it.
-    add_library(LowLevelInterpreterLib OBJECT llint/LowLevelInterpreter.cpp
+    add_library(LowLevelInterpreterLib STATIC llint/LowLevelInterpreter.cpp
         ${JavaScriptCore_DERIVED_SOURCES_DIR}/${LLIntOutput})
 endif ()
 
@@ -627,7 +634,6 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     bytecode/DataFormat.h
     bytecode/DirectEvalCodeCache.h
     bytecode/ExecutableInfo.h
-    bytecode/ExecutableToCodeBlockEdge.h
     bytecode/ExecutionCounter.h
     bytecode/ExitKind.h
     bytecode/ExitingInlineKind.h
@@ -868,15 +874,14 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     jit/RegisterAtOffsetList.h
     jit/RegisterMap.h
     jit/RegisterSet.h
+    jit/ScratchRegisterAllocator.h
     jit/Snippet.h
     jit/SnippetParams.h
     jit/SnippetReg.h
     jit/SnippetSlowPathCalls.h
     jit/SpillRegistersMode.h
     jit/TagRegistersMode.h
-    jit/TempRegisterSet.h
     jit/ThunkGenerator.h
-    jit/UnusedPointer.h
 
     llint/LLIntOpcode.h
 
@@ -1154,6 +1159,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/ScopedArgumentsTable.h
     runtime/Scribble.h
     runtime/ScriptExecutable.h
+    runtime/ScriptExecutableInlines.h
     runtime/ScriptFetchParameters.h
     runtime/ScriptFetcher.h
     runtime/ShadowRealmObject.h
@@ -1170,7 +1176,6 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/StructureCache.h
     runtime/StructureChain.h
     runtime/StructureID.h
-    runtime/StructureIDBlob.h
     runtime/StructureInlines.h
     runtime/StructureRareData.h
     runtime/StructureRareDataInlines.h
@@ -1187,6 +1192,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/ThrowScope.h
     runtime/ToNativeFromValue.h
     runtime/TypeError.h
+    runtime/TypeInfoBlob.h
     runtime/TypeSet.h
     runtime/TypedArrayAdaptersForwardDeclarations.h
     runtime/TypedArrayAdaptors.h
@@ -1244,7 +1250,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     wasm/WasmOSREntryData.h
     wasm/WasmPageCount.h
     wasm/WasmSections.h
-    wasm/WasmSignature.h
+    wasm/WasmTypeDefinition.h
     wasm/WasmStreamingCompiler.h
     wasm/WasmStreamingParser.h
     wasm/WasmTierUpCount.h
@@ -1399,24 +1405,6 @@ add_custom_command(
     VERBATIM)
 add_custom_target(InspectorBackendCommands DEPENDS "${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorBackendCommands.js")
 
-list(APPEND JavaScriptCore_HEADERS
-    ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorBackendDispatchers.h
-    ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorFrontendDispatchers.h
-    ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorProtocolObjects.h
-    ${JavaScriptCore_DERIVED_SOURCES_DIR}/JSCBuiltins.h
-)
-
-add_custom_command(
-    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/InjectedScriptSource.h ${JavaScriptCore_DERIVED_SOURCES_DIR}/InjectedScriptSource.min.js
-    MAIN_DEPENDENCY ${JAVASCRIPTCORE_DIR}/inspector/InjectedScriptSource.js
-    DEPENDS ${JavaScriptCore_SCRIPTS_DIR}/xxd.pl ${JavaScriptCore_SCRIPTS_DIR}/jsmin.py
-    COMMAND ${CMAKE_COMMAND} -E echo "//# sourceURL=__InjectedScript_InjectedScriptSource.js" > ${JavaScriptCore_DERIVED_SOURCES_DIR}/InjectedScriptSource.min.js
-    COMMAND ${PYTHON_EXECUTABLE} ${JavaScriptCore_SCRIPTS_DIR}/jsmin.py < ${JAVASCRIPTCORE_DIR}/inspector/InjectedScriptSource.js >> ${JavaScriptCore_DERIVED_SOURCES_DIR}/InjectedScriptSource.min.js
-    COMMAND ${PERL_EXECUTABLE} ${JavaScriptCore_SCRIPTS_DIR}/xxd.pl InjectedScriptSource_js ${JavaScriptCore_DERIVED_SOURCES_DIR}/InjectedScriptSource.min.js ${JavaScriptCore_DERIVED_SOURCES_DIR}/InjectedScriptSource.h
-    VERBATIM)
-
-list(APPEND JavaScriptCore_HEADERS ${JavaScriptCore_DERIVED_SOURCES_DIR}/InjectedScriptSource.h)
-
 if (WTF_CPU_X86_64)
     if (MSVC AND NOT ENABLE_C_LOOP)
         add_custom_command(
@@ -1501,38 +1489,9 @@ if (CMAKE_COMPILER_IS_GNUCXX AND GCC_OFFLINEASM_SOURCE_MAP)
         COMPILE_OPTIONS "-fno-lto")
 endif ()
 
-# When building JavaScriptCore as an object library, we need to make sure the
-# lowlevelinterpreter lib objects get propogated.
-if (${JavaScriptCore_LIBRARY_TYPE} STREQUAL "OBJECT")
-    list(APPEND JavaScriptCore_PRIVATE_LIBRARIES $<TARGET_OBJECTS:LowLevelInterpreterLib>)
-else ()
-    list(APPEND JavaScriptCore_SOURCES $<TARGET_OBJECTS:LowLevelInterpreterLib>)
-endif ()
+list(APPEND JavaScriptCore_PRIVATE_LIBRARIES LowLevelInterpreterLib)
 
 WEBKIT_COMPUTE_SOURCES(JavaScriptCore)
-list(APPEND JavaScriptCore_SOURCES
-    disassembler/zydis/Zydis/Zycore.c
-    disassembler/zydis/Zydis/ZycoreAllocator.c
-    disassembler/zydis/Zydis/ZycoreBitset.c
-    disassembler/zydis/Zydis/ZycoreFormat.c
-    disassembler/zydis/Zydis/ZycoreList.c
-    disassembler/zydis/Zydis/ZycoreString.c
-    disassembler/zydis/Zydis/ZycoreVector.c
-    disassembler/zydis/Zydis/Zydis.c
-    disassembler/zydis/Zydis/ZydisDecoder.c
-    disassembler/zydis/Zydis/ZydisDecoderData.c
-    disassembler/zydis/Zydis/ZydisFormatter.c
-    disassembler/zydis/Zydis/ZydisFormatterATT.c
-    disassembler/zydis/Zydis/ZydisFormatterBase.c
-    disassembler/zydis/Zydis/ZydisFormatterBuffer.c
-    disassembler/zydis/Zydis/ZydisFormatterIntel.c
-    disassembler/zydis/Zydis/ZydisMetaInfo.c
-    disassembler/zydis/Zydis/ZydisMnemonic.c
-    disassembler/zydis/Zydis/ZydisRegister.c
-    disassembler/zydis/Zydis/ZydisSharedData.c
-    disassembler/zydis/Zydis/ZydisString.c
-    disassembler/zydis/Zydis/ZydisUtils.c
-)
 WEBKIT_FRAMEWORK(JavaScriptCore)
 WEBKIT_FRAMEWORK_TARGET(JavaScriptCore)
 

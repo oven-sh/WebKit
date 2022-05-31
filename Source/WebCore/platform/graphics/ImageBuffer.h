@@ -31,18 +31,45 @@
 #include "ImageBufferBackend.h"
 #include "RenderingMode.h"
 #include "RenderingResourceIdentifier.h"
+#include <wtf/OptionSet.h>
 #include <wtf/RefCounted.h>
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
 
 class Filter;
+class HostWindow;
+#if HAVE(IOSURFACE)
+class IOSurfacePool;
+#endif
+
+enum class ImageBufferOptions : uint8_t {
+    Accelerated     = 1 << 0,
+    UseDisplayList  = 1 << 1
+};
 
 class ImageBuffer : public ThreadSafeRefCounted<ImageBuffer, WTF::DestructionThread::Main>, public CanMakeWeakPtr<ImageBuffer> {
 public:
+    struct CreationContext {
+        // clang 13.1.6 throws errors if we use default initializers here.
+        HostWindow* hostWindow;
+#if HAVE(IOSURFACE)
+        IOSurfacePool* surfacePool;
+#endif
+        CreationContext(HostWindow* window = nullptr
+#if HAVE(IOSURFACE)
+            , IOSurfacePool* pool = nullptr
+#endif
+        )
+            : hostWindow(window)
+#if HAVE(IOSURFACE)
+            , surfacePool(pool)
+#endif
+        { }
+    };
+
     // Will return a null pointer on allocation failure.
-    WEBCORE_EXPORT static RefPtr<ImageBuffer> create(const FloatSize&, RenderingMode, ShouldUseDisplayList, RenderingPurpose, float resolutionScale, const DestinationColorSpace&, PixelFormat, const HostWindow* = nullptr);
-    WEBCORE_EXPORT static RefPtr<ImageBuffer> create(const FloatSize&, RenderingMode, float resolutionScale, const DestinationColorSpace&, PixelFormat, const HostWindow* = nullptr);
+    WEBCORE_EXPORT static RefPtr<ImageBuffer> create(const FloatSize&, RenderingPurpose, float resolutionScale, const DestinationColorSpace&, PixelFormat, OptionSet<ImageBufferOptions> = { }, const CreationContext& = { });
 
     RefPtr<ImageBuffer> clone() const;
 
@@ -61,6 +88,7 @@ public:
     virtual ImageBufferBackend* ensureBackendCreated() const = 0;
 
     virtual RenderingMode renderingMode() const = 0;
+    virtual RenderingPurpose renderingPurpose() const = 0;
     virtual bool canMapBackingStore() const = 0;
     virtual RenderingResourceIdentifier renderingResourceIdentifier() const { return { }; }
 
@@ -70,7 +98,7 @@ public:
     virtual GraphicsContext* drawingContext() { return nullptr; }
     virtual bool prefersPreparationForDisplay() { return false; }
     virtual void flushDrawingContext() { }
-    virtual void flushDrawingContextAsync() { }
+    virtual bool flushDrawingContextAsync() { return false; }
     virtual void didFlush(GraphicsContextFlushIdentifier) { }
 
     virtual FloatSize logicalSize() const = 0;
@@ -88,8 +116,6 @@ public:
 
     virtual bool isInUse() const = 0;
     virtual void releaseGraphicsContext() = 0;
-    virtual void releaseBufferToPool() = 0;
-
     // Returns true on success.
     virtual bool setVolatile() = 0;
     virtual SetNonVolatileResult setNonVolatile() = 0;
@@ -126,6 +152,10 @@ public:
     virtual bool copyToPlatformTexture(GraphicsContextGL&, GCGLenum, PlatformGLObject, GCGLenum, bool, bool) const = 0;
     virtual PlatformLayer* platformLayer() const = 0;
 
+#if USE(CAIRO)
+    virtual RefPtr<cairo_surface_t> createCairoSurface() { return nullptr; }
+#endif
+
 protected:
     ImageBuffer() = default;
 
@@ -133,5 +163,12 @@ protected:
     virtual RefPtr<Image> sinkIntoImage(PreserveResolution = PreserveResolution::No) = 0;
     virtual void drawConsuming(GraphicsContext&, const FloatRect& destRect, const FloatRect& srcRect, const ImagePaintingOptions&) = 0;
 };
+
+inline OptionSet<ImageBufferOptions> bufferOptionsForRendingMode(RenderingMode renderingMode)
+{
+    if (renderingMode == RenderingMode::Accelerated)
+        return { ImageBufferOptions::Accelerated };
+    return { };
+}
 
 } // namespace WebCore

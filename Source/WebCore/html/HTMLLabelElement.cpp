@@ -167,10 +167,10 @@ void HTMLLabelElement::defaultEventHandler(Event& event)
     HTMLElement::defaultEventHandler(event);
 }
 
-bool HTMLLabelElement::willRespondToMouseClickEvents()
+bool HTMLLabelElement::willRespondToMouseClickEventsWithEditability(Editability editability) const
 {
     auto element = control();
-    return (element && element->willRespondToMouseClickEvents()) || HTMLElement::willRespondToMouseClickEvents();
+    return (element && element->willRespondToMouseClickEventsWithEditability(editability)) || HTMLElement::willRespondToMouseClickEventsWithEditability(editability);
 }
 
 void HTMLLabelElement::focus(const FocusOptions& options)
@@ -196,6 +196,30 @@ bool HTMLLabelElement::accessKeyAction(bool sendMouseEvents)
         return element->accessKeyAction(sendMouseEvents);
 
     return HTMLElement::accessKeyAction(sendMouseEvents);
+}
+
+auto HTMLLabelElement::insertedIntoAncestor(InsertionType insertionType, ContainerNode& parentOfInsertedTree) -> InsertedIntoAncestorResult
+{
+    auto result = HTMLElement::insertedIntoAncestor(insertionType, parentOfInsertedTree);
+
+    if (parentOfInsertedTree.isInTreeScope() && insertionType.treeScopeChanged) {
+        auto& newScope = parentOfInsertedTree.treeScope();
+        if (newScope.shouldCacheLabelsByForAttribute())
+            updateLabel(newScope, nullAtom(), attributeWithoutSynchronization(forAttr));
+    }
+
+    return result;
+}
+
+void HTMLLabelElement::removedFromAncestor(RemovalType removalType, ContainerNode& oldParentOfRemovedTree)
+{
+    if (oldParentOfRemovedTree.isInTreeScope() && removalType.treeScopeChanged) {
+        auto& oldScope = oldParentOfRemovedTree.treeScope();
+        if (oldScope.shouldCacheLabelsByForAttribute())
+            updateLabel(oldScope, attributeWithoutSynchronization(forAttr), nullAtom());
+    }
+
+    HTMLElement::removedFromAncestor(removalType, oldParentOfRemovedTree);
 }
 
 } // namespace

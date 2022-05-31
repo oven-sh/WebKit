@@ -341,7 +341,10 @@ void WriteResultsFile(bool interrupted,
 
         js::Value times;
         times.SetArray();
-        times.PushBack(result.elapsedTimeSeconds, allocator);
+        for (double elapsedTimeSeconds : result.elapsedTimeSeconds)
+        {
+            times.PushBack(elapsedTimeSeconds, allocator);
+        }
 
         jsResult.AddMember("times", times, allocator);
 
@@ -430,7 +433,7 @@ void UpdateCurrentTestResult(const testing::TestResult &resultIn, TestResults *r
         resultOut.type = TestResultType::Pass;
     }
 
-    resultOut.elapsedTimeSeconds = resultsOut->currentTestTimer.getElapsedWallClockTime();
+    resultOut.elapsedTimeSeconds.back() = resultsOut->currentTestTimer.getElapsedWallClockTime();
 }
 
 TestIdentifier GetTestIdentifier(const testing::TestInfo &testInfo)
@@ -611,7 +614,7 @@ bool GetTestArtifactsFromJSON(const js::Value::ConstObject &obj,
         return false;
     }
 
-    const js::Value::ConstObject &artifacts = jsArtifacts.GetObject();
+    const js::Value::ConstObject &artifacts = jsArtifacts.GetObj();
     for (const auto &artifactMember : artifacts)
     {
         const js::Value &artifact = artifactMember.value;
@@ -700,7 +703,7 @@ bool GetSingleTestResultFromJSON(const js::Value &name,
         }
     }
 
-    double elapsedTimeSeconds = 0.0;
+    std::vector<double> elapsedTimeSeconds;
     if (obj.HasMember("times"))
     {
         const js::Value &times = obj["times"];
@@ -710,12 +713,19 @@ bool GetSingleTestResultFromJSON(const js::Value &name,
         }
 
         const js::Value::ConstArray &timesArray = times.GetArray();
-        if (timesArray.Size() != 1 || !timesArray[0].IsDouble())
+        if (timesArray.Size() < 1)
         {
             return false;
         }
+        for (const js::Value &time : timesArray)
+        {
+            if (!time.IsDouble())
+            {
+                return false;
+            }
 
-        elapsedTimeSeconds = timesArray[0].GetDouble();
+            elapsedTimeSeconds.push_back(time.GetDouble());
+        }
     }
 
     TestResult &result        = resultsOut->results[id];
@@ -733,7 +743,7 @@ bool GetTestResultsFromJSON(const js::Document &document, TestResults *resultsOu
         return false;
     }
 
-    const js::Value::ConstObject &tests = document["tests"].GetObject();
+    const js::Value::ConstObject &tests = document["tests"].GetObj();
     for (const auto &testMember : tests)
     {
         // Get test identifier.
@@ -752,7 +762,7 @@ bool GetTestResultsFromJSON(const js::Document &document, TestResults *resultsOu
             return false;
         }
 
-        const js::Value::ConstObject &obj = value.GetObject();
+        const js::Value::ConstObject &obj = value.GetObj();
 
         if (BeginsWith(name.GetString(), kArtifactsFakeTestName))
         {
@@ -802,8 +812,17 @@ bool MergeTestResults(TestResults *input, TestResults *output, int flakyRetries)
             }
             else
             {
+                outputResult.type = inputResult.type;
+            }
+            if (runCount == 1)
+            {
                 outputResult.elapsedTimeSeconds = inputResult.elapsedTimeSeconds;
-                outputResult.type               = inputResult.type;
+            }
+            else
+            {
+                outputResult.elapsedTimeSeconds.insert(outputResult.elapsedTimeSeconds.end(),
+                                                       inputResult.elapsedTimeSeconds.begin(),
+                                                       inputResult.elapsedTimeSeconds.end());
             }
         }
     }
@@ -1369,6 +1388,7 @@ bool TestSuite::parseSingleArg(const char *argument)
             ParseStringArg("--isolated_script_test_perf_output=", argument, &mHistogramJsonFile) ||
             ParseStringArg(kRenderTestOutputDir, argument, &mTestArtifactDirectory) ||
             ParseStringArg(kIsolatedOutDir, argument, &mTestArtifactDirectory) ||
+            ParseFlag("--test-launcher-bot-mode", argument, &mBotMode) ||
             ParseFlag("--bot-mode", argument, &mBotMode) ||
             ParseFlag("--debug-test-groups", argument, &mDebugTestGroups) ||
             ParseFlag(kGTestListTests, argument, &mGTestListTests) ||
@@ -1382,9 +1402,9 @@ void TestSuite::onCrashOrTimeout(TestResultType crashOrTimeout)
     std::lock_guard<std::mutex> guard(mTestResults.currentTestMutex);
     if (mTestResults.currentTest.valid())
     {
-        TestResult &result        = mTestResults.results[mTestResults.currentTest];
-        result.type               = crashOrTimeout;
-        result.elapsedTimeSeconds = mTestResults.currentTestTimer.getElapsedWallClockTime();
+        TestResult &result               = mTestResults.results[mTestResults.currentTest];
+        result.type                      = crashOrTimeout;
+        result.elapsedTimeSeconds.back() = mTestResults.currentTestTimer.getElapsedWallClockTime();
     }
 
     if (mResultsFile.empty())
@@ -1612,7 +1632,7 @@ bool TestSuite::finishProcess(ProcessInfo *processInfo)
         }
         else if (result.type == TestResultType::Pass)
         {
-            printf(" (%0.1lf ms)\n", result.elapsedTimeSeconds * 1000.0);
+            printf(" (%0.1lf ms)\n", result.elapsedTimeSeconds.back() * 1000.0);
         }
         else if (result.type == TestResultType::Skip)
         {
@@ -1620,7 +1640,7 @@ bool TestSuite::finishProcess(ProcessInfo *processInfo)
         }
         else if (result.type == TestResultType::Timeout)
         {
-            printf(" (TIMEOUT in %0.1lf s)\n", result.elapsedTimeSeconds);
+            printf(" (TIMEOUT in %0.1lf s)\n", result.elapsedTimeSeconds.back());
             mFailureCount++;
         }
         else

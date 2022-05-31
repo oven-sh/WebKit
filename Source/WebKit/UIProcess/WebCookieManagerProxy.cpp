@@ -49,7 +49,8 @@ WebCookieManagerProxy::~WebCookieManagerProxy()
 {
     if (m_networkProcess)
         m_networkProcess->removeMessageReceiver(Messages::WebCookieManagerProxy::messageReceiverName());
-    ASSERT(m_cookieObservers.isEmpty());
+    if (!m_cookieObservers.isEmpty())
+        RELEASE_LOG(Storage, "WebCookieManagerProxy::~WebCookieManagerProxy %u cookie observers will be invalidated", m_cookieObservers.size());
 }
 
 void WebCookieManagerProxy::getHostnamesWithCookies(PAL::SessionID sessionID, CompletionHandler<void(Vector<String>&&)>&& callbackFunction)
@@ -60,16 +61,20 @@ void WebCookieManagerProxy::getHostnamesWithCookies(PAL::SessionID sessionID, Co
         callbackFunction({ });
 }
 
-void WebCookieManagerProxy::deleteCookiesForHostnames(PAL::SessionID sessionID, const Vector<String>& hostnames)
+void WebCookieManagerProxy::deleteCookiesForHostnames(PAL::SessionID sessionID, const Vector<String>& hostnames, CompletionHandler<void()>&& completionHandler)
 {
     if (m_networkProcess)
-        m_networkProcess->send(Messages::WebCookieManager::DeleteCookiesForHostnames(sessionID, hostnames), 0);
+        m_networkProcess->sendWithAsyncReply(Messages::WebCookieManager::DeleteCookiesForHostnames(sessionID, hostnames), WTFMove(completionHandler));
+    else
+        completionHandler();
 }
 
-void WebCookieManagerProxy::deleteAllCookies(PAL::SessionID sessionID)
+void WebCookieManagerProxy::deleteAllCookies(PAL::SessionID sessionID, CompletionHandler<void()>&& completionHandler)
 {
     if (m_networkProcess)
-        m_networkProcess->send(Messages::WebCookieManager::DeleteAllCookies(sessionID), 0);
+        m_networkProcess->sendWithAsyncReply(Messages::WebCookieManager::DeleteAllCookies(sessionID), WTFMove(completionHandler));
+    else
+        completionHandler();
 }
 
 void WebCookieManagerProxy::deleteCookie(PAL::SessionID sessionID, const Cookie& cookie, CompletionHandler<void()>&& callbackFunction)

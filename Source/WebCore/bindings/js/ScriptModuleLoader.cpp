@@ -97,7 +97,7 @@ static Expected<URL, String> resolveModuleSpecifier(ScriptExecutionContext& cont
     if (absoluteURL.isValid())
         return absoluteURL;
 
-    if (!specifier.startsWith('/') && !specifier.startsWith("./") && !specifier.startsWith("../"))
+    if (!specifier.startsWith('/') && !specifier.startsWith("./"_s) && !specifier.startsWith("../"_s))
         return makeUnexpected(makeString("Module specifier, '"_s, specifier, "' does not start with \"/\", \"./\", or \"../\". Referenced from "_s, baseURL.string()));
 
     URL result;
@@ -151,7 +151,7 @@ static void rejectToPropagateNetworkError(DeferredPromise& deferred, ModuleFetch
         // https://bugs.webkit.org/show_bug.cgi?id=167553
         auto* error = JSC::createTypeError(&jsGlobalObject, message);
         ASSERT(error);
-        error->putDirect(vm, static_cast<JSVMClientData&>(*vm.clientData).builtinNames().failureKindPrivateName(), JSC::jsNumber(static_cast<int32_t>(failureKind)));
+        error->putDirect(vm, builtinNames(vm).failureKindPrivateName(), JSC::jsNumber(static_cast<int32_t>(failureKind)));
         return error;
     });
 }
@@ -163,7 +163,7 @@ static void rejectWithFetchError(DeferredPromise& deferred, ExceptionCode ec, co
         JSC::VM& vm = jsGlobalObject.vm();
         JSC::JSObject* error = jsCast<JSC::JSObject*>(createDOMException(&jsGlobalObject, ec, message));
         ASSERT(error);
-        error->putDirect(vm, static_cast<JSVMClientData&>(*vm.clientData).builtinNames().failureKindPrivateName(), JSC::jsNumber(static_cast<int32_t>(ModuleFetchFailureKind::WasFetchError)));
+        error->putDirect(vm, builtinNames(vm).failureKindPrivateName(), JSC::jsNumber(static_cast<int32_t>(ModuleFetchFailureKind::WasFetchError)));
         return error;
     });
 }
@@ -171,7 +171,7 @@ static void rejectWithFetchError(DeferredPromise& deferred, ExceptionCode ec, co
 JSC::JSInternalPromise* ScriptModuleLoader::fetch(JSC::JSGlobalObject* jsGlobalObject, JSC::JSModuleLoader*, JSC::JSValue moduleKeyValue, JSC::JSValue parameters, JSC::JSValue scriptFetcher)
 {
     JSC::VM& vm = jsGlobalObject->vm();
-    ASSERT(JSC::jsDynamicCast<JSC::JSScriptFetcher*>(vm, scriptFetcher));
+    ASSERT(JSC::jsDynamicCast<JSC::JSScriptFetcher*>(scriptFetcher));
 
     auto& globalObject = *JSC::jsCast<JSDOMGlobalObject*>(jsGlobalObject);
     auto* jsPromise = JSC::JSInternalPromise::create(vm, globalObject.internalPromiseStructure());
@@ -196,7 +196,7 @@ JSC::JSInternalPromise* ScriptModuleLoader::fetch(JSC::JSGlobalObject* jsGlobalO
     }
 
     RefPtr<ModuleFetchParameters> topLevelFetchParameters;
-    if (auto* scriptFetchParameters = JSC::jsDynamicCast<JSC::JSScriptFetchParameters*>(vm, parameters))
+    if (auto* scriptFetchParameters = JSC::jsDynamicCast<JSC::JSScriptFetchParameters*>(parameters))
         topLevelFetchParameters = static_cast<ModuleFetchParameters*>(&scriptFetchParameters->parameters());
 
     if (m_ownerType == OwnerType::Document) {
@@ -258,7 +258,7 @@ JSC::JSValue ScriptModuleLoader::evaluate(JSC::JSGlobalObject* jsGlobalObject, J
     // FIXME: Currently, we only support JSModuleRecord and WebAssemblyModuleRecord.
     // Once the reflective part of the module loader is supported, we will handle arbitrary values.
     // https://whatwg.github.io/loader/#registry-prototype-provide
-    auto* moduleRecord = JSC::jsDynamicCast<JSC::AbstractModuleRecord*>(vm, moduleRecordValue);
+    auto* moduleRecord = JSC::jsDynamicCast<JSC::AbstractModuleRecord*>(moduleRecordValue);
     if (!moduleRecord)
         return JSC::jsUndefined();
 
@@ -371,7 +371,7 @@ JSC::JSObject* ScriptModuleLoader::createImportMetaProperties(JSC::JSGlobalObjec
     URL responseURL = responseURLFromRequestURL(*jsGlobalObject, moduleKeyValue);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    metaProperties->putDirect(vm, JSC::Identifier::fromString(vm, "url"), JSC::jsString(vm, responseURL.string()));
+    metaProperties->putDirect(vm, JSC::Identifier::fromString(vm, "url"_s), JSC::jsString(vm, responseURL.string()));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     return metaProperties;
@@ -482,12 +482,8 @@ void ScriptModuleLoader::notifyFinished(ModuleScriptLoader& moduleScriptLoader, 
         if (MIMETypeRegistry::isSupportedJavaScriptMIMEType(loader.responseMIMEType()))
             type = ModuleType::JavaScript;
 #if ENABLE(WEBASSEMBLY)
-        else if (context().settingsValues().webAssemblyESMIntegrationEnabled && MIMETypeRegistry::isSupportedWebAssemblyMIMEType(loader.responseMIMEType())) {
+        else if (context().settingsValues().webAssemblyESMIntegrationEnabled && MIMETypeRegistry::isSupportedWebAssemblyMIMEType(loader.responseMIMEType()))
             type = ModuleType::WebAssembly;
-            // FIXME: add worker support for Wasm/ESM integration.
-            rejectWithFetchError(promise.get(), TypeError, makeString("WebAssembly modules are not supported in workers yet."));
-            return;
-        }
 #endif
         else {
             // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script
@@ -518,7 +514,12 @@ void ScriptModuleLoader::notifyFinished(ModuleScriptLoader& moduleScriptLoader, 
                 return JSC::JSSourceCode::create(jsGlobalObject.vm(),
                     JSC::SourceCode { ScriptSourceCode { loader.script(), WTFMove(responseURL), { }, JSC::SourceProviderSourceType::Module, loader.scriptFetcher() }.jsSourceCode() });
                 break;
+#if ENABLE(WEBASSEMBLY)
             case ModuleType::WebAssembly:
+                return JSC::JSSourceCode::create(jsGlobalObject.vm(),
+                    JSC::SourceCode { WebAssemblyScriptSourceCode { loader.script(), WTFMove(responseURL), loader.scriptFetcher() }.jsSourceCode() });
+                break;
+#endif
             default:
                 RELEASE_ASSERT_NOT_REACHED();
             }

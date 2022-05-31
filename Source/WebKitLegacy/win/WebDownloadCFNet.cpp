@@ -192,8 +192,7 @@ HRESULT WebDownload::initToResumeWithBundle(_In_ BSTR bundlePath, _In_opt_ IWebD
     // Attempt to remove the ".download" extension from the bundle for the final file destination
     // Failing that, we clear m_destination and will ask the delegate later once the download starts
     if (m_bundlePath.endsWithIgnoringASCIICase(DownloadBundle::fileExtension())) {
-        m_destination = m_bundlePath.isolatedCopy();
-        m_destination.truncate(m_destination.length() - DownloadBundle::fileExtension().length());
+        m_destination = StringView(m_bundlePath).left(m_destination.length() - DownloadBundle::fileExtension().length()).toString().isolatedCopy();
     } else
         m_destination = String();
     
@@ -306,7 +305,7 @@ HRESULT WebDownload::cancelAuthenticationChallenge(_In_opt_ IWebURLAuthenticatio
     }
 
     // FIXME: Do we need a URL or description for this error code?
-    ResourceError error(String(WebURLErrorDomain), WebURLErrorUserCancelledAuthentication, URL(), "");
+    ResourceError error(String(WebURLErrorDomain), WebURLErrorUserCancelledAuthentication, URL(), emptyString());
     COMPtr<WebError> webError(AdoptCOM, WebError::createInstance(error));
     m_delegate->didFailWithError(this, webError.get());
 

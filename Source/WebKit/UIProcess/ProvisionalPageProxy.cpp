@@ -36,6 +36,7 @@
 #include "URLSchemeTaskParameters.h"
 #include "WebBackForwardCacheEntry.h"
 #include "WebBackForwardList.h"
+#include "WebBackForwardListCounts.h"
 #include "WebBackForwardListItem.h"
 #include "WebErrors.h"
 #include "WebNavigationDataStore.h"
@@ -83,8 +84,10 @@ ProvisionalPageProxy::ProvisionalPageProxy(WebPageProxy& page, Ref<WebProcessPro
     m_process->addMessageReceiver(Messages::WebPageProxy::messageReceiverName(), m_webPageID, *this);
     m_process->addProvisionalPageProxy(*this);
 
-    if (&m_process->websiteDataStore() != &m_page.websiteDataStore())
-        m_process->processPool().pageBeginUsingWebsiteDataStore(m_page.identifier(), m_process->websiteDataStore());
+    m_websiteDataStore = m_process->websiteDataStore();
+    ASSERT(m_websiteDataStore);
+    if (m_websiteDataStore && m_websiteDataStore != &m_page.websiteDataStore())
+        m_process->processPool().pageBeginUsingWebsiteDataStore(m_page.identifier(), *m_websiteDataStore);
 
     // If we are reattaching to a SuspendedPage, then the WebProcess' WebPage already exists and
     // WebPageProxy::didCreateMainFrame() will not be called to initialize m_mainFrame. In such
@@ -112,8 +115,9 @@ ProvisionalPageProxy::~ProvisionalPageProxy()
     if (!m_wasCommitted) {
         m_page.inspectorController().willDestroyProvisionalPage(*this);
 
-        if (&m_process->websiteDataStore() != &m_page.websiteDataStore())
-            m_process->processPool().pageEndUsingWebsiteDataStore(m_page.identifier(), m_process->websiteDataStore());
+        auto dataStore = m_process->websiteDataStore();
+        if (dataStore && dataStore!= &m_page.websiteDataStore())
+            m_process->processPool().pageEndUsingWebsiteDataStore(m_page.identifier(), *dataStore);
 
         m_process->removeMessageReceiver(Messages::WebPageProxy::messageReceiverName(), m_webPageID);
         send(Messages::WebPage::Close());
@@ -238,8 +242,10 @@ void ProvisionalPageProxy::didCreateMainFrame(FrameIdentifier frameID)
 
     // Restore the main frame's committed URL as some clients may rely on it until the next load is committed.
     RefPtr previousMainFrame = m_page.mainFrame();
-    if (previousMainFrame)
+    if (previousMainFrame) {
         m_mainFrame->frameLoadState().setURL(previousMainFrame->url());
+        previousMainFrame->transferNavigationCallbackToFrame(*m_mainFrame);
+    }
 
     // Normally, notification of a server redirect comes from the WebContent process.
     // If we are process swapping in response to a server redirect then that notification will not come from the new WebContent process.

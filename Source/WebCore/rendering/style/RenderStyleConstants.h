@@ -49,7 +49,7 @@ enum class PrintColorAdjust : uint8_t {
 // - StyleDifference::Equal - The two styles are identical
 // - StyleDifference::RecompositeLayer - The layer needs its position and transform updated, but no repaint
 // - StyleDifference::Repaint - The object just needs to be repainted.
-// - StyleDifference::RepaintIfTextOrBorderOrOutline - The object needs to be repainted if it contains text or a border or outline.
+// - StyleDifference::RepaintIfText - The object needs to be repainted if it contains text.
 // - StyleDifference::RepaintLayer - The layer and its descendant layers needs to be repainted.
 // - StyleDifference::LayoutPositionedMovementOnly - Only the position of this positioned object has been updated
 // - StyleDifference::SimplifiedLayout - Only overflow needs to be recomputed
@@ -59,7 +59,7 @@ enum class StyleDifference {
     Equal,
     RecompositeLayer,
     Repaint,
-    RepaintIfTextOrBorderOrOutline,
+    RepaintIfText,
     RepaintLayer,
     LayoutPositionedMovementOnly,
     SimplifiedLayout,
@@ -575,7 +575,9 @@ enum class Resize : uint8_t {
     None,
     Both,
     Horizontal,
-    Vertical
+    Vertical,
+    Block,
+    Inline,
 };
 
 // The order of this enum must match the order of the list style types in CSSValueKeywords.in.
@@ -736,7 +738,6 @@ enum class TextTransform : uint8_t {
 
 static const size_t TextDecorationLineBits = 4;
 enum class TextDecorationLine : uint8_t {
-    None          = 0,
     Underline     = 1 << 0,
     Overline      = 1 << 1,
     LineThrough   = 1 << 2,
@@ -751,7 +752,6 @@ enum class TextDecorationStyle : uint8_t {
     Wavy
 };
 
-#if ENABLE(CSS3_TEXT)
 enum class TextAlignLast : uint8_t {
     Auto,
     Start,
@@ -768,7 +768,6 @@ enum class TextJustify : uint8_t {
     InterWord,
     Distribute
 };
-#endif // CSS3_TEXT
 
 enum class TextDecorationSkipInk : uint8_t {
     None,
@@ -1189,6 +1188,7 @@ enum class FontLoadingBehavior : uint8_t {
 enum class EventListenerRegionType : uint8_t {
     Wheel           = 1 << 0,
     NonPassiveWheel = 1 << 1,
+    MouseClick      = 1 << 2,
 };
 
 enum class MathStyle : uint8_t {
@@ -1208,6 +1208,12 @@ enum class ContainerType : uint8_t {
     None,
     Size,
     InlineSize,
+};
+
+enum class ContainIntrinsicSizeType : uint8_t {
+    None,
+    Length,
+    AutoAndLength
 };
 
 CSSBoxType transformBoxToCSSBoxType(TransformBox);
@@ -1321,6 +1327,7 @@ WTF::TextStream& operator<<(WTF::TextStream&, Visibility);
 WTF::TextStream& operator<<(WTF::TextStream&, WhiteSpace);
 WTF::TextStream& operator<<(WTF::TextStream&, WordBreak);
 WTF::TextStream& operator<<(WTF::TextStream&, MathStyle);
+WTF::TextStream& operator<<(WTF::TextStream&, ContainIntrinsicSizeType);
 
 } // namespace WebCore
 

@@ -122,7 +122,7 @@ private:
 #endif
 
 #if ENABLE(IMAGE_ANALYSIS)
-    void requestTextRecognition(const URL& imageURL, const ShareableBitmap::Handle& imageData, const String& identifier, CompletionHandler<void(WebCore::TextRecognitionResult&&)>&&) final;
+    void requestTextRecognition(const URL& imageURL, const ShareableBitmap::Handle& imageData, const String& source, const String& target, CompletionHandler<void(WebCore::TextRecognitionResult&&)>&&) final;
 #endif
 
     RefPtr<WebPopupMenuProxy> createPopupMenuProxy(WebPageProxy&) override;
@@ -211,10 +211,10 @@ private:
     void enableInspectorNodeSearch() override;
     void disableInspectorNodeSearch() override;
 
-    void scrollingNodeScrollViewWillStartPanGesture() override;
-    void scrollingNodeScrollViewDidScroll() override;
-    void scrollingNodeScrollWillStartScroll() override;
-    void scrollingNodeScrollDidEndScroll() override;
+    void scrollingNodeScrollViewWillStartPanGesture(WebCore::ScrollingNodeID) override;
+    void scrollingNodeScrollViewDidScroll(WebCore::ScrollingNodeID) override;
+    void scrollingNodeScrollWillStartScroll(WebCore::ScrollingNodeID) override;
+    void scrollingNodeScrollDidEndScroll(WebCore::ScrollingNodeID) override;
         
     void requestScrollToRect(const WebCore::FloatRect& targetRect, const WebCore::FloatPoint& origin) override;
         
@@ -306,6 +306,11 @@ private:
     void beginFullscreenVideoExtraction(const ShareableBitmap::Handle&, AVPlayerViewController *) final;
     void cancelFullscreenVideoExtraction(AVPlayerViewController *) final;
     bool isFullscreenVideoExtractionEnabled() const final;
+
+    void beginElementFullscreenVideoExtraction(const ShareableBitmap::Handle&, WebCore::FloatRect) final;
+    void cancelElementFullscreenVideoExtraction() final;
+
+    bool isInMultitaskingMode() const final;
 
     WeakObjCPtr<WKContentView> m_contentView;
     RetainPtr<WKEditorUndoTarget> m_undoTarget;

@@ -85,11 +85,6 @@ struct WebProcessCreationParameters {
 
     UserData initializationUserData;
 
-#if PLATFORM(IOS_FAMILY)
-    SandboxExtension::Handle cookieStorageDirectoryExtensionHandle;
-    SandboxExtension::Handle containerCachesDirectoryExtensionHandle;
-    SandboxExtension::Handle containerTemporaryDirectoryExtensionHandle;
-#endif
 #if PLATFORM(COCOA) && ENABLE(REMOTE_INSPECTOR)
     SandboxExtension::Handle enableRemoteWebInspectorExtensionHandle;
 #endif
@@ -213,7 +208,6 @@ struct WebProcessCreationParameters {
 #endif
 
 #if PLATFORM(IOS_FAMILY)
-    Vector<SandboxExtension::Handle> dynamicMachExtensionHandles;
     Vector<SandboxExtension::Handle> dynamicIOKitExtensionHandles;
 #endif
 
@@ -254,12 +248,16 @@ struct WebProcessCreationParameters {
 #if USE(GLIB)
     String applicationID;
     String applicationName;
+#if ENABLE(REMOTE_INSPECTOR)
     CString inspectorServerAddress;
+#endif
 #endif
 
 #if USE(ATSPI)
     String accessibilityBusAddress;
 #endif
+
+    String timeZoneOverride;
 };
 
 } // namespace WebKit

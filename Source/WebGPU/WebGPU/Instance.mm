@@ -28,6 +28,7 @@
 
 #import "APIConversions.h"
 #import "Adapter.h"
+#import "HardwareCapabilities.h"
 #import "Surface.h"
 #import <cstring>
 #import <wtf/BlockPtr.h>
@@ -35,18 +36,18 @@
 
 namespace WebGPU {
 
-RefPtr<Instance> Instance::create(const WGPUInstanceDescriptor& descriptor)
+Ref<Instance> Instance::create(const WGPUInstanceDescriptor& descriptor)
 {
     if (!descriptor.nextInChain)
         return adoptRef(*new Instance(nullptr));
 
     if (descriptor.nextInChain->sType != static_cast<WGPUSType>(WGPUSTypeExtended_InstanceCocoaDescriptor))
-        return nullptr;
+        return Instance::createInvalid();
 
     const WGPUInstanceCocoaDescriptor& cocoaDescriptor = reinterpret_cast<const WGPUInstanceCocoaDescriptor&>(*descriptor.nextInChain);
 
     if (cocoaDescriptor.chain.next)
-        return nullptr;
+        return Instance::createInvalid();
 
     return adoptRef(*new Instance(cocoaDescriptor.scheduleWorkBlock));
 }
@@ -56,9 +57,15 @@ Instance::Instance(WGPUScheduleWorkBlock scheduleWorkBlock)
 {
 }
 
+Instance::Instance()
+    : m_scheduleWorkBlock(^(WGPUWorkItem workItem) { defaultScheduleWork(WTFMove(workItem)); })
+    , m_isValid(false)
+{
+}
+
 Instance::~Instance() = default;
 
-RefPtr<Surface> Instance::createSurface(const WGPUSurfaceDescriptor& descriptor)
+Ref<Surface> Instance::createSurface(const WGPUSurfaceDescriptor& descriptor)
 {
     // FIXME: Implement this.
     UNUSED_PARAM(descriptor);
@@ -123,11 +130,12 @@ static NSArray<id<MTLDevice>> *sortedDevices(NSArray<id<MTLDevice>> *devices, WG
         return devices;
 #endif
     case WGPUPowerPreference_Force32:
+        ASSERT_NOT_REACHED();
         return nil;
     }
 }
 
-void Instance::requestAdapter(const WGPURequestAdapterOptions& options, CompletionHandler<void(WGPURequestAdapterStatus, RefPtr<Adapter>&&, String&&)>&& callback)
+void Instance::requestAdapter(const WGPURequestAdapterOptions& options, CompletionHandler<void(WGPURequestAdapterStatus, Ref<Adapter>&&, String&&)>&& callback)
 {
 #if PLATFORM(MAC) || PLATFORM(MACCATALYST)
     NSArray<id<MTLDevice>> *devices = MTLCopyAllDevices();
@@ -142,31 +150,54 @@ void Instance::requestAdapter(const WGPURequestAdapterOptions& options, Completi
     auto sortedDevices = WebGPU::sortedDevices(devices, options.powerPreference);
 
     if (options.nextInChain) {
-        callback(WGPURequestAdapterStatus_Error, nullptr, "Unknown descriptor type"_s);
+        scheduleWork([strongThis = Ref { *this }, callback = WTFMove(callback)]() mutable {
+            callback(WGPURequestAdapterStatus_Error, Adapter::createInvalid(strongThis), "Unknown descriptor type"_s);
+        });
         return;
     }
 
     if (options.forceFallbackAdapter) {
-        callback(WGPURequestAdapterStatus_Unavailable, nullptr, "No adapters present"_s);
+        scheduleWork([strongThis = Ref { *this }, callback = WTFMove(callback)]() mutable {
+            callback(WGPURequestAdapterStatus_Unavailable, Adapter::createInvalid(strongThis), "No adapters present"_s);
+        });
         return;
     }
 
     if (!sortedDevices) {
-        callback(WGPURequestAdapterStatus_Error, nullptr, "Unknown power preference"_s);
+        scheduleWork([strongThis = Ref { *this }, callback = WTFMove(callback)]() mutable {
+            callback(WGPURequestAdapterStatus_Error, Adapter::createInvalid(strongThis), "Unknown power preference"_s);
+        });
         return;
     }
 
     if (!sortedDevices.count) {
-        callback(WGPURequestAdapterStatus_Unavailable, nullptr, "No adapters present"_s);
+        scheduleWork([strongThis = Ref { *this }, callback = WTFMove(callback)]() mutable {
+            callback(WGPURequestAdapterStatus_Unavailable, Adapter::createInvalid(strongThis), "No adapters present"_s);
+        });
         return;
     }
 
     if (!sortedDevices[0]) {
-        callback(WGPURequestAdapterStatus_Error, nullptr, "Adapter is internally null"_s);
+        scheduleWork([strongThis = Ref { *this }, callback = WTFMove(callback)]() mutable {
+            callback(WGPURequestAdapterStatus_Error, Adapter::createInvalid(strongThis), "Adapter is internally null"_s);
+        });
         return;
     }
 
-    callback(WGPURequestAdapterStatus_Success, Adapter::create(sortedDevices[0], *this), { });
+    auto device = sortedDevices[0];
+
+    auto deviceCapabilities = hardwareCapabilities(device);
+
+    if (!deviceCapabilities) {
+        scheduleWork([strongThis = Ref { *this }, callback = WTFMove(callback)]() mutable {
+            callback(WGPURequestAdapterStatus_Error, Adapter::createInvalid(strongThis), "Device does not support WebGPU"_s);
+        });
+        return;
+    }
+
+    scheduleWork([strongThis = Ref { *this }, device = sortedDevices[0], deviceCapabilities = WTFMove(*deviceCapabilities), callback = WTFMove(callback)]() mutable {
+        callback(WGPURequestAdapterStatus_Success, Adapter::create(device, strongThis, WTFMove(deviceCapabilities)), { });
+    });
 }
 
 } // namespace WebGPU
@@ -444,14 +475,14 @@ void wgpuInstanceProcessEvents(WGPUInstance instance)
 
 void wgpuInstanceRequestAdapter(WGPUInstance instance, const WGPURequestAdapterOptions* options, WGPURequestAdapterCallback callback, void* userdata)
 {
-    WebGPU::fromAPI(instance).requestAdapter(*options, [callback, userdata](WGPURequestAdapterStatus status, RefPtr<WebGPU::Adapter>&& adapter, String&& message) {
+    WebGPU::fromAPI(instance).requestAdapter(*options, [callback, userdata](WGPURequestAdapterStatus status, Ref<WebGPU::Adapter>&& adapter, String&& message) {
         callback(status, WebGPU::releaseToAPI(WTFMove(adapter)), message.utf8().data(), userdata);
     });
 }
 
 void wgpuInstanceRequestAdapterWithBlock(WGPUInstance instance, WGPURequestAdapterOptions const * options, WGPURequestAdapterBlockCallback callback)
 {
-    WebGPU::fromAPI(instance).requestAdapter(*options, [callback = WTFMove(callback)](WGPURequestAdapterStatus status, RefPtr<WebGPU::Adapter>&& adapter, String&& message) {
+    WebGPU::fromAPI(instance).requestAdapter(*options, [callback = WTFMove(callback)](WGPURequestAdapterStatus status, Ref<WebGPU::Adapter>&& adapter, String&& message) {
         callback(status, WebGPU::releaseToAPI(WTFMove(adapter)), message.utf8().data());
     });
 }

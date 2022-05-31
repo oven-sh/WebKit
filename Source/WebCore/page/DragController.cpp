@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2007-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -162,7 +162,7 @@ static RefPtr<DocumentFragment> documentFragmentFromDragData(const DragData& dra
             if (!url.isEmpty()) {
                 auto& document = context.start.document();
                 auto anchor = HTMLAnchorElement::create(document);
-                anchor->setHref(url);
+                anchor->setHref(AtomString { url });
                 if (title.isEmpty()) {
                     // Try the plain text first because the URL might be normalized or escaped.
                     if (dragData.containsPlainText())
@@ -170,7 +170,7 @@ static RefPtr<DocumentFragment> documentFragmentFromDragData(const DragData& dra
                     if (title.isEmpty())
                         title = url;
                 }
-                anchor->appendChild(document.createTextNode(title));
+                anchor->appendChild(document.createTextNode(WTFMove(title)));
                 auto fragment = document.createDocumentFragment();
                 fragment->appendChild(anchor);
                 return fragment;
@@ -294,7 +294,9 @@ bool DragController::performDragOperation(const DragData& dragData)
         return false;
 
     client().willPerformDragDestinationAction(DragDestinationAction::Load, dragData);
-    FrameLoadRequest frameLoadRequest { m_page.mainFrame(), ResourceRequest { urlString } };
+    ResourceRequest resourceRequest { urlString };
+    resourceRequest.setIsAppInitiated(false);
+    FrameLoadRequest frameLoadRequest { m_page.mainFrame(), resourceRequest };
     frameLoadRequest.setShouldOpenExternalURLsPolicy(shouldOpenExternalURLsPolicy);
     frameLoadRequest.setIsRequestFromClientOrUserInput();
     m_page.mainFrame().loader().load(WTFMove(frameLoadRequest));
@@ -501,7 +503,7 @@ std::optional<DragOperation> DragController::operationForLoad(const DragData& dr
 
     bool pluginDocumentAcceptsDrags = false;
     if (auto* pluginDocument = dynamicDowncast<PluginDocument>(document)) {
-        if (auto* pluginView = dynamicDowncast<PluginViewBase>(pluginDocument->pluginWidget()))
+        if (auto* pluginView = pluginDocument->pluginWidget())
             pluginDocumentAcceptsDrags = pluginView->shouldAllowNavigationFromDrags();
     }
 

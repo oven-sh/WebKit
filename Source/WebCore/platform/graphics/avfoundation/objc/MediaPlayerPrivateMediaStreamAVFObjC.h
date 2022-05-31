@@ -35,6 +35,7 @@
 #include <wtf/Forward.h>
 #include <wtf/Lock.h>
 #include <wtf/LoggerHelper.h>
+#include <wtf/RobinHoodHashMap.h>
 
 OBJC_CLASS AVSampleBufferDisplayLayer;
 OBJC_CLASS WebRootSampleBufferBoundsChangeListener;
@@ -61,6 +62,9 @@ public:
     virtual ~MediaPlayerPrivateMediaStreamAVFObjC();
 
     static void registerMediaEngine(MediaEngineRegistrar);
+
+    using NativeImageCreator = RefPtr<NativeImage> (*)(const VideoFrame&);
+    WEBCORE_EXPORT static void setNativeImageCreator(NativeImageCreator&&);
 
     // MediaPlayer Factory Methods
     static bool isAvailable();
@@ -95,7 +99,7 @@ private:
 
     void load(const String&) override;
 #if ENABLE(MEDIA_SOURCE)
-    void load(const URL&, const ContentType&, MediaSourcePrivateClient*) override;
+    void load(const URL&, const ContentType&, MediaSourcePrivateClient&) override;
 #endif
     void load(MediaStreamPrivate&) override;
     void cancelLoad() override;
@@ -243,8 +247,8 @@ private:
     };
     CurrentFramePainter m_imagePainter;
 
-    HashMap<String, Ref<AudioTrackPrivateMediaStream>> m_audioTrackMap;
-    HashMap<String, Ref<VideoTrackPrivateMediaStream>> m_videoTrackMap;
+    MemoryCompactRobinHoodHashMap<String, Ref<AudioTrackPrivateMediaStream>> m_audioTrackMap;
+    MemoryCompactRobinHoodHashMap<String, Ref<VideoTrackPrivateMediaStream>> m_videoTrackMap;
 
     MediaPlayer::NetworkState m_networkState { MediaPlayer::NetworkState::Empty };
     MediaPlayer::ReadyState m_readyState { MediaPlayer::ReadyState::HaveNothing };
@@ -289,8 +293,10 @@ private:
     Seconds m_presentationTime { 0 };
     FloatSize m_videoFrameSize;
     VideoFrameTimeMetadata m_sampleMetadata;
+
+    static NativeImageCreator m_nativeImageCreator;
 };
-    
+
 }
 
 #endif // ENABLE(MEDIA_STREAM) && USE(AVFOUNDATION)

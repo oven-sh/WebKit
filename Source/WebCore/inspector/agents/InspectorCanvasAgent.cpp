@@ -38,6 +38,7 @@
 #include "Element.h"
 #include "EventLoop.h"
 #include "Frame.h"
+#include "FrameDestructionObserverInlines.h"
 #include "HTMLCanvasElement.h"
 #include "HTMLImageElement.h"
 #include "HTMLVideoElement.h"
@@ -242,7 +243,7 @@ Protocol::ErrorStringOr<Ref<Protocol::Runtime::RemoteObject>> InspectorCanvasAge
 
     auto result = injectedScript.wrapObject(value, objectGroup);
     if (!result)
-        return makeUnexpected("Internal error: unable to cast Context");
+        return makeUnexpected("Internal error: unable to cast Context"_s);
 
     return result.releaseNonNull();
 }
@@ -502,13 +503,13 @@ void InspectorCanvasAgent::consoleStartRecordingCanvas(CanvasRenderingContext& c
     RecordingOptions recordingOptions;
     if (options) {
         JSC::VM& vm = exec.vm();
-        if (JSC::JSValue optionSingleFrame = options->get(&exec, JSC::Identifier::fromString(vm, "singleFrame")))
+        if (JSC::JSValue optionSingleFrame = options->get(&exec, JSC::Identifier::fromString(vm, "singleFrame"_s)))
             recordingOptions.frameCount = optionSingleFrame.toBoolean(&exec) ? 1 : 0;
-        if (JSC::JSValue optionFrameCount = options->get(&exec, JSC::Identifier::fromString(vm, "frameCount")))
+        if (JSC::JSValue optionFrameCount = options->get(&exec, JSC::Identifier::fromString(vm, "frameCount"_s)))
             recordingOptions.frameCount = optionFrameCount.toNumber(&exec);
-        if (JSC::JSValue optionMemoryLimit = options->get(&exec, JSC::Identifier::fromString(vm, "memoryLimit")))
+        if (JSC::JSValue optionMemoryLimit = options->get(&exec, JSC::Identifier::fromString(vm, "memoryLimit"_s)))
             recordingOptions.memoryLimit = optionMemoryLimit.toNumber(&exec);
-        if (JSC::JSValue optionName = options->get(&exec, JSC::Identifier::fromString(vm, "name")))
+        if (JSC::JSValue optionName = options->get(&exec, JSC::Identifier::fromString(vm, "name"_s)))
             recordingOptions.name = optionName.toWTFString(&exec);
     }
     startRecording(*inspectorCanvas, Protocol::Recording::Initiator::Console, WTFMove(recordingOptions));

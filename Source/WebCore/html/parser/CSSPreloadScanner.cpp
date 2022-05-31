@@ -215,7 +215,7 @@ static bool hasValidImportConditions(StringView conditions)
 
     auto end = conditions.find(')');
     if (end != notFound)
-        return end == conditions.length() - 1 && conditions.startsWith("layer(");
+        return end == conditions.length() - 1 && conditions.startsWith("layer("_s);
 
     return conditions == "layer";
 }
@@ -223,16 +223,16 @@ static bool hasValidImportConditions(StringView conditions)
 void CSSPreloadScanner::emitRule()
 {
     StringView rule(m_rule.data(), m_rule.size());
-    if (equalLettersIgnoringASCIICase(rule, "import")) {
+    if (equalLettersIgnoringASCIICase(rule, "import"_s)) {
         String url = parseCSSStringOrURL(m_ruleValue.data(), m_ruleValue.size());
         StringView conditions(m_ruleConditions.data(), m_ruleConditions.size());
         if (!url.isEmpty() && hasValidImportConditions(conditions)) {
             URL baseElementURL; // FIXME: This should be passed in from the HTMLPreloadScanner via scan(): without it we will get relative URLs wrong.
             // FIXME: Should this be including the charset in the preload request?
-            m_requests->append(makeUnique<PreloadRequest>("css", url, baseElementURL, CachedResource::Type::CSSStyleSheet, String(), PreloadRequest::ModuleScript::No, ReferrerPolicy::EmptyString));
+            m_requests->append(makeUnique<PreloadRequest>("css"_s, url, baseElementURL, CachedResource::Type::CSSStyleSheet, String(), PreloadRequest::ModuleScript::No, ReferrerPolicy::EmptyString));
         }
         m_state = Initial;
-    } else if (equalLettersIgnoringASCIICase(rule, "charset"))
+    } else if (equalLettersIgnoringASCIICase(rule, "charset"_s))
         m_state = Initial;
     else
         m_state = DoneParsingImportRules;

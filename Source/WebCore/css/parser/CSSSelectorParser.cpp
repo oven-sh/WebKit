@@ -30,6 +30,7 @@
 #include "config.h"
 #include "CSSSelectorParser.h"
 
+#include "CommonAtomStrings.h"
 #include "RuntimeEnabledFeatures.h"
 #include <memory>
 #include <wtf/OptionSet.h>
@@ -173,7 +174,7 @@ static bool consumeLangArgumentList(std::unique_ptr<Vector<AtomString>>& argumen
     if (ident.type() != IdentToken && ident.type() != StringToken)
         return false;
     StringView string = ident.value();
-    if (string.startsWith("--"))
+    if (string.startsWith("--"_s))
         return false;
     argumentList->append(string.toAtomString());
     while (!range.atEnd() && range.peek().type() == CommaToken) {
@@ -182,7 +183,7 @@ static bool consumeLangArgumentList(std::unique_ptr<Vector<AtomString>>& argumen
         if (ident.type() != IdentToken && ident.type() != StringToken)
             return false;
         StringView string = ident.value();
-        if (string.startsWith("--"))
+        if (string.startsWith("--"_s))
             return false;
         argumentList->append(string.toAtomString());
     }
@@ -643,8 +644,6 @@ std::unique_ptr<CSSParserSelector> CSSSelectorParser::consumePseudo(CSSParserTok
         if (!selector)
             return nullptr;
         if (selector->match() == CSSSelector::PseudoClass) {
-            if (m_context.mode != UASheetMode && selector->pseudoClassType() == CSSSelector::PseudoClassModalDialog)
-                return nullptr;
             if (!m_context.focusVisibleEnabled && selector->pseudoClassType() == CSSSelector::PseudoClassFocusVisible)
                 return nullptr;
             if (!m_context.hasPseudoClassEnabled && selector->pseudoClassType() == CSSSelector::PseudoClassHas)
@@ -709,7 +708,7 @@ std::unique_ptr<CSSParserSelector> CSSSelectorParser::consumePseudo(CSSParserTok
                 if (block.peek().type() != IdentToken)
                     return nullptr;
                 const CSSParserToken& ident = block.consume();
-                if (!equalIgnoringASCIICase(ident.value(), "of"))
+                if (!equalLettersIgnoringASCIICase(ident.value(), "of"_s))
                     return nullptr;
                 if (block.peek().type() != WhitespaceToken)
                     return nullptr;
@@ -883,7 +882,7 @@ CSSSelector::AttributeMatchType CSSSelectorParser::consumeAttributeFlags(CSSPars
     if (range.peek().type() != IdentToken)
         return CSSSelector::CaseSensitive;
     const CSSParserToken& flag = range.consumeIncludingWhitespace();
-    if (equalIgnoringASCIICase(flag.value(), "i"))
+    if (equalLettersIgnoringASCIICase(flag.value(), "i"_s))
         return CSSSelector::CaseInsensitive;
     m_failedParsing = true;
     return CSSSelector::CaseSensitive;
@@ -920,11 +919,11 @@ static bool consumeANPlusB(CSSParserTokenRange& range, std::pair<int, int>& resu
         return true;
     }
     if (token.type() == IdentToken) {
-        if (equalIgnoringASCIICase(token.value(), "odd")) {
+        if (equalLettersIgnoringASCIICase(token.value(), "odd"_s)) {
             result = std::make_pair(2, 1);
             return true;
         }
-        if (equalIgnoringASCIICase(token.value(), "even")) {
+        if (equalLettersIgnoringASCIICase(token.value(), "even"_s)) {
             result = std::make_pair(2, 0);
             return true;
         }
@@ -932,21 +931,21 @@ static bool consumeANPlusB(CSSParserTokenRange& range, std::pair<int, int>& resu
 
     // The 'n' will end up as part of an ident or dimension. For a valid <an+b>,
     // this will store a string of the form 'n', 'n-', or 'n-123'.
-    String nString;
+    StringView nString;
 
     if (token.type() == DelimiterToken && token.delimiter() == '+' && range.peek().type() == IdentToken) {
         result.first = 1;
-        nString = range.consume().value().toString();
+        nString = range.consume().value();
     } else if (token.type() == DimensionToken && token.numericValueType() == IntegerValueType) {
         result.first = token.numericValue();
-        nString = token.unitString().toString();
+        nString = token.unitString();
     } else if (token.type() == IdentToken) {
         if (token.value()[0] == '-') {
             result.first = -1;
-            nString = token.value().substring(1).toString();
+            nString = token.value().substring(1);
         } else {
             result.first = 1;
-            nString = token.value().toString();
+            nString = token.value();
         }
     }
 
@@ -958,7 +957,7 @@ static bool consumeANPlusB(CSSParserTokenRange& range, std::pair<int, int>& resu
         return false;
 
     if (nString.length() > 2) {
-        auto parsedNumber = parseInteger<int>(StringView { nString }.substring(1));
+        auto parsedNumber = parseInteger<int>(nString.substring(1));
         result.second = parsedNumber.value_or(0);
         return parsedNumber.has_value();
     }

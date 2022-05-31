@@ -97,7 +97,7 @@ static String appendSourceToErrorMessage(CallFrame* callFrame, ErrorInstance* ex
         return message;
     
     if (expressionStart < expressionStop)
-        return appender(message, codeBlock->source().provider()->getRange(expressionStart, expressionStop).toString(), type, ErrorInstance::FoundExactSource);
+        return appender(message, codeBlock->source().provider()->getRange(expressionStart, expressionStop), type, ErrorInstance::FoundExactSource);
 
     // No range information, so give a few characters of context.
     int dataLength = sourceString.length();
@@ -113,13 +113,13 @@ static String appendSourceToErrorMessage(CallFrame* callFrame, ErrorInstance* ex
         stop++;
     while (stop > expressionStart && isStrWhiteSpace(sourceString[stop - 1]))
         stop--;
-    return appender(message, codeBlock->source().provider()->getRange(start, stop).toString(), type, ErrorInstance::FoundApproximateSource);
+    return appender(message, codeBlock->source().provider()->getRange(start, stop), type, ErrorInstance::FoundApproximateSource);
 }
 
 void ErrorInstance::finishCreation(VM& vm, JSGlobalObject* globalObject, const String& message, JSValue cause, SourceAppender appender, RuntimeType type, bool useCurrentFrame)
 {
     Base::finishCreation(vm);
-    ASSERT(inherits(vm, info()));
+    ASSERT(inherits(info()));
 
     m_sourceAppender = appender;
     m_runtimeTypeForCause = type;
@@ -141,7 +141,7 @@ void ErrorInstance::finishCreation(VM& vm, JSGlobalObject* globalObject, const S
     }
 
     if (!messageWithSource.isNull())
-        putDirect(vm, vm.propertyNames->message, jsString(vm, messageWithSource), static_cast<unsigned>(PropertyAttribute::DontEnum));
+        putDirect(vm, vm.propertyNames->message, jsString(vm, WTFMove(messageWithSource)), static_cast<unsigned>(PropertyAttribute::DontEnum));
 
     if (!cause.isEmpty())
         putDirect(vm, vm.propertyNames->cause, cause, static_cast<unsigned>(PropertyAttribute::DontEnum));
@@ -191,7 +191,7 @@ String ErrorInstance::sanitizedNameString(JSGlobalObject* globalObject)
             nameValue = nameSlot.getValue(globalObject, namePropertName);
             break;
         }
-        currentObj = obj->getPrototypeDirect(vm);
+        currentObj = obj->getPrototypeDirect();
     }
     RETURN_IF_EXCEPTION(scope, { });
 

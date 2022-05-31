@@ -36,18 +36,27 @@ struct WGPUPipelineLayoutImpl {
 namespace WebGPU {
 
 class BindGroupLayout;
+class Device;
 
+// https://gpuweb.github.io/gpuweb/#gpupipelinelayout
 class PipelineLayout : public WGPUPipelineLayoutImpl, public RefCounted<PipelineLayout> {
     WTF_MAKE_FAST_ALLOCATED;
 public:
-    static Ref<PipelineLayout> create(Vector<Ref<BindGroupLayout>>&& bindGroupLayouts)
+    static Ref<PipelineLayout> create(Vector<Ref<BindGroupLayout>>&& bindGroupLayouts, Device& device)
     {
-        return adoptRef(*new PipelineLayout(WTFMove(bindGroupLayouts)));
+        return adoptRef(*new PipelineLayout(WTFMove(bindGroupLayouts), device));
+    }
+    static Ref<PipelineLayout> createInvalid(Device& device)
+    {
+        return adoptRef(*new PipelineLayout(device));
     }
 
     ~PipelineLayout();
 
     void setLabel(String&&);
+
+    // FIXME: Is it impossible to legitimately have no bind group layouts in a valid object?
+    bool isValid() const { return !m_bindGroupLayouts.isEmpty(); }
 
     bool operator==(const PipelineLayout&) const;
     bool operator!=(const PipelineLayout&) const;
@@ -55,10 +64,15 @@ public:
     size_t numberOfBindGroupLayouts() const { return m_bindGroupLayouts.size(); }
     const BindGroupLayout& bindGroupLayout(size_t i) const { return m_bindGroupLayouts[i]; }
 
+    Device& device() const { return m_device; }
+
 private:
-    PipelineLayout(Vector<Ref<BindGroupLayout>>&&);
+    PipelineLayout(Vector<Ref<BindGroupLayout>>&&, Device&);
+    PipelineLayout(Device&);
 
     const Vector<Ref<BindGroupLayout>> m_bindGroupLayouts;
+
+    const Ref<Device> m_device;
 };
 
 } // namespace WebGPU

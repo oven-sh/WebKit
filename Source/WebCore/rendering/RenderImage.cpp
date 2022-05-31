@@ -149,7 +149,7 @@ RenderImage::RenderImage(Element& element, RenderStyle&& style, StyleImage* styl
     updateAltText();
 #if ENABLE(SERVICE_CONTROLS)
     if (is<HTMLImageElement>(element))
-        m_hasShadowControls = downcast<HTMLImageElement>(element).imageMenuEnabled();
+        m_hasShadowControls = downcast<HTMLImageElement>(element).isImageMenuEnabled();
 #endif
 }
 
@@ -533,7 +533,7 @@ void RenderImage::paintReplaced(PaintInfo& paintInfo, const LayoutPoint& paintOf
             if (!m_altText.isEmpty()) {
                 auto& font = style().fontCascade();
                 auto& fontMetrics = font.metricsOfPrimaryFont();
-                auto textRun = RenderBlock::constructTextRun(document().displayStringModifiedByEncoding(m_altText), style(), DefaultExpansion, RespectDirection | RespectDirectionOverride);
+                auto textRun = RenderBlock::constructTextRun(document().displayStringModifiedByEncoding(m_altText), style(), ExpansionBehavior::defaultBehavior(), RespectDirection | RespectDirectionOverride);
                 auto textWidth = LayoutUnit { font.width(textRun) };
 
                 auto hasRoomForAltText = [&] {
@@ -858,7 +858,7 @@ void RenderImage::layoutShadowContent(const LayoutSize& oldSize)
 
 void RenderImage::computeIntrinsicRatioInformation(FloatSize& intrinsicSize, double& intrinsicRatio) const
 {
-    ASSERT(!shouldApplySizeContainment(*this));
+    ASSERT(!shouldApplySizeContainment());
     RenderReplaced::computeIntrinsicRatioInformation(intrinsicSize, intrinsicRatio);
 
     // Our intrinsicSize is empty if we're rendering generated images with relative width/height. Figure out the right intrinsic size to use.

@@ -329,12 +329,12 @@ RenderElement* RenderView::rendererForRootBackground() const
     if (!is<HTMLHtmlElement>(documentRenderer.element()))
         return &documentRenderer;
 
-    if (shouldApplyAnyContainment(documentRenderer))
+    if (documentRenderer.shouldApplyAnyContainment())
         return nullptr;
 
     if (auto* body = document().body()) {
         if (auto* renderer = body->renderer()) {
-            if (!shouldApplyAnyContainment(*renderer))
+            if (!renderer->shouldApplyAnyContainment())
                 return renderer;
         }
     }
@@ -380,7 +380,7 @@ void RenderView::paintBoxDecorations(PaintInfo& paintInfo, const LayoutPoint&)
             break;
         }
 
-        if (RenderLayer* compositingLayer = layer->enclosingCompositingLayerForRepaint()) {
+        if (auto* compositingLayer = layer->enclosingCompositingLayerForRepaint().layer) {
             if (!compositingLayer->backing()->paintsIntoWindow()) {
                 frameView().setCannotBlitToWindow();
                 break;
@@ -448,7 +448,7 @@ void RenderView::repaintRootContents()
 
     // Always use layoutOverflowRect() to fix rdar://problem/27182267.
     // This should be cleaned up via webkit.org/b/159913 and webkit.org/b/159914.
-    RenderLayerModelObject* repaintContainer = containerForRepaint();
+    auto* repaintContainer = containerForRepaint().renderer;
     repaintUsingContainer(repaintContainer, computeRectForRepaint(layoutOverflowRect(), repaintContainer));
 }
 

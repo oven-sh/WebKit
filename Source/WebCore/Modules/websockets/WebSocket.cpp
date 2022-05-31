@@ -41,6 +41,7 @@
 #include "EventListener.h"
 #include "EventNames.h"
 #include "Frame.h"
+#include "FrameDestructionObserverInlines.h"
 #include "FrameLoader.h"
 #include "FrameLoaderClient.h"
 #include "InspectorInstrumentation.h"
@@ -235,7 +236,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
         return Exception { SyntaxError };
     }
 
-    if (!m_url.protocolIs("ws") && !m_url.protocolIs("wss")) {
+    if (!m_url.protocolIs("ws"_s) && !m_url.protocolIs("wss"_s)) {
         context.addConsoleMessage(MessageSource::JS, MessageLevel::Error, "Wrong url scheme for WebSocket " + m_url.stringCenterEllipsizedToLength());
         m_state = CLOSED;
         return Exception { SyntaxError };
@@ -352,7 +353,15 @@ ExceptionOr<void> WebSocket::send(const String& message)
         return { };
     }
     // FIXME: WebSocketChannel also has a m_bufferedAmount. Remove that one. This one is the correct one accessed by JS.
-    m_bufferedAmount = saturateAdd(m_bufferedAmount, utf8.length());
+#if HAVE(NSURLSESSION_WEBSOCKET)
+    bool shouldSynchronouslyUpdateBufferedAmount = RuntimeEnabledFeatures::sharedFeatures().isNSURLSessionWebSocketEnabled();
+#elif PLATFORM(MAC)
+    bool shouldSynchronouslyUpdateBufferedAmount = false;
+#else
+    bool shouldSynchronouslyUpdateBufferedAmount = true;
+#endif
+    if (shouldSynchronouslyUpdateBufferedAmount)
+        m_bufferedAmount = saturateAdd(m_bufferedAmount, utf8.length());
     ASSERT(m_channel);
     m_channel->send(WTFMove(utf8));
     return { };
@@ -369,7 +378,15 @@ ExceptionOr<void> WebSocket::send(ArrayBuffer& binaryData)
         m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
         return { };
     }
-    m_bufferedAmount = saturateAdd(m_bufferedAmount, binaryData.byteLength());
+#if HAVE(NSURLSESSION_WEBSOCKET)
+    bool shouldSynchronouslyUpdateBufferedAmount = RuntimeEnabledFeatures::sharedFeatures().isNSURLSessionWebSocketEnabled();
+#elif PLATFORM(MAC)
+    bool shouldSynchronouslyUpdateBufferedAmount = false;
+#else
+    bool shouldSynchronouslyUpdateBufferedAmount = true;
+#endif
+    if (shouldSynchronouslyUpdateBufferedAmount)
+        m_bufferedAmount = saturateAdd(m_bufferedAmount, binaryData.byteLength());
     ASSERT(m_channel);
     m_channel->send(binaryData, 0, binaryData.byteLength());
     return { };
@@ -387,7 +404,15 @@ ExceptionOr<void> WebSocket::send(ArrayBufferView& arrayBufferView)
         m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
         return { };
     }
-    m_bufferedAmount = saturateAdd(m_bufferedAmount, arrayBufferView.byteLength());
+#if HAVE(NSURLSESSION_WEBSOCKET)
+    bool shouldSynchronouslyUpdateBufferedAmount = RuntimeEnabledFeatures::sharedFeatures().isNSURLSessionWebSocketEnabled();
+#elif PLATFORM(MAC)
+    bool shouldSynchronouslyUpdateBufferedAmount = false;
+#else
+    bool shouldSynchronouslyUpdateBufferedAmount = true;
+#endif
+    if (shouldSynchronouslyUpdateBufferedAmount)
+        m_bufferedAmount = saturateAdd(m_bufferedAmount, arrayBufferView.byteLength());
     ASSERT(m_channel);
     m_channel->send(*arrayBufferView.unsharedBuffer(), arrayBufferView.byteOffset(), arrayBufferView.byteLength());
     return { };
@@ -404,7 +429,15 @@ ExceptionOr<void> WebSocket::send(Blob& binaryData)
         m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
         return { };
     }
-    m_bufferedAmount = saturateAdd(m_bufferedAmount, binaryData.size());
+#if HAVE(NSURLSESSION_WEBSOCKET)
+    bool shouldSynchronouslyUpdateBufferedAmount = RuntimeEnabledFeatures::sharedFeatures().isNSURLSessionWebSocketEnabled();
+#elif PLATFORM(MAC)
+    bool shouldSynchronouslyUpdateBufferedAmount = false;
+#else
+    bool shouldSynchronouslyUpdateBufferedAmount = true;
+#endif
+    if (shouldSynchronouslyUpdateBufferedAmount)
+        m_bufferedAmount = saturateAdd(m_bufferedAmount, binaryData.size());
     ASSERT(m_channel);
     m_channel->send(binaryData);
     return { };
@@ -677,8 +710,8 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, ClosingHandshakeCompl
 
 void WebSocket::didUpgradeURL()
 {
-    ASSERT(m_url.protocolIs("ws"));
-    m_url.setProtocol("wss");
+    ASSERT(m_url.protocolIs("ws"_s));
+    m_url.setProtocol("wss"_s);
 }
 
 size_t WebSocket::getFramingOverhead(size_t payloadSize)

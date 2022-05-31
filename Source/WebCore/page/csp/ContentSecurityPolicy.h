@@ -69,6 +69,12 @@ enum class CheckUnsafeHashes : bool { No, Yes };
 
 typedef Vector<std::unique_ptr<ContentSecurityPolicyDirectiveList>> CSPDirectiveListVector;
 
+enum class ContentSecurityPolicyModeForExtension {
+    None,
+    ManifestV2,
+    ManifestV3
+};
+
 class ContentSecurityPolicy {
     WTF_MAKE_FAST_ALLOCATED;
 public:
@@ -170,7 +176,7 @@ public:
     }
 
     // Used by ContentSecurityPolicySource
-    bool protocolMatchesSelf(const URL&) const;
+    const String& selfProtocol() const { return m_selfSourceProtocol; };
 
     void setUpgradeInsecureRequests(bool);
     bool upgradeInsecureRequests() const { return m_upgradeInsecureRequests; }
@@ -192,6 +198,9 @@ public:
     bool isHeaderDelivered() const { return m_isHeaderDelivered; }
 
     const String& evalErrorMessage() const { return m_lastPolicyEvalDisabledErrorMessage; }
+    const String& webAssemblyErrorMessage() const { return m_lastPolicyWebAssemblyDisabledErrorMessage; }
+
+    ContentSecurityPolicyModeForExtension contentSecurityPolicyModeForExtension() const { return m_contentSecurityPolicyModeForExtension; }
 
 private:
     void logToConsole(const String& message, const String& contextURL = String(), const OrdinalNumber& contextLine = OrdinalNumber::beforeFirst(), const OrdinalNumber& contextColumn = OrdinalNumber::beforeFirst(), JSC::JSGlobalObject* = nullptr) const;
@@ -249,6 +258,19 @@ private:
     HashSet<SecurityOriginData> m_insecureNavigationRequestsToUpgrade;
     mutable std::optional<ContentSecurityPolicyResponseHeaders> m_cachedResponseHeaders;
     bool m_isHeaderDelivered { false };
+    ContentSecurityPolicyModeForExtension m_contentSecurityPolicyModeForExtension { ContentSecurityPolicyModeForExtension::None };
 };
 
+} // namespace WebCore
+
+namespace WTF {
+
+template<> struct EnumTraits<WebCore::ContentSecurityPolicyModeForExtension> {
+    using values = EnumValues<
+        WebCore::ContentSecurityPolicyModeForExtension,
+        WebCore::ContentSecurityPolicyModeForExtension::None,
+        WebCore::ContentSecurityPolicyModeForExtension::ManifestV2,
+        WebCore::ContentSecurityPolicyModeForExtension::ManifestV3
+    >;
+    };
 }

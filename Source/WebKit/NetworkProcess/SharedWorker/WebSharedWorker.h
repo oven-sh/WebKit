@@ -30,6 +30,7 @@
 #include <WebCore/SharedWorkerObjectIdentifier.h>
 #include <WebCore/TransferredMessagePort.h>
 #include <WebCore/WorkerFetchResult.h>
+#include <WebCore/WorkerInitializationData.h>
 #include <WebCore/WorkerOptions.h>
 #include <wtf/WeakPtr.h>
 
@@ -60,6 +61,8 @@ public:
 
     void addSharedWorkerObject(WebCore::SharedWorkerObjectIdentifier, const WebCore::TransferredMessagePort&);
     void removeSharedWorkerObject(WebCore::SharedWorkerObjectIdentifier);
+    void suspend(WebCore::SharedWorkerObjectIdentifier);
+    void resume(WebCore::SharedWorkerObjectIdentifier);
     unsigned sharedWorkerObjectsCount() const { return m_sharedWorkerObjects.size(); }
     void forEachSharedWorkerObject(const Function<void(WebCore::SharedWorkerObjectIdentifier, const WebCore::TransferredMessagePort&)>&) const;
     std::optional<WebCore::ProcessIdentifier> firstSharedWorkerObjectProcess() const;
@@ -69,9 +72,14 @@ public:
     bool isRunning() const { return m_isRunning; }
     void markAsRunning() { m_isRunning = true; }
 
+    const WebCore::WorkerInitializationData& initializationData() const { return m_initializationData; }
+    void setInitializationData(WebCore::WorkerInitializationData&& initializationData) { m_initializationData = WTFMove(initializationData); }
+
     const WebCore::WorkerFetchResult& fetchResult() const { return m_fetchResult; }
-    void setFetchResult(WebCore::WorkerFetchResult&& fetchResult) { m_fetchResult = WTFMove(fetchResult); }
+    void setFetchResult(WebCore::WorkerFetchResult&&);
     bool didFinishFetching() const { return !!m_fetchResult.script; }
+
+    void launch(WebSharedWorkerServerToContextConnection&);
 
 private:
     WebSharedWorker(WebSharedWorker&&) = delete;
@@ -79,13 +87,23 @@ private:
     WebSharedWorker(const WebSharedWorker&) = delete;
     WebSharedWorker& operator=(const WebSharedWorker&) = delete;
 
+    void suspendIfNeeded();
+    void resumeIfNeeded();
+
+    struct SharedWorkerObjectState {
+        bool isSuspended { false };
+        WebCore::TransferredMessagePort port;
+    };
+
     WebSharedWorkerServer& m_server;
     WebCore::SharedWorkerIdentifier m_identifier;
     WebCore::SharedWorkerKey m_key;
     WebCore::WorkerOptions m_workerOptions;
-    HashMap<WebCore::SharedWorkerObjectIdentifier, WebCore::TransferredMessagePort> m_sharedWorkerObjects;
+    HashMap<WebCore::SharedWorkerObjectIdentifier, SharedWorkerObjectState> m_sharedWorkerObjects;
     WebCore::WorkerFetchResult m_fetchResult;
+    WebCore::WorkerInitializationData m_initializationData;
     bool m_isRunning { false };
+    bool m_isSuspended { false };
 };
 
 } // namespace WebKit

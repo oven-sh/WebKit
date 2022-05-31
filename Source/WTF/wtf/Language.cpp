@@ -113,16 +113,6 @@ Vector<String> userPreferredLanguagesOverride()
     return preferredLanguagesOverride();
 }
 
-void overrideUserPreferredLanguages(const Vector<String>& override)
-{
-    LOG_WITH_STREAM(Language, stream << "Languages are being overridden to: " << override);
-    {
-        Locker locker { preferredLanguagesOverrideLock };
-        preferredLanguagesOverride() = override;
-    }
-    languageDidChange();
-}
-
 Vector<String> userPreferredLanguages(ShouldMinimizeLanguages shouldMinimizeLanguages)
 {
     {
@@ -146,12 +136,22 @@ Vector<String> userPreferredLanguages(ShouldMinimizeLanguages shouldMinimizeLang
 
 #if !PLATFORM(COCOA)
 
+void overrideUserPreferredLanguages(const Vector<String>& override)
+{
+    LOG_WITH_STREAM(Language, stream << "Languages are being overridden to: " << override);
+    {
+        Locker locker { preferredLanguagesOverrideLock };
+        preferredLanguagesOverride() = override;
+    }
+    languageDidChange();
+}
+
 static String canonicalLanguageIdentifier(const String& languageCode)
 {
     String lowercaseLanguageCode = languageCode.convertToASCIILowercase();
     
     if (lowercaseLanguageCode.length() >= 3 && lowercaseLanguageCode[2] == '_')
-        lowercaseLanguageCode.replace(2, 1, "-");
+        lowercaseLanguageCode = makeStringByReplacing(lowercaseLanguageCode, 2, 1, "-"_s);
 
     return lowercaseLanguageCode;
 }

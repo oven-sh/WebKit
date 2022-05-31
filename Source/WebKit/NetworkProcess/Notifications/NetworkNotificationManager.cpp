@@ -39,33 +39,22 @@
 namespace WebKit {
 using namespace WebCore;
 
-NetworkNotificationManager::NetworkNotificationManager(NetworkSession& networkSession, const String& webPushMachServiceName)
+NetworkNotificationManager::NetworkNotificationManager(NetworkSession& networkSession, const String& webPushMachServiceName, WebPushD::WebPushDaemonConnectionConfiguration&& configuration)
     : m_networkSession(networkSession)
 {
-    if (!m_networkSession.sessionID().isEphemeral() && !webPushMachServiceName.isEmpty())
-        m_connection = makeUnique<WebPushD::Connection>(webPushMachServiceName.utf8(), *this);
-}
-
-void NetworkNotificationManager::maybeSendConnectionConfiguration() const
-{
-    if (m_sentConnectionConfiguration)
-        return;
-    m_sentConnectionConfiguration = true;
-
-    WebPushD::WebPushDaemonConnectionConfiguration configuration;
-    configuration.useMockBundlesForTesting = m_networkSession.webPushDaemonUsesMockBundlesForTesting();
-
+    if (!m_networkSession.sessionID().isEphemeral() && !webPushMachServiceName.isEmpty()) {
 #if PLATFORM(COCOA)
-    auto token = m_networkSession.networkProcess().parentProcessConnection()->getAuditToken();
-    if (token) {
-        Vector<uint8_t> auditTokenData;
-        auditTokenData.resize(sizeof(*token));
-        memcpy(auditTokenData.data(), &(*token), sizeof(*token));
-        configuration.hostAppAuditTokenData = WTFMove(auditTokenData);
-    }
+        auto token = m_networkSession.networkProcess().parentProcessConnection()->getAuditToken();
+        if (token) {
+            Vector<uint8_t> auditTokenData;
+            auditTokenData.resize(sizeof(*token));
+            memcpy(auditTokenData.data(), &(*token), sizeof(*token));
+            configuration.hostAppAuditTokenData = WTFMove(auditTokenData);
+        }
 #endif
 
-    sendMessage<WebPushD::MessageType::UpdateConnectionConfiguration>(configuration);
+        m_connection = makeUnique<WebPushD::Connection>(webPushMachServiceName.utf8(), *this, WTFMove(configuration));
+    }
 }
 
 void NetworkNotificationManager::requestSystemNotificationPermission(const String& originString, CompletionHandler<void(bool)>&& completionHandler)
@@ -101,10 +90,9 @@ void NetworkNotificationManager::getPendingPushMessages(CompletionHandler<void(c
     sendMessageWithReply<WebPushD::MessageType::GetPendingPushMessages>(WTFMove(replyHandler));
 }
 
-void NetworkNotificationManager::showNotification(IPC::Connection&, const WebCore::NotificationData&)
+void NetworkNotificationManager::showNotification(IPC::Connection&, const WebCore::NotificationData&, CompletionHandler<void()>&& callback)
 {
-    if (!m_connection)
-        return;
+    callback();
 
 //     FIXME: While we don't normally land commented-out code in the tree,
 //     this is a nice bookmark for a development milestone; Roundtrip communication with webpushd
@@ -209,8 +197,6 @@ template<WebPushD::MessageType messageType, typename... Args>
 void NetworkNotificationManager::sendMessage(Args&&... args) const
 {
     RELEASE_ASSERT(m_connection);
-
-    maybeSendConnectionConfiguration();
 
     Daemon::Encoder encoder;
     encoder.encode(std::forward<Args>(args)...);
@@ -347,8 +333,6 @@ template<WebPushD::MessageType messageType, typename... Args, typename... ReplyA
 void NetworkNotificationManager::sendMessageWithReply(CompletionHandler<void(ReplyArgs...)>&& completionHandler, Args&&... args) const
 {
     RELEASE_ASSERT(m_connection);
-
-    maybeSendConnectionConfiguration();
 
     Daemon::Encoder encoder;
     encoder.encode(std::forward<Args>(args)...);

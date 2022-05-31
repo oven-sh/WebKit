@@ -586,7 +586,7 @@ void ApplicationCacheStorage::openDatabase(bool createIfDoesNotExist)
     if (m_cacheDirectory.isNull())
         return;
 
-    m_cacheFile = FileSystem::pathByAppendingComponent(m_cacheDirectory, "ApplicationCache.db");
+    m_cacheFile = FileSystem::pathByAppendingComponent(m_cacheDirectory, "ApplicationCache.db"_s);
     if (!createIfDoesNotExist && !FileSystem::fileExists(m_cacheFile))
         return;
 
@@ -798,12 +798,12 @@ bool ApplicationCacheStorage::store(ApplicationCacheResource* resource, unsigned
         String flatFileDirectory = FileSystem::pathByAppendingComponent(m_cacheDirectory, m_flatFileSubdirectoryName);
         FileSystem::makeAllDirectories(flatFileDirectory);
 
-        String extension;
+        StringView extension;
         
         String fileName = resource->response().suggestedFilename();
         size_t dotIndex = fileName.reverseFind('.');
         if (dotIndex != notFound && dotIndex < (fileName.length() - 1))
-            extension = fileName.substring(dotIndex);
+            extension = StringView(fileName).substring(dotIndex);
 
         String path;
         if (!writeDataToUniqueFileInDirectory(resource->data(), flatFileDirectory, path, extension))
@@ -1269,18 +1269,15 @@ void ApplicationCacheStorage::deleteTables()
 bool ApplicationCacheStorage::shouldStoreResourceAsFlatFile(ApplicationCacheResource* resource)
 {
     auto& type = resource->response().mimeType();
-    return startsWithLettersIgnoringASCIICase(type, "audio/") || startsWithLettersIgnoringASCIICase(type, "video/");
+    return startsWithLettersIgnoringASCIICase(type, "audio/"_s) || startsWithLettersIgnoringASCIICase(type, "video/"_s);
 }
     
-bool ApplicationCacheStorage::writeDataToUniqueFileInDirectory(FragmentedSharedBuffer& data, const String& directory, String& path, const String& fileExtension)
+bool ApplicationCacheStorage::writeDataToUniqueFileInDirectory(FragmentedSharedBuffer& data, const String& directory, String& path, StringView fileExtension)
 {
     String fullPath;
     
     do {
-        path = FileSystem::encodeForFileName(createVersion4UUIDString()) + fileExtension;
-        // Guard against the above function being called on a platform which does not implement
-        // createVersion4UUIDString().
-        ASSERT(!path.isEmpty());
+        path = makeString(UUID::createVersion4(), fileExtension);
         if (path.isEmpty())
             return false;
         

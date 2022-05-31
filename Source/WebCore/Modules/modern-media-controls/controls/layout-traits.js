@@ -66,17 +66,12 @@ class LayoutTraits
         throw "Derived class must implement this function.";
     }
 
-    knobStyleForScrubber()
-    {
-        throw "Derived class must implement this function.";
-    }
-
     supportsDurationTimeLabel()
     {
         throw "Derived class must implement this function.";
     }
 
-    playPauseButtonScaleFactor()
+    skipDuration()
     {
         throw "Derived class must implement this function.";
     }
@@ -94,6 +89,13 @@ class LayoutTraits
     overflowButtonHasCircle()
     {
         return false;
+    }
+
+    supportsTouches()
+    {
+        // Can be overridden by subclasses.
+
+        return GestureRecognizer.SupportsTouches;
     }
 
     additionalControlScaleFactor()

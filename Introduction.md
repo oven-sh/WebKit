@@ -661,7 +661,7 @@ class A : CanMakeWeakPtr<A> { }
 ...
 
 function foo(A& a) {
-    WeakPtr<A> weakA = makeWeakPtr(a);
+    WeakPtr<A> weakA = a;
 }
 ```
 
@@ -882,9 +882,9 @@ and it does not conform to a specific interface or behavior.
 It could have been an arbitrary integer value but `void*` is used out of convenience since pointer values of live objects are unique.
 
 In the case of a `StyleSheet` object, `StyleSheet`'s JavaScript wrapper tells the garbage collector that it needs to be kept alive
-because an opaque root it cares about has been encountered whenever `onwerNode` is visited by the garbage collector.
+because an opaque root it cares about has been encountered whenever `ownerNode` is visited by the garbage collector.
 
-In the most simplistic model, the opaque root for this case will be the `onwerNode` itself.
+In the most simplistic model, the opaque root for this case will be the `ownerNode` itself.
 However, each `Node` object also has to keep its parent, siblings, and children alive.
 To this end, each `Node` designates the [root](https://dom.spec.whatwg.org/#concept-tree-root) node as its opaque root.
 Both `Node` and `StyleSheet` objects use this unique opaque root as a way of communicating with the gargage collector.
@@ -932,7 +932,7 @@ Generally, using opaque roots as a way of keeping JavaScript wrappers involve tw
  1. Add opaque roots in `visitAdditionalChildren`.
  2. Return true in `isReachableFromOpaqueRoots` when relevant opaque roots are found.
 
-The first step can be achieved by using the aforementioend `JSCustomMarkFunction` with `visitAdditionalChildren`.
+The first step can be achieved by using the aforementioned `JSCustomMarkFunction` with `visitAdditionalChildren`.
 Alternatively and more preferably, `GenerateAddOpaqueRoot` can be added to the IDL interface to auto-generate this code.
 For example, [AbortController.idl](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/dom/AbortController.idl)
 makes use of this IDL attribute as follows:
@@ -950,7 +950,7 @@ makes use of this IDL attribute as follows:
 };
 ```
 
-Here, `singal` is a public member function funtion of
+Here, `signal` is a public member function funtion of
 the [underlying C++ object](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/dom/AbortController.h):
 
 ```cpp
@@ -1004,7 +1004,166 @@ or any function called by GenerateIsReachable cannot have thread unsafe side eff
 such as incrementing or decrementing the reference count of a `RefCounted` object
 or creating a new `WeakPtr` from `CanMakeWeakPtr` since these WTF classes' mutation operations are not thread safe.
 
-FIXME: Discuss Active DOM objects
+## Active DOM Objects
+
+Visit children and opaque roots are great way to express lifecycle relationships between JS wrappers
+but there are cases in which a JS wrapper needs to be kept alive without any relation to other objects.
+Consider [`XMLHttpRequest`](https://developer.mozilla.org/en-US/docs/Web/API/XMLHttpRequest).
+In the following example, JavaScript loses all references to the `XMLHttpRequest` object and its event listener
+but when a new response gets received, an event will be dispatched on the object,
+re-introducing a new JavaScript reference to the object.
+That is, the object survives garbage collection's
+[mark and sweep cycles](https://en.wikipedia.org/wiki/Tracing_garbage_collection#Basic_algorithm)
+without having any ties to other ["root" objects](https://en.wikipedia.org/wiki/Tracing_garbage_collection#Reachability_of_an_object).
+
+```js
+function fetchURL(url, callback)
+{
+    const request = new XMLHttpRequest();
+    request.addEventListener("load", callback);
+    request.open("GET", url);
+    request.send();
+}
+```
+
+In WebKit, we consider such an object to have a *pending activity*.
+Expressing the presence of such a pending activity is a primary use case of
+[`ActiveDOMObject`](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/dom/ActiveDOMObject.h).
+
+By making an object inherit from [`ActiveDOMObject`](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/dom/ActiveDOMObject.h)
+and [annotating IDL as such](https://github.com/WebKit/WebKit/blob/64cdede660d9eaea128fd151281f4715851c4fe2/Source/WebCore/xml/XMLHttpRequest.idl#L42),
+WebKit will [automatically generate `isReachableFromOpaqueRoot` function](https://github.com/WebKit/WebKit/blob/64cdede660d9eaea128fd151281f4715851c4fe2/Source/WebCore/bindings/scripts/CodeGeneratorJS.pm#L5029)
+which returns true whenever `ActiveDOMObject::hasPendingActivity` returns true
+even though the garbage collector may not have encountered any particular opaque root to speak of in this instance.
+
+In the case of [`XMLHttpRequest`](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/xml/XMLHttpRequest.h),
+`hasPendingActivity` [will return true](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/xml/XMLHttpRequest.cpp#L1195)
+so long as there is still an active network activity associated with the object.
+Once the resource is fully fetched or failed, it ceases to have a pending activity.
+This way, JS wrapper of `XMLHttpRequest` is kept alive so long as there is an active network activity.
+
+There is one other related use case of active DOM objects,
+and that's when a document enters the [back-forward cache](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/history/BackForwardCache.h)
+and when the entire [page](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/page/Page.h) has to pause
+for [other reasons](https://github.com/WebKit/WebKit/blob/64cdede660d9eaea128fd151281f4715851c4fe2/Source/WebCore/dom/ActiveDOMObject.h#L45).
+
+When this happens, each active DOM object associated with the document
+[gets suspended](https://github.com/WebKit/WebKit/blob/64cdede660d9eaea128fd151281f4715851c4fe2/Source/WebCore/dom/ActiveDOMObject.h#L70).
+Each active DOM object can use this opportunity to prepare itself to pause whatever pending activity;
+for example, `XMLHttpRequest` [will stop dispatching `progress` event](https://github.com/WebKit/WebKit/blob/64cdede660d9eaea128fd151281f4715851c4fe2/Source/WebCore/xml/XMLHttpRequest.cpp#L1157)
+and media elements [will stop playback](https://github.com/WebKit/WebKit/blob/64cdede660d9eaea128fd151281f4715851c4fe2/Source/WebCore/html/HTMLMediaElement.cpp#L6008).
+When a document gets out of the back-forward cache or resumes for other reasons,
+each active DOM object [gets resumed](https://github.com/WebKit/WebKit/blob/64cdede660d9eaea128fd151281f4715851c4fe2/Source/WebCore/dom/ActiveDOMObject.h#L71).
+Here, each object has the opportunity to resurrect the previously pending activity once again.
+
+### Creating a Pending Activity
+
+There are a few ways to create a pending activity on an [active DOM objects](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/dom/ActiveDOMObject.h).
+
+When the relevant Web standards says to [queue a task](https://html.spec.whatwg.org/multipage/webappapis.html#queue-a-task) to do some work,
+one of the following member functions of [`ActiveDOMObject`](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/dom/ActiveDOMObject.h) should be used:
+ * [`queueTaskKeepingObjectAlive`](https://github.com/WebKit/WebKit/blob/64cdede660d9eaea128fd151281f4715851c4fe2/Source/WebCore/dom/ActiveDOMObject.h#L106)
+ * [`queueCancellableTaskKeepingObjectAlive`](https://github.com/WebKit/WebKit/blob/64cdede660d9eaea128fd151281f4715851c4fe2/Source/WebCore/dom/ActiveDOMObject.h#L114)
+ * [`queueTaskToDispatchEvent`](https://github.com/WebKit/WebKit/blob/64cdede660d9eaea128fd151281f4715851c4fe2/Source/WebCore/dom/ActiveDOMObject.h#L124)
+ * [`queueCancellableTaskToDispatchEvent`](https://github.com/WebKit/WebKit/blob/64cdede660d9eaea128fd151281f4715851c4fe2/Source/WebCore/dom/ActiveDOMObject.h#L130)
+These functions will automatically create a pending activity until a newly enqueued task is executed.
+
+Alternatively, [`makePendingActivity`](https://github.com/WebKit/WebKit/blob/64cdede660d9eaea128fd151281f4715851c4fe2/Source/WebCore/dom/ActiveDOMObject.h#L97)
+can be used to create a [pending activity token](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/dom/ActiveDOMObject.h#L78)
+for an active DOM object.
+This will keep a pending activity on the active DOM object until all tokens are dead.
+
+Finally, when there is a complex condition under which a pending activity exists,
+an active DOM object can override [`virtualHasPendingActivity`](https://github.com/WebKit/WebKit/blob/64cdede660d9eaea128fd151281f4715851c4fe2/Source/WebCore/dom/ActiveDOMObject.h#L147)
+member function and return true whilst such a condition holds.
+Note that `virtualHasPendingActivity` should return true so long as there is a possibility of dispatching an event or invoke JavaScript in any way in the future.
+In other words, a pending activity should exist while an object is doing some work in C++ well before any event dispatching is scheduled.
+Anytime there is no pending activity, JS wrappers of the object can get deleted by the garbage collector.
+
+## Reference Counting of DOM Nodes
+
+[`Node`](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/dom/Node.h) is a reference counted object but with a twist.
+It has a [separate boolean flag](https://github.com/WebKit/WebKit/blob/297c01a143f649b34544f0cb7a555decf6ecbbfd/Source/WebCore/dom/Node.h#L832)
+indicating whether it has a [parent](https://dom.spec.whatwg.org/#concept-tree-parent) node or not.
+A `Node` object is [not deleted](https://github.com/WebKit/WebKit/blob/297c01a143f649b34544f0cb7a555decf6ecbbfd/Source/WebCore/dom/Node.h#L801)
+so long as it has a reference count above 0 or this boolean flag is set.
+The boolean flag effectively functions as a `RefPtr` from a parent `Node`
+to each one of its [child](https://dom.spec.whatwg.org/#concept-tree-child) `Node`.
+We do this because `Node` only knows its [first child](https://dom.spec.whatwg.org/#concept-tree-first-child)
+and its [last child](https://dom.spec.whatwg.org/#concept-tree-last-child)
+and each [sibling](https://dom.spec.whatwg.org/#concept-tree-sibling) nodes are implemented
+as a [doubly linked list](https://en.wikipedia.org/wiki/Doubly_linked_list) to allow
+efficient [insertion](https://dom.spec.whatwg.org/#concept-node-insert)
+and [removal](https://dom.spec.whatwg.org/#concept-node-remove) and traversal of sibling nodes.
+
+Conceptually, each `Node` is kept alive by its root node and external references to it,
+and we use the root node as an opaque root of each `Node`'s JS wrapper.
+Therefore the JS wrapper of each `Node` is kept alive as long as either the node itself
+or any other node which shares the same root node is visited by the garbage collector.
+
+On the other hand, a `Node` does not keep its parent or any of its
+[shadow-including ancestor](https://dom.spec.whatwg.org/#concept-shadow-including-ancestor) `Node` alive
+either by reference counting or via the boolean flag even though the JavaScript API requires this to be the case.
+In order to implement this DOM API behavior,
+WebKit [will create](https://github.com/WebKit/WebKit/blob/297c01a143f649b34544f0cb7a555decf6ecbbfd/Source/WebCore/bindings/js/JSNodeCustom.cpp#L174)
+a JS wrapper for each `Node` which is being removed from its parent if there isn't already one.
+A `Node` which is a root node (of the newly removed [subtree](https://dom.spec.whatwg.org/#concept-tree)) is an opaque root of its JS wrapper,
+and the garbage collector will visit this opaque root if there is any JS wrapper in the removed subtree that needs to be kept alive.
+In effect, this keeps the new root node and all its [descendant](https://dom.spec.whatwg.org/#concept-tree-descendant) nodes alive
+if the newly removed subtree contains any node with a live JS wrapper, preserving the API contract.
+
+It's important to recognize that storing a `Ref` or a `RefPtr` to another `Node` in a `Node` subclass
+or an object directly owned by the Node can create a [reference cycle](https://en.wikipedia.org/wiki/Reference_counting#Dealing_with_reference_cycles),
+or a reference that never gets cleared.
+It's not guaranteed that every node is [disconnected](https://dom.spec.whatwg.org/#connected)
+from a [`Document`](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/dom/Document.h) at some point in the future,
+and some `Node` may always have a parent node or a child node so long as it exists.
+Only permissible circumstances in which a `Ref` or a `RefPtr` to another `Node` can be stored
+in a `Node` subclass or other data structures owned by it is if it's temporally limited.
+For example, it's okay to store a `Ref` or a `RefPtr` in
+an enqueued [event loop task](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/dom/EventLoop.h#L69).
+In all other circumstances, `WeakPtr` should be used to reference another `Node`,
+and JS wrapper relationships such as opaque roots should be used to preserve the lifecycle ties between `Node` objects.
+
+It's equally crucial to observe that keeping C++ Node object alive by storing `Ref` or `RefPtr`
+in an enqueued [event loop task](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/dom/EventLoop.h#L69)
+does not keep its JS wrapper alive, and can result in the JS wrapper of a conceptually live object to be erroneously garbage collected.
+To avoid this problem, use [`GCReachableRef`](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/dom/GCReachableRef.h) instead
+to temporarily hold a strong reference to a node over a period of time.
+For example, [`HTMLTextFormControlElement::scheduleSelectEvent()`](https://github.com/WebKit/WebKit/blob/297c01a143f649b34544f0cb7a555decf6ecbbfd/Source/WebCore/html/HTMLTextFormControlElement.cpp#L547)
+uses `GCReachableRef` to fire an event in an event loop task:
+```cpp
+void HTMLTextFormControlElement::scheduleSelectEvent()
+{
+    document().eventLoop().queueTask(TaskSource::UserInteraction, [protectedThis = GCReachableRef { *this }] {
+        protectedThis->dispatchEvent(Event::create(eventNames().selectEvent, Event::CanBubble::Yes, Event::IsCancelable::No));
+    });
+}
+```
+
+Alternatively, we can make it inherit from an [active DOM object](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/dom/ActiveDOMObject.h),
+and use one of the following functions to enqueue a task or an event:
+ - [`queueTaskKeepingObjectAlive`](https://github.com/WebKit/WebKit/blob/297c01a143f649b34544f0cb7a555decf6ecbbfd/Source/WebCore/dom/ActiveDOMObject.h#L107)
+ - [`queueCancellableTaskKeepingObjectAlive`](https://github.com/WebKit/WebKit/blob/297c01a143f649b34544f0cb7a555decf6ecbbfd/Source/WebCore/dom/ActiveDOMObject.h#L115)
+ - [`queueTaskToDispatchEvent`](https://github.com/WebKit/WebKit/blob/297c01a143f649b34544f0cb7a555decf6ecbbfd/Source/WebCore/dom/ActiveDOMObject.h#L124)
+ - [`queueCancellableTaskToDispatchEvent`](https://github.com/WebKit/WebKit/blob/297c01a143f649b34544f0cb7a555decf6ecbbfd/Source/WebCore/dom/ActiveDOMObject.h#L130)
+
+[`Document`](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/dom/Document.h) node has one more special quirk
+because every [`Node`](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/dom/Node.h) can have access to a document
+via [`ownerDocument` property](https://developer.mozilla.org/en-US/docs/Web/API/Node/ownerDocument)
+whether Node is [connected](https://dom.spec.whatwg.org/#connected) to the document or not.
+Every document has a regular reference count used by external clients and
+[referencing node count](https://github.com/WebKit/WebKit/blob/297c01a143f649b34544f0cb7a555decf6ecbbfd/Source/WebCore/dom/Document.h#L2093).
+The referencing node count of a document is the total number of nodes whose `ownerDocument` is the document.
+A document is [kept alive](https://github.com/WebKit/WebKit/blob/297c01a143f649b34544f0cb7a555decf6ecbbfd/Source/WebCore/dom/Document.cpp#L749)
+so long as its reference count and node referencing count is above 0.
+In addition, when the regular reference count is to become 0,
+it clears various states including its internal references to owning Nodes to sever any reference cycles with them.
+A document is special in that sense that it can store `RefPtr` to other nodes.
+Note that whilst the referencing node count acts like `Ref` from each `Node` to its owner `Document`,
+storing a `Ref` or a `RefPtr` to the same document or any other document will create
+a [reference cycle](https://en.wikipedia.org/wiki/Reference_counting#Dealing_with_reference_cycles)
+and should be avoided unless it's temporally limited as noted above.
 
 ## Inserting or Removing DOM Nodes 
 
@@ -1097,7 +1256,23 @@ These are cross browser vendor tests developed by W3C. Mozilla, Google, and Appl
 
 ### HTTP Tests
 
-FIXME: Explain how to start and open tests that require HTTP server.
+To open tests under [LayoutTests/http](https://github.com/WebKit/WebKit/tree/main/LayoutTests/http) or
+[LayoutTests/imported/w3c/web-platform-tests](https://github.com/WebKit/WebKit/tree/main/LayoutTests/imported/w3c/web-platform-tests),
+use [Tools/Scripts/open-layout-test](https://github.com/WebKit/WebKit/blob/main/Tools/Scripts/open-layout-test) with the path to a test.
+
+You can also manually start HTTP servers with [`Tools/Scripts/run-webkit-httpd`](https://github.com/WebKit/WebKit/blob/main/Tools/Scripts/run-webkit-httpd).
+To stop the HTTP servers, exit the script (e.g. Control + C on macOS).
+
+Tests under [LayoutTests/http](https://github.com/WebKit/WebKit/tree/main/LayoutTests/http) are accessible at [http://127.0.0.1:8000](http://127.0.0.1:8000)
+except tests in [LayoutTests/http/wpt](https://github.com/WebKit/WebKit/tree/main/LayoutTests/http/wpt),
+which are available at [http://localhost:8800/WebKit/](http://localhost:8800/WebKit/) instead.
+
+The [Web Platform Tests](https://web-platform-tests.org/) imported under
+[LayoutTests/imported/w3c/web-platform-tests](https://github.com/WebKit/WebKit/tree/main/LayoutTests/imported/w3c/web-platform-tests)
+are accessible under HTTP at [http://localhost:8800/](http://localhost:8800/) and HTTPS at [http://localhost:9443/](http://localhost:9443/)
+
+Note that it's important to use the exact host names such as `127.0.0.1` and `localhost` above verbatim
+since some tests rely on or test same-origin or cross-origin behaviors based on those host names.
 
 ## Test Expectations
 

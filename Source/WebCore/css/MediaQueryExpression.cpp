@@ -218,7 +218,7 @@ inline RefPtr<CSSPrimitiveValue> consumeFirstValue(const String& mediaFeature, C
     if (auto value = CSSPropertyParserHelpers::consumeIntegerZeroAndGreater(range))
         return value;
 
-    if (!featureExpectingPositiveInteger(mediaFeature) && !isAspectRatioFeature(mediaFeature)) {
+    if (!featureExpectingPositiveInteger(mediaFeature) && !isAspectRatioFeature(AtomString { mediaFeature })) {
         if (auto value = CSSPropertyParserHelpers::consumeNumber(range, ValueRange::NonNegative))
             return value;
     }
@@ -274,7 +274,7 @@ MediaQueryExpression::MediaQueryExpression(const String& feature, CSSParserToken
 String MediaQueryExpression::serialize() const
 {
     if (m_serializationCache.isNull())
-        m_serializationCache = makeString('(', m_mediaFeature.convertToASCIILowercase(), m_value ? ": " : "", m_value ? m_value->cssText() : emptyString(), ')');
+        m_serializationCache = makeString('(', asASCIILowercase(m_mediaFeature), m_value ? ": " : "", m_value ? m_value->cssText() : emptyString(), ')');
     return m_serializationCache;
 }
 

@@ -776,6 +776,29 @@ enum class AccessibilityVisiblePositionForBounds {
 enum class AccessibilityMathScriptObjectType { Subscript, Superscript };
 enum class AccessibilityMathMultiscriptObjectType { PreSubscript, PreSuperscript, PostSubscript, PostSuperscript };
 
+// Relationships between AX objects.
+enum class AXRelationType : uint8_t {
+    None,
+    ActiveDescendant,
+    ActiveDescendantOf,
+    ControlledBy,
+    ControllerFor,
+    DescribedBy,
+    DescriptionFor,
+    Details,
+    DetailsFor,
+    ErrorMessage,
+    ErrorMessageFor,
+    FlowsFrom,
+    FlowsTo,
+    Headers,
+    HeaderFor,
+    LabelledBy,
+    LabelFor,
+    OwnedBy,
+    OwnerFor,
+};
+
 // Use this struct to store the isIgnored data that depends on the parents, so that in addChildren()
 // we avoid going up the parent chain for each element while traversing the tree with useful information already.
 struct AccessibilityIsIgnoredFromParentData {
@@ -1048,21 +1071,23 @@ public:
 
     virtual bool supportsARIAOwns() const = 0;
     virtual bool isActiveDescendantOfFocusedContainer() const = 0;
-    virtual void ariaActiveDescendantReferencingElements(AccessibilityChildrenVector&) const = 0;
-    virtual void ariaControlsElements(AccessibilityChildrenVector&) const = 0;
-    virtual void ariaControlsReferencingElements(AccessibilityChildrenVector&) const = 0;
-    virtual void ariaDescribedByElements(AccessibilityChildrenVector&) const = 0;
-    virtual void ariaDescribedByReferencingElements(AccessibilityChildrenVector&) const = 0;
-    virtual void ariaDetailsElements(AccessibilityChildrenVector&) const = 0;
-    virtual void ariaDetailsReferencingElements(AccessibilityChildrenVector&) const = 0;
-    virtual void ariaErrorMessageElements(AccessibilityChildrenVector&) const = 0;
-    virtual void ariaErrorMessageReferencingElements(AccessibilityChildrenVector&) const = 0;
-    virtual void ariaFlowToElements(AccessibilityChildrenVector&) const = 0;
-    virtual void ariaFlowToReferencingElements(AccessibilityChildrenVector&) const = 0;
-    virtual void ariaLabelledByElements(AccessibilityChildrenVector&) const = 0;
-    virtual void ariaLabelledByReferencingElements(AccessibilityChildrenVector&) const = 0;
-    virtual void ariaOwnsElements(AccessibilityChildrenVector&) const = 0;
-    virtual void ariaOwnsReferencingElements(AccessibilityChildrenVector&) const = 0;
+
+    // Retrieval of related objects.
+    virtual AccessibilityChildrenVector activeDescendantOfObjects() const = 0;
+    virtual AccessibilityChildrenVector controlledObjects() const = 0;
+    virtual AccessibilityChildrenVector controllers() const = 0;
+    virtual AccessibilityChildrenVector describedByObjects() const = 0;
+    virtual AccessibilityChildrenVector descriptionForObjects() const = 0;
+    virtual AccessibilityChildrenVector detailedByObjects() const = 0;
+    virtual AccessibilityChildrenVector detailsForObjects() const = 0;
+    virtual AccessibilityChildrenVector errorMessageObjects() const = 0;
+    virtual AccessibilityChildrenVector errorMessageForObjects() const = 0;
+    virtual AccessibilityChildrenVector flowToObjects() const = 0;
+    virtual AccessibilityChildrenVector flowFromObjects() const = 0;
+    virtual AccessibilityChildrenVector labelledByObjects() const = 0;
+    virtual AccessibilityChildrenVector labelForObjects() const = 0;
+    virtual AccessibilityChildrenVector ownedObjects() const = 0;
+    virtual AccessibilityChildrenVector owners() const = 0;
 
     virtual bool hasPopup() const = 0;
     virtual String popupValue() const = 0;
@@ -1128,7 +1153,7 @@ public:
     virtual Vector<String> performTextOperation(AccessibilityTextOperation const&) = 0;
 
     virtual AXCoreObject* observableObject() const = 0;
-    virtual void linkedUIElements(AccessibilityChildrenVector&) const = 0;
+    virtual AccessibilityChildrenVector linkedObjects() const = 0;
     virtual AXCoreObject* titleUIElement() const = 0;
     virtual AXCoreObject* correspondingLabelForControlElement() const = 0;
     virtual AXCoreObject* correspondingControlForLabelElement() const = 0;
@@ -1170,8 +1195,6 @@ public:
     // Abbreviations
     virtual String expandedTextValue() const = 0;
     virtual bool supportsExpandedTextValue() const = 0;
-
-    virtual void elementsFromAttribute(Vector<Element*>&, const QualifiedName&) const = 0;
 
     // Only if isColorWell()
     virtual SRGBA<uint8_t> colorValue() const = 0;
@@ -1266,14 +1289,13 @@ public:
     virtual void tabChildren(AccessibilityChildrenVector&) = 0;
     virtual bool shouldFocusActiveDescendant() const = 0;
     virtual AXCoreObject* activeDescendant() const = 0;
-    virtual void handleActiveDescendantChanged() = 0;
     bool isDescendantOfObject(const AXCoreObject*) const;
     bool isAncestorOfObject(const AXCoreObject*) const;
     virtual AXCoreObject* firstAnonymousBlockChild() const = 0;
 
     virtual std::optional<String> attributeValue(const String&) const = 0;
     virtual bool hasTagName(const QualifiedName&) const = 0;
-    virtual String tagName() const = 0;
+    virtual AtomString tagName() const = 0;
 
     virtual VisiblePositionRange visiblePositionRange() const = 0;
     virtual VisiblePositionRange visiblePositionRangeForLine(unsigned) const = 0;
@@ -1354,7 +1376,7 @@ public:
     // Used by an ARIA tree to get all its rows.
     virtual void ariaTreeRows(AccessibilityChildrenVector&) = 0;
     // Used by an ARIA tree item to get only its content, and not its child tree items and groups.
-    virtual void ariaTreeItemContent(AccessibilityChildrenVector&) = 0;
+    virtual AccessibilityChildrenVector ariaTreeItemContent() = 0;
 
     // ARIA live-region features.
     virtual bool supportsLiveRegion(bool excludeIfOff = true) const = 0;
@@ -1534,6 +1556,13 @@ private:
     virtual void detachPlatformWrapper(AccessibilityDetachmentType) = 0;
 };
 
+inline Vector<AXID> axIDs(const AXCoreObject::AccessibilityChildrenVector& objects)
+{
+    return objects.map([] (const auto& object) {
+        return object ? object->objectID() : AXID();
+    });
+}
+
 inline AXCoreObject::AXValue AXCoreObject::value()
 {
     if (supportsRangeValue())
@@ -1569,7 +1598,8 @@ inline AXCoreObject::AXValue AXCoreObject::value()
 inline void AXCoreObject::detach(AccessibilityDetachmentType detachmentType)
 {
     detachWrapper(detachmentType);
-    detachRemoteParts(detachmentType);
+    if (detachmentType != AccessibilityDetachmentType::ElementChanged)
+        detachRemoteParts(detachmentType);
     setObjectID({ });
 }
 
@@ -1583,9 +1613,7 @@ inline void AXCoreObject::detachWrapper(AccessibilityDetachmentType detachmentTy
 
 inline Vector<AXID> AXCoreObject::childrenIDs(bool updateChildrenIfNecessary)
 {
-    return children(updateChildrenIfNecessary).map([] (auto& axObject) -> AXID {
-        return axObject->objectID();
-    });
+    return axIDs(children(updateChildrenIfNecessary));
 }
 
 namespace Accessibility {
@@ -1608,6 +1636,20 @@ T* findAncestor(const T& object, bool includeSelf, const F& matches)
             return parent;
     }
 
+    return nullptr;
+}
+
+template<typename T>
+T* findRelatedObjectInAncestry(const T& object, AXRelationType relationType, const T& descendant)
+{
+    auto relatedObjects = object.relatedObjects(relationType);
+    for (const auto& object : relatedObjects) {
+        auto* ancestor = findAncestor(descendant, false, [&object] (const auto& ancestor) {
+            return object.get() == &ancestor;
+        });
+        if (ancestor)
+            return ancestor;
+    }
     return nullptr;
 }
 

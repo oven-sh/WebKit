@@ -297,24 +297,26 @@ public:
     double loadingProgress() const override { return 0; }
     WEBCORE_EXPORT static bool isARIAControl(AccessibilityRole);
     bool supportsCheckedState() const override;
-    
+
+    bool supportsARIARoleDescription() const;
     bool supportsARIAOwns() const override { return false; }
     bool isActiveDescendantOfFocusedContainer() const override;
-    void ariaActiveDescendantReferencingElements(AccessibilityChildrenVector&) const override;
-    void ariaControlsElements(AccessibilityChildrenVector&) const override;
-    void ariaControlsReferencingElements(AccessibilityChildrenVector&) const override;
-    void ariaDescribedByElements(AccessibilityChildrenVector&) const override;
-    void ariaDescribedByReferencingElements(AccessibilityChildrenVector&) const override;
-    void ariaDetailsElements(AccessibilityChildrenVector&) const override;
-    void ariaDetailsReferencingElements(AccessibilityChildrenVector&) const override;
-    void ariaErrorMessageElements(AccessibilityChildrenVector&) const override;
-    void ariaErrorMessageReferencingElements(AccessibilityChildrenVector&) const override;
-    void ariaFlowToElements(AccessibilityChildrenVector&) const override;
-    void ariaFlowToReferencingElements(AccessibilityChildrenVector&) const override;
-    void ariaLabelledByElements(AccessibilityChildrenVector&) const override;
-    void ariaLabelledByReferencingElements(AccessibilityChildrenVector&) const override;
-    void ariaOwnsElements(AccessibilityChildrenVector&) const override;
-    void ariaOwnsReferencingElements(AccessibilityChildrenVector&) const override;
+
+    AccessibilityChildrenVector activeDescendantOfObjects() const override;
+    AccessibilityChildrenVector controlledObjects() const override;
+    AccessibilityChildrenVector controllers() const override;
+    AccessibilityChildrenVector describedByObjects() const override;
+    AccessibilityChildrenVector descriptionForObjects() const override;
+    AccessibilityChildrenVector detailedByObjects() const override;
+    AccessibilityChildrenVector detailsForObjects() const override;
+    AccessibilityChildrenVector errorMessageObjects() const override;
+    AccessibilityChildrenVector errorMessageForObjects() const override;
+    AccessibilityChildrenVector flowToObjects() const override;
+    AccessibilityChildrenVector flowFromObjects() const override;
+    AccessibilityChildrenVector labelledByObjects() const override;
+    AccessibilityChildrenVector labelForObjects() const override;
+    AccessibilityChildrenVector ownedObjects() const override;
+    AccessibilityChildrenVector owners() const override;
 
     bool hasPopup() const override { return false; }
     String popupValue() const override;
@@ -370,7 +372,7 @@ public:
     virtual AccessibilityObject* previousSiblingUnignored(int limit) const;
     AccessibilityObject* parentObject() const override { return nullptr; }
     AccessibilityObject* displayContentsParent() const;
-    AXCoreObject* parentObjectUnignored() const override;
+    AccessibilityObject* parentObjectUnignored() const override;
     AccessibilityObject* parentObjectIfExists() const override { return nullptr; }
     static AccessibilityObject* firstAccessibleObjectFromNode(const Node*);
     void findMatchingObjects(AccessibilitySearchCriteria*, AccessibilityChildrenVector&) override;
@@ -383,7 +385,7 @@ public:
     Vector<String> performTextOperation(AccessibilityTextOperation const&) override;
 
     AccessibilityObject* observableObject() const override { return nullptr; }
-    void linkedUIElements(AccessibilityChildrenVector&) const override { }
+    AccessibilityChildrenVector linkedObjects() const override { return { }; }
     AccessibilityObject* titleUIElement() const override { return nullptr; }
     AccessibilityObject* correspondingLabelForControlElement() const override { return nullptr; }
     AccessibilityObject* correspondingControlForLabelElement() const override { return nullptr; }
@@ -427,7 +429,7 @@ public:
     String expandedTextValue() const override { return String(); }
     bool supportsExpandedTextValue() const override { return false; }
 
-    void elementsFromAttribute(Vector<Element*>&, const QualifiedName&) const override;
+    Vector<Element*> elementsFromAttribute(const QualifiedName&) const;
 
     // Only if isColorWell()
     SRGBA<uint8_t> colorValue() const override { return Color::transparentBlack; }
@@ -508,7 +510,7 @@ public:
     void increment() override { }
     void decrement() override { }
 
-    virtual void updateAccessibilityRole() { }
+    virtual void updateRole() { }
     const AccessibilityChildrenVector& children(bool updateChildrenIfNeeded = true) override;
     virtual void addChildren() { }
     enum class DescendIfIgnored : uint8_t { No, Yes };
@@ -534,7 +536,6 @@ public:
     void tabChildren(AccessibilityChildrenVector&) override { }
     bool shouldFocusActiveDescendant() const override { return false; }
     AccessibilityObject* activeDescendant() const override { return nullptr; }
-    void handleActiveDescendantChanged() override { }
     AccessibilityObject* firstAnonymousBlockChild() const override;
 
     WEBCORE_EXPORT static AccessibilityRole ariaRoleToWebCoreRole(const String&);
@@ -543,7 +544,7 @@ public:
     std::optional<String> attributeValue(const String&) const override;
     int getIntegralAttribute(const QualifiedName&) const;
     bool hasTagName(const QualifiedName&) const override;
-    String tagName() const override;
+    AtomString tagName() const override;
     bool hasDisplayContents() const;
 
     VisiblePositionRange visiblePositionRange() const override { return VisiblePositionRange(); }
@@ -607,7 +608,7 @@ public:
     String doAXStringForRange(const PlainTextRange&) const override { return String(); }
     IntRect doAXBoundsForRange(const PlainTextRange&) const override { return IntRect(); }
     IntRect doAXBoundsForRangeUsingCharacterOffset(const PlainTextRange&) const override { return IntRect(); }
-    static String listMarkerTextForNodeAndPosition(Node*, const VisiblePosition&);
+    static StringView listMarkerTextForNodeAndPosition(Node*, const VisiblePosition&);
 
     unsigned doAXLineForIndex(unsigned) override;
 
@@ -627,7 +628,7 @@ public:
     // Used by an ARIA tree to get all its rows.
     void ariaTreeRows(AccessibilityChildrenVector&) override;
     // Used by an ARIA tree item to get only its content, and not its child tree items and groups.
-    void ariaTreeItemContent(AccessibilityChildrenVector&) override;
+    AccessibilityChildrenVector ariaTreeItemContent() override;
 
     // ARIA live-region features.
     bool supportsLiveRegion(bool excludeIfOff = true) const override;
@@ -784,6 +785,7 @@ public:
     String documentEncoding() const override;
     AccessibilityChildrenVector documentLinks() override { return AccessibilityChildrenVector(); }
 
+    AccessibilityChildrenVector relatedObjects(AXRelationType) const;
 protected:
     AccessibilityObject() = default;
 
@@ -809,8 +811,7 @@ protected:
     bool dispatchTouchEvent();
 
     static bool isARIAInput(AccessibilityRole);
-    void ariaElementsFromAttribute(AccessibilityChildrenVector&, const QualifiedName&) const;
-    void ariaElementsReferencedByAttribute(AccessibilityChildrenVector&, const QualifiedName&) const;
+
     virtual bool exposesTitleUIElement() const { return true; }
     FloatRect unobscuredContentRect() const override;
     AccessibilityObject* radioGroupAncestor() const;
@@ -877,7 +878,7 @@ inline VisiblePosition AccessibilityObject::previousLineStartPosition(const Visi
 #else
 inline bool AccessibilityObject::hasDisplayContents() const { return false; }
 inline std::optional<BoundaryPoint> AccessibilityObject::lastBoundaryPointContainedInRect(const Vector<BoundaryPoint>&, const BoundaryPoint&, const FloatRect&) const { return std::nullopt; }
-inline VisiblePosition AccessibilityObject::previousLineStartPosition(const VisiblePosition& position) const { return { }; }
+inline VisiblePosition AccessibilityObject::previousLineStartPosition(const VisiblePosition&) const { return { }; }
 #endif
 
 #if !ENABLE(ACCESSIBILITY)

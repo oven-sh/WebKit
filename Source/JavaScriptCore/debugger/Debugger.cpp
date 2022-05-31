@@ -150,7 +150,7 @@ void Debugger::attach(JSGlobalObject* globalObject)
         m_vm.heap.objectSpace().forEachLiveCell(iterationScope, [&] (HeapCell* heapCell, HeapCell::Kind kind) {
             if (isJSCellKind(kind)) {
                 auto* cell = static_cast<JSCell*>(heapCell);
-                if (auto* function = jsDynamicCast<JSFunction*>(cell->vm(), cell)) {
+                if (auto* function = jsDynamicCast<JSFunction*>(cell)) {
                     if (function->scope()->globalObject() == globalObject && function->executable()->isFunctionExecutable() && !function->isHostOrBuiltinFunction())
                         sourceProviders.add(jsCast<FunctionExecutable*>(function->executable())->source().provider());
                 }
@@ -171,7 +171,7 @@ void Debugger::detach(JSGlobalObject* globalObject, ReasonForDetach reason)
     VM& vm = globalObject->vm();
     JSLockHolder locker(vm);
 
-    if (m_isPaused && m_currentCallFrame && vm.entryScope->globalObject() == globalObject) {
+    if (m_isPaused && m_currentCallFrame && (!vm.isEntered() || vm.entryScope->globalObject() == globalObject)) {
         m_currentCallFrame = nullptr;
         m_pauseOnCallFrame = nullptr;
         continueProgram();
@@ -607,6 +607,7 @@ bool Debugger::evaluateBreakpointCondition(Breakpoint& breakpoint, JSGlobalObjec
     ASSERT(m_isPaused);
     ASSERT(isAttached(globalObject));
 
+    VM& vm = globalObject->vm();
     const String& condition = breakpoint.condition();
     if (condition.isEmpty())
         return true;
@@ -614,7 +615,7 @@ bool Debugger::evaluateBreakpointCondition(Breakpoint& breakpoint, JSGlobalObjec
     NakedPtr<Exception> exception;
     DebuggerCallFrame& debuggerCallFrame = currentDebuggerCallFrame();
     JSObject* scopeExtensionObject = m_client ? m_client->debuggerScopeExtensionObject(*this, globalObject, debuggerCallFrame) : nullptr;
-    JSValue result = debuggerCallFrame.evaluateWithScopeExtension(condition, scopeExtensionObject, exception);
+    JSValue result = debuggerCallFrame.evaluateWithScopeExtension(vm, condition, scopeExtensionObject, exception);
 
     // We can lose the debugger while executing JavaScript.
     if (!m_currentCallFrame)
@@ -633,6 +634,8 @@ void Debugger::evaluateBreakpointActions(Breakpoint& breakpoint, JSGlobalObject*
     ASSERT(m_isPaused);
     ASSERT(isAttached(globalObject));
 
+    VM& vm = globalObject->vm();
+
     m_currentProbeBatchId++;
 
     for (const auto& action : breakpoint.actions()) {
@@ -644,16 +647,16 @@ void Debugger::evaluateBreakpointActions(Breakpoint& breakpoint, JSGlobalObject*
         switch (action.type) {
         case Breakpoint::Action::Type::Log:
             dispatchFunctionToObservers([&] (Observer& observer) {
-                observer.breakpointActionLog(debuggerCallFrame.globalObject(), action.data);
+                observer.breakpointActionLog(debuggerCallFrame.globalObject(vm), action.data);
             });
             break;
 
         case Breakpoint::Action::Type::Evaluate: {
             NakedPtr<Exception> exception;
             JSObject* scopeExtensionObject = m_client ? m_client->debuggerScopeExtensionObject(*this, globalObject, debuggerCallFrame) : nullptr;
-            debuggerCallFrame.evaluateWithScopeExtension(action.data, scopeExtensionObject, exception);
+            debuggerCallFrame.evaluateWithScopeExtension(vm, action.data, scopeExtensionObject, exception);
             if (exception)
-                reportException(debuggerCallFrame.globalObject(), exception);
+                reportException(debuggerCallFrame.globalObject(vm), exception);
             break;
         }
 
@@ -666,8 +669,8 @@ void Debugger::evaluateBreakpointActions(Breakpoint& breakpoint, JSGlobalObject*
         case Breakpoint::Action::Type::Probe: {
             NakedPtr<Exception> exception;
             JSObject* scopeExtensionObject = m_client ? m_client->debuggerScopeExtensionObject(*this, globalObject, debuggerCallFrame) : nullptr;
-            JSValue result = debuggerCallFrame.evaluateWithScopeExtension(action.data, scopeExtensionObject, exception);
-            JSC::JSGlobalObject* debuggerGlobalObject = debuggerCallFrame.globalObject();
+            JSValue result = debuggerCallFrame.evaluateWithScopeExtension(vm, action.data, scopeExtensionObject, exception);
+            JSC::JSGlobalObject* debuggerGlobalObject = debuggerCallFrame.globalObject(vm);
             if (exception)
                 reportException(debuggerGlobalObject, exception);
 
@@ -1026,8 +1029,9 @@ JSC::JSValue Debugger::exceptionOrCaughtValue(JSC::JSGlobalObject* globalObject)
     if (reasonForPause() == PausedForException)
         return currentException();
 
+    VM& vm = globalObject->vm();
     for (RefPtr<DebuggerCallFrame> frame = &currentDebuggerCallFrame(); frame; frame = frame->callerFrame()) {
-        DebuggerScope& scope = *frame->scope();
+        DebuggerScope& scope = *frame->scope(vm);
         if (scope.isCatchScope())
             return scope.caughtValue(globalObject);
     }
@@ -1035,12 +1039,32 @@ JSC::JSValue Debugger::exceptionOrCaughtValue(JSC::JSGlobalObject* globalObject)
     return { };
 }
 
+class EmptyTopLevelCallFrameForDebugger {
+public:
+    EmptyTopLevelCallFrameForDebugger(JSGlobalObject* globalObject)
+    {
+        CallFrame* callFrame = asCallFrame();
+        callFrame->setCodeBlock(nullptr);
+        callFrame->setCallerFrame(CallFrame::noCaller());
+        callFrame->setReturnPC(nullptr);
+        callFrame->setArgumentCountIncludingThis(1);
+        callFrame->setThisValue(globalObject->globalThis());
+        callFrame->setCallee(globalObject->globalCallee());
+        ASSERT(callFrame->isEmptyTopLevelCallFrameForDebugger());
+    }
+
+    CallFrame* asCallFrame() { return CallFrame::create(m_values); }
+
+private:
+    Register m_values[CallFrame::headerSizeInRegisters + /* thisValue */ 1] { };
+};
+
 void Debugger::exception(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue exception, bool hasCatchHandler)
 {
     if (m_isPaused)
         return;
 
-    if (JSObject* object = jsDynamicCast<JSObject*>(m_vm, exception)) {
+    if (JSObject* object = jsDynamicCast<JSObject*>(exception)) {
         if (object->isErrorInstance()) {
             ErrorInstance* error = static_cast<ErrorInstance*>(object);
             // FIXME: <https://webkit.org/b/173625> Web Inspector: Should be able to pause and debug a StackOverflow Exception
@@ -1056,11 +1080,21 @@ void Debugger::exception(JSGlobalObject* globalObject, CallFrame* callFrame, JSV
         setSteppingMode(SteppingModeEnabled);
     }
 
+    // When callFrame is nullptr, we are throwing an error without JS call frames.
+    // This can happen when program throws SyntaxError without evaluation.
+    EmptyTopLevelCallFrameForDebugger emptyCallFrame(globalObject);
+    bool callFrameWasNull = !callFrame;
+    if (callFrameWasNull)
+        callFrame = emptyCallFrame.asCallFrame();
+
     m_hasHandlerForExceptionCallback = true;
     m_currentException = exception;
     updateCallFrame(globalObject, callFrame, AttemptPause);
     m_currentException = JSValue();
     m_hasHandlerForExceptionCallback = false;
+
+    if (callFrameWasNull)
+        m_currentCallFrame = nullptr;
 }
 
 void Debugger::atStatement(CallFrame* callFrame)

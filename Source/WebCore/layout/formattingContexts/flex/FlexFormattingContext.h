@@ -27,8 +27,10 @@
 
 #if ENABLE(LAYOUT_FORMATTING_CONTEXT)
 
+#include "FlexFormattingConstraints.h"
 #include "FlexFormattingGeometry.h"
 #include "FlexFormattingState.h"
+#include "FlexRect.h"
 #include "FormattingQuirks.h"
 #include <wtf/IsoMalloc.h>
 
@@ -42,16 +44,35 @@ class FlexFormattingContext final : public FormattingContext {
 public:
     FlexFormattingContext(const ContainerBox& formattingContextRoot, FlexFormattingState&);
     void layoutInFlowContent(const ConstraintsForInFlowContent&) override;
-    LayoutUnit usedContentHeight() const override;
-
     IntrinsicWidthConstraints computedIntrinsicWidthConstraints() override;
+    LayoutUnit usedContentHeight() const override;
 
     const FlexFormattingGeometry& formattingGeometry() const final { return m_flexFormattingGeometry; }
     const FormattingQuirks& formattingQuirks() const final { return m_flexFormattingQuirks; }
 
+    void layoutInFlowContentForIntegration(const ConstraintsForInFlowContent&);
+    IntrinsicWidthConstraints computedIntrinsicWidthConstraintsForIntegration();
+
 private:
-    void sizeAndPlaceFlexItems(const ConstraintsForInFlowContent&);
+    void sizeAndPlaceFlexItems(const ConstraintsForFlexContent&);
     void computeIntrinsicWidthConstraintsForFlexItems();
+
+    struct LogicalFlexItem {
+        FlexRect rect;
+        int logicalOrder { 0 };
+        CheckedPtr<const ContainerBox> layoutBox;
+    };
+    using LogicalFlexItems = Vector<LogicalFlexItem>;
+    LogicalFlexItems convertFlexItemsToLogicalSpace();
+    void setFlexItemsGeometry(const LogicalFlexItems&, const ConstraintsForFlexContent&);
+    void computeLogicalWidthForFlexItems(LogicalFlexItems&, LayoutUnit availableSpace);
+    void computeLogicalWidthForStretchingFlexItems(LogicalFlexItems&, LayoutUnit availableSpace);
+    void computeLogicalWidthForShrinkingFlexItems(LogicalFlexItems&, LayoutUnit availableSpace);
+    void computeLogicalHeightForFlexItems(LogicalFlexItems&, LayoutUnit availableSpace);
+    void alignFlexItems(LogicalFlexItems&, LayoutUnit availableSpace);
+    void justifyFlexItems(LogicalFlexItems&, LayoutUnit availableSpace);
+    LayoutUnit computeAvailableLogicalVerticalSpace(LogicalFlexItems&, const ConstraintsForFlexContent&) const;
+    LayoutUnit computeAvailableLogicalHorizontalSpace(LogicalFlexItems&, const ConstraintsForFlexContent&) const;
 
     const FlexFormattingState& formattingState() const { return downcast<FlexFormattingState>(FormattingContext::formattingState()); }
     FlexFormattingState& formattingState() { return downcast<FlexFormattingState>(FormattingContext::formattingState()); }

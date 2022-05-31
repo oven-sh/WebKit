@@ -49,11 +49,11 @@
 namespace WebKit {
 namespace NetworkCache {
 
-static const char saltFileName[] = "salt";
-static const char versionDirectoryPrefix[] = "Version ";
-static const char recordsDirectoryName[] = "Records";
-static const char blobsDirectoryName[] = "Blobs";
-static const char blobSuffix[] = "-blob";
+static constexpr auto saltFileName = "salt"_s;
+static constexpr auto versionDirectoryPrefix = "Version "_s;
+static constexpr auto recordsDirectoryName = "Records"_s;
+static constexpr auto blobsDirectoryName = "Blobs"_s;
+static constexpr auto blobSuffix = "-blob"_s;
 
 static inline size_t maximumInlineBodySize()
 {
@@ -176,7 +176,7 @@ static String makeCachePath(const String& baseCachePath)
 #if PLATFORM(MAC)
     // Put development cache to a different directory to avoid affecting the system cache.
     if (!AuxiliaryProcess::isSystemWebKit())
-        return FileSystem::pathByAppendingComponent(baseCachePath, "Development");
+        return FileSystem::pathByAppendingComponent(baseCachePath, "Development"_s);
 #endif
     return baseCachePath;
 }
@@ -235,7 +235,7 @@ static void traverseRecordsFiles(const String& recordsPath, const String& expect
                 if (entryType != DirectoryEntryType::File || fileName.length() < Key::hashStringLength())
                     return;
 
-                String hashString = fileName.substring(0, Key::hashStringLength());
+                String hashString = fileName.left(Key::hashStringLength());
                 auto isBlob = fileName.length() > Key::hashStringLength() && fileName.endsWith(blobSuffix);
                 function(fileName, hashString, actualType, isBlob, recordDirectoryPath);
             });

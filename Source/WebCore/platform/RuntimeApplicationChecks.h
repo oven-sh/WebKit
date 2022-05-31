@@ -40,9 +40,6 @@ enum class AuxiliaryProcessType : uint8_t {
 #if ENABLE(GPU_PROCESS)
     GPU,
 #endif
-#if ENABLE(WEB_AUTHN)
-    WebAuthn,
-#endif
 };
 
 WEBCORE_EXPORT void setAuxiliaryProcessType(AuxiliaryProcessType);
@@ -73,6 +70,7 @@ WEBCORE_EXPORT void clearApplicationBundleIdentifierTestingOverride();
 namespace CocoaApplication {
 
 WEBCORE_EXPORT bool isIBooks();
+WEBCORE_EXPORT bool isWebkitTestRunner();
 
 }
 

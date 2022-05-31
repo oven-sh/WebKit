@@ -53,7 +53,7 @@ void SVGFEGaussianBlurElement::setStdDeviation(float x, float y)
 {
     m_stdDeviationX->setBaseValInternal(x);
     m_stdDeviationY->setBaseValInternal(y);
-    setSVGResourcesInAncestorChainAreDirty();
+    updateSVGRendererForElementChange();
 }
 
 void SVGFEGaussianBlurElement::parseAttribute(const QualifiedName& name, const AtomString& value)
@@ -87,14 +87,20 @@ void SVGFEGaussianBlurElement::svgAttributeChanged(const QualifiedName& attrName
 {
     if (PropertyRegistry::isKnownAttribute(attrName)) {
         InstanceInvalidationGuard guard(*this);
-        setSVGResourcesInAncestorChainAreDirty();
+        updateSVGRendererForElementChange();
         return;
     }
 
     SVGFilterPrimitiveStandardAttributes::svgAttributeChanged(attrName);
 }
 
-RefPtr<FilterEffect> SVGFEGaussianBlurElement::filterEffect(const SVGFilterBuilder&, const FilterEffectVector&) const
+IntOutsets SVGFEGaussianBlurElement::outsets(const FloatRect& targetBoundingBox, SVGUnitTypes::SVGUnitType primitiveUnits) const
+{
+    auto stdDeviation = SVGFilter::calculateResolvedSize({ stdDeviationX(), stdDeviationY() }, targetBoundingBox, primitiveUnits);
+    return FEGaussianBlur::calculateOutsets(stdDeviation);
+}
+
+RefPtr<FilterEffect> SVGFEGaussianBlurElement::filterEffect(const SVGFilter&, const FilterEffectVector&, const GraphicsContext&) const
 {
     if (stdDeviationX() < 0 || stdDeviationY() < 0)
         return nullptr;

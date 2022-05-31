@@ -31,14 +31,20 @@
 
 namespace WebGPU {
 
-RefPtr<QuerySet> Device::createQuerySet(const WGPUQuerySetDescriptor& descriptor)
+Ref<QuerySet> Device::createQuerySet(const WGPUQuerySetDescriptor& descriptor)
 {
     UNUSED_PARAM(descriptor);
-    return QuerySet::create(nil);
+    return QuerySet::createInvalid(*this);
 }
 
-QuerySet::QuerySet(id<MTLCounterSampleBuffer> counterSampleBuffer)
+QuerySet::QuerySet(id<MTLCounterSampleBuffer> counterSampleBuffer, Device& device)
     : m_counterSampleBuffer(counterSampleBuffer)
+    , m_device(device)
+{
+}
+
+QuerySet::QuerySet(Device& device)
+    : m_device(device)
 {
 }
 
@@ -46,6 +52,9 @@ QuerySet::~QuerySet() = default;
 
 void QuerySet::destroy()
 {
+    // https://gpuweb.github.io/gpuweb/#dom-gpuqueryset-destroy
+
+    m_counterSampleBuffer = nil;
 }
 
 void QuerySet::setLabel(String&&)

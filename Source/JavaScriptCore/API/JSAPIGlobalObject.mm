@@ -86,7 +86,7 @@ static Expected<URL, String> computeValidImportSpecifier(const URL& base, const 
     if (absoluteURL.isValid())
         return absoluteURL;
 
-    if (!specifier.startsWith('/') && !specifier.startsWith("./") && !specifier.startsWith("../"))
+    if (!specifier.startsWith('/') && !specifier.startsWith("./"_s) && !specifier.startsWith("../"_s))
         return makeUnexpected(makeString("Module specifier: "_s, specifier, " does not start with \"/\", \"./\", or \"../\". Referenced from: "_s, base.string()));
 
     if (specifier.startsWith('/')) {
@@ -117,7 +117,7 @@ Identifier JSAPIGlobalObject::moduleLoaderResolve(JSGlobalObject* globalObject, 
     RETURN_IF_EXCEPTION(scope, { });
 
     URL base;
-    if (JSString* referrerString = jsDynamicCast<JSString*>(vm, referrer)) {
+    if (JSString* referrerString = jsDynamicCast<JSString*>(referrer)) {
         String value = referrerString->value(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
         URL referrerURL({ }, value);
@@ -235,7 +235,7 @@ JSObject* JSAPIGlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     JSObject* metaProperties = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    metaProperties->putDirect(vm, Identifier::fromString(vm, "filename"), key);
+    metaProperties->putDirect(vm, Identifier::fromString(vm, "filename"_s), key);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     return metaProperties;

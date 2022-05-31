@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2011-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2011-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -64,9 +64,9 @@ std::optional<T> parse(const char* string);
 template<>
 std::optional<OptionsStorage::Bool> parse(const char* string)
 {
-    if (equalLettersIgnoringASCIICase(string, "true") || equalLettersIgnoringASCIICase(string, "yes") || !strcmp(string, "1"))
+    if (equalLettersIgnoringASCIICase(string, "true"_s) || equalLettersIgnoringASCIICase(string, "yes"_s) || !strcmp(string, "1"))
         return true;
-    if (equalLettersIgnoringASCIICase(string, "false") || equalLettersIgnoringASCIICase(string, "no") || !strcmp(string, "0"))
+    if (equalLettersIgnoringASCIICase(string, "false"_s) || equalLettersIgnoringASCIICase(string, "no"_s) || !strcmp(string, "0"))
         return false;
     return std::nullopt;
 }
@@ -134,13 +134,13 @@ std::optional<OptionsStorage::OptionString> parse(const char* string)
 template<>
 std::optional<OptionsStorage::GCLogLevel> parse(const char* string)
 {
-    if (equalLettersIgnoringASCIICase(string, "none") || equalLettersIgnoringASCIICase(string, "no") || equalLettersIgnoringASCIICase(string, "false") || !strcmp(string, "0"))
+    if (equalLettersIgnoringASCIICase(string, "none"_s) || equalLettersIgnoringASCIICase(string, "no"_s) || equalLettersIgnoringASCIICase(string, "false"_s) || !strcmp(string, "0"))
         return GCLogging::None;
 
-    if (equalLettersIgnoringASCIICase(string, "basic") || equalLettersIgnoringASCIICase(string, "yes") || equalLettersIgnoringASCIICase(string, "true") || !strcmp(string, "1"))
+    if (equalLettersIgnoringASCIICase(string, "basic"_s) || equalLettersIgnoringASCIICase(string, "yes"_s) || equalLettersIgnoringASCIICase(string, "true"_s) || !strcmp(string, "1"))
         return GCLogging::Basic;
 
-    if (equalLettersIgnoringASCIICase(string, "verbose") || !strcmp(string, "2"))
+    if (equalLettersIgnoringASCIICase(string, "verbose"_s) || !strcmp(string, "2"))
         return GCLogging::Verbose;
 
     return std::nullopt;
@@ -200,8 +200,7 @@ bool Options::overrideAliasedOptionWithHeuristic(const char* name)
     if (!stringValue)
         return false;
 
-    String aliasedOption;
-    aliasedOption = String(&name[4]) + "=" + stringValue;
+    auto aliasedOption = makeString(&name[4], '=', stringValue);
     if (Options::setOption(aliasedOption.utf8().data()))
         return true;
 
@@ -429,9 +428,18 @@ void Options::recomputeDependentOptions()
 #if !ENABLE(FTL_JIT)
     Options::useFTLJIT() = false;
 #endif
+
+#if CPU(RISCV64)
+    // On RISCV64, JIT levels are enabled at build-time to simplify building JSC, avoiding
+    // otherwise rare combinations of build-time configuration. FTL on RISCV64 is disabled
+    // at runtime for now, until it gets int a proper working state.
+    // https://webkit.org/b/239707
+    Options::useFTLJIT() = false;
+#endif
     
 #if !CPU(X86_64) && !CPU(ARM64)
     Options::useConcurrentGC() = false;
+    Options::forceUnlinkedDFG() = false;
 #endif
 
     // At initialization time, we may decide that useJIT should be false for any
@@ -457,10 +465,18 @@ void Options::recomputeDependentOptions()
     if (!Options::useWebAssembly())
         Options::useFastTLSForWasmContext() = false;
     
-    if (Options::logJIT()
-        || Options::dumpDisassembly()
+    if (Options::dumpDisassembly()
+        || Options::asyncDisassembly()
         || Options::dumpDFGDisassembly()
         || Options::dumpFTLDisassembly()
+        || Options::dumpRegExpDisassembly()
+        || Options::dumpWasmDisassembly()
+        || Options::dumpBBQDisassembly()
+        || Options::dumpOMGDisassembly())
+        Options::needDisassemblySupport() = true;
+
+    if (Options::logJIT()
+        || Options::needDisassemblySupport()
         || Options::dumpBytecodeAtDFGTime()
         || Options::dumpGraphAtEachPhase()
         || Options::dumpDFGGraphAtEachPhase()
@@ -537,10 +553,6 @@ void Options::recomputeDependentOptions()
         Options::reservedZoneSize() = minimumReservedZoneSize;
     if (Options::softReservedZoneSize() < Options::reservedZoneSize() + minimumReservedZoneSize)
         Options::softReservedZoneSize() = Options::reservedZoneSize() + minimumReservedZoneSize;
-
-    // FIXME: Make probe OSR exit work on 32-bit:
-    // https://bugs.webkit.org/show_bug.cgi?id=177956
-    Options::useProbeOSRExit() = false;
 
     if (!Options::useCodeCache())
         Options::diskCachePath() = nullptr;
@@ -882,7 +894,7 @@ bool Options::setAliasedOption(const char* arg)
 #define FOR_EACH_OPTION(aliasedName_, unaliasedName_, equivalence) \
     if (strlen(#aliasedName_) == static_cast<size_t>(equalStr - arg)    \
         && !strncasecmp(arg, #aliasedName_, equalStr - arg)) {          \
-        String unaliasedOption(#unaliasedName_);                        \
+        auto unaliasedOption = String::fromLatin1(#unaliasedName_);     \
         if (equivalence == SameOption)                                  \
             unaliasedOption = unaliasedOption + equalStr;               \
         else {                                                          \

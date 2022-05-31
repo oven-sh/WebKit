@@ -71,7 +71,7 @@ static MTLFunctionConstantValues *createConstantValues(uint32_t constantCount, c
     auto constantValues = [MTLFunctionConstantValues new];
     for (uint32_t i = 0; i < constantCount; ++i) {
         const auto& entry = constants[i];
-        auto nameIterator = entryPointInformation.specializationConstantIndices.find(String { entry.key });
+        auto nameIterator = entryPointInformation.specializationConstantIndices.find(fromAPI(entry.key));
         if (nameIterator == entryPointInformation.specializationConstantIndices.end())
             return nullptr;
         auto specializationConstantIndex = nameIterator->value;
@@ -141,42 +141,50 @@ static id<MTLComputePipelineState> createComputePipelineState(id<MTLDevice> devi
     return computePipelineState;
 }
 
-RefPtr<ComputePipeline> Device::createComputePipeline(const WGPUComputePipelineDescriptor& descriptor)
+Ref<ComputePipeline> Device::createComputePipeline(const WGPUComputePipelineDescriptor& descriptor)
 {
     if (descriptor.nextInChain || descriptor.compute.nextInChain)
-        return nullptr;
+        return ComputePipeline::createInvalid(*this);
 
     const ShaderModule& shaderModule = WebGPU::fromAPI(descriptor.compute.module);
     const PipelineLayout& pipelineLayout = WebGPU::fromAPI(descriptor.layout);
     auto label = fromAPI(descriptor.label);
 
-    auto libraryCreationResult = createLibrary(m_device, shaderModule, pipelineLayout, String { descriptor.compute.entryPoint }, label);
+    auto libraryCreationResult = createLibrary(m_device, shaderModule, pipelineLayout, fromAPI(descriptor.compute.entryPoint), label);
     if (!libraryCreationResult)
-        return nullptr;
+        return ComputePipeline::createInvalid(*this);
 
     auto library = libraryCreationResult->library;
     const auto& entryPointInformation = libraryCreationResult->entryPointInformation;
 
     if (!std::holds_alternative<WGSL::Reflection::Compute>(entryPointInformation.typedEntryPoint))
-        return nullptr;
+        return ComputePipeline::createInvalid(*this);
     const auto& computeInformation = std::get<WGSL::Reflection::Compute>(entryPointInformation.typedEntryPoint);
 
     auto function = createFunction(library, entryPointInformation, descriptor.compute, label);
 
     auto computePipelineState = createComputePipelineState(m_device, function, pipelineLayout, computeInformation, label);
 
-    return ComputePipeline::create(computePipelineState);
+    return ComputePipeline::create(computePipelineState, *this);
 }
 
-void Device::createComputePipelineAsync(const WGPUComputePipelineDescriptor& descriptor, CompletionHandler<void(WGPUCreatePipelineAsyncStatus, RefPtr<ComputePipeline>&&, String&& message)>&& callback)
+void Device::createComputePipelineAsync(const WGPUComputePipelineDescriptor& descriptor, CompletionHandler<void(WGPUCreatePipelineAsyncStatus, Ref<ComputePipeline>&&, String&& message)>&& callback)
 {
     // FIXME: Implement this
     UNUSED_PARAM(descriptor);
-    UNUSED_PARAM(callback);
+    instance().scheduleWork([strongThis = Ref { *this }, callback = WTFMove(callback)]() mutable {
+        callback(WGPUCreatePipelineAsyncStatus_Error, ComputePipeline::createInvalid(strongThis), { });
+    });
 }
 
-ComputePipeline::ComputePipeline(id<MTLComputePipelineState> computePipelineState)
+ComputePipeline::ComputePipeline(id<MTLComputePipelineState> computePipelineState, Device& device)
     : m_computePipelineState(computePipelineState)
+    , m_device(device)
+{
+}
+
+ComputePipeline::ComputePipeline(Device& device)
+    : m_device(device)
 {
 }
 

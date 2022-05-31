@@ -352,13 +352,14 @@ std::optional<PixelBuffer> GraphicsContextGLOpenGL::readCompositedResults()
     return readRenderingResults();
 }
 
-void GraphicsContextGLOpenGL::validateDepthStencil(const char* packedDepthStencilExtension)
+void GraphicsContextGLOpenGL::validateDepthStencil(ASCIILiteral packedDepthStencilExtension)
 {
     auto attrs = contextAttributes();
 
     if (attrs.stencil) {
-        if (supportsExtension(packedDepthStencilExtension)) {
-            ensureExtensionEnabled(packedDepthStencilExtension);
+        String packedDepthStencilExtensionString { packedDepthStencilExtension };
+        if (supportsExtension(packedDepthStencilExtensionString)) {
+            ensureExtensionEnabled(packedDepthStencilExtensionString);
             // Force depth if stencil is true.
             attrs.depth = true;
         } else
@@ -366,11 +367,11 @@ void GraphicsContextGLOpenGL::validateDepthStencil(const char* packedDepthStenci
         setContextAttributes(attrs);
     }
     if (attrs.antialias && !m_isForWebGL2) {
-        if (!supportsExtension("GL_ANGLE_framebuffer_multisample")) {
+        if (!supportsExtension("GL_ANGLE_framebuffer_multisample"_s)) {
             attrs.antialias = false;
             setContextAttributes(attrs);
         } else
-            ensureExtensionEnabled("GL_ANGLE_framebuffer_multisample");
+            ensureExtensionEnabled("GL_ANGLE_framebuffer_multisample"_s);
     }
 }
 
@@ -1345,7 +1346,7 @@ String GraphicsContextGLOpenGL::getString(GCGLenum name)
     if (!makeContextCurrent())
         return String();
 
-    return String(reinterpret_cast<const char*>(::glGetString(name)));
+    return String::fromLatin1(reinterpret_cast<const char*>(::glGetString(name)));
 }
 
 void GraphicsContextGLOpenGL::hint(GCGLenum target, GCGLenum mode)
@@ -1941,7 +1942,7 @@ void GraphicsContextGLOpenGL::getNonBuiltInActiveSymbolCount(PlatformGLObject pr
     for (GCGLint i = 0; i < attributeCount; ++i) {
         ActiveInfo info;
         getActiveAttribImpl(program, i, info);
-        if (info.name.startsWith("gl_"))
+        if (info.name.startsWith("gl_"_s))
             continue;
 
         symbolCounts.filteredToActualAttributeIndexMap.append(i);
@@ -1953,7 +1954,7 @@ void GraphicsContextGLOpenGL::getNonBuiltInActiveSymbolCount(PlatformGLObject pr
     for (GCGLint i = 0; i < uniformCount; ++i) {
         ActiveInfo info;
         getActiveUniformImpl(program, i, info);
-        if (info.name.startsWith("gl_"))
+        if (info.name.startsWith("gl_"_s))
             continue;
         
         symbolCounts.filteredToActualUniformIndexMap.append(i);
@@ -1966,7 +1967,7 @@ String GraphicsContextGLOpenGL::getUnmangledInfoLog(PlatformGLObject shaders[2],
 {
     LOG(WebGL, "Original ShaderInfoLog:\n%s", log.utf8().data());
 
-    JSC::Yarr::RegularExpression regExp("webgl_[0123456789abcdefABCDEF]+");
+    JSC::Yarr::RegularExpression regExp("webgl_[0123456789abcdefABCDEF]+"_s);
 
     StringBuilder processedLog;
     
@@ -1974,8 +1975,8 @@ String GraphicsContextGLOpenGL::getUnmangledInfoLog(PlatformGLObject shaders[2],
     // causes a warning in some compilers. There is no point showing
     // this warning to the user since they didn't write the code that
     // is causing it.
-    static constexpr char angleWarning[] = "WARNING: 0:1: extension 'GL_ARB_gpu_shader5' is not supported\n";
-    int startFrom = log.startsWith(angleWarning) ? strlen(angleWarning) : 0;
+    static constexpr auto angleWarning = "WARNING: 0:1: extension 'GL_ARB_gpu_shader5' is not supported\n"_s;
+    int startFrom = log.startsWith(angleWarning) ? angleWarning.length() : 0;
     int matchedLength = 0;
 
     do {
@@ -1983,7 +1984,7 @@ String GraphicsContextGLOpenGL::getUnmangledInfoLog(PlatformGLObject shaders[2],
         if (start == -1)
             break;
 
-        processedLog.append(log.substring(startFrom, start - startFrom));
+        processedLog.append(StringView(log).substring(startFrom, start - startFrom));
         startFrom = start + matchedLength;
 
         const String& mangledSymbol = log.substring(start, matchedLength);
@@ -1992,7 +1993,7 @@ String GraphicsContextGLOpenGL::getUnmangledInfoLog(PlatformGLObject shaders[2],
         processedLog.append(mappedSymbol);
     } while (startFrom < static_cast<int>(log.length()));
 
-    processedLog.append(log.substring(startFrom, log.length() - startFrom));
+    processedLog.append(StringView(log).substring(startFrom, log.length() - startFrom));
 
     LOG(WebGL, "Unmangled ShaderInfoLog:\n%s", processedLog.toString().utf8().data());
     return processedLog.toString();
@@ -3035,22 +3036,22 @@ void GraphicsContextGLOpenGL::compressedTexSubImage3D(GCGLenum, GCGLint, GCGLint
 {
 }
 
-void GraphicsContextGLOpenGL::multiDrawArraysANGLE(GCGLenum, GCGLSpan<const GCGLint>, GCGLSpan<const GCGLsizei>, GCGLsizei)
+void GraphicsContextGLOpenGL::multiDrawArraysANGLE(GCGLenum, GCGLSpanTuple<const GCGLint, const GCGLsizei>)
 {
     synthesizeGLError(GraphicsContextGL::INVALID_OPERATION);
 }
 
-void GraphicsContextGLOpenGL::multiDrawArraysInstancedANGLE(GCGLenum, GCGLSpan<const GCGLint>, GCGLSpan<const GCGLsizei>, GCGLSpan<const GCGLsizei>, GCGLsizei)
+void GraphicsContextGLOpenGL::multiDrawArraysInstancedANGLE(GCGLenum, GCGLSpanTuple<const GCGLint, const GCGLsizei, const GCGLsizei>)
 {
     synthesizeGLError(GraphicsContextGL::INVALID_OPERATION);
 }
 
-void GraphicsContextGLOpenGL::multiDrawElementsANGLE(GCGLenum, GCGLSpan<const GCGLsizei>, GCGLenum, GCGLSpan<const GCGLint>, GCGLsizei)
+void GraphicsContextGLOpenGL::multiDrawElementsANGLE(GCGLenum, GCGLSpanTuple<const GCGLsizei, const GCGLint>, GCGLenum)
 {
     synthesizeGLError(GraphicsContextGL::INVALID_OPERATION);
 }
 
-void GraphicsContextGLOpenGL::multiDrawElementsInstancedANGLE(GCGLenum, GCGLSpan<const GCGLsizei>, GCGLenum, GCGLSpan<const GCGLint>, GCGLSpan<const GCGLsizei>, GCGLsizei)
+void GraphicsContextGLOpenGL::multiDrawElementsInstancedANGLE(GCGLenum, GCGLSpanTuple<const GCGLsizei, const GCGLint, const GCGLsizei>, GCGLenum)
 {
     synthesizeGLError(GraphicsContextGL::INVALID_OPERATION);
 }

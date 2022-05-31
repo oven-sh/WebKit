@@ -134,7 +134,7 @@ void SVGAElement::defaultEventHandler(Event& event)
                 }
             }
 
-            String target = this->target();
+            auto target = this->target();
             if (target.isEmpty() && attributeWithoutSynchronization(XLinkNames::showAttr) == "new")
                 target = blankTargetFrameName();
             event.setDefaultHandled();
@@ -210,9 +210,9 @@ bool SVGAElement::childShouldCreateRenderer(const Node& child) const
     return SVGElement::childShouldCreateRenderer(child);
 }
 
-bool SVGAElement::willRespondToMouseClickEvents()
+bool SVGAElement::willRespondToMouseClickEventsWithEditability(Editability editability) const
 { 
-    return isLink() || SVGGraphicsElement::willRespondToMouseClickEvents(); 
+    return isLink() || SVGGraphicsElement::willRespondToMouseClickEventsWithEditability(editability); 
 }
 
 SharedStringHash SVGAElement::visitedLinkHash() const
@@ -228,10 +228,10 @@ DOMTokenList& SVGAElement::relList()
     if (!m_relList) {
         m_relList = makeUnique<DOMTokenList>(*this, SVGNames::relAttr, [](Document&, StringView token) {
 #if USE(SYSTEM_PREVIEW)
-            if (equalIgnoringASCIICase(token, "ar"))
+            if (equalLettersIgnoringASCIICase(token, "ar"_s))
                 return true;
 #endif
-            return equalIgnoringASCIICase(token, "noreferrer") || equalIgnoringASCIICase(token, "noopener");
+            return equalLettersIgnoringASCIICase(token, "noreferrer"_s) || equalLettersIgnoringASCIICase(token, "noopener"_s);
         });
     }
     return *m_relList;

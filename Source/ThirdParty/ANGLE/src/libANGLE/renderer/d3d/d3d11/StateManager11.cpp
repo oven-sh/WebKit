@@ -356,7 +356,7 @@ bool ShaderConstants11::updateSamplerMetadata(SamplerMetadata *data,
     gl::TextureTarget target = (texture.getType() == gl::TextureType::CubeMap)
                                    ? gl::kCubeMapTextureTargetMin
                                    : gl::NonCubeTextureTypeToTarget(texture.getType());
-    GLenum sizedFormat = texture.getFormat(target, baseLevel).info->sizedInternalFormat;
+    GLenum sizedFormat       = texture.getFormat(target, baseLevel).info->sizedInternalFormat;
     if (data->baseLevel != static_cast<int>(baseLevel))
     {
         data->baseLevel = static_cast<int>(baseLevel);
@@ -568,16 +568,18 @@ void ShaderConstants11::onSamplerChange(gl::ShaderType shaderType,
     }
 }
 
-void ShaderConstants11::onImageChange(gl::ShaderType shaderType,
+bool ShaderConstants11::onImageChange(gl::ShaderType shaderType,
                                       unsigned int imageIndex,
                                       const gl::ImageUnit &imageUnit)
 {
     ASSERT(shaderType != gl::ShaderType::InvalidEnum);
+    bool dirty = false;
     if (imageUnit.access == GL_READ_ONLY)
     {
         if (updateImageMetadata(&mShaderReadonlyImageMetadata[shaderType][imageIndex], imageUnit))
         {
             mNumActiveShaderReadonlyImages[shaderType] = 0;
+            dirty                                      = true;
         }
     }
     else
@@ -585,8 +587,10 @@ void ShaderConstants11::onImageChange(gl::ShaderType shaderType,
         if (updateImageMetadata(&mShaderImageMetadata[shaderType][imageIndex], imageUnit))
         {
             mNumActiveShaderImages[shaderType] = 0;
+            dirty                              = true;
         }
     }
+    return dirty;
 }
 
 void ShaderConstants11::onClipControlChange(bool lowerLeft, bool zeroToOne)
@@ -817,7 +821,6 @@ void StateManager11::setUnorderedAccessViewInternal(gl::ShaderType shaderType,
                                                     UINT resourceSlot,
                                                     const UAVType *uav)
 {
-    ASSERT(shaderType == gl::ShaderType::Compute);
     ASSERT(static_cast<size_t>(resourceSlot) < mCurComputeUAVs.size());
     const ViewRecord<D3D11_UNORDERED_ACCESS_VIEW_DESC> &record = mCurComputeUAVs[resourceSlot];
 
@@ -837,7 +840,24 @@ void StateManager11::setUnorderedAccessViewInternal(gl::ShaderType shaderType,
             unsetConflictingSRVs(gl::PipelineType::ComputePipeline, gl::ShaderType::Compute,
                                  resource, nullptr, false);
         }
-        deviceContext->CSSetUnorderedAccessViews(resourceSlot, 1, &uavPtr, nullptr);
+        switch (shaderType)
+        {
+            case gl::ShaderType::Vertex:
+            case gl::ShaderType::Fragment:
+            {
+                UINT baseUAVRegister = static_cast<UINT>(mProgramD3D->getPixelShaderKey().size());
+                deviceContext->OMSetRenderTargetsAndUnorderedAccessViews(
+                    D3D11_KEEP_RENDER_TARGETS_AND_DEPTH_STENCIL, nullptr, nullptr,
+                    baseUAVRegister + resourceSlot, 1, &uavPtr, nullptr);
+                break;
+            }
+            case gl::ShaderType::Compute:
+                deviceContext->CSSetUnorderedAccessViews(resourceSlot, 1, &uavPtr, nullptr);
+                break;
+            default:
+                UNIMPLEMENTED();
+                break;
+        }
 
         mCurComputeUAVs.update(resourceSlot, uavPtr);
     }
@@ -962,12 +982,12 @@ void StateManager11::syncState(const gl::Context *context,
             case gl::State::DIRTY_BIT_BLEND_EQUATIONS:
             {
                 const gl::BlendStateExt &blendStateExt = state.getBlendStateExt();
-                ASSERT(mCurBlendStateExt.mMaxDrawBuffers == blendStateExt.mMaxDrawBuffers);
+                ASSERT(mCurBlendStateExt.getDrawBufferCount() ==
+                       blendStateExt.getDrawBufferCount());
                 // Compare blend equations only for buffers with blending enabled because
                 // subsequent sync stages enforce default values for buffers with blending disabled.
-                if ((blendStateExt.mEnabledMask &
-                     mCurBlendStateExt.compareEquations(blendStateExt.mEquationColor,
-                                                        blendStateExt.mEquationAlpha))
+                if ((blendStateExt.getEnabledMask() &
+                     mCurBlendStateExt.compareEquations(blendStateExt))
                         .any())
                 {
                     mInternalDirtyBits.set(DIRTY_BIT_BLEND_STATE);
@@ -977,13 +997,12 @@ void StateManager11::syncState(const gl::Context *context,
             case gl::State::DIRTY_BIT_BLEND_FUNCS:
             {
                 const gl::BlendStateExt &blendStateExt = state.getBlendStateExt();
-                ASSERT(mCurBlendStateExt.mMaxDrawBuffers == blendStateExt.mMaxDrawBuffers);
+                ASSERT(mCurBlendStateExt.getDrawBufferCount() ==
+                       blendStateExt.getDrawBufferCount());
                 // Compare blend factors only for buffers with blending enabled because
                 // subsequent sync stages enforce default values for buffers with blending disabled.
-                if ((blendStateExt.mEnabledMask &
-                     mCurBlendStateExt.compareFactors(
-                         blendStateExt.mSrcColor, blendStateExt.mDstColor, blendStateExt.mSrcAlpha,
-                         blendStateExt.mDstAlpha))
+                if ((blendStateExt.getEnabledMask() &
+                     mCurBlendStateExt.compareFactors(blendStateExt))
                         .any())
                 {
                     mInternalDirtyBits.set(DIRTY_BIT_BLEND_STATE);
@@ -992,7 +1011,7 @@ void StateManager11::syncState(const gl::Context *context,
             }
             case gl::State::DIRTY_BIT_BLEND_ENABLED:
             {
-                if (state.getBlendStateExt().mEnabledMask != mCurBlendStateExt.mEnabledMask)
+                if (state.getBlendStateExt().getEnabledMask() != mCurBlendStateExt.getEnabledMask())
                 {
                     mInternalDirtyBits.set(DIRTY_BIT_BLEND_STATE);
                 }
@@ -1012,7 +1031,8 @@ void StateManager11::syncState(const gl::Context *context,
                 break;
             case gl::State::DIRTY_BIT_COLOR_MASK:
             {
-                if (state.getBlendStateExt().mColorMask != mCurBlendStateExt.mColorMask)
+                if (state.getBlendStateExt().getColorMaskBits() !=
+                    mCurBlendStateExt.getColorMaskBits())
                 {
                     mInternalDirtyBits.set(DIRTY_BIT_BLEND_STATE);
                 }
@@ -1262,7 +1282,7 @@ angle::Result StateManager11::syncBlendState(const gl::Context *context,
 {
     const d3d11::BlendState *dxBlendState = nullptr;
     const d3d11::BlendStateKey &key       = RenderStateCache::GetBlendStateKey(
-        context, mFramebuffer11, blendStateExt, sampleAlphaToCoverage);
+              context, mFramebuffer11, blendStateExt, sampleAlphaToCoverage);
 
     ANGLE_TRY(mRenderer->getBlendState(context, key, &dxBlendState));
 
@@ -2342,7 +2362,7 @@ angle::Result StateManager11::updateState(const gl::Context *context,
                 // TODO(jie.a.chen@intel.com): http://anglebug.com/1729
                 break;
             case DIRTY_BIT_PROGRAM_SHADER_STORAGE_BUFFERS:
-                // TODO(jie.a.chen@intel.com): http://anglebug.com/1951
+                ANGLE_TRY(syncShaderStorageBuffers(context));
                 break;
             case DIRTY_BIT_SHADERS:
                 ANGLE_TRY(syncProgram(context, mode));
@@ -2635,6 +2655,7 @@ angle::Result StateManager11::syncTextures(const gl::Context *context)
 {
     ANGLE_TRY(applyTexturesForSRVs(context, gl::ShaderType::Vertex));
     ANGLE_TRY(applyTexturesForSRVs(context, gl::ShaderType::Fragment));
+    ANGLE_TRY(applyTexturesForUAVs(context, gl::ShaderType::Fragment));
     if (mProgramD3D->hasShaderStage(gl::ShaderType::Geometry))
     {
         ANGLE_TRY(applyTexturesForSRVs(context, gl::ShaderType::Geometry));
@@ -2751,7 +2772,10 @@ angle::Result StateManager11::setImageState(const gl::Context *context,
 {
     ASSERT(index < mRenderer->getNativeCaps().maxShaderImageUniforms[type]);
 
-    mShaderConstants.onImageChange(type, index, imageUnit);
+    if (mShaderConstants.onImageChange(type, index, imageUnit))
+    {
+        invalidateProgramUniforms();
+    }
 
     return angle::Result::Continue;
 }
@@ -2819,7 +2843,6 @@ angle::Result StateManager11::applyTexturesForSRVs(const gl::Context *context,
         {
             ANGLE_TRY(setImageState(context, gl::ShaderType::Compute,
                                     readonlyImageIndex - readonlyImageRange.low(), imageUnit));
-            invalidateProgramUniforms();
         }
         ANGLE_TRY(setTextureForImage(context, shaderType, readonlyImageIndex, true, imageUnit));
     }
@@ -2830,7 +2853,6 @@ angle::Result StateManager11::applyTexturesForSRVs(const gl::Context *context,
 angle::Result StateManager11::applyTexturesForUAVs(const gl::Context *context,
                                                    gl::ShaderType shaderType)
 {
-    ASSERT(shaderType == gl::ShaderType::Compute);
     const auto &glState = context->getState();
     const auto &caps    = context->getCaps();
 
@@ -2842,9 +2864,7 @@ angle::Result StateManager11::applyTexturesForUAVs(const gl::Context *context,
         const gl::ImageUnit &imageUnit = glState.getImageUnit(imageUnitIndex);
         if (!imageUnit.layered)
         {
-            ANGLE_TRY(setImageState(context, gl::ShaderType::Compute, imageIndex - imageRange.low(),
-                                    imageUnit));
-            invalidateProgramUniforms();
+            ANGLE_TRY(setImageState(context, shaderType, imageIndex - imageRange.low(), imageUnit));
         }
         ANGLE_TRY(setTextureForImage(context, shaderType, imageIndex, false, imageUnit));
     }
@@ -3761,14 +3781,14 @@ angle::Result StateManager11::syncShaderStorageBuffersForShader(const gl::Contex
 
         switch (shaderType)
         {
+            case gl::ShaderType::Vertex:
+            case gl::ShaderType::Fragment:
             case gl::ShaderType::Compute:
             {
                 setUnorderedAccessViewInternal(shaderType, registerIndex, uavPtr);
                 break;
             }
 
-            case gl::ShaderType::Vertex:
-            case gl::ShaderType::Fragment:
             case gl::ShaderType::Geometry:
                 UNIMPLEMENTED();
                 break;
@@ -3863,9 +3883,12 @@ angle::Result StateManager11::syncAtomicCounterBuffersForShader(const gl::Contex
 
 angle::Result StateManager11::syncShaderStorageBuffers(const gl::Context *context)
 {
-    if (mProgramD3D->hasShaderStage(gl::ShaderType::Compute))
+    for (gl::ShaderType shaderType : gl::AllShaderTypes())
     {
-        ANGLE_TRY(syncShaderStorageBuffersForShader(context, gl::ShaderType::Compute));
+        if (mProgramD3D->hasShaderStage(shaderType))
+        {
+            ANGLE_TRY(syncShaderStorageBuffersForShader(context, shaderType));
+        }
     }
 
     return angle::Result::Continue;

@@ -46,6 +46,10 @@
 #include "MockAudioSharedUnit.h"
 #endif
 
+#if USE(GSTREAMER)
+#include "MockRealtimeAudioSourceGStreamer.h"
+#endif
+
 namespace WebCore {
 
 #if !PLATFORM(MAC) && !PLATFORM(IOS_FAMILY) && !USE(GSTREAMER)
@@ -66,7 +70,7 @@ CaptureSourceOrError MockRealtimeAudioSource::create(String&& deviceID, String&&
 }
 #endif
 
-MockRealtimeAudioSource::MockRealtimeAudioSource(String&& deviceID, String&& name, String&& hashSalt, PageIdentifier pageIdentifier)
+MockRealtimeAudioSource::MockRealtimeAudioSource(String&& deviceID, AtomString&& name, String&& hashSalt, PageIdentifier pageIdentifier)
     : RealtimeMediaSource(RealtimeMediaSource::Type::Audio, WTFMove(name), WTFMove(deviceID), WTFMove(hashSalt), pageIdentifier)
     , m_workQueue(WorkQueue::create("MockRealtimeAudioSource Render Queue"))
     , m_timer(RunLoop::current(), this, &MockRealtimeAudioSource::tick)
@@ -91,7 +95,7 @@ const RealtimeMediaSourceSettings& MockRealtimeAudioSource::settings()
         settings.setVolume(volume());
         settings.setEchoCancellation(echoCancellation());
         settings.setSampleRate(sampleRate());
-        settings.setLabel(name());
+        settings.setLabel(AtomString { name() });
 
         RealtimeMediaSourceSupportedConstraints supportedConstraints;
         supportedConstraints.setSupportsDeviceId(true);
@@ -188,6 +192,9 @@ void MockRealtimeAudioSource::setIsInterrupted(bool isInterrupted)
         MockAudioSharedUnit::singleton().suspend();
     else
         MockAudioSharedUnit::singleton().resume();
+#elif USE(GSTREAMER)
+    for (auto* source : MockRealtimeAudioSourceGStreamer::allMockRealtimeAudioSources())
+        source->setInterruptedForTesting(isInterrupted);
 #endif
 }
 

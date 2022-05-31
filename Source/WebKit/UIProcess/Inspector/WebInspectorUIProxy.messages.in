@@ -29,12 +29,12 @@ messages -> WebInspectorUIProxy {
     FrontendLoaded()
     DidClose()
     BringToFront()
-    BringInspectedPageToFront()
     Reopen()
     ResetState()
 
     SetForcedAppearance(WebCore::InspectorFrontendClient::Appearance appearance)
     OpenURLExternally(String url)
+    RevealFileExternally(String path)
 
     InspectedURLChanged(String urlString)
     ShowCertificate(WebCore::CertificateInfo certificateInfo)
@@ -44,6 +44,7 @@ messages -> WebInspectorUIProxy {
 
     Save(String filename, String content, bool base64Encoded, bool forceSaveAs)
     Append(String filename, String content)
+    Load(String path) -> (String content)
 
     AttachBottom()
     AttachRight()

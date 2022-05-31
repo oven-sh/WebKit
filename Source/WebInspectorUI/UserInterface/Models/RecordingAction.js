@@ -115,6 +115,53 @@ WI.RecordingAction = class RecordingAction extends WI.Object
         return typeof propertyDescriptor.value === "function";
     }
 
+    static bitfieldNamesForParameter(type, name, value, index, count)
+    {
+        if (!value)
+            return null;
+
+        let prototype = WI.RecordingAction._prototypeForType(type);
+        if (!prototype)
+            return null;
+
+        function testAndClearBit(name) {
+            let bit = prototype[name];
+            if (!bit)
+                return;
+
+            if (value & bit)
+                names.push(name);
+
+            value = value & ~bit;
+        }
+
+        function hexString(value) {
+            return "0x" + value.toString(16);
+        }
+
+        let names = [];
+
+        if ((name === "clear" && index === 0 && (type === WI.Recording.Type.CanvasWebGL || type === WI.Recording.Type.CanvasWebGL2)) ||
+            (name === "blitFramebuffer" && index === 8 && type === WI.Recording.Type.CanvasWebGL2)) {
+            testAndClearBit("COLOR_BUFFER_BIT");
+            testAndClearBit("DEPTH_BUFFER_BIT");
+            testAndClearBit("STENCIL_BUFFER_BIT");
+            if (value)
+                names.push(hexString(value));
+        }
+
+        if (name === "clientWaitSync" && index === 1 && type === WI.Recording.Type.CanvasWebGL2) {
+            testAndClearBit("SYNC_FLUSH_COMMANDS_BIT");
+            if (value)
+                names.push(hexString(value));
+        }
+
+        if (!names.length)
+            return null;
+
+        return names;
+    }
+
     static constantNameForParameter(type, name, value, index, count)
     {
         let indexesForType = WI.RecordingAction._constantIndexes[type];
@@ -125,10 +172,10 @@ WI.RecordingAction = class RecordingAction extends WI.Object
         if (!indexesForAction)
             return null;
 
-        if (Array.isArray(indexesForAction) && !indexesForAction.includes(index))
-            return null;
-
-        if (typeof indexesForAction === "object") {
+        if (Array.isArray(indexesForAction)) {
+            if (!indexesForAction.includes(index))
+                return null;
+        } else if (typeof indexesForAction === "object") {
             let indexesForActionVariant = indexesForAction[count];
             if (!indexesForActionVariant)
                 return null;

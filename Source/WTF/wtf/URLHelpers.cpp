@@ -92,6 +92,16 @@ template<> bool isLookalikeCharacterOfScriptType<USCRIPT_TAMIL>(UChar32 codePoin
     }
 }
 
+template<> bool isLookalikeCharacterOfScriptType<USCRIPT_CANADIAN_ABORIGINAL>(UChar32 codePoint)
+{
+    switch (codePoint) {
+    case 0x15AF: /* CANADIAN SYLLABICS AIVILIK B */
+        return true;
+    default:
+        return false;
+    }
+}
+
 template <UScriptCode ScriptType>
 bool isOfScriptType(UChar32 codePoint)
 {
@@ -287,7 +297,8 @@ static bool isLookalikeCharacter(const std::optional<UChar32>& previousCodePoint
         return false;
     default:
         return isLookalikeSequence<USCRIPT_ARMENIAN>(previousCodePoint, codePoint)
-            || isLookalikeSequence<USCRIPT_TAMIL>(previousCodePoint, codePoint);
+            || isLookalikeSequence<USCRIPT_TAMIL>(previousCodePoint, codePoint)
+            || isLookalikeSequence<USCRIPT_CANADIAN_ABORIGINAL>(previousCodePoint, codePoint);
     }
 }
 
@@ -707,7 +718,7 @@ static void applyHostNameFunctionToURLString(const String& string, URLDecodeFunc
     
     // Maybe we should implement this using a character buffer instead?
     
-    if (protocolIs(string, "mailto")) {
+    if (protocolIs(string, "mailto"_s)) {
         applyHostNameFunctionToMailToURLString(string, decodeFunction, array);
         return;
     }
@@ -716,12 +727,12 @@ static void applyHostNameFunctionToURLString(const String& string, URLDecodeFunc
     // It comes after a "://" sequence, with scheme characters preceding.
     // If ends with the end of the string or a ":", "/", or a "?".
     // If there is a "@" character, the host part is just the part after the "@".
-    static const char* separator = "://";
+    static constexpr auto separator = "://"_s;
     auto separatorIndex = string.find(separator);
     if (separatorIndex == notFound)
         return;
 
-    unsigned authorityStart = separatorIndex + strlen(separator);
+    unsigned authorityStart = separatorIndex + separator.length();
 
     // Check that all characters before the :// are valid scheme characters.
     if (StringView { string }.left(separatorIndex).contains([](UChar character) {
@@ -762,7 +773,7 @@ String mapHostNames(const String& string, URLDecodeFunction decodeFunction)
     String result = string;
     while (!hostNameRanges->isEmpty()) {
         auto [location, length, mappedHostName] = hostNameRanges->takeLast();
-        result = result.replace(location, length, mappedHostName);
+        result = makeStringByReplacing(result, location, length, mappedHostName);
     }
     return result;
 }

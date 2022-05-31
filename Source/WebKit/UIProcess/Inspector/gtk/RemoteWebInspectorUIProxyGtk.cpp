@@ -56,7 +56,7 @@ WebPageProxy* RemoteWebInspectorUIProxy::platformCreateFrontendPageAndWindow()
 {
     ASSERT(!m_webView);
 
-    auto preferences = WebPreferences::create(String(), "WebKit2.", "WebKit2.");
+    auto preferences = WebPreferences::create(String(), "WebKit2."_s, "WebKit2."_s);
 #if ENABLE(DEVELOPER_MODE)
     // Allow developers to inspect the Web Inspector in debug builds without changing settings.
     preferences->setDeveloperExtrasEnabled(true);
@@ -114,7 +114,7 @@ static void remoteFileReplaceContentsCallback(GObject* sourceObject, GAsyncResul
 
     auto* page = static_cast<WebPageProxy*>(userData);
     GUniquePtr<char> path(g_file_get_path(file));
-    page->send(Messages::RemoteWebInspectorUI::DidSave(path.get()));
+    page->send(Messages::RemoteWebInspectorUI::DidSave(String::fromUTF8(path.get())));
 }
 
 void RemoteWebInspectorUIProxy::platformSave(const String& suggestedURL, const String& content, bool base64Encoded, bool forceSaveDialog)
@@ -162,6 +162,11 @@ void RemoteWebInspectorUIProxy::platformAppend(const String&, const String&)
 {
 }
 
+void RemoteWebInspectorUIProxy::platformLoad(const String&, CompletionHandler<void(const String&)>&& completionHandler)
+{
+    completionHandler(nullString());
+}
+
 void RemoteWebInspectorUIProxy::platformSetSheetRect(const FloatRect&)
 {
 }
@@ -175,6 +180,10 @@ void RemoteWebInspectorUIProxy::platformStartWindowDrag()
 }
 
 void RemoteWebInspectorUIProxy::platformOpenURLExternally(const String&)
+{
+}
+
+void RemoteWebInspectorUIProxy::platformRevealFileExternally(const String&)
 {
 }
 

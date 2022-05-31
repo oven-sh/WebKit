@@ -277,7 +277,7 @@ void Graph::dump(PrintStream& out, const char* prefixStr, Node* node, DumpContex
                 if (ExecutableBase* executable = variant.executable()) {
                     if (executable->isHostFunction())
                         out.print(comma, "<host function>");
-                    else if (FunctionExecutable* functionExecutable = jsDynamicCast<FunctionExecutable*>(m_vm, executable))
+                    else if (FunctionExecutable* functionExecutable = jsDynamicCast<FunctionExecutable*>(executable))
                         out.print(comma, FunctionExecutableDump(functionExecutable));
                     else
                         out.print(comma, "<non-function executable>");
@@ -1064,7 +1064,7 @@ bool Graph::watchCondition(const ObjectPropertyCondition& key)
     if (m_plan.isUnlinked())
         return false;
 
-    if (!key.isWatchable())
+    if (!key.isWatchable(PropertyCondition::MakeNoChanges))
         return false;
 
     DesiredWeakReferences& weakReferences = m_plan.weakReferences();
@@ -1318,7 +1318,7 @@ JSValue Graph::tryGetConstantProperty(
     // incompatible with the getDirect we're trying to do. The easiest way to do that is to
     // determine if the structure belongs to the proven set.
 
-    Structure* structure = object->structure(m_vm);
+    Structure* structure = object->structure();
     if (!structureSet.toStructureSet().contains(structure))
         return JSValue();
 
@@ -1371,7 +1371,7 @@ JSValue Graph::tryGetConstantClosureVar(JSValue base, ScopeOffset offset)
     if (!base)
         return JSValue();
     
-    JSLexicalEnvironment* activation = jsDynamicCast<JSLexicalEnvironment*>(m_vm, base);
+    JSLexicalEnvironment* activation = jsDynamicCast<JSLexicalEnvironment*>(base);
     if (!activation)
         return JSValue();
     
@@ -1421,7 +1421,7 @@ JSArrayBufferView* Graph::tryGetFoldableView(JSValue value)
         return nullptr;
     if (!value)
         return nullptr;
-    JSArrayBufferView* view = jsDynamicCast<JSArrayBufferView*>(m_vm, value);
+    JSArrayBufferView* view = jsDynamicCast<JSArrayBufferView*>(value);
     if (!view)
         return nullptr;
     if (!view->length())
@@ -1486,7 +1486,7 @@ FrozenValue* Graph::freeze(JSValue value)
     // point to other CodeBlocks. We don't want to have them be
     // part of the weak pointer set. For example, an optimized CodeBlock
     // having a weak pointer to itself will cause it to get collected.
-    RELEASE_ASSERT(!jsDynamicCast<CodeBlock*>(m_vm, value));
+    RELEASE_ASSERT(!jsDynamicCast<CodeBlock*>(value));
     
     auto result = m_frozenValueMap.add(JSValue::encode(value), nullptr);
     if (LIKELY(!result.isNewEntry))
@@ -1698,10 +1698,8 @@ MethodOfGettingAValueProfile Graph::methodOfGettingAValueProfileFor(Node* curren
                 Node* argumentNode = m_rootToArguments.find(block(0))->value[argument];
                 // FIXME: We should match SetArgumentDefinitely nodes at other entrypoints as well:
                 // https://bugs.webkit.org/show_bug.cgi?id=175841
-                if (argumentNode && node->variableAccessData() == argumentNode->variableAccessData()) {
-                    CodeBlock* profiledBlock = baselineCodeBlockFor(node->origin.semantic);
-                    return &profiledBlock->valueProfileForArgument(argument);
-                }
+                if (argumentNode && node->variableAccessData() == argumentNode->variableAccessData())
+                    return MethodOfGettingAValueProfile::argumentValueProfile(node->origin.semantic, node->operand());
             }
         }
 
@@ -1710,22 +1708,18 @@ MethodOfGettingAValueProfile Graph::methodOfGettingAValueProfileFor(Node* curren
             CodeBlock* profiledBlock = baselineCodeBlockFor(node->origin.semantic);
 
             if (node->accessesStack(*this)) {
-                if (node->op() == GetLocal) {
-                    return MethodOfGettingAValueProfile::fromLazyOperand(
-                        profiledBlock,
-                        LazyOperandValueProfileKey(
-                            node->origin.semantic.bytecodeIndex(), node->operand()));
-                }
+                if (node->op() == GetLocal)
+                    return MethodOfGettingAValueProfile::lazyOperandValueProfile(node->origin.semantic, node->operand());
             }
 
             if (node->hasHeapPrediction())
-                return &profiledBlock->valueProfileForBytecodeIndex(node->origin.semantic.bytecodeIndex());
+                return MethodOfGettingAValueProfile::bytecodeValueProfile(node->origin.semantic);
 
             if (profiledBlock->hasBaselineJITProfiling()) {
-                if (BinaryArithProfile* result = profiledBlock->binaryArithProfileForBytecodeIndex(node->origin.semantic.bytecodeIndex()))
-                    return result;
-                if (UnaryArithProfile* result = profiledBlock->unaryArithProfileForBytecodeIndex(node->origin.semantic.bytecodeIndex()))
-                    return result;
+                if (profiledBlock->binaryArithProfileForBytecodeIndex(node->origin.semantic.bytecodeIndex()))
+                    return MethodOfGettingAValueProfile::binaryArithProfile(node->origin.semantic);
+                if (profiledBlock->unaryArithProfileForBytecodeIndex(node->origin.semantic.bytecodeIndex()))
+                    return MethodOfGettingAValueProfile::unaryArithProfile(node->origin.semantic);
             }
         }
 
@@ -1742,7 +1736,7 @@ MethodOfGettingAValueProfile Graph::methodOfGettingAValueProfileFor(Node* curren
         }
     }
     
-    return MethodOfGettingAValueProfile();
+    return { };
 }
 
 bool Graph::getRegExpPrototypeProperty(JSObject* regExpPrototype, Structure* regExpPrototypeStructure, UniquedStringImpl* uid, JSValue& returnJSValue)
@@ -1760,9 +1754,9 @@ bool Graph::getRegExpPrototypeProperty(JSObject* regExpPrototype, Structure* reg
 
     // We only care about functions and getters at this point. If you want to access other properties
     // you'll have to add code for those types.
-    JSFunction* function = jsDynamicCast<JSFunction*>(m_vm, value);
+    JSFunction* function = jsDynamicCast<JSFunction*>(value);
     if (!function) {
-        GetterSetter* getterSetter = jsDynamicCast<GetterSetter*>(m_vm, value);
+        GetterSetter* getterSetter = jsDynamicCast<GetterSetter*>(value);
 
         if (!getterSetter)
             return false;
@@ -1784,7 +1778,7 @@ bool Graph::isStringPrototypeMethodSane(JSGlobalObject* globalObject, UniquedStr
 
     ObjectPropertyCondition equivalenceCondition = conditions.slotBaseCondition();
     RELEASE_ASSERT(equivalenceCondition.hasRequiredValue());
-    JSFunction* function = jsDynamicCast<JSFunction*>(m_vm, equivalenceCondition.condition().requiredValue());
+    JSFunction* function = jsDynamicCast<JSFunction*>(equivalenceCondition.condition().requiredValue());
     if (!function)
         return false;
 
@@ -1807,7 +1801,7 @@ bool Graph::canOptimizeStringObjectAccess(const CodeOrigin& codeOrigin)
     Structure* stringObjectStructure = globalObjectFor(codeOrigin)->stringObjectStructure();
     registerStructure(stringObjectStructure);
     ASSERT(stringObjectStructure->storedPrototype().isObject());
-    ASSERT(stringObjectStructure->storedPrototype().asCell()->classInfo(stringObjectStructure->storedPrototype().asCell()->vm()) == StringPrototype::info());
+    ASSERT(stringObjectStructure->storedPrototype().asCell()->classInfo() == StringPrototype::info());
 
     if (!watchConditions(generateConditionsForPropertyMissConcurrently(m_vm, globalObject, stringObjectStructure, m_vm.propertyNames->toPrimitiveSymbol.impl())))
         return false;

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -35,14 +35,17 @@
 #include "NetworkProcessConnection.h"
 #include "NetworkProcessMessages.h"
 #include "WebCoreArgumentCoders.h"
+#include "WebPage.h"
+#include "WebPageProxyMessages.h"
 #include "WebProcess.h"
-#include "WebProcessPoolMessages.h"
+#include "WebProcessProxyMessages.h"
 #include "WebSWOriginTable.h"
 #include "WebSWServerConnectionMessages.h"
 #include <WebCore/Document.h>
 #include <WebCore/DocumentLoader.h>
 #include <WebCore/FocusController.h>
 #include <WebCore/Frame.h>
+#include <WebCore/FrameDestructionObserverInlines.h>
 #include <WebCore/ProcessIdentifier.h>
 #include <WebCore/SecurityOrigin.h>
 #include <WebCore/SerializedScriptValue.h>
@@ -51,11 +54,12 @@
 #include <WebCore/ServiceWorkerRegistrationData.h>
 #include <WebCore/ServiceWorkerRegistrationKey.h>
 #include <WebCore/WorkerFetchResult.h>
+#include <WebCore/WorkerScriptLoader.h>
 
 namespace WebKit {
+
 using namespace PAL;
 using namespace WebCore;
-
 
 WebSWClientConnection::WebSWClientConnection()
     : m_identifier(Process::identifier())
@@ -112,9 +116,9 @@ void WebSWClientConnection::postMessageToServiceWorker(ServiceWorkerIdentifier d
     send(Messages::WebSWServerConnection::PostMessageToServiceWorker { destinationIdentifier, WTFMove(message), sourceIdentifier });
 }
 
-void WebSWClientConnection::registerServiceWorkerClient(const SecurityOrigin& topOrigin, WebCore::ServiceWorkerClientData&& data, const std::optional<WebCore::ServiceWorkerRegistrationIdentifier>& controllingServiceWorkerRegistrationIdentifier, String&& userAgent)
+void WebSWClientConnection::registerServiceWorkerClient(const ClientOrigin& clientOrigin, WebCore::ServiceWorkerClientData&& data, const std::optional<WebCore::ServiceWorkerRegistrationIdentifier>& controllingServiceWorkerRegistrationIdentifier, String&& userAgent)
 {
-    send(Messages::WebSWServerConnection::RegisterServiceWorkerClient { topOrigin.data(), data, controllingServiceWorkerRegistrationIdentifier, userAgent });
+    send(Messages::WebSWServerConnection::RegisterServiceWorkerClient { clientOrigin, data, controllingServiceWorkerRegistrationIdentifier, userAgent });
 }
 
 void WebSWClientConnection::unregisterServiceWorkerClient(ScriptExecutionContextIdentifier contextIdentifier)
@@ -178,11 +182,19 @@ void WebSWClientConnection::whenRegistrationReady(const SecurityOriginData& topO
     });
 }
 
-void WebSWClientConnection::setDocumentIsControlled(ScriptExecutionContextIdentifier documentIdentifier, ServiceWorkerRegistrationData&& data, CompletionHandler<void(bool)>&& completionHandler)
+void WebSWClientConnection::setServiceWorkerClientIsControlled(ScriptExecutionContextIdentifier identifier, ServiceWorkerRegistrationData&& data, CompletionHandler<void(bool)>&& completionHandler)
 {
-    auto* documentLoader = DocumentLoader::fromScriptExecutionContextIdentifier(documentIdentifier);
-    bool result = documentLoader ? documentLoader->setControllingServiceWorkerRegistration(WTFMove(data)) : false;
-    completionHandler(result);
+    if (auto* loader = DocumentLoader::fromScriptExecutionContextIdentifier(identifier)) {
+        completionHandler(loader->setControllingServiceWorkerRegistration(WTFMove(data)));
+        return;
+    }
+
+    if (auto* loader = WorkerScriptLoader::fromScriptExecutionContextIdentifier(identifier)) {
+        completionHandler(data.activeWorker ? loader->setControllingServiceWorker(WTFMove(*data.activeWorker)) : false);
+        return;
+    }
+
+    completionHandler(false);
 }
 
 void WebSWClientConnection::getRegistrations(SecurityOriginData&& topOrigin, const URL& clientURL, GetRegistrationsCallback&& callback)
@@ -265,6 +277,11 @@ void WebSWClientConnection::getPushPermissionState(WebCore::ServiceWorkerRegistr
             return callback(result.error().toException());
         callback(static_cast<PushPermissionState>(*result));
     });
+}
+
+void WebSWClientConnection::getNotifications(const URL& registrationURL, const String& tag, GetNotificationsCallback&& callback)
+{
+    WebProcess::singleton().parentProcessConnection()->sendWithAsyncReply(Messages::WebProcessProxy::GetNotifications { registrationURL, tag }, WTFMove(callback));
 }
 
 void WebSWClientConnection::enableNavigationPreload(WebCore::ServiceWorkerRegistrationIdentifier registrationIdentifier, ExceptionOrVoidCallback&& callback)

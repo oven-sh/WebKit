@@ -305,6 +305,11 @@ _PATH_RULES_SPECIFIER = [
       os.path.join('Source', 'ThirdParty', 'libwebrtc', 'Source', 'webrtc'),
       os.path.join('Source', 'WebCore', 'PAL', 'pal', 'spi')],
      ["-readability/naming/underscores"]),
+
+    ([  # c code with underscores in variable names and tabs for the Makefile
+     os.path.join('Tools', 'Scripts', 'webkitpy', 'binary_bundling', 'dlopenwrap')],
+     ["-readability/naming/underscores",
+      "-whitespace/tab"]),
 ]
 
 
@@ -404,7 +409,8 @@ _SKIPPED_FILES_WITH_WARNING = [
     os.path.join('Source', 'WebKit', 'WebProcess', 'InjectedBundle', 'API', 'wpe', 'webkit-web-extension.h'),
     os.path.join('Source', 'WebKit', 'WebProcess', 'InjectedBundle', 'API', 'wpe', 'DOM', 'webkitdom.h'),
     os.path.join('Source', 'WebGPU', 'WebGPU', 'WebGPU.h'),
-    os.path.join('Source', 'WebGPU', 'WebGPU', 'WebGPUExt.h')]
+    os.path.join('Source', 'WebGPU', 'WebGPU', 'WebGPUExt.h'),
+    os.path.join('Source', 'WebGPU', 'WebGPU', 'metal-cpp', 'SingleHeader', 'MakeSingleHeader.py')]
 
 # Files to skip that are more common or obvious.
 #

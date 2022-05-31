@@ -28,6 +28,7 @@
 #include "Connection.h"
 #include "MessageReceiverMap.h"
 #include "MessageSender.h"
+#include "SandboxExtension.h"
 #include <WebCore/ProcessIdentifier.h>
 #include <WebCore/RuntimeApplicationChecks.h>
 #include <WebCore/UserActivity.h>
@@ -56,7 +57,7 @@ public:
     void initialize(const AuxiliaryProcessInitializationParameters&);
 
     // disable and enable termination of the process. when disableTermination is called, the
-    // process won't terminate unless a corresponding disableTermination call is made.
+    // process won't terminate unless a corresponding enableTermination call is made.
     void disableTermination();
     void enableTermination();
 
@@ -134,8 +135,6 @@ protected:
     void didReceiveMemoryPressureEvent(bool isCritical);
 #endif
 
-    static std::optional<std::pair<IPC::Connection::Identifier, IPC::Attachment>> createIPCConnectionPair();
-
 protected:
 #if ENABLE(CFPREFS_DIRECT_MODE)
     static id decodePreferenceValue(const std::optional<String>& encodedValue);
@@ -146,6 +145,10 @@ protected:
     virtual void dispatchSimulatedNotificationsForPreferenceChange(const String& key) { }
 #endif
     void applyProcessCreationParameters(const AuxiliaryProcessCreationParameters&);
+
+#if PLATFORM(MAC)
+    void openDirectoryCacheInvalidated(SandboxExtension::Handle&&);
+#endif
 
 private:
     virtual bool shouldOverrideQuarantine() { return true; }
@@ -182,14 +185,13 @@ struct AuxiliaryProcessInitializationParameters {
     String uiProcessName;
     String clientIdentifier;
     String clientBundleIdentifier;
-    uint32_t clientSDKVersion;
     std::optional<WebCore::ProcessIdentifier> processIdentifier;
     IPC::Connection::Identifier connectionIdentifier;
     HashMap<String, String> extraInitializationData;
     WebCore::AuxiliaryProcessType processType;
 #if PLATFORM(COCOA)
     OSObjectPtr<xpc_object_t> priorityBoostMessage;
-    std::optional<LinkedOnOrAfterOverride> clientLinkedOnOrAfterOverride;
+    SDKAlignedBehaviors clientSDKAlignedBehaviors;
 #endif
 };
 

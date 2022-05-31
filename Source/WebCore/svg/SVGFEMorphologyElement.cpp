@@ -52,7 +52,7 @@ void SVGFEMorphologyElement::setRadius(float x, float y)
 {
     m_radiusX->setBaseValInternal(x);
     m_radiusY->setBaseValInternal(y);
-    setSVGResourcesInAncestorChainAreDirty();
+    updateSVGRendererForElementChange();
 }
 
 void SVGFEMorphologyElement::parseAttribute(const QualifiedName& name, const AtomString& value)
@@ -101,7 +101,7 @@ void SVGFEMorphologyElement::svgAttributeChanged(const QualifiedName& attrName)
     if (PropertyRegistry::isKnownAttribute(attrName)) {
         InstanceInvalidationGuard guard(*this);
         if (attrName == SVGNames::inAttr)
-            setSVGResourcesInAncestorChainAreDirty();
+            updateSVGRendererForElementChange();
         else {
             ASSERT(attrName == SVGNames::operatorAttr || attrName == SVGNames::radiusAttr);
             primitiveAttributeChanged(attrName);
@@ -112,7 +112,7 @@ void SVGFEMorphologyElement::svgAttributeChanged(const QualifiedName& attrName)
     SVGFilterPrimitiveStandardAttributes::svgAttributeChanged(attrName);
 }
 
-RefPtr<FilterEffect> SVGFEMorphologyElement::filterEffect(const SVGFilterBuilder&, const FilterEffectVector&) const
+RefPtr<FilterEffect> SVGFEMorphologyElement::filterEffect(const SVGFilter&, const FilterEffectVector&, const GraphicsContext&) const
 {
     if (radiusX() < 0 || radiusY() < 0)
         return nullptr;

@@ -297,7 +297,7 @@ static bool sampleBufferRenderersSupportKeySession()
     return supports;
 }
 
-static Vector<Ref<FragmentedSharedBuffer>> copyKeyIDs(const Vector<Ref<FragmentedSharedBuffer>> keyIDs)
+static Vector<Ref<SharedBuffer>> copyKeyIDs(const Vector<Ref<SharedBuffer>> keyIDs)
 {
     return keyIDs.map([] (auto& keyID) {
         return keyID.copyRef();
@@ -361,7 +361,6 @@ SourceBufferPrivateAVFObjC::~SourceBufferPrivateAVFObjC()
 {
     ALWAYS_LOG(LOGIDENTIFIER);
 
-    ASSERT(!m_client);
     sourceBufferMap().remove(m_mapID);
     destroyStreamDataParser();
     destroyRenderers();
@@ -1099,7 +1098,7 @@ void SourceBufferPrivateAVFObjC::rendererWasAutomaticallyFlushed(AVSampleBufferA
     AtomString trackId;
     for (auto& pair : m_audioRenderers) {
         if (pair.value.get() == renderer) {
-            trackId = String::number(pair.key);
+            trackId = AtomString::number(pair.key);
             break;
         }
     }

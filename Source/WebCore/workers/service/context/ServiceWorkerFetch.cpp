@@ -46,11 +46,14 @@ namespace WebCore {
 
 namespace ServiceWorkerFetch {
 
-// https://fetch.spec.whatwg.org/#http-fetch step 3.3
+// https://fetch.spec.whatwg.org/#http-fetch step 5.5
 static inline ResourceError validateResponse(const ResourceResponse& response, FetchOptions::Mode mode, FetchOptions::Redirect redirect)
 {
     if (response.type() == ResourceResponse::Type::Error)
         return ResourceError { errorDomainWebKitInternal, 0, response.url(), "Response served by service worker is an error"_s, ResourceError::Type::General, ResourceError::IsSanitized::Yes };
+
+    if (mode == FetchOptions::Mode::SameOrigin && response.type() == ResourceResponse::Type::Cors)
+        return ResourceError { errorDomainWebKitInternal, 0, response.url(), "Response served by service worker is CORS while mode is same origin"_s, ResourceError::Type::AccessControl, ResourceError::IsSanitized::Yes };
 
     if (mode != FetchOptions::Mode::NoCors && response.tainting() == ResourceResponse::Tainting::Opaque)
         return ResourceError { errorDomainWebKitInternal, 0, response.url(), "Response served by service worker is opaque"_s, ResourceError::Type::AccessControl, ResourceError::IsSanitized::Yes };
@@ -120,6 +123,10 @@ static void processResponse(Ref<Client>&& client, Expected<Ref<FetchResponse>, s
     client->didReceiveResponse(resourceResponse);
 
     if (response->isBodyReceivedByChunk()) {
+        client->setCancelledCallback([response = WeakPtr { response.get() }] {
+            if (response)
+                response->cancelStream();
+        });
         response->consumeBodyReceivedByChunk([client = WTFMove(client), response = WeakPtr { response.get() }] (auto&& result) mutable {
             if (result.hasException()) {
                 auto error = FetchEvent::createResponseError(URL { }, result.exception().message(), ResourceError::IsSanitized::Yes);

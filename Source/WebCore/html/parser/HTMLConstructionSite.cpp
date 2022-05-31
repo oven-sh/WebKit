@@ -33,6 +33,7 @@
 #include "DocumentFragment.h"
 #include "DocumentType.h"
 #include "Frame.h"
+#include "FrameDestructionObserverInlines.h"
 #include "FrameLoader.h"
 #include "FrameLoaderClient.h"
 #include "HTMLElementFactory.h"
@@ -342,76 +343,76 @@ void HTMLConstructionSite::setCompatibilityModeFromDoctype(const String& name, c
 
     // Check for Quirks Mode.
     if (name != "html"
-        || startsWithLettersIgnoringASCIICase(publicId, "+//silmaril//dtd html pro v0r11 19970101//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//advasoft ltd//dtd html 3.0 aswedit + extensions//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//as//dtd html 3.0 aswedit + extensions//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html 2.0 level 1//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html 2.0 level 2//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html 2.0 strict level 1//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html 2.0 strict level 2//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html 2.0 strict//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html 2.0//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html 2.1e//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html 3.0//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html 3.2 final//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html 3.2//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html 3//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html level 0//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html level 1//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html level 2//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html level 3//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html strict level 0//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html strict level 1//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html strict level 2//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html strict level 3//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html strict//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//metrius//dtd metrius presentational//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//microsoft//dtd internet explorer 2.0 html strict//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//microsoft//dtd internet explorer 2.0 html//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//microsoft//dtd internet explorer 2.0 tables//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//microsoft//dtd internet explorer 3.0 html strict//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//microsoft//dtd internet explorer 3.0 html//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//microsoft//dtd internet explorer 3.0 tables//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//netscape comm. corp.//dtd html//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//netscape comm. corp.//dtd strict html//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//o'reilly and associates//dtd html 2.0//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//o'reilly and associates//dtd html extended 1.0//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//o'reilly and associates//dtd html extended relaxed 1.0//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//softquad software//dtd hotmetal pro 6.0::19990601::extensions to html 4.0//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//softquad//dtd hotmetal pro 4.0::19971010::extensions to html 4.0//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//spyglass//dtd html 2.0 extended//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//sq//dtd html 2.0 hotmetal + extensions//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//sun microsystems corp.//dtd hotjava html//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//sun microsystems corp.//dtd hotjava strict html//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd html 3 1995-03-24//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd html 3.2 draft//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd html 3.2 final//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd html 3.2//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd html 3.2s draft//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd html 4.0 frameset//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd html 4.0 transitional//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd html experimental 19960712//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd html experimental 970421//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd w3 html//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//w3o//dtd w3 html 3.0//")
-        || equalLettersIgnoringASCIICase(publicId, "-//w3o//dtd w3 html strict 3.0//en//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//webtechs//dtd mozilla html 2.0//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//webtechs//dtd mozilla html//")
-        || equalLettersIgnoringASCIICase(publicId, "-/w3c/dtd html 4.0 transitional/en")
-        || equalLettersIgnoringASCIICase(publicId, "html")
-        || equalLettersIgnoringASCIICase(systemId, "http://www.ibm.com/data/dtd/v11/ibmxhtml1-transitional.dtd")
-        || (systemId.isEmpty() && startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd html 4.01 frameset//"))
-        || (systemId.isEmpty() && startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd html 4.01 transitional//"))) {
+        || startsWithLettersIgnoringASCIICase(publicId, "+//silmaril//dtd html pro v0r11 19970101//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//advasoft ltd//dtd html 3.0 aswedit + extensions//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//as//dtd html 3.0 aswedit + extensions//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html 2.0 level 1//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html 2.0 level 2//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html 2.0 strict level 1//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html 2.0 strict level 2//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html 2.0 strict//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html 2.0//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html 2.1e//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html 3.0//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html 3.2 final//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html 3.2//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html 3//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html level 0//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html level 1//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html level 2//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html level 3//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html strict level 0//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html strict level 1//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html strict level 2//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html strict level 3//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html strict//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//ietf//dtd html//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//metrius//dtd metrius presentational//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//microsoft//dtd internet explorer 2.0 html strict//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//microsoft//dtd internet explorer 2.0 html//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//microsoft//dtd internet explorer 2.0 tables//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//microsoft//dtd internet explorer 3.0 html strict//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//microsoft//dtd internet explorer 3.0 html//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//microsoft//dtd internet explorer 3.0 tables//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//netscape comm. corp.//dtd html//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//netscape comm. corp.//dtd strict html//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//o'reilly and associates//dtd html 2.0//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//o'reilly and associates//dtd html extended 1.0//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//o'reilly and associates//dtd html extended relaxed 1.0//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//softquad software//dtd hotmetal pro 6.0::19990601::extensions to html 4.0//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//softquad//dtd hotmetal pro 4.0::19971010::extensions to html 4.0//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//spyglass//dtd html 2.0 extended//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//sq//dtd html 2.0 hotmetal + extensions//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//sun microsystems corp.//dtd hotjava html//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//sun microsystems corp.//dtd hotjava strict html//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd html 3 1995-03-24//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd html 3.2 draft//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd html 3.2 final//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd html 3.2//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd html 3.2s draft//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd html 4.0 frameset//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd html 4.0 transitional//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd html experimental 19960712//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd html experimental 970421//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd w3 html//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//w3o//dtd w3 html 3.0//"_s)
+        || equalLettersIgnoringASCIICase(publicId, "-//w3o//dtd w3 html strict 3.0//en//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//webtechs//dtd mozilla html 2.0//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//webtechs//dtd mozilla html//"_s)
+        || equalLettersIgnoringASCIICase(publicId, "-/w3c/dtd html 4.0 transitional/en"_s)
+        || equalLettersIgnoringASCIICase(publicId, "html"_s)
+        || equalLettersIgnoringASCIICase(systemId, "http://www.ibm.com/data/dtd/v11/ibmxhtml1-transitional.dtd"_s)
+        || (systemId.isEmpty() && startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd html 4.01 frameset//"_s))
+        || (systemId.isEmpty() && startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd html 4.01 transitional//"_s))) {
         setCompatibilityMode(DocumentCompatibilityMode::QuirksMode);
         return;
     }
 
     // Check for Limited Quirks Mode.
-    if (startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd xhtml 1.0 frameset//")
-        || startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd xhtml 1.0 transitional//")
-        || (!systemId.isEmpty() && startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd html 4.01 frameset//"))
-        || (!systemId.isEmpty() && startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd html 4.01 transitional//"))) {
+    if (startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd xhtml 1.0 frameset//"_s)
+        || startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd xhtml 1.0 transitional//"_s)
+        || (!systemId.isEmpty() && startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd html 4.01 frameset//"_s))
+        || (!systemId.isEmpty() && startsWithLettersIgnoringASCIICase(publicId, "-//w3c//dtd html 4.01 transitional//"_s))) {
         setCompatibilityMode(DocumentCompatibilityMode::LimitedQuirksMode);
         return;
     }
@@ -452,20 +453,20 @@ void HTMLConstructionSite::insertDoctype(AtomHTMLToken&& token)
 void HTMLConstructionSite::insertComment(AtomHTMLToken&& token)
 {
     ASSERT(token.type() == HTMLToken::Comment);
-    attachLater(currentNode(), Comment::create(ownerDocumentForCurrentNode(), token.comment()));
+    attachLater(currentNode(), Comment::create(ownerDocumentForCurrentNode(), WTFMove(token.comment())));
 }
 
 void HTMLConstructionSite::insertCommentOnDocument(AtomHTMLToken&& token)
 {
     ASSERT(token.type() == HTMLToken::Comment);
-    attachLater(m_attachmentRoot, Comment::create(m_document, token.comment()));
+    attachLater(m_attachmentRoot, Comment::create(m_document, WTFMove(token.comment())));
 }
 
 void HTMLConstructionSite::insertCommentOnHTMLHtmlElement(AtomHTMLToken&& token)
 {
     ASSERT(token.type() == HTMLToken::Comment);
     ContainerNode& parent = m_openElements.rootNode();
-    attachLater(parent, Comment::create(parent.document(), token.comment()));
+    attachLater(parent, Comment::create(parent.document(), WTFMove(token.comment())));
 }
 
 void HTMLConstructionSite::insertHTMLHeadElement(AtomHTMLToken&& token)
@@ -600,7 +601,7 @@ void HTMLConstructionSite::insertTextNode(const String& characters, WhitespaceMo
         if (!textNode->length()) {
             String substring = characters.substring(currentPosition);
             AtomString substringAtom = m_whitespaceCache.lookup(substring, whitespaceMode);
-            textNode = Text::create(task.parent->document(), substringAtom.isNull() ? substring : substringAtom.string());
+            textNode = Text::create(task.parent->document(), substringAtom.isNull() ? WTFMove(substring) : substringAtom.releaseString());
         }
 
         currentPosition += textNode->length();
@@ -887,35 +888,26 @@ AtomString WhitespaceCache::lookup(const String& string, WhitespaceMode whitespa
         return whitespaceMode == AllWhitespace || isAllWhitespace(string) ? AtomString(string) : AtomString();
 
     uint64_t code;
-    if (whitespaceMode == AllWhitespace)
+    if (whitespaceMode == AllWhitespace) {
         code = codeForString<AllWhitespace>(string);
-    else
+        ASSERT(code);
+    } else {
         code = codeForString<WhitespaceUnknown>(string);
+        if (!code)
+            return AtomString();
+    }
 
-    if (!code)
-        return AtomString();
-
-    size_t lengthIndex = length - 1;
-    if (m_codes[lengthIndex] == code) {
-        ASSERT(m_atoms[m_indexes[lengthIndex]] == string);
-        return m_atoms[m_indexes[lengthIndex]];
+    auto& existingAtom = m_atoms[length - 1];
+    if (existingAtom.code == code) {
+        ASSERT(existingAtom.string == string);
+        return existingAtom.string;
     }
 
     if (code == overflowWhitespaceCode)
         return AtomString(string);
 
-    if (m_codes[lengthIndex]) {
-        AtomString whitespaceAtom(string);
-        m_codes[lengthIndex] = code;
-        m_atoms[m_indexes[lengthIndex]] = whitespaceAtom;
-        return whitespaceAtom;
-    }
-
-    AtomString whitespaceAtom(string);
-    m_codes[lengthIndex] = code;
-    m_indexes[lengthIndex] = m_atoms.size();
-    m_atoms.append(whitespaceAtom);
-    return whitespaceAtom;
+    existingAtom = { AtomString { string }, code };
+    return existingAtom.string;
 }
 
 }

@@ -27,6 +27,7 @@
 #include "NetworkStorageSession.h"
 
 #include "Cookie.h"
+#include "CookieJar.h"
 #include "HTTPCookieAcceptPolicy.h"
 #include "RuntimeApplicationChecks.h"
 #include <wtf/NeverDestroyed.h>
@@ -385,14 +386,14 @@ const HashMap<RegistrableDomain, HashSet<RegistrableDomain>>& NetworkStorageSess
 {
     static NeverDestroyed<HashMap<RegistrableDomain, HashSet<RegistrableDomain>>> map = [] {
         HashMap<RegistrableDomain, HashSet<RegistrableDomain>> map;
-        map.add(RegistrableDomain::uncheckedCreateFromRegistrableDomainString("microsoft.com"),
+        map.add(RegistrableDomain::uncheckedCreateFromRegistrableDomainString("microsoft.com"_s),
             HashSet { RegistrableDomain::uncheckedCreateFromRegistrableDomainString("microsoftonline.com"_s) });
-        map.add(RegistrableDomain::uncheckedCreateFromRegistrableDomainString("live.com"),
+        map.add(RegistrableDomain::uncheckedCreateFromRegistrableDomainString("live.com"_s),
             HashSet { RegistrableDomain::uncheckedCreateFromRegistrableDomainString("skype.com"_s) });
-        map.add(RegistrableDomain::uncheckedCreateFromRegistrableDomainString("playstation.com"), HashSet {
+        map.add(RegistrableDomain::uncheckedCreateFromRegistrableDomainString("playstation.com"_s), HashSet {
             RegistrableDomain::uncheckedCreateFromRegistrableDomainString("sonyentertainmentnetwork.com"_s),
             RegistrableDomain::uncheckedCreateFromRegistrableDomainString("sony.com"_s) });
-        map.add(RegistrableDomain::uncheckedCreateFromRegistrableDomainString("bbc.co.uk"), HashSet {
+        map.add(RegistrableDomain::uncheckedCreateFromRegistrableDomainString("bbc.co.uk"_s), HashSet {
             RegistrableDomain::uncheckedCreateFromRegistrableDomainString("radioplayer.co.uk"_s) });
         return map;
     }();
@@ -430,5 +431,10 @@ std::optional<RegistrableDomain> NetworkStorageSession::findAdditionalLoginDomai
 }
 
 #endif // ENABLE(INTELLIGENT_TRACKING_PREVENTION)
+
+void NetworkStorageSession::deleteCookiesForHostnames(const Vector<String>& cookieHostNames, CompletionHandler<void()>&& completionHandler)
+{
+    deleteCookiesForHostnames(cookieHostNames, IncludeHttpOnlyCookies::Yes, WTFMove(completionHandler));
+}
 
 }

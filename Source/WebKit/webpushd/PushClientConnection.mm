@@ -86,7 +86,7 @@ const String& ClientConnection::hostAppCodeSigningIdentifier()
     if (!m_hostAppCodeSigningIdentifier) {
 #if PLATFORM(MAC) && !USE(APPLE_INTERNAL_SDK)
         // This isn't great, but currently the only user of webpushd in open source builds is TestWebKitAPI and codeSigningIdentifier returns the null String on x86_64 Macs.
-        m_hostAppCodeSigningIdentifier = "com.apple.WebKit.TestWebKitAPI";
+        m_hostAppCodeSigningIdentifier = "com.apple.WebKit.TestWebKitAPI"_s;
 #else
         if (!m_hostAppAuditToken)
             m_hostAppCodeSigningIdentifier = String();
@@ -131,7 +131,7 @@ void ClientConnection::setDebugModeIsEnabled(bool enabled)
     broadcastDebugMessage(makeString("Turned Debug Mode ", m_debugModeEnabled ? "on" : "off"));
 }
 
-void ClientConnection::broadcastDebugMessage(const String& message)
+void ClientConnection::broadcastDebugMessage(StringView message)
 {
     String messageIdentifier;
     auto signingIdentifer = hostAppCodeSigningIdentifier();
@@ -143,7 +143,7 @@ void ClientConnection::broadcastDebugMessage(const String& message)
     Daemon::singleton().broadcastDebugMessage(makeString(messageIdentifier, message));
 }
 
-void ClientConnection::sendDebugMessage(const String& message)
+void ClientConnection::sendDebugMessage(StringView message)
 {
     // FIXME: We currently send the debug message twice.
     // After getting all debug message clients onto the encoder/decoder mechanism, remove the old style message.
@@ -186,7 +186,7 @@ void ClientConnection::didCompleteAppBundleRequest(AppBundleRequest& request)
 
 void ClientConnection::connectionClosed()
 {
-    broadcastDebugMessage("Connection closed");
+    broadcastDebugMessage("Connection closed"_s);
 
     RELEASE_ASSERT(m_xpcConnection);
     m_xpcConnection = nullptr;

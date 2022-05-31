@@ -34,6 +34,7 @@
 #include "FlexibleBoxAlgorithm.h"
 #include "HitTestResult.h"
 #include "InspectorInstrumentation.h"
+#include "LayoutIntegrationCoverage.h"
 #include "LayoutRepainter.h"
 #include "RenderChildIterator.h"
 #include "RenderLayer.h"
@@ -89,9 +90,9 @@ RenderFlexibleBox::~RenderFlexibleBox()
         InspectorInstrumentation::nodeLayoutContextChanged(nodeForNonAnonymous(), nullptr);
 }
 
-const char* RenderFlexibleBox::renderName() const
+ASCIILiteral RenderFlexibleBox::renderName() const
 {
-    return "RenderFlexibleBox";
+    return "RenderFlexibleBox"_s;
 }
 
 void RenderFlexibleBox::computeIntrinsicLogicalWidths(LayoutUnit& minLogicalWidth, LayoutUnit& maxLogicalWidth) const
@@ -102,7 +103,8 @@ void RenderFlexibleBox::computeIntrinsicLogicalWidths(LayoutUnit& minLogicalWidt
         minLogicalWidth += scrollbarWidth;
     };
 
-    if (shouldApplySizeContainment(*this)) {
+    auto shouldIgnoreFlexItemContentForLogicalWidth = shouldApplySizeOrStyleContainment({ Containment::Size, Containment::InlineSize });
+    if (shouldIgnoreFlexItemContentForLogicalWidth) {
         addScrollbarWidth();
         return;
     }
@@ -254,7 +256,7 @@ LayoutUnit RenderFlexibleBox::baselinePosition(FontBaseline, bool, LineDirection
 
 std::optional<LayoutUnit> RenderFlexibleBox::firstLineBaseline() const
 {
-    if (isWritingModeRoot() || m_numberOfInFlowChildrenOnFirstLine <= 0 || shouldApplyLayoutContainment(*this))
+    if (isWritingModeRoot() || m_numberOfInFlowChildrenOnFirstLine <= 0 || shouldApplyLayoutContainment())
         return std::optional<LayoutUnit>();
     RenderBox* baselineChild = nullptr;
     int childNumber = 0;
@@ -519,6 +521,11 @@ bool RenderFlexibleBox::shouldApplyMinSizeAutoForChild(const RenderBox& child) c
     bool childBlockSizeIsEquivalentToAutomaticSize  = !mainAxisIsChildInlineAxis(child) && (minSize.isMinContent() || minSize.isMaxContent() || minSize.isFitContent());
 
     return (minSize.isAuto() || childBlockSizeIsEquivalentToAutomaticSize) && (mainAxisOverflowForChild(child) == Overflow::Visible);
+}
+
+bool RenderFlexibleBox::shouldApplyMinBlockSizeAutoForChild(const RenderBox& child) const
+{
+    return !mainAxisIsChildInlineAxis(child) && shouldApplyMinSizeAutoForChild(child);
 }
 
 Length RenderFlexibleBox::flexBasisForChild(const RenderBox& child) const
@@ -1121,6 +1128,10 @@ LayoutUnit RenderFlexibleBox::computeFlexBaseSizeForChild(RenderBox& child, Layo
 
 void RenderFlexibleBox::layoutFlexItems(bool relayoutChildren)
 {
+#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
+    if (LayoutIntegration::canUseForFlexLayout(*this))
+        return layoutUsingFlexFormattingContext();
+#endif
     Vector<LineContext> lineContexts;
     LayoutUnit sumFlexBaseSize;
     double totalFlexGrow;
@@ -2334,4 +2345,22 @@ LayoutUnit RenderFlexibleBox::computeGap(RenderFlexibleBox::GapType gapType) con
     auto availableSize = usesRowGap ? availableLogicalHeightForPercentageComputation().value_or(0_lu) : contentLogicalWidth();
     return minimumValueForLength(gapLength.length(), availableSize);
 }
+
+#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
+void RenderFlexibleBox::layoutUsingFlexFormattingContext()
+{
+    if (!m_flexLayout)
+        m_flexLayout = makeUnique<LayoutIntegration::FlexLayout>(*this);
+
+    m_flexLayout->updateFormattingRootGeometryAndInvalidate();
+
+    for (auto& flexItem : childrenOfType<RenderBlock>(*this)) {
+        flexItem.layoutIfNeeded();
+        auto minMaxContentSize = computeFlexItemMinMaxSizes(flexItem);
+        m_flexLayout->updateFlexItemDimensions(flexItem, minMaxContentSize.first, minMaxContentSize.second);
+    }
+    m_flexLayout->layout();
+}
+#endif
+
 }

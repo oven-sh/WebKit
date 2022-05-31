@@ -400,6 +400,12 @@ bool AccessibilityUIElement::isDecrementActionSupported()
     return false;
 }
 
+bool AccessibilityUIElement::isBusy() const
+{
+    notImplemented();
+    return false;
+}
+
 bool AccessibilityUIElement::isEnabled()
 {
     notImplemented();
@@ -1007,6 +1013,12 @@ bool AccessibilityUIElement::insertText(JSStringRef)
 {
     notImplemented();
     return false;
+}
+
+JSRetainPtr<JSStringRef> AccessibilityUIElement::domIdentifier() const
+{
+    notImplemented();
+    return nullptr;
 }
 
 } // namespace  WTF

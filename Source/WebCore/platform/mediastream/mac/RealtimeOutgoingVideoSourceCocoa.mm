@@ -29,26 +29,15 @@
 #if USE(LIBWEBRTC)
 
 #import "AffineTransform.h"
+#import "CVUtilities.h"
 #import "ImageRotationSessionVT.h"
 #import "Logging.h"
-#import "PixelBufferConformerCV.h"
 #import "RealtimeVideoUtilities.h"
 #import <pal/cf/CoreMediaSoftLink.h>
 #import "CoreVideoSoftLink.h"
 #import "VideoToolboxSoftLink.h"
 
 namespace WebCore {
-
-RetainPtr<CVPixelBufferRef> RealtimeOutgoingVideoSourceCocoa::convertToYUV(CVPixelBufferRef pixelBuffer)
-{
-    if (!pixelBuffer)
-        return nullptr;
-
-    if (!m_pixelBufferConformer)
-        m_pixelBufferConformer = makeUnique<PixelBufferConformerCV>((__bridge CFDictionaryRef)@{ (__bridge NSString *)kCVPixelBufferPixelFormatTypeKey: @(preferedPixelBufferFormat()) });
-
-    return m_pixelBufferConformer->convert(pixelBuffer);
-}
 
 static inline unsigned rotationToAngle(webrtc::VideoRotation rotation)
 {

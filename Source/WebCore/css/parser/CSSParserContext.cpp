@@ -88,7 +88,6 @@ CSSParserContext::CSSParserContext(const Document& document, const URL& sheetBas
     , counterStyleAtRulesEnabled { document.settings().cssCounterStyleAtRulesEnabled() }
     , counterStyleAtRuleImageSymbolsEnabled { document.settings().cssCounterStyleAtRuleImageSymbolsEnabled() }
     , cssColor4 { document.settings().cssColor4() }
-    , deferredCSSParserEnabled { document.settings().deferredCSSParserEnabled() }
     , individualTransformPropertiesEnabled { document.settings().cssIndividualTransformPropertiesEnabled() }
 #if ENABLE(OVERFLOW_SCROLLING_TOUCH)
     , legacyOverflowScrollingTouchEnabled { shouldEnableLegacyOverflowScrollingTouch(document) }
@@ -113,6 +112,10 @@ CSSParserContext::CSSParserContext(const Document& document, const URL& sheetBas
     , gradientInterpolationColorSpacesEnabled { document.settings().cssGradientInterpolationColorSpacesEnabled() }
     , inputSecurityEnabled { document.settings().cssInputSecurityEnabled() }
     , subgridEnabled { document.settings().subgridEnabled() }
+    , containIntrinsicSizeEnabled { document.settings().cssContainIntrinsicSizeEnabled() }
+    , motionPathEnabled { document.settings().cssMotionPathEnabled() }
+    , cssTextAlignLastEnabled { document.settings().cssTextAlignLastEnabled() }
+    , cssTextJustifyEnabled { document.settings().cssTextJustifyEnabled() }
 #if ENABLE(ATTACHMENT_ELEMENT)
     , attachmentEnabled { RuntimeEnabledFeatures::sharedFeatures().attachmentElementEnabled() }
 #endif
@@ -139,7 +142,6 @@ bool operator==(const CSSParserContext& a, const CSSParserContext& b)
         && a.counterStyleAtRulesEnabled == b.counterStyleAtRulesEnabled
         && a.counterStyleAtRuleImageSymbolsEnabled == b.counterStyleAtRuleImageSymbolsEnabled
         && a.cssColor4 == b.cssColor4
-        && a.deferredCSSParserEnabled == b.deferredCSSParserEnabled
         && a.individualTransformPropertiesEnabled == b.individualTransformPropertiesEnabled
 #if ENABLE(OVERFLOW_SCROLLING_TOUCH)
         && a.legacyOverflowScrollingTouchEnabled == b.legacyOverflowScrollingTouchEnabled
@@ -167,6 +169,10 @@ bool operator==(const CSSParserContext& a, const CSSParserContext& b)
         && a.attachmentEnabled == b.attachmentEnabled
 #endif
         && a.subgridEnabled == b.subgridEnabled
+        && a.containIntrinsicSizeEnabled == b.containIntrinsicSizeEnabled
+        && a.motionPathEnabled == b.motionPathEnabled
+        && a.cssTextAlignLastEnabled == b.cssTextAlignLastEnabled
+        && a.cssTextJustifyEnabled == b.cssTextJustifyEnabled
     ;
 }
 
@@ -183,28 +189,27 @@ void add(Hasher& hasher, const CSSParserContext& context)
         | context.constantPropertiesEnabled                 << 8
         | context.containmentEnabled                        << 9
         | context.cssColor4                                 << 10
-        | context.deferredCSSParserEnabled                  << 11
-        | context.individualTransformPropertiesEnabled      << 12
+        | context.individualTransformPropertiesEnabled      << 11
 #if ENABLE(OVERFLOW_SCROLLING_TOUCH)
-        | context.legacyOverflowScrollingTouchEnabled       << 13
+        | context.legacyOverflowScrollingTouchEnabled       << 12
 #endif
-        | context.overscrollBehaviorEnabled                 << 14
-        | context.relativeColorSyntaxEnabled                << 15
-        | context.scrollBehaviorEnabled                     << 16
-        | context.springTimingFunctionEnabled               << 17
+        | context.overscrollBehaviorEnabled                 << 13
+        | context.relativeColorSyntaxEnabled                << 14
+        | context.scrollBehaviorEnabled                     << 15
+        | context.springTimingFunctionEnabled               << 16
 #if ENABLE(TEXT_AUTOSIZING)
-        | context.textAutosizingEnabled                     << 18
+        | context.textAutosizingEnabled                     << 17
 #endif
 #if ENABLE(CSS_TRANSFORM_STYLE_OPTIMIZED_3D)
-        | context.transformStyleOptimized3DEnabled          << 19
+        | context.transformStyleOptimized3DEnabled          << 18
 #endif
-        | context.useLegacyBackgroundSizeShorthandBehavior  << 20
-        | context.focusVisibleEnabled                       << 21
-        | context.hasPseudoClassEnabled                     << 22
-        | context.cascadeLayersEnabled                      << 23
-        | context.containerQueriesEnabled                   << 24
-        | context.overflowClipEnabled                       << 25
-        | context.gradientPremultipliedAlphaInterpolationEnabled << 26
+        | context.useLegacyBackgroundSizeShorthandBehavior  << 19
+        | context.focusVisibleEnabled                       << 20
+        | context.hasPseudoClassEnabled                     << 21
+        | context.cascadeLayersEnabled                      << 22
+        | context.containerQueriesEnabled                   << 23
+        | context.overflowClipEnabled                       << 24
+        | context.gradientPremultipliedAlphaInterpolationEnabled << 25
         | context.gradientInterpolationColorSpacesEnabled   << 27
 #if ENABLE(ATTACHMENT_ELEMENT)
         | context.attachmentEnabled                         << 28
@@ -212,7 +217,12 @@ void add(Hasher& hasher, const CSSParserContext& context)
         | context.accentColorEnabled                        << 29
         | context.inputSecurityEnabled                      << 30
         | context.subgridEnabled                            << 31
-        | (unsigned long long)context.mode                  << 32; // This is multiple bits, so keep it last.
+        | (uint64_t)context.containIntrinsicSizeEnabled     << 32
+        | (uint64_t)context.motionPathEnabled               << 33
+        | (uint64_t)context.cssTextAlignLastEnabled         << 34
+        | (uint64_t)context.cssTextJustifyEnabled           << 35
+        | (uint64_t)context.mode                            << 36; // This is multiple bits, so keep it last.
+
     add(hasher, context.baseURL, context.charset, bits);
 }
 
@@ -259,6 +269,23 @@ bool CSSParserContext::isPropertyRuntimeDisabled(CSSPropertyID property) const
     case CSSPropertyWebkitOverflowScrolling:
         return !legacyOverflowScrollingTouchEnabled;
 #endif
+    case CSSPropertyContainIntrinsicSize:
+    case CSSPropertyContainIntrinsicHeight:
+    case CSSPropertyContainIntrinsicWidth:
+    case CSSPropertyContainIntrinsicBlockSize:
+    case CSSPropertyContainIntrinsicInlineSize:
+        return !containIntrinsicSizeEnabled;
+    case CSSPropertyOffset:
+    case CSSPropertyOffsetPath:
+    case CSSPropertyOffsetDistance:
+    case CSSPropertyOffsetPosition:
+    case CSSPropertyOffsetAnchor:
+    case CSSPropertyOffsetRotate:
+        return !motionPathEnabled;
+    case CSSPropertyTextAlignLast:
+        return !cssTextAlignLastEnabled;
+    case CSSPropertyWebkitTextJustify:
+        return !cssTextJustifyEnabled;
     default:
         return false;
     }

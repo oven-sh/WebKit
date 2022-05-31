@@ -68,7 +68,7 @@ static inline SharedWorkerObjectConnection* mainThreadConnection()
 ExceptionOr<Ref<SharedWorker>> SharedWorker::create(Document& document, String&& scriptURLString, std::optional<std::variant<String, WorkerOptions>>&& maybeOptions)
 {
     if (!mainThreadConnection())
-        return Exception { NotSupportedError, "Shared workers are not supported" };
+        return Exception { NotSupportedError, "Shared workers are not supported"_s };
 
     auto url = document.completeURL(scriptURLString);
     if (!url.isValid())
@@ -163,6 +163,22 @@ void SharedWorker::stop()
     SHARED_WORKER_RELEASE_LOG("stop:");
     m_isActive = false;
     mainThreadConnection()->sharedWorkerObjectIsGoingAway(m_key, m_identifier);
+}
+
+void SharedWorker::suspend(ReasonForSuspension reason)
+{
+    if (reason == ReasonForSuspension::BackForwardCache) {
+        mainThreadConnection()->suspendForBackForwardCache(m_key, m_identifier);
+        m_isSuspendedForBackForwardCache = true;
+    }
+}
+
+void SharedWorker::resume()
+{
+    if (m_isSuspendedForBackForwardCache) {
+        mainThreadConnection()->resumeForBackForwardCache(m_key, m_identifier);
+        m_isSuspendedForBackForwardCache = false;
+    }
 }
 
 #undef SHARED_WORKER_RELEASE_LOG

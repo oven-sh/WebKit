@@ -55,6 +55,7 @@ static MTLArgumentDescriptor *createArgumentDescriptor(const WGPUBufferBindingLa
         break;
     case WGPUBufferBindingType_Undefined:
     case WGPUBufferBindingType_Force32:
+        ASSERT_NOT_REACHED();
         return nil;
     }
     return descriptor;
@@ -114,21 +115,21 @@ static MTLArgumentDescriptor *createArgumentDescriptor(const WGPUStorageTextureB
     return descriptor;
 }
 
-RefPtr<BindGroupLayout> Device::createBindGroupLayout(const WGPUBindGroupLayoutDescriptor& descriptor)
+Ref<BindGroupLayout> Device::createBindGroupLayout(const WGPUBindGroupLayoutDescriptor& descriptor)
 {
     if (descriptor.nextInChain)
-        return nullptr;
+        return BindGroupLayout::createInvalid(*this);
 
     NSMutableArray<MTLArgumentDescriptor *> *vertexArguments = [NSMutableArray arrayWithCapacity:descriptor.entryCount];
     NSMutableArray<MTLArgumentDescriptor *> *fragmentArguments = [NSMutableArray arrayWithCapacity:descriptor.entryCount];
     NSMutableArray<MTLArgumentDescriptor *> *computeArguments = [NSMutableArray arrayWithCapacity:descriptor.entryCount];
     if (!vertexArguments || !fragmentArguments || !computeArguments)
-        return nullptr;
+        return BindGroupLayout::createInvalid(*this);
 
     for (uint32_t i = 0; i < descriptor.entryCount; ++i) {
         const WGPUBindGroupLayoutEntry& entry = descriptor.entries[i];
         if (entry.nextInChain)
-            return nullptr;
+            return BindGroupLayout::createInvalid(*this);
 
         // https://gpuweb.github.io/gpuweb/#dictdef-gpubindgrouplayoutentry
         // "Only one [of buffer, sampler, texture, storageTexture, or externalTexture] may be defined for any given GPUBindGroupLayoutEntry."
@@ -146,38 +147,38 @@ RefPtr<BindGroupLayout> Device::createBindGroupLayout(const WGPUBindGroupLayoutD
 
         if (isPresent(buffer)) {
             if (i != vertexArguments.count)
-                return nullptr;
+                return BindGroupLayout::createInvalid(*this);
 
             descriptor = createArgumentDescriptor(buffer);
             if (!descriptor)
-                return nullptr;
+                return BindGroupLayout::createInvalid(*this);
         }
 
         if (isPresent(sampler)) {
             if (i != vertexArguments.count)
-                return nullptr;
+                return BindGroupLayout::createInvalid(*this);
 
             descriptor = createArgumentDescriptor(sampler);
             if (!descriptor)
-                return nullptr;
+                return BindGroupLayout::createInvalid(*this);
         }
 
         if (isPresent(texture)) {
             if (i != vertexArguments.count)
-                return nullptr;
+                return BindGroupLayout::createInvalid(*this);
 
             descriptor = createArgumentDescriptor(texture);
             if (!descriptor)
-                return nullptr;
+                return BindGroupLayout::createInvalid(*this);
         }
 
         if (isPresent(storageTexture)) {
             if (i != vertexArguments.count)
-                return nullptr;
+                return BindGroupLayout::createInvalid(*this);
 
             descriptor = createArgumentDescriptor(storageTexture);
             if (!descriptor)
-                return nullptr;
+                return BindGroupLayout::createInvalid(*this);
         }
 
         // FIXME: This needs coordination with the shader compiler.
@@ -187,7 +188,7 @@ RefPtr<BindGroupLayout> Device::createBindGroupLayout(const WGPUBindGroupLayoutD
         MTLArgumentDescriptor *fragmentDescriptor = [descriptor copy];
         MTLArgumentDescriptor *computeDescriptor = [descriptor copy];
         if (!fragmentDescriptor || !computeDescriptor)
-            return nullptr;
+            return BindGroupLayout::createInvalid(*this);
 
         if (!(entry.visibility & WGPUShaderStage_Vertex))
             vertexDescriptor.access = MTLArgumentAccessReadOnly;
@@ -205,20 +206,26 @@ RefPtr<BindGroupLayout> Device::createBindGroupLayout(const WGPUBindGroupLayoutD
     id<MTLArgumentEncoder> fragmentArgumentEncoder = [m_device newArgumentEncoderWithArguments:fragmentArguments];
     id<MTLArgumentEncoder> computeArgumentEncoder = [m_device newArgumentEncoderWithArguments:computeArguments];
     if (!vertexArgumentEncoder || !fragmentArgumentEncoder || !computeArgumentEncoder)
-        return nullptr;
+        return BindGroupLayout::createInvalid(*this);
 
     auto label = fromAPI(descriptor.label);
     vertexArgumentEncoder.label = label;
     fragmentArgumentEncoder.label = label;
     computeArgumentEncoder.label = label;
 
-    return BindGroupLayout::create(vertexArgumentEncoder, fragmentArgumentEncoder, computeArgumentEncoder);
+    return BindGroupLayout::create(vertexArgumentEncoder, fragmentArgumentEncoder, computeArgumentEncoder, *this);
 }
 
-BindGroupLayout::BindGroupLayout(id<MTLArgumentEncoder> vertexArgumentEncoder, id<MTLArgumentEncoder> fragmentArgumentEncoder, id<MTLArgumentEncoder> computeArgumentEncoder)
+BindGroupLayout::BindGroupLayout(id<MTLArgumentEncoder> vertexArgumentEncoder, id<MTLArgumentEncoder> fragmentArgumentEncoder, id<MTLArgumentEncoder> computeArgumentEncoder, Device& device)
     : m_vertexArgumentEncoder(vertexArgumentEncoder)
     , m_fragmentArgumentEncoder(fragmentArgumentEncoder)
     , m_computeArgumentEncoder(computeArgumentEncoder)
+    , m_device(device)
+{
+}
+
+BindGroupLayout::BindGroupLayout(Device& device)
+    : m_device(device)
 {
 }
 

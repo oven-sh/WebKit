@@ -54,27 +54,27 @@ static inline bool isClassicPhone()
     return isClassic() && [PAL::getUIApplicationClass() _classicMode] != UIApplicationSceneClassicModeOriginalPad;
 }
 
-String osNameForUserAgent()
+ASCIILiteral osNameForUserAgent()
 {
     if (deviceHasIPadCapability() && !isClassicPhone())
-        return "OS";
-    return "iPhone OS";
+        return "OS"_s;
+    return "iPhone OS"_s;
 }
 
 static StringView deviceNameForUserAgent()
 {
     if (isClassic()) {
         if (isClassicPad())
-            return "iPad";
-        return "iPhone";
+            return "iPad"_s;
+        return "iPhone"_s;
     }
 
     static NeverDestroyed<String> name = [] {
         auto name = deviceName();
 #if PLATFORM(IOS_FAMILY_SIMULATOR)
-        size_t location = name.find(" Simulator");
+        size_t location = name.find(" Simulator"_s);
         if (location != notFound)
-            return name.substring(0, location);
+            return name.left(location);
 #endif
         return name;
     }();

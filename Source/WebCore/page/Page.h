@@ -23,8 +23,10 @@
 #include "ActivityState.h"
 #include "AnimationFrameRate.h"
 #include "Color.h"
+#include "ContentSecurityPolicy.h"
 #include "DisabledAdaptations.h"
 #include "Document.h"
+#include "EventTrackingRegions.h"
 #include "FindOptions.h"
 #include "FrameLoaderTypes.h"
 #include "IntRectHash.h"
@@ -56,6 +58,7 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
 #include <wtf/Ref.h>
+#include <wtf/RobinHoodHashSet.h>
 #include <wtf/UniqueRef.h>
 #include <wtf/WeakHashMap.h>
 #include <wtf/WeakHashSet.h>
@@ -142,7 +145,6 @@ class PerformanceMonitor;
 class PermissionController;
 class PluginData;
 class PluginInfoProvider;
-class PluginViewBase;
 class PointerCaptureController;
 class PointerLockController;
 class ProgressTracker;
@@ -169,10 +171,10 @@ class ValidationMessageClient;
 class VisibleSelection;
 class VisitedLinkStore;
 class WebGLStateTracker;
-class WebLockRegistry;
 class WheelEventDeltaFilter;
 class WheelEventTestMonitor;
 
+struct AXTreeData;
 struct ApplePayAMSUIRequest;
 struct SimpleRange;
 struct TextRecognitionResult;
@@ -206,7 +208,7 @@ enum class FinalizeRenderingUpdateFlags : uint8_t {
     InvalidateImagesWithAsyncDecodes    = 1 << 1,
 };
 
-enum class RenderingUpdateStep : uint16_t {
+enum class RenderingUpdateStep : uint32_t {
     Resize                          = 1 << 0,
     Scroll                          = 1 << 1,
     MediaQueryEvaluation            = 1 << 2,
@@ -225,6 +227,7 @@ enum class RenderingUpdateStep : uint16_t {
 #endif
     FlushAutofocusCandidates        = 1 << 14,
     VideoFrameCallbacks             = 1 << 15,
+    PrepareCanvasesForDisplay       = 1 << 16,
 };
 
 constexpr OptionSet<RenderingUpdateStep> updateRenderingSteps = {
@@ -241,6 +244,7 @@ constexpr OptionSet<RenderingUpdateStep> updateRenderingSteps = {
     RenderingUpdateStep::WheelEventMonitorCallbacks,
     RenderingUpdateStep::CursorUpdate,
     RenderingUpdateStep::EventRegionUpdate,
+    RenderingUpdateStep::PrepareCanvasesForDisplay,
 };
 
 constexpr auto allRenderingUpdateSteps = updateRenderingSteps | OptionSet<RenderingUpdateStep> {
@@ -305,8 +309,6 @@ public:
     BroadcastChannelRegistry& broadcastChannelRegistry() { return m_broadcastChannelRegistry; }
     WEBCORE_EXPORT void setBroadcastChannelRegistry(Ref<BroadcastChannelRegistry>&&); // Only used by WebKitLegacy.
 
-    WebLockRegistry& webLockRegistry() { return m_webLockRegistry; }
-
     WEBCORE_EXPORT static void forEachPage(const Function<void(Page&)>&);
     WEBCORE_EXPORT static unsigned nonUtilityPageCount();
 
@@ -360,7 +362,7 @@ public:
     WEBCORE_EXPORT String synchronousScrollingReasonsAsText();
     WEBCORE_EXPORT Ref<DOMRectList> nonFastScrollableRectsForTesting();
 
-    WEBCORE_EXPORT Ref<DOMRectList> touchEventRectsForEventForTesting(const String& eventName);
+    WEBCORE_EXPORT Ref<DOMRectList> touchEventRectsForEventForTesting(EventTrackingRegions::EventType);
     WEBCORE_EXPORT Ref<DOMRectList> passiveTouchEventListenerRectsForTesting();
 
     WEBCORE_EXPORT void settingsDidChange();
@@ -899,6 +901,10 @@ public:
 
     WEBCORE_EXPORT Vector<Ref<Element>> editableElementsInRect(const FloatRect&) const;
 
+#if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
+    bool shouldBuildInteractionRegions() const;
+#endif
+
 #if ENABLE(DEVICE_ORIENTATION) && PLATFORM(IOS_FAMILY)
     DeviceOrientationUpdateProvider* deviceOrientationUpdateProvider() const { return m_deviceOrientationUpdateProvider.get(); }
 #endif
@@ -943,6 +949,7 @@ public:
     AttachmentElementClient* attachmentElementClient() { return m_attachmentElementClient.get(); }
 #endif
 
+    WEBCORE_EXPORT std::optional<AXTreeData> accessibilityTreeData() const;
 #if USE(ATSPI)
     AccessibilityRootAtspi* accessibilityRootObject() const { return m_accessibilityRootObject; }
     void setAccessibilityRootObject(AccessibilityRootAtspi* rootObject) { m_accessibilityRootObject = rootObject; }
@@ -955,12 +962,16 @@ public:
 
     void timelineControllerMaximumAnimationFrameRateDidChange(DocumentTimelinesController&);
 
+    ContentSecurityPolicyModeForExtension contentSecurityPolicyModeForExtension() const { return m_contentSecurityPolicyModeForExtension; }
+
 private:
     struct Navigation {
         RegistrableDomain domain;
         FrameLoadType type;
     };
     void logNavigation(const Navigation&);
+
+    static void firstTimeInitialization();
 
     WEBCORE_EXPORT void initGroup();
 
@@ -980,8 +991,6 @@ private:
 #if ENABLE(VIDEO)
     void playbackControlsManagerUpdateTimerFired();
 #endif
-
-    Vector<Ref<PluginViewBase>> pluginViews();
 
     void handleLowModePowerChange(bool);
 
@@ -1157,8 +1166,8 @@ private:
 
     RefPtr<IDBClient::IDBConnectionToServer> m_idbConnectionToServer;
 
-    HashSet<String> m_seenPlugins;
-    HashSet<String> m_seenMediaEngines;
+    MemoryCompactRobinHoodHashSet<String> m_seenPlugins;
+    MemoryCompactRobinHoodHashSet<String> m_seenMediaEngines;
 
     unsigned m_lastSpatialNavigationCandidatesCount { 0 };
     unsigned m_forbidPromptsDepth { 0 };
@@ -1174,7 +1183,6 @@ private:
     Ref<UserContentProvider> m_userContentProvider;
     Ref<VisitedLinkStore> m_visitedLinkStore;
     Ref<BroadcastChannelRegistry> m_broadcastChannelRegistry;
-    Ref<WebLockRegistry> m_webLockRegistry;
     RefPtr<WheelEventTestMonitor> m_wheelEventTestMonitor;
     WeakHashSet<ActivityStateChangeObserver> m_activityStateChangeObservers;
 
@@ -1280,7 +1288,7 @@ private:
 
     Vector<UserContentURLPattern> m_corsDisablingPatterns;
     Vector<UserStyleSheet> m_userStyleSheetsPendingInjection;
-    std::optional<HashSet<String>> m_allowedNetworkHosts;
+    std::optional<MemoryCompactLookupOnlyRobinHoodHashSet<String>> m_allowedNetworkHosts;
     bool m_isTakingSnapshotsForApplicationSuspension { false };
     bool m_loadsSubresources { true };
     bool m_canUseCredentialStorage { true };
@@ -1313,6 +1321,8 @@ private:
 #if USE(ATSPI)
     AccessibilityRootAtspi* m_accessibilityRootObject { nullptr };
 #endif
+
+    ContentSecurityPolicyModeForExtension m_contentSecurityPolicyModeForExtension { ContentSecurityPolicyModeForExtension::None };
 };
 
 inline PageGroup& Page::group()

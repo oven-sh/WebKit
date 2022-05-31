@@ -257,22 +257,22 @@ SystemFontDatabaseCoreText::CascadeListParameters SystemFontDatabaseCoreText::sy
 
     switch (systemFontKind) {
     case SystemFontKind::SystemUI: {
-        static MainThreadNeverDestroyed<const AtomString> systemUI = AtomString("system-ui", AtomString::ConstructFromLiteral);
+        static MainThreadNeverDestroyed<const AtomString> systemUI { "system-ui"_s };
         result.fontName = systemUI.get();
         break;
     }
     case SystemFontKind::UISerif: {
-        static MainThreadNeverDestroyed<const AtomString> systemUISerif = AtomString("ui-serif", AtomString::ConstructFromLiteral);
+        static MainThreadNeverDestroyed<const AtomString> systemUISerif { "ui-serif"_s };
         result.fontName = systemUISerif.get();
         break;
     }
     case SystemFontKind::UIMonospace: {
-        static MainThreadNeverDestroyed<const AtomString> systemUIMonospace = AtomString("ui-monospace", AtomString::ConstructFromLiteral);
+        static MainThreadNeverDestroyed<const AtomString> systemUIMonospace { "ui-monospace"_s };
         result.fontName = systemUIMonospace.get();
         break;
     }
     case SystemFontKind::UIRounded: {
-        static MainThreadNeverDestroyed<const AtomString> systemUIRounded = AtomString("ui-rounded", AtomString::ConstructFromLiteral);
+        static MainThreadNeverDestroyed<const AtomString> systemUIRounded { "ui-rounded"_s };
         result.fontName = systemUIRounded.get();
         break;
     }
@@ -289,7 +289,7 @@ Vector<RetainPtr<CTFontDescriptorRef>> SystemFontDatabaseCoreText::cascadeList(c
     return cascadeList(systemFontParameters(description, cssFamily, systemFontKind, allowUserInstalledFonts), systemFontKind);
 }
 
-static String genericFamily(const String& locale, HashMap<String, String>& map, CFStringRef ctKey)
+static String genericFamily(const String& locale, MemoryCompactRobinHoodHashMap<String, String>& map, CFStringRef ctKey)
 {
     return map.ensure(locale, [&] {
         auto descriptor = adoptCF(CTFontDescriptorCreateForCSSFamily(ctKey, locale.createCFString().get()));
@@ -324,10 +324,10 @@ String SystemFontDatabaseCoreText::monospaceFamily(const String& locale)
 #if PLATFORM(MAC) && ENABLE(MONOSPACE_FONT_EXCEPTION)
     // In general, CoreText uses Monaco for monospaced (see: Terminal.app and Xcode.app).
     // For now, we want to use Courier for web compatibility, until we have more time to do compatibility testing.
-    if (equalLettersIgnoringASCIICase(result, "monaco"))
+    if (equalLettersIgnoringASCIICase(result, "monaco"_s))
         return "Courier"_str;
 #elif PLATFORM(IOS_FAMILY) && ENABLE(MONOSPACE_FONT_EXCEPTION)
-    if (equalLettersIgnoringASCIICase(result, "courier new"))
+    if (equalLettersIgnoringASCIICase(result, "courier new"_s))
         return "Courier"_str;
 #endif
     return result;

@@ -54,9 +54,9 @@ const TextureMapperContextAttributes& TextureMapperContextAttributes::get()
 #if USE(OPENGL_ES)
         attributes.isGLES2Compliant = true;
 
-        String extensionsString(reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS)));
-        attributes.supportsNPOTTextures = extensionsString.contains("GL_OES_texture_npot");
-        attributes.supportsUnpackSubimage = extensionsString.contains("GL_EXT_unpack_subimage");
+        auto extensionsString = String::fromLatin1(reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS)));
+        attributes.supportsNPOTTextures = extensionsString.contains("GL_OES_texture_npot"_s);
+        attributes.supportsUnpackSubimage = extensionsString.contains("GL_EXT_unpack_subimage"_s);
 #else
         attributes.isGLES2Compliant = false;
         attributes.supportsNPOTTextures = true;

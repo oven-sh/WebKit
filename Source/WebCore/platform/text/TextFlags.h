@@ -58,20 +58,55 @@ enum class NonCJKGlyphOrientation : uint8_t {
     Upright
 };
 
-enum ExpansionBehaviorFlags {
-    ForbidRightExpansion = 0 << 0,
-    AllowRightExpansion = 1 << 0,
-    ForceRightExpansion = 2 << 0,
-    RightExpansionMask = 3 << 0,
+struct ExpansionBehavior {
+    enum class Behavior : uint8_t {
+        Forbid,
+        Allow,
+        Force
+    };
 
-    ForbidLeftExpansion = 0 << 2,
-    AllowLeftExpansion = 1 << 2,
-    ForceLeftExpansion = 2 << 2,
-    LeftExpansionMask = 3 << 2,
+    ExpansionBehavior()
+        : left(Behavior::Forbid)
+        , right(Behavior::Allow)
+    {
 
-    DefaultExpansion = AllowRightExpansion | ForbidLeftExpansion,
+    }
+
+    ExpansionBehavior(Behavior left, Behavior right)
+        : left(left)
+        , right(right)
+    {
+    }
+
+    static ExpansionBehavior defaultBehavior()
+    {
+        return { };
+    }
+
+    static ExpansionBehavior allowRightOnly()
+    {
+        return { Behavior::Forbid, Behavior::Allow };
+    }
+
+    static ExpansionBehavior allowLeftOnly()
+    {
+        return { Behavior::Allow, Behavior::Forbid };
+    }
+
+    static ExpansionBehavior forceLeftOnly()
+    {
+        return { Behavior::Force, Behavior::Forbid };
+    }
+
+    static ExpansionBehavior forbidAll()
+    {
+        return { Behavior::Forbid, Behavior::Forbid };
+    }
+
+    static constexpr unsigned bitsOfKind = 2;
+    Behavior left : bitsOfKind;
+    Behavior right : bitsOfKind;
 };
-typedef unsigned ExpansionBehavior;
 
 enum FontSynthesisValues {
     FontSynthesisNone = 0x0,

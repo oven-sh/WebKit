@@ -135,7 +135,7 @@ static bool canCacheFrame(Frame& frame, DiagnosticLoggingClient& diagnosticLoggi
         logBackForwardCacheFailureDiagnosticMessage(diagnosticLoggingClient, DiagnosticLoggingKeys::isErrorPageKey());
         isCacheable = false;
     }
-    if (frame.isMainFrame() && frame.document() && frame.document()->url().protocolIs("https") && documentLoader->response().cacheControlContainsNoStore()) {
+    if (frame.isMainFrame() && frame.document() && frame.document()->url().protocolIs("https"_s) && documentLoader->response().cacheControlContainsNoStore()) {
         PCLOG("   -Frame is HTTPS, and cache control prohibits storing");
         logBackForwardCacheFailureDiagnosticMessage(diagnosticLoggingClient, DiagnosticLoggingKeys::httpsNoStoreKey());
         isCacheable = false;
@@ -285,7 +285,7 @@ BackForwardCache::BackForwardCache()
 {
     static std::once_flag onceFlag;
     std::call_once(onceFlag, [] {
-        PAL::registerNotifyCallback("com.apple.WebKit.showBackForwardCache", [] {
+        PAL::registerNotifyCallback("com.apple.WebKit.showBackForwardCache"_s, [] {
             BackForwardCache::singleton().dump();
         });
     });

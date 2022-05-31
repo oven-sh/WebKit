@@ -25,9 +25,9 @@
 messages -> GPUProcess LegacyReceiver {
     InitializeGPUProcess(struct WebKit::GPUProcessCreationParameters processCreationParameters)
 
-    CreateGPUConnectionToWebProcess(WebCore::ProcessIdentifier processIdentifier, PAL::SessionID sessionID, struct WebKit::GPUProcessConnectionParameters parameters) -> (std::optional<IPC::Attachment> connectionIdentifier, struct WebKit::GPUProcessConnectionInitializationParameters parameters)
+    CreateGPUConnectionToWebProcess(WebCore::ProcessIdentifier processIdentifier, PAL::SessionID sessionID, IPC::Attachment connectionIdentifier, struct WebKit::GPUProcessConnectionParameters parameters) -> ()
 
-    PrepareToSuspend(bool isSuspensionImminent) -> ()
+    PrepareToSuspend(bool isSuspensionImminent, MonotonicTime estimatedSuspendTime) -> ()
     ProcessDidResume()
 
     AddSession(PAL::SessionID sessionID, struct WebKit::GPUProcessSessionParameters parameters)
@@ -77,10 +77,6 @@ messages -> GPUProcess LegacyReceiver {
     SetMediaSourceInlinePaintingEnabled(bool enabled);
 #endif
 
-#if HAVE(SCREEN_CAPTURE_KIT)
-    SetUseScreenCaptureKit(bool use);
-#endif
-
 #if HAVE(AVCONTENTKEYSPECIFIER)
     SetSampleBufferContentKeySessionSupportEnabled(bool enabled);
 #endif
@@ -89,6 +85,10 @@ messages -> GPUProcess LegacyReceiver {
 
 #if ENABLE(CFPREFS_DIRECT_MODE)
     NotifyPreferencesChanged(String domain, String key, std::optional<String> encodedValue)
+#endif
+
+#if PLATFORM(MAC)
+    OpenDirectoryCacheInvalidated(WebKit::SandboxExtension::Handle handle)
 #endif
 
     WebProcessConnectionCountForTesting() -> (uint64_t count)

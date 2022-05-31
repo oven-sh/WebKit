@@ -75,7 +75,7 @@ SVGSVGElement& RenderSVGRoot::svgSVGElement() const
 
 void RenderSVGRoot::computeIntrinsicRatioInformation(FloatSize& intrinsicSize, double& intrinsicRatio) const
 {
-    ASSERT(!shouldApplySizeContainment(*this));
+    ASSERT(!shouldApplySizeContainment());
 
     // Spec: http://www.w3.org/TR/SVG/coords.html#IntrinsicSizing
     // SVG needs to specify how to calculate some intrinsic sizing properties to enable inclusion within other languages.
@@ -196,6 +196,10 @@ void RenderSVGRoot::layout()
 
         SVGBoundingBoxComputation boundingBoxComputation(*this);
         m_objectBoundingBox = boundingBoxComputation.computeDecoratedBoundingBox(SVGBoundingBoxComputation::objectBoundingBoxDecoration);
+
+        constexpr auto objectBoundingBoxDecorationWithoutTransformations = SVGBoundingBoxComputation::objectBoundingBoxDecoration | SVGBoundingBoxComputation::DecorationOption::IgnoreTransformations;
+        m_objectBoundingBoxWithoutTransformations = boundingBoxComputation.computeDecoratedBoundingBox(objectBoundingBoxDecorationWithoutTransformations);
+
         m_strokeBoundingBox = boundingBoxComputation.computeDecoratedBoundingBox(SVGBoundingBoxComputation::strokeBoundingBoxDecoration);
     }
 
@@ -396,8 +400,8 @@ void RenderSVGRoot::updateFromStyle()
 {
     RenderReplaced::updateFromStyle();
 
-    // FIXME: [LBSE] Upstream RenderObject changes
-    // setHasSVGTransform();
+    setHasSVGTransform();
+    setHasTransformRelatedProperty();
 
     if (shouldApplyViewportClip())
         setHasNonVisibleOverflow();
@@ -513,10 +517,10 @@ void RenderSVGRoot::mapLocalToContainer(const RenderLayerModelObject* repaintCon
     bool isFixedPos = isFixedPositioned();
     // If this box has a transform, it acts as a fixed position container for fixed descendants,
     // and may itself also be fixed position. So propagate 'fixed' up only if this box is fixed position.
-    if (hasTransform() && !isFixedPos)
-        mode.remove(IsFixed);
-    else if (isFixedPos)
+    if (isFixedPos)
         mode.add(IsFixed);
+    else if (mode.contains(IsFixed) && canContainFixedPositionObjects())
+        mode.remove(IsFixed);
 
     if (wasFixed)
         *wasFixed = mode.contains(IsFixed);
@@ -604,14 +608,6 @@ LayoutRect RenderSVGRoot::overflowClipRect(const LayoutPoint& location, RenderFr
     }
 
     return clipRect;
-}
-
-void RenderSVGRoot::applyTransform(TransformationMatrix& transform, const FloatRect& boundingBox, OptionSet<RenderStyle::TransformOperationOption> options) const
-{
-    RenderReplaced::applyTransform(transform, boundingBox, options);
-
-    // FIXME: [LBSE] Upstream SVGRenderSupport changes
-    // SVGRenderSupport::applyTransform(*this, transform, style, boundingBox, std::nullopt, std::nullopt, options);
 }
 
 void RenderSVGRoot::absoluteRects(Vector<IntRect>& rects, const LayoutPoint& accumulatedOffset) const

@@ -26,8 +26,16 @@
 
 using namespace WebCore;
 
+GST_DEBUG_CATEGORY(webkit_gst_video_sink_common_debug);
+#define GST_CAT_DEFAULT webkit_gst_video_sink_common_debug
+
 void webKitVideoSinkSetMediaPlayerPrivate(GstElement* appSink, MediaPlayerPrivateGStreamer* player)
 {
+    static std::once_flag onceFlag;
+    std::call_once(onceFlag, [] {
+        GST_DEBUG_CATEGORY_INIT(webkit_gst_video_sink_common_debug, "webkitvideosinkcommon", 0, "WebKit Video Sink Common utilities");
+    });
+
     g_signal_connect(appSink, "new-sample", G_CALLBACK(+[](GstElement* sink, MediaPlayerPrivateGStreamer* player) -> GstFlowReturn {
         GRefPtr<GstSample> sample = adoptGRef(gst_app_sink_pull_sample(GST_APP_SINK(sink)));
         GstBuffer* buffer = gst_sample_get_buffer(sample.get());
@@ -56,13 +64,19 @@ void webKitVideoSinkSetMediaPlayerPrivate(GstElement* appSink, MediaPlayerPrivat
             return GST_PAD_PROBE_OK;
         }
 
-        // In some platforms (e.g. OpenMAX on the Raspberry Pi) when a resolution change occurs the
-        // pipeline has to be drained before a frame with the new resolution can be decoded.
-        // In this context, it's important that we don't hold references to any previous frame
-        // (e.g. m_sample) so that decoding can continue.
-        // We are also not supposed to keep the original frame after a flush.
         if (info->type & GST_PAD_PROBE_TYPE_QUERY_DOWNSTREAM) {
-            if (GST_QUERY_TYPE(GST_PAD_PROBE_INFO_QUERY(info)) != GST_QUERY_DRAIN)
+            auto* query = GST_PAD_PROBE_INFO_QUERY(info);
+            if (GST_QUERY_TYPE(query) == GST_QUERY_ALLOCATION) {
+                gst_query_add_allocation_meta(query, GST_VIDEO_META_API_TYPE, nullptr);
+                return GST_PAD_PROBE_OK;
+            }
+
+            // In some platforms (e.g. OpenMAX on the Raspberry Pi) when a resolution change occurs the
+            // pipeline has to be drained before a frame with the new resolution can be decoded.
+            // In this context, it's important that we don't hold references to any previous frame
+            // (e.g. m_sample) so that decoding can continue.
+            // We are also not supposed to keep the original frame after a flush.
+            if (GST_QUERY_TYPE(query) != GST_QUERY_DRAIN)
                 return GST_PAD_PROBE_OK;
             GST_DEBUG("Acting upon DRAIN query");
         }

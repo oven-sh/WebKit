@@ -40,7 +40,6 @@
 #import "TextCheckingController.h"
 #import "TransactionID.h"
 #import "UIKitSPI.h"
-#import "WKHoverPlatter.h"
 #import <WebKit/WKActionSheetAssistant.h>
 #import <WebKit/WKAirPlayRoutePicker.h>
 #import <WebKit/WKContactPicker.h>
@@ -112,6 +111,7 @@ class WebPageProxy;
 
 @class AVPlayerViewController;
 @class QLPreviewController;
+@class VKCImageAnalysisInteraction;
 @class WebEvent;
 @class WebTextIndicatorLayer;
 @class WKActionSheetAssistant;
@@ -165,7 +165,8 @@ typedef std::pair<WebKit::InteractionInformationRequest, InteractionInformationC
 #define FOR_EACH_FIND_WKCONTENTVIEW_ACTION(M) \
     M(find) \
     M(findNext) \
-    M(findPrevious)
+    M(findPrevious) \
+    M(findAndReplace)
 #else
 #define FOR_EACH_FIND_WKCONTENTVIEW_ACTION(M)
 #endif
@@ -223,7 +224,6 @@ enum SuppressSelectionAssistantReason : uint8_t {
     EditableRootIsTransparentOrFullyClipped = 1 << 0,
     FocusedElementIsTooSmall = 1 << 1,
     InteractionIsHappening = 1 << 2,
-    HoverPlatterEnabled = 1 << 3,
 };
 
 struct WKSelectionDrawingInfo {
@@ -315,10 +315,6 @@ using ImageAnalysisRequestIdentifier = ObjectIdentifier<ImageAnalysisRequestIden
     RetainPtr<WKMouseGestureRecognizer> _mouseGestureRecognizer;
     RetainPtr<WKMouseGestureRecognizer> _alternateMouseGestureRecognizer;
     WebCore::MouseEventPolicy _mouseEventPolicy;
-#endif
-
-#if HAVE(UIKIT_WITH_MOUSE_SUPPORT)
-    RetainPtr<WKHoverPlatter> _hoverPlatter;
 #endif
 
 #if HAVE(PENCILKIT_TEXT_INPUT)
@@ -540,7 +536,11 @@ using ImageAnalysisRequestIdentifier = ObjectIdentifier<ImageAnalysisRequestIden
 #endif // ENABLE(IMAGE_ANALYSIS)
     uint32_t _fullscreenVideoExtractionRequestIdentifier;
 #if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+    RetainPtr<VKCImageAnalysisInteraction> _imageAnalysisInteraction;
+    RetainPtr<NSMutableSet<UIButton *>> _imageAnalysisActionButtons;
+    WebCore::FloatRect _imageAnalysisInteractionBounds;
     std::optional<WebKit::ImageAnalysisMarkupData> _imageAnalysisMarkupData;
+    RetainPtr<CGImageRef> _croppedImageResult;
 #endif
 }
 
@@ -557,11 +557,8 @@ using ImageAnalysisRequestIdentifier = ObjectIdentifier<ImageAnalysisRequestIden
     , UIDragInteractionDelegate, UIDropInteractionDelegate
 #endif
     , WKTouchActionGestureRecognizerDelegate
-#if HAVE(UIKIT_WITH_MOUSE_SUPPORT)
-    , WKHoverPlatterDelegate
-#endif
 #if HAVE(UIFINDINTERACTION)
-    , _UITextSearching
+    , UITextSearching
 #endif
 >
 
@@ -658,8 +655,8 @@ FOR_EACH_PRIVATE_WKCONTENTVIEW_ACTION(DECLARE_WKCONTENTVIEW_ACTION_FOR_WEB_VIEW)
 - (void)_willStartScrollingOrZooming;
 - (void)_didScroll;
 - (void)_didEndScrollingOrZooming;
-- (void)_scrollingNodeScrollingWillBegin;
-- (void)_scrollingNodeScrollingDidEnd;
+- (void)_scrollingNodeScrollingWillBegin:(WebCore::ScrollingNodeID)nodeID;
+- (void)_scrollingNodeScrollingDidEnd:(WebCore::ScrollingNodeID)nodeID;
 - (void)_showPlaybackTargetPicker:(BOOL)hasVideo fromRect:(const WebCore::IntRect&)elementRect routeSharingPolicy:(WebCore::RouteSharingPolicy)policy routingContextUID:(NSString *)contextUID;
 - (void)_showRunOpenPanel:(API::OpenPanelParameters*)parameters frameInfo:(const WebKit::FrameInfoData&)frameInfo resultListener:(WebKit::WebOpenPanelResultListenerProxy*)listener;
 - (void)_showShareSheet:(const WebCore::ShareDataWithParsedURL&)shareData inRect:(std::optional<WebCore::FloatRect>)rect completionHandler:(WTF::CompletionHandler<void(bool)>&&)completionHandler;
@@ -789,17 +786,23 @@ FOR_EACH_PRIVATE_WKCONTENTVIEW_ACTION(DECLARE_WKCONTENTVIEW_ACTION_FOR_WEB_VIEW)
 
 #if ENABLE(IMAGE_ANALYSIS)
 - (void)_endImageAnalysisGestureDeferral:(WebKit::ShouldPreventGestures)shouldPreventGestures;
-- (void)requestTextRecognition:(NSURL *)imageURL imageData:(const WebKit::ShareableBitmap::Handle&)imageData identifier:(NSString *)identifier completionHandler:(CompletionHandler<void(WebCore::TextRecognitionResult&&)>&&)completion;
+- (void)requestTextRecognition:(NSURL *)imageURL imageData:(const WebKit::ShareableBitmap::Handle&)imageData source:(NSString *)source target:(NSString *)target completionHandler:(CompletionHandler<void(WebCore::TextRecognitionResult&&)>&&)completion;
 #endif
 
 #if HAVE(UIFINDINTERACTION)
-- (NSComparisonResult)compareFoundRange:(UITextRange *)fromRange toRange:(UITextRange *)toRange inDocument:(_UITextSearchDocumentIdentifier)document;
+- (NSInteger)offsetFromPosition:(UITextPosition *)from toPosition:(UITextPosition *)toPosition inDocument:(UITextSearchDocumentIdentifier)document;
+- (void)didBeginTextSearchOperation;
+- (void)didEndTextSearchOperation;
+
 - (void)requestRectForFoundTextRange:(UITextRange *)range completionHandler:(void (^)(CGRect))completionHandler;
 #endif
 
 - (void)beginFullscreenVideoExtraction:(const WebKit::ShareableBitmap::Handle&)imageHandle playerViewController:(AVPlayerViewController *)playerViewController;
 - (void)cancelFullscreenVideoExtraction:(AVPlayerViewController *)controller;
 @property (nonatomic, readonly) BOOL isFullscreenVideoExtractionEnabled;
+
+- (void)beginElementFullscreenVideoExtraction:(const WebKit::ShareableBitmap::Handle&)bitmapHandle bounds:(WebCore::FloatRect)bounds;
+- (void)cancelElementFullscreenVideoExtraction;
 
 @end
 

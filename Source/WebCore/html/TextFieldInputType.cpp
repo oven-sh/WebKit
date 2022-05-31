@@ -38,6 +38,7 @@
 #include "DOMFormData.h"
 #include "Editor.h"
 #include "ElementInlines.h"
+#include "ElementRareData.h"
 #include "EventNames.h"
 #include "Frame.h"
 #include "FrameSelection.h"
@@ -139,10 +140,13 @@ void TextFieldInputType::setValue(const String& sanitizedValue, bool valueChange
     // TextFieldInputType dispatches events different way from InputType.
     InputType::setValue(sanitizedValue, valueChanged, DispatchNoEvent, selection);
 
+    // Visible value needs update if it differs from sanitized value, if it was set with setValue().
+    // event_behavior == DispatchNoEvent usually means this call is not a user edit.
+    bool needsTextUpdate = valueChanged || (eventBehavior == TextFieldEventBehavior::DispatchNoEvent && sanitizedValue != element()->innerTextValue());
+    if (needsTextUpdate)
+        updateInnerTextValue();
     if (!valueChanged)
         return;
-
-    updateInnerTextValue();
 
     if (selection == TextControlSetValueSelection::SetSelectionToEnd) {
         auto max = visibleValue().length();
@@ -200,8 +204,8 @@ auto TextFieldInputType::handleKeydownEvent(KeyboardEvent& event) -> ShouldCallB
         event.setDefaultHandled();
     }
 #endif
-    RefPtr<Frame> frame = element()->document().frame();
-    if (frame && frame->editor().doTextFieldCommandFromEvent(element(), &event))
+    RefPtr frame = element()->document().frame();
+    if (frame && frame->editor().doTextFieldCommandFromEvent(*element(), &event))
         event.setDefaultHandled();
     return ShouldCallBaseEventHandler::Yes;
 }
@@ -235,8 +239,9 @@ void TextFieldInputType::forwardEvent(Event& event)
             return;
     }
 
-    bool isFocusEvent = event.type() == eventNames().focusEvent;
-    bool isBlurEvent = event.type() == eventNames().blurEvent;
+    auto& eventNames = WebCore::eventNames();
+    bool isFocusEvent = event.type() == eventNames.focusEvent;
+    bool isBlurEvent = event.type() == eventNames.blurEvent;
     if (isFocusEvent || isBlurEvent)
         capsLockStateMayHaveChanged();
     if (event.isMouseEvent() || isFocusEvent || isBlurEvent)
@@ -273,8 +278,8 @@ void TextFieldInputType::handleFocusEvent(Node* oldFocusedNode, FocusDirection)
 {
     ASSERT(element());
     ASSERT_UNUSED(oldFocusedNode, oldFocusedNode != element());
-    if (RefPtr<Frame> frame = element()->document().frame()) {
-        frame->editor().textFieldDidBeginEditing(element());
+    if (RefPtr frame = element()->document().frame()) {
+        frame->editor().textFieldDidBeginEditing(*element());
 #if ENABLE(DATALIST_ELEMENT)
         if (shouldOnlyShowDataListDropdownButtonWhenFocusedOrEdited() && element()->list() && m_dataListDropdownIndicator)
             m_dataListDropdownIndicator->setInlineStyleProperty(CSSPropertyDisplay, suggestions().size() ? CSSValueBlock : CSSValueNone, true);
@@ -619,14 +624,14 @@ void TextFieldInputType::handleBeforeTextInsertedEvent(BeforeTextInsertedEvent& 
     unsigned appendableLength = maxLength > baseLength ? maxLength - baseLength : 0;
 
     // Truncate the inserted text to avoid violating the maxLength and other constraints.
+    // FIXME: This may cause a lot of String allocations in the worst case scenario.
     String eventText = event.text();
     unsigned textLength = eventText.length();
     while (textLength > 0 && isHTMLLineBreak(eventText[textLength - 1]))
         textLength--;
-    eventText.truncate(textLength);
-    eventText.replace("\r\n", " ");
-    eventText.replace('\r', ' ');
-    eventText.replace('\n', ' ');
+    eventText = makeStringByReplacingAll(eventText.left(textLength), "\r\n"_s, " "_s);
+    eventText = makeStringByReplacingAll(eventText, '\r', ' ');
+    eventText = makeStringByReplacingAll(eventText, '\n', ' ');
     event.setText(limitLength(eventText, appendableLength));
 }
 
@@ -661,7 +666,7 @@ void TextFieldInputType::updatePlaceholderText()
         m_placeholder = TextControlPlaceholderElement::create(element()->document());
         element()->userAgentShadowRoot()->insertBefore(*m_placeholder, m_container ? m_container.get() : innerTextElement().get());
     }
-    m_placeholder->setInnerText(placeholderText);
+    m_placeholder->setInnerText(WTFMove(placeholderText));
 }
 
 bool TextFieldInputType::appendFormData(DOMFormData& formData) const
@@ -710,8 +715,8 @@ void TextFieldInputType::didSetValueByUserEdit()
     ASSERT(element());
     if (!element()->focused())
         return;
-    if (RefPtr<Frame> frame = element()->document().frame())
-        frame->editor().textDidChangeInTextField(element());
+    if (RefPtr frame = element()->document().frame())
+        frame->editor().textDidChangeInTextField(*element());
 #if ENABLE(DATALIST_ELEMENT)
     if (shouldOnlyShowDataListDropdownButtonWhenFocusedOrEdited() && element()->list() && m_dataListDropdownIndicator)
         m_dataListDropdownIndicator->setInlineStyleProperty(CSSPropertyDisplay, suggestions().size() ? CSSValueBlock : CSSValueNone, true);
@@ -750,13 +755,13 @@ void TextFieldInputType::focusAndSelectSpinButtonOwner()
     input->select();
 }
 
-bool TextFieldInputType::shouldSpinButtonRespondToMouseEvents()
+bool TextFieldInputType::shouldSpinButtonRespondToMouseEvents() const
 {
     ASSERT(element());
     return !element()->isDisabledOrReadOnly();
 }
 
-bool TextFieldInputType::shouldSpinButtonRespondToWheelEvents()
+bool TextFieldInputType::shouldSpinButtonRespondToWheelEvents() const
 {
     ASSERT(element());
     return shouldSpinButtonRespondToMouseEvents() && element()->focused();
@@ -814,7 +819,7 @@ void TextFieldInputType::createContainer()
     ASSERT(!m_container);
     ASSERT(element());
 
-    static MainThreadNeverDestroyed<const AtomString> webkitTextfieldDecorationContainerName("-webkit-textfield-decoration-container", AtomString::ConstructFromLiteral);
+    static MainThreadNeverDestroyed<const AtomString> webkitTextfieldDecorationContainerName("-webkit-textfield-decoration-container"_s);
 
     ScriptDisallowedScope::EventAllowedScope allowedScope(*element()->userAgentShadowRoot());
 
@@ -834,12 +839,11 @@ void TextFieldInputType::createAutoFillButton(AutoFillButtonType autoFillButtonT
     if (autoFillButtonType == AutoFillButtonType::None)
         return;
 
-    static MainThreadNeverDestroyed<const AtomString> buttonName("button", AtomString::ConstructFromLiteral);
     ASSERT(element());
     m_autoFillButton = AutoFillButtonElement::create(element()->document(), *this);
     m_autoFillButton->setPseudo(autoFillButtonTypeToAutoFillButtonPseudoClassName(autoFillButtonType));
-    m_autoFillButton->setAttributeWithoutSynchronization(roleAttr, buttonName);
-    m_autoFillButton->setAttributeWithoutSynchronization(aria_labelAttr, autoFillButtonTypeToAccessibilityLabel(autoFillButtonType));
+    m_autoFillButton->setAttributeWithoutSynchronization(roleAttr, HTMLNames::buttonTag->localName());
+    m_autoFillButton->setAttributeWithoutSynchronization(aria_labelAttr, AtomString { autoFillButtonTypeToAccessibilityLabel(autoFillButtonType) });
     m_autoFillButton->setTextContent(autoFillButtonTypeToAutoFillButtonText(autoFillButtonType));
     m_container->appendChild(*m_autoFillButton);
 }
@@ -865,7 +869,7 @@ void TextFieldInputType::updateAutoFillButton()
         bool shouldUpdateAutoFillButtonType = isAutoFillButtonTypeChanged(attribute, autoFillButtonType);
         if (shouldUpdateAutoFillButtonType) {
             m_autoFillButton->setPseudo(autoFillButtonTypeToAutoFillButtonPseudoClassName(autoFillButtonType));
-            m_autoFillButton->setAttributeWithoutSynchronization(aria_labelAttr, autoFillButtonTypeToAccessibilityLabel(autoFillButtonType));
+            m_autoFillButton->setAttributeWithoutSynchronization(aria_labelAttr, AtomString { autoFillButtonTypeToAccessibilityLabel(autoFillButtonType) });
             m_autoFillButton->setTextContent(autoFillButtonTypeToAutoFillButtonText(autoFillButtonType));
         }
         m_autoFillButton->setInlineStyleProperty(CSSPropertyDisplay, CSSValueBlock, true);

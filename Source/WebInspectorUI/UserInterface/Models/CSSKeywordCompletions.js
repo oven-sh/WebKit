@@ -125,10 +125,9 @@ WI.CSSKeywordCompletions.forPartialPropertyValue = function(text, propertyName, 
     }
 
     let valueCompletions;
-    if (functionName) {
-        valueCompletions = WI.CSSKeywordCompletions.forFunction(functionName);
-        valueCompletions.addValues(additionalFunctionValueCompletionsProvider?.(functionName) ?? []);
-    } else
+    if (functionName)
+        valueCompletions = WI.CSSKeywordCompletions.forFunction(functionName, {additionalFunctionValueCompletionsProvider});
+    else
         valueCompletions = WI.CSSKeywordCompletions.forProperty(propertyName);
 
     let completions;
@@ -209,7 +208,7 @@ WI.CSSKeywordCompletions.isTimingFunctionAwareProperty = function(name)
     return false;
 };
 
-WI.CSSKeywordCompletions.forFunction = function(functionName)
+WI.CSSKeywordCompletions.forFunction = function(functionName, {additionalFunctionValueCompletionsProvider} = {})
 {
     let suggestions = ["var()"];
 
@@ -229,6 +228,9 @@ WI.CSSKeywordCompletions.forFunction = function(functionName)
         suggestions.push("to", "left", "right", "top", "bottom");
         suggestions.pushAll(WI.CSSKeywordCompletions._colors);
     }
+
+    if (additionalFunctionValueCompletionsProvider)
+        suggestions.pushAll(additionalFunctionValueCompletionsProvider(functionName));
 
     return new WI.CSSCompletions(suggestions, {acceptEmptyPrefix: true});
 };
@@ -309,7 +311,6 @@ WI.CSSKeywordCompletions.InheritedProperties = new Set([
     "-webkit-overflow-scrolling",
     "-webkit-rtl-ordering",
     "-webkit-ruby-position",
-    "-webkit-text-align-last",
     "-webkit-text-combine",
     "-webkit-text-decoration-skip",
     "-webkit-text-decorations-in-effect",
@@ -398,6 +399,7 @@ WI.CSSKeywordCompletions.InheritedProperties = new Set([
     "stroke-width",
     "tab-size",
     "text-align",
+    "text-align-last",
     "text-anchor",
     "text-indent",
     "text-rendering",
@@ -1124,9 +1126,6 @@ WI.CSSKeywordCompletions._propertyKeywordMap = {
     "-webkit-ruby-position": [
         "after", "before", "inter-character",
     ],
-    "-webkit-text-align-last": [
-        "auto", "start", "end", "left", "right", "center", "justify",
-    ],
     "-webkit-text-combine": [
         "none", "horizontal",
     ],
@@ -1336,6 +1335,9 @@ WI.CSSKeywordCompletions._propertyKeywordMap = {
     ],
     "text-align": [
         "-webkit-auto", "left", "right", "center", "justify", "match-parent", "-webkit-left", "-webkit-right", "-webkit-center", "-webkit-match-parent", "start", "end",
+    ],
+    "text-align-last": [
+        "auto", "start", "end", "left", "right", "center", "justify", "match-parent",
     ],
     "text-anchor": [
         "middle", "start", "end",

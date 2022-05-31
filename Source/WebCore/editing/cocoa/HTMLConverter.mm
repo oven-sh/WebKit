@@ -34,11 +34,13 @@
 #import "CharacterData.h"
 #import "ColorCocoa.h"
 #import "ColorMac.h"
+#import "CommonAtomStrings.h"
 #import "ComposedTreeIterator.h"
 #import "Document.h"
 #import "DocumentLoader.h"
 #import "Editing.h"
 #import "ElementInlines.h"
+#import "ElementRareData.h"
 #import "ElementTraversal.h"
 #import "File.h"
 #import "FontCascade.h"
@@ -596,7 +598,7 @@ String HTMLConverterCaches::propertyValueForNode(Node& node, CSSPropertyID prope
     switch (propertyId) {
     case CSSPropertyDisplay:
         if (element.hasTagName(headTag) || element.hasTagName(scriptTag) || element.hasTagName(appletTag) || element.hasTagName(noframesTag))
-            return "none"_s;
+            return noneAtom();
         else if (element.hasTagName(addressTag) || element.hasTagName(blockquoteTag) || element.hasTagName(bodyTag) || element.hasTagName(centerTag)
              || element.hasTagName(ddTag) || element.hasTagName(dirTag) || element.hasTagName(divTag) || element.hasTagName(dlTag)
              || element.hasTagName(dtTag) || element.hasTagName(fieldsetTag) || element.hasTagName(formTag) || element.hasTagName(frameTag)
@@ -817,10 +819,10 @@ static inline NSShadow *_shadowForShadowStyle(NSString *shadowStyle)
 bool HTMLConverterCaches::isBlockElement(Element& element)
 {
     String displayValue = propertyValueForNode(element, CSSPropertyDisplay);
-    if (displayValue == "block" || displayValue == "list-item" || displayValue.startsWith("table"))
+    if (displayValue == "block"_s || displayValue == "list-item"_s || displayValue.startsWith("table"_s))
         return true;
     String floatValue = propertyValueForNode(element, CSSPropertyFloat);
-    if (floatValue == "left" || floatValue == "right")
+    if (floatValue == "left"_s || floatValue == "right"_s)
         return true;
     return false;
 }
@@ -831,7 +833,7 @@ bool HTMLConverterCaches::elementHasOwnBackgroundColor(Element& element)
         return false;
     // In the text system, text blocks (table elements) and documents (body elements)
     // have their own background colors, which should not be inherited.
-    return element.hasTagName(htmlTag) || element.hasTagName(bodyTag) || propertyValueForNode(element, CSSPropertyDisplay).startsWith("table");
+    return element.hasTagName(htmlTag) || element.hasTagName(bodyTag) || propertyValueForNode(element, CSSPropertyDisplay).startsWith("table"_s);
 }
 
 Element* HTMLConverter::_blockLevelElementForNode(Node* node)
@@ -977,7 +979,7 @@ NSDictionary *HTMLConverter::computedAttributesForElement(Element& element)
         }
 
         String fontWeight = _caches->propertyValueForNode(element, CSSPropertyFontStyle);
-        if (fontWeight.startsWith("bold") || parseIntegerAllowingTrailingJunk<int>(fontWeight).value_or(0) >= 700) {
+        if (fontWeight.startsWith("bold"_s) || parseIntegerAllowingTrailingJunk<int>(fontWeight).value_or(0) >= 700) {
             // ??? handle weight properly using NSFontManager
             PlatformFont *originalFont = font;
 #if PLATFORM(IOS_FAMILY)
@@ -1016,7 +1018,7 @@ NSDictionary *HTMLConverter::computedAttributesForElement(Element& element)
     String fontKerning = _caches->propertyValueForNode(element, CSSPropertyFontKerning);
     String letterSpacing = _caches->propertyValueForNode(element, CSSPropertyLetterSpacing);
     if (fontKerning.length() || letterSpacing.length()) {
-        if (fontKerning == "none")
+        if (fontKerning == noneAtom())
             [attrs setObject:@0.0 forKey:NSKernAttributeName];
         else {
             double kernVal = letterSpacing.length() ? letterSpacing.toDouble() : 0.0;
@@ -1029,19 +1031,19 @@ NSDictionary *HTMLConverter::computedAttributesForElement(Element& element)
 
     String fontLigatures = _caches->propertyValueForNode(element, CSSPropertyFontVariantLigatures);
     if (fontLigatures.length()) {
-        if (fontLigatures.contains("normal"))
+        if (fontLigatures.contains("normal"_s))
             ;   // default: whatever the system decides to do
-        else if (fontLigatures.contains("common-ligatures"))
+        else if (fontLigatures.contains("common-ligatures"_s))
             [attrs setObject:@1 forKey:NSLigatureAttributeName];   // explicitly enabled
-        else if (fontLigatures.contains("no-common-ligatures"))
+        else if (fontLigatures.contains("no-common-ligatures"_s))
             [attrs setObject:@0 forKey:NSLigatureAttributeName];  // explicitly disabled
     }
 
     String textDecoration = _caches->propertyValueForNode(element, CSSPropertyTextDecorationLine);
     if (textDecoration.length()) {
-        if (textDecoration.contains("underline"))
+        if (textDecoration.contains("underline"_s))
             [attrs setObject:[NSNumber numberWithInteger:NSUnderlineStyleSingle] forKey:NSUnderlineStyleAttributeName];
-        if (textDecoration.contains("line-through"))
+        if (textDecoration.contains("line-through"_s))
             [attrs setObject:[NSNumber numberWithInteger:NSUnderlineStyleSingle] forKey:NSStrikethroughStyleAttributeName];
     }
 
@@ -1089,27 +1091,27 @@ NSDictionary *HTMLConverter::computedAttributesForElement(Element& element)
         String textAlign = _caches->propertyValueForNode(coreBlockElement, CSSPropertyTextAlign);
         if (textAlign.length()) {
             // WebKit can return -khtml-left, -khtml-right, -khtml-center
-            if (textAlign.endsWith("left"))
+            if (textAlign.endsWith("left"_s))
                 [paragraphStyle setAlignment:NSTextAlignmentLeft];
-            else if (textAlign.endsWith("right"))
+            else if (textAlign.endsWith("right"_s))
                 [paragraphStyle setAlignment:NSTextAlignmentRight];
-            else if (textAlign.endsWith("center"))
+            else if (textAlign.endsWith("center"_s))
                 [paragraphStyle setAlignment:NSTextAlignmentCenter];
-            else if (textAlign.endsWith("justify"))
+            else if (textAlign.endsWith("justify"_s))
                 [paragraphStyle setAlignment:NSTextAlignmentJustified];
         }
 
         String direction = _caches->propertyValueForNode(coreBlockElement, CSSPropertyDirection);
         if (direction.length()) {
-            if (direction == "ltr")
+            if (direction == "ltr"_s)
                 [paragraphStyle setBaseWritingDirection:NSWritingDirectionLeftToRight];
-            else if (direction == "rtl")
+            else if (direction == "rtl"_s)
                 [paragraphStyle setBaseWritingDirection:NSWritingDirectionRightToLeft];
         }
 
         String hyphenation = _caches->propertyValueForNode(coreBlockElement, CSSPropertyWebkitHyphens);
         if (hyphenation.length()) {
-            if (hyphenation == "auto")
+            if (hyphenation == autoAtom())
                 [paragraphStyle setHyphenationFactor:1.0];
             else
                 [paragraphStyle setHyphenationFactor:0.0];
@@ -1609,7 +1611,7 @@ BOOL HTMLConverter::_enterElement(Element& element, BOOL embedded)
 
     if (element.hasTagName(headTag) && !embedded)
         _processHeadElement(element);
-    else if (!displayValue.length() || !(displayValue == "none" || displayValue == "table-column" || displayValue == "table-column-group")) {
+    else if (!displayValue.length() || !(displayValue == noneAtom() || displayValue == "table-column" || displayValue == "table-column-group")) {
         if (_caches->isBlockElement(element) && !element.hasTagName(brTag) && !(displayValue == "table-cell" && [_textTables count] == 0)
             && !([_textLists count] > 0 && displayValue == "block" && !element.hasTagName(liTag) && !element.hasTagName(ulTag) && !element.hasTagName(olTag)))
             _newParagraphForElement(element, element.tagName(), NO, YES);
@@ -1864,7 +1866,7 @@ BOOL HTMLConverter::_processElement(Element& element, NSInteger depth)
     } else if (element.hasTagName(inputTag)) {
         if (is<HTMLInputElement>(element)) {
             HTMLInputElement& inputElement = downcast<HTMLInputElement>(element);
-            if (inputElement.type() == "text") {
+            if (inputElement.type() == textAtom()) {
                 NSString *value = inputElement.value();
                 if (value && [value length] > 0)
                     _addValue(value, element);
@@ -2105,7 +2107,7 @@ void HTMLConverter::_processText(CharacterData& characterData)
 
     // FIXME: Use RenderText's content instead.
     bool wasSpace = false;
-    if (_caches->propertyValueForNode(characterData, CSSPropertyWhiteSpace).startsWith("pre")) {
+    if (_caches->propertyValueForNode(characterData, CSSPropertyWhiteSpace).startsWith("pre"_s)) {
         if (textLength && originalString.length() && _flags.isSoft) {
             unichar c = originalString.characterAt(0);
             if (c == '\n' || c == '\r' || c == NSParagraphSeparatorCharacter || c == NSLineSeparatorCharacter || c == NSFormFeedCharacter || c == WebNextLineCharacter)
@@ -2440,7 +2442,7 @@ AttributedString editingAttributedString(const SimpleRange& range, IncludeImages
         if (style.nbspMode() == NBSPMode::Normal)
             text = it.text().createNSStringWithoutCopying();
         else
-            text = it.text().toString().replace(noBreakSpace, ' ');
+            text = makeStringByReplacingAll(it.text(), noBreakSpace, ' ');
 
         [string replaceCharactersInRange:NSMakeRange(stringLength, 0) withString:text.get()];
         [string setAttributes:attrs.get() range:NSMakeRange(stringLength, currentTextLength)];

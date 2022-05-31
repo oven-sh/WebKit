@@ -110,9 +110,9 @@ void TestController::cocoaPlatformInitialize(const Options& options)
     if (!dumpRenderTreeTemp)
         return;
 
-    String resourceLoadStatisticsFolder = String(dumpRenderTreeTemp) + '/' + "ResourceLoadStatistics";
+    String resourceLoadStatisticsFolder = makeString(dumpRenderTreeTemp, "/ResourceLoadStatistics");
     [[NSFileManager defaultManager] createDirectoryAtPath:resourceLoadStatisticsFolder withIntermediateDirectories:YES attributes:nil error: nil];
-    String fullBrowsingSessionResourceLog = resourceLoadStatisticsFolder + '/' + "full_browsing_session_resourceLog.plist";
+    String fullBrowsingSessionResourceLog = makeString(resourceLoadStatisticsFolder, "/full_browsing_session_resourceLog.plist");
     NSDictionary *resourceLogPlist = @{ @"version": @(1) };
     if (![resourceLogPlist writeToFile:fullBrowsingSessionResourceLog atomically:YES])
         WTFCrash();
@@ -189,6 +189,13 @@ void TestController::platformCreateWebView(WKPageConfigurationRef, const TestOpt
     [copiedConfiguration _setAllowTopNavigationToDataURLs:options.allowTopNavigationToDataURLs()];
     [copiedConfiguration _setAppHighlightsEnabled:options.appHighlightsEnabled()];
 
+    if (!options.contentSecurityPolicyExtensionMode().empty()) {
+        if (options.contentSecurityPolicyExtensionMode() == "v2")
+            [copiedConfiguration _setContentSecurityPolicyModeForExtension:_WKContentSecurityPolicyModeForExtensionManifestV2];
+        if (options.contentSecurityPolicyExtensionMode() == "v3")
+            [copiedConfiguration _setContentSecurityPolicyModeForExtension:_WKContentSecurityPolicyModeForExtensionManifestV3];
+    }
+
     configureContentMode(copiedConfiguration.get(), options);
 
     auto applicationManifest = options.applicationManifest();
@@ -214,7 +221,8 @@ void TestController::platformCreateWebView(WKPageConfigurationRef, const TestOpt
 UniqueRef<PlatformWebView> TestController::platformCreateOtherPage(PlatformWebView* parentView, WKPageConfigurationRef, const TestOptions& options)
 {
     auto newConfiguration = adoptNS([globalWebViewConfiguration() copy]);
-    [newConfiguration _setRelatedWebView:static_cast<WKWebView*>(parentView->platformView())];
+    if (parentView)
+        [newConfiguration _setRelatedWebView:static_cast<WKWebView*>(parentView->platformView())];
     if ([newConfiguration _relatedWebView])
         [newConfiguration setWebsiteDataStore:[newConfiguration _relatedWebView].configuration.websiteDataStore];
     auto view = makeUniqueRef<PlatformWebView>(newConfiguration.get(), options);
@@ -320,7 +328,7 @@ void TestController::cocoaResetStateToConsistentValues(const TestOptions& option
 
     [globalWebsiteDataStoreDelegateClient() setAllowRaisingQuota:YES];
 
-    WebCoreTestSupport::setAdditionalSupportedImageTypesForTesting(options.additionalSupportedImageTypes().c_str());
+    WebCoreTestSupport::setAdditionalSupportedImageTypesForTesting(String::fromLatin1(options.additionalSupportedImageTypes().c_str()));
 }
 
 void TestController::platformWillRunTest(const TestInvocation& testInvocation)

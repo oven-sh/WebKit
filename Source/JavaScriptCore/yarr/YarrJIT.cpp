@@ -3596,7 +3596,16 @@ class YarrGenerator final : public YarrJITInfo {
                 lastOp.m_checkAdjust = nestedAlternative->m_minimumSize;
                 if ((term->quantityType == QuantifierType::FixedCount) && (term->type != PatternTerm::Type::ParentheticalAssertion))
                     lastOp.m_checkAdjust -= disjunction->m_minimumSize;
-                lastOp.m_checkedOffset = checkedOffset + lastOp.m_checkAdjust;
+
+                Checked<unsigned, RecordOverflow> checkedOffsetResult(checkedOffset);
+                checkedOffsetResult += lastOp.m_checkAdjust;
+
+                if (UNLIKELY(checkedOffsetResult.hasOverflowed())) {
+                    m_failureReason = JITFailureReason::OffsetTooLarge;
+                    return;
+                }
+
+                lastOp.m_checkedOffset = checkedOffsetResult;
             }
             opCompileAlternative(m_ops[lastOpIndex].m_checkedOffset, nestedAlternative);
 
@@ -4093,7 +4102,7 @@ class YarrGenerator final : public YarrJITInfo {
     }
 
 public:
-    YarrGenerator(CCallHelpers& jit, const VM* vm, YarrCodeBlock* codeBlock, const YarrJITRegs& regs, YarrPattern& pattern, const String& patternString, CharSize charSize, JITCompileMode compileMode)
+    YarrGenerator(CCallHelpers& jit, const VM* vm, YarrCodeBlock* codeBlock, const YarrJITRegs& regs, YarrPattern& pattern, StringView patternString, CharSize charSize, JITCompileMode compileMode)
         : m_jit(jit)
         , m_vm(vm)
         , m_codeBlock(codeBlock)
@@ -4112,7 +4121,7 @@ public:
         m_boyerMooreData = static_cast<YarrBoyerMoyerData*>(m_codeBlock);
     }
 
-    YarrGenerator(CCallHelpers& jit, const VM* vm, YarrBoyerMoyerData* yarrBMData, const YarrJITRegs& regs, YarrPattern& pattern, const String& patternString, CharSize charSize, JITCompileMode compileMode)
+    YarrGenerator(CCallHelpers& jit, const VM* vm, YarrBoyerMoyerData* yarrBMData, const YarrJITRegs& regs, YarrPattern& pattern, StringView patternString, CharSize charSize, JITCompileMode compileMode)
         : m_jit(jit)
         , m_vm(vm)
         , m_codeBlock(nullptr)
@@ -4652,7 +4661,7 @@ private:
 
     StackCheck* m_compilationThreadStackChecker { nullptr };
     YarrPattern& m_pattern;
-    const String& m_patternString;
+    const StringView m_patternString;
 
     CharSize m_charSize;
     JITCompileMode m_compileMode;
@@ -4721,10 +4730,13 @@ static void dumpCompileFailure(JITFailureReason failure)
     case JITFailureReason::ExecutableMemoryAllocationFailure:
         dataLog("Can't JIT because of failure of allocation of executable memory\n");
         break;
+    case JITFailureReason::OffsetTooLarge:
+        dataLog("Can't JIT because pattern exceeds string length limits\n");
+        break;
     }
 }
 
-void jitCompile(YarrPattern& pattern, String& patternString, CharSize charSize, VM* vm, YarrCodeBlock& codeBlock, JITCompileMode mode)
+void jitCompile(YarrPattern& pattern, StringView patternString, CharSize charSize, VM* vm, YarrCodeBlock& codeBlock, JITCompileMode mode)
 {
     CCallHelpers masm;
 
@@ -4747,7 +4759,7 @@ void jitCompile(YarrPattern& pattern, String& patternString, CharSize charSize, 
 #error "No support for inlined JIT'ing of RegExp.test for this CPU / OS combination."
 #endif
 
-void jitCompileInlinedTest(StackCheck* m_compilationThreadStackChecker, const String& patternString, OptionSet<Yarr::Flags> flags, CharSize charSize, const VM* vm, YarrBoyerMoyerData& boyerMooreData, CCallHelpers& jit, YarrJITRegisters& jitRegisters)
+void jitCompileInlinedTest(StackCheck* m_compilationThreadStackChecker, StringView patternString, OptionSet<Yarr::Flags> flags, CharSize charSize, const VM* vm, YarrBoyerMoyerData& boyerMooreData, CCallHelpers& jit, YarrJITRegisters& jitRegisters)
 {
     Yarr::ErrorCode errorCode;
     Yarr::YarrPattern pattern(patternString, flags, errorCode);

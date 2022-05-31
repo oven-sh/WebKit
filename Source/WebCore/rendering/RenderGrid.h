@@ -102,8 +102,6 @@ public:
     // nested subgrids, where ancestor may not be our direct parent.
     bool isSubgridOf(GridTrackSizingDirection, const RenderGrid& ancestor);
 
-    bool mayBeSubgridExcludingAbsPos(GridTrackSizingDirection) const;
-
     const Grid& currentGrid() const
     {
         return m_grid;
@@ -129,7 +127,7 @@ private:
         return child->isRenderReplaced() ? ItemPosition::Start : ItemPosition::Stretch;
     }
 
-    const char* renderName() const override;
+    ASCIILiteral renderName() const override;
     bool isRenderGrid() const override { return true; }
     void computeIntrinsicLogicalWidths(LayoutUnit& minLogicalWidth, LayoutUnit& maxLogicalWidth) const override;
 
@@ -220,6 +218,7 @@ private:
     LayoutUnit translateRTLCoordinate(LayoutUnit) const;
 
     bool shouldResetLogicalHeightBeforeLayout() const override { return true; }
+    bool establishesIndependentFormattingContext() const override;
 
     bool aspectRatioPrefersInline(const RenderBox& child, bool blockFlowIsColumnAxis);
 
@@ -228,7 +227,6 @@ private:
     GridSpan gridSpanForOutOfFlowChild(const RenderBox&, GridTrackSizingDirection) const;
 
     bool computeGridPositionsForOutOfFlowChild(const RenderBox&, GridTrackSizingDirection, int&, bool&, int&, bool&) const;
-    bool gridSpanCoversRealTracks(const RenderBox&, GridTrackSizingDirection) const;
 
     Grid m_grid;
 
@@ -242,6 +240,9 @@ private:
     typedef HashMap<const RenderBox*, std::optional<size_t>> OutOfFlowPositionsMap;
     OutOfFlowPositionsMap m_outOfFlowItemColumn;
     OutOfFlowPositionsMap m_outOfFlowItemRow;
+
+    std::optional<LayoutUnit> m_minContentSize;
+    std::optional<LayoutUnit> m_maxContentSize;
 
     bool m_hasAnyOrthogonalItem {false};
     bool m_hasAspectRatioBlockSizeDependentItem { false };

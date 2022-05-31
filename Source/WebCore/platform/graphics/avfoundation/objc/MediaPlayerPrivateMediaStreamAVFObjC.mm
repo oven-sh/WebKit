@@ -127,6 +127,12 @@ namespace WebCore {
 #pragma mark -
 #pragma mark MediaPlayerPrivateMediaStreamAVFObjC
 
+MediaPlayerPrivateMediaStreamAVFObjC::NativeImageCreator MediaPlayerPrivateMediaStreamAVFObjC::m_nativeImageCreator = nullptr;
+void MediaPlayerPrivateMediaStreamAVFObjC::setNativeImageCreator(NativeImageCreator&& callback)
+{
+    m_nativeImageCreator = WTFMove(callback);
+}
+
 MediaPlayerPrivateMediaStreamAVFObjC::MediaPlayerPrivateMediaStreamAVFObjC(MediaPlayer* player)
     : m_player(player)
     , m_logger(player->mediaPlayerLogger())
@@ -450,7 +456,7 @@ void MediaPlayerPrivateMediaStreamAVFObjC::load(const String&)
 }
 
 #if ENABLE(MEDIA_SOURCE)
-void MediaPlayerPrivateMediaStreamAVFObjC::load(const URL&, const ContentType&, MediaSourcePrivateClient*)
+void MediaPlayerPrivateMediaStreamAVFObjC::load(const URL&, const ContentType&, MediaSourcePrivateClient&)
 {
     // This media engine only supports MediaStream URLs.
     scheduleDeferredTask([this] {
@@ -638,6 +644,7 @@ void MediaPlayerPrivateMediaStreamAVFObjC::setPageIsVisible(bool isVisible)
     if (m_isPageVisible == isVisible)
         return;
 
+    ALWAYS_LOG(LOGIDENTIFIER, isVisible);
     m_isPageVisible = isVisible;
     flushRenderers();
     reenqueueCurrentVideoFrameIfNeeded();
@@ -822,24 +829,30 @@ enum class TrackState {
     Configure
 };
 
+enum class TrackKind {
+    Audio,
+    Video
+};
+
 template <typename RefT>
-void updateTracksOfType(HashMap<String, RefT>& trackMap, RealtimeMediaSource::Type trackType, MediaStreamTrackPrivateVector& currentTracks, RefT (*itemFactory)(MediaStreamTrackPrivate&), const Function<void(std::reference_wrapper<typename std::remove_pointer<typename RefT::PtrTraits::StorageType>::type>, int, TrackState)>& configureTrack)
+void updateTracksOfKind(MemoryCompactRobinHoodHashMap<String, RefT>& trackMap, TrackKind trackKind, MediaStreamTrackPrivateVector& currentTracks, RefT (*itemFactory)(MediaStreamTrackPrivate&), const Function<void(std::reference_wrapper<typename std::remove_pointer<typename RefT::PtrTraits::StorageType>::type>, int, TrackState)>& configureTrack)
 {
     Vector<RefT> removedTracks;
     Vector<RefT> addedTracks;
     Vector<Ref<MediaStreamTrackPrivate>> addedPrivateTracks;
 
+    bool wantsVideo = trackKind == TrackKind::Video;
     for (const auto& track : currentTracks) {
-        if (track->type() != trackType)
+        if (wantsVideo != track->isVideo())
             continue;
 
         if (!trackMap.contains(track->id()))
-            addedPrivateTracks.append(*track);
+            addedPrivateTracks.append(track);
     }
 
     for (const auto& track : trackMap.values()) {
         auto& streamTrack = track->streamTrack();
-        if (currentTracks.contains(&streamTrack))
+        if (currentTracks.containsIf([&streamTrack](auto& track) { return track.ptr() == &streamTrack; }))
             continue;
 
         removedTracks.append(track);
@@ -941,7 +954,7 @@ void MediaPlayerPrivateMediaStreamAVFObjC::updateTracks()
             break;
         }
     };
-    updateTracksOfType(m_audioTrackMap, RealtimeMediaSource::Type::Audio, currentTracks, &AudioTrackPrivateMediaStream::create, WTFMove(setAudioTrackState));
+    updateTracksOfKind(m_audioTrackMap, TrackKind::Audio, currentTracks, &AudioTrackPrivateMediaStream::create, WTFMove(setAudioTrackState));
 
     if (!m_player->isVideoPlayer())
         return;
@@ -966,7 +979,7 @@ void MediaPlayerPrivateMediaStreamAVFObjC::updateTracks()
             break;
         }
     };
-    updateTracksOfType(m_videoTrackMap, RealtimeMediaSource::Type::Video, currentTracks, &VideoTrackPrivateMediaStream::create, WTFMove(setVideoTrackState));
+    updateTracksOfKind(m_videoTrackMap, TrackKind::Video, currentTracks, &VideoTrackPrivateMediaStream::create, WTFMove(setVideoTrackState));
 }
 
 std::unique_ptr<PlatformTimeRanges> MediaPlayerPrivateMediaStreamAVFObjC::seekable() const
@@ -988,6 +1001,11 @@ void MediaPlayerPrivateMediaStreamAVFObjC::updateCurrentFrameImage()
 {
     if (m_imagePainter.cgImage || !m_imagePainter.videoFrame)
         return;
+
+    if (m_nativeImageCreator) {
+        m_imagePainter.cgImage = m_nativeImageCreator(*m_imagePainter.videoFrame);
+        return;
+    }
 
     if (!m_imagePainter.pixelBufferConformer)
         m_imagePainter.pixelBufferConformer = makeUnique<PixelBufferConformerCV>((__bridge CFDictionaryRef)@{ (__bridge NSString *)kCVPixelBufferPixelFormatTypeKey: @(kCVPixelFormatType_32BGRA) });

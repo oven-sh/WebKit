@@ -265,10 +265,10 @@ void PaymentCoordinator::didCancelPaymentSession(PaymentSessionError&& error)
 
 std::optional<String> PaymentCoordinator::validatedPaymentNetwork(Document&, unsigned version, const String& paymentNetwork) const
 {
-    if (version < 2 && equalIgnoringASCIICase(paymentNetwork, "jcb"))
+    if (version < 2 && equalLettersIgnoringASCIICase(paymentNetwork, "jcb"_s))
         return std::nullopt;
 
-    if (version < 3 && equalIgnoringASCIICase(paymentNetwork, "carteBancaire"))
+    if (version < 3 && equalIgnoringASCIICase(paymentNetwork, "carteBancaire"_s))
         return std::nullopt;
 
     return m_client.validatedPaymentNetwork(paymentNetwork);

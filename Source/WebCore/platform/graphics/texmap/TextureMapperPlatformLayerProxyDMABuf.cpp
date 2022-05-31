@@ -44,6 +44,9 @@
 #include <EGL/eglext.h>
 #endif
 
+// This has to be included after the EGL headers.
+#include "DMABufEGLUtilities.h"
+
 namespace WebCore {
 
 static PFNEGLCREATEIMAGEKHRPROC createImageKHR()
@@ -194,10 +197,11 @@ void TextureMapperPlatformLayerProxyDMABuf::DMABufLayer::paintToTextureMapper(Te
 
     // TODO: this is the BT.601 colorspace conversion matrix. The exact desired colorspace should be included
     // in the DMABufObject, and the relevant matrix decided based on it. BT.601 should remain the default.
-    static constexpr std::array<GLfloat, 9> s_yuvToRGB {
-        1.164f,  0.0f,    1.596f,
-        1.164f, -0.391f, -0.813f,
-        1.164f,  2.018f,  0.0f
+    static constexpr std::array<GLfloat, 16> s_yuvToRGB {
+        1.164383561643836f,  0.0f,                1.596026785714286f, -0.874202217873451f,
+        1.164383561643836f, -0.391762290094914f, -0.812967647237771f,  0.531667823499146f,
+        1.164383561643836f,  2.017232142857143f, -0.0f,               -1.085630789302022f,
+        0.0f,                0.0f,                0.0f,                1.0f,
     };
 
     TextureMapperGL& texmapGL = static_cast<TextureMapperGL&>(textureMapper);
@@ -247,20 +251,14 @@ std::unique_ptr<TextureMapperPlatformLayerProxyDMABuf::DMABufLayer::EGLImageData
 {
     using EGLImageData = TextureMapperPlatformLayerProxyDMABuf::DMABufLayer::EGLImageData;
 
-    EGLDisplay eglDisplay = PlatformDisplay::sharedDisplayForCompositing().eglDisplay();
+    auto& platformDisplay = PlatformDisplay::sharedDisplayForCompositing();
+    EGLDisplay eglDisplay = platformDisplay.eglDisplay();
 
     EGLImageKHR image[DMABufFormat::c_maxPlanes];
     for (unsigned i = 0; i < object.format.numPlanes; ++i) {
-        std::initializer_list<EGLint> attributes {
-            EGL_WIDTH, EGLint(object.format.planeWidth(i, object.width)),
-            EGL_HEIGHT, EGLint(object.format.planeHeight(i, object.height)),
-            EGL_LINUX_DRM_FOURCC_EXT, EGLint(object.format.planes[i].fourcc),
-            EGL_DMA_BUF_PLANE0_FD_EXT, object.fd[i],
-            EGL_DMA_BUF_PLANE0_OFFSET_EXT, EGLint(object.offset[i]),
-            EGL_DMA_BUF_PLANE0_PITCH_EXT, EGLint(object.stride[i]),
-            EGL_NONE,
-        };
-        image[i] = createImageKHR()(eglDisplay, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, nullptr, std::data(attributes));
+        auto attributes = DMABufEGLUtilities::constructEGLCreateImageAttributes(object, i,
+            DMABufEGLUtilities::PlaneModifiersUsage { platformDisplay.eglExtensions().EXT_image_dma_buf_import_modifiers });
+        image[i] = createImageKHR()(eglDisplay, EGL_NO_CONTEXT, EGL_LINUX_DMA_BUF_EXT, nullptr, attributes.data());
     }
 
     auto imageData = makeUnique<EGLImageData>();

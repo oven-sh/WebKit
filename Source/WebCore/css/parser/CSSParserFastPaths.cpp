@@ -671,9 +671,8 @@ bool CSSParserFastPaths::isValidKeywordPropertyAndValue(CSSPropertyID propertyId
         return valueID == CSSValueAuto || valueID == CSSValueNone || (valueID >= CSSValueInset && valueID <= CSSValueDouble);
     // FIXME-NEWPARSER: Support?
     // case CSSPropertyOverflowAnchor:
-    //    return valueID == CSSValueVisible || valueID == CSSValueNone || valueID == CSSValueAuto;
+    //    return valueID == CSSValueNone || valueID == CSSValueAuto;
     case CSSPropertyOverflowWrap: // normal | break-word | anywhere
-    case CSSPropertyWordWrap:
         return valueID == CSSValueNormal || valueID == CSSValueBreakWord || valueID == CSSValueAnywhere;
     case CSSPropertyOverflowX: // visible | hidden | scroll | auto | overlay (overlay is a synonym for auto)
         if (context.overflowClipEnabled && valueID == CSSValueClip)
@@ -705,8 +704,8 @@ bool CSSParserFastPaths::isValidKeywordPropertyAndValue(CSSPropertyID propertyId
             || valueID == CSSValueAbsolute
             || valueID == CSSValueFixed
             || valueID == CSSValueSticky || valueID == CSSValueWebkitSticky;
-    case CSSPropertyResize: // none | both | horizontal | vertical | auto
-        return valueID == CSSValueNone || valueID == CSSValueBoth || valueID == CSSValueHorizontal || valueID == CSSValueVertical || valueID == CSSValueAuto;
+    case CSSPropertyResize: // none | both | horizontal | vertical | block | inline | auto
+        return valueID == CSSValueNone || valueID == CSSValueBoth || valueID == CSSValueHorizontal || valueID == CSSValueVertical || valueID == CSSValueBlock || valueID == CSSValueInline || valueID == CSSValueAuto;
     case CSSPropertyShapeRendering:
         return valueID == CSSValueAuto || valueID == CSSValueOptimizeSpeed || valueID == CSSValueCrispedges || valueID == CSSValueGeometricPrecision;
     case CSSPropertyStrokeLinejoin:
@@ -717,27 +716,19 @@ bool CSSParserFastPaths::isValidKeywordPropertyAndValue(CSSPropertyID propertyId
         return valueID == CSSValueAuto || valueID == CSSValueFixed;
     case CSSPropertyTextAlign:
         return (valueID >= CSSValueWebkitAuto && valueID <= CSSValueWebkitMatchParent) || valueID == CSSValueStart || valueID == CSSValueEnd;
-#if ENABLE(CSS3_TEXT)
-    case CSSPropertyWebkitTextAlignLast:
-        // auto | start | end | left | right | center | justify
-        return (valueID >= CSSValueLeft && valueID <= CSSValueJustify) || valueID == CSSValueStart || valueID == CSSValueEnd || valueID == CSSValueAuto;
-#endif
+    case CSSPropertyTextAlignLast:
+        // auto | start | end | left | right | center | justify | match-parent
+        return (valueID >= CSSValueLeft && valueID <= CSSValueJustify) || valueID == CSSValueStart || valueID == CSSValueEnd || valueID == CSSValueAuto || valueID == CSSValueMatchParent;
     case CSSPropertyTextAnchor:
         return valueID == CSSValueStart || valueID == CSSValueMiddle || valueID == CSSValueEnd;
-// FIXME-NEWPARSER: Support
-//    case CSSPropertyTextCombineUpright:
-//        return valueID == CSSValueNone || valueID == CSSValueAll;
     case CSSPropertyTextDecorationStyle:
         // solid | double | dotted | dashed | wavy
         return valueID == CSSValueSolid || valueID == CSSValueDouble || valueID == CSSValueDotted || valueID == CSSValueDashed || valueID == CSSValueWavy;
-#if ENABLE(CSS3_TEXT)
     case CSSPropertyWebkitTextJustify:
         // auto | none | inter-word | distribute
         return valueID == CSSValueInterWord || valueID == CSSValueDistribute || valueID == CSSValueAuto || valueID == CSSValueNone;
-#endif
-    case CSSPropertyWebkitTextOrientation: // mixed | upright | sideways | sideways-right
-        return valueID == CSSValueMixed || valueID == CSSValueUpright || valueID == CSSValueSideways || valueID == CSSValueSidewaysRight;
     case CSSPropertyTextOrientation:
+        // mixed | upright | sideways
         return valueID == CSSValueMixed || valueID == CSSValueUpright || valueID == CSSValueSideways;
     case CSSPropertyTextOverflow: // clip | ellipsis
         return valueID == CSSValueClip || valueID == CSSValueEllipsis;
@@ -755,8 +746,19 @@ bool CSSParserFastPaths::isValidKeywordPropertyAndValue(CSSPropertyID propertyId
         return valueID == CSSValueNone || valueID == CSSValueNonScalingStroke;
     case CSSPropertyVisibility: // visible | hidden | collapse
         return valueID == CSSValueVisible || valueID == CSSValueHidden || valueID == CSSValueCollapse;
-    case CSSPropertyAppearance:
-        return (valueID >= CSSValueCheckbox && valueID <= CSSValueCapsLockIndicator) || valueID == CSSValueNone || valueID == CSSValueAuto;
+    case CSSPropertyAppearance: {
+        if (valueID == CSSValueMediaSlider || valueID == CSSValueMediaVolumeSlider || valueID == CSSValueMediaFullscreenVolumeSlider)
+            return isUASheetBehavior(context.mode);
+
+        if (valueID == CSSValueDefaultButton)
+            return context.useSystemAppearance;
+
+#if ENABLE(ATTACHMENT_ELEMENT)
+        if (valueID == CSSValueAttachment || valueID == CSSValueBorderlessAttachment)
+            return context.attachmentEnabled;
+#endif
+        return (valueID >= CSSValueCheckbox && valueID <= CSSValueTextfield) || valueID == CSSValueNone || valueID == CSSValueAuto;
+    }
     case CSSPropertyBackfaceVisibility:
         return valueID == CSSValueVisible || valueID == CSSValueHidden;
 #if ENABLE(CSS_COMPOSITING)
@@ -819,7 +821,6 @@ bool CSSParserFastPaths::isValidKeywordPropertyAndValue(CSSPropertyID propertyId
     case CSSPropertyWebkitTextSecurity: // disc | circle | square | none
         return valueID == CSSValueDisc || valueID == CSSValueCircle || valueID == CSSValueSquare || valueID == CSSValueNone;
     case CSSPropertyTransformStyle:
-    case CSSPropertyWebkitTransformStyle:
         return valueID == CSSValueFlat
             || valueID == CSSValuePreserve3d
 #if ENABLE(CSS_TRANSFORM_STYLE_OPTIMIZED_3D)
@@ -830,7 +831,7 @@ bool CSSParserFastPaths::isValidKeywordPropertyAndValue(CSSPropertyID propertyId
         return valueID == CSSValueAuto || valueID == CSSValueNone || valueID == CSSValueElement;
     case CSSPropertyWebkitUserModify: // read-only | read-write
         return valueID == CSSValueReadOnly || valueID == CSSValueReadWrite || valueID == CSSValueReadWritePlaintextOnly;
-    case CSSPropertyWebkitUserSelect: // auto | none | text | all
+    case CSSPropertyUserSelect: // auto | none | text | all
         return valueID == CSSValueAuto || valueID == CSSValueNone || valueID == CSSValueText || valueID == CSSValueAll;
     case CSSPropertyWritingMode:
         // Note that horizontal-bt is not supported by the unprefixed version of
@@ -903,7 +904,7 @@ bool CSSParserFastPaths::isValidKeywordPropertyAndValue(CSSPropertyID propertyId
     case CSSPropertyTextDecorationSkipInk:
         return valueID == CSSValueAuto || valueID == CSSValueNone || valueID == CSSValueAll;
     case CSSPropertyContainerType:
-        // FIXME: Support 'style', 'state'. Those will require parsing the value as a list.
+        // FIXME: Support 'style'. It will require parsing the value as a list.
         return valueID == CSSValueNone || valueID == CSSValueSize || valueID == CSSValueInlineSize;
     default:
         ASSERT_NOT_REACHED();
@@ -960,6 +961,8 @@ bool CSSParserFastPaths::isKeywordPropertyID(CSSPropertyID propertyId)
     case CSSPropertyResize:
     case CSSPropertyTableLayout:
     case CSSPropertyTextAlign:
+    case CSSPropertyTextAlignLast:
+    case CSSPropertyWebkitTextJustify:
     case CSSPropertyTextOrientation:
     case CSSPropertyTextOverflow:
     case CSSPropertyTextRendering:
@@ -989,16 +992,13 @@ bool CSSParserFastPaths::isKeywordPropertyID(CSSPropertyID propertyId)
     case CSSPropertyWebkitTextCombine:
     case CSSPropertyTextCombineUpright:
     case CSSPropertyTextDecorationStyle:
-    case CSSPropertyWebkitTextOrientation:
     case CSSPropertyWebkitTextSecurity:
     case CSSPropertyWebkitTextZoom:
-    case CSSPropertyWebkitTransformStyle:
     case CSSPropertyWebkitUserDrag:
     case CSSPropertyWebkitUserModify:
-    case CSSPropertyWebkitUserSelect:
+    case CSSPropertyUserSelect:
     case CSSPropertyWhiteSpace:
     case CSSPropertyWordBreak:
-    case CSSPropertyWordWrap:
 
     // SVG CSS properties from SVG 1.1, Appendix N: Property Index.
     case CSSPropertyAlignmentBaseline:
@@ -1020,14 +1020,9 @@ bool CSSParserFastPaths::isKeywordPropertyID(CSSPropertyID propertyId)
     // case CSSPropertyAll:
 
     // FIXME-NEWPARSER: Add the following unprefixed properties:
-    // case CSSPropertyBackfaceVisibility:
     // case CSSPropertyHyphens:
     // case CSSPropertyOverflowAnchor:
     // case CSSPropertyScrollSnapType:
-    // case CSSPropertyTextAlignLast:
-    // case CSSPropertyTextCombineUpright:
-    // case CSSPropertyTextJustify:
-    // case CSSPropertyUserSelect:
 #if ENABLE(CSS_TRAILING_WORD)
     case CSSPropertyAppleTrailingWord:
 #endif
@@ -1043,10 +1038,6 @@ bool CSSParserFastPaths::isKeywordPropertyID(CSSPropertyID propertyId)
 #endif
 #if ENABLE(OVERFLOW_SCROLLING_TOUCH)
     case CSSPropertyWebkitOverflowScrolling:
-#endif
-#if ENABLE(CSS3_TEXT)
-    case CSSPropertyWebkitTextAlignLast:
-    case CSSPropertyWebkitTextJustify:
 #endif
 #if PLATFORM(IOS_FAMILY)
     // Apple specific property. This will never be standardized and is purely to
@@ -1082,10 +1073,11 @@ bool CSSParserFastPaths::isPartialKeywordPropertyID(CSSPropertyID propertyId)
 static bool isUniversalKeyword(StringView string)
 {
     // These keywords can be used for all properties.
-    return equalLettersIgnoringASCIICase(string, "initial")
-        || equalLettersIgnoringASCIICase(string, "inherit")
-        || equalLettersIgnoringASCIICase(string, "unset")
-        || equalLettersIgnoringASCIICase(string, "revert");
+    return equalLettersIgnoringASCIICase(string, "initial"_s)
+        || equalLettersIgnoringASCIICase(string, "inherit"_s)
+        || equalLettersIgnoringASCIICase(string, "unset"_s)
+        || equalLettersIgnoringASCIICase(string, "revert"_s)
+        || equalLettersIgnoringASCIICase(string, "revert-layer"_s);
 }
 
 static RefPtr<CSSValue> parseKeywordValue(CSSPropertyID propertyId, StringView string, const CSSParserContext& context)
@@ -1093,7 +1085,8 @@ static RefPtr<CSSValue> parseKeywordValue(CSSPropertyID propertyId, StringView s
     ASSERT(!string.isEmpty());
 
     bool parsingDescriptor = context.enclosingRuleType && *context.enclosingRuleType != StyleRuleType::Style;
-    ASSERT(!CSSProperty::isDescriptorOnly(propertyId) || parsingDescriptor);
+    // FIXME: The "!context.enclosingRuleType" is suspicious.
+    ASSERT(!CSSProperty::isDescriptorOnly(propertyId) || parsingDescriptor || !context.enclosingRuleType);
 
     if (!CSSParserFastPaths::isKeywordPropertyID(propertyId)) {
         // All properties, including non-keyword properties, accept the CSS-wide keywords.

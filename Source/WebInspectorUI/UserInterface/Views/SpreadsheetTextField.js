@@ -123,7 +123,6 @@ WI.SpreadsheetTextField = class SpreadsheetTextField
         this._element.classList.add("editing");
         this._element.contentEditable = "plaintext-only";
         this._element.spellcheck = false;
-        this._element.scrollIntoViewIfNeeded(false);
 
         this._element.focus();
         this._selectText();
@@ -464,8 +463,10 @@ WI.SpreadsheetTextField = class SpreadsheetTextField
 
         this._suggestionsView.selectedIndex = NaN;
         if (this._completionPrefix) {
-            // Select first item and call completionSuggestionsSelectedCompletion.
-            this._suggestionsView.selectNext();
+            if (this._delegate?.spreadsheetTextFieldInitialCompletionIndex)
+                this._suggestionsView.selectedIndex = this._delegate.spreadsheetTextFieldInitialCompletionIndex(this, completions.map((completion) => this._suggestionsView.getCompletionText(completion)));
+            else
+                this._suggestionsView.selectNext();
         } else
             this.suggestionHint = "";
     }

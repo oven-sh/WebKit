@@ -52,7 +52,7 @@ public:
     virtual void load(const URL& url, const ContentType&, const String&) { load(url.string()); }
 
 #if ENABLE(MEDIA_SOURCE)
-    virtual void load(const URL&, const ContentType&, MediaSourcePrivateClient*) = 0;
+    virtual void load(const URL&, const ContentType&, MediaSourcePrivateClient&) = 0;
 #endif
 #if ENABLE(MEDIA_STREAM)
     virtual void load(MediaStreamPrivate&) = 0;
@@ -185,6 +185,7 @@ public:
     virtual RefPtr<VideoFrame> videoFrameForCurrentTime() { return nullptr; }
     virtual RefPtr<NativeImage> nativeImageForCurrentTime() { return nullptr; }
     virtual DestinationColorSpace colorSpace() = 0;
+    virtual bool shouldGetNativeImageForCanvasDrawing() const { return true; }
 
     virtual void setPreload(MediaPlayer::Preload) { }
 

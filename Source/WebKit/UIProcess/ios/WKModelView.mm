@@ -31,6 +31,7 @@
 #import "Logging.h"
 #import "RemoteLayerTreeViews.h"
 #import "WKModelInteractionGestureRecognizer.h"
+#import "WebPageProxy.h"
 #import "WebsiteDataStore.h"
 #import <WebCore/Model.h>
 #import <pal/spi/cocoa/QuartzCoreSPI.h>
@@ -49,6 +50,8 @@ SOFT_LINK_CLASS(AssetViewer, ASVInlinePreview);
     RetainPtr<WKModelInteractionGestureRecognizer> _modelInteractionGestureRecognizer;
     String _filePath;
     CGRect _lastBounds;
+    WebCore::GraphicsLayer::PlatformLayerID _layerID;
+    WeakPtr<WebKit::WebPageProxy> _page;
 }
 
 - (ASVInlinePreview *)preview
@@ -66,12 +69,15 @@ SOFT_LINK_CLASS(AssetViewer, ASVInlinePreview);
     return nil;
 }
 
-- (instancetype)initWithModel:(WebCore::Model&)model
+- (instancetype)initWithModel:(WebCore::Model&)model layerID:(WebCore::GraphicsLayer::PlatformLayerID)layerID page:(WebKit::WebPageProxy&)page
 {
     _lastBounds = CGRectZero;
     self = [super initWithFrame:_lastBounds];
     if (!self)
         return nil;
+
+    _layerID = layerID;
+    _page = page;
 
     [self createFileForModel:model];
     [self updateBounds];
@@ -96,7 +102,7 @@ SOFT_LINK_CLASS(AssetViewer, ASVInlinePreview);
         return NO;
     }
 
-    String fileName = FileSystem::encodeForFileName(createVersion4UUIDString()) + ".usdz";
+    String fileName = makeString(UUID::createVersion4(), ".usdz"_s);
     auto filePath = FileSystem::pathByAppendingComponent(pathToDirectory, fileName);
     auto file = FileSystem::openFile(filePath, FileSystem::FileOpenMode::Write);
     if (file <= 0)
@@ -126,16 +132,19 @@ SOFT_LINK_CLASS(AssetViewer, ASVInlinePreview);
     [_preview setupRemoteConnectionWithCompletionHandler:^(NSError *contextError) {
         if (contextError) {
             LOG(ModelElement, "Unable to create remote connection, error: %@", [contextError localizedDescription]);
+            _page->modelInlinePreviewDidFailToLoad(_layerID, WebCore::ResourceError { contextError });
             return;
         }
 
         [_preview preparePreviewOfFileAtURL:url.get() completionHandler:^(NSError *loadError) {
             if (loadError) {
                 LOG(ModelElement, "Unable to load file, error: %@", [loadError localizedDescription]);
+                _page->modelInlinePreviewDidFailToLoad(_layerID, WebCore::ResourceError { loadError });
                 return;
             }
 
             LOG(ModelElement, "File loaded successfully.");
+            _page->modelInlinePreviewDidLoad(_layerID);
         }];
     }];
 

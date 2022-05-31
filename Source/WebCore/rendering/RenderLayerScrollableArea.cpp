@@ -361,7 +361,7 @@ void RenderLayerScrollableArea::scrollTo(const ScrollPosition& position)
     }
 
     Frame& frame = renderer.frame();
-    RenderLayerModelObject* repaintContainer = renderer.containerForRepaint();
+    auto* repaintContainer = renderer.containerForRepaint().renderer;
     // The caret rect needs to be invalidated after scrolling
     frame.selection().setCaretRectNeedsUpdate();
 
@@ -483,7 +483,7 @@ bool RenderLayerScrollableArea::canUseCompositedScrolling() const
         return isVisible && scrollsOverflow() && !m_layer.isInsideSVGForeignObject();
 
 #if PLATFORM(IOS_FAMILY) && ENABLE(OVERFLOW_SCROLLING_TOUCH)
-    return isVisible && scrollsOverflow() && (renderer.style().useTouchOverflowScrolling() || renderer.settings().alwaysUseAcceleratedOverflowScroll());
+    return isVisible && scrollsOverflow() && renderer.style().useTouchOverflowScrolling();
 #else
     return false;
 #endif

@@ -56,6 +56,8 @@ localizedStrings["%s (%s)"] = "%s (%s)";
 localizedStrings["%s (%s, %s)"] = "%s (%s, %s)";
 /* Label for case-insensitive URL match pattern of a local override. */
 localizedStrings["%s (Case Insensitive) @ Local Override"] = "%s (Case Insensitive)";
+/* Label for the IP address of a proxy server used to retrieve a network resource. */
+localizedStrings["%s (Proxy) @ Resource Remote Address"] = "%s (Proxy)";
 localizedStrings["%s (default)"] = "%s (default)";
 localizedStrings["%s (hidden)"] = "%s (hidden)";
 localizedStrings["%s Callback"] = "%s Callback";
@@ -103,6 +105,8 @@ localizedStrings["1 match"] = "1 match";
 localizedStrings["1080p"] = "1080p";
 localizedStrings["2D"] = "2D";
 localizedStrings["720p"] = "720p";
+/* Text indicating that the local override will block the network activity with an access error. */
+localizedStrings["Access Control @ Local Override Type"] = "Access Control";
 localizedStrings["Accessibility"] = "Accessibility";
 localizedStrings["Action"] = "Action";
 /* Tooltip for a time range bar that represents when a CSS animation/transition is running */
@@ -231,6 +235,10 @@ localizedStrings["Blackbox Script"] = "Blackbox Script";
 localizedStrings["Blackbox script to ignore it when debugging"] = "Blackbox script to ignore it when debugging";
 /* Part of the 'Blackboxed - %d call frames' label shown in the debugger call stack when paused instead of subsequent call frames that have been blackboxed. */
 localizedStrings["Blackboxed @ Debugger Call Stack"] = "Blackboxed";
+/* Text indicating that the local override will always block the network activity. */
+localizedStrings["Block @ Local Override Type"] = "Block";
+localizedStrings["Block Request URL"] = "Block Request URL";
+localizedStrings["Block URL with %s error"] = "Block URL with %s error";
 localizedStrings["Block Variables"] = "Block Variables";
 /* Input label for the blur radius of a CSS box shadow */
 localizedStrings["Blur @ Box Shadow Editor"] = "Blur";
@@ -272,6 +280,8 @@ localizedStrings["Cancel Automatic Continue"] = "Cancel Automatic Continue";
 localizedStrings["Cancel comparison"] = "Cancel comparison";
 /* Tooltip for a timestamp marker that represents when a CSS animation/transition is canceled */
 localizedStrings["Canceled"] = "Canceled";
+/* Text indicating that the local override will block the network activity with a cancellation error. */
+localizedStrings["Cancellation @ Local Override Type"] = "Cancellation";
 localizedStrings["Canvas"] = "Canvas";
 localizedStrings["Canvas %d"] = "Canvas %d";
 localizedStrings["Canvas %s"] = "Canvas %s";
@@ -595,7 +605,6 @@ localizedStrings["Enable Event Listener"] = "Enable Event Listener";
 localizedStrings["Enable Event Listeners"] = "Enable Event Listeners";
 localizedStrings["Enable Inspector Bootstrap Script"] = "Enable Inspector Bootstrap Script";
 localizedStrings["Enable Local Override"] = "Enable Local Override";
-localizedStrings["Enable Preview Features"] = "Enable Preview Features";
 localizedStrings["Enable Program"] = "Enable Program";
 localizedStrings["Enable Rule"] = "Enable Rule";
 localizedStrings["Enable all breakpoints (%s)"] = "Enable all breakpoints (%s)";
@@ -634,6 +643,10 @@ localizedStrings["Event Breakpoint\u2026"] = "Event Breakpoint\u2026";
 localizedStrings["Event Dispatched"] = "Event Dispatched";
 localizedStrings["Event Handlers:"] = "Event Handlers:";
 localizedStrings["Event Listeners"] = "Event Listeners";
+/* Display name for the type of network requests sent via EventSource API (https://developer.mozilla.org/en-US/docs/Web/API/EventSource) */
+localizedStrings["EventSource"] = "EventSource";
+/* Display name for the type of network requests sent via EventSource(s) API (https://developer.mozilla.org/en-US/docs/Web/API/EventSource) */
+localizedStrings["EventSources"] = "EventSources";
 localizedStrings["Events"] = "Events";
 localizedStrings["Events:"] = "Events:";
 localizedStrings["Exception with thrown value: %s"] = "Exception with thrown value: %s";
@@ -722,6 +735,8 @@ localizedStrings["Function Name Variable"] = "Function Name Variable";
 localizedStrings["GIF"] = "GIF";
 localizedStrings["Garbage Collection"] = "Garbage Collection";
 localizedStrings["General"] = "General";
+/* Text indicating that the local override will block the network activity with a general error. */
+localizedStrings["General @ Local Override Type"] = "General";
 localizedStrings["Getter"] = "Getter";
 localizedStrings["Global Code"] = "Global Code";
 localizedStrings["Global Lexical Environment"] = "Global Lexical Environment";
@@ -887,6 +902,7 @@ localizedStrings["Loaded in %s"] = "Loaded in %s";
 localizedStrings["Loading for %s"] = "Loading for %s";
 localizedStrings["Local File"] = "Local File";
 localizedStrings["Local Override"] = "Local Override";
+localizedStrings["Local Override: could not load \u201C%s\u201D"] = "Local Override: could not load \u201C%s\u201D";
 localizedStrings["Local Override\u2026"] = "Local Override\u2026";
 localizedStrings["Local Overrides"] = "Local Overrides";
 localizedStrings["Local Storage"] = "Local Storage";
@@ -920,6 +936,8 @@ localizedStrings["MSE Logging:"] = "MSE Logging:";
 localizedStrings["Main Thread"] = "Main Thread";
 localizedStrings["Main: %s"] = "Main: %s";
 localizedStrings["Manifest URL"] = "Manifest URL";
+localizedStrings["Map to File"] = "Map to File";
+localizedStrings["Mapped to \u201C%s\u201D"] = "Mapped to \u201C%s\u201D";
 localizedStrings["Mass"] = "Mass";
 localizedStrings["Matching"] = "Matching";
 localizedStrings["Max Comparison"] = "Max Comparison";
@@ -1011,6 +1029,8 @@ localizedStrings["No request, served from the disk cache."] = "No request, serve
 localizedStrings["No request, served from the memory cache."] = "No request, served from the memory cache.";
 localizedStrings["No response cookies."] = "No response cookies.";
 localizedStrings["No response headers"] = "No response headers";
+/* Placeholder text shown when there are no images to display in the Screenshots timeline. */
+localizedStrings["No screenshots @ Screenshots Timeline"] = "No screenshots";
 localizedStrings["No search results"] = "No search results";
 localizedStrings["No search string"] = "No search string";
 localizedStrings["Node"] = "Node";
@@ -1210,8 +1230,8 @@ localizedStrings["Request @ Local Override Type"] = "Request";
 localizedStrings["Request Cookies"] = "Request Cookies";
 localizedStrings["Request Data"] = "Request Data";
 localizedStrings["Request Headers"] = "Request Headers";
-/* Label indicating that the shown content is from a request local override. */
-localizedStrings["Request Override @ Local Override Content View"] = "Request Override";
+/* Text indicating that the local override replaces the request of the network activity. */
+localizedStrings["Request Override @ Local Override Network Stage"] = "Request Override";
 localizedStrings["Requesting: %s"] = "Requesting: %s";
 localizedStrings["Required"] = "Required";
 /* Context menu action for resetting the breakpoint to its initial configuration. */
@@ -1238,8 +1258,8 @@ localizedStrings["Response (skip network) @ Local Override Type"] = "Response (s
 localizedStrings["Response @ Local Override Type"] = "Response";
 localizedStrings["Response Cookies"] = "Response Cookies";
 localizedStrings["Response Headers"] = "Response Headers";
-/* Label indicating that the shown content is from a response local override. */
-localizedStrings["Response Override @ Local Override Content View"] = "Response Override";
+/* Text indicating that the local override replaces the response of the network activity. */
+localizedStrings["Response Override @ Local Override Network Stage"] = "Response Override";
 localizedStrings["Response:"] = "Response:";
 localizedStrings["Restart (%s)"] = "Restart (%s)";
 localizedStrings["Restart animation"] = "Restart animation";
@@ -1290,6 +1310,7 @@ localizedStrings["Scope"] = "Scope";
 localizedStrings["Scope Chain"] = "Scope Chain";
 localizedStrings["Screen Shot %s-%s-%s at %s.%s.%s"] = "Screen Shot %s-%s-%s at %s.%s.%s";
 localizedStrings["Screen size:"] = "Screen size:";
+localizedStrings["Screenshots"] = "Screenshots";
 localizedStrings["Script"] = "Script";
 localizedStrings["Script Element %d"] = "Script Element %d";
 localizedStrings["Script Entries:"] = "Script Entries:";
@@ -1366,6 +1387,7 @@ localizedStrings["Show Elements"] = "Show Elements";
 localizedStrings["Show Path"] = "Show Path";
 localizedStrings["Show Remaining (%d)"] = "Show Remaining (%d)";
 localizedStrings["Show Scope Chain on pause"] = "Show Scope Chain on pause";
+localizedStrings["Show Screenshots"] = "Show Screenshots";
 localizedStrings["Show all actions"] = "Show all actions";
 localizedStrings["Show all resources"] = "Show all resources";
 localizedStrings["Show changes only for selected node"] = "Show changes only for selected node";
@@ -1427,7 +1449,6 @@ localizedStrings["Spelling"] = "Spelling";
 localizedStrings["Spread @ Box Shadow Editor"] = "Spread";
 /* Property value for `font-variant-numeric: stacked-fractions`. */
 localizedStrings["Stacked Fractions @ Font Details Sidebar Property Value"] = "Stacked Fractions";
-localizedStrings["Staging:"] = "Staging:";
 localizedStrings["Stalled"] = "Stalled";
 localizedStrings["Start"] = "Start";
 localizedStrings["Start Audit"] = "Start Audit";
@@ -1482,6 +1503,7 @@ localizedStrings["Subject"] = "Subject";
 localizedStrings["Subscript @ Font Details Sidebar Property Value"] = "Subscript";
 /* A submenu item of 'Break On' that breaks (pauses) before child DOM node is modified */
 localizedStrings["Subtree Modified @ DOM Breakpoint"] = "Subtree Modified";
+localizedStrings["Suggest property names based on usage"] = "Suggest property names based on usage";
 localizedStrings["Summary"] = "Summary";
 /* Property value for `font-variant-position: super`. */
 localizedStrings["Superscript @ Font Details Sidebar Property Value"] = "Superscript";
@@ -1556,6 +1578,7 @@ localizedStrings["This is what the result of an unsupported test with no data lo
 localizedStrings["This object is a root"] = "This object is a root";
 localizedStrings["This object is referenced by internal objects"] = "This object is referenced by internal objects";
 localizedStrings["This resource came from a local override"] = "This resource came from a local override";
+localizedStrings["This resource was blocked by a local override"] = "This resource was blocked by a local override";
 localizedStrings["This resource was loaded from a local override"] = "This resource was loaded from a local override";
 localizedStrings["This resource was loaded from a service worker"] = "This resource was loaded from a service worker";
 localizedStrings["This resource was loaded from the disk cache"] = "This resource was loaded from the disk cache";
@@ -1570,6 +1593,9 @@ localizedStrings["Timeline Recording %d"] = "Timeline Recording %d";
 localizedStrings["Timeline Recording Import Error: %s"] = "Timeline Recording Import Error: %s";
 /* Name of Timelines Tab */
 localizedStrings["Timelines Tab Name"] = "Timelines";
+localizedStrings["Timelines:"] = "Timelines:";
+/* Text indicating that the local override will block the network activity with an timeout error. */
+localizedStrings["Timeout @ Local Override Type"] = "Timeout";
 localizedStrings["Timer %d Fired"] = "Timer %d Fired";
 localizedStrings["Timer %d Installed"] = "Timer %d Installed";
 localizedStrings["Timer %d Removed"] = "Timer %d Removed";
@@ -1779,6 +1805,8 @@ localizedStrings["default prevented"] = "default prevented";
 /* Shown in the 'Type' column of the Network Table for document resources. */
 localizedStrings["document @ Network Tab Resource Type Column Value"] = "document";
 localizedStrings["ensuring that common debugging functions are available on every page via the Console"] = "ensuring that common debugging functions are available on every page via the Console";
+/* Shown in the 'Type' column of the Network Table for EventSource resources. */
+localizedStrings["eventsource @ Network Tab Resource Type Column Value"] = "eventsource";
 /* Shown in the 'Type' column of the Network Table for resources loaded via the 'fetch' method. */
 localizedStrings["fetch @ Network Tab Resource Type Column Value"] = "fetch";
 /* Shown in the 'Type' column of the Network Table for font resources. */

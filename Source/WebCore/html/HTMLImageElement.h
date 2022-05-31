@@ -81,7 +81,7 @@ public:
     WEBCORE_EXPORT void setHeight(unsigned);
 
     URL src() const;
-    void setSrc(const String&);
+    void setSrc(const AtomString&);
 
     WEBCORE_EXPORT void setCrossOrigin(const AtomString&);
     WEBCORE_EXPORT String crossOrigin() const;
@@ -93,7 +93,7 @@ public:
 
     WEBCORE_EXPORT bool complete() const;
 
-    void setDecoding(String&&);
+    void setDecoding(AtomString&&);
     String decoding() const;
 
     DecodingMode decodingMode() const;
@@ -101,7 +101,7 @@ public:
     WEBCORE_EXPORT void decode(Ref<DeferredPromise>&&);
 
 #if PLATFORM(IOS_FAMILY)
-    bool willRespondToMouseClickEvents() override;
+    bool willRespondToMouseClickEventsWithEditability(Editability) const override;
 #endif
 
 #if ENABLE(ATTACHMENT_ELEMENT)
@@ -117,7 +117,8 @@ public:
     const AtomString& imageSourceURL() const override;
     
 #if ENABLE(SERVICE_CONTROLS)
-    bool imageMenuEnabled() const { return m_imageMenuEnabled; }
+    bool isImageMenuEnabled() const { return m_isImageMenuEnabled; }
+    void setImageMenuEnabled(bool value) { m_isImageMenuEnabled = value; }
 #endif
 
     HTMLPictureElement* pictureElement() const;
@@ -147,10 +148,6 @@ public:
     ReferrerPolicy referrerPolicy() const;
 
     bool allowsOrientationOverride() const;
-    
-#if ENABLE(SERVICE_CONTROLS)
-    WEBCORE_EXPORT bool hasImageControls() const;
-#endif
 
 protected:
     HTMLImageElement(const QualifiedName&, Document&, HTMLFormElement* = nullptr);
@@ -164,6 +161,8 @@ private:
     void collectPresentationalHintsForAttribute(const QualifiedName&, const AtomString&, MutableStyleProperties&) override;
     void collectExtraStyleForPresentationalHints(MutableStyleProperties&) override;
     void invalidateAttributeMapping();
+
+    Ref<Element> cloneElementWithoutAttributesAndChildren(Document& targetDocument) final;
 
     // ActiveDOMObject.
     const char* activeDOMObjectName() const final;
@@ -202,9 +201,6 @@ private:
     float effectiveImageDevicePixelRatio() const;
     
 #if ENABLE(SERVICE_CONTROLS)
-    void updateImageControls();
-    void tryCreateImageControls();
-    void destroyImageControls();
     bool childShouldCreateRenderer(const Node&) const override;
 #endif
 
@@ -221,7 +217,7 @@ private:
     AtomString m_parsedUsemap;
     float m_imageDevicePixelRatio;
 #if ENABLE(SERVICE_CONTROLS)
-    bool m_imageMenuEnabled { false };
+    bool m_isImageMenuEnabled { false };
 #endif
     bool m_hadNameBeforeAttributeChanged { false }; // FIXME: We only need this because parseAttribute() can't see the old value.
     bool m_isDroppedImagePlaceholder { false };

@@ -44,19 +44,15 @@ LaunchServicesDatabaseManager& LaunchServicesDatabaseManager::singleton()
 
 void LaunchServicesDatabaseManager::handleEvent(xpc_object_t message)
 {
-    String messageName = xpc_dictionary_get_string(message, XPCEndpoint::xpcMessageNameKey);
-    if (messageName.isEmpty())
-        return;
-    if (messageName == LaunchServicesDatabaseXPCConstants::xpcUpdateLaunchServicesDatabaseMessageName) {
+    auto* messageName = xpc_dictionary_get_string(message, XPCEndpoint::xpcMessageNameKey);
+    if (LaunchServicesDatabaseXPCConstants::xpcUpdateLaunchServicesDatabaseMessageName == messageName) {
 #if HAVE(LSDATABASECONTEXT)
         auto database = xpc_dictionary_get_value(message, LaunchServicesDatabaseXPCConstants::xpcLaunchServicesDatabaseKey);
 
-        if (database) {
-            auto context = [NSClassFromString(@"LSDatabaseContext") sharedDatabaseContext];
-            if (![context respondsToSelector:@selector(observeDatabaseChange4WebKit:)])
-                return;
-            [context observeDatabaseChange4WebKit:database];
-        }
+        RELEASE_LOG(Loading, "Received Launch Services database %p", database);
+
+        if (database)
+            [LSDatabaseContext.sharedDatabaseContext observeDatabaseChange4WebKit:database];
 #endif
         m_semaphore.signal();
         m_hasReceivedLaunchServicesDatabase = true;

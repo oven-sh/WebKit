@@ -35,7 +35,6 @@ class SharedBuffer;
 
 class CachedRawResourceClient : public CachedResourceClient {
 public:
-    virtual ~CachedRawResourceClient() = default;
     static CachedResourceClientType expectedType() { return RawResourceType; }
     CachedResourceClientType resourceClientType() const override { return expectedType(); }
 
@@ -56,4 +55,6 @@ public:
 #endif
 };
 
-}
+} // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_CACHED_RESOURCE_CLIENT(CachedRawResourceClient, RawResourceType);

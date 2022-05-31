@@ -291,6 +291,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/notifications/NotificationController.h
     Modules/notifications/NotificationData.h
     Modules/notifications/NotificationDirection.h
+    Modules/notifications/NotificationEventType.h
     Modules/notifications/NotificationPermission.h
     Modules/notifications/NotificationPermissionCallback.h
 
@@ -490,6 +491,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     bindings/js/WebAssemblyCachedScriptSourceProvider.h
     bindings/js/WebAssemblyScriptSourceCode.h
     bindings/js/WebCoreJITOperations.h
+    bindings/js/WebCoreOpaqueRoot.h
     bindings/js/WebCoreTypedArrayController.h
     bindings/js/WindowProxy.h
     bindings/js/WorkerScriptFetcher.h
@@ -837,6 +839,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     html/HTMLAnchorElement.h
     html/HTMLAnchorElementInlines.h
     html/HTMLAreaElement.h
+    html/HTMLArticleElement.h
     html/HTMLAttachmentElement.h
     html/HTMLAudioElement.h
     html/HTMLBRElement.h
@@ -969,25 +972,38 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     inspector/agents/InspectorPageAgent.h
 
+    layout/FormattingState.h
+    layout/LayoutState.h
     layout/LayoutUnits.h
     layout/MarginTypes.h
+
+    layout/formattingContexts/FormattingConstraints.h
+    layout/formattingContexts/FormattingContext.h
+
+    layout/formattingContexts/flex/FlexFormattingConstraints.h
+    layout/formattingContexts/flex/FlexFormattingState.h
 
     layout/formattingContexts/inline/display/InlineDisplayBox.h
     layout/formattingContexts/inline/InlineRect.h
 
-    layout/integration/InlineIteratorBox.h
-    layout/integration/InlineIteratorBoxLegacyPath.h
-    layout/integration/InlineIteratorBoxModernPath.h
-    layout/integration/InlineIteratorLineBox.h
-    layout/integration/InlineIteratorLineBoxLegacyPath.h
-    layout/integration/InlineIteratorLineBoxModernPath.h
-    layout/integration/InlineIteratorLogicalOrderTraversal.h
-    layout/integration/InlineIteratorTextBox.h
-    layout/integration/LayoutIntegrationInlineContent.h
-    layout/integration/LayoutIntegrationLine.h
+    layout/integration/LayoutIntegrationBoxTree.h
+
+    layout/integration/flex/LayoutIntegrationFlexLayout.h
+
+    layout/integration/inline/InlineIteratorBox.h
+    layout/integration/inline/InlineIteratorBoxLegacyPath.h
+    layout/integration/inline/InlineIteratorBoxModernPath.h
+    layout/integration/inline/InlineIteratorLineBox.h
+    layout/integration/inline/InlineIteratorLineBoxLegacyPath.h
+    layout/integration/inline/InlineIteratorLineBoxModernPath.h
+    layout/integration/inline/InlineIteratorLogicalOrderTraversal.h
+    layout/integration/inline/InlineIteratorTextBox.h
+    layout/integration/inline/LayoutIntegrationInlineContent.h
+    layout/integration/inline/LayoutIntegrationLine.h
 
     layout/layouttree/LayoutContainerBox.h
     layout/layouttree/LayoutBox.h
+    layout/layouttree/LayoutInitialContainingBlock.h
 
     loader/CanvasActivityRecord.h
     loader/ContentFilterClient.h
@@ -1117,6 +1133,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/FocusDirection.h
     page/Frame.h
     page/FrameDestructionObserver.h
+    page/FrameDestructionObserverInlines.h
     page/FrameFlattening.h
     page/FrameIdentifier.h
     page/FrameSnapshotting.h
@@ -1126,6 +1143,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/GlobalFrameIdentifier.h
     page/GlobalWindowIdentifier.h
     page/ImageAnalysisQueue.h
+    page/InteractionRegion.h
     page/LayoutMilestone.h
     page/MediaCanStartListener.h
     page/MediaControlsContextMenuItem.h
@@ -1238,6 +1256,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/CPUMonitor.h
     platform/ColorChooser.h
     platform/ColorChooserClient.h
+    platform/CommonAtomStrings.h
     platform/ContentFilterUnblockHandler.h
     platform/ContentType.h
     platform/ContextMenu.h
@@ -1353,6 +1372,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/SuddenTermination.h
     platform/Supplementable.h
     platform/SystemSoundDelegate.h
+    platform/TextRecognitionOptions.h
     platform/ThemeTypes.h
     platform/ThreadCheck.h
     platform/ThreadGlobalData.h
@@ -1423,6 +1443,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/AnimationFrameRate.h
     platform/graphics/AudioTrackPrivate.h
     platform/graphics/AudioTrackPrivateClient.h
+    platform/graphics/CopyImageOptions.h
     platform/graphics/BifurcatedGraphicsContext.h
     platform/graphics/BitmapImage.h
     platform/graphics/Color.h
@@ -1983,6 +2004,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     workers/WorkerFetchResult.h
     workers/WorkerFontLoadRequest.h
     workers/WorkerGlobalScope.h
+    workers/WorkerInitializationData.h
     workers/WorkerLoaderProxy.h
     workers/WorkerObjectProxy.h
     workers/WorkerOptions.h
@@ -2051,6 +2073,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     ${WebCore_DERIVED_SOURCES_DIR}/CSSPropertyNames.h
     ${WebCore_DERIVED_SOURCES_DIR}/CSSValueKeywords.h
+    ${WebCore_DERIVED_SOURCES_DIR}/CommandLineAPIModuleSourceBuiltins.h
     ${WebCore_DERIVED_SOURCES_DIR}/EventInterfaces.h
     ${WebCore_DERIVED_SOURCES_DIR}/EventTargetInterfaces.h
     ${WebCore_DERIVED_SOURCES_DIR}/HTMLElementTypeHelpers.h

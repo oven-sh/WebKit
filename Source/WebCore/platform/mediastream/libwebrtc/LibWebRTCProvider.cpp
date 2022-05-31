@@ -50,6 +50,7 @@ ALLOW_UNUSED_PARAMETERS_BEGIN
 #include <webrtc/pc/peer_connection_factory.h>
 #include <webrtc/pc/peer_connection_factory_proxy.h>
 #include <webrtc/rtc_base/physical_socket_server.h>
+#include <webrtc/rtc_base/task_queue_gcd.h>
 
 ALLOW_UNUSED_PARAMETERS_END
 
@@ -299,7 +300,11 @@ rtc::scoped_refptr<webrtc::PeerConnectionFactoryInterface> LibWebRTCProvider::cr
     auto audioModule = rtc::scoped_refptr<LibWebRTCAudioModule>(new rtc::RefCountedObject<LibWebRTCAudioModule>());
     m_audioModule = audioModule.get();
 
-    return webrtc::CreatePeerConnectionFactory(networkThread, signalingThread, signalingThread, WTFMove(audioModule), webrtc::CreateBuiltinAudioEncoderFactory(), webrtc::CreateBuiltinAudioDecoderFactory(), createEncoderFactory(), createDecoderFactory(), nullptr, nullptr, nullptr);
+    return webrtc::CreatePeerConnectionFactory(networkThread, signalingThread, signalingThread, WTFMove(audioModule), webrtc::CreateBuiltinAudioEncoderFactory(), webrtc::CreateBuiltinAudioDecoderFactory(), createEncoderFactory(), createDecoderFactory(), nullptr, nullptr, nullptr
+#if PLATFORM(COCOA)
+        , webrtc::CreateTaskQueueGcdFactory()
+#endif
+    );
 }
 
 std::unique_ptr<webrtc::VideoDecoderFactory> LibWebRTCProvider::createDecoderFactory()
@@ -603,10 +608,10 @@ void LibWebRTCProvider::createDecodingConfiguration(MediaDecodingConfiguration&&
             return;
         }
         auto containerType = contentType.containerType();
-        if (equalIgnoringASCIICase(containerType, "video/vp8")) {
+        if (equalLettersIgnoringASCIICase(containerType, "video/vp8"_s)) {
             info.powerEfficient = false;
             info.smooth = isVPSoftwareDecoderSmooth(*info.supportedConfiguration.video);
-        } else if (equalIgnoringASCIICase(containerType, "video/vp9")) {
+        } else if (equalLettersIgnoringASCIICase(containerType, "video/vp9"_s)) {
             auto decodingInfo = computeVPParameters(*info.supportedConfiguration.video);
             if (decodingInfo && !decodingInfo->supported && isSupportingVP9VTB()) {
                 callback({ });
@@ -654,7 +659,7 @@ void LibWebRTCProvider::createEncodingConfiguration(MediaEncodingConfiguration&&
         info.supported = true;
 #if PLATFORM(COCOA)
         auto containerType = contentType.containerType();
-        if (equalIgnoringASCIICase(containerType, "video/vp8") || equalIgnoringASCIICase(containerType, "video/vp9")) {
+        if (equalLettersIgnoringASCIICase(containerType, "video/vp8"_s) || equalLettersIgnoringASCIICase(containerType, "video/vp9"_s)) {
             info.powerEfficient = false;
             // FIXME: Provide more granular VPX encoder smoothness.
             info.smooth = false;

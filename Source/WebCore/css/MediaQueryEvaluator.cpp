@@ -139,16 +139,16 @@ MediaQueryEvaluator::MediaQueryEvaluator(const String& acceptedMediaType, const 
 bool MediaQueryEvaluator::mediaTypeMatch(const String& mediaTypeToMatch) const
 {
     return mediaTypeToMatch.isEmpty()
-        || equalLettersIgnoringASCIICase(mediaTypeToMatch, "all")
+        || equalLettersIgnoringASCIICase(mediaTypeToMatch, "all"_s)
         || equalIgnoringASCIICase(mediaTypeToMatch, m_mediaType);
 }
 
-bool MediaQueryEvaluator::mediaTypeMatchSpecific(const char* mediaTypeToMatch) const
+bool MediaQueryEvaluator::mediaTypeMatchSpecific(ASCIILiteral mediaTypeToMatch) const
 {
     // Like mediaTypeMatch, but without the special cases for "" and "all".
-    ASSERT(mediaTypeToMatch);
-    ASSERT(mediaTypeToMatch[0] != '\0');
-    ASSERT(!equalLettersIgnoringASCIICase(StringView(mediaTypeToMatch), "all"));
+    ASSERT(!mediaTypeToMatch.isNull());
+    ASSERT(mediaTypeToMatch.characterAt(0) != '\0');
+    ASSERT(!equalLettersIgnoringASCIICase(mediaTypeToMatch, "all"_s));
     return equalIgnoringASCIICase(m_mediaType, mediaTypeToMatch);
 }
 
@@ -419,9 +419,9 @@ static bool evaluateResolution(CSSValue* value, Frame& frame, MediaFeaturePrefix
     // in the query. Thus, if if the document's media type is "print", the
     // media type of the query will either be "print" or "all".
     String mediaType = view->mediaType();
-    if (equalLettersIgnoringASCIICase(mediaType, "screen"))
+    if (equalLettersIgnoringASCIICase(mediaType, "screen"_s))
         deviceScaleFactor = frame.page() ? frame.page()->deviceScaleFactor() : 1;
-    else if (equalLettersIgnoringASCIICase(mediaType, "print")) {
+    else if (equalLettersIgnoringASCIICase(mediaType, "print"_s)) {
         // The resolution of images while printing should not depend on the dpi
         // of the screen. Until we support proper ways of querying this info
         // we use 300px which is considered minimum for current printers.
@@ -448,7 +448,7 @@ static bool devicePixelRatioEvaluate(CSSValue* value, const CSSToLengthConversio
 
 static bool resolutionEvaluate(CSSValue* value, const CSSToLengthConversionData&, Frame& frame, MediaFeaturePrefix op)
 {
-    if (!frame.settings().resolutionMediaFeatureEnabled())
+    if (!frame.settings().resolutionMediaFeatureEnabled() || frame.document()->quirks().shouldDisableResolutionMediaQuery())
         return false;
 
     return (!value || (is<CSSPrimitiveValue>(*value) && downcast<CSSPrimitiveValue>(*value).isResolution())) && evaluateResolution(value, frame, op);
@@ -953,7 +953,7 @@ bool MediaQueryEvaluator::mediaAttributeMatches(Document& document, const String
 {
     ASSERT(document.renderView());
     auto mediaQueries = MediaQuerySet::create(attributeValue, MediaQueryParserContext(document));
-    return MediaQueryEvaluator { "screen", document, &document.renderView()->style() }.evaluate(mediaQueries.get());
+    return MediaQueryEvaluator { "screen"_s, document, &document.renderView()->style() }.evaluate(mediaQueries.get());
 }
 
 } // WebCore

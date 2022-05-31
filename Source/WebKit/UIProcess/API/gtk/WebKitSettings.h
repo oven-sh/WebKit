@@ -70,12 +70,14 @@ typedef struct _WebKitSettingsPrivate WebKitSettingsPrivate;
 struct _WebKitSettings {
     GObject parent_instance;
 
+    /*< private >*/
     WebKitSettingsPrivate *priv;
 };
 
 struct _WebKitSettingsClass {
     GObjectClass parent_class;
 
+    /*< private >*/
     void (*_webkit_reserved0) (void);
     void (*_webkit_reserved1) (void);
     void (*_webkit_reserved2) (void);
@@ -133,10 +135,10 @@ webkit_settings_get_enable_html5_database                      (WebKitSettings *
 WEBKIT_API void
 webkit_settings_set_enable_html5_database                      (WebKitSettings *settings,
                                                                 gboolean        enabled);
-WEBKIT_API gboolean
+WEBKIT_DEPRECATED gboolean
 webkit_settings_get_enable_xss_auditor                         (WebKitSettings *settings);
 
-WEBKIT_API void
+WEBKIT_DEPRECATED void
 webkit_settings_set_enable_xss_auditor                         (WebKitSettings *settings,
                                                                 gboolean        enabled);
 
@@ -154,10 +156,10 @@ WEBKIT_DEPRECATED void
 webkit_settings_set_enable_plugins                             (WebKitSettings *settings,
                                                                 gboolean        enabled);
 
-WEBKIT_API gboolean
+WEBKIT_DEPRECATED gboolean
 webkit_settings_get_enable_java                                (WebKitSettings *settings);
 
-WEBKIT_API void
+WEBKIT_DEPRECATED void
 webkit_settings_set_enable_java                                (WebKitSettings *settings,
                                                                 gboolean        enabled);
 

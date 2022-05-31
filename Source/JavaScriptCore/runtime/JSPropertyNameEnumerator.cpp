@@ -105,13 +105,13 @@ void getEnumerablePropertyNames(JSGlobalObject* globalObject, JSObject* base, Pr
             // Although doing this for all objects is spec-conformant, collecting DontEnum properties isn't free.
             mode = DontEnumPropertiesMode::Include;
         }
-        object->methodTable(vm)->getOwnPropertyNames(object, globalObject, propertyNames, mode);
+        object->methodTable()->getOwnPropertyNames(object, globalObject, propertyNames, mode);
     };
 
-    Structure* structure = base->structure(vm);
+    Structure* structure = base->structure();
     if (structure->canAccessPropertiesQuicklyForEnumeration() && indexedLength == base->getArrayLength()) {
         // Inlined JSObject::getOwnNonIndexPropertyNames()
-        base->methodTable(vm)->getOwnSpecialPropertyNames(base, globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
+        base->methodTable()->getOwnSpecialPropertyNames(base, globalObject, propertyNames, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(scope, void());
 
         base->getNonReifiedStaticPropertyNames(vm, propertyNames, DontEnumPropertiesMode::Exclude);
@@ -193,7 +193,7 @@ JSString* JSPropertyNameEnumerator::computeNext(JSGlobalObject* globalObject, JS
                 break;
             if (index < endStructurePropertyIndex() && base->structureID() == cachedStructureID())
                 break;
-            auto id = Identifier::fromString(vm, name->value(globalObject));
+            auto id = name->toIdentifier(globalObject);
             RETURN_IF_EXCEPTION(scope, nullptr);
             if (base->hasEnumerableProperty(globalObject, id))
                 break;

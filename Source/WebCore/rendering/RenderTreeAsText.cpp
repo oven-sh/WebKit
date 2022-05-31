@@ -130,9 +130,9 @@ static void printBorderStyle(TextStream& ts, const BorderStyle borderStyle)
 static String getTagName(Node* n)
 {
     if (n->isDocumentNode())
-        return "";
+        return ""_s;
     if (n->nodeType() == Node::COMMENT_NODE)
-        return "COMMENT";
+        return "COMMENT"_s;
     return n->nodeName();
 }
 
@@ -214,7 +214,7 @@ static inline bool hasNonEmptySibling(const RenderInline& inlineRenderer)
 
 void RenderTreeAsText::writeRenderObject(TextStream& ts, const RenderObject& o, OptionSet<RenderAsTextFlag> behavior)
 {
-    ts << o.renderName();
+    ts << o.renderName().characters();
 
     if (behavior.contains(RenderAsTextFlag::ShowAddresses))
         ts << " " << &o;
@@ -330,6 +330,7 @@ void RenderTreeAsText::writeRenderObject(TextStream& ts, const RenderObject& o, 
         LayoutUnit borderRight = box.borderRight();
         LayoutUnit borderBottom = box.borderBottom();
         LayoutUnit borderLeft = box.borderLeft();
+        bool overridden = o.style().borderImage().overridesBorderWidths();
         if (box.isFieldset()) {
             const auto& block = downcast<RenderBlock>(box);
             if (o.style().writingMode() == WritingMode::TopToBottom)
@@ -357,7 +358,7 @@ void RenderTreeAsText::writeRenderObject(TextStream& ts, const RenderObject& o, 
                 ts << serializationForRenderTreeAsText(color) << ")";
             }
 
-            if (o.style().borderRight() != prevBorder) {
+            if (o.style().borderRight() != prevBorder || (overridden && borderRight != borderTop)) {
                 prevBorder = o.style().borderRight();
                 if (!borderRight)
                     ts << " none";
@@ -371,7 +372,7 @@ void RenderTreeAsText::writeRenderObject(TextStream& ts, const RenderObject& o, 
                 }
             }
 
-            if (o.style().borderBottom() != prevBorder) {
+            if (o.style().borderBottom() != prevBorder || (overridden && borderBottom != borderRight)) {
                 prevBorder = box.style().borderBottom();
                 if (!borderBottom)
                     ts << " none";
@@ -385,7 +386,7 @@ void RenderTreeAsText::writeRenderObject(TextStream& ts, const RenderObject& o, 
                 }
             }
 
-            if (o.style().borderLeft() != prevBorder) {
+            if (o.style().borderLeft() != prevBorder || (overridden && borderLeft != borderBottom)) {
                 prevBorder = o.style().borderLeft();
                 if (!borderLeft)
                     ts << " none";
@@ -451,13 +452,13 @@ void RenderTreeAsText::writeRenderObject(TextStream& ts, const RenderObject& o, 
             else {
                 switch (text[0]) {
                     case bullet:
-                        text = "bullet";
+                        text = "bullet"_s;
                         break;
                     case blackSquare:
-                        text = "black square";
+                        text = "black square"_s;
                         break;
                     case whiteBullet:
-                        text = "white bullet";
+                        text = "white bullet"_s;
                         break;
                     default:
                         text = quoteAndEscapeNonPrintables(text);

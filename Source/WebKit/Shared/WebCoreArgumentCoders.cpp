@@ -188,8 +188,10 @@ static void encodeSharedBuffer(Encoder& encoder, const FragmentedSharedBuffer* b
         encoder.encodeFixedLengthData(element.segment->data(), element.segment->size(), 1);
 #else
     SharedMemory::Handle handle;
-    auto sharedMemoryBuffer = SharedMemory::copyBuffer(*buffer);
-    sharedMemoryBuffer->createHandle(handle, SharedMemory::Protection::ReadOnly);
+    {
+        auto sharedMemoryBuffer = SharedMemory::copyBuffer(*buffer);
+        sharedMemoryBuffer->createHandle(handle, SharedMemory::Protection::ReadOnly);
+    }
     encoder << SharedMemory::IPCHandle { WTFMove(handle), bufferSize };
 #endif
 }
@@ -449,7 +451,7 @@ bool ArgumentCoder<EventTrackingRegions>::decode(Decoder& decoder, EventTracking
     decoder >> asynchronousDispatchRegion;
     if (!asynchronousDispatchRegion)
         return false;
-    HashMap<String, Region> eventSpecificSynchronousDispatchRegions;
+    EventTrackingRegions::EventSpecificSynchronousDispatchRegions eventSpecificSynchronousDispatchRegions;
     if (!decoder.decode(eventSpecificSynchronousDispatchRegions))
         return false;
     eventTrackingRegions.asynchronousDispatchRegion = WTFMove(*asynchronousDispatchRegion);
@@ -1017,7 +1019,7 @@ bool ArgumentCoder<Credential>::decode(Decoder& decoder, Credential& credential)
 
 static void encodeImage(Encoder& encoder, Image& image)
 {
-    RefPtr<ShareableBitmap> bitmap = ShareableBitmap::createShareable(IntSize(image.size()), { });
+    RefPtr<ShareableBitmap> bitmap = ShareableBitmap::create(IntSize(image.size()), { });
     auto graphicsContext = bitmap->createGraphicsContext();
     encoder << !!graphicsContext;
     if (!graphicsContext)
@@ -1074,44 +1076,19 @@ static WARN_UNUSED_RETURN bool decodeOptionalImage(Decoder& decoder, RefPtr<Imag
     return decodeImage(decoder, image);
 }
 
-void ArgumentCoder<RefPtr<Font>>::encode(Encoder& encoder, const RefPtr<Font>& font)
+void ArgumentCoder<WebCore::Font>::encode(Encoder& encoder, const WebCore::Font& font)
 {
-    encoder << !!font;
-    if (font)
-        encoder << Ref { *font };
-}
-
-std::optional<RefPtr<Font>> ArgumentCoder<RefPtr<Font>>::decode(Decoder& decoder)
-{
-    std::optional<bool> hasFont;
-    decoder >> hasFont;
-    if (!hasFont)
-        return std::nullopt;
-
-    if (!hasFont.value())
-        return std::make_optional(nullptr);
-
-    std::optional<Ref<Font>> font;
-    decoder >> font;
-    if (!font)
-        return std::nullopt;
-
-    return { WTFMove(*font) };
-}
-
-void ArgumentCoder<Ref<Font>>::encode(Encoder& encoder, const Ref<WebCore::Font>& font)
-{
-    encoder << font->origin();
-    encoder << (font->isInterstitial() ? Font::Interstitial::Yes : Font::Interstitial::No);
-    encoder << font->visibility();
-    encoder << (font->isTextOrientationFallback() ? Font::OrientationFallback::Yes : Font::OrientationFallback::No);
-    encoder << font->renderingResourceIdentifier();
+    encoder << font.origin();
+    encoder << (font.isInterstitial() ? Font::Interstitial::Yes : Font::Interstitial::No);
+    encoder << font.visibility();
+    encoder << (font.isTextOrientationFallback() ? Font::OrientationFallback::Yes : Font::OrientationFallback::No);
+    encoder << font.renderingResourceIdentifier();
     // Intentionally don't encode m_isBrokenIdeographFallback because it doesn't affect drawGlyphs().
 
     encodePlatformData(encoder, font);
 }
 
-std::optional<Ref<Font>> ArgumentCoder<Ref<Font>>::decode(Decoder& decoder)
+std::optional<Ref<Font>> ArgumentCoder<Font>::decode(Decoder& decoder)
 {
     std::optional<Font::Origin> origin;
     decoder >> origin;
@@ -3160,23 +3137,23 @@ std::optional<WebCore::ScriptBuffer> ArgumentCoder<WebCore::ScriptBuffer>::decod
 }
 
 template<typename Encoder>
-void ArgumentCoder<Ref<SystemImage>>::encode(Encoder& encoder, const Ref<SystemImage>& systemImage)
+void ArgumentCoder<SystemImage>::encode(Encoder& encoder, const SystemImage& systemImage)
 {
-    encoder << systemImage->systemImageType();
+    encoder << systemImage.systemImageType();
 
-    switch (systemImage->systemImageType()) {
+    switch (systemImage.systemImageType()) {
 #if ENABLE(APPLE_PAY)
     case SystemImageType::ApplePayButton:
-        downcast<ApplePayButtonSystemImage>(systemImage.get()).encode(encoder);
+        downcast<ApplePayButtonSystemImage>(systemImage).encode(encoder);
         return;
 
     case SystemImageType::ApplePayLogo:
-        downcast<ApplePayLogoSystemImage>(systemImage.get()).encode(encoder);
+        downcast<ApplePayLogoSystemImage>(systemImage).encode(encoder);
         return;
 #endif
 #if USE(SYSTEM_PREVIEW)
     case SystemImageType::ARKitBadge:
-        downcast<ARKitBadgeSystemImage>(systemImage.get()).encode(encoder);
+        downcast<ARKitBadgeSystemImage>(systemImage).encode(encoder);
         return;
 #endif
     }
@@ -3185,11 +3162,11 @@ void ArgumentCoder<Ref<SystemImage>>::encode(Encoder& encoder, const Ref<SystemI
 }
 
 template
-void ArgumentCoder<Ref<SystemImage>>::encode<Encoder>(Encoder&, const Ref<SystemImage>&);
+void ArgumentCoder<SystemImage>::encode<Encoder>(Encoder&, const SystemImage&);
 template
-void ArgumentCoder<Ref<SystemImage>>::encode<StreamConnectionEncoder>(StreamConnectionEncoder&, const Ref<SystemImage>&);
+void ArgumentCoder<SystemImage>::encode<StreamConnectionEncoder>(StreamConnectionEncoder&, const SystemImage&);
 
-std::optional<Ref<SystemImage>> ArgumentCoder<Ref<SystemImage>>::decode(Decoder& decoder)
+std::optional<Ref<SystemImage>> ArgumentCoder<SystemImage>::decode(Decoder& decoder)
 {
     std::optional<SystemImageType> systemImageType;
     decoder >> systemImageType;
@@ -3219,7 +3196,7 @@ void ArgumentCoder<WebCore::CDMInstanceSession::Message>::encode(Encoder& encode
 {
     encoder << message.first;
 
-    RefPtr<FragmentedSharedBuffer> messageData = message.second.copyRef();
+    RefPtr<SharedBuffer> messageData = message.second.copyRef();
     encoder << messageData;
 }
 
@@ -3229,7 +3206,7 @@ std::optional<WebCore::CDMInstanceSession::Message>  ArgumentCoder<WebCore::CDMI
     if (!decoder.decode(type))
         return std::nullopt;
 
-    RefPtr<FragmentedSharedBuffer> buffer;
+    RefPtr<SharedBuffer> buffer;
     if (!decoder.decode(buffer) || !buffer)
         return std::nullopt;
 
@@ -3290,5 +3267,27 @@ std::optional<TextRecognitionDataDetector> ArgumentCoder<TextRecognitionDataDete
 }
 
 #endif // ENABLE(IMAGE_ANALYSIS) && ENABLE(DATA_DETECTION)
+
+#if USE(UNIX_DOMAIN_SOCKETS)
+
+void ArgumentCoder<UnixFileDescriptor>::encode(Encoder& encoder, const UnixFileDescriptor& fd)
+{
+    encoder.addAttachment(Attachment(fd.duplicate()));
+}
+
+void ArgumentCoder<UnixFileDescriptor>::encode(Encoder& encoder, UnixFileDescriptor&& fd)
+{
+    encoder.addAttachment(Attachment(WTFMove(fd)));
+}
+
+std::optional<UnixFileDescriptor> ArgumentCoder<UnixFileDescriptor>::decode(Decoder& decoder)
+{
+    auto attachment = decoder.takeLastAttachment();
+    if (!attachment)
+        return std::nullopt;
+    return std::optional<UnixFileDescriptor> { std::in_place, attachment->release() };
+}
+
+#endif
 
 } // namespace IPC

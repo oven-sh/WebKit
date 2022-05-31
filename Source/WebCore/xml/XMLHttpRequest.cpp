@@ -81,10 +81,10 @@ enum XMLHttpRequestSendArrayBufferOrView {
 static void replaceCharsetInMediaTypeIfNeeded(String& mediaType)
 {
     auto parsedContentType = ParsedContentType::create(mediaType);
-    if (!parsedContentType || parsedContentType->charset().isEmpty() || equalIgnoringASCIICase(parsedContentType->charset(), "UTF-8"))
+    if (!parsedContentType || parsedContentType->charset().isEmpty() || equalIgnoringASCIICase(parsedContentType->charset(), "UTF-8"_s))
         return;
 
-    parsedContentType->setCharset("UTF-8");
+    parsedContentType->setCharset("UTF-8"_s);
     mediaType = parsedContentType->serialize();
 }
 
@@ -171,7 +171,7 @@ ExceptionOr<Document*> XMLHttpRequest::responseXML()
         auto& context = downcast<Document>(*scriptExecutionContext());
 
         String mimeType = responseMIMEType();
-        bool isHTML = equalLettersIgnoringASCIICase(mimeType, "text/html");
+        bool isHTML = equalLettersIgnoringASCIICase(mimeType, "text/html"_s);
         bool isXML = MIMETypeRegistry::isXMLMIMEType(mimeType);
 
         // The W3C spec requires the final MIME type to be some valid XML type, or text/html.
@@ -180,18 +180,21 @@ ExceptionOr<Document*> XMLHttpRequest::responseXML()
             || (isHTML && responseType() == ResponseType::EmptyString)) {
             m_responseDocument = nullptr;
         } else {
+            RefPtr<Document> responseDocument;
             if (isHTML)
-                m_responseDocument = HTMLDocument::create(nullptr, context.settings(), m_response.url(), { });
+                responseDocument = HTMLDocument::create(nullptr, context.settings(), m_response.url(), { });
             else
-                m_responseDocument = XMLDocument::create(nullptr, context.settings(), m_response.url());
-            m_responseDocument->overrideLastModified(m_response.lastModified());
-            m_responseDocument->setContextDocument(context);
-            m_responseDocument->setSecurityOriginPolicy(context.securityOriginPolicy());
-            m_responseDocument->overrideMIMEType(mimeType);
-            m_responseDocument->setContent(m_responseBuilder.toStringPreserveCapacity());
+                responseDocument = XMLDocument::create(nullptr, context.settings(), m_response.url());
+            responseDocument->overrideLastModified(m_response.lastModified());
+            responseDocument->setContextDocument(context);
+            responseDocument->setSecurityOriginPolicy(context.securityOriginPolicy());
+            responseDocument->overrideMIMEType(mimeType);
+            responseDocument->setContent(m_responseBuilder.toStringPreserveCapacity());
 
-            if (!m_responseDocument->wellFormed())
+            if (!responseDocument->wellFormed())
                 m_responseDocument = nullptr;
+            else
+                m_responseDocument = WTFMove(responseDocument);
         }
         m_createdDocument = true;
     }
@@ -223,7 +226,7 @@ RefPtr<ArrayBuffer> XMLHttpRequest::createResponseArrayBuffer()
 ExceptionOr<void> XMLHttpRequest::setTimeout(unsigned timeout)
 {
     if (scriptExecutionContext()->isDocument() && !m_async) {
-        logConsoleError(scriptExecutionContext(), "XMLHttpRequest.timeout cannot be set for synchronous HTTP(S) requests made from the window context.");
+        logConsoleError(scriptExecutionContext(), "XMLHttpRequest.timeout cannot be set for synchronous HTTP(S) requests made from the window context."_s);
         return Exception { InvalidAccessError };
     }
     m_timeoutMilliseconds = timeout;
@@ -249,7 +252,7 @@ ExceptionOr<void> XMLHttpRequest::setResponseType(ResponseType type)
     // We'll only disable this functionality for HTTP(S) requests since sync requests for local protocols
     // such as file: and data: still make sense to allow.
     if (!m_async && scriptExecutionContext()->isDocument() && m_url.protocolIsInHTTPFamily()) {
-        logConsoleError(scriptExecutionContext(), "XMLHttpRequest.responseType cannot be changed for synchronous HTTP(S) requests made from the window context.");
+        logConsoleError(scriptExecutionContext(), "XMLHttpRequest.responseType cannot be changed for synchronous HTTP(S) requests made from the window context."_s);
         return Exception { InvalidAccessError };
     }
 
@@ -354,13 +357,13 @@ ExceptionOr<void> XMLHttpRequest::open(const String& method, const URL& url, boo
         // We'll only disable this functionality for HTTP(S) requests since sync requests for local protocols
         // such as file: and data: still make sense to allow.
         if (url.protocolIsInHTTPFamily() && responseType() != ResponseType::EmptyString) {
-            logConsoleError(context, "Synchronous HTTP(S) requests made from the window context cannot have XMLHttpRequest.responseType set.");
+            logConsoleError(context, "Synchronous HTTP(S) requests made from the window context cannot have XMLHttpRequest.responseType set."_s);
             return Exception { InvalidAccessError };
         }
 
         // Similarly, timeouts are disabled for synchronous requests as well.
         if (m_timeoutMilliseconds > 0) {
-            logConsoleError(context, "Synchronous XMLHttpRequests must not have a timeout value set.");
+            logConsoleError(context, "Synchronous XMLHttpRequests must not have a timeout value set."_s);
             return Exception { InvalidAccessError };
         }
     }
@@ -842,7 +845,7 @@ String XMLHttpRequest::getAllResponseHeaders() const
 
         StringBuilder stringBuilder;
         for (auto& header : headers)
-            stringBuilder.append(lowercase(header.first), ": ", header.second, "\r\n");
+            stringBuilder.append(asASCIILowercase(header.first), ": ", header.second, "\r\n");
 
         m_allResponseHeaders = stringBuilder.toString();
     }
@@ -991,9 +994,9 @@ static inline bool shouldDecodeResponse(XMLHttpRequest::ResponseType type)
 // https://xhr.spec.whatwg.org/#final-charset
 PAL::TextEncoding XMLHttpRequest::finalResponseCharset() const
 {
-    String label = m_responseEncoding;
+    StringView label = m_responseEncoding;
 
-    String overrideResponseCharset = extractCharsetFromMediaType(m_mimeTypeOverride);
+    StringView overrideResponseCharset = extractCharsetFromMediaType(label);
     if (!overrideResponseCharset.isEmpty())
         label = overrideResponseCharset;
 
@@ -1004,12 +1007,12 @@ Ref<TextResourceDecoder> XMLHttpRequest::createDecoder() const
 {
     PAL::TextEncoding finalResponseCharset = this->finalResponseCharset();
     if (finalResponseCharset.isValid())
-        return TextResourceDecoder::create("text/plain", finalResponseCharset);
+        return TextResourceDecoder::create("text/plain"_s, finalResponseCharset);
 
     switch (responseType()) {
     case ResponseType::EmptyString:
         if (MIMETypeRegistry::isXMLMIMEType(responseMIMEType())) {
-            auto decoder = TextResourceDecoder::create("application/xml");
+            auto decoder = TextResourceDecoder::create("application/xml"_s);
             // Don't stop on encoding errors, unlike it is done for other kinds of XML resources. This matches the behavior of previous WebKit versions, Firefox and Opera.
             decoder->useLenientXMLDecoding();
             return decoder;
@@ -1017,11 +1020,11 @@ Ref<TextResourceDecoder> XMLHttpRequest::createDecoder() const
         FALLTHROUGH;
     case ResponseType::Text:
     case ResponseType::Json:
-        return TextResourceDecoder::create("text/plain", "UTF-8");
+        return TextResourceDecoder::create("text/plain"_s, "UTF-8");
     case ResponseType::Document: {
-        if (equalLettersIgnoringASCIICase(responseMIMEType(), "text/html"))
-            return TextResourceDecoder::create("text/html", "UTF-8");
-        auto decoder = TextResourceDecoder::create("application/xml");
+        if (equalLettersIgnoringASCIICase(responseMIMEType(), "text/html"_s))
+            return TextResourceDecoder::create("text/html"_s, "UTF-8");
+        auto decoder = TextResourceDecoder::create("application/xml"_s);
         // Don't stop on encoding errors, unlike it is done for other kinds of XML resources. This matches the behavior of previous WebKit versions, Firefox and Opera.
         decoder->useLenientXMLDecoding();
         return decoder;
@@ -1031,7 +1034,7 @@ Ref<TextResourceDecoder> XMLHttpRequest::createDecoder() const
         ASSERT_NOT_REACHED();
         break;
     }
-    return TextResourceDecoder::create("text/plain", "UTF-8");
+    return TextResourceDecoder::create("text/plain"_s, "UTF-8");
 }
 
 void XMLHttpRequest::didReceiveData(const SharedBuffer& buffer)
@@ -1043,7 +1046,7 @@ void XMLHttpRequest::didReceiveData(const SharedBuffer& buffer)
         changeState(HEADERS_RECEIVED);
 
     if (!m_mimeTypeOverride.isEmpty())
-        m_responseEncoding = extractCharsetFromMediaType(m_mimeTypeOverride);
+        m_responseEncoding = extractCharsetFromMediaType(m_mimeTypeOverride).toString();
     if (m_responseEncoding.isEmpty())
         m_responseEncoding = m_response.textEncodingName();
 

@@ -102,13 +102,12 @@ void RealtimeOutgoingVideoSourceCocoa::videoFrameAvailable(VideoFrame& videoFram
         }
     }
 
-    auto pixelBuffer = videoFrame.pixelBuffer();
-    auto pixelFormatType = CVPixelBufferGetPixelFormatType(pixelBuffer);
-
-    RetainPtr<CVPixelBufferRef> convertedBuffer = pixelBuffer;
-    if (pixelFormatType != preferedPixelBufferFormat())
-        convertedBuffer = convertToYUV(pixelBuffer);
-
+#if ASSERT_ENABLED
+    auto pixelFormat = videoFrame.pixelFormat();
+    // FIXME: We should use a pixel conformer for other pixel formats and kCVPixelFormatType_32BGRA.
+    ASSERT(pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange || pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange || pixelFormat == kCVPixelFormatType_32BGRA);
+#endif
+    RetainPtr<CVPixelBufferRef> convertedBuffer = videoFrame.pixelBuffer();
     if (shouldApplyRotation)
         convertedBuffer = rotatePixelBuffer(convertedBuffer.get(), m_currentRotation);
 

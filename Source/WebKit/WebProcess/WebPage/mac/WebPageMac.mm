@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2010-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -113,6 +113,10 @@ using namespace WebCore;
 
 void WebPage::platformInitializeAccessibility()
 {
+    // Need to initialize accessibility for VoiceOver to work when the WebContent process is using NSRunLoop.
+    // Currently, it is also needed to allocate and initialize an NSApplication object.
+    [NSApplication _accessibilityInitialize];
+
     auto mockAccessibilityElement = adoptNS([[WKAccessibilityWebPageObject alloc] init]);
 
     // Get the pid for the starting process.
@@ -197,7 +201,7 @@ NSObject *WebPage::accessibilityObjectForMainFramePlugin()
     if (!m_page)
         return nil;
     
-    if (auto* pluginView = pluginViewForFrame(&m_page->mainFrame()))
+    if (auto* pluginView = mainFramePlugIn())
         return pluginView->accessibilityObject();
 
     return nil;
@@ -212,7 +216,7 @@ bool WebPage::shouldUsePDFPlugin(const String& contentType, StringView path) con
         && getPDFLayerControllerClass()
         && (MIMETypeRegistry::isPDFOrPostScriptMIMEType(contentType)
             || (contentType.isEmpty()
-                && (path.endsWithIgnoringASCIICase(".pdf") || path.endsWithIgnoringASCIICase(".ps"))));
+                && (path.endsWithIgnoringASCIICase(".pdf"_s) || path.endsWithIgnoringASCIICase(".ps"_s))));
 }
 
 static String commandNameForSelectorName(const String& selectorName)
@@ -366,7 +370,7 @@ void WebPage::attributedSubstringForCharacterRangeAsync(const EditingRange& edit
 
 #if ENABLE(PDFKIT_PLUGIN)
 
-DictionaryPopupInfo WebPage::dictionaryPopupInfoForSelectionInPDFPlugin(PDFSelection *selection, PDFPlugin& pdfPlugin, NSDictionary *options, WebCore::TextIndicatorPresentationTransition presentationTransition)
+DictionaryPopupInfo WebPage::dictionaryPopupInfoForSelectionInPDFPlugin(PDFSelection *selection, PluginView& pdfPlugin, NSDictionary *options, WebCore::TextIndicatorPresentationTransition presentationTransition)
 {
     DictionaryPopupInfo dictionaryPopupInfo;
     if (!selection.string.length)
@@ -380,7 +384,7 @@ DictionaryPopupInfo WebPage::dictionaryPopupInfoForSelectionInPDFPlugin(PDFSelec
     
     NSFontManager *fontManager = [NSFontManager sharedFontManager];
 
-    CGFloat scaleFactor = pdfPlugin.scaleFactor();
+    CGFloat scaleFactor = pdfPlugin.contentScaleFactor();
 
     __block CGFloat maxAscender = 0;
     __block CGFloat maxDescender = 0;
@@ -505,11 +509,13 @@ void WebPage::getDataSelectionForPasteboard(const String pasteboardType, Complet
     auto buffer = frame.editor().dataSelectionForPasteboard(pasteboardType);
     if (!buffer)
         return completionHandler({ });
-    auto sharedMemoryBuffer = SharedMemory::copyBuffer(*buffer);
-    if (!sharedMemoryBuffer)
-        return completionHandler({ });
     SharedMemory::Handle handle;
-    sharedMemoryBuffer->createHandle(handle, SharedMemory::Protection::ReadOnly);
+    {
+        auto sharedMemoryBuffer = SharedMemory::copyBuffer(*buffer);
+        if (!sharedMemoryBuffer)
+            return completionHandler({ });
+        sharedMemoryBuffer->createHandle(handle, SharedMemory::Protection::ReadOnly);
+    }
     completionHandler(SharedMemory::IPCHandle { WTFMove(handle), buffer->size() });
 }
 
@@ -524,7 +530,7 @@ bool WebPage::platformCanHandleRequest(const WebCore::ResourceRequest& request)
         return true;
 
     // FIXME: Return true if this scheme is any one WebKit2 knows how to handle.
-    return request.url().protocolIs("applewebdata");
+    return request.url().protocolIs("applewebdata"_s);
 }
 
 void WebPage::shouldDelayWindowOrderingEvent(const WebKit::WebMouseEvent& event, CompletionHandler<void(bool)>&& completionHandler)
@@ -576,9 +582,13 @@ void WebPage::setTopOverhangImage(WebImage* image)
     if (!layer)
         return;
 
+    auto nativeImage = image->copyNativeImage();
+    if (!nativeImage)
+        return;
+
     layer->setSize(image->size());
     layer->setPosition(FloatPoint(0, -image->size().height()));
-    layer->platformLayer().contents = (__bridge id)image->bitmap().makeCGImageCopy().get();
+    layer->platformLayer().contents = (__bridge id)nativeImage->platformImage().get();
 }
 
 void WebPage::setBottomOverhangImage(WebImage* image)
@@ -591,8 +601,12 @@ void WebPage::setBottomOverhangImage(WebImage* image)
     if (!layer)
         return;
 
+    auto nativeImage = image->copyNativeImage();
+    if (!nativeImage)
+        return;
+
     layer->setSize(image->size());
-    layer->platformLayer().contents = (__bridge id)image->bitmap().makeCGImageCopy().get();
+    layer->platformLayer().contents = (__bridge id)nativeImage->platformImage().get();
 }
 
 void WebPage::updateHeaderAndFooterLayersForDeviceScaleChange(float scaleFactor)
@@ -774,6 +788,17 @@ void WebPage::handleImageServiceClick(const IntPoint& point, Image& image, HTMLI
     }, { }));
 }
 
+void WebPage::handlePDFServiceClick(const IntPoint& point, HTMLAttachmentElement& element)
+{
+    send(Messages::WebPageProxy::ShowContextMenu(ContextMenuContextData {
+        point,
+        element.isContentEditable(),
+        element.renderBox()->absoluteContentQuad().enclosingBoundingBox(),
+        element.uniqueIdentifier(),
+        "application/pdf"_s
+    }, { }));
+}
+
 #endif
 
 String WebPage::platformUserAgent(const URL&) const
@@ -886,25 +911,21 @@ void WebPage::performImmediateActionHitTestAtLocation(WebCore::FloatPoint locati
 #if ENABLE(PDFKIT_PLUGIN)
     if (is<HTMLPlugInImageElement>(element)) {
         if (auto* pluginView = static_cast<PluginView*>(downcast<HTMLPlugInImageElement>(*element).pluginWidget())) {
-            if (is<PDFPlugin>(pluginView->plugin())) {
-                // FIXME: We don't have API to identify images inside PDFs based on position.
-                auto& plugIn = downcast<PDFPlugin>(*pluginView->plugin());
-                auto lookupResult = plugIn.lookupTextAtLocation(locationInViewCoordinates, immediateActionResult);
-                auto lookupText = std::get<String>(lookupResult);
-                if (!lookupText.isEmpty()) {
-                    // FIXME (144030): Focus does not seem to get set to the PDF when invoking the menu.
-                    auto& document = element->document();
-                    if (is<PluginDocument>(document))
-                        downcast<PluginDocument>(document).setFocusedElement(element);
+            // FIXME: We don't have API to identify images inside PDFs based on position.
+            auto lookupResult = pluginView->lookupTextAtLocation(locationInViewCoordinates, immediateActionResult);
+            if (auto lookupText = std::get<String>(lookupResult); !lookupText.isEmpty()) {
+                // FIXME (144030): Focus does not seem to get set to the PDF when invoking the menu.
+                auto& document = element->document();
+                if (is<PluginDocument>(document))
+                    downcast<PluginDocument>(document).setFocusedElement(element);
 
-                    auto selection = std::get<PDFSelection *>(lookupResult);
-                    auto options = std::get<NSDictionary *>(lookupResult);
+                auto selection = std::get<PDFSelection *>(lookupResult);
+                auto options = std::get<NSDictionary *>(lookupResult);
 
-                    immediateActionResult.lookupText = lookupText;
-                    immediateActionResult.isTextNode = true;
-                    immediateActionResult.isSelected = true;
-                    immediateActionResult.dictionaryPopupInfo = dictionaryPopupInfoForSelectionInPDFPlugin(selection, plugIn, options, TextIndicatorPresentationTransition::FadeIn);
-                }
+                immediateActionResult.lookupText = lookupText;
+                immediateActionResult.isTextNode = true;
+                immediateActionResult.isSelected = true;
+                immediateActionResult.dictionaryPopupInfo = dictionaryPopupInfoForSelectionInPDFPlugin(selection, *pluginView, options, TextIndicatorPresentationTransition::FadeIn);
             }
         }
     }

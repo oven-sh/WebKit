@@ -2451,7 +2451,7 @@ WI._handleDeviceSettingsTabBarButtonClicked = function(event)
         }
     }
 
-    contentElement.appendChild(WI.createReferencePageLink("device-settings"));
+    contentElement.appendChild(WI.ReferencePage.DeviceSettings.createLinkElement());
 
     WI._deviceSettingsPopover.presentNewContentWithFrame(contentElement, calculateTargetFrame(), preferredEdges);
 };
@@ -3084,7 +3084,7 @@ WI.createMessageTextView = function(message, isError)
 
     let textElement = messageElement.appendChild(document.createElement("div"));
     textElement.className = "message";
-    textElement.textContent = message;
+    textElement.append(message);
 
     return messageElement;
 };
@@ -3109,23 +3109,6 @@ WI.createNavigationItemHelp = function(formatString, navigationItem)
 
     String.format(formatString, [wrapperElement], String.standardFormatters, containerElement, append);
     return containerElement;
-};
-
-WI.createReferencePageLink = function(page, fragment)
-{
-    let url = "https://webkit.org/web-inspector/" + page + "/";
-    if (fragment)
-        url += "#" + fragment;
-
-    let wrapper = document.createElement("span");
-    wrapper.className = "reference-page-link-container";
-
-    let link = wrapper.appendChild(document.createElement("a"));
-    link.className = "reference-page-link";
-    link.href = link.title = url;
-    link.textContent = "?";
-
-    return wrapper;
 };
 
 WI.createGoToArrowButton = function()
@@ -3555,7 +3538,6 @@ WI.reset = async function()
 };
 
 WI.isEngineeringBuild = false;
-WI.isExperimentalBuild = InspectorFrontendHost.isExperimentalBuild();
 
 // OpenResourceDialog delegate
 

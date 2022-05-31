@@ -47,7 +47,6 @@
 #include "PageConsoleClient.h"
 #include "PageGroup.h"
 #include "PaymentCoordinator.h"
-#include "PluginViewBase.h"
 #include "RunJavaScriptParameters.h"
 #include "RuntimeApplicationChecks.h"
 #include "RuntimeEnabledFeatures.h"
@@ -74,6 +73,7 @@
 #include <JavaScriptCore/StrongInlines.h>
 #include <JavaScriptCore/WeakGCMapInlines.h>
 #include <JavaScriptCore/WebAssemblyModuleRecord.h>
+#include <wtf/GenerateProfiles.h>
 #include <wtf/SetForScope.h>
 #include <wtf/SharedTask.h>
 #include <wtf/Threading.h>
@@ -84,6 +84,8 @@
 namespace WebCore {
 using namespace JSC;
 
+enum class WebCoreProfileTag { };
+
 void ScriptController::initializeMainThread()
 {
 #if !PLATFORM(IOS_FAMILY)
@@ -91,6 +93,7 @@ void ScriptController::initializeMainThread()
     WTF::initializeMainThread();
     WebCore::populateJITOperations();
 #endif
+    WTF::registerProfileGenerationCallback<WebCoreProfileTag>("WebCore");
 }
 
 ScriptController::ScriptController(Frame& frame)
@@ -244,7 +247,7 @@ JSC::JSValue ScriptController::evaluateModule(const URL& sourceURL, AbstractModu
     SetForScope sourceURLScope(m_sourceURL, &sourceURL);
 
 #if ENABLE(WEBASSEMBLY)
-    const bool isWasmModule = moduleRecord.inherits<WebAssemblyModuleRecord>(vm);
+    const bool isWasmModule = moduleRecord.inherits<WebAssemblyModuleRecord>();
 #else
     constexpr bool isWasmModule = false;
 #endif
@@ -252,7 +255,7 @@ JSC::JSValue ScriptController::evaluateModule(const URL& sourceURL, AbstractModu
         // FIXME: Provide better inspector support for Wasm scripts.
         InspectorInstrumentation::willEvaluateScript(m_frame, sourceURL.string(), 1, 1);
     } else {
-        auto* jsModuleRecord = jsDynamicCast<JSModuleRecord*>(vm, &moduleRecord);
+        auto* jsModuleRecord = jsDynamicCast<JSModuleRecord*>(&moduleRecord);
         const auto& jsSourceCode = jsModuleRecord->sourceCode();
         InspectorInstrumentation::willEvaluateScript(m_frame, sourceURL.string(), jsSourceCode.firstLine().oneBasedInt(), jsSourceCode.startColumn().oneBasedInt());
     }
@@ -332,7 +335,7 @@ void ScriptController::setupModuleScriptHandlers(LoadableModuleScript& moduleScr
         auto scope = DECLARE_CATCH_SCOPE(vm);
         if (errorValue.isObject()) {
             auto* object = JSC::asObject(errorValue);
-            if (JSValue failureKindValue = object->getDirect(vm, static_cast<JSVMClientData&>(*vm.clientData).builtinNames().failureKindPrivateName())) {
+            if (JSValue failureKindValue = object->getDirect(vm, builtinNames(vm).failureKindPrivateName())) {
                 // This is host propagated error in the module loader pipeline.
                 switch (static_cast<ModuleFetchFailureKind>(failureKindValue.asInt32())) {
                 case ModuleFetchFailureKind::WasPropagatedError:
@@ -406,36 +409,20 @@ TextPosition ScriptController::eventHandlerPosition() const
     return TextPosition();
 }
 
-void ScriptController::enableEval(bool enable, const String& errorMessage)
+void ScriptController::setEvalEnabled(bool value, const String& errorMessage)
 {
     auto* jsWindowProxy = windowProxy().existingJSWindowProxy(mainThreadNormalWorld());
     if (!jsWindowProxy)
         return;
-    jsWindowProxy->window()->setEvalEnabled(enable, errorMessage);
+    jsWindowProxy->window()->setEvalEnabled(value, errorMessage);
 }
 
-void ScriptController::enableWebAssembly()
+void ScriptController::setWebAssemblyEnabled(bool value, const String& errorMessage)
 {
     auto* jsWindowProxy = windowProxy().existingJSWindowProxy(mainThreadNormalWorld());
     if (!jsWindowProxy)
         return;
-    jsWindowProxy->window()->setWebAssemblyEnabled(true);
-}
-
-void ScriptController::disableEval(const String& errorMessage)
-{
-    auto* jsWindowProxy = windowProxy().existingJSWindowProxy(mainThreadNormalWorld());
-    if (!jsWindowProxy)
-        return;
-    jsWindowProxy->window()->setEvalEnabled(false, errorMessage);
-}
-
-void ScriptController::disableWebAssembly(const String& errorMessage)
-{
-    auto* jsWindowProxy = windowProxy().existingJSWindowProxy(mainThreadNormalWorld());
-    if (!jsWindowProxy)
-        return;
-    jsWindowProxy->window()->setWebAssemblyEnabled(false, errorMessage);
+    jsWindowProxy->window()->setWebAssemblyEnabled(value, errorMessage);
 }
 
 bool ScriptController::canAccessFromCurrentOrigin(Frame* frame, Document& accessingDocument)
@@ -505,12 +492,9 @@ void ScriptController::collectIsolatedContexts(Vector<std::pair<JSC::JSGlobalObj
 }
 
 #if !PLATFORM(COCOA)
-RefPtr<JSC::Bindings::Instance> ScriptController::createScriptInstanceForWidget(Widget* widget)
+RefPtr<JSC::Bindings::Instance> ScriptController::createScriptInstanceForWidget(Widget*)
 {
-    if (!is<PluginViewBase>(*widget))
-        return nullptr;
-
-    return downcast<PluginViewBase>(*widget).bindingInstance();
+    return nullptr;
 }
 #endif
 
@@ -585,7 +569,7 @@ ValueOrException ScriptController::executeScriptInWorld(DOMWrapperWorld& world, 
 #if ENABLE(APP_BOUND_DOMAINS)
     if (m_frame.loader().client().shouldEnableInAppBrowserPrivacyProtections()) {
         if (auto* document = m_frame.document())
-            document->addConsoleMessage(MessageSource::Security, MessageLevel::Warning, "Ignoring user script injection for non-app bound domain.");
+            document->addConsoleMessage(MessageSource::Security, MessageLevel::Warning, "Ignoring user script injection for non-app bound domain."_s);
         SCRIPTCONTROLLER_RELEASE_LOG_ERROR(Loading, "executeScriptInWorld: Ignoring user script injection for non app-bound domain");
         return makeUnexpected(ExceptionDetails { "Ignoring user script injection for non-app bound domain"_s });
     }
@@ -668,14 +652,14 @@ ValueOrException ScriptController::callInWorld(RunJavaScriptParameters&& paramet
         if (evaluationException)
             break;
 
-        if (!functionObject || !functionObject.isCallable(world.vm())) {
+        if (!functionObject || !functionObject.isCallable()) {
             optionalDetails = { { "Unable to create JavaScript async function to call"_s } };
             break;
         }
 
         // FIXME: https://bugs.webkit.org/show_bug.cgi?id=205562
         // Getting CallData shouldn't be required to call into JS.
-        auto callData = getCallData(world.vm(), functionObject);
+        auto callData = JSC::getCallData(functionObject);
         if (callData.type == CallData::Type::None) {
             optionalDetails = { { "Unable to prepare JavaScript async function to be called"_s } };
             break;
@@ -727,7 +711,7 @@ void ScriptController::executeAsynchronousUserAgentScriptInWorld(DOMWrapperWorld
         return;
     }
 
-    auto callData = getCallData(world.vm(), thenFunction);
+    auto callData = JSC::getCallData(thenFunction);
     if (callData.type == CallData::Type::None) {
         resolveCompletionHandler(result);
         return;

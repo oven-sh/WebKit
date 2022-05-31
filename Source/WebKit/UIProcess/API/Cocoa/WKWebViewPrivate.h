@@ -407,6 +407,8 @@ for this property.
 - (void)_grantAccessToAssetServices WK_API_AVAILABLE(macos(12.0), ios(14.0));
 - (void)_revokeAccessToAssetServices WK_API_AVAILABLE(macos(12.0), ios(14.0));
 
+- (void)_disableURLSchemeCheckInDataDetectors WK_API_AVAILABLE(ios(WK_IOS_TBA));
+
 /*! @abstract If the WKWebView was created with _shouldAllowUserInstalledFonts = NO,
  the web process will automatically use an in-process font registry, and its sandbox
  will be restricted to forbid access to fontd. Otherwise, the web process will use
@@ -425,7 +427,7 @@ for this property.
 - (void)_suspendPage:(void (^)(BOOL))completionHandler WK_API_AVAILABLE(macos(12.0), ios(15.0));
 - (void)_resumePage:(void (^)(BOOL))completionHandler WK_API_AVAILABLE(macos(12.0), ios(15.0));
 
-- (void)_startImageAnalysis:(NSString *)identifier WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA));
+- (void)_startImageAnalysis:(NSString *)identifier target:(NSString *)targetIdentifier WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA));
 
 - (void)_dataTaskWithRequest:(NSURLRequest *)request completionHandler:(void(^)(_WKDataTask *))completionHandler WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA));
 
@@ -493,7 +495,7 @@ typedef NS_OPTIONS(NSUInteger, WKDisplayCaptureSurfaces) {
 #if TARGET_OS_IPHONE
 
 #if !TARGET_OS_TV && !TARGET_OS_WATCH && __has_include(<UIKit/_UITextSearching.h>)
-@interface WKWebView (WKPrivateIOS) <_UITextSearching>
+@interface WKWebView (WKPrivateIOS) <_UITextSearching, UITextSearching, UIFindInteractionDelegate>
 #else
 @interface WKWebView (WKPrivateIOS)
 #endif

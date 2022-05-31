@@ -87,7 +87,7 @@ void SVGFEColorMatrixElement::svgAttributeChanged(const QualifiedName& attrName)
     if (PropertyRegistry::isKnownAttribute(attrName)) {
         InstanceInvalidationGuard guard(*this);
         if (attrName == SVGNames::inAttr)
-            setSVGResourcesInAncestorChainAreDirty();
+            updateSVGRendererForElementChange();
         else {
             ASSERT(attrName == SVGNames::typeAttr || attrName == SVGNames::valuesAttr);
             primitiveAttributeChanged(attrName);
@@ -98,7 +98,7 @@ void SVGFEColorMatrixElement::svgAttributeChanged(const QualifiedName& attrName)
     SVGFilterPrimitiveStandardAttributes::svgAttributeChanged(attrName);
 }
 
-RefPtr<FilterEffect> SVGFEColorMatrixElement::filterEffect(const SVGFilterBuilder&, const FilterEffectVector&) const
+RefPtr<FilterEffect> SVGFEColorMatrixElement::filterEffect(const SVGFilter&, const FilterEffectVector&, const GraphicsContext&) const
 {
     Vector<float> filterValues;
     ColorMatrixType filterType = type();

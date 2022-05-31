@@ -28,15 +28,18 @@ import sys
 from .blame import Blame
 from .branch import Branch
 from .canonicalize import Canonicalize
-from .clean import Clean
+from .clean import Clean, DeletePRBranches
 from .command import Command
+from .commit import Commit
 from .checkout import Checkout
+from .credentials import Credentials
 from .find import Find, Info
 from .install_git_lfs import InstallGitLFS
 from .land import Land
 from .log import Log
 from .pull import Pull
 from .pull_request import PullRequest
+from .revert import Revert
 from .setup_git_svn import SetupGitSvn
 from .setup import Setup
 
@@ -72,7 +75,12 @@ def main(
     )
 
     subparsers = parser.add_subparsers(help='sub-command help')
-    programs = [Blame, Branch, Canonicalize, Checkout, Clean, Find, Info, Land, Log, Pull, PullRequest, Setup, InstallGitLFS]
+    programs = [
+        Blame, Branch, Canonicalize, Checkout,
+        Clean, Find, Info, Land, Log, Pull,
+        PullRequest, Revert, Setup, InstallGitLFS,
+        Credentials, Commit, DeletePRBranches,
+    ]
     if subversion:
         programs.append(SetupGitSvn)
 

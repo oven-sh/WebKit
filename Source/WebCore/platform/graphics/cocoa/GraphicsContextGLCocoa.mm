@@ -33,6 +33,7 @@
 #import "ANGLEUtilitiesCocoa.h"
 #import "CVUtilities.h"
 #import "GraphicsContextGLIOSurfaceSwapChain.h"
+#import "IOSurfacePool.h"
 #import "Logging.h"
 #import "PixelBuffer.h"
 #import "ProcessIdentity.h"
@@ -58,8 +59,8 @@
 #import "ImageRotationSessionVT.h"
 #endif
 
-// Metal may not be available, for example in recovery OS.
-WTF_WEAK_LINK_FORCE_IMPORT(MTLCreateSystemDefaultDevice);
+// FIXME: Checking for EGL_Initialize does not seem to be robust in recovery OS.
+WTF_WEAK_LINK_FORCE_IMPORT(EGL_GetPlatformDisplayEXT);
 
 namespace WebCore {
 
@@ -100,22 +101,6 @@ static bool checkVolatileContextSupportIfDeviceExists(EGLDisplay display, const 
 
 static bool platformSupportsMetal(bool isWebGL2)
 {
-    // FIXME: Figure out why WebKit runs in recovery system using -framework Metal, but seemingly cannot call into Metal.
-    // The hunk about runnningInRecoverySystem should be removed once it is clear how WebKit can link strongly to Metal
-    // but run without Metal.
-    static bool runningInRecoverySystem = [] {
-        if (getenv("__OSINSTALL_ENVIRONMENT")) {
-            WTFLogAlways("WebGL: Running in recovery. Has access to Metal: %s", !MTLCreateSystemDefaultDevice ? "no" : "yes");
-            return true;
-        }
-        return false;
-    }();
-    if (runningInRecoverySystem)
-        return false;
-
-    if (!MTLCreateSystemDefaultDevice)
-        return false;
-
     auto device = adoptNS(MTLCreateSystemDefaultDevice());
 
     if (device) {
@@ -139,6 +124,12 @@ static EGLDisplay initializeEGLDisplay(const GraphicsContextGLAttributes& attrs)
         WTFLogAlways("Failed to load ANGLE shared library.");
         return EGL_NO_DISPLAY;
     }
+    // FIXME(http://webkit.org/b/238448): Why is checking EGL_Initialize not robust in recovery OS?
+    if (EGL_GetPlatformDisplayEXT == NULL) { // NOLINT
+        WTFLogAlways("Inconsistent weak linking for ANGLE shared library.");
+        return EGL_NO_DISPLAY;
+    }
+
 #if ASSERT_ENABLED
     const char* clientExtensions = EGL_QueryString(EGL_NO_DISPLAY, EGL_EXTENSIONS);
     ASSERT(clientExtensions);
@@ -583,7 +574,7 @@ bool GraphicsContextGLCocoa::reshapeDisplayBufferBacking()
 bool GraphicsContextGLCocoa::allocateAndBindDisplayBufferBacking()
 {
     ASSERT(!getInternalFramebufferSize().isEmpty());
-    auto backing = IOSurface::create(getInternalFramebufferSize(), DestinationColorSpace::SRGB());
+    auto backing = IOSurface::create(nullptr, getInternalFramebufferSize(), DestinationColorSpace::SRGB());
     if (!backing)
         return false;
     if (m_resourceOwner)

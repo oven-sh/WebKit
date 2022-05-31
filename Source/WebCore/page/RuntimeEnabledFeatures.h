@@ -89,9 +89,6 @@ public:
     void setAccessibilityObjectModelEnabled(bool isEnabled) { m_accessibilityObjectModelEnabled = isEnabled; }
     bool accessibilityObjectModelEnabled() const { return m_accessibilityObjectModelEnabled; }
 
-    void setAriaReflectionEnabled(bool isEnabled) { m_ariaReflectionEnabled = isEnabled; }
-    bool ariaReflectionEnabled() const { return m_ariaReflectionEnabled; }
-
     void setItpDebugModeEnabled(bool isEnabled) { m_itpDebugMode = isEnabled; }
     bool itpDebugModeEnabled() const { return m_itpDebugMode; }
 
@@ -111,8 +108,8 @@ public:
     void setLayoutFormattingContextEnabled(bool isEnabled) { m_layoutFormattingContextEnabled = isEnabled; }
     bool layoutFormattingContextEnabled() const { return m_layoutFormattingContextEnabled; }
 
-    void setLayoutFormattingContextIntegrationEnabled(bool isEnabled) { m_layoutFormattingContextIntegrationEnabled = isEnabled; }
-    bool layoutFormattingContextIntegrationEnabled() const { return m_layoutFormattingContextIntegrationEnabled; }
+    void setInlineFormattingContextIntegrationEnabled(bool isEnabled) { m_inlineFormattingContextIntegrationEnabled = isEnabled; }
+    bool inlineFormattingContextIntegrationEnabled() const { return m_inlineFormattingContextIntegrationEnabled; }
 #endif
 
 #if ENABLE(CSS_PAINTING_API)
@@ -153,6 +150,8 @@ public:
     bool webRTCPlatformUDPSocketsEnabled() const { return m_isWebRTCPlatformUDPSocketsEnabled; }
     void setWebRTCPlatformUDPSocketsEnabled(bool isEnabled) { m_isWebRTCPlatformUDPSocketsEnabled = isEnabled; }
 #endif
+    bool webRTCAudioLatencyAdaptationEnabled() const { return m_isWebRTCAudioLatencyAdaptationEnabled; }
+    void setWebRTCAudioLatencyAdaptationEnabled(bool isEnabled) { m_isWebRTCAudioLatencyAdaptationEnabled = isEnabled; }
 
 #if ENABLE(DATALIST_ELEMENT)
     bool dataListElementEnabled() const { return m_isDataListElementEnabled; }
@@ -161,9 +160,6 @@ public:
 
     void setReadableByteStreamAPIEnabled(bool isEnabled) { m_isReadableByteStreamAPIEnabled = isEnabled; }
     bool readableByteStreamAPIEnabled() const { return m_isReadableByteStreamAPIEnabled; }
-
-    void setCSSDisplayContentsAXSupportEnabled(bool isEnabled) { m_CSSDisplayContentsAXSupportEnabled = isEnabled; }
-    bool cssDisplayContentsAXSupportEnabled() const { return m_CSSDisplayContentsAXSupportEnabled; }
 
     void setCSSLogicalEnabled(bool isEnabled) { m_CSSLogicalEnabled = isEnabled; }
     bool cssLogicalEnabled() const { return m_CSSLogicalEnabled; }
@@ -234,11 +230,6 @@ public:
     bool opusDecoderEnabled() const { return m_opusDecoderEnabled; }
 #endif
 
-#if ENABLE(WEB_AUTHN)
-    void setWebAuthenticationModernEnabled(bool areEnabled) { m_areWebAuthenticationModernEnabled = areEnabled; }
-    bool webAuthenticationModernEnabled() const { return m_areWebAuthenticationModernEnabled; }
-#endif
-
 #if ENABLE(MEDIA_SOURCE) && (HAVE(AVSAMPLEBUFFERVIDEOOUTPUT) || USE(GSTREAMER))
     WEBCORE_EXPORT void setMediaSourceInlinePaintingEnabled(bool);
     bool mediaSourceInlinePaintingEnabled() const { return m_mediaSourceInlinePaintingEnabled; }
@@ -287,7 +278,6 @@ private:
     bool m_webXREnabled { false };
 #endif
     bool m_accessibilityObjectModelEnabled { false };
-    bool m_ariaReflectionEnabled { true };
     bool m_itpDebugMode { false };
     bool m_isRestrictedHTTPResponseAccess { true };
     bool m_isServerTimingEnabled { false };
@@ -301,7 +291,7 @@ private:
 
 #if ENABLE(LAYOUT_FORMATTING_CONTEXT)
     bool m_layoutFormattingContextEnabled { false };
-    bool m_layoutFormattingContextIntegrationEnabled { true };
+    bool m_inlineFormattingContextIntegrationEnabled { true };
 #endif
 
 #if ENABLE(CSS_PAINTING_API)
@@ -326,6 +316,7 @@ private:
     bool m_isWebRTCPlatformTCPSocketsEnabled { false };
     bool m_isWebRTCPlatformUDPSocketsEnabled { false };
 #endif
+    bool m_isWebRTCAudioLatencyAdaptationEnabled { true };
 
 #if ENABLE(DATALIST_ELEMENT)
     bool m_isDataListElementEnabled { false };
@@ -333,7 +324,6 @@ private:
 
     bool m_isReadableByteStreamAPIEnabled { false };
 
-    bool m_CSSDisplayContentsAXSupportEnabled { false };
     bool m_CSSLogicalEnabled { false };
 
     // False by default until https://bugs.webkit.org/show_bug.cgi?id=211351 /
@@ -386,10 +376,6 @@ private:
 
 #if ENABLE(OPUS)
     bool m_opusDecoderEnabled { false };
-#endif
-
-#if ENABLE(WEB_AUTHN)
-    bool m_areWebAuthenticationModernEnabled { false };
 #endif
 
 #if ENABLE(MEDIA_SOURCE) && (HAVE(AVSAMPLEBUFFERVIDEOOUTPUT) || USE(GSTREAMER))

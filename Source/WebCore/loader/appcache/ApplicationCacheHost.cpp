@@ -34,6 +34,7 @@
 #include "DOMApplicationCache.h"
 #include "EventNames.h"
 #include "Frame.h"
+#include "FrameDestructionObserverInlines.h"
 #include "FrameLoader.h"
 #include "FrameLoaderClient.h"
 #include "InspectorInstrumentation.h"
@@ -561,14 +562,14 @@ bool ApplicationCacheHost::isApplicationCacheEnabled()
     return m_documentLoader.frame() && m_documentLoader.frame()->settings().offlineWebApplicationCacheEnabled() && !m_documentLoader.frame()->page()->usesEphemeralSession();
 }
 
-bool ApplicationCacheHost::isApplicationCacheBlockedForRequest(const ResourceRequest& request)
+bool ApplicationCacheHost::isApplicationCacheBlockedForRequest(const ResourceRequest&)
 {
     auto* frame = m_documentLoader.frame();
     if (!frame)
         return false;
     if (frame->isMainFrame())
         return false;
-    return !SecurityOrigin::create(request.url())->canAccessApplicationCache(frame->document()->topOrigin());
+    return frame->document()->canAccessResource(ScriptExecutionContext::ResourceType::ApplicationCache) != ScriptExecutionContext::HasResourceAccess::Yes;
 }
 
 }  // namespace WebCore

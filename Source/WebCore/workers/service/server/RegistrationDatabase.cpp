@@ -129,7 +129,7 @@ struct ImportedScriptAttributes {
     }
 };
 
-static HashMap<URL, ImportedScriptAttributes> stripScriptSources(const HashMap<URL, ServiceWorkerContextData::ImportedScript>& map)
+static HashMap<URL, ImportedScriptAttributes> stripScriptSources(const MemoryCompactRobinHoodHashMap<URL, ServiceWorkerContextData::ImportedScript>& map)
 {
     HashMap<URL, ImportedScriptAttributes> mapWithoutScripts;
     for (auto& pair : map)
@@ -137,9 +137,9 @@ static HashMap<URL, ImportedScriptAttributes> stripScriptSources(const HashMap<U
     return mapWithoutScripts;
 }
 
-static HashMap<URL, ServiceWorkerContextData::ImportedScript> populateScriptSourcesFromDisk(SWScriptStorage& scriptStorage, const ServiceWorkerRegistrationKey& registrationKey, HashMap<URL, ImportedScriptAttributes>&& map)
+static MemoryCompactRobinHoodHashMap<URL, ServiceWorkerContextData::ImportedScript> populateScriptSourcesFromDisk(SWScriptStorage& scriptStorage, const ServiceWorkerRegistrationKey& registrationKey, HashMap<URL, ImportedScriptAttributes>&& map)
 {
-    HashMap<URL, ServiceWorkerContextData::ImportedScript> importedScripts;
+    MemoryCompactRobinHoodHashMap<URL, ServiceWorkerContextData::ImportedScript> importedScripts;
     for (auto& pair : map) {
         auto importedScript = scriptStorage.retrieve(registrationKey, pair.key);
         if (!importedScript) {
@@ -241,7 +241,7 @@ bool RegistrationDatabase::openSQLiteDatabase(const String& fullFilename)
 
 String RegistrationDatabase::scriptStorageDirectory() const
 {
-    return FileSystem::pathByAppendingComponents(m_databaseDirectory, { "Scripts", "V1" });
+    return FileSystem::pathByAppendingComponents(m_databaseDirectory, { "Scripts"_s, "V1"_s });
 }
 
 SWScriptStorage& RegistrationDatabase::scriptStorage()
@@ -293,7 +293,7 @@ String RegistrationDatabase::ensureValidRecordsTable()
         }
 
         if (sqliteResult != SQLITE_ROW)
-            return "Error executing statement to fetch schema for the Records table.";
+            return "Error executing statement to fetch schema for the Records table."_s;
 
         currentSchema = statement->columnText(1);
     }
@@ -306,15 +306,15 @@ String RegistrationDatabase::ensureValidRecordsTable()
     return makeString("Unexpected schema: ", currentSchema);
 }
 
-static String updateViaCacheToString(ServiceWorkerUpdateViaCache update)
+static ASCIILiteral updateViaCacheToString(ServiceWorkerUpdateViaCache update)
 {
     switch (update) {
     case ServiceWorkerUpdateViaCache::Imports:
-        return "Imports";
+        return "Imports"_s;
     case ServiceWorkerUpdateViaCache::All:
-        return "All";
+        return "All"_s;
     case ServiceWorkerUpdateViaCache::None:
-        return "None";
+        return "None"_s;
     }
 
     RELEASE_ASSERT_NOT_REACHED();
@@ -332,13 +332,13 @@ static std::optional<ServiceWorkerUpdateViaCache> stringToUpdateViaCache(const S
     return std::nullopt;
 }
 
-static String workerTypeToString(WorkerType workerType)
+static ASCIILiteral workerTypeToString(WorkerType workerType)
 {
     switch (workerType) {
     case WorkerType::Classic:
-        return "Classic";
+        return "Classic"_s;
     case WorkerType::Module:
-        return "Module";
+        return "Module"_s;
     }
 
     RELEASE_ASSERT_NOT_REACHED();
@@ -462,9 +462,9 @@ bool RegistrationDatabase::doPushChanges(const Vector<ServiceWorkerContextData>&
             || insertStatement->bindText(3, data.registration.scopeURL.path().toString()) != SQLITE_OK
             || insertStatement->bindText(4, data.registration.key.topOrigin().databaseIdentifier()) != SQLITE_OK
             || insertStatement->bindDouble(5, data.registration.lastUpdateTime.secondsSinceEpoch().value()) != SQLITE_OK
-            || insertStatement->bindText(6, updateViaCacheToString(data.registration.updateViaCache)) != SQLITE_OK
+            || insertStatement->bindText(6, StringView { updateViaCacheToString(data.registration.updateViaCache) }) != SQLITE_OK
             || insertStatement->bindText(7, data.scriptURL.string()) != SQLITE_OK
-            || insertStatement->bindText(8, workerTypeToString(data.workerType)) != SQLITE_OK
+            || insertStatement->bindText(8, StringView { workerTypeToString(data.workerType) }) != SQLITE_OK
             || insertStatement->bindBlob(9, Span { cspEncoder.buffer(), cspEncoder.bufferSize() }) != SQLITE_OK
             || insertStatement->bindBlob(10, Span { coepEncoder.buffer(), coepEncoder.bufferSize() }) != SQLITE_OK
             || insertStatement->bindText(11, data.referrerPolicy) != SQLITE_OK
@@ -481,7 +481,7 @@ bool RegistrationDatabase::doPushChanges(const Vector<ServiceWorkerContextData>&
         ASSERT(mainScript);
         if (!mainScript)
             return false;
-        HashMap<URL, ScriptBuffer> importedScripts;
+        MemoryCompactRobinHoodHashMap<URL, ScriptBuffer> importedScripts;
         for (auto& [scriptURL, script] : data.scriptResourceMap) {
             auto importedScript = scriptStorage.store(data.registration.key, scriptURL, script.script);
             ASSERT(importedScript);
@@ -546,7 +546,7 @@ String RegistrationDatabase::importRecords()
 
         auto referrerPolicy = sql->columnText(10);
 
-        HashMap<URL, ServiceWorkerContextData::ImportedScript> scriptResourceMap;
+        MemoryCompactRobinHoodHashMap<URL, ServiceWorkerContextData::ImportedScript> scriptResourceMap;
         auto scriptResourceMapDataSpan = sql->columnBlobAsSpan(11);
         if (scriptResourceMapDataSpan.size()) {
             WTF::Persistence::Decoder scriptResourceMapDecoder(scriptResourceMapDataSpan);

@@ -97,10 +97,10 @@ void HTMLMapElement::parseAttribute(const QualifiedName& name, const AtomString&
         }
         if (isConnected())
             treeScope().removeImageMap(*this);
-        String mapName = value;
+        AtomString mapName = value;
         if (mapName[0] == '#')
-            mapName = mapName.substring(1);
-        m_name = mapName;
+            mapName = StringView(mapName).substring(1).toAtomString();
+        m_name = WTFMove(mapName);
         if (isConnected())
             treeScope().addImageMap(*this);
 
