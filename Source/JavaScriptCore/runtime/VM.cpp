@@ -1227,7 +1227,8 @@ void VM::dumpTypeProfilerData()
 
 void VM::queueMicrotask(JSGlobalObject& globalObject, Ref<Microtask>&& task)
 {
-    m_microtaskQueue.append(makeUnique<QueuedTask>(*this, &globalObject, WTFMove(task)));
+    globalObject.queueMicrotask(WTFMove(task));
+    // m_microtaskQueue.append(makeUnique<QueuedTask>(*this, &globalObject, WTFMove(task)));
 }
 
 void VM::callPromiseRejectionCallback(Strong<JSPromise>& promise)
@@ -1270,15 +1271,8 @@ void VM::drainMicrotasks()
 {
     if (UNLIKELY(executionForbidden()))
         m_microtaskQueue.clear();
-    else {
-        do {
-            while (!m_microtaskQueue.isEmpty()) {
-                m_microtaskQueue.takeFirst()->run();
-                if (m_onEachMicrotaskTick)
-                    m_onEachMicrotaskTick(*this);
-            }
-            didExhaustMicrotaskQueue();
-        } while (!m_microtaskQueue.isEmpty());
+    else if (auto *globalObject = deprecatedVMEntryGlobalObject(nullptr)) {
+        globalObject->drainMicrotasks();
     }
     finalizeSynchronousJSExecution();
 }

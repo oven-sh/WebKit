@@ -120,7 +120,7 @@ void DeferredWorkTimer::doWork(VM& vm)
                 globalObject->globalObjectMethodTable()->reportUncaughtExceptionAtEventLoop(globalObject, exception);
             }
 
-            vm.drainMicrotasks();
+            globalObject->drainMicrotasks();
             ASSERT(!vm.exceptionForInspection());
         }
         m_currentlyRunningTask = false;

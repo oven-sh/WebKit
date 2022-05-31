@@ -450,6 +450,7 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_proxyObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_callableProxyObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_proxyRevokeStructure;
+    LazyProperty<JSGlobalObject, JSObject> m_microtaskQueue;
     LazyClassStructure m_sharedArrayBufferStructure;
 
 #define DEFINE_STORAGE_FOR_SIMPLE_TYPE_PROTOTYPE(capitalName, lowerName, properName, instanceType, jsName, prototypeBase, featureFlag) \
@@ -580,6 +581,7 @@ public:
     bool isMapPrototypeSetFastAndNonObservable();
     bool isSetPrototypeAddFastAndNonObservable();
 
+    bool drainMicrotasks();
 
 #if ENABLE(DFG_JIT)
     using ReferencedGlobalPropertyWatchpointSets = HashMap<RefPtr<UniquedStringImpl>, Ref<WatchpointSet>, IdentifierRepHash>;
@@ -709,6 +711,8 @@ public:
 
     JSFunction* parseIntFunction() const { return m_parseIntFunction.get(this); }
     JSFunction* parseFloatFunction() const { return m_parseFloatFunction.get(this); }
+
+    JSObject *microtaskQueue() const { return m_microtaskQueue.get(this); }
 
     JSFunction* evalFunction() const { return m_evalFunction.get(this); }
     JSFunction* throwTypeErrorFunction() const;

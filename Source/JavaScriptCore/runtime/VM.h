@@ -610,6 +610,7 @@ public:
     }
 
     void clearLastException() { m_lastException = nullptr; }
+    void didExhaustMicrotaskQueue();
 
     CallFrame** addressOfCallFrameForCatch() { return &callFrameForCatch; }
 
@@ -901,7 +902,7 @@ private:
     void primitiveGigacageDisabled();
 
     void callPromiseRejectionCallback(Strong<JSPromise>&);
-    void didExhaustMicrotaskQueue();
+  
 
 #if ENABLE(GC_VALIDATION)
     const ClassInfo* m_initializingObjectClass;

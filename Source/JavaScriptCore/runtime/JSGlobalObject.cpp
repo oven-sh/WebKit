@@ -277,7 +277,6 @@ static JSC_DECLARE_HOST_FUNCTION(hasOwnLengthProperty);
 static JSC_DECLARE_HOST_FUNCTION(createPrivateSymbol);
 static JSC_DECLARE_HOST_FUNCTION(enableSuperSampler);
 static JSC_DECLARE_HOST_FUNCTION(disableSuperSampler);
-static JSC_DECLARE_HOST_FUNCTION(enqueueJob);
 #if ASSERT_ENABLED
 static JSC_DECLARE_HOST_FUNCTION(assertCall);
 #endif
@@ -388,6 +387,13 @@ JSC_DEFINE_HOST_FUNCTION(assertCall, (JSGlobalObject* globalObject, CallFrame* c
     return JSValue::encode(jsUndefined());
 }
 #endif // ASSERT_ENABLED
+
+// JSC_DEFINE_HOST_FUNCTION(hostUncaughtExceptionTracker, (JSGlobalObject* globalObject, CallFrame* callFrame))
+// {
+//     VM& vm = globalObject->vm();
+//     globalObject->putDirect(vm, vm.propertyNames->builtinNames().microtaskQueuePrivateName(), callFrame->argument(0), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
+//     return JSValue::encode(jsUndefined());
+// }
 
 #if ENABLE(SAMPLING_PROFILER)
 JSC_DEFINE_HOST_FUNCTION(enableSamplingProfiler, (JSGlobalObject* globalObject, CallFrame*))
@@ -594,20 +600,20 @@ const GlobalObjectMethodTable JSGlobalObject::s_globalObjectMethodTable = {
 @end
 */
 
-JSC_DEFINE_HOST_FUNCTION(enqueueJob, (JSGlobalObject* globalObject, CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
+// JSC_DEFINE_HOST_FUNCTION(enqueueJob, (JSGlobalObject* globalObject, CallFrame* callFrame))
+// {
+//     VM& vm = globalObject->vm();
 
-    JSValue job = callFrame->argument(0);
-    JSValue argument0 = callFrame->argument(1);
-    JSValue argument1 = callFrame->argument(2);
-    JSValue argument2 = callFrame->argument(3);
-    JSValue argument3 = callFrame->argument(4);
+//     JSValue job = callFrame->argument(0);
+//     JSValue argument0 = callFrame->argument(1);
+//     JSValue argument1 = callFrame->argument(2);
+//     JSValue argument2 = callFrame->argument(3);
+//     JSValue argument3 = callFrame->argument(4);
 
-    globalObject->queueMicrotask(createJSMicrotask(vm, job, argument0, argument1, argument2, argument3));
+//     globalObject->queueMicrotask(createJSMicrotask(vm, job, argument0, argument1, argument2, argument3));
 
-    return encodedJSUndefined();
-}
+//     return encodedJSUndefined();
+// }
 
 JSGlobalObject::JSGlobalObject(VM& vm, Structure* structure, const GlobalObjectMethodTable* globalObjectMethodTable)
     : Base(vm, structure, nullptr)
@@ -991,6 +997,7 @@ void JSGlobalObject::init(VM& vm)
             });
     }
 
+
     m_iteratorPrototype.set(vm, this, IteratorPrototype::create(vm, this, IteratorPrototype::createStructure(vm, this, m_objectPrototype.get())));
     m_asyncIteratorPrototype.set(vm, this, AsyncIteratorPrototype::create(vm, this, AsyncIteratorPrototype::createStructure(vm, this, m_objectPrototype.get())));
 
@@ -1013,6 +1020,16 @@ void JSGlobalObject::init(VM& vm)
 
     JSFunction* defaultPromiseThen = JSFunction::create(vm, promisePrototypeThenCodeGenerator(vm), this);
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::defaultPromiseThen)].set(vm, this, defaultPromiseThen);
+
+
+    JSFunction* drainMicrotaskQueue = JSFunction::create(vm, globalOperationsDrainMicrotaskQueueCodeGenerator(vm), this);
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::drainMicrotaskQueue)].set(vm, this, drainMicrotaskQueue);
+
+    //  m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::hostUncaughtExceptionTracker)].initLater([] (const Initializer<JSFunction>& init) {
+    //     JSFunction *hostUncaughtExceptionTracker = JSFunction::create(init.vm, globalFuncHostUncaughtExceptionTracker, init.owner);
+    //     init.set(hostUncaughtExceptionTracker);
+    // });
+
 
 #define CREATE_PROTOTYPE_FOR_SIMPLE_TYPE(capitalName, lowerName, properName, instanceType, jsName, prototypeBase, featureFlag) if (featureFlag) { \
         m_ ## lowerName ## Prototype.set(vm, this, capitalName##Prototype::create(vm, this, capitalName##Prototype::createStructure(vm, this, m_ ## prototypeBase ## Prototype.get()))); \
@@ -1253,6 +1270,8 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     IntlObject* intl = IntlObject::create(vm, this, IntlObject::createStructure(vm, this, m_objectPrototype.get()));
     putDirectWithoutTransition(vm, vm.propertyNames->Intl, intl, static_cast<unsigned>(PropertyAttribute::DontEnum));
 
+    
+
     if (Options::useTemporal()) {
         m_calendarStructure.initLater(
             [] (const Initializer<Structure>& init) {
@@ -1404,9 +1423,9 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::copyDataProperties)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, jsCast<JSGlobalObject*>(init.owner), 2, String(), globalFuncCopyDataProperties));
         });
-    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::enqueueJob)].initLater([] (const Initializer<JSCell>& init) {
-            init.set(JSFunction::create(init.vm, jsCast<JSGlobalObject*>(init.owner), 0, "enqueueJob"_s, enqueueJob));
-        });
+    // m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::enqueueJob)].initLater([] (const Initializer<JSCell>& init) {
+    //         init.set(JSFunction::create(init.vm, jsCast<JSGlobalObject*>(init.owner), 0, "enqueueJob"_s, enqueueJob));
+    //     });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::makeTypeError)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, jsCast<JSGlobalObject*>(init.owner), 0, String(), globalFuncMakeTypeError));
         });
@@ -1575,6 +1594,8 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         init.set(init.vm.emptyPropertyNameEnumerator());
     });
 
+
+
     if (Options::exposeProfilersOnGlobalObject()) {
 #if ENABLE(SAMPLING_PROFILER)
         putDirectWithoutTransition(vm, Identifier::fromString(vm, "__enableSamplingProfiler"_s), JSFunction::create(vm, this, 1, String(), enableSamplingProfiler), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
@@ -1679,7 +1700,32 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         this->symbolPrototype();
     }
 
+
     fixupPrototypeChainWithObjectPrototype(vm);
+}
+
+bool JSGlobalObject::drainMicrotasks()
+{
+    auto &vm = this->vm();
+
+    if (!vm.topCallFrame)
+            vm.clearLastException();
+
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    JSC::JSObject* function = jsCast<JSC::JSObject*>(linkTimeConstant(LinkTimeConstant::drainMicrotaskQueue));
+    ASSERT(function);
+    JSC::CallData callData = JSC::getCallData(function);
+    JSC::JSValue result = JSC::call(this, function, callData, this, ArgList());
+    if (UNLIKELY(scope.exception())) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwScope.throwException(this, scope.exception());
+        scope.clearException();
+        return true;
+    }
+
+    scope.clearException();
+    vm.didExhaustMicrotaskQueue();
+    return result.toBoolean(this);
 }
 
 bool JSGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
@@ -2302,6 +2348,7 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_callableProxyObjectStructure.visit(visitor);
     thisObject->m_proxyRevokeStructure.visit(visitor);
     thisObject->m_sharedArrayBufferStructure.visit(visitor);
+    thisObject->m_microtaskQueue.visit(visitor);
 
     for (auto& property : thisObject->m_linkTimeConstants)
         property.visit(visitor);
@@ -2577,12 +2624,22 @@ void JSGlobalObject::bumpGlobalLexicalBindingEpoch(VM& vm)
 
 void JSGlobalObject::queueMicrotask(Ref<Microtask>&& task)
 {
-    if (globalObjectMethodTable()->queueMicrotaskToEventLoop) {
-        globalObjectMethodTable()->queueMicrotaskToEventLoop(*this, WTFMove(task));
-        return;
-    }
+    auto &vm = this->vm();
+    JSFunction* handler = JSNativeStdFunction::create(vm, this, 0, String(), [task](JSGlobalObject* globalObject, CallFrame* callFrame) {
+        task->run(globalObject);
+        return JSValue::encode(jsUndefined());
+    });
+    MarkedArgumentBuffer args;
+    args.append(JSValue(handler));
+    JSObject *enqueueJob = getDirect(vm, vm.propertyNames->builtinNames().enqueueJobPrivateName()).getObject(); 
+    ASSERT(enqueueJob);
 
-    vm().queueMicrotask(*this, WTFMove(task));
+    auto callData = getCallData(enqueueJob);
+    ASSERT(callData.type != CallData::Type::None);
+
+    auto catchScope = DECLARE_CATCH_SCOPE(vm);
+    JSC::call(this, enqueueJob, callData, jsUndefined(), args);
+    catchScope.clearException();
 }
 
 void JSGlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject*, Exception* exception)
@@ -2645,6 +2702,14 @@ void JSGlobalObject::finishCreation(VM& vm)
     m_runtimeFlags = m_globalObjectMethodTable->javaScriptRuntimeFlags(this);
     init(vm);
     setGlobalThis(vm, JSProxy::create(vm, JSProxy::createStructure(vm, this, getPrototypeDirect()), this));
+    {
+        JSFunction* function = jsCast<JSFunction*>(linkTimeConstant(LinkTimeConstant::initializeMicrotaskQueue));
+        JSC::CallData callData = JSC::getCallData(function);
+        JSC::JSValue result = JSC::call(this, function, callData, jsUndefined(), ArgList());
+        gcProtect(result);
+        putDirectWithoutTransition(vm, vm.propertyNames->builtinNames().microtaskQueuePrivateName(), result, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    } 
+
     ASSERT(type() == GlobalObjectType);
 }
 

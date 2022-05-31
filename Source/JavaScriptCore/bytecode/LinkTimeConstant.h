@@ -46,7 +46,7 @@ class JSGlobalObject;
     v(setPrototypeDirect, nullptr) \
     v(setPrototypeDirectOrThrow, nullptr) \
     v(copyDataProperties, nullptr) \
-    v(enqueueJob, nullptr) \
+    v(drainMicrotaskQueue, nullptr) \
     v(makeTypeError, nullptr) \
     v(AggregateError, nullptr) \
     v(typedArrayLength, nullptr) \
@@ -120,6 +120,7 @@ class JSGlobalObject;
     v(createRemoteFunction, nullptr) \
     v(isRemoteFunction, nullptr) \
     v(arraySort, nullptr) \
+    v(hostUncaughtExceptionTracker, nullptr) \
 
 
 #define DECLARE_LINK_TIME_CONSTANT(name, code) name,

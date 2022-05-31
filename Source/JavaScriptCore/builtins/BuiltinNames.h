@@ -80,7 +80,6 @@ namespace JSC {
     macro(BuiltinLog) \
     macro(BuiltinDescribe) \
     macro(homeObject) \
-    macro(enqueueJob) \
     macro(hostPromiseRejectionTracker) \
     macro(onFulfilled) \
     macro(onRejected) \
@@ -192,6 +191,8 @@ namespace JSC {
     macro(createRemoteFunction) \
     macro(isRemoteFunction) \
     macro(arraySort) \
+    macro(microtaskQueue) \
+    macro(hostUncaughtExceptionTracker) \
 
 
 namespace Symbols {

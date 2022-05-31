@@ -2504,8 +2504,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDumpTypesForAllVariables, (JSGlobalObject* glob
 
 JSC_DEFINE_HOST_FUNCTION(functionDrainMicrotasks, (JSGlobalObject* globalObject, CallFrame*))
 {
-    VM& vm = globalObject->vm();
-    vm.drainMicrotasks();
+    globalObject->drainMicrotasks();
     return JSValue::encode(jsUndefined());
 }
 
@@ -3274,8 +3273,10 @@ static void runWithOptions(GlobalObject* globalObject, CommandLine& options, boo
             });
 
             promise->then(globalObject, fulfillHandler, rejectHandler);
-            scope.releaseAssertNoExceptionExceptTermination();
-            vm.drainMicrotasks();
+            
+            globalObject->drainMicrotasks();
+            checkException(globalObject, isLastFile, scope.exception(), jsUndefined(), options, success);
+
         } else {
             NakedPtr<Exception> evaluationException;
             JSValue returnValue = evaluate(globalObject, jscSource(scriptBuffer, sourceOrigin , fileName), JSValue(), evaluationException);
@@ -3373,7 +3374,7 @@ static void runInteractive(GlobalObject* globalObject)
         putchar('\n');
 
         scope.clearException();
-        vm.drainMicrotasks();
+        globalObject->drainMicrotasks();
     }
     printf("\n");
 }
@@ -3670,7 +3671,7 @@ int runJSC(const CommandLine& options, bool isWorker, const Func& func)
         globalObject = GlobalObject::create(vm, GlobalObject::createStructure(vm, jsNull()), options.m_arguments);
         globalObject->setRemoteDebuggingEnabled(options.m_enableRemoteDebugging);
         func(vm, globalObject, success);
-        vm.drainMicrotasks();
+        globalObject->drainMicrotasks();
     }
     vm.deferredWorkTimer->runRunLoop();
     {

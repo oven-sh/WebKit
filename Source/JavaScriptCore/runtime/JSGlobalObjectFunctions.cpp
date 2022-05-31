@@ -767,6 +767,18 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncSetPrototypeDirectOrThrow, (JSGlobalObject* g
     return JSValue::encode(jsUndefined());
 }
 
+// JSC_DEFINE_HOST_FUNCTION(globalFuncHostUncaughtExceptionTracker, (JSGlobalObject* globalObject, CallFrame* callFrame))
+// {
+//     Exception *exception = JSC::Exception::create(globalObject, callFrame->argument(1));
+//     if (globalObject->globalObjectMethodTable()->reportUncaughtExceptionAtEventLoop)
+//         globalObject->globalObjectMethodTable()->reportUncaughtExceptionAtEventLoop(globalObject, exception);
+//     else 
+//         globalObject->reportUncaughtException(exception);
+    
+
+//     return JSValue::encode(jsUndefined());
+// }
+
 JSC_DEFINE_HOST_FUNCTION(globalFuncHostPromiseRejectionTracker, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();

@@ -75,3 +75,192 @@ function speciesConstructor(obj, defaultConstructor)
         return constructor;
     @throwTypeError("|this|.constructor[Symbol.species] is not a constructor");
 }
+
+@globalPrivate
+function enqueueJob(job) {
+    "use strict";
+
+    
+    switch (@argumentCount()) {
+      case 1: {
+        @microtaskQueue.push([job]);
+        break;
+      }
+      case 2: {
+        @microtaskQueue.push([job, @argument(1)]);
+        break;
+      }
+      case 3: {
+        @microtaskQueue.push([job, @argument(1), @argument(2)]);
+        break;
+      }
+      case 4: {
+        @microtaskQueue.push([job, @argument(1), @argument(2), @argument(3)]);
+        break;
+      }
+      case 5: {
+        @microtaskQueue.push([job, @argument(1), @argument(2), @argument(3), @argument(4)]);
+        break;
+      }
+      case 0: {
+        break;
+      }
+      default: {
+        @microtaskQueue.push(@Array.prototype.slice.@call(arguments));
+        break;
+      }
+    }
+}
+
+function drainMicrotaskQueue() {
+    "use strict";
+
+    var any = false;
+    while (true) {
+        var item = @microtaskQueue.shift();
+        if (item === @undefined) return any;
+        
+        var job = item[0];
+
+        switch (job) {
+          case @promiseResolveThenableJobWithoutPromiseFast: {
+            @promiseResolveThenableJobWithoutPromiseFast(item[1], item[2], item[3]);
+            break;
+          }
+          case @promiseResolveThenableJobFast: {
+            @promiseResolveThenableJobFast(item[1], item[2]);
+            break;
+          }
+          case @promiseReactionJob: {
+            @promiseReactionJob(item[1], item[2], item[3], item[4]);
+            break;
+          }
+          case @promiseReactionJobWithoutPromise: {
+            @promiseReactionJobWithoutPromise(item[1], item[2]);
+            break;
+          }
+          case @promiseResolveThenableJob: {
+            @promiseResolveThenableJob(item[1], item[2], item[3]);
+            break;
+          }
+          default: {
+            // using .@apply was 20% slower
+            // I saw calls to variadic arguments in Instruments
+            switch (@toLength(item.length)) {
+              case 1: {
+                job();
+                break;
+              }
+              case 2: {
+                job(item[1]);
+                break;
+              }
+              case 3: {
+                job(item[1], item[2]);
+                break;
+              }
+              case 4: {
+                job(item[1], item[2], item[3]);
+                break;
+              }
+              case 5: {
+                job(item[1], item[2], item[3], item[4]);
+                break;
+              }
+              default: {
+                job.@apply(null, item.slice(1));
+                break;
+              }
+            }
+            break;
+          }
+        }
+        
+        any = true;
+    }
+
+    return any;
+}
+
+
+@globalPrivate
+function initializeMicrotaskQueue() {
+    'use strict';
+
+    class Denqueue {
+      constructor() {
+        this._head = 0;
+        this._tail = 0;
+        // this._capacity = 0;
+        this._capacityMask = 0x3;
+        this._list = @newArrayWithSize(4);
+      }
+
+      size() {
+        if (this._head === this._tail) return 0;
+        if (this._head < this._tail) return this._tail - this._head;
+        else return this._capacityMask + 1 - (this._head - this._tail);
+      }
+
+      shift() {
+        var head = this._head;
+        if (head === this._tail) return @undefined;
+        var item = this._list[head];
+        @putByValDirect(this._list, head, @undefined);
+        this._head = (head + 1) & this._capacityMask;
+        if (head < 2 && this._tail > 10000 && this._tail <= this._list.length >>> 2) this._shrinkArray();
+        return item;
+      }
+
+      push(item) {
+        var tail = this._tail;
+        @putByValDirect(this._list, tail, item);
+        this._tail = (tail + 1) & this._capacityMask;
+        if (this._tail === this._head) {
+          this._growArray();
+        }
+        // if (this._capacity && this.size() > this._capacity) {
+          // this.shift();
+        // }
+      }
+
+      _copyArray(fullCopy) {
+        var list = this._list;
+        var len = @toLength(list.length);
+        
+        if (fullCopy || this._head > this._tail) {
+          var _head = @toLength(this._head);
+          var _tail = @toLength(this._tail);
+          var total = @toLength((len - _head) + _tail);
+          var array = @newArrayWithSize(total);
+          var j = 0;
+          for (var i = _head; i < len; i++) @putByValDirect(array, j++, list[i]);
+          for (var i = 0; i < _tail; i++) @putByValDirect(array, j++, list[i]);
+          return array;
+        } else {
+          return @Array.prototype.slice.@call(list, this._head, this._tail);
+        }
+      }
+
+      _growArray() {
+        if (this._head) {
+          // copy existing data, head to end, then beginning to tail.
+          this._list = this._copyArray(true);
+          this._head = 0;
+        }
+      
+        // head is at 0 and array is now full, safe to extend
+        this._tail = @toLength(this._list.length);
+      
+        this._list.length <<= 1;
+        this._capacityMask = (this._capacityMask << 1) | 1;
+      }
+
+      shrinkArray() {
+        this._list.length >>>= 1;
+        this._capacityMask >>>= 1;
+      }
+    }
+    
+    return new Denqueue();
+}
