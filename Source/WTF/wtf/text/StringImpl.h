@@ -40,6 +40,7 @@
 #include <wtf/text/StringCommon.h>
 #include <wtf/text/StringHasher.h>
 #include <wtf/text/UTF8ConversionError.h>
+#include <wtf/ForkExtras.h>
 
 #if USE(CF)
 typedef const struct __CFString * CFStringRef;
@@ -395,6 +396,7 @@ public:
 
     // FIXME: Does this really belong in StringImpl?
     template<typename SourceCharacterType, typename DestinationCharacterType> static void copyCharacters(DestinationCharacterType* destination, const SourceCharacterType* source, unsigned numCharacters);
+    template<typename SourceCharacterType> static void iterCharacters(jsstring_iterator* iter, unsigned start, const SourceCharacterType* source, unsigned numCharacters);
 
     // Some string features, like reference counting and the atomicity flag, are not
     // thread-safe. We achieve thread safety by isolation, giving each thread
@@ -1119,8 +1121,21 @@ inline void StringImpl::deref()
     m_refCount = tempRefCount;
 }
 
+template<typename SourceCharacterType>
+inline void StringImpl::iterCharacters(jsstring_iterator* iter, unsigned start, const SourceCharacterType* source, unsigned numCharacters)
+{
+    static_assert(std::is_same_v<SourceCharacterType, LChar> || std::is_same_v<SourceCharacterType, UChar>);
+
+    if constexpr (std::is_same_v<SourceCharacterType, LChar>) {
+       iter->write8(iter, (const void*) source, numCharacters, start);
+    } else {
+       iter->write16(iter, (const void*) source, numCharacters, start);
+    }
+}
+
 template<typename SourceCharacterType, typename DestinationCharacterType>
 inline void StringImpl::copyCharacters(DestinationCharacterType* destination, const SourceCharacterType* source, unsigned numCharacters)
+
 {
     ASSERT(destination || !numCharacters); // Workaround for clang static analyzer (<rdar://problem/82475719>).
     static_assert(std::is_same_v<SourceCharacterType, LChar> || std::is_same_v<SourceCharacterType, UChar>);
