@@ -173,7 +173,11 @@ using JSOrWasmInstruction = std::variant<const JSInstruction*, const WasmInstruc
 
         JSValue execute(CallFrameClosure&);
 
-        inline VM& vm();
+
+        template<bool isJSCall>
+        JSValue executeCallImpl(JSGlobalObject*, JSObject* function, const CallData&, JSValue thisValue, const ArgList&);
+        template<bool isJSConstruct>
+        JSObject* executeConstructImpl(JSGlobalObject*, JSObject* function, const CallData&, const ArgList&, JSValue newTarget);
 #if ENABLE(C_LOOP)
         CLoopStack m_cloopStack;
 #endif
@@ -199,6 +203,7 @@ using JSOrWasmInstruction = std::variant<const JSInstruction*, const WasmInstruc
     void setupForwardArgumentsFrame(JSGlobalObject*, CallFrame* execCaller, CallFrame* execCallee, uint32_t length);
     void setupForwardArgumentsFrameAndSetThis(JSGlobalObject*, CallFrame* execCaller, CallFrame* execCallee, JSValue thisValue, uint32_t length);
     
+
 } // namespace JSC
 
 namespace WTF {

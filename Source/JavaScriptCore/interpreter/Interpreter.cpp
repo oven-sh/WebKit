@@ -995,7 +995,9 @@ failedJSONP:
     return checkedReturn(result);
 }
 
-JSValue Interpreter::executeCall(JSGlobalObject* lexicalGlobalObject, JSObject* function, const CallData& callData, JSValue thisValue, const ArgList& args)
+
+template<bool isJSCall>
+JSValue Interpreter::executeCallImpl(JSGlobalObject* lexicalGlobalObject, JSObject* function, const CallData& callData, JSValue thisValue, const ArgList& args)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -1009,13 +1011,12 @@ JSValue Interpreter::executeCall(JSGlobalObject* lexicalGlobalObject, JSObject* 
     if (vm.isCollectorBusyOnCurrentThread())
         return jsNull();
 
-    bool isJSCall = (callData.type == CallData::Type::JS);
     JSScope* scope = nullptr;
     size_t argsCount = 1 + args.size(); // implicit "this" parameter
 
     JSGlobalObject* globalObject;
 
-    if (isJSCall) {
+    if constexpr (isJSCall) {
         scope = callData.js.scope;
         globalObject = scope->globalObject();
     } else {
@@ -1038,7 +1039,7 @@ JSValue Interpreter::executeCall(JSGlobalObject* lexicalGlobalObject, JSObject* 
         DeferTraps deferTraps(vm); // We can't jettison this code if we're about to run it.
 
         CodeBlock* newCodeBlock = nullptr;
-        if (isJSCall) {
+        if constexpr (isJSCall) {
             // Compile the callee:
             callData.js.functionExecutable->prepareForExecution<FunctionExecutable>(vm, jsCast<JSFunction*>(function), scope, CodeForCall, newCodeBlock);
             RETURN_IF_EXCEPTION(throwScope, checkedReturn(throwScope.exception()));
@@ -1049,7 +1050,7 @@ JSValue Interpreter::executeCall(JSGlobalObject* lexicalGlobalObject, JSObject* 
 
         {
             DisallowGC disallowGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
-            if (isJSCall)
+            if constexpr (isJSCall)
                 jitCode = callData.js.functionExecutable->generatedJITCodeForCall();
             protoCallFrame.init(newCodeBlock, globalObject, function, thisValue, argsCount, args.data());
         }
@@ -1057,7 +1058,7 @@ JSValue Interpreter::executeCall(JSGlobalObject* lexicalGlobalObject, JSObject* 
 
     JSValue result;
     // Execute the code:
-    if (isJSCall) {
+    if constexpr (isJSCall) {
         throwScope.release();
         ASSERT(jitCode == callData.js.functionExecutable->generatedJITCodeForCall().ptr());
         result = jitCode->execute(&vm, &protoCallFrame);
@@ -1069,7 +1070,18 @@ JSValue Interpreter::executeCall(JSGlobalObject* lexicalGlobalObject, JSObject* 
     return checkedReturn(result);
 }
 
-JSObject* Interpreter::executeConstruct(JSGlobalObject* lexicalGlobalObject, JSObject* constructor, const CallData& constructData, const ArgList& args, JSValue newTarget)
+JSValue Interpreter::executeCall(JSGlobalObject* lexicalGlobalObject, JSObject* function, const CallData& callData, JSValue thisValue, const ArgList& args)
+{
+    if (callData.type == CallData::Type::JS) {
+        return executeCallImpl<true>(lexicalGlobalObject, function, callData, thisValue, args);
+    } else {
+        return executeCallImpl<false>(lexicalGlobalObject, function, callData, thisValue, args);
+    }
+}
+
+
+template<bool isJSConstruct>
+JSObject* Interpreter::executeConstructImpl(JSGlobalObject* lexicalGlobalObject, JSObject* constructor, const CallData& constructData, const ArgList& args, JSValue newTarget)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -1087,13 +1099,12 @@ JSObject* Interpreter::executeConstruct(JSGlobalObject* lexicalGlobalObject, JSO
         return nullptr;
     }
 
-    bool isJSConstruct = (constructData.type == CallData::Type::JS);
     JSScope* scope = nullptr;
     size_t argsCount = 1 + args.size(); // implicit "this" parameter
 
     JSGlobalObject* globalObject;
 
-    if (isJSConstruct) {
+    if constexpr (isJSConstruct) {
         scope = constructData.js.scope;
         globalObject = scope->globalObject();
     } else {
@@ -1118,7 +1129,7 @@ JSObject* Interpreter::executeConstruct(JSGlobalObject* lexicalGlobalObject, JSO
         DeferTraps deferTraps(vm); // We can't jettison this code if we're about to run it.
 
         CodeBlock* newCodeBlock = nullptr;
-        if (isJSConstruct) {
+        if constexpr (isJSConstruct) {
             // Compile the callee:
             constructData.js.functionExecutable->prepareForExecution<FunctionExecutable>(vm, jsCast<JSFunction*>(constructor), scope, CodeForConstruct, newCodeBlock);
             RETURN_IF_EXCEPTION(throwScope, nullptr);
@@ -1129,7 +1140,7 @@ JSObject* Interpreter::executeConstruct(JSGlobalObject* lexicalGlobalObject, JSO
 
         {
             DisallowGC disallowGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
-            if (isJSConstruct)
+            if constexpr (isJSConstruct)
                 jitCode = constructData.js.functionExecutable->generatedJITCodeForConstruct();
             protoCallFrame.init(newCodeBlock, globalObject, constructor, newTarget, argsCount, args.data());
         }
@@ -1137,7 +1148,7 @@ JSObject* Interpreter::executeConstruct(JSGlobalObject* lexicalGlobalObject, JSO
 
     JSValue result;
     // Execute the code.
-    if (isJSConstruct) {
+    if constexpr (isJSConstruct) {
         ASSERT(jitCode == constructData.js.functionExecutable->generatedJITCodeForConstruct().ptr());
         result = jitCode->execute(&vm, &protoCallFrame);
     } else {
@@ -1151,6 +1162,15 @@ JSObject* Interpreter::executeConstruct(JSGlobalObject* lexicalGlobalObject, JSO
     ASSERT(result.isObject());
     return checkedReturn(asObject(result));
 }
+
+JSObject* Interpreter::executeConstruct(JSGlobalObject* lexicalGlobalObject, JSObject* constructor, const CallData& constructData, const ArgList& args, JSValue newTarget) {
+    if (constructData.type == CallData::Type::JS) {
+        return executeConstructImpl<true>(lexicalGlobalObject, constructor, constructData, args, newTarget);
+    } else {
+        return executeConstructImpl<false>(lexicalGlobalObject, constructor, constructData, args, newTarget);
+    }
+}
+
 
 CallFrameClosure Interpreter::prepareForRepeatCall(FunctionExecutable* functionExecutable, CallFrame* callFrame, ProtoCallFrame* protoCallFrame, JSFunction* function, int argumentCountIncludingThis, JSScope* scope, const ArgList& args)
 {
