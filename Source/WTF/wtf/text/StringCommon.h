@@ -439,6 +439,25 @@ ALWAYS_INLINE static size_t findInner(const SearchCharacterType* searchCharacter
 template<typename CharacterType, std::enable_if_t<std::is_integral_v<CharacterType>>* = nullptr>
 inline size_t find(const CharacterType* characters, unsigned length, CharacterType matchCharacter, unsigned index = 0)
 {
+    
+    if constexpr (sizeof(CharacterType) == 1) {
+        if (length > index && length - index >= 16) {
+            const CharacterType *result = reinterpret_cast<const CharacterType*>(
+                // memchr() is faster for long strings
+                memchr(
+                    characters + index, 
+                    matchCharacter,
+                    // count
+                    length - index
+                )
+            );
+            ASSERT(!result || (result - characters) >= index);
+            if (result != nullptr) {
+                return result - characters;
+            }
+            return notFound;
+        }
+    }
     while (index < length) {
         if (characters[index] == matchCharacter)
             return index;
