@@ -530,6 +530,7 @@ set(WTF_SOURCES
     text/StringBuffer.cpp
     text/StringBuilder.cpp
     text/StringBuilderJSON.cpp
+    text/StringCommon.cpp
     text/StringImpl.cpp
     text/StringView.cpp
     text/SymbolImpl.cpp
