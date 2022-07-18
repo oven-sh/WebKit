@@ -1040,6 +1040,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/HashMapImplInlines.h
     runtime/Identifier.h
     runtime/IdentifierInlines.h
+    runtime/ImplementationVisibility.h
     runtime/IndexingHeader.h
     runtime/IndexingHeaderInlines.h
     runtime/IndexingType.h
