@@ -26,7 +26,7 @@
 
 // @internal
 
-@globalPrivate
+@linkTimeConstant
 function pushNewPromiseReaction(thenable, existingReactions, promiseOrCapability, onFulfilled, onRejected)
 {
     "use strict";
@@ -49,7 +49,7 @@ function pushNewPromiseReaction(thenable, existingReactions, promiseOrCapability
     }
 }
 
-@globalPrivate
+@linkTimeConstant
 function newPromiseCapabilitySlow(constructor)
 {
     "use strict";
@@ -81,7 +81,7 @@ function newPromiseCapabilitySlow(constructor)
     return promiseCapability;
 }
 
-@globalPrivate
+@linkTimeConstant
 function newPromiseCapability(constructor)
 {
     "use strict";
@@ -101,7 +101,7 @@ function newPromiseCapability(constructor)
     return @newPromiseCapabilitySlow(constructor);
 }
 
-@globalPrivate
+@linkTimeConstant
 function promiseResolve(constructor, value)
 {
     "use strict";
@@ -118,7 +118,7 @@ function promiseResolve(constructor, value)
     return @promiseResolveSlow(constructor, value);
 }
 
-@globalPrivate
+@linkTimeConstant
 function promiseResolveSlow(constructor, value)
 {
     "use strict";
@@ -129,7 +129,7 @@ function promiseResolveSlow(constructor, value)
     return promiseCapability.@promise;
 }
 
-@globalPrivate
+@linkTimeConstant
 function promiseRejectSlow(constructor, reason)
 {
     "use strict";
@@ -140,7 +140,7 @@ function promiseRejectSlow(constructor, reason)
     return promiseCapability.@promise;
 }
 
-@globalPrivate
+@linkTimeConstant
 function newHandledRejectedPromise(error)
 {
     "use strict";
@@ -150,7 +150,7 @@ function newHandledRejectedPromise(error)
     return promise;
 }
 
-@globalPrivate
+@linkTimeConstant
 function triggerPromiseReactions(state, reactions, argument)
 {
     "use strict";
@@ -170,7 +170,7 @@ function triggerPromiseReactions(state, reactions, argument)
     @assert(i === count);
 }
 
-@globalPrivate
+@linkTimeConstant
 function resolvePromise(promise, resolution)
 {
     "use strict";
@@ -208,7 +208,7 @@ function resolvePromise(promise, resolution)
 }
 
 // Keep in sync with JSPromise::rejectedPromise.
-@globalPrivate
+@linkTimeConstant
 function rejectPromise(promise, reason)
 {
     "use strict";
@@ -227,7 +227,7 @@ function rejectPromise(promise, reason)
     @triggerPromiseReactions(@promiseStateRejected, reactions, reason);
 }
 
-@globalPrivate
+@linkTimeConstant
 function fulfillPromise(promise, value)
 {
     "use strict";
@@ -243,7 +243,7 @@ function fulfillPromise(promise, value)
     @triggerPromiseReactions(@promiseStateFulfilled, reactions, value);
 }
 
-@globalPrivate
+@linkTimeConstant
 function resolvePromiseWithFirstResolvingFunctionCallCheck(promise, value)
 {
     "use strict";
@@ -256,7 +256,7 @@ function resolvePromiseWithFirstResolvingFunctionCallCheck(promise, value)
     return @resolvePromise(promise, value);
 }
 
-@globalPrivate
+@linkTimeConstant
 function fulfillPromiseWithFirstResolvingFunctionCallCheck(promise, value)
 {
     "use strict";
@@ -269,7 +269,7 @@ function fulfillPromiseWithFirstResolvingFunctionCallCheck(promise, value)
     return @fulfillPromise(promise, value);
 }
 
-@globalPrivate
+@linkTimeConstant
 function rejectPromiseWithFirstResolvingFunctionCallCheck(promise, reason)
 {
     "use strict";
@@ -282,7 +282,7 @@ function rejectPromiseWithFirstResolvingFunctionCallCheck(promise, reason)
     return @rejectPromise(promise, reason);
 }
 
-@globalPrivate
+@linkTimeConstant
 function createResolvingFunctions(promise)
 {
     "use strict";
@@ -309,7 +309,7 @@ function createResolvingFunctions(promise)
     return { @resolve: resolve, @reject: reject };
 }
 
-@globalPrivate
+@linkTimeConstant
 function promiseReactionJobWithoutPromise(handler, argument)
 {
     "use strict";
@@ -322,7 +322,7 @@ function promiseReactionJobWithoutPromise(handler, argument)
 }
 
 // This function has strong guarantee that each handler function (onFulfilled and onRejected) will be called at most once.
-@globalPrivate
+@linkTimeConstant
 function resolveWithoutPromise(resolution, onFulfilled, onRejected)
 {
     "use strict";
@@ -361,7 +361,7 @@ function resolveWithoutPromise(resolution, onFulfilled, onRejected)
 }
 
 // This function has strong guarantee that each handler function (onFulfilled and onRejected) will be called at most once.
-@globalPrivate
+@linkTimeConstant
 function rejectWithoutPromise(reason, onFulfilled, onRejected)
 {
     "use strict";
@@ -370,7 +370,7 @@ function rejectWithoutPromise(reason, onFulfilled, onRejected)
 }
 
 // This function has strong guarantee that each handler function (onFulfilled and onRejected) will be called at most once.
-@globalPrivate
+@linkTimeConstant
 function fulfillWithoutPromise(value, onFulfilled, onRejected)
 {
     "use strict";
@@ -381,7 +381,7 @@ function fulfillWithoutPromise(value, onFulfilled, onRejected)
 // This function has strong guarantee that each handler function (onFulfilled and onRejected) will be called at most once.
 // This is special version of resolveWithoutPromise which skips resolution's then handling.
 // https://github.com/tc39/ecma262/pull/1250
-@globalPrivate
+@linkTimeConstant
 function resolveWithoutPromiseForAsyncAwait(resolution, onFulfilled, onRejected)
 {
     "use strict";
@@ -395,7 +395,7 @@ function resolveWithoutPromiseForAsyncAwait(resolution, onFulfilled, onRejected)
     return @resolveWithoutPromise(resolution, onFulfilled, onRejected);
 }
 
-@globalPrivate
+@linkTimeConstant
 function createResolvingFunctionsWithoutPromise(onFulfilled, onRejected)
 {
     "use strict";
@@ -421,7 +421,7 @@ function createResolvingFunctionsWithoutPromise(onFulfilled, onRejected)
     return { @resolve: resolve, @reject: reject };
 }
 
-@globalPrivate
+@linkTimeConstant
 function promiseReactionJob(state, promiseOrCapability, handler, argument)
 {
     // Promise Reaction has four types.
@@ -475,7 +475,7 @@ function promiseReactionJob(state, promiseOrCapability, handler, argument)
     promiseOrCapability.@resolve.@call(@undefined, result);
 }
 
-@globalPrivate
+@linkTimeConstant
 function promiseResolveThenableJobFast(thenable, promiseToResolve)
 {
     "use strict";
@@ -504,7 +504,7 @@ function promiseResolveThenableJobFast(thenable, promiseToResolve)
     @putPromiseInternalField(thenable, @promiseFieldFlags, @getPromiseInternalField(thenable, @promiseFieldFlags) | @promiseFlagsIsHandled);
 }
 
-@globalPrivate
+@linkTimeConstant
 function promiseResolveThenableJobWithoutPromiseFast(thenable, onFulfilled, onRejected)
 {
     "use strict";
@@ -535,7 +535,7 @@ function promiseResolveThenableJobWithoutPromiseFast(thenable, onFulfilled, onRe
     @putPromiseInternalField(thenable, @promiseFieldFlags, @getPromiseInternalField(thenable, @promiseFieldFlags) | @promiseFlagsIsHandled);
 }
 
-@globalPrivate
+@linkTimeConstant
 function promiseResolveThenableJob(thenable, then, resolvingFunctions)
 {
     "use strict";
@@ -547,7 +547,7 @@ function promiseResolveThenableJob(thenable, then, resolvingFunctions)
     }
 }
 
-@globalPrivate
+@linkTimeConstant
 function promiseResolveThenableJobWithDerivedPromise(thenable, constructor, resolvingFunctions)
 {
     "use strict";
@@ -561,7 +561,7 @@ function promiseResolveThenableJobWithDerivedPromise(thenable, constructor, reso
     }
 }
 
-@globalPrivate
+@linkTimeConstant
 function promiseEmptyOnFulfilled(argument)
 {
     "use strict";
@@ -569,7 +569,7 @@ function promiseEmptyOnFulfilled(argument)
     return argument;
 }
 
-@globalPrivate
+@linkTimeConstant
 function promiseEmptyOnRejected(argument)
 {
     "use strict";
@@ -577,7 +577,7 @@ function promiseEmptyOnRejected(argument)
     throw argument;
 }
 
-@globalPrivate
+@linkTimeConstant
 function performPromiseThen(promise, onFulfilled, onRejected, promiseOrCapability)
 {
     "use strict";
