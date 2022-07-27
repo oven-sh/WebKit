@@ -35,7 +35,7 @@
 
 namespace JSC {
 
-static inline void runMicrotaskWithCount(JSGlobalObject* globalObject, JSValue job, MarkedArgumentBuffer&& handlerArguments)
+static inline void runMicrotaskWithCount(JSC::Microtask* task, JSGlobalObject* globalObject, JSValue job, MarkedArgumentBuffer&& handlerArguments)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_CATCH_SCOPE(vm);
@@ -44,13 +44,13 @@ static inline void runMicrotaskWithCount(JSGlobalObject* globalObject, JSValue j
     ASSERT(handlerCallData.type != CallData::Type::None);
 
     if (UNLIKELY(globalObject->hasDebugger()))
-        globalObject->debugger()->willRunMicrotask();
+        globalObject->debugger()->willRunMicrotask(globalObject, *task);
 
     profiledCall(globalObject, ProfilingReason::Microtask, job, handlerCallData, jsUndefined(), handlerArguments);
     scope.clearException();
 
     if (UNLIKELY(globalObject->hasDebugger()))
-        globalObject->debugger()->didRunMicrotask();
+        globalObject->debugger()->didRunMicrotask(globalObject, *task);
 }
 
 class JSMicrotask final : public Microtask {
@@ -94,13 +94,13 @@ private:
         MarkedArgumentBuffer handlerArguments;
 
         if (UNLIKELY(globalObject->hasDebugger()))
-            globalObject->debugger()->willRunMicrotask();
+            globalObject->debugger()->willRunMicrotask(globalObject, *this);
 
         profiledCall(globalObject, ProfilingReason::Microtask, job, handlerCallData, jsUndefined(), handlerArguments);
         scope.clearException();
 
         if (UNLIKELY(globalObject->hasDebugger()))
-            globalObject->debugger()->didRunMicrotask();
+            globalObject->debugger()->didRunMicrotask(globalObject, *this);
     }
 
     Strong<Unknown> m_job;
@@ -124,7 +124,7 @@ private:
         handlerArguments.append(m_args[1].get());
         m_args[0].clear();
         m_args[1].clear();
-        runMicrotaskWithCount(globalObject, job, WTFMove(handlerArguments));
+        runMicrotaskWithCount(this, globalObject, job, WTFMove(handlerArguments));
     }
 
     Strong<Unknown> m_args[maxArguments];
@@ -154,7 +154,7 @@ private:
         handlerArguments.append(m_args[2].get());
         m_args[2].clear();
 
-        runMicrotaskWithCount(globalObject, job, WTFMove(handlerArguments));
+        runMicrotaskWithCount(this, globalObject, job, WTFMove(handlerArguments));
     }
 
     Strong<Unknown> m_args[maxArguments];
@@ -185,7 +185,7 @@ private:
         handlerArguments.append(m_args[3].get());
         m_args[3].clear();
 
-        runMicrotaskWithCount(globalObject, job, WTFMove(handlerArguments));
+        runMicrotaskWithCount(this, globalObject, job, WTFMove(handlerArguments));
     }
 
     Strong<Unknown> m_args[maxArguments];
@@ -222,7 +222,7 @@ void JSMicrotask::run(JSGlobalObject* globalObject)
     JSC::JSValue job = m_job.get();
     m_job.clear();
 
-    runMicrotaskWithCount(globalObject, job, WTFMove(handlerArguments));
+    runMicrotaskWithCount(this, globalObject, job, WTFMove(handlerArguments));
 }
 
 } // namespace JSC
