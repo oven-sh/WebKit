@@ -1283,6 +1283,9 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
                 read(World);
             else
                 read(AbstractHeap(DOMState, effect.reads.rawRepresentation()));
+        } else if (effect.readsLen > 0) {
+            for (auto i = 0; i < effect.readsLen; ++i)
+                read(effect.readsKind[i]);
         }
         if (effect.writes) {
             if (effect.writes == DOMJIT::HeapRange::top()) {
@@ -1291,6 +1294,9 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
                 write(Heap);
             } else
                 write(AbstractHeap(DOMState, effect.writes.rawRepresentation()));
+        } else if (effect.writesLen) {
+           for (auto i = 0; i < effect.writesLen; ++i)
+                write(effect.writesKind[i]);
         }
         if (effect.def != DOMJIT::HeapRange::top()) {
             DOMJIT::HeapRange range = effect.def;
@@ -1313,6 +1319,9 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
                 read(World);
             else
                 read(AbstractHeap(DOMState, effect.reads.rawRepresentation()));
+        } else if (effect.readsLen > 0) {
+            for (auto i = 0; i < effect.readsLen; ++i)
+                read(effect.readsKind[i]);
         }
         if (effect.writes) {
             if (effect.writes == DOMJIT::HeapRange::top()) {
@@ -1321,6 +1330,9 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
                 write(Heap);
             } else
                 write(AbstractHeap(DOMState, effect.writes.rawRepresentation()));
+        } else if (effect.writesLen) {
+           for (auto i = 0; i < effect.writesLen; ++i)
+                write(effect.writesKind[i]);
         }
         ASSERT_WITH_MESSAGE(effect.def == DOMJIT::HeapRange::top(), "Currently, we do not accept any def for CallDOM.");
         return;
