@@ -887,6 +887,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     jit/SpillRegistersMode.h
     jit/TagRegistersMode.h
     jit/ThunkGenerator.h
+    
 
     llint/LLIntOpcode.h
 
@@ -1336,6 +1337,11 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     jit/JSInterfaceJIT.h
     llint/LLIntData.h
     bytecode/FunctionCodeBlock.h
+
+    dfg/DFGAbstractHeap.h
+    bytecode/OperandsInlines.h
+    bytecode/Operands.h
+    domjit/DOMJITHeapRange.h
 )
 
 
