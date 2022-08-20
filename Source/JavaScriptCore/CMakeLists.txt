@@ -1345,6 +1345,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     bytecode/Operands.h
     domjit/DOMJITHeapRange.h
     runtime/JSModuleNamespaceObject.h
+    runtime/SamplingProfiler.h
 )
 
 
