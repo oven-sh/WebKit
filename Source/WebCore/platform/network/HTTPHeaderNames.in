@@ -97,6 +97,7 @@ Service-Worker-Allowed
 Service-Worker-Navigation-Preload
 Set-Cookie
 Set-Cookie2
+Strict-Transport-Security
 SourceMap
 TE
 Timing-Allow-Origin
@@ -113,6 +114,7 @@ X-Frame-Options
 X-SourceMap
 X-XSS-Protection
 X-Temp-Tablet
+
 
 // These headers are specific to GStreamer.
 Icy-MetaInt
