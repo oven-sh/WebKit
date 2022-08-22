@@ -208,6 +208,7 @@ Modules/mediastream/RTCEncodedVideoFrame.cpp
 Modules/mediastream/RTCError.cpp
 Modules/mediastream/RTCErrorEvent.cpp
 Modules/mediastream/RTCIceCandidate.cpp
+Modules/mediastream/RTCIceCandidateFields.cpp
 Modules/mediastream/RTCIceTransport.cpp
 Modules/mediastream/RTCPeerConnection.cpp
 Modules/mediastream/RTCPeerConnectionIceEvent.cpp
@@ -247,6 +248,7 @@ Modules/notifications/Notification.cpp
 Modules/notifications/NotificationController.cpp
 Modules/notifications/NotificationData.cpp
 Modules/notifications/NotificationEvent.cpp
+Modules/notifications/NotificationResourcesLoader.cpp
 Modules/paymentrequest/MerchantValidationEvent.cpp
 Modules/paymentrequest/PaymentAddress.cpp
 Modules/paymentrequest/PaymentHandler.cpp
@@ -259,6 +261,7 @@ Modules/permissions/NavigatorPermissions.cpp
 Modules/permissions/PermissionController.cpp
 Modules/permissions/PermissionStatus.cpp
 Modules/permissions/Permissions.cpp
+Modules/permissions/WorkerNavigatorPermissions.cpp
 Modules/pictureinpicture/DocumentPictureInPicture.cpp
 Modules/pictureinpicture/HTMLVideoElementPictureInPicture.cpp
 Modules/pictureinpicture/PictureInPictureEvent.cpp
@@ -275,6 +278,8 @@ Modules/push-api/PushSubscriptionOptions.cpp
 Modules/push-api/PushManager.cpp
 Modules/push-api/ServiceWorkerRegistrationPushAPI.cpp
 Modules/remoteplayback/RemotePlayback.cpp
+Modules/reporting/Report.cpp
+Modules/reporting/ReportingObserver.cpp
 Modules/speech/SpeechRecognition.cpp
 Modules/speech/SpeechRecognitionAlternative.cpp
 Modules/speech/SpeechRecognitionErrorEvent.cpp
@@ -604,6 +609,7 @@ bindings/js/JSRangeCustom.cpp
 bindings/js/JSReadableStreamSourceCustom.cpp
 bindings/js/JSRemoteDOMWindowBase.cpp
 bindings/js/JSRemoteDOMWindowCustom.cpp
+bindings/js/JSReportBodyCustom.cpp
 bindings/js/JSResizeObserverCustom.cpp
 bindings/js/JSResizeObserverEntryCustom.cpp
 bindings/js/JSSVGPathSegCustom.cpp
@@ -711,6 +717,7 @@ css/BasicShapeFunctions.cpp
 css/ContainerQuery.cpp
 css/ContainerQueryParser.cpp
 css/CSSAspectRatioValue.cpp
+css/CSSBackgroundRepeatValue.cpp
 css/CSSBasicShapes.cpp
 css/CSSBorderImage.cpp
 css/CSSBorderImageSliceValue.cpp
@@ -854,6 +861,8 @@ css/parser/MediaQueryBlockWatcher.cpp
 css/parser/MediaQueryParser.cpp
 css/parser/SizesAttributeParser.cpp
 css/parser/SizesCalcParser.cpp
+css/query/GenericMediaQueryEvaluator.cpp
+css/query/GenericMediaQueryParser.cpp
 css/typedom/ComputedStylePropertyMapReadOnly.cpp
 css/typedom/StylePropertyMapReadOnly.cpp
 css/typedom/CSSKeywordValue.cpp
@@ -873,6 +882,7 @@ css/typedom/color/CSSLab.cpp
 css/typedom/color/CSSOKLCH.cpp
 css/typedom/color/CSSOKLab.cpp
 css/typedom/color/CSSRGB.cpp
+css/typedom/numeric/CSSMathClamp.cpp
 css/typedom/numeric/CSSMathInvert.cpp
 css/typedom/numeric/CSSMathMax.cpp
 css/typedom/numeric/CSSMathMin.cpp
@@ -1349,6 +1359,7 @@ html/TimeRanges.cpp
 html/TypeAhead.cpp
 html/URLDecomposition.cpp
 html/URLInputType.cpp
+html/URLRegistry.cpp
 html/URLSearchParams.cpp
 html/ValidationMessage.cpp
 html/WeekInputType.cpp
@@ -2330,6 +2341,7 @@ rendering/CaretRectComputation.cpp
 rendering/ClipRect.cpp
 rendering/ContentfulPaintChecker.cpp
 rendering/CounterNode.cpp
+rendering/EllipsisBoxPainter.cpp
 rendering/EventRegion.cpp
 rendering/FixedTableLayout.cpp
 rendering/FlexibleBoxAlgorithm.cpp
@@ -2523,6 +2535,7 @@ rendering/style/WillChangeData.cpp
 rendering/svg/LegacyRenderSVGContainer.cpp
 rendering/svg/LegacyRenderSVGEllipse.cpp
 rendering/svg/LegacyRenderSVGModelObject.cpp
+rendering/svg/LegacyRenderSVGHiddenContainer.cpp
 rendering/svg/LegacyRenderSVGPath.cpp
 rendering/svg/LegacyRenderSVGRect.cpp
 rendering/svg/LegacyRenderSVGRoot.cpp
@@ -3754,6 +3767,10 @@ JSReadableStreamSource.cpp
 JSRemoteDOMWindow.cpp
 JSRemotePlayback.cpp
 JSRemotePlaybackAvailabilityCallback.cpp
+JSReport.cpp
+JSReportBody.cpp
+JSReportingObserver.cpp
+JSReportingObserverCallback.cpp
 JSRequestAnimationFrameCallback.cpp
 JSRequestCookieConsentOptions.cpp
 JSResidentKeyRequirement.cpp
@@ -3997,7 +4014,6 @@ JSTransitionEvent.cpp
 JSTreeWalker.cpp
 JSCSSKeywordValue.cpp
 JSCSSStyleImageValue.cpp
-JSCSSMathInvert.cpp
 JSCSSColor.cpp
 JSCSSColorValue.cpp
 JSCSSHSL.cpp
@@ -4007,6 +4023,8 @@ JSCSSLab.cpp
 JSCSSOKLCH.cpp
 JSCSSOKLab.cpp
 JSCSSRGB.cpp
+JSCSSMathClamp.cpp
+JSCSSMathInvert.cpp
 JSCSSMathMax.cpp
 JSCSSMathMin.cpp
 JSCSSMathNegate.cpp

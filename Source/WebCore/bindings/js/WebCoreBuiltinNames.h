@@ -120,6 +120,7 @@ namespace WebCore {
     macro(CSSKeywordValue) \
     macro(CSSLCH) \
     macro(CSSLab) \
+    macro(CSSMathClamp) \
     macro(CSSMathInvert) \
     macro(CSSMathMax) \
     macro(CSSMathMin) \
@@ -311,6 +312,9 @@ namespace WebCore {
     macro(PushSubscription) \
     macro(PushSubscriptionChangeEvent) \
     macro(PushSubscriptionOptions) \
+    macro(Report) \
+    macro(ReportBody) \
+    macro(ReportingObserver) \
     macro(ResizeObserver) \
     macro(ResizeObserverEntry) \
     macro(RTCCertificate) \

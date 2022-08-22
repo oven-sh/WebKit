@@ -467,8 +467,14 @@ fast/events/mouseover-button.html [ Skip ]
 # TODO Accept header is handled by the browser
 http/tests/misc/image-checks-for-accept.html [ Skip ]
 
+# Failing since added in https://bugs.webkit.org/show_bug.cgi?id=244126.
+accessibility/dynamically-unignored-contenteditable.html [ Skip ]
+
 # Timing out since added in https://bugs.webkit.org/show_bug.cgi?id=240750 (likely some missing AccessibilityUIElement implementation).
 accessibility/table-exposure-updates-dynamically.html [ Skip ]
+
+# Failing since added in https://bugs.webkit.org/show_bug.cgi?id=244069.
+accessibility/dynamically-ignored-canvas.html [ Skip ]
 
 # Failing since added in https://bugs.webkit.org/show_bug.cgi?id=241022.
 accessibility/node-only-inert-object.html [ Failure ]
@@ -482,6 +488,9 @@ accessibility/aria-multiline.html [ Skip ]
 # Probably wrong role after adding children to list (AXGroup instead of AXList).
 accessibility/list-with-dynamically-changing-content.html [ Skip ]
 accessibility/ignored-aria-role-description.html [ Skip ]
+
+# Failing since added in https://bugs.webkit.org/show_bug.cgi?id=243768.
+accessibility/spinbutton-increment-decrement.html [ Skip ]
 
 # Need to implement AccessibilityUIElement::clearSelectedChildren()
 accessibility/aria-listbox-clear-selection-crash.html [ Skip ]
@@ -519,6 +528,9 @@ accessibility/aria-readonly-updates-after-dynamic-change.html [ Skip ]
 accessibility/aria-required-updates-after-dynamic-change.html [ Skip ]
 # Missing AccessibilityUIElement::{isBusy, isAtomicLiveRegion, liveRegionStatus, liveRegionRelevant} implementations.
 accessibility/live-region-attributes-update-after-dynamic-change.html [ Skip ]
+
+# Failing since added in https://bugs.webkit.org/show_bug.cgi?id=244151.
+accessibility/ignored-textfield-still-accessible.html [ Skip ]
 
 # TODO Conic gradients
 http/wpt/css/css-images-4/conic-gradient-parsing.html [ Skip ]
@@ -5112,3 +5124,9 @@ webkit.org/b/241377 fast/css3-text/css3-text-decoration/repaint/underline-outsid
 webkit.org/b/241382 html5lib/generated/run-tests19-data.html [ Pass Crash ]
 
 webkit.org/b/243648 scrollbars/transparent-scrollbar.html [ ImageOnlyFailure ]
+
+webkit.org/b/243992 fast/text/punctuation-break-all.html [ ImageOnlyFailure ]
+
+webkit.org/b/142087 fast/css3-text/css3-text-decoration/text-decoration-skip/text-decoration-skip-ink-inherit.html [ ImageOnlyFailure ]
+webkit.org/b/142087 fast/css3-text/css3-text-decoration/no-gap-between-two-rounded-textboxes.html [ ImageOnlyFailure ]
+

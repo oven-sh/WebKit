@@ -344,6 +344,8 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSLayerBlockRule.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSLayerBlockRule.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSLayerStatementRule.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSLayerStatementRule.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSMathClamp.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSMathClamp.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSMathInvert.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSMathInvert.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCSSMathMax.cpp
@@ -2168,6 +2170,14 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSRemotePlayback.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSRemotePlayback.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSRemotePlaybackAvailabilityCallback.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSRemotePlaybackAvailabilityCallback.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSReport.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSReport.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSReportBody.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSReportBody.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSReportingObserver.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSReportingObserver.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSReportingObserverCallback.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSReportingObserverCallback.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSRequestAnimationFrameCallback.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSRequestAnimationFrameCallback.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSRequestCookieConsentOptions.cpp
@@ -2918,6 +2928,8 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSWorkerLocation.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSWorkerLocation.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSWorkerNavigator+MediaCapabilities.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSWorkerNavigator+MediaCapabilities.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSWorkerNavigator+Permissions.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSWorkerNavigator+Permissions.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSWorkerNavigator.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSWorkerNavigator.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSWorkerOptions.cpp

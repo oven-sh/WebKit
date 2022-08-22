@@ -353,7 +353,7 @@ void JSDOMGlobalObject::clearDOMGuardedObjects() const
 JSFunction* JSDOMGlobalObject::createCrossOriginFunction(JSGlobalObject* lexicalGlobalObject, PropertyName propertyName, NativeFunction nativeFunction, unsigned length)
 {
     auto& vm = lexicalGlobalObject->vm();
-    CrossOriginMapKey key = std::make_pair(lexicalGlobalObject, nativeFunction.rawPointer());
+    CrossOriginMapKey key = std::make_pair(lexicalGlobalObject, nativeFunction.executableAddress());
 
     // WeakGCMap::ensureValue's functor must not invoke GC since GC can modify WeakGCMap in the middle of HashMap::ensure.
     // We use DeferGC here (1) not to invoke GC when executing WeakGCMap::ensureValue and (2) to avoid looking up HashMap twice.
@@ -367,7 +367,7 @@ GetterSetter* JSDOMGlobalObject::createCrossOriginGetterSetter(JSGlobalObject* l
 {
     ASSERT(getter || setter);
     auto& vm = lexicalGlobalObject->vm();
-    CrossOriginMapKey key = std::make_pair(lexicalGlobalObject, getter ? reinterpret_cast<void*>(getter) : reinterpret_cast<void*>(setter));
+    CrossOriginMapKey key = std::make_pair(lexicalGlobalObject, getter ? getter.executableAddress() : setter.executableAddress());
 
     // WeakGCMap::ensureValue's functor must not invoke GC since GC can modify WeakGCMap in the middle of HashMap::ensure.
     // We use DeferGC here (1) not to invoke GC when executing WeakGCMap::ensureValue and (2) to avoid looking up HashMap twice.
@@ -425,7 +425,7 @@ static JSC::JSPromise* handleResponseOnStreamingAction(JSC::JSGlobalObject* glob
     }
 
     // FIXME: for efficiency, we should load blobs directly instead of going through the readableStream path.
-    if (inputResponse->isBlobBody()) {
+    if (inputResponse->isBlobBody() || inputResponse->isBlobFormData()) {
         auto streamOrException = inputResponse->readableStream(*globalObject);
         if (UNLIKELY(streamOrException.hasException())) {
             deferred->reject(streamOrException.releaseException());
@@ -475,15 +475,8 @@ static JSC::JSPromise* handleResponseOnStreamingAction(JSC::JSGlobalObject* glob
     }
 
     auto body = inputResponse->consumeBody();
-    WTF::switchOn(body, [&](Ref<FormData>& formData) {
-        if (auto buffer = formData->asSharedBuffer()) {
-            compiler->addBytes(buffer->data(), buffer->size());
-            compiler->finalize(globalObject);
-            return;
-        }
-        // FIXME: Support FormData loading.
-        // https://bugs.webkit.org/show_bug.cgi?id=221248
-        compiler->fail(globalObject, createDOMException(*globalObject, Exception { NotSupportedError, "Not implemented"_s  }));
+    WTF::switchOn(body, [&](Ref<FormData>&) {
+        RELEASE_ASSERT_NOT_REACHED();
     }, [&](Ref<SharedBuffer>& buffer) {
         compiler->addBytes(buffer->data(), buffer->size());
         compiler->finalize(globalObject);

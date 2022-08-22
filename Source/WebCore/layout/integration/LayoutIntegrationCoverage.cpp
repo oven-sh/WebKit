@@ -118,9 +118,6 @@ static void printReason(AvoidanceReason reason, TextStream& stream)
     case AvoidanceReason::FlowHasLineSnap:
         stream << "-webkit-line-snap property";
         break;
-    case AvoidanceReason::FlowHasPseudoFirstLetter:
-        stream << "first-letter";
-        break;
     case AvoidanceReason::FlowHasTextCombine:
         stream << "text combine";
         break;
@@ -153,9 +150,6 @@ static void printReason(AvoidanceReason reason, TextStream& stream)
         break;
     case AvoidanceReason::ContentIsSVG:
         stream << "SVG content";
-        break;
-    case AvoidanceReason::InlineBoxNeedsLayer:
-        stream << "inline box needs layer";
         break;
     case AvoidanceReason::BoxDecorationBreakClone:
         stream << "webkit-box-decoration-break: clone";
@@ -317,8 +311,6 @@ static OptionSet<AvoidanceReason> canUseForStyle(const RenderElement& renderer, 
         SET_REASON_AND_RETURN_IF_NEEDED(FlowHasTextOverflow, reasons, includeReasons);
     if (style.writingMode() == WritingMode::BottomToTop)
         SET_REASON_AND_RETURN_IF_NEEDED(FlowHasUnsupportedWritingMode, reasons, includeReasons);
-    if (style.hasPseudoStyle(PseudoId::FirstLetter))
-        SET_REASON_AND_RETURN_IF_NEEDED(FlowHasPseudoFirstLetter, reasons, includeReasons);
     if (style.hasTextCombine())
         SET_REASON_AND_RETURN_IF_NEEDED(FlowHasTextCombine, reasons, includeReasons);
     if (!style.hangingPunctuation().isEmpty())
@@ -355,10 +347,6 @@ static OptionSet<AvoidanceReason> canUseForRenderInlineChild(const RenderInline&
         SET_REASON_AND_RETURN_IF_NEEDED(ContentIsSVG, reasons, includeReasons);
     if (renderInline.isRubyInline())
         SET_REASON_AND_RETURN_IF_NEEDED(ContentIsRuby, reasons, includeReasons);
-    if (renderInline.requiresLayer())
-        SET_REASON_AND_RETURN_IF_NEEDED(InlineBoxNeedsLayer, reasons, includeReasons)
-    if (renderInline.isInFlowPositioned())
-        SET_REASON_AND_RETURN_IF_NEEDED(ChildBoxIsFloatingOrPositioned, reasons, includeReasons);
 
     auto styleReasons = canUseForStyle(renderInline, includeReasons);
     if (styleReasons)
@@ -383,45 +371,58 @@ static OptionSet<AvoidanceReason> canUseForChild(const RenderObject& child, Incl
     if (is<RenderLineBreak>(child))
         return reasons;
 
-    if (is<RenderReplaced>(child)) {
-        auto& replaced = downcast<RenderReplaced>(child);
-        if (replaced.isFloating() || replaced.isPositioned())
+    auto isSupportedFloatingOrPositioned = [&] (auto& renderer) {
+        if (renderer.isFloating())
+            return false;
+        if (renderer.isOutOfFlowPositioned()) {
+            if (!is<RenderReplaced>(renderer))
+                return false;
+            if (!renderer.parent()->style().isLeftToRightDirection())
+                return false;
+            // This simply checks the not-yet supported case when the out-of-flow positioned
+            // content has a relatively positioned inline containing block (has to call container to not skip RenderInlines).
+            return is<RenderBlockFlow>(child.container());
+        }
+        return true;
+    };
+
+    auto& renderer = downcast<RenderElement>(child);
+    if (is<RenderReplaced>(renderer)) {
+        if (!isSupportedFloatingOrPositioned(renderer))
             SET_REASON_AND_RETURN_IF_NEEDED(ChildBoxIsFloatingOrPositioned, reasons, includeReasons)
 
-        if (replaced.isSVGRootOrLegacySVGRoot())
+        if (renderer.isSVGRootOrLegacySVGRoot())
             SET_REASON_AND_RETURN_IF_NEEDED(ContentIsSVG, reasons, includeReasons);
 
         return reasons;
     }
 
-    if (is<RenderListItem>(child)) {
-        if (child.isPositioned() || child.isFloating())
+    if (is<RenderListItem>(renderer)) {
+        if (!isSupportedFloatingOrPositioned(renderer))
             SET_REASON_AND_RETURN_IF_NEEDED(FlowIsUnsupportedListItem, reasons, includeReasons);
         return reasons;
     }
 
-    if (is<RenderListMarker>(child) && is<RenderListItem>(child.parent()) && !is<RenderListMarker>(child.nextSibling()))
+    if (is<RenderListMarker>(renderer) && is<RenderListItem>(renderer.parent()) && !is<RenderListMarker>(renderer.nextSibling()))
         return reasons;
 
-    if (is<RenderTable>(child)) {
-        auto& table = downcast<RenderTable>(child);
-        if (table.isFloating() || table.isPositioned())
+    if (is<RenderTable>(renderer)) {
+        if (!isSupportedFloatingOrPositioned(renderer))
             SET_REASON_AND_RETURN_IF_NEEDED(ChildBoxIsFloatingOrPositioned, reasons, includeReasons)
         return reasons;
     }
 
-    if (is<RenderBlockFlow>(child)) {
-        auto& block = downcast<RenderBlockFlow>(child);
-        if (block.isFloating() || block.isPositioned())
+    if (is<RenderBlockFlow>(renderer)) {
+        if (!isSupportedFloatingOrPositioned(renderer))
             SET_REASON_AND_RETURN_IF_NEEDED(ChildBoxIsFloatingOrPositioned, reasons, includeReasons)
-        if (block.isRubyRun())
+        if (renderer.isRubyRun())
             SET_REASON_AND_RETURN_IF_NEEDED(ContentIsRuby, reasons, includeReasons);
 
         return reasons;
     }
 
-    if (is<RenderInline>(child)) {
-        auto renderInlineReasons = canUseForRenderInlineChild(downcast<RenderInline>(child), includeReasons);
+    if (is<RenderInline>(renderer)) {
+        auto renderInlineReasons = canUseForRenderInlineChild(downcast<RenderInline>(renderer), includeReasons);
         if (renderInlineReasons)
             ADD_REASONS_AND_RETURN_IF_NEEDED(renderInlineReasons, reasons, includeReasons);
         return reasons;

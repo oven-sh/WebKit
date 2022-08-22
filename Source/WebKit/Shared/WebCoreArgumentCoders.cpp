@@ -37,6 +37,7 @@
 #include <WebCore/AuthenticationChallenge.h>
 #include <WebCore/AuthenticationChallenge.h>
 #include <WebCore/BlobPart.h>
+#include <WebCore/ByteArrayPixelBuffer.h>
 #include <WebCore/CacheQueryOptions.h>
 #include <WebCore/CacheStorageConnection.h>
 #include <WebCore/CompositionUnderline.h>
@@ -66,6 +67,7 @@
 #include <WebCore/Length.h>
 #include <WebCore/LengthBox.h>
 #include <WebCore/MediaSelectionOption.h>
+#include <WebCore/NotificationResources.h>
 #include <WebCore/Pasteboard.h>
 #include <WebCore/PluginData.h>
 #include <WebCore/PromisedAttachmentInfo.h>
@@ -3081,6 +3083,25 @@ std::optional<Ref<SystemImage>> ArgumentCoder<SystemImage>::decode(Decoder& deco
     return std::nullopt;
 }
 
+void ArgumentCoder<WebCore::NotificationResources>::encode(Encoder& encoder, const WebCore::NotificationResources& resources)
+{
+    encodeOptionalImage(encoder, resources.icon().get());
+}
+
+std::optional<RefPtr<WebCore::NotificationResources>> ArgumentCoder<WebCore::NotificationResources>::decode(Decoder& decoder)
+{
+    RefPtr<Image> icon;
+    if (!decodeOptionalImage(decoder, icon))
+        return std::nullopt;
+
+    if (!icon)
+        return nullptr;
+
+    auto resources = WebCore::NotificationResources::create();
+    resources->setIcon(WTFMove(icon));
+    return resources;
+}
+
 #if ENABLE(ENCRYPTED_MEDIA)
 void ArgumentCoder<WebCore::CDMInstanceSession::Message>::encode(Encoder& encoder, const WebCore::CDMInstanceSession::Message& message)
 {
@@ -3177,5 +3198,26 @@ std::optional<UnixFileDescriptor> ArgumentCoder<UnixFileDescriptor>::decode(Deco
 }
 
 #endif
+
+template<class Encoder>
+void ArgumentCoder<PixelBuffer>::encode(Encoder& encoder, const PixelBuffer& pixelBuffer)
+{
+    if (LIKELY(is<const ByteArrayPixelBuffer>(pixelBuffer))) {
+        downcast<const ByteArrayPixelBuffer>(pixelBuffer).encode(encoder);
+        return;
+    }
+    ASSERT_NOT_REACHED();
+}
+
+std::optional<Ref<PixelBuffer>> ArgumentCoder<PixelBuffer>::decode(Decoder& decoder)
+{
+    return ByteArrayPixelBuffer::decode(decoder);
+}
+
+template
+void ArgumentCoder<PixelBuffer>::encode<Encoder>(Encoder&, const PixelBuffer&);
+
+template
+void ArgumentCoder<PixelBuffer>::encode<StreamConnectionEncoder>(StreamConnectionEncoder&, const PixelBuffer&);
 
 } // namespace IPC

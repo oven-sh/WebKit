@@ -1493,25 +1493,17 @@ bool equalIgnoringASCIICaseNonNull(const StringImpl* a, const StringImpl* b)
     return equalIgnoringASCIICase(*a, *b);
 }
 
-UCharDirection StringImpl::defaultWritingDirection(bool* hasStrongDirectionality)
+std::optional<UCharDirection> StringImpl::defaultWritingDirection()
 {
     for (auto codePoint : StringView(this).codePoints()) {
         auto charDirection = u_charDirection(codePoint);
-        if (charDirection == U_LEFT_TO_RIGHT) {
-            if (hasStrongDirectionality)
-                *hasStrongDirectionality = true;
+        if (charDirection == U_LEFT_TO_RIGHT)
             return U_LEFT_TO_RIGHT;
-        }
         if (charDirection == U_RIGHT_TO_LEFT || charDirection == U_RIGHT_TO_LEFT_ARABIC) {
-            if (hasStrongDirectionality)
-                *hasStrongDirectionality = true;
             return U_RIGHT_TO_LEFT;
         }
     }
-
-    if (hasStrongDirectionality)
-        *hasStrongDirectionality = false;
-    return U_LEFT_TO_RIGHT;
+    return std::nullopt;
 }
 
 Ref<StringImpl> StringImpl::adopt(StringBuffer<LChar>&& buffer)
@@ -1601,77 +1593,33 @@ UTF8ConversionError StringImpl::utf8Impl(const UChar* characters, unsigned lengt
 
 Expected<CString, UTF8ConversionError> StringImpl::utf8ForCharacters(const LChar* characters, unsigned length)
 {
-    if (!length)
-        return CString("", 0);
-    if (length > MaxLength / 3)
-        return makeUnexpected(UTF8ConversionError::OutOfMemory);
-    Vector<char, 1024> bufferVector(length * 3);
-    char* buffer = bufferVector.data();
-    const LChar* source = characters;
-    bool success = convertLatin1ToUTF8(&source, source + length, &buffer, buffer + bufferVector.size());
-    ASSERT_UNUSED(success, success); // (length * 3) should be sufficient for any conversion
-    return CString(bufferVector.data(), buffer - bufferVector.data());
+    return StringImpl::tryGetUTF8ForCharacters([](Span<const char> span) -> CString {
+        return CString(span.data(), span.size());
+    }, characters, length);
 }
 
 Expected<CString, UTF8ConversionError> StringImpl::utf8ForCharacters(const UChar* characters, unsigned length, ConversionMode mode)
 {
-    if (!length)
-        return CString("", 0);
-    if (length > MaxLength / 3)
-        return makeUnexpected(UTF8ConversionError::OutOfMemory);
-    Vector<char, 1024> bufferVector(length * 3);
-    char* buffer = bufferVector.data();
-    UTF8ConversionError error = utf8Impl(characters, length, buffer, bufferVector.size(), mode);
-    if (error != UTF8ConversionError::None)
-        return makeUnexpected(error);
-    return CString(bufferVector.data(), buffer - bufferVector.data());
+    return StringImpl::tryGetUTF8ForCharacters([](Span<const char> span) -> CString {
+        return CString(span.data(), span.size());
+    }, characters, length, mode);
 }
 
-Expected<CString, UTF8ConversionError> StringImpl::tryGetUtf8ForRange(unsigned offset, unsigned length, ConversionMode mode) const
+Expected<CString, UTF8ConversionError> StringImpl::tryGetUTF8ForRange(unsigned offset, unsigned length, ConversionMode mode) const
 {
-    ASSERT(offset <= this->length());
-    ASSERT(offset + length <= this->length());
-    
-    if (!length)
-        return CString("", 0);
-
-    // Allocate a buffer big enough to hold all the characters
-    // (an individual UTF-16 UChar can only expand to 3 UTF-8 bytes).
-    // Optimization ideas, if we find this function is hot:
-    //  * We could speculatively create a CStringBuffer to contain 'length' 
-    //    characters, and resize if necessary (i.e. if the buffer contains
-    //    non-ascii characters). (Alternatively, scan the buffer first for
-    //    ascii characters, so we know this will be sufficient).
-    //  * We could allocate a CStringBuffer with an appropriate size to
-    //    have a good chance of being able to write the string into the
-    //    buffer without reallocing (say, 1.5 x length).
-    if (length > MaxLength / 3)
-        return makeUnexpected(UTF8ConversionError::OutOfMemory);
-    Vector<char, 1024> bufferVector(length * 3);
-
-    char* buffer = bufferVector.data();
-
-    if (is8Bit()) {
-        const LChar* characters = this->characters8() + offset;
-        auto success = convertLatin1ToUTF8(&characters, characters + length, &buffer, buffer + bufferVector.size());
-        ASSERT_UNUSED(success, success); // (length * 3) should be sufficient for any conversion
-    } else {
-        UTF8ConversionError error = utf8Impl(this->characters16() + offset, length, buffer, bufferVector.size(), mode);
-        if (error != UTF8ConversionError::None)
-            return makeUnexpected(error);
-    }
-
-    return CString(bufferVector.data(), buffer - bufferVector.data());
+    return tryGetUTF8ForRange([](Span<const char> span) -> CString {
+        return CString(span.data(), span.size());
+    }, offset, length, mode);
 }
 
-Expected<CString, UTF8ConversionError> StringImpl::tryGetUtf8(ConversionMode mode) const
+Expected<CString, UTF8ConversionError> StringImpl::tryGetUTF8(ConversionMode mode) const
 {
-    return tryGetUtf8ForRange(0, length(), mode);
+    return tryGetUTF8ForRange(0, length(), mode);
 }
 
 CString StringImpl::utf8(ConversionMode mode) const
 {
-    auto expectedString = tryGetUtf8ForRange(0, length(), mode);
+    auto expectedString = tryGetUTF8ForRange(0, length(), mode);
     RELEASE_ASSERT(expectedString);
     return expectedString.value();
 }

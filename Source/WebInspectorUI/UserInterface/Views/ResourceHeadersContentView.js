@@ -568,3 +568,5 @@ WI.ResourceHeadersContentView = class ResourceHeadersContentView extends WI.Cont
         this.needsLayout();
     }
 };
+
+WI.ResourceHeadersContentView.ReferencePage = WI.ReferencePage.NetworkTab.HeadersPane;

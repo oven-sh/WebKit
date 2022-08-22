@@ -260,7 +260,6 @@ def types_that_cannot_be_forward_declared():
         'IPC::DataReference',
         'IPC::FilterReference',
         'IPC::FontReference',
-        'IPC::PixelBufferReference',
         'IPC::Semaphore',
         'MachSendRight',
         'MediaTime',
@@ -675,6 +674,7 @@ def argument_coder_headers_for_type(type):
 
     special_cases = {
         'String': '"ArgumentCoders.h"',
+        'MachSendRight': '"ArgumentCodersDarwin.h"',
         'WebKit::ScriptMessageHandlerHandle': '"WebScriptMessageHandler.h"',
     }
 

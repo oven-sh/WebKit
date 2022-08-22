@@ -45,7 +45,6 @@ fast/css/getComputedStyle/computed-style-apple-pay-button.html [ Pass ]
 
 # accent-color is currently only supported on Cocoa platforms
 fast/css/accent-color [ Pass ]
-imported/w3c/web-platform-tests/css/css-ui/accent-color-checkbox-checked-001.tentative.html [ Pass ]
 
 fast/css/ios [ Pass ]
 fast/media/ios [ Pass ]
@@ -2134,6 +2133,7 @@ accessibility/aria-roles-unignored.html [ Pass ]
 accessibility/aria-slider-value.html [ Pass ]
 accessibility/display-contents-element-roles.html [ Pass ]
 accessibility/display-contents-object-ordering.html [ Pass ]
+accessibility/dynamically-ignored-canvas.html [ Pass ]
 accessibility/element-haspopup.html [ Pass ]
 accessibility/heading-level.html [ Pass ]
 accessibility/html5-required-attribute.html [ Pass ]
@@ -2146,6 +2146,7 @@ accessibility/node-only-inert-object.html [ Pass ]
 accessibility/node-only-object-element-rect.html [ Pass ]
 accessibility/placeholder.html [ Pass ]
 accessibility/slider-with-lost-renderer.html [ Pass ]
+accessibility/spinbutton-increment-decrement.html [ Pass ]
 accessibility/text-under-display-contents-element.html [ Pass ]
 accessibility/text-updates-after-dynamic-change.html [ Pass ]
 accessibility/video-element-url-attribute.html [ Pass ]
@@ -3055,8 +3056,6 @@ webkit.org/b/204757 imported/w3c/web-platform-tests/fetch/api/request/destinatio
 
 webkit.org/b/203222 svg/wicd/rightsizing-grid.xhtml [ Pass Failure ]
 
-webkit.org/b/206864 http/tests/workers/service/basic-timeout.https.html [ Pass Failure ]
-
 webkit.org/b/206754 imported/w3c/web-platform-tests/css/css-backgrounds/background-image-centered-with-border-radius.html [ ImageOnlyFailure ]
 webkit.org/b/206754 imported/w3c/web-platform-tests/css/css-backgrounds/box-shadow-body.html [ ImageOnlyFailure ]
 
@@ -3609,7 +3608,7 @@ webkit.org/b/240489 imported/w3c/web-platform-tests/html/browsers/browsing-the-w
 imported/w3c/web-platform-tests/css/css-contain/contain-paint-clip-016.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-contain/contain-paint-clip-015.html [ ImageOnlyFailure ]
 
-webkit.org/b/243558 fast/canvas/image-object-in-canvas.html [ Slow ]
+webkit.org/b/243558 fast/canvas/image-object-in-canvas.html [ Pass Timeout ]
 
 #  Correction to guard in Platform file removing iOS - Skip tests
 webkit.org/b/240579 http/tests/workers/service/shownotification-allowed-document.html [ Skip ]
@@ -3702,3 +3701,26 @@ webkit.org/b/243690 imported/w3c/web-platform-tests/html/cross-origin-opener-pol
 webkit.org/b/243828 fast/text-autosizing/ios/idempotentmode/idempotent-autosizing-after-changing-initial-scale.html [ Pass Failure ]
 
 webkit.org/b/243836 imported/w3c/web-platform-tests/css/css-flexbox/negative-overflow-002.html [ Pass Failure ]
+
+webkit.org/b/243946 imported/w3c/web-platform-tests/html/semantics/forms/form-submission-0/implicit-submission.optional.html [ Pass Failure ]
+
+webkit.org/b/243962 imported/w3c/web-platform-tests/css/css-pseudo/target-text-008.html [ Pass ImageOnlyFailure ]
+webkit.org/b/243962 imported/w3c/web-platform-tests/css/css-pseudo/highlight-paired-cascade-005.html [ Pass ImageOnlyFailure ]
+
+webkit.org/b/243961 imported/w3c/web-platform-tests/css/css-transforms/preserve3d-and-flattening-z-order-008.html [ Pass ImageOnlyFailure ]
+
+# These tests have similar image failures, rounded edges issues. See webkit.org/b/244046
+imported/w3c/web-platform-tests/css/css-ui/compute-kind-widget-generated/kind-of-widget-fallback-select-menulist-button-border-top-right-radius-001.html [ Pass ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-ui/compute-kind-widget-generated/kind-of-widget-fallback-textarea-border-block-end-color-001.html [ Pass ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-ui/compute-kind-widget-generated/kind-of-widget-fallback-textarea-border-block-start-color-001.html [ Pass ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-ui/compute-kind-widget-generated/kind-of-widget-fallback-textarea-border-bottom-color-001.html [ Pass ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-ui/compute-kind-widget-generated/kind-of-widget-fallback-textarea-border-inline-end-color-001.html [ Pass ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-ui/compute-kind-widget-generated/kind-of-widget-fallback-textarea-border-inline-start-color-001.html [ Pass ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-ui/compute-kind-widget-generated/kind-of-widget-fallback-textarea-border-left-color-001.html [ Pass ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-ui/compute-kind-widget-generated/kind-of-widget-fallback-textarea-border-right-color-001.html [ Pass ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-ui/compute-kind-widget-generated/kind-of-widget-fallback-textarea-border-top-color-001.html [ Pass ImageOnlyFailure ]
+
+webkit.org/b/244065 fast/forms/auto-fill-button/hide-auto-fill-button-when-input-becomes-readonly.html [ Pass ImageOnlyFailure ]
+
+webkit.org/b/244134 animations/no-style-recalc-during-accelerated-animation.html [ Pass Failure ]
+webkit.org/b/244134 animations/steps-transform-rendering-updates.html [ Pass Failure ]

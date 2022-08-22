@@ -41,19 +41,23 @@ struct Box {
     struct Text {
         WTF_MAKE_STRUCT_FAST_ALLOCATED;
     public:
-        Text(size_t position, size_t length, const String& originalContent, String adjustedContentToRender = String(), bool hasHyphen = false);
+        Text(size_t position, size_t length, const String& originalContent, String adjustedContentToRender = String(), bool hasHyphen = false, std::optional<size_t> visuallyVisibleLength = std::nullopt);
 
         size_t start() const { return m_start; }
         size_t end() const { return start() + length(); }
         size_t length() const { return m_length; }
+        std::optional<size_t> visuallyVisibleLength() const { return m_visuallyVisibleLength; }
         StringView originalContent() const { return StringView(m_originalContent).substring(m_start, m_length); }
         StringView renderedContent() const { return m_adjustedContentToRender.isNull() ? originalContent() : m_adjustedContentToRender; }
 
         bool hasHyphen() const { return m_hasHyphen; }
 
     private:
+        friend struct Box;
+
         size_t m_start { 0 };
         size_t m_length { 0 };
+        std::optional<size_t> m_visuallyVisibleLength { };
         bool m_hasHyphen { false };
         String m_originalContent;
         String m_adjustedContentToRender;
@@ -75,7 +79,8 @@ struct Box {
         First = 1 << 0,
         Last  = 1 << 1
     };
-    Box(size_t lineIndex, Type, const Layout::Box&, UBiDiLevel, const FloatRect&, const FloatRect& inkOverflow, Expansion, std::optional<Text> = std::nullopt, bool hasContent = true, OptionSet<PositionWithinInlineLevelBox> = { });
+    enum class IsVisuallyHidden : uint8_t { Yes, No, Partially };
+    Box(size_t lineIndex, Type, const Layout::Box&, UBiDiLevel, const FloatRect&, const FloatRect& inkOverflow, Expansion, std::optional<Text> = std::nullopt, bool hasContent = true, IsVisuallyHidden isVisuallyHidden = IsVisuallyHidden::No, OptionSet<PositionWithinInlineLevelBox> = { });
 
     bool isText() const { return m_type == Type::Text || isWordSeparator(); }
     bool isWordSeparator() const { return m_type == Type::WordSeparator; }
@@ -97,6 +102,7 @@ struct Box {
     bool isHorizontal() const { return style().isHorizontalWritingMode(); }
 
     bool hasContent() const { return m_hasContent; }
+    IsVisuallyHidden isVisuallyHidden() const { return m_isVisuallyHidden; }
 
     const FloatRect& visualRectIgnoringBlockDirection() const { return m_unflippedVisualRect; }
     const FloatRect& inkOverflow() const { return m_inkOverflow; }
@@ -120,7 +126,6 @@ struct Box {
         m_inkOverflow.move({ offset, { } });
     }
     void adjustInkOverflow(const FloatRect& childBorderBox) { return m_inkOverflow.uniteEvenIfEmpty(childBorderBox); }
-    void truncate(float truncatedwidth = 0.f);
     void setLeft(float pysicalLeft)
     {
         auto offset = pysicalLeft - left();
@@ -183,11 +188,12 @@ private:
     bool m_hasContent : 1;
     bool m_isFirstForLayoutBox : 1;
     bool m_isLastForLayoutBox : 1;
+    IsVisuallyHidden m_isVisuallyHidden { IsVisuallyHidden::No };
     Expansion m_expansion;
     std::optional<Text> m_text;
 };
 
-inline Box::Box(size_t lineIndex, Type type, const Layout::Box& layoutBox, UBiDiLevel bidiLevel, const FloatRect& physicalRect, const FloatRect& inkOverflow, Expansion expansion, std::optional<Text> text, bool hasContent, OptionSet<PositionWithinInlineLevelBox> positionWithinInlineLevelBox)
+inline Box::Box(size_t lineIndex, Type type, const Layout::Box& layoutBox, UBiDiLevel bidiLevel, const FloatRect& physicalRect, const FloatRect& inkOverflow, Expansion expansion, std::optional<Text> text, bool hasContent, IsVisuallyHidden isVisuallyHidden, OptionSet<PositionWithinInlineLevelBox> positionWithinInlineLevelBox)
     : m_lineIndex(lineIndex)
     , m_type(type)
     , m_layoutBox(layoutBox)
@@ -197,24 +203,20 @@ inline Box::Box(size_t lineIndex, Type type, const Layout::Box& layoutBox, UBiDi
     , m_hasContent(hasContent)
     , m_isFirstForLayoutBox(positionWithinInlineLevelBox.contains(PositionWithinInlineLevelBox::First))
     , m_isLastForLayoutBox(positionWithinInlineLevelBox.contains(PositionWithinInlineLevelBox::Last))
+    , m_isVisuallyHidden(isVisuallyHidden)
     , m_expansion(expansion)
     , m_text(text)
 {
 }
 
-inline Box::Text::Text(size_t start, size_t length, const String& originalContent, String adjustedContentToRender, bool hasHyphen)
+inline Box::Text::Text(size_t start, size_t length, const String& originalContent, String adjustedContentToRender, bool hasHyphen, std::optional<size_t> visuallyVisibleLength)
     : m_start(start)
     , m_length(length)
+    , m_visuallyVisibleLength(visuallyVisibleLength)
     , m_hasHyphen(hasHyphen)
     , m_originalContent(originalContent)
     , m_adjustedContentToRender(adjustedContentToRender)
 {
-}
-
-inline void Box::truncate(float truncatedwidth)
-{
-    m_unflippedVisualRect.setWidth(truncatedwidth);
-    m_inkOverflow.shiftMaxXEdgeTo(m_unflippedVisualRect.maxY());
 }
 
 }

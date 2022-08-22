@@ -91,6 +91,7 @@ Platform/cocoa/SharedMemoryCocoa.cpp
 Platform/cocoa/WKCrashReporter.mm
 Platform/cocoa/WKPaymentAuthorizationDelegate.mm
 Platform/cocoa/WebKitAdditions.mm @no-unify
+Platform/cocoa/XPCUtilities.mm
 
 Platform/foundation/LoggingFoundation.mm
 
@@ -101,6 +102,7 @@ Platform/IPC/cocoa/ConnectionCocoa.mm
 Platform/IPC/cocoa/DaemonConnectionCocoa.mm
 Platform/IPC/cocoa/MachMessage.cpp
 
+Platform/IPC/darwin/ArgumentCodersDarwin.mm
 Platform/IPC/darwin/IPCSemaphoreDarwin.cpp
 
 Platform/mac/MachUtilities.cpp

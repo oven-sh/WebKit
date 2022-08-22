@@ -41,15 +41,33 @@ TextBoxIterator TextBox::nextTextBox() const
 
 LayoutRect TextBox::selectionRect(unsigned rangeStart, unsigned rangeEnd) const
 {
+    bool isCaretCase = rangeStart == rangeEnd;
+
     auto [clampedStart, clampedEnd] = selectableRange().clamp(rangeStart, rangeEnd);
 
-    if (clampedStart >= clampedEnd && !(rangeStart == rangeEnd && rangeStart >= start() && rangeStart <= end()))
-        return { };
+    if (clampedStart >= clampedEnd) {
+        if (isCaretCase) {
+            // handle unitary range, e.g.: representing caret position
+            bool isCaretWithinTextBox = rangeStart >= start() && rangeStart < end();
+            // For last text box in a InlineTextBox chain, we allow the caret to move to a position 'after' the end of the last text box.
+            bool isCaretWithinLastTextBox = rangeStart >= start() && rangeStart <= end();
+
+            auto itEnd = TextBoxRange(TextBoxIterator(*this)).end();
+            auto isLastTextBox = nextTextBox() == itEnd;
+
+            if ((isLastTextBox && !isCaretWithinLastTextBox) || (!isLastTextBox && !isCaretWithinTextBox))
+                return { };
+        } else {
+            bool isRangeWithinTextBox = (rangeStart >= start() && rangeStart <= end());
+            if (!isRangeWithinTextBox)
+                return { };
+        }
+    }
 
     auto lineSelectionRect = LineSelection::logicalRect(*lineBox());
     auto selectionRect = LayoutRect { logicalLeft(), lineSelectionRect.y(), logicalWidth(), lineSelectionRect.height() };
 
-    TextRun textRun = createTextRun();
+    auto textRun = this->textRun();
     if (clampedStart || clampedEnd != textRun.length())
         fontCascade().adjustSelectionRectForText(textRun, selectionRect, clampedStart, clampedEnd);
 
@@ -64,7 +82,7 @@ unsigned TextBox::offsetForPosition(float x, bool includePartialGlyphs) const
         return isLeftToRightDirection() ? length() : 0;
     if (x - logicalLeft() < 0)
         return isLeftToRightDirection() ? 0 : length();
-    return fontCascade().offsetForPosition(createTextRun(CreateTextRunMode::Editing), x - logicalLeft(), includePartialGlyphs);
+    return fontCascade().offsetForPosition(textRun(TextRunMode::Editing), x - logicalLeft(), includePartialGlyphs);
 }
 
 float TextBox::positionForOffset(unsigned offset) const
@@ -83,7 +101,7 @@ float TextBox::positionForOffset(unsigned offset) const
 
     auto selectionRect = LayoutRect(logicalLeft(), 0, 0, 0);
     
-    auto textRun = createTextRun(CreateTextRunMode::Editing);
+    auto textRun = this->textRun(TextRunMode::Editing);
     fontCascade().adjustSelectionRectForText(textRun, selectionRect, startOffset, endOffset);
     return snapRectToDevicePixelsWithWritingDirection(selectionRect, renderer().document().deviceScaleFactor(), textRun.ltr()).maxX();
 }

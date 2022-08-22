@@ -99,10 +99,6 @@
 
 #if PLATFORM(COCOA)
 #include "ArgumentCodersCF.h"
-
-namespace WTF {
-class MachSendRight;
-}
 #endif
 
 #if USE(UNIX_DOMAIN_SOCKETS)
@@ -139,8 +135,10 @@ class HTTPHeaderMap;
 class KeyframeValueList;
 class LinearTimingFunction;
 class Notification;
+class NotificationResources;
 class PasteboardCustomData;
 class PaymentInstallmentConfiguration;
+class PixelBuffer;
 class ProtectionSpace;
 class Region;
 class ResourceError;
@@ -438,12 +436,6 @@ template<> struct ArgumentCoder<WebCore::DragData> {
 #endif
 
 #if PLATFORM(COCOA)
-
-template<> struct ArgumentCoder<WTF::MachSendRight> {
-    static void encode(Encoder&, const WTF::MachSendRight&);
-    static void encode(Encoder&, WTF::MachSendRight&&);
-    static WARN_UNUSED_RETURN bool decode(Decoder&, WTF::MachSendRight&);
-};
 
 template<> struct ArgumentCoder<WebCore::KeypressCommand> {
     static void encode(Encoder&, const WebCore::KeypressCommand&);
@@ -773,6 +765,11 @@ template<> struct ArgumentCoder<WebCore::SystemImage> {
     static std::optional<Ref<WebCore::SystemImage>> decode(Decoder&);
 };
 
+template<> struct ArgumentCoder<WebCore::NotificationResources> {
+    static void encode(Encoder&, const WebCore::NotificationResources&);
+    static std::optional<RefPtr<WebCore::NotificationResources>> decode(Decoder&);
+};
+
 #if ENABLE(DATA_DETECTION)
 
 template<> struct ArgumentCoder<WebCore::DataDetectorElementInfo> {
@@ -843,6 +840,11 @@ template<> struct ArgumentCoder<UnixFileDescriptor> {
 };
 
 #endif
+
+template<> struct ArgumentCoder<WebCore::PixelBuffer> {
+    template<class Encoder> static void encode(Encoder&, const WebCore::PixelBuffer&);
+    static std::optional<Ref<WebCore::PixelBuffer>> decode(Decoder&);
+};
 
 } // namespace IPC
 

@@ -87,12 +87,13 @@ public:
     void updateListItemDimensions(const RenderListItem&);
     void updateListMarkerDimensions(const RenderListMarker&);
     void updateStyle(const RenderBoxModelObject&, const RenderStyle& oldStyle);
+    void updateOverflow();
 
     std::pair<LayoutUnit, LayoutUnit> computeIntrinsicWidthConstraints();
 
     void layout();
-    void paint(PaintInfo&, const LayoutPoint& paintOffset);
-    bool hitTest(const HitTestRequest&, HitTestResult&, const HitTestLocation&, const LayoutPoint& accumulatedOffset, HitTestAction);
+    void paint(PaintInfo&, const LayoutPoint& paintOffset, const RenderInline* layerRenderer = nullptr);
+    bool hitTest(const HitTestRequest&, HitTestResult&, const HitTestLocation&, const LayoutPoint& accumulatedOffset, HitTestAction, const RenderInline* layerRenderer = nullptr);
     void adjustForPagination();
 
     void collectOverflow();

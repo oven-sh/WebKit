@@ -188,7 +188,6 @@ OBJECT_LUT_HEADERS = \
     JSDataViewPrototype.lut.h \
     JSGlobalObject.lut.h \
     JSInternalPromiseConstructor.lut.h \
-    JSModuleLoader.lut.h \
     JSONObject.lut.h \
     JSPromiseConstructor.lut.h \
     JSPromisePrototype.lut.h \
@@ -213,6 +212,8 @@ OBJECT_LUT_HEADERS = \
     TemporalObject.lut.h \
     TemporalPlainDateConstructor.lut.h \
     TemporalPlainDatePrototype.lut.h \
+    TemporalPlainDateTimeConstructor.lut.h \
+    TemporalPlainDateTimePrototype.lut.h \
     TemporalPlainTimeConstructor.lut.h \
     TemporalPlainTimePrototype.lut.h \
     TemporalTimeZoneConstructor.lut.h \

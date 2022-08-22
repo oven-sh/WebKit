@@ -426,7 +426,7 @@ ExceptionOr<Vector<MediaEndpointConfiguration::IceServerInfo>> RTCPeerConnection
                             return Exception { TypeError, "TURN/TURNS username and/or credential are too long"_s };
                     }
                 } else if (!serverURL.protocolIs("stun"_s))
-                    return Exception { NotSupportedError, "ICE server protocol not supported"_s };
+                    return Exception { SyntaxError, "ICE server protocol not supported"_s };
             }
             if (serverURLs.size())
                 servers.uncheckedAppend({ WTFMove(serverURLs), server.credential, server.username });
@@ -555,7 +555,7 @@ ExceptionOr<Ref<RTCDataChannel>> RTCPeerConnection::createDataChannel(String&& l
     // FIXME: Provide better error reporting.
     auto channelHandler = m_backend->createDataChannelHandler(label, options);
     if (!channelHandler)
-        return Exception { NotSupportedError };
+        return Exception { OperationError };
 
     return RTCDataChannel::create(*document(), WTFMove(channelHandler), WTFMove(label), WTFMove(options));
 }

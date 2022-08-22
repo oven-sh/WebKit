@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "LegacyEllipsisBox.h"
 #include "LegacyInlineTextBox.h"
 #include "LegacyRootInlineBox.h"
 #include "RenderText.h"
@@ -34,7 +35,7 @@
 namespace WebCore {
 namespace InlineIterator {
 
-enum class CreateTextRunMode { Painting, Editing };
+enum class TextRunMode { Painting, Editing };
 
 class BoxLegacyPath {
 public:
@@ -45,6 +46,7 @@ public:
     bool isText() const { return m_inlineBox->isInlineTextBox(); }
     bool isInlineBox() const { return m_inlineBox->isInlineFlowBox(); }
     bool isRootInlineBox() const { return m_inlineBox->isRootInlineBox(); }
+    bool isEllipsisBox() const { return m_inlineBox->isEllipsisBox(); }
 
     FloatRect visualRectIgnoringBlockDirection() const { return m_inlineBox->frameRect(); }
 
@@ -57,18 +59,23 @@ public:
     unsigned char bidiLevel() const { return m_inlineBox->bidiLevel(); }
 
     bool hasHyphen() const { return inlineTextBox()->hasHyphen(); }
-    StringView text() const { return StringView(inlineTextBox()->renderer().text()).substring(inlineTextBox()->start(), inlineTextBox()->len()); }
+    StringView originalText() const { return StringView(inlineTextBox()->renderer().text()).substring(inlineTextBox()->start(), inlineTextBox()->len()); }
     unsigned start() const { return inlineTextBox()->start(); }
     unsigned end() const { return inlineTextBox()->end(); }
     unsigned length() const { return inlineTextBox()->len(); }
 
     TextBoxSelectableRange selectableRange() const { return inlineTextBox()->selectableRange(); }
 
-    TextRun createTextRun(CreateTextRunMode mode) const
+    TextRun textRun(TextRunMode mode = TextRunMode::Painting) const
     {
-        bool ignoreCombinedText = mode == CreateTextRunMode::Editing;
-        bool ignoreHyphen = mode == CreateTextRunMode::Editing;
-        return inlineTextBox()->createTextRun(ignoreCombinedText, ignoreHyphen);
+        bool ignoreCombinedText = mode == TextRunMode::Editing;
+        bool ignoreHyphen = mode == TextRunMode::Editing;
+        if (isText())
+            return inlineTextBox()->createTextRun(ignoreCombinedText, ignoreHyphen);
+        if (isEllipsisBox())
+            return ellipsisBox()->createTextRun();
+        ASSERT_NOT_REACHED();
+        return TextRun { emptyString() };
     }
 
     const RenderObject& renderer() const
@@ -136,6 +143,7 @@ public:
 private:
     const LegacyInlineTextBox* inlineTextBox() const { return downcast<LegacyInlineTextBox>(m_inlineBox); }
     const LegacyInlineFlowBox* inlineFlowBox() const { return downcast<LegacyInlineFlowBox>(m_inlineBox); }
+    const LegacyEllipsisBox* ellipsisBox() const { return downcast<LegacyEllipsisBox>(m_inlineBox); }
 
     const LegacyInlineBox* m_inlineBox { nullptr };
 };

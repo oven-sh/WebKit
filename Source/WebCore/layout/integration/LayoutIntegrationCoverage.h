@@ -64,7 +64,7 @@ enum class AvoidanceReason : uint64_t {
     // Unused                                    = 1LLU  << 22,
     // Unused                                    = 1LLU  << 23,
     // Unused                                    = 1LLU  << 24,
-    FlowHasPseudoFirstLetter                     = 1LLU  << 25,
+    // Unused                                    = 1LLU  << 25,
     FlowHasTextCombine                           = 1LLU  << 26,
     // Unused                                    = 1LLU  << 27,
     // Unused                                    = 1LLU  << 28,
@@ -98,7 +98,7 @@ enum class AvoidanceReason : uint64_t {
     ContentIsSVG                                 = 1LLU  << 56,
     // Unused                                    = 1LLU  << 57,
     // Unused                                    = 1LLU  << 58,
-    InlineBoxNeedsLayer                          = 1LLU  << 59,
+    // Unused                                    = 1LLU  << 59,
     BoxDecorationBreakClone                      = 1LLU  << 60,
     FlowIsUnsupportedListItem                    = 1LLU  << 61,
     EndOfReasons                                 = 1LLU  << 62

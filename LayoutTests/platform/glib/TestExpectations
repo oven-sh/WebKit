@@ -321,6 +321,9 @@ fast/css/accent-color/text.html [ Pass ]
 # Support for VP9 encoded videos with transparency is only available on ports that use GStreamer.
 media/video-with-alpha.html [ Pass ]
 
+# Only glib platforms fail (detected by this test) on corrupt aac encapsulated in MP4 because of GStreamer fdkaacdec.
+media/media-source/media-source-append-play-corrupt-aac.html [ Pass ]
+
 # NOTIFICATION_EVENT tests
 http/tests/workers/service/shownotification-allowed-document.html [ Pass ]
 http/tests/workers/service/shownotification-allowed.html [ Pass ]
@@ -362,6 +365,9 @@ accessibility/text-updates-after-dynamic-change.html [ Skip ]
 
 # Failing since added in https://bugs.webkit.org/show_bug.cgi?id=241428.
 accessibility/aria-multiline.html [ Skip ]
+
+# Failing since added in https://bugs.webkit.org/show_bug.cgi?id=244069.
+accessibility/dynamically-ignored-canvas.html [ Skip ]
 
 # Missing AccessibilityUIElement::uiElementForSearchPredicate implementation.
 accessibility/aria-modal-with-text-crash.html [ Skip ]
@@ -446,6 +452,9 @@ accessibility/nested-textareas-value-changed-notifications.html [ Skip ]
 
 accessibility/dialog-properties.html [ Skip ]
 accessibility/ignored-aria-role-description.html [ Skip ]
+
+# Failing since added in https://bugs.webkit.org/show_bug.cgi?id=244151.
+accessibility/ignored-textfield-still-accessible.html [ Skip ]
 
 webkit.org/b/229261 accessibility/element-line-rects-and-text.html [ Missing ]
 
@@ -1244,8 +1253,6 @@ webkit.org/b/201981 imported/w3c/web-platform-tests/service-workers/service-work
 webkit.org/b/238738 http/wpt/service-workers/navigate-iframes-window-client.https.html [ Failure ]
 webkit.org/b/238738238738 imported/w3c/web-platform-tests/service-workers/service-worker/windowclient-navigate.https.html [ Failure ]
 
-webkit.org/b/208369 http/tests/workers/service/basic-timeout.https.html [ Failure Timeout Pass ]
-
 webkit.org/b/215638 http/tests/websocket/tests/hybi/invalid-continuation.html [ Failure ]
 webkit.org/b/215638 http/tests/websocket/tests/hybi/stop-on-resume-in-error-handler.html [ Failure ]
 
@@ -1678,7 +1685,6 @@ webkit.org/b/214472 imported/w3c/web-platform-tests/css/css-images/normalization
 webkit.org/b/214472 imported/w3c/web-platform-tests/css/css-images/normalization-conic-2.html [ Pass ]
 
 # Reftest-wait timeouts
-webkit.org/b/186045 imported/w3c/web-platform-tests/css/css-ui/text-overflow-017.html [ Timeout ]
 webkit.org/b/186045 imported/w3c/web-platform-tests/css/css-values/vh_not_refreshing_on_chrome.html [ Timeout ]
 
 webkit.org/b/186485 imported/w3c/web-platform-tests/web-animations/animation-model/animation-types/accumulation-per-property-002.html [ Failure ]
@@ -1962,6 +1968,9 @@ http/tests/webrtc [ Skip ]
 # Failing since more testcases were added in https://bugs.webkit.org/show_bug.cgi?id=242092
 accessibility/table-exposure-updates-dynamically.html [ Skip ]
 
+# Failing since added in https://bugs.webkit.org/show_bug.cgi?id=243768.
+accessibility/spinbutton-increment-decrement.html [ Skip ]
+
 # GTK already has its own version of this test (accessibility/gtk/aria-roles-unignored.html).
 accessibility/aria-roles-unignored.html [ Skip ]
 
@@ -2088,6 +2097,11 @@ webanimations/accelerated-animations-and-composite.html [ Skip ]
 
 # OT-SVG is not implemented on GTK/WPE
 fast/text/otsvg-canvas.html [ ImageOnlyFailure ]
+
+# resignFirstResponder is not implemented on GLIB
+fast/shadow-dom/focus-ring-on-shadow-host.html [ Skip ]
+fast/shadow-dom/focus-ring-on-shadow-host-focuswithin.html [ Skip ]
+fast/shadow-dom/focus-ring-on-shadow-host-sibling.html [ Skip ]
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of UNSUPPORTED tests.

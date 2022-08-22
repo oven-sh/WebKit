@@ -750,11 +750,11 @@ ImperativeSlotAPIEnabled:
   humanReadableDescription: "Imperative Shadow DOM Distribution API"
   defaultValue:
     WebKitLegacy:
-      default: false
+      default: true
     WebKit:
-      default: false
+      default: true
     WebCore:
-      default: false
+      default: true
 
 # FIXME: This is not relevent for WebKitLegacy, so should be excluded from WebKitLegacy entirely.
 InProcessCookieCacheEnabled:
@@ -1264,6 +1264,18 @@ RemotePlaybackEnabled:
     WebCore:
       default: true
 
+ReportingEnabled:
+  type: bool
+  humanReadableName: "Reporting API"
+  humanReadableDescription: "Enable Reporting API"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
 RequestIdleCallbackEnabled:
   type: bool
   humanReadableName: "requestIdleCallback"
@@ -1417,6 +1429,18 @@ ShouldDeferAsynchronousScriptsUntilAfterDocumentLoadOrFirstPaint:
       default: true
     WebCore:
       default: true
+
+ShowMediaStatsContextMenuItemEnabled:
+  type: bool
+  humanReadableName: "Show Media Stats"
+  humanReadableDescription: "Adds a 'Media Stats' context menu item to <video> when the Develop menu is enabled"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
 
 SpeechRecognitionEnabled:
   type: bool

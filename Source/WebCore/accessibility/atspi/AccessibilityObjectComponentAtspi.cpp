@@ -23,6 +23,7 @@
 #if USE(ATSPI)
 #include "AccessibilityAtspi.h"
 #include "AccessibilityAtspiEnums.h"
+#include "AccessibilityObject.h"
 #include "AccessibilityObjectInterface.h"
 #include "Document.h"
 #include "FrameView.h"
@@ -161,7 +162,8 @@ float AccessibilityObjectAtspi::opacity() const
 
 void AccessibilityObjectAtspi::scrollToMakeVisible(uint32_t scrollType) const
 {
-    if (!m_coreObject)
+    auto* liveObject = dynamicDowncast<AccessibilityObject>(m_coreObject);
+    if (!liveObject)
         return;
 
     ScrollAlignment alignX;
@@ -193,7 +195,7 @@ void AccessibilityObjectAtspi::scrollToMakeVisible(uint32_t scrollType) const
         break;
     }
 
-    m_coreObject->scrollToMakeVisible({ SelectionRevealMode::Reveal, alignX, alignY, ShouldAllowCrossOriginScrolling::Yes });
+    liveObject->scrollToMakeVisible({ SelectionRevealMode::Reveal, alignX, alignY, ShouldAllowCrossOriginScrolling::Yes });
 }
 
 void AccessibilityObjectAtspi::scrollToPoint(const IntPoint& point, uint32_t coordinateType) const

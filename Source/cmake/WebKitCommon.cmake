@@ -211,6 +211,7 @@ if (NOT HAS_RUN_WEBKIT_COMMON)
     include(CheckTypeSize)
     include(CMakeDependentOption)
     include(CMakeParseArguments)
+    include(CMakePushCheckState)
     include(ProcessorCount)
 
     include(WebKitPackaging)
