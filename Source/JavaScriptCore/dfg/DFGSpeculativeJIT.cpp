@@ -780,6 +780,7 @@ JITCompiler::JumpList SpeculativeJIT::jumpSlowForUnwantedArrayMode(GPRReg tempGP
     case Array::Int32:
     case Array::Double:
     case Array::Contiguous:
+    case Array::AlwaysSlowPutContiguous:
     case Array::Undecided:
     case Array::ArrayStorage: {
         IndexingType shape = arrayMode.shapeMask();
@@ -878,6 +879,7 @@ void SpeculativeJIT::checkArray(Node* node)
     case Array::Int32:
     case Array::Double:
     case Array::Contiguous:
+    case Array::AlwaysSlowPutContiguous:
     case Array::Undecided:
     case Array::ArrayStorage:
     case Array::SlowPutArrayStorage: {
@@ -905,9 +907,11 @@ void SpeculativeJIT::checkArray(Node* node)
     case Array::Int32:
     case Array::Double:
     case Array::Contiguous:
+    case Array::AlwaysSlowPutContiguous:
     case Array::Undecided:
     case Array::ArrayStorage:
     case Array::SlowPutArrayStorage: {
+        ASSERT(tempGPR.has_value());
         m_jit.load8(MacroAssembler::Address(baseReg, JSCell::indexingTypeAndMiscOffset()), tempGPR.value());
         speculationCheck(
             BadIndexingType, JSValueSource::unboxedCell(baseReg), nullptr,
@@ -2677,6 +2681,7 @@ void SpeculativeJIT::compilePutByVal(Node* node)
     case Array::String:
     case Array::DirectArguments:
     case Array::ScopedArguments:
+    case Array::AlwaysSlowPutContiguous:
     case Array::Undecided:
 #if USE(JSVALUE32_64)
     case Array::BigInt64Array:
@@ -5502,7 +5507,7 @@ void SpeculativeJIT::compileMathIC(Node* node, JITBinaryMathIC<Generator>* mathI
 #if ENABLE(MATH_IC_STATS)
             auto slowPathEnd = m_jit.label();
             m_jit.addLinkTask([=] (LinkBuffer& linkBuffer) {
-                size_t size = static_cast<char*>(linkBuffer.locationOf(slowPathEnd).executableAddress()) - static_cast<char*>(linkBuffer.locationOf(slowPathStart).executableAddress());
+                size_t size = static_cast<char*>(linkBuffer.locationOf(slowPathEnd).taggedPtr()) - static_cast<char*>(linkBuffer.locationOf(slowPathStart).taggedPtr());
                 mathIC->m_generatedCodeSize += size;
             });
 #endif
@@ -5525,7 +5530,7 @@ void SpeculativeJIT::compileMathIC(Node* node, JITBinaryMathIC<Generator>* mathI
 #if ENABLE(MATH_IC_STATS)
     auto inlineEnd = m_jit.label();
     m_jit.addLinkTask([=] (LinkBuffer& linkBuffer) {
-        size_t size = static_cast<char*>(linkBuffer.locationOf(inlineEnd).executableAddress()) - static_cast<char*>(linkBuffer.locationOf(inlineStart).executableAddress());
+        size_t size = static_cast<char*>(linkBuffer.locationOf(inlineEnd).taggedPtr()) - static_cast<char*>(linkBuffer.locationOf(inlineStart).taggedPtr());
         mathIC->m_generatedCodeSize += size;
     });
 #endif
@@ -6115,7 +6120,7 @@ void SpeculativeJIT::compileMathIC(Node* node, JITUnaryMathIC<Generator>* mathIC
 #if ENABLE(MATH_IC_STATS)
             auto slowPathEnd = m_jit.label();
             m_jit.addLinkTask([=] (LinkBuffer& linkBuffer) {
-                size_t size = static_cast<char*>(linkBuffer.locationOf(slowPathEnd).executableAddress()) - static_cast<char*>(linkBuffer.locationOf(slowPathStart).executableAddress());
+                size_t size = static_cast<char*>(linkBuffer.locationOf(slowPathEnd).taggedPtr()) - static_cast<char*>(linkBuffer.locationOf(slowPathStart).taggedPtr());
                 mathIC->m_generatedCodeSize += size;
             });
 #endif
@@ -6130,7 +6135,7 @@ void SpeculativeJIT::compileMathIC(Node* node, JITUnaryMathIC<Generator>* mathIC
 #if ENABLE(MATH_IC_STATS)
     auto inlineEnd = m_jit.label();
     m_jit.addLinkTask([=] (LinkBuffer& linkBuffer) {
-        size_t size = static_cast<char*>(linkBuffer.locationOf(inlineEnd).executableAddress()) - static_cast<char*>(linkBuffer.locationOf(inlineStart).executableAddress());
+        size_t size = static_cast<char*>(linkBuffer.locationOf(inlineEnd).taggedPtr()) - static_cast<char*>(linkBuffer.locationOf(inlineStart).taggedPtr());
         mathIC->m_generatedCodeSize += size;
     });
 #endif
@@ -8644,7 +8649,8 @@ void SpeculativeJIT::compileGetArrayLength(Node* node)
     case Array::Undecided:
     case Array::Int32:
     case Array::Double:
-    case Array::Contiguous: {
+    case Array::Contiguous:
+    case Array::AlwaysSlowPutContiguous: {
         StorageOperand storage(this, node->child2());
         GPRTemporary result(this, Reuse, storage);
         GPRReg storageReg = storage.gpr();
@@ -10149,7 +10155,7 @@ void SpeculativeJIT::compileArrayIndexOf(Node* node)
         }
 
         if (searchElementEdge.useKind() == OtherUse) {
-            ASSERT(node->arrayMode().type() == Array::Contiguous);
+            ASSERT(node->arrayMode().isAnyKindOfContiguous());
             JSValueOperand searchElement(this, searchElementEdge, ManualOperandSpeculation);
             GPRTemporary temp(this);
 
@@ -10169,7 +10175,7 @@ void SpeculativeJIT::compileArrayIndexOf(Node* node)
             return;
         }
 
-        ASSERT(node->arrayMode().type() == Array::Contiguous);
+        ASSERT(node->arrayMode().isAnyKindOfContiguous());
         SpeculateCellOperand searchElement(this, searchElementEdge);
         GPRReg searchElementGPR = searchElement.gpr();
 
@@ -10229,7 +10235,7 @@ void SpeculativeJIT::compileArrayIndexOf(Node* node)
     }
 
     case StringUse: {
-        ASSERT(node->arrayMode().type() == Array::Contiguous);
+        ASSERT(node->arrayMode().isAnyKindOfContiguous());
         SpeculateCellOperand searchElement(this, searchElementEdge);
 
         GPRReg searchElementGPR = searchElement.gpr();
@@ -11095,13 +11101,13 @@ void SpeculativeJIT::compileCallDOM(Node* node)
     unsigned argumentCountIncludingThis = signature->argumentCount + 1;
     switch (argumentCountIncludingThis) {
     case 1:
-        callOperation(reinterpret_cast<J_JITOperation_GP>(function.get()), extractResult(resultRegs), JITCompiler::LinkableConstant(m_jit, m_graph.globalObjectFor(node->origin.semantic)), regs[0]);
+        callOperation(reinterpret_cast<J_JITOperation_GP>(function.untypedFunc()), extractResult(resultRegs), JITCompiler::LinkableConstant(m_jit, m_graph.globalObjectFor(node->origin.semantic)), regs[0]);
         break;
     case 2:
-        callOperation(reinterpret_cast<J_JITOperation_GPP>(function.get()), extractResult(resultRegs), JITCompiler::LinkableConstant(m_jit, m_graph.globalObjectFor(node->origin.semantic)), regs[0], regs[1]);
+        callOperation(reinterpret_cast<J_JITOperation_GPP>(function.untypedFunc()), extractResult(resultRegs), JITCompiler::LinkableConstant(m_jit, m_graph.globalObjectFor(node->origin.semantic)), regs[0], regs[1]);
         break;
     case 3:
-        callOperation(reinterpret_cast<J_JITOperation_GPPP>(function.get()), extractResult(resultRegs), JITCompiler::LinkableConstant(m_jit, m_graph.globalObjectFor(node->origin.semantic)), regs[0], regs[1], regs[2]);
+        callOperation(reinterpret_cast<J_JITOperation_GPPP>(function.untypedFunc()), extractResult(resultRegs), JITCompiler::LinkableConstant(m_jit, m_graph.globalObjectFor(node->origin.semantic)), regs[0], regs[1], regs[2]);
         break;
     default:
         RELEASE_ASSERT_NOT_REACHED();
@@ -11116,7 +11122,7 @@ void SpeculativeJIT::compileCallDOMGetter(Node* node)
 {
     DOMJIT::CallDOMGetterSnippet* snippet = node->callDOMGetterData()->snippet;
     if (!snippet) {
-        FunctionPtr<CustomAccessorPtrTag> getter = node->callDOMGetterData()->customAccessorGetter;
+        CodePtr<CustomAccessorPtrTag> getter = node->callDOMGetterData()->customAccessorGetter;
         SpeculateCellOperand base(this, node->child1());
         JSValueRegsTemporary result(this);
 
@@ -11125,7 +11131,7 @@ void SpeculativeJIT::compileCallDOMGetter(Node* node)
 
         flushRegisters();
         if (Options::useJITCage())
-            m_jit.setupArguments<J_JITOperation_GJIP>(JITCompiler::LinkableConstant(m_jit, m_graph.globalObjectFor(node->origin.semantic)), CCallHelpers::CellValue(baseGPR), TrustedImmPtr(identifierUID(node->callDOMGetterData()->identifierNumber)), TrustedImmPtr(getter.executableAddress()));
+            m_jit.setupArguments<J_JITOperation_GJIP>(JITCompiler::LinkableConstant(m_jit, m_graph.globalObjectFor(node->origin.semantic)), CCallHelpers::CellValue(baseGPR), TrustedImmPtr(identifierUID(node->callDOMGetterData()->identifierNumber)), TrustedImmPtr(getter.taggedPtr()));
         else
             m_jit.setupArguments<J_JITOperation_GJI>(JITCompiler::LinkableConstant(m_jit, m_graph.globalObjectFor(node->origin.semantic)), CCallHelpers::CellValue(baseGPR), TrustedImmPtr(identifierUID(node->callDOMGetterData()->identifierNumber)));
 
@@ -11134,7 +11140,7 @@ void SpeculativeJIT::compileCallDOMGetter(Node* node)
         if (Options::useJITCage())
             m_jit.appendCall(vmEntryCustomGetter);
         else {
-            FunctionPtr<OperationPtrTag> bypassedFunction = MacroAssemblerCodePtr<OperationPtrTag>(WTF::tagNativeCodePtrImpl<OperationPtrTag>(WTF::untagNativeCodePtrImpl<CustomAccessorPtrTag>(getter.executableAddress()))).toFunctionPtr();
+            CodePtr<OperationPtrTag> bypassedFunction(WTF::tagNativeCodePtrImpl<OperationPtrTag>(WTF::untagNativeCodePtrImpl<CustomAccessorPtrTag>(getter.taggedPtr())));
             m_jit.appendOperationCall(bypassedFunction);
         }
         m_jit.setupResults(resultRegs);

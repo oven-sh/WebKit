@@ -693,6 +693,8 @@ WebPage::WebPage(PageIdentifier pageID, WebPageCreationParameters&& parameters)
 
     m_page = makeUnique<Page>(WTFMove(pageConfiguration));
 
+    WebStorageNamespaceProvider::incrementUseCount(*m_pageGroup, sessionStorageNamespaceIdentifier());
+
 #if PLATFORM(IOS)
     setAllowsDeprecatedSynchronousXMLHttpRequestDuringUnload(parameters.allowsDeprecatedSynchronousXMLHttpRequestDuringUnload);
 #endif
@@ -1093,6 +1095,8 @@ WebPage::~WebPage()
     if (m_footerBanner)
         m_footerBanner->detachFromPage();
 #endif
+
+    WebStorageNamespaceProvider::decrementUseCount(*m_pageGroup, sessionStorageNamespaceIdentifier());
 
 #ifndef NDEBUG
     webPageCounter.decrement();
@@ -1905,7 +1909,7 @@ void WebPage::setDefersLoading(bool defersLoading)
     m_page->setDefersLoading(defersLoading);
 }
 
-void WebPage::reload(uint64_t navigationID, uint32_t reloadOptions, SandboxExtension::Handle&& sandboxExtensionHandle)
+void WebPage::reload(uint64_t navigationID, OptionSet<WebCore::ReloadOption> reloadOptions, SandboxExtension::Handle&& sandboxExtensionHandle)
 {
     SendStopResponsivenessTimer stopper;
 
@@ -1914,7 +1918,7 @@ void WebPage::reload(uint64_t navigationID, uint32_t reloadOptions, SandboxExten
 
     m_sandboxExtensionTracker.beginReload(m_mainFrame.ptr(), WTFMove(sandboxExtensionHandle));
     if (m_page && m_mainFrame->coreFrame())
-        m_page->userInputBridge().reloadFrame(*m_mainFrame->coreFrame(), OptionSet<ReloadOption>::fromRaw(reloadOptions));
+        m_page->userInputBridge().reloadFrame(*m_mainFrame->coreFrame(), reloadOptions);
     else
         ASSERT_NOT_REACHED();
 
@@ -7575,7 +7579,12 @@ void WebPage::getTextFragmentMatch(CompletionHandler<void(const String&)>&& comp
         return;
     }
 
-    FragmentDirectiveParser fragmentDirectiveParser(mainWebFrame().url());
+    auto fragmentDirective = document->fragmentDirective();
+    if (fragmentDirective.isEmpty()) {
+        completionHandler({ });
+        return;
+    }
+    FragmentDirectiveParser fragmentDirectiveParser(fragmentDirective);
     if (!fragmentDirectiveParser.isValid()) {
         completionHandler({ });
         return;
@@ -8069,17 +8078,17 @@ bool WebPage::createAppHighlightInSelectedRange(WebCore::CreateNewGroupForHighli
     return true;
 }
 
-void WebPage::restoreAppHighlightsAndScrollToIndex(const Vector<SharedMemory::IPCHandle>&& memoryHandles, const std::optional<unsigned> index)
+void WebPage::restoreAppHighlightsAndScrollToIndex(const Vector<SharedMemory::Handle>&& memoryHandles, const std::optional<unsigned> index)
 {
     RefPtr document = CheckedRef(m_page->focusController())->focusedOrMainFrame().document();
 
     unsigned i = 0;
-    for (const auto& ipcHandle : memoryHandles) {
-        auto sharedMemory = SharedMemory::map(ipcHandle.handle, SharedMemory::Protection::ReadOnly);
+    for (const auto& handle : memoryHandles) {
+        auto sharedMemory = SharedMemory::map(handle, SharedMemory::Protection::ReadOnly);
         if (!sharedMemory)
             continue;
 
-        document->appHighlightStorage().restoreAndScrollToAppHighlight(sharedMemory->createSharedBuffer(ipcHandle.dataSize), i == index ? ScrollToHighlight::Yes : ScrollToHighlight::No);
+        document->appHighlightStorage().restoreAndScrollToAppHighlight(sharedMemory->createSharedBuffer(handle.size()), i == index ? ScrollToHighlight::Yes : ScrollToHighlight::No);
         i++;
     }
 }

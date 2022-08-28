@@ -325,8 +325,8 @@ public:
 
                     jit.addLinkTask(
                         [=] (LinkBuffer& linkBuffer) {
-                            linkBuffer.link(throwCall, FunctionPtr<OperationPtrTag>(operationThrowStackOverflowError));
-                            linkBuffer.link(lookupExceptionHandlerCall, FunctionPtr<OperationPtrTag>(operationLookupExceptionHandlerFromCallerFrame));
+                            linkBuffer.link<OperationPtrTag>(throwCall, operationThrowStackOverflowError);
+                            linkBuffer.link<OperationPtrTag>(lookupExceptionHandlerCall, operationLookupExceptionHandlerFromCallerFrame);
                     });
                 });
             });
@@ -2459,7 +2459,7 @@ private:
 #if ENABLE(MATH_IC_STATS)
                         auto slowPathEnd = jit.label();
                         jit.addLinkTask([=] (LinkBuffer& linkBuffer) {
-                            size_t size = linkBuffer.locationOf(slowPathEnd).executableAddress<char*>() - linkBuffer.locationOf(slowPathStart).executableAddress<char*>();
+                            size_t size = linkBuffer.locationOf(slowPathEnd).taggedPtr<char*>() - linkBuffer.locationOf(slowPathStart).taggedPtr<char*>();
                             mathIC->m_generatedCodeSize += size;
                         });
 #endif
@@ -2473,7 +2473,7 @@ private:
 #if ENABLE(MATH_IC_STATS)
                 auto inlineEnd = jit.label();
                 jit.addLinkTask([=] (LinkBuffer& linkBuffer) {
-                    size_t size = linkBuffer.locationOf(inlineEnd).executableAddress<char*>() - linkBuffer.locationOf(inlineStart).executableAddress<char*>();
+                    size_t size = linkBuffer.locationOf(inlineEnd).taggedPtr<char*>() - linkBuffer.locationOf(inlineStart).taggedPtr<char*>();
                     mathIC->m_generatedCodeSize += size;
                 });
 #endif
@@ -2570,7 +2570,7 @@ private:
 #if ENABLE(MATH_IC_STATS)
                         auto slowPathEnd = jit.label();
                         jit.addLinkTask([=] (LinkBuffer& linkBuffer) {
-                            size_t size = linkBuffer.locationOf(slowPathEnd).executableAddress<char*>() - linkBuffer.locationOf(slowPathStart).executableAddress<char*>();
+                            size_t size = linkBuffer.locationOf(slowPathEnd).taggedPtr<char*>() - linkBuffer.locationOf(slowPathStart).taggedPtr<char*>();
                             mathIC->m_generatedCodeSize += size;
                         });
 #endif
@@ -2584,7 +2584,7 @@ private:
 #if ENABLE(MATH_IC_STATS)
                 auto inlineEnd = jit.label();
                 jit.addLinkTask([=] (LinkBuffer& linkBuffer) {
-                    size_t size = linkBuffer.locationOf(inlineEnd).executableAddress<char*>() - linkBuffer.locationOf(inlineStart).executableAddress<char*>();
+                    size_t size = linkBuffer.locationOf(inlineEnd).taggedPtr<char*>() - linkBuffer.locationOf(inlineStart).taggedPtr<char*>();
                     mathIC->m_generatedCodeSize += size;
                 });
 #endif
@@ -3858,6 +3858,7 @@ private:
             case Array::Int32:
             case Array::Double:
             case Array::Contiguous:
+            case Array::AlwaysSlowPutContiguous:
                 speculate(
                     Uncountable, noValue(), nullptr,
                     m_out.aboveOrEqual(property, m_out.constInt32(MIN_SPARSE_ARRAY_INDEX)));
@@ -3875,6 +3876,7 @@ private:
             vmCall(Void, operationEnsureDouble, m_vmValue, cell);
             break;
         case Array::Contiguous:
+        case Array::AlwaysSlowPutContiguous:
             vmCall(Void, operationEnsureContiguous, m_vmValue, cell);
             break;
         case Array::ArrayStorage:
@@ -5054,7 +5056,8 @@ IGNORE_CLANG_WARNINGS_END
         case Array::Undecided:
         case Array::Int32:
         case Array::Double:
-        case Array::Contiguous: {
+        case Array::Contiguous:
+        case Array::AlwaysSlowPutContiguous: {
             setInt32(m_out.load32NonNegative(lowStorage(m_node->child2()), m_heaps.Butterfly_publicLength));
             return;
         }
@@ -5200,7 +5203,8 @@ IGNORE_CLANG_WARNINGS_END
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
         switch (m_node->arrayMode().type()) {
         case Array::Int32:
-        case Array::Contiguous: {
+        case Array::Contiguous:
+        case Array::AlwaysSlowPutContiguous: {
             LValue index = lowInt32(m_graph.varArgChild(m_node, 1));
             LValue storage = lowStorage(m_graph.varArgChild(m_node, 2));
             
@@ -5214,13 +5218,13 @@ IGNORE_CLANG_WARNINGS_END
                 LValue isHole = m_out.isZero64(result);
                 if (m_node->arrayMode().isInBoundsSaneChain()) {
                     DFG_ASSERT(
-                        m_graph, m_node, m_node->arrayMode().type() == Array::Contiguous, m_node->arrayMode().type());
+                        m_graph, m_node, m_node->arrayMode().isAnyKindOfContiguous(), m_node->arrayMode().type());
                     result = m_out.select(
                         isHole, m_out.constInt64(JSValue::encode(jsUndefined())), result);
                 } else
                     speculate(LoadFromHole, noValue(), nullptr, isHole);
                 // We have to keep base alive to keep content in storage alive.
-                if (m_node->arrayMode().type() == Array::Contiguous)
+                if (m_node->arrayMode().isAnyKindOfContiguous())
                     ensureStillAliveHere(base);
                 return result;
             }
@@ -5252,7 +5256,7 @@ IGNORE_CLANG_WARNINGS_END
             
             m_out.appendTo(continuation, lastNext);
             // We have to keep base alive to keep content in storage alive.
-            if (m_node->arrayMode().type() == Array::Contiguous)
+            if (m_node->arrayMode().isAnyKindOfContiguous())
                 ensureStillAliveHere(base);
             return m_out.phi(Int64, fastResult, slowResult);
         }
@@ -6132,6 +6136,7 @@ IGNORE_CLANG_WARNINGS_END
         case Array::ForceExit:
         case Array::Generic:
         case Array::ScopedArguments:
+        case Array::AlwaysSlowPutContiguous:
         case Array::SelectUsingArguments:
         case Array::SelectUsingPredictions:
         case Array::Undecided:
@@ -6723,15 +6728,15 @@ IGNORE_CLANG_WARNINGS_END
                 searchElement = lowJSValue(searchElementEdge, ManualOperandSpeculation);
                 break;
             case ObjectUse:
-                ASSERT(m_node->arrayMode().type() == Array::Contiguous);
+                ASSERT(m_node->arrayMode().isAnyKindOfContiguous());
                 searchElement = lowObject(searchElementEdge);
                 break;
             case SymbolUse:
-                ASSERT(m_node->arrayMode().type() == Array::Contiguous);
+                ASSERT(m_node->arrayMode().isAnyKindOfContiguous());
                 searchElement = lowSymbol(searchElementEdge);
                 break;
             case OtherUse:
-                ASSERT(m_node->arrayMode().type() == Array::Contiguous);
+                ASSERT(m_node->arrayMode().isAnyKindOfContiguous());
                 speculate(searchElementEdge);
                 searchElement = lowJSValue(searchElementEdge, ManualOperandSpeculation);
                 break;
@@ -6799,7 +6804,7 @@ IGNORE_CLANG_WARNINGS_END
         }
 
         case StringUse:
-            ASSERT(m_node->arrayMode().type() == Array::Contiguous);
+            ASSERT(m_node->arrayMode().isAnyKindOfContiguous());
             // We have to keep base alive since that keeps storage alive.
             ensureStillAliveHere(base);
             setInt32(m_out.castToInt32(vmCall(Int64, operationArrayIndexOfString, weakPointer(globalObject), storage, lowString(searchElementEdge), startIndex)));
@@ -6811,6 +6816,7 @@ IGNORE_CLANG_WARNINGS_END
                 setInt32(m_out.castToInt32(vmCall(Int64, operationArrayIndexOfValueDouble, weakPointer(globalObject), storage, lowJSValue(searchElementEdge), startIndex)));
                 return;
             case Array::Contiguous:
+            case Array::AlwaysSlowPutContiguous:
                 // We have to keep base alive since that keeps content of storage alive.
                 ensureStillAliveHere(base);
                 FALLTHROUGH;
@@ -15804,13 +15810,13 @@ IGNORE_CLANG_WARNINGS_END
         auto function = signature->functionWithoutTypeCheck();
         switch (argumentCountIncludingThis) {
         case 1:
-            result = vmCall(Int64, reinterpret_cast<J_JITOperation_GP>(function.get()), weakPointer(globalObject), operands[0]);
+            result = vmCall(Int64, reinterpret_cast<J_JITOperation_GP>(function.untypedFunc()), weakPointer(globalObject), operands[0]);
             break;
         case 2:
-            result = vmCall(Int64, reinterpret_cast<J_JITOperation_GPP>(function.get()), weakPointer(globalObject), operands[0], operands[1]);
+            result = vmCall(Int64, reinterpret_cast<J_JITOperation_GPP>(function.untypedFunc()), weakPointer(globalObject), operands[0], operands[1]);
             break;
         case 3:
-            result = vmCall(Int64, reinterpret_cast<J_JITOperation_GPPP>(function.get()), weakPointer(globalObject), operands[0], operands[1], operands[2]);
+            result = vmCall(Int64, reinterpret_cast<J_JITOperation_GPPP>(function.untypedFunc()), weakPointer(globalObject), operands[0], operands[1], operands[2]);
             break;
         default:
             RELEASE_ASSERT_NOT_REACHED();
@@ -15832,10 +15838,10 @@ IGNORE_CLANG_WARNINGS_END
             m_out.storePtr(m_callFrame, m_out.absolute(&vm().topCallFrame));
             if (Options::useJITCage()) {
                 setJSValue(
-                    vmCall(Int64, vmEntryCustomGetter, weakPointer(globalObject), lowCell(m_node->child1()), m_out.constIntPtr(m_graph.identifiers()[m_node->callDOMGetterData()->identifierNumber]), m_out.constIntPtr(m_node->callDOMGetterData()->customAccessorGetter.executableAddress())));
+                    vmCall(Int64, vmEntryCustomGetter, weakPointer(globalObject), lowCell(m_node->child1()), m_out.constIntPtr(m_graph.identifiers()[m_node->callDOMGetterData()->identifierNumber]), m_out.constIntPtr(m_node->callDOMGetterData()->customAccessorGetter.taggedPtr())));
             } else {
-                FunctionPtr<CustomAccessorPtrTag> getter = m_node->callDOMGetterData()->customAccessorGetter;
-                FunctionPtr<OperationPtrTag> bypassedFunction = MacroAssemblerCodePtr<OperationPtrTag>(WTF::tagNativeCodePtrImpl<OperationPtrTag>(WTF::untagNativeCodePtrImpl<CustomAccessorPtrTag>(getter.executableAddress()))).toFunctionPtr();
+                CodePtr<CustomAccessorPtrTag> getter = m_node->callDOMGetterData()->customAccessorGetter;
+                CodePtr<OperationPtrTag> bypassedFunction(WTF::tagNativeCodePtrImpl<OperationPtrTag>(WTF::untagNativeCodePtrImpl<CustomAccessorPtrTag>(getter.taggedPtr())));
                 setJSValue(vmCall(Int64, bypassedFunction, weakPointer(globalObject), lowCell(m_node->child1()), m_out.constIntPtr(m_graph.identifiers()[m_node->callDOMGetterData()->identifierNumber])));
             }
             return;
@@ -19816,6 +19822,7 @@ IGNORE_CLANG_WARNINGS_END
         case Array::Int32:
         case Array::Double:
         case Array::Contiguous:
+        case Array::AlwaysSlowPutContiguous:
         case Array::Undecided:
         case Array::ArrayStorage: {
             IndexingType indexingModeMask = IsArray | IndexingShapeMask;
@@ -19911,6 +19918,7 @@ IGNORE_CLANG_WARNINGS_END
         case Array::Int32:
         case Array::Double:
         case Array::Contiguous:
+        case Array::AlwaysSlowPutContiguous:
         case Array::Undecided:
         case Array::ArrayStorage:
         case Array::SlowPutArrayStorage:
@@ -20576,7 +20584,7 @@ IGNORE_CLANG_WARNINGS_END
     LValue vmCall(LType type, OperationType function, Args&&... args)
     {
         static_assert(!std::is_same<OperationType, LValue>::value);
-        if constexpr (!std::is_same_v<FunctionPtr<OperationPtrTag>, OperationType>)
+        if constexpr (!std::is_same_v<CodePtr<OperationPtrTag>, OperationType>)
             static_assert(FunctionTraits<OperationType>::cCallArity() == sizeof...(Args), "Sanity check");
         callPreflight();
         LValue result = m_out.call(type, m_out.operation(function), std::forward<Args>(args)...);

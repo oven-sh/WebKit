@@ -552,17 +552,17 @@ const TagOffset = constexpr TagOffset
 const PayloadOffset = constexpr PayloadOffset
 
 # Constant for reasoning about butterflies.
-const IsArray                  = constexpr IsArray
-const IndexingShapeMask        = constexpr IndexingShapeMask
-const IndexingTypeMask         = constexpr IndexingTypeMask
-const NoIndexingShape          = constexpr NoIndexingShape
-const Int32Shape               = constexpr Int32Shape
-const DoubleShape              = constexpr DoubleShape
-const ContiguousShape          = constexpr ContiguousShape
-const ArrayStorageShape        = constexpr ArrayStorageShape
-const SlowPutArrayStorageShape = constexpr SlowPutArrayStorageShape
-const CopyOnWrite              = constexpr CopyOnWrite
-const ArrayWithUndecided       = constexpr ArrayWithUndecided
+const IsArray                      = constexpr IsArray
+const IndexingShapeMask            = constexpr IndexingShapeMask
+const IndexingTypeMask             = constexpr IndexingTypeMask
+const NoIndexingShape              = constexpr NoIndexingShape
+const Int32Shape                   = constexpr Int32Shape
+const DoubleShape                  = constexpr DoubleShape
+const ContiguousShape              = constexpr ContiguousShape
+const AlwaysSlowPutContiguousShape = constexpr AlwaysSlowPutContiguousShape
+const ArrayStorageShape            = constexpr ArrayStorageShape
+const CopyOnWrite                  = constexpr CopyOnWrite
+const ArrayWithUndecided           = constexpr ArrayWithUndecided
 
 # Type constants.
 const StructureType = constexpr StructureType
@@ -2033,7 +2033,7 @@ end)
 
 op(llint_function_for_call_arity_check, macro ()
     prologue(_llint_entry_osr_function_for_call_arityCheck, _llint_trace_arityCheck_for_call)
-    functionArityCheck(llint_function_for_call_arity_check, .functionForCallBegin, _slow_path_call_arityCheck)
+    functionArityCheck(llint_function_for_call_arity_check, .functionForCallBegin)
 .functionForCallBegin:
     functionInitialization(0)
     dispatch(0)
@@ -2041,7 +2041,7 @@ end)
 
 op(llint_function_for_construct_arity_check, macro ()
     prologue(_llint_entry_osr_function_for_construct_arityCheck, _llint_trace_arityCheck_for_construct)
-    functionArityCheck(llint_function_for_construct_arity_check, .functionForConstructBegin, _slow_path_construct_arityCheck)
+    functionArityCheck(llint_function_for_construct_arity_check, .functionForConstructBegin)
 .functionForConstructBegin:
     functionInitialization(1)
     dispatch(0)

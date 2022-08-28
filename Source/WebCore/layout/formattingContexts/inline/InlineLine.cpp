@@ -51,6 +51,7 @@ Line::~Line()
 
 void Line::initialize(const Vector<InlineItem>& lineSpanningInlineBoxes, bool collapseLeadingNonBreakingSpace)
 {
+    m_contentIsTruncated = false;
     m_collapseLeadingNonBreakingSpace = collapseLeadingNonBreakingSpace;
     m_inlineBoxListWithClonedDecorationEnd.clear();
     m_clonedEndDecorationWidthForInlineBoxRuns = { };
@@ -174,12 +175,15 @@ void Line::applyRunExpansion(InlineLayoutUnit horizontalAvailableSpace)
 
 void Line::truncate(InlineLayoutUnit logicalRight)
 {
+    ASSERT(!m_contentIsTruncated);
     ASSERT(m_contentLogicalWidth > logicalRight);
     for (auto& run : m_runs) {
         if (run.isInlineBox())
             continue;
-        if (run.logicalRight() > logicalRight)
+        if (run.logicalRight() > logicalRight) {
             run.truncate(logicalRight - run.logicalLeft());
+            m_contentIsTruncated = true;
+        }
     }
 }
 

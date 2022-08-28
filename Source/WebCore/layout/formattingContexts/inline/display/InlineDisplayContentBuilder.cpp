@@ -104,7 +104,8 @@ DisplayBoxes InlineDisplayContentBuilder::build(const LineBuilder::LineContent& 
         processBidiContent(lineContent, lineBox, displayLine, boxes);
     else
         processNonBidiContent(lineContent, lineBox, displayLine, boxes);
-    processOverflownRunsForEllipsis(lineContent, boxes, displayLine.right());
+    processFloatBoxes(lineContent);
+
     collectInkOverflowForTextDecorations(boxes, displayLine);
     collectInkOverflowForInlineBoxes(boxes);
     return boxes;
@@ -756,60 +757,23 @@ void InlineDisplayContentBuilder::processBidiContent(const LineBuilder::LineCont
     handleTrailingOpenInlineBoxes();
 }
 
-void InlineDisplayContentBuilder::processOverflownRunsForEllipsis(const LineBuilder::LineContent& lineContent, DisplayBoxes& boxes, InlineLayoutUnit lineBoxRight)
+void InlineDisplayContentBuilder::processFloatBoxes(const LineBuilder::LineContent& lineContent)
 {
-    if (root().style().textOverflow() != TextOverflow::Ellipsis)
-        return;
-    auto& rootInlineBox = boxes[0];
-    ASSERT(rootInlineBox.isRootInlineBox());
-
-    if (rootInlineBox.right() <= lineBoxRight) {
-        ASSERT(boxes.last().right() <= lineBoxRight);
-        ASSERT(lineContent.runs.isEmpty() || !lineContent.runs[lineContent.runs.size() - 1].isTruncated());
+    // Float boxes are not part of the inline content so we don't construct inline display boxes for them.
+    // However box geometry still needs flipping from logical to visual.
+    auto writingMode = root().style().writingMode();
+    if (WebCore::isHorizontalWritingMode(writingMode)) {
+        // FIXME: Add right-to-left support
         return;
     }
 
-    static MainThreadNeverDestroyed<const AtomString> ellipsisStr(&horizontalEllipsis, 1);
-    auto ellipsisRun = WebCore::TextRun { ellipsisStr->string() };
-    auto ellipsisWidth = !m_lineIndex ? root().firstLineStyle().fontCascade().width(ellipsisRun) : root().style().fontCascade().width(ellipsisRun);
+    for (auto* floatBox : lineContent.floats) {
+        auto& boxGeometry = formattingState().boxGeometry(*floatBox);
+        auto borderBoxLogicalRect = LayoutRect { BoxGeometry::borderBoxRect(boxGeometry) };
+        auto visualRect = flipLogicalRectToVisualForWritingMode(InlineRect { borderBoxLogicalRect }, writingMode);
 
-    auto ellipsisVisualLeft = [&] {
-        auto truncatedWidth = [&] () -> float {
-            for (auto& lineRun : lineContent.runs) {
-                if (lineRun.isTruncated())
-                    return lineRun.isText() ? lineRun.textContent()->partiallyVisibleContent->width : 0.f;
-            }
-            return { };
-        };
-        auto left = 0.f;
-        for (auto& box : boxes) {
-            if (box.isInlineBox())
-                continue;
-            switch (box.isVisuallyHidden()) {
-            case InlineDisplay::Box::IsVisuallyHidden::No:
-                left = std::max(left, box.right());
-                break;
-            case InlineDisplay::Box::IsVisuallyHidden::Partially:
-                return std::max(left, box.left() + truncatedWidth());
-            case InlineDisplay::Box::IsVisuallyHidden::Yes:
-                return left;
-            default:
-                ASSERT_NOT_REACHED();
-                break;
-            }
-        }
-        return left;
-    }();
-    auto ellispisBoxRect = InlineRect { rootInlineBox.top(), ellipsisVisualLeft, ellipsisWidth, rootInlineBox.height() };
-
-    boxes.append({ m_lineIndex
-        , InlineDisplay::Box::Type::Ellipsis
-        , root()
-        , UBIDI_DEFAULT_LTR
-        , ellispisBoxRect
-        , ellispisBoxRect
-        , { }
-        , InlineDisplay::Box::Text { 0, 1, ellipsisStr->string() } });
+        boxGeometry.setLogicalTopLeft(toLayoutPoint(visualRect.topLeft()));
+    }
 }
 
 void InlineDisplayContentBuilder::collectInkOverflowForInlineBoxes(DisplayBoxes& boxes)

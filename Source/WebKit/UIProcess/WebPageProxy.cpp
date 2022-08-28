@@ -1806,7 +1806,7 @@ RefPtr<API::Navigation> WebPageProxy::reload(OptionSet<WebCore::ReloadOption> op
         navigation->setUserContentExtensionsEnabled(false);
 
     m_process->markProcessAsRecentlyUsed();
-    send(Messages::WebPage::Reload(navigation->navigationID(), options.toRaw(), sandboxExtensionHandle));
+    send(Messages::WebPage::Reload(navigation->navigationID(), options, sandboxExtensionHandle));
     m_process->startResponsivenessTimer();
 
 #if ENABLE(SPEECH_SYNTHESIS)
@@ -2184,7 +2184,7 @@ void WebPageProxy::updateActivityState(OptionSet<ActivityState::Flag> flagsToUpd
         m_activityState.add(ActivityState::IsAudible);
     if (flagsToUpdate & ActivityState::IsLoading && m_pageLoadState.isLoading())
         m_activityState.add(ActivityState::IsLoading);
-    if (flagsToUpdate & ActivityState::IsCapturingMedia && m_mediaState.containsAny({ MediaProducerMediaState::HasActiveAudioCaptureDevice,  MediaProducerMediaState::HasActiveVideoCaptureDevice }))
+    if (flagsToUpdate & ActivityState::IsCapturingMedia && m_mediaState.containsAny(MediaProducer::ActiveCaptureMask))
         m_activityState.add(ActivityState::IsCapturingMedia);
 }
 
@@ -8885,8 +8885,7 @@ void WebPageProxy::queryPermission(const ClientOrigin& clientOrigin, const Permi
         return;
     }
 
-    auto origin = API::SecurityOrigin::create(clientOrigin.topOrigin);
-    m_uiClient->queryPermission(name, origin, [clientOrigin, shouldChangeDeniedToPrompt, shouldChangePromptToGrant, completionHandler = WTFMove(completionHandler)](auto result) mutable {
+    CompletionHandler<void(std::optional<WebCore::PermissionState>)> callback = [clientOrigin, shouldChangeDeniedToPrompt, shouldChangePromptToGrant, completionHandler = WTFMove(completionHandler)](auto result) mutable {
         if (!result) {
             completionHandler({ }, false);
             return;
@@ -8896,7 +8895,15 @@ void WebPageProxy::queryPermission(const ClientOrigin& clientOrigin, const Permi
         else if (*result == PermissionState::Prompt && shouldChangePromptToGrant)
             result = PermissionState::Granted;
         completionHandler(*result, false);
-    });
+    };
+
+    if (clientOrigin.topOrigin.isUnique()) {
+        callback(PermissionState::Prompt);
+        return;
+    }
+
+    auto origin = API::SecurityOrigin::create(clientOrigin.topOrigin);
+    m_uiClient->queryPermission(name, origin, WTFMove(callback));
 }
 
 #if ENABLE(MEDIA_STREAM)

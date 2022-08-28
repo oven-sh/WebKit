@@ -68,3 +68,4 @@ __cmake_systeminformation/
 LocalOverrides.xcconfig
 
 DerivedData
+/BenchmarkTemp

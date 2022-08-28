@@ -272,6 +272,18 @@ CSSContainmentEnabled:
     WebCore:
       default: true
 
+CSSContentVisibilityEnabled:
+  type: bool
+  humanReadableName: "CSS Content Visibility"
+  humanReadableDescription: "Enable CSS content-visibility"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
 CSSCounterStyleAtRuleImageSymbolsEnabled:
   type: bool
   humanReadableName: "CSS @counter-style <image> symbols"
@@ -477,7 +489,7 @@ CompressionStreamEnabled:
     WebKitLegacy:
       default: false
     WebKit:
-      default: false
+      default: true
     WebCore:
       default: false
 
@@ -1377,9 +1389,9 @@ ScrollToTextFragmentEnabled:
     WebKitLegacy:
       default: false
     WebKit:
-      default: false
+      default: true
     WebCore:
-      default: false
+      default: true
 
 ServerTimingEnabled:
   type: bool

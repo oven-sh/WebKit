@@ -1090,7 +1090,7 @@
 		536B319C1F735E7D0037FC33 /* UnifiedSource134.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 536B31971F735E5B0037FC33 /* UnifiedSource134.cpp */; };
 		536B319D1F735E7D0037FC33 /* UnifiedSource135.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 536B31991F735E5D0037FC33 /* UnifiedSource135.cpp */; };
 		5370806B1FE232DF00299E44 /* JSArrayBufferView.h in Headers */ = {isa = PBXBuildFile; fileRef = 0F2B66BB17B6B5AB00A7AE3F /* JSArrayBufferView.h */; };
-		5370B4F61BF26205005C40FC /* AdaptiveInferredPropertyValueWatchpointBase.h in Headers */ = {isa = PBXBuildFile; fileRef = 5370B4F41BF25EA2005C40FC /* AdaptiveInferredPropertyValueWatchpointBase.h */; };
+		5370B4F61BF26205005C40FC /* AdaptiveInferredPropertyValueWatchpointBase.h in Headers */ = {isa = PBXBuildFile; fileRef = 5370B4F41BF25EA2005C40FC /* AdaptiveInferredPropertyValueWatchpointBase.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		537FEEC92742BDA300C9EFEE /* StructureID.h in Headers */ = {isa = PBXBuildFile; fileRef = 537FEEC82742BDA300C9EFEE /* StructureID.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		537FEED02742BDE100C9EFEE /* StructureAlignedMemoryAllocator.h in Headers */ = {isa = PBXBuildFile; fileRef = 537FEECC2742BDE000C9EFEE /* StructureAlignedMemoryAllocator.h */; };
 		5381B9391E60E97D0090F794 /* WasmFaultSignalHandler.h in Headers */ = {isa = PBXBuildFile; fileRef = 5381B9381E60E97D0090F794 /* WasmFaultSignalHandler.h */; settings = {ATTRIBUTES = (Private, ); }; };
@@ -2011,7 +2011,7 @@
 		E3BF3C532390D205008BC752 /* WebAssemblyGlobalConstructor.h in Headers */ = {isa = PBXBuildFile; fileRef = E3BF3C512390D1FC008BC752 /* WebAssemblyGlobalConstructor.h */; };
 		E3BFA5D021E853A1009C0EBA /* DFGDesiredGlobalProperty.h in Headers */ = {isa = PBXBuildFile; fileRef = E3BFA5CD21E853A1009C0EBA /* DFGDesiredGlobalProperty.h */; };
 		E3BFD0BC1DAF808E0065DEA2 /* AccessCaseSnippetParams.h in Headers */ = {isa = PBXBuildFile; fileRef = E3BFD0BA1DAF807C0065DEA2 /* AccessCaseSnippetParams.h */; };
-		E3C295DD1ED2CBDA00D3016F /* ObjectPropertyChangeAdaptiveWatchpoint.h in Headers */ = {isa = PBXBuildFile; fileRef = E3C295DC1ED2CBAA00D3016F /* ObjectPropertyChangeAdaptiveWatchpoint.h */; };
+		E3C295DD1ED2CBDA00D3016F /* ObjectPropertyChangeAdaptiveWatchpoint.h in Headers */ = {isa = PBXBuildFile; fileRef = E3C295DC1ED2CBAA00D3016F /* ObjectPropertyChangeAdaptiveWatchpoint.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		E3C4131D289E08EA001150F8 /* SyntheticModuleRecord.h in Headers */ = {isa = PBXBuildFile; fileRef = E3C4131C289E08E5001150F8 /* SyntheticModuleRecord.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		E3C694B323026877006FBE42 /* WasmOSREntryData.h in Headers */ = {isa = PBXBuildFile; fileRef = E3C694B123026873006FBE42 /* WasmOSREntryData.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		E3C73A9125BFA73B00EFE303 /* WasmStreamingPlan.h in Headers */ = {isa = PBXBuildFile; fileRef = E3C73A9025BFA73400EFE303 /* WasmStreamingPlan.h */; };
@@ -3775,7 +3775,6 @@
 		3395C70522555F6D00BDBFAD /* B3EliminateDeadCode.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = B3EliminateDeadCode.h; path = b3/B3EliminateDeadCode.h; sourceTree = "<group>"; };
 		33A920BC23DA2C6D000EBAF0 /* CommonSlowPathsInlines.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = CommonSlowPathsInlines.h; sourceTree = "<group>"; };
 		33B2A54522651D53005A0F79 /* MarkedSpace.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = MarkedSpace.cpp; sourceTree = "<group>"; };
-		37119A7720CCB5DC002C6DC9 /* WebKitTargetConditionals.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = WebKitTargetConditionals.xcconfig; sourceTree = "<group>"; };
 		371D842C17C98B6E00ECF994 /* libz.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = libz.dylib; path = usr/lib/libz.dylib; sourceTree = SDKROOT; };
 		37AAC090279F124100D64842 /* WasmBranchHintsSectionParser.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = WasmBranchHintsSectionParser.cpp; sourceTree = "<group>"; };
 		37AAC091279F124200D64842 /* WasmBranchHints.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.h; fileEncoding = 4; path = WasmBranchHints.h; sourceTree = "<group>"; };
@@ -4648,7 +4647,6 @@
 		A1712B4011C7B235007A5315 /* RegExpKey.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = RegExpKey.h; sourceTree = "<group>"; };
 		A18193E11B4E0CDB00FC1029 /* IntlCollatorConstructor.lut.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = IntlCollatorConstructor.lut.h; sourceTree = "<group>"; };
 		A18193E21B4E0CDB00FC1029 /* IntlCollatorPrototype.lut.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = IntlCollatorPrototype.lut.h; sourceTree = "<group>"; };
-		A1B89B88221E002A00EB4CEA /* SDKVariant.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = SDKVariant.xcconfig; sourceTree = "<group>"; };
 		A1B9E2331B4E0D6700BC7FED /* IntlCollator.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = IntlCollator.cpp; sourceTree = "<group>"; };
 		A1B9E2341B4E0D6700BC7FED /* IntlCollator.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = IntlCollator.h; sourceTree = "<group>"; };
 		A1B9E2351B4E0D6700BC7FED /* IntlCollatorConstructor.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = IntlCollatorConstructor.cpp; sourceTree = "<group>"; };
@@ -7053,11 +7051,9 @@
 				1C9051440BA9E8A70081E9D0 /* DebugRelease.xcconfig */,
 				1C9051430BA9E8A70081E9D0 /* JavaScriptCore.xcconfig */,
 				5DAFD6CB146B686300FBEFB4 /* JSC.xcconfig */,
-				A1B89B88221E002A00EB4CEA /* SDKVariant.xcconfig */,
 				E3D6F6EF25D791B300C20EB4 /* TestAPI.xcconfig */,
 				BC021BF2136900C300FC5467 /* ToolExecutable.xcconfig */,
 				1C9051420BA9E8A70081E9D0 /* Version.xcconfig */,
-				37119A7720CCB5DC002C6DC9 /* WebKitTargetConditionals.xcconfig */,
 			);
 			path = Configurations;
 			sourceTree = "<group>";
@@ -9950,7 +9946,6 @@
 				41DEA1321B9F3163006D65DD /* BuiltinUtils.h in Headers */,
 				9E72940B190F0514001A91B5 /* BundlePath.h in Headers */,
 				0FB7F39715ED8E4600F167B2 /* Butterfly.h in Headers */,
-				A38120B728ADAD4B008064D5 /* TemporalPlainDateTimePrototype.h in Headers */,
 				0FB7F39815ED8E4600F167B2 /* ButterflyInlines.h in Headers */,
 				C2FCAE1117A9C24E0034C735 /* BytecodeBasicBlock.h in Headers */,
 				1435952122A521CD00E8086D /* BytecodeCacheError.h in Headers */,
@@ -10360,7 +10355,6 @@
 				0FEA0A12170513DB00BB722C /* FTLState.h in Headers */,
 				A7FCC26D17A0B6AA00786D1A /* FTLSwitchCase.h in Headers */,
 				0F235BE217178E1C00690C7F /* FTLThunks.h in Headers */,
-				A38120B828ADAD4B008064D5 /* TemporalPlainDateTimeConstructor.h in Headers */,
 				0FEA0A201708B00700BB722C /* FTLTypedPointer.h in Headers */,
 				0FDB2CCA173DA523007B3C1B /* FTLValueFromBlock.h in Headers */,
 				0F5A6284188C98D40072C9DF /* FTLValueRange.h in Headers */,
@@ -11146,7 +11140,6 @@
 				0F766D3915AE4A1F008F363E /* StructureStubClearingWatchpoint.h in Headers */,
 				BCCF0D080EF0AAB900413C8F /* StructureStubInfo.h in Headers */,
 				BC9041480EB9250900FE26FA /* StructureTransitionTable.h in Headers */,
-				A38120B928ADAD4B008064D5 /* TemporalPlainDateTime.h in Headers */,
 				0F44767020C5E2B4008B2C36 /* StubInfoSummary.h in Headers */,
 				0F7DF1371E2970E10095951B /* Subspace.h in Headers */,
 				E39006212208BFC4001019CF /* SubspaceAccess.h in Headers */,
@@ -11186,6 +11179,9 @@
 				31770C5827B94CE600308091 /* TemporalPlainDate.h in Headers */,
 				31770C5527B94CE600308091 /* TemporalPlainDateConstructor.h in Headers */,
 				31770C5727B94CE600308091 /* TemporalPlainDatePrototype.h in Headers */,
+				A38120B928ADAD4B008064D5 /* TemporalPlainDateTime.h in Headers */,
+				A38120B828ADAD4B008064D5 /* TemporalPlainDateTimeConstructor.h in Headers */,
+				A38120B728ADAD4B008064D5 /* TemporalPlainDateTimePrototype.h in Headers */,
 				E386FD7E26E867B800E4C28B /* TemporalPlainTime.h in Headers */,
 				E386FD7B26E867B800E4C28B /* TemporalPlainTimeConstructor.h in Headers */,
 				E386FD7F26E867B800E4C28B /* TemporalPlainTimePrototype.h in Headers */,
