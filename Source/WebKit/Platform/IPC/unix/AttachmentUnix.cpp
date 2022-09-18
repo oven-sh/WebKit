@@ -27,37 +27,33 @@
 #include "config.h"
 #include "Attachment.h"
 
+#include "Decoder.h"
+#include "Encoder.h"
 #include <wtf/UniStdExtras.h>
 
 namespace IPC {
 
-Attachment::Attachment(UnixFileDescriptor&& fd, size_t size)
-    : m_type(MappedMemoryType)
-    , m_fd(WTFMove(fd))
-    , m_size(size)
+Attachment::Attachment()
+    : m_type(Uninitialized)
 {
 }
 
 Attachment::Attachment(UnixFileDescriptor&& fd)
-    : m_type(SocketType)
+    : m_type(FileDescriptorType)
     , m_fd(WTFMove(fd))
-    , m_size(0)
 {
 }
 
 Attachment::Attachment(Attachment&& attachment)
     : m_type(attachment.m_type)
     , m_fd(WTFMove(attachment.m_fd))
-    , m_size(attachment.m_size)
     , m_customWriter(WTFMove(attachment.m_customWriter))
 {
     attachment.m_type = Uninitialized;
-    attachment.m_size = 0;
 }
 
 Attachment::Attachment(CustomWriter&& writer)
     : m_type(CustomWriterType)
-    , m_size(0)
     , m_customWriter(WTFMove(writer))
 {
 }
@@ -67,13 +63,21 @@ Attachment& Attachment::operator=(Attachment&& attachment)
     m_type = attachment.m_type;
     attachment.m_type = Uninitialized;
     m_fd = WTFMove(attachment.m_fd);
-    m_size = attachment.m_size;
-    attachment.m_size = 0;
     m_customWriter = WTFMove(attachment.m_customWriter);
 
     return *this;
 }
 
 Attachment::~Attachment() = default;
+
+void Attachment::encode(Encoder& encoder) const
+{
+    encoder.addAttachment(WTFMove(*const_cast<Attachment*>(this)));
+}
+
+std::optional<Attachment> Attachment::decode(Decoder& decoder)
+{
+    return decoder.takeLastAttachment();
+}
 
 } // namespace IPC

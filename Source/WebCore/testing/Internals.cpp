@@ -203,6 +203,7 @@
 #include "Settings.h"
 #include "ShadowRoot.h"
 #include "SourceBuffer.h"
+#include "SpeechSynthesisUtterance.h"
 #include "SpellChecker.h"
 #include "StaticNodeList.h"
 #include "StorageNamespace.h"
@@ -278,6 +279,7 @@
 #include "TextTrack.h"
 #include "TextTrackCueGeneric.h"
 #include "TimeRanges.h"
+#include "VTTCue.h"
 #endif
 
 #if ENABLE(WEBGL)
@@ -704,6 +706,7 @@ Internals::Internals(Document& document)
 
 #if ENABLE(VP9) && PLATFORM(COCOA)
     VP9TestingOverrides::singleton().setHardwareDecoderDisabled(std::nullopt);
+    VP9TestingOverrides::singleton().setVP9DecoderDisabled(std::nullopt);
     VP9TestingOverrides::singleton().setVP9ScreenSizeAndScale(std::nullopt);
 #endif
 }
@@ -1044,6 +1047,24 @@ bool Internals::isImageAnimating(HTMLImageElement& element)
 {
     auto* image = imageFromImageElement(element);
     return image && (image->isAnimating() || image->animationPending());
+}
+
+void Internals::setImageAnimationEnabled(bool enabled)
+{
+    if (auto* page = contextDocument() ? contextDocument()->page() : nullptr) {
+        if (page->settings().imageAnimationControlEnabled())
+            page->setImageAnimationEnabled(enabled);
+    }
+}
+
+void Internals::resumeImageAnimation(HTMLImageElement& element)
+{
+    element.setAllowsAnimation(true);
+}
+
+void Internals::pauseImageAnimation(HTMLImageElement& element)
+{
+    element.setAllowsAnimation(false);
 }
 
 unsigned Internals::imagePendingDecodePromisesCountForTesting(HTMLImageElement& element)
@@ -1476,14 +1497,34 @@ ExceptionOr<void> Internals::setFormControlStateOfPreviousHistoryItem(const Vect
 
 void Internals::enableMockSpeechSynthesizer()
 {
-    Document* document = contextDocument();
+    auto document = contextDocument();
     if (!document || !document->domWindow())
         return;
-    SpeechSynthesis* synthesis = DOMWindowSpeechSynthesis::speechSynthesis(*document->domWindow());
+    auto synthesis = DOMWindowSpeechSynthesis::speechSynthesis(*document->domWindow());
     if (!synthesis)
         return;
 
-    synthesis->setPlatformSynthesizer(makeUnique<PlatformSpeechSynthesizerMock>(synthesis));
+    auto mock = PlatformSpeechSynthesizerMock::create(*synthesis);
+    m_platformSpeechSynthesizer = static_cast<PlatformSpeechSynthesizerMock*>(mock.ptr());
+    synthesis->setPlatformSynthesizer(WTFMove(mock));
+}
+
+void Internals::enableMockSpeechSynthesizerForMediaElement(HTMLMediaElement& element)
+{
+    auto& synthesis = element.speechSynthesis();
+    auto mock = PlatformSpeechSynthesizerMock::create(synthesis);
+
+    m_platformSpeechSynthesizer = static_cast<PlatformSpeechSynthesizerMock*>(mock.ptr());
+    synthesis.setPlatformSynthesizer(WTFMove(mock));
+}
+
+ExceptionOr<void> Internals::setSpeechUtteranceDuration(double duration)
+{
+    if (!m_platformSpeechSynthesizer)
+        return Exception { InvalidAccessError };
+
+    m_platformSpeechSynthesizer->setUtteranceDuration(Seconds(duration));
+    return { };
 }
 
 #endif
@@ -1831,7 +1872,7 @@ void Internals::invalidateFontCache()
 
 void Internals::setFontSmoothingEnabled(bool enabled)
 {
-    FontCascade::setShouldUseSmoothing(enabled);
+    FontCascade::setShouldUseSmoothingForTesting(enabled);
 }
 
 ExceptionOr<void> Internals::setLowPowerModeEnabled(bool isEnabled)
@@ -4701,10 +4742,27 @@ void Internals::setMediaElementVolumeLocked(HTMLMediaElement& element, bool volu
 {
     element.setVolumeLocked(volumeLocked);
 }
+
+#if ENABLE(SPEECH_SYNTHESIS)
+ExceptionOr<RefPtr<SpeechSynthesisUtterance>> Internals::speechSynthesisUtteranceForCue(const VTTCue& cue)
+{
+    return cue.speechUtterance();
+}
+
+ExceptionOr<RefPtr<VTTCue>> Internals::mediaElementCurrentlySpokenCue(HTMLMediaElement& element)
+{
+    auto cue = element.cueBeingSpoken();
+    ASSERT(is<VTTCue>(cue));
+    if (!is<VTTCue>(cue))
+        return Exception { InvalidAccessError };
+
+    return downcast<VTTCue>(cue.get());
+}
 #endif
 
-#if ENABLE(WIRELESS_PLAYBACK_TARGET)
+#endif // ENABLE(VIDEO)
 
+#if ENABLE(WIRELESS_PLAYBACK_TARGET)
 void Internals::setMockMediaPlaybackTargetPickerEnabled(bool enabled)
 {
     Page* page = contextDocument()->frame()->page();
@@ -6394,6 +6452,15 @@ void Internals::setHardwareVP9DecoderDisabledForTesting(bool disabled)
 {
 #if ENABLE(VP9) && PLATFORM(COCOA)
     VP9TestingOverrides::singleton().setHardwareDecoderDisabled(disabled);
+#else
+    UNUSED_PARAM(disabled);
+#endif
+}
+
+void Internals::setVP9DecoderDisabledForTesting(bool disabled)
+{
+#if ENABLE(VP9) && PLATFORM(COCOA)
+    VP9TestingOverrides::singleton().setVP9DecoderDisabled(disabled);
 #else
     UNUSED_PARAM(disabled);
 #endif

@@ -347,9 +347,10 @@ static unsigned countUsages(CryptoKeyUsageBitmap usages)
  * Version 7. added support for File's lastModified attribute.
  * Version 8. added support for ImageData's colorSpace attribute.
  * Version 9. added support for ImageBitmap color space.
- * Version 10. changed the length (and offsets) of ArrayBuffers (and ArrayBufferViews) from 32 to 64 bits
+ * Version 10. changed the length (and offsets) of ArrayBuffers (and ArrayBufferViews) from 32 to 64 bits.
+ * Version 11. added support for Blob's memory cost.
  */
-static const unsigned CurrentVersion = 10;
+static const unsigned CurrentVersion = 11;
 static const unsigned TerminatorTag = 0xFFFFFFFF;
 static const unsigned StringPoolTag = 0xFFFFFFFE;
 static const unsigned NonIndexPropertiesTag = 0xFFFFFFFD;
@@ -460,7 +461,7 @@ static const unsigned StringDataIs8BitFlag = 0x80000000;
  *    ImageDataTag <width:int32_t> <height:int32_t> <length:uint32_t> <data:uint8_t{length}> <colorSpace:PredefinedColorSpaceTag>
  *
  * Blob :-
- *    BlobTag <url:StringData><type:StringData><size:long long>
+ *    BlobTag <url:StringData><type:StringData><size:long long><memoryCost:long long>
  *
  * RegExp :-
  *    RegExpTag <pattern:StringData><flags:StringData>
@@ -629,7 +630,7 @@ public:
             WasmModuleArray& wasmModules,
             WasmMemoryHandleArray& wasmMemoryHandles,
 #endif
-        Vector<BlobURLHandle>& blobHandles, Vector<uint8_t>& out, SerializationContext context, ArrayBufferContentsArray& sharedBuffers)
+        Vector<URLKeepingBlobAlive>& blobHandles, Vector<uint8_t>& out, SerializationContext context, ArrayBufferContentsArray& sharedBuffers)
     {
         CloneSerializer serializer(lexicalGlobalObject, messagePorts, arrayBuffers, imageBitmaps,
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
@@ -676,7 +677,7 @@ private:
             WasmModuleArray& wasmModules,
             WasmMemoryHandleArray& wasmMemoryHandles,
 #endif
-        Vector<BlobURLHandle>& blobHandles, Vector<uint8_t>& out, SerializationContext context, ArrayBufferContentsArray& sharedBuffers)
+        Vector<URLKeepingBlobAlive>& blobHandles, Vector<uint8_t>& out, SerializationContext context, ArrayBufferContentsArray& sharedBuffers)
         : CloneBase(lexicalGlobalObject)
         , m_buffer(out)
         , m_blobHandles(blobHandles)
@@ -1263,6 +1264,8 @@ private:
                 static_assert(sizeof(uint64_t) == sizeof(decltype(blob->size())));
                 uint64_t size = blob->size();
                 write(size);
+                uint64_t memoryCost = blob->memoryCost();
+                write(memoryCost);
                 return true;
             }
             if (auto* data = JSImageData::toWrapped(vm, obj)) {
@@ -1343,7 +1346,7 @@ private:
             if (auto* key = JSCryptoKey::toWrapped(vm, obj)) {
                 write(CryptoKeyTag);
                 Vector<uint8_t> serializedKey;
-                Vector<BlobURLHandle> dummyBlobHandles;
+                Vector<URLKeepingBlobAlive> dummyBlobHandles;
                 Vector<RefPtr<MessagePort>> dummyMessagePorts;
                 Vector<RefPtr<JSC::ArrayBuffer>> dummyArrayBuffers;
 #if ENABLE(WEBASSEMBLY)
@@ -1873,7 +1876,7 @@ private:
     }
 
     Vector<uint8_t>& m_buffer;
-    Vector<BlobURLHandle>& m_blobHandles;
+    Vector<URLKeepingBlobAlive>& m_blobHandles;
     ObjectPool m_objectPool;
     ObjectPool m_transferredMessagePorts;
     ObjectPool m_transferredArrayBuffers;
@@ -3651,9 +3654,12 @@ private:
             uint64_t size = 0;
             if (!read(size))
                 return JSValue();
+            uint64_t memoryCost = 0;
+            if (m_version >= 11 && !read(memoryCost))
+                return JSValue();
             if (!m_canCreateDOMObject)
                 return jsNull();
-            return getJSValue(Blob::deserialize(executionContext(m_lexicalGlobalObject), URL { url->string() }, type->string(), size, blobFilePathForBlobURL(url->string())).get());
+            return getJSValue(Blob::deserialize(executionContext(m_lexicalGlobalObject), URL { url->string() }, type->string(), size, memoryCost, blobFilePathForBlobURL(url->string())).get());
         }
         case StringTag: {
             CachedStringRef cachedString;
@@ -4115,7 +4121,7 @@ SerializedScriptValue::SerializedScriptValue(Vector<uint8_t>&& buffer, std::uniq
     m_memoryCost = computeMemoryCost();
 }
 
-SerializedScriptValue::SerializedScriptValue(Vector<uint8_t>&& buffer, const Vector<BlobURLHandle>& blobHandles, std::unique_ptr<ArrayBufferContentsArray> arrayBufferContentsArray, std::unique_ptr<ArrayBufferContentsArray> sharedBufferContentsArray, Vector<std::optional<ImageBitmapBacking>>&& backingStores
+SerializedScriptValue::SerializedScriptValue(Vector<uint8_t>&& buffer, Vector<URLKeepingBlobAlive>&& blobHandles, std::unique_ptr<ArrayBufferContentsArray> arrayBufferContentsArray, std::unique_ptr<ArrayBufferContentsArray> sharedBufferContentsArray, Vector<std::optional<ImageBitmapBacking>>&& backingStores
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
         , Vector<std::unique_ptr<DetachedOffscreenCanvas>>&& detachedOffscreenCanvases
 #endif
@@ -4141,7 +4147,7 @@ SerializedScriptValue::SerializedScriptValue(Vector<uint8_t>&& buffer, const Vec
     , m_wasmModulesArray(WTFMove(wasmModulesArray))
     , m_wasmMemoryHandlesArray(WTFMove(wasmMemoryHandlesArray))
 #endif
-    , m_blobHandles(blobHandles)
+    , m_blobHandles(WTFMove(blobHandles))
 {
     m_memoryCost = computeMemoryCost();
 }
@@ -4386,7 +4392,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 #endif
 
     Vector<uint8_t> buffer;
-    Vector<BlobURLHandle> blobHandles;
+    Vector<URLKeepingBlobAlive> blobHandles;
 #if ENABLE(WEBASSEMBLY)
     WasmModuleArray wasmModules;
     WasmMemoryHandleArray wasmMemoryHandles;
@@ -4428,7 +4434,7 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
         detachedRTCDataChannels.append(channel->detach());
 #endif
 
-    return adoptRef(*new SerializedScriptValue(WTFMove(buffer), blobHandles, arrayBufferContentsArray.releaseReturnValue(), context == SerializationContext::WorkerPostMessage ? WTFMove(sharedBuffers) : nullptr, WTFMove(backingStores)
+    return adoptRef(*new SerializedScriptValue(WTFMove(buffer), WTFMove(blobHandles), arrayBufferContentsArray.releaseReturnValue(), context == SerializationContext::WorkerPostMessage ? WTFMove(sharedBuffers) : nullptr, WTFMove(backingStores)
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
                 , WTFMove(detachedCanvases)
 #endif
@@ -4537,7 +4543,7 @@ uint32_t SerializedScriptValue::wireFormatVersion()
 Vector<String> SerializedScriptValue::blobURLs() const
 {
     return m_blobHandles.map([](auto& handle) {
-        return handle.url().string();
+        return handle.url().string().isolatedCopy();
     });
 }
 

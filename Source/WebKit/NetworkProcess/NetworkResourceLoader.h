@@ -39,6 +39,7 @@
 #include <WebCore/ContentSecurityPolicyClient.h>
 #include <WebCore/CrossOriginAccessControl.h>
 #include <WebCore/PrivateClickMeasurement.h>
+#include <WebCore/ReportingClient.h>
 #include <WebCore/ResourceResponse.h>
 #include <WebCore/SWServerRegistration.h>
 #include <WebCore/SecurityPolicyViolationEvent.h>
@@ -52,6 +53,7 @@ class BlobDataFileReference;
 class ContentFilter;
 class FormData;
 class NetworkStorageSession;
+class Report;
 class ResourceRequest;
 }
 
@@ -64,6 +66,7 @@ class ServiceWorkerFetchTask;
 class WebSWServerConnection;
 
 enum class NegotiatedLegacyTLS : bool;
+enum class ViolationReportType : uint8_t;
 
 struct ResourceLoadInfo;
 
@@ -80,6 +83,7 @@ class NetworkResourceLoader final
 #if ENABLE(CONTENT_FILTERING_IN_NETWORKING_PROCESS)
     , public WebCore::ContentFilterClient
 #endif
+    , public WebCore::ReportingClient
     , public CanMakeWeakPtr<NetworkResourceLoader> {
 public:
     static Ref<NetworkResourceLoader> create(NetworkResourceLoadParameters&& parameters, NetworkConnectionToWebProcess& connection, Messages::NetworkConnectionToWebProcess::PerformSynchronousLoadDelayedReply&& reply = nullptr)
@@ -237,7 +241,6 @@ private:
 
     // ContentSecurityPolicyClient
     void addConsoleMessage(MessageSource, MessageLevel, const String&, unsigned long requestIdentifier = 0) final;
-    void sendCSPViolationReport(URL&&, Ref<WebCore::FormData>&&) final;
     void enqueueSecurityPolicyViolationEvent(WebCore::SecurityPolicyViolationEventInit&&) final;
 
     void logSlowCacheRetrieveIfNeeded(const NetworkCache::Cache::RetrieveInfo&);
@@ -249,6 +252,14 @@ private:
 #if ENABLE(CONTENT_FILTERING_IN_NETWORKING_PROCESS)
     bool startContentFiltering(WebCore::ResourceRequest&);
 #endif
+
+    // ReportingClient
+    void notifyReportObservers(Ref<WebCore::Report>&&) final;
+    String endpointURIForToken(const String&) const final;
+    void sendReportToEndpoints(const URL& baseURL, const Vector<String>& endpointURIs, const Vector<String>& endpointTokens, Ref<WebCore::FormData>&& report, WebCore::ViolationReportType) final;
+    String httpUserAgent() const final { return originalRequest().httpUserAgent(); }
+    void initializeReportingEndpoints(const WebCore::ResourceResponse&);
+    WebCore::FrameIdentifier frameIdentifierForReport() const;
 
     enum class IsFromServiceWorker : bool { No, Yes };
     void willSendRedirectedRequestInternal(WebCore::ResourceRequest&&, WebCore::ResourceRequest&& redirectRequest, WebCore::ResourceResponse&&, IsFromServiceWorker);
@@ -308,6 +319,7 @@ private:
 #endif
 
     PrivateRelayed m_privateRelayed { PrivateRelayed::No };
+    MemoryCompactRobinHoodHashMap<String, String> m_reportingEndpoints;
 };
 
 } // namespace WebKit

@@ -326,9 +326,9 @@ void WKContextSetAlwaysUsesComplexTextCodePath(WKContextRef contextRef, bool alw
     WebKit::toImpl(contextRef)->setAlwaysUsesComplexTextCodePath(alwaysUseComplexTextCodePath);
 }
 
-void WKContextSetShouldUseFontSmoothing(WKContextRef contextRef, bool useFontSmoothing)
+void WKContextSetShouldUseFontSmoothingForTesting(WKContextRef contextRef, bool useFontSmoothing)
 {
-    WebKit::toImpl(contextRef)->setShouldUseFontSmoothing(useFontSmoothing);
+    WebKit::toImpl(contextRef)->setShouldUseFontSmoothingForTesting(useFontSmoothing);
 }
 
 void WKContextSetAdditionalPluginsDirectory(WKContextRef contextRef, WKStringRef pluginsDirectory)
@@ -570,4 +570,15 @@ void WKContextSetUseSeparateServiceWorkerProcess(WKContextRef, bool useSeparateS
 
 void WKContextSetPrimaryWebsiteDataStore(WKContextRef, WKWebsiteDataStoreRef)
 {
+}
+
+WKArrayRef WKContextCopyLocalhostAliases(WKContextRef)
+{
+    return WebKit::toAPI(&API::Array::createStringArray(copyToVector(WebKit::LegacyGlobalSettings::singleton().hostnamesToRegisterAsLocal())).leakRef());
+}
+
+void WKContextSetLocalhostAliases(WKContextRef, WKArrayRef localhostAliases)
+{
+    for (const auto& hostname : WebKit::toImpl(localhostAliases)->toStringVector())
+        WebKit::LegacyGlobalSettings::singleton().registerHostnameAsLocal(hostname);
 }

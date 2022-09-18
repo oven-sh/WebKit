@@ -321,6 +321,7 @@ set(WebKit_MESSAGES_IN_FILES
     WebProcess/WebCoreSupport/RemoteWebLockRegistry
     WebProcess/WebCoreSupport/WebBroadcastChannelRegistry
     WebProcess/WebCoreSupport/WebFileSystemStorageConnection
+    WebProcess/WebCoreSupport/WebPermissionController
     WebProcess/WebCoreSupport/WebSpeechRecognitionConnection
 
     WebProcess/WebPage/DrawingArea
@@ -509,6 +510,62 @@ macro(GENERATE_MESSAGE_SOURCES _output_source _inputs)
     )
 endmacro()
 GENERATE_MESSAGE_SOURCES(WebKit_DERIVED_SOURCES "${WebKit_MESSAGES_IN_FILES}")
+
+set(WebKit_SERIALIZATION_IN_FILES
+    NetworkProcess/NetworkProcessCreationParameters.serialization.in
+
+    Shared/FrameInfoData.serialization.in
+    Shared/FrameTreeNodeData.serialization.in
+    Shared/WebCoreArgumentCoders.serialization.in
+    Shared/WebsiteDataStoreParameters.serialization.in
+
+    Shared/API/APIGeometry.serialization.in
+
+    Shared/WebGPU/WebGPUBindGroupEntry.serialization.in
+    Shared/WebGPU/WebGPUBlendComponent.serialization.in
+    Shared/WebGPU/WebGPUBlendState.serialization.in
+    Shared/WebGPU/WebGPUBufferBinding.serialization.in
+    Shared/WebGPU/WebGPUBufferBindingLayout.serialization.in
+    Shared/WebGPU/WebGPUCanvasConfiguration.serialization.in
+    Shared/WebGPU/WebGPUColor.serialization.in
+    Shared/WebGPU/WebGPUColorTargetState.serialization.in
+    Shared/WebGPU/WebGPUComputePassTimestampWrites.serialization.in
+    Shared/WebGPU/WebGPUObjectDescriptorBase.serialization.in
+    Shared/WebGPU/WebGPUOrigin3D.serialization.in
+    Shared/WebGPU/WebGPUPrimitiveState.serialization.in
+    Shared/WebGPU/WebGPUProgrammableStage.serialization.in
+    Shared/WebGPU/WebGPURenderPassColorAttachment.serialization.in
+    Shared/WebGPU/WebGPURenderPassDepthStencilAttachment.serialization.in
+    Shared/WebGPU/WebGPURenderPassTimestampWrites.serialization.in
+    Shared/WebGPU/WebGPUStencilFaceState.serialization.in
+    Shared/WebGPU/WebGPUStorageTextureBindingLayout.serialization.in
+    Shared/WebGPU/WebGPUSupportedFeatures.serialization.in
+    Shared/WebGPU/WebGPUSupportedLimits.serialization.in
+    Shared/WebGPU/WebGPUTextureBindingLayout.serialization.in
+    Shared/WebGPU/WebGPUValidationError.serialization.in
+    Shared/WebGPU/WebGPUVertexAttribute.serialization.in
+    Shared/WebGPU/WebGPUVertexBufferLayout.serialization.in
+
+    Shared/WebsiteData/WebsiteDataFetchOption.serialization.in
+)
+
+list(APPEND WebKit_DERIVED_SOURCES
+    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializers.h
+    ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializers.cpp
+)
+
+add_custom_command(
+    OUTPUT
+        ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializers.h
+        ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializers.cpp
+        ${WebKit_DERIVED_SOURCES_DIR}/SerializedTypeInfo.cpp
+    MAIN_DEPENDENCY ${WEBKIT_DIR}/Scripts/generate-serializers.py
+    DEPENDS
+        ${WebKit_SERIALIZATION_IN_FILES}
+    COMMAND ${PYTHON_EXECUTABLE} ${WEBKIT_DIR}/Scripts/generate-serializers.py ${WEBKIT_DIR}/ ${WebKit_SERIALIZATION_IN_FILES}
+    WORKING_DIRECTORY ${WebKit_DERIVED_SOURCES_DIR}
+    VERBATIM
+)
 
 set(WebKit_AUTOMATION_PROTOCOL_GENERATOR_SCRIPTS
     ${PROTOCOL_GENERATOR_SCRIPTS_DIR}/generate-inspector-protocol-bindings.py

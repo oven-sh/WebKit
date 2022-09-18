@@ -265,6 +265,7 @@ class ValidationBubble;
 enum class AutoplayEvent : uint8_t;
 enum class CookieConsentDecisionResult : uint8_t;
 enum class CreateNewGroupForHighlight : bool;
+enum class DataOwnerType : uint8_t;
 enum class DOMPasteAccessCategory : uint8_t;
 enum class DOMPasteAccessResponse : uint8_t;
 enum class EditAction : uint8_t;
@@ -316,9 +317,6 @@ struct TextRecognitionResult;
 struct ViewportAttributes;
 struct WindowFeatures;
 
-#if HAVE(PASTEBOARD_DATA_OWNER)
-enum class DataOwnerType : uint8_t;
-#endif
 
 template<typename> class RectEdges;
 using FloatBoxExtent = RectEdges<float>;
@@ -474,7 +472,8 @@ public:
     virtual ~WebPageProxy();
 
     using IPC::MessageReceiver::weakPtrFactory;
-    using WeakValueType = IPC::MessageReceiver::WeakValueType;
+    using IPC::MessageReceiver::WeakValueType;
+    using IPC::MessageReceiver::WeakPtrImplType;
 
     static void forMostVisibleWebPageIfAny(PAL::SessionID, const WebCore::SecurityOriginData&, CompletionHandler<void(WebPageProxy*)>&&);
 
@@ -1126,6 +1125,7 @@ public:
     
     float deviceScaleFactor() const;
     void setIntrinsicDeviceScaleFactor(float);
+    std::optional<float> customDeviceScaleFactor() const { return m_customDeviceScaleFactor; }
     void setCustomDeviceScaleFactor(float);
 
     void accessibilitySettingsDidChange();
@@ -1208,9 +1208,7 @@ public:
     bool useDarkAppearance() const;
     bool useElevatedUserInterfaceLevel() const;
 
-#if HAVE(PASTEBOARD_DATA_OWNER)
     WebCore::DataOwnerType dataOwnerForPasteboard(PasteboardAccessIntent) const;
-#endif
 
 #if PLATFORM(COCOA)
     // Called by the web process through a message.
@@ -1290,6 +1288,7 @@ public:
     float footerHeightForPrinting(WebFrameProxy&);
     void drawHeaderForPrinting(WebFrameProxy&, WebCore::FloatRect&&);
     void drawFooterForPrinting(WebFrameProxy&, WebCore::FloatRect&&);
+    void drawPageBorderForPrinting(WebFrameProxy&, WebCore::FloatSize&&);
 
 #if PLATFORM(COCOA)
     // Dictionary.
@@ -1455,7 +1454,7 @@ public:
     uint64_t drawToPDFiOS(WebCore::FrameIdentifier, const PrintInfo&, size_t pageCount, CompletionHandler<void(RefPtr<WebCore::SharedBuffer>&&)>&&);
 #endif
 #elif PLATFORM(GTK)
-    void drawPagesForPrinting(WebFrameProxy*, const PrintInfo&, CompletionHandler<void(API::Error*)>&&);
+    void drawPagesForPrinting(WebFrameProxy*, const PrintInfo&, CompletionHandler<void(std::optional<SharedMemory::Handle>&&, WebCore::ResourceError&&)>&&);
 #endif
 
     PageLoadState& pageLoadState() { return m_pageLoadState; }
@@ -1685,6 +1684,8 @@ public:
     const Function<bool()>& deviceOrientationUserPermissionHandlerForTesting() const { return m_deviceOrientationUserPermissionHandlerForTesting; };
     void setDeviceOrientationUserPermissionHandlerForTesting(Function<bool()>&& handler) { m_deviceOrientationUserPermissionHandlerForTesting = WTFMove(handler); }
     void setDeviceHasAGXCompilerServiceForTesting() const;
+
+    void statusBarWasTapped();
 #endif
 
 #if ENABLE(WIRELESS_PLAYBACK_TARGET) && !PLATFORM(IOS_FAMILY)
@@ -1846,6 +1847,7 @@ public:
     void startURLSchemeTaskShared(Ref<WebProcessProxy>&&, WebCore::PageIdentifier, URLSchemeTaskParameters&&);
     void loadDataWithNavigationShared(Ref<WebProcessProxy>&&, WebCore::PageIdentifier, API::Navigation&, const IPC::DataReference&, const String& MIMEType, const String& encoding, const String& baseURL, API::Object* userData, WebCore::ShouldTreatAsContinuingLoad, std::optional<NavigatingToAppBoundDomain>, std::optional<WebsitePoliciesData>&&, WebCore::ShouldOpenExternalURLsPolicy, WebCore::SubstituteData::SessionHistoryVisibility);
     void loadRequestWithNavigationShared(Ref<WebProcessProxy>&&, WebCore::PageIdentifier, API::Navigation&, WebCore::ResourceRequest&&, WebCore::ShouldOpenExternalURLsPolicy, API::Object* userData, WebCore::ShouldTreatAsContinuingLoad, std::optional<NavigatingToAppBoundDomain>, std::optional<WebsitePoliciesData>&& = std::nullopt, std::optional<NetworkResourceLoadIdentifier> existingNetworkResourceLoadIdentifierToResume = std::nullopt);
+    void backForwardAddItemShared(Ref<WebProcessProxy>&&, BackForwardListItemState&&);
     void backForwardGoToItemShared(Ref<WebProcessProxy>&&, const WebCore::BackForwardItemIdentifier&, CompletionHandler<void(const WebBackForwardListCounts&)>&&);
     void decidePolicyForNavigationActionSyncShared(Ref<WebProcessProxy>&&, WebCore::PageIdentifier, WebCore::FrameIdentifier, bool isMainFrame, FrameInfoData&&, WebCore::PolicyCheckIdentifier, uint64_t navigationID, NavigationActionData&&, FrameInfoData&& originatingFrameInfo, std::optional<WebPageProxyIdentifier> originatingPageID, const WebCore::ResourceRequest& originalRequest, WebCore::ResourceRequest&&, IPC::FormDataReference&& requestBody, WebCore::ResourceResponse&& redirectResponse, const UserData&, Messages::WebPageProxy::DecidePolicyForNavigationActionSyncDelayedReply&&);
 #if USE(QUICK_LOOK)
@@ -1983,6 +1985,7 @@ public:
 #endif
 
 #if ENABLE(VIDEO_PRESENTATION_MODE)
+    void failedToEnterFullscreen(PlaybackSessionContextIdentifier);
     void didEnterFullscreen(PlaybackSessionContextIdentifier);
     void didExitFullscreen(PlaybackSessionContextIdentifier);
     void didChangePlaybackRate(PlaybackSessionContextIdentifier);
@@ -2144,7 +2147,9 @@ public:
     void setInteractionRegionsEnabled(bool);
 #endif
 
-    void queryPermission(const WebCore::ClientOrigin&, const WebCore::PermissionDescriptor&, CompletionHandler<void(std::optional<WebCore::PermissionState>, bool shouldCache)>&&);
+    void queryPermission(const WebCore::ClientOrigin&, const WebCore::PermissionDescriptor&, CompletionHandler<void(std::optional<WebCore::PermissionState>)>&&);
+
+    void generateTestReport(const String& message, const String& group);
 
 private:
     WebPageProxy(PageClient&, WebProcessProxy&, Ref<API::PageConfiguration>&&);
@@ -3226,7 +3231,7 @@ private:
 
 #if ENABLE(SPEECH_SYNTHESIS)
     struct SpeechSynthesisData {
-        std::unique_ptr<WebCore::PlatformSpeechSynthesizer> synthesizer;
+        Ref<WebCore::PlatformSpeechSynthesizer> synthesizer;
         RefPtr<WebCore::PlatformSpeechSynthesisUtterance> utterance;
         CompletionHandler<void()> speakingStartedCompletionHandler;
         CompletionHandler<void()> speakingFinishedCompletionHandler;

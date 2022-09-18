@@ -17,8 +17,6 @@ list(APPEND TestWTF_SOURCES
     Tests/WTF/glib/GRefPtr.cpp
     Tests/WTF/glib/GUniquePtr.cpp
     Tests/WTF/glib/WorkQueueGLib.cpp
-
-    glib/UtilitiesGLib.cpp
 )
 
 list(APPEND TestWTF_SYSTEM_INCLUDE_DIRECTORIES
@@ -36,8 +34,6 @@ list(APPEND TestWebCore_SOURCES
     Tests/WebCore/UserAgentQuirks.cpp
     Tests/WebCore/gstreamer/GStreamerTest.cpp
     Tests/WebCore/gstreamer/GstMappedBuffer.cpp
-
-    glib/UtilitiesGLib.cpp
 )
 
 list(APPEND TestWebCore_SYSTEM_INCLUDE_DIRECTORIES
@@ -56,8 +52,6 @@ list(APPEND TestWebCore_LIBRARIES
 # TestWebKit
 list(APPEND TestWebKit_SOURCES
     ${test_main_SOURCES}
-
-    glib/UtilitiesGLib.cpp
 
     gtk/PlatformUtilitiesGtk.cpp
     gtk/PlatformWebViewGtk.cpp
@@ -81,8 +75,6 @@ target_include_directories(TestWebKitAPIBase PRIVATE "${CMAKE_SOURCE_DIR}/Source
 
 # TestWebKitAPIInjectedBundle
 target_sources(TestWebKitAPIInjectedBundle PRIVATE
-    glib/UtilitiesGLib.cpp
-
     gtk/PlatformUtilitiesGtk.cpp
 )
 target_include_directories(TestWebKitAPIInjectedBundle PRIVATE

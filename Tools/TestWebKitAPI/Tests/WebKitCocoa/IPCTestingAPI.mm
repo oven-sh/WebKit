@@ -160,7 +160,7 @@ TEST(IPCTestingAPI, CanDetectNilReplyBlocks)
         // mostly zero objects + "v@?c" (objective-C method signature)
         "0x0,0x0,0x1,0x0,0x0,0x0,0x2c,0x0,0x0,0x0,0x59,0x1,0x0,0x0,0x0,0x9b,0x0,0x0,0x4,0x0,0x0,0x0,0x1,0x76,0x40,0x3f,0x63,0x0,]);"
         "for(var x=0; x<100; x++) IPC.sendMessage('UI', x, IPC.messages.RemoteObjectRegistry_InvokeMethod.name, [buf]);</script>"];
-    TestWebKitAPI::Util::runFor(&done, 1);
+    TestWebKitAPI::Util::runFor(&done, 1_s);
 
     // Make sure sayHello was not called, as the reply block was nil.
     EXPECT_FALSE([delegate.get() sayHelloWasCalled]);
@@ -479,6 +479,124 @@ TEST(IPCTestingAPI, CanInterceptFindString)
     EXPECT_STREQ([webView stringByEvaluatingJavaScript:@"typeof(messages[0].syncRequestID)"].UTF8String, "undefined");
     EXPECT_EQ([webView stringByEvaluatingJavaScript:@"messages[0].destinationID"].intValue,
         [webView stringByEvaluatingJavaScript:@"IPC.webPageProxyID.toString()"].intValue);
+}
+
+static NSSet<NSString *> *splitTypeFromList(NSString *input, bool firstTypeOnly)
+{
+    NSMutableSet *set = NSMutableSet.set;
+    size_t nestedTypeDepth { 0 };
+    bool atComma { false };
+    size_t previousTypeEnd { 0 };
+    for (size_t i = 0; i < input.length; i++) {
+        auto c = [input characterAtIndex:i];
+        if (c == '<')
+            nestedTypeDepth++;
+        if (c == '>')
+            nestedTypeDepth--;
+        if (c == ',') {
+            atComma = true;
+            continue;
+        }
+        if (c == ' ' && !nestedTypeDepth && atComma) {
+            [set addObject:[input substringWithRange:NSMakeRange(previousTypeEnd, i - 1 - previousTypeEnd)]];
+            if (firstTypeOnly)
+                return set;
+            previousTypeEnd = i + 1;
+        }
+        atComma = false;
+    }
+    [set addObject:[input substringWithRange:NSMakeRange(previousTypeEnd, input.length - previousTypeEnd)]];
+    return set;
+}
+
+static NSMutableSet<NSString *> *extractTypesFromContainers(NSSet<NSString *> *inputSet)
+{
+    NSMutableSet *outputSet = NSMutableSet.set;
+    for (NSString *input in inputSet) {
+        BOOL foundContainer = NO;
+        NSArray<NSString *> *containerTypes = @[
+            @"Expected",
+            @"HashMap",
+            @"std::pair",
+            @"IPC::ArrayReferenceTuple",
+            @"IPC::ArrayReference",
+            @"std::variant",
+            @"std::unique_ptr",
+            @"Vector",
+            @"HashSet",
+            @"Ref",
+            @"RefPtr",
+            @"std::optional",
+            @"OptionSet",
+            @"RetainPtr",
+            @"WebCore::RectEdges"
+        ];
+        for (NSString *container in containerTypes) {
+            if ([input hasPrefix:[container stringByAppendingString:@"<"]]
+                && [input hasSuffix:@">"]) {
+                NSString *containedTypes = [input substringWithRange:NSMakeRange(container.length + 1, input.length - container.length - 2)];
+                for (NSString *type : extractTypesFromContainers(splitTypeFromList(containedTypes, [container isEqualToString:@"IPC::ArrayReference"])))
+                    [outputSet addObject:type];
+                foundContainer = YES;
+            }
+        }
+        if (!foundContainer)
+            [outputSet addObject:input];
+    }
+    return outputSet;
+}
+
+TEST(IPCTestingAPI, SerializedTypeInfo)
+{
+    auto webView = createWebViewWithIPCTestingAPI();
+    NSDictionary *typeInfo = [webView objectByEvaluatingJavaScript:@"IPC.serializedTypeInfo"];
+    NSArray *expectedArray = @[@"bool", @"bool", @"bool", @"String"];
+    EXPECT_TRUE([typeInfo[@"WebCore::CacheQueryOptions"] isEqualToArray:expectedArray]);
+    NSDictionary *expectedDictionary = @{
+        @"isOptionSet" : @1,
+        @"size" : @1,
+        @"validValues" : @[@1, @2]
+    };
+
+    NSDictionary *enumInfo = [webView objectByEvaluatingJavaScript:@"IPC.serializedEnumInfo"];
+    EXPECT_TRUE([enumInfo[@"WebKit::WebsiteDataFetchOption"] isEqualToDictionary:expectedDictionary]);
+
+    NSArray *objectIdentifiers = [webView objectByEvaluatingJavaScript:@"IPC.objectIdentifiers"];
+    EXPECT_TRUE([objectIdentifiers containsObject:@"WebCore::PageIdentifier"]);
+
+    NSMutableSet<NSString *> *typesNeedingDescriptions = NSMutableSet.set;
+    NSDictionary *messages = [webView objectByEvaluatingJavaScript:@"IPC.messages"];
+    for (NSDictionary *message in messages.allValues) {
+        if (![message isKindOfClass:NSDictionary.class])
+            continue;
+        for (NSString *key in @[@"arguments", @"replyArguments"]) {
+            NSArray *arguments = message[key];
+            if (![arguments isKindOfClass:NSArray.class])
+                continue;
+            for (NSDictionary *argument in arguments) {
+                if (![argument isKindOfClass:NSDictionary.class])
+                    continue;
+                [typesNeedingDescriptions addObject:argument[@"type"]];
+            }
+        }
+    }
+    for (NSArray *memberTypes in typeInfo.allValues) {
+        for (NSString *memberType in memberTypes)
+            [typesNeedingDescriptions addObject:memberType];
+    }
+
+    typesNeedingDescriptions = extractTypesFromContainers(typesNeedingDescriptions);
+
+    NSMutableSet<NSString *> *typesHavingDescriptions = NSMutableSet.set;
+    for (NSString *describedType in typeInfo.keyEnumerator)
+        [typesHavingDescriptions addObject:describedType];
+    for (NSString *describedType in enumInfo.keyEnumerator)
+        [typesHavingDescriptions addObject:describedType];
+    for (NSString *objectIdentifier in objectIdentifiers)
+        [typesHavingDescriptions addObject:objectIdentifier];
+
+    [typesNeedingDescriptions minusSet:typesHavingDescriptions];
+
 }
 
 #endif

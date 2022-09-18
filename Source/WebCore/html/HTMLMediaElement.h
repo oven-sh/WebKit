@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2007-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -98,6 +98,7 @@ class ScriptController;
 class ScriptExecutionContext;
 class SleepDisabler;
 class SourceBuffer;
+class SpeechSynthesis;
 class TextTrackList;
 class TimeRanges;
 class VideoPlaybackQuality;
@@ -151,8 +152,9 @@ class HTMLMediaElement
 {
     WTF_MAKE_ISO_ALLOCATED(HTMLMediaElement);
 public:
-    using WeakValueType = HTMLElement::WeakValueType;
     using HTMLElement::weakPtrFactory;
+    using HTMLElement::WeakValueType;
+    using HTMLElement::WeakPtrImplType;
 
     RefPtr<MediaPlayer> player() const { return m_player; }
     WEBCORE_EXPORT std::optional<MediaPlayerIdentifier> playerIdentifier() const;
@@ -615,6 +617,12 @@ public:
     bool showingStats() const { return m_showingStats; }
     void setShowingStats(bool);
 
+    enum class SpeechSynthesisState : uint8_t { None, Speaking, CompletingExtendedDescription, Paused };
+    WEBCORE_EXPORT RefPtr<TextTrackCue> cueBeingSpoken() const;
+#if ENABLE(SPEECH_SYNTHESIS)
+    WEBCORE_EXPORT SpeechSynthesis& speechSynthesis();
+#endif
+
 protected:
     HTMLMediaElement(const QualifiedName&, Document&, bool createdByParser);
     virtual ~HTMLMediaElement();
@@ -835,6 +843,17 @@ private:
 
     void updateActiveTextTrackCues(const MediaTime&);
     HTMLTrackElement* showingTrackWithSameKind(HTMLTrackElement*) const;
+
+    enum class CueAction : uint8_t { Enter, Exit };
+    void executeCueEnterOrExitActionForTime(TextTrackCue&, CueAction);
+    void speakCueText(TextTrackCue&);
+    void pauseSpeakingCueText();
+    void resumeSpeakingCueText();
+    void cancelSpeakingCueText();
+    bool shouldSpeakCueTextForTime(const MediaTime&);
+    void pausePlaybackForExtendedTextDescription();
+
+    void setSpeechSynthesisState(SpeechSynthesisState);
 
     enum ReconfigureMode { Immediately, AfterDelay };
     void markCaptionAndSubtitleTracksAsUnconfigured(ReconfigureMode);
@@ -1217,11 +1236,6 @@ private:
     std::unique_ptr<MediaElementSession> m_mediaSession;
     size_t m_reportedExtraMemoryCost { 0 };
 
-#if !RELEASE_LOG_DISABLED
-    RefPtr<Logger> m_logger;
-    const void* m_logIdentifier;
-#endif
-
     friend class MediaControlsHost;
     RefPtr<MediaControlsHost> m_mediaControlsHost;
     RefPtr<DOMWrapperWorld> m_isolatedWorld;
@@ -1254,9 +1268,25 @@ private:
     bool m_wasInterruptedForInvisibleAutoplay { false };
 
     bool m_showingStats { false };
+
+#if ENABLE(SPEECH_SYNTHESIS)
+    RefPtr<SpeechSynthesis> m_speechSynthesis;
+#endif
+    SpeechSynthesisState m_speechState { SpeechSynthesisState::None };
+    RefPtr<TextTrackCue> m_cueBeingSpoken;
+    double m_volumeMultiplierForSpeechSynthesis { 1 };
+    bool m_userPrefersTextDescriptions { false };
+    bool m_userPrefersExtendedDescriptions { false };
+    bool m_changingSynthesisState { false };
+
+#if !RELEASE_LOG_DISABLED
+    RefPtr<Logger> m_logger;
+    const void* m_logIdentifier;
+#endif
 };
 
 String convertEnumerationToString(HTMLMediaElement::AutoplayEventPlaybackState);
+String convertEnumerationToString(HTMLMediaElement::SpeechSynthesisState);
 
 } // namespace WebCore
 
@@ -1264,6 +1294,10 @@ namespace WTF {
 
 template<> struct LogArgument<WebCore::HTMLMediaElement::AutoplayEventPlaybackState> {
     static String toString(WebCore::HTMLMediaElement::AutoplayEventPlaybackState reason) { return convertEnumerationToString(reason); }
+};
+
+template<> struct LogArgument<WebCore::HTMLMediaElement::SpeechSynthesisState> {
+    static String toString(WebCore::HTMLMediaElement::SpeechSynthesisState state) { return convertEnumerationToString(state); }
 };
 
 } // namespace WTF

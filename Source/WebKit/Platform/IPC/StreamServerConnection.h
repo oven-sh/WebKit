@@ -66,7 +66,7 @@ public:
     // Creates StreamServerConnection where the out of stream messages and server replies are
     // received through a dedidcated, new IPC::Connection. The messages from the server are sent to
     // the dedicated conneciton.
-    static Ref<StreamServerConnection> createWithDedicatedConnection(Attachment&& connectionIdentifier, StreamConnectionBuffer&&, StreamConnectionWorkQueue&);
+    static Ref<StreamServerConnection> createWithDedicatedConnection(IPC::Connection::Handle&&, StreamConnectionBuffer&&, StreamConnectionWorkQueue&);
     ~StreamServerConnection() final;
 
     void startReceivingMessages(StreamMessageReceiver&, ReceiverName, uint64_t destinationID);
@@ -83,6 +83,7 @@ public:
 
     void open();
     void invalidate();
+    template<typename T, typename U> bool send(T&& message, ObjectIdentifier<U> destinationID);
 
     template<typename T, typename... Arguments>
     void sendSyncReply(Connection::SyncRequestID, Arguments&&...);
@@ -141,6 +142,12 @@ private:
 
     friend class StreamConnectionWorkQueue;
 };
+
+template<typename T, typename U>
+bool StreamServerConnection::send(T&& message, ObjectIdentifier<U> destinationID)
+{
+    return m_connection->send(WTFMove(message), destinationID);
+}
 
 template<typename T, typename... Arguments>
 void StreamServerConnection::sendSyncReply(Connection::SyncRequestID syncRequestID, Arguments&&... arguments)

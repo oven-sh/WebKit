@@ -22,7 +22,7 @@ function shouldThrow(func, errorType) {
 }
 
 shouldBe(Temporal.PlainDateTime instanceof Function, true);
-shouldBe(Temporal.PlainDateTime.length, 0);
+shouldBe(Temporal.PlainDateTime.length, 3);
 shouldBe(Object.getOwnPropertyDescriptor(Temporal.PlainDateTime, 'prototype').writable, false);
 shouldBe(Object.getOwnPropertyDescriptor(Temporal.PlainDateTime, 'prototype').enumerable, false);
 shouldBe(Object.getOwnPropertyDescriptor(Temporal.PlainDateTime, 'prototype').configurable, false);
@@ -83,10 +83,31 @@ shouldBe(Temporal.PlainDateTime.from('0001-02-03T04:05:06.007008009').toString()
 
     const date = Temporal.PlainDate.from('2007-01-09T03:24:30+01:00[Europe/Brussels]');
     shouldBe(Temporal.PlainDateTime.from(date).toString(), '2007-01-09T00:00:00');
+
+    shouldBe(Temporal.PlainDateTime.from({ year: 1, month: 2, day: 3, hour: 4, minute: 5, second: 6, millisecond: 7, microsecond: 8, nanosecond: 9 }).toString(), '0001-02-03T04:05:06.007008009');
+    shouldBe(Temporal.PlainDateTime.from({ year: 2007, monthCode: 'M01', day: 9 }).toString(), '2007-01-09T00:00:00');
+
+    shouldBe(Temporal.PlainDateTime.from({ year: 2007, month: 20, day: 40, hour: 30, minute: 80, second: 80, millisecond: 2000, microsecond: 2000, nanosecond: 2000 }).toString(), '2007-12-31T23:59:59.999999999');
+    shouldBe(Temporal.PlainDateTime.from({ year: 2007, month: 20, day: 40, hour: 30, minute: 80, second: 80, millisecond: 2000, microsecond: 2000, nanosecond: 2000 }, { overflow: 'constrain' }).toString(), '2007-12-31T23:59:59.999999999');
 }
 
 shouldThrow(() => Temporal.PlainDateTime.from(pdt, { overflow: 'bogus' }), RangeError);
-shouldBe(Temporal.PlainDateTime.from(pdt, { overflow: 'constrain' }).toString(), Temporal.PlainDateTime.from(pdt).toString());
+shouldBe(Temporal.PlainDateTime.from(pdt, { overflow: 'constrain' }).toString(), Temporal.PlainDateTime.from(pdt).toString());shouldThrow(() => { Temporal.PlainDate.from({ month: 1, day: 9 }); }, TypeError);
+
+shouldThrow(() => { Temporal.PlainDateTime.from({ year: 2007, day: 9 }); }, TypeError);
+shouldThrow(() => { Temporal.PlainDateTime.from({ year: 2007, month: 1 }); }, TypeError);
+shouldThrow(() => { Temporal.PlainDateTime.from({ year: Infinity, month: 1, day: 9 }); }, RangeError);
+shouldThrow(() => { Temporal.PlainDateTime.from({ year: 2007, month: 0, day: 9 }); }, RangeError);
+shouldThrow(() => { Temporal.PlainDateTime.from({ year: 2007, monthCode: 'M00', day: 9 }); }, RangeError);
+shouldThrow(() => { Temporal.PlainDateTime.from({ year: 2007, monthCode: 'M00', day: 9, hour: Infinity }); }, RangeError);
+shouldThrow(() => { Temporal.PlainDateTime.from({ year: 2007, monthCode: 'M00', day: 9, minute: Infinity }); }, RangeError);
+shouldThrow(() => { Temporal.PlainDateTime.from({ year: 2007, monthCode: 'M00', day: 9, second: Infinity }); }, RangeError);
+shouldThrow(() => { Temporal.PlainDateTime.from({ year: 2007, monthCode: 'M00', day: 9, millisecond: Infinity }); }, RangeError);
+shouldThrow(() => { Temporal.PlainDateTime.from({ year: 2007, monthCode: 'M00', day: 9, microsecond: Infinity }); }, RangeError);
+shouldThrow(() => { Temporal.PlainDateTime.from({ year: 2007, monthCode: 'M00', day: 9, nanosecond: Infinity }); }, RangeError);
+shouldThrow(() => { Temporal.PlainDateTime.from({ year: 2007, month: 1, day: 0 }); }, RangeError);
+shouldThrow(() => { Temporal.PlainDateTime.from({ year: 2007, month: 1, monthCode: 'M02', day: 9 }); }, RangeError);
+shouldThrow(() => { Temporal.PlainDateTime.from({ year: 2007, month: 20, day: 40, hour: 30, minute: 80, second: 80, millisecond: 2000, microsecond: 2000, nanosecond: 2000 }, { overflow: 'reject' }); }, RangeError);
 
 const goodStrings = [
     '2007-01-09',
@@ -211,5 +232,65 @@ shouldBe(pdt.toString({ fractionalSecondDigits: 2, roundingMode: 'ceil' }), '000
 shouldBe(pdt.toString({ fractionalSecondDigits: 2, roundingMode: 'floor' }), '0001-02-03T04:05:06.00');
 shouldBe(new Temporal.PlainDateTime(1999,12,31,23,59,59,999,999,999).toString({ smallestUnit: 'microsecond', roundingMode: 'halfExpand' }), '2000-01-01T00:00:00.000000');
 
+shouldBe(Temporal.PlainDateTime.prototype.toPlainDate.length, 0);
+shouldBe(pdt.toPlainDate().toString(), '0001-02-03');
+shouldBe(Temporal.PlainDateTime.prototype.toPlainTime.length, 0);
+shouldBe(pdt.toPlainTime().toString(), '04:05:06.007008009');
+
 shouldBe(Temporal.PlainDateTime.prototype.valueOf.length, 0);
 shouldThrow(() => pdt.valueOf(), TypeError);
+
+shouldBe(pdt.equals(new Temporal.PlainDateTime(1,2,3,4,5,6,7,8,9)), true);
+shouldBe(pdt.equals(new Temporal.PlainDateTime(2,2,3,4,5,6,7,8,9)), false);
+shouldBe(pdt.equals(new Temporal.PlainDateTime(1,3,3,4,5,6,7,8,9)), false);
+shouldBe(pdt.equals(new Temporal.PlainDateTime(1,2,4,4,5,6,7,8,9)), false);
+shouldBe(pdt.equals(new Temporal.PlainDateTime(1,2,3,5,5,6,7,8,9)), false);
+shouldBe(pdt.equals(new Temporal.PlainDateTime(1,2,3,4,6,6,7,8,9)), false);
+shouldBe(pdt.equals(new Temporal.PlainDateTime(1,2,3,4,5,7,7,8,9)), false);
+shouldBe(pdt.equals(new Temporal.PlainDateTime(1,2,3,4,5,6,8,8,9)), false);
+shouldBe(pdt.equals(new Temporal.PlainDateTime(1,2,3,4,5,6,7,9,9)), false);
+shouldBe(pdt.equals(new Temporal.PlainDateTime(1,2,3,4,5,6,7,8,1)), false);
+
+shouldBe(Temporal.PlainDateTime.prototype.add.length, 1);
+shouldBe(pdt.add(new Temporal.Duration()).toString(), '0001-02-03T04:05:06.007008009');
+shouldBe(pdt.add(new Temporal.Duration(1,1,1,1,1,1,1,1,1,1)).toString(), '0002-03-11T05:06:07.00800901');
+shouldBe(pdt.add('-P1Y1M1DT1H1M1.001001001S').toString(), '0000-01-02T03:04:05.006007008');
+shouldBe(pdt.add({ hours: 24 }).toString(), '0001-02-04T04:05:06.007008009');
+shouldBe(pdt.add(new Temporal.Duration(0,10,3,7,19,54,53,992,991,991)).toString(), '0002-01-01T00:00:00');
+shouldBe(Temporal.PlainDateTime.from('2020-01-30').add({ months: 1 }).toString(), '2020-02-29T00:00:00');
+shouldThrow(() => { Temporal.PlainDateTime.from('2020-01-30').add({ months: 1 }, { overflow: 'reject' }); }, RangeError);
+shouldThrow(() => { pdt.add({ years: 300000 }); }, RangeError);
+
+shouldBe(Temporal.PlainDateTime.prototype.subtract.length, 1);
+shouldBe(pdt.subtract(new Temporal.Duration()).toString(), '0001-02-03T04:05:06.007008009');
+shouldBe(pdt.subtract(new Temporal.Duration(1,1,0,1,1,1,1,1,1,1)).toString(), '0000-01-02T03:04:05.006007008');
+shouldBe(pdt.subtract('-P1Y1M1W1DT1H1M1.001001001S').toString(), '0002-03-11T05:06:07.00800901');
+shouldBe(pdt.subtract({ hours: 24 }).toString(), '0001-02-02T04:05:06.007008009');
+shouldBe(pdt.subtract(new Temporal.Duration(0,1,5,3,4,5,6,7,8,10)).toString(), '0000-11-25T23:59:59.999999999');
+shouldBe(Temporal.PlainDateTime.from('2020-03-30').subtract({ months: 1 }).toString(), '2020-02-29T00:00:00');
+shouldThrow(() => { Temporal.PlainDateTime.from('2020-03-30').subtract({ months: 1 }, { overflow: 'reject' }); }, RangeError);
+shouldThrow(() => { pdt.subtract({ years: 300000 }); }, RangeError);
+
+shouldBe(Temporal.PlainDateTime.prototype.with.length, 1);
+shouldBe(pdt.with({ year: 2000, month: 10, hour: 1, minute: 3, millisecond: 0, microsecond: 0, nanosecond: 0 }).toString(), '2000-10-03T01:03:06');
+shouldBe(pdt.with({ second: 15 }).toString(), '0001-02-03T04:05:15.007008009');
+shouldBe(pdt.with({ day: 30 }).toString(), '0001-02-28T04:05:06.007008009');
+shouldThrow(() => { pdt.with({ day: 30 }, { overflow: 'reject' }); }, RangeError);
+
+shouldBe(Temporal.PlainDateTime.prototype.withPlainDate.length, 1);
+shouldThrow(() => { pdt.withPlainDate(); }, RangeError);
+shouldBe(pdt.withPlainDate({ year: 2000, month: 10, day: 30 }).toString(), '2000-10-30T04:05:06.007008009');
+
+shouldBe(Temporal.PlainDateTime.prototype.withPlainTime.length, 0);
+shouldBe(pdt.withPlainTime().toString(), '0001-02-03T00:00:00');
+shouldBe(pdt.withPlainTime({ hour: 1, minute: 2, second: 3 }).toString(), '0001-02-03T01:02:03');
+
+shouldBe(Temporal.PlainDateTime.prototype.round.length, 1);
+shouldBe(pdt.round('hour').toString(), '0001-02-03T04:00:00');
+shouldBe(pdt.round({ smallestUnit: 'hour' }).toString(), '0001-02-03T04:00:00');
+shouldBe(pdt.round({ smallestUnit: 'minute', roundingIncrement: 2 }).toString(), '0001-02-03T04:06:00');
+shouldBe(pdt.round({ smallestUnit: 'minute', roundingIncrement: 2, roundingMode: 'floor' }).toString(), '0001-02-03T04:04:00');
+shouldThrow(() => { pdt.round({}); }, RangeError);
+shouldThrow(() => { pdt.round({ smallestUnit: 'bogus' }); }, RangeError);
+shouldThrow(() => { pdt.round({ smallestUnit: 'minute', roundingIncrement: 24 }); }, RangeError);
+shouldThrow(() => { pdt.round({ smallestUnit: 'minute', roundingMode: 'bogus' }); }, RangeError);

@@ -602,7 +602,7 @@ TEST(WebKit2, CrashGPUProcessWhileCapturing)
     auto* processPool = configuration.get().processPool;
     unsigned timeout = 0;
     while (![processPool _gpuProcessIdentifier] && timeout++ < 100)
-        TestWebKitAPI::Util::sleep(0.1);
+        TestWebKitAPI::Util::runFor(0.1_s);
 
     EXPECT_NE([processPool _gpuProcessIdentifier], 0);
     if (![processPool _gpuProcessIdentifier])
@@ -615,7 +615,7 @@ TEST(WebKit2, CrashGPUProcessWhileCapturing)
     // GPU Process should get relaunched.
     timeout = 0;
     while ((![processPool _gpuProcessIdentifier] || [processPool _gpuProcessIdentifier] == gpuProcessPID) && timeout++ < 100)
-        TestWebKitAPI::Util::sleep(0.1);
+        TestWebKitAPI::Util::runFor(0.1_s);
     EXPECT_NE([processPool _gpuProcessIdentifier], 0);
     EXPECT_NE([processPool _gpuProcessIdentifier], gpuProcessPID);
     gpuProcessPID = [processPool _gpuProcessIdentifier];
@@ -683,7 +683,7 @@ TEST(WebKit2, CrashGPUProcessAfterApplyingConstraints)
     auto* processPool = configuration.get().processPool;
     unsigned timeout = 0;
     while (![processPool _gpuProcessIdentifier] && timeout++ < 100)
-        TestWebKitAPI::Util::sleep(0.1);
+        TestWebKitAPI::Util::runFor(0.1_s);
 
     EXPECT_NE([processPool _gpuProcessIdentifier], 0);
     if (![processPool _gpuProcessIdentifier])
@@ -696,7 +696,7 @@ TEST(WebKit2, CrashGPUProcessAfterApplyingConstraints)
     // GPU Process should get relaunched.
     timeout = 0;
     while ((![processPool _gpuProcessIdentifier] || [processPool _gpuProcessIdentifier] == gpuProcessPID) && timeout++ < 100)
-        TestWebKitAPI::Util::sleep(0.1);
+        TestWebKitAPI::Util::runFor(0.1_s);
     EXPECT_NE([processPool _gpuProcessIdentifier], 0);
     EXPECT_NE([processPool _gpuProcessIdentifier], gpuProcessPID);
     gpuProcessPID = [processPool _gpuProcessIdentifier];
@@ -766,7 +766,7 @@ TEST(WebKit2, CrashGPUProcessWhileCapturingAndCalling)
     auto* processPool = configuration.get().processPool;
     unsigned timeout = 0;
     while (![processPool _gpuProcessIdentifier] && timeout++ < 100)
-        TestWebKitAPI::Util::sleep(0.1);
+        TestWebKitAPI::Util::runFor(0.1_s);
 
     EXPECT_NE([processPool _gpuProcessIdentifier], 0);
     if (![processPool _gpuProcessIdentifier])
@@ -779,7 +779,7 @@ TEST(WebKit2, CrashGPUProcessWhileCapturingAndCalling)
     // GPU Process should get relaunched.
     timeout = 0;
     while ((![processPool _gpuProcessIdentifier] || [processPool _gpuProcessIdentifier] == gpuProcessPID) && timeout++ < 100)
-        TestWebKitAPI::Util::sleep(0.1);
+        TestWebKitAPI::Util::runFor(0.1_s);
     EXPECT_NE([processPool _gpuProcessIdentifier], 0);
     EXPECT_NE([processPool _gpuProcessIdentifier], gpuProcessPID);
     gpuProcessPID = [processPool _gpuProcessIdentifier];
@@ -1077,6 +1077,40 @@ TEST(WebKit2, CapturePermission)
     [webView stringByEvaluatingJavaScript:@"checkPermission('camera', 'denied')"];
     TestWebKitAPI::Util::run(&done);
     done = false;
+}
+
+TEST(WebKit2, EnumerateDevicesAfterMuting)
+{
+    auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+    [configuration preferences]._inactiveMediaCaptureSteamRepromptIntervalInMinutes = .5 / 60;
+
+    initializeMediaCaptureConfiguration(configuration.get());
+
+#if PLATFORM(IOS_FAMILY)
+    [configuration setAllowsInlineMediaPlayback:YES];
+#endif
+
+    auto messageHandler = adoptNS([[GUMMessageHandler alloc] init]);
+    [[configuration userContentController] addScriptMessageHandler:messageHandler.get() name:@"gum"];
+
+    auto webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 400, 400) configuration:configuration.get()]);
+
+    auto delegate = adoptNS([[UserMediaCaptureUIDelegate alloc] init]);
+    webView.get().UIDelegate = delegate.get();
+
+    [webView loadTestPageNamed:@"getUserMedia"];
+    EXPECT_TRUE(waitUntilCaptureState(webView.get(), _WKMediaCaptureStateDeprecatedActiveCamera));
+
+    [webView setCameraCaptureState:WKMediaCaptureStateMuted completionHandler:nil];
+    [webView setMicrophoneCaptureState:WKMediaCaptureStateMuted completionHandler:nil];
+
+    // Sleep long enough for the reprompt timer to fire and clear cached state.
+    Util::runFor(1_s);
+
+    // Verify enumerateDevices still works fine.
+    done = false;
+    [webView stringByEvaluatingJavaScript:@"checkEnumerateDevicesDoesNotFilter()"];
+    TestWebKitAPI::Util::run(&done);
 }
 
 #if PLATFORM(IOS_FAMILY)

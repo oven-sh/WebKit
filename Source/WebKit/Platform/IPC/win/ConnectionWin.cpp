@@ -26,8 +26,10 @@
 #include "config.h"
 #include "Connection.h"
 
-#include "ArgumentCoder.h"
 #include "DataReference.h"
+#include "Decoder.h"
+#include "Encoder.h"
+#include <wtf/ArgumentCoder.h>
 #include <wtf/HexNumber.h>
 #include <wtf/RandomNumber.h>
 
@@ -71,7 +73,7 @@ bool Connection::createServerAndClientIdentifiers(HANDLE& serverIdentifier, HAND
 
 void Connection::platformInitialize(Identifier identifier)
 {
-    m_connectionPipe = identifier;
+    m_connectionPipe = identifier.handle;
 }
 
 void Connection::platformInvalidate()
@@ -247,10 +249,12 @@ void Connection::invokeWriteEventHandler()
     });
 }
 
-bool Connection::open()
+bool Connection::open(Client& client)
 {
+    ASSERT(!m_client);
     // We connected the two ends of the pipe in createServerAndClientIdentifiers.
     m_isConnected = true;
+    m_client = &client;
 
     // Start listening for read and write state events.
     m_readListener.open([this] {
@@ -364,12 +368,13 @@ void Connection::EventListener::close()
 
 std::optional<Connection::ConnectionIdentifierPair> Connection::createConnectionIdentifierPair()
 {
-    Connection::Identifier serverIdentifier, clientIdentifier;
+    HANDLE serverIdentifier;
+    HANDLE clientIdentifier;
     if (!Connection::createServerAndClientIdentifiers(serverIdentifier, clientIdentifier)) {
         LOG_ERROR("Failed to create server and client identifiers");
         return std::nullopt;
     }
-    return ConnectionIdentifierPair { serverIdentifier, Attachment { clientIdentifier } };
+    return ConnectionIdentifierPair { Identifier { Win32Handle { serverIdentifier } }, Win32Handle { clientIdentifier } };
 }
 
 } // namespace IPC

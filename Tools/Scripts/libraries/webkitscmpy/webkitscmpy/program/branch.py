@@ -26,7 +26,7 @@ import sys
 from .command import Command
 from .commit import Commit
 
-from webkitbugspy import Tracker
+from webkitbugspy import Tracker, radar
 from webkitcorepy import run, string_utils, Terminal
 from webkitscmpy import local, log, remote
 
@@ -138,7 +138,28 @@ class Branch(Command):
             else:
                 log.warning("'{}' has no spaces, assuming user intends it to be a branch name".format(args.issue))
 
-        if issue:
+        needs_radar = issue and not isinstance(issue.tracker, radar.Tracker)
+        needs_radar = needs_radar and any([
+            isinstance(tracker, radar.Tracker) and tracker.radarclient()
+            for tracker in Tracker._trackers
+        ])
+        needs_radar = needs_radar and not any([
+            isinstance(reference.tracker, radar.Tracker)
+            for reference in issue.references
+        ])
+
+        if needs_radar:
+            rdar = None
+            if not getattr(args, 'defaults', None):
+                sys.stdout.write('Existing radar to CC (leave empty to create new radar)')
+                sys.stdout.flush()
+                input = Terminal.input(': ')
+                if re.match(r'\d+', input):
+                    input = '<rdar://problem/{}>'.format(input)
+                rdar = Tracker.from_string(input)
+            issue.cc_radar(block=True, radar=rdar)
+
+        if issue and not isinstance(issue.tracker, radar.Tracker):
             args._title = issue.title
             args._bug_urls = Commit.bug_urls(issue)
 

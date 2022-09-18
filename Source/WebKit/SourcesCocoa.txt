@@ -208,7 +208,6 @@ Shared/mac/PasteboardTypes.mm
 Shared/mac/PrintInfoMac.mm
 Shared/mac/ScrollingAccelerationCurveMac.mm
 Shared/mac/SecItemRequestData.cpp
-Shared/mac/SecItemResponseData.cpp
 Shared/mac/SecItemShim.cpp
 Shared/mac/WebCoreArgumentCodersMac.mm
 Shared/mac/WebEventFactory.mm
@@ -292,8 +291,6 @@ UIProcess/API/Cocoa/_WKTextManipulationExclusionRule.mm
 UIProcess/API/Cocoa/_WKTextManipulationItem.mm
 UIProcess/API/Cocoa/_WKTextManipulationToken.mm
 UIProcess/API/Cocoa/_WKThumbnailView.mm
-UIProcess/API/Cocoa/_WKUserContentExtensionStore.mm
-UIProcess/API/Cocoa/_WKUserContentFilter.mm
 UIProcess/API/Cocoa/_WKUserContentWorld.mm
 UIProcess/API/Cocoa/_WKUserInitiatedAction.mm
 UIProcess/API/Cocoa/_WKUserStyleSheet.mm
@@ -586,7 +583,6 @@ UIProcess/WebAuthentication/Cocoa/NfcService.mm
 UIProcess/WebAuthentication/Cocoa/WKASCAuthorizationPresenterDelegate.mm
 UIProcess/WebAuthentication/Cocoa/WKNFReaderSessionDelegate.mm
 UIProcess/WebAuthentication/Cocoa/WebAuthenticationPanelClient.mm
-UIProcess/WebAuthentication/Cocoa/WebAuthenticatorCoordinatorProxy.mm
 
 UIProcess/WebAuthentication/Mock/MockLocalConnection.mm
 UIProcess/WebAuthentication/Mock/MockLocalService.mm

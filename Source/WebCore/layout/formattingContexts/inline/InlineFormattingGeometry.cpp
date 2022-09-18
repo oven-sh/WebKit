@@ -26,8 +26,6 @@
 #include "config.h"
 #include "InlineFormattingGeometry.h"
 
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
-
 #include "FloatingContext.h"
 #include "FontCascade.h"
 #include "FormattingContext.h"
@@ -47,19 +45,37 @@ InlineFormattingGeometry::InlineFormattingGeometry(const InlineFormattingContext
 {
 }
 
-InlineLayoutUnit InlineFormattingGeometry::logicalTopForNextLine(const LineBuilder::LineContent& lineContent, InlineLayoutUnit previousLineLogicalBottom, const FloatingContext& floatingContext) const
+InlineLayoutUnit InlineFormattingGeometry::logicalTopForNextLine(const LineBuilder::LineContent& lineContent, const InlineRect& lineInitialRect, const InlineRect& lineLogicalRect, const FloatingContext& floatingContext) const
 {
-    // Normally the next line's logical top is the previous line's logical bottom, but when the line ends
-    // with the clear property set, the next line needs to clear the existing floats.
-    if (lineContent.runs.isEmpty())
-        return previousLineLogicalBottom;
-    auto& lastRunLayoutBox = lineContent.runs.last().layoutBox(); 
-    if (!lastRunLayoutBox.hasFloatClear())
-        return previousLineLogicalBottom;
-    auto positionWithClearance = floatingContext.verticalPositionWithClearance(lastRunLayoutBox);
-    if (!positionWithClearance)
-        return previousLineLogicalBottom;
-    return std::max(previousLineLogicalBottom, InlineLayoutUnit(positionWithClearance->position));
+    if (!lineContent.inlineItemRange.isEmpty()) {
+        // Normally the next line's logical top is the previous line's logical bottom, but when the line ends
+        // with the clear property set, the next line needs to clear the existing floats.
+        if (lineContent.runs.isEmpty())
+            return lineLogicalRect.bottom();
+        auto& lastRunLayoutBox = lineContent.runs.last().layoutBox();
+        if (!lastRunLayoutBox.hasFloatClear())
+            return lineLogicalRect.bottom();
+        auto positionWithClearance = floatingContext.verticalPositionWithClearance(lastRunLayoutBox);
+        if (!positionWithClearance)
+            return lineLogicalRect.bottom();
+        return std::max(lineLogicalRect.bottom(), InlineLayoutUnit(positionWithClearance->position));
+    }
+    // Move the next line below the intrusive float(s).
+    ASSERT(lineContent.runs.isEmpty() || lineContent.runs[0].isLineSpanningInlineBoxStart());
+    ASSERT(lineContent.hasIntrusiveFloat);
+    auto lineBottomWithNoInlineContent = std::max(lineLogicalRect.bottom(), lineInitialRect.bottom());
+    auto floatConstraints = floatingContext.constraints(toLayoutUnit(lineInitialRect.top()), toLayoutUnit(lineBottomWithNoInlineContent), FloatingContext::MayBeAboveLastFloat::Yes);
+    ASSERT(floatConstraints.left || floatConstraints.right);
+    if (floatConstraints.left && floatConstraints.right) {
+        // In case of left and right constraints, we need to pick the one that's closer to the current line.
+        return std::min(floatConstraints.left->y, floatConstraints.right->y);
+    }
+    if (floatConstraints.left)
+        return floatConstraints.left->y;
+    if (floatConstraints.right)
+        return floatConstraints.right->y;
+    ASSERT_NOT_REACHED();
+    return lineBottomWithNoInlineContent;
 }
 
 ContentWidthAndMargin InlineFormattingGeometry::inlineBlockContentWidthAndMargin(const Box& formattingContextRoot, const HorizontalConstraints& horizontalConstraints, const OverriddenHorizontalValues& overriddenHorizontalValues) const
@@ -209,7 +225,55 @@ std::tuple<const InlineDisplay::Box*, const InlineDisplay::Box*> InlineFormattin
     return { nullptr, nullptr };
 }
 
+InlineLayoutUnit InlineFormattingGeometry::initialLineHeight() const
+{
+    if (layoutState().inStandardsMode())
+        return formattingContext().root().style().computedLineHeight();
+    return formattingContext().formattingQuirks().initialLineHeight();
+}
+
+std::optional<HorizontalConstraints> InlineFormattingGeometry::floatConstraintsForLine(const InlineRect& lineLogicalRect, const FloatingContext& floatingContext) const
+{
+    // Check for intruding floats and adjust logical left/available width for this line accordingly.
+    auto toLogicalFloatPosition = [&] (const auto& constraints) {
+        // FIXME: Move inline direction flip to FloatingContext.
+        if (floatingContext.isLeftToRightDirection() == formattingContext().root().style().isLeftToRightDirection())
+            return constraints;
+        auto logicalConstraints = FloatingContext::Constraints { };
+        auto borderBoxWidth = layoutState().geometryForBox(formattingContext().root()).borderBoxWidth();
+        if (constraints.left)
+            logicalConstraints.right = PointInContextRoot { borderBoxWidth - constraints.left->x, constraints.left->y };
+        if (constraints.right)
+            logicalConstraints.left = PointInContextRoot { borderBoxWidth - constraints.right->x, constraints.right->y };
+        return logicalConstraints;
+    };
+    auto constraints = toLogicalFloatPosition(floatingContext.constraints(toLayoutUnit(lineLogicalRect.top()), toLayoutUnit(lineLogicalRect.bottom()), FloatingContext::MayBeAboveLastFloat::Yes));
+
+    // Check if these values actually constrain the line.
+    if (constraints.left && constraints.left->x <= lineLogicalRect.left())
+        constraints.left = { };
+
+    if (constraints.right && constraints.right->x >= lineLogicalRect.right())
+        constraints.right = { };
+
+    if (!constraints.left && !constraints.right)
+        return { };
+
+    auto lineLogicalLeft = lineLogicalRect.left();
+    auto lineLogicalRight = lineLogicalRect.right();
+    if (constraints.left && constraints.right) {
+        lineLogicalRight = constraints.right->x;
+        lineLogicalLeft = constraints.left->x;
+    } else if (constraints.left) {
+        ASSERT(constraints.left->x >= lineLogicalLeft);
+        lineLogicalLeft = constraints.left->x;
+    } else if (constraints.right) {
+        // Right float boxes may overflow the containing block on the left.
+        lineLogicalRight = std::max<InlineLayoutUnit>(lineLogicalLeft, constraints.right->x);
+    }
+    return HorizontalConstraints { toLayoutUnit(lineLogicalLeft), toLayoutUnit(lineLogicalRight - lineLogicalLeft) };
+}
+
 }
 }
 
-#endif

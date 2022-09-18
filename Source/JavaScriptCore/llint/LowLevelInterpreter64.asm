@@ -1910,8 +1910,8 @@ llintOpWithMetadata(op_get_by_val, OpGetByVal, macro (size, get, dispatch, metad
     jmp .opGetByValDone
     
 .opGetByValNotDouble:
-    bieq t2, AlwaysSlowPutContiguousShape, .opGetByValIsContiguous
-    bilt t2, ArrayStorageShape, .opGetByValNotIndexedStorage
+    subi ArrayStorageShape, t2
+    bia t2, SlowPutArrayStorageShape - ArrayStorageShape, .opGetByValNotIndexedStorage
     biaeq t1, -sizeof IndexingHeader + IndexingHeader::u.lengths.vectorLength[t3], .opGetByValSlow
     get(m_dst, t0)
     loadq ArrayStorage::m_vector[t3, t1, 8], t2
@@ -2378,7 +2378,7 @@ macro compareOp(opcodeName, opcodeStruct, integerCompareAndSet, doubleCompareAnd
         return(t0)
 
     .slow:
-        callSlowPath(_slow_path_%opcodeName%)
+        callSlowPath(_llint_slow_path_%opcodeName%)
         dispatch()
     end)
 end
@@ -3535,5 +3535,6 @@ end)
 op(fuzzer_return_early_from_loop_hint, macro ()
     loadp CodeBlock[cfr], t0
     loadp CodeBlock::m_globalObject[t0], t0
+    loadp JSGlobalObject::m_globalThis[t0], t0
     doReturn()
 end)

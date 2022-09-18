@@ -25,23 +25,26 @@
 
 #pragma once
 
-#include <wtf/Ref.h>
+#include <wtf/IsoMalloc.h>
 #include <wtf/RefCounted.h>
 
 namespace WebCore {
 
-class ReportBody : public RefCounted<ReportBody> {
-    WTF_MAKE_FAST_ALLOCATED;
+enum class ViolationReportType : uint8_t;
+
+class WEBCORE_EXPORT ReportBody : public RefCounted<ReportBody> {
+    WTF_MAKE_ISO_ALLOCATED(ReportBody);
 public:
-    static Ref<ReportBody> create();
+    virtual ~ReportBody();
+
+    virtual const AtomString& type() const = 0;
+    ViolationReportType reportBodyType() const;
+
+protected:
+    ReportBody(ViolationReportType);
 
 private:
-    ReportBody() = default;
+    ViolationReportType m_reportBodyType;
 };
 
-inline Ref<ReportBody> ReportBody::create()
-{
-    return adoptRef(*new ReportBody());
-}
-
-}
+} // namespace WebCore

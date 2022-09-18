@@ -1186,6 +1186,10 @@ private:
             break;
         }
 
+        case GetByValWithThis: {
+            break;
+        }
+
         case PutByValDirect:
         case PutByVal:
         case PutByValAlias: {
@@ -1504,13 +1508,24 @@ private:
 
         case StringReplace:
         case StringReplaceRegExp: {
+            if (op == StringReplace
+                && node->child1()->shouldSpeculateString()
+                && node->child2()->shouldSpeculateString()
+                && node->child3()->shouldSpeculateString()
+                && m_graph.isWatchingStringSymbolReplaceWatchpoint(node)) {
+                fixEdge<StringUse>(node->child1());
+                fixEdge<StringUse>(node->child2());
+                fixEdge<StringUse>(node->child3());
+                break;
+            }
+
             if (node->child2()->shouldSpeculateString()) {
                 m_insertionSet.insertNode(
                     m_indexInBlock, SpecNone, Check, node->origin,
                     Edge(node->child2().node(), StringUse));
                 fixEdge<StringUse>(node->child2());
             } else if (op == StringReplace) {
-                if (node->child2()->shouldSpeculateRegExpObject())
+                if (node->child2()->shouldSpeculateRegExpObject() && m_graph.isWatchingRegExpPrimordialPropertiesWatchpoint(node))
                     addStringReplacePrimordialChecks(node->child2().node());
                 else 
                     m_insertionSet.insertNode(
@@ -2865,7 +2880,7 @@ private:
         case Construct:
         case DirectConstruct:
         case CallVarargs:
-        case CallEval:
+        case CallDirectEval:
         case TailCallVarargsInlinedCaller:
         case ConstructVarargs:
         case CallForwardVarargs:
@@ -2917,7 +2932,6 @@ private:
         case TypeOf:
         case PutByIdWithThis:
         case PutByValWithThis:
-        case GetByValWithThis:
         case CompareEqPtr:
         case NumberToStringWithValidRadixConstant:
         case GetGlobalThis:
@@ -3681,25 +3695,25 @@ private:
         } else {
             // Note that we only need to be using a structure check if we opt for InBoundsSaneChain, since
             // that needs to protect against JSArray's __proto__ being changed.
-            StructureSet structureSet = arrayMode.originalArrayStructureSet(m_graph, origin.semantic);
+            Structure* structure = arrayMode.originalArrayStructure(m_graph, origin.semantic);
         
             Edge indexEdge = index ? Edge(index, Int32Use) : Edge();
             
             if (arrayMode.doesConversion()) {
-                if (!structureSet.isEmpty()) {
+                if (structure) {
                     m_insertionSet.insertNode(
                         m_indexInBlock, SpecNone, ArrayifyToStructure, origin,
-                        OpInfo(m_graph.registerStructure(structureSet.onlyStructure())), OpInfo(arrayMode.asWord()), Edge(array, CellUse), indexEdge);
+                        OpInfo(m_graph.registerStructure(structure)), OpInfo(arrayMode.asWord()), Edge(array, CellUse), indexEdge);
                 } else {
                     m_insertionSet.insertNode(
                         m_indexInBlock, SpecNone, Arrayify, origin,
                         OpInfo(arrayMode.asWord()), Edge(array, CellUse), indexEdge);
                 }
             } else {
-                if (!structureSet.isEmpty()) {
+                if (structure) {
                     m_insertionSet.insertNode(
                         m_indexInBlock, SpecNone, CheckStructure, origin,
-                        OpInfo(m_graph.addStructureSet(structureSet)), Edge(array, CellUse));
+                        OpInfo(m_graph.addStructureSet(structure)), Edge(array, CellUse));
                 } else {
                     m_insertionSet.insertNode(
                         m_indexInBlock, SpecNone, CheckArray, origin,
@@ -4121,37 +4135,11 @@ private:
                 attemptToForceStringArrayModeByToStringConversion<StringOrStringObjectUse>(arrayMode, node);
         }
             
-        if (!arrayMode.supportsSelfLength()) {
-            if (arrayMode.type() == Array::AlwaysSlowPutContiguous)
-                return attemptToMakeGetArrayLengthForAlwaysSlowPutContiguous(node, arrayMode);
-
+        if (!arrayMode.supportsSelfLength())
             return false;
-        }
         
         convertToGetArrayLength(node, arrayMode);
         return true;
-    }
-
-    bool attemptToMakeGetArrayLengthForAlwaysSlowPutContiguous(Node* node, ArrayMode arrayMode)
-    {
-        if (arrayMode.arrayClass() != Array::OriginalNonArray)
-            return false;
-
-        JSGlobalObject* globalObject = m_graph.globalObjectFor(node->origin.semantic);
-        Structure* objectPrototypeStructure = globalObject->objectPrototype()->structure();
-
-        if (globalObject->alwaysSlowPutContiguousPrototypesAreSaneWatchpointSet().isStillValid()
-            && objectPrototypeStructure->transitionWatchpointSetIsStillValid()
-            && globalObject->objectPrototypeIsSaneConcurrently(objectPrototypeStructure)) {
-
-            m_graph.watchpoints().addLazily(globalObject->alwaysSlowPutContiguousPrototypesAreSaneWatchpointSet());
-            m_graph.registerAndWatchStructureTransition(objectPrototypeStructure);
-
-            convertToGetArrayLength(node, arrayMode);
-            return true;
-        }
-
-        return false;
     }
 
     void convertToGetArrayLength(Node* node, ArrayMode arrayMode)
@@ -4454,8 +4442,7 @@ private:
                 fixEdge<Int32Use>(searchElement);
             return;
         }
-        case Array::Contiguous:
-        case Array::AlwaysSlowPutContiguous: {
+        case Array::Contiguous: {
             if (searchElement->shouldSpeculateString())
                 fixEdge<StringUse>(searchElement);
             else if (searchElement->shouldSpeculateSymbol())

@@ -120,6 +120,14 @@ bool URL::hasSpecialScheme() const
         || protocolIs("wss"_s);
 }
 
+bool URL::hasLocalScheme() const
+{
+    // https://fetch.spec.whatwg.org/#local-scheme
+    return protocolIs("about"_s)
+        || protocolIs("blob"_s)
+        || protocolIs("data"_s);
+}
+
 unsigned URL::pathStart() const
 {
     unsigned start = m_hostEnd + m_portLength;
@@ -860,6 +868,28 @@ String URL::strippedForUseAsReferrer() const
         StringView(m_string).substring(end, m_queryEnd - end)
     );
 }
+
+String URL::strippedForUseAsReferrerWithExplicitPort() const
+{
+    if (!m_isValid)
+        return m_string;
+
+    // Custom ports will appear in the URL string:
+    if (m_portLength)
+        return strippedForUseAsReferrer();
+
+    auto port = defaultPortForProtocol(protocol());
+    if (!port)
+        return strippedForUseAsReferrer();
+
+    unsigned end = credentialsEnd();
+
+    if (m_userStart == end && m_queryEnd == m_string.length())
+        return makeString(StringView(m_string).left(m_hostEnd), ':', static_cast<unsigned>(*port), StringView(m_string).substring(pathStart()));
+
+    return makeString(StringView(m_string).left(m_hostEnd), ':', static_cast<unsigned>(*port), StringView(m_string).substring(end, m_queryEnd - end));
+}
+
 
 bool URL::isLocalFile() const
 {

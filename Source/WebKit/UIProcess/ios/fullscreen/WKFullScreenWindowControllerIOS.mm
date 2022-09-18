@@ -461,6 +461,9 @@ static const NSTimeInterval kAnimationDuration = 0.2;
     RetainPtr<UIPinchGestureRecognizer> _interactivePinchDismissGestureRecognizer;
     RetainPtr<WKFullScreenInteractiveTransition> _interactiveDismissTransitionCoordinator;
 #endif
+#if ENABLE(FULLSCREEN_WINDOW_EFFECTS)
+    RetainPtr<UIWindow> _lastKnownParentWindow;
+#endif
 
     std::unique_ptr<WebKit::VideoFullscreenManagerProxy::VideoInPictureInPictureDidChangeObserver> _pipObserver;
     BOOL _shouldReturnToFullscreenFromPictureInPicture;
@@ -520,7 +523,7 @@ static const NSTimeInterval kAnimationDuration = 0.2;
 #pragma mark -
 #pragma mark External Interface
 
-- (void)enterFullScreen
+- (void)enterFullScreen:(CGSize)videoDimensions
 {
     if ([self isFullScreen])
         return;
@@ -533,6 +536,9 @@ static const NSTimeInterval kAnimationDuration = 0.2;
 
     [self _invalidateEVOrganizationName];
 
+#if ENABLE(FULLSCREEN_WINDOW_EFFECTS)
+    _lastKnownParentWindow = [webView window];
+#endif
     _fullScreenState = WebKit::WaitingToEnterFullScreen;
     _blocksReturnToFullscreenFromPictureInPicture = manager->blocksReturnToFullscreenFromPictureInPicture();
     _originalWindowSize = [webView window].frame.size;
@@ -542,7 +548,10 @@ static const NSTimeInterval kAnimationDuration = 0.2;
     [_window setWindowLevel:UIWindowLevelNormal - 1];
     [_window setHidden:NO];
 #if HAVE(UIKIT_WEBKIT_INTERNALS)
-    [_window setFrame:CGRectMake(0, 0, 960, 540)];
+    CGFloat aspectRatio = videoDimensions.height ? (videoDimensions.width / videoDimensions.height) : (960.0 / 540.0);
+    [_window setFrame:CGRectMake(0, 0, 540 * aspectRatio, 540)];
+    [_window setNeedsLayout];
+    [_window layoutIfNeeded];
 #endif
 
     _rootViewController = adoptNS([[UIViewController alloc] init]);
@@ -561,6 +570,9 @@ static const NSTimeInterval kAnimationDuration = 0.2;
     [_fullscreenViewController setTarget:self];
     [_fullscreenViewController setExitFullScreenAction:@selector(requestExitFullScreen)];
     _fullscreenViewController.get().view.frame = _rootViewController.get().view.bounds;
+#if HAVE(UIKIT_WEBKIT_INTERNALS)
+    [_fullscreenViewController hideMediaControls:manager->isVideoElement()];
+#endif
     [self _updateLocationInfo];
 
 #if ENABLE(FULLSCREEN_DISMISSAL_GESTURES)
@@ -680,6 +692,9 @@ static const NSTimeInterval kAnimationDuration = 0.2;
         WebKit::WKWebViewState().applyTo(webView.get());
         auto page = [self._webView _page];
         auto* manager = self._manager;
+#if ENABLE(FULLSCREEN_WINDOW_EFFECTS)
+        [_lastKnownParentWindow setAlpha:0];
+#endif
         if (page && manager) {
             [self._webView becomeFirstResponder];
             manager->didEnterFullScreen();
@@ -746,6 +761,9 @@ static const NSTimeInterval kAnimationDuration = 0.2;
         return;
     }
 
+#if ENABLE(FULLSCREEN_WINDOW_EFFECTS)
+    [self _restoreWindowTransparency];
+#endif
     if (auto* manager = self._manager) {
         manager->requestExitFullScreen();
         _exitingFullScreen = YES;
@@ -755,6 +773,14 @@ static const NSTimeInterval kAnimationDuration = 0.2;
     ASSERT_NOT_REACHED();
     [self _exitFullscreenImmediately];
 }
+
+#if ENABLE(FULLSCREEN_WINDOW_EFFECTS)
+- (void)_restoreWindowTransparency
+{
+    [_lastKnownParentWindow setAlpha:1];
+    _lastKnownParentWindow = nullptr;
+}
+#endif // ENABLE(FULLSCREEN_WINDOW_EFFECTS)
 
 - (void)exitFullScreen
 {
@@ -767,6 +793,9 @@ static const NSTimeInterval kAnimationDuration = 0.2;
     }
     _fullScreenState = WebKit::WaitingToExitFullScreen;
     _exitingFullScreen = YES;
+#if ENABLE(FULLSCREEN_WINDOW_EFFECTS)
+    [self _restoreWindowTransparency];
+#endif
 
     if (auto* manager = self._manager) {
         manager->setAnimatingFullScreen(true);

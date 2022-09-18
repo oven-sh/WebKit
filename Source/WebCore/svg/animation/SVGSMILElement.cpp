@@ -136,8 +136,8 @@ SVGSMILElement::Condition::Condition(Type type, BeginOrEnd beginOrEnd, const Str
 {
 }
     
-SVGSMILElement::SVGSMILElement(const QualifiedName& tagName, Document& doc)
-    : SVGElement(tagName, doc)
+SVGSMILElement::SVGSMILElement(const QualifiedName& tagName, Document& doc, UniqueRef<SVGPropertyRegistry>&& propertyRegistry)
+    : SVGElement(tagName, doc, WTFMove(propertyRegistry))
     , m_attributeName(anyQName())
     , m_conditionsConnected(false)
     , m_hasEndEventConditions(false)
@@ -1157,7 +1157,7 @@ bool SVGSMILElement::progress(SMILTime elapsed, SVGSMILElement& firstAnimation, 
 void SVGSMILElement::notifyDependentsIntervalChanged(NewOrExistingInterval newOrExisting)
 {
     ASSERT(m_intervalBegin.isFinite());
-    static NeverDestroyed<WeakHashSet<SVGSMILElement>> loopBreaker;
+    static NeverDestroyed<WeakHashSet<SVGSMILElement, WeakPtrImplWithEventTargetData>> loopBreaker;
     if (loopBreaker->contains(*this))
         return;
     loopBreaker->add(*this);

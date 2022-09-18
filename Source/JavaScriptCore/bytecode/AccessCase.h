@@ -38,6 +38,12 @@
 
 namespace JSC {
 
+class GetterSetterAccessCase;
+class InstanceOfAccessCase;
+class IntrinsicGetterAccessCase;
+class ModuleNamespaceAccessCase;
+class ProxyableAccessCase;
+
 struct AccessGenerationState;
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(AccessCase);
@@ -108,6 +114,7 @@ public:
         DirectArgumentsLength,
         ScopedArgumentsLength,
         ModuleNamespaceLoad,
+        ProxyObjectLoad,
         InstanceOfHit,
         InstanceOfMiss,
         InstanceOfGeneric,
@@ -116,7 +123,6 @@ public:
         IndexedInt32Load,
         IndexedDoubleLoad,
         IndexedContiguousLoad,
-        IndexedAlwaysSlowPutContiguousLoad,
         IndexedArrayStorageLoad,
         IndexedScopedArgumentsLoad,
         IndexedDirectArgumentsLoad,
@@ -165,11 +171,13 @@ public:
     static RefPtr<AccessCase> createTransition(VM&, JSCell* owner, CacheableIdentifier, PropertyOffset, Structure* oldStructure,
         Structure* newStructure, const ObjectPropertyConditionSet&, RefPtr<PolyProtoAccessChain>&&, const StructureStubInfo&);
 
-    static Ref<AccessCase> createDelete(VM&, JSCell* owner, CacheableIdentifier, PropertyOffset, Structure* oldStructure,
-        Structure* newStructure);
+    static Ref<AccessCase> createDelete(VM&, JSCell* owner, CacheableIdentifier, PropertyOffset, Structure* oldStructure, Structure* newStructure);
 
     static Ref<AccessCase> createCheckPrivateBrand(VM&, JSCell* owner, CacheableIdentifier, Structure*);
+
     static Ref<AccessCase> createSetPrivateBrand(VM&, JSCell* owner, CacheableIdentifier, Structure* oldStructure, Structure* newStructure);
+
+    static Ref<AccessCase> createReplace(VM&, JSCell* owner, CacheableIdentifier, PropertyOffset, Structure* oldStructure, bool viaProxy);
     
     static RefPtr<AccessCase> fromStructureStubInfo(VM&, JSCell* owner, CacheableIdentifier, StructureStubInfo&);
 
@@ -193,10 +201,10 @@ public:
 
     ObjectPropertyConditionSet conditionSet() const { return m_conditionSet; }
 
-    virtual bool hasAlternateBase() const;
-    virtual JSObject* alternateBase() const;
+    bool hasAlternateBase() const;
+    JSObject* alternateBase() const;
     
-    virtual WatchpointSet* additionalSet() const { return nullptr; }
+    WatchpointSet* additionalSet() const;
     bool viaProxy() const { return m_viaProxy; }
 
     // If you supply the optional vector, this will append the set of cells that this will need to keep alive
@@ -242,9 +250,6 @@ public:
     bool canReplace(const AccessCase& other) const;
 
     void dump(PrintStream& out) const;
-    virtual void dumpImpl(PrintStream&, CommaPrinter&, Indenter&) const { }
-
-    virtual ~AccessCase();
 
     bool usesPolyProto() const
     {
@@ -273,6 +278,11 @@ public:
 
     static bool canBeShared(const AccessCase&, const AccessCase&);
 
+    template<typename Func>
+    void runWithDowncast(const Func&);
+
+    void operator delete(AccessCase*, std::destroying_delete_t);
+
 protected:
     AccessCase(VM&, JSCell* owner, AccessType, CacheableIdentifier, PropertyOffset, Structure*, const ObjectPropertyConditionSet&, RefPtr<PolyProtoAccessChain>&&);
     AccessCase(AccessCase&& other)
@@ -300,9 +310,21 @@ protected:
     AccessCase& operator=(const AccessCase&) = delete;
     void resetState() { m_state = Primordial; }
 
+    Ref<AccessCase> cloneImpl() const;
+    WatchpointSet* additionalSetImpl() const { return nullptr; }
+    bool hasAlternateBaseImpl() const;
+    void dumpImpl(PrintStream&, CommaPrinter&, Indenter&) const { }
+    JSObject* alternateBaseImpl() const;
+
 private:
     friend class CodeBlock;
     friend class PolymorphicAccess;
+
+    friend class ProxyableAccessCase;
+    friend class GetterSetterAccessCase;
+    friend class IntrinsicGetterAccessCase;
+    friend class ModuleNamespaceAccessCase;
+    friend class InstanceOfAccessCase;
 
     template<typename Functor>
     void forEachDependentCell(VM&, const Functor&) const;
@@ -313,7 +335,7 @@ private:
 
     // FIXME: This only exists because of how AccessCase puts post-generation things into itself.
     // https://bugs.webkit.org/show_bug.cgi?id=156456
-    virtual Ref<AccessCase> clone() const;
+    Ref<AccessCase> clone() const;
 
     // Perform any action that must be performed before the end of the epoch in which the case
     // was created. Returns a set of watchpoint sets that will need to be watched.
@@ -362,11 +384,12 @@ public:
         struct Key {
             Key() = default;
 
-            Key(GPRReg baseGPR, GPRReg valueGPR, GPRReg extraGPR, GPRReg stubInfoGPR, GPRReg arrayProfileGPR, RegisterSet usedRegisters, PolymorphicAccessJITStubRoutine* wrapped)
+            Key(GPRReg baseGPR, GPRReg valueGPR, GPRReg extraGPR, GPRReg extra2GPR, GPRReg stubInfoGPR, GPRReg arrayProfileGPR, RegisterSet usedRegisters, PolymorphicAccessJITStubRoutine* wrapped)
                 : m_wrapped(wrapped)
                 , m_baseGPR(baseGPR)
                 , m_valueGPR(valueGPR)
                 , m_extraGPR(extraGPR)
+                , m_extra2GPR(extra2GPR)
                 , m_stubInfoGPR(stubInfoGPR)
                 , m_arrayProfileGPR(arrayProfileGPR)
                 , m_usedRegisters(usedRegisters)
@@ -384,6 +407,7 @@ public:
                     && a.m_baseGPR == b.m_baseGPR
                     && a.m_valueGPR == b.m_valueGPR
                     && a.m_extraGPR == b.m_extraGPR
+                    && a.m_extra2GPR == b.m_extra2GPR
                     && a.m_stubInfoGPR == b.m_stubInfoGPR
                     && a.m_arrayProfileGPR == b.m_arrayProfileGPR
                     && a.m_usedRegisters == b.m_usedRegisters;
@@ -393,6 +417,7 @@ public:
             GPRReg m_baseGPR;
             GPRReg m_valueGPR;
             GPRReg m_extraGPR;
+            GPRReg m_extra2GPR;
             GPRReg m_stubInfoGPR;
             GPRReg m_arrayProfileGPR;
             RegisterSet m_usedRegisters;
@@ -427,6 +452,7 @@ public:
                 if (a.m_baseGPR == b.m_baseGPR
                     && a.m_valueGPR == b.m_valueGPR
                     && a.m_extraGPR == b.m_extraGPR
+                    && a.m_extra2GPR == b.m_extra2GPR
                     && a.m_stubInfoGPR == b.m_stubInfoGPR
                     && a.m_arrayProfileGPR == b.m_arrayProfileGPR
                     && a.m_usedRegisters == b.m_usedRegisters) {
@@ -457,6 +483,7 @@ public:
         GPRReg m_baseGPR;
         GPRReg m_valueGPR;
         GPRReg m_extraGPR;
+        GPRReg m_extra2GPR;
         GPRReg m_stubInfoGPR;
         GPRReg m_arrayProfileGPR;
         RegisterSet m_usedRegisters;

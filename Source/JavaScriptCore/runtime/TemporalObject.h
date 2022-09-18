@@ -109,6 +109,7 @@ struct PrecisionData {
     unsigned increment;
 };
 
+double nonNegativeModulo(double x, double y);
 WTF::String ellipsizeAt(unsigned maxLength, const WTF::String&);
 PropertyName temporalUnitPluralPropertyName(VM&, TemporalUnit);
 PropertyName temporalUnitSingularPropertyName(VM&, TemporalUnit);
@@ -124,6 +125,7 @@ std::optional<double> maximumRoundingIncrement(TemporalUnit);
 double temporalRoundingIncrement(JSGlobalObject*, JSObject* options, std::optional<double> dividend, bool inclusive);
 double roundNumberToIncrement(double, double increment, RoundingMode);
 Int128 roundNumberToIncrement(Int128, Int128 increment, RoundingMode);
+void rejectObjectWithCalendarOrTimeZone(JSGlobalObject*, JSObject*);
 
 enum class TemporalOverflow : bool {
     Constrain,

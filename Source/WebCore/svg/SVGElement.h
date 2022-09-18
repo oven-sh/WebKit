@@ -94,7 +94,7 @@ public:
     void updateSVGRendererForElementChange();
 
     // The instances of an element are clones made in shadow trees to implement <use>.
-    const WeakHashSet<SVGElement>& instances() const;
+    const WeakHashSet<SVGElement, WeakPtrImplWithEventTargetData>& instances() const;
 
     std::optional<FloatRect> getBoundingBox() const;
 
@@ -137,7 +137,7 @@ public:
     class InstanceInvalidationGuard;
 
     using PropertyRegistry = SVGPropertyOwnerRegistry<SVGElement>;
-    virtual const SVGPropertyRegistry& propertyRegistry() const { return m_propertyRegistry; }
+    const SVGPropertyRegistry& propertyRegistry() const { return m_propertyRegistry.get(); }
     void detachAllProperties() { propertyRegistry().detachAllProperties(); }
 
     bool isAnimatedPropertyAttribute(const QualifiedName&) const;
@@ -164,7 +164,7 @@ public:
     SVGAnimatedString& classNameAnimated() { return m_className; }
 
 protected:
-    SVGElement(const QualifiedName&, Document&, ConstructionType = CreateSVGElement);
+    SVGElement(const QualifiedName&, Document&, UniqueRef<SVGPropertyRegistry>&&, ConstructionType = CreateSVGElement);
     virtual ~SVGElement();
 
     bool rendererIsNeeded(const RenderStyle&) override;
@@ -205,11 +205,11 @@ private:
 
     std::unique_ptr<SVGElementRareData> m_svgRareData;
 
-    WeakHashSet<SVGElement> m_elementsWithRelativeLengths;
+    WeakHashSet<SVGElement, WeakPtrImplWithEventTargetData> m_elementsWithRelativeLengths;
 
     std::unique_ptr<SVGPropertyAnimatorFactory> m_propertyAnimatorFactory;
 
-    PropertyRegistry m_propertyRegistry { *this };
+    UniqueRef<SVGPropertyRegistry> m_propertyRegistry;
     Ref<SVGAnimatedString> m_className { SVGAnimatedString::create(this) };
 };
 

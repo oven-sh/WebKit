@@ -62,9 +62,6 @@ public:
     bool requiresLayerWithScrollableArea() const;
     bool backgroundIsKnownToBeOpaqueInRect(const LayoutRect& localRect) const final;
     
-    // Returns false for the body renderer if its background is propagated to the root.
-    bool paintsOwnBackground() const;
-
     LayoutUnit x() const { return m_frameRect.x(); }
     LayoutUnit y() const { return m_frameRect.y(); }
     LayoutUnit width() const { return m_frameRect.width(); }
@@ -426,7 +423,7 @@ override;
     LayoutUnit perpendicularContainingBlockLogicalHeight() const;
 
     virtual void updateLogicalWidth();
-    virtual void updateLogicalHeight();
+    void updateLogicalHeight();
     virtual LogicalExtentComputedValues computeLogicalHeight(LayoutUnit logicalHeight, LayoutUnit logicalTop) const;
 
     void cacheIntrinsicContentLogicalHeightForFlexItem(LayoutUnit) const;
@@ -448,7 +445,7 @@ override;
     }
 
     virtual LayoutSize intrinsicSize() const { return LayoutSize(); }
-    LayoutUnit intrinsicLogicalWidth() const { return style().isHorizontalWritingMode() ? intrinsicSize().width() : intrinsicSize().height(); }
+    LayoutUnit intrinsicLogicalWidth() const;
     LayoutUnit intrinsicLogicalHeight() const { return style().isHorizontalWritingMode() ? intrinsicSize().height() : intrinsicSize().width(); }
 
     // Whether or not the element shrinks to its intrinsic width (rather than filling the width
@@ -690,11 +687,6 @@ protected:
     virtual bool foregroundIsKnownToBeOpaqueInRect(const LayoutRect& localRect, unsigned maxDepthToTest) const;
     bool computeBackgroundIsKnownToBeObscured(const LayoutPoint& paintOffset) override;
 
-    void paintBackground(const PaintInfo&, const LayoutRect&, BackgroundBleedAvoidance = BackgroundBleedNone);
-    
-    void paintFillLayer(const PaintInfo&, const Color&, const FillLayer&, const LayoutRect&, BackgroundBleedAvoidance, CompositeOperator, RenderElement* backgroundObject, BaseBackgroundColorUsage = BaseBackgroundColorUse);
-    void paintFillLayers(const PaintInfo&, const Color&, const FillLayer&, const LayoutRect&, BackgroundBleedAvoidance = BackgroundBleedNone, CompositeOperator = CompositeOperator::SourceOver, RenderElement* backgroundObject = nullptr);
-
     void paintMaskImages(const PaintInfo&, const LayoutRect&);
 
     BackgroundBleedAvoidance determineBackgroundBleedAvoidance(GraphicsContext&) const;
@@ -710,8 +702,6 @@ protected:
     void mapLocalToContainer(const RenderLayerModelObject* ancestorContainer, TransformState&, OptionSet<MapCoordinatesMode>, bool* wasFixed) const override;
     const RenderObject* pushMappingToContainer(const RenderLayerModelObject*, RenderGeometryMap&) const override;
     void mapAbsoluteToLocalPoint(OptionSet<MapCoordinatesMode>, TransformState&) const override;
-
-    void paintRootBoxFillLayers(const PaintInfo&);
 
     bool skipContainingBlockForPercentHeightCalculation(const RenderBox& containingBlock, bool isPerpendicularWritingMode) const;
 

@@ -2554,7 +2554,7 @@ int RenderThemeMac::attachmentBaseline(const RenderAttachment& attachment) const
 
 static RefPtr<Icon> iconForAttachment(const String& fileName, const String& attachmentType, const String& title)
 {
-    if (!attachmentType.isEmpty()) {
+    if (!attachmentType.isEmpty() && !equalLettersIgnoringASCIICase(attachmentType, "public.data"_s)) {
         if (equalLettersIgnoringASCIICase(attachmentType, "multipart/x-folder"_s) || equalLettersIgnoringASCIICase(attachmentType, "application/vnd.apple.folder"_s)) {
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
             auto type = kUTTypeFolder;
@@ -2630,6 +2630,7 @@ static void paintAttachmentIconBackground(const RenderAttachment& attachment, Gr
 
 static bool shouldDrawIcon(const String& title)
 {
+#if HAVE(QUICKLOOK_THUMBNAILING)
     // The thumbnail will be painted by the client.
     NSString *cocoaTitle = title;
     if (auto fileExtension = cocoaTitle.pathExtension; fileExtension.length) {
@@ -2637,6 +2638,8 @@ static bool shouldDrawIcon(const String& title)
             && ![fileExtension isEqualToString:@"pages"]
             && ![fileExtension isEqualToString:@"numbers"];
     }
+#endif
+    UNUSED_PARAM(title);
     return true;
 }
 

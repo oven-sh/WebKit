@@ -49,17 +49,22 @@
 #include "WebSWServerConnection.h"
 #include "WebsiteDataStoreParameters.h"
 #include <WebCore/BlobDataFileReference.h>
+#include <WebCore/COEPInheritenceViolationReportBody.h>
+#include <WebCore/CORPViolationReportBody.h>
 #include <WebCore/CertificateInfo.h>
 #include <WebCore/ContentSecurityPolicy.h>
+#include <WebCore/CrossOriginEmbedderPolicy.h>
 #include <WebCore/DiagnosticLoggingKeys.h>
 #include <WebCore/HTTPParsers.h>
 #include <WebCore/NetworkLoadMetrics.h>
 #include <WebCore/NetworkStorageSession.h>
 #include <WebCore/RegistrableDomain.h>
+#include <WebCore/ReportingScope.h>
 #include <WebCore/SameSiteInfo.h>
 #include <WebCore/SecurityOrigin.h>
 #include <WebCore/SecurityPolicy.h>
 #include <WebCore/SharedBuffer.h>
+#include <WebCore/ViolationReportType.h>
 #include <wtf/Expected.h>
 #include <wtf/RunLoop.h>
 
@@ -647,9 +652,12 @@ bool NetworkResourceLoader::shouldInterruptLoadForCSPFrameAncestorsOrXFrameOptio
 #endif
 
     auto url = response.url();
-    ContentSecurityPolicy contentSecurityPolicy { URL { url }, this };
+    ContentSecurityPolicy contentSecurityPolicy { URL { url }, this, this };
     contentSecurityPolicy.didReceiveHeaders(ContentSecurityPolicyResponseHeaders { response }, originalRequest().httpReferrer());
     if (!contentSecurityPolicy.allowFrameAncestors(m_parameters.frameAncestorOrigins, url))
+        return true;
+
+    if (shouldInterruptNavigationForCrossOriginEmbedderPolicy(m_response))
         return true;
 
     if (!contentSecurityPolicy.overridesXFrameOptions()) {
@@ -661,7 +669,7 @@ bool NetworkResourceLoader::shouldInterruptLoadForCSPFrameAncestorsOrXFrameOptio
         }
     }
 
-    return shouldInterruptNavigationForCrossOriginEmbedderPolicy(m_response);
+    return false;
 }
 
 bool NetworkResourceLoader::shouldInterruptNavigationForCrossOriginEmbedderPolicy(const ResourceResponse& response)
@@ -671,10 +679,13 @@ bool NetworkResourceLoader::shouldInterruptNavigationForCrossOriginEmbedderPolic
     // https://html.spec.whatwg.org/multipage/origin.html#check-a-navigation-response's-adherence-to-its-embedder-policy
     if (m_parameters.parentCrossOriginEmbedderPolicy.value == WebCore::CrossOriginEmbedderPolicyValue::RequireCORP || m_parameters.parentCrossOriginEmbedderPolicy.reportOnlyValue == WebCore::CrossOriginEmbedderPolicyValue::RequireCORP) {
         auto responseCOEP = WebCore::obtainCrossOriginEmbedderPolicy(response, nullptr);
+        if (m_parameters.parentCrossOriginEmbedderPolicy.reportOnlyValue == WebCore::CrossOriginEmbedderPolicyValue::RequireCORP && responseCOEP.value != WebCore::CrossOriginEmbedderPolicyValue::RequireCORP)
+            sendCOEPInheritenceViolation(*this, m_parameters.parentFrameURL.isValid() ? m_parameters.parentFrameURL : aboutBlankURL(), m_parameters.parentCrossOriginEmbedderPolicy.reportOnlyReportingEndpoint, COEPDisposition::Reporting, "navigation"_s, m_firstResponseURL);
 
         if (m_parameters.parentCrossOriginEmbedderPolicy.value != WebCore::CrossOriginEmbedderPolicyValue::UnsafeNone && responseCOEP.value != WebCore::CrossOriginEmbedderPolicyValue::RequireCORP) {
             String errorMessage = makeString("Refused to display '", response.url().stringCenterEllipsizedToLength(), "' in a frame because of Cross-Origin-Embedder-Policy.");
             send(Messages::WebPage::AddConsoleMessage { m_parameters.webFrameID,  MessageSource::Security, MessageLevel::Error, errorMessage, coreIdentifier() }, m_parameters.webPageID);
+            sendCOEPInheritenceViolation(*this, m_parameters.parentFrameURL.isValid() ? m_parameters.parentFrameURL : aboutBlankURL(), m_parameters.parentCrossOriginEmbedderPolicy.reportingEndpoint, COEPDisposition::Enforce, "navigation"_s, m_firstResponseURL);
             return true;
         }
     }
@@ -690,10 +701,13 @@ bool NetworkResourceLoader::shouldInterruptWorkerLoadForCrossOriginEmbedderPolic
 
     if (m_parameters.crossOriginEmbedderPolicy.value == WebCore::CrossOriginEmbedderPolicyValue::RequireCORP || m_parameters.crossOriginEmbedderPolicy.reportOnlyValue == WebCore::CrossOriginEmbedderPolicyValue::RequireCORP) {
         auto responseCOEP = WebCore::obtainCrossOriginEmbedderPolicy(response, nullptr);
+        if (m_parameters.crossOriginEmbedderPolicy.reportOnlyValue == WebCore::CrossOriginEmbedderPolicyValue::RequireCORP && responseCOEP.value == WebCore::CrossOriginEmbedderPolicyValue::UnsafeNone)
+            sendCOEPInheritenceViolation(*this, m_parameters.frameURL.isValid() ? m_parameters.frameURL : aboutBlankURL(), m_parameters.crossOriginEmbedderPolicy.reportOnlyReportingEndpoint, COEPDisposition::Reporting, "worker initialization"_s, m_firstResponseURL);
 
         if (m_parameters.crossOriginEmbedderPolicy.value == WebCore::CrossOriginEmbedderPolicyValue::RequireCORP && responseCOEP.value == WebCore::CrossOriginEmbedderPolicyValue::UnsafeNone) {
             String errorMessage = makeString("Refused to load '", response.url().stringCenterEllipsizedToLength(), "' worker because of Cross-Origin-Embedder-Policy.");
             send(Messages::WebPage::AddConsoleMessage { m_parameters.webFrameID,  MessageSource::Security, MessageLevel::Error, errorMessage, coreIdentifier() }, m_parameters.webPageID);
+            sendCOEPInheritenceViolation(*this, m_parameters.frameURL.isValid() ? m_parameters.frameURL : aboutBlankURL(), m_parameters.crossOriginEmbedderPolicy.reportingEndpoint, COEPDisposition::Enforce, "worker initialization"_s, m_firstResponseURL);
             return true;
         }
     }
@@ -713,16 +727,16 @@ std::optional<ResourceError> NetworkResourceLoader::doCrossOriginOpenerHandlingO
 
     std::unique_ptr<ContentSecurityPolicy> contentSecurityPolicy;
     if (!response.httpHeaderField(HTTPHeaderName::ContentSecurityPolicy).isNull()) {
-        contentSecurityPolicy = makeUnique<ContentSecurityPolicy>(URL { response.url() }, nullptr);
+        contentSecurityPolicy = makeUnique<ContentSecurityPolicy>(URL { response.url() }, nullptr, this);
         contentSecurityPolicy->didReceiveHeaders(ContentSecurityPolicyResponseHeaders { response }, originalRequest().httpReferrer(), ContentSecurityPolicy::ReportParsingErrors::No);
     }
 
     if (!m_currentCoopEnforcementResult) {
-        auto sourceOrigin = m_parameters.sourceOrigin ? Ref { *m_parameters.sourceOrigin } : SecurityOrigin::createUnique();
+        auto sourceOrigin = m_parameters.sourceOrigin ? Ref { *m_parameters.sourceOrigin } : SecurityOrigin::createOpaque();
         m_currentCoopEnforcementResult = CrossOriginOpenerPolicyEnforcementResult::from(m_parameters.documentURL, WTFMove(sourceOrigin), m_parameters.sourceCrossOriginOpenerPolicy, m_parameters.navigationRequester, m_parameters.openerURL);
     }
 
-    m_currentCoopEnforcementResult = WebCore::doCrossOriginOpenerHandlingOfResponse(response, m_parameters.navigationRequester, contentSecurityPolicy.get(), m_parameters.effectiveSandboxFlags, m_parameters.isDisplayingInitialEmptyDocument, *m_currentCoopEnforcementResult);
+    m_currentCoopEnforcementResult = WebCore::doCrossOriginOpenerHandlingOfResponse(*this, response, m_parameters.navigationRequester, contentSecurityPolicy.get(), m_parameters.effectiveSandboxFlags, originalRequest().httpReferrer(), m_parameters.isDisplayingInitialEmptyDocument, *m_currentCoopEnforcementResult);
     if (!m_currentCoopEnforcementResult)
         return ResourceError { errorDomainWebKitInternal, 0, response.url(), "Navigation was blocked by Cross-Origin-Opener-Policy"_s, ResourceError::Type::AccessControl };
     return std::nullopt;
@@ -818,6 +832,8 @@ void NetworkResourceLoader::didReceiveResponse(ResourceResponse&& receivedRespon
             return completionHandler(PolicyAction::Ignore);
         }
     }
+
+    initializeReportingEndpoints(m_response);
 
     if (isMainResource() && shouldInterruptLoadForCSPFrameAncestorsOrXFrameOptions(m_response)) {
         LOADER_RELEASE_LOG_ERROR("didReceiveResponse: Interrupting main resource load due to CSP frame-ancestors or X-Frame-Options");
@@ -1413,6 +1429,13 @@ void NetworkResourceLoader::didReceiveMainResourceResponse(const WebCore::Resour
 #endif
 }
 
+void NetworkResourceLoader::initializeReportingEndpoints(const ResourceResponse& response)
+{
+    auto reportingEndpoints = response.httpHeaderField(HTTPHeaderName::ReportingEndpoints);
+    if (!reportingEndpoints.isEmpty())
+        m_reportingEndpoints = ReportingScope::parseReportingEndpointsFromHeader(reportingEndpoints, response.url());
+}
+
 void NetworkResourceLoader::didRetrieveCacheEntry(std::unique_ptr<NetworkCache::Entry> entry)
 {
     LOADER_RELEASE_LOG("didRetrieveCacheEntry:");
@@ -1425,6 +1448,8 @@ void NetworkResourceLoader::didRetrieveCacheEntry(std::unique_ptr<NetworkCache::
 
     if (isMainResource())
         didReceiveMainResourceResponse(response);
+
+    initializeReportingEndpoints(response);
 
     if (isMainResource() && shouldInterruptLoadForCSPFrameAncestorsOrXFrameOptions(response)) {
         LOADER_RELEASE_LOG_ERROR("didRetrieveCacheEntry: Stopping load due to CSP Frame-Ancestors or X-Frame-Options");
@@ -1644,14 +1669,14 @@ static void logBlockedCookieInformation(NetworkConnectionToWebProcess& connectio
 #define LOCAL_LOG(str, ...) \
     LOCAL_LOG_IF_ALLOWED("logCookieInformation: BLOCKED cookie access for webPageID=%s, frameID=%s, resourceID=%s, firstParty=%s: " str, escapedPageID.utf8().data(), escapedFrameID.utf8().data(), escapedIdentifier.utf8().data(), escapedFirstParty.utf8().data(), ##__VA_ARGS__)
 
-    LOCAL_LOG(R"({ "url": "%{public}s",)", escapedURL.utf8().data());
-    LOCAL_LOG(R"(  "partition": "%{public}s",)", "BLOCKED");
-    LOCAL_LOG(R"(  "hasStorageAccess": %{public}s,)", "false");
-    LOCAL_LOG(R"(  "referer": "%{public}s",)", escapedReferrer.utf8().data());
-    LOCAL_LOG(R"(  "isSameSite": "%{public}s",)", sameSiteInfo.isSameSite ? "true" : "false");
-    LOCAL_LOG(R"(  "isTopSite": "%{public}s",)", sameSiteInfo.isTopSite ? "true" : "false");
-    LOCAL_LOG(R"(  "cookies": [])");
-    LOCAL_LOG(R"(  })");
+    LOCAL_LOG("{ \"url\": \"%" PUBLIC_LOG_STRING "\",", escapedURL.utf8().data());
+    LOCAL_LOG("  \"partition\": \"%" PUBLIC_LOG_STRING "\",", "BLOCKED");
+    LOCAL_LOG("  \"hasStorageAccess\": %" PUBLIC_LOG_STRING ",", "false");
+    LOCAL_LOG("  \"referer\": \"%" PUBLIC_LOG_STRING "\",", escapedReferrer.utf8().data());
+    LOCAL_LOG("  \"isSameSite\": \"%" PUBLIC_LOG_STRING "\",", sameSiteInfo.isSameSite ? "true" : "false");
+    LOCAL_LOG("  \"isTopSite\": \"%" PUBLIC_LOG_STRING "\",", sameSiteInfo.isTopSite ? "true" : "false");
+    LOCAL_LOG("  \"cookies\": []");
+    LOCAL_LOG("  }");
 #undef LOCAL_LOG
 #undef LOCAL_LOG_IF_ALLOWED
 }
@@ -1676,13 +1701,13 @@ static void logCookieInformationInternal(NetworkConnectionToWebProcess& connecti
 #define LOCAL_LOG(str, ...) \
     LOCAL_LOG_IF_ALLOWED("logCookieInformation: webPageID=%s, frameID=%s, resourceID=%s: " str, escapedPageID.utf8().data(), escapedFrameID.utf8().data(), escapedIdentifier.utf8().data(), ##__VA_ARGS__)
 
-    LOCAL_LOG(R"({ "url": "%{public}s",)", escapedURL.utf8().data());
-    LOCAL_LOG(R"(  "partition": "%{public}s",)", escapedPartition.utf8().data());
-    LOCAL_LOG(R"(  "hasStorageAccess": %{public}s,)", hasStorageAccess ? "true" : "false");
-    LOCAL_LOG(R"(  "referer": "%{public}s",)", escapedReferrer.utf8().data());
-    LOCAL_LOG(R"(  "isSameSite": "%{public}s",)", sameSiteInfo.isSameSite ? "true" : "false");
-    LOCAL_LOG(R"(  "isTopSite": "%{public}s",)", sameSiteInfo.isTopSite ? "true" : "false");
-    LOCAL_LOG(R"(  "cookies": [)");
+    LOCAL_LOG("{ \"url\": \"%" PUBLIC_LOG_STRING "\",", escapedURL.utf8().data());
+    LOCAL_LOG("  \"partition\": \"%" PUBLIC_LOG_STRING "\",", escapedPartition.utf8().data());
+    LOCAL_LOG("  \"hasStorageAccess\": %" PUBLIC_LOG_STRING ",", hasStorageAccess ? "true" : "false");
+    LOCAL_LOG("  \"referer\": \"%" PUBLIC_LOG_STRING "\",", escapedReferrer.utf8().data());
+    LOCAL_LOG("  \"isSameSite\": \"%" PUBLIC_LOG_STRING "\",", sameSiteInfo.isSameSite ? "true" : "false");
+    LOCAL_LOG("  \"isTopSite\": \"%" PUBLIC_LOG_STRING "\",", sameSiteInfo.isTopSite ? "true" : "false");
+    LOCAL_LOG("  \"cookies\": [");
 
     auto size = cookies.size();
     decltype(size) count = 0;
@@ -1699,20 +1724,20 @@ static void logCookieInformationInternal(NetworkConnectionToWebProcess& connecti
         auto escapedCommentURL = escapeForJSON(cookie.commentURL.string());
         // FIXME: Log Same-Site policy for each cookie. See <https://bugs.webkit.org/show_bug.cgi?id=184894>.
 
-        LOCAL_LOG(R"(  { "name": "%{public}s",)", escapedName.utf8().data());
-        LOCAL_LOG(R"(    "value": "%{public}s",)", escapedValue.utf8().data());
-        LOCAL_LOG(R"(    "domain": "%{public}s",)", escapedDomain.utf8().data());
-        LOCAL_LOG(R"(    "path": "%{public}s",)", escapedPath.utf8().data());
-        LOCAL_LOG(R"(    "created": %f,)", cookie.created);
-        LOCAL_LOG(R"(    "expires": %f,)", cookie.expires.value_or(0));
-        LOCAL_LOG(R"(    "httpOnly": %{public}s,)", cookie.httpOnly ? "true" : "false");
-        LOCAL_LOG(R"(    "secure": %{public}s,)", cookie.secure ? "true" : "false");
-        LOCAL_LOG(R"(    "session": %{public}s,)", cookie.session ? "true" : "false");
-        LOCAL_LOG(R"(    "comment": "%{public}s",)", escapedComment.utf8().data());
-        LOCAL_LOG(R"(    "commentURL": "%{public}s")", escapedCommentURL.utf8().data());
-        LOCAL_LOG(R"(  }%{public}s)", trailingComma);
+        LOCAL_LOG("  { \"name\": \"%" PUBLIC_LOG_STRING "\",", escapedName.utf8().data());
+        LOCAL_LOG("    \"value\": \"%" PUBLIC_LOG_STRING "\",", escapedValue.utf8().data());
+        LOCAL_LOG("    \"domain\": \"%" PUBLIC_LOG_STRING "\",", escapedDomain.utf8().data());
+        LOCAL_LOG("    \"path\": \"%" PUBLIC_LOG_STRING "\",", escapedPath.utf8().data());
+        LOCAL_LOG("    \"created\": %f,", cookie.created);
+        LOCAL_LOG("    \"expires\": %f,", cookie.expires.value_or(0));
+        LOCAL_LOG("    \"httpOnly\": %" PUBLIC_LOG_STRING ",", cookie.httpOnly ? "true" : "false");
+        LOCAL_LOG("    \"secure\": %" PUBLIC_LOG_STRING ",", cookie.secure ? "true" : "false");
+        LOCAL_LOG("    \"session\": %" PUBLIC_LOG_STRING ",", cookie.session ? "true" : "false");
+        LOCAL_LOG("    \"comment\": \"%" PUBLIC_LOG_STRING "\",", escapedComment.utf8().data());
+        LOCAL_LOG("    \"commentURL\": \"%" PUBLIC_LOG_STRING "\"", escapedCommentURL.utf8().data());
+        LOCAL_LOG("  }%" PUBLIC_LOG_STRING, trailingComma);
     }
-    LOCAL_LOG(R"(]})");
+    LOCAL_LOG("]}");
 #undef LOCAL_LOG
 #undef LOCAL_LOG_IF_ALLOWED
 }
@@ -1731,11 +1756,6 @@ void NetworkResourceLoader::logCookieInformation(NetworkConnectionToWebProcess& 
 void NetworkResourceLoader::addConsoleMessage(MessageSource messageSource, MessageLevel messageLevel, const String& message, unsigned long)
 {
     send(Messages::WebPage::AddConsoleMessage { m_parameters.webFrameID,  messageSource, messageLevel, message, coreIdentifier() }, m_parameters.webPageID);
-}
-
-void NetworkResourceLoader::sendCSPViolationReport(URL&& reportURL, Ref<FormData>&& report)
-{
-    send(Messages::WebPage::SendCSPViolationReport { m_parameters.webFrameID, WTFMove(reportURL), IPC::FormDataReference { WTFMove(report) } }, m_parameters.webPageID);
 }
 
 void NetworkResourceLoader::enqueueSecurityPolicyViolationEvent(WebCore::SecurityPolicyViolationEventInit&& eventInit)
@@ -1830,6 +1850,38 @@ void NetworkResourceLoader::serviceWorkerDidNotHandle(ServiceWorkerFetchTask* fe
 bool NetworkResourceLoader::isAppInitiated()
 {
     return m_parameters.request.isAppInitiated();
+}
+
+WebCore::FrameIdentifier NetworkResourceLoader::frameIdentifierForReport() const
+{
+    // Reports are sent to the parent frame when they are for a main resource.
+    if (isMainResource() && m_parameters.parentFrameID)
+        return *m_parameters.parentFrameID;
+    return m_parameters.webFrameID;
+}
+
+void NetworkResourceLoader::notifyReportObservers(Ref<Report>&& report)
+{
+    send(Messages::WebPage::NotifyReportObservers { frameIdentifierForReport(), report }, m_parameters.webPageID);
+}
+
+String NetworkResourceLoader::endpointURIForToken(const String& reportTo) const
+{
+    return m_reportingEndpoints.get(reportTo);
+}
+
+void NetworkResourceLoader::sendReportToEndpoints(const URL& baseURL, const Vector<String>& endpointURIs, const Vector<String>& endpointTokens, Ref<FormData>&& report, WebCore::ViolationReportType reportType)
+{
+    Vector<String> updatedEndpointURIs = endpointURIs;
+    Vector<String> updatedEndpointTokens;
+    for (auto& token : endpointTokens) {
+        if (auto url = endpointURIForToken(token); !url.isEmpty())
+            updatedEndpointURIs.append(WTFMove(url));
+        else
+            updatedEndpointTokens.append(token);
+    }
+
+    send(Messages::WebPage::SendReportToEndpoints { frameIdentifierForReport(), baseURL, updatedEndpointURIs, updatedEndpointTokens, IPC::FormDataReference { WTFMove(report) }, reportType }, m_parameters.webPageID);
 }
 
 #if ENABLE(CONTENT_FILTERING_IN_NETWORKING_PROCESS)

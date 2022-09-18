@@ -26,8 +26,6 @@
 #include "config.h"
 #include "InlineItemsBuilder.h"
 
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
-
 #include "InlineSoftLineBreakItem.h"
 #include "LayoutLineBreakBox.h"
 #include "StyleResolver.h"
@@ -329,6 +327,9 @@ static inline void buildBidiParagraph(const RenderStyle& rootStyle, const Inline
         } else if (inlineItem.isWordBreakOpportunity()) {
             // Soft wrap opportunity markers are opaque to bidi. 
             inlineItemOffsetList.uncheckedAppend({ });            
+        } else if (inlineItem.isFloat()) {
+            // Floats are not part of the inline content which make them opaque to bidi.
+            inlineItemOffsetList.uncheckedAppend({ });
         } else
             ASSERT_NOT_IMPLEMENTED_YET();
     }
@@ -613,4 +614,3 @@ void InlineItemsBuilder::handleInlineLevelBox(const Box& layoutBox, InlineItems&
 }
 }
 
-#endif

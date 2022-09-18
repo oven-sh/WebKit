@@ -167,8 +167,6 @@ localizedStrings["All items in \u0022%s\u0022 must be valid DOM nodes"] = "All i
 /* Label for setting that allows the user to inspect the Web Inspector user interface. */
 localizedStrings["Allow Inspecting Web Inspector @ Experimental Settings"] = "Allow Inspecting Web Inspector";
 localizedStrings["Allow Media Capture on Insecure Sites"] = "Allow Media Capture on Insecure Sites";
-/* Label for checkbox that controls whether symbolic breakpoint functionality is enabled. */
-localizedStrings["Allow Symbolic Breakpoints"] = "Allow Symbolic Breakpoints";
 /* Label for checkbox that controls whether network throttling functionality is enabled. */
 localizedStrings["Allow throttling"] = "Allow throttling";
 localizedStrings["Also defer evaluating breakpoint conditions, ignore counts, and actions until execution has continued outside of the related script instead of at the breakpoint's location."] = "Also defer evaluating breakpoint conditions, ignore counts, and actions until execution has continued outside of the related script instead of at the breakpoint's location.";
@@ -451,6 +449,7 @@ localizedStrings["DOM Content Loaded \u2014 %s"] = "DOM Content Loaded \u2014 %s
 localizedStrings["DOM Event \u201C%s\u201D"] = "DOM Event \u201C%s\u201D";
 localizedStrings["DOM Events"] = "DOM Events";
 localizedStrings["DOM Nodes:"] = "DOM Nodes:";
+localizedStrings["DOM Tree:"] = "DOM Tree:";
 /* Label indicating that network activity is being simulated with DSL connectivity. */
 localizedStrings["DSL"] = "DSL";
 localizedStrings["Damping"] = "Damping";
@@ -463,13 +462,13 @@ localizedStrings["Database"] = "Database";
 localizedStrings["Database no longer has expected version."] = "Database no longer has expected version.";
 localizedStrings["Databases"] = "Databases";
 localizedStrings["Date"] = "Date";
+localizedStrings["De-emphasize nodes that are not rendered"] = "De-emphasize nodes that are not rendered";
 localizedStrings["Debug: "] = "Debug: ";
 localizedStrings["Debugger Statement"] = "Debugger Statement";
 /* Break (pause) on debugger statements */
 localizedStrings["Debugger Statements @ JavaScript Breakpoint"] = "Debugger Statements";
 localizedStrings["Debugger disabled during Audit"] = "Debugger disabled during Audit";
 localizedStrings["Debugger disabled during Timeline recording"] = "Debugger disabled during Timeline recording";
-localizedStrings["Debugger:"] = "Debugger:";
 localizedStrings["Debugging:"] = "Debugging:";
 localizedStrings["Debugs"] = "Debugs";
 localizedStrings["Decoded"] = "Decoded";
@@ -716,6 +715,10 @@ localizedStrings["Focused"] = "Focused";
 localizedStrings["Font"] = "Font";
 /* Title for the Font details sidebar. */
 localizedStrings["Font @ Font Details Sidebar Title"] = "Font";
+/* A warning that is shown in the Font Details Sidebar when the font had to be synthesized to support the provided weight. */
+localizedStrings["Font was synthesized to be bold because no bold font is available."] = "Font was synthesized to be bold because no bold font is available.";
+/* A warning that is shown in the Font Details Sidebar when the font had to be synthesized to support the provided style. */
+localizedStrings["Font was synthesized to be oblique because no oblique font is available."] = "Font was synthesized to be oblique because no oblique font is available.";
 localizedStrings["Fonts"] = "Fonts";
 localizedStrings["Force Dark Appearance"] = "Force Dark Appearance";
 localizedStrings["Force Light Appearance"] = "Force Light Appearance";
@@ -839,8 +842,8 @@ localizedStrings["Import audit or result"] = "Import audit or result";
 localizedStrings["Imported"] = "Imported";
 localizedStrings["Imported - %s"] = "Imported - %s";
 localizedStrings["Imported \u2014 %s"] = "Imported \u2014 %s";
-localizedStrings["Include original response data"] = "Include original response data";
 localizedStrings["Include original request data"] = "Include original request data";
+localizedStrings["Include original response data"] = "Include original response data";
 localizedStrings["Incomplete"] = "Incomplete";
 localizedStrings["Indent width:"] = "Indent width:";
 localizedStrings["Index"] = "Index";
@@ -1355,6 +1358,8 @@ localizedStrings["Script ignored due to blackbox"] = "Script ignored due to blac
 localizedStrings["Script ignored when debugging due to URL pattern blackbox"] = "Script ignored when debugging due to URL pattern blackbox";
 localizedStrings["Scripts"] = "Scripts";
 localizedStrings["Scripts can also be individually blackboxed by clicking on the %s icon that is shown on hover."] = "Scripts can also be individually blackboxed by clicking on the %s icon that is shown on hover.";
+/* Title for a badge applied to DOM nodes that are a scrollable container. */
+localizedStrings["Scroll"] = "Scroll";
 /* Scroll selected DOM node into view on the inspected web page */
 localizedStrings["Scroll into View"] = "Scroll into View";
 localizedStrings["Search"] = "Search";

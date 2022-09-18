@@ -42,8 +42,8 @@ namespace WebCore {
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(SVGGraphicsElement);
 
-SVGGraphicsElement::SVGGraphicsElement(const QualifiedName& tagName, Document& document)
-    : SVGElement(tagName, document)
+SVGGraphicsElement::SVGGraphicsElement(const QualifiedName& tagName, Document& document, UniqueRef<SVGPropertyRegistry>&& propertyRegistry)
+    : SVGElement(tagName, document, WTFMove(propertyRegistry))
     , SVGTests(this)
     , m_shouldIsolateBlending(false)
 {
@@ -199,8 +199,10 @@ void SVGGraphicsElement::didAttachRenderers()
 {
 #if ENABLE(LAYER_BASED_SVG_ENGINE)
     if (document().settings().layerBasedSVGEngineEnabled()) {
-        if (auto* svgRenderer = dynamicDowncast<RenderLayerModelObject>(renderer()); svgRenderer && lineageOfType<RenderSVGHiddenContainer>(*svgRenderer).first())
-            svgRenderer->layer()->dirtyVisibleContentStatus();
+        if (auto* svgRenderer = dynamicDowncast<RenderLayerModelObject>(renderer()); svgRenderer && lineageOfType<RenderSVGHiddenContainer>(*svgRenderer).first()) {
+            if (auto* layer = svgRenderer->layer())
+                layer->dirtyVisibleContentStatus();
+        }
     }
 #endif
 }

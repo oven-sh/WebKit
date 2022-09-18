@@ -375,7 +375,7 @@ AccessibilityRole AccessibilityNodeObject::determineAccessibilityRoleFromNode(Tr
         return AccessibilityRole::Caption;
     if (node()->hasTagName(dialogTag))
         return AccessibilityRole::ApplicationDialog;
-    if (node()->hasTagName(markTag))
+    if (node()->hasTagName(markTag) || equalLettersIgnoringASCIICase(getAttribute(roleAttr), "mark"_s))
         return AccessibilityRole::Mark;
     if (node()->hasTagName(preTag))
         return AccessibilityRole::Pre;
@@ -445,6 +445,14 @@ bool AccessibilityNodeObject::isDescendantOfElementType(const HashSet<QualifiedN
             return true;
     }
     return false;
+}
+
+void AccessibilityNodeObject::updateChildrenIfNecessary()
+{
+    if (needsToUpdateChildren())
+        clearChildren();
+
+    AccessibilityObject::updateChildrenIfNecessary();
 }
 
 void AccessibilityNodeObject::addChildren()
@@ -554,11 +562,6 @@ bool AccessibilityNodeObject::canvasHasFallbackContent() const
     return childrenOfType<Element>(canvasElement).first();
 }
 
-bool AccessibilityNodeObject::isImageButton() const
-{
-    return isNativeImage() && isButton();
-}
-
 bool AccessibilityNodeObject::isNativeTextControl() const
 {
     Node* node = this->node();
@@ -637,25 +640,6 @@ bool AccessibilityNodeObject::isPasswordField() const
         return false;
 
     return downcast<HTMLInputElement>(*node).isPasswordField();
-}
-
-AccessibilityObject* AccessibilityNodeObject::passwordFieldOrContainingPasswordField()
-{
-    Node* node = this->node();
-    if (!node)
-        return nullptr;
-
-    if (is<HTMLInputElement>(*node) && downcast<HTMLInputElement>(*node).isPasswordField())
-        return this;
-
-    auto* element = node->shadowHost();
-    if (!is<HTMLInputElement>(element))
-        return nullptr;
-
-    if (auto* cache = axObjectCache())
-        return cache->getOrCreate(element);
-
-    return nullptr;
 }
 
 bool AccessibilityNodeObject::isInputImage() const
@@ -2266,11 +2250,13 @@ String AccessibilityNodeObject::stringValue() const
     if (node->hasTagName(selectTag)) {
         HTMLSelectElement& selectElement = downcast<HTMLSelectElement>(*node);
         int selectedIndex = selectElement.selectedIndex();
-        const Vector<HTMLElement*>& listItems = selectElement.listItems();
+        auto& listItems = selectElement.listItems();
         if (selectedIndex >= 0 && static_cast<size_t>(selectedIndex) < listItems.size()) {
-            const AtomString& overriddenDescription = listItems[selectedIndex]->attributeWithoutSynchronization(aria_labelAttr);
-            if (!overriddenDescription.isNull())
-                return overriddenDescription;
+            if (RefPtr selectedItem = listItems[selectedIndex].get()) {
+                const AtomString& overriddenDescription = selectedItem->attributeWithoutSynchronization(aria_labelAttr);
+                if (!overriddenDescription.isNull())
+                    return overriddenDescription;
+            }
         }
         if (!selectElement.multiple())
             return selectElement.value();

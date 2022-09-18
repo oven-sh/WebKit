@@ -192,9 +192,7 @@
 #include "WebGLStateTracker.h"
 #endif
 
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
 #include "DisplayView.h"
-#endif
 
 #if ENABLE(MEDIA_SESSION_COORDINATOR)
 #include "MediaSessionCoordinator.h"
@@ -1645,7 +1643,7 @@ void Page::updateRendering()
 #endif
 
     // Timestamps should not change while serving the rendering update steps.
-    Vector<WeakPtr<Document>> initialDocuments;
+    Vector<WeakPtr<Document, WeakPtrImplWithEventTargetData>> initialDocuments;
     forEachDocument([&initialDocuments] (Document& document) {
         document.domWindow()->freezeNowTimestamp();
         initialDocuments.append(document);
@@ -1737,14 +1735,12 @@ void Page::doAfterUpdateRendering()
     // Code here should do once-per-frame work that needs to be done before painting, and requires
     // layout to be up-to-date. It should not run script, trigger layout, or dirty layout.
 
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
     if (DeprecatedGlobalSettings::layoutFormattingContextEnabled()) {
         forEachDocument([] (Document& document) {
             if (auto* frameView = document.view())
                 frameView->displayView().prepareForDisplay();
         });
     }
-#endif
 
     auto runProcessingStep = [&](RenderingUpdateStep step, const Function<void(Document&)>& perDocumentFunction) {
         m_renderingUpdateRemainingSteps.last().remove(step);
@@ -1775,7 +1771,7 @@ void Page::doAfterUpdateRendering()
         
         if (appHighlightStorage->hasUnrestoredHighlights() && MonotonicTime::now() - appHighlightStorage->lastRangeSearchTime() > 1_s) {
             appHighlightStorage->resetLastRangeSearchTime();
-            document.eventLoop().queueTask(TaskSource::InternalAsyncTask, [weakDocument = WeakPtr { document }] {
+            document.eventLoop().queueTask(TaskSource::InternalAsyncTask, [weakDocument = WeakPtr<Document, WeakPtrImplWithEventTargetData> { document }] {
                 RefPtr document { weakDocument.get() };
                 if (!document)
                     return;
@@ -1947,6 +1943,14 @@ void Page::setLoadSchedulingMode(LoadSchedulingMode mode)
     m_loadSchedulingMode = mode;
 
     platformStrategies()->loaderStrategy()->setResourceLoadSchedulingMode(*this, m_loadSchedulingMode);
+}
+
+void Page::setImageAnimationEnabled(bool enabled)
+{
+    if (m_imageAnimationEnabled == enabled)
+        return;
+    m_imageAnimationEnabled = enabled;
+    repaintAnimatedImages();
 }
 
 void Page::suspendScriptedAnimations()
@@ -4013,6 +4017,12 @@ void Page::forceRepaintAllFrames()
 
         frameView->renderView()->repaintViewAndCompositedLayers();
     }
+}
+
+void Page::repaintAnimatedImages()
+{
+    if (auto* view = mainFrame().view())
+        view->repaintVisibleImageAnimationsIncludingSubframes();
 }
 
 } // namespace WebCore

@@ -305,11 +305,14 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/notifications/NotificationPermissionCallback.h
     Modules/notifications/NotificationResources.h
 
+    Modules/permissions/MainThreadPermissionObserver.h
+    Modules/permissions/MainThreadPermissionObserverIdentifier.h
     Modules/permissions/PermissionController.h
     Modules/permissions/PermissionDescriptor.h
     Modules/permissions/PermissionName.h
     Modules/permissions/PermissionObserver.h
     Modules/permissions/PermissionQuerySource.h
+    Modules/permissions/Permissions.h
     Modules/permissions/PermissionState.h
 
     Modules/plugins/PluginReplacement.h
@@ -324,8 +327,12 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     Modules/reporting/Report.h
     Modules/reporting/ReportBody.h
+    Modules/reporting/ReportingClient.h
     Modules/reporting/ReportingObserver.h
     Modules/reporting/ReportingObserverCallback.h
+    Modules/reporting/ReportingScope.h
+    Modules/reporting/TestReportBody.h
+    Modules/reporting/ViolationReportType.h
 
     Modules/speech/SpeechRecognitionCaptureSource.h
     Modules/speech/SpeechRecognitionCaptureSourceImpl.h
@@ -745,6 +752,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     dom/ScriptExecutionContext.h
     dom/SecurityContext.h
     dom/SecurityPolicyViolationEvent.h
+    dom/SecurityPolicyViolationEventDisposition.h
     dom/SelectionRestorationMode.h
     dom/ShadowRoot.h
     dom/ShadowRootInit.h
@@ -834,6 +842,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     fileapi/FileReaderLoader.h
     fileapi/FileReaderLoaderClient.h
     fileapi/NetworkSendQueue.h
+    fileapi/URLKeepingBlobAlive.h
 
     history/BackForwardCache.h
     history/BackForwardClient.h
@@ -1005,8 +1014,14 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     layout/formattingContexts/flex/FlexFormattingState.h
     layout/formattingContexts/flex/FlexLayout.h
 
-    layout/formattingContexts/inline/display/InlineDisplayBox.h
+    layout/formattingContexts/inline/InlineItem.h
+    layout/formattingContexts/inline/InlineLine.h
     layout/formattingContexts/inline/InlineRect.h
+    layout/formattingContexts/inline/InlineTextItem.h
+
+    layout/formattingContexts/inline/display/InlineDisplayBox.h
+
+    layout/formattingContexts/inline/text/TextUtil.h
 
     layout/integration/LayoutIntegrationBoxTree.h
 
@@ -1026,7 +1041,10 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     layout/layouttree/LayoutContainerBox.h
     layout/layouttree/LayoutBox.h
     layout/layouttree/LayoutInitialContainingBlock.h
+    layout/layouttree/LayoutInlineTextBox.h
 
+    loader/COEPInheritenceViolationReportBody.h
+    loader/CORPViolationReportBody.h
     loader/CanvasActivityRecord.h
     loader/ContentFilterClient.h
     loader/CookieJar.h
@@ -1241,6 +1259,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/WindowFeatures.h
     page/WindowOrWorkerGlobalScope.h
 
+    page/csp/CSPViolationReportBody.h
     page/csp/ContentSecurityPolicy.h
     page/csp/ContentSecurityPolicyClient.h
     page/csp/ContentSecurityPolicyHash.h
@@ -1562,6 +1581,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/ImageBuffer.h
     platform/graphics/ImageBufferAllocator.h
     platform/graphics/ImageBufferBackend.h
+    platform/graphics/ImageDecoderIdentifier.h
     platform/graphics/ImageFrame.h
     platform/graphics/ImageObserver.h
     platform/graphics/ImageOrientation.h
@@ -2115,6 +2135,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     ${WebCore_DERIVED_SOURCES_DIR}/CSSPropertyNames.h
     ${WebCore_DERIVED_SOURCES_DIR}/CSSValueKeywords.h
     ${WebCore_DERIVED_SOURCES_DIR}/CommandLineAPIModuleSourceBuiltins.h
+    ${WebCore_DERIVED_SOURCES_DIR}/ElementName.h
     ${WebCore_DERIVED_SOURCES_DIR}/EventInterfaces.h
     ${WebCore_DERIVED_SOURCES_DIR}/EventTargetInterfaces.h
     ${WebCore_DERIVED_SOURCES_DIR}/HTMLElementTypeHelpers.h
@@ -2153,10 +2174,12 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     ${WebCore_DERIVED_SOURCES_DIR}/JSTreeWalker.h
     ${WebCore_DERIVED_SOURCES_DIR}/JSXPathExpression.h
     ${WebCore_DERIVED_SOURCES_DIR}/JSXPathResult.h
+    ${WebCore_DERIVED_SOURCES_DIR}/Namespace.h
     ${WebCore_DERIVED_SOURCES_DIR}/ReadableByteStreamInternalsBuiltins.h
     ${WebCore_DERIVED_SOURCES_DIR}/ReadableStreamInternalsBuiltins.h
     ${WebCore_DERIVED_SOURCES_DIR}/Settings.h
     ${WebCore_DERIVED_SOURCES_DIR}/StreamInternalsBuiltins.h
+    ${WebCore_DERIVED_SOURCES_DIR}/TagName.h
     ${WebCore_DERIVED_SOURCES_DIR}/TransformStreamInternalsBuiltins.h
     ${WebCore_DERIVED_SOURCES_DIR}/WebCoreJSBuiltinInternals.h
     ${WebCore_DERIVED_SOURCES_DIR}/WebKitFontFamilyNames.h

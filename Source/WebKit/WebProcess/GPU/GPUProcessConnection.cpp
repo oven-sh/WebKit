@@ -136,9 +136,9 @@ RefPtr<GPUProcessConnection> GPUProcessConnection::create(IPC::Connection& paren
 }
 
 GPUProcessConnection::GPUProcessConnection(IPC::Connection::Identifier&& connectionIdentifier)
-    : m_connection(IPC::Connection::createServerConnection(connectionIdentifier, *this))
+    : m_connection(IPC::Connection::createServerConnection(connectionIdentifier))
 {
-    m_connection->open();
+    m_connection->open(*this);
 
     addLanguageChangeObserver(this, languagesChanged);
 
@@ -400,7 +400,9 @@ void GPUProcessConnection::updateMediaConfiguration()
         settingsChanged = true;
 
 #if ENABLE(VP9)
-    if (m_mediaOverridesForTesting.vp9HardwareDecoderDisabled != VP9TestingOverrides::singleton().hardwareDecoderDisabled() || m_mediaOverridesForTesting.vp9ScreenSizeAndScale != VP9TestingOverrides::singleton().vp9ScreenSizeAndScale())
+    if (m_mediaOverridesForTesting.vp9HardwareDecoderDisabled != VP9TestingOverrides::singleton().hardwareDecoderDisabled()
+        || m_mediaOverridesForTesting.vp9DecoderDisabled != VP9TestingOverrides::singleton().vp9DecoderDisabled()
+        || m_mediaOverridesForTesting.vp9ScreenSizeAndScale != VP9TestingOverrides::singleton().vp9ScreenSizeAndScale())
         settingsChanged = true;
 #endif
 
@@ -413,6 +415,7 @@ void GPUProcessConnection::updateMediaConfiguration()
 
 #if ENABLE(VP9)
         .vp9HardwareDecoderDisabled = VP9TestingOverrides::singleton().hardwareDecoderDisabled(),
+        .vp9DecoderDisabled = VP9TestingOverrides::singleton().vp9DecoderDisabled(),
         .vp9ScreenSizeAndScale = VP9TestingOverrides::singleton().vp9ScreenSizeAndScale(),
 #endif
     };

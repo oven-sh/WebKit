@@ -211,6 +211,9 @@ webrtc/vp8-then-h264-gpu-process-crash.html [ Skip ]
 # ARIA description needs to be supported on GTK.
 accessibility/aria-description.html [ Skip ]
 
+# default ARIA for custom elements tests that timeout in GTK:
+accessibility/custom-elements/modal.html [ Skip ]
+
 #//////////////////////////////////////////////////////////////////////////////////////////
 # End of Triaged Expectations
 # Legacy Expectations sections below
@@ -917,6 +920,24 @@ webkit.org/b/242145 media/mediacapabilities/mediacapabilities-allowed-containers
 webkit.org/b/241601 svg/wicd/rightsizing-grid.xhtml [ Failure ]
 webkit.org/b/241601 svg/wicd/test-rightsizing-b.xhtml [ Failure ]
 
+# Shared Workers don't seem to generate some CSP report events in GTK
+webkit.org/b/244517 imported/w3c/web-platform-tests/content-security-policy/gen/top.http-rp/script-src-self/sharedworker-import.http.html [ Failure ]
+webkit.org/b/244517 imported/w3c/web-platform-tests/content-security-policy/gen/top.http-rp/script-src-self/sharedworker-import.https.html [ Failure ]
+webkit.org/b/244517 imported/w3c/web-platform-tests/content-security-policy/gen/top.http-rp/script-src-wildcard/sharedworker-import.http.html [ Failure ]
+webkit.org/b/244517 imported/w3c/web-platform-tests/content-security-policy/gen/top.http-rp/script-src-wildcard/sharedworker-import.https.html [ Failure ]
+webkit.org/b/244517 imported/w3c/web-platform-tests/content-security-policy/gen/top.http-rp/worker-src-self/sharedworker-import.http.html [ Failure ]
+webkit.org/b/244517 imported/w3c/web-platform-tests/content-security-policy/gen/top.http-rp/worker-src-self/sharedworker-import.https.html [ Failure ]
+webkit.org/b/244517 imported/w3c/web-platform-tests/content-security-policy/gen/top.http-rp/worker-src-wildcard/sharedworker-import.http.html [ Failure ]
+webkit.org/b/244517 imported/w3c/web-platform-tests/content-security-policy/gen/top.http-rp/worker-src-wildcard/sharedworker-import.https.html [ Failure ]
+webkit.org/b/244517 imported/w3c/web-platform-tests/content-security-policy/gen/top.meta/script-src-self/sharedworker-import.http.html [ Failure ]
+webkit.org/b/244517 imported/w3c/web-platform-tests/content-security-policy/gen/top.meta/script-src-self/sharedworker-import.https.html [ Failure ]
+webkit.org/b/244517 imported/w3c/web-platform-tests/content-security-policy/gen/top.meta/script-src-wildcard/sharedworker-import.http.html [ Failure ]
+webkit.org/b/244517 imported/w3c/web-platform-tests/content-security-policy/gen/top.meta/script-src-wildcard/sharedworker-import.https.html [ Failure ]
+webkit.org/b/244517 imported/w3c/web-platform-tests/content-security-policy/gen/top.meta/worker-src-self/sharedworker-import.http.html [ Failure ]
+webkit.org/b/244517 imported/w3c/web-platform-tests/content-security-policy/gen/top.meta/worker-src-self/sharedworker-import.https.html [ Failure ]
+webkit.org/b/244517 imported/w3c/web-platform-tests/content-security-policy/gen/top.meta/worker-src-wildcard/sharedworker-import.http.html [ Failure ]
+webkit.org/b/244517 imported/w3c/web-platform-tests/content-security-policy/gen/top.meta/worker-src-wildcard/sharedworker-import.https.html [ Failure ]
+
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of Expected failures.
 #////////////////////////////////////////////////////////////////////////////////////////
@@ -938,6 +959,8 @@ webkit.org/b/207605 [ Debug ] http/tests/workers/service/registration-clear-redu
 webkit.org/b/207605 [ Debug ] http/tests/websocket/tests/hybi/no-subprotocol.html [ Crash ]
 
 webkit.org/b/212232 editing/async-clipboard/clipboard-read-while-pasting.html [ Crash ]
+
+webkit.org/b/211942 webgl/1.0.3/conformance/more/functions/copyTexImage2DBadArgs.html [ Crash ]
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of Crashing tests
@@ -1196,8 +1219,6 @@ imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/as
 
 fast/frames/lots-of-iframes.html [ Slow ]
 
-imported/w3c/web-platform-tests/html/browsers/the-window-object/apis-for-creating-and-navigating-browsing-contexts-by-name/open-features-negative-innerwidth-innerheight.html [ Slow ]
-
 imported/w3c/web-platform-tests/css/cssom-view/scroll-behavior-main-frame-root.html [ Slow ]
 imported/w3c/web-platform-tests/css/cssom-view/scroll-behavior-smooth-positions.html [ Slow ]
 imported/w3c/web-platform-tests/css/cssom-view/scroll-behavior-subframe-root.html [ Slow ]
@@ -1274,6 +1295,8 @@ webkit.org/b/219979 gamepad/gamepad-polling-access.html [ Timeout Pass ]
 
 # Test is flaky timing out. Also skipped in Mac and iOS.
 editing/selection/select-bidi-run.html [ Skip ]
+
+webkit.org/b/224071 webgl/pending/conformance/context/context-attributes-alpha-depth-stencil-antialias.html [ Timeout ]
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of Tests timing out
@@ -1620,8 +1643,6 @@ webkit.org/b/172272 fast/visual-viewport/client-coordinates-relative-to-layout-v
 
 webkit.org/b/172273 fast/visual-viewport/client-rects-relative-to-layout-viewport.html [ Failure Crash ]
 
-webkit.org/b/172275 imported/w3c/web-platform-tests/html/browsers/the-window-object/apis-for-creating-and-navigating-browsing-contexts-by-name/open-features-non-integer-screeny.html [ Failure ]
-
 webkit.org/b/172811 fast/block/float/032.html [ Failure ]
 webkit.org/b/172811 fast/forms/input-text-word-wrap.html [ Failure ]
 webkit.org/b/172811 fast/forms/number/number-appearance-rtl.html [ Failure ]
@@ -1837,10 +1858,38 @@ webkit.org/b/234782 imported/w3c/web-platform-tests/css/css-writing-modes/text-s
 
 # WPT css/css-pseudo import (webkit.org/b/235197)
 imported/w3c/web-platform-tests/css/css-pseudo/selection-background-painting-order.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-pseudo/target-text-007.html [ Failure ]
 
 # WebGL on GTK renders pixels with opacity slightly differently
 fast/canvas/toDataURL-alpha-permutation.html [ ImageOnlyFailure ]
+
+webkit.org/b/219251 fast/canvas/webgl/getIndexedParameter-crash.html [ Failure ]
+
+webkit.org/b/229050 fast/canvas/webgl/shader-with-comma-op.html [ Failure ]
+webkit.org/b/229050 fast/canvas/webgl/shader-with-struct-array.html [ Failure ]
+
+webkit.org/b/218318 fast/canvas/webgl/webgl-clear-composited-notshowing.html [ Failure ]
+
+webkit.org/b/166536 webgl/webgl-allow-shared.html [ Failure ]
+
+webkit.org/b/217813 webgl/conformance/extensions/ext-texture-compression-rgtc.html [ Failure ]
+webkit.org/b/217813 webgl/conformance/extensions/s3tc-and-rgtc.html [ Failure ]
+webkit.org/b/217816 webgl/conformance2/uniforms/gl-uniform-arrays-sub-source.html [ Failure ]
+
+webkit.org/b/243487 webgl/1.0.x/conformance/extensions/webgl-multi-draw.html [ Failure ]
+
+webkit.org/b/229051 webgl/1.0.x/conformance/glsl/bugs/character-set.html [ Failure ]
+webkit.org/b/229051 webgl/1.0.x/conformance/misc/invalid-passed-params.html [ Failure ]
+
+webkit.org/b/169917 webgl/1.0.3/conformance/context/context-lost-restored.html [ Failure ]
+webkit.org/b/219340 webgl/1.0.3/conformance/extensions/angle-instanced-arrays-out-of-bounds.html [ Failure ]
+webkit.org/b/169917 webgl/1.0.3/conformance/extensions/oes-texture-half-float.html [ Failure ]
+webkit.org/b/169917 webgl/1.0.3/conformance/extensions/webgl-compressed-texture-s3tc.html [ Failure ]
+webkit.org/b/169917 webgl/1.0.3/conformance/extensions/webgl-compressed-texture-size-limit.html [ Failure ]
+webkit.org/b/169917 webgl/1.0.3/conformance/misc/webgl-specific.html [ Failure ]
+webkit.org/b/169917 webgl/1.0.3/conformance/renderbuffers/framebuffer-object-attachment.html [ Failure ]
+webkit.org/b/169917 webgl/1.0.3/conformance/rendering/point-no-attributes.html [ Failure ]
+webkit.org/b/169917 webgl/1.0.3/conformance/textures/texture-copying-feedback-loops.html [ Failure ]
+
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of non-crashing, non-flaky tests failing
@@ -1926,3 +1975,5 @@ webkit.org/b/206881 imported/w3c/web-platform-tests/css/css-fonts/font-variant-0
 webkit.org/b/206881 imported/w3c/web-platform-tests/css/css-fonts/font-variant-caps-03.html [ ImageOnlyFailure ]
 webkit.org/b/206881 imported/w3c/web-platform-tests/css/css-fonts/font-variant-caps-05.html [ ImageOnlyFailure ]
 webkit.org/b/206881 imported/w3c/web-platform-tests/css/css-fonts/font-variant-caps.html [ ImageOnlyFailure ]
+
+webkit.org/b/214463 imported/w3c/web-platform-tests/css/css-sizing/contain-intrinsic-size/contain-intrinsic-size-032.html [ Failure ]

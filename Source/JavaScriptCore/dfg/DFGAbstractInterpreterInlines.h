@@ -2316,7 +2316,6 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
             case Array::Int32:
             case Array::Double:
             case Array::Contiguous:
-            case Array::AlwaysSlowPutContiguous:
             case Array::ArrayStorage:
             case Array::SlowPutArrayStorage:
                 if (foldGetByValOnConstantProperty(m_graph.child(node, 0), m_graph.child(node, 1))) {
@@ -2446,7 +2445,6 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
                 setNonCellTypeForNode(node, SpecDoubleReal);
             break;
         case Array::Contiguous:
-        case Array::AlwaysSlowPutContiguous:
         case Array::ArrayStorage:
         case Array::SlowPutArrayStorage:
             if (node->arrayMode().isEffectfulOutOfBounds())
@@ -2655,7 +2653,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     case StringReplace:
     case StringReplaceRegExp:
         if (node->child1().useKind() == StringUse
-            && node->child2().useKind() == RegExpObjectUse
+            && (node->child2().useKind() == RegExpObjectUse || node->child2().useKind() == StringUse)
             && node->child3().useKind() == StringUse) {
             // This doesn't clobber the world. It just reads and writes regexp state.
         } else
@@ -3702,7 +3700,6 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         case Array::Int32:
         case Array::Double:
         case Array::Contiguous:
-        case Array::AlwaysSlowPutContiguous:
         case Array::Undecided:
         case Array::ArrayStorage:
         case Array::SlowPutArrayStorage:
@@ -4302,7 +4299,6 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         case Array::Int32:
         case Array::Double:
         case Array::Contiguous:
-        case Array::AlwaysSlowPutContiguous:
         case Array::ArrayStorage: {
             if (mode.isInBounds())
                 break;
@@ -4334,7 +4330,6 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
             case Array::Int32:
             case Array::Double:
             case Array::Contiguous:
-            case Array::AlwaysSlowPutContiguous:
             case Array::ArrayStorage: {
                 if (arrayMode.isInBounds())
                     break;
@@ -4492,7 +4487,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     case ConstructVarargs:
     case ConstructForwardVarargs:
     case TailCallForwardVarargsInlinedCaller:
-    case CallEval:
+    case CallDirectEval:
     case DirectCall:
     case DirectConstruct:
     case DirectTailCallInlinedCaller:

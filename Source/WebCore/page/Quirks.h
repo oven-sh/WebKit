@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018-2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2018-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -38,6 +38,7 @@ class HTMLElement;
 class HTMLVideoElement;
 class LayoutUnit;
 class PlatformMouseEvent;
+class WeakPtrImplWithEventTargetData;
 struct SecurityOriginData;
 
 #if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
@@ -160,8 +161,8 @@ public:
 #if PLATFORM(IOS)
     WEBCORE_EXPORT bool allowLayeredFullscreenVideos() const;
 #endif
-    bool hasBrokenPermissionsAPISupportQuirk() const;
     bool shouldEnableApplicationCacheQuirk() const;
+    bool shouldEnableFontLoadingAPIQuirk() const;
     
 private:
     bool needsQuirks() const;
@@ -171,7 +172,7 @@ private:
     bool isGoogleMaps() const;
 #endif
 
-    WeakPtr<Document> m_document;
+    WeakPtr<Document, WeakPtrImplWithEventTargetData> m_document;
 
     mutable std::optional<bool> m_hasBrokenEncryptedMediaAPISupportQuirk;
     mutable std::optional<bool> m_needsFullWidthHeightFullscreenStyleQuirk;
@@ -211,10 +212,10 @@ private:
 #if PLATFORM(IOS)
     mutable std::optional<bool> m_allowLayeredFullscreenVideos;
 #endif
-    mutable std::optional<bool> m_hasBrokenPermissionsAPISupportQuirk;
 #if PLATFORM(IOS_FAMILY)
     mutable std::optional<bool> m_shouldEnableApplicationCacheQuirk;
 #endif
+    mutable std::optional<bool> m_shouldEnableFontLoadingAPIQuirk;
 };
 
 } // namespace WebCore

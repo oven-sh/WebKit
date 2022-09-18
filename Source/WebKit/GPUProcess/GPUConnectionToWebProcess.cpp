@@ -44,7 +44,6 @@
 #include "RemoteAudioHardwareListenerProxy.h"
 #include "RemoteAudioMediaStreamTrackRendererInternalUnitManager.h"
 #include "RemoteAudioMediaStreamTrackRendererInternalUnitManagerMessages.h"
-#include "RemoteGraphicsContextGLMessages.h"
 #include "RemoteMediaPlayerManagerProxy.h"
 #include "RemoteMediaPlayerManagerProxyMessages.h"
 #include "RemoteMediaPlayerProxy.h"
@@ -80,6 +79,7 @@
 
 #if ENABLE(WEBGL)
 #include "RemoteGraphicsContextGL.h"
+#include "RemoteGraphicsContextGLMessages.h"
 #endif
 
 #if ENABLE(ENCRYPTED_MEDIA)
@@ -233,13 +233,13 @@ private:
 
 #endif
 
-Ref<GPUConnectionToWebProcess> GPUConnectionToWebProcess::create(GPUProcess& gpuProcess, WebCore::ProcessIdentifier webProcessIdentifier, PAL::SessionID sessionID, IPC::Connection::Identifier&& connectionIdentifier, GPUProcessConnectionParameters&& parameters)
+Ref<GPUConnectionToWebProcess> GPUConnectionToWebProcess::create(GPUProcess& gpuProcess, WebCore::ProcessIdentifier webProcessIdentifier, PAL::SessionID sessionID, IPC::Connection::Handle&& connectionHandle, GPUProcessConnectionParameters&& parameters)
 {
-    return adoptRef(*new GPUConnectionToWebProcess(gpuProcess, webProcessIdentifier, sessionID, WTFMove(connectionIdentifier), WTFMove(parameters)));
+    return adoptRef(*new GPUConnectionToWebProcess(gpuProcess, webProcessIdentifier, sessionID, WTFMove(connectionHandle), WTFMove(parameters)));
 }
 
-GPUConnectionToWebProcess::GPUConnectionToWebProcess(GPUProcess& gpuProcess, WebCore::ProcessIdentifier webProcessIdentifier, PAL::SessionID sessionID, IPC::Connection::Identifier&& connectionIdentifier, GPUProcessConnectionParameters&& parameters)
-    : m_connection(IPC::Connection::createClientConnection(connectionIdentifier, *this))
+GPUConnectionToWebProcess::GPUConnectionToWebProcess(GPUProcess& gpuProcess, WebCore::ProcessIdentifier webProcessIdentifier, PAL::SessionID sessionID, IPC::Connection::Handle&& connectionHandle, GPUProcessConnectionParameters&& parameters)
+    : m_connection(IPC::Connection::createClientConnection(IPC::Connection::Identifier { WTFMove(connectionHandle) }))
     , m_gpuProcess(gpuProcess)
     , m_webProcessIdentifier(webProcessIdentifier)
     , m_webProcessIdentity(WTFMove(parameters.webProcessIdentity))
@@ -249,7 +249,7 @@ GPUConnectionToWebProcess::GPUConnectionToWebProcess(GPUProcess& gpuProcess, Web
     , m_sampleBufferDisplayLayerManager(RemoteSampleBufferDisplayLayerManager::create(*this))
 #endif
 #if ENABLE(MEDIA_STREAM)
-    , m_captureOrigin(SecurityOrigin::createUnique())
+    , m_captureOrigin(SecurityOrigin::createOpaque())
 #endif
 #if ENABLE(VIDEO)
     , m_videoFrameObjectHeap(RemoteVideoFrameObjectHeap::create(m_connection.get()))
@@ -278,7 +278,7 @@ GPUConnectionToWebProcess::GPUConnectionToWebProcess(GPUProcess& gpuProcess, Web
     // Otherwise, the WebProcess would process incoming synchronous IPC while waiting for a synchronous IPC
     // reply from the GPU process, which would be unsafe.
     m_connection->setOnlySendMessagesAsDispatchWhenWaitingForSyncReplyWhenProcessingSuchAMessage(true);
-    m_connection->open();
+    m_connection->open(*this);
 
 #if ENABLE(VP9)
     bool hasVP9HardwareDecoder;
@@ -554,7 +554,7 @@ RemoteImageDecoderAVFProxy& GPUConnectionToWebProcess::imageDecoderAVFProxy()
 }
 #endif
 
-void GPUConnectionToWebProcess::createRenderingBackend(RemoteRenderingBackendCreationParameters&& creationParameters, IPC::Attachment&& connectionIdentifier, IPC::StreamConnectionBuffer&& streamBuffer)
+void GPUConnectionToWebProcess::createRenderingBackend(RemoteRenderingBackendCreationParameters&& creationParameters, IPC::Connection::Handle&& connectionIdentifier, IPC::StreamConnectionBuffer&& streamBuffer)
 {
     auto addResult = m_remoteRenderingBackendMap.ensure(creationParameters.identifier, [&]() {
         return IPC::ScopedActiveMessageReceiveQueue { RemoteRenderingBackend::create(*this, WTFMove(creationParameters), WTFMove(connectionIdentifier), WTFMove(streamBuffer)) };
@@ -710,6 +710,7 @@ void GPUConnectionToWebProcess::setMediaOverridesForTesting(MediaOverridesForTes
 {
 #if ENABLE(VP9) && PLATFORM(COCOA)
     VP9TestingOverrides::singleton().setHardwareDecoderDisabled(WTFMove(overrides.vp9HardwareDecoderDisabled));
+    VP9TestingOverrides::singleton().setVP9DecoderDisabled(WTFMove(overrides.vp9DecoderDisabled));
     VP9TestingOverrides::singleton().setVP9ScreenSizeAndScale(WTFMove(overrides.vp9ScreenSizeAndScale));
 #endif
 

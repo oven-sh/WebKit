@@ -20,6 +20,7 @@ endmacro()
 set(TestWTF_SOURCES
     Counters.cpp
     TestsController.cpp
+    Utilities.cpp
     WTFStringUtilities.cpp
 
     Tests/WTF/AtomString.cpp
@@ -100,6 +101,7 @@ set(TestWTF_SOURCES
     Tests/WTF/StringImpl.cpp
     Tests/WTF/StringOperators.cpp
     Tests/WTF/StringParsingBuffer.cpp
+    Tests/WTF/StringSearch.cpp
     Tests/WTF/StringToIntegerConversion.cpp
     Tests/WTF/StringView.cpp
     Tests/WTF/SynchronizedFixedQueue.cpp
@@ -171,6 +173,7 @@ endif ()
 if (ENABLE_WEBCORE)
     set(TestWebCore_SOURCES
         TestsController.cpp
+        Utilities.cpp
         WTFStringUtilities.cpp
 
         Tests/WebCore/AffineTransform.cpp
@@ -257,6 +260,8 @@ endif ()
 # TestWebKit definitions
 if (ENABLE_WEBKIT)
     set(TestWebKit_SOURCES
+        Utilities.cpp
+
         Tests/WebKit/AboutBlankLoad.cpp
         Tests/WebKit/CanHandleRequest.cpp
         Tests/WebKit/DOMWindowExtensionBasic.cpp
@@ -352,6 +357,8 @@ if (ENABLE_WEBKIT)
         InjectedBundleController.cpp
         InjectedBundleMain.cpp
         PlatformUtilities.cpp
+        Utilities.cpp
+
         Tests/WebKit/CanHandleRequest_Bundle.cpp
         Tests/WebKit/DidAssociateFormControls_Bundle.cpp
         Tests/WebKit/DOMWindowExtensionBasic_Bundle.cpp

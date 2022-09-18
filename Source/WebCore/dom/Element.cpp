@@ -1874,6 +1874,13 @@ void Element::setAttribute(const QualifiedName& name, const AtomString& value)
     setAttributeInternal(index, name, value, NotInSynchronizationOfLazyAttribute);
 }
 
+void Element::setAttributeWithoutOverwriting(const QualifiedName& name, const AtomString& value)
+{
+    synchronizeAttribute(name);
+    if (!elementData() || elementData()->findAttributeIndexByName(name) == ElementData::attributeNotFound)
+        addAttributeInternal(name, value, NotInSynchronizationOfLazyAttribute);
+}
+
 void Element::setAttributeWithoutSynchronization(const QualifiedName& name, const AtomString& value)
 {
     unsigned index = elementData() ? elementData()->findAttributeIndexByName(name) : ElementData::attributeNotFound;
@@ -1929,7 +1936,7 @@ static inline AtomString makeIdForStyleResolution(const AtomString& value, bool 
 
 static inline bool isElementReflectionAttribute(const QualifiedName& name)
 {
-    return name == HTMLNames::aria_activedescendantAttr || name == HTMLNames::aria_errormessageAttr;
+    return name == HTMLNames::aria_activedescendantAttr;
 }
 
 static inline bool isElementsArrayReflectionAttribute(const QualifiedName& name)
@@ -1937,6 +1944,7 @@ static inline bool isElementsArrayReflectionAttribute(const QualifiedName& name)
     return name == HTMLNames::aria_controlsAttr
         || name == HTMLNames::aria_describedbyAttr
         || name == HTMLNames::aria_detailsAttr
+        || name == HTMLNames::aria_errormessageAttr
         || name == HTMLNames::aria_flowtoAttr
         || name == HTMLNames::aria_labelledbyAttr
         || name == HTMLNames::aria_ownsAttr;
@@ -2002,7 +2010,7 @@ void Element::attributeChanged(const QualifiedName& name, const AtomString& oldV
                 for (auto it = descendantsOfType<Element>(*this).begin(); it;) {
                     auto& element = *it;
                     if (auto* elementData = element.elementData()) {
-                        if (auto* attribute = elementData->findLanguageAttribute()) {
+                        if (elementData->findLanguageAttribute()) {
                             it.traverseNextSkippingChildren();
                             continue;
                         }
@@ -2028,7 +2036,7 @@ void Element::attributeChanged(const QualifiedName& name, const AtomString& oldV
     invalidateNodeListAndCollectionCachesInAncestorsForAttribute(name);
 
     if (AXObjectCache* cache = document().existingAXObjectCache())
-        cache->deferAttributeChangeIfNeeded(name, this);
+        cache->deferAttributeChangeIfNeeded(this, name, oldValue, newValue);
 }
 
 ExplicitlySetAttrElementsMap& Element::explicitlySetAttrElementsMap()
@@ -2082,7 +2090,7 @@ void Element::setElementAttribute(const QualifiedName& attributeName, Element* e
     else
         setAttribute(attributeName, emptyAtom());
 
-    explicitlySetAttrElementsMap().set(attributeName, Vector<WeakPtr<Element>> { element });
+    explicitlySetAttrElementsMap().set(attributeName, Vector<WeakPtr<Element, WeakPtrImplWithEventTargetData>> { element });
 }
 
 std::optional<Vector<RefPtr<Element>>> Element::getElementsArrayAttribute(const QualifiedName& attributeName) const
@@ -2128,7 +2136,7 @@ void Element::setElementsArrayAttribute(const QualifiedName& attributeName, std:
         return;
     }
 
-    Vector<WeakPtr<Element>> newElements;
+    Vector<WeakPtr<Element, WeakPtrImplWithEventTargetData>> newElements;
     newElements.reserveInitialCapacity(elements->size());
     StringBuilder value;
     for (auto element : elements.value()) {
@@ -2149,46 +2157,16 @@ void Element::setElementsArrayAttribute(const QualifiedName& attributeName, std:
     explicitlySetAttrElementsMap().set(attributeName, WTFMove(newElements));
 }
 
-template <typename CharacterType>
-static inline bool isNonEmptyTokenList(const CharacterType* characters, unsigned length)
-{
-    ASSERT(length > 0);
-
-    unsigned i = 0;
-    do {
-        if (isNotHTMLSpace(characters[i]))
-            break;
-        ++i;
-    } while (i < length);
-
-    return i < length;
-}
-
-static inline bool isNonEmptyTokenList(const AtomString& stringValue)
-{
-    unsigned length = stringValue.length();
-
-    if (!length)
-        return false;
-
-    if (stringValue.is8Bit())
-        return isNonEmptyTokenList(stringValue.characters8(), length);
-    return isNonEmptyTokenList(stringValue.characters16(), length);
-}
-
 void Element::classAttributeChanged(const AtomString& newClassString)
 {
     // Note: We'll need ElementData, but it doesn't have to be UniqueElementData.
     if (!elementData())
         ensureUniqueElementData();
 
-    auto shouldFoldCase = document().inQuirksMode() ? SpaceSplitString::ShouldFoldCase::Yes : SpaceSplitString::ShouldFoldCase::No;
-    bool newStringHasClasses = isNonEmptyTokenList(newClassString);
-
-    auto oldClassNames = elementData()->classNames();
-    auto newClassNames = newStringHasClasses ? SpaceSplitString(newClassString, shouldFoldCase) : SpaceSplitString();
     {
-        Style::ClassChangeInvalidation styleInvalidation(*this, oldClassNames, newClassNames);
+        auto shouldFoldCase = document().inQuirksMode() ? SpaceSplitString::ShouldFoldCase::Yes : SpaceSplitString::ShouldFoldCase::No;
+        SpaceSplitString newClassNames(newClassString, shouldFoldCase);
+        Style::ClassChangeInvalidation styleInvalidation(*this, elementData()->classNames(), newClassNames);
         elementData()->setClassNames(WTFMove(newClassNames));
     }
 
@@ -2200,11 +2178,9 @@ void Element::classAttributeChanged(const AtomString& newClassString)
 
 void Element::partAttributeChanged(const AtomString& newValue)
 {
-    bool hasParts = isNonEmptyTokenList(newValue);
-    if (hasParts || !partNames().isEmpty()) {
-        auto newParts = hasParts ? SpaceSplitString(newValue, SpaceSplitString::ShouldFoldCase::No) : SpaceSplitString();
+    SpaceSplitString newParts(newValue, SpaceSplitString::ShouldFoldCase::No);
+    if (!newParts.isEmpty() || !partNames().isEmpty())
         ensureElementRareData().setPartNames(WTFMove(newParts));
-    }
 
     if (hasRareData()) {
         if (auto* partList = elementRareData()->partList())
@@ -2324,6 +2300,11 @@ void Element::invalidateForQueryContainerSizeChange()
     setNodeFlag(NodeFlag::NeedsUpdateQueryContainerDependentStyle);
 }
 
+void Element::invalidateForResumingQueryContainerResolution()
+{
+    markAncestorsForInvalidatedStyle();
+}
+
 bool Element::needsUpdateQueryContainerDependentStyle() const
 {
     return hasNodeFlag(NodeFlag::NeedsUpdateQueryContainerDependentStyle);
@@ -2411,6 +2392,7 @@ void Element::didMoveToNewDocument(Document& oldDocument, Document& newDocument)
     ASSERT_WITH_SECURITY_IMPLICATION(&document() == &newDocument);
 
     if (oldDocument.inQuirksMode() != document().inQuirksMode()) {
+        ensureUniqueElementData();
         // ElementData::m_classNames or ElementData::m_idForStyleResolution need to be updated with the right case.
         if (hasID())
             attributeChanged(idAttr, nullAtom(), getIdAttribute());
@@ -2494,63 +2476,50 @@ Node::InsertedIntoAncestorResult Element::insertedIntoAncestor(InsertionType ins
         setContainsFullScreenElementOnAncestorsCrossingFrameBoundaries(true);
 #endif
 
-    auto hostChildElementDidChange = makeScopeExit([&] () {
-        if (parentNode() == &parentOfInsertedTree) {
-            if (auto* shadowRoot = parentNode()->shadowRoot())
-                shadowRoot->hostChildElementDidChange(*this);
+    if (parentOfInsertedTree.isInTreeScope()) {
+        bool becomeConnected = insertionType.connectedToDocument;
+        auto* newScope = &parentOfInsertedTree.treeScope();
+        auto* newDocument = becomeConnected ? dynamicDowncast<HTMLDocument>(newScope->documentScope()) : nullptr;
+        if (!insertionType.treeScopeChanged)
+            newScope = nullptr;
+
+        if (auto& idValue = getIdAttribute(); !idValue.isEmpty()) {
+            if (newScope)
+                newScope->addElementById(*idValue.impl(), *this);
+            if (newDocument)
+                updateIdForDocument(*newDocument, nullAtom(), idValue, AlwaysUpdateHTMLDocumentNamedItemMaps);
         }
-    });
 
-    if (!parentOfInsertedTree.isInTreeScope())
-        return InsertedIntoAncestorResult::Done;
-
-    bool becomeConnected = insertionType.connectedToDocument;
-    TreeScope* newScope = &parentOfInsertedTree.treeScope();
-    auto* newDocument = becomeConnected ? dynamicDowncast<HTMLDocument>(newScope->documentScope()) : nullptr;
-    if (!insertionType.treeScopeChanged)
-        newScope = nullptr;
-
-    const AtomString& idValue = getIdAttribute();
-    if (!idValue.isNull()) {
-        if (newScope)
-            updateIdForTreeScope(*newScope, nullAtom(), idValue);
-        if (newDocument)
-            updateIdForDocument(*newDocument, nullAtom(), idValue, AlwaysUpdateHTMLDocumentNamedItemMaps);
-    }
-
-    const AtomString& nameValue = getNameAttribute();
-    if (!nameValue.isNull()) {
-        if (newScope)
-            updateNameForTreeScope(*newScope, nullAtom(), nameValue);
-        if (newDocument)
-            updateNameForDocument(*newDocument, nullAtom(), nameValue);
-    }
-
-    if (becomeConnected) {
-        if (UNLIKELY(isCustomElementUpgradeCandidate())) {
-            ASSERT(isConnected());
-            CustomElementReactionQueue::tryToUpgradeElement(*this);
+        if (auto& nameValue = getNameAttribute(); !nameValue.isNull()) {
+            if (newScope)
+                newScope->addElementByName(*nameValue.impl(), *this);
+            if (newDocument)
+                updateNameForDocument(*newDocument, nullAtom(), nameValue);
         }
-        if (UNLIKELY(isDefinedCustomElement()))
-            CustomElementReactionQueue::enqueueConnectedCallbackIfNeeded(*this);
-    }
 
-    [&]() {
-        if (auto* parent = parentOrShadowHostElement(); parent && parent != document().documentElement() && UNLIKELY(parent->hasRareData())) {
-            auto lang = parent->elementRareData()->effectiveLang();
-            if (!lang.isNull() && langFromAttribute().isNull()) {
-                ensureElementRareData().setEffectiveLang(lang);
-                return;
+        if (becomeConnected) {
+            if (UNLIKELY(isCustomElementUpgradeCandidate())) {
+                ASSERT(isConnected());
+                CustomElementReactionQueue::tryToUpgradeElement(*this);
             }
+            if (UNLIKELY(isDefinedCustomElement()))
+                CustomElementReactionQueue::enqueueConnectedCallbackIfNeeded(*this);
         }
-        if (UNLIKELY(hasRareData())) {
-            if (!elementRareData()->effectiveLang().isNull() && langFromAttribute().isNull())
-                ensureElementRareData().setEffectiveLang(nullAtom());
-        }
-    }();
 
-    if (shouldAutofocus(*this))
-        document().topDocument().appendAutofocusCandidate(*this);
+        if (shouldAutofocus(*this))
+            document().topDocument().appendAutofocusCandidate(*this);
+    }
+
+    if (parentNode() == &parentOfInsertedTree) {
+        if (auto* shadowRoot = parentNode()->shadowRoot())
+            shadowRoot->hostChildElementDidChange(*this);
+    }
+
+    if (auto* parent = parentOrShadowHostElement(); parent && parent != document().documentElement() && UNLIKELY(parent->hasRareData())) {
+        auto& lang = parent->elementRareData()->effectiveLang();
+        if (!lang.isNull() && langFromAttribute().isNull())
+            ensureElementRareData().setEffectiveLang(lang);
+    }
 
     return InsertedIntoAncestorResult::Done;
 }
@@ -2567,6 +2536,10 @@ void Element::removedFromAncestor(RemovalType removalType, ContainerNode& oldPar
         page->pointerLockController().elementWasRemoved(*this);
 #endif
         page->pointerCaptureController().elementWasRemoved(*this);
+#if ENABLE(WHEEL_EVENT_LATCHING)
+        if (auto* scrollLatchingController = page->scrollLatchingControllerIfExists())
+            scrollLatchingController->removeLatchingStateForTarget(*this);
+#endif
     }
 
     setSavedLayerScrollPosition(ScrollPosition());
@@ -2578,26 +2551,22 @@ void Element::removedFromAncestor(RemovalType removalType, ContainerNode& oldPar
         if (!removalType.treeScopeChanged)
             oldScope = nullptr;
 
-        const AtomString& idValue = getIdAttribute();
-        if (!idValue.isNull()) {
+        if (auto& idValue = getIdAttribute(); !idValue.isEmpty()) {
             if (oldScope)
-                updateIdForTreeScope(*oldScope, idValue, nullAtom());
+                oldScope->removeElementById(*idValue.impl(), *this);
             if (oldHTMLDocument)
                 updateIdForDocument(*oldHTMLDocument, idValue, nullAtom(), AlwaysUpdateHTMLDocumentNamedItemMaps);
         }
 
-        const AtomString& nameValue = getNameAttribute();
-        if (!nameValue.isNull()) {
+        if (auto& nameValue = getNameAttribute(); !nameValue.isEmpty()) {
             if (oldScope)
-                updateNameForTreeScope(*oldScope, nameValue, nullAtom());
+                oldScope->removeElementByName(*nameValue.impl(), *this);
             if (oldHTMLDocument)
                 updateNameForDocument(*oldHTMLDocument, nameValue, nullAtom());
         }
 
-        if (oldDocument) {
-            if (oldDocument->cssTarget() == this)
-                oldDocument->setCSSTarget(nullptr);
-        }
+        if (oldDocument && oldDocument->cssTarget() == this)
+            oldDocument->setCSSTarget(nullptr);
 
         if (removalType.disconnectedFromDocument && UNLIKELY(isDefinedCustomElement()))
             CustomElementReactionQueue::enqueueDisconnectedCallbackIfNeeded(*this);
@@ -2614,18 +2583,12 @@ void Element::removedFromAncestor(RemovalType removalType, ContainerNode& oldPar
     ContainerNode::removedFromAncestor(removalType, oldParentOfRemovedTree);
 
     if (UNLIKELY(hasRareData()) && !elementRareData()->effectiveLang().isNull()) {
-        if (langFromAttribute().isNull())
+        if (auto* parent = parentOrShadowHostElement(); langFromAttribute().isNull()
+            && !(parent && UNLIKELY(parent->hasRareData()) && !parent->elementRareData()->effectiveLang().isNull()))
             elementRareData()->setEffectiveLang(nullAtom());
     }
 
     Styleable::fromElement(*this).elementWasRemoved();
-
-#if ENABLE(WHEEL_EVENT_LATCHING)
-    if (RefPtr frame = document().frame(); frame && frame->page()) {
-        if (auto* scrollLatchingController = frame->page()->scrollLatchingControllerIfExists())
-            scrollLatchingController->removeLatchingStateForTarget(*this);
-    }
-#endif
 
     if (UNLIKELY(isInTopLayer()))
         removeFromTopLayer();
@@ -2847,6 +2810,22 @@ CustomElementReactionQueue* Element::reactionQueue() const
     if (!hasRareData())
         return nullptr;
     return elementRareData()->customElementReactionQueue();
+}
+
+CustomElementDefaultARIA& Element::customElementDefaultARIA()
+{
+    ASSERT(isPrecustomizedOrDefinedCustomElement());
+    auto* deafultARIA = elementRareData()->customElementDefaultARIA();
+    if (!deafultARIA) {
+        elementRareData()->setCustomElementDefaultARIA(makeUnique<CustomElementDefaultARIA>());
+        deafultARIA = elementRareData()->customElementDefaultARIA();
+    }
+    return *deafultARIA;
+}
+
+CustomElementDefaultARIA* Element::customElementDefaultARIAIfExists()
+{
+    return isPrecustomizedOrDefinedCustomElement() && hasRareData() ? elementRareData()->customElementDefaultARIA() : nullptr;
 }
 
 const AtomString& Element::shadowPseudoId() const
@@ -5006,9 +4985,9 @@ Vector<RefPtr<WebAnimation>> Element::getAnimations(std::optional<GetAnimationsO
     return animations;
 }
 
-static WeakHashMap<Element, ElementIdentifier>& elementIdentifiersMap()
+static WeakHashMap<Element, ElementIdentifier, WeakPtrImplWithEventTargetData>& elementIdentifiersMap()
 {
-    static MainThreadNeverDestroyed<WeakHashMap<Element, ElementIdentifier>> map;
+    static MainThreadNeverDestroyed<WeakHashMap<Element, ElementIdentifier, WeakPtrImplWithEventTargetData>> map;
     return map;
 }
 

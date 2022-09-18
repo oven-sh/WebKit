@@ -27,6 +27,8 @@
 #include "RenderTable.h"
 
 #include "AutoTableLayout.h"
+#include "BackgroundPainter.h"
+#include "BorderPainter.h"
 #include "CollapsedBorderValue.h"
 #include "Document.h"
 #include "FixedTableLayout.h"
@@ -792,10 +794,12 @@ void RenderTable::paintBoxDecorations(PaintInfo& paintInfo, const LayoutPoint& p
 
     LayoutRect rect(paintOffset, size());
     adjustBorderBoxRectForPainting(rect);
-    
+
+    BackgroundPainter backgroundPainter { *this, paintInfo };
+
     BackgroundBleedAvoidance bleedAvoidance = determineBackgroundBleedAvoidance(paintInfo.context());
-    if (!boxShadowShouldBeAppliedToBackground(rect.location(), bleedAvoidance, { }))
-        paintBoxShadow(paintInfo, rect, style(), ShadowStyle::Normal);
+    if (!BackgroundPainter::boxShadowShouldBeAppliedToBackground(*this, rect.location(), bleedAvoidance, { }))
+        backgroundPainter.paintBoxShadow(rect, style(), ShadowStyle::Normal);
 
     GraphicsContextStateSaver stateSaver(paintInfo.context(), false);
     if (bleedAvoidance == BackgroundBleedUseTransparencyLayer) {
@@ -807,11 +811,11 @@ void RenderTable::paintBoxDecorations(PaintInfo& paintInfo, const LayoutPoint& p
         paintInfo.context().beginTransparencyLayer(1);
     }
 
-    paintBackground(paintInfo, rect, bleedAvoidance);
-    paintBoxShadow(paintInfo, rect, style(), ShadowStyle::Inset);
+    backgroundPainter.paintBackground(rect, bleedAvoidance);
+    backgroundPainter.paintBoxShadow(rect, style(), ShadowStyle::Inset);
 
     if (style().hasVisibleBorderDecoration() && !collapseBorders())
-        paintBorder(paintInfo, rect, style());
+        BorderPainter { *this, paintInfo }.paintBorder(rect, style());
 
     if (bleedAvoidance == BackgroundBleedUseTransparencyLayer)
         paintInfo.context().endTransparencyLayer();

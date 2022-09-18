@@ -38,6 +38,7 @@
 #import "RemoteScrollingCoordinatorProxy.h"
 #import "ScrollingTreeScrollingNodeDelegateIOS.h"
 #import "TapHandlingResult.h"
+#import "UIKitSPI.h"
 #import "VideoFullscreenManagerProxy.h"
 #import "ViewGestureController.h"
 #import "WKBackForwardListItemInternal.h"
@@ -907,7 +908,7 @@ static void changeContentOffsetBoundedInValidRange(UIScrollView *scrollView, Web
         horizontalOverscrollBehavior = rootNode->horizontalOverscrollBehavior();
         verticalOverscrollBehavior = rootNode->verticalOverscrollBehavior();
     }
-
+    
     WebKit::ScrollingTreeScrollingNodeDelegateIOS::updateScrollViewForOverscrollBehavior(_scrollView.get(), horizontalOverscrollBehavior, verticalOverscrollBehavior, WebKit::ScrollingTreeScrollingNodeDelegateIOS::AllowOverscrollToPreventScrollPropagation::No);
 
     bool hasDockedInputView = !CGRectIsEmpty(_inputViewBoundsInWindow);
@@ -1878,6 +1879,13 @@ static WebCore::FloatPoint constrainContentOffset(WebCore::FloatPoint contentOff
 #if HAVE(UISCROLLVIEW_ASYNCHRONOUS_SCROLL_EVENT_HANDLING)
 - (void)_scrollView:(UIScrollView *)scrollView asynchronouslyHandleScrollEvent:(UIScrollEvent *)scrollEvent completion:(void (^)(BOOL handled))completion
 {
+#if ENABLE(OVERLAY_REGIONS_IN_EVENT_REGION)
+    if ([scrollEvent _scrollDeviceCategory] == _UIScrollDeviceCategoryOverlayScroll) {
+        completion(YES);
+        return;
+    }
+#endif
+
     BOOL isHandledByDefault = !scrollView.scrollEnabled;
 
     if (scrollEvent.phase == UIScrollPhaseMayBegin) {
@@ -2732,6 +2740,11 @@ static int32_t activeOrientation(WKWebView *webView)
 {
     if ([_contentView isFocusingElement])
         return YES;
+
+#if HAVE(UIFINDINTERACTION)
+    if ([_findInteraction isFindNavigatorVisible])
+        return YES;
+#endif
 
     NSNumber *isLocalKeyboard = [keyboardInfo valueForKey:UIKeyboardIsLocalUserInfoKey];
     return isLocalKeyboard && !isLocalKeyboard.boolValue;

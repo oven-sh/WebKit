@@ -38,6 +38,9 @@
 #include <WebCore/AuthenticationChallenge.h>
 #include <WebCore/BlobPart.h>
 #include <WebCore/ByteArrayPixelBuffer.h>
+#include <WebCore/COEPInheritenceViolationReportBody.h>
+#include <WebCore/CORPViolationReportBody.h>
+#include <WebCore/CSPViolationReportBody.h>
 #include <WebCore/CacheQueryOptions.h>
 #include <WebCore/CacheStorageConnection.h>
 #include <WebCore/CompositionUnderline.h>
@@ -75,8 +78,9 @@
 #include <WebCore/RectEdges.h>
 #include <WebCore/Region.h>
 #include <WebCore/RegistrableDomain.h>
+#include <WebCore/Report.h>
+#include <WebCore/ReportBody.h>
 #include <WebCore/ResourceError.h>
-#include <WebCore/ResourceLoadStatistics.h>
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/ResourceResponse.h>
 #include <WebCore/ScriptBuffer.h>
@@ -92,9 +96,9 @@
 #include <WebCore/ShareData.h>
 #include <WebCore/SharedBuffer.h>
 #include <WebCore/SystemImage.h>
+#include <WebCore/TestReportBody.h>
 #include <WebCore/TextCheckerClient.h>
 #include <WebCore/TextIndicator.h>
-#include <WebCore/TimingFunction.h>
 #include <WebCore/TransformationMatrix.h>
 #include <WebCore/UserStyleSheet.h>
 #include <WebCore/VelocityData.h>
@@ -145,11 +149,7 @@ using namespace WebKit;
     template void ArgumentCoder<Type>::encode<Encoder>(Encoder&, const Type&); \
     template void ArgumentCoder<Type>::encode<StreamConnectionEncoder>(StreamConnectionEncoder&, const Type&);
 
-DEFINE_SIMPLE_ARGUMENT_CODER_FOR_SOURCE(AffineTransform)
 DEFINE_SIMPLE_ARGUMENT_CODER_FOR_SOURCE(FloatBoxExtent)
-DEFINE_SIMPLE_ARGUMENT_CODER_FOR_SOURCE(FloatPoint)
-DEFINE_SIMPLE_ARGUMENT_CODER_FOR_SOURCE(FloatPoint3D)
-DEFINE_SIMPLE_ARGUMENT_CODER_FOR_SOURCE(FloatRect)
 DEFINE_SIMPLE_ARGUMENT_CODER_FOR_SOURCE(FloatRoundedRect)
 DEFINE_SIMPLE_ARGUMENT_CODER_FOR_SOURCE(FloatSize)
 DEFINE_SIMPLE_ARGUMENT_CODER_FOR_SOURCE(IntPoint)
@@ -158,89 +158,10 @@ DEFINE_SIMPLE_ARGUMENT_CODER_FOR_SOURCE(IntSize)
 DEFINE_SIMPLE_ARGUMENT_CODER_FOR_SOURCE(LayoutPoint)
 DEFINE_SIMPLE_ARGUMENT_CODER_FOR_SOURCE(LayoutSize)
 
-#if USE(CG)
-DEFINE_SIMPLE_ARGUMENT_CODER_FOR_SOURCE(CGRect)
-DEFINE_SIMPLE_ARGUMENT_CODER_FOR_SOURCE(CGSize)
-DEFINE_SIMPLE_ARGUMENT_CODER_FOR_SOURCE(CGPoint)
-DEFINE_SIMPLE_ARGUMENT_CODER_FOR_SOURCE(CGAffineTransform)
-#endif
-
 DEFINE_SIMPLE_ARGUMENT_CODER_FOR_SOURCE(DisplayList::SetInlineFillColor)
 DEFINE_SIMPLE_ARGUMENT_CODER_FOR_SOURCE(DisplayList::SetInlineStrokeColor)
 
 #undef DEFINE_SIMPLE_ARGUMENT_CODER_FOR_SOURCE
-
-void ArgumentCoder<CacheQueryOptions>::encode(Encoder& encoder, const CacheQueryOptions& options)
-{
-    encoder << options.ignoreSearch;
-    encoder << options.ignoreMethod;
-    encoder << options.ignoreVary;
-    encoder << options.cacheName;
-}
-
-bool ArgumentCoder<CacheQueryOptions>::decode(Decoder& decoder, CacheQueryOptions& options)
-{
-    bool ignoreSearch;
-    if (!decoder.decode(ignoreSearch))
-        return false;
-    bool ignoreMethod;
-    if (!decoder.decode(ignoreMethod))
-        return false;
-    bool ignoreVary;
-    if (!decoder.decode(ignoreVary))
-        return false;
-    String cacheName;
-    if (!decoder.decode(cacheName))
-        return false;
-
-    options.ignoreSearch = ignoreSearch;
-    options.ignoreMethod = ignoreMethod;
-    options.ignoreVary = ignoreVary;
-    options.cacheName = WTFMove(cacheName);
-    return true;
-}
-
-void ArgumentCoder<CharacterRange>::encode(Encoder& encoder, const CharacterRange& range)
-{
-    encoder << static_cast<uint64_t>(range.location);
-    encoder << static_cast<uint64_t>(range.length);
-}
-
-std::optional<CharacterRange> ArgumentCoder<CharacterRange>::decode(Decoder& decoder)
-{
-    std::optional<uint64_t> location;
-    decoder >> location;
-    if (!location)
-        return std::nullopt;
-
-    std::optional<uint64_t> length;
-    decoder >> length;
-    if (!length)
-        return std::nullopt;
-
-    return { { *location, *length } };
-}
-
-void ArgumentCoder<DOMCacheEngine::CacheInfo>::encode(Encoder& encoder, const DOMCacheEngine::CacheInfo& info)
-{
-    encoder << info.identifier;
-    encoder << info.name;
-}
-
-auto ArgumentCoder<DOMCacheEngine::CacheInfo>::decode(Decoder& decoder) -> std::optional<DOMCacheEngine::CacheInfo>
-{
-    std::optional<uint64_t> identifier;
-    decoder >> identifier;
-    if (!identifier)
-        return std::nullopt;
-    
-    std::optional<String> name;
-    decoder >> name;
-    if (!name)
-        return std::nullopt;
-    
-    return {{ WTFMove(*identifier), WTFMove(*name) }};
-}
 
 void ArgumentCoder<DOMCacheEngine::Record>::encode(Encoder& encoder, const DOMCacheEngine::Record& record)
 {
@@ -353,202 +274,6 @@ bool ArgumentCoder<EventTrackingRegions>::decode(Decoder& decoder, EventTracking
     return true;
 }
 
-template<typename Encoder>
-void ArgumentCoder<TransformationMatrix>::encode(Encoder& encoder, const TransformationMatrix& transformationMatrix)
-{
-    encoder << transformationMatrix.m11();
-    encoder << transformationMatrix.m12();
-    encoder << transformationMatrix.m13();
-    encoder << transformationMatrix.m14();
-
-    encoder << transformationMatrix.m21();
-    encoder << transformationMatrix.m22();
-    encoder << transformationMatrix.m23();
-    encoder << transformationMatrix.m24();
-
-    encoder << transformationMatrix.m31();
-    encoder << transformationMatrix.m32();
-    encoder << transformationMatrix.m33();
-    encoder << transformationMatrix.m34();
-
-    encoder << transformationMatrix.m41();
-    encoder << transformationMatrix.m42();
-    encoder << transformationMatrix.m43();
-    encoder << transformationMatrix.m44();
-}
-
-bool ArgumentCoder<TransformationMatrix>::decode(Decoder& decoder, TransformationMatrix& transformationMatrix)
-{
-    double m11;
-    if (!decoder.decode(m11))
-        return false;
-    double m12;
-    if (!decoder.decode(m12))
-        return false;
-    double m13;
-    if (!decoder.decode(m13))
-        return false;
-    double m14;
-    if (!decoder.decode(m14))
-        return false;
-
-    double m21;
-    if (!decoder.decode(m21))
-        return false;
-    double m22;
-    if (!decoder.decode(m22))
-        return false;
-    double m23;
-    if (!decoder.decode(m23))
-        return false;
-    double m24;
-    if (!decoder.decode(m24))
-        return false;
-
-    double m31;
-    if (!decoder.decode(m31))
-        return false;
-    double m32;
-    if (!decoder.decode(m32))
-        return false;
-    double m33;
-    if (!decoder.decode(m33))
-        return false;
-    double m34;
-    if (!decoder.decode(m34))
-        return false;
-
-    double m41;
-    if (!decoder.decode(m41))
-        return false;
-    double m42;
-    if (!decoder.decode(m42))
-        return false;
-    double m43;
-    if (!decoder.decode(m43))
-        return false;
-    double m44;
-    if (!decoder.decode(m44))
-        return false;
-
-    transformationMatrix.setMatrix(m11, m12, m13, m14, m21, m22, m23, m24, m31, m32, m33, m34, m41, m42, m43, m44);
-    return true;
-}
-
-template void ArgumentCoder<TransformationMatrix>::encode<Encoder>(Encoder&, const TransformationMatrix&);
-template void ArgumentCoder<TransformationMatrix>::encode<StreamConnectionEncoder>(StreamConnectionEncoder&, const TransformationMatrix&);
-
-void ArgumentCoder<LinearTimingFunction>::encode(Encoder& encoder, const LinearTimingFunction& timingFunction)
-{
-    encoder << timingFunction.type();
-}
-
-bool ArgumentCoder<LinearTimingFunction>::decode(Decoder&, LinearTimingFunction&)
-{
-    // Type is decoded by the caller. Nothing else to decode.
-    return true;
-}
-
-void ArgumentCoder<CubicBezierTimingFunction>::encode(Encoder& encoder, const CubicBezierTimingFunction& timingFunction)
-{
-    encoder << timingFunction.type();
-    
-    encoder << timingFunction.x1();
-    encoder << timingFunction.y1();
-    encoder << timingFunction.x2();
-    encoder << timingFunction.y2();
-    
-    encoder << timingFunction.timingFunctionPreset();
-}
-
-bool ArgumentCoder<CubicBezierTimingFunction>::decode(Decoder& decoder, CubicBezierTimingFunction& timingFunction)
-{
-    // Type is decoded by the caller.
-    double x1;
-    if (!decoder.decode(x1))
-        return false;
-
-    double y1;
-    if (!decoder.decode(y1))
-        return false;
-
-    double x2;
-    if (!decoder.decode(x2))
-        return false;
-
-    double y2;
-    if (!decoder.decode(y2))
-        return false;
-
-    CubicBezierTimingFunction::TimingFunctionPreset preset;
-    if (!decoder.decode(preset))
-        return false;
-
-    timingFunction.setValues(x1, y1, x2, y2);
-    timingFunction.setTimingFunctionPreset(preset);
-
-    return true;
-}
-
-void ArgumentCoder<StepsTimingFunction>::encode(Encoder& encoder, const StepsTimingFunction& timingFunction)
-{
-    encoder << timingFunction.type();
-    
-    encoder << timingFunction.numberOfSteps();
-    encoder << timingFunction.stepPosition();
-}
-
-bool ArgumentCoder<StepsTimingFunction>::decode(Decoder& decoder, StepsTimingFunction& timingFunction)
-{
-    // Type is decoded by the caller.
-    int numSteps;
-    if (!decoder.decode(numSteps))
-        return false;
-
-    std::optional<StepsTimingFunction::StepPosition> stepPosition;
-    if (!decoder.decode(stepPosition))
-        return false;
-
-    timingFunction.setNumberOfSteps(numSteps);
-    timingFunction.setStepPosition(stepPosition);
-
-    return true;
-}
-
-void ArgumentCoder<SpringTimingFunction>::encode(Encoder& encoder, const SpringTimingFunction& timingFunction)
-{
-    encoder << timingFunction.type();
-    
-    encoder << timingFunction.mass();
-    encoder << timingFunction.stiffness();
-    encoder << timingFunction.damping();
-    encoder << timingFunction.initialVelocity();
-}
-
-bool ArgumentCoder<SpringTimingFunction>::decode(Decoder& decoder, SpringTimingFunction& timingFunction)
-{
-    // Type is decoded by the caller.
-    double mass;
-    if (!decoder.decode(mass))
-        return false;
-
-    double stiffness;
-    if (!decoder.decode(stiffness))
-        return false;
-
-    double damping;
-    if (!decoder.decode(damping))
-        return false;
-
-    double initialVelocity;
-    if (!decoder.decode(initialVelocity))
-        return false;
-
-    timingFunction.setValues(mass, stiffness, damping, initialVelocity);
-
-    return true;
-}
-
 void ArgumentCoder<RectEdges<bool>>::encode(Encoder& encoder, const RectEdges<bool>& boxEdges)
 {
     SimpleArgumentCoder<RectEdges<bool>>::encode(encoder, boxEdges);
@@ -579,16 +304,6 @@ std::optional<ViewportArguments> ArgumentCoder<ViewportArguments>::decode(Decode
 }
 
 #endif // ENABLE(META_VIEWPORT)
-
-void ArgumentCoder<ViewportAttributes>::encode(Encoder& encoder, const ViewportAttributes& viewportAttributes)
-{
-    SimpleArgumentCoder<ViewportAttributes>::encode(encoder, viewportAttributes);
-}
-
-bool ArgumentCoder<ViewportAttributes>::decode(Decoder& decoder, ViewportAttributes& viewportAttributes)
-{
-    return SimpleArgumentCoder<ViewportAttributes>::decode(decoder, viewportAttributes);
-}
 
 void ArgumentCoder<RecentSearch>::encode(Encoder& encoder, const RecentSearch& recentSearch)
 {
@@ -739,46 +454,6 @@ std::optional<MimeClassInfo> ArgumentCoder<MimeClassInfo>::decode(Decoder& decod
         return std::nullopt;
 
     return mimeClassInfo;
-}
-
-
-void ArgumentCoder<PluginInfo>::encode(Encoder& encoder, const PluginInfo& pluginInfo)
-{
-    encoder << pluginInfo.name;
-    encoder << pluginInfo.file;
-    encoder << pluginInfo.desc;
-    encoder << pluginInfo.mimes;
-    encoder << pluginInfo.isApplicationPlugin;
-    encoder << pluginInfo.clientLoadPolicy;
-    encoder << pluginInfo.bundleIdentifier;
-#if PLATFORM(MAC)
-    encoder << pluginInfo.versionString;
-#endif
-}
-
-std::optional<WebCore::PluginInfo> ArgumentCoder<PluginInfo>::decode(Decoder& decoder)
-{
-    PluginInfo pluginInfo;
-    if (!decoder.decode(pluginInfo.name))
-        return std::nullopt;
-    if (!decoder.decode(pluginInfo.file))
-        return std::nullopt;
-    if (!decoder.decode(pluginInfo.desc))
-        return std::nullopt;
-    if (!decoder.decode(pluginInfo.mimes))
-        return std::nullopt;
-    if (!decoder.decode(pluginInfo.isApplicationPlugin))
-        return std::nullopt;
-    if (!decoder.decode(pluginInfo.clientLoadPolicy))
-        return std::nullopt;
-    if (!decoder.decode(pluginInfo.bundleIdentifier))
-        return std::nullopt;
-#if PLATFORM(MAC)
-    if (!decoder.decode(pluginInfo.versionString))
-        return std::nullopt;
-#endif
-
-    return pluginInfo;
 }
 
 void ArgumentCoder<AuthenticationChallenge>::encode(Encoder& encoder, const AuthenticationChallenge& challenge)
@@ -1490,38 +1165,6 @@ bool ArgumentCoder<PasteboardCustomData>::decode(Decoder& decoder, PasteboardCus
     return true;
 }
 
-void ArgumentCoder<PasteboardURL>::encode(Encoder& encoder, const PasteboardURL& content)
-{
-    encoder << content.url;
-    encoder << content.title;
-#if PLATFORM(MAC)
-    encoder << content.userVisibleForm;
-#endif
-#if PLATFORM(GTK)
-    encoder << content.markup;
-#endif
-}
-
-bool ArgumentCoder<PasteboardURL>::decode(Decoder& decoder, PasteboardURL& content)
-{
-    if (!decoder.decode(content.url))
-        return false;
-
-    if (!decoder.decode(content.title))
-        return false;
-
-#if PLATFORM(MAC)
-    if (!decoder.decode(content.userVisibleForm))
-        return false;
-#endif
-#if PLATFORM(GTK)
-    if (!decoder.decode(content.markup))
-        return false;
-#endif
-
-    return true;
-}
-
 #if PLATFORM(IOS_FAMILY)
 
 void ArgumentCoder<InspectorOverlay::Highlight>::encode(Encoder& encoder, const InspectorOverlay::Highlight& highlight)
@@ -1716,58 +1359,7 @@ bool ArgumentCoder<FileChooserSettings>::decode(Decoder& decoder, FileChooserSet
 
     return true;
 }
-
-void ArgumentCoder<RawFile>::encode(Encoder& encoder, const RawFile& file)
-{
-    encoder << file.fileName;
-    encoder << file.fileData;
-}
-
-bool ArgumentCoder<RawFile>::decode(Decoder& decoder, RawFile& file)
-{
-    if (!decoder.decode(file.fileName))
-        return false;
-    if (!decoder.decode(file.fileData))
-        return false;
-    return true;
-}
     
-void ArgumentCoder<ShareData>::encode(Encoder& encoder, const ShareData& settings)
-{
-    encoder << settings.title;
-    encoder << settings.text;
-    encoder << settings.url;
-}
-
-bool ArgumentCoder<ShareData>::decode(Decoder& decoder, ShareData& settings)
-{
-    if (!decoder.decode(settings.title))
-        return false;
-    if (!decoder.decode(settings.text))
-        return false;
-    if (!decoder.decode(settings.url))
-        return false;
-    return true;
-}
-    
-void ArgumentCoder<ShareDataWithParsedURL>::encode(Encoder& encoder, const ShareDataWithParsedURL& settings)
-{
-    encoder << settings.shareData;
-    encoder << settings.url;
-    encoder << settings.files;
-}
-
-bool ArgumentCoder<ShareDataWithParsedURL>::decode(Decoder& decoder, ShareDataWithParsedURL& settings)
-{
-    if (!decoder.decode(settings.shareData))
-        return false;
-    if (!decoder.decode(settings.url))
-        return false;
-    if (!decoder.decode(settings.files))
-        return false;
-    return true;
-}
-
 void ArgumentCoder<GrammarDetail>::encode(Encoder& encoder, const GrammarDetail& detail)
 {
     encoder << detail.range;
@@ -2466,161 +2058,6 @@ bool ArgumentCoder<ExceptionDetails>::decode(IPC::Decoder& decoder, ExceptionDet
     return true;
 }
 
-void ArgumentCoder<ResourceLoadStatistics>::encode(Encoder& encoder, const WebCore::ResourceLoadStatistics& statistics)
-{
-    encoder << statistics.registrableDomain;
-    
-    encoder << statistics.lastSeen.secondsSinceEpoch().value();
-    
-    // User interaction
-    encoder << statistics.hadUserInteraction;
-    encoder << statistics.mostRecentUserInteractionTime.secondsSinceEpoch().value();
-    encoder << statistics.grandfathered;
-
-    // Storage access
-    encoder << statistics.storageAccessUnderTopFrameDomains;
-
-    // Top frame stats
-    encoder << statistics.topFrameUniqueRedirectsTo;
-    encoder << statistics.topFrameUniqueRedirectsFrom;
-    encoder << statistics.topFrameLoadedThirdPartyScripts;
-
-    // Subframe stats
-    encoder << statistics.subframeUnderTopFrameDomains;
-    
-    // Subresource stats
-    encoder << statistics.subresourceUnderTopFrameDomains;
-    encoder << statistics.subresourceUniqueRedirectsTo;
-    encoder << statistics.subresourceUniqueRedirectsFrom;
-
-    // Prevalent Resource
-    encoder << statistics.isPrevalentResource;
-    encoder << statistics.isVeryPrevalentResource;
-    encoder << statistics.dataRecordsRemoved;
-
-#if ENABLE(WEB_API_STATISTICS)
-    encoder << statistics.fontsFailedToLoad;
-    encoder << statistics.fontsSuccessfullyLoaded;
-    encoder << statistics.topFrameRegistrableDomainsWhichAccessedWebAPIs;
-    
-    encoder << statistics.canvasActivityRecord;
-    
-    encoder << statistics.navigatorFunctionsAccessed;
-    encoder << statistics.screenFunctionsAccessed;
-#endif
-}
-
-std::optional<ResourceLoadStatistics> ArgumentCoder<ResourceLoadStatistics>::decode(Decoder& decoder)
-{
-    ResourceLoadStatistics statistics;
-    std::optional<RegistrableDomain> registrableDomain;
-    decoder >> registrableDomain;
-    if (!registrableDomain)
-        return std::nullopt;
-    statistics.registrableDomain = WTFMove(*registrableDomain);
-
-    double lastSeenTimeAsDouble;
-    if (!decoder.decode(lastSeenTimeAsDouble))
-        return std::nullopt;
-    statistics.lastSeen = WallTime::fromRawSeconds(lastSeenTimeAsDouble);
-    
-    // User interaction
-    if (!decoder.decode(statistics.hadUserInteraction))
-        return std::nullopt;
-
-    double mostRecentUserInteractionTimeAsDouble;
-    if (!decoder.decode(mostRecentUserInteractionTimeAsDouble))
-        return std::nullopt;
-    statistics.mostRecentUserInteractionTime = WallTime::fromRawSeconds(mostRecentUserInteractionTimeAsDouble);
-
-    if (!decoder.decode(statistics.grandfathered))
-        return std::nullopt;
-
-    // Storage access
-    std::optional<HashSet<RegistrableDomain>> storageAccessUnderTopFrameDomains;
-    decoder >> storageAccessUnderTopFrameDomains;
-    if (!storageAccessUnderTopFrameDomains)
-        return std::nullopt;
-    statistics.storageAccessUnderTopFrameDomains = WTFMove(*storageAccessUnderTopFrameDomains);
-
-    // Top frame stats
-    std::optional<HashSet<RegistrableDomain>> topFrameUniqueRedirectsTo;
-    decoder >> topFrameUniqueRedirectsTo;
-    if (!topFrameUniqueRedirectsTo)
-        return std::nullopt;
-    statistics.topFrameUniqueRedirectsTo = WTFMove(*topFrameUniqueRedirectsTo);
-
-    std::optional<HashSet<RegistrableDomain>> topFrameUniqueRedirectsFrom;
-    decoder >> topFrameUniqueRedirectsFrom;
-    if (!topFrameUniqueRedirectsFrom)
-        return std::nullopt;
-    statistics.topFrameUniqueRedirectsFrom = WTFMove(*topFrameUniqueRedirectsFrom);
-
-    std::optional<HashSet<RegistrableDomain>> topFrameLoadedThirdPartyScripts;
-    decoder >> topFrameLoadedThirdPartyScripts;
-    if (!topFrameLoadedThirdPartyScripts)
-        return std::nullopt;
-    statistics.topFrameLoadedThirdPartyScripts = WTFMove(*topFrameLoadedThirdPartyScripts);
-
-    // Subframe stats
-    std::optional<HashSet<RegistrableDomain>> subframeUnderTopFrameDomains;
-    decoder >> subframeUnderTopFrameDomains;
-    if (!subframeUnderTopFrameDomains)
-        return std::nullopt;
-    statistics.subframeUnderTopFrameDomains = WTFMove(*subframeUnderTopFrameDomains);
-
-    // Subresource stats
-    std::optional<HashSet<RegistrableDomain>> subresourceUnderTopFrameDomains;
-    decoder >> subresourceUnderTopFrameDomains;
-    if (!subresourceUnderTopFrameDomains)
-        return std::nullopt;
-    statistics.subresourceUnderTopFrameDomains = WTFMove(*subresourceUnderTopFrameDomains);
-
-    std::optional<HashSet<RegistrableDomain>> subresourceUniqueRedirectsTo;
-    decoder >> subresourceUniqueRedirectsTo;
-    if (!subresourceUniqueRedirectsTo)
-        return std::nullopt;
-    statistics.subresourceUniqueRedirectsTo = WTFMove(*subresourceUniqueRedirectsTo);
-
-    std::optional<HashSet<RegistrableDomain>> subresourceUniqueRedirectsFrom;
-    decoder >> subresourceUniqueRedirectsFrom;
-    if (!subresourceUniqueRedirectsFrom)
-        return std::nullopt;
-    statistics.subresourceUniqueRedirectsFrom = WTFMove(*subresourceUniqueRedirectsFrom);
-
-    // Prevalent Resource
-    if (!decoder.decode(statistics.isPrevalentResource))
-        return std::nullopt;
-
-    if (!decoder.decode(statistics.isVeryPrevalentResource))
-        return std::nullopt;
-    
-    if (!decoder.decode(statistics.dataRecordsRemoved))
-        return std::nullopt;
-    
-#if ENABLE(WEB_API_STATISTICS)
-    if (!decoder.decode(statistics.fontsFailedToLoad))
-        return std::nullopt;
-    
-    if (!decoder.decode(statistics.fontsSuccessfullyLoaded))
-        return std::nullopt;
-    
-    if (!decoder.decode(statistics.topFrameRegistrableDomainsWhichAccessedWebAPIs))
-        return std::nullopt;
-    
-    if (!decoder.decode(statistics.canvasActivityRecord))
-        return std::nullopt;
-    
-    if (!decoder.decode(statistics.navigatorFunctionsAccessed))
-        return std::nullopt;
-    
-    if (!decoder.decode(statistics.screenFunctionsAccessed))
-        return std::nullopt;
-#endif
-
-    return statistics;
-}
-
 #if ENABLE(MEDIA_STREAM)
 void ArgumentCoder<MediaConstraints>::encode(Encoder& encoder, const WebCore::MediaConstraints& constraint)
 {
@@ -3123,35 +2560,6 @@ std::optional<WebCore::CDMInstanceSession::Message>  ArgumentCoder<WebCore::CDMI
 }
 #endif // ENABLE(ENCRYPTED_MEDIA)
 
-#if ENABLE(GPU_PROCESS) && ENABLE(WEBGL)
-
-template<typename Encoder>
-void ArgumentCoder<WebCore::GraphicsContextGL::ActiveInfo>::encode(Encoder& encoder, const WebCore::GraphicsContextGL::ActiveInfo& activeInfo)
-{
-    encoder << activeInfo.name;
-    encoder << activeInfo.type;
-    encoder << activeInfo.size;
-}
-
-template
-void ArgumentCoder<WebCore::GraphicsContextGL::ActiveInfo>::encode<Encoder>(Encoder&, const WebCore::GraphicsContextGL::ActiveInfo&);
-template
-void ArgumentCoder<WebCore::GraphicsContextGL::ActiveInfo>::encode<StreamConnectionEncoder>(StreamConnectionEncoder&, const WebCore::GraphicsContextGL::ActiveInfo&);
-
-std::optional<WebCore::GraphicsContextGL::ActiveInfo> ArgumentCoder<WebCore::GraphicsContextGL::ActiveInfo>::decode(Decoder& decoder)
-{
-    WebCore::GraphicsContextGL::ActiveInfo activeInfo;
-    if (!decoder.decode(activeInfo.name))
-        return std::nullopt;
-    if (!decoder.decode(activeInfo.type))
-        return std::nullopt;
-    if (!decoder.decode(activeInfo.size))
-        return std::nullopt;
-    return activeInfo;
-}
-
-#endif
-
 #if ENABLE(IMAGE_ANALYSIS) && ENABLE(DATA_DETECTION)
 
 void ArgumentCoder<TextRecognitionDataDetector>::encode(Encoder& encoder, const TextRecognitionDataDetector& info)
@@ -3219,5 +2627,80 @@ void ArgumentCoder<PixelBuffer>::encode<Encoder>(Encoder&, const PixelBuffer&);
 
 template
 void ArgumentCoder<PixelBuffer>::encode<StreamConnectionEncoder>(StreamConnectionEncoder&, const PixelBuffer&);
+
+void ArgumentCoder<Ref<WebCore::Report>>::encode(Encoder& encoder, const Ref<WebCore::Report>& report)
+{
+    report->encode(encoder);
+}
+
+std::optional<Ref<WebCore::Report>> ArgumentCoder<Ref<WebCore::Report>>::decode(Decoder& decoder)
+{
+    return WebCore::Report::decode(decoder);
+}
+
+void ArgumentCoder<RefPtr<WebCore::ReportBody>>::encode(Encoder& encoder, const RefPtr<WebCore::ReportBody>& reportBody)
+{
+    bool hasReportBody = !!reportBody;
+    encoder << hasReportBody;
+    if (!hasReportBody)
+        return;
+
+    encoder << reportBody->reportBodyType();
+
+    switch (reportBody->reportBodyType()) {
+    case ViolationReportType::ContentSecurityPolicy:
+        downcast<CSPViolationReportBody>(reportBody.get())->encode(encoder);
+        return;
+    case ViolationReportType::COEPInheritenceViolation:
+        downcast<COEPInheritenceViolationReportBody>(reportBody.get())->encode(encoder);
+        return;
+    case ViolationReportType::CORPViolation:
+        downcast<CORPViolationReportBody>(reportBody.get())->encode(encoder);
+        return;
+    case ViolationReportType::Test:
+        downcast<TestReportBody>(reportBody.get())->encode(encoder);
+        return;
+    case ViolationReportType::CrossOriginOpenerPolicy:
+    case ViolationReportType::StandardReportingAPIViolation:
+        ASSERT_NOT_REACHED();
+        return;
+    }
+
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+std::optional<RefPtr<WebCore::ReportBody>> ArgumentCoder<RefPtr<WebCore::ReportBody>>::decode(Decoder& decoder)
+{
+    bool hasReportBody = false;
+    if (!decoder.decode(hasReportBody))
+        return std::nullopt;
+
+    RefPtr<WebCore::ReportBody> result;
+    if (!hasReportBody)
+        return { result };
+
+    std::optional<ViolationReportType> reportBodyType;
+    decoder >> reportBodyType;
+    if (!reportBodyType)
+        return std::nullopt;
+
+    switch (*reportBodyType) {
+    case ViolationReportType::ContentSecurityPolicy:
+        return CSPViolationReportBody::decode(decoder);
+    case ViolationReportType::COEPInheritenceViolation:
+        return COEPInheritenceViolationReportBody::decode(decoder);
+    case ViolationReportType::CORPViolation:
+        return CORPViolationReportBody::decode(decoder);
+    case ViolationReportType::Test:
+        return TestReportBody::decode(decoder);
+    case ViolationReportType::CrossOriginOpenerPolicy:
+    case ViolationReportType::StandardReportingAPIViolation:
+        ASSERT_NOT_REACHED();
+        return std::nullopt;
+    }
+
+    ASSERT_NOT_REACHED();
+    return std::nullopt;
+}
 
 } // namespace IPC

@@ -120,25 +120,25 @@ static PlatformCAAnimation::ValueFunctionType fromCACFValueFunctionType(CFString
     return PlatformCAAnimation::NoValueFunction;
 }
 
-static RetainPtr<CACFTimingFunctionRef> toCACFTimingFunction(const TimingFunction* timingFunction, bool reverse)
+static RetainPtr<CACFTimingFunctionRef> toCACFTimingFunction(const TimingFunction& timingFunction, bool reverse)
 {
-    ASSERT(timingFunction);
-    if (timingFunction->isCubicBezierTimingFunction()) {
+    if (is<CubicBezierTimingFunction>(timingFunction)) {
         RefPtr<CubicBezierTimingFunction> reversed;
-        const CubicBezierTimingFunction* ctf = static_cast<const CubicBezierTimingFunction*>(timingFunction);
+        std::reference_wrapper<const CubicBezierTimingFunction> function = downcast<CubicBezierTimingFunction>(timingFunction);
 
         if (reverse) {
-            reversed = ctf->createReversed();
-            ctf = reversed.get();
+            reversed = function.get().createReversed();
+            function = *reversed;
         }
 
-        float x1 = static_cast<float>(ctf->x1());
-        float y1 = static_cast<float>(ctf->y1());
-        float x2 = static_cast<float>(ctf->x2());
-        float y2 = static_cast<float>(ctf->y2());
+        float x1 = static_cast<float>(function.get().x1());
+        float y1 = static_cast<float>(function.get().y1());
+        float x2 = static_cast<float>(function.get().x2());
+        float y2 = static_cast<float>(function.get().y2());
         return adoptCF(CACFTimingFunctionCreate(x1, y1, x2, y2));
     }
-    
+
+    ASSERT(timingFunction.type() == TimingFunction::TimingFunctionType::LinearFunction);
     return CACFTimingFunctionGetFunctionWithName(kCACFTimingFunctionLinear);
 }
 
@@ -293,10 +293,10 @@ void PlatformCAAnimationWin::setFillMode(FillModeType value)
     CACFAnimationSetFillMode(m_animation.get(), toCACFFillModeType(value));
 }
 
-void PlatformCAAnimationWin::setTimingFunction(const TimingFunction* value, bool reverse)
+void PlatformCAAnimationWin::setTimingFunction(const TimingFunction* timingFunction, bool reverse)
 {
-    UNUSED_PARAM(reverse);
-    CACFAnimationSetTimingFunction(m_animation.get(), toCACFTimingFunction(value, reverse).get());
+    ASSERT(timingFunction);
+    CACFAnimationSetTimingFunction(m_animation.get(), toCACFTimingFunction(*timingFunction, reverse).get());
 }
 
 void PlatformCAAnimationWin::copyTimingFunctionFrom(const PlatformCAAnimation& value)
@@ -537,17 +537,14 @@ void PlatformCAAnimationWin::copyKeyTimesFrom(const PlatformCAAnimation& value)
     CACFAnimationSetKeyTimes(m_animation.get(), CACFAnimationGetKeyTimes(downcast<PlatformCAAnimationWin>(value).platformAnimation()));
 }
 
-void PlatformCAAnimationWin::setTimingFunctions(const Vector<const TimingFunction*>& value, bool reverse)
+void PlatformCAAnimationWin::setTimingFunctions(const Vector<Ref<const TimingFunction>>& timingFunctions, bool reverse)
 {
-    UNUSED_PARAM(reverse);
     if (animationType() != Keyframe)
         return;
 
-    RetainPtr<CFMutableArrayRef> array = adoptCF(CFArrayCreateMutable(0, value.size(), &kCFTypeArrayCallBacks));
-    for (size_t i = 0; i < value.size(); ++i) {
-        RetainPtr<CFNumberRef> v = adoptCF(CFNumberCreate(0, kCFNumberFloatType, &value[i]));
-        CFArrayAppendValue(array.get(), toCACFTimingFunction(value[i], reverse).get());
-    }
+    RetainPtr<CFMutableArrayRef> array = adoptCF(CFArrayCreateMutable(0, timingFunctions.size(), &kCFTypeArrayCallBacks));
+    for (auto& timingFunction : timingFunctions)
+        CFArrayAppendValue(array.get(), toCACFTimingFunction(timingFunction.get(), reverse).get());
 
     CACFAnimationSetTimingFunctions(m_animation.get(), array.get());
 }

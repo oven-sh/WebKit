@@ -104,8 +104,8 @@ void WebInspectorUI::updateConnection()
     if (!connectionIdentifiers)
         return;
 
-    m_backendConnection = IPC::Connection::createServerConnection(connectionIdentifiers->server, *this);
-    m_backendConnection->open();
+    m_backendConnection = IPC::Connection::createServerConnection(connectionIdentifiers->server);
+    m_backendConnection->open(*this);
 
     WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::SetFrontendConnection(connectionIdentifiers->client), m_inspectedPageIdentifier);
 }
@@ -323,6 +323,11 @@ void WebInspectorUI::inspectedURLChanged(const String& urlString)
 void WebInspectorUI::showCertificate(const CertificateInfo& certificateInfo)
 {
     WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::ShowCertificate(certificateInfo), m_inspectedPageIdentifier);
+}
+
+void WebInspectorUI::setInspectorPageDeveloperExtrasEnabled(bool enabled)
+{
+    WebProcess::singleton().parentProcessConnection()->send(Messages::WebInspectorUIProxy::SetInspectorPageDeveloperExtrasEnabled(enabled), m_inspectedPageIdentifier);
 }
 
 #if ENABLE(INSPECTOR_TELEMETRY)

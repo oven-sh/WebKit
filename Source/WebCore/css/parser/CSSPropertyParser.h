@@ -75,6 +75,7 @@ private:
     bool parseFontFaceDescriptor(CSSPropertyID);
     bool parseFontPaletteValuesDescriptor(CSSPropertyID);
     bool parseCounterStyleDescriptor(CSSPropertyID, const CSSParserContext&);
+    bool parseKeyframeDescriptor(CSSPropertyID, bool important);
 
     void addProperty(CSSPropertyID, CSSPropertyID, Ref<CSSValue>&&, bool important, bool implicit = false);
     void addPropertyWithImplicitDefault(CSSPropertyID, CSSPropertyID, RefPtr<CSSValue>&&, Ref<CSSValue>&& implicitDefault, bool important);
@@ -123,6 +124,7 @@ private:
     bool consumePerspectiveOrigin(bool important);
     bool consumePrefixedPerspective(bool important);
     bool consumeOffset(bool important);
+    bool consumeListStyleShorthand(bool important);
 
     bool consumeOverscrollBehaviorShorthand(bool important);
 

@@ -515,6 +515,17 @@ AccessibilityObject* AccessibilityRenderObject::parentObject() const
             return parent;
     }
 
+#if USE(ATSPI)
+    // Expose markers that are not direct children of a list item too.
+    if (m_renderer->isListMarker()) {
+        if (auto* listItem = ancestorsOfType<RenderListItem>(*m_renderer).first()) {
+            AccessibilityObject* parent = axObjectCache()->getOrCreate(listItem);
+            if (downcast<AccessibilityRenderObject>(*parent).markerRenderer() == m_renderer)
+                return parent;
+        }
+    }
+#endif
+
     AXObjectCache* cache = axObjectCache();
     if (!cache)
         return nullptr;
@@ -527,22 +538,6 @@ AccessibilityObject* AccessibilityRenderObject::parentObject() const
         return cache->getOrCreate(&m_renderer->view().frameView());
     
     return nullptr;
-}
-
-AccessibilityObject* AccessibilityRenderObject::parentObjectUnignored() const
-{
-#if USE(ATSPI)
-    // Expose markers that are not direct children of a list item too.
-    if (m_renderer && m_renderer->isListMarker()) {
-        if (auto* listItem = ancestorsOfType<RenderListItem>(*m_renderer).first()) {
-            AccessibilityObject* parent = axObjectCache()->getOrCreate(listItem);
-            if (downcast<AccessibilityRenderObject>(*parent).markerRenderer() == m_renderer)
-                return parent;
-        }
-    }
-#endif
-
-    return AccessibilityObject::parentObjectUnignored();
 }
 
 bool AccessibilityRenderObject::isAttachment() const
@@ -779,9 +774,11 @@ String AccessibilityRenderObject::stringValue() const
         int selectedIndex = selectElement.selectedIndex();
         const auto& listItems = selectElement.listItems();
         if (selectedIndex >= 0 && static_cast<size_t>(selectedIndex) < listItems.size()) {
-            const AtomString& overriddenDescription = listItems[selectedIndex]->attributeWithoutSynchronization(aria_labelAttr);
-            if (!overriddenDescription.isNull())
-                return overriddenDescription;
+            if (RefPtr selectedItem = listItems[selectedIndex].get()) {
+                const AtomString& overriddenDescription = selectedItem->attributeWithoutSynchronization(aria_labelAttr);
+                if (!overriddenDescription.isNull())
+                    return overriddenDescription;
+            }
         }
         return renderMenuList->text();
     }
@@ -980,7 +977,7 @@ IntPoint AccessibilityRenderObject::linkClickPoint()
      */
     if (auto range = elementRange()) {
         auto start = VisiblePosition { makeContainerOffsetPosition(range->start) };
-        auto end = nextVisiblePosition(start);
+        auto end = start.next();
         if (contains<ComposedTree>(*range, makeBoundaryPoint(end)))
             return { boundsForRange(*makeSimpleRange(start, end)).center() };
     }
@@ -1728,10 +1725,8 @@ void AccessibilityRenderObject::setSelectedTextRange(const PlainTextRange& range
 URL AccessibilityRenderObject::url() const
 {
     auto* node = this->node();
-    if (isLink() && is<HTMLAnchorElement>(node)) {
-        if (HTMLAnchorElement* anchor = downcast<HTMLAnchorElement>(anchorElement()))
-            return anchor->href();
-    }
+    if (isLink() && is<HTMLAnchorElement>(node))
+        return downcast<HTMLAnchorElement>(node)->href();
 
     if (m_renderer && isWebArea())
         return m_renderer->document().url();
@@ -2427,21 +2422,6 @@ int AccessibilityRenderObject::index(const VisiblePosition& position) const
     return -1;
 }
 
-void AccessibilityRenderObject::lineBreaks(Vector<int>& lineBreaks) const
-{
-    if (!isTextControl())
-        return;
-
-    VisiblePosition visiblePos = visiblePositionForIndex(0);
-    VisiblePosition savedVisiblePos = visiblePos;
-    visiblePos = nextLinePosition(visiblePos, 0);
-    while (!visiblePos.isNull() && visiblePos != savedVisiblePos) {
-        lineBreaks.append(indexForVisiblePosition(visiblePos));
-        savedVisiblePos = visiblePos;
-        visiblePos = nextLinePosition(visiblePos, 0);
-    }
-}
-
 static bool isHardLineBreak(const VisiblePosition& position)
 {
     if (!isEndOfLine(position))
@@ -2953,14 +2933,6 @@ void AccessibilityRenderObject::addImageMapChildren()
     }
 }
 
-void AccessibilityRenderObject::updateChildrenIfNecessary()
-{
-    if (needsToUpdateChildren())
-        clearChildren();
-    
-    AccessibilityObject::updateChildrenIfNecessary();
-}
-    
 void AccessibilityRenderObject::addTextFieldChildren()
 {
     Node* node = this->node();
@@ -3024,10 +2996,7 @@ AccessibilitySVGRoot* AccessibilityRenderObject::remoteSVGRootElement(CreationCh
     AccessibilityObject* rootSVGObject = createIfNecessary == Create ? cache->getOrCreate(rendererRoot) : cache->get(rendererRoot);
 
     ASSERT(!createIfNecessary || rootSVGObject);
-    if (!is<AccessibilitySVGRoot>(rootSVGObject))
-        return nullptr;
-
-    return downcast<AccessibilitySVGRoot>(rootSVGObject);
+    return dynamicDowncast<AccessibilitySVGRoot>(rootSVGObject);
 }
     
 void AccessibilityRenderObject::addRemoteSVGChildren()

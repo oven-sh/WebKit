@@ -165,7 +165,7 @@ ALWAYS_INLINE bool JSObject::getNonIndexPropertySlot(JSGlobalObject* globalObjec
                 return false;
             if (object->type() == ProxyObjectType && slot.internalMethodType() == PropertySlot::InternalMethodType::HasProperty)
                 return false;
-            if (isTypedArrayType(object->type()) && isCanonicalNumericIndexString(propertyName))
+            if (isTypedArrayType(object->type()) && isCanonicalNumericIndexString(propertyName.uid()))
                 return false;
         }
         JSValue prototype;
@@ -485,21 +485,6 @@ inline bool JSObject::canGetIndexQuicklyForTypedArray(unsigned i) const
     default:
         return false;
     }
-}
-
-inline bool JSObject::canDoFastIndexedAccess()
-{
-    if (LIKELY(isJSArray(this)))
-        return asArray(this)->canDoFastIndexedAccess();
-
-    Structure* structure = this->structure();
-    if (structure->typeInfo().interceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero())
-        return false;
-
-    if (structure->holesMustForwardToPrototype(this))
-        return false;
-
-    return true;
 }
 
 inline JSValue JSObject::getIndexQuicklyForTypedArray(unsigned i, ArrayProfile* arrayProfile) const

@@ -26,6 +26,7 @@
 
 #if ENABLE(VIDEO) && USE(GSTREAMER)
 
+#include "AbortableTaskQueue.h"
 #include "GStreamerCommon.h"
 #include "GStreamerEMEUtilities.h"
 #include "ImageOrientation.h"
@@ -246,6 +247,10 @@ public:
     const void* mediaPlayerLogIdentifier() { return logIdentifier(); }
     const Logger& mediaPlayerLogger() { return logger(); }
 #endif
+
+    // This AbortableTaskQueue must be aborted everytime a flush is sent downstream from the main thread
+    // to avoid deadlocks from threads in the playback pipeline waiting for the main thread.
+    AbortableTaskQueue& sinkTaskQueue() { return m_sinkTaskQueue; }
 
 protected:
     enum MainThreadNotification {
@@ -599,6 +604,8 @@ private:
 #endif
 
     GRefPtr<GstStreamCollection> m_streamCollection;
+
+    AbortableTaskQueue m_sinkTaskQueue;
 };
 
 }

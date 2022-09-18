@@ -36,6 +36,7 @@
 #include <WebCore/ContentRuleListResults.h>
 #include <WebCore/ContentSecurityPolicy.h>
 #include <WebCore/CrossOriginAccessControl.h>
+#include <WebCore/CrossOriginEmbedderPolicy.h>
 #include <WebCore/CrossOriginPreflightResultCache.h>
 #include <WebCore/LegacySchemeRegistry.h>
 #include <wtf/Scope.h>
@@ -160,15 +161,29 @@ void NetworkLoadChecker::checkRedirection(ResourceRequest&& request, ResourceReq
     });
 }
 
+static URL contextURLforCORPViolation(NetworkResourceLoader& loader)
+{
+    auto& url = loader.isMainResource() ? loader.parameters().parentFrameURL : loader.parameters().frameURL;
+    return url.isValid() ? url : aboutBlankURL();
+}
+
 // https://fetch.spec.whatwg.org/#cross-origin-resource-policy-check
 static std::optional<ResourceError> performCORPCheck(const CrossOriginEmbedderPolicy& embedderCOEP, const SecurityOrigin& embedderOrigin, const URL& url, ResourceResponse& response, ForNavigation forNavigation, NetworkResourceLoader* loader)
 {
     if (auto error = validateCrossOriginResourcePolicy(CrossOriginEmbedderPolicyValue::UnsafeNone, embedderOrigin, url, response, forNavigation))
         return error;
 
+    if (embedderCOEP.reportOnlyValue == CrossOriginEmbedderPolicyValue::RequireCORP && loader) {
+        if (auto error = validateCrossOriginResourcePolicy(embedderCOEP.reportOnlyValue, embedderOrigin, url, response, forNavigation))
+            sendCOEPCORPViolation(*loader, contextURLforCORPViolation(*loader), embedderCOEP.reportOnlyReportingEndpoint, COEPDisposition::Reporting, loader->parameters().options.destination, loader->firstResponseURL());
+    }
+
     if (embedderCOEP.value == CrossOriginEmbedderPolicyValue::RequireCORP) {
-        if (auto error = validateCrossOriginResourcePolicy(embedderCOEP.value, embedderOrigin, url, response, forNavigation))
+        if (auto error = validateCrossOriginResourcePolicy(embedderCOEP.value, embedderOrigin, url, response, forNavigation)) {
+            if (loader)
+                sendCOEPCORPViolation(*loader, contextURLforCORPViolation(*loader), embedderCOEP.reportingEndpoint, COEPDisposition::Enforce, loader->parameters().options.destination, loader->firstResponseURL());
             return error;
+        }
     }
     return std::nullopt;
 }
@@ -370,10 +385,10 @@ void NetworkLoadChecker::checkCORSRedirectedRequest(ResourceRequest&& request, V
     m_isSameOriginRequest = false;
 
     if (!m_origin->canRequest(m_previousURL) && !protocolHostAndPortAreEqual(m_previousURL, request.url())) {
-        // Use a unique origin for subsequent loads if needed.
+        // Use an opaque origin for subsequent loads if needed.
         // https://fetch.spec.whatwg.org/#concept-http-redirect-fetch (Step 10).
-        if (!m_origin || !m_origin->isUnique())
-            m_origin = SecurityOrigin::createUnique();
+        if (!m_origin || !m_origin->isOpaque())
+            m_origin = SecurityOrigin::createOpaque();
     }
 
     // FIXME: We should set the request referrer according the referrer policy.
@@ -445,7 +460,7 @@ ContentSecurityPolicy* NetworkLoadChecker::contentSecurityPolicy()
 {
     if (!m_contentSecurityPolicy && m_cspResponseHeaders) {
         // FIXME: Pass the URL of the protected resource instead of its origin.
-        m_contentSecurityPolicy = makeUnique<ContentSecurityPolicy>(URL { m_origin->toRawString() });
+        m_contentSecurityPolicy = makeUnique<ContentSecurityPolicy>(URL { m_origin->toRawString() }, nullptr, m_networkResourceLoader.get());
         m_contentSecurityPolicy->didReceiveHeaders(*m_cspResponseHeaders, String { m_referrer }, ContentSecurityPolicy::ReportParsingErrors::No);
         if (!m_documentURL.isEmpty())
             m_contentSecurityPolicy->setDocumentURL(m_documentURL);

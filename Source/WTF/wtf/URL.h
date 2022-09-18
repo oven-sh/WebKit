@@ -78,6 +78,8 @@ public:
 
     WTF_EXPORT_PRIVATE String strippedForUseAsReferrer() const;
 
+    WTF_EXPORT_PRIVATE String strippedForUseAsReferrerWithExplicitPort() const;
+
     // Makes a deep copy. Helpful only if you need to use a URL on another
     // thread. Since the underlying StringImpl objects are immutable, there's
     // no other reason to ever prefer isolatedCopy() over plain old assignment.
@@ -209,6 +211,7 @@ public:
     template<typename Decoder> static std::optional<URL> decode(Decoder&);
 
     WTF_EXPORT_PRIVATE bool hasSpecialScheme() const;
+    WTF_EXPORT_PRIVATE bool hasLocalScheme() const;
 
 private:
     friend class URLParser;

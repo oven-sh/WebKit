@@ -40,24 +40,11 @@
 #include <wtf/MemoryPressureHandler.h>
 #endif
 
-namespace IPC {
-class Decoder;
-class Encoder;
-}
-
 namespace WebKit {
 
 struct WebsiteDataStoreParameters;
 
 struct NetworkProcessCreationParameters {
-    NetworkProcessCreationParameters();
-    NetworkProcessCreationParameters(NetworkProcessCreationParameters&&);
-    ~NetworkProcessCreationParameters();
-    NetworkProcessCreationParameters& operator=(NetworkProcessCreationParameters&&);
-
-    void encode(IPC::Encoder&) const;
-    static WARN_UNUSED_RETURN bool decode(IPC::Decoder&, NetworkProcessCreationParameters&);
-
     AuxiliaryProcessCreationParameters auxiliaryProcessParameters;
 
     CacheModel cacheModel { CacheModel::DocumentViewer };
@@ -89,6 +76,8 @@ struct NetworkProcessCreationParameters {
     bool ftpEnabled { false };
 
     Vector<WebsiteDataStoreParameters> websiteDataStoreParameters;
+
+    HashSet<String> localhostAliasesForTesting;
 };
 
 } // namespace WebKit

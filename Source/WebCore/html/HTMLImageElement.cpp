@@ -726,6 +726,7 @@ void HTMLImageElement::didMoveToNewDocument(Document& oldDocument, Document& new
 {
     oldDocument.removeDynamicMediaQueryDependentImage(*this);
 
+    selectImageSource(RelevantMutation::No);
     m_imageLoader->elementDidMoveToNewDocument(oldDocument);
     HTMLElement::didMoveToNewDocument(oldDocument, newDocument);
     if (RefPtr element = pictureElement())
@@ -764,6 +765,32 @@ bool HTMLImageElement::allowsOrientationOverride() const
 
     auto image = cachedImage->image();
     return !image || image->sourceURL().protocolIsData() || cachedImage->isCORSSameOrigin();
+}
+
+Image* HTMLImageElement::image() const
+{
+    if (auto* cachedImage = this->cachedImage())
+        return cachedImage->image();
+    return nullptr;
+}
+
+bool HTMLImageElement::allowsAnimation() const
+{
+    if (auto* image = this->image())
+        return image->allowsAnimation().value_or(document().page() ? document().page()->imageAnimationEnabled() : false);
+    return false;
+}
+
+void HTMLImageElement::setAllowsAnimation(bool allowsAnimation)
+{
+    if (auto* image = this->image())
+        return image->setAllowsAnimation(allowsAnimation);
+}
+
+void HTMLImageElement::resetAllowsAnimation()
+{
+    if (auto* image = this->image())
+        return image->setAllowsAnimation(std::nullopt);
 }
 
 #if ENABLE(ATTACHMENT_ELEMENT)

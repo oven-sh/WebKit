@@ -1538,7 +1538,7 @@ static void appendStringToResult(NSMutableString *result, NSString *string)
     if (value)
         return value;
 
-    Ref<AXCoreObject> backingObject = *self.axBackingObject;
+    Ref<AccessibilityObject> backingObject = *self.axBackingObject;
     if (backingObject->supportsCheckedState()) {
         switch (backingObject->checkboxOrRadioValue()) {
         case AccessibilityButtonState::Off:
@@ -2825,6 +2825,14 @@ static RenderObject* rendererForView(WAKView* view)
         parent = object->parentObjectUnignored();
     }
     return NO;
+}
+
+- (BOOL)accessibilityIsMarkAnnotation
+{
+    if (![self _prepareAccessibilityCall])
+        return NO;
+    
+    return ancestorWithRole(*self.axBackingObject, { AccessibilityRole::Mark }) != nullptr;
 }
 
 - (NSArray<NSString *> *)accessibilitySpeechHint

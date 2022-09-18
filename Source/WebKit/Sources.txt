@@ -97,7 +97,6 @@ NetworkProcess/NetworkLoad.cpp
 NetworkProcess/NetworkLoadChecker.cpp
 NetworkProcess/NetworkLoadScheduler.cpp
 NetworkProcess/NetworkProcess.cpp
-NetworkProcess/NetworkProcessCreationParameters.cpp
 NetworkProcess/NetworkProcessPlatformStrategies.cpp
 NetworkProcess/NetworkResourceLoadParameters.cpp
 NetworkProcess/NetworkResourceLoadMap.cpp
@@ -196,7 +195,6 @@ Shared/DebuggableInfoData.cpp
 Shared/EditingRange.cpp
 Shared/EditorState.cpp
 Shared/FontInfo.cpp
-Shared/FrameInfoData.cpp
 Shared/InspectorExtensionTypes.cpp
 Shared/IPCConnectionTester.cpp
 Shared/IPCStreamTester.cpp
@@ -258,7 +256,6 @@ Shared/WebTouchEvent.cpp
 Shared/WebUserContentControllerDataTypes.cpp
 Shared/WebWheelEventCoalescer.cpp
 Shared/WebWheelEvent.cpp
-Shared/WebsiteDataStoreParameters.cpp
 Shared/WebsitePoliciesData.cpp
 
 Shared/API/APIArray.cpp
@@ -266,7 +263,6 @@ Shared/API/APIData.cpp
 Shared/API/APIDictionary.cpp
 Shared/API/APIError.cpp
 Shared/API/APIFrameHandle.cpp
-Shared/API/APIGeometry.cpp
 Shared/API/APIObject.cpp
 Shared/API/APIPageHandle.cpp
 Shared/API/APIURLRequest.cpp
@@ -581,7 +577,6 @@ UIProcess/WebAuthentication/Mock/MockAuthenticatorManager.cpp
 UIProcess/WebAuthentication/Mock/MockHidConnection.cpp
 UIProcess/WebAuthentication/Mock/MockHidService.cpp
 
-UIProcess/WebAuthentication/AuthenticatorManager.cpp
 UIProcess/WebAuthentication/AuthenticatorTransportService.cpp
 UIProcess/WebAuthentication/Authenticator.cpp
 UIProcess/WebAuthentication/WebAuthenticatorCoordinatorProxy.cpp
@@ -876,9 +871,11 @@ RemoteShaderModuleMessageReceiver.cpp
 RemoteTextureMessageReceiver.cpp
 RemoteTextureViewMessageReceiver.cpp
 RemoteWebLockRegistryMessageReceiver.cpp
+SerializedTypeInfo.cpp
 ServiceWorkerDownloadTaskMessageReceiver.cpp
 WebBroadcastChannelRegistryMessageReceiver.cpp
 WebLockRegistryProxyMessageReceiver.cpp
+WebPermissionControllerMessageReceiver.cpp
 WebPermissionControllerProxyMessageReceiver.cpp
 WebSharedWorkerContextManagerConnectionMessageReceiver.cpp
 WebSharedWorkerObjectConnectionMessageReceiver.cpp

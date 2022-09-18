@@ -476,14 +476,10 @@ void PageClientImpl::requestTextRecognition(const URL& imageURL, const Shareable
 
 #endif // ENABLE(IMAGE_ANALYSIS)
 
-#if HAVE(PASTEBOARD_DATA_OWNER)
-
 WebCore::DataOwnerType PageClientImpl::dataOwnerForPasteboard(PasteboardAccessIntent intent) const
 {
     return [m_contentView _dataOwnerForPasteboard:intent];
 }
-
-#endif
 
 RefPtr<WebPopupMenuProxy> PageClientImpl::createPopupMenuProxy(WebPageProxy&)
 {
@@ -735,9 +731,9 @@ bool PageClientImpl::isFullScreen()
     return [m_webView fullScreenWindowController].isFullScreen;
 }
 
-void PageClientImpl::enterFullScreen()
+void PageClientImpl::enterFullScreen(FloatSize videoDimensions)
 {
-    [[m_webView fullScreenWindowController] enterFullScreen];
+    [[m_webView fullScreenWindowController] enterFullScreen:videoDimensions];
 }
 
 void PageClientImpl::exitFullScreen()

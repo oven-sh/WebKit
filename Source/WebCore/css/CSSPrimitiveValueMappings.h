@@ -2823,9 +2823,6 @@ template<> inline CSSPrimitiveValue::CSSPrimitiveValue(WhiteSpace e)
     case WhiteSpace::NoWrap:
         m_value.valueID = CSSValueNowrap;
         break;
-    case WhiteSpace::KHTMLNoWrap:
-        m_value.valueID = CSSValueWebkitNowrap;
-        break;
     case WhiteSpace::BreakSpaces:
         m_value.valueID = CSSValueBreakSpaces;
         break;
@@ -2837,8 +2834,6 @@ template<> inline CSSPrimitiveValue::operator WhiteSpace() const
     ASSERT(isValueID());
 
     switch (m_value.valueID) {
-    case CSSValueWebkitNowrap:
-        return WhiteSpace::KHTMLNoWrap;
     case CSSValueNowrap:
         return WhiteSpace::NoWrap;
     case CSSValuePre:
@@ -5646,6 +5641,8 @@ constexpr CSSValueID toCSSValueID(ContentVisibility contentVisibility)
     case ContentVisibility::Auto:
         return CSSValueAuto;
     }
+    ASSERT_NOT_REACHED();
+    return CSSValueVisible;
 }
 
 template<> inline CSSPrimitiveValue::CSSPrimitiveValue(ContentVisibility contentVisibility)

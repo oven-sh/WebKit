@@ -127,17 +127,24 @@ inline bool isI31ref(Type type)
     return isRefType(type) && type.index == static_cast<TypeIndex>(TypeKind::I31ref);
 }
 
+inline bool isArrayref(Type type)
+{
+    if (!Options::useWebAssemblyGC())
+        return false;
+    return isRefType(type) && type.index == static_cast<TypeIndex>(TypeKind::Arrayref);
+}
+
 inline Type funcrefType()
 {
     if (Options::useWebAssemblyTypedFunctionReferences())
-        return Wasm::Type { Wasm::TypeKind::RefNull, Wasm::Nullable::Yes, static_cast<Wasm::TypeIndex>(Wasm::TypeKind::Funcref) };
+        return Wasm::Type { Wasm::TypeKind::RefNull, static_cast<Wasm::TypeIndex>(Wasm::TypeKind::Funcref) };
     return Types::Funcref;
 }
 
 inline Type externrefType()
 {
     if (Options::useWebAssemblyTypedFunctionReferences())
-        return Wasm::Type { Wasm::TypeKind::RefNull, Wasm::Nullable::Yes, static_cast<Wasm::TypeIndex>(Wasm::TypeKind::Externref) };
+        return Wasm::Type { Wasm::TypeKind::RefNull, static_cast<Wasm::TypeIndex>(Wasm::TypeKind::Externref) };
     return Types::Externref;
 }
 
@@ -146,7 +153,7 @@ inline bool isRefWithTypeIndex(Type type)
     if (!Options::useWebAssemblyTypedFunctionReferences())
         return false;
 
-    return isRefType(type) && !isExternref(type) && !isFuncref(type) && !isI31ref(type);
+    return isRefType(type) && !isExternref(type) && !isFuncref(type) && !isI31ref(type) && !isArrayref(type);
 }
 
 inline bool isTypeIndexHeapType(int32_t heapType)
@@ -162,8 +169,13 @@ inline bool isSubtype(Type sub, Type parent)
     if (sub.isNullable() && !parent.isNullable())
         return false;
 
-    if ((sub.isRef() || sub.isRefNull()) && isFuncref(parent))
-        return true;
+    if (isRefWithTypeIndex(sub)) {
+        if (TypeInformation::get(sub.index).is<ArrayType>() && isArrayref(parent))
+            return true;
+
+        if (TypeInformation::get(sub.index).is<FunctionSignature>() && isFuncref(parent))
+            return true;
+    }
 
     if (sub.isRef() && parent.isRefNull() && sub.index == parent.index)
         return true;
@@ -178,6 +190,7 @@ inline bool isValidHeapTypeKind(TypeKind kind)
     case TypeKind::Externref:
         return true;
     case TypeKind::I31ref:
+    case TypeKind::Arrayref:
         return Options::useWebAssemblyGC();
     default:
         break;

@@ -141,6 +141,10 @@ WKRetainPtr<WKMutableDictionaryRef> TestInvocation::createTestSettingsDictionary
     setValue(beginTestMessageBody, "Timeout", static_cast<uint64_t>(m_timeout.milliseconds()));
     setValue(beginTestMessageBody, "DumpJSConsoleLogInStdErr", m_dumpJSConsoleLogInStdErr);
     setValue(beginTestMessageBody, "additionalSupportedImageTypes", options().additionalSupportedImageTypes().c_str());
+    auto allowedHostsValue = adoptWK(WKMutableArrayCreate());
+    for (auto& host : TestController::singleton().allowedHosts())
+        WKArrayAppendItem(allowedHostsValue.get(), toWK(host.c_str()).get());
+    setValue(beginTestMessageBody, "AllowedHosts", allowedHostsValue);
     return beginTestMessageBody;
 }
 
@@ -968,6 +972,11 @@ WKRetainPtr<WKTypeRef> TestInvocation::didReceiveSynchronousMessageFromInjectedB
         bool isCameraInterrupted = booleanValue(messageBodyDictionary, "camera");
         bool isMicrophoneInterrupted = booleanValue(messageBodyDictionary, "microphone");
         TestController::singleton().setMockCaptureDevicesInterrupted(isCameraInterrupted, isMicrophoneInterrupted);
+        return nullptr;
+    }
+    
+    if (WKStringIsEqualToUTF8CString(messageName, "TriggerMockMicrophoneConfigurationChange")) {
+        TestController::singleton().triggerMockMicrophoneConfigurationChange();
         return nullptr;
     }
 

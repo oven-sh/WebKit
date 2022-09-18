@@ -169,13 +169,22 @@ void WebFullScreenManager::enterFullScreenForElement(WebCore::Element* element)
 
     setElement(*element);
 
+    bool isVideoElement = false;
 #if PLATFORM(IOS_FAMILY) || (PLATFORM(MAC) && ENABLE(VIDEO_PRESENTATION_MODE))
-    if (auto* currentPlaybackControlsElement = m_page->playbackSessionManager().currentPlaybackControlsElement())
+    if (auto* currentPlaybackControlsElement = m_page->playbackSessionManager().currentPlaybackControlsElement()) {
         currentPlaybackControlsElement->prepareForVideoFullscreenStandby();
+        isVideoElement = currentPlaybackControlsElement->controls();
+    }
 #endif
 
     m_initialFrame = screenRectOfContents(m_element.get());
-    m_page->injectedBundleFullScreenClient().enterFullScreenForElement(m_page.get(), element, m_element->document().quirks().blocksReturnToFullscreenFromPictureInPictureQuirk());
+#if ENABLE(VIDEO)
+    updateMainVideoElement();
+    auto videoDimensions = m_mainVideoElement ? FloatSize(m_mainVideoElement->videoWidth(), m_mainVideoElement->videoHeight()) : FloatSize(m_initialFrame.width(), m_initialFrame.height());
+#else
+    FloatSize videoDimensions;
+#endif
+    m_page->injectedBundleFullScreenClient().enterFullScreenForElement(m_page.get(), element, m_element->document().quirks().blocksReturnToFullscreenFromPictureInPictureQuirk(), isVideoElement, videoDimensions);
 }
 
 void WebFullScreenManager::exitFullScreenForElement(WebCore::Element* element)
@@ -203,7 +212,6 @@ void WebFullScreenManager::willEnterFullScreen()
     m_page->hidePageBanners();
 #endif
     m_element->document().updateLayout();
-    m_page->forceRepaintWithoutCallback();
     m_finalFrame = screenRectOfContents(m_element.get());
     m_page->injectedBundleFullScreenClient().beganEnterFullScreen(m_page.get(), m_initialFrame, m_finalFrame);
 }

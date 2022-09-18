@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2017 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2008-2022 Apple Inc. All Rights Reserved.
  * Copyright (C) 2009, 2011 Google Inc. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -28,7 +28,6 @@
 #include "config.h"
 #include "WorkerGlobalScope.h"
 
-#include "BlobURL.h"
 #include "CSSFontSelector.h"
 #include "CSSValueList.h"
 #include "CSSValuePool.h"
@@ -42,8 +41,10 @@
 #include "ImageBitmapOptions.h"
 #include "InspectorInstrumentation.h"
 #include "JSDOMExceptionHandling.h"
+#include "NotImplemented.h"
 #include "Performance.h"
 #include "RTCDataChannelRemoteHandlerConnection.h"
+#include "ReportingScope.h"
 #include "ScheduledAction.h"
 #include "ScriptSourceCode.h"
 #include "SecurityOrigin.h"
@@ -52,6 +53,8 @@
 #include "ServiceWorkerClientData.h"
 #include "ServiceWorkerGlobalScope.h"
 #include "SocketProvider.h"
+#include "URLKeepingBlobAlive.h"
+#include "ViolationReportType.h"
 #include "WorkerCacheStorageConnection.h"
 #include "WorkerFileSystemStorageConnection.h"
 #include "WorkerFontLoadRequest.h"
@@ -93,7 +96,7 @@ static WorkQueue& sharedFileSystemStorageQueue()
 WTF_MAKE_ISO_ALLOCATED_IMPL(WorkerGlobalScope);
 
 WorkerGlobalScope::WorkerGlobalScope(WorkerThreadType type, const WorkerParameters& params, Ref<SecurityOrigin>&& origin, WorkerThread& thread, Ref<SecurityOrigin>&& topOrigin, IDBClient::IDBConnectionProxy* connectionProxy, SocketProvider* socketProvider)
-    : WorkerOrWorkletGlobalScope(type, params.sessionID, isMainThread() ? Ref { commonVM() } : JSC::VM::create(), &thread, params.clientIdentifier)
+    : WorkerOrWorkletGlobalScope(type, params.sessionID, isMainThread() ? Ref { commonVM() } : JSC::VM::create(), params.referrerPolicy, &thread, params.clientIdentifier)
     , m_url(params.scriptURL)
     , m_ownerURL(params.ownerURL)
     , m_inspectorIdentifier(params.inspectorIdentifier)
@@ -104,7 +107,7 @@ WorkerGlobalScope::WorkerGlobalScope(WorkerThreadType type, const WorkerParamete
     , m_connectionProxy(connectionProxy)
     , m_socketProvider(socketProvider)
     , m_performance(Performance::create(this, params.timeOrigin))
-    , m_referrerPolicy(params.referrerPolicy)
+    , m_reportingScope(ReportingScope::create(*this))
     , m_settingsValues(params.settingsValues)
     , m_workerType(params.workerType)
     , m_credentials(params.credentials)
@@ -128,8 +131,6 @@ WorkerGlobalScope::WorkerGlobalScope(WorkerThreadType type, const WorkerParamete
 WorkerGlobalScope::~WorkerGlobalScope()
 {
     ASSERT(thread().thread() == &Thread::current());
-    // We need to remove from the contexts map very early in the destructor so that calling postTask() on this WorkerGlobalScope from another thread is safe.
-    removeFromContextsMap();
 
     {
         Locker locker { allWorkerGlobalScopeIdentifiersLock };
@@ -367,15 +368,12 @@ ExceptionOr<void> WorkerGlobalScope::importScripts(const FixedVector<String>& ur
     if (m_workerType == WorkerType::Module)
         return Exception { TypeError, "importScripts cannot be used if worker type is \"module\""_s };
 
-    Vector<URL> completedURLs;
-    Vector<BlobURLHandle> protectedBlobURLs;
+    Vector<URLKeepingBlobAlive> completedURLs;
     completedURLs.reserveInitialCapacity(urls.size());
     for (auto& entry : urls) {
         URL url = completeURL(entry);
         if (!url.isValid())
             return Exception { SyntaxError };
-        if (url.protocolIsBlob())
-            protectedBlobURLs.append(BlobURLHandle { url });
         completedURLs.uncheckedAppend(WTFMove(url));
     }
 
@@ -404,6 +402,9 @@ ExceptionOr<void> WorkerGlobalScope::importScripts(const FixedVector<String>& ur
         if (auto exception = scriptLoader->loadSynchronously(this, url, WorkerScriptLoader::Source::ClassicWorkerImport, FetchOptions::Mode::NoCors, cachePolicy, cspEnforcement, resourceRequestIdentifier()))
             return WTFMove(*exception);
 
+        // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-classic-worker-imported-script (step 7).
+        bool mutedErrors = scriptLoader->responseTainting() == ResourceResponse::Tainting::Opaque || scriptLoader->responseTainting() == ResourceResponse::Tainting::Opaqueredirect;
+
         InspectorInstrumentation::scriptImported(*this, scriptLoader->identifier(), scriptLoader->script().toString());
 
         WeakPtr<ScriptBufferSourceProvider> sourceProvider;
@@ -413,6 +414,8 @@ ExceptionOr<void> WorkerGlobalScope::importScripts(const FixedVector<String>& ur
             sourceProvider = static_cast<ScriptBufferSourceProvider&>(sourceCode.provider());
             script()->evaluate(sourceCode, exception);
             if (exception) {
+                if (mutedErrors)
+                    return Exception { NetworkError, "Network response is CORS-cross-origin"_s };
                 script()->setException(exception);
                 return { };
             }
@@ -570,11 +573,6 @@ void WorkerGlobalScope::beginLoadingFontSoon(FontLoadRequest& request)
     downcast<WorkerFontLoadRequest>(request).load(*this);
 }
 
-ReferrerPolicy WorkerGlobalScope::referrerPolicy() const
-{
-    return m_referrerPolicy;
-}
-
 WorkerThread& WorkerGlobalScope::thread() const
 {
     return *static_cast<WorkerThread*>(workerOrWorkletThread());
@@ -682,5 +680,21 @@ void WorkerGlobalScope::updateServiceWorkerClientData()
     swClientConnection().registerServiceWorkerClient(clientOrigin(), ServiceWorkerClientData::from(*this), controllingServiceWorkerRegistrationIdentifier, String { m_userAgent });
 }
 #endif
+
+void WorkerGlobalScope::notifyReportObservers(Ref<Report>&& reports)
+{
+    reportingScope().notifyReportObservers(WTFMove(reports));
+}
+
+String WorkerGlobalScope::endpointURIForToken(const String& token) const
+{
+    return reportingScope().endpointURIForToken(token);
+}
+
+void WorkerGlobalScope::sendReportToEndpoints(const URL&, const Vector<String>& /*endpointURIs*/, const Vector<String>& /*endpointTokens*/, Ref<FormData>&&, ViolationReportType)
+{
+    notImplemented();
+}
+
 
 } // namespace WebCore

@@ -26,8 +26,6 @@
 #include "config.h"
 #include "LayoutIntegrationInlineContentPainter.h"
 
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
-
 #include "EllipsisBoxPainter.h"
 #include "InlineBoxPainter.h"
 #include "PaintInfo.h"
@@ -51,7 +49,7 @@ InlineContentPainter::InlineContentPainter(PaintInfo& paintInfo, const LayoutPoi
 
 void InlineContentPainter::paintEllipsis(size_t lineIndex)
 {
-    if (m_paintInfo.phase != PaintPhase::Foreground)
+    if (m_paintInfo.phase != PaintPhase::Foreground || root().style().visibility() != Visibility::Visible)
         return;
 
     auto lineBox = InlineIterator::LineBox { InlineIterator::LineBoxIteratorModernPath { m_inlineContent, lineIndex } };
@@ -69,8 +67,7 @@ void InlineContentPainter::paintDisplayBox(const InlineDisplay::Box& box)
         return m_damageRect.maxY() > rect.y() && m_damageRect.y() < rect.maxY();
     };
 
-    auto isVisuallyHidden = box.isVisuallyHidden() == InlineDisplay::Box::IsVisuallyHidden::Yes || box.style().visibility() != Visibility::Visible;
-    if (isVisuallyHidden || box.isLineBreak())
+    if (!box.isVisible() || box.isLineBreak())
         return;
 
     if (box.isInlineBox()) {
@@ -193,4 +190,3 @@ bool LayerPaintScope::includes(const InlineDisplay::Box& box)
 }
 }
 
-#endif

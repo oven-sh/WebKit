@@ -315,8 +315,6 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
             return WI.DebuggerManager.PauseReason.EventListener;
         case InspectorBackend.Enum.Debugger.PausedReason.Exception:
             return WI.DebuggerManager.PauseReason.Exception;
-        case InspectorBackend.Enum.Debugger.PausedReason.Fetch:
-            return WI.DebuggerManager.PauseReason.Fetch;
         case InspectorBackend.Enum.Debugger.PausedReason.FunctionCall:
             return WI.DebuggerManager.PauseReason.FunctionCall;
         case InspectorBackend.Enum.Debugger.PausedReason.Interval:
@@ -331,8 +329,10 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
             return WI.DebuggerManager.PauseReason.Timeout;
         case InspectorBackend.Enum.Debugger.PausedReason.Timer:
             return WI.DebuggerManager.PauseReason.Timer;
-        case InspectorBackend.Enum.Debugger.PausedReason.XHR:
-            return WI.DebuggerManager.PauseReason.XHR;
+        case InspectorBackend.Enum.Debugger.PausedReason.URL:
+        case InspectorBackend.Enum.Debugger.PausedReason.Fetch: // COMPATIBILITY (macOS 13.0, iOS 16.0): Debugger.paused.reason.Fetch was replaced by Debugger.paused.reason.URL
+        case InspectorBackend.Enum.Debugger.PausedReason.XHR: // COMPATIBILITY (macOS 13.0, iOS 16.0): Debugger.paused.reason.XHR was replaced by Debugger.paused.reason.URL
+            return WI.DebuggerManager.PauseReason.URL;
         default:
             return WI.DebuggerManager.PauseReason.Other;
         }
@@ -426,6 +426,14 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
         }
 
         return [];
+    }
+
+    breakpointsForSourceCodeLocation(sourceCodeLocation)
+    {
+        console.assert(sourceCodeLocation instanceof WI.SourceCodeLocation, sourceCodeLocation);
+
+        return this.breakpointsForSourceCode(sourceCodeLocation.sourceCode)
+            .filter((breakpoint) => breakpoint.hasResolvedLocation(sourceCodeLocation));
     }
 
     breakpointForSourceCodeLocation(sourceCodeLocation)
@@ -932,12 +940,12 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
 
         console.assert(breakpoint.identifier === breakpointIdentifier);
 
-        if (!breakpoint.sourceCodeLocation.sourceCode) {
-            let sourceCodeLocation = this._sourceCodeLocationFromPayload(target, location);
-            breakpoint.sourceCodeLocation.sourceCode = sourceCodeLocation.sourceCode;
-        }
+        let sourceCodeLocation = this._sourceCodeLocationFromPayload(target, location);
 
-        breakpoint.resolved = true;
+        if (!breakpoint.sourceCodeLocation.sourceCode)
+            breakpoint.sourceCodeLocation.sourceCode = sourceCodeLocation.sourceCode;
+
+        breakpoint.addResolvedLocation(sourceCodeLocation);
     }
 
     globalObjectCleared(target)
@@ -954,7 +962,8 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
         // Mark all the breakpoints as unresolved. They will be reported as resolved when
         // breakpointResolved is called as the page loads.
         for (let breakpoint of this._breakpoints) {
-            breakpoint.resolved = false;
+            breakpoint.clearResolvedLocations();
+
             if (breakpoint.sourceCodeLocation.sourceCode)
                 breakpoint.sourceCodeLocation.sourceCode = null;
         }
@@ -1224,7 +1233,7 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
         // If something goes wrong it will stay unresolved and show up as such in the user interface.
         // When setting for a new target, don't change the resolved target.
         if (!specificTarget)
-            breakpoint.resolved = false;
+            breakpoint.clearResolvedLocations();
 
         if (breakpoint.contentIdentifier) {
             let targets = specificTarget ? [specificTarget] : WI.targets;
@@ -1285,8 +1294,8 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
         console.assert(!breakpoint.disabled, breakpoint);
         console.assert(WI.SymbolicBreakpoint.supported(target), target);
 
-        if (!this._restoringBreakpoints && !WI.debuggerManager.breakpointsDisabledTemporarily)
-            WI.debuggerManager.breakpointsEnabled = true;
+        if (!this._restoringBreakpoints && !this.breakpointsDisabledTemporarily)
+            this.breakpointsEnabled = true;
 
         target.DebuggerAgent.addSymbolicBreakpoint.invoke({
             symbol: breakpoint.symbol,
@@ -1521,7 +1530,7 @@ WI.DebuggerManager = class DebuggerManager extends WI.Object
 
         this._handleSymbolicBreakpointEditablePropertyChanged(event);
 
-        WI.debuggerManager.updateProbesForBreakpoint(breakpoint);
+        this.updateProbesForBreakpoint(breakpoint);
     }
 
     _startDisablingBreakpointsTemporarily()
@@ -1706,14 +1715,13 @@ WI.DebuggerManager.PauseReason = {
     DebuggerStatement: "debugger-statement",
     DOM: "DOM",
     Exception: "exception",
-    Fetch: "fetch",
     FunctionCall: "function-call",
     Interval: "interval",
     Listener: "listener",
     Microtask: "microtask",
     PauseOnNextStatement: "pause-on-next-statement",
     Timeout: "timeout",
-    XHR: "xhr",
+    URL: "url",
     Other: "other",
 
     // COMPATIBILITY (iOS 13): DOMDebugger.EventBreakpointType.Timer was replaced by DOMDebugger.EventBreakpointType.Interval and DOMDebugger.EventBreakpointType.Timeout.

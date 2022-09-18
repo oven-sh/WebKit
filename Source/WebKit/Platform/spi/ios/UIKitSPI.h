@@ -108,6 +108,7 @@
 #import <UIKit/UIContextMenuInteraction_ForSpringBoardOnly.h>
 #import <UIKit/UIContextMenuInteraction_ForWebKitOnly.h>
 #import <UIKit/UIContextMenuInteraction_Private.h>
+#import <UIKit/UIMenu_Private.h>
 #endif
 
 #if HAVE(UIDATEPICKER_OVERLAY_PRESENTATION)
@@ -164,6 +165,13 @@
 #import <UIKit/NSItemProvider+UIKitAdditions.h>
 #endif
 
+typedef NS_ENUM(NSInteger, _UIDataOwner) {
+    _UIDataOwnerUndefined,
+    _UIDataOwnerUser,
+    _UIDataOwnerEnterprise,
+    _UIDataOwnerShared,
+};
+
 #if HAVE(LINK_PREVIEW)
 typedef NS_ENUM(NSInteger, UIPreviewItemType) {
     UIPreviewItemTypeNone,
@@ -172,13 +180,6 @@ typedef NS_ENUM(NSInteger, UIPreviewItemType) {
     UIPreviewItemTypeImage,
     UIPreviewItemTypeText,
     UIPreviewItemTypeAttachment,
-};
-
-typedef NS_ENUM(NSInteger, _UIDataOwner) {
-    _UIDataOwnerUndefined,
-    _UIDataOwnerUser,
-    _UIDataOwnerEnterprise,
-    _UIDataOwnerShared,
 };
 
 @class UIPreviewItemController;
@@ -347,6 +348,10 @@ typedef id<NSCoding, NSCopying> _UITextSearchDocumentIdentifier;
 
 - (void)clearAllDecoratedFoundText;
 
+@optional
+
+- (BOOL)supportsTextReplacement;
+
 @end
 
 @interface _UIFindInteraction : NSObject <UIInteraction>
@@ -507,10 +512,8 @@ typedef enum {
 - (void)_wheelChangedWithEvent:(UIEvent *)event;
 - (void)_beginPinningInputViews;
 - (void)_endPinningInputViews;
-#if HAVE(PASTEBOARD_DATA_OWNER)
 @property (nonatomic, setter=_setDataOwnerForCopy:) _UIDataOwner _dataOwnerForCopy;
 @property (nonatomic, setter=_setDataOwnerForPaste:) _UIDataOwner _dataOwnerForPaste;
-#endif
 @end
 
 @class FBSDisplayConfiguration;
@@ -1345,6 +1348,10 @@ typedef NS_ENUM(NSUInteger, _UIContextMenuLayout) {
 
 #if USE(UICONTEXTMENU)
 
+typedef NS_ENUM(NSUInteger, UIMenuOptionsPrivate) {
+    UIMenuOptionsPrivateRemoveLineLimitForChildren = 1 << 6,
+};
+
 @interface UIContextMenuInteraction ()
 @property (nonatomic, readonly) UIGestureRecognizer *gestureRecognizerForFailureRelationships;
 - (void)_presentMenuAtLocation:(CGPoint)location;
@@ -1412,6 +1419,16 @@ typedef NS_ENUM(NSUInteger, _UIContextMenuLayout) {
 #endif // HAVE(UIKIT_RESIZABLE_WINDOWS)
 
 #endif // USE(APPLE_INTERNAL_SDK)
+
+#if ENABLE(OVERLAY_REGIONS_IN_EVENT_REGION)
+typedef NS_ENUM(NSUInteger, _UIScrollDeviceCategory) {
+    _UIScrollDeviceCategoryOverlayScroll = 6
+};
+
+@interface UIScrollEvent ()
+- (_UIScrollDeviceCategory)_scrollDeviceCategory;
+@end
+#endif
 
 @interface UITextInteractionAssistant (IPI)
 @property (nonatomic, readonly) BOOL inGesture;
@@ -1537,6 +1554,10 @@ typedef NS_ENUM(NSUInteger, _UIContextMenuLayout) {
 @end
 #endif
 
+@interface UIPasteboard ()
++ (void)_performAsDataOwner:(_UIDataOwner)dataOwner block:(void(^ NS_NOESCAPE)(void))block;
+@end
+
 @interface UIResponder ()
 - (UIResponder *)firstResponder;
 - (void)pasteAndMatchStyle:(id)sender;
@@ -1661,6 +1682,7 @@ extern NSString * const NSTextSizeMultiplierDocumentOption;
 
 extern NSNotificationName const _UISceneWillBeginSystemSnapshotSequence;
 extern NSNotificationName const _UISceneDidCompleteSystemSnapshotSequence;
+extern NSNotificationName const _UIWindowSceneEnhancedWindowingModeChanged;
 
 extern CGRect UIRectInsetEdges(CGRect, UIRectEdge edges, CGFloat v);
 extern CGRect UIRectInset(CGRect, CGFloat top, CGFloat right, CGFloat bottom, CGFloat left);

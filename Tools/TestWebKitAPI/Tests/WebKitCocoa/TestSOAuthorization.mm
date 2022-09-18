@@ -495,7 +495,7 @@ TEST(SOAuthorizationRedirect, InterceptionCancel)
 
     [gDelegate authorizationDidCancel:gAuthorization];
     // FIXME: Find a delegate method that can detect load cancels.
-    Util::sleep(0.5);
+    Util::runFor(0.5_s);
     EXPECT_WK_STREQ("", webView.get()._committedURL.absoluteString);
 }
 
@@ -1283,7 +1283,7 @@ TEST(SOAuthorizationRedirect, InterceptionCancelWithUI)
 
     [gDelegate authorizationDidCancel:gAuthorization];
     // FIXME: Find a delegate method that can detect load cancels.
-    Util::sleep(0.5);
+    Util::runFor(0.5_s);
     EXPECT_WK_STREQ("", webView.get()._committedURL.absoluteString);
     EXPECT_FALSE(uiShowed);
 }
@@ -1644,7 +1644,7 @@ TEST(SOAuthorizationPopUp, NoInterceptionsSubFrame)
     [webView loadHTMLString:testHtml baseURL:baseURL.get()];
     Util::run(&navigationCompleted);
 
-    // The new window will not navigate to the testURL as the iframe has unique origin.
+    // The new window will not navigate to the testURL as the iframe has an opaque origin.
     [webView sendClicksAtPoint:NSMakePoint(200, 200) numberOfClicks:1];
     Util::run(&newWindowCreated);
     EXPECT_FALSE(policyForAppSSOPerformed);
@@ -2236,7 +2236,7 @@ TEST(SOAuthorizationSubFrame, NoInterceptionsNonAppleFirstPartyMainFrame)
 
     [webView loadHTMLString:testHtml baseURL:(NSURL *)URL { "http://www.webkit.org"_str }];
     // Try to wait until the iframe load is finished.
-    Util::sleep(0.5);
+    Util::runFor(0.5_s);
     // Make sure we don't intercept the iframe.
     EXPECT_FALSE(authorizationPerformed);
     EXPECT_FALSE(policyForAppSSOPerformed);
@@ -2481,7 +2481,7 @@ TEST(SOAuthorizationSubFrame, SOAuthorizationLoadPolicyIgnore)
 
     [webView loadHTMLString:testHtml baseURL:(NSURL *)URL { "http://www.apple.com"_str }];
     // Try to wait until the iframe load is finished.
-    Util::sleep(0.5);
+    Util::runFor(0.5_s);
     // Make sure we don't intercept the iframe.
     EXPECT_FALSE(authorizationPerformed);
 }
@@ -2534,7 +2534,7 @@ TEST(SOAuthorizationSubFrame, SOAuthorizationLoadPolicyIgnoreAsync)
 
     [webView loadHTMLString:testHtml baseURL:(NSURL *)URL("http://www.apple.com"_s)];
     // Try to wait until the iframe load is finished.
-    Util::sleep(0.5);
+    Util::runFor(0.5_s);
     // Make sure we don't intercept the iframe.
     EXPECT_FALSE(authorizationPerformed);
 }

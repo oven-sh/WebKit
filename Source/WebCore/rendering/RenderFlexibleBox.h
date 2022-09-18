@@ -78,7 +78,7 @@ public:
     void clearCachedChildIntrinsicContentLogicalHeight(const RenderBox& child);
 
     LayoutUnit staticMainAxisPositionForPositionedChild(const RenderBox&);
-    LayoutUnit staticCrossAxisPositionForPositionedChild(const RenderBox&) const;
+    LayoutUnit staticCrossAxisPositionForPositionedChild(const RenderBox&);
     
     LayoutUnit staticInlinePositionForPositionedChild(const RenderBox&);
     LayoutUnit staticBlockPositionForPositionedChild(const RenderBox&);
@@ -179,7 +179,7 @@ private:
     bool updateAutoMarginsInCrossAxis(RenderBox& child, LayoutUnit availableAlignmentSpace);
     void repositionLogicalHeightDependentFlexItems(Vector<LineContext>&, LayoutUnit gapBetweenLines);
     
-    LayoutUnit availableAlignmentSpaceForChild(const LayoutUnit lineCrossAxisExtent, const RenderBox& child) const;
+    LayoutUnit availableAlignmentSpaceForChild(LayoutUnit lineCrossAxisExtent, const RenderBox& child);
     LayoutUnit marginBoxAscentForChild(const RenderBox& child);
     
     LayoutUnit computeChildMarginValue(Length margin);
@@ -210,9 +210,7 @@ private:
 
     void resetHasDefiniteHeight() { m_hasDefiniteHeight = SizeDefiniteness::Unknown; }
 
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
     void layoutUsingFlexFormattingContext();
-#endif
 
     // This is used to cache the preferred size for orthogonal flow children so we
     // don't have to relayout to get it

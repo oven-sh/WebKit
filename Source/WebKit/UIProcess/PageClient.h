@@ -545,6 +545,7 @@ public:
 
     virtual void pinnedStateWillChange() { }
     virtual void pinnedStateDidChange() { }
+    virtual void drawPageBorderForPrinting(WebCore::FloatSize&& size) { }
     virtual bool scrollingUpdatesDisabledForTesting() { return false; }
 
     virtual bool hasSafeBrowsingWarning() const { return false; }
@@ -553,9 +554,7 @@ public:
 
     virtual void makeViewBlank(bool) { }
 
-#if HAVE(PASTEBOARD_DATA_OWNER)
     virtual WebCore::DataOwnerType dataOwnerForPasteboard(PasteboardAccessIntent) const { return WebCore::DataOwnerType::Undefined; }
-#endif
 
     virtual bool hasResizableWindows() const { return false; }
 

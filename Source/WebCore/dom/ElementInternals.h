@@ -43,13 +43,17 @@ public:
     Element* element() const { return m_element.get(); }
     ShadowRoot* shadowRoot() const;
 
+    // For ARIAMixin
+    const AtomString& attributeWithoutSynchronization(const QualifiedName&) const;
+    void setAttributeWithoutSynchronization(const QualifiedName&, const AtomString& value);
+
 private:
     ElementInternals(HTMLElement& element)
         : m_element(element)
     {
     }
 
-    WeakPtr<HTMLElement> m_element;
+    WeakPtr<HTMLElement, WeakPtrImplWithEventTargetData> m_element;
 };
 
 } // namespace WebCore

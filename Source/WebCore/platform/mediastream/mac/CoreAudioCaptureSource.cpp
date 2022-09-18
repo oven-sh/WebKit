@@ -328,10 +328,36 @@ void CoreAudioCaptureSource::delaySamples(Seconds seconds)
     unit().delaySamples(seconds);
 }
 
+#if PLATFORM(IOS_FAMILY)
+void CoreAudioCaptureSource::setIsInBackground(bool value)
+{
+    if (isProducingData())
+        CoreAudioSharedUnit::unit().setIsInBackground(value);
+}
+#endif
+
 void CoreAudioCaptureSource::audioUnitWillStart()
 {
     forEachObserver([](auto& observer) {
         observer.audioUnitWillStart();
+    });
+}
+
+void CoreAudioCaptureSource::handleNewCurrentMicrophoneDevice(const CaptureDevice& device)
+{
+    if (!isProducingData() || persistentID() == device.persistentId())
+        return;
+    
+    RELEASE_LOG_INFO(WebRTC, "CoreAudioCaptureSource switching from '%s' to '%s'", name().string().utf8().data(), device.label().utf8().data());
+    
+    setName(AtomString { device.label() });
+    setPersistentId(device.persistentId());
+    
+    m_currentSettings = { };
+    m_capabilities = { };
+
+    forEachObserver([](auto& observer) {
+        observer.sourceConfigurationChanged();
     });
 }
 

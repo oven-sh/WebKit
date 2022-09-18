@@ -58,6 +58,8 @@ http/tests/gzip-content-encoding [ Pass ]
 imported/w3c/web-platform-tests/speech-api/ [ Pass ]
 
 http/tests/media/fairplay [ Pass ]
+media/track/track-description-cue.html [ Pass ]
+media/track/track-extended-descriptions.html [ Pass ]
 
 #//////////////////////////////////////////////////////////////////////////////////////////
 # End platform-specific directories.
@@ -89,6 +91,9 @@ media/encrypted-media/
 
 # FIXME: <rdar://problem/6512037> LayoutTests: Enable printing tests once printing is supported on iOS
 printing
+
+# Tests that rely on custom domain names.
+imported/w3c/web-platform-tests/html/browsers/browsing-the-web/overlapping-navigations-and-traversals/tentative/nav-cancelation-2.sub.html [ Skip ]
 
 # Web Notifications are not supported on iOS.
 http/tests/notifications
@@ -215,7 +220,6 @@ platform/ios/ios/fast/forms/range-input-touches.html [ Skip ]
 platform/ios/ios/fast/text/data-detectors/phone-disabled.html [ Skip ]
 platform/ios/ios/fast/text/data-detectors/phone.html [ Skip ]
 platform/ios/ios/touch [ Skip ]
-platform/iphone-7/fast/events/touch [ Skip ]
 media/modern-media-controls/css/pointer-events-none.html [ Skip ]
 
 platform/ipad/fast/forms [ Skip ]
@@ -1574,8 +1578,6 @@ fast/events/tabindex-focus-blur-all.html [ Failure ]
 
 # Ref-test imported from W3C that is failing because type=image input elements have rounded corners on iOS.
 imported/w3c/web-platform-tests/html/semantics/forms/the-input-element/image01.html [ ImageOnlyFailure ]
-# Ref-test imported form W3C that is failing because the test is off by a couple of pixels on iOS.
-imported/w3c/web-platform-tests/html/semantics/embedded-content/the-img-element/image-loading-lazy-slow.html [ ImageOnlyFailure ]
 
 webkit.org/b/204505 imported/w3c/web-platform-tests/css/css-multicol/multicol-rule-fraction-003.xht [ ImageOnlyFailure ]
 webkit.org/b/204505 imported/w3c/web-platform-tests/css/css-multicol/multicol-rule-shorthand-2.xht [ ImageOnlyFailure ]
@@ -2131,6 +2133,8 @@ accessibility/aria-readonly-updates-after-dynamic-change.html [ Pass ]
 accessibility/aria-required-updates-after-dynamic-change.html [ Pass ]
 accessibility/aria-roles-unignored.html [ Pass ]
 accessibility/aria-slider-value.html [ Pass ]
+accessibility/ax-object-destroyed-on-reload.html [ Pass ]
+accessibility/display-contents-dynamically-added-children.html [ Pass ]
 accessibility/display-contents-element-roles.html [ Pass ]
 accessibility/display-contents-object-ordering.html [ Pass ]
 accessibility/dynamically-ignored-canvas.html [ Pass ]
@@ -2150,6 +2154,7 @@ accessibility/slider-with-lost-renderer.html [ Pass ]
 accessibility/spinbutton-increment-decrement.html [ Pass ]
 accessibility/text-under-display-contents-element.html [ Pass ]
 accessibility/text-updates-after-dynamic-change.html [ Pass ]
+accessibility/url-test.html [ Pass ]
 accessibility/video-element-url-attribute.html [ Pass ]
 accessibility/visible-character-range-basic.html [ Pass ]
 accessibility/visible-character-range-height-changes.html [ Pass ]
@@ -3378,6 +3383,7 @@ imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.s
 storage/indexeddb/structured-clone-image-data-display-p3.html [ Pass ]
 
 # Show 1px diff in the result. Maybe hitting the background bleed avoidance code path.
+webkit.org/b/229397 imported/w3c/web-platform-tests/css/css-writing-modes/abs-pos-non-replaced-vlr-095.xht [ ImageOnlyFailure ]
 webkit.org/b/229397 imported/w3c/web-platform-tests/css/css-writing-modes/abs-pos-non-replaced-vlr-109.xht [ ImageOnlyFailure ]
 webkit.org/b/229397 imported/w3c/web-platform-tests/css/css-writing-modes/abs-pos-non-replaced-vlr-125.xht [ ImageOnlyFailure ]
 webkit.org/b/229397 imported/w3c/web-platform-tests/css/css-writing-modes/abs-pos-non-replaced-vlr-141.xht [ ImageOnlyFailure ]
@@ -3395,6 +3401,7 @@ webkit.org/b/229397 imported/w3c/web-platform-tests/css/css-writing-modes/abs-po
 webkit.org/b/229397 imported/w3c/web-platform-tests/css/css-writing-modes/abs-pos-non-replaced-vrl-052.xht [ ImageOnlyFailure ]
 webkit.org/b/229397 imported/w3c/web-platform-tests/css/css-writing-modes/abs-pos-non-replaced-vrl-064.xht [ ImageOnlyFailure ]
 webkit.org/b/229397 imported/w3c/web-platform-tests/css/css-writing-modes/abs-pos-non-replaced-vrl-076.xht [ ImageOnlyFailure ]
+webkit.org/b/229397 imported/w3c/web-platform-tests/css/css-writing-modes/abs-pos-non-replaced-vrl-088.xht [ ImageOnlyFailure ]
 webkit.org/b/229397 imported/w3c/web-platform-tests/css/css-writing-modes/abs-pos-non-replaced-vrl-104.xht [ ImageOnlyFailure ]
 webkit.org/b/229397 imported/w3c/web-platform-tests/css/css-writing-modes/abs-pos-non-replaced-vrl-108.xht [ ImageOnlyFailure ]
 webkit.org/b/229397 imported/w3c/web-platform-tests/css/css-writing-modes/abs-pos-non-replaced-vrl-112.xht [ ImageOnlyFailure ]
@@ -3484,7 +3491,6 @@ webkit.org/b/159755 fast/text/emoji-num-glyphs.html [ Pass ]
 imported/w3c/web-platform-tests/css/css-pseudo/selection-background-painting-order.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-pseudo/selection-originating-decoration-color.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-pseudo/selection-originating-underline-order.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-pseudo/target-text-007.html [ Failure ]
 
 # These tests require platform support.
 # <rdar://problem/87944426>
@@ -3733,3 +3739,16 @@ webkit.org/b/244346 imported/w3c/web-platform-tests/html/cross-origin-opener-pol
 webkit.org/b/244358 imported/w3c/web-platform-tests/html/cross-origin-opener-policy/iframe-popup-same-origin-to-same-origin.https.html [ Pass Failure Timeout ]
 webkit.org/b/244358 imported/w3c/web-platform-tests/html/cross-origin-opener-policy/iframe-popup-same-origin-to-unsafe-none.https.html [ Pass Failure ]
 webkit.org/b/244358 imported/w3c/web-platform-tests/html/cross-origin-opener-policy/tentative/restrict-properties/iframe-popup.https.html [ Pass Failure Timeout ]
+
+webkit.org/b/244501 [ Debug ] webgl/2.0.y/conformance2/state/gl-object-get-calls.html [ Pass Timeout ]
+
+webkit.org/b/244549 imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/module/dynamic-import/blob-url-workers.window.html [ Pass Failure ]
+
+webkit.org/b/244619 editing/selection/ios/tap-to-set-selection-in-editable-web-view.html [ Pass Timeout ]
+
+webkit.org/b/244740 http/wpt/cross-origin-opener-policy/non-secure-to-secure-context-navigation.https.html [ Pass Failure ]
+
+# These tests have similar harness errors and timeouts. See webkit.org/b/244900
+[ Debug ] imported/w3c/web-platform-tests/dom/nodes/NodeList-static-length-getter-tampered-indexOf-1.html [ Pass Timeout Failure ]
+[ Debug ] imported/w3c/web-platform-tests/dom/nodes/NodeList-static-length-getter-tampered-indexOf-2.html [ Pass Timeout Failure ]
+[ Debug ] imported/w3c/web-platform-tests/dom/nodes/NodeList-static-length-getter-tampered-indexOf-3.html [ Pass Timeout Failure ]

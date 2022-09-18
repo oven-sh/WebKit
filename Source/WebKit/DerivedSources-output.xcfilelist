@@ -46,6 +46,8 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/GPUProcessMessagesReplies.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/GPUProcessProxyMessageReceiver.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/GPUProcessProxyMessages.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/GPUProcessProxyMessagesReplies.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/GeneratedSerializers.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/GeneratedSerializers.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/IPCConnectionTesterMessageReceiver.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/IPCConnectionTesterMessages.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/IPCConnectionTesterMessagesReplies.h
@@ -417,6 +419,7 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/SampleBufferDisplayLayerMessagesRepl
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/SecItemShimProxyMessageReceiver.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/SecItemShimProxyMessages.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/SecItemShimProxyMessagesReplies.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/SerializedTypeInfo.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/ServiceWorkerDownloadTaskMessageReceiver.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/ServiceWorkerDownloadTaskMessages.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/ServiceWorkerDownloadTaskMessagesReplies.h
@@ -572,6 +575,9 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebPaymentCoordinatorProxyAdditionsM
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebPaymentCoordinatorProxyMessageReceiver.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebPaymentCoordinatorProxyMessages.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebPaymentCoordinatorProxyMessagesReplies.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebPermissionControllerMessageReceiver.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebPermissionControllerMessages.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebPermissionControllerMessagesReplies.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebPermissionControllerProxyMessageReceiver.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebPermissionControllerProxyMessages.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebPermissionControllerProxyMessagesReplies.h

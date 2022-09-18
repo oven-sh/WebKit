@@ -35,6 +35,7 @@ namespace WebCore {
 
 class CachedImageClient;
 class CachedResourceLoader;
+class WeakPtrImplWithEventTargetData;
 class FloatSize;
 class MemoryCache;
 class RenderElement;
@@ -88,7 +89,7 @@ public:
 
     bool isOriginClean(SecurityOrigin*);
 
-    bool isClientWaitingForAsyncDecoding(CachedImageClient&) const;
+    bool isClientWaitingForAsyncDecoding(const CachedImageClient&) const;
     void addClientWaitingForAsyncDecoding(CachedImageClient&);
     void removeAllClientsWaitingForAsyncDecoding();
 
@@ -98,6 +99,7 @@ public:
     bool canSkipRevalidation(const CachedResourceLoader&, const CachedResourceRequest&) const;
 
     bool isVisibleInViewport(const Document&) const;
+    bool allowsAnimation(const Image&) const;
 
 private:
     void clear();
@@ -158,6 +160,8 @@ private:
         void changedInRect(const Image&, const IntRect*) final;
         void scheduleRenderingUpdate(const Image&) final;
 
+        bool allowsAnimation(const Image&) const final;
+
         HashSet<CachedImage*> m_cachedImages;
     };
 
@@ -190,7 +194,7 @@ private:
 
     MonotonicTime m_lastUpdateImageDataTime;
 
-    WeakPtr<Document> m_skippingRevalidationDocument;
+    WeakPtr<Document, WeakPtrImplWithEventTargetData> m_skippingRevalidationDocument;
 
     static constexpr unsigned maxUpdateImageDataCount = 4;
     unsigned m_updateImageDataCount : 3;

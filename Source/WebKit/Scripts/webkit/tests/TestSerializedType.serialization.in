@@ -1,0 +1,58 @@
+# test comment
+
+headers requiring ENABLE(TEST_FEATURE): "StructHeader.h" "FirstMemberType.h" "SecondMemberType.h"
+headers: "HeaderWithoutCondition"
+
+#if ENABLE(TEST_FEATURE)
+[AdditionalEncoder=OtherEncoder] struct Namespace::Subnamespace::StructName {
+    FirstMemberType firstMemberName
+    #if ENABLE(SECOND_MEMBER)
+    SecondMemberType secondMemberName;
+    #endif
+    [Nullable] RetainPtr<CFTypeRef> nullableTestMember;
+}
+#endif
+
+class Namespace::OtherClass {
+    [ReturnEarlyIfTrue] bool isNull
+    int a
+    bool b
+}
+
+[Return=Ref] class Namespace::ReturnRefClass {
+    double functionCall().member1
+    double functionCall().member2
+    std::unique_ptr<int> uniqueMember
+}
+
+[LegacyPopulateFrom=EmptyConstructor] struct Namespace::EmptyConstructorStruct {
+    int m_int;
+    double m_double;
+}
+
+[LegacyPopulateFrom=EmptyConstructor] class Namespace::EmptyConstructorNullable {
+    [ReturnEarlyIfTrue] bool m_isNull;
+#if CONDITION_AROUND_M_TYPE_AND_M_VALUE
+    MemberType m_type;
+    OtherMemberType m_value;
+#endif
+}
+
+class WithoutNamespace {
+    int a;
+}
+
+[AdditionalEncoder=OtherEncoder] class WithoutNamespaceWithAttributes {
+    int a;
+}
+
+enum class EnumNamespace::EnumType : uint16_t {
+    FirstValue,
+    SecondValue
+}
+
+[OptionSet] enum class EnumNamespace2::OptionSetEnumType : uint8_t {
+    OptionSetFirstValue,
+    OptionSetSecondValue,
+    OptionSetThirdValue
+}

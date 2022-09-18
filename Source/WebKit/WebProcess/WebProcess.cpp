@@ -354,7 +354,7 @@ WebProcess::WebProcess()
 #endif
 
     WebCore::WebLockRegistry::setSharedRegistry(RemoteWebLockRegistry::create(*this));
-    WebCore::PermissionController::setSharedController(WebPermissionController::create());
+    WebCore::PermissionController::setSharedController(WebPermissionController::create(*this));
 }
 
 WebProcess::~WebProcess()
@@ -566,7 +566,7 @@ void WebProcess::initializeWebProcess(WebProcessCreationParameters&& parameters)
 
     setAlwaysUsesComplexTextCodePath(parameters.shouldAlwaysUseComplexTextCodePath);
 
-    setShouldUseFontSmoothing(parameters.shouldUseFontSmoothing);
+    setShouldUseFontSmoothingForTesting(parameters.shouldUseFontSmoothingForTesting);
 
     setMemoryCacheDisabled(parameters.memoryCacheDisabled);
 
@@ -777,9 +777,9 @@ void WebProcess::setAlwaysUsesComplexTextCodePath(bool alwaysUseComplexText)
     WebCore::FontCascade::setCodePath(alwaysUseComplexText ? WebCore::FontCascade::CodePath::Complex : WebCore::FontCascade::CodePath::Auto);
 }
 
-void WebProcess::setShouldUseFontSmoothing(bool useFontSmoothing)
+void WebProcess::setShouldUseFontSmoothingForTesting(bool useFontSmoothing)
 {
-    WebCore::FontCascade::setShouldUseSmoothing(useFontSmoothing);
+    WebCore::FontCascade::setShouldUseSmoothingForTesting(useFontSmoothing);
 }
 
 void WebProcess::userPreferredLanguagesChanged(const Vector<String>& languages) const
@@ -1141,7 +1141,7 @@ NO_RETURN inline void failedToSendSyncMessage()
 static NetworkProcessConnectionInfo getNetworkProcessConnection(IPC::Connection& connection)
 {
     NetworkProcessConnectionInfo connectionInfo;
-    auto requestConnection = [&] {
+    auto requestConnection = [&]() -> bool {
         if (!connection.isValid()) {
             // Connection to UIProcess has been severed, exit cleanly.
             exit(0);
@@ -1150,7 +1150,7 @@ static NetworkProcessConnectionInfo getNetworkProcessConnection(IPC::Connection&
             RELEASE_LOG_ERROR(Process, "getNetworkProcessConnection: Failed to send or receive message");
             return false;
         }
-        return IPC::Connection::identifierIsValid(connectionInfo.identifier());
+        return !!connectionInfo.connection;
     };
 
     static constexpr unsigned maxFailedAttempts = 30;
@@ -1177,7 +1177,7 @@ NetworkProcessConnection& WebProcess::ensureNetworkProcessConnection()
     if (!m_networkProcessConnection) {
         auto connectionInfo = getNetworkProcessConnection(*parentProcessConnection());
 
-        m_networkProcessConnection = NetworkProcessConnection::create(connectionInfo.releaseIdentifier(), connectionInfo.cookieAcceptPolicy);
+        m_networkProcessConnection = NetworkProcessConnection::create(IPC::Connection::Identifier { WTFMove(connectionInfo.connection) }, connectionInfo.cookieAcceptPolicy);
 #if HAVE(AUDIT_TOKEN)
         m_networkProcessConnection->setNetworkProcessAuditToken(WTFMove(connectionInfo.auditToken));
 #endif
@@ -1858,7 +1858,7 @@ void WebProcess::clearCachedPage(BackForwardItemIdentifier backForwardItemID, Co
 LibWebRTCNetwork& WebProcess::libWebRTCNetwork()
 {
     if (!m_libWebRTCNetwork)
-        m_libWebRTCNetwork = LibWebRTCNetwork::create();
+        m_libWebRTCNetwork = LibWebRTCNetwork::create().moveToUniquePtr();
     return *m_libWebRTCNetwork;
 }
 

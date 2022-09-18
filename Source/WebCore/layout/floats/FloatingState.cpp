@@ -26,8 +26,6 @@
 #include "config.h"
 #include "FloatingState.h"
 
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
-
 #include "FormattingContext.h"
 #include "LayoutBox.h"
 #include "LayoutContainerBox.h"
@@ -55,11 +53,15 @@ FloatingState::FloatItem::FloatItem(Position position, BoxGeometry absoluteBoxGe
 FloatingState::FloatingState(LayoutState& layoutState, const ContainerBox& formattingContextRoot)
     : m_layoutState(layoutState)
     , m_formattingContextRoot(formattingContextRoot)
+    , m_isLeftToRightDirection(formattingContextRoot.style().isLeftToRightDirection())
 {
 }
 
 void FloatingState::append(FloatItem floatItem)
 {
+    auto isLeftPositioned = floatItem.isLeftPositioned();
+    m_positionTypes.add(isLeftPositioned ? PositionType::Left : PositionType::Right);
+
     if (m_floats.isEmpty())
         return m_floats.append(floatItem);
 
@@ -68,7 +70,6 @@ void FloatingState::append(FloatItem floatItem)
         return entry.floatBox() == floatItem.floatBox();
     }) == notFound);
 
-    auto isLeftPositioned = floatItem.isLeftPositioned();
     // When adding a new float item to the list, we have to ensure that it is definitely the left(right)-most item.
     // Normally it is, but negative horizontal margins can push the float box beyond another float box.
     // Float items in m_floats list should stay in horizontal position order (left/right edge) on the same vertical position.
@@ -87,9 +88,14 @@ void FloatingState::append(FloatItem floatItem)
             || (!isLeftPositioned && floatItem.rectWithMargin().left() <= floatItem.rectWithMargin().left()))
             return m_floats.insert(i + 1, floatItem);
     }
-    return m_floats.insert(0, floatItem);
+    m_floats.insert(0, floatItem);
+}
+
+void FloatingState::clear()
+{
+    m_floats.clear();
+    m_positionTypes = { };
 }
 
 }
 }
-#endif

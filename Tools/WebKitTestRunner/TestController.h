@@ -275,6 +275,8 @@ public:
     void updateBundleIdentifierInNetworkProcess(const std::string& bundleIdentifier);
     void clearBundleIdentifierInNetworkProcess();
 
+    const std::set<std::string>& allowedHosts() const { return m_allowedHosts; }
+
     WKArrayRef openPanelFileURLs() const { return m_openPanelFileURLs.get(); }
     void setOpenPanelFileURLs(WKArrayRef fileURLs) { m_openPanelFileURLs = fileURLs; }
 
@@ -316,6 +318,7 @@ public:
     void setMockCameraOrientation(uint64_t);
     bool isMockRealtimeMediaSourceCenterEnabled() const;
     void setMockCaptureDevicesInterrupted(bool isCameraInterrupted, bool isMicrophoneInterrupted);
+    void triggerMockMicrophoneConfigurationChange();
     bool hasAppBoundSession();
 
     void injectUserScript(WKStringRef);
@@ -576,6 +579,7 @@ private:
     bool m_enableAllExperimentalFeatures { true };
     std::vector<std::string> m_paths;
     std::set<std::string> m_allowedHosts;
+    std::set<std::string> m_localhostAliases;
     TestFeatures m_globalFeatures;
 
     WKRetainPtr<WKStringRef> m_injectedBundlePath;
@@ -583,6 +587,8 @@ private:
 
     WebNotificationProvider m_webNotificationProvider;
     HashSet<String> m_notificationOriginsToDenyOnPrompt;
+
+    HashSet<String> m_geolocationPermissionQueryOrigins;
 
     std::unique_ptr<PlatformWebView> m_mainWebView;
     Vector<UniqueRef<PlatformWebView>> m_auxiliaryWebViews;

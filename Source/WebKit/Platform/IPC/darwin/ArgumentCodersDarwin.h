@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "ArgumentCoder.h"
+#include <wtf/ArgumentCoder.h>
 
 #if HAVE(AUDIT_TOKEN)
 #include <mach/mach.h>
@@ -40,7 +40,7 @@ namespace IPC {
 template<> struct ArgumentCoder<WTF::MachSendRight> {
     static void encode(Encoder&, const WTF::MachSendRight&);
     static void encode(Encoder&, WTF::MachSendRight&&);
-    static WARN_UNUSED_RETURN bool decode(Decoder&, WTF::MachSendRight&);
+    static std::optional<WTF::MachSendRight> decode(Decoder&);
 };
 
 #if HAVE(AUDIT_TOKEN)

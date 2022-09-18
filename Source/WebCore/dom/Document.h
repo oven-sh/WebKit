@@ -49,12 +49,14 @@
 #include "ReferrerPolicy.h"
 #include "RegistrableDomain.h"
 #include "RenderPtr.h"
+#include "ReportingClient.h"
 #include "ScriptExecutionContext.h"
 #include "SecurityOrigin.h"
 #include "StringWithDirection.h"
 #include "Supplementable.h"
 #include "Timer.h"
 #include "TreeScope.h"
+#include "URLKeepingBlobAlive.h"
 #include "UserActionElementSet.h"
 #include "ViewportArguments.h"
 #include "VisibilityState.h"
@@ -202,6 +204,7 @@ class Range;
 class Region;
 class RenderTreeBuilder;
 class RenderView;
+class ReportingScope;
 class RequestAnimationFrameCallback;
 class ResizeObserver;
 class SVGDocumentExtensions;
@@ -268,6 +271,7 @@ enum class ShouldOpenExternalURLsPolicy : uint8_t;
 enum class RenderingUpdateStep : uint32_t;
 enum class StyleColorOptions : uint8_t;
 enum class MutationObserverOptionType : uint8_t;
+enum class ViolationReportType : uint8_t;
 
 using MediaProducerMediaStateFlags = OptionSet<MediaProducerMediaState>;
 using MediaProducerMutedStateFlags = OptionSet<MediaProducerMutedState>;
@@ -337,7 +341,7 @@ public:
     WEBCORE_EXPORT ~DocumentParserYieldToken();
 
 private:
-    WeakPtr<Document> m_document;
+    WeakPtr<Document, WeakPtrImplWithEventTargetData> m_document;
 };
 
 class Document
@@ -348,11 +352,13 @@ class Document
     , public FrameDestructionObserver
     , public Supplementable<Document>
     , public Logger::Observer
-    , public CanvasObserver {
+    , public CanvasObserver
+    , public ReportingClient {
     WTF_MAKE_ISO_ALLOCATED_EXPORT(Document, WEBCORE_EXPORT);
 public:
-    using WeakValueType = EventTarget::WeakValueType;
     using EventTarget::weakPtrFactory;
+    using EventTarget::WeakValueType;
+    using EventTarget::WeakPtrImplType;
 
     inline static Ref<Document> create(const Settings&, const URL&);
     static Ref<Document> createNonRenderedPlaceholder(Frame&, const URL&);
@@ -475,6 +481,8 @@ public:
 
     const AtomString& effectiveDocumentElementLanguage() const;
     void setDocumentElementLanguage(const AtomString&);
+    TextDirection documentElementTextDirection() const { return m_documentElementTextDirection; }
+    void setDocumentElementTextDirection(TextDirection textDirection) { m_documentElementTextDirection = textDirection; }
 
     String xmlEncoding() const { return m_xmlEncoding; }
     String xmlVersion() const { return m_xmlVersion; }
@@ -706,7 +714,7 @@ public:
 
     const URL& url() const final { return m_url; }
     void setURL(const URL&);
-    const URL& urlForBindings() const { return m_url.isEmpty() ? aboutBlankURL() : m_url; }
+    const URL& urlForBindings() const { return m_url.url().isEmpty() ? aboutBlankURL() : m_url.url(); }
 
     const URL& creationURL() const { return m_creationURL; }
 
@@ -1694,6 +1702,9 @@ public:
 
     std::optional<PAL::SessionID> sessionID() const final;
 
+    ReportingScope& reportingScope() const { return m_reportingScope.get(); }
+    WEBCORE_EXPORT String endpointURIForToken(const String&) const final;
+
 protected:
     enum ConstructionFlags { Synthesized = 1, NonRenderedPlaceholder = 1 << 1 };
     WEBCORE_EXPORT Document(Frame*, const Settings&, const URL&, DocumentClasses = { }, unsigned constructionFlags = 0, ScriptExecutionContextIdentifier = { });
@@ -1752,7 +1763,7 @@ private:
     void updateTitle(const StringWithDirection&);
     void updateBaseURL();
 
-    WeakPtr<HTMLMetaElement> determineActiveThemeColorMetaElement();
+    WeakPtr<HTMLMetaElement, WeakPtrImplWithEventTargetData> determineActiveThemeColorMetaElement();
     void themeColorChanged();
 
     void invalidateAccessKeyCacheSlowCase();
@@ -1821,12 +1832,16 @@ private:
 
     NotificationClient* notificationClient() final;
 
+    void notifyReportObservers(Ref<Report>&&) final;
+    void sendReportToEndpoints(const URL& baseURL, const Vector<String>& endpointURIs, const Vector<String>& endpointTokens, Ref<FormData>&& report, ViolationReportType) final;
+    String httpUserAgent() const final;
+
     const Ref<const Settings> m_settings;
 
     UniqueRef<Quirks> m_quirks;
 
     RefPtr<DOMWindow> m_domWindow;
-    WeakPtr<Document> m_contextDocument;
+    WeakPtr<Document, WeakPtrImplWithEventTargetData> m_contextDocument;
 
     Ref<CachedResourceLoader> m_cachedResourceLoader;
     RefPtr<DocumentParser> m_parser;
@@ -1834,7 +1849,7 @@ private:
     unsigned m_parserYieldTokenCount { 0 };
 
     // Document URLs.
-    URL m_url; // Document.URL: The URL from which this document was retrieved.
+    URLKeepingBlobAlive m_url; // Document.URL: The URL from which this document was retrieved.
     URL m_creationURL; // https://html.spec.whatwg.org/multipage/webappapis.html#concept-environment-creation-url.
     URL m_baseURL; // Node.baseURI: The URL to use when resolving relative URLs.
     URL m_baseURLOverride; // An alternative base URL that takes precedence over m_baseURL (but not m_baseElementURL).
@@ -1860,7 +1875,7 @@ private:
     std::unique_ptr<DOMImplementation> m_implementation;
 
     RefPtr<Node> m_focusNavigationStartingNode;
-    Deque<WeakPtr<Element>> m_autofocusCandidates;
+    Deque<WeakPtr<Element, WeakPtrImplWithEventTargetData>> m_autofocusCandidates;
     RefPtr<Element> m_focusedElement;
     RefPtr<Element> m_hoveredElement;
     RefPtr<Element> m_activeElement;
@@ -1882,8 +1897,8 @@ private:
     std::unique_ptr<FormController> m_formController;
 
     Color m_cachedThemeColor;
-    std::optional<Vector<WeakPtr<HTMLMetaElement>>> m_metaThemeColorElements;
-    WeakPtr<HTMLMetaElement> m_activeThemeColorMetaElement;
+    std::optional<Vector<WeakPtr<HTMLMetaElement, WeakPtrImplWithEventTargetData>>> m_metaThemeColorElements;
+    WeakPtr<HTMLMetaElement, WeakPtrImplWithEventTargetData> m_activeThemeColorMetaElement;
     Color m_applicationManifestThemeColor;
 
     Color m_textColor { Color::black };
@@ -1907,7 +1922,6 @@ private:
 
     std::unique_ptr<LazyLoadImageObserver> m_lazyLoadImageObserver;
 
-    RefPtr<SerializedScriptValue> m_pendingStateObject;
 #if !LOG_DISABLED
     MonotonicTime m_documentCreationTime;
 #endif
@@ -1932,6 +1946,7 @@ private:
 
     AtomString m_contentLanguage;
     AtomString m_documentElementLanguage;
+    TextDirection m_documentElementTextDirection;
 
     RefPtr<TextResourceDecoder> m_decoder;
 
@@ -1946,7 +1961,7 @@ private:
     // Collection of canvas objects that need to do work after they've
     // rendered but before compositing, for the next frame. The set is
     // cleared after they've been called.
-    WeakHashSet<HTMLCanvasElement> m_canvasesNeedingDisplayPreparation;
+    WeakHashSet<HTMLCanvasElement, WeakPtrImplWithEventTargetData> m_canvasesNeedingDisplayPreparation;
 
 #if ENABLE(DARK_MODE_CSS)
     OptionSet<ColorScheme> m_colorScheme;
@@ -1955,23 +1970,23 @@ private:
 
     HashMap<String, RefPtr<HTMLCanvasElement>> m_cssCanvasElements;
 
-    WeakHashSet<Element> m_documentSuspensionCallbackElements;
+    WeakHashSet<Element, WeakPtrImplWithEventTargetData> m_documentSuspensionCallbackElements;
 
 #if ENABLE(VIDEO)
-    WeakHashSet<HTMLMediaElement> m_mediaElements;
+    WeakHashSet<HTMLMediaElement, WeakPtrImplWithEventTargetData> m_mediaElements;
 #endif
 
 #if ENABLE(VIDEO)
-    WeakHashSet<HTMLMediaElement> m_captionPreferencesChangedElements;
-    WeakPtr<HTMLMediaElement> m_mediaElementShowingTextTrack;
+    WeakHashSet<HTMLMediaElement, WeakPtrImplWithEventTargetData> m_captionPreferencesChangedElements;
+    WeakPtr<HTMLMediaElement, WeakPtrImplWithEventTargetData> m_mediaElementShowingTextTrack;
 #endif
 
-    WeakPtr<Element> m_mainArticleElement;
-    WeakHashSet<Element> m_articleElements;
+    WeakPtr<Element, WeakPtrImplWithEventTargetData> m_mainArticleElement;
+    WeakHashSet<Element, WeakPtrImplWithEventTargetData> m_articleElements;
 
     WeakHashSet<VisibilityChangeClient> m_visibilityStateCallbackClients;
 
-    std::unique_ptr<HashMap<String, WeakPtr<Element>, ASCIICaseInsensitiveHash>> m_accessKeyCache;
+    std::unique_ptr<HashMap<String, WeakPtr<Element, WeakPtrImplWithEventTargetData>, ASCIICaseInsensitiveHash>> m_accessKeyCache;
 
     std::unique_ptr<ConstantPropertyMap> m_constantPropertyMap;
 
@@ -1988,7 +2003,7 @@ private:
     UniqueRef<FullscreenManager> m_fullscreenManager;
 #endif
 
-    WeakHashSet<HTMLImageElement> m_dynamicMediaQueryDependentImages;
+    WeakHashSet<HTMLImageElement, WeakPtrImplWithEventTargetData> m_dynamicMediaQueryDependentImages;
 
     Vector<WeakPtr<IntersectionObserver>> m_intersectionObservers;
     Timer m_intersectionObserversInitialUpdateTimer;
@@ -2064,7 +2079,7 @@ private:
     LocaleIdentifierToLocaleMap m_localeCache;
 
     RefPtr<Document> m_templateDocument;
-    WeakPtr<Document> m_templateDocumentHost; // Manually managed weakref (backpointer from m_templateDocument).
+    WeakPtr<Document, WeakPtrImplWithEventTargetData> m_templateDocumentHost; // Manually managed weakref (backpointer from m_templateDocument).
 
     RefPtr<DocumentFragment> m_documentFragmentForInnerOuterHTML;
 
@@ -2098,7 +2113,7 @@ private:
 
     std::optional<WallTime> m_overrideLastModified;
 
-    WeakHashSet<Element> m_associatedFormControls;
+    WeakHashSet<Element, WeakPtrImplWithEventTargetData> m_associatedFormControls;
     unsigned m_disabledFieldsetElementsCount { 0 };
 
     unsigned m_dataListElementCount { 0 };
@@ -2269,7 +2284,7 @@ private:
 #endif
 
 #if ENABLE(PICTURE_IN_PICTURE_API)
-    WeakPtr<HTMLVideoElement> m_pictureInPictureElement;
+    WeakPtr<HTMLVideoElement, WeakPtrImplWithEventTargetData> m_pictureInPictureElement;
 #endif
 
     std::unique_ptr<TextManipulationController> m_textManipulationController;
@@ -2290,7 +2305,9 @@ private:
 
     Vector<Function<void()>> m_whenIsVisibleHandlers;
 
-    WeakHashSet<Element> m_elementsWithPendingUserAgentShadowTreeUpdates;
+    WeakHashSet<Element, WeakPtrImplWithEventTargetData> m_elementsWithPendingUserAgentShadowTreeUpdates;
+
+    Ref<ReportingScope> m_reportingScope;
 };
 
 Element* eventTargetElementForDocument(Document*);

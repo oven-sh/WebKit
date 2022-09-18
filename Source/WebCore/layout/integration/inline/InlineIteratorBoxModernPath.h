@@ -25,8 +25,6 @@
 
 #pragma once
 
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
-
 #include "FontCascade.h"
 #include "LayoutContainerBox.h"
 #include "LayoutIntegrationInlineContent.h"
@@ -75,7 +73,7 @@ public:
             length(),
             box().text()->hasHyphen() ? box().style().hyphenString().length() : 0,
             box().isLineBreak(),
-            box().text()->visuallyVisibleLength()
+            box().text()->partiallyVisibleContentLength()
         };
     }
 
@@ -302,4 +300,3 @@ private:
 }
 }
 
-#endif

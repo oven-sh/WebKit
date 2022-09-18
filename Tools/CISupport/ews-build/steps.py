@@ -1940,33 +1940,6 @@ class CloseBug(buildstep.BuildStep, BugzillaMixin):
         return not self.doStepIf(step)
 
 
-class ClosePullRequest(buildstep.BuildStep, GitHubMixin, AddToLogMixin):
-    name = 'close-pull-request'
-    flunkOnFailure = False
-    haltOnFailure = False
-
-    def start(self):
-        self.pr_number = self.getProperty('github.number', '')
-        if self.close_pr(self.pr_number, self.getProperty('repository')):
-            self.finished(SUCCESS)
-        else:
-            self.finished(FAILURE)
-        return None
-
-    def getResultSummary(self):
-        if self.results == FAILURE:
-            return {'step': f'Failed to close PR {self.pr_number}'}
-        if self.results == SUCCESS:
-            return {'step': f'Closed PR {self.pr_number}'}
-        return buildstep.BuildStep.getResultSummary(self)
-
-    def doStepIf(self, step):
-        return self.getProperty('github.number')
-
-    def hideStepIf(self, results, step):
-        return not self.doStepIf(step)
-
-
 class LeaveComment(buildstep.BuildStep, BugzillaMixin, GitHubMixin):
     name = 'leave-comment'
     flunkOnFailure = False
@@ -2049,6 +2022,14 @@ class RevertPullRequestChanges(steps.ShellSequence):
             ['git', 'checkout', self.getProperty('ews_revision') or self.getProperty('got_revision')],
         ]:
             self.commands.append(util.ShellArg(command=command, logname='stdio'))
+
+        platform = self.getProperty('platform')
+        if platform in ('gtk', 'wpe'):
+            # Force cmake reconfigure to ensure the recovery after patches breaking cmake configure step
+            platform = platform.upper()
+            config = self.getProperty('configuration').capitalize()
+            target = os.path.join("WebKitBuild", platform, config, "build-webkit-options.txt")
+            self.commands.append(util.ShellArg(command=['rm', '-f', target], logname='stdio'))
         return super(RevertPullRequestChanges, self).run()
 
     def doStepIf(self, step):
@@ -2364,7 +2345,7 @@ class RunWebKitPyPython2Tests(WebKitPyTest):
     description = ['webkitpy-tests running ({})'.format(language)]
     jsonFileName = 'webkitpy_test_{}_results.json'.format(language)
     logfiles = {'json': jsonFileName}
-    command = ['python', 'Tools/Scripts/test-webkitpy', '--verbose', '--json-output={0}'.format(jsonFileName)]
+    command = ['python', 'Tools/Scripts/test-webkitpy', '--all', '--verbose', '--json-output={0}'.format(jsonFileName)]
 
 
 class RunWebKitPyPython3Tests(WebKitPyTest):
@@ -2373,7 +2354,7 @@ class RunWebKitPyPython3Tests(WebKitPyTest):
     description = ['webkitpy-tests running ({})'.format(language)]
     jsonFileName = 'webkitpy_test_{}_results.json'.format(language)
     logfiles = {'json': jsonFileName}
-    command = ['python3', 'Tools/Scripts/test-webkitpy', '--verbose', '--json-output={0}'.format(jsonFileName)]
+    command = ['python3', 'Tools/Scripts/test-webkitpy', '--all', '--verbose', '--json-output={0}'.format(jsonFileName)]
 
 
 class InstallGtkDependencies(shell.ShellCommand):
@@ -4591,7 +4572,7 @@ class PushCommitToWebKitRepo(shell.ShellCommand):
                 DetermineLandedIdentifier(),
                 LeaveComment(),
                 RemoveFlagsOnPatch(), RemoveLabelsFromPullRequest(),
-                CloseBug(), ClosePullRequest(),
+                CloseBug(),
             ]
             self.build.addStepsAfterCurrentStep(steps_to_add)
 

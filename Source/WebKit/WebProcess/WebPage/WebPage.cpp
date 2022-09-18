@@ -239,6 +239,8 @@
 #include <WebCore/RenderTreeAsText.h>
 #include <WebCore/RenderVideo.h>
 #include <WebCore/RenderView.h>
+#include <WebCore/Report.h>
+#include <WebCore/ReportingScope.h>
 #include <WebCore/ResourceLoadStatistics.h>
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/ResourceResponse.h>
@@ -264,6 +266,7 @@
 #include <WebCore/UserScript.h>
 #include <WebCore/UserStyleSheet.h>
 #include <WebCore/UserTypingGestureIndicator.h>
+#include <WebCore/ViolationReportType.h>
 #include <WebCore/VisiblePosition.h>
 #include <WebCore/VisibleUnits.h>
 #include <WebCore/WebGLStateTracker.h>
@@ -1588,10 +1591,7 @@ void WebPage::close()
 #endif
 
 #if PLATFORM(GTK)
-    if (m_printOperation) {
-        m_printOperation->disconnectFromPage();
-        m_printOperation = nullptr;
-    }
+    m_printOperation = nullptr;
 #endif
 
 #if ENABLE(VIDEO) && USE(GSTREAMER)
@@ -3917,7 +3917,7 @@ void WebPage::runJavaScriptInFrameInScriptWorld(RunJavaScriptParameters&& parame
 
     runJavaScript(webFrame.get(), WTFMove(parameters), worldData.first, [this, protectedThis = Ref { *this }, completionHandler = WTFMove(completionHandler)](const IPC::DataReference& result, const std::optional<WebCore::ExceptionDetails>& exception) mutable {
         if (exception)
-            WEBPAGE_RELEASE_LOG_ERROR(Process, "runJavaScriptInFrameInScriptWorld: Request to run JavaScript failed with error %{private}s", exception->message.utf8().data());
+            WEBPAGE_RELEASE_LOG_ERROR(Process, "runJavaScriptInFrameInScriptWorld: Request to run JavaScript failed with error %" PRIVATE_LOG_STRING, exception->message.utf8().data());
         else
             WEBPAGE_RELEASE_LOG(Process, "runJavaScriptInFrameInScriptWorld: Request to run JavaScript succeeded");
         completionHandler(result, exception);
@@ -4583,15 +4583,6 @@ void WebPage::addConsoleMessage(FrameIdentifier frameID, MessageSource messageSo
         frame->addConsoleMessage(messageSource, messageLevel, message, requestID ? requestID->toUInt64() : 0);
 }
 
-void WebPage::sendCSPViolationReport(FrameIdentifier frameID, const URL& reportURL, IPC::FormDataReference&& reportData)
-{
-    auto report = reportData.takeData();
-    if (!report)
-        return;
-    if (auto* frame = WebProcess::singleton().webFrame(frameID))
-        PingLoader::sendViolationReport(*frame->coreFrame(), reportURL, report.releaseNonNull(), ViolationReportType::ContentSecurityPolicy);
-}
-
 void WebPage::enqueueSecurityPolicyViolationEvent(FrameIdentifier frameID, SecurityPolicyViolationEventInit&& eventInit)
 {
     auto* frame = WebProcess::singleton().webFrame(frameID);
@@ -4602,6 +4593,41 @@ void WebPage::enqueueSecurityPolicyViolationEvent(FrameIdentifier frameID, Secur
         return;
     if (auto* document = coreFrame->document())
         document->enqueueSecurityPolicyViolationEvent(WTFMove(eventInit));
+}
+
+void WebPage::notifyReportObservers(FrameIdentifier frameID, Ref<WebCore::Report>&& report)
+{
+    auto* frame = WebProcess::singleton().webFrame(frameID);
+    if (!frame)
+        return;
+    auto* coreFrame = frame->coreFrame();
+    if (!coreFrame)
+        return;
+    if (RefPtr document = coreFrame->document())
+        document->reportingScope().notifyReportObservers(WTFMove(report));
+}
+
+void WebPage::sendReportToEndpoints(FrameIdentifier frameID, URL&& baseURL, const Vector<String>& endpointURIs, const Vector<String>& endpointTokens, IPC::FormDataReference&& reportData, WebCore::ViolationReportType reportType)
+{
+    auto report = reportData.takeData();
+    if (!report)
+        return;
+
+    RefPtr frame = WebProcess::singleton().webFrame(frameID);
+    if (!frame || !frame->coreFrame())
+        return;
+
+    for (auto& url : endpointURIs)
+        PingLoader::sendViolationReport(*frame->coreFrame(), URL { baseURL, url }, Ref { *report.get() }, reportType);
+
+    auto* document = frame->coreFrame()->document();
+    if (!document)
+        return;
+
+    for (auto& token : endpointTokens) {
+        if (auto url = document->endpointURIForToken(token); !url.isEmpty())
+            PingLoader::sendViolationReport(*frame->coreFrame(), URL { baseURL, url }, Ref { *report.get() }, reportType);
+    }
 }
 
 NotificationPermissionRequestManager* WebPage::notificationPermissionRequestManager()
@@ -4626,28 +4652,28 @@ void WebPage::performDragControllerAction(DragControllerAction action, const Int
     DragData dragData(&selectionData, clientPosition, globalPosition, draggingSourceOperationMask, flags, anyDragDestinationAction(), m_identifier);
     switch (action) {
     case DragControllerAction::Entered: {
-        auto resolvedDragOperation = m_page->dragController().dragEntered(dragData);
+        auto resolvedDragOperation = m_page->dragController().dragEntered(WTFMove(dragData));
         send(Messages::WebPageProxy::DidPerformDragControllerAction(resolvedDragOperation, m_page->dragController().dragHandlingMethod(), m_page->dragController().mouseIsOverFileInput(), m_page->dragController().numberOfItemsToBeAccepted(), { }, { }));
         return;
     }
     case DragControllerAction::Updated: {
-        auto resolvedDragOperation = m_page->dragController().dragUpdated(dragData);
+        auto resolvedDragOperation = m_page->dragController().dragUpdated(WTFMove(dragData));
         send(Messages::WebPageProxy::DidPerformDragControllerAction(resolvedDragOperation, m_page->dragController().dragHandlingMethod(), m_page->dragController().mouseIsOverFileInput(), m_page->dragController().numberOfItemsToBeAccepted(), { }, { }));
         return;
     }
     case DragControllerAction::Exited:
-        m_page->dragController().dragExited(dragData);
+        m_page->dragController().dragExited(WTFMove(dragData));
         return;
 
     case DragControllerAction::PerformDragOperation: {
-        m_page->dragController().performDragOperation(dragData);
+        m_page->dragController().performDragOperation(WTFMove(dragData));
         return;
     }
     }
     ASSERT_NOT_REACHED();
 }
 #else
-void WebPage::performDragControllerAction(DragControllerAction action, const WebCore::DragData& dragData, SandboxExtension::Handle&& sandboxExtensionHandle, Vector<SandboxExtension::Handle>&& sandboxExtensionsHandleArray)
+void WebPage::performDragControllerAction(DragControllerAction action, WebCore::DragData&& dragData, SandboxExtension::Handle&& sandboxExtensionHandle, Vector<SandboxExtension::Handle>&& sandboxExtensionsHandleArray)
 {
     if (!m_page) {
         send(Messages::WebPageProxy::DidPerformDragControllerAction(std::nullopt, DragHandlingMethod::None, false, 0, { }, { }));
@@ -4656,17 +4682,17 @@ void WebPage::performDragControllerAction(DragControllerAction action, const Web
 
     switch (action) {
     case DragControllerAction::Entered: {
-        auto resolvedDragOperation = m_page->dragController().dragEntered(dragData);
+        auto resolvedDragOperation = m_page->dragController().dragEntered(WTFMove(dragData));
         send(Messages::WebPageProxy::DidPerformDragControllerAction(resolvedDragOperation, m_page->dragController().dragHandlingMethod(), m_page->dragController().mouseIsOverFileInput(), m_page->dragController().numberOfItemsToBeAccepted(), m_page->dragCaretController().caretRectInRootViewCoordinates(), m_page->dragCaretController().editableElementRectInRootViewCoordinates()));
         return;
     }
     case DragControllerAction::Updated: {
-        auto resolvedDragOperation = m_page->dragController().dragUpdated(dragData);
+        auto resolvedDragOperation = m_page->dragController().dragUpdated(WTFMove(dragData));
         send(Messages::WebPageProxy::DidPerformDragControllerAction(resolvedDragOperation, m_page->dragController().dragHandlingMethod(), m_page->dragController().mouseIsOverFileInput(), m_page->dragController().numberOfItemsToBeAccepted(), m_page->dragCaretController().caretRectInRootViewCoordinates(), m_page->dragCaretController().editableElementRectInRootViewCoordinates()));
         return;
     }
     case DragControllerAction::Exited:
-        m_page->dragController().dragExited(dragData);
+        m_page->dragController().dragExited(WTFMove(dragData));
         send(Messages::WebPageProxy::DidPerformDragControllerAction(std::nullopt, DragHandlingMethod::None, false, 0, { }, { }));
         return;
         
@@ -4679,7 +4705,7 @@ void WebPage::performDragControllerAction(DragControllerAction action, const Web
                 m_pendingDropExtensionsForFileUpload.append(extension);
         }
 
-        bool handled = m_page->dragController().performDragOperation(dragData);
+        bool handled = m_page->dragController().performDragOperation(WTFMove(dragData));
 
         // If we started loading a local file, the sandbox extension tracker would have adopted this
         // pending drop sandbox extension. If not, we'll play it safe and clear it.
@@ -4851,6 +4877,11 @@ void WebPage::didEndDateTimePicker()
 void WebPage::setActiveOpenPanelResultListener(Ref<WebOpenPanelResultListener>&& openPanelResultListener)
 {
     m_activeOpenPanelResultListener = WTFMove(openPanelResultListener);
+}
+
+void WebPage::setTextIndicator(const WebCore::TextIndicatorData& indicatorData)
+{
+    send(Messages::WebPageProxy::SetTextIndicator(indicatorData, static_cast<uint64_t>(WebCore::TextIndicatorLifetime::Temporary)));
 }
 
 bool WebPage::findStringFromInjectedBundle(const String& target, OptionSet<FindOptions> options)
@@ -5614,7 +5645,7 @@ void WebPage::beginPrinting(FrameIdentifier frameID, const PrintInfo& printInfo)
 
 #if PLATFORM(GTK)
     if (!m_printOperation)
-        m_printOperation = WebPrintOperationGtk::create(this, printInfo);
+        m_printOperation = makeUnique<WebPrintOperationGtk>(printInfo);
 #endif
 }
 
@@ -5808,17 +5839,25 @@ void WebPage::drawPagesToPDFImpl(FrameIdentifier frameID, const PrintInfo& print
 }
 
 #elif PLATFORM(GTK)
-void WebPage::drawPagesForPrinting(FrameIdentifier frameID, const PrintInfo& printInfo, CompletionHandler<void(const WebCore::ResourceError&)>&& completionHandler)
+void WebPage::drawPagesForPrinting(FrameIdentifier frameID, const PrintInfo& printInfo, CompletionHandler<void(std::optional<SharedMemory::Handle>&&, WebCore::ResourceError&&)>&& completionHandler)
 {
     beginPrinting(frameID, printInfo);
     if (m_printContext && m_printOperation) {
-        m_printOperation->startPrint(m_printContext.get(), [this, protectedThis = Ref { *this }, completionHandler = WTFMove(completionHandler)] (const WebCore::ResourceError& error) mutable {
+        m_printOperation->startPrint(m_printContext.get(), [this, protectedThis = Ref { *this }, completionHandler = WTFMove(completionHandler)] (RefPtr<WebCore::FragmentedSharedBuffer>&& data, WebCore::ResourceError&& error) mutable {
             m_printOperation = nullptr;
-            completionHandler(error);
+            std::optional<SharedMemory::Handle> ipcHandle;
+            if (error.isNull()) {
+                auto sharedMemory = SharedMemory::copyBuffer(*data);
+                SharedMemory::Handle handle;
+                sharedMemory->createHandle(handle, SharedMemory::Protection::ReadOnly);
+                if (!handle.isNull())
+                    ipcHandle = WTFMove(handle);
+            }
+            completionHandler(WTFMove(ipcHandle), WTFMove(error));
         });
         return;
     }
-    completionHandler({ });
+    completionHandler(std::nullopt, { });
 }
 #endif
 
@@ -7677,9 +7716,6 @@ void WebPage::startTextManipulations(Vector<WebCore::TextManipulationController:
     completionHandler();
 }
 
-void completeTextManipulation(const Vector<WebCore::TextManipulationController::ManipulationItem>,
-    CompletionHandler<void(const HashSet<WebCore::TextManipulationController::ItemIdentifier, WebCore::TextManipulationController::ManipulationFailure>&)>&&);
-
 void WebPage::completeTextManipulation(const Vector<WebCore::TextManipulationController::ManipulationItem>& items,
     CompletionHandler<void(bool allFailed, const Vector<WebCore::TextManipulationController::ManipulationFailure>&)>&& completionHandler)
 {
@@ -8233,6 +8269,12 @@ void WebPage::clearNotificationPermissionState()
     static_cast<WebNotificationClient&>(WebCore::NotificationController::from(m_page.get())->client()).clearNotificationPermissionState();
 }
 #endif
+
+void WebPage::generateTestReport(String&& message, String&& group)
+{
+    if (RefPtr document = m_page->mainFrame().document())
+        document->reportingScope().generateTestReport(WTFMove(message), WTFMove(group));
+}
 
 } // namespace WebKit
 

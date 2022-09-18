@@ -372,7 +372,7 @@ inline bool jitCompileAndSetHeuristics(VM& vm, CodeBlock* codeBlock, BytecodeInd
     DeferGCForAWhile deferGC(vm); // My callers don't set top callframe, so we don't want to GC here at all.
     ASSERT(Options::useJIT());
     
-    codeBlock->updateAllValueProfilePredictions();
+    codeBlock->updateAllValueProfilePredictions(ConcurrentJSLocker(codeBlock->m_lock));
 
     if (codeBlock->jitType() != JITType::BaselineJIT) {
         if (RefPtr<BaselineJITCode> baselineRef = codeBlock->unlinkedCodeBlock()->m_unlinkedBaselineCode) {
@@ -763,7 +763,7 @@ static void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, Cod
         structure->flattenDictionaryStructure(vm, jsCast<JSObject*>(baseCell));
     }
 
-    prepareChainForCaching(globalObject, baseCell, slot);
+    prepareChainForCaching(globalObject, baseCell, ident.impl(), slot);
 
     ObjectPropertyConditionSet conditions;
     if (slot.isUnset())
@@ -863,13 +863,6 @@ static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeB
 
             if (!(--metadata.hitCountForLLIntCaching))
                 setupGetByIdPrototypeCache(globalObject, vm, codeBlock, bytecodeIndex, metadata, baseCell, slot, ident);
-        } else if (hasAlwaysSlowPutContiguous(baseCell->indexingMode()) && ident == vm.propertyNames->length) {
-            {
-                ConcurrentJSLocker locker(codeBlock->m_lock);
-                metadata.setArrayLengthMode();
-                metadata.arrayLengthMode.arrayProfile.observeStructure(structure);
-            }
-            vm.writeBarrier(codeBlock);
         }
     } else if (Options::useLLIntICs() && isJSArray(baseValue) && ident == vm.propertyNames->length) {
         {
@@ -1612,6 +1605,34 @@ LLINT_SLOW_PATH_DECL(slow_path_jfalse)
     LLINT_BRANCH(!getOperand(callFrame, bytecode.m_condition).toBoolean(globalObject));
 }
 
+LLINT_SLOW_PATH_DECL(slow_path_less)
+{
+    LLINT_BEGIN();
+    auto bytecode = pc->as<OpLess>();
+    LLINT_RETURN(jsBoolean(jsLess<true>(globalObject, getOperand(callFrame, bytecode.m_lhs), getOperand(callFrame, bytecode.m_rhs))));
+}
+
+LLINT_SLOW_PATH_DECL(slow_path_lesseq)
+{
+    LLINT_BEGIN();
+    auto bytecode = pc->as<OpLesseq>();
+    LLINT_RETURN(jsBoolean(jsLessEq<true>(globalObject, getOperand(callFrame, bytecode.m_lhs), getOperand(callFrame, bytecode.m_rhs))));
+}
+
+LLINT_SLOW_PATH_DECL(slow_path_greater)
+{
+    LLINT_BEGIN();
+    auto bytecode = pc->as<OpGreater>();
+    LLINT_RETURN(jsBoolean(jsLess<false>(globalObject, getOperand(callFrame, bytecode.m_rhs), getOperand(callFrame, bytecode.m_lhs))));
+}
+
+LLINT_SLOW_PATH_DECL(slow_path_greatereq)
+{
+    LLINT_BEGIN();
+    auto bytecode = pc->as<OpGreatereq>();
+    LLINT_RETURN(jsBoolean(jsLessEq<false>(globalObject, getOperand(callFrame, bytecode.m_rhs), getOperand(callFrame, bytecode.m_lhs))));
+}
+
 LLINT_SLOW_PATH_DECL(slow_path_jless)
 {
     LLINT_BEGIN();
@@ -2064,10 +2085,10 @@ LLINT_SLOW_PATH_DECL(slow_path_construct_varargs)
     return varargsSetup<OpConstructVarargs, SetArgumentsWith::Object>(callFrame, pc, CodeForConstruct);
 }
 
-inline SlowPathReturnType commonCallEval(CallFrame* callFrame, const JSInstruction* pc, MacroAssemblerCodeRef<JSEntryPtrTag> returnPoint)
+inline SlowPathReturnType commonCallDirectEval(CallFrame* callFrame, const JSInstruction* pc, MacroAssemblerCodeRef<JSEntryPtrTag> returnPoint)
 {
     LLINT_BEGIN_NO_SET_PC();
-    auto bytecode = pc->as<OpCallEval>();
+    auto bytecode = pc->as<OpCallDirectEval>();
     JSValue calleeAsValue = getNonConstantOperand(callFrame, bytecode.m_callee);
     
     CallFrame* calleeFrame = callFrame - bytecode.m_argv;
@@ -2082,25 +2103,27 @@ inline SlowPathReturnType commonCallEval(CallFrame* callFrame, const JSInstructi
     if (!isHostFunction(calleeAsValue, globalFuncEval))
         RELEASE_AND_RETURN(throwScope, setUpCall(calleeFrame, CodeForCall, calleeAsValue));
     
-    vm.encodedHostCallReturnValue = JSValue::encode(eval(globalObject, calleeFrame, bytecode.m_ecmaMode));
+    JSScope* callerScopeChain = jsCast<JSScope*>(getOperand(callFrame, bytecode.m_scope));
+    JSValue thisValue = getOperand(callFrame, bytecode.m_thisValue);
+    vm.encodedHostCallReturnValue = JSValue::encode(eval(calleeFrame, thisValue, callerScopeChain, bytecode.m_ecmaMode));
     DisallowGC disallowGC;
     auto* callerSP = calleeFrame + CallerFrameAndPC::sizeInRegisters;
     LLINT_CALL_RETURN(globalObject, callerSP, LLInt::getHostCallReturnValueEntrypoint().code().taggedPtr(), JSEntryPtrTag);
 }
     
-LLINT_SLOW_PATH_DECL(slow_path_call_eval)
+LLINT_SLOW_PATH_DECL(slow_path_call_direct_eval)
 {
-    return commonCallEval(callFrame, pc, LLInt::genericReturnPointEntrypoint(OpcodeSize::Narrow));
+    return commonCallDirectEval(callFrame, pc, LLInt::genericReturnPointEntrypoint(OpcodeSize::Narrow));
 }
 
-LLINT_SLOW_PATH_DECL(slow_path_call_eval_wide16)
+LLINT_SLOW_PATH_DECL(slow_path_call_direct_eval_wide16)
 {
-    return commonCallEval(callFrame, pc, LLInt::genericReturnPointEntrypoint(OpcodeSize::Wide16));
+    return commonCallDirectEval(callFrame, pc, LLInt::genericReturnPointEntrypoint(OpcodeSize::Wide16));
 }
 
-LLINT_SLOW_PATH_DECL(slow_path_call_eval_wide32)
+LLINT_SLOW_PATH_DECL(slow_path_call_direct_eval_wide32)
 {
-    return commonCallEval(callFrame, pc, LLInt::genericReturnPointEntrypoint(OpcodeSize::Wide32));
+    return commonCallDirectEval(callFrame, pc, LLInt::genericReturnPointEntrypoint(OpcodeSize::Wide32));
 }
 
 LLINT_SLOW_PATH_DECL(slow_path_strcat)

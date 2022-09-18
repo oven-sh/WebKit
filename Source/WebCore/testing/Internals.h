@@ -115,6 +115,7 @@ class ScrollableArea;
 class SerializedScriptValue;
 class SharedBuffer;
 class SourceBuffer;
+class SpeechSynthesisUtterance;
 class StringCallback;
 class StyleSheet;
 class TextIterator;
@@ -135,6 +136,7 @@ class MediaKeySession;
 
 #if ENABLE(VIDEO)
 class TextTrackCueGeneric;
+class VTTCue;
 #endif
 
 #if ENABLE(SERVICE_WORKER)
@@ -161,6 +163,10 @@ class MockMediaSessionCoordinator;
 
 #if ENABLE(ARKIT_INLINE_PREVIEW_MAC)
 class HTMLModelElement;
+#endif
+
+#if ENABLE(SPEECH_SYNTHESIS)
+class PlatformSpeechSynthesizerMock;
 #endif
 
 template<typename IDLType> class DOMPromiseDeferred;
@@ -219,6 +225,9 @@ public:
     void setImageFrameDecodingDuration(HTMLImageElement&, float duration);
     void resetImageAnimation(HTMLImageElement&);
     bool isImageAnimating(HTMLImageElement&);
+    void setImageAnimationEnabled(bool);
+    void resumeImageAnimation(HTMLImageElement&);
+    void pauseImageAnimation(HTMLImageElement&);
     unsigned imagePendingDecodePromisesCountForTesting(HTMLImageElement&);
     void setClearDecoderAfterAsyncFrameRequestForTesting(HTMLImageElement&, bool enabled);
     unsigned imageDecodeCount(HTMLImageElement&);
@@ -652,6 +661,8 @@ public:
 
 #if ENABLE(SPEECH_SYNTHESIS)
     void enableMockSpeechSynthesizer();
+    void enableMockSpeechSynthesizerForMediaElement(HTMLMediaElement&);
+    ExceptionOr<void> setSpeechUtteranceDuration(double);
 #endif
 
 #if ENABLE(MEDIA_STREAM)
@@ -1090,7 +1101,13 @@ public:
     size_t mediaElementCount() const;
 
     void setMediaElementVolumeLocked(HTMLMediaElement&, bool);
+
+#if ENABLE(SPEECH_SYNTHESIS)
+    ExceptionOr<RefPtr<SpeechSynthesisUtterance>> speechSynthesisUtteranceForCue(const VTTCue&);
+    ExceptionOr<RefPtr<VTTCue>> mediaElementCurrentlySpokenCue(HTMLMediaElement&);
 #endif
+
+#endif // ENABLE(VIDEO)
 
     void setCaptureExtraNetworkLoadMetricsEnabled(bool);
     String ongoingLoadsDescriptions() const;
@@ -1229,6 +1246,7 @@ public:
     void setSystemHasACForTesting(bool);
 
     void setHardwareVP9DecoderDisabledForTesting(bool);
+    void setVP9DecoderDisabledForTesting(bool);
     void setVP9ScreenSizeAndScaleForTesting(double, double, double);
 
     int readPreferenceInteger(const String& domain, const String& key);
@@ -1374,6 +1392,9 @@ private:
     RefPtr<WebXRTest> m_xrTest;
 #endif
 
+#if ENABLE(SPEECH_SYNTHESIS)
+    RefPtr<PlatformSpeechSynthesizerMock> m_platformSpeechSynthesizer;
+#endif
 #if ENABLE(MEDIA_SESSION_COORDINATOR)
     RefPtr<MockMediaSessionCoordinator> m_mockMediaSessionCoordinator;
 #endif

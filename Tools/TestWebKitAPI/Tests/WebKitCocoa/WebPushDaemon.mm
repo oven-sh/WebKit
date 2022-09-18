@@ -348,7 +348,9 @@ static void clearWebsiteDataStore(WKWebsiteDataStore *store)
 {
     __block bool clearedStore = false;
     [store removeDataOfTypes:[WKWebsiteDataStore allWebsiteDataTypes] modifiedSince:[NSDate distantPast] completionHandler:^() {
-        clearedStore = true;
+        [store _clearResourceLoadStatistics:^{
+            clearedStore = true;
+        }];
     }];
     TestWebKitAPI::Util::run(&clearedStore);
 }
@@ -624,6 +626,10 @@ TEST(WebPush, ITPCleanup)
     [WKWebsiteDataStore _allowWebsiteDataRecordsForAllOrigins];
     auto tempDir = setUpTestWebPushD();
     using namespace TestWebKitAPI;
+    
+    NSError *error = nil;
+    [[NSFileManager defaultManager] removeItemAtURL:adoptNS([_WKWebsiteDataStoreConfiguration new]).get()._resourceLoadStatisticsDirectory error:&error];
+    EXPECT_NULL(error);
 
     auto runTestWithInterval = ^(NSTimeInterval interval, bool expectPushAfterITPCleanupToSucceed) {
         HTTPServer server({
@@ -704,7 +710,7 @@ TEST(WebPush, ITPCleanup)
                 pushMessageProcessed = true;
             }];
             if (!expectedMessages) {
-                TestWebKitAPI::Util::sleep(0.1);
+                TestWebKitAPI::Util::runFor(0.1_s);
                 EXPECT_FALSE(gotExpectedMessage);
                 return;
             }
@@ -730,9 +736,9 @@ TEST(WebPush, ITPCleanup)
         testPush(expectPushAfterITPCleanupToSucceed);
     };
 
-    // FIXME: This time interval should change when rdar://92694600 is fixed.
     runTestWithInterval(3600 * 24 * 0, true);
-    runTestWithInterval(3600 * 24 * 5, true);
+    runTestWithInterval(3600 * 24 * 29, true);
+    runTestWithInterval(3600 * 24 * 31, false);
     runTestWithInterval(3600 * 24 * 50, false);
     runTestWithInterval(3600 * 24 * 100, false);
 

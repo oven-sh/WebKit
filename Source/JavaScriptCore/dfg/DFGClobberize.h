@@ -396,8 +396,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
             break;
         }
             
-        case Array::Contiguous:
-        case Array::AlwaysSlowPutContiguous: {
+        case Array::Contiguous: {
             if (mode.isInBounds()) {
                 read(Butterfly_publicLength);
                 read(IndexedContiguousProperties);
@@ -668,7 +667,6 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
             read(IndexedInt32Properties);
             return;
         case Array::Contiguous:
-        case Array::AlwaysSlowPutContiguous:
             read(IndexedContiguousProperties);
             return;
         default:
@@ -733,6 +731,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case TailCallForwardVarargsInlinedCaller:
     case ConstructVarargs:
     case ConstructForwardVarargs:
+    case CallDirectEval:
     case ToPrimitive:
     case ToPropertyKey:
     case InByVal:
@@ -834,13 +833,6 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         write(TypedArrayProperties);
         return;
     }
-
-    case CallEval:
-        ASSERT(!node->origin.semantic.inlineCallFrame());
-        read(AbstractHeap(Stack, graph.m_codeBlock->scopeRegister()));
-        read(AbstractHeap(Stack, virtualRegisterForArgumentIncludingThis(0)));
-        clobberTop();
-        return;
 
     case Throw:
     case ThrowStaticError:
@@ -1018,7 +1010,6 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
             return;
             
         case Array::Contiguous:
-        case Array::AlwaysSlowPutContiguous:
             if (mode.isInBounds() || mode.isOutOfBoundsSaneChain()) {
                 read(Butterfly_publicLength);
                 read(IndexedContiguousProperties);
@@ -1189,7 +1180,6 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         case Array::String:
         case Array::DirectArguments:
         case Array::ScopedArguments:
-        case Array::AlwaysSlowPutContiguous:
             DFG_CRASH(graph, node, "impossible array mode for put");
             return;
         }
@@ -1459,7 +1449,6 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         case Array::Int32:
         case Array::Double:
         case Array::Contiguous:
-        case Array::AlwaysSlowPutContiguous:
         case Array::ArrayStorage:
         case Array::SlowPutArrayStorage:
             read(Butterfly_publicLength);
@@ -1845,6 +1834,10 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
             read(RegExpObject_lastIndex);
             write(RegExpState);
             write(RegExpObject_lastIndex);
+            return;
+        } else if (node->child1().useKind() == StringUse
+            && node->child2().useKind() == StringUse
+            && node->child3().useKind() == StringUse) {
             return;
         }
         clobberTop();

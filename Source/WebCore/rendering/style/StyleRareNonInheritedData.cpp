@@ -73,6 +73,7 @@ StyleRareNonInheritedData::StyleRareNonInheritedData()
     , shapeImageThreshold(RenderStyle::initialShapeImageThreshold())
     , order(RenderStyle::initialOrder())
     , clipPath(RenderStyle::initialClipPath())
+    , textDecorationColor(RenderStyle::initialTextDecorationColor())
     , visitedLinkBackgroundColor(RenderStyle::initialBackgroundColor())
     , alignContent(RenderStyle::initialContentAlignment())
     , alignItems(RenderStyle::initialDefaultAlignment())
@@ -96,6 +97,7 @@ StyleRareNonInheritedData::StyleRareNonInheritedData()
     , appearance(static_cast<unsigned>(RenderStyle::initialAppearance()))
     , effectiveAppearance(static_cast<unsigned>(RenderStyle::initialAppearance()))
     , textDecorationStyle(static_cast<unsigned>(RenderStyle::initialTextDecorationStyle()))
+    , textDecorationThickness(RenderStyle::initialTextDecorationThickness())
     , aspectRatioType(static_cast<unsigned>(RenderStyle::initialAspectRatioType()))
     , contentVisibility(static_cast<unsigned>(RenderStyle::initialContentVisibility()))
 #if ENABLE(CSS_COMPOSITING)
@@ -206,6 +208,7 @@ inline StyleRareNonInheritedData::StyleRareNonInheritedData(const StyleRareNonIn
     , appearance(o.appearance)
     , effectiveAppearance(o.effectiveAppearance)
     , textDecorationStyle(o.textDecorationStyle)
+    , textDecorationThickness(o.textDecorationThickness)
     , aspectRatioType(o.aspectRatioType)
     , contentVisibility(o.contentVisibility)
 #if ENABLE(CSS_COMPOSITING)
@@ -319,6 +322,7 @@ bool StyleRareNonInheritedData::operator==(const StyleRareNonInheritedData& o) c
         && appearance == o.appearance
         && effectiveAppearance == o.effectiveAppearance
         && textDecorationStyle == o.textDecorationStyle
+        && textDecorationThickness == o.textDecorationThickness
         && arePointingToEqualData(rotate, o.rotate)
         && arePointingToEqualData(scale, o.scale)
         && arePointingToEqualData(translate, o.translate)

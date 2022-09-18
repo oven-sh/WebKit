@@ -226,9 +226,12 @@ class PullRequest(Command):
     @classmethod
     def find_existing_pull_request(cls, repository, remote):
         existing_pr = None
+        user, _ = remote.credentials(required=False)
         for pr in remote.pull_requests.find(opened=None, head=repository.branch):
             existing_pr = pr
-            if existing_pr.opened:
+            if not existing_pr.opened:
+                continue
+            if user and existing_pr.author == user:
                 break
         return existing_pr
 
@@ -314,45 +317,14 @@ class PullRequest(Command):
             sys.stderr.write('Checks have failed, aborting pull request.\n')
             return 1
 
-        remote_repo = repository.remote(name=source_remote)
-        if not remote_repo:
-            sys.stderr.write("'{}' doesn't have a recognized remote\n".format(repository.root_path))
-            return 1
-
-        existing_pr = None
-        if remote_repo.pull_requests:
-            log.info("Checking if PR already exists...")
-            existing_pr = cls.find_existing_pull_request(repository, remote_repo)
-            log.info("PR #{} found.".format(existing_pr.number) if existing_pr else "PR not found.")
-            if existing_pr and not existing_pr.opened and not args.defaults and (args.defaults is False or Terminal.choose(
-                    "'{}' is already associated with '{}', which is closed.\nWould you like to create a new pull-request?".format(
-                        repository.branch, existing_pr,
-                    ), default='No',
-            ) == 'Yes'):
-                existing_pr = None
-
-        # Remove any active labels
-        if existing_pr and existing_pr._metadata and existing_pr._metadata.get('issue'):
-            log.info("Checking PR labels for active labels...")
-            pr_issue = existing_pr._metadata['issue']
-            labels = pr_issue.labels
-            did_remove = False
-            for to_remove in cls.MERGE_LABELS + cls.UNSAFE_MERGE_LABELS + ([cls.BLOCKED_LABEL] if unblock else []):
-                if to_remove in labels:
-                    log.info("Removing '{}' from PR #{}...".format(to_remove, existing_pr.number))
-                    labels.remove(to_remove)
-                    did_remove = True
-            if did_remove:
-                pr_issue.set_labels(labels)
-
-        commits = list(repository.commits(begin=dict(hash=branch_point.hash), end=dict(branch=repository.branch)))
-
         issue = None
+        commits = list(repository.commits(begin=dict(hash=branch_point.hash), end=dict(branch=repository.branch)))
         for line in commits[0].message.split() if commits[0] and commits[0].message else []:
             issue = Tracker.from_string(line)
             if issue:
                 break
 
+        remote_repo = repository.remote(name=source_remote)
         if isinstance(remote_repo, remote.GitHub):
             if issue and issue.redacted and args.remote is None:
                 print("Your issue is redacted, diverting to a secure, non-origin remote you have access to.")
@@ -367,6 +339,7 @@ class PullRequest(Command):
                         return 1
                 else:
                     source_remote = repository.source_remotes()[1]
+                    remote_repo = repository.remote(name=source_remote)
                     print("Making PR against '{}' instead of '{}'".format(source_remote, original_remote))
             target = 'fork' if source_remote == repository.default_remote else '{}-fork'.format(source_remote)
 
@@ -377,6 +350,69 @@ class PullRequest(Command):
                 return 1
         else:
             target = source_remote
+
+        if not remote_repo:
+            sys.stderr.write("'{}' doesn't have a recognized remote\n".format(repository.root_path))
+            return 1
+
+        existing_pr = None
+        if remote_repo.pull_requests:
+            user, _ = remote_repo.credentials(required=False)
+
+            log.info("Checking if PR already exists...")
+            existing_pr = cls.find_existing_pull_request(repository, remote_repo)
+            log.info("PR #{} found.".format(existing_pr.number) if existing_pr else "PR not found.")
+            if existing_pr and not existing_pr.opened and not args.defaults and (
+                args.defaults is False or Terminal.choose(
+                    "'{}' is already associated with '{}', which is closed.\nWould you like to create a new pull-request?".format(repository.branch, existing_pr),
+                    default='No',
+            ) == 'Yes'):
+                existing_pr = None
+
+            if existing_pr and user and existing_pr.author != user and (args.defaults or Terminal.choose(
+                "'{}' is owned by '{}'\nYou can either".format(existing_pr, existing_pr.author),
+                options=('Create a new pull request', 'Overwrite PR-{} and assign to yourself'.format(existing_pr.number)),
+                default='Create a new pull request',
+                numbered=True,
+            ) == 'Create a new pull request'):
+                if target == source_remote:
+                    sys.stderr.write("'{}' already exists on '{}', creating a pull-request would overwrite it\n".format(
+                        repository.branch, target,
+                    ))
+                    return 1
+                existing_pr = None
+
+            if user and existing_pr and isinstance(remote_repo, remote.GitHub) and existing_pr._metadata.get('full_name'):
+                pr_target = existing_pr._metadata['full_name']
+                if not pr_target.startswith('{}/'.format(user)):
+                    target, repo_name = pr_target.split('/')
+                    if '-' in repo_name:
+                        target = '{}-{}'.format(target, repo_name.split('-')[-1])
+                    base_url = repository.url(name=source_remote)
+                    if '://' in base_url:
+                        base_url = '/'.join(base_url.split('/')[:3]) + '/'
+                    else:
+                        base_url = base_url.split(':')[0] + ':'
+                    if target not in repository.source_remotes(personal=True) and run(
+                        [repository.executable(), 'remote', 'add', target, '{}{}.git'.format(base_url, pr_target)],
+                        capture_output=True, cwd=repository.root_path,
+                    ).returncode not in [0, 3]:
+                        sys.stderr.write("Failed to add '{}' remote\n".format(target))
+                        return 1
+
+        # Remove any active labels
+        if existing_pr and existing_pr._metadata and existing_pr._metadata.get('issue'):
+            log.info("Checking PR labels for active labels...")
+            pr_issue = existing_pr._metadata['issue']
+            labels = pr_issue.labels
+            did_remove = False
+            for to_remove in cls.MERGE_LABELS + cls.UNSAFE_MERGE_LABELS + ([cls.BLOCKED_LABEL] if unblock else []):
+                if to_remove in labels:
+                    log.info("Removing '{}' from PR #{}...".format(to_remove, existing_pr.number))
+                    labels.remove(to_remove)
+                    did_remove = True
+            if did_remove:
+                pr_issue.set_labels(labels)
 
         log.info("Pushing '{}' to '{}'...".format(repository.branch, target))
         if run([repository.executable(), 'push', '-f', target, repository.branch], cwd=repository.root_path).returncode:
@@ -405,6 +441,7 @@ class PullRequest(Command):
                 repository.executable(), 'push', '-f', target, history_branch,
             ], cwd=repository.root_path).returncode:
                 sys.stderr.write("Failed to create and push '{}' to '{}'\n".format(history_branch, target))
+                return 1
 
         if not remote_repo.pull_requests:
             sys.stderr.write("'{}' cannot generate pull-requests\n".format(remote_repo.url))

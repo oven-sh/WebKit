@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2011 Google, Inc. All rights reserved.
- * Copyright (C) 2016-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -90,7 +90,7 @@ static inline bool checkNonce(ContentSecurityPolicySourceListDirective* directiv
 }
 
 // Used to compute the comparison URL when checking frame-ancestors. We do this weird conversion so that child
-// frames of a page with a unique origin (e.g. about:blank) are not blocked due to their frame-ancestors policy
+// frames of a page with an opaque origin (e.g. about:blank) are not blocked due to their frame-ancestors policy
 // and do not need to add the parent's URL to their policy. The latter could allow the child page to be framed
 // by anyone. See <https://github.com/w3c/webappsec/issues/311> for more details.
 static inline URL urlFromOrigin(const SecurityOrigin& origin)
@@ -151,8 +151,8 @@ std::unique_ptr<ContentSecurityPolicyDirectiveList> ContentSecurityPolicyDirecti
     if (!checkWasmEval(directives->operativeDirective(directives->m_scriptSrc.get(), ContentSecurityPolicyDirectiveNames::scriptSrc)))
         directives->setWebAssemblyDisabledErrorMessage(makeString("Refused to create a WebAssembly object because 'unsafe-eval' or 'wasm-unsafe-eval' is not an allowed source of script in the following Content Security Policy directive: \"", directives->operativeDirective(directives->m_scriptSrc.get(), ContentSecurityPolicyDirectiveNames::scriptSrc)->text(), "\".\n"));
 
-    if (directives->isReportOnly() && directives->reportURIs().isEmpty())
-        policy.reportMissingReportURI(header);
+    if (directives->isReportOnly() && (directives->reportToTokens().isEmpty() && directives->reportURIs().isEmpty()))
+        policy.reportMissingReportToTokens(header);
 
     return directives;
 }
@@ -456,7 +456,8 @@ void ContentSecurityPolicyDirectiveList::parse(const String& policy, ContentSecu
                     }
                 } else if (policyFrom == ContentSecurityPolicy::PolicyFrom::InheritedForPluginDocument) {
                     if (!equalIgnoringASCIICase(directive->name, ContentSecurityPolicyDirectiveNames::pluginTypes)
-                        && !equalIgnoringASCIICase(directive->name, ContentSecurityPolicyDirectiveNames::reportURI))
+                        && !equalIgnoringASCIICase(directive->name, ContentSecurityPolicyDirectiveNames::reportURI)
+                        && !equalIgnoringASCIICase(directive->name, ContentSecurityPolicyDirectiveNames::reportTo))
                         continue;
                 }
                 addDirective(WTFMove(*directive));
@@ -540,6 +541,26 @@ void ContentSecurityPolicyDirectiveList::parseReportURI(ParsedDirective&& direct
     });
 }
 
+void ContentSecurityPolicyDirectiveList::parseReportTo(ParsedDirective&& directive)
+{
+    if (!m_reportToTokens.isEmpty()) {
+        m_policy.reportDuplicateDirective(directive.name);
+        return;
+    }
+
+    readCharactersForParsing(directive.value, [&](auto buffer) {
+        auto begin = buffer.position();
+        while (buffer.hasCharactersRemaining()) {
+            skipWhile<isASCIISpace>(buffer);
+
+            auto urlBegin = buffer.position();
+            skipWhile<isNotASCIISpace>(buffer);
+
+            if (urlBegin < buffer.position())
+                m_reportToTokens.append(directive.value.substring(urlBegin - begin, buffer.position() - urlBegin));
+        }
+    });
+}
 
 template<class CSPDirectiveType>
 void ContentSecurityPolicyDirectiveList::setCSPDirective(ParsedDirective&& directive, std::unique_ptr<CSPDirectiveType>& existingDirective)
@@ -653,6 +674,8 @@ void ContentSecurityPolicyDirectiveList::addDirective(ParsedDirective&& directiv
         setCSPDirective<ContentSecurityPolicyMediaListDirective>(WTFMove(directive), m_pluginTypes);
     else if (equalIgnoringASCIICase(directive.name, ContentSecurityPolicyDirectiveNames::sandbox))
         applySandboxPolicy(WTFMove(directive));
+    else if (equalIgnoringASCIICase(directive.name, ContentSecurityPolicyDirectiveNames::reportTo))
+        parseReportTo(WTFMove(directive));
     else if (equalIgnoringASCIICase(directive.name, ContentSecurityPolicyDirectiveNames::reportURI))
         parseReportURI(WTFMove(directive));
     else if (equalIgnoringASCIICase(directive.name, ContentSecurityPolicyDirectiveNames::upgradeInsecureRequests))

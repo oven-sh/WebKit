@@ -78,6 +78,7 @@ struct NotificationData;
 struct PluginInfo;
 struct PrewarmInformation;
 struct SecurityOriginData;
+enum class PermissionName : uint8_t;
 enum class ThirdPartyCookieBlockingMode : uint8_t;
 using FramesPerSecond = unsigned;
 using PlatformDisplayID = uint32_t;
@@ -178,6 +179,7 @@ public:
 
     static WebProcessProxy* processForIdentifier(WebCore::ProcessIdentifier);
     static WebPageProxy* webPage(WebPageProxyIdentifier);
+    static WebPageProxy* audioCapturingWebPage();
     Ref<WebPageProxy> createWebPage(PageClient&, Ref<API::PageConfiguration>&&);
 
     enum class BeginsUsingDataStore : bool { No, Yes };
@@ -223,6 +225,9 @@ public:
     size_t frameCountInPage(WebPageProxy*) const; // Including main frame.
 
     VisibleWebPageToken visiblePageToken() const;
+
+    void addPreviouslyApprovedFileURL(const URL&);
+    bool wasPreviouslyApprovedFileURL(const URL&) const;
 
     void updateTextCheckerState();
 
@@ -448,6 +453,9 @@ public:
     const WeakHashSet<WebProcessProxy>* serviceWorkerClientProcesses() const;
     const WeakHashSet<WebProcessProxy>* sharedWorkerClientProcesses() const;
 
+    static void permissionChanged(WebCore::PermissionName, const WebCore::SecurityOriginData&);
+    void sendPermissionChanged(WebCore::PermissionName, const WebCore::SecurityOriginData&);
+
 protected:
     WebProcessProxy(WebProcessPool&, WebsiteDataStore*, IsPrewarmed, WebCore::CrossOriginMode, CaptivePortalMode);
 
@@ -493,7 +501,7 @@ private:
     void getNetworkProcessConnection(Messages::WebProcessProxy::GetNetworkProcessConnectionDelayedReply&&);
 
 #if ENABLE(GPU_PROCESS)
-    void createGPUProcessConnection(IPC::Attachment&& connectionIdentifier, WebKit::GPUProcessConnectionParameters&&);
+    void createGPUProcessConnection(IPC::Connection::Handle&&, WebKit::GPUProcessConnectionParameters&&);
 #endif
 
     bool shouldAllowNonValidInjectedCode() const;
@@ -591,6 +599,7 @@ private:
 
     bool m_mayHaveUniversalFileReadSandboxExtension; // True if a read extension for "/" was ever granted - we don't track whether WebProcess still has it.
     HashSet<String> m_localPathsWithAssumedReadAccess;
+    HashSet<String> m_previouslyApprovedFilePaths;
 
     WebPageProxyMap m_pageMap;
     WebFrameProxyMap m_frameMap;

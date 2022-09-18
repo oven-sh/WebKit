@@ -285,13 +285,13 @@ void AuxiliaryProcessProxy::didFinishLaunching(ProcessLauncher*, IPC::Connection
     if (launchTime > 1_s)
         RELEASE_LOG_FAULT(Process, "%s process (%p) took %f seconds to launch", processName().characters(), this, launchTime.value());
     
-    if (!IPC::Connection::identifierIsValid(connectionIdentifier))
+    if (!connectionIdentifier)
         return;
 
-    m_connection = IPC::Connection::createServerConnection(connectionIdentifier, *this);
+    m_connection = IPC::Connection::createServerConnection(connectionIdentifier);
 
     connectionWillOpen(*m_connection);
-    m_connection->open();
+    m_connection->open(*this);
 
     for (auto&& pendingMessage : std::exchange(m_pendingMessages, { })) {
         if (!shouldSendPendingMessage(pendingMessage))

@@ -25,6 +25,8 @@
 
 #include "config.h"
 #include "RenderTableSection.h"
+
+#include "BorderPainter.h"
 #include "Document.h"
 #include "HitTestResult.h"
 #include "HTMLNames.h"
@@ -53,12 +55,10 @@ WTF_MAKE_ISO_ALLOCATED_IMPL(RenderTableSection);
 static const unsigned gMinTableSizeToUseFastPaintPathWithOverflowingCell = 75 * 75;
 static const float gMaxAllowedOverflowingCellRatioForFastPaintPath = 0.1f;
 
-static inline void setRowLogicalHeightToRowStyleLogicalHeightIfNotRelative(RenderTableSection::RowStruct& row)
+static inline void setRowLogicalHeightToRowStyleLogicalHeight(RenderTableSection::RowStruct& row)
 {
     ASSERT(row.rowRenderer);
     row.logicalHeight = row.rowRenderer->style().logicalHeight();
-    if (row.logicalHeight.isRelative())
-        row.logicalHeight = Length();
 }
 
 static inline void updateLogicalHeightForCell(RenderTableSection::RowStruct& row, const RenderTableCell* cell)
@@ -68,7 +68,7 @@ static inline void updateLogicalHeightForCell(RenderTableSection::RowStruct& row
         return;
 
     Length logicalHeight = cell->style().logicalHeight();
-    if (logicalHeight.isPositive() || (logicalHeight.isRelative() && logicalHeight.value() >= 0)) {
+    if (logicalHeight.isPositive()) {
         Length cRowLogicalHeight = row.logicalHeight;
         switch (logicalHeight.type()) {
         case LengthType::Percent:
@@ -80,7 +80,6 @@ static inline void updateLogicalHeightForCell(RenderTableSection::RowStruct& row
                 || (cRowLogicalHeight.isFixed() && cRowLogicalHeight.value() < logicalHeight.value()))
                 row.logicalHeight = logicalHeight;
             break;
-        case LengthType::Relative:
         default:
             break;
         }
@@ -136,7 +135,7 @@ void RenderTableSection::willInsertTableRow(RenderTableRow& child, RenderObject*
     child.setRowIndex(insertionRow);
 
     if (!beforeChild)
-        setRowLogicalHeightToRowStyleLogicalHeightIfNotRelative(m_grid[insertionRow]);
+        setRowLogicalHeightToRowStyleLogicalHeight(m_grid[insertionRow]);
 }
 
 void RenderTableSection::ensureRows(unsigned numRows)
@@ -626,6 +625,8 @@ void RenderTableSection::layoutRows()
 
     setLogicalHeight(m_rowPos[totalRows]);
 
+    updateLayerTransform();
+
     computeOverflowFromCells(totalRows, nEffCols);
 }
 
@@ -1078,7 +1079,7 @@ void RenderTableSection::paintRowGroupBorder(const PaintInfo& paintInfo, bool an
     rect.intersect(paintInfo.rect);
     if (rect.isEmpty())
         return;
-    drawLineForBoxSide(paintInfo.context(), rect, side, style().visitedDependentColorWithColorFilter(borderColor), borderStyle, 0, 0, antialias);
+    BorderPainter::drawLineForBoxSide(paintInfo.context(), document(), rect, side, style().visitedDependentColorWithColorFilter(borderColor), borderStyle, 0, 0, antialias);
 }
 
 LayoutUnit RenderTableSection::offsetLeftForRowGroupBorder(RenderTableCell* cell, const LayoutRect& rowGroupRect, unsigned row)
@@ -1131,7 +1132,7 @@ void RenderTableSection::paintRowGroupBorderIfRequired(const PaintInfo& paintInf
         return;
 
     const RenderStyle& style = this->style();
-    bool antialias = shouldAntialiasLines(paintInfo.context());
+    bool antialias = BorderPainter::shouldAntialiasLines(paintInfo.context());
     LayoutRect rowGroupRect = LayoutRect(paintOffset, size());
     rowGroupRect.moveBy(-LayoutPoint(outerBorderLeft(&style), (borderSide == BoxSide::Right) ? 0_lu : outerBorderTop(&style)));
 
@@ -1328,7 +1329,7 @@ void RenderTableSection::recalcCells()
 
         m_grid[insertionRow].rowRenderer = row;
         row->setRowIndex(insertionRow);
-        setRowLogicalHeightToRowStyleLogicalHeightIfNotRelative(m_grid[insertionRow]);
+        setRowLogicalHeightToRowStyleLogicalHeight(m_grid[insertionRow]);
 
         for (RenderTableCell* cell = row->firstCell(); cell; cell = cell->nextCell())
             addCell(cell, row);
@@ -1354,7 +1355,7 @@ void RenderTableSection::rowLogicalHeightChanged(unsigned rowIndex)
     if (needsCellRecalc())
         return;
 
-    setRowLogicalHeightToRowStyleLogicalHeightIfNotRelative(m_grid[rowIndex]);
+    setRowLogicalHeightToRowStyleLogicalHeight(m_grid[rowIndex]);
 
     for (RenderTableCell* cell = m_grid[rowIndex].rowRenderer->firstCell(); cell; cell = cell->nextCell())
         updateLogicalHeightForCell(m_grid[rowIndex], cell);

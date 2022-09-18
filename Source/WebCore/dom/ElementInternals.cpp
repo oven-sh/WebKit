@@ -26,11 +26,14 @@
 #include "config.h"
 #include "ElementInternals.h"
 
+#include "AXObjectCache.h"
 #include "ElementRareData.h"
 #include "ShadowRoot.h"
 #include <wtf/IsoMallocInlines.h>
 
 namespace WebCore {
+
+using namespace HTMLNames;
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(ElementInternals);
 
@@ -43,6 +46,29 @@ ShadowRoot* ElementInternals::shadowRoot() const
     if (!shadowRoot || !shadowRoot->isAvailableToElementInternals())
         return nullptr;
     return shadowRoot;
+}
+
+void ElementInternals::setAttributeWithoutSynchronization(const QualifiedName& name, const AtomString& value)
+{
+    RefPtr element = m_element.get();
+
+    auto* defaultARIA = m_element->customElementDefaultARIAIfExists();
+    auto oldValue = defaultARIA ? defaultARIA->valueForAttribute(name) : nullAtom();
+    if (oldValue.isNull())
+        oldValue = element->attributeWithoutSynchronization(name);
+
+    element->customElementDefaultARIA().setValueForAttribute(name, value);
+
+    if (AXObjectCache* cache = element->document().existingAXObjectCache())
+        cache->deferAttributeChangeIfNeeded(element.get(), name, oldValue, value);
+}
+
+const AtomString& ElementInternals::attributeWithoutSynchronization(const QualifiedName& name) const
+{
+    auto* defaultARIA = m_element->customElementDefaultARIAIfExists();
+    if (!defaultARIA)
+        return nullAtom();
+    return defaultARIA->valueForAttribute(name);
 }
 
 } // namespace WebCore

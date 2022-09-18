@@ -1,5 +1,7 @@
 SCRIPTS_PATH ?= ../Tools/Scripts
 
+ifneq ($(MAKECMDGOALS),installsrc)
+
 ifneq ($(USE_WORKSPACE),NO)
 SCHEME ?= $(notdir $(CURDIR))
 XCODE_TARGET = -scheme "$(SCHEME)"
@@ -67,18 +69,20 @@ ifneq (,$(EXPORT_COMPILE_COMMANDS))
 		XCODE_OPTIONS += COMPILER_INDEX_STORE_ENABLE=NO
 endif
 
+endif # ifneq ($(MAKECMDGOALS),installsrc)
+
 DEFAULT_VERBOSITY := $(shell defaults read org.webkit.BuildConfiguration BuildTranscriptVerbosity 2>/dev/null || echo "default")
 VERBOSITY ?= $(DEFAULT_VERBOSITY)
 
 ifeq ($(VERBOSITY),default)
 OUTPUT_FILTER = cat
 XCODE_OPTIONS += -hideShellScriptEnvironment
-else
-ifeq ($(VERBOSITY),noisy)
+else ifeq ($(VERBOSITY),noisy)
 OUTPUT_FILTER = cat
+else ifeq ($(VERBOSITY),oneline)
+OUTPUT_FILTER = $(SCRIPTS_PATH)/filter-build-webkit -f oneline
 else
 OUTPUT_FILTER = $(SCRIPTS_PATH)/filter-build-webkit
-endif
 endif
 
 ifeq ($(ASAN),YES)

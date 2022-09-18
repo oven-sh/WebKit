@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2010-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -500,6 +500,7 @@ public:
     void setMockCameraOrientation(unsigned);
     bool isMockRealtimeMediaSourceCenterEnabled();
     void setMockCaptureDevicesInterrupted(bool isCameraInterrupted, bool isMicrophoneInterrupted);
+    void triggerMockMicrophoneConfigurationChange();
 
     bool hasAppBoundSession();
     void clearAppBoundSession();
@@ -546,6 +547,9 @@ public:
 
     void takeViewPortSnapshot(JSValueRef callback);
     void viewPortSnapshotTaken(WKStringRef);
+
+    // Reporting API
+    void generateTestReport(JSStringRef message, JSStringRef group);
 
 private:
     TestRunner();

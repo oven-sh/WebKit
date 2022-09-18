@@ -191,6 +191,7 @@ class CachedPage;
 class CaptureDevice;
 class DocumentLoader;
 class DragData;
+class WeakPtrImplWithEventTargetData;
 class FontAttributeChanges;
 class FontChanges;
 class Frame;
@@ -213,6 +214,7 @@ class Page;
 class PrintContext;
 class Range;
 class RenderImage;
+class Report;
 class ResourceRequest;
 class ResourceResponse;
 class SelectionData;
@@ -238,6 +240,7 @@ enum class TextIndicatorPresentationTransition : uint8_t;
 enum class TextGranularity : uint8_t;
 enum class WheelEventProcessingSteps : uint8_t;
 enum class WritingDirection : uint8_t;
+enum class ViolationReportType : uint8_t;
 
 using PlatformDisplayID = uint32_t;
 
@@ -448,8 +451,10 @@ public:
 #endif
 
     void addConsoleMessage(WebCore::FrameIdentifier, MessageSource, MessageLevel, const String&, std::optional<WebCore::ResourceLoaderIdentifier> = std::nullopt);
-    void sendCSPViolationReport(WebCore::FrameIdentifier, const URL& reportURL, IPC::FormDataReference&&);
     void enqueueSecurityPolicyViolationEvent(WebCore::FrameIdentifier, WebCore::SecurityPolicyViolationEventInit&&);
+
+    void notifyReportObservers(WebCore::FrameIdentifier, Ref<WebCore::Report>&&);
+    void sendReportToEndpoints(WebCore::FrameIdentifier, URL&& baseURL, const Vector<String>& endpointURIs, const Vector<String>& endpointTokens, IPC::FormDataReference&&, WebCore::ViolationReportType);
 
     // -- Called by the DrawingArea.
     // FIXME: We could genericize these into a DrawingArea client interface. Would that be beneficial?
@@ -551,6 +556,8 @@ public:
     bool findStringFromInjectedBundle(const String&, OptionSet<FindOptions>);
     void findStringMatchesFromInjectedBundle(const String&, OptionSet<FindOptions>);
     void replaceStringMatchesFromInjectedBundle(const Vector<uint32_t>& matchIndices, const String& replacementText, bool selectionOnly);
+
+    void setTextIndicator(const WebCore::TextIndicatorData&);
 
     WebFrame& mainWebFrame() const { return m_mainFrame; }
 
@@ -1022,7 +1029,7 @@ public:
 #endif
 
 #if ENABLE(DRAG_SUPPORT) && !PLATFORM(GTK)
-    void performDragControllerAction(DragControllerAction, const WebCore::DragData&, SandboxExtension::Handle&&, Vector<SandboxExtension::Handle>&&);
+    void performDragControllerAction(DragControllerAction, WebCore::DragData&&, SandboxExtension::Handle&&, Vector<SandboxExtension::Handle>&&);
 #endif
 
 #if ENABLE(DRAG_SUPPORT)
@@ -1056,7 +1063,7 @@ public:
     void drawToPDF(WebCore::FrameIdentifier, const std::optional<WebCore::FloatRect>&, CompletionHandler<void(RefPtr<WebCore::SharedBuffer>&&)>&&);
 
 #if PLATFORM(GTK)
-    void drawPagesForPrinting(WebCore::FrameIdentifier, const PrintInfo&, CompletionHandler<void(const WebCore::ResourceError&)>&&);
+    void drawPagesForPrinting(WebCore::FrameIdentifier, const PrintInfo&, CompletionHandler<void(std::optional<SharedMemory::Handle>&&, WebCore::ResourceError&&)>&&);
 #endif
 
     void addResourceRequest(WebCore::ResourceLoaderIdentifier, const WebCore::ResourceRequest&);
@@ -1559,6 +1566,8 @@ public:
 #if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
     void setInteractionRegionsEnabled(bool);
 #endif
+
+    void generateTestReport(String&& message, String&& group);
 
 private:
     WebPage(WebCore::PageIdentifier, WebPageCreationParameters&&);
@@ -2242,7 +2251,7 @@ private:
     friend class PrintContextAccessScope;
 
 #if PLATFORM(GTK)
-    RefPtr<WebPrintOperationGtk> m_printOperation;
+    std::unique_ptr<WebPrintOperationGtk> m_printOperation;
 #endif
 
     SandboxExtensionTracker m_sandboxExtensionTracker;
@@ -2499,7 +2508,7 @@ private:
 #endif
 
 #if ENABLE(IMAGE_ANALYSIS)
-    Vector<std::pair<WeakPtr<WebCore::HTMLElement>, Vector<CompletionHandler<void(RefPtr<WebCore::Element>&&)>>>> m_elementsPendingTextRecognition;
+    Vector<std::pair<WeakPtr<WebCore::HTMLElement, WebCore::WeakPtrImplWithEventTargetData>, Vector<CompletionHandler<void(RefPtr<WebCore::Element>&&)>>>> m_elementsPendingTextRecognition;
 #endif
 
 #if ENABLE(WEBXR) && !USE(OPENXR)
@@ -2511,7 +2520,7 @@ private:
 #endif
 
 #if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
-    WeakHashSet<WebCore::HTMLImageElement> m_elementsToExcludeFromRemoveBackground;
+    WeakHashSet<WebCore::HTMLImageElement, WebCore::WeakPtrImplWithEventTargetData> m_elementsToExcludeFromRemoveBackground;
 #endif
 };
 

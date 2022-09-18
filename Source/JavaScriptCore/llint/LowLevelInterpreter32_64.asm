@@ -1771,8 +1771,8 @@ llintOpWithMetadata(op_get_by_val, OpGetByVal, macro (size, get, dispatch, metad
     jmp .opGetByValNotEmpty
 
 .opGetByValNotDouble:
-    bieq t2, AlwaysSlowPutContiguousShape, .opGetByValIsContiguous
-    bilt t2, ArrayStorageShape, .opGetByValNotIndexedStorage
+    subi ArrayStorageShape, t2
+    bia t2, SlowPutArrayStorageShape - ArrayStorageShape, .opGetByValNotIndexedStorage
     biaeq t1, -sizeof IndexingHeader + IndexingHeader::u.lengths.vectorLength[t3], .opGetByValSlow
     loadi ArrayStorage::m_vector + TagOffset[t3, t1, 8], t2
     loadi ArrayStorage::m_vector + PayloadOffset[t3, t1, 8], t1
@@ -2126,7 +2126,7 @@ macro compareOp(opcodeName, opcodeStruct, integerCompareAndSet, doubleCompareAnd
         return(BooleanTag, t1)
 
     .slow:
-        callSlowPath(_slow_path_%opcodeName%)
+        callSlowPath(_llint_slow_path_%opcodeName%)
         dispatch()
     end)
 end
@@ -3242,8 +3242,11 @@ end)
 
 
 op(fuzzer_return_early_from_loop_hint, macro ()
-    move UndefinedTag, r1
-    move 0, r0
+    loadp CodeBlock[cfr], t0
+    loadp CodeBlock::m_globalObject[t0], t0
+    loadp JSGlobalObject::m_globalThis[t0], t0
+    move t0, r0
+    move CellTag, r1
     doReturn()
 end)
 

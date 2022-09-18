@@ -45,9 +45,9 @@
 #include <pal/Logging.h>
 #include <wtf/OptionSet.h>
 
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
-
-#define ALLOW_FLOATS 0
+#define ALLOW_FLOATS 1
+#define ALLOW_RTL_FLOATS 1
+#define ALLOW_VERTICAL_FLOATS 1
 
 #ifndef NDEBUG
 #define SET_REASON_AND_RETURN_IF_NEEDED(reason, reasons, includeReasons) { \
@@ -95,9 +95,6 @@ static void printReason(AvoidanceReason reason, TextStream& stream)
         break;
     case AvoidanceReason::FlowIsPaginated:
         stream << "paginated";
-        break;
-    case AvoidanceReason::FlowHasTextOverflow:
-        stream << "text-overflow";
         break;
     case AvoidanceReason::FlowHasLineClamp:
         stream << "-webkit-line-clamp";
@@ -309,8 +306,6 @@ static OptionSet<AvoidanceReason> canUseForStyle(const RenderElement& renderer, 
 {
     auto& style = renderer.style();
     OptionSet<AvoidanceReason> reasons;
-    if (style.textOverflow() == TextOverflow::Ellipsis)
-        SET_REASON_AND_RETURN_IF_NEEDED(FlowHasTextOverflow, reasons, includeReasons);
     if (style.writingMode() == WritingMode::BottomToTop)
         SET_REASON_AND_RETURN_IF_NEEDED(FlowHasUnsupportedWritingMode, reasons, includeReasons);
     if (style.hasTextCombine())
@@ -321,9 +316,6 @@ static OptionSet<AvoidanceReason> canUseForStyle(const RenderElement& renderer, 
     if (style.boxDecorationBreak() == BoxDecorationBreak::Clone)
         SET_REASON_AND_RETURN_IF_NEEDED(BoxDecorationBreakClone, reasons, includeReasons);
 #endif
-    if (renderer.isAnonymousBlock() && renderer.parent()->style().textOverflow() == TextOverflow::Ellipsis)
-        SET_REASON_AND_RETURN_IF_NEEDED(FlowHasTextOverflow, reasons, includeReasons);
-
     // These are non-standard properties.
     if (style.lineBreak() == LineBreak::AfterWhiteSpace)
         SET_REASON_AND_RETURN_IF_NEEDED(FlowHasAfterWhiteSpaceLineBreak, reasons, includeReasons);
@@ -357,7 +349,7 @@ static OptionSet<AvoidanceReason> canUseForRenderInlineChild(const RenderInline&
     return reasons;
 }
 
-static OptionSet<AvoidanceReason> canUseForChild(const RenderObject& child, IncludeReasons includeReasons)
+static OptionSet<AvoidanceReason> canUseForChild(const RenderBlockFlow& flow, const RenderObject& child, IncludeReasons includeReasons)
 {
     OptionSet<AvoidanceReason> reasons;
 
@@ -374,10 +366,30 @@ static OptionSet<AvoidanceReason> canUseForChild(const RenderObject& child, Incl
         return reasons;
 
     auto isSupportedFloatingOrPositioned = [&] (auto& renderer) {
+        if (renderer.style().styleType() == PseudoId::FirstLetter) {
+            // Initial letter implementation uses a specialized float behavior internally.
+            auto& style = renderer.style();
+            if (renderer.isFloating() && (!style.initialLetter().isEmpty() || style.initialLetterDrop() || style.initialLetterHeight()))
+                return false;
+        }
 #if !ALLOW_FLOATS
         if (renderer.isFloating())
             return false;
 #endif
+#if !ALLOW_RTL_FLOATS
+        if (renderer.isFloating() && !renderer.parent()->style().isLeftToRightDirection())
+            return false;
+#endif
+#if !ALLOW_VERTICAL_FLOATS
+        if (renderer.isFloating() && !renderer.parent()->style().isHorizontalWritingMode())
+            return false;
+#endif
+        auto intrusiveFloatsWithMismatchingInlineDirection = flow.containsFloats() && flow.containingBlock() && flow.containingBlock()->style().isLeftToRightDirection() != flow.style().isLeftToRightDirection();
+        if (renderer.isFloating() && intrusiveFloatsWithMismatchingInlineDirection)
+            return false;
+
+        if (renderer.style().shapeOutside())
+            return false;
         if (renderer.isOutOfFlowPositioned()) {
             if (!is<RenderReplaced>(renderer))
                 return false;
@@ -490,7 +502,7 @@ OptionSet<AvoidanceReason> canUseForLineLayoutWithReason(const RenderBlockFlow& 
 
     for (auto walker = InlineWalker(flow); !walker.atEnd(); walker.advance()) {
         auto& child = *walker.current();
-        if (auto childReasons = canUseForChild(child, includeReasons))
+        if (auto childReasons = canUseForChild(flow, child, includeReasons))
             ADD_REASONS_AND_RETURN_IF_NEEDED(childReasons, reasons, includeReasons);
     }
     auto styleReasons = canUseForStyle(flow, includeReasons);
@@ -621,4 +633,3 @@ bool canUseForFlexLayout(const RenderFlexibleBox& flexBox)
 }
 }
 
-#endif

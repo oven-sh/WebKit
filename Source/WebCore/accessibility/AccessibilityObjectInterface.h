@@ -841,9 +841,6 @@ public:
     virtual bool isAccessibilityRenderObject() const = 0;
     virtual bool isAccessibilityScrollbar() const = 0;
     virtual bool isAccessibilityScrollViewInstance() const = 0;
-    virtual bool isAXImageInstance() const = 0;
-    virtual bool isAccessibilitySVGRoot() const = 0;
-    virtual bool isAccessibilitySVGElement() const = 0;
     virtual bool isAccessibilityTableInstance() const = 0;
     virtual bool isAccessibilityTableColumnInstance() const = 0;
     virtual bool isAccessibilityARIAGridInstance() const = 0;
@@ -853,32 +850,24 @@ public:
     virtual bool isAccessibilityListBoxInstance() const = 0;
     virtual bool isAXIsolatedObjectInstance() const = 0;
 
-    virtual bool isAttachmentElement() const = 0;
     virtual bool isHeading() const = 0;
     virtual bool isLink() const = 0;
     bool isImage() const { return roleValue() == AccessibilityRole::Image; }
     bool isImageMap() const { return roleValue() == AccessibilityRole::ImageMap; }
     bool isVideo() const { return roleValue() == AccessibilityRole::Video; }
-    virtual bool isNativeImage() const = 0;
-    virtual bool isImageButton() const = 0;
     virtual bool isPasswordField() const = 0;
-    virtual bool isContainedByPasswordField() const = 0;
-    virtual AXCoreObject* passwordFieldOrContainingPasswordField() = 0;
     virtual bool isNativeTextControl() const = 0;
-    virtual bool isSearchField() const = 0;
     bool isWebArea() const { return roleValue() == AccessibilityRole::WebArea; }
     bool isCheckbox() const { return roleValue() == AccessibilityRole::CheckBox; }
     bool isRadioButton() const { return roleValue() == AccessibilityRole::RadioButton; }
     bool isListBox() const { return roleValue() == AccessibilityRole::ListBox; }
     virtual bool isListBoxOption() const = 0;
     virtual bool isAttachment() const = 0;
-    virtual bool isMediaTimeline() const = 0;
     virtual bool isMenuRelated() const = 0;
     virtual bool isMenu() const = 0;
     virtual bool isMenuBar() const = 0;
     virtual bool isMenuButton() const = 0;
     virtual bool isMenuItem() const = 0;
-    virtual bool isFileUploadButton() const = 0;
     virtual bool isInputImage() const = 0;
     virtual bool isProgressIndicator() const = 0;
     virtual bool isSlider() const = 0;
@@ -888,14 +877,10 @@ public:
     virtual bool isLabel() const = 0;
     // lists support (l, ul, ol, dl)
     virtual bool isList() const = 0;
-    virtual bool isUnorderedList() const = 0;
-    virtual bool isOrderedList() const = 0;
-    virtual bool isDescriptionList() const = 0;
 
     // Table support.
     virtual bool isTable() const = 0;
     virtual bool isExposable() const = 0;
-    virtual bool isDataTable() const = 0;
     virtual int tableLevel() const = 0;
     virtual bool supportsSelectedRows() const = 0;
     virtual AccessibilityChildrenVector columns() = 0;
@@ -919,8 +904,6 @@ public:
     virtual std::pair<unsigned, unsigned> rowIndexRange() const = 0;
     // Returns the start location and column span of the cell.
     virtual std::pair<unsigned, unsigned> columnIndexRange() const = 0;
-    virtual bool isColumnHeaderCell() const = 0;
-    virtual bool isRowHeaderCell() const = 0;
     virtual int axColumnIndex() const = 0;
     virtual int axRowIndex() const = 0;
 
@@ -951,7 +934,6 @@ public:
     virtual AXCoreObject* incrementButton() = 0;
     virtual AXCoreObject* decrementButton() = 0;
     virtual bool isSpinButtonPart() const = 0;
-    virtual bool isIncrementor() const = 0;
 
     virtual bool isMockObject() const = 0;
     virtual bool isMediaObject() const = 0;
@@ -987,18 +969,13 @@ public:
 #endif
 
     virtual bool isLandmark() const = 0;
-    virtual bool isRangeControl() const = 0;
-    virtual bool isMeter() const = 0;
     virtual bool isStyleFormatGroup() const = 0;
-    virtual bool isFigureElement() const = 0;
     virtual bool isKeyboardFocusable() const = 0;
-    virtual bool isOutput() const = 0;
 
     virtual bool isChecked() const = 0;
     virtual bool isEnabled() const = 0;
     virtual bool isSelected() const = 0;
     virtual bool isFocused() const = 0;
-    virtual bool isHovered() const = 0;
     virtual bool isIndeterminate() const = 0;
     virtual bool isLoaded() const = 0;
     virtual bool isMultiSelectable() const = 0;
@@ -1010,10 +987,8 @@ public:
     virtual bool isVisited() const = 0;
     virtual bool isRequired() const = 0;
     virtual bool supportsRequiredAttribute() const = 0;
-    virtual bool isLinked() const = 0;
     virtual bool isExpanded() const = 0;
     virtual bool isVisible() const = 0;
-    virtual bool isCollapsed() const = 0;
     virtual void setIsExpanded(bool) = 0;
     virtual FloatRect relativeFrame() const = 0;
     virtual FloatRect convertFrameToSpace(const FloatRect&, AccessibilityConversionSpace) const = 0;
@@ -1055,9 +1030,6 @@ public:
     virtual AccessibilityObjectInclusion defaultObjectInclusion() const = 0;
     virtual bool accessibilityIsIgnoredByDefault() const = 0;
 
-    virtual bool isShowingValidationMessage() const = 0;
-    virtual String validationMessage() const = 0;
-
     virtual unsigned blockquoteLevel() const = 0;
     virtual unsigned headingLevel() const = 0;
     virtual AccessibilityButtonState checkboxOrRadioValue() const = 0;
@@ -1098,7 +1070,6 @@ public:
 
     virtual bool hasPopup() const = 0;
     virtual String popupValue() const = 0;
-    virtual bool hasDatalist() const = 0;
     virtual bool supportsHasPopup() const = 0;
     virtual bool pressedIsPresent() const = 0;
     virtual bool ariaIsMultiline() const = 0;
@@ -1106,20 +1077,16 @@ public:
     virtual bool supportsPressed() const = 0;
     virtual bool supportsExpanded() const = 0;
     virtual bool supportsChecked() const = 0;
-    virtual bool supportsRowCountChange() const = 0;
     virtual AccessibilitySortDirection sortDirection() const = 0;
-    virtual bool canvasHasFallbackContent() const = 0;
     virtual bool supportsRangeValue() const = 0;
     virtual String identifierAttribute() const = 0;
     virtual String linkRelValue() const = 0;
-    virtual void classList(Vector<String>&) const = 0;
+    virtual Vector<String> classList() const = 0;
     virtual AccessibilityCurrentState currentState() const = 0;
     virtual String currentValue() const = 0;
     virtual bool supportsCurrent() const = 0;
     virtual const String keyShortcutsValue() const = 0;
 
-    // This function checks if the object should be ignored when there's a modal dialog displayed.
-    virtual bool isModalDescendant(Node*) const = 0;
     virtual bool isModalNode() const = 0;
 
     virtual bool supportsSetSize() const = 0;
@@ -1196,7 +1163,6 @@ public:
     virtual String ariaLabeledByAttribute() const = 0;
     virtual String ariaDescribedByAttribute() const = 0;
     virtual const String placeholderValue() const = 0;
-    virtual bool accessibleNameDerivesFromContent() const = 0;
 
     // Abbreviations
     virtual String expandedTextValue() const = 0;
@@ -1326,15 +1292,9 @@ public:
     virtual String stringForRange(const SimpleRange&) const = 0;
     virtual IntRect boundsForVisiblePositionRange(const VisiblePositionRange&) const = 0;
     virtual IntRect boundsForRange(const SimpleRange&) const = 0;
-    virtual int lengthForVisiblePositionRange(const VisiblePositionRange&) const = 0;
     virtual void setSelectedVisiblePositionRange(const VisiblePositionRange&) const = 0;
 
-    virtual VisiblePosition visiblePositionForBounds(const IntRect&, AccessibilityVisiblePositionForBounds) const = 0;
     virtual VisiblePosition visiblePositionForPoint(const IntPoint&) const = 0;
-    virtual VisiblePosition nextVisiblePosition(const VisiblePosition&) const = 0;
-    virtual VisiblePosition previousVisiblePosition(const VisiblePosition&) const = 0;
-    virtual VisiblePosition nextWordEnd(const VisiblePosition&) const = 0;
-    virtual VisiblePosition previousWordStart(const VisiblePosition&) const = 0;
     virtual VisiblePosition nextLineEndPosition(const VisiblePosition&) const = 0;
     virtual VisiblePosition previousLineStartPosition(const VisiblePosition&) const = 0;
     virtual VisiblePosition nextSentenceEndPosition(const VisiblePosition&) const = 0;
@@ -1346,12 +1306,10 @@ public:
     virtual VisiblePosition visiblePositionForIndex(int) const = 0;
     virtual int indexForVisiblePosition(const VisiblePosition&) const = 0;
 
-    virtual AXCoreObject* accessibilityObjectForPosition(const VisiblePosition&) const = 0;
     virtual int lineForPosition(const VisiblePosition&) const = 0;
     virtual PlainTextRange plainTextRangeForVisiblePositionRange(const VisiblePositionRange&) const = 0;
     virtual int index(const VisiblePosition&) const = 0;
 
-    virtual void lineBreaks(Vector<int>&) const = 0;
     virtual PlainTextRange doAXRangeForLine(unsigned) const = 0;
     virtual PlainTextRange doAXRangeForPosition(const IntPoint&) const = 0;
     virtual PlainTextRange doAXRangeForIndex(unsigned) const = 0;
@@ -1384,9 +1342,6 @@ public:
     virtual String readOnlyValue() const = 0;
     virtual String autoCompleteValue() const = 0;
 
-    // CSS3 Speech properties.
-    virtual OptionSet<SpeakAs> speakAsProperty() const = 0;
-
     // Make this object visible by scrolling as many nested scrollable views as needed.
     virtual void scrollToMakeVisible() const = 0;
     // Same, but if the whole object can't be made visible, try for this subrect, in local coordinates.
@@ -1405,12 +1360,6 @@ public:
     virtual bool isMathUnderOver() const = 0;
     virtual bool isMathRoot() const = 0;
     virtual bool isMathSquareRoot() const = 0;
-    virtual bool isMathText() const = 0;
-    virtual bool isMathNumber() const = 0;
-    virtual bool isMathOperator() const = 0;
-    virtual bool isMathFenceOperator() const = 0;
-    virtual bool isMathSeparatorOperator() const = 0;
-    virtual bool isMathIdentifier() const = 0;
     virtual bool isMathTable() const = 0;
     virtual bool isMathTableRow() const = 0;
     virtual bool isMathTableCell() const = 0;
@@ -1438,7 +1387,6 @@ public:
     virtual String mathFencedOpenString() const = 0;
     virtual String mathFencedCloseString() const = 0;
     virtual int mathLineThickness() const = 0;
-    virtual bool isAnonymousMathOperator() const = 0;
 
     // Multiscripts components.
     typedef std::pair<AXCoreObject*, AXCoreObject*> AccessibilityMathMultiscriptPair;
@@ -1469,7 +1417,6 @@ public:
 #if PLATFORM(COCOA)
     virtual bool preventKeyboardDOMEventDispatch() const = 0;
     virtual void setPreventKeyboardDOMEventDispatch(bool) = 0;
-    virtual bool fileUploadButtonReturnsValueInTitle() const = 0;
     virtual String speechHintAttributeValue() const = 0;
     virtual String descriptionAttributeValue() const = 0;
     virtual String helpTextAttributeValue() const = 0;
@@ -1488,8 +1435,6 @@ public:
     virtual AXCoreObject* focusableAncestor() = 0;
     virtual AXCoreObject* editableAncestor() = 0;
     virtual AXCoreObject* highestEditableAncestor() = 0;
-
-    virtual AXCoreObject* webAreaObject() const = 0;
 
     virtual PAL::SessionID sessionID() const = 0;
     virtual String documentURI() const = 0;

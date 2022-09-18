@@ -25,8 +25,6 @@
 
 #pragma once
 
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
-
 #include "InlineFormattingContext.h"
 #include "InlineLineBuilder.h"
 #include "LayoutUnits.h"
@@ -62,6 +60,7 @@ private:
     void appendSoftLineBreakDisplayBox(const Line::Run&, const InlineRect&, DisplayBoxes&);
     void appendHardLineBreakDisplayBox(const Line::Run&, const InlineRect&, DisplayBoxes&);
     void appendAtomicInlineLevelDisplayBox(const Line::Run&, const InlineRect& , DisplayBoxes&);
+    void appendRootInlineBoxDisplayBox(const InlineRect&, bool linehasContent, DisplayBoxes&);
     void appendInlineBoxDisplayBox(const Line::Run&, const InlineLevelBox&, const InlineRect&, bool linehasContent, DisplayBoxes&);
     void appendSpanningInlineBoxDisplayBox(const Line::Run&, const InlineLevelBox&, const InlineRect&, DisplayBoxes&);
     void appendInlineDisplayBoxAtBidiBoundary(const Box&, DisplayBoxes&);
@@ -86,10 +85,10 @@ private:
     const InlineFormattingContext& m_formattingContext;
     InlineFormattingState& m_formattingState;
     size_t m_lineIndex { 0 };
+    InlineLayoutUnit m_lineBoxOffset { 0.f };
     bool m_contentHasInkOverflow { false };
 };
 
 }
 }
 
-#endif

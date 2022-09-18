@@ -294,8 +294,8 @@ namespace JSC {
         template<typename Op>
         bool compileTailCall(const Op&, UnlinkedCallLinkInfo*, unsigned callLinkInfoIndex);
         template<typename Op>
-        bool compileCallEval(const Op&);
-        void compileCallEvalSlowCase(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
+        bool compileCallDirectEval(const Op&);
+        void compileCallDirectEvalSlowCase(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
         template<typename Op>
         void emitPutCallResult(const Op&);
 
@@ -361,8 +361,11 @@ namespace JSC {
         void emitJumpSlowCaseIfNotJSCell(JSValueRegs, VirtualRegister);
 
         template<typename Op>
+        void emit_compare(const JSInstruction*, RelationalCondition);
+        template <typename EmitCompareFunctor>
+        void emit_compareImpl(VirtualRegister op1, VirtualRegister op2, RelationalCondition, const EmitCompareFunctor&);
+        template<typename Op>
         void emit_compareAndJump(const JSInstruction*, RelationalCondition);
-        void emit_compareAndJumpImpl(VirtualRegister op1, VirtualRegister op2, unsigned target, RelationalCondition);
         template<typename Op>
         void emit_compareUnsigned(const JSInstruction*, RelationalCondition);
         void emit_compareUnsignedImpl(VirtualRegister dst, VirtualRegister op1, VirtualRegister op2, RelationalCondition);
@@ -370,9 +373,11 @@ namespace JSC {
         void emit_compareUnsignedAndJump(const JSInstruction*, RelationalCondition);
         void emit_compareUnsignedAndJumpImpl(VirtualRegister op1, VirtualRegister op2, unsigned target, RelationalCondition);
         template<typename Op, typename SlowOperation>
+        void emit_compareSlow(const JSInstruction*, DoubleCondition, SlowOperation, Vector<SlowCaseEntry>::iterator&);
+        template<typename SlowOperation, typename HanldeReturnValueGPRFunctor, typename EmitDoubleCompareFunctor>
+        void emit_compareSlowImpl(VirtualRegister op1, VirtualRegister op2, size_t instructionSize, SlowOperation, Vector<SlowCaseEntry>::iterator&, const HanldeReturnValueGPRFunctor&, const EmitDoubleCompareFunctor&);
+        template<typename Op, typename SlowOperation>
         void emit_compareAndJumpSlow(const JSInstruction*, DoubleCondition, SlowOperation, bool invert, Vector<SlowCaseEntry>::iterator&);
-        template<typename SlowOperation>
-        void emit_compareAndJumpSlowImpl(VirtualRegister op1, VirtualRegister op2, unsigned target, size_t instructionSize, DoubleCondition, SlowOperation, bool invert, Vector<SlowCaseEntry>::iterator&);
 
         void emit_op_add(const JSInstruction*);
         void emit_op_bitand(const JSInstruction*);
@@ -381,7 +386,7 @@ namespace JSC {
         void emit_op_bitnot(const JSInstruction*);
         void emit_op_call(const JSInstruction*);
         void emit_op_tail_call(const JSInstruction*);
-        void emit_op_call_eval(const JSInstruction*);
+        void emit_op_call_direct_eval(const JSInstruction*);
         void emit_op_call_varargs(const JSInstruction*);
         void emit_op_tail_call_varargs(const JSInstruction*);
         void emit_op_tail_call_forward_arguments(const JSInstruction*);
@@ -413,6 +418,7 @@ namespace JSC {
         void emit_op_get_by_id_with_this(const JSInstruction*);
         void emit_op_get_by_id_direct(const JSInstruction*);
         void emit_op_get_by_val(const JSInstruction*);
+        void emit_op_get_by_val_with_this(const JSInstruction*);
         void emit_op_get_private_name(const JSInstruction*);
         void emit_op_set_private_brand(const JSInstruction*);
         void emit_op_check_private_brand(const JSInstruction*);
@@ -445,6 +451,10 @@ namespace JSC {
         void emit_op_jnundefined_or_null(const JSInstruction*);
         void emit_op_jeq_ptr(const JSInstruction*);
         void emit_op_jneq_ptr(const JSInstruction*);
+        void emit_op_less(const JSInstruction*);
+        void emit_op_lesseq(const JSInstruction*);
+        void emit_op_greater(const JSInstruction*);
+        void emit_op_greatereq(const JSInstruction*);
         void emit_op_jless(const JSInstruction*);
         void emit_op_jlesseq(const JSInstruction*);
         void emit_op_jgreater(const JSInstruction*);
@@ -542,7 +552,7 @@ namespace JSC {
         void emitSlow_op_add(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
         void emitSlow_op_call(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
         void emitSlow_op_tail_call(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
-        void emitSlow_op_call_eval(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
+        void emitSlow_op_call_direct_eval(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
         void emitSlow_op_call_varargs(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
         void emitSlow_op_tail_call_varargs(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
         void emitSlow_op_tail_call_forward_arguments(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
@@ -555,6 +565,7 @@ namespace JSC {
         void emitSlow_op_get_by_id_with_this(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
         void emitSlow_op_get_by_id_direct(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
         void emitSlow_op_get_by_val(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
+        void emitSlow_op_get_by_val_with_this(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
         void emitSlow_op_get_private_name(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
         void emitSlow_op_set_private_brand(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
         void emitSlow_op_check_private_brand(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
@@ -564,6 +575,10 @@ namespace JSC {
         void emitSlow_op_has_private_name(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
         void emitSlow_op_has_private_brand(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
         void emitSlow_op_instanceof(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
+        void emitSlow_op_less(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
+        void emitSlow_op_lesseq(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
+        void emitSlow_op_greater(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
+        void emitSlow_op_greatereq(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
         void emitSlow_op_jless(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
         void emitSlow_op_jlesseq(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
         void emitSlow_op_jgreater(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
@@ -653,6 +668,7 @@ namespace JSC {
         static MacroAssemblerCodeRef<JITThunkPtrTag> slow_op_get_by_id_callSlowOperationThenCheckExceptionGenerator(VM&);
         static MacroAssemblerCodeRef<JITThunkPtrTag> slow_op_put_by_id_callSlowOperationThenCheckExceptionGenerator(VM&);
         static MacroAssemblerCodeRef<JITThunkPtrTag> slow_op_get_by_val_callSlowOperationThenCheckExceptionGenerator(VM&);
+        static MacroAssemblerCodeRef<JITThunkPtrTag> slow_op_get_by_val_with_this_callSlowOperationThenCheckExceptionGenerator(VM&);
         static MacroAssemblerCodeRef<JITThunkPtrTag> slow_op_get_private_name_callSlowOperationThenCheckExceptionGenerator(VM&);
         static MacroAssemblerCodeRef<JITThunkPtrTag> slow_op_get_from_scopeGenerator(VM&);
         static MacroAssemblerCodeRef<JITThunkPtrTag> slow_op_resolve_scopeGenerator(VM&);
@@ -893,6 +909,7 @@ namespace JSC {
         Vector<JITGetByIdGenerator> m_getByIds;
         Vector<JITGetByValGenerator> m_getByVals;
         Vector<JITGetByIdWithThisGenerator> m_getByIdsWithThis;
+        Vector<JITGetByValWithThisGenerator> m_getByValsWithThis;
         Vector<JITPutByIdGenerator> m_putByIds;
         Vector<JITPutByValGenerator> m_putByVals;
         Vector<JITInByIdGenerator> m_inByIds;
@@ -918,6 +935,7 @@ namespace JSC {
         unsigned m_getByIdIndex { UINT_MAX };
         unsigned m_getByValIndex { UINT_MAX };
         unsigned m_getByIdWithThisIndex { UINT_MAX };
+        unsigned m_getByValWithThisIndex { UINT_MAX };
         unsigned m_putByIdIndex { UINT_MAX };
         unsigned m_putByValIndex { UINT_MAX };
         unsigned m_inByIdIndex { UINT_MAX };

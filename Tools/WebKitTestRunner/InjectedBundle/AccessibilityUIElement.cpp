@@ -53,7 +53,11 @@ JSClassRef AccessibilityUIElement::wrapperClass()
 
 bool AccessibilityUIElement::isValid() const
 {
-    return m_element;            
+#if PLATFORM(COCOA)
+    return m_element.getAutoreleased();
+#else
+    return m_element;
+#endif
 }
 
 #if !ENABLE(ACCESSIBILITY_ISOLATED_TREE)
@@ -89,6 +93,7 @@ JSRetainPtr<JSStringRef> AccessibilityUIElement::attributedStringForElement() { 
 bool AccessibilityUIElement::isInTable() const { return false; }
 bool AccessibilityUIElement::isInLandmark() const { return false; }
 bool AccessibilityUIElement::isInList() const { return false; }
+bool AccessibilityUIElement::isMarkAnnotation() const { return false; }
 #endif
     
 // Unsupported methods on various platforms. As they're implemented on other platforms this list should be modified.

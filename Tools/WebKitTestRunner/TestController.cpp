@@ -379,6 +379,18 @@ void TestController::handleQueryPermission(WKStringRef string, WKSecurityOriginR
         }
     }
 
+    if (toWTFString(string) == "geolocation"_s) {
+        m_geolocationPermissionQueryOrigins.add(toWTFString(adoptWK(WKSecurityOriginCopyToString(securityOrigin))));
+
+        if (m_isGeolocationPermissionSet) {
+            if (m_isGeolocationPermissionAllowed)
+                WKQueryPermissionResultCallbackCompleteWithGranted(callback);
+            else
+                WKQueryPermissionResultCallbackCompleteWithDenied(callback);
+            return;
+        }
+    }
+
     WKQueryPermissionResultCallbackCompleteWithPrompt(callback);
 }
 
@@ -561,6 +573,7 @@ void TestController::initialize(int argc, const char* argv[])
     JSC::initialize();
     WTF::initializeMainThread();
     WTF::setProcessPrivileges(allPrivileges());
+    WebCoreTestSupport::initializeNames();
     WebCoreTestSupport::populateJITOperations();
 
     Options options;
@@ -583,10 +596,15 @@ void TestController::initialize(int argc, const char* argv[])
     m_forceComplexText = options.forceComplexText;
     m_paths = options.paths;
     m_allowedHosts = options.allowedHosts;
+    m_localhostAliases = options.localhostAliases;
     m_checkForWorldLeaks = options.checkForWorldLeaks;
     m_allowAnyHTTPSCertificateForAllowedHosts = options.allowAnyHTTPSCertificateForAllowedHosts;
     m_enableAllExperimentalFeatures = options.enableAllExperimentalFeatures;
     m_globalFeatures = std::move(options.features);
+
+    /* localhost is implicitly allowed and so should aliases to it. */
+    for (const auto& alias : m_localhostAliases)
+        m_allowedHosts.insert(alias);
 
     m_usingServerMode = (m_paths.size() == 1 && m_paths[0] == "-");
     if (m_usingServerMode)
@@ -676,6 +694,11 @@ WKRetainPtr<WKPageConfigurationRef> TestController::generatePageConfiguration(co
     if (!m_context || !m_mainWebView || !m_mainWebView->viewSupportsOptions(options)) {
         auto contextConfiguration = generateContextConfiguration(options);
         m_context = platformAdjustContext(adoptWK(WKContextCreateWithConfiguration(contextConfiguration.get())).get(), contextConfiguration.get());
+
+        auto localhostAliases = adoptWK(WKMutableArrayCreate());
+        for (const auto& alias : m_localhostAliases)
+            WKArrayAppendItem(localhostAliases.get(), toWK(alias.c_str()).get());
+        WKContextSetLocalhostAliases(m_context.get(), localhostAliases.get());
 
         m_geolocationProvider = makeUnique<GeolocationProviderMock>(m_context.get());
 
@@ -770,19 +793,29 @@ static String originUserVisibleName(WKSecurityOriginRef origin)
 
 bool TestController::grantNotificationPermission(WKStringRef originString)
 {
-    m_webNotificationProvider.setPermission(toWTFString(originString), true);
-
     auto origin = adoptWK(WKSecurityOriginCreateFromString(originString));
+    auto previousPermissionState = m_webNotificationProvider.permissionState(origin.get());
+
+    m_webNotificationProvider.setPermission(toWTFString(originString), true);
     WKNotificationManagerProviderDidUpdateNotificationPolicy(WKNotificationManagerGetSharedServiceWorkerNotificationManager(), origin.get(), true);
+
+    if (!previousPermissionState || !*previousPermissionState)
+        WKPagePermissionChanged(toWK("notifications").get(), originString);
+
     return true;
 }
 
 bool TestController::denyNotificationPermission(WKStringRef originString)
 {
-    m_webNotificationProvider.setPermission(toWTFString(originString), false);
-
     auto origin = adoptWK(WKSecurityOriginCreateFromString(originString));
+    auto previousPermissionState = m_webNotificationProvider.permissionState(origin.get());
+
+    m_webNotificationProvider.setPermission(toWTFString(originString), false);
     WKNotificationManagerProviderDidUpdateNotificationPolicy(WKNotificationManagerGetSharedServiceWorkerNotificationManager(), origin.get(), false);
+
+    if (!previousPermissionState || *previousPermissionState)
+        WKPagePermissionChanged(toWK("notifications").get(), originString);
+
     return true;
 }
 
@@ -990,8 +1023,10 @@ void TestController::resetPreferencesToConsistentValues(const TestOptions& optio
     batchUpdatePreferences(platformPreferences(), [options, enableAllExperimentalFeatures = m_enableAllExperimentalFeatures] (auto preferences) {
         WKPreferencesResetTestRunnerOverrides(preferences);
 
-        if (enableAllExperimentalFeatures)
+        if (enableAllExperimentalFeatures) {
             WKPreferencesEnableAllExperimentalFeatures(preferences);
+            WKPreferencesSetExperimentalFeatureForKey(preferences, false, toWK("AlternateWebMPlayerEnabled").get());
+        }
 
         WKPreferencesResetAllInternalDebugFeatures(preferences);
 
@@ -1039,7 +1074,7 @@ bool TestController::resetStateToConsistentValues(const TestOptions& options, Re
     if (resetStage == ResetStage::AfterTest)
         WKPagePostMessageToInjectedBundle(TestController::singleton().mainWebView()->page(), toWK("Reset").get(), resetMessageBody.get());
 
-    WKContextSetShouldUseFontSmoothing(TestController::singleton().context(), false);
+    WKContextSetShouldUseFontSmoothingForTesting(TestController::singleton().context(), false);
     WKContextSetCacheModel(TestController::singleton().context(), kWKCacheModelDocumentBrowser);
 
     WKWebsiteDataStoreClearCachedCredentials(websiteDataStore());
@@ -1103,6 +1138,7 @@ bool TestController::resetStateToConsistentValues(const TestOptions& options, Re
     m_geolocationPermissionRequests.clear();
     m_isGeolocationPermissionSet = false;
     m_isGeolocationPermissionAllowed = false;
+    m_geolocationPermissionQueryOrigins.clear();
 
     // Reset UserMedia permissions.
     m_userMediaPermissionRequests.clear();
@@ -2231,7 +2267,7 @@ bool TestController::canAuthenticateAgainstProtectionSpace(WKPageRef page, WKPro
     auto scheme = WKProtectionSpaceGetAuthenticationScheme(protectionSpace);
     if (scheme == kWKProtectionSpaceAuthenticationSchemeServerTrustEvaluationRequested) {
         auto host = toSTD(adoptWK(WKProtectionSpaceCopyHost(protectionSpace)));
-        return host == "localhost" || host == "127.0.0.1" || (m_allowAnyHTTPSCertificateForAllowedHosts && m_allowedHosts.find(host) != m_allowedHosts.end());
+        return host == "localhost" || host == "127.0.0.1" || m_localhostAliases.contains(host) || (m_allowAnyHTTPSCertificateForAllowedHosts && m_allowedHosts.contains(host));
     }
     return scheme <= kWKProtectionSpaceAuthenticationSchemeHTTPDigest || scheme == kWKProtectionSpaceAuthenticationSchemeOAuth;
 }
@@ -2450,9 +2486,19 @@ void TestController::simulateWebNotificationClickForServiceWorkerNotifications()
 
 void TestController::setGeolocationPermission(bool enabled)
 {
+    bool permissionChanged = false;
+    if (!m_isGeolocationPermissionSet || m_isGeolocationPermissionAllowed != enabled)
+        permissionChanged = true;
+
     m_isGeolocationPermissionSet = true;
     m_isGeolocationPermissionAllowed = enabled;
     decidePolicyForGeolocationPermissionRequestIfPossible();
+
+    if (!permissionChanged)
+        return;
+
+    for (auto& originString : m_geolocationPermissionQueryOrigins)
+        WKPagePermissionChanged(toWK("geolocation").get(), toWK(originString).get());
 }
 
 void TestController::setMockGeolocationPosition(double latitude, double longitude, double accuracy, std::optional<double> altitude, std::optional<double> altitudeAccuracy, std::optional<double> heading, std::optional<double> speed, std::optional<double> floorLevel)
@@ -3701,6 +3747,11 @@ bool TestController::isMockRealtimeMediaSourceCenterEnabled() const
 void TestController::setMockCaptureDevicesInterrupted(bool isCameraInterrupted, bool isMicrophoneInterrupted)
 {
     WKPageSetMockCaptureDevicesInterrupted(m_mainWebView->page(), isCameraInterrupted, isMicrophoneInterrupted);
+}
+
+void TestController::triggerMockMicrophoneConfigurationChange()
+{
+    WKPageTriggerMockMicrophoneConfigurationChange(m_mainWebView->page());
 }
 
 struct InAppBrowserPrivacyCallbackContext {

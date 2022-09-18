@@ -388,7 +388,7 @@ public:
     TextDecorationSkipInk textDecorationSkipInk() const { return static_cast<TextDecorationSkipInk>(m_rareInheritedData->textDecorationSkipInk); }
     TextUnderlinePosition textUnderlinePosition() const { return static_cast<TextUnderlinePosition>(m_rareInheritedData->textUnderlinePosition); }
     TextUnderlineOffset textUnderlineOffset() const { return m_rareInheritedData->textUnderlineOffset; }
-    TextDecorationThickness textDecorationThickness() const { return m_rareInheritedData->textDecorationThickness; }
+    TextDecorationThickness textDecorationThickness() const { return m_rareNonInheritedData->textDecorationThickness; }
 
     TextIndentLine textIndentLine() const { return static_cast<TextIndentLine>(m_rareInheritedData->textIndentLine); }
     TextIndentType textIndentType() const { return static_cast<TextIndentType>(m_rareInheritedData->textIndentType); }
@@ -719,7 +719,7 @@ public:
     bool affectedByTransformOrigin() const;
 
     FloatPoint computePerspectiveOrigin(const FloatRect& boundingBox) const;
-    void applyPerspective(TransformationMatrix&, const RenderObject&, const FloatPoint& originTranslate) const;
+    void applyPerspective(TransformationMatrix&, const FloatPoint& originTranslate) const;
 
     FloatPoint3D computeTransformOrigin(const FloatRect& boundingBox) const;
     void applyTransformOrigin(TransformationMatrix&, const FloatPoint3D& originTranslate) const;
@@ -767,7 +767,7 @@ public:
 
     BackfaceVisibility backfaceVisibility() const { return static_cast<BackfaceVisibility>(m_rareNonInheritedData->backfaceVisibility); }
     float perspective() const { return m_rareNonInheritedData->perspective; }
-    float usedPerspective(const RenderObject&) const;
+    float usedPerspective() const { return std::max(1.0f, perspective()); }
     bool hasPerspective() const { return m_rareNonInheritedData->perspective != initialPerspective(); }
     const Length& perspectiveOriginX() const { return m_rareNonInheritedData->perspectiveOriginX; }
     const Length& perspectiveOriginY() const { return m_rareNonInheritedData->perspectiveOriginY; }
@@ -1036,7 +1036,7 @@ public:
     void setTextDecorationSkipInk(TextDecorationSkipInk skipInk) { SET_VAR(m_rareInheritedData, textDecorationSkipInk, static_cast<unsigned>(skipInk)); }
     void setTextUnderlinePosition(TextUnderlinePosition position) { SET_VAR(m_rareInheritedData, textUnderlinePosition, static_cast<unsigned>(position)); }
     void setTextUnderlineOffset(TextUnderlineOffset textUnderlineOffset) { SET_VAR(m_rareInheritedData, textUnderlineOffset, textUnderlineOffset); }
-    void setTextDecorationThickness(TextDecorationThickness textDecorationThickness) { SET_VAR(m_rareInheritedData, textDecorationThickness, textDecorationThickness); }
+    void setTextDecorationThickness(TextDecorationThickness textDecorationThickness) { SET_VAR(m_rareNonInheritedData, textDecorationThickness, textDecorationThickness); }
     void setDirection(TextDirection v) { m_inheritedFlags.direction = static_cast<unsigned>(v); }
     void setHasExplicitlySetDirection(bool v) { m_nonInheritedFlags.hasExplicitlySetDirection = v; }
     void setLineHeight(Length&&);
@@ -1644,6 +1644,9 @@ public:
     static float initialVerticalBorderSpacing() { return 0; }
     static CursorType initialCursor() { return CursorType::Auto; }
     static Color initialColor() { return Color::black; }
+    static Color initialTextStrokeColor() { return currentColor(); }
+    static Color initialTextFillColor() { return currentColor(); }
+    static Color initialTextDecorationColor() { return currentColor(); }
     static StyleImage* initialListStyleImage() { return 0; }
     static float initialBorderWidth() { return 3; }
     static unsigned short initialColumnRuleWidth() { return 3; }
@@ -2548,6 +2551,11 @@ inline bool pseudoElementRendererIsNeeded(const RenderStyle* style)
 inline bool generatesBox(const RenderStyle& style)
 {
     return style.display() != DisplayType::None && style.display() != DisplayType::Contents;
+}
+
+inline bool isNonVisibleOverflow(Overflow overflow)
+{
+    return overflow == Overflow::Hidden || overflow == Overflow::Scroll || overflow == Overflow::Clip;
 }
 
 } // namespace WebCore

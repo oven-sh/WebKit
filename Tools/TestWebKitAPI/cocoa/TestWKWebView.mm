@@ -270,7 +270,7 @@ static NSString *overrideBundleIdentifier(id, SEL)
     unsigned clientWidth = 0;
     do {
         if (timeout != 10)
-            TestWebKitAPI::Util::sleep(0.1);
+            TestWebKitAPI::Util::runFor(0.1_s);
 
         id result = [self objectByEvaluatingJavaScript:@"function ___forceLayoutAndGetClientWidth___() { document.body.offsetTop; return document.body.clientWidth; }; ___forceLayoutAndGetClientWidth___();"];
         clientWidth = [result integerValue];
@@ -374,6 +374,11 @@ NSEventMask __simulated_forceClickAssociatedEventsMask(id self, SEL _cmd)
     [self sendEvent:[NSEvent mouseEventWithType:eventType location:point modifierFlags:modifierFlags timestamp:_webView.eventTimestamp windowNumber:self.windowNumber context:[NSGraphicsContext currentContext] eventNumber:++gEventNumber clickCount:clickCount pressure:0]];
 }
 
+- (BOOL)canBecomeKeyWindow
+{
+    return _webView.forceWindowToBecomeKey || super.canBecomeKeyWindow;
+}
+
 #endif
 
 - (BOOL)isKeyWindow
@@ -461,6 +466,7 @@ static InputSessionChangeCount nextInputSessionChangeCount()
     InputSessionChangeCount _inputSessionChangeCount;
 #endif
 #if PLATFORM(MAC)
+    BOOL _forceWindowToBecomeKey;
     NSTimeInterval _eventTimestampOffset;
 #endif
 }
@@ -809,6 +815,16 @@ static WKContentView *recursiveFindWKContentView(UIView *view)
     return GetCurrentEventTime() + _eventTimestampOffset;
 }
 
+- (BOOL)forceWindowToBecomeKey
+{
+    return _forceWindowToBecomeKey;
+}
+
+- (void)setForceWindowToBecomeKey:(BOOL)forceWindowToBecomeKey
+{
+    _forceWindowToBecomeKey = forceWindowToBecomeKey;
+}
+
 - (void)mouseDownAtPoint:(NSPoint)pointInWindow simulatePressure:(BOOL)simulatePressure
 {
     [self mouseDownAtPoint:pointInWindow simulatePressure:simulatePressure withFlags:0 eventType:NSEventTypeLeftMouseDown];
@@ -845,6 +861,11 @@ static WKContentView *recursiveFindWKContentView(UIView *view)
 - (void)sendClickAtPoint:(NSPoint)pointInWindow
 {
     [self sendClicksAtPoint:pointInWindow numberOfClicks:1];
+}
+
+- (BOOL)acceptsFirstMouseAtPoint:(NSPoint)pointInWindow
+{
+    return [self acceptsFirstMouse:[self _mouseEventWithType:NSEventTypeLeftMouseDown atLocation:pointInWindow]];
 }
 
 - (void)mouseEnterAtPoint:(NSPoint)pointInWindow

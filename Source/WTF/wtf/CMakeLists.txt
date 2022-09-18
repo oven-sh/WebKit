@@ -4,6 +4,7 @@ set(WTF_PUBLIC_HEADERS
     Algorithms.h
     AnsiColors.h
     ApproximateTime.h
+    ArgumentCoder.h
     Assertions.h
     Atomics.h
     AutodrainedPool.h
@@ -381,6 +382,7 @@ set(WTF_PUBLIC_HEADERS
     text/StringImpl.h
     text/StringOperators.h
     text/StringParsingBuffer.h
+    text/StringSearch.h
     text/StringToIntegerConversion.h
     text/StringView.h
     text/SymbolImpl.h

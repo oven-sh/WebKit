@@ -120,7 +120,9 @@ typedef NS_OPTIONS(NSUInteger, _WKRectEdge) {
 @class WKBrowsingContextHandle;
 @class WKDownload;
 @class WKFrameInfo;
+@class WKSecurityOrigin;
 @class WKWebpagePreferences;
+@class _UIFindInteraction;
 @class _WKApplicationManifest;
 @class _WKDataTask;
 @class _WKFrameHandle;
@@ -433,6 +435,9 @@ for this property.
 
 - (void)_dataTaskWithRequest:(NSURLRequest *)request completionHandler:(void(^)(_WKDataTask *))completionHandler WK_API_AVAILABLE(macos(13.0), ios(16.0));
 
+// Default value is 0. A value of 0 means the window's backing scale factor will be used and automatically update when the window moves screens.
+@property (nonatomic, setter=_setOverrideDeviceScaleFactor:) CGFloat _overrideDeviceScaleFactor WK_API_AVAILABLE(macos(10.11), ios(WK_IOS_TBA));
+
 typedef NS_ENUM(NSInteger, WKDisplayCaptureState) {
     WKDisplayCaptureStateNone,
     WKDisplayCaptureStateActive,
@@ -492,12 +497,16 @@ typedef NS_OPTIONS(NSUInteger, WKDisplayCaptureSurfaces) {
  */
 - (void)_setSystemAudioCaptureState:(WKSystemAudioCaptureState)state completionHandler:(void (^)(void))completionHandler WK_API_AVAILABLE(macos(13.0), ios(16.0));
 
++ (void)_permissionChanged:(NSString *)permissionName forOrigin:(WKSecurityOrigin *)origin WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA));
+
 @end
 
 #if TARGET_OS_IPHONE
 
 #if !TARGET_OS_TV && !TARGET_OS_WATCH && __has_include(<UIKit/_UITextSearching.h>)
 @interface WKWebView (WKPrivateIOS) <_UITextSearching, UITextSearching, UIFindInteractionDelegate>
+#elif TARGET_OS_IOS && __IPHONE_OS_VERSION_MIN_REQUIRED >= 160000
+@interface WKWebView (WKPrivateIOS) <UITextSearching, UIFindInteractionDelegate>
 #else
 @interface WKWebView (WKPrivateIOS)
 #endif
@@ -507,7 +516,7 @@ typedef NS_OPTIONS(NSUInteger, WKDisplayCaptureSurfaces) {
 @property (nonatomic, copy, setter=_setEphemeralUIEventAttribution:) UIEventAttribution *_ephemeralUIEventAttribution WK_API_AVAILABLE(ios(16.0));
 - (void)_setEphemeralUIEventAttribution:(UIEventAttribution *)attribution forApplicationWithBundleID:(NSString *)bundleID WK_API_AVAILABLE(ios(16.0));
 
-#if __has_include(<UIKit/_UIFindInteraction.h>)
+#if TARGET_OS_IOS && __IPHONE_OS_VERSION_MIN_REQUIRED >= 160000
 @property (nonatomic, readonly) _UIFindInteraction *_findInteraction WK_API_AVAILABLE(ios(16.0));
 @property (nonatomic, readwrite, setter=_setFindInteractionEnabled:) BOOL _findInteractionEnabled WK_API_AVAILABLE(ios(16.0));
 
@@ -666,9 +675,6 @@ typedef NS_OPTIONS(NSUInteger, WKDisplayCaptureSurfaces) {
 @property (nonatomic, setter=_setTopContentInset:) CGFloat _topContentInset;
 
 @property (nonatomic, setter=_setAutomaticallyAdjustsContentInsets:) BOOL _automaticallyAdjustsContentInsets;
-
-// Default value is 0. A value of 0 means the window's backing scale factor will be used and automatically update when the window moves screens.
-@property (nonatomic, setter=_setOverrideDeviceScaleFactor:) CGFloat _overrideDeviceScaleFactor WK_API_AVAILABLE(macos(10.11));
 
 @property (nonatomic, setter=_setWindowOcclusionDetectionEnabled:) BOOL _windowOcclusionDetectionEnabled;
 

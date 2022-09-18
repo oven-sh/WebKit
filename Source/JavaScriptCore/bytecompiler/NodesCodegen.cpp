@@ -1204,7 +1204,7 @@ RegisterID* EvalFunctionCallNode::emitBytecode(BytecodeGenerator& generator, Reg
     if (isOptionalChainBase())
         generator.emitOptionalCheck(func.get());
 
-    return generator.emitCallEval(returnValue.get(), func.get(), callArguments, divot(), divotStart(), divotEnd(), DebuggableCall::No);
+    return generator.emitCallDirectEval(returnValue.get(), func.get(), callArguments, divot(), divotStart(), divotEnd(), DebuggableCall::No);
 }
 
 // ------------------------------ FunctionCallValueNode ----------------------------------
@@ -1340,6 +1340,20 @@ RegisterID* BytecodeIntrinsicNode::emit_intrinsic_getByIdDirectPrivate(BytecodeG
     ASSERT(symbol);
     ASSERT(!node->m_next);
     return generator.emitDirectGetById(generator.finalDestination(dst), base.get(), generator.parserArena().identifierArena().makeIdentifier(generator.vm(), symbol));
+}
+
+RegisterID* BytecodeIntrinsicNode::emit_intrinsic_getByValWithThis(BytecodeGenerator& generator, RegisterID* dst)
+{
+    ArgumentListNode* node = m_args->m_listNode;
+    RefPtr<RegisterID> base = generator.emitNode(node);
+    node = node->m_next;
+    RefPtr<RegisterID> thisValue = generator.emitNode(node);
+    node = node->m_next;
+    RefPtr<RegisterID> property = generator.emitNodeForProperty(node);
+
+    ASSERT(!node->m_next);
+
+    return generator.emitGetByVal(generator.finalDestination(dst), base.get(), thisValue.get(), property.get());
 }
 
 RegisterID* BytecodeIntrinsicNode::emit_intrinsic_getPrototypeOf(BytecodeGenerator& generator, RegisterID* dst)

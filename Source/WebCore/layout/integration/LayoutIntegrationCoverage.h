@@ -25,8 +25,6 @@
 
 #pragma once
 
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
-
 #include "RenderStyleConstants.h"
 #include <wtf/Forward.h>
 
@@ -44,7 +42,7 @@ enum class AvoidanceReason : uint64_t {
     // Unused                                    = 1LLU  << 2,
     ContentIsRuby                                = 1LLU  << 3,
     FlowIsPaginated                              = 1LLU  << 4,
-    FlowHasTextOverflow                          = 1LLU  << 5,
+    // Unused                                    = 1LLU  << 5,
     FlowHasLineClamp                             = 1LLU  << 6,
     // Unused                                    = 1LLU  << 7,
     // Unused                                    = 1LLU  << 8,
@@ -116,4 +114,3 @@ OptionSet<AvoidanceReason> canUseForLineLayoutWithReason(const RenderBlockFlow&,
 }
 }
 
-#endif

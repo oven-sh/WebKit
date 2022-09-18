@@ -35,6 +35,7 @@
 #include <wtf/Vector.h>
 
 namespace WebCore {
+class FloatSize;
 class IntRect;
 
 template <typename> class RectEdges;
@@ -51,7 +52,11 @@ public:
 
     virtual void closeFullScreenManager() = 0;
     virtual bool isFullScreen() = 0;
+#if PLATFORM(IOS_FAMILY)
+    virtual void enterFullScreen(WebCore::FloatSize videoDimensions) = 0;
+#else
     virtual void enterFullScreen() = 0;
+#endif
     virtual void exitFullScreen() = 0;
     virtual void beganEnterFullScreen(const WebCore::IntRect& initialFrame, const WebCore::IntRect& finalFrame) = 0;
     virtual void beganExitFullScreen(const WebCore::IntRect& initialFrame, const WebCore::IntRect& finalFrame) = 0;
@@ -65,6 +70,9 @@ public:
 
     bool isFullScreen();
     bool blocksReturnToFullscreenFromPictureInPicture() const;
+#if HAVE(UIKIT_WEBKIT_INTERNALS)
+    bool isVideoElement() const;
+#endif
     void close();
 
     enum class FullscreenState : uint8_t {
@@ -91,7 +99,7 @@ public:
 
 private:
     void supportsFullScreen(bool withKeyboard, CompletionHandler<void(bool)>&&);
-    void enterFullScreen(bool blocksReturnToFullscreenFromPictureInPicture);
+    void enterFullScreen(bool blocksReturnToFullscreenFromPictureInPicture, bool isVideoElement, WebCore::FloatSize videoDimensions);
     void exitFullScreen();
     void beganEnterFullScreen(const WebCore::IntRect& initialFrame, const WebCore::IntRect& finalFrame);
     void beganExitFullScreen(const WebCore::IntRect& initialFrame, const WebCore::IntRect& finalFrame);
@@ -104,6 +112,9 @@ private:
     WebFullScreenManagerProxyClient& m_client;
     FullscreenState m_fullscreenState { FullscreenState::NotInFullscreen };
     bool m_blocksReturnToFullscreenFromPictureInPicture { false };
+#if HAVE(UIKIT_WEBKIT_INTERNALS)
+    bool m_isVideoElement { false };
+#endif
     Vector<CompletionHandler<void()>> m_closeCompletionHandlers;
 };
 

@@ -460,7 +460,7 @@ plugins/destroy-on-setwindow.html
 
 # New history tests added in r76205 fail on WebKit2 (perhaps the change
 # as coded doesn't affect both processes for WebKit2)
-fast/history/history-replace-updates-current-item.html
+http/tests/history/history-replace-updates-current-item.html
 http/tests/navigation/redirect-on-back-updates-history-item.html
 http/tests/navigation/redirect-on-reload-updates-history-item.html
 
@@ -874,6 +874,7 @@ fast/speechrecognition/start-second-recognition.html [ Pass ]
 fullscreen/full-screen-enter-while-exiting.html [ Pass ]
 imported/w3c/web-platform-tests/permissions/ [ Pass ]
 http/tests/notifications/permission/ [ Pass ]
+http/tests/permissions/ [ Pass ]
 imported/w3c/web-platform-tests/storage/ [ Pass ]
 imported/w3c/web-platform-tests/file-system-access/ [ Pass ]
 storage/filesystemaccess/ [ Pass ]

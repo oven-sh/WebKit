@@ -780,10 +780,12 @@ void GStreamerRegistryScanner::fillAudioRtpCapabilities(Configuration configurat
 
     auto factories = ElementFactories({ codecElement, rtpElement });
     if (factories.hasElementForMediaType(codecElement, "audio/x-opus") && factories.hasElementForMediaType(rtpElement, "audio/x-opus"))
-        capabilities.codecs.append({ .mimeType = "audio/OPUS"_s, .clockRate = 48000, .channels = 2, .sdpFmtpLine = emptyString() });
+        capabilities.codecs.append({ .mimeType = "audio/OPUS"_s, .clockRate = 48000, .channels = 2, .sdpFmtpLine = "minptime=10;useinbandfec=1"_s });
 
-    if (factories.hasElementForMediaType(codecElement, "audio/isac") && factories.hasElementForMediaType(rtpElement, "audio/isac"))
+    if (factories.hasElementForMediaType(codecElement, "audio/isac") && factories.hasElementForMediaType(rtpElement, "audio/isac")) {
         capabilities.codecs.append({ .mimeType = "audio/ISAC"_s, .clockRate = 16000, .channels = 1, .sdpFmtpLine = emptyString() });
+        capabilities.codecs.append({ .mimeType = "audio/ISAC"_s, .clockRate = 32000, .channels = 1, .sdpFmtpLine = emptyString() });
+    }
 
     if (factories.hasElementForMediaType(codecElement, "audio/G722") && factories.hasElementForMediaType(rtpElement, "audio/G722"))
         capabilities.codecs.append({ .mimeType = "audio/G722"_s, .clockRate = 8000, .channels = 1, .sdpFmtpLine = emptyString() });
@@ -814,29 +816,52 @@ void GStreamerRegistryScanner::fillVideoRtpCapabilities(Configuration configurat
     if (factories.hasElementForMediaType(codecElement, "video/x-h264") && factories.hasElementForMediaType(rtpElement, "video/x-h264")) {
         // FIXME: Profile levels are hardcoded here for the time being. It might be a good idea to
         // actually probe those on the selected encoder.
-        capabilities.codecs.append({ .mimeType = "video/H264"_s, .clockRate = 90000,
+        capabilities.codecs.append({ .mimeType = "video/H264"_s, .clockRate = 90000, .channels = { },
             .sdpFmtpLine = "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640c1f"_s });
-        capabilities.codecs.append({ .mimeType = "video/H264"_s, .clockRate = 90000,
+        capabilities.codecs.append({ .mimeType = "video/H264"_s, .clockRate = 90000, .channels = { },
             .sdpFmtpLine = "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f"_s });
-        capabilities.codecs.append({ .mimeType = "video/H264"_s, .clockRate = 90000,
+        capabilities.codecs.append({ .mimeType = "video/H264"_s, .clockRate = 90000, .channels = { },
             .sdpFmtpLine = "level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=640c1f"_s });
-        capabilities.codecs.append({ .mimeType = "video/H264"_s, .clockRate = 90000,
+        capabilities.codecs.append({ .mimeType = "video/H264"_s, .clockRate = 90000, .channels = { },
             .sdpFmtpLine = "level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42e01f"_s });
+        capabilities.codecs.append({ .mimeType = "video/H264"_s, .clockRate = 90000, .channels = { },
+            .sdpFmtpLine = "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f"_s });
+        capabilities.codecs.append({ .mimeType = "video/H264"_s, .clockRate = 90000, .channels = { },
+            .sdpFmtpLine = "level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=42001f"_s });
+        capabilities.codecs.append({ .mimeType = "video/H264"_s, .clockRate = 90000, .channels = { },
+            .sdpFmtpLine = "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=4d001f"_s });
+        capabilities.codecs.append({ .mimeType = "video/H264"_s, .clockRate = 90000, .channels = { },
+            .sdpFmtpLine = "level-asymmetry-allowed=1;packetization-mode=0;profile-level-id=4d001f"_s });
     }
 
     // FIXME: Probe for video/H265 capabilies.
     // FIXME: Probe for video/AV1 capabilies.
 
     if (factories.hasElementForMediaType(codecElement, "video/x-vp8") && factories.hasElementForMediaType(rtpElement, "video/x-vp8"))
-        capabilities.codecs.append({ .mimeType = "video/VP8"_s, .clockRate = 90000 });
+        capabilities.codecs.append({ .mimeType = "video/VP8"_s, .clockRate = 90000, .channels = { }, .sdpFmtpLine = { } });
 
     if (factories.hasElementForMediaType(codecElement, "video/x-vp9") && factories.hasElementForMediaType(rtpElement, "video/x-vp9")) {
         // FIXME: Profile levels are hardcoded here for the time being. It might be a good idea to
         // actually probe those on the selected encoder.
-        capabilities.codecs.append({ .mimeType = "video/VP9"_s, .clockRate = 90000, .sdpFmtpLine = "profile-id=0"_s });
-        capabilities.codecs.append({ .mimeType = "video/VP9"_s, .clockRate = 90000, .sdpFmtpLine = "profile-id=2"_s });
+        capabilities.codecs.append({ .mimeType = "video/VP9"_s, .clockRate = 90000, .channels = { }, .sdpFmtpLine = "profile-id=0"_s });
+        capabilities.codecs.append({ .mimeType = "video/VP9"_s, .clockRate = 90000, .channels = { }, .sdpFmtpLine = "profile-id=2"_s });
     }
 }
+
+Vector<RTCRtpCapabilities::HeaderExtensionCapability> GStreamerRegistryScanner::audioRtpExtensions()
+{
+    if (!m_audioRtpExtensions)
+        m_audioRtpExtensions = probeRtpExtensions(m_allAudioRtpExtensions);
+    return *m_audioRtpExtensions;
+}
+
+Vector<RTCRtpCapabilities::HeaderExtensionCapability> GStreamerRegistryScanner::videoRtpExtensions()
+{
+    if (!m_videoRtpExtensions)
+        m_videoRtpExtensions = probeRtpExtensions(m_allVideoRtpExtensions);
+    return *m_videoRtpExtensions;
+}
+
 #endif // USE(GSTREAMER_WEBRTC)
 
 }

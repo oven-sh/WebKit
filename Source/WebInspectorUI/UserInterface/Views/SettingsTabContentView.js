@@ -279,6 +279,14 @@ WI.SettingsTabContentView = class SettingsTabContentView extends WI.TabContentVi
 
         let elementsSettingsView = new WI.SettingsView("elements", WI.UIString("Elements"));
 
+        // COMPATIBILITY (macOS 13.0, iOS 16.0): CSS.LayoutFlag.Rendered did not exist yet.
+        console.log(InspectorBackend.Enum.CSS);
+        if (InspectorBackend.Enum.CSS?.LayoutFlag?.Rendered) {
+            elementsSettingsView.addSetting(WI.UIString("DOM Tree:"), WI.settings.domTreeDeemphasizesNodesThatAreNotRendered, WI.UIString("De-emphasize nodes that are not rendered"));
+
+            elementsSettingsView.addSeparator();
+        }
+
         if (InspectorBackend.hasCommand("DOM.setInspectModeEnabled", "showRulers")) {
             elementsSettingsView.addSetting(WI.UIString("Element Selection:"), WI.settings.showRulersDuringElementSelection, WI.UIString("Show page rulers and node border lines"));
 
@@ -404,14 +412,6 @@ WI.SettingsTabContentView = class SettingsTabContentView extends WI.TabContentVi
             experimentalSettingsView.addSeparator();
         }
 
-        let hasSymbolicBreakpoint = InspectorBackend.hasCommand("Debugger.addSymbolicBreakpoint");
-        if (hasSymbolicBreakpoint) {
-            let debuggerGroup = experimentalSettingsView.addGroup(WI.UIString("Debugger:"));
-            debuggerGroup.addSetting(WI.settings.experimentalEnableSymbolicBreakpoints, WI.UIString("Allow Symbolic Breakpoints", "Label for checkbox that controls whether symbolic breakpoint functionality is enabled."));
-
-            experimentalSettingsView.addSeparator();
-        }
-
         let diagnosticsGroup = experimentalSettingsView.addGroup(WI.UIString("Diagnostics:", "Diagnostics: @ Experimental Settings", "Category label for experimental settings related to Web Inspector diagnostics."));
         diagnosticsGroup.addSetting(WI.settings.experimentalAllowInspectingInspector, WI.UIString("Allow Inspecting Web Inspector", "Allow Inspecting Web Inspector @ Experimental Settings", "Label for setting that allows the user to inspect the Web Inspector user interface."));
         experimentalSettingsView.addSeparator();
@@ -439,9 +439,6 @@ WI.SettingsTabContentView = class SettingsTabContentView extends WI.TabContentVi
 
         if (hasNetworkEmulatedCondition)
             listenForChange(WI.settings.experimentalEnableNetworkEmulatedCondition);
-
-        if (hasSymbolicBreakpoint)
-            listenForChange(WI.settings.experimentalEnableSymbolicBreakpoints);
 
         this._createReferenceLink(experimentalSettingsView);
 

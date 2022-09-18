@@ -240,10 +240,7 @@ bool RenderSVGRoot::shouldApplyViewportClip() const
     // the outermost svg is clipped if auto, and svg document roots are always clipped
     // When the svg is stand-alone (isDocumentElement() == true) the viewport clipping should always
     // be applied, noting that the window scrollbars should be hidden if overflow=hidden.
-    return effectiveOverflowX() == Overflow::Hidden
-        || style().overflowX() == Overflow::Auto
-        || style().overflowX() == Overflow::Scroll
-        || this->isDocumentElementRenderer();
+    return isNonVisibleOverflow(effectiveOverflowX()) || style().overflowX() == Overflow::Auto || this->isDocumentElementRenderer();
 }
 
 // FIXME: Basically a copy of RenderBlock::paint() - ideally one would share this code.
@@ -391,12 +388,44 @@ void RenderSVGRoot::styleDidChange(StyleDifference diff, const RenderStyle* oldS
     SVGResourcesCache::clientStyleChanged(*this, diff, oldStyle, style());
 }
 
+bool RenderSVGRoot::paintingAffectedByExternalOffset() const
+{
+    // Standalone SVGs have no parent above the outermost <svg> that could affect the positioning.
+    if (isDocumentElementRenderer())
+        return false;
+
+    // SVGs embedded via 'SVGImage' paint at (0, 0) by construction.
+    if (isEmbeddedThroughSVGImage())
+        return false;
+
+    // <object> / <embed> might receive a non-zero paintOffset.
+    if (isEmbeddedThroughFrameContainingSVGDocument())
+        return true;
+
+    // Inline SVG. A non-SVG ancestor might induce a non-zero paintOffset.
+    if (auto* parentNode = svgSVGElement().parentNode())
+        return !is<SVGElement>(parentNode);
+
+    ASSERT_NOT_REACHED();
+    return false;
+}
+
 void RenderSVGRoot::updateFromStyle()
 {
     RenderReplaced::updateFromStyle();
 
     if (shouldApplyViewportClip())
         setHasNonVisibleOverflow();
+
+    // Only mark us as transformed if really needed. Whenver a non-zero paintOffset could reach
+    // RenderSVGRoot from an ancestor, the pixel snapping logic needs to be applied. Since the rest
+    // of the SVG subtree doesn't know anything about subpixel offsets, we'll have to stop use/set
+    // 'adjustedSubpixelOffset' starting at the RenderSVGRoot boundary. This mostly affects inline
+    // SVG documents and SVGs embedded via <object> / <embed>.
+    if (!hasSVGTransform() && paintingAffectedByExternalOffset()) {
+        setHasTransformRelatedProperty();
+        setHasSVGTransform();
+    }
 }
 
 void RenderSVGRoot::updateLayerTransform()

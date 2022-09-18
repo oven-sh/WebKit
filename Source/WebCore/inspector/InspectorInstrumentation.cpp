@@ -185,6 +185,23 @@ void InspectorInstrumentation::didChangeRendererForDOMNodeImpl(InstrumentingAgen
         cssAgent->didChangeRendererForDOMNode(node);
 }
 
+void InspectorInstrumentation::didAddOrRemoveScrollbarsImpl(InstrumentingAgents& instrumentingAgents, FrameView& frameView)
+{
+    if (auto* cssAgent = instrumentingAgents.enabledCSSAgent()) {
+        auto* document = frameView.frame().document();
+        if (auto* documentElement = document ? document->documentElement() : nullptr)
+            cssAgent->didChangeRendererForDOMNode(*documentElement);
+    }
+}
+
+void InspectorInstrumentation::didAddOrRemoveScrollbarsImpl(InstrumentingAgents& instrumentingAgents, RenderObject& renderer)
+{
+    if (auto* cssAgent = instrumentingAgents.enabledCSSAgent()) {
+        if (auto* node = renderer.node())
+            cssAgent->didChangeRendererForDOMNode(*node);
+    }
+}
+
 void InspectorInstrumentation::willModifyDOMAttrImpl(InstrumentingAgents& instrumentingAgents, Element& element, const AtomString& oldValue, const AtomString& newValue)
 {
     if (auto* pageDOMDebuggerAgent = instrumentingAgents.enabledPageDOMDebuggerAgent())
@@ -598,12 +615,16 @@ void InspectorInstrumentation::willSendRequestImpl(InstrumentingAgents& instrume
 {
     if (auto* networkAgent = instrumentingAgents.enabledNetworkAgent())
         networkAgent->willSendRequest(identifier, loader, request, redirectResponse, cachedResource, resourceLoader);
+    if (auto* domDebuggerAgent = instrumentingAgents.enabledDOMDebuggerAgent())
+        domDebuggerAgent->willSendRequest(request);
 }
 
 void InspectorInstrumentation::willSendRequestOfTypeImpl(InstrumentingAgents& instrumentingAgents, ResourceLoaderIdentifier identifier, DocumentLoader* loader, ResourceRequest& request, LoadType loadType)
 {
     if (auto* networkAgent = instrumentingAgents.enabledNetworkAgent())
         networkAgent->willSendRequestOfType(identifier, loader, request, loadType);
+    if (auto* domDebuggerAgent = instrumentingAgents.enabledDOMDebuggerAgent())
+        domDebuggerAgent->willSendRequestOfType(request);
 }
 
 void InspectorInstrumentation::didLoadResourceFromMemoryCacheImpl(InstrumentingAgents& instrumentingAgents, DocumentLoader* loader, CachedResource* cachedResource)

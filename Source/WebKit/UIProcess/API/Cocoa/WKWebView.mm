@@ -30,6 +30,7 @@
 #import "APIFormClient.h"
 #import "APIFrameTreeNode.h"
 #import "APIPageConfiguration.h"
+#import "APISecurityOrigin.h"
 #import "APISerializedScriptValue.h"
 #import "CocoaImage.h"
 #import "CompletionHandlerCallChecker.h"
@@ -76,6 +77,7 @@
 #import "WKPreferencesInternal.h"
 #import "WKProcessPoolInternal.h"
 #import "WKSafeBrowsingWarning.h"
+#import "WKSecurityOriginInternal.h"
 #import "WKSharedAPICast.h"
 #import "WKSnapshotConfiguration.h"
 #import "WKUIDelegate.h"
@@ -128,6 +130,7 @@
 #import <WebCore/JSDOMExceptionHandling.h>
 #import <WebCore/LegacySchemeRegistry.h>
 #import <WebCore/MIMETypeRegistry.h>
+#import <WebCore/Permissions.h>
 #import <WebCore/PlatformScreen.h>
 #import <WebCore/RuntimeApplicationChecks.h>
 #import <WebCore/Settings.h>
@@ -471,8 +474,9 @@ static void hardwareKeyboardAvailabilityChangedCallback(CFNotificationCenterRef,
 
     pageConfiguration->preferences()->setShouldRespectImageOrientation(!![_configuration _respectsImageOrientation]);
 #if !PLATFORM(MAC)
-    // FIXME: Expose WKPreferences._shouldPrintBackgrounds on iOS, adopt it in all iOS clients, and remove this and WKWebViewConfiguration._printsBackgrounds.
-    pageConfiguration->preferences()->setShouldPrintBackgrounds(!![_configuration _printsBackgrounds]);
+    // FIXME: rdar://99156546. Remove this and WKWebViewConfiguration._printsBackgrounds once all iOS clients adopt the new API.
+    if (!linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::DefaultsToExcludingBackgroundsWhenPrinting))
+        pageConfiguration->preferences()->setShouldPrintBackgrounds(!![_configuration _printsBackgrounds]);
 #endif
     pageConfiguration->preferences()->setIncrementalRenderingSuppressionTimeout([_configuration _incrementalRenderingSuppressionTimeout]);
     pageConfiguration->preferences()->setJavaScriptMarkupEnabled(!![_configuration _allowsJavaScriptMarkup]);
@@ -843,15 +847,11 @@ static void hardwareKeyboardAvailabilityChangedCallback(CFNotificationCenterRef,
 
 - (SecTrustRef)serverTrust
 {
-#if HAVE(SEC_TRUST_SERIALIZATION)
     auto certificateInfo = _page->pageLoadState().certificateInfo();
     if (!certificateInfo)
         return nil;
 
     return certificateInfo->certificateInfo().trust();
-#else
-    return nil;
-#endif
 }
 
 - (BOOL)canGoBack
@@ -2652,7 +2652,7 @@ static void convertAndAddHighlight(Vector<Ref<WebKit::SharedMemory>>& buffers, N
 - (NSArray *)_certificateChain
 {
     if (WebKit::WebFrameProxy* mainFrame = _page->mainFrame())
-        return mainFrame->certificateInfo() ? (__bridge NSArray *)mainFrame->certificateInfo()->certificateInfo().certificateChain() : nil;
+        return mainFrame->certificateInfo() ? (__bridge NSArray *)WebCore::CertificateInfo::certificateChainFromSecTrust(mainFrame->certificateInfo()->certificateInfo().trust()).autorelease() : nil;
 
     return nil;
 }
@@ -3927,6 +3927,25 @@ static inline OptionSet<WebKit::FindOptions> toFindOptions(_WKFindOptions wkFind
     });
 }
 
+- (void)_setOverrideDeviceScaleFactor:(CGFloat)deviceScaleFactor
+{
+    _page->setCustomDeviceScaleFactor(deviceScaleFactor);
+}
+
+- (CGFloat)_overrideDeviceScaleFactor
+{
+    return _page->customDeviceScaleFactor().value_or(0);
+}
+
++ (void)_permissionChanged:(NSString *)permissionName forOrigin:(WKSecurityOrigin *)origin
+{
+    auto name = WebCore::Permissions::toPermissionName(permissionName);
+    if (!name)
+        return;
+
+    WebKit::WebProcessProxy::permissionChanged(*name, origin->_securityOrigin->securityOrigin());
+}
+
 @end
 
 @implementation WKWebView (WKDeprecated)
@@ -3937,7 +3956,7 @@ static inline OptionSet<WebKit::FindOptions> toFindOptions(_WKFindOptions wkFind
     if (!certificateInfo)
         return @[ ];
 
-    return (__bridge NSArray *)certificateInfo->certificateInfo().certificateChain() ?: @[ ];
+    return (__bridge NSArray *)WebCore::CertificateInfo::certificateChainFromSecTrust(certificateInfo->certificateInfo().trust()).autorelease() ?: @[ ];
 }
 
 @end

@@ -170,10 +170,27 @@ bool WebFullScreenManagerProxy::blocksReturnToFullscreenFromPictureInPicture() c
     return m_blocksReturnToFullscreenFromPictureInPicture;
 }
 
-void WebFullScreenManagerProxy::enterFullScreen(bool blocksReturnToFullscreenFromPictureInPicture)
+#if HAVE(UIKIT_WEBKIT_INTERNALS)
+bool WebFullScreenManagerProxy::isVideoElement() const
+{
+    return m_isVideoElement;
+}
+#endif
+
+void WebFullScreenManagerProxy::enterFullScreen(bool blocksReturnToFullscreenFromPictureInPicture, bool isVideoElement, FloatSize videoDimensions)
 {
     m_blocksReturnToFullscreenFromPictureInPicture = blocksReturnToFullscreenFromPictureInPicture;
+#if HAVE(UIKIT_WEBKIT_INTERNALS)
+    m_isVideoElement = isVideoElement;
+#else
+    UNUSED_PARAM(isVideoElement);
+#endif
+#if PLATFORM(IOS_FAMILY)
+    m_client.enterFullScreen(videoDimensions);
+#else
+    UNUSED_PARAM(videoDimensions);
     m_client.enterFullScreen();
+#endif
 }
 
 void WebFullScreenManagerProxy::exitFullScreen()
@@ -183,7 +200,10 @@ void WebFullScreenManagerProxy::exitFullScreen()
 
 void WebFullScreenManagerProxy::beganEnterFullScreen(const IntRect& initialFrame, const IntRect& finalFrame)
 {
-    m_client.beganEnterFullScreen(initialFrame, finalFrame);
+    m_page.callAfterNextPresentationUpdate([weakThis = WeakPtr { *this }, initialFrame = initialFrame, finalFrame = finalFrame](CallbackBase::Error) {
+        if (weakThis)
+            weakThis->m_client.beganEnterFullScreen(initialFrame, finalFrame);
+    });
 }
 
 void WebFullScreenManagerProxy::beganExitFullScreen(const IntRect& initialFrame, const IntRect& finalFrame)

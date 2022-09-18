@@ -104,6 +104,16 @@ void EventDispatcher::initializeConnection(IPC::Connection* connection)
 void EventDispatcher::internalWheelEvent(PageIdentifier pageID, const WebWheelEvent& wheelEvent, RectEdges<bool> rubberBandableEdges, WheelEventOrigin wheelEventOrigin)
 {
     auto processingSteps = OptionSet<WebCore::WheelEventProcessingSteps> { WheelEventProcessingSteps::MainThreadForScrolling, WheelEventProcessingSteps::MainThreadForBlockingDOMEventDispatch };
+
+    ensureOnMainRunLoop([pageID] {
+        if (auto* webPage = WebProcess::singleton().webPage(pageID)) {
+            if (auto* corePage = webPage->corePage()) {
+                if (auto* keyboardScrollingAnimator = corePage->currentKeyboardScrollingAnimator())
+                    keyboardScrollingAnimator->stopScrollingImmediately();
+            }
+        }
+    });
+    
 #if ENABLE(ASYNC_SCROLLING) && ENABLE(SCROLLING_THREAD)
     do {
         auto platformWheelEvent = platform(wheelEvent);
@@ -133,8 +143,9 @@ void EventDispatcher::internalWheelEvent(PageIdentifier pageID, const WebWheelEv
         bool useMainThreadForScrolling = processingSteps.contains(WheelEventProcessingSteps::MainThreadForScrolling);
 
 #if !PLATFORM(COCOA)
-        // Deliver continuing scroll gestures directly to the scrolling thread.
-        if (platformWheelEvent.phase() == PlatformWheelEventPhase::Changed && scrollingTree->isUserScrollInProgressAtEventLocation(platformWheelEvent))
+        // Deliver continuing scroll gestures directly to the scrolling thread until the end.
+        if ((platformWheelEvent.phase() == PlatformWheelEventPhase::Changed || platformWheelEvent.phase() == PlatformWheelEventPhase::Ended)
+            && scrollingTree->isUserScrollInProgressAtEventLocation(platformWheelEvent))
             useMainThreadForScrolling = false;
 #endif
 

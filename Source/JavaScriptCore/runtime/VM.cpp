@@ -41,6 +41,7 @@
 #include "ControlFlowProfiler.h"
 #include "CustomGetterSetter.h"
 #include "DOMAttributeGetterSetter.h"
+#include "Debugger.h"
 #include "DeferredWorkTimer.h"
 #include "Disassembler.h"
 #include "DoublePredictionFuzzerAgent.h"
@@ -1220,6 +1221,7 @@ void VM::callPromiseRejectionCallback(Strong<JSPromise>& promise)
     MarkedArgumentBuffer args;
     args.append(promise.get());
     args.append(promise->result(*this));
+    ASSERT(!args.hasOverflowed());
     call(promise->globalObject(), callback, callData, jsNull(), args);
     scope.clearException();
 }
@@ -1475,6 +1477,16 @@ void VM::visitAggregateImpl(Visitor& visitor)
     m_microtaskQueue.visitAggregate(visitor);
 }
 DEFINE_VISIT_AGGREGATE(VM);
+
+void VM::addDebugger(Debugger& debugger)
+{
+    m_debuggers.append(&debugger);
+}
+
+void VM::removeDebugger(Debugger& debugger)
+{
+    m_debuggers.remove(&debugger);
+}
 
 void QueuedTask::run()
 {

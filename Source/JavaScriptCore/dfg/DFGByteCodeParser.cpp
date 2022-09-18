@@ -540,7 +540,7 @@ private:
 
         // Always flush arguments, except for 'this'. If 'this' is created by us,
         // then make sure that it's never unboxed.
-        if (argument || m_graph.needsFlushedThis()) {
+        if (argument) {
             if (setMode != ImmediateNakedSet)
                 flushDirect(reg);
         } else if (!argument) {
@@ -855,7 +855,7 @@ private:
     
     Node* addCallWithoutSettingResult(
         NodeType op, OpInfo opInfo, Node* callee, int argCount, int registerOffset,
-        OpInfo prediction)
+        OpInfo prediction, Node* thisValueForEval = nullptr, Node* scopeForEval = nullptr)
     {
         addVarArgChild(callee);
         size_t parameterSlots = Graph::parameterSlotsForArgCount(argCount);
@@ -865,13 +865,17 @@ private:
 
         for (int i = 0; i < argCount; ++i)
             addVarArgChild(get(virtualRegisterForArgumentIncludingThis(i, registerOffset)));
+        if (op == CallDirectEval) {
+            addVarArgChild(Edge(thisValueForEval));
+            addVarArgChild(Edge(scopeForEval, KnownCellUse));
+        }
 
         return addToGraph(Node::VarArg, op, opInfo, prediction);
     }
     
     Node* addCall(
         Operand result, NodeType op, OpInfo opInfo, Node* callee, int argCount, int registerOffset,
-        SpeculatedType prediction)
+        SpeculatedType prediction, Node* thisValueForEval = nullptr, Node* scopeForEval = nullptr)
     {
         if (op == TailCall) {
             if (allInlineFramesAreTailCalls())
@@ -880,8 +884,7 @@ private:
         }
 
 
-        Node* call = addCallWithoutSettingResult(
-            op, opInfo, callee, argCount, registerOffset, OpInfo(prediction));
+        Node* call = addCallWithoutSettingResult(op, opInfo, callee, argCount, registerOffset, OpInfo(prediction), thisValueForEval, scopeForEval);
         if (result.isValid())
             set(result, call);
         return call;
@@ -2516,6 +2519,9 @@ bool ByteCodeParser::handleIntrinsicCall(Node* callee, Operand result, Intrinsic
                 return false;
 
             ArrayMode arrayMode = getArrayMode(Array::Read);
+            if (!arrayMode.isJSArray())
+                return false;
+
             if (!arrayMode.isJSArrayWithOriginalStructure())
                 return false;
 
@@ -2602,32 +2608,21 @@ bool ByteCodeParser::handleIntrinsicCall(Node* callee, Operand result, Intrinsic
                 return false;
 
             ArrayMode arrayMode = getArrayMode(Array::Read);
+            if (!arrayMode.isJSArray())
+                return false;
+
+            if (!arrayMode.isJSArrayWithOriginalStructure())
+                return false;
+
             // We do not want to convert arrays into one type just to perform indexOf.
             if (arrayMode.doesConversion())
                 return false;
-
-            auto addToGraphAndSetResult = [&] {
-                insertChecks();
-
-                Node* array = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
-                addVarArgChild(array);
-                addVarArgChild(get(virtualRegisterForArgumentIncludingThis(1, registerOffset))); // Search element.
-                if (argumentCountIncludingThis >= 3)
-                    addVarArgChild(get(virtualRegisterForArgumentIncludingThis(2, registerOffset))); // Start index.
-                addVarArgChild(nullptr);
-
-                Node* node = addToGraph(Node::VarArg, ArrayIndexOf, OpInfo(arrayMode.asWord()), OpInfo());
-                setResult(node);
-            };
-
-            JSGlobalObject* globalObject = m_graph.globalObjectFor(currentNodeOrigin().semantic);
 
             switch (arrayMode.type()) {
             case Array::Double:
             case Array::Int32:
             case Array::Contiguous: {
-                if (!arrayMode.isJSArrayWithOriginalStructure())
-                    return false;
+                JSGlobalObject* globalObject = m_graph.globalObjectFor(currentNodeOrigin().semantic);
 
                 Structure* arrayPrototypeStructure = globalObject->arrayPrototype()->structure();
                 Structure* objectPrototypeStructure = globalObject->objectPrototype()->structure();
@@ -2641,27 +2636,17 @@ bool ByteCodeParser::handleIntrinsicCall(Node* callee, Operand result, Intrinsic
                     m_graph.registerAndWatchStructureTransition(arrayPrototypeStructure);
                     m_graph.registerAndWatchStructureTransition(objectPrototypeStructure);
 
-                    addToGraphAndSetResult();
-                    return true;
-                }
+                    insertChecks();
 
-                return false;
-            }
+                    Node* array = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
+                    addVarArgChild(array);
+                    addVarArgChild(get(virtualRegisterForArgumentIncludingThis(1, registerOffset))); // Search element.
+                    if (argumentCountIncludingThis >= 3)
+                        addVarArgChild(get(virtualRegisterForArgumentIncludingThis(2, registerOffset))); // Start index.
+                    addVarArgChild(nullptr);
 
-            case Array::AlwaysSlowPutContiguous: {
-                if (arrayMode.arrayClass() != Array::OriginalNonArray)
-                    return false;
-
-                Structure* objectPrototypeStructure = globalObject->objectPrototype()->structure();
-
-                if (globalObject->alwaysSlowPutContiguousPrototypesAreSaneWatchpointSet().isStillValid()
-                    && objectPrototypeStructure->transitionWatchpointSetIsStillValid()
-                    && globalObject->objectPrototypeIsSaneConcurrently(objectPrototypeStructure)) {
-
-                    m_graph.watchpoints().addLazily(globalObject->alwaysSlowPutContiguousPrototypesAreSaneWatchpointSet());
-                    m_graph.registerAndWatchStructureTransition(objectPrototypeStructure);
-
-                    addToGraphAndSetResult();
+                    Node* node = addToGraph(Node::VarArg, ArrayIndexOf, OpInfo(arrayMode.asWord()), OpInfo());
+                    setResult(node);
                     return true;
                 }
 
@@ -3051,36 +3036,7 @@ bool ByteCodeParser::handleIntrinsicCall(Node* callee, Operand result, Intrinsic
                 return false;
 
             JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObject();
-            Structure* regExpStructure = globalObject->regExpStructure();
-            m_graph.registerStructure(regExpStructure);
-            ASSERT(regExpStructure->storedPrototype().isObject());
-            ASSERT(regExpStructure->storedPrototype().asCell()->classInfo() == RegExpPrototype::info());
-
-            FrozenValue* regExpPrototypeObjectValue = m_graph.freeze(regExpStructure->storedPrototype());
-            Structure* regExpPrototypeStructure = regExpPrototypeObjectValue->structure();
-
-            auto isRegExpPropertySame = [&] (JSValue primordialProperty, UniquedStringImpl* propertyUID) {
-                JSValue currentProperty;
-                if (!m_graph.getRegExpPrototypeProperty(regExpStructure->storedPrototypeObject(), regExpPrototypeStructure, propertyUID, currentProperty))
-                    return false;
-
-                return currentProperty == primordialProperty;
-            };
-
-            // Check that searchRegExp.exec is still the primordial RegExp.prototype.exec
-            if (!isRegExpPropertySame(globalObject->regExpProtoExecFunction(), m_vm->propertyNames->exec.impl()))
-                return false;
-
-            // Check that searchRegExp.global is still the primordial RegExp.prototype.global
-            if (!isRegExpPropertySame(globalObject->regExpProtoGlobalGetter(), m_vm->propertyNames->global.impl()))
-                return false;
-
-            // Check that searchRegExp.unicode is still the primordial RegExp.prototype.unicode
-            if (!isRegExpPropertySame(globalObject->regExpProtoUnicodeGetter(), m_vm->propertyNames->unicode.impl()))
-                return false;
-
-            // Check that searchRegExp[Symbol.match] is still the primordial RegExp.prototype[Symbol.replace]
-            if (!isRegExpPropertySame(globalObject->regExpProtoSymbolReplaceFunction(), m_vm->propertyNames->replaceSymbol.impl()))
+            if (!globalObject->stringSymbolReplaceWatchpointSet().isStillValid() || !globalObject->regExpPrimordialPropertiesWatchpointSet().isStillValid())
                 return false;
 
             insertChecks();
@@ -7277,11 +7233,11 @@ void ByteCodeParser::parseBlock(unsigned limit)
             NEXT_OPCODE(op_construct_varargs);
         }
 
-        case op_call_eval: {
-            auto bytecode = currentInstruction->as<OpCallEval>();
+        case op_call_direct_eval: {
+            auto bytecode = currentInstruction->as<OpCallDirectEval>();
             int registerOffset = -bytecode.m_argv;
-            addCall(bytecode.m_dst, CallEval, OpInfo(bytecode.m_ecmaMode), get(bytecode.m_callee), bytecode.m_argc, registerOffset, getPrediction());
-            NEXT_OPCODE(op_call_eval);
+            addCall(bytecode.m_dst, CallDirectEval, OpInfo(bytecode.m_ecmaMode), get(bytecode.m_callee), bytecode.m_argc, registerOffset, getPrediction(), get(bytecode.m_thisValue), get(bytecode.m_scope));
+            NEXT_OPCODE(op_call_direct_eval);
         }
 
         case op_iterator_open: {

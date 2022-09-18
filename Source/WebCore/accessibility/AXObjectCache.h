@@ -45,6 +45,7 @@ namespace WebCore {
 
 class Document;
 class HTMLAreaElement;
+class HTMLTableElement;
 class HTMLTextFormControlElement;
 class Node;
 class Page;
@@ -205,7 +206,7 @@ public:
     bool isRetrievingCurrentModalNode() { return m_isRetrievingCurrentModalNode; }
     Node* modalNode();
 
-    void deferAttributeChangeIfNeeded(const QualifiedName&, Element*);
+    void deferAttributeChangeIfNeeded(Element*, const QualifiedName&, const AtomString&, const AtomString&);
     void recomputeIsIgnored(RenderObject*);
     void recomputeIsIgnored(Node*);
 
@@ -273,7 +274,6 @@ public:
     
     // Index
     CharacterOffset characterOffsetForIndex(int, const AXCoreObject*);
-    int indexForCharacterOffset(const CharacterOffset&, AccessibilityObject*);
 
     enum AXNotification {
         AXActiveDescendantChanged,
@@ -311,6 +311,8 @@ public:
         AXSelectedStateChanged,
         AXSelectedTextChanged,
         AXSetSizeChanged,
+        AXTableHeadersChanged,
+        AXURLChanged,
         AXValueChanged,
         AXScrolledToAnchor,
         AXLiveRegionCreated,
@@ -485,12 +487,12 @@ private:
 
     void processDeferredChildrenChangedList();
     void handleChildrenChanged(AccessibilityObject&);
-    void handleRoleChanged(Element*);
+    void handleRoleChanged(Element*, const AtomString&, const AtomString&);
     void handleMenuOpened(Node*);
     void handleLiveRegionCreated(Node*);
     void handleMenuItemSelected(Node*);
     void handleRowCountChanged(AccessibilityObject*, Document*);
-    void handleAttributeChange(Element*, const QualifiedName&);
+    void handleAttributeChange(Element*, const QualifiedName&, const AtomString&, const AtomString&);
     bool shouldProcessAttributeChange(Element*, const QualifiedName&);
     void selectedChildrenChanged(Node*);
     void selectedChildrenChanged(RenderObject*);
@@ -553,7 +555,7 @@ private:
     Timer m_liveRegionChangedPostTimer;
     ListHashSet<RefPtr<AccessibilityObject>> m_liveRegionObjectsSet;
 
-    WeakPtr<Element> m_currentModalElement;
+    WeakPtr<Element, WeakPtrImplWithEventTargetData> m_currentModalElement;
     // Multiple aria-modals behavior is undefined by spec. We keep them sorted based on DOM order here.
     // If that changes to require only one aria-modal we could change this to a WeakHashSet, or discard the set completely.
     ListHashSet<Element*> m_modalElementsSet;
@@ -563,16 +565,24 @@ private:
     Timer m_performCacheUpdateTimer;
 
     AXTextStateChangeIntent m_textSelectionIntent;
-    WeakHashSet<Element> m_deferredRecomputeIsIgnoredList;
-    WeakHashSet<HTMLTableElement> m_deferredRecomputeTableIsExposedList;
+    WeakHashSet<Element, WeakPtrImplWithEventTargetData> m_deferredRecomputeIsIgnoredList;
+    WeakHashSet<HTMLTableElement, WeakPtrImplWithEventTargetData> m_deferredRecomputeTableIsExposedList;
     ListHashSet<Node*> m_deferredTextChangedList;
-    WeakHashSet<Element> m_deferredSelectedChildredChangedList;
+    WeakHashSet<Element, WeakPtrImplWithEventTargetData> m_deferredSelectedChildredChangedList;
     ListHashSet<RefPtr<AccessibilityObject>> m_deferredChildrenChangedList;
     ListHashSet<Node*> m_deferredNodeAddedOrRemovedList;
-    WeakHashSet<Element> m_deferredModalChangedList;
-    WeakHashSet<Element> m_deferredMenuListChange;
+    WeakHashSet<Element, WeakPtrImplWithEventTargetData> m_deferredModalChangedList;
+    WeakHashSet<Element, WeakPtrImplWithEventTargetData> m_deferredMenuListChange;
     HashMap<Element*, String> m_deferredTextFormControlValue;
-    Vector<std::pair<Element*, QualifiedName>> m_deferredAttributeChange;
+
+    struct AttributeChange {
+        Element* element { nullptr };
+        QualifiedName attrName;
+        AtomString oldValue;
+        AtomString newValue;
+    };
+    Vector<AttributeChange> m_deferredAttributeChange;
+
     Vector<std::pair<Node*, Node*>> m_deferredFocusedNodeChange;
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
     bool m_deferredRegenerateIsolatedTree { false };
@@ -657,8 +667,8 @@ inline void AXObjectCache::handleActiveDescendantChanged(Element&) { }
 inline void AXObjectCache::handleAriaExpandedChange(Node*) { }
 inline void AXObjectCache::deferModalChange(Element*) { }
 inline void AXObjectCache::handleRoleChanged(AccessibilityObject*) { }
-inline void AXObjectCache::deferAttributeChangeIfNeeded(const QualifiedName&, Element*) { }
-inline void AXObjectCache::handleAttributeChange(Element*, const QualifiedName&) { }
+inline void AXObjectCache::deferAttributeChangeIfNeeded(Element*, const QualifiedName&, const AtomString&, const AtomString&) { }
+inline void AXObjectCache::handleAttributeChange(Element*, const QualifiedName&, const AtomString&, const AtomString&) { }
 inline bool AXObjectCache::shouldProcessAttributeChange(Element*, const QualifiedName&) { return false; }
 inline void AXObjectCache::handleFocusedUIElementChanged(Node*, Node*, UpdateModal) { }
 inline void AXObjectCache::handleScrollbarUpdate(ScrollView*) { }

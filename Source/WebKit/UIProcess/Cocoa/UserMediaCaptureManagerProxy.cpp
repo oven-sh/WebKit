@@ -122,6 +122,7 @@ public:
     }
 
     void setShouldApplyRotation(bool shouldApplyRotation) { m_shouldApplyRotation = true; }
+    void setIsInBackground(bool value) { m_source->setIsInBackground(value); }
 
 private:
     void sourceStopped() final {
@@ -134,6 +135,11 @@ private:
 
     void sourceSettingsChanged() final {
         m_connection->send(Messages::UserMediaCaptureManager::SourceSettingsChanged(m_id, m_source->settings()), 0);
+    }
+
+    void sourceConfigurationChanged() final
+    {
+        m_connection->send(Messages::UserMediaCaptureManager::SourceConfigurationChanged(m_id, m_source->persistentID(), m_source->settings(), m_source->capabilities()), 0);
     }
 
     // May get called on a background thread.
@@ -462,6 +468,12 @@ void UserMediaCaptureManagerProxy::setShouldApplyRotation(RealtimeMediaSourceIde
 {
     if (auto* proxy = m_proxies.get(sourceID))
         proxy->setShouldApplyRotation(shouldApplyRotation);
+}
+
+void UserMediaCaptureManagerProxy::setIsInBackground(RealtimeMediaSourceIdentifier sourceID, bool isInBackground)
+{
+    if (auto* proxy = m_proxies.get(sourceID))
+        proxy->setIsInBackground(isInBackground);
 }
 
 void UserMediaCaptureManagerProxy::clear()

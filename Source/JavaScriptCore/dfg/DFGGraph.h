@@ -840,6 +840,26 @@ public:
         return isWatchingGlobalObjectWatchpoint(globalObject, set);
     }
 
+    bool isWatchingStringSymbolReplaceWatchpoint(Node* node)
+    {
+        if (m_plan.isUnlinked())
+            return false;
+
+        JSGlobalObject* globalObject = globalObjectFor(node->origin.semantic);
+        InlineWatchpointSet& set = globalObject->stringSymbolReplaceWatchpointSet();
+        return isWatchingGlobalObjectWatchpoint(globalObject, set);
+    }
+
+    bool isWatchingRegExpPrimordialPropertiesWatchpoint(Node* node)
+    {
+        if (m_plan.isUnlinked())
+            return false;
+
+        JSGlobalObject* globalObject = globalObjectFor(node->origin.semantic);
+        InlineWatchpointSet& set = globalObject->regExpPrimordialPropertiesWatchpointSet();
+        return isWatchingGlobalObjectWatchpoint(globalObject, set);
+    }
+
     Profiler::Compilation* compilation() { return m_plan.compilation(); }
 
     DesiredIdentifiers& identifiers() { return m_plan.identifiers(); }
@@ -1044,8 +1064,7 @@ public:
     }
     bool willCatchExceptionInMachineFrame(CodeOrigin, CodeOrigin& opCatchOriginOut, HandlerInfo*& catchHandlerOut);
     
-    bool needsScopeRegister() const { return m_hasDebuggerEnabled || m_codeBlock->usesCallEval(); }
-    bool needsFlushedThis() const { return m_codeBlock->usesCallEval(); }
+    bool needsScopeRegister() const { return m_hasDebuggerEnabled; }
 
     void clearCPSCFGData();
 
@@ -1085,6 +1104,18 @@ public:
 
     void freeDFGIRAfterLowering();
 
+    const BoyerMooreHorspoolTable<uint8_t>* tryAddStringSearchTable8(const String& string)
+    {
+        constexpr unsigned minPatternLength = 9;
+        if (string.length() > BoyerMooreHorspoolTable<uint8_t>::maxPatternLength)
+            return nullptr;
+        if (string.length() < minPatternLength)
+            return nullptr;
+        return m_stringSearchTable8.ensure(string, [&]() {
+            return makeUnique<BoyerMooreHorspoolTable<uint8_t>>(string);
+        }).iterator->value.get();
+    }
+
     StackCheck m_stackChecker;
     VM& m_vm;
     Plan& m_plan;
@@ -1100,6 +1131,7 @@ public:
     Vector<SimpleJumpTable> m_switchJumpTables;
     Vector<const UnlinkedStringJumpTable*> m_unlinkedStringSwitchJumpTables;
     Vector<StringJumpTable> m_stringSwitchJumpTables;
+    HashMap<String, std::unique_ptr<BoyerMooreHorspoolTable<uint8_t>>> m_stringSearchTable8;
 
     HashMap<EncodedJSValue, FrozenValue*, EncodedJSValueHash, EncodedJSValueHashTraits> m_frozenValueMap;
     Bag<FrozenValue> m_frozenValues;

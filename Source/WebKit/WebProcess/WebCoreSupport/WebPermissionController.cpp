@@ -28,67 +28,45 @@
 
 #include "WebPage.h"
 #include "WebPageProxyMessages.h"
+#include "WebPermissionControllerMessages.h"
 #include "WebPermissionControllerProxyMessages.h"
 #include "WebProcess.h"
+#include <WebCore/Document.h>
 #include <WebCore/Page.h>
 #include <WebCore/PermissionObserver.h>
 #include <WebCore/PermissionQuerySource.h>
 #include <WebCore/PermissionState.h>
+#include <WebCore/Permissions.h>
+#include <WebCore/SecurityOriginData.h>
 #include <optional>
 
 namespace WebKit {
 
-Ref<WebPermissionController> WebPermissionController::create()
+Ref<WebPermissionController> WebPermissionController::create(WebProcess& process)
 {
-    return adoptRef(*new WebPermissionController);
+    return adoptRef(*new WebPermissionController(process));
 }
 
-WebPermissionController::WebPermissionController() = default;
-
-void WebPermissionController::query(WebCore::ClientOrigin&& origin, WebCore::PermissionDescriptor&& descriptor, WebCore::Page* page, WebCore::PermissionQuerySource source, CompletionHandler<void(std::optional<WebCore::PermissionState>)>&& completionHandler)
+WebPermissionController::WebPermissionController(WebProcess& process)
 {
-    auto cachedResult = queryCache(origin, descriptor);
-    if (cachedResult != WebCore::PermissionState::Prompt)
-        return completionHandler(cachedResult);
+    process.addMessageReceiver(Messages::WebPermissionController::messageReceiverName(), *this);
+}
 
+WebPermissionController::~WebPermissionController()
+{
+    WebProcess::singleton().removeMessageReceiver(Messages::WebPermissionController::messageReceiverName());
+}
+
+void WebPermissionController::query(WebCore::ClientOrigin&& origin, WebCore::PermissionDescriptor descriptor, const WeakPtr<WebCore::Page>& page, WebCore::PermissionQuerySource source, CompletionHandler<void(std::optional<WebCore::PermissionState>)>&& completionHandler)
+{
     std::optional<WebPageProxyIdentifier> proxyIdentifier;
     if (source == WebCore::PermissionQuerySource::Window || source == WebCore::PermissionQuerySource::DedicatedWorker) {
         ASSERT(page);
         proxyIdentifier = WebPage::fromCorePage(*page).webPageProxyIdentifier();
     }
 
-    m_requests.append(PermissionRequest { WTFMove(origin), WTFMove(descriptor), proxyIdentifier, source, WTFMove(completionHandler) });
+    m_requests.append(PermissionRequest { WTFMove(origin), descriptor, proxyIdentifier, source, WTFMove(completionHandler) });
     tryProcessingRequests();
-}
-
-WebCore::PermissionState WebPermissionController::queryCache(const WebCore::ClientOrigin& origin, const WebCore::PermissionDescriptor& descriptor)
-{
-    auto iterator = m_cachedPermissionEntries.find(origin);
-    if (iterator != m_cachedPermissionEntries.end()) {
-        for (auto& entry : iterator->value) {
-            if (entry.first == descriptor)
-                return entry.second;
-        }
-    }
-
-    return WebCore::PermissionState::Prompt;
-}
-
-void WebPermissionController::updateCache(const WebCore::ClientOrigin& origin, const WebCore::PermissionDescriptor& descriptor, WebCore::PermissionState state)
-{
-    auto& entries = m_cachedPermissionEntries.ensure(origin, [&]() {
-        return Vector<PermissionEntry> { };
-    }).iterator->value;
-    for (auto& entry : entries) {
-        if (entry.first == descriptor) {
-            if (entry.second == state)
-                return;
-
-            entry.second = state;
-            permissionChanged(origin, descriptor, state);
-            return;
-        }
-    }
 }
 
 void WebPermissionController::tryProcessingRequests()
@@ -98,24 +76,13 @@ void WebPermissionController::tryProcessingRequests()
         if (currentRequest.isWaitingForReply)
             return;
 
-        // Cache may have updated.
-        auto cachedResult = queryCache(currentRequest.origin, currentRequest.descriptor);
-        if (cachedResult != WebCore::PermissionState::Prompt) {
-            m_requests.takeFirst().completionHandler(cachedResult);
-            continue;
-        }
-
         currentRequest.isWaitingForReply = true;
-        WebProcess::singleton().sendWithAsyncReply(Messages::WebPermissionControllerProxy::Query(currentRequest.origin, currentRequest.descriptor, currentRequest.identifier, currentRequest.source), [this, weakThis = WeakPtr { *this }](auto state, bool shouldCache) {
+        WebProcess::singleton().sendWithAsyncReply(Messages::WebPermissionControllerProxy::Query(currentRequest.origin, currentRequest.descriptor, currentRequest.identifier, currentRequest.source), [this, weakThis = WeakPtr { *this }](auto state) {
             RefPtr protectedThis { weakThis.get() };
             if (!protectedThis)
                 return;
 
-            auto takenRequest = m_requests.takeFirst();
-            takenRequest.completionHandler(state);
-            if (shouldCache && state)
-                updateCache(takenRequest.origin, takenRequest.descriptor, *state);
-
+            m_requests.takeFirst().completionHandler(state);
             tryProcessingRequests();
         });
     }
@@ -131,11 +98,22 @@ void WebPermissionController::removeObserver(WebCore::PermissionObserver& observ
     m_observers.remove(observer);
 }
 
-void WebPermissionController::permissionChanged(const WebCore::ClientOrigin& origin, const WebCore::PermissionDescriptor& descriptor, WebCore::PermissionState state)
+void WebPermissionController::permissionChanged(WebCore::PermissionName permissionName, const WebCore::SecurityOriginData& topOrigin)
 {
+    ASSERT(isMainRunLoop());
+
     for (auto& observer : m_observers) {
-        if (observer.origin() == origin && observer.descriptor() == descriptor)
-            observer.stateChanged(state);
+        if (observer.descriptor().name != permissionName || observer.origin().topOrigin != topOrigin)
+            return;
+
+        auto source = observer.source();
+        if (!observer.page() && (source == WebCore::PermissionQuerySource::Window || source == WebCore::PermissionQuerySource::DedicatedWorker))
+            return;
+
+        query(WebCore::ClientOrigin { observer.origin() }, WebCore::PermissionDescriptor { permissionName }, observer.page(), source, [observer = WeakPtr { observer }](auto newState) {
+            if (observer && newState != observer->currentState())
+                observer->stateChanged(*newState);
+        });
     }
 }
 

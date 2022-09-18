@@ -77,11 +77,9 @@ class RenderWidget;
 class ScrollingCoordinator;
 class ScrollAnchoringController;
 
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
 namespace Display {
 class View;
 }
-#endif
 
 Pagination::Mode paginationModeForRenderStyle(const RenderStyle&);
 
@@ -106,10 +104,8 @@ public:
 
     WEBCORE_EXPORT RenderView* renderView() const;
 
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
     Display::View* existingDisplayView() const;
     Display::View& displayView();
-#endif
 
     int mapFromLayoutToCSSUnits(LayoutUnit) const;
     LayoutUnit mapFromCSSToLayoutUnits(int) const;
@@ -325,6 +321,7 @@ public:
 
     void viewportContentsChanged();
     WEBCORE_EXPORT void resumeVisibleImageAnimationsIncludingSubframes();
+    void repaintVisibleImageAnimationsIncludingSubframes();
 
     String mediaType() const;
     WEBCORE_EXPORT void setMediaType(const String&);
@@ -475,6 +472,7 @@ public:
 
     bool scrollToFragment(const URL&);
     void maintainScrollPositionAtAnchor(ContainerNode*);
+    void maintainScrollPositionAtScrollToTextFragmentRange(SimpleRange&);
     WEBCORE_EXPORT void scrollElementToRect(const Element&, const IntRect&);
 
     // Coordinate systems:
@@ -776,6 +774,7 @@ private:
 
     void applyRecursivelyWithVisibleRect(const Function<void(FrameView& frameView, const IntRect& visibleRect)>&);
     void resumeVisibleImageAnimations(const IntRect& visibleRect);
+    void repaintVisibleImageAnimations(const IntRect& visibleRect);
     void updateScriptedAnimationsAndTimersThrottlingState(const IntRect& visibleRect);
 
     WEBCORE_EXPORT void adjustTiledBackingCoverage();
@@ -847,6 +846,7 @@ private:
 
     bool scrollToFragmentInternal(StringView);
     void scrollToAnchor();
+    void scrollToTextFragmentRange();
     void scrollPositionChanged(const ScrollPosition& oldPosition, const ScrollPosition& newPosition);
     void scrollableAreaSetChanged();
     void scheduleScrollEvent();
@@ -903,9 +903,7 @@ private:
     const Ref<Frame> m_frame;
     FrameViewLayoutContext m_layoutContext;
 
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
     std::unique_ptr<Display::View> m_displayView;
-#endif
 
     HashSet<Widget*> m_widgetsInRenderTree;
     std::unique_ptr<ListHashSet<RenderEmbeddedObject*>> m_embeddedObjectsToUpdate;
@@ -915,6 +913,7 @@ private:
     RefPtr<Node> m_nodeToDraw;
     std::optional<SimpleRange> m_pendingTextFragmentIndicatorRange;
     String m_pendingTextFragmentIndicatorText;
+    bool m_skipScrollResetOfScrollToTextFragmentRange { false };
 
     // Renderer to hold our custom scroll corner.
     RenderPtr<RenderScrollbarPart> m_scrollCorner;

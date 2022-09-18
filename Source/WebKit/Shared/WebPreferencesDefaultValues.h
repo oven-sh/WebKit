@@ -38,6 +38,7 @@ namespace WebKit {
 #if PLATFORM(IOS_FAMILY)
 bool defaultPassiveTouchListenersAsDefaultOnDocument();
 bool defaultCSSOMViewScrollingAPIEnabled();
+bool defaultShouldPrintBackgrounds();
 bool defaultAlternateFormControlDesignEnabled();
 #if ENABLE(TEXT_AUTOSIZING)
 bool defaultTextAutosizingUsesIdempotentMode();
@@ -67,6 +68,7 @@ bool defaultOfflineWebApplicationCacheEnabled();
 #if ENABLE(MEDIA_STREAM)
 bool defaultCaptureAudioInGPUProcessEnabled();
 bool defaultCaptureAudioInUIProcessEnabled();
+bool defaultManageCaptureStatusBarInGPUProcessEnabled();
 #endif
 
 #if ENABLE(MEDIA_SOURCE) && PLATFORM(IOS_FAMILY)

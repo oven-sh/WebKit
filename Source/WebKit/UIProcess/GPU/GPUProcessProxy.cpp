@@ -350,6 +350,11 @@ void GPUProcessProxy::setMockCaptureDevicesInterrupted(bool isCameraInterrupted,
 {
     send(Messages::GPUProcess::SetMockCaptureDevicesInterrupted { isCameraInterrupted, isMicrophoneInterrupted }, 0);
 }
+
+void GPUProcessProxy::triggerMockMicrophoneConfigurationChange()
+{
+    send(Messages::GPUProcess::TriggerMockMicrophoneConfigurationChange { }, 0);
+}
 #endif // ENABLE(MEDIA_STREAM)
 
 #if HAVE(SC_CONTENT_SHARING_SESSION)
@@ -385,7 +390,7 @@ void GPUProcessProxy::processWillShutDown(IPC::Connection& connection)
 std::optional<bool> GPUProcessProxy::s_hasVP9HardwareDecoder;
 #endif
 
-void GPUProcessProxy::createGPUProcessConnection(WebProcessProxy& webProcessProxy, IPC::Attachment&& connectionIdentifier, GPUProcessConnectionParameters&& parameters)
+void GPUProcessProxy::createGPUProcessConnection(WebProcessProxy& webProcessProxy, IPC::Connection::Handle&& connectionIdentifier, GPUProcessConnectionParameters&& parameters)
 {
 #if ENABLE(VP9)
     parameters.hasVP9HardwareDecoder = s_hasVP9HardwareDecoder;
@@ -396,7 +401,7 @@ void GPUProcessProxy::createGPUProcessConnection(WebProcessProxy& webProcessProx
 
     RELEASE_LOG(ProcessSuspension, "%p - GPUProcessProxy is taking a background assertion because a web process is requesting a connection", this);
     startResponsivenessTimer(UseLazyStop::No);
-    sendWithAsyncReply(Messages::GPUProcess::CreateGPUConnectionToWebProcess { webProcessProxy.coreProcessIdentifier(), webProcessProxy.sessionID(), connectionIdentifier, parameters }, [this, weakThis = WeakPtr { *this }]() mutable {
+    sendWithAsyncReply(Messages::GPUProcess::CreateGPUConnectionToWebProcess { webProcessProxy.coreProcessIdentifier(), webProcessProxy.sessionID(), WTFMove(connectionIdentifier), parameters }, [this, weakThis = WeakPtr { *this }]() mutable {
         if (!weakThis)
             return;
         stopResponsivenessTimer();
@@ -414,7 +419,7 @@ void GPUProcessProxy::gpuProcessExited(ProcessTerminationReason reason)
     case ProcessTerminationReason::IdleExit:
     case ProcessTerminationReason::Unresponsive:
     case ProcessTerminationReason::Crash:
-        RELEASE_LOG_ERROR(Process, "%p - GPUProcessProxy::gpuProcessExited: reason=%{public}s", this, processTerminationReasonToString(reason));
+        RELEASE_LOG_ERROR(Process, "%p - GPUProcessProxy::gpuProcessExited: reason=%" PUBLIC_LOG_STRING, this, processTerminationReasonToString(reason));
         break;
     case ProcessTerminationReason::ExceededProcessCountLimit:
     case ProcessTerminationReason::NavigationSwap:
@@ -472,7 +477,7 @@ void GPUProcessProxy::didFinishLaunching(ProcessLauncher* launcher, IPC::Connect
 {
     AuxiliaryProcessProxy::didFinishLaunching(launcher, connectionIdentifier);
 
-    if (!IPC::Connection::identifierIsValid(connectionIdentifier)) {
+    if (!connectionIdentifier) {
         gpuProcessExited(ProcessTerminationReason::Crash);
         return;
     }
@@ -678,6 +683,16 @@ void GPUProcessProxy::requestBitmapImageForCurrentTime(ProcessIdentifier process
 {
     sendWithAsyncReply(Messages::GPUProcess::RequestBitmapImageForCurrentTime(processIdentifier, playerIdentifier), WTFMove(completion));
 }
+
+#if ENABLE(MEDIA_STREAM) && PLATFORM(IOS_FAMILY)
+void GPUProcessProxy::statusBarWasTapped(CompletionHandler<void()>&& completionHandler)
+{
+    if (auto* page = WebProcessProxy::audioCapturingWebPage())
+        page->statusBarWasTapped();
+    // Find the web page capturing audio and put focus on it.
+    completionHandler();
+}
+#endif
 
 } // namespace WebKit
 

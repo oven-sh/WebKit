@@ -343,7 +343,7 @@ public:
     WEBCORE_EXPORT void cancelSelectionAutoscroll();
 #endif
 
-    WEBCORE_EXPORT std::optional<Cursor> selectCursor(const HitTestResult&);
+    WEBCORE_EXPORT std::optional<Cursor> selectCursor(const HitTestResult&, bool shiftKey);
 
 #if ENABLE(KINETIC_SCROLLING)
     std::optional<WheelScrollGestureState> wheelScrollGestureState() const { return m_wheelScrollGestureState; }
@@ -352,6 +352,8 @@ public:
 #if ENABLE(DRAG_SUPPORT)
     Element* draggingElement() const;
 #endif
+
+    bool canDropCurrentlyDraggedImageAsFile() const;
 
     WEBCORE_EXPORT void invalidateClick();
 
@@ -403,7 +405,7 @@ private:
 
     bool internalKeyEvent(const PlatformKeyboardEvent&);
 
-    void updateCursor(FrameView&, const HitTestResult&);
+    void updateCursor(FrameView&, const HitTestResult&, bool shiftKey);
 
     void hoverTimerFired();
 

@@ -25,8 +25,6 @@
 
 #pragma once
 
-#if ENABLE(LAYOUT_FORMATTING_CONTEXT)
-
 #include "FormattingContext.h"
 #include "FormattingState.h"
 #include "InlineFormattingGeometry.h"
@@ -61,7 +59,7 @@ public:
     IntrinsicWidthConstraints computedIntrinsicWidthConstraintsForIntegration();
 
 private:
-    void lineLayout(InlineItems&, LineBuilder::InlineItemRange, const ConstraintsForInFlowContent&);
+    void lineLayout(InlineItems&, const LineBuilder::InlineItemRange&, const ConstraintsForInFlowContent&);
     void computeStaticPositionForOutOfFlowContent(const FormattingState::OutOfFlowBoxList&);
 
     void computeIntrinsicWidthForFormattingRoot(const Box&);
@@ -85,4 +83,3 @@ private:
 
 SPECIALIZE_TYPE_TRAITS_LAYOUT_FORMATTING_CONTEXT(InlineFormattingContext, isInlineFormattingContext())
 
-#endif

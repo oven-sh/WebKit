@@ -473,7 +473,7 @@ void WebProcessPool::gpuProcessDidFinishLaunching(ProcessID)
 
 void WebProcessPool::gpuProcessExited(ProcessID identifier, ProcessTerminationReason reason)
 {
-    WEBPROCESSPOOL_RELEASE_LOG(Process, "gpuProcessDidExit: PID=%d, reason=%{public}s", identifier, processTerminationReasonToString(reason));
+    WEBPROCESSPOOL_RELEASE_LOG(Process, "gpuProcessDidExit: PID=%d, reason=%" PUBLIC_LOG_STRING, identifier, processTerminationReasonToString(reason));
     m_gpuProcess = nullptr;
 
     if (shouldReportAuxiliaryProcessCrash(reason))
@@ -494,7 +494,7 @@ void WebProcessPool::gpuProcessExited(ProcessID identifier, ProcessTerminationRe
     }
 }
 
-void WebProcessPool::createGPUProcessConnection(WebProcessProxy& webProcessProxy, IPC::Attachment&& connectionIdentifier, WebKit::GPUProcessConnectionParameters&& parameters)
+void WebProcessPool::createGPUProcessConnection(WebProcessProxy& webProcessProxy, IPC::Connection::Handle&& connectionIdentifier, WebKit::GPUProcessConnectionParameters&& parameters)
 {
 #if ENABLE(IPC_TESTING_API)
     parameters.ignoreInvalidMessageForTesting = webProcessProxy.ignoreInvalidMessageForTesting();
@@ -558,7 +558,7 @@ void WebProcessPool::establishRemoteWorkerContextConnectionToNetworkProcess(Remo
 
             useProcessForRemoteWorkers(process);
 
-            WEBPROCESSPOOL_RELEASE_LOG_STATIC(ServiceWorker, "establishRemoteWorkerContextConnectionToNetworkProcess reusing an existing web process (process=%p, workerType=%{public}s, PID=%d)", remoteWorkerProcessProxy, workerType == RemoteWorkerType::ServiceWorker ? "service" : "shared", remoteWorkerProcessProxy->processIdentifier());
+            WEBPROCESSPOOL_RELEASE_LOG_STATIC(ServiceWorker, "establishRemoteWorkerContextConnectionToNetworkProcess reusing an existing web process (process=%p, workerType=%" PUBLIC_LOG_STRING ", PID=%d)", remoteWorkerProcessProxy, workerType == RemoteWorkerType::ServiceWorker ? "service" : "shared", remoteWorkerProcessProxy->processIdentifier());
             break;
         }
     }
@@ -567,7 +567,7 @@ void WebProcessPool::establishRemoteWorkerContextConnectionToNetworkProcess(Remo
         auto newProcessProxy = WebProcessProxy::createForRemoteWorkers(workerType, *processPool, RegistrableDomain  { registrableDomain }, *websiteDataStore);
         remoteWorkerProcessProxy = newProcessProxy.ptr();
 
-        WEBPROCESSPOOL_RELEASE_LOG_STATIC(ServiceWorker, "establishRemoteWorkerContextConnectionToNetworkProcess creating a new service worker process (process=%p, workerType=%{public}s, PID=%d)", remoteWorkerProcessProxy, workerType == RemoteWorkerType::ServiceWorker ? "service" : "shared", remoteWorkerProcessProxy->processIdentifier());
+        WEBPROCESSPOOL_RELEASE_LOG_STATIC(ServiceWorker, "establishRemoteWorkerContextConnectionToNetworkProcess creating a new service worker process (process=%p, workerType=%" PUBLIC_LOG_STRING ", PID=%d)", remoteWorkerProcessProxy, workerType == RemoteWorkerType::ServiceWorker ? "service" : "shared", remoteWorkerProcessProxy->processIdentifier());
 
         processPool->initializeNewWebProcess(newProcessProxy, websiteDataStore);
         processPool->m_processes.append(WTFMove(newProcessProxy));
@@ -809,7 +809,7 @@ void WebProcessPool::initializeNewWebProcess(WebProcessProxy& process, WebsiteDa
     parameters.urlSchemesRegisteredAsCanDisplayOnlyIfCanRequest = copyToVector(m_schemesToRegisterAsCanDisplayOnlyIfCanRequest);
 
     parameters.shouldAlwaysUseComplexTextCodePath = m_alwaysUsesComplexTextCodePath;
-    parameters.shouldUseFontSmoothing = m_shouldUseFontSmoothing;
+    parameters.shouldUseFontSmoothingForTesting = m_shouldUseFontSmoothingForTesting;
 
     parameters.textCheckerState = TextChecker::state();
 
@@ -1282,10 +1282,10 @@ void WebProcessPool::setAlwaysUsesComplexTextCodePath(bool alwaysUseComplexText)
     sendToAllProcesses(Messages::WebProcess::SetAlwaysUsesComplexTextCodePath(alwaysUseComplexText));
 }
 
-void WebProcessPool::setShouldUseFontSmoothing(bool useFontSmoothing)
+void WebProcessPool::setShouldUseFontSmoothingForTesting(bool useFontSmoothing)
 {
-    m_shouldUseFontSmoothing = useFontSmoothing;
-    sendToAllProcesses(Messages::WebProcess::SetShouldUseFontSmoothing(useFontSmoothing));
+    m_shouldUseFontSmoothingForTesting = useFontSmoothing;
+    sendToAllProcesses(Messages::WebProcess::SetShouldUseFontSmoothingForTesting(useFontSmoothing));
 }
 
 void WebProcessPool::registerURLSchemeAsEmptyDocument(const String& urlScheme)

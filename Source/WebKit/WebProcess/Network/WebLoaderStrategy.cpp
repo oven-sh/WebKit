@@ -299,7 +299,7 @@ bool WebLoaderStrategy::tryLoadingUsingPDFJSHandler(ResourceLoader& resourceLoad
 }
 #endif
 
-static void addParametersShared(const Frame* frame, NetworkResourceLoadParameters& parameters, DocumentLoader* currentDocumentLoader = nullptr)
+static void addParametersShared(const Frame* frame, NetworkResourceLoadParameters& parameters, bool isMainFrameNavigation = false)
 {
     parameters.crossOriginAccessControlCheckEnabled = CrossOriginAccessControlCheckDisabler::singleton().crossOriginAccessControlCheckEnabled();
     parameters.hadMainFrameMainResourcePrivateRelayed = WebProcess::singleton().hadMainFrameMainResourcePrivateRelayed();
@@ -307,12 +307,17 @@ static void addParametersShared(const Frame* frame, NetworkResourceLoadParameter
     if (!frame)
         return;
 
-    // When loading the main frame, we need to get allowPrivacyProxy from currentDocumentLoader.
-    // Otherwise we need to get it from mainFrameDocumentLoader.
+    // When loading the main frame, we need to get allowPrivacyProxy from the same DocumentLoader that
+    // WebFrameLoaderClient::applyToDocumentLoader stored the value on. Otherwise, we need to get the
+    // value from the main frame's current DocumentLoader.
     auto& mainFrame = frame->mainFrame();
-    auto* mainFrameDocumentLoader = mainFrame.document() ? mainFrame.document()->loader() : nullptr;
-    parameters.allowPrivacyProxy = (currentDocumentLoader ? currentDocumentLoader->allowPrivacyProxy() : true)
-    && (mainFrameDocumentLoader ? mainFrameDocumentLoader->allowPrivacyProxy() : true);
+    auto* mainFrameDocumentLoader = mainFrame.loader().policyDocumentLoader();
+    if (!mainFrameDocumentLoader)
+        mainFrameDocumentLoader = mainFrame.loader().provisionalDocumentLoader();
+    if (!mainFrameDocumentLoader || !isMainFrameNavigation)
+        mainFrameDocumentLoader = mainFrame.loader().documentLoader();
+
+    parameters.allowPrivacyProxy = mainFrameDocumentLoader ? mainFrameDocumentLoader->allowPrivacyProxy() : true;
 
     if (auto* document = frame->document())
         parameters.crossOriginEmbedderPolicy = document->crossOriginEmbedderPolicy();
@@ -327,6 +332,7 @@ static void addParametersShared(const Frame* frame, NetworkResourceLoadParameter
         if (auto* parentFrame = ownerElement->document().frame()) {
             parameters.parentFrameID = parentFrame->loader().frameID();
             parameters.parentCrossOriginEmbedderPolicy = ownerElement->document().crossOriginEmbedderPolicy();
+            parameters.parentFrameURL = ownerElement->document().url();
         }
     }
 }
@@ -377,7 +383,8 @@ void WebLoaderStrategy::scheduleLoadFromNetworkProcess(ResourceLoader& resourceL
     loadParameters.maximumBufferingTime = maximumBufferingTime;
     loadParameters.options = resourceLoader.options();
     loadParameters.preflightPolicy = resourceLoader.options().preflightPolicy;
-    addParametersShared(frame, loadParameters, resourceLoader.documentLoader());
+    bool isMainFrameNavigation = resourceLoader.frame() && resourceLoader.frame()->isMainFrame() && resourceLoader.options().mode == FetchOptions::Mode::Navigate;
+    addParametersShared(frame, loadParameters, isMainFrameNavigation);
 
 #if ENABLE(SERVICE_WORKER)
     loadParameters.serviceWorkersMode = resourceLoader.options().loadedFromOpaqueSource == LoadedFromOpaqueSource::No ? resourceLoader.options().serviceWorkersMode : ServiceWorkersMode::None;
@@ -408,15 +415,15 @@ void WebLoaderStrategy::scheduleLoadFromNetworkProcess(ResourceLoader& resourceL
         loadParameters.isNavigatingToAppBoundDomain = webFrame->isTopFrameNavigatingToAppBoundDomain();
 #endif
 
-#if ENABLE(CONTENT_EXTENSIONS)
     if (document) {
-        loadParameters.mainDocumentURL = document->topDocument().url();
         loadParameters.frameURL = document->url();
+#if ENABLE(CONTENT_EXTENSIONS)
+        loadParameters.mainDocumentURL = document->topDocument().url();
         // FIXME: Instead of passing userContentControllerIdentifier, the NetworkProcess should be able to get it using webPageId.
         if (auto* webPage = webFrame ? webFrame->page() : nullptr)
             loadParameters.userContentControllerIdentifier = webPage->userContentControllerIdentifier();
-    }
 #endif
+    }
 
     // FIXME: All loaders should provide their origin if navigation mode is cors/no-cors/same-origin.
     // As a temporary approach, we use the document origin if available or the HTTP Origin header otherwise.
@@ -451,7 +458,7 @@ void WebLoaderStrategy::scheduleLoadFromNetworkProcess(ResourceLoader& resourceL
 
     loadParameters.shouldRestrictHTTPResponseAccess = shouldPerformSecurityChecks();
 
-    loadParameters.isMainFrameNavigation = resourceLoader.frame() && resourceLoader.frame()->isMainFrame() && resourceLoader.options().mode == FetchOptions::Mode::Navigate;
+    loadParameters.isMainFrameNavigation = isMainFrameNavigation;
     if (loadParameters.isMainFrameNavigation && document)
         loadParameters.sourceCrossOriginOpenerPolicy = document->crossOriginOpenerPolicy();
 
@@ -801,9 +808,9 @@ void WebLoaderStrategy::startPingLoad(Frame& frame, ResourceRequest& request, co
     loadParameters.isNavigatingToAppBoundDomain = webFrame->isTopFrameNavigatingToAppBoundDomain();
 #endif
 
+    loadParameters.frameURL = document->url();
 #if ENABLE(CONTENT_EXTENSIONS)
     loadParameters.mainDocumentURL = document->topDocument().url();
-    loadParameters.frameURL = document->url();
     // FIXME: Instead of passing userContentControllerIdentifier, we should just pass webPageId to NetworkProcess.
     loadParameters.userContentControllerIdentifier = webPage->userContentControllerIdentifier();
 #endif

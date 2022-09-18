@@ -66,6 +66,7 @@
 #include "AccessibilityTree.h"
 #include "AccessibilityTreeItem.h"
 #include "CaretRectComputation.h"
+#include "CustomElementDefaultARIA.h"
 #include "Document.h"
 #include "Editing.h"
 #include "Editor.h"
@@ -261,8 +262,12 @@ AXObjectCache::~AXObjectCache()
 bool AXObjectCache::isModalElement(Element& element) const
 {
     bool hasDialogRole = nodeHasRole(&element, "dialog"_s) || nodeHasRole(&element, "alertdialog"_s);
-    bool isAriaModal = equalLettersIgnoringASCIICase(element.attributeWithoutSynchronization(aria_modalAttr), "true"_s);
-
+    AtomString modalValue = element.attributeWithoutSynchronization(aria_modalAttr);
+    if (modalValue.isNull()) {
+        if (auto* defaultARIA = element.customElementDefaultARIAIfExists())
+            modalValue = defaultARIA->valueForAttribute(aria_modalAttr);
+    }
+    bool isAriaModal = equalLettersIgnoringASCIICase(modalValue, "true"_s);
     return (hasDialogRole && isAriaModal) || (is<HTMLDialogElement>(element) && downcast<HTMLDialogElement>(element).isModal());
 }
 
@@ -536,7 +541,11 @@ bool nodeHasRole(Node* node, StringView role)
     if (!node || !is<Element>(node))
         return false;
 
-    auto& roleValue = downcast<Element>(*node).attributeWithoutSynchronization(roleAttr);
+    AtomString roleValue = downcast<Element>(*node).attributeWithoutSynchronization(roleAttr);
+    if (roleValue.isNull()) {
+        if (auto* defaultARIA = downcast<Element>(*node).customElementDefaultARIAIfExists())
+            roleValue = defaultARIA->valueForAttribute(roleAttr);
+    }
     if (role.isNull())
         return roleValue.isEmpty();
     if (roleValue.isEmpty())
@@ -931,7 +940,7 @@ void AXObjectCache::remove(Node& node)
     if (is<Element>(node)) {
         m_deferredTextFormControlValue.remove(downcast<Element>(&node));
         m_deferredAttributeChange.removeAllMatching([&node] (const auto& entry) {
-            return entry.first == &node;
+            return entry.element == &node;
         });
         m_modalElementsSet.remove(downcast<Element>(&node));
         m_deferredRecomputeIsIgnoredList.remove(downcast<Element>(node));
@@ -1886,21 +1895,34 @@ void AXObjectCache::handleActiveDescendantChanged(Element& element)
     }
 }
 
-void AXObjectCache::handleRoleChanged(Element* element)
+static bool isTableOrRowRole(const AtomString& attrValue)
 {
+    return attrValue == "table"_s
+        || attrValue == "grid"_s
+        || attrValue == "treegrid"_s
+        || attrValue == "row"_s;
+}
+
+void AXObjectCache::handleRoleChanged(Element* element, const AtomString& oldValue, const AtomString& newValue)
+{
+    AXTRACE("AXObjectCache::handleRoleChanged"_s);
+    AXLOG(makeString("oldValue ", oldValue, " new value ", newValue));
+    ASSERT(oldValue != newValue);
+
     auto* object = get(element);
     if (!object)
         return;
 
-    if (is<AccessibilityARIAGrid>(object)
-        || is<AccessibilityARIAGridRow>(object)
-        || is<AccessibilityARIAGridCell>(object)) {
-        // These classes instances are created based on the role attribute of the underlying Element.
-        // Thus when the role changes, remove the object and force a ChildrenChanged on the parent so that the object is re-created.
-        auto* parent = object->parentObject();
-        remove(*element);
-        childrenChanged(parent);
-        return;
+    // The class of an AX object created for an Element depends on the role attribute of that Element.
+    // Thus when the role changes, remove the existing AX object and force a ChildrenChanged on the parent so that the object is re-created.
+    // At the moment this is done only for table and row roles. Other roles may be added here if needed.
+    if (oldValue.isEmpty() || isTableOrRowRole(oldValue)
+        || newValue.isEmpty() || isTableOrRowRole(newValue)) {
+        if (auto* parent = object->parentObject()) {
+            remove(*element);
+            childrenChanged(parent);
+            return;
+        }
     }
 
     object->updateRole();
@@ -1916,18 +1938,18 @@ void AXObjectCache::handleRoleChanged(AccessibilityObject* axObject)
 #endif
 }
 
-void AXObjectCache::deferAttributeChangeIfNeeded(const QualifiedName& attrName, Element* element)
+void AXObjectCache::deferAttributeChangeIfNeeded(Element* element, const QualifiedName& attrName, const AtomString& oldValue, const AtomString& newValue)
 {
     AXTRACE(makeString("AXObjectCache::deferAttributeChangeIfNeeded 0x"_s, hex(reinterpret_cast<uintptr_t>(this))));
 
     if (nodeAndRendererAreValid(element) && rendererNeedsDeferredUpdate(*element->renderer())) {
-        m_deferredAttributeChange.append({ element, attrName });
+        m_deferredAttributeChange.append({ element, attrName, oldValue, newValue });
         if (!m_performCacheUpdateTimer.isActive())
             m_performCacheUpdateTimer.startOneShot(0_s);
         AXLOG(makeString("Deferring handling of attribute ", attrName.localName().string(), " for element ", element->debugDescription()));
         return;
     }
-    handleAttributeChange(element, attrName);
+    handleAttributeChange(element, attrName, oldValue, newValue);
 }
 
 bool AXObjectCache::shouldProcessAttributeChange(Element* element, const QualifiedName& attrName)
@@ -1945,7 +1967,7 @@ bool AXObjectCache::shouldProcessAttributeChange(Element* element, const Qualifi
     return get(element) || get(element->parentNode());
 }
 
-void AXObjectCache::handleAttributeChange(Element* element, const QualifiedName& attrName)
+void AXObjectCache::handleAttributeChange(Element* element, const QualifiedName& attrName, const AtomString& oldValue, const AtomString& newValue)
 {
     AXTRACE(makeString("AXObjectCache::handleAttributeChange 0x"_s, hex(reinterpret_cast<uintptr_t>(this))));
     AXLOG(makeString("attribute ", attrName.localName().string(), " for element ", element ? element->debugDescription() : String("nullptr"_s)));
@@ -1957,7 +1979,7 @@ void AXObjectCache::handleAttributeChange(Element* element, const QualifiedName&
         relationsNeedUpdate(true);
 
     if (attrName == roleAttr)
-        handleRoleChanged(element);
+        handleRoleChanged(element, oldValue, newValue);
     else if (attrName == altAttr || attrName == titleAttr)
         handleTextChanged(getOrCreate(element));
     else if (attrName == contenteditableAttr) {
@@ -1973,13 +1995,19 @@ void AXObjectCache::handleAttributeChange(Element* element, const QualifiedName&
     else if (attrName == tabindexAttr)
         childrenChanged(element->parentNode(), element);
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+    else if (attrName == headersAttr)
+        updateIsolatedTree(get(element), AXTableHeadersChanged);
     else if (attrName == langAttr)
         updateIsolatedTree(get(element), AXObjectCache::AXLanguageChanged);
     else if (attrName == placeholderAttr)
         postNotification(element, AXPlaceholderChanged);
+    else if (attrName == hrefAttr)
+        updateIsolatedTree(get(element), AXURLChanged);
     else if (attrName == idAttr) {
         relationsNeedUpdate(true);
-        updateIsolatedTree(get(element), AXObjectCache::AXIdAttributeChanged);
+#if !LOG_DISABLED
+        updateIsolatedTree(get(element), AXIdAttributeChanged);
+#endif
     }
 #endif
     else if (attrName == openAttr && is<HTMLDialogElement>(*element)) {
@@ -2672,7 +2700,7 @@ CharacterOffset AXObjectCache::characterOffsetFromVisiblePosition(const VisibleP
     VisiblePosition previousVisiblePos;
     while (!currentPosition.isNull() && !deepPos.equals(currentPosition)) {
         previousVisiblePos = visiblePosition;
-        visiblePosition = obj->nextVisiblePosition(visiblePosition);
+        visiblePosition = visiblePosition.next();
         currentPosition = visiblePosition.deepEquivalent();
         Position previousPosition = previousVisiblePos.deepEquivalent();
         // Sometimes nextVisiblePosition will give the same VisiblePostion,
@@ -3326,15 +3354,6 @@ CharacterOffset AXObjectCache::characterOffsetForIndex(int index, const AXCoreOb
     return result;
 }
 
-int AXObjectCache::indexForCharacterOffset(const CharacterOffset& characterOffset, AccessibilityObject* obj)
-{
-    // Create a collapsed range so that we can get the VisiblePosition from it.
-    auto range = rangeForUnorderedCharacterOffsets(characterOffset, characterOffset);
-    if (!range)
-        return 0;
-    return obj->indexForVisiblePosition(makeContainerOffsetPosition(range->start));
-}
-
 const Element* AXObjectCache::rootAXEditableElement(const Node* node)
 {
     const Element* result = node->rootEditableElement();
@@ -3377,8 +3396,8 @@ static void filterListForRemoval(const ListHashSet<T>& list, const Document& doc
         conditionallyAddNodeToFilterList(node, document, nodesToRemove);
 }
 
-template<typename T>
-static void filterWeakHashSetForRemoval(WeakHashSet<T>& weakHashSet, const Document& document, HashSet<Ref<Node>>& nodesToRemove)
+template<typename WeakHashSet>
+static void filterWeakHashSetForRemoval(WeakHashSet& weakHashSet, const Document& document, HashSet<Ref<Node>>& nodesToRemove)
 {
     weakHashSet.forEach([&] (auto& element) {
         conditionallyAddNodeToFilterList(&element, document, nodesToRemove);
@@ -3401,8 +3420,8 @@ void AXObjectCache::prepareForDocumentDestruction(const Document& document)
     filterVectorPairForRemoval(m_deferredFocusedNodeChange, document, nodesToRemove);
 
     for (const auto& entry : m_deferredAttributeChange) {
-        if (entry.first && (!entry.first->isConnected() || &entry.first->document() == &document))
-            nodesToRemove.add(*entry.first);
+        if (entry.element && (!entry.element->isConnected() || &entry.element->document() == &document))
+            nodesToRemove.add(*entry.element);
     }
 
     for (auto& node : nodesToRemove)
@@ -3488,7 +3507,7 @@ void AXObjectCache::performDeferredCacheUpdate()
 
     AXLOG(makeString("AttributeChange size ", m_deferredAttributeChange.size()));
     for (const auto& attributeChange : m_deferredAttributeChange)
-        handleAttributeChange(attributeChange.first, attributeChange.second);
+        handleAttributeChange(attributeChange.element, attributeChange.attrName, attributeChange.oldValue, attributeChange.newValue);
     m_deferredAttributeChange.clear();
 
     AXLOG(makeString("FocusedNodeChange size ", m_deferredFocusedNodeChange.size()));
@@ -3670,6 +3689,12 @@ void AXObjectCache::updateIsolatedTree(const Vector<std::pair<RefPtr<Accessibili
         case AXSetSizeChanged:
             tree->updateNodeProperty(*notification.first, AXPropertyName::SetSize);
             tree->updateNodeProperty(*notification.first, AXPropertyName::SupportsSetSize);
+            break;
+        case AXTableHeadersChanged:
+            tree->updateNodeProperty(*notification.first, AXPropertyName::ColumnHeaders);
+            break;
+        case AXURLChanged:
+            tree->updateNodeProperty(*notification.first, AXPropertyName::URL);
             break;
         case AXActiveDescendantChanged:
         case AXAriaRoleChanged:

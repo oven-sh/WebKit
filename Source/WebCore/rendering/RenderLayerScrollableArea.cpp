@@ -55,6 +55,7 @@
 #include "FocusController.h"
 #include "FrameSelection.h"
 #include "HitTestResult.h"
+#include "InspectorInstrumentation.h"
 #include "Logging.h"
 #include "RenderFlexibleBox.h"
 #include "RenderGeometryMap.h"
@@ -248,6 +249,10 @@ bool RenderLayerScrollableArea::requestScrollPositionUpdate(const ScrollPosition
 
     if (auto* scrollingCoordinator = m_layer.page().scrollingCoordinator())
         return scrollingCoordinator->requestScrollPositionUpdate(*this, position, scrollType, clamping);
+#else
+    UNUSED_PARAM(position);
+    UNUSED_PARAM(scrollType);
+    UNUSED_PARAM(clamping);
 #endif
     return false;
 }
@@ -259,6 +264,9 @@ bool RenderLayerScrollableArea::requestAnimatedScrollToPosition(const ScrollPosi
 
     if (auto* scrollingCoordinator = m_layer.page().scrollingCoordinator())
         return scrollingCoordinator->requestAnimatedScrollToPosition(*this, destinationPosition, clamping);
+#else
+    UNUSED_PARAM(destinationPosition);
+    UNUSED_PARAM(clamping);
 #endif
     return false;
 }
@@ -1287,6 +1295,8 @@ void RenderLayerScrollableArea::updateScrollInfoAfterLayout()
         m_layer.setNeedsPostLayoutCompositingUpdate();
 
     resnapAfterLayout();
+
+    InspectorInstrumentation::didAddOrRemoveScrollbars(m_layer.renderer());
 }
 
 bool RenderLayerScrollableArea::overflowControlsIntersectRect(const IntRect& localRect) const

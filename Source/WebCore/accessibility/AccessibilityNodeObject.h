@@ -59,7 +59,6 @@ public:
     bool isGroup() const override;
     bool isHeading() const override;
     bool isHovered() const override;
-    bool isImageButton() const override;
     bool isInputImage() const override;
     bool isLink() const override;
     bool isMenu() const override;
@@ -69,10 +68,9 @@ public:
     bool isMenuRelated() const override;
     bool isMultiSelectable() const override;
     virtual bool isNativeCheckboxOrRadio() const;
-    bool isNativeImage() const override;
+    bool isNativeImage() const;
     bool isNativeTextControl() const override;
     bool isPasswordField() const override;
-    AccessibilityObject* passwordFieldOrContainingPasswordField() override;
     bool isProgressIndicator() const override;
     bool isSearchField() const override;
     bool isSlider() const override;
@@ -161,13 +159,15 @@ protected:
         Yes
     };
     AccessibilityRole determineAccessibilityRoleFromNode(TreatStyleFormatGroupAsInline = TreatStyleFormatGroupAsInline::No) const;
-    void addChildren() override;
-
-    bool canHaveChildren() const override;
     AccessibilityRole ariaRoleAttribute() const override;
     virtual AccessibilityRole determineAriaRoleAttribute() const;
     AccessibilityRole remapAriaRoleDueToParent(AccessibilityRole) const;
+
+    void addChildren() override;
+    void updateChildrenIfNecessary() override;
+    bool canHaveChildren() const override;
     bool isDescendantOfBarrenParent() const override;
+
     enum class StepAction : bool { Decrement, Increment };
     void alterRangeValue(StepAction);
     void changeValueByStep(StepAction);
@@ -213,7 +213,11 @@ private:
     void setNodeValue(StepAction, float);
     bool performDismissAction() final;
     bool hasTextAlternative() const;
-    
+
+    void setNeedsToUpdateChildren() override { m_childrenDirty = true; }
+    bool needsToUpdateChildren() const override { return m_childrenDirty; }
+    void setNeedsToUpdateSubtree() override { m_subtreeDirty = true; }
+
     bool isDescendantOfElementType(const HashSet<QualifiedName>&) const;
 
     Node* m_node;

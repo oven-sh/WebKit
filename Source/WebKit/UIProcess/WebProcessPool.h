@@ -260,7 +260,7 @@ public:
     WebPageGroup& defaultPageGroup() { return m_defaultPageGroup.get(); }
 
     void setAlwaysUsesComplexTextCodePath(bool);
-    void setShouldUseFontSmoothing(bool);
+    void setShouldUseFontSmoothingForTesting(bool);
     
     void registerURLSchemeAsEmptyDocument(const String&);
     void registerURLSchemeAsSecure(const String&);
@@ -364,7 +364,7 @@ public:
     void gpuProcessDidFinishLaunching(ProcessID);
     void gpuProcessExited(ProcessID, ProcessTerminationReason);
 
-    void createGPUProcessConnection(WebProcessProxy&, IPC::Attachment&&, WebKit::GPUProcessConnectionParameters&&);
+    void createGPUProcessConnection(WebProcessProxy&, IPC::Connection::Handle&&, WebKit::GPUProcessConnectionParameters&&);
 
     GPUProcessProxy& ensureGPUProcess();
     GPUProcessProxy* gpuProcess() const { return m_gpuProcess.get(); }
@@ -664,7 +664,7 @@ private:
     HashSet<String> m_schemesToRegisterAsCanDisplayOnlyIfCanRequest;
 
     bool m_alwaysUsesComplexTextCodePath { false };
-    bool m_shouldUseFontSmoothing { true };
+    bool m_shouldUseFontSmoothingForTesting { true };
 
     Vector<String> m_fontAllowList;
 

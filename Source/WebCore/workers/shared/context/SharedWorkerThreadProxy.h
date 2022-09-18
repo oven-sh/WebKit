@@ -74,6 +74,7 @@ private:
     RefPtr<CacheStorageConnection> createCacheStorageConnection() final;
     RefPtr<RTCDataChannelRemoteHandlerConnection> createRTCDataChannelRemoteHandlerConnection() final;
     void postTaskToLoader(ScriptExecutionContext::Task&&) final;
+    ScriptExecutionContextIdentifier loaderContextIdentifier() const final;
 
     // WorkerDebuggerProxy.
     void postMessageToDebugger(const String&) final;
@@ -81,6 +82,8 @@ private:
 
     static void networkStateChanged(bool isOnLine);
     void notifyNetworkStateChange(bool isOnline);
+
+    ReportingClient* reportingClient() const final;
 
     UniqueRef<Page> m_page;
     Ref<Document> m_document;

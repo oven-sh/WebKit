@@ -26,8 +26,11 @@
 #import "config.h"
 #import "TestsController.h"
 #import "UIKitMacHelperSPI.h"
-#import <WebKit/WKProcessPoolPrivate.h>
 #import <wtf/RetainPtr.h>
+
+#if !defined(BUILDING_TEST_WTF) && !defined(BUILDING_TEST_IPC)
+#import <WebKit/WKProcessPoolPrivate.h>
+#endif
 
 int main(int argc, char** argv)
 {
@@ -46,7 +49,7 @@ int main(int argc, char** argv)
 
         [[NSUserDefaults standardUserDefaults] setVolatileDomain:argumentDomain.get() forName:NSArgumentDomain];
 
-#ifndef BUILDING_TEST_WTF
+#if !defined(BUILDING_TEST_WTF) && !defined(BUILDING_TEST_IPC)
         [WKProcessPool _setLinkedOnOrAfterEverythingForTesting];
 #endif
 

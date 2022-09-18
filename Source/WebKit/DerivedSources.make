@@ -225,6 +225,7 @@ MESSAGE_RECEIVERS = \
 	WebProcess/WebCoreSupport/WebBroadcastChannelRegistry \
 	WebProcess/WebCoreSupport/WebDeviceOrientationUpdateProvider \
 	WebProcess/WebCoreSupport/WebFileSystemStorageConnection \
+	WebProcess/WebCoreSupport/WebPermissionController \
 	WebProcess/WebCoreSupport/WebSpeechRecognitionConnection \
 	WebProcess/Speech/SpeechRecognitionRealtimeMediaSourceManager \
 	WebProcess/Storage/WebSharedWorkerContextManagerConnection \
@@ -445,3 +446,43 @@ $(WEB_PREFERENCES_COMBINED_INPUT_FILE) : $(WEB_PREFERENCES_INPUT_FILES)
 
 $(WEB_PREFERENCES_PATTERNS) : $(WTF_BUILD_SCRIPTS_DIR)/GeneratePreferences.rb $(WEB_PREFERENCES_TEMPLATES) $(WEB_PREFERENCES_COMBINED_INPUT_FILE) $(WEB_PREFERENCES_CATEGORY_INPUT_FILES)
 	$(RUBY) $< --frontend WebKit --base $(WEB_PREFERENCES_COMBINED_INPUT_FILE) --debug ${WTF_BUILD_SCRIPTS_DIR}/Preferences/WebPreferencesDebug.yaml --experimental ${WTF_BUILD_SCRIPTS_DIR}/Preferences/WebPreferencesExperimental.yaml	--internal ${WTF_BUILD_SCRIPTS_DIR}/Preferences/WebPreferencesInternal.yaml $(addprefix --template , $(WEB_PREFERENCES_TEMPLATES))
+
+SERIALIZATION_DESCRIPTION_FILES = \
+	NetworkProcess/NetworkProcessCreationParameters.serialization.in \
+	Shared/API/APIGeometry.serialization.in \
+	Shared/FrameInfoData.serialization.in \
+	Shared/FrameTreeNodeData.serialization.in \
+	Shared/WebCoreArgumentCoders.serialization.in \
+	Shared/mac/SecItemResponseData.serialization.in \
+	Shared/WebsiteDataStoreParameters.serialization.in \
+	Shared/WebsiteData/WebsiteDataFetchOption.serialization.in \
+	Shared/WebGPU/WebGPUVertexBufferLayout.serialization.in \
+ 	Shared/WebGPU/WebGPUVertexAttribute.serialization.in \
+	Shared/WebGPU/WebGPUValidationError.serialization.in \
+	Shared/WebGPU/WebGPUTextureBindingLayout.serialization.in \
+	Shared/WebGPU/WebGPUSupportedLimits.serialization.in \
+	Shared/WebGPU/WebGPUSupportedFeatures.serialization.in \
+	Shared/WebGPU/WebGPUStorageTextureBindingLayout.serialization.in \
+	Shared/WebGPU/WebGPUStencilFaceState.serialization.in \
+	Shared/WebGPU/WebGPURenderPassTimestampWrites.serialization.in \
+	Shared/WebGPU/WebGPURenderPassDepthStencilAttachment.serialization.in \
+	Shared/WebGPU/WebGPURenderPassColorAttachment.serialization.in \
+	Shared/WebGPU/WebGPUProgrammableStage.serialization.in \
+	Shared/WebGPU/WebGPUPrimitiveState.serialization.in \
+	Shared/WebGPU/WebGPUOrigin3D.serialization.in \
+	Shared/WebGPU/WebGPUObjectDescriptorBase.serialization.in \
+	Shared/WebGPU/WebGPUComputePassTimestampWrites.serialization.in \
+	Shared/WebGPU/WebGPUColorTargetState.serialization.in \
+	Shared/WebGPU/WebGPUColor.serialization.in \
+	Shared/WebGPU/WebGPUCanvasConfiguration.serialization.in \
+	Shared/WebGPU/WebGPUBufferBindingLayout.serialization.in \
+	Shared/WebGPU/WebGPUBufferBinding.serialization.in \
+	Shared/WebGPU/WebGPUBlendState.serialization.in \
+	Shared/WebGPU/WebGPUBlendComponent.serialization.in \
+	Shared/WebGPU/WebGPUBindGroupEntry.serialization.in \
+#
+
+all : GeneratedSerializers.h GeneratedSerializers.cpp SerializedTypeInfo.cpp
+
+GeneratedSerializers.h GeneratedSerializers.cpp SerializedTypeInfo.cpp : $(WebKit2)/Scripts/generate-serializers.py $(SERIALIZATION_DESCRIPTION_FILES) $(WebKit2)/DerivedSources.make
+	$(PYTHON) $(WebKit2)/Scripts/generate-serializers.py $(WebKit2)/ $(SERIALIZATION_DESCRIPTION_FILES)

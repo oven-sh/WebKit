@@ -198,6 +198,7 @@ set(WebCore_IDL_INCLUDES
     fileapi
     html
     inspector
+    loader
     page
     plugins
     storage
@@ -314,6 +315,7 @@ set(WebCore_NON_SVG_IDL_FILES
     Modules/fetch/FetchRequest.idl
     Modules/fetch/FetchRequestCache.idl
     Modules/fetch/FetchRequestCredentials.idl
+    Modules/fetch/FetchRequestDestination.idl
     Modules/fetch/FetchRequestInit.idl
     Modules/fetch/FetchRequestMode.idl
     Modules/fetch/FetchRequestRedirect.idl
@@ -554,6 +556,7 @@ set(WebCore_NON_SVG_IDL_FILES
     Modules/reporting/ReportBody.idl
     Modules/reporting/ReportingObserver.idl
     Modules/reporting/ReportingObserverCallback.idl
+    Modules/reporting/TestReportBody.idl
 
     Modules/speech/DOMWindow+SpeechSynthesis.idl
     Modules/speech/SpeechRecognitionErrorEvent.idl
@@ -989,6 +992,7 @@ set(WebCore_NON_SVG_IDL_FILES
     dom/Range.idl
     dom/RequestAnimationFrameCallback.idl
     dom/SecurityPolicyViolationEvent.idl
+    dom/SecurityPolicyViolationEventDisposition.idl
     dom/ShadowRoot.idl
     dom/ShadowRootInit.idl
     dom/ShadowRootMode.idl
@@ -1187,6 +1191,8 @@ set(WebCore_NON_SVG_IDL_FILES
     inspector/InspectorAuditResourcesObject.idl
     inspector/InspectorFrontendHost.idl
 
+    loader/COEPInheritenceViolationReportBody.idl
+    loader/CORPViolationReportBody.idl
     loader/appcache/DOMApplicationCache.idl
 
     mathml/MathMLElement.idl
@@ -1265,6 +1271,8 @@ set(WebCore_NON_SVG_IDL_FILES
     page/WindowOrWorkerGlobalScope.idl
     page/WindowSessionStorage.idl
     page/WorkerNavigator.idl
+
+    page/csp/CSPViolationReportBody.idl
 
     plugins/DOMMimeType.idl
     plugins/DOMMimeTypeArray.idl
@@ -2144,6 +2152,12 @@ set(MODERN_MEDIA_CONTROLS_STYLE_SHEETS
     "${WEBCORE_DIR}/Modules/modern-media-controls/controls/watchos-media-controls.css"
 )
 
+if (PORT STREQUAL "GTK" OR PORT STREQUAL "WPE")
+    list(APPEND MODERN_MEDIA_CONTROLS_STYLE_SHEETS
+        "${WEBCORE_DIR}/Modules/modern-media-controls/controls/adwaita-overrides.css"
+    )
+endif ()
+
 add_custom_command(
     OUTPUT ${WebCore_DERIVED_SOURCES_DIR}/ModernMediaControls.css
     DEPENDS ${MODERN_MEDIA_CONTROLS_STYLE_SHEETS}
@@ -2573,6 +2587,15 @@ list(APPEND WebCore_SOURCES ${WebCore_DERIVED_SOURCES_DIR}/XMLNSNames.cpp)
 
 GENERATE_DOM_NAMES(XML ${WEBCORE_DIR}/xml/xmlattrs.in)
 list(APPEND WebCore_SOURCES ${WebCore_DERIVED_SOURCES_DIR}/XMLNames.cpp)
+
+GENERATE_DOM_NAME_ENUM(TagName)
+list(APPEND WebCore_SOURCES ${WebCore_DERIVED_SOURCES_DIR}/TagName.cpp)
+
+GENERATE_DOM_NAME_ENUM(ElementName)
+list(APPEND WebCore_SOURCES ${WebCore_DERIVED_SOURCES_DIR}/ElementName.cpp)
+
+GENERATE_DOM_NAME_ENUM(Namespace)
+list(APPEND WebCore_SOURCES ${WebCore_DERIVED_SOURCES_DIR}/Namespace.cpp)
 
 WEBKIT_COMPUTE_SOURCES(WebCore)
 
