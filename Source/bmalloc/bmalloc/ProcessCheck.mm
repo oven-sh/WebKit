@@ -54,6 +54,7 @@ bool gigacageEnabledForProcess()
 }
 #endif // !BPLATFORM(WATCHOS)
 
+#if BPLATFORM(COCOA)
 bool shouldAllowMiniMode()
 {
     // Mini mode is mainly meant for constraining memory usage in bursty daemons that use JavaScriptCore.
@@ -66,6 +67,7 @@ bool shouldAllowMiniMode()
     }
     return !isApplication;
 }
+#endif
 
 #if BPLATFORM(IOS_FAMILY)
 bool shouldProcessUnconditionallyUseBmalloc()
