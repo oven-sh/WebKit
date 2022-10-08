@@ -30,6 +30,11 @@
 
 #pragma once
 
+#if !USE(GLIBC) && !OS(WINDOWS)
+#include <sys/types.h> 
+#include "unistd.h"
+#endif
+
 #include <time.h>
 #include <utility>
 #include <wtf/Forward.h>
