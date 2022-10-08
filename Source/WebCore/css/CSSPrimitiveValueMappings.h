@@ -5454,38 +5454,6 @@ template<> inline CSSPrimitiveValue::operator FontVariantCaps() const
     return FontVariantCaps::Normal;
 }
 
-template<> inline CSSPrimitiveValue::CSSPrimitiveValue(FontVariantAlternates alternates)
-    : CSSValue(PrimitiveClass)
-{
-    setPrimitiveUnitType(CSSUnitType::CSS_VALUE_ID);
-    switch (alternates) {
-    case FontVariantAlternates::Normal:
-        m_value.valueID = CSSValueNormal;
-        break;
-    case FontVariantAlternates::HistoricalForms:
-        m_value.valueID = CSSValueHistoricalForms;
-        break;
-    default:
-        ASSERT_NOT_REACHED();
-        break;
-    }
-}
-
-template<> inline CSSPrimitiveValue::operator FontVariantAlternates() const
-{
-    ASSERT(isValueID());
-    switch (m_value.valueID) {
-    case CSSValueNormal:
-        return FontVariantAlternates::Normal;
-    case CSSValueHistoricalForms:
-        return FontVariantAlternates::HistoricalForms;
-    default:
-        break;
-    }
-    ASSERT_NOT_REACHED();
-    return FontVariantAlternates::Normal;
-}
-
 template<> inline CSSPrimitiveValue::CSSPrimitiveValue(FontOpticalSizing sizing)
     : CSSValue(PrimitiveClass)
 {
@@ -5516,6 +5484,38 @@ template<> inline CSSPrimitiveValue::operator FontOpticalSizing() const
     }
     ASSERT_NOT_REACHED();
     return FontOpticalSizing::Enabled;
+}
+
+template<> inline CSSPrimitiveValue::CSSPrimitiveValue(FontSynthesisLonghandValue value)
+    : CSSValue(PrimitiveClass)
+{
+    setPrimitiveUnitType(CSSUnitType::CSS_VALUE_ID);
+    switch (value) {
+    case FontSynthesisLonghandValue::Auto:
+        m_value.valueID = CSSValueAuto;
+        break;
+    case FontSynthesisLonghandValue::None:
+        m_value.valueID = CSSValueNone;
+        break;
+    default:
+        ASSERT_NOT_REACHED();
+        break;
+    }
+}
+
+template<> inline CSSPrimitiveValue::operator FontSynthesisLonghandValue() const
+{
+    ASSERT(isValueID());
+    switch (m_value.valueID) {
+    case CSSValueAuto:
+        return FontSynthesisLonghandValue::Auto;
+    case CSSValueNone:
+        return FontSynthesisLonghandValue::None;
+    default:
+        break;
+    }
+    ASSERT_NOT_REACHED();
+    return FontSynthesisLonghandValue::Auto;
 }
 
 template<> inline CSSPrimitiveValue::CSSPrimitiveValue(FontLoadingBehavior behavior)

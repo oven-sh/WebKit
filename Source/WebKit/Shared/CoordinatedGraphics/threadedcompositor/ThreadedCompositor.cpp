@@ -85,7 +85,7 @@ ThreadedCompositor::~ThreadedCompositor()
 
 void ThreadedCompositor::createGLContext()
 {
-    ASSERT(!RunLoop::isMain());
+    ASSERT(m_compositingRunLoop->isCurrent());
 
     // GLNativeWindowType depends on the EGL implementation: reinterpret_cast works
     // for pointers (only if they are 64-bit wide and not for other cases), and static_cast for
@@ -173,13 +173,8 @@ void ThreadedCompositor::updateViewport()
 
 void ThreadedCompositor::forceRepaint()
 {
-    // FIXME: Enable this for WPE once it's possible to do these forced updates
+    // FIXME: Implement this once it's possible to do these forced updates
     // in a way that doesn't starve out the underlying graphics buffers.
-#if PLATFORM(GTK) && !USE(WPE_RENDERER)
-    m_compositingRunLoop->performTaskSync([this, protectedThis = Ref { *this }] {
-        renderLayerTree();
-    });
-#endif
 }
 
 void ThreadedCompositor::renderLayerTree()
@@ -306,7 +301,7 @@ RefPtr<WebCore::DisplayRefreshMonitor> ThreadedCompositor::displayRefreshMonitor
 
 void ThreadedCompositor::frameComplete()
 {
-    ASSERT(!RunLoop::isMain());
+    ASSERT(m_compositingRunLoop->isCurrent());
     sceneUpdateFinished();
 }
 

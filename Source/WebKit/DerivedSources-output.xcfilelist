@@ -48,6 +48,7 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/GPUProcessProxyMessages.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/GPUProcessProxyMessagesReplies.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/GeneratedSerializers.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/GeneratedSerializers.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/GeneratedSerializers.mm
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/IPCConnectionTesterMessageReceiver.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/IPCConnectionTesterMessages.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/IPCConnectionTesterMessagesReplies.h
@@ -511,6 +512,12 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebDeviceOrientationUpdateProviderMe
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebDeviceOrientationUpdateProviderProxyMessageReceiver.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebDeviceOrientationUpdateProviderProxyMessages.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebDeviceOrientationUpdateProviderProxyMessagesReplies.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebExtensionControllerMessageReceiver.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebExtensionControllerMessages.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebExtensionControllerMessagesReplies.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebExtensionControllerProxyMessageReceiver.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebExtensionControllerProxyMessages.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebExtensionControllerProxyMessagesReplies.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebFileSystemStorageConnectionMessageReceiver.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebFileSystemStorageConnectionMessages.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebFileSystemStorageConnectionMessagesReplies.h
@@ -622,6 +629,12 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebSWServerConnectionMessagesReplies
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebSWServerToContextConnectionMessageReceiver.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebSWServerToContextConnectionMessages.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebSWServerToContextConnectionMessagesReplies.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebScreenOrientationManagerMessageReceiver.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebScreenOrientationManagerMessages.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebScreenOrientationManagerMessagesReplies.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebScreenOrientationManagerProxyMessageReceiver.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebScreenOrientationManagerProxyMessages.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebScreenOrientationManagerProxyMessagesReplies.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebSharedWorkerContextManagerConnectionMessageReceiver.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebSharedWorkerContextManagerConnectionMessages.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/WebSharedWorkerContextManagerConnectionMessagesReplies.h

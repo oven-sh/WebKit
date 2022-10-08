@@ -31,13 +31,12 @@
 #include "CSSRegisteredCustomProperty.h"
 #include "CanvasBase.h"
 #include "ClientOrigin.h"
-#include "Color.h"
 #include "ContainerNode.h"
-#include "CrossOriginOpenerPolicy.h"
 #include "DisabledAdaptations.h"
 #include "DocumentEventTiming.h"
 #include "FocusOptions.h"
 #include "FontSelectorClient.h"
+#include "FragmentScriptingPermission.h"
 #include "FrameDestructionObserver.h"
 #include "FrameIdentifier.h"
 #include "FrameLoaderTypes.h"
@@ -53,6 +52,7 @@
 #include "ScriptExecutionContext.h"
 #include "SecurityOrigin.h"
 #include "StringWithDirection.h"
+#include "StyleColor.h"
 #include "Supplementable.h"
 #include "Timer.h"
 #include "TreeScope.h"
@@ -237,6 +237,7 @@ class TreeWalker;
 class UndoManager;
 class VisibilityChangeClient;
 class VisitedLinkState;
+class WakeLockManager;
 class WebAnimation;
 class WebGL2RenderingContext;
 class WebGLRenderingContext;
@@ -420,9 +421,6 @@ public:
     bool didDispatchViewportPropertiesChanged() const { return m_didDispatchViewportPropertiesChanged; }
 #endif
 
-    void setReferrerPolicy(ReferrerPolicy);
-    ReferrerPolicy referrerPolicy() const final { return m_referrerPolicy.value_or(ReferrerPolicy::Default); }
-
     WEBCORE_EXPORT DocumentType* doctype() const;
 
     WEBCORE_EXPORT DOMImplementation& implementation();
@@ -526,6 +524,8 @@ public:
 
     Ref<HTMLCollection> windowNamedItems(const AtomString&);
     Ref<HTMLCollection> documentNamedItems(const AtomString&);
+
+    WakeLockManager& wakeLockManager();
 
     // Other methods (not part of DOM)
     bool isSynthesized() const { return m_isSynthesized; }
@@ -727,6 +727,7 @@ public:
     const AtomString& baseTarget() const { return m_baseTarget; }
     void processBaseElement();
 
+    URL baseURLForComplete(const URL& baseURLOverride) const;
     WEBCORE_EXPORT URL completeURL(const String&, ForceUTF8 = ForceUTF8::No) const final;
     URL completeURL(const String&, const URL& baseURLOverride, ForceUTF8 = ForceUTF8::No) const;
 
@@ -895,6 +896,9 @@ public:
 
     Document& contextDocument() const;
     void setContextDocument(Document& document) { m_contextDocument = document; }
+    
+    OptionSet<ParserContentPolicy> parserContentPolicy() const { return m_parserContentPolicy; }
+    void setParserContentPolicy(OptionSet<ParserContentPolicy> policy) { m_parserContentPolicy = policy; }
 
     // Helper functions for forwarding DOMWindow event related tasks to the DOMWindow if it exists.
     void setWindowAttributeEventListener(const AtomString& eventType, const QualifiedName& attributeName, const AtomString& value, DOMWrapperWorld&);
@@ -1202,6 +1206,8 @@ public:
     void initSecurityContext();
     void initContentSecurityPolicy();
 
+    void inheritPolicyContainerFrom(const PolicyContainer&) final;
+
     void updateURLForPushOrReplaceState(const URL&);
     void statePopped(Ref<SerializedScriptValue>&&);
 
@@ -1307,6 +1313,9 @@ public:
     void setMayHaveEditableElements() { m_mayHaveEditableElements = true; }
 #endif
 
+    bool mayHaveRenderedSVGRootElements() const { return m_mayHaveRenderedSVGRootElements; }
+    void setMayHaveRenderedSVGRootElements() { m_mayHaveRenderedSVGRootElements = true; }
+
     bool mayHaveRenderedSVGForeignObjects() const { return m_mayHaveRenderedSVGForeignObjects; }
     void setMayHaveRenderedSVGForeignObjects() { m_mayHaveRenderedSVGForeignObjects = true; }
 
@@ -1410,7 +1419,6 @@ public:
     bool shouldForceNoOpenerBasedOnCOOP() const;
 
     WEBCORE_EXPORT const CrossOriginOpenerPolicy& crossOriginOpenerPolicy() const final;
-    void setCrossOriginOpenerPolicy(const CrossOriginOpenerPolicy&);
 
     void willLoadScriptElement(const URL&);
     void willLoadFrameElement(const URL&);
@@ -1594,7 +1602,7 @@ public:
     bool handlingTouchEvent() const { return m_handlingTouchEvent; }
 #endif
 
-#if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
+#if ENABLE(TRACKING_PREVENTION)
     WEBCORE_EXPORT bool hasRequestedPageSpecificStorageAccessWithUserInteraction(const RegistrableDomain&);
     WEBCORE_EXPORT void setHasRequestedPageSpecificStorageAccessWithUserInteraction(const RegistrableDomain&);
     WEBCORE_EXPORT void wasLoadedWithDataTransferFromPrevalentResource();
@@ -1842,6 +1850,7 @@ private:
 
     RefPtr<DOMWindow> m_domWindow;
     WeakPtr<Document, WeakPtrImplWithEventTargetData> m_contextDocument;
+    OptionSet<ParserContentPolicy> m_parserContentPolicy;
 
     Ref<CachedResourceLoader> m_cachedResourceLoader;
     RefPtr<DocumentParser> m_parser;
@@ -2032,6 +2041,7 @@ private:
 #endif
 
     bool m_mayHaveRenderedSVGForeignObjects { false };
+    bool m_mayHaveRenderedSVGRootElements { false };
 
     std::unique_ptr<EventTargetSet> m_wheelEventTargets;
 
@@ -2141,9 +2151,7 @@ private:
     MediaProducerMediaStateFlags m_mediaState;
     bool m_userHasInteractedWithMediaElement { false };
     BackForwardCacheState m_backForwardCacheState { NotInBackForwardCache };
-    std::optional<ReferrerPolicy> m_referrerPolicy;
     ReadyState m_readyState { Complete };
-    CrossOriginOpenerPolicy m_crossOriginOpenerPolicy;
 
     MutationObserverOptions m_mutationObserverTypes;
 
@@ -2254,7 +2262,7 @@ private:
     RefPtr<SWClientConnection> m_serviceWorkerConnection;
 #endif
 
-#if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
+#if ENABLE(TRACKING_PREVENTION)
     RegistrableDomain m_registrableDomainRequestedPageSpecificStorageAccessWithUserInteraction { };
     String m_referrerOverride;
 #endif
@@ -2308,6 +2316,7 @@ private:
     WeakHashSet<Element, WeakPtrImplWithEventTargetData> m_elementsWithPendingUserAgentShadowTreeUpdates;
 
     Ref<ReportingScope> m_reportingScope;
+    std::unique_ptr<WakeLockManager> m_wakeLockManager;
 };
 
 Element* eventTargetElementForDocument(Document*);

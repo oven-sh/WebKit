@@ -148,6 +148,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/cache/CacheQueryOptions.h
     Modules/cache/CacheStorageConnection.h
     Modules/cache/DOMCacheEngine.h
+    Modules/cache/DOMCacheIdentifier.h
     Modules/cache/RetrieveRecordsOptions.h
 
     Modules/compression/CompressionStreamEncoder.h
@@ -260,6 +261,21 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     Modules/mediarecorder/MediaRecorderProvider.h
 
+    Modules/mediasession/NavigatorMediaSession.h
+    Modules/mediasession/MediaSession.h
+    Modules/mediasession/MediaImage.h
+    Modules/mediasession/MediaMetadata.h
+    Modules/mediasession/MediaSessionActionDetails.h
+    Modules/mediasession/MediaPositionState.h
+    Modules/mediasession/MediaSessionActionHandler.h
+    Modules/mediasession/MediaSessionPlaybackState.h
+    Modules/mediasession/MediaSessionCoordinatorPrivate.h
+    Modules/mediasession/MediaSessionCoordinatorState.h
+    Modules/mediasession/MediaSessionReadyState.h
+    Modules/mediasession/MediaSessionCoordinator.h
+    Modules/mediasession/MediaMetadataInit.h
+    Modules/mediasession/MediaSessionAction.h
+
     Modules/mediasource/SampleMap.h
 
     Modules/mediastream/DetachedRTCDataChannel.h
@@ -325,6 +341,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/push-api/PushSubscriptionData.h
     Modules/push-api/PushSubscriptionIdentifier.h
 
+    Modules/reporting/DeprecationReportBody.h
     Modules/reporting/Report.h
     Modules/reporting/ReportBody.h
     Modules/reporting/ReportingClient.h
@@ -750,6 +767,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     dom/ScriptElement.h
     dom/ScriptElementCachedScriptFetcher.h
     dom/ScriptExecutionContext.h
+    dom/ScriptType.h
     dom/SecurityContext.h
     dom/SecurityPolicyViolationEvent.h
     dom/SecurityPolicyViolationEventDisposition.h
@@ -1038,11 +1056,14 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     layout/integration/inline/LayoutIntegrationInlineContent.h
     layout/integration/inline/LayoutIntegrationLine.h
 
-    layout/layouttree/LayoutContainerBox.h
     layout/layouttree/LayoutBox.h
+    layout/layouttree/LayoutElementBox.h
     layout/layouttree/LayoutInitialContainingBlock.h
     layout/layouttree/LayoutInlineTextBox.h
 
+    loader/AttributionSecondsUntilSendData.h
+    loader/AttributionTimeToSendData.h
+    loader/AttributionTriggerData.h
     loader/COEPInheritenceViolationReportBody.h
     loader/CORPViolationReportBody.h
     loader/CanvasActivityRecord.h
@@ -1058,6 +1079,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     loader/DocumentWriter.h
     loader/EmptyClients.h
     loader/EmptyFrameLoaderClient.h
+    loader/EphemeralNonce.h
     loader/FetchOptions.h
     loader/FontLoadRequest.h
     loader/FormState.h
@@ -1080,6 +1102,8 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     loader/NavigationAction.h
     loader/NavigationRequester.h
     loader/NetscapePlugInStreamLoader.h
+    loader/PCMSites.h
+    loader/PCMTokens.h
     loader/PingLoader.h
     loader/PolicyChecker.h
     loader/PolicyContainer.h
@@ -1215,6 +1239,8 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/RemoteDOMWindow.h
     page/RemoteFrame.h
     page/RenderingUpdateScheduler.h
+    page/ScreenOrientationLockType.h
+    page/ScreenOrientationType.h
     page/ScrollBehavior.h
     page/ScrollIntoViewOptions.h
     page/ScrollLogicalPosition.h
@@ -1365,6 +1391,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/PasteboardItemInfo.h
     platform/PasteboardStrategy.h
     platform/PasteboardWriterData.h
+    platform/PlaneLayout.h
     platform/PlatformEvent.h
     platform/PlatformExportMacros.h
     platform/PlatformKeyboardEvent.h
@@ -1394,6 +1421,8 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/RemoteCommandListener.h
     platform/RuntimeApplicationChecks.h
     platform/SSLKeyGenerator.h
+    platform/ScreenOrientationManager.h
+    platform/ScreenOrientationProvider.h
     platform/ScreenProperties.h
     platform/ScriptExecutionContextIdentifier.h
     platform/ScrollAlignment.h
@@ -1435,6 +1464,8 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/VideoFrame.h
     platform/VideoFrameMetadata.h
     platform/VideoFrameTimeMetadata.h
+    platform/VideoPixelFormat.h
+    platform/WebCorePersistentCoders.h
     platform/WebGLStateTracker.h
     platform/Widget.h
     platform/WindowsKeyboardCodes.h
@@ -1487,7 +1518,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/gamepad/SharedGamepadValue.h
 
     platform/graphics/AlphaPremultiplication.h
-    platform/graphics/ANGLEWebKitBridge.h
     platform/graphics/AnimationFrameRate.h
     platform/graphics/AudioTrackPrivate.h
     platform/graphics/AudioTrackPrivateClient.h
@@ -1737,10 +1767,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     platform/graphics/libwpe/PlatformDisplayLibWPE.h
 
-    platform/graphics/opengl/ExtensionsGLOpenGL.h
-    platform/graphics/opengl/ExtensionsGLOpenGLCommon.h
-    platform/graphics/opengl/ExtensionsGLOpenGLES.h
-    platform/graphics/opengl/GraphicsContextGLOpenGL.h
     platform/graphics/opengl/TemporaryOpenGLSetting.h
 
     platform/graphics/opentype/OpenTypeMathData.h
@@ -1848,6 +1874,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/network/ProtectionSpace.h
     platform/network/ProtectionSpaceBase.h
     platform/network/ProtectionSpaceHash.h
+    platform/network/RFC8941.h
     platform/network/ResourceErrorBase.h
     platform/network/ResourceHandle.h
     platform/network/ResourceHandleClient.h

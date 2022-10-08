@@ -56,6 +56,16 @@
 @protocol UIDropSession;
 @protocol UIEditMenuInteractionAnimating;
 
+typedef NS_ENUM(NSInteger, _WKScreenOrientationLockType) {
+    _WKScreenOrientationLockTypeAny,
+    _WKScreenOrientationLockTypeLandscape,
+    _WKScreenOrientationLockTypeLandscapePrimary,
+    _WKScreenOrientationLockTypeLandscapeSecondary,
+    _WKScreenOrientationLockTypePortrait,
+    _WKScreenOrientationLockTypePortraitPrimary,
+    _WKScreenOrientationLockTypePortraitSecondary
+} WK_API_AVAILABLE(ios(WK_IOS_TBA));
+
 #else
 
 typedef NS_ENUM(NSInteger, _WKResourceLimit) {
@@ -257,6 +267,9 @@ struct UIEdgeInsets;
 - (NSArray<UIDragItem *> *)_webView:(WKWebView *)webView willPerformDropWithSession:(id <UIDropSession>)session WK_API_AVAILABLE(ios(11.0));
 - (NSInteger)_webView:(WKWebView *)webView dataOwnerForDropSession:(id <UIDropSession>)session WK_API_AVAILABLE(ios(11.0));
 - (NSInteger)_webView:(WKWebView *)webView dataOwnerForDragSession:(id <UIDragSession>)session WK_API_AVAILABLE(ios(11.0));
+
+- (void)_webViewLockScreenOrientation:(WKWebView *)webView lockType:(_WKScreenOrientationLockType)lockType WK_API_AVAILABLE(ios(WK_IOS_TBA));
+- (void)_webViewUnlockScreenOrientation:(WKWebView *)webView WK_API_AVAILABLE(ios(WK_IOS_TBA));
 #endif
 
 - (void)_webView:(WKWebView *)webView didChangeSafeAreaShouldAffectObscuredInsets:(BOOL)safeAreaShouldAffectObscuredInsets WK_API_AVAILABLE(ios(11.0));
@@ -289,7 +302,6 @@ struct UIEdgeInsets;
 - (void)_webView:(WKWebView *)webView drawHeaderInRect:(CGRect)rect forPageWithTitle:(NSString *)title URL:(NSURL *)url WK_API_AVAILABLE(macos(10.13.4));
 - (void)_webView:(WKWebView *)webView drawFooterInRect:(CGRect)rect forPageWithTitle:(NSString *)title URL:(NSURL *)url WK_API_AVAILABLE(macos(10.13.4));
 - (void)_webView:(WKWebView *)webview mouseDidMoveOverElement:(_WKHitTestResult *)hitTestResult withFlags:(NSEventModifierFlags)flags userInfo:(id <NSSecureCoding>)userInfo;
-- (void)_webView:(WKWebView *)webView didExceedBackgroundResourceLimitWhileInForeground:(_WKResourceLimit)limit WK_API_AVAILABLE(macos(10.13.4));
 - (void)_webView:(WKWebView *)webView setResizable:(BOOL)isResizable WK_API_AVAILABLE(macos(10.13.4));
 - (void)_webView:(WKWebView *)webView getWindowFrameWithCompletionHandler:(void (^)(CGRect))completionHandler WK_API_AVAILABLE(macos(10.13.4));
 - (void)_webView:(WKWebView *)webView setWindowFrame:(CGRect)frame WK_API_AVAILABLE(macos(10.13.4));

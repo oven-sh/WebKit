@@ -936,7 +936,7 @@ void FrameView::updateSnapOffsets()
     LayoutRect viewport = LayoutRect(IntPoint(), baseLayoutViewportSize());
     viewport.move(-rootRenderer->marginLeft(), -rootRenderer->marginTop());
 
-    updateSnapOffsetsForScrollableArea(*this, *rootRenderer, *styleToUse, viewport, rootRenderer->style().writingMode(), rootRenderer->style().direction());
+    updateSnapOffsetsForScrollableArea(*this, *rootRenderer, *styleToUse, viewport, rootRenderer->style().writingMode(), rootRenderer->style().direction(), frame().document()->focusedElement());
 }
 
 bool FrameView::isScrollSnapInProgress() const
@@ -1190,9 +1190,17 @@ void FrameView::forceLayoutParentViewIfNeeded()
     if (!contentBox)
         return;
 
-    auto& svgRoot = downcast<LegacyRenderSVGRoot>(*contentBox);
-    if (svgRoot.everHadLayout() && !svgRoot.needsLayout())
-        return;
+    if (auto* svgRoot = dynamicDowncast<LegacyRenderSVGRoot>(contentBox)) {
+        if (svgRoot->everHadLayout() && !svgRoot->needsLayout())
+            return;
+    }
+
+#if ENABLE(LAYER_BASED_SVG_ENGINE)
+    if (auto* svgRoot = dynamicDowncast<RenderSVGRoot>(contentBox)) {
+        if (svgRoot->everHadLayout() && !svgRoot->needsLayout())
+            return;
+    }
+#endif
 
     LOG(Layout, "FrameView %p forceLayoutParentViewIfNeeded scheduling layout on parent FrameView %p", this, &ownerRenderer->view().frameView());
 
@@ -1319,8 +1327,13 @@ RenderBox* FrameView::embeddedContentBox() const
     RenderObject* firstChild = renderView->firstChild();
 
     // Curently only embedded SVG documents participate in the size-negotiation logic.
-    if (is<LegacyRenderSVGRoot>(firstChild))
-        return downcast<LegacyRenderSVGRoot>(firstChild);
+    if (auto* svgRoot = dynamicDowncast<LegacyRenderSVGRoot>(firstChild))
+        return svgRoot;
+
+#if ENABLE(LAYER_BASED_SVG_ENGINE)
+    if (auto* svgRoot = dynamicDowncast<RenderSVGRoot>(firstChild))
+        return svgRoot;
+#endif
 
     return nullptr;
 }
@@ -2458,8 +2471,10 @@ void FrameView::scrollToFocusedElementInternal()
         return;
 
     bool insideFixed;
-    LayoutRect absoluteBounds = renderer->absoluteAnchorRectWithScrollMargin(&insideFixed);
-    FrameView::scrollRectToVisible(absoluteBounds, *renderer, insideFixed, { m_selectionRevealModeForFocusedElement, ScrollAlignment::alignCenterIfNeeded, ScrollAlignment::alignCenterIfNeeded, ShouldAllowCrossOriginScrolling::No });
+    auto absoluteBounds = renderer->absoluteAnchorRectWithScrollMargin(&insideFixed);
+    auto anchorRectWithScrollMargin = absoluteBounds.marginRect;
+    auto anchorRect = absoluteBounds.anchorRect;
+    FrameView::scrollRectToVisible(anchorRectWithScrollMargin, *renderer, insideFixed, { m_selectionRevealModeForFocusedElement, ScrollAlignment::alignCenterIfNeeded, ScrollAlignment::alignCenterIfNeeded, ShouldAllowCrossOriginScrolling::No, ScrollBehavior::Auto, anchorRect });
 }
 
 void FrameView::textFragmentIndicatorTimerFired()
@@ -3526,7 +3541,7 @@ void FrameView::scrollToAnchor()
     LayoutRect rect;
     bool insideFixed = false;
     if (anchorNode != frame().document() && anchorNode->renderer())
-        rect = anchorNode->renderer()->absoluteAnchorRectWithScrollMargin(&insideFixed);
+        rect = anchorNode->renderer()->absoluteAnchorRectWithScrollMargin(&insideFixed).marginRect;
 
     LOG_WITH_STREAM(Scrolling, stream << " anchor node rect " << rect);
 

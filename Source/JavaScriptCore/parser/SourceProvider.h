@@ -48,6 +48,7 @@ class UnlinkedFunctionCodeBlock;
         WebAssembly,
         JSON,
         Synthetic
+        ImportMap,
     };
 
     using BytecodeCacheGenerator = Function<RefPtr<CachedBytecode>()>;

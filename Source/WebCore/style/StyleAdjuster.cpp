@@ -34,6 +34,7 @@
 #include "DOMTokenList.h"
 #include "DOMWindow.h"
 #include "ElementInlines.h"
+#include "ElementName.h"
 #include "EventNames.h"
 #include "FrameView.h"
 #include "HTMLDialogElement.h"
@@ -108,7 +109,7 @@ static void addIntrinsicMargins(RenderStyle& style)
 }
 #endif
 
-static DisplayType equivalentBlockDisplay(const RenderStyle& style, const Document& document)
+static DisplayType equivalentBlockDisplay(const RenderStyle& style)
 {
     switch (auto display = style.display()) {
     case DisplayType::Block:
@@ -117,12 +118,7 @@ static DisplayType equivalentBlockDisplay(const RenderStyle& style, const Docume
     case DisplayType::Flex:
     case DisplayType::Grid:
     case DisplayType::FlowRoot:
-        return display;
-
     case DisplayType::ListItem:
-        // It is a WinIE bug that floated list items lose their bullets, so we'll emulate the quirk, but only in quirks mode.
-        if (document.inQuirksMode() && style.isFloating())
-            return DisplayType::Block;
         return display;
     case DisplayType::InlineTable:
         return DisplayType::Table;
@@ -312,7 +308,7 @@ void Adjuster::adjust(RenderStyle& style, const RenderStyle* userAgentAppearance
 
         // Absolute/fixed positioned elements, floating elements and the document element need block-like outside display.
         if (style.hasOutOfFlowPosition() || style.isFloating() || (m_element && m_document.documentElement() == m_element))
-            style.setEffectiveDisplay(equivalentBlockDisplay(style, m_document));
+            style.setEffectiveDisplay(equivalentBlockDisplay(style));
 
         // FIXME: Don't support this mutation for pseudo styles like first-letter or first-line, since it's not completely
         // clear how that should work.
@@ -344,7 +340,7 @@ void Adjuster::adjust(RenderStyle& style, const RenderStyle* userAgentAppearance
         // "A parent with a grid or flex display value blockifies the box’s display type."
         if (m_parentBoxStyle.isDisplayFlexibleOrGridBox()) {
             style.setFloating(Float::None);
-            style.setEffectiveDisplay(equivalentBlockDisplay(style, m_document));
+            style.setEffectiveDisplay(equivalentBlockDisplay(style));
         }
     }
 
@@ -600,33 +596,7 @@ void Adjuster::adjust(RenderStyle& style, const RenderStyle* userAgentAppearance
 
 static bool hasEffectiveDisplayNoneForDisplayContents(const Element& element)
 {
-    // https://drafts.csswg.org/css-display-3/#unbox-html
-    static NeverDestroyed<MemoryCompactLookupOnlyRobinHoodHashSet<AtomString>> tagNames = [] {
-        static const HTMLQualifiedName* const tagList[] = {
-            &brTag.get(),
-            &wbrTag.get(),
-            &meterTag.get(),
-            &appletTag.get(),
-            &progressTag.get(),
-            &canvasTag.get(),
-            &embedTag.get(),
-            &objectTag.get(),
-            &audioTag.get(),
-            &iframeTag.get(),
-            &imgTag.get(),
-            &videoTag.get(),
-            &frameTag.get(),
-            &framesetTag.get(),
-            &inputTag.get(),
-            &textareaTag.get(),
-            &selectTag.get(),
-        };
-        MemoryCompactLookupOnlyRobinHoodHashSet<AtomString> set;
-        set.reserveInitialCapacity(sizeof(tagList));
-        for (auto& name : tagList)
-            set.add(name->localName());
-        return set;
-    }();
+    using namespace ElementNames;
 
     // https://drafts.csswg.org/css-display-3/#unbox-svg
     // FIXME: <g>, <use> and <tspan> have special (?) behavior for display:contents in the current draft spec.
@@ -639,7 +609,32 @@ static bool hasEffectiveDisplayNoneForDisplayContents(const Element& element)
 #endif // ENABLE(MATHML)
     if (!is<HTMLElement>(element))
         return false;
-    return tagNames.get().contains(element.localName());
+
+    // https://drafts.csswg.org/css-display-3/#unbox-html
+    switch (element.tagQName().elementName()) {
+    case HTML::br:
+    case HTML::wbr:
+    case HTML::meter:
+    case HTML::applet:
+    case HTML::progress:
+    case HTML::canvas:
+    case HTML::embed:
+    case HTML::object:
+    case HTML::audio:
+    case HTML::iframe:
+    case HTML::img:
+    case HTML::video:
+    case HTML::frame:
+    case HTML::frameset:
+    case HTML::input:
+    case HTML::textarea:
+    case HTML::select:
+        return true;
+    default:
+        break;
+    }
+
+    return false;
 }
 
 void Adjuster::adjustDisplayContentsStyle(RenderStyle& style) const

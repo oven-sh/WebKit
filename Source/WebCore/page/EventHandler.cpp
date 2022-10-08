@@ -1790,7 +1790,6 @@ bool EventHandler::handleMousePressEvent(const PlatformMouseEvent& platformMouse
         layer->setInResizeMode(true);
         m_resizeLayer = WeakPtr { layer };
         m_offsetFromResizeCorner = layer->offsetFromResizeCorner(localPoint);
-        invalidateClick();
         return true;
     }
 
@@ -2274,7 +2273,7 @@ bool EventHandler::dispatchDragEvent(const AtomString& eventType, Element& dragT
 
     auto dragEvent = DragEvent::create(eventType, Event::CanBubble::Yes, Event::IsCancelable::Yes, Event::IsComposed::Yes,
         event.timestamp().approximateMonotonicTime(), &m_frame.windowProxy(), 0,
-        event.globalPosition(), event.position(), event.movementDelta(),
+        event.globalPosition(), event.position(), event.movementDelta().x(), event.movementDelta().y(),
         event.modifiers(), 0, 0, nullptr, event.force(), NoTap, &dataTransfer);
 
     dragTarget.dispatchEvent(dragEvent);
@@ -4412,8 +4411,11 @@ bool EventHandler::startKeyboardScrollAnimationOnEnclosingScrollableContainer(Sc
 
     if (node) {
         auto renderer = node->renderer();
+        if (!renderer)
+            return false;
+
         RenderBox& renderBox = renderer->enclosingBox();
-        if (renderer && !renderer->isListBox() && startKeyboardScrollAnimationOnRenderBoxAndItsAncestors(direction, granularity, &renderBox))
+        if (!renderer->isListBox() && startKeyboardScrollAnimationOnRenderBoxAndItsAncestors(direction, granularity, &renderBox))
             return true;
     }
     return false;

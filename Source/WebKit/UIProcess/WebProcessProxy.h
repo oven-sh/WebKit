@@ -84,6 +84,10 @@ using FramesPerSecond = unsigned;
 using PlatformDisplayID = uint32_t;
 }
 
+namespace WTF {
+class TextStream;
+}
+
 namespace WebKit {
 
 class AudioSessionRoutingArbitratorProxy;
@@ -226,9 +230,6 @@ public:
 
     VisibleWebPageToken visiblePageToken() const;
 
-    void addPreviouslyApprovedFileURL(const URL&);
-    bool wasPreviouslyApprovedFileURL(const URL&) const;
-
     void updateTextCheckerState();
 
     void willAcquireUniversalFileReadSandboxExtension() { m_mayHaveUniversalFileReadSandboxExtension = true; }
@@ -252,7 +253,7 @@ public:
     void deleteWebsiteData(PAL::SessionID, OptionSet<WebsiteDataType>, WallTime modifiedSince, CompletionHandler<void()>&&);
     void deleteWebsiteDataForOrigins(PAL::SessionID, OptionSet<WebsiteDataType>, const Vector<WebCore::SecurityOriginData>&, CompletionHandler<void()>&&);
 
-#if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
+#if ENABLE(TRACKING_PREVENTION)
     static void notifyPageStatisticsAndDataRecordsProcessed();
 
     static void notifyWebsiteDataDeletionForRegistrableDomainsFinished();
@@ -280,6 +281,7 @@ public:
     void setIsHoldingLockedFiles(bool);
 
     ProcessThrottler& throttler() final { return m_throttler; }
+    const ProcessThrottler& throttler() const { return m_throttler; }
 
     void isResponsive(CompletionHandler<void(bool isWebProcessResponsive)>&&);
     void isResponsiveWithLazyStop();
@@ -287,7 +289,6 @@ public:
 
     void memoryPressureStatusChanged(bool isUnderMemoryPressure) { m_isUnderMemoryPressure = isUnderMemoryPressure; }
     bool isUnderMemoryPressure() const { return m_isUnderMemoryPressure; }
-    void didExceedInactiveMemoryLimitWhileActive();
 
     void processTerminated();
 
@@ -599,7 +600,6 @@ private:
 
     bool m_mayHaveUniversalFileReadSandboxExtension; // True if a read extension for "/" was ever granted - we don't track whether WebProcess still has it.
     HashSet<String> m_localPathsWithAssumedReadAccess;
-    HashSet<String> m_previouslyApprovedFilePaths;
 
     WebPageProxyMap m_pageMap;
     WebFrameProxyMap m_frameMap;
@@ -696,5 +696,7 @@ private:
     std::unique_ptr<WebPermissionControllerProxy> m_webPermissionController;
     bool m_isConnectedToHardwareConsole { true };
 };
+
+WTF::TextStream& operator<<(WTF::TextStream&, const WebProcessProxy&);
 
 } // namespace WebKit

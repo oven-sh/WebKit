@@ -80,7 +80,7 @@ SANDBOX_SOURCE_ROOT = "/app/webkit"
 
 # Our SDK branch matches with the FDO SDK branch. When updating the FDO SDK release branch
 # in our SDK build definitions please don't forget to update the version here as well.
-SDK_BRANCH = "21.08"
+SDK_BRANCH = "22.08"
 
 WEBKIT_SDK_FLATPAK_REPO_URL = "https://software.igalia.com/flatpak-refs/webkit-sdk.flatpakrepo"
 WEBKIT_SDK_GPG_PUBKEY_URL = "https://software.igalia.com/flatpak-refs/webkit-sdk-pubkey.gpg"
@@ -276,6 +276,7 @@ class FlatpakObject:
                     tmpfile.flush()
                     self.flatpak("remote-modify", "--gpg-import=" + tmpfile.name, remote)
 
+        self.flatpak("repair", comment="Ensuring the local Flatpak repository is not corrupted")
         self.flatpak("update", comment="Updating Flatpak environment")
 
 class FlatpakPackages(FlatpakObject):
@@ -1087,6 +1088,9 @@ class WebkitFlatpak:
 
                     Console.message("New SDK version available, removing local UserFlatpak directory before switching to new version")
                     shutil.rmtree(self.flatpak_build_path)
+
+                    Console.message("Removing webkitpy auto-installed dependencies, new Python runtime might be incompatible with them.")
+                    shutil.rmtree(os.path.join(WEBKIT_SOURCE_DIR, 'Tools', 'Scripts', 'libraries', 'autoinstalled'))
 
                     Console.message("Forcing next WebKit build to re-run CMake")
                     for platform in ('GTK', 'WPE'):

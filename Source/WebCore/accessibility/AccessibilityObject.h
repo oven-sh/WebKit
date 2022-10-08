@@ -80,7 +80,6 @@ public:
     // After constructing an AccessibilityObject, it must be given a
     // unique ID, then added to AXObjectCache, and finally init() must
     // be called last.
-    void setObjectID(AXID id) override { m_id = id; }
     void init() override { }
 
     // Prefer using the dedicated functions over consuming these flag values directly, as the flags can sometimes be uninitialized.
@@ -97,6 +96,8 @@ public:
     void initializeAncestorFlags(const OptionSet<AXAncestorFlag>&);
     bool hasAncestorMatchingFlag(AXAncestorFlag) const;
     bool matchesAncestorFlag(AXAncestorFlag) const;
+
+    bool hasDirtySubtree() const { return m_subtreeDirty; }
 
     bool hasDocumentRoleAncestor() const override;
     bool hasWebApplicationAncestor() const override;
@@ -367,7 +368,7 @@ public:
 
     // Text selection
     Vector<SimpleRange> findTextRanges(const AccessibilitySearchTextCriteria&) const override;
-    Vector<String> performTextOperation(AccessibilityTextOperation const&) override;
+    Vector<String> performTextOperation(const AccessibilityTextOperation&) override;
 
     AccessibilityObject* observableObject() const override { return nullptr; }
     AccessibilityChildrenVector linkedObjects() const override { return { }; }
@@ -427,7 +428,6 @@ public:
     String ariaLandmarkRoleDescription() const override;
 
     AXObjectCache* axObjectCache() const override;
-    AXID objectID() const override { return m_id; }
 
     static AccessibilityObject* anchorElementForNode(Node*);
     static AccessibilityObject* headingElementForNode(Node*);
@@ -823,7 +823,6 @@ protected: // FIXME: Make the data members private.
     mutable bool m_childrenInitialized { false };
     AccessibilityRole m_role { AccessibilityRole::Unknown };
 private:
-    AXID m_id;
     OptionSet<AXAncestorFlag> m_ancestorFlags;
     AccessibilityObjectInclusion m_lastKnownIsIgnoredValue { AccessibilityObjectInclusion::DefaultBehavior };
     // std::nullopt is a valid cached value if this object has no visible characters.

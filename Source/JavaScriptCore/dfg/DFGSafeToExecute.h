@@ -306,6 +306,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case MapHash:
     case NormalizeMapKey:
     case StringSlice:
+    case StringSubstring:
     case ToLowerCase:
     case GetMapBucket:
     case GetMapBucketHead:
@@ -581,6 +582,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case NewAsyncGenerator:
     case NewArray:
     case NewArrayWithSize:
+    case NewArrayWithSpecies:
     case NewArrayBuffer:
     case NewArrayWithSpread:
     case NewInternalFieldObject:
@@ -695,12 +697,15 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case DataViewSet:
     case SetAdd:
     case MapSet:
-    case StringReplaceRegExp:
     case StringReplace:
+    case StringReplaceRegExp:
     case ArithRandom:
     case ArithIMul:
     case TryGetById:
         return false;
+
+    case StringReplaceString:
+        return node->child3().useKind() == StringUse;
 
     case Inc:
     case Dec:

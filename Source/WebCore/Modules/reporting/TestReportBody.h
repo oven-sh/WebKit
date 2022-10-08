@@ -34,47 +34,21 @@ namespace WebCore {
 
 class FormData;
 
-struct CSPInfo;
-struct SecurityPolicyViolationEventInit;
-
-class WEBCORE_EXPORT TestReportBody final : public ReportBody {
+class TestReportBody final : public ReportBody {
     WTF_MAKE_ISO_ALLOCATED(TestReportBody);
 public:
-    static Ref<TestReportBody> create(String&& message);
+    WEBCORE_EXPORT static Ref<TestReportBody> create(String&& message);
 
-    const String& message() const;
+    WEBCORE_EXPORT const String& type() const final;
+    WEBCORE_EXPORT const String& message() const;
 
-    static const AtomString& testReportType();
-
-    static Ref<FormData> createReportFormDataForViolation(const String& bodyMessage);
-
-    template<typename Encoder> void encode(Encoder&) const;
-    template<typename Decoder> static std::optional<RefPtr<WebCore::TestReportBody>> decode(Decoder&);
+    WEBCORE_EXPORT Ref<FormData> createReportFormDataForViolation() const;
 
 private:
     TestReportBody(String&& message);
 
-    const AtomString& type() const final;
-
     const String m_bodyMessage;
 };
-
-template<typename Encoder>
-void TestReportBody::encode(Encoder& encoder) const
-{
-    encoder << m_bodyMessage;
-}
-
-template<typename Decoder>
-std::optional<RefPtr<TestReportBody>> TestReportBody::decode(Decoder& decoder)
-{
-    std::optional<String> bodymessage;
-    decoder >> bodymessage;
-    if (!bodymessage)
-        return std::nullopt;
-
-    return adoptRef(new TestReportBody(WTFMove(*bodymessage)));
-}
 
 } // namespace WebCore
 

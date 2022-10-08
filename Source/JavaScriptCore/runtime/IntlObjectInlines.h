@@ -152,7 +152,7 @@ ResultType intlOption(JSGlobalObject* globalObject, JSObject* options, PropertyN
 }
 
 template<typename ResultType>
-ResultType intlStringOrBooleanOption(JSGlobalObject* globalObject, JSObject* options, PropertyName property, ResultType trueValue, ResultType falsyValue, std::initializer_list<std::pair<ASCIILiteral, ResultType>> values, ResultType fallback)
+ResultType intlStringOrBooleanOption(JSGlobalObject* globalObject, JSObject* options, PropertyName property, ResultType trueValue, ResultType falsyValue, std::initializer_list<std::pair<ASCIILiteral, ResultType>> values, ASCIILiteral notFoundMessage, ResultType fallback)
 {
     // https://tc39.es/proposal-intl-numberformat-v3/out/negotiation/diff.html#sec-getstringorbooleanoption
 
@@ -182,12 +182,18 @@ ResultType intlStringOrBooleanOption(JSGlobalObject* globalObject, JSObject* opt
     String stringValue = value.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
 
+    // FIXME: We need to know whether this fallback is actually correct.
+    // https://github.com/tc39/proposal-intl-numberformat-v3/issues/111
+    if (stringValue == "true"_s || stringValue == "false"_s)
+        return fallback;
+
     for (const auto& entry : values) {
         if (entry.first == stringValue)
             return entry.second;
     }
 
-    return fallback;
+    throwRangeError(globalObject, scope, notFoundMessage);
+    return { };
 }
 
 ALWAYS_INLINE bool canUseASCIIUCADUCETComparison(UChar character)
@@ -298,5 +304,37 @@ JSArray* createArrayFromIntVector(JSGlobalObject* globalObject, const Container&
     }
     return result;
 }
+
+class ListFormatInput {
+    WTF_MAKE_NONCOPYABLE(ListFormatInput);
+public:
+    ListFormatInput(Vector<String, 4>&& strings)
+        : m_strings(WTFMove(strings))
+    {
+        m_stringPointers.reserveInitialCapacity(m_strings.size());
+        m_stringLengths.reserveInitialCapacity(m_strings.size());
+        for (auto& string : m_strings) {
+            if (string.is8Bit()) {
+                auto vector = makeUnique<Vector<UChar>>();
+                vector->resize(string.length());
+                StringImpl::copyCharacters(vector->data(), string.characters8(), string.length());
+                m_retainedUpconvertedStrings.append(WTFMove(vector));
+                m_stringPointers.append(m_retainedUpconvertedStrings.last()->data());
+            } else
+                m_stringPointers.append(string.characters16());
+            m_stringLengths.append(string.length());
+        }
+    }
+
+    int32_t size() const { return m_stringPointers.size(); }
+    const UChar* const* stringPointers() const { return m_stringPointers.data(); }
+    const int32_t* stringLengths() const { return m_stringLengths.data(); }
+
+private:
+    Vector<String, 4> m_strings;
+    Vector<std::unique_ptr<Vector<UChar>>, 4> m_retainedUpconvertedStrings;
+    Vector<const UChar*, 4> m_stringPointers;
+    Vector<int32_t, 4> m_stringLengths;
+};
 
 } // namespace JSC

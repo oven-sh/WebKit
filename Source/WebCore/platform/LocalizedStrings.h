@@ -159,8 +159,9 @@ namespace WebCore {
     String contextMenuItemTagMediaPause();
     String contextMenuItemTagMediaMute();
     WEBCORE_EXPORT String contextMenuItemTagInspectElement();
-#endif // ENABLE(CONTEXT_MENUS)
-
+#if HAVE(TRANSLATION_UI_SERVICES)
+    String contextMenuItemTagTranslate(const String& selectedString);
+#endif
 #if ENABLE(PDFJS)
     String contextMenuItemPDFAutoSize();
     String contextMenuItemPDFZoomIn();
@@ -173,6 +174,9 @@ namespace WebCore {
     String contextMenuItemPDFNextPage();
     String contextMenuItemPDFPreviousPage();
 #endif
+#endif // ENABLE(CONTEXT_MENU)
+
+    WEBCORE_EXPORT String pdfDocumentTypeDescription();
 
 #if !PLATFORM(IOS_FAMILY)
     String searchMenuNoRecentSearchesText();
@@ -272,7 +276,6 @@ namespace WebCore {
 
 #if PLATFORM(COCOA)
     WEBCORE_EXPORT String builtInPDFPluginName();
-    WEBCORE_EXPORT String pdfDocumentTypeDescription();
     WEBCORE_EXPORT String postScriptDocumentTypeDescription();
     String keygenMenuItem2048();
     WEBCORE_EXPORT String keygenKeychainItemName(const String& host);
@@ -395,10 +398,6 @@ namespace WebCore {
     WEBCORE_EXPORT String contextMenuItemTitleRemoveBackground();
 #endif
 
-#if HAVE(TRANSLATION_UI_SERVICES)
-    String contextMenuItemTagTranslate(const String& selectedString);
-#endif
-
 #if USE(CF) && !PLATFORM(WIN)
 #define WEB_UI_STRING(string, description) WebCore::localizedString(CFSTR(string))
 #define WEB_UI_STRING_KEY(string, key, description) WebCore::localizedString(CFSTR(key))
@@ -452,13 +451,15 @@ namespace WebCore {
 #endif
 
 #if USE(CF) && !PLATFORM(WIN)
-    String formatLocalizedString(CFStringRef format, ...) CF_FORMAT_FUNCTION(1, 2);
+    WEBCORE_EXPORT String formatLocalizedString(CFStringRef format, ...) CF_FORMAT_FUNCTION(1, 2);
 #else
-    String formatLocalizedString(const char* format, ...) WTF_ATTRIBUTE_PRINTF(1, 2);
+    WEBCORE_EXPORT String formatLocalizedString(const char* format, ...) WTF_ATTRIBUTE_PRINTF(1, 2);
 #endif
 
 #ifdef __OBJC__
 #define WEB_UI_NSSTRING(string, description) WebCore::localizedNSString(string)
+#define WEB_UI_NSSTRING_KEY(string, key, description) WebCore::localizedNSString(key)
+
     inline NS_FORMAT_ARGUMENT(1) NSString *localizedNSString(NSString *key)
     {
         return bridge_cast(copyLocalizedString(bridge_cast(key)).autorelease());

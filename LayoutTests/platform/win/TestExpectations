@@ -137,8 +137,15 @@ model-element/model-element-graphics-layers-opacity.html [ Skip ]
 # Apple Cocoa only for the moment.
 http/tests/model [ Skip ]
 
+# No support for the Clear-Site-Data header in WebKit1.
+imported/w3c/web-platform-tests/clear-site-data [ Skip ]
+http/tests/clear-site-data [ Skip ]
+
 # color-filters are off by default
 webkit.org/b/185076 css3/color-filters [ Skip ]
+
+# The Screen Wake Lock API is not supportted in WebKit1.
+imported/w3c/web-platform-tests/screen-wake-lock [ Skip ]
 
 # IntersectionObserver is off by default
 webkit.org/b/188613 intersection-observer [ Skip ]
@@ -495,6 +502,9 @@ accessibility/node-only-inert-object.html [ Failure ]
 # Failing since added in https://bugs.webkit.org/show_bug.cgi?id=243486.
 accessibility/text-under-display-contents-element.html [ Skip ]
 
+# Missing AccessibilityUIElement::takeFocus().
+accessibility/basic-focusability.html [ Skip ]
+
 # Failing since added in https://bugs.webkit.org/show_bug.cgi?id=241428.
 accessibility/aria-multiline.html [ Skip ]
 
@@ -551,6 +561,17 @@ accessibility/ignored-textfield-still-accessible.html [ Skip ]
 
 # Default ARIA for custom elements are not yet enabled
 accessibility/custom-elements/ [ Skip ]
+
+accessibility/element-reflection-ariaactivedescendant.html [ Skip ]
+accessibility/element-reflection-ariacontrols.html [ Skip ]
+accessibility/element-reflection-ariadescribedby.html [ Skip ]
+accessibility/element-reflection-ariadetails.html [ Skip ]
+accessibility/element-reflection-ariaerrormessage.html [ Skip ]
+accessibility/element-reflection-ariaflowto.html [ Skip ]
+accessibility/element-reflection-arialabelledby.html [ Skip ]
+accessibility/element-reflection-ariaowns.html [ Skip ]
+
+webkit.org/b/245301 fast/custom-elements/reactions-for-aria-element-attributes.html [ Failure ]
 
 # TODO Conic gradients
 http/wpt/css/css-images-4/conic-gradient-parsing.html [ Skip ]
@@ -2405,6 +2426,7 @@ webkit.org/b/97026 fast/forms/state-restore-broken-state.html [ Failure ]
 fast/forms/searchfield-heights.html [ Failure ]
 fast/forms/placeholder-content-center.html [ ImageOnlyFailure ]
 fast/forms/placeholder-content-line-height.html [ ImageOnlyFailure ]
+fast/forms/placeholder-content-center-line-height-greater-than-content-height.html [ ImageOnlyFailure ]
 
 # Test uses "required" form element property which currently does not work on Safari
 fast/forms/validation-message-user-modify.html [ Failure ]
@@ -3659,6 +3681,7 @@ editing/selection/character-granularity-rect.html [ Skip ]
 editing/selection/ios [ Skip ]
 fast/canvas/canvas-createPattern-video-loading.html [ Skip ]
 fast/canvas/canvas-createPattern-video-modify.html [ Skip ]
+fast/canvas/canvas-drawImage-hdr-video.html [ Skip ]
 fast/events/before-input-prevent-insert-replacement.html [ Skip ]
 fast/events/input-event-insert-replacement.html [ Skip ]
 fast/forms/scroll-into-view-and-show-validation-message.html [ Skip ]
@@ -4048,7 +4071,7 @@ imported/w3c/web-platform-tests/fetch/api/policies/referrer-unsafe-url-service-w
 imported/w3c/web-platform-tests/fetch/api/request/destination [ Skip ]
 imported/w3c/web-platform-tests/fetch/cross-origin-resource-policy [ Skip ]
 imported/w3c/web-platform-tests/push-api [ Skip ]
-imported/w3c/web-platform-tests/server-timing/service_worker_idl.html [ Skip ]
+imported/w3c/web-platform-tests/server-timing/service_worker_idl.https.html [ Skip ]
 imported/w3c/web-platform-tests/service-workers [ Skip ]
 imported/w3c/web-platform-tests/html/infrastructure/safe-passing-of-structured-data/messagechannel.any.serviceworker.html [ Skip ]
 imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/json-module/json-module-service-worker-test.https.html [ Skip ]

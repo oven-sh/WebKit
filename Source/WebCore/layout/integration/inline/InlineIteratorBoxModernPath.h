@@ -26,7 +26,7 @@
 #pragma once
 
 #include "FontCascade.h"
-#include "LayoutContainerBox.h"
+#include "LayoutElementBox.h"
 #include "LayoutIntegrationInlineContent.h"
 #include "TextBoxSelectableRange.h"
 
@@ -94,9 +94,9 @@ public:
         return m_inlineContent->rendererForLayoutBox(box().layoutBox());
     }
 
-    const RenderBlockFlow& containingBlock() const
+    const RenderBlockFlow& formattingContextRoot() const
     {
-        return m_inlineContent->containingBlock();
+        return m_inlineContent->formattingContextRoot();
     }
 
     const RenderStyle& style() const

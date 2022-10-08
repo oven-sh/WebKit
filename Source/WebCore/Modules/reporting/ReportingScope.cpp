@@ -29,6 +29,7 @@
 #include "ContextDestructionObserver.h"
 #include "Document.h"
 #include "HeaderFieldTokenizer.h"
+#include "RFC8941.h"
 #include "Report.h"
 #include "ReportingObserver.h"
 #include "ScriptExecutionContext.h"
@@ -76,6 +77,7 @@ void ReportingScope::removeAllObservers()
 void ReportingScope::clearReports()
 {
     m_queuedReports.clear();
+    m_queuedReportTypeCounts.clear();
 }
 
 void ReportingScope::notifyReportObservers(Ref<Report>&& report)
@@ -90,25 +92,27 @@ void ReportingScope::notifyReportObservers(Ref<Report>&& report)
     for (auto& observer : possibleReportObservers)
         observer->appendQueuedReportIfCorrectType(report);
 
+    auto currentReportType = report->body()->reportBodyType();
+
     // Step 4.2.2
+    m_queuedReportTypeCounts.add(currentReportType);
     m_queuedReports.append(WTFMove(report));
 
     // Step 4.2.3-4: If scope’s report buffer now contains more than 100 reports with type equal to type, remove the earliest item with type equal to type in the report buffer.
-    // FIXME(244369): When we support more than one time of report, remove only the specific type of report.
-    if (m_queuedReports.size() > 100)
-        m_queuedReports.removeFirst();
+    if (m_queuedReportTypeCounts.count(currentReportType) > 100) {
+        bool removed = m_queuedReports.removeFirstMatching([currentReportType](auto& report) {
+            return report->body()->reportBodyType() == currentReportType;
+        });
+        ASSERT_UNUSED(removed, removed);
+        m_queuedReportTypeCounts.remove(currentReportType);
+    }
 }
 
-void ReportingScope::appendQueuedReportForRelevantType(ReportingObserver& observer)
+void ReportingScope::appendQueuedReportsForRelevantType(ReportingObserver& observer)
 {
     // https://www.w3.org/TR/reporting-1/#concept-report-type
     for (auto& report : m_queuedReports)
         observer.appendQueuedReportIfCorrectType(report);
-}
-
-static bool isQuote(UChar character)
-{
-    return character == '\"';
 }
 
 void ReportingScope::parseReportingEndpoints(const String& headerValue, const URL& baseURL)
@@ -116,43 +120,29 @@ void ReportingScope::parseReportingEndpoints(const String& headerValue, const UR
     m_reportingEndpoints = parseReportingEndpointsFromHeader(headerValue, baseURL);
 }
 
+// https://w3c.github.io/reporting/#process-header
+// FIXME: The value in the HashMap should probably be a URL, not a String.
 MemoryCompactRobinHoodHashMap<String, String> ReportingScope::parseReportingEndpointsFromHeader(const String& headerValue, const URL& baseURL)
 {
-    // https://w3c.github.io/reporting/#process-header
-    // Step 3.3.2-4
     MemoryCompactRobinHoodHashMap<String, String> reportingEndpoints;
+    auto parsedHeader = RFC8941::parseDictionaryStructuredFieldValue(headerValue);
+    if (!parsedHeader)
+        return reportingEndpoints;
 
-    HeaderFieldTokenizer tokenizer(headerValue);
-
-    // Step 3.3.5
-    while (!tokenizer.isConsumed()) {
-        // Step 3.3.5.1
-        String reportTo = tokenizer.consumeToken();
-        if (reportTo.isNull())
-            break;
-
-        if (!tokenizer.consume('='))
-            break;
-
-        // Step 3.3.5.1
-        String urlPath = tokenizer.consumeTokenOrQuotedString().stripLeadingAndTrailingCharacters(isQuote);
-
-        // Step 3.3.5.2
-        auto url = baseURL.isNull() ? URL(urlPath) : URL(baseURL, urlPath);
-        if (url.isValid()) {
-            // Step 3.3.5.3
-            if (shouldTreatAsPotentiallyTrustworthy(url)) {
-                // Step 3.3.4.4: FIXME(244368): Should track failure count for endpoint.
-                reportingEndpoints.set(WTFMove(reportTo), WTFMove(urlPath));
-            }
-        }
-
-        tokenizer.consumeBeforeAnyCharMatch({ ',', ';' });
-
-        if (!tokenizer.consume(','))
-            break;
+    for (auto& [name, valueAndParameters] : *parsedHeader) {
+        auto* bareItem = std::get_if<RFC8941::BareItem>(&valueAndParameters.first);
+        if (!bareItem)
+            continue;
+        auto* endpointURLString = std::get_if<String>(bareItem);
+        if (!endpointURLString)
+            continue;
+        URL endpointURL(baseURL, *endpointURLString);
+        if (!endpointURL.isValid())
+            continue;
+        if (!shouldTreatAsPotentiallyTrustworthy(endpointURL))
+            continue;
+        reportingEndpoints.add(name, endpointURL.string());
     }
-
     return reportingEndpoints;
 }
 
@@ -170,7 +160,8 @@ void ReportingScope::generateTestReport(String&& message, String&& group)
         reportURL = document->url().strippedForUseAsReferrer();
 
     // https://w3c.github.io/reporting/#generate-test-report-command, step 7.1.10.
-    notifyReportObservers(Report::create(TestReportBody::testReportType(), WTFMove(reportURL), TestReportBody::create(WTFMove(message))));
+    auto reportBody = TestReportBody::create(WTFMove(message));
+    notifyReportObservers(Report::create(reportBody->type(), WTFMove(reportURL), WTFMove(reportBody)));
 
     // FIXME(244907): We should call sendReportToEndpoints here.
 }

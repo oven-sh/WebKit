@@ -131,6 +131,7 @@
 #include "WebProcessPoolMessages.h"
 #include "WebProcessProxyMessages.h"
 #include "WebProgressTrackerClient.h"
+#include "WebScreenOrientationManager.h"
 #include "WebServiceWorkerProvider.h"
 #include "WebSocketProvider.h"
 #include "WebSpeechRecognitionProvider.h"
@@ -534,6 +535,7 @@ WebPage::WebPage(PageIdentifier pageID, WebPageCreationParameters&& parameters)
     , m_foundTextRangeController(makeUniqueRef<WebFoundTextRangeController>(*this))
     , m_inspectorTargetController(makeUnique<WebPageInspectorTargetController>(*this))
     , m_userContentController(WebUserContentController::getOrCreate(parameters.userContentControllerParameters.identifier))
+    , m_screenOrientationManager(makeUniqueRef<WebScreenOrientationManager>(*this))
 #if ENABLE(GEOLOCATION)
     , m_geolocationPermissionRequestManager(makeUniqueRef<GeolocationPermissionRequestManager>(*this))
 #endif
@@ -565,7 +567,7 @@ WebPage::WebPage(PageIdentifier pageID, WebPageCreationParameters&& parameters)
 #endif
     , m_layerVolatilityTimer(*this, &WebPage::layerVolatilityTimerFired)
     , m_activityState(parameters.activityState)
-    , m_userActivity("App nap disabled for page due to user activity")
+    , m_userActivity("App nap disabled for page due to user activity"_s)
     , m_userInterfaceLayoutDirection(parameters.userInterfaceLayoutDirection)
     , m_overrideContentSecurityPolicy { parameters.overrideContentSecurityPolicy }
     , m_cpuLimit(parameters.cpuLimit)
@@ -622,6 +624,7 @@ WebPage::WebPage(PageIdentifier pageID, WebPageCreationParameters&& parameters)
 
     pageConfiguration.diagnosticLoggingClient = makeUnique<WebDiagnosticLoggingClient>(*this);
     pageConfiguration.performanceLoggingClient = makeUnique<WebPerformanceLoggingClient>(*this);
+    pageConfiguration.screenOrientationManager = m_screenOrientationManager.get();
 
 #if ENABLE(WEBGL)
     pageConfiguration.webGLStateTracker = makeUnique<WebGLStateTracker>([this](bool isUsingHighPerformanceWebGL) {
@@ -1863,22 +1866,9 @@ void WebPage::navigateToPDFLinkWithSimulatedClick(const String& url, IntPoint do
     // FIXME: Set modifier keys.
     // FIXME: This should probably set IsSimulated::Yes.
     auto mouseEvent = MouseEvent::create(eventNames().clickEvent, Event::CanBubble::Yes, Event::IsCancelable::Yes, Event::IsComposed::Yes,
-        MonotonicTime::now(), nullptr, singleClick, screenPoint, documentPoint, { }, { }, 0, 0, nullptr, 0, WebCore::NoTap);
+        MonotonicTime::now(), nullptr, singleClick, screenPoint, documentPoint, 0, 0, { }, 0, 0, nullptr, 0, WebCore::NoTap);
 
     mainFrame->loader().changeLocation(mainFrameDocument->completeURL(url), emptyAtom(), mouseEvent.ptr(), ReferrerPolicy::NoReferrer, ShouldOpenExternalURLsPolicy::ShouldAllow);
-}
-
-void WebPage::stopLoadingFrame(FrameIdentifier frameID)
-{
-    WebFrame* frame = WebProcess::singleton().webFrame(frameID);
-    if (!frame)
-        return;
-
-    auto* coreFrame = frame->coreFrame();
-    if (!coreFrame || !m_page)
-        return;
-
-    m_page->userInputBridge().stopLoadingFrame(*coreFrame);
 }
 
 void WebPage::stopLoading()
@@ -2664,15 +2654,36 @@ void WebPage::setFooterBannerHeightForTesting(int height)
 
 #endif // !PLATFORM(IOS_FAMILY)
 
-void WebPage::takeSnapshot(IntRect snapshotRect, IntSize bitmapSize, uint32_t options, CompletionHandler<void(const WebKit::ShareableBitmap::Handle&)>&& completionHandler)
+void WebPage::takeSnapshot(IntRect snapshotRect, IntSize bitmapSize, uint32_t options, CompletionHandler<void(const WebKit::ShareableBitmapHandle&)>&& completionHandler)
 {
+    ShareableBitmapHandle handle;
+    Frame* coreFrame = m_mainFrame->coreFrame();
+    if (!coreFrame) {
+        completionHandler(handle);
+        return;
+    }
+
+    FrameView* frameView = coreFrame->view();
+    if (!frameView) {
+        completionHandler(handle);
+        return;
+    }
+
     SnapshotOptions snapshotOptions = static_cast<SnapshotOptions>(options);
     snapshotOptions |= SnapshotOptionsShareable;
 
-    RefPtr<WebImage> image = snapshotAtSize(snapshotRect, bitmapSize, snapshotOptions);
+    if (options & SnapshotOptionsVisibleContentRect)
+        snapshotRect = frameView->visibleContentRect();
+    else if (options & SnapshotOptionsFullContentRect)
+        snapshotRect = IntRect({ 0, 0 }, frameView->contentsSize());
 
-    ShareableBitmap::Handle handle;
-    if (image)
+    if (bitmapSize.isEmpty()) {
+        bitmapSize = snapshotRect.size();
+        if (!(options & SnapshotOptionsExcludeDeviceScaleFactor))
+            bitmapSize.scale(corePage()->deviceScaleFactor());
+    }
+
+    if (auto image = snapshotAtSize(snapshotRect, bitmapSize, snapshotOptions, *coreFrame, *frameView))
         handle = image->createHandle(SharedMemory::Protection::ReadOnly);
 
     completionHandler(handle);
@@ -2680,13 +2691,18 @@ void WebPage::takeSnapshot(IntRect snapshotRect, IntSize bitmapSize, uint32_t op
 
 RefPtr<WebImage> WebPage::scaledSnapshotWithOptions(const IntRect& rect, double additionalScaleFactor, SnapshotOptions options)
 {
+    Frame* coreFrame = m_mainFrame->coreFrame();
+    if (!coreFrame)
+        return nullptr;
+
+    FrameView* frameView = coreFrame->view();
+    if (!frameView)
+        return nullptr;
+
     IntRect snapshotRect = rect;
     IntSize bitmapSize = snapshotRect.size();
     if (options & SnapshotOptionsPrinting) {
         ASSERT(additionalScaleFactor == 1);
-        Frame* coreFrame = m_mainFrame->coreFrame();
-        if (!coreFrame)
-            return nullptr;
         bitmapSize.setHeight(PrintContext::numberOfPages(*coreFrame, bitmapSize) * (bitmapSize.height() + 1) - 1);
     } else {
         double scaleFactor = additionalScaleFactor;
@@ -2695,7 +2711,7 @@ RefPtr<WebImage> WebPage::scaledSnapshotWithOptions(const IntRect& rect, double 
         bitmapSize.scale(scaleFactor);
     }
 
-    return snapshotAtSize(rect, bitmapSize, options);
+    return snapshotAtSize(rect, bitmapSize, options, *coreFrame, *frameView);
 }
 
 void WebPage::paintSnapshotAtSize(const IntRect& rect, const IntSize& bitmapSize, SnapshotOptions options, Frame& frame, FrameView& frameView, GraphicsContext& graphicsContext)
@@ -2712,8 +2728,16 @@ void WebPage::paintSnapshotAtSize(const IntRect& rect, const IntSize& bitmapSize
         return;
     }
 
-    Color documentBackgroundColor = frameView.documentBackgroundColor();
-    Color backgroundColor = (frame.settings().backgroundShouldExtendBeyondPage() && documentBackgroundColor.isValid()) ? documentBackgroundColor : frameView.baseBackgroundColor();
+    Color backgroundColor;
+    Color savedBackgroundColor;
+    if (options & SnapshotOptionsTransparentBackground) {
+        backgroundColor = Color::transparentBlack;
+        savedBackgroundColor = frameView.baseBackgroundColor();
+        frameView.setBaseBackgroundColor(backgroundColor);
+    } else {
+        Color documentBackgroundColor = frameView.documentBackgroundColor();
+        backgroundColor = (frame.settings().backgroundShouldExtendBeyondPage() && documentBackgroundColor.isValid()) ? documentBackgroundColor : frameView.baseBackgroundColor();
+    }
     graphicsContext.fillRect(IntRect(IntPoint(), bitmapSize), backgroundColor);
 
     if (!(options & SnapshotOptionsExcludeDeviceScaleFactor)) {
@@ -2740,6 +2764,9 @@ void WebPage::paintSnapshotAtSize(const IntRect& rect, const IntSize& bitmapSize
         graphicsContext.setStrokeColor(Color::red);
         graphicsContext.strokeRect(selectionRectangle, 1);
     }
+
+    if (options & SnapshotOptionsTransparentBackground)
+        frameView.setBaseBackgroundColor(savedBackgroundColor);
 }
 
 static DestinationColorSpace snapshotColorSpace(SnapshotOptions options, WebPage& page)
@@ -2751,22 +2778,14 @@ static DestinationColorSpace snapshotColorSpace(SnapshotOptions options, WebPage
     return DestinationColorSpace::SRGB();
 }
 
-RefPtr<WebImage> WebPage::snapshotAtSize(const IntRect& rect, const IntSize& bitmapSize, SnapshotOptions options)
+RefPtr<WebImage> WebPage::snapshotAtSize(const IntRect& rect, const IntSize& bitmapSize, SnapshotOptions options, Frame& frame, FrameView& frameView)
 {
-    Frame* coreFrame = m_mainFrame->coreFrame();
-    if (!coreFrame)
-        return nullptr;
-
-    FrameView* frameView = coreFrame->view();
-    if (!frameView)
-        return nullptr;
-
     auto snapshot = WebImage::create(bitmapSize, snapshotOptionsToImageOptions(options), snapshotColorSpace(options, *this), &m_page->chrome().client());
     if (!snapshot)
         return nullptr;
 
     auto& graphicsContext = snapshot->context();
-    paintSnapshotAtSize(rect, bitmapSize, options, *coreFrame, *frameView, graphicsContext);
+    paintSnapshotAtSize(rect, bitmapSize, options, frame, frameView, graphicsContext);
 
     return snapshot;
 }
@@ -3809,29 +3828,29 @@ void WebPage::resume(CompletionHandler<void(bool)>&& completionHandler)
 
 IntPoint WebPage::screenToRootView(const IntPoint& point)
 {
-    IntPoint windowPoint;
-    sendSync(Messages::WebPageProxy::ScreenToRootView(point), Messages::WebPageProxy::ScreenToRootView::Reply(windowPoint));
+    auto sendResult = sendSync(Messages::WebPageProxy::ScreenToRootView(point));
+    auto [windowPoint] = sendResult.takeReplyOr(IntPoint { });
     return windowPoint;
 }
     
 IntRect WebPage::rootViewToScreen(const IntRect& rect)
 {
-    IntRect screenRect;
-    sendSync(Messages::WebPageProxy::RootViewToScreen(rect), Messages::WebPageProxy::RootViewToScreen::Reply(screenRect));
+    auto sendResult = sendSync(Messages::WebPageProxy::RootViewToScreen(rect));
+    auto [screenRect] = sendResult.takeReplyOr(IntRect { });
     return screenRect;
 }
     
 IntPoint WebPage::accessibilityScreenToRootView(const IntPoint& point)
 {
-    IntPoint windowPoint;
-    sendSync(Messages::WebPageProxy::AccessibilityScreenToRootView(point), Messages::WebPageProxy::AccessibilityScreenToRootView::Reply(windowPoint));
+    auto sendResult = sendSync(Messages::WebPageProxy::AccessibilityScreenToRootView(point));
+    auto [windowPoint] = sendResult.takeReplyOr(IntPoint { });
     return windowPoint;
 }
 
 IntRect WebPage::rootViewToAccessibilityScreen(const IntRect& rect)
 {
-    IntRect screenRect;
-    sendSync(Messages::WebPageProxy::RootViewToAccessibilityScreen(rect), Messages::WebPageProxy::RootViewToAccessibilityScreen::Reply(screenRect));
+    auto sendResult = sendSync(Messages::WebPageProxy::RootViewToAccessibilityScreen(rect));
+    auto [screenRect] = sendResult.takeReplyOr(IntRect { });
     return screenRect;
 }
 
@@ -5555,8 +5574,9 @@ void WebPage::didRemoveBackForwardItem(const BackForwardItemIdentifier& itemID)
 
 bool WebPage::isSpeaking()
 {
-    bool result;
-    return sendSync(Messages::WebPageProxy::GetIsSpeaking(), Messages::WebPageProxy::GetIsSpeaking::Reply(result)) && result;
+    auto sendResult = sendSync(Messages::WebPageProxy::GetIsSpeaking());
+    auto [result] = sendResult.takeReplyOr(false);
+    return result;
 }
 
 void WebPage::speak(const String& string)
@@ -5733,7 +5753,7 @@ void WebPage::drawToPDF(FrameIdentifier frameID, const std::optional<FloatRect>&
     completionHandler(SharedBuffer::create(pdfData.get()));
 }
 
-void WebPage::drawRectToImage(FrameIdentifier frameID, const PrintInfo& printInfo, const IntRect& rect, const WebCore::IntSize& imageSize, CompletionHandler<void(const WebKit::ShareableBitmap::Handle&)>&& completionHandler)
+void WebPage::drawRectToImage(FrameIdentifier frameID, const PrintInfo& printInfo, const IntRect& rect, const WebCore::IntSize& imageSize, CompletionHandler<void(const WebKit::ShareableBitmapHandle&)>&& completionHandler)
 {
     PrintContextAccessScope scope { *this };
     WebFrame* frame = WebProcess::singleton().webFrame(frameID);
@@ -5773,7 +5793,7 @@ void WebPage::drawRectToImage(FrameIdentifier frameID, const PrintInfo& printInf
     }
 #endif
 
-    ShareableBitmap::Handle handle;
+    ShareableBitmapHandle handle;
     if (image)
         handle = image->createHandle(SharedMemory::Protection::ReadOnly);
 
@@ -6728,7 +6748,7 @@ void WebPage::didCommitLoad(WebFrame* frame)
     m_elementsPendingTextRecognition.clear();
 #endif
 
-#if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
+#if ENABLE(TRACKING_PREVENTION)
     clearLoadedSubresourceDomains();
 #endif
     
@@ -7140,13 +7160,14 @@ void WebPage::postMessageIgnoringFullySynchronousMode(const String& messageName,
 
 void WebPage::postSynchronousMessageForTesting(const String& messageName, API::Object* messageBody, RefPtr<API::Object>& returnData)
 {
-    UserData returnUserData;
-
     auto& webProcess = WebProcess::singleton();
-    if (!sendSync(Messages::WebPageProxy::HandleSynchronousMessage(messageName, UserData(webProcess.transformObjectsToHandles(messageBody))), Messages::WebPageProxy::HandleSynchronousMessage::Reply(returnUserData), Seconds::infinity(), IPC::SendSyncOption::UseFullySynchronousModeForTesting))
-        returnData = nullptr;
-    else
+
+    auto sendResult = sendSync(Messages::WebPageProxy::HandleSynchronousMessage(messageName, UserData(webProcess.transformObjectsToHandles(messageBody))), Seconds::infinity(), IPC::SendSyncOption::UseFullySynchronousModeForTesting);
+    if (sendResult) {
+        auto& [returnUserData] = sendResult.reply();
         returnData = webProcess.transformHandlesToObjects(returnUserData.object());
+    } else
+        returnData = nullptr;
 }
 
 void WebPage::clearWheelEventTestMonitor()
@@ -7382,7 +7403,7 @@ void WebPage::setIsSuspended(bool suspended)
     suspendForProcessSwap();
 }
 
-#if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
+#if ENABLE(TRACKING_PREVENTION)
 void WebPage::hasStorageAccess(RegistrableDomain&& subFrameDomain, RegistrableDomain&& topFrameDomain, WebFrame& frame, CompletionHandler<void(bool)>&& completionHandler)
 {
     if (hasPageLevelStorageAccess(topFrameDomain, subFrameDomain)) {
@@ -7476,7 +7497,6 @@ void WebPage::showContactPicker(const WebCore::ContactsRequestData& requestData,
 
 WebCore::DOMPasteAccessResponse WebPage::requestDOMPasteAccess(WebCore::DOMPasteAccessCategory pasteAccessCategory, const String& originIdentifier)
 {
-    auto response = WebCore::DOMPasteAccessResponse::DeniedForGesture;
 #if PLATFORM(IOS_FAMILY)
     // FIXME: Computing and sending an autocorrection context is a workaround for the fact that autocorrection context
     // requests on iOS are currently synchronous in the web process. This allows us to immediately fulfill pending
@@ -7484,7 +7504,8 @@ WebCore::DOMPasteAccessResponse WebPage::requestDOMPasteAccess(WebCore::DOMPaste
     // should be removed once <rdar://problem/16207002> is resolved.
     preemptivelySendAutocorrectionContext();
 #endif
-    sendSyncWithDelayedReply(Messages::WebPageProxy::RequestDOMPasteAccess(pasteAccessCategory, rectForElementAtInteractionLocation(), originIdentifier), Messages::WebPageProxy::RequestDOMPasteAccess::Reply(response));
+    auto sendResult = sendSyncWithDelayedReply(Messages::WebPageProxy::RequestDOMPasteAccess(pasteAccessCategory, rectForElementAtInteractionLocation(), originIdentifier));
+    auto [response] = sendResult.takeReplyOr(WebCore::DOMPasteAccessResponse::DeniedForGesture);
     return response;
 }
 
@@ -7553,7 +7574,7 @@ void WebPage::updateAttachmentAttributes(const String& identifier, std::optional
     callback();
 }
 
-void WebPage::updateAttachmentThumbnail(const String& identifier, const ShareableBitmap::Handle& qlThumbnailHandle)
+void WebPage::updateAttachmentThumbnail(const String& identifier, const ShareableBitmapHandle& qlThumbnailHandle)
 {
     if (auto attachment = attachmentElementWithIdentifier(identifier)) {
         if (RefPtr<ShareableBitmap> thumbnail = !qlThumbnailHandle.isNull() ? ShareableBitmap::create(qlThumbnailHandle) : nullptr)
@@ -7561,7 +7582,7 @@ void WebPage::updateAttachmentThumbnail(const String& identifier, const Shareabl
     }
 }
 
-void WebPage::updateAttachmentIcon(const String& identifier, const ShareableBitmap::Handle& iconHandle, const WebCore::FloatSize& size)
+void WebPage::updateAttachmentIcon(const String& identifier, const ShareableBitmapHandle& iconHandle, const WebCore::FloatSize& size)
 {
     if (auto attachment = attachmentElementWithIdentifier(identifier)) {
         if (auto icon = !iconHandle.isNull() ? ShareableBitmap::create(iconHandle) : nullptr)
@@ -7904,7 +7925,7 @@ void WebPage::requestTextRecognition(Element& element, TextRecognitionOptions&& 
         return;
     }
 
-    ShareableBitmap::Handle bitmapHandle;
+    ShareableBitmapHandle bitmapHandle;
     bitmap->createHandle(bitmapHandle);
     if (bitmapHandle.isNull()) {
         if (completion)
@@ -7998,7 +8019,7 @@ void WebPage::startVisualTranslation(const String& sourceLanguageIdentifier, con
 
 #endif // ENABLE(IMAGE_ANALYSIS)
 
-void WebPage::requestImageBitmap(const ElementContext& context, CompletionHandler<void(const ShareableBitmap::Handle&, const String& sourceMIMEType)>&& completion)
+void WebPage::requestImageBitmap(const ElementContext& context, CompletionHandler<void(const ShareableBitmapHandle&, const String& sourceMIMEType)>&& completion)
 {
     RefPtr element = elementForContext(context);
     if (!element) {
@@ -8018,7 +8039,7 @@ void WebPage::requestImageBitmap(const ElementContext& context, CompletionHandle
         return;
     }
 
-    ShareableBitmap::Handle handle;
+    ShareableBitmapHandle handle;
     bitmap->createHandle(handle);
     if (handle.isNull()) {
         completion({ }, { });

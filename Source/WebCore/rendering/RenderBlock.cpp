@@ -1471,7 +1471,8 @@ bool RenderBlock::isSelectionRoot() const
         || isPositioned() || isFloating()
         || isTableCell() || isInlineBlockOrInlineTable()
         || hasTransform() || hasReflection() || hasMask() || isWritingModeRoot()
-        || isRenderFragmentedFlow() || style().columnSpan() == ColumnSpan::All)
+        || isRenderFragmentedFlow() || style().columnSpan() == ColumnSpan::All
+        || isFlexItemIncludingDeprecated() || isGridItem())
         return true;
     
     if (view().selection().start()) {
@@ -2545,13 +2546,25 @@ std::optional<LayoutUnit> RenderBlock::firstLineBaseline() const
     if (isWritingModeRoot() && !isRubyRun())
         return std::optional<LayoutUnit>();
 
-    for (RenderBox* curr = firstChildBox(); curr; curr = curr->nextSiblingBox()) {
-        if (!curr->isFloatingOrOutOfFlowPositioned()) {
-            if (auto result = curr->firstLineBaseline())
-                return LayoutUnit { curr->logicalTop() + result.value() }; // Translate to our coordinate space.
-        }
+    for (RenderBox* child = firstInFlowChildBox(); child; child = child->nextInFlowSiblingBox()) {
+        if (auto baseline = child->firstLineBaseline())
+            return LayoutUnit { child->logicalTop() + baseline.value() };
     }
+    return std::optional<LayoutUnit>();
+}
 
+std::optional<LayoutUnit> RenderBlock::lastLineBaseline() const
+{
+    if (shouldApplyLayoutContainment())
+        return std::nullopt;
+
+    if (isWritingModeRoot() && !isRubyRun())
+        return std::optional<LayoutUnit>();
+
+    for (RenderBox* child = lastInFlowChildBox(); child; child = child->previousInFlowSiblingBox()) {
+        if (auto baseline = child->lastLineBaseline())
+            return LayoutUnit { baseline.value() + child->logicalTop() };
+    } 
     return std::optional<LayoutUnit>();
 }
 
@@ -2817,12 +2830,12 @@ void RenderBlock::updateHitTestResult(HitTestResult& result, const LayoutPoint& 
     }
 }
 
-void RenderBlock::addFocusRingRectsForInlineChildren(Vector<LayoutRect>&, const LayoutPoint&, const RenderLayerModelObject*)
+void RenderBlock::addFocusRingRectsForInlineChildren(Vector<LayoutRect>&, const LayoutPoint&, const RenderLayerModelObject*) const
 {
     ASSERT_NOT_REACHED();
 }
 
-void RenderBlock::addFocusRingRects(Vector<LayoutRect>& rects, const LayoutPoint& additionalOffset, const RenderLayerModelObject* paintContainer)
+void RenderBlock::addFocusRingRects(Vector<LayoutRect>& rects, const LayoutPoint& additionalOffset, const RenderLayerModelObject* paintContainer) const
 {
     // For blocks inside inlines, we include margins so that we run right up to the inline boxes
     // above and below us (thus getting merged with them to form a single irregular shape).

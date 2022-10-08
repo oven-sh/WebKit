@@ -2114,7 +2114,7 @@ void AccessCase::generateImpl(AccessGenerationState& state)
                         virtualRegisterForArgumentIncludingThis(1).offset() * sizeof(Register)));
             }
 
-            auto slowCase = access.callLinkInfo()->emitFastPath(jit, loadedValueGPR, loadedValueGPR == GPRInfo::regT2 ? GPRInfo::regT0 : GPRInfo::regT2);
+            auto slowCase = CallLinkInfo::emitFastPath(jit, access.callLinkInfo(), loadedValueGPR, loadedValueGPR == GPRInfo::regT2 ? GPRInfo::regT0 : GPRInfo::regT2);
             auto doneLocation = jit.label();
 
             if (m_type == Getter)
@@ -2846,10 +2846,9 @@ bool AccessCase::canBeShared(const AccessCase& lhs, const AccessCase& rhs)
 void AccessCase::operator delete(AccessCase* accessCase, std::destroying_delete_t)
 {
     accessCase->runWithDowncast([](auto* accessCase) {
-        using T = std::decay_t<decltype(*accessCase)>;
-        accessCase->~T();
+        std::destroy_at(accessCase);
+        std::decay_t<decltype(*accessCase)>::freeAfterDestruction(accessCase);
     });
-    AccessCase::freeAfterDestruction(accessCase);
 }
 
 Ref<AccessCase> AccessCase::clone() const

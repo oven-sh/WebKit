@@ -31,7 +31,6 @@
 #include "LayoutBoxGeometry.h"
 #include "LayoutIntegrationBoxTree.h"
 #include "LayoutIntegrationInlineContent.h"
-#include "LayoutReplacedBox.h"
 #include "LayoutState.h"
 #include "RenderBlockFlow.h"
 #include "StringTruncator.h"
@@ -117,11 +116,13 @@ void InlineContentBuilder::createDisplayLines(Layout::InlineFormattingState& inl
         // Collect overflow from boxes.
         for (; boxIndex < boxes.size() && boxes[boxIndex].lineIndex() == lineIndex; ++boxIndex) {
             auto& box = boxes[boxIndex];
+            if (box.isRootInlineBox())
+                continue;
 
             lineInkOverflowRect.unite(box.inkOverflow());
 
             auto& layoutBox = box.layoutBox();
-            if (layoutBox.isReplacedBox()) {
+            if (layoutBox.isAtomicInlineLevelBox()) {
                 // Similar to LegacyInlineFlowBox::addReplacedChildOverflow.
                 auto& renderer = downcast<RenderBox>(m_boxTree.rendererForLayoutBox(layoutBox));
                 if (!renderer.hasSelfPaintingLayer()) {

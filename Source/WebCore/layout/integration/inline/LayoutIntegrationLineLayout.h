@@ -33,6 +33,7 @@
 #include "LayoutPoint.h"
 #include "LayoutState.h"
 #include "RenderObjectEnums.h"
+#include "layout/integration/inline/LayoutIntegrationLine.h"
 #include <wtf/CheckedPtr.h>
 
 namespace WebCore {
@@ -102,6 +103,7 @@ public:
     size_t lineCount() const;
     bool hasVisualOverflow() const;
     LayoutUnit firstLinePhysicalBaseline() const;
+    LayoutUnit lastLinePhysicalBaseline() const;
     LayoutUnit lastLineLogicalBaseline() const;
     LayoutRect firstInlineBoxRect(const RenderInline&) const;
     LayoutRect enclosingBorderBoxRectFor(const RenderInline&) const;
@@ -130,15 +132,20 @@ private:
     InlineContent& ensureInlineContent();
     void updateLayoutBoxDimensions(const RenderBox&);
 
-    Layout::InlineDamage& ensureLineDamage();
+    Layout::LayoutState& layoutState() { return *m_layoutState; }
 
-    const Layout::ContainerBox& rootLayoutBox() const;
-    Layout::ContainerBox& rootLayoutBox();
+    Layout::InlineDamage& ensureLineDamage();
+    
+
+    const Layout::ElementBox& rootLayoutBox() const;
+    Layout::ElementBox& rootLayoutBox();
     void clearInlineContent();
     void releaseCaches();
 
+    LayoutUnit physicalBaselineForLine(LayoutIntegration::Line&) const;
+    
     BoxTree m_boxTree;
-    Layout::LayoutState m_layoutState;
+    WeakPtr<Layout::LayoutState> m_layoutState;
     Layout::InlineFormattingState& m_inlineFormattingState;
     // FIXME: This should be part of LayoutState.
     std::unique_ptr<Layout::InlineDamage> m_lineDamage;

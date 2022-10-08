@@ -101,7 +101,7 @@ std::tuple<BaselineUnlinkedStructureStubInfo*, JITConstantPool::Constant> JIT::a
     return std::tuple { stubInfo, stubInfoIndex };
 }
 
-UnlinkedCallLinkInfo* JIT::addUnlinkedCallLinkInfo()
+BaselineUnlinkedCallLinkInfo* JIT::addUnlinkedCallLinkInfo()
 {
     return &m_unlinkedCalls.alloc();
 }
@@ -281,6 +281,7 @@ void JIT::privateCompileMainPass()
         DEFINE_SLOW_OP(unreachable)
         DEFINE_SLOW_OP(throw_static_error)
         DEFINE_SLOW_OP(new_array_with_spread)
+        DEFINE_SLOW_OP(new_array_with_species)
         DEFINE_SLOW_OP(new_array_buffer)
         DEFINE_SLOW_OP(spread)
         DEFINE_SLOW_OP(create_direct_arguments)
@@ -969,7 +970,7 @@ void JIT::link()
     finalizeICs(m_privateBrandAccesses);
 
     for (auto& compilationInfo : m_callCompilationInfo) {
-        UnlinkedCallLinkInfo& info = *compilationInfo.unlinkedCallLinkInfo;
+        auto& info = *compilationInfo.unlinkedCallLinkInfo;
         info.doneLocation = patchBuffer.locationOf<JSInternalPtrTag>(compilationInfo.doneLocation);
     }
 
@@ -1002,7 +1003,7 @@ void JIT::link()
     CodePtr<JSEntryPtrTag> withArityCheck = patchBuffer.locationOf<JSEntryPtrTag>(m_arityCheck);
     m_jitCode = adoptRef(*new BaselineJITCode(result, withArityCheck));
 
-    m_jitCode->m_unlinkedCalls = FixedVector<UnlinkedCallLinkInfo>(m_unlinkedCalls.size());
+    m_jitCode->m_unlinkedCalls = FixedVector<BaselineUnlinkedCallLinkInfo>(m_unlinkedCalls.size());
     if (m_jitCode->m_unlinkedCalls.size())
         std::move(m_unlinkedCalls.begin(), m_unlinkedCalls.end(), m_jitCode->m_unlinkedCalls.begin());
     m_jitCode->m_unlinkedStubInfos = FixedVector<BaselineUnlinkedStructureStubInfo>(m_unlinkedStubInfos.size());

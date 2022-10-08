@@ -539,6 +539,12 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         LINK(OpTailCallForwardArguments, callLinkInfo, profile)
         LINK(OpConstructVarargs, callLinkInfo, profile)
 
+        case op_new_array_with_species: {
+            INITIALIZE_METADATA(OpNewArrayWithSpecies)
+            link_profile(instruction, bytecode, metadata);
+            break;
+        }
+
         case op_resolve_scope: {
             INITIALIZE_METADATA(OpResolveScope)
 
@@ -2746,12 +2752,6 @@ ArrayProfile* CodeBlock::getArrayProfile(const ConcurrentJSLocker&, BytecodeInde
     return nullptr;
 }
 
-ArrayProfile* CodeBlock::getArrayProfile(BytecodeIndex bytecodeIndex)
-{
-    ConcurrentJSLocker locker(m_lock);
-    return getArrayProfile(locker, bytecodeIndex);
-}
-
 #if ENABLE(DFG_JIT)
 DFG::CodeOriginPool& CodeBlock::codeOrigins()
 {
@@ -2833,7 +2833,7 @@ bool CodeBlock::hasIdentifier(UniquedStringImpl* uid)
 }
 #endif
 
-void CodeBlock::updateAllValueProfilePredictionsAndCountLiveness(const ConcurrentJSLocker& locker, unsigned& numberOfLiveNonArgumentValueProfiles, unsigned& numberOfSamplesInProfiles)
+void CodeBlock::updateAllNonLazyValueProfilePredictionsAndCountLiveness(const ConcurrentJSLocker& locker, unsigned& numberOfLiveNonArgumentValueProfiles, unsigned& numberOfSamplesInProfiles)
 {
     numberOfLiveNonArgumentValueProfiles = 0;
     numberOfSamplesInProfiles = 0; // If this divided by ValueProfile::numberOfBuckets equals numberOfValueProfiles() then value profiles are full.
@@ -2865,20 +2865,27 @@ void CodeBlock::updateAllValueProfilePredictionsAndCountLiveness(const Concurren
             }
         });
     }
-
-#if ENABLE(DFG_JIT)
-    lazyOperandValueProfiles(locker).computeUpdatedPredictions(locker);
-#endif
 }
 
-void CodeBlock::updateAllValueProfilePredictions(const ConcurrentJSLocker& locker)
+void CodeBlock::updateAllNonLazyValueProfilePredictions(const ConcurrentJSLocker& locker)
 {
     unsigned ignoredValue1, ignoredValue2;
-    updateAllValueProfilePredictionsAndCountLiveness(locker, ignoredValue1, ignoredValue2);
+    updateAllNonLazyValueProfilePredictionsAndCountLiveness(locker, ignoredValue1, ignoredValue2);
+}
+
+void CodeBlock::updateAllLazyValueProfilePredictions(const ConcurrentJSLocker& locker)
+{
+    ASSERT(m_lock.isLocked());
+#if ENABLE(DFG_JIT)
+    lazyOperandValueProfiles(locker).computeUpdatedPredictions(locker);
+#else
+    UNUSED_PARAM(locker);
+#endif
 }
 
 void CodeBlock::updateAllArrayProfilePredictions(const ConcurrentJSLocker& locker)
 {
+    ASSERT(m_lock.isLocked());
     if (!m_metadata)
         return;
 
@@ -2910,10 +2917,8 @@ void CodeBlock::updateAllArrayProfilePredictions(const ConcurrentJSLocker& locke
     });
 }
 
-void CodeBlock::updateAllArrayPredictions(const ConcurrentJSLocker& locker)
+void CodeBlock::updateAllArrayAllocationProfilePredictions()
 {
-    updateAllArrayProfilePredictions(locker);
-    
     forEachArrayAllocationProfile([&](ArrayAllocationProfile& profile) {
         profile.updateProfile();
     });
@@ -2921,9 +2926,13 @@ void CodeBlock::updateAllArrayPredictions(const ConcurrentJSLocker& locker)
 
 void CodeBlock::updateAllPredictions()
 {
-    ConcurrentJSLocker locker(m_lock);
-    updateAllValueProfilePredictions(locker);
-    updateAllArrayPredictions(locker);
+    updateAllNonLazyValueProfilePredictions(ConcurrentJSLocker(valueProfileLock()));
+    updateAllArrayAllocationProfilePredictions();
+    {
+        ConcurrentJSLocker locker(m_lock);
+        updateAllLazyValueProfilePredictions(locker);
+        updateAllArrayProfilePredictions(locker);
+    }
 }
 
 bool CodeBlock::shouldOptimizeNow()
@@ -2936,9 +2945,13 @@ bool CodeBlock::shouldOptimizeNow()
     unsigned numberOfLiveNonArgumentValueProfiles;
     unsigned numberOfSamplesInProfiles;
     {
-        ConcurrentJSLocker locker(m_lock);
-        updateAllArrayPredictions(locker);
-        updateAllValueProfilePredictionsAndCountLiveness(locker, numberOfLiveNonArgumentValueProfiles, numberOfSamplesInProfiles);
+        updateAllNonLazyValueProfilePredictionsAndCountLiveness(ConcurrentJSLocker(valueProfileLock()), numberOfLiveNonArgumentValueProfiles, numberOfSamplesInProfiles);
+        updateAllArrayAllocationProfilePredictions();
+        {
+            ConcurrentJSLocker locker(m_lock);
+            updateAllArrayProfilePredictions(locker);
+            updateAllLazyValueProfilePredictions(locker);
+        }
     }
 
     if (Options::verboseOSR()) {

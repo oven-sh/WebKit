@@ -135,7 +135,7 @@ public:
     static bool convertTouchCallout(BuilderState&, const CSSValue&);
 #endif
 #if ENABLE(TOUCH_EVENTS)
-    static Color convertTapHighlightColor(BuilderState&, const CSSValue&);
+    static StyleColor convertTapHighlightColor(BuilderState&, const CSSValue&);
 #endif
     static OptionSet<TouchAction> convertTouchAction(BuilderState&, const CSSValue&);
 #if ENABLE(OVERFLOW_SCROLLING_TOUCH)
@@ -162,7 +162,6 @@ public:
     static GlyphOrientation convertGlyphOrientation(BuilderState&, const CSSValue&);
     static GlyphOrientation convertGlyphOrientationOrAuto(BuilderState&, const CSSValue&);
     static std::optional<Length> convertLineHeight(BuilderState&, const CSSValue&, float multiplier = 1.f);
-    static FontSynthesis convertFontSynthesis(BuilderState&, const CSSValue&);
     static FontPalette convertFontPalette(BuilderState&, const CSSValue&);
     
     static BreakBetween convertPageBreakBetween(BuilderState&, const CSSValue&);
@@ -1423,7 +1422,7 @@ inline bool BuilderConverter::convertTouchCallout(BuilderState&, const CSSValue&
 #endif
 
 #if ENABLE(TOUCH_EVENTS)
-inline Color BuilderConverter::convertTapHighlightColor(BuilderState& builderState, const CSSValue& value)
+inline StyleColor BuilderConverter::convertTapHighlightColor(BuilderState& builderState, const CSSValue& value)
 {
     return builderState.colorFromPrimitiveValue(downcast<CSSPrimitiveValue>(value));
 }
@@ -1617,35 +1616,6 @@ inline std::optional<Length> BuilderConverter::convertLineHeight(BuilderState& b
     // FIXME: The parser should only emit the above types, so this should never be reached. We should change the
     // type of this function to return just a Length (and not an Optional).
     return std::nullopt;
-}
-
-inline FontSynthesis BuilderConverter::convertFontSynthesis(BuilderState&, const CSSValue& value)
-{
-    if (is<CSSPrimitiveValue>(value)) {
-        ASSERT(downcast<CSSPrimitiveValue>(value).valueID() == CSSValueNone);
-        return FontSynthesisNone;
-    }
-
-    FontSynthesis result = FontSynthesisNone;
-    ASSERT(is<CSSValueList>(value));
-    for (const CSSValue& v : downcast<CSSValueList>(value)) {
-        switch (downcast<CSSPrimitiveValue>(v).valueID()) {
-        case CSSValueWeight:
-            result |= FontSynthesisWeight;
-            break;
-        case CSSValueStyle:
-            result |= FontSynthesisStyle;
-            break;
-        case CSSValueSmallCaps:
-            result |= FontSynthesisSmallCaps;
-            break;
-        default:
-            ASSERT_NOT_REACHED();
-            break;
-        }
-    }
-
-    return result;
 }
 
 inline FontPalette BuilderConverter::convertFontPalette(BuilderState&, const CSSValue& value)

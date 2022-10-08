@@ -37,9 +37,6 @@
 #include <WebCore/FrameLoaderTypes.h>
 #include <WebCore/IndexedDB.h>
 #include <WebCore/InputMode.h>
-#include <WebCore/IntPoint.h>
-#include <WebCore/IntRect.h>
-#include <WebCore/IntSize.h>
 #include <WebCore/LayoutPoint.h>
 #include <WebCore/LayoutSize.h>
 #include <WebCore/LengthBox.h>
@@ -229,13 +226,6 @@ namespace IPC {
     };
 
 DEFINE_SIMPLE_ARGUMENT_CODER_FOR_HEADER(WebCore::FloatBoxExtent)
-DEFINE_SIMPLE_ARGUMENT_CODER_FOR_HEADER(WebCore::FloatRoundedRect)
-DEFINE_SIMPLE_ARGUMENT_CODER_FOR_HEADER(WebCore::FloatSize)
-DEFINE_SIMPLE_ARGUMENT_CODER_FOR_HEADER(WebCore::IntPoint)
-DEFINE_SIMPLE_ARGUMENT_CODER_FOR_HEADER(WebCore::IntRect)
-DEFINE_SIMPLE_ARGUMENT_CODER_FOR_HEADER(WebCore::IntSize)
-DEFINE_SIMPLE_ARGUMENT_CODER_FOR_HEADER(WebCore::LayoutPoint)
-DEFINE_SIMPLE_ARGUMENT_CODER_FOR_HEADER(WebCore::LayoutSize)
 
 DEFINE_SIMPLE_ARGUMENT_CODER_FOR_HEADER(WebCore::DisplayList::SetInlineFillColor)
 DEFINE_SIMPLE_ARGUMENT_CODER_FOR_HEADER(WebCore::DisplayList::SetInlineStrokeColor)
@@ -512,13 +502,6 @@ template<> struct ArgumentCoder<WebCore::TextIndicatorData> {
     static std::optional<WebCore::TextIndicatorData> decode(Decoder&);
 };
 
-template<> struct ArgumentCoder<WebCore::DictionaryPopupInfo> {
-    static void encode(Encoder&, const WebCore::DictionaryPopupInfo&);
-    static WARN_UNUSED_RETURN bool decode(Decoder&, WebCore::DictionaryPopupInfo&);
-    static void encodePlatformData(Encoder&, const WebCore::DictionaryPopupInfo&);
-    static WARN_UNUSED_RETURN bool decodePlatformData(Decoder&, WebCore::DictionaryPopupInfo&);
-};
-
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
 template<> struct ArgumentCoder<WebCore::MediaPlaybackTargetContext> {
     static void encode(Encoder&, const WebCore::MediaPlaybackTargetContext&);
@@ -620,6 +603,11 @@ template<> struct ArgumentCoder<WebCore::PromisedAttachmentInfo> {
 template<> struct ArgumentCoder<RefPtr<WebCore::SecurityOrigin>> {
     static void encode(Encoder&, const RefPtr<WebCore::SecurityOrigin>&);
     static std::optional<RefPtr<WebCore::SecurityOrigin>> decode(Decoder&);
+};
+
+template<> struct ArgumentCoder<Ref<WebCore::SecurityOrigin>> {
+    static void encode(Encoder&, const Ref<WebCore::SecurityOrigin>&);
+    static std::optional<Ref<WebCore::SecurityOrigin>> decode(Decoder&);
 };
 
 template<> struct ArgumentCoder<WebCore::FontAttributes> {
@@ -736,11 +724,6 @@ template<> struct ArgumentCoder<UnixFileDescriptor> {
 template<> struct ArgumentCoder<WebCore::PixelBuffer> {
     template<class Encoder> static void encode(Encoder&, const WebCore::PixelBuffer&);
     static std::optional<Ref<WebCore::PixelBuffer>> decode(Decoder&);
-};
-
-template<> struct ArgumentCoder<Ref<WebCore::Report>> {
-    static void encode(Encoder&, const Ref<WebCore::Report>&);
-    static std::optional<Ref<WebCore::Report>> decode(Decoder&);
 };
 
 template<> struct ArgumentCoder<RefPtr<WebCore::ReportBody>> {

@@ -102,7 +102,7 @@ struct NetworkProcessConnectionInfo;
 struct WebsiteDataRecord;
 struct WebsiteDataStoreParameters;
 
-#if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
+#if ENABLE(TRACKING_PREVENTION)
 enum class ShouldGrandfatherStatistics : bool;
 enum class StorageAccessStatus : uint8_t;
 enum class StorageAccessPromptStatus;
@@ -130,6 +130,9 @@ public:
 
     bool isPersistent() const { return !m_sessionID.isEphemeral(); }
     PAL::SessionID sessionID() const { return m_sessionID; }
+
+    enum class ProcessAccessType : uint8_t { None, OnlyIfLaunched, Launch };
+    static ProcessAccessType computeWebProcessAccessTypeForDataRemoval(OptionSet<WebsiteDataType> dataTypes, bool /* isNonPersistentStore */);
     
     void registerProcess(WebProcessProxy&);
     void unregisterProcess(WebProcessProxy&);
@@ -167,7 +170,7 @@ public:
     static String cacheDirectoryInContainerOrHomeDirectory(const String& subpath);
 #endif
 
-#if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
+#if ENABLE(TRACKING_PREVENTION)
     void clearResourceLoadStatisticsInWebProcesses(CompletionHandler<void()>&&);
 #endif
 
@@ -180,7 +183,7 @@ public:
     void resetServiceWorkerTimeoutForTesting();
     bool hasServiceWorkerBackgroundActivityForTesting() const;
 
-#if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
+#if ENABLE(TRACKING_PREVENTION)
     void fetchDataForRegistrableDomains(OptionSet<WebsiteDataType>, OptionSet<WebsiteDataFetchOption>, Vector<WebCore::RegistrableDomain>&&, CompletionHandler<void(Vector<WebsiteDataRecord>&&, HashSet<WebCore::RegistrableDomain>&&)>&&);
     void clearPrevalentResource(const URL&, CompletionHandler<void()>&&);
     void clearUserInteraction(const URL&, CompletionHandler<void()>&&);
@@ -264,7 +267,6 @@ public:
     const String& resolvedIndexedDBDatabaseDirectory() const { return m_resolvedConfiguration->indexedDBDatabaseDirectory(); }
     const String& resolvedServiceWorkerRegistrationDirectory() const { return m_resolvedConfiguration->serviceWorkerRegistrationDirectory(); }
     const String& resolvedResourceLoadStatisticsDirectory() const { return m_resolvedConfiguration->resourceLoadStatisticsDirectory(); }
-    const String& resolvedPrivateClickMeasurementStorageDirectory() const { return m_resolvedConfiguration->privateClickMeasurementStorageDirectory(); }
     const String& resolvedHSTSStorageDirectory() const { return m_resolvedConfiguration->hstsStorageDirectory(); }
     const String& resolvedGeneralStorageDirectory() const { return m_resolvedConfiguration->generalStorageDirectory(); }
 #if ENABLE(ARKIT_INLINE_PREVIEW)
@@ -341,6 +343,10 @@ public:
     SOAuthorizationCoordinator& soAuthorizationCoordinator(const WebPageProxy&);
 #endif
 
+#if PLATFORM(COCOA)
+    static String defaultWebsiteDataStoreDirectory(const String& identifier);
+    static String defaultCookieStorageFile(const String& baseDataDirectory = nullString());
+#endif
     static String defaultServiceWorkerRegistrationDirectory(const String& baseDataDirectory = nullString());
     static String defaultLocalStorageDirectory(const String& baseDataDirectory = nullString());
     static String defaultResourceLoadStatisticsDirectory(const String& baseDataDirectory = nullString());
@@ -458,7 +464,7 @@ private:
     String m_resolvedCookieStorageDirectory;
 #endif
 
-#if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
+#if ENABLE(TRACKING_PREVENTION)
     bool m_resourceLoadStatisticsDebugMode { false };
     bool m_resourceLoadStatisticsEnabled { false };
     Function<void(const String&)> m_statisticsTestingCallback;
@@ -508,7 +514,7 @@ private:
 #if HAVE(APP_SSO)
     std::unique_ptr<SOAuthorizationCoordinator> m_soAuthorizationCoordinator;
 #endif
-#if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
+#if ENABLE(TRACKING_PREVENTION)
     mutable std::optional<WebCore::ThirdPartyCookieBlockingMode> m_thirdPartyCookieBlockingMode; // Lazily computed.
 #endif
     Ref<WebCore::LocalWebLockRegistry> m_webLockRegistry;

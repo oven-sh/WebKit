@@ -207,7 +207,6 @@
 #include "SVGSVGElement.h"
 #include "SVGTitleElement.h"
 #include "SVGUseElement.h"
-#include "SVGZoomEvent.h"
 #include "SWClientConnection.h"
 #include "ScopedEventQueue.h"
 #include "ScriptController.h"
@@ -260,6 +259,7 @@
 #include "VisibilityChangeClient.h"
 #include "VisitedLinkState.h"
 #include "VisualViewport.h"
+#include "WakeLockManager.h"
 #include "WebAnimation.h"
 #include "WebAnimationUtilities.h"
 #include "WebRTCProvider.h"
@@ -545,6 +545,7 @@ Document::Document(Frame* frame, const Settings& settings, const URL& url, Docum
     , FrameDestructionObserver(frame)
     , m_settings(settings)
     , m_quirks(makeUniqueRef<Quirks>(*this))
+    , m_parserContentPolicy(DefaultParserContentPolicy)
     , m_cachedResourceLoader(createCachedResourceLoader(frame))
     , m_creationURL(url)
     , m_domTreeVersion(++s_globalTreeVersion)
@@ -688,6 +689,9 @@ Document::~Document()
     m_moduleLoader = nullptr;
 
     removeAllEventListeners();
+
+    if (m_eventLoop)
+        m_eventLoop->removeAssociatedContext(*this);
 
     // Currently we believe that Document can never outlive the parser.
     // Although the Document may be replaced synchronously, DocumentParsers
@@ -885,16 +889,6 @@ void Document::clearSelectorQueryCache()
     m_selectorQueryCache = nullptr;
 }
 
-void Document::setReferrerPolicy(ReferrerPolicy referrerPolicy)
-{
-    // Do not override existing referrer policy with the "empty string" one as the "empty string" means we should use
-    // the policy defined elsewhere.
-    if (m_referrerPolicy && referrerPolicy == ReferrerPolicy::EmptyString)
-        return;
-
-    m_referrerPolicy = referrerPolicy;
-}
-
 MediaQueryMatcher& Document::mediaQueryMatcher()
 {
     if (!m_mediaQueryMatcher)
@@ -916,6 +910,9 @@ void Document::setCompatibilityMode(DocumentCompatibilityMode mode)
         extensionStyleSheets().clearPageUserSheet();
         extensionStyleSheets().invalidateInjectedStyleSheetCache();
     }
+
+    if (renderView())
+        renderView()->updateQuirksMode();
 }
 
 String Document::compatMode() const
@@ -1934,6 +1931,13 @@ Node::NodeType Document::nodeType() const
     return DOCUMENT_NODE;
 }
 
+WakeLockManager& Document::wakeLockManager()
+{
+    if (!m_wakeLockManager)
+        m_wakeLockManager = makeUnique<WakeLockManager>(*this);
+    return *m_wakeLockManager;
+}
+
 FormController& Document::formController()
 {
     if (!m_formController)
@@ -2844,6 +2848,10 @@ void Document::stopActiveDOMObjects()
         m_documentTaskGroup->markAsReadyToStop();
     ScriptExecutionContext::stopActiveDOMObjects();
     platformSuspendOrStopActiveDOMObjects();
+
+    // https://www.w3.org/TR/screen-wake-lock/#handling-document-loss-of-full-activity
+    if (m_wakeLockManager)
+        m_wakeLockManager->releaseAllLocks(WakeLockType::Screen);
 }
 
 void Document::clearAXObjectCache()
@@ -2893,7 +2901,7 @@ void Document::setVisuallyOrdered()
 Ref<DocumentParser> Document::createParser()
 {
     // FIXME: this should probably pass the frame instead
-    return XMLDocumentParser::create(*this, view());
+    return XMLDocumentParser::create(*this, view(), m_parserContentPolicy);
 }
 
 bool Document::hasHighlight() const
@@ -3029,9 +3037,10 @@ ExceptionOr<void> Document::open(Document* entryDocument)
             }
         }
 
+        bool isNavigating = m_frame->loader().policyChecker().delegateIsDecidingNavigationPolicy() || m_frame->loader().state() == FrameState::Provisional || m_frame->navigationScheduler().hasQueuedNavigation();
         if (m_frame->loader().policyChecker().delegateIsDecidingNavigationPolicy())
             m_frame->loader().policyChecker().stopCheck();
-        if (m_frame && m_frame->loader().state() == FrameState::Provisional)
+        if (isNavigating)
             m_frame->loader().stopAllLoaders();
     }
 
@@ -3053,8 +3062,13 @@ ExceptionOr<void> Document::open(Document* entryDocument)
     if (ScriptableDocumentParser* parser = scriptableDocumentParser())
         parser->setWasCreatedByScript(true);
 
-    if (m_frame)
+    if (m_frame) {
+        // Set document's is initial about:blank to false.
+        // https://html.spec.whatwg.org/multipage/dynamic-markup-insertion.html#document-open-steps (step 13)
+        m_frame->loader().advanceStatePastInitialEmptyDocument();
+
         m_frame->loader().didExplicitOpen();
+    }
 
     return { };
 }
@@ -5270,15 +5284,6 @@ ExceptionOr<Ref<Event>> Document::createEvent(const String& type)
 
     // FIXME: Add support for "dragevent", which the DOM specification calls for.
 
-    // The following string comes from the SVG specification
-    // <http://www.w3.org/TR/SVG/script.html#InterfaceSVGZoomEvent>
-    // However, since there is no provision for initializing the event once it is created,
-    // there is no practical value in this feature.
-    // FIXME: Confirm there is no content depending on this and remove it.
-
-    if (equalLettersIgnoringASCIICase(type, "svgzoomevents"_s))
-        return Ref<Event> { SVGZoomEvent::createForBindings() };
-
     // The following strings are not part of the DOM specification and we would like to eliminate them.
     // However, we currently include them until we resolve any issues with backward compatibility.
     // FIXME: For each of the strings below, confirm that there is no content depending on it and remove
@@ -5417,7 +5422,7 @@ ExceptionOr<void> Document::setCookie(const String& value)
 
 String Document::referrer()
 {
-#if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
+#if ENABLE(TRACKING_PREVENTION)
     if (!m_referrerOverride.isEmpty())
         return m_referrerOverride;
     if (DeprecatedGlobalSettings::resourceLoadStatisticsEnabled() && frame()) {
@@ -5626,6 +5631,11 @@ void Document::setDecoder(RefPtr<TextResourceDecoder>&& decoder)
     m_decoder = WTFMove(decoder);
 }
 
+URL Document::baseURLForComplete(const URL& baseURLOverride) const
+{
+    return ((baseURLOverride.isEmpty() || baseURLOverride == aboutBlankURL()) && parentDocument()) ? parentDocument()->baseURL() : baseURLOverride;
+}
+
 URL Document::completeURL(const String& url, const URL& baseURLOverride, ForceUTF8 forceUTF8) const
 {
     // See also CSSParserContext::completeURL(const String&)
@@ -5635,7 +5645,7 @@ URL Document::completeURL(const String& url, const URL& baseURLOverride, ForceUT
     if (url.isNull())
         return URL();
 
-    const URL& baseURL = ((baseURLOverride.isEmpty() || baseURLOverride == aboutBlankURL()) && parentDocument()) ? parentDocument()->baseURL() : baseURLOverride;
+    URL baseURL = baseURLForComplete(baseURLOverride);
     if (!m_decoder || forceUTF8 == ForceUTF8::Yes)
         return URL(baseURL, url);
     return URL(baseURL, url, m_decoder->encodingForURLParsing());
@@ -6510,6 +6520,12 @@ void Document::initContentSecurityPolicy()
         contentSecurityPolicy()->copyStateFrom(parentFrame->document()->contentSecurityPolicy());
 }
 
+void Document::inheritPolicyContainerFrom(const PolicyContainer& policyContainer)
+{
+    setContentSecurityPolicy(makeUnique<ContentSecurityPolicy>(URL { m_url }, *this));
+    SecurityContext::inheritPolicyContainerFrom(policyContainer);
+}
+
 // https://html.spec.whatwg.org/#the-rules-for-choosing-a-browsing-context-given-a-browsing-context-name (Step 8.2)
 bool Document::shouldForceNoOpenerBasedOnCOOP() const
 {
@@ -6768,8 +6784,10 @@ EventLoopTaskGroup& Document::eventLoop()
 WindowEventLoop& Document::windowEventLoop()
 {
     ASSERT(isMainThread());
-    if (UNLIKELY(!m_eventLoop))
+    if (UNLIKELY(!m_eventLoop)) {
         m_eventLoop = WindowEventLoop::eventLoopForSecurityOrigin(securityOrigin());
+        m_eventLoop->addAssociatedContext(*this);
+    }
     return *m_eventLoop;
 }
 
@@ -8579,7 +8597,7 @@ void Document::updateMainArticleElementAfterLayout()
     m_mainArticleElement = tallestArticle;
 }
 
-#if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
+#if ENABLE(TRACKING_PREVENTION)
 
 bool Document::hasRequestedPageSpecificStorageAccessWithUserInteraction(const RegistrableDomain& domain)
 {
@@ -9116,12 +9134,7 @@ const CrossOriginOpenerPolicy& Document::crossOriginOpenerPolicy() const
 {
     if (this != &topDocument())
         return topDocument().crossOriginOpenerPolicy();
-    return m_crossOriginOpenerPolicy;
-}
-
-void Document::setCrossOriginOpenerPolicy(const CrossOriginOpenerPolicy& policy)
-{
-    m_crossOriginOpenerPolicy = policy;
+    return SecurityContext::crossOriginOpenerPolicy();
 }
 
 void Document::prepareCanvasesForDisplayIfNeeded()

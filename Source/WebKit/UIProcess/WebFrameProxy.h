@@ -50,7 +50,6 @@ class Decoder;
 
 namespace WebKit {
 class SafeBrowsingWarning;
-class WebCertificateInfo;
 class WebFramePolicyListenerProxy;
 class WebsiteDataStore;
 enum class ShouldExpectSafeBrowsingResult : bool;
@@ -82,7 +81,6 @@ public:
     void loadURL(const URL&, const String& referrer = String());
     // Sub frames only. For main frames, use WebPageProxy::loadData.
     void loadData(const IPC::DataReference&, const String& MIMEType, const String& encodingName, const URL& baseURL);
-    void stopLoading();
 
     const URL& url() const { return m_frameLoadState.url(); }
     const URL& provisionalURL() const { return m_frameLoadState.provisionalURL(); }
@@ -95,10 +93,9 @@ public:
 
     const String& title() const { return m_title; }
 
-    WebCertificateInfo* certificateInfo() const { return m_certificateInfo.get(); }
+    const WebCore::CertificateInfo& certificateInfo() const { return m_certificateInfo; }
 
     bool canProvideSource() const;
-    bool canShowMIMEType(const String& mimeType) const;
 
     bool isDisplayingStandaloneImageDocument() const;
     bool isDisplayingStandaloneMediaDocument() const;
@@ -113,7 +110,7 @@ public:
     void didExplicitOpen(URL&&, String&& mimeType);
     void didReceiveServerRedirectForProvisionalLoad(const URL&);
     void didFailProvisionalLoad();
-    void didCommitLoad(const String& contentType, WebCertificateInfo&, bool containsPluginDocument);
+    void didCommitLoad(const String& contentType, const WebCore::CertificateInfo&, bool containsPluginDocument);
     void didFinishLoad();
     void didFailLoad();
     void didSameDocumentNavigation(const URL&); // eg. anchor navigation, session state change.
@@ -145,7 +142,7 @@ private:
     String m_MIMEType;
     String m_title;
     bool m_containsPluginDocument { false };
-    RefPtr<WebCertificateInfo> m_certificateInfo;
+    WebCore::CertificateInfo m_certificateInfo;
     RefPtr<WebFramePolicyListenerProxy> m_activeListener;
     WebCore::FrameIdentifier m_frameID;
 #if ENABLE(CONTENT_FILTERING)

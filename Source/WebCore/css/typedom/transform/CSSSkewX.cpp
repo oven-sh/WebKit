@@ -32,6 +32,10 @@
 
 #if ENABLE(CSS_TYPED_OM)
 
+#include "CSSFunctionValue.h"
+#include "CSSNumericFactory.h"
+#include "CSSNumericValue.h"
+#include "CSSStyleValueFactory.h"
 #include "DOMMatrix.h"
 #include "ExceptionOr.h"
 #include <wtf/IsoMallocInlines.h>
@@ -47,10 +51,39 @@ ExceptionOr<Ref<CSSSkewX>> CSSSkewX::create(Ref<CSSNumericValue> ax)
     return adoptRef(*new CSSSkewX(WTFMove(ax)));
 }
 
+ExceptionOr<Ref<CSSSkewX>> CSSSkewX::create(CSSFunctionValue& cssFunctionValue)
+{
+    if (cssFunctionValue.name() != CSSValueSkewX) {
+        ASSERT_NOT_REACHED();
+        return CSSSkewX::create(CSSNumericFactory::deg(0));
+    }
+
+    if (cssFunctionValue.size() != 1 || !cssFunctionValue.item(0)) {
+        ASSERT_NOT_REACHED();
+        return Exception { TypeError, "Unexpected number of values."_s };
+    }
+
+    auto valueOrException = CSSStyleValueFactory::reifyValue(*cssFunctionValue.item(0));
+    if (valueOrException.hasException())
+        return valueOrException.releaseException();
+    if (!is<CSSNumericValue>(valueOrException.returnValue()))
+        return Exception { TypeError, "Expected a CSSNumericValue."_s };
+    return CSSSkewX::create(downcast<CSSNumericValue>(valueOrException.releaseReturnValue().get()));
+}
+
 CSSSkewX::CSSSkewX(Ref<CSSNumericValue> ax)
     : CSSTransformComponent(Is2D::Yes)
     , m_ax(WTFMove(ax))
 {
+}
+
+ExceptionOr<void> CSSSkewX::setAx(Ref<CSSNumericValue> ax)
+{
+    if (!ax->type().matches<CSSNumericBaseType::Angle>())
+        return Exception { TypeError };
+
+    m_ax = WTFMove(ax);
+    return { };
 }
 
 void CSSSkewX::serialize(StringBuilder& builder) const
@@ -63,8 +96,17 @@ void CSSSkewX::serialize(StringBuilder& builder) const
 
 ExceptionOr<Ref<DOMMatrix>> CSSSkewX::toMatrix()
 {
-    // FIXME: Implement.
-    return DOMMatrix::fromMatrix(DOMMatrixInit { });
+    if (!is<CSSUnitValue>(m_ax))
+        return Exception { TypeError };
+
+    auto x = downcast<CSSUnitValue>(m_ax.get()).convertTo(CSSUnitType::CSS_DEG);
+    if (!x)
+        return Exception { TypeError };
+
+    TransformationMatrix matrix { };
+    matrix.skewX(x->value());
+
+    return { DOMMatrix::create(WTFMove(matrix), DOMMatrixReadOnly::Is2D::Yes) };
 }
 
 } // namespace WebCore

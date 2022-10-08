@@ -86,17 +86,7 @@ void JSString::dumpToStream(const JSCell* cell, PrintStream& out)
 
 bool JSString::equalSlowCase(JSGlobalObject* globalObject, JSString* other) const
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (length() != other->length())
-        return false;
-
-    String str1 = value(globalObject);
-    RETURN_IF_EXCEPTION(scope, false);
-    String str2 = other->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, false);
-    return WTF::equal(*str1.impl(), *str2.impl());
+    return equalInline(globalObject, other);
 }
 
 bool JSString::equalSlowCase(JSGlobalObject* globalObject, const char* ptr, size_t len) const

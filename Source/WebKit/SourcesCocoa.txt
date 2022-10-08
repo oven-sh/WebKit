@@ -129,7 +129,6 @@ Shared/ApplePay/mac/WebPaymentCoordinatorProxyMac.mm
 Shared/APIWebArchive.mm
 Shared/APIWebArchiveResource.mm
 Shared/DocumentEditingContext.mm
-Shared/FocusedElementInformation.cpp
 Shared/VisibleContentRectUpdateInfo.cpp
 Shared/WebSQLiteDatabaseTracker.cpp
 
@@ -251,6 +250,7 @@ UIProcess/API/C/WKUserScriptRef.cpp
 UIProcess/API/C/cg/WKIconDatabaseCG.cpp
 
 UIProcess/API/C/mac/WKContextPrivateMac.mm
+UIProcess/API/C/mac/WKFrameMac.cpp
 UIProcess/API/C/mac/WKNotificationPrivateMac.mm
 UIProcess/API/C/mac/WKPagePrivateMac.mm
 UIProcess/API/C/mac/WKProtectionSpaceNS.mm
@@ -291,6 +291,8 @@ UIProcess/API/Cocoa/_WKTextManipulationExclusionRule.mm
 UIProcess/API/Cocoa/_WKTextManipulationItem.mm
 UIProcess/API/Cocoa/_WKTextManipulationToken.mm
 UIProcess/API/Cocoa/_WKThumbnailView.mm
+UIProcess/API/Cocoa/_WKUserContentExtensionStore.mm
+UIProcess/API/Cocoa/_WKUserContentFilter.mm
 UIProcess/API/Cocoa/_WKUserContentWorld.mm
 UIProcess/API/Cocoa/_WKUserInitiatedAction.mm
 UIProcess/API/Cocoa/_WKUserStyleSheet.mm
@@ -360,8 +362,6 @@ UIProcess/API/mac/WKWebViewTestingMac.mm
 UIProcess/Authentication/cocoa/AuthenticationChallengeProxyCocoa.mm
 UIProcess/Authentication/cocoa/SecKeyProxyStore.mm
 
-UIProcess/Authentication/mac/WebCredentialMac.mm
-
 UIProcess/Automation/cocoa/WebAutomationSessionCocoa.mm
 
 UIProcess/Automation/ios/WebAutomationSessionIOS.mm
@@ -400,6 +400,7 @@ UIProcess/Cocoa/NavigationState.mm
 UIProcess/Cocoa/PageClientImplCocoa.mm
 UIProcess/Cocoa/PlatformXRCoordinator.mm
 UIProcess/Cocoa/PlaybackSessionManagerProxy.mm
+UIProcess/Cocoa/ProcessAssertionCocoa.mm
 UIProcess/Cocoa/ResourceLoadDelegate.mm
 UIProcess/Cocoa/SafeBrowsingWarningCocoa.mm
 UIProcess/Cocoa/SessionStateCoding.mm
@@ -471,7 +472,6 @@ UIProcess/ios/DragDropInteractionState.mm
 UIProcess/ios/GestureRecognizerConsistencyEnforcer.mm
 UIProcess/ios/InputViewUpdateDeferrer.mm
 UIProcess/ios/PageClientImplIOS.mm
-UIProcess/ios/ProcessAssertionIOS.mm
 UIProcess/ios/ProcessStateMonitor.mm
 UIProcess/ios/SmartMagnificationController.mm
 UIProcess/ios/TextCheckerIOS.mm
@@ -479,6 +479,7 @@ UIProcess/ios/ViewGestureControllerIOS.mm
 UIProcess/ios/WebDataListSuggestionsDropdownIOS.mm
 UIProcess/ios/WebPageProxyIOS.mm
 UIProcess/ios/WebProcessProxyIOS.mm
+UIProcess/ios/WebScreenOrientationManagerProxyIOS.mm
 UIProcess/ios/WKActionSheet.mm
 UIProcess/ios/WKActionSheetAssistant.mm
 UIProcess/ios/WKApplicationStateTrackingView.mm
@@ -571,8 +572,6 @@ UIProcess/WebAuthentication/Cocoa/AuthenticationServicesCoreSoftLink.mm @no-unif
 UIProcess/WebAuthentication/Cocoa/AuthenticatorPresenterCoordinator.mm
 UIProcess/WebAuthentication/Cocoa/CcidConnection.mm
 UIProcess/WebAuthentication/Cocoa/CcidService.mm
-UIProcess/WebAuthentication/Cocoa/HidConnection.mm
-UIProcess/WebAuthentication/Cocoa/HidService.mm
 UIProcess/WebAuthentication/Cocoa/LocalAuthenticationSoftLink.mm @no-unify
 UIProcess/WebAuthentication/Cocoa/LocalAuthenticator.mm
 UIProcess/WebAuthentication/Cocoa/LocalConnection.mm

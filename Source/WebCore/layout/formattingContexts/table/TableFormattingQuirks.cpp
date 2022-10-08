@@ -27,8 +27,8 @@
 #include "TableFormattingQuirks.h"
 
 #include "LayoutBox.h"
-#include "LayoutContainerBox.h"
 #include "LayoutContainingBlockChainIterator.h"
+#include "LayoutElementBox.h"
 #include "LayoutState.h"
 #include "TableFormattingContext.h"
 #include "TableGrid.h"
@@ -41,7 +41,7 @@ TableFormattingQuirks::TableFormattingQuirks(const TableFormattingContext& table
 {
 }
 
-bool TableFormattingQuirks::shouldIgnoreChildContentVerticalMargin(const ContainerBox& cellBox)
+bool TableFormattingQuirks::shouldIgnoreChildContentVerticalMargin(const ElementBox& cellBox)
 {
     // Normally BFC root content height takes the margin box of the child content as vertical margins don't collapse with BFC roots,
     // but table cell boxes do collapse their (non-existing) margins with child quirk margins (so much quirk), so here we check
@@ -60,7 +60,7 @@ LayoutUnit TableFormattingQuirks::heightValueOfNearestContainingBlockWithFixedHe
     // The "let's find the nearest ancestor with fixed height to resolve percent height" quirk is limited to the table formatting
     // context. If we can't resolve it within the table subtree, we default it to 0.
     // e.g <div style="height: 100px"><table><tr><td style="height: 100%"></td></tr></table></div> is resolved to 0px.
-    for (auto& ancestor : containingBlockChainWithinFormattingContext(layoutBox)) {
+    for (auto& ancestor : containingBlockChainWithinFormattingContext(layoutBox, formattingContext().root())) {
         auto height = ancestor.style().logicalHeight();
         if (height.isFixed())
             return LayoutUnit { height.value() };

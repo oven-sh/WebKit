@@ -490,7 +490,7 @@ void MediaPlayerPrivateGStreamer::seek(const MediaTime& mediaTime)
         return;
     }
 
-    if (m_isLiveStream) {
+    if (m_isLiveStream.value_or(false)) {
         GST_DEBUG_OBJECT(pipeline(), "[Seek] Live stream seek unhandled");
         return;
     }
@@ -616,7 +616,7 @@ void MediaPlayerPrivateGStreamer::setRate(float rate)
         return;
     }
 
-    if (m_isLiveStream) {
+    if (m_isLiveStream.value_or(false)) {
         // Notify upper layers that we cannot handle passed rate.
         m_isChangingRate = false;
         m_player->rateChanged();
@@ -664,7 +664,7 @@ void MediaPlayerPrivateGStreamer::setPreload(MediaPlayer::Preload preload)
 #endif
 
     GST_DEBUG_OBJECT(pipeline(), "Setting preload to %s", convertEnumerationToString(preload).utf8().data());
-    if (preload == MediaPlayer::Preload::Auto && m_isLiveStream)
+    if (preload == MediaPlayer::Preload::Auto && m_isLiveStream.value_or(false))
         return;
 
     m_preload = preload;
@@ -679,7 +679,7 @@ void MediaPlayerPrivateGStreamer::setPreload(MediaPlayer::Preload preload)
 std::unique_ptr<PlatformTimeRanges> MediaPlayerPrivateGStreamer::buffered() const
 {
     auto timeRanges = makeUnique<PlatformTimeRanges>();
-    if (m_didErrorOccur || m_isLiveStream)
+    if (m_didErrorOccur || m_isLiveStream.value_or(false))
         return timeRanges;
 
     MediaTime mediaDuration = durationMediaTime();
@@ -717,7 +717,7 @@ MediaTime MediaPlayerPrivateGStreamer::maxMediaTimeSeekable() const
     if (m_didErrorOccur)
         return MediaTime::zeroTime();
 
-    if (m_isLiveStream)
+    if (m_isLiveStream.value_or(false))
         return MediaTime::zeroTime();
 
 #if ENABLE(MEDIA_STREAM)
@@ -771,7 +771,7 @@ bool MediaPlayerPrivateGStreamer::didLoadingProgress() const
 
 unsigned long long MediaPlayerPrivateGStreamer::totalBytes() const
 {
-    if (m_didErrorOccur || !m_source || m_isLiveStream)
+    if (m_didErrorOccur || !m_source || m_isLiveStream.value_or(false))
         return 0;
 
     if (m_totalBytes)
@@ -1158,7 +1158,11 @@ MediaTime MediaPlayerPrivateGStreamer::platformDuration() const
     int64_t duration = 0;
     if (!gst_element_query_duration(m_pipeline.get(), GST_FORMAT_TIME, &duration) || !GST_CLOCK_TIME_IS_VALID(duration)) {
         GST_DEBUG_OBJECT(pipeline(), "Time duration query failed for %s", m_url.string().utf8().data());
-        return MediaTime::positiveInfiniteTime();
+        // https://www.w3.org/TR/2011/WD-html5-20110113/video.html#getting-media-metadata
+        // In order to be strict with the spec, consider that not "enough of the media data has been fetched to determine
+        // the duration of the media resource" and therefore return invalidTime only when we know for sure that the
+        // stream isn't live (treating empty value as unsure).
+        return m_isLiveStream.value_or(true) ? MediaTime::positiveInfiniteTime() : MediaTime::invalidTime();
     }
 
     GST_LOG_OBJECT(pipeline(), "Duration: %" GST_TIME_FORMAT, GST_TIME_ARGS(duration));
@@ -1817,6 +1821,9 @@ void MediaPlayerPrivateGStreamer::handleMessage(GstMessage* message)
     case GST_MESSAGE_ASYNC_DONE:
         if (!messageSourceIsPlaybin || m_isDelayingLoad)
             break;
+
+        // The MediaPlayerPrivateGStreamer superclass now processes what it needs by calling updateStates() in handleMessage() for
+        // GST_MESSAGE_STATE_CHANGED. However, subclasses still need to override asyncStateChangeDone() to do their own stuff.
         asyncStateChangeDone();
         break;
     case GST_MESSAGE_STATE_CHANGED: {
@@ -1941,7 +1948,7 @@ void MediaPlayerPrivateGStreamer::handleMessage(GstMessage* message)
                 }
                 if (!isRangeRequest) {
                     m_isLiveStream = !contentLength;
-                    GST_INFO_OBJECT(pipeline(), "%s stream detected", m_isLiveStream ? "Live" : "Non-live");
+                    GST_INFO_OBJECT(pipeline(), "%s stream detected", m_isLiveStream.value_or(false) ? "Live" : "Non-live");
                     updateDownloadBufferingFlag();
                 }
             }
@@ -2027,7 +2034,6 @@ void MediaPlayerPrivateGStreamer::updateBufferingStatus(GstBufferingMode mode, d
 #endif
 
     m_didDownloadFinish = percentage == 100;
-    m_isBuffering = !m_didDownloadFinish;
 
     if (!m_didDownloadFinish)
         m_isBuffering = true;
@@ -2040,7 +2046,7 @@ void MediaPlayerPrivateGStreamer::updateBufferingStatus(GstBufferingMode mode, d
         updateMaxTimeLoaded(percentage);
 
         m_bufferingPercentage = percentage;
-        if (m_didDownloadFinish || (!wasBuffering && m_isBuffering))
+        if (m_didDownloadFinish || !wasBuffering)
             updateStates();
 
         break;
@@ -2229,32 +2235,22 @@ void MediaPlayerPrivateGStreamer::purgeOldDownloadFiles(const String& downloadFi
     }
 }
 
-void MediaPlayerPrivateGStreamer::asyncStateChangeDone()
+void MediaPlayerPrivateGStreamer::finishSeek()
 {
-    if (!m_pipeline || m_didErrorOccur)
+    GST_DEBUG_OBJECT(pipeline(), "[Seek] seeked to %s", toString(m_seekTime).utf8().data());
+    m_isSeeking = false;
+    invalidateCachedPosition();
+    if (m_timeOfOverlappingSeek != m_seekTime && m_timeOfOverlappingSeek.isValid()) {
+        seek(m_timeOfOverlappingSeek);
+        m_timeOfOverlappingSeek = MediaTime::invalidTime();
         return;
+    }
+    m_timeOfOverlappingSeek = MediaTime::invalidTime();
 
-    if (m_isSeeking) {
-        if (m_isSeekPending)
-            updateStates();
-        else {
-            GST_DEBUG_OBJECT(pipeline(), "[Seek] seeked to %s", toString(m_seekTime).utf8().data());
-            m_isSeeking = false;
-            invalidateCachedPosition();
-            if (m_timeOfOverlappingSeek != m_seekTime && m_timeOfOverlappingSeek.isValid()) {
-                seek(m_timeOfOverlappingSeek);
-                m_timeOfOverlappingSeek = MediaTime::invalidTime();
-                return;
-            }
-            m_timeOfOverlappingSeek = MediaTime::invalidTime();
-
-            // The pipeline can still have a pending state. In this case a position query will fail.
-            // Right now we can use m_seekTime as a fallback.
-            m_canFallBackToLastFinishedSeekPosition = true;
-            timeChanged();
-        }
-    } else
-        updateStates();
+    // The pipeline can still have a pending state. In this case a position query will fail.
+    // Right now we can use m_seekTime as a fallback.
+    m_canFallBackToLastFinishedSeekPosition = true;
+    timeChanged();
 }
 
 void MediaPlayerPrivateGStreamer::updateStates()
@@ -2305,7 +2301,7 @@ void MediaPlayerPrivateGStreamer::updateStates()
             if (m_isBuffering) {
                 GRefPtr<GstQuery> query = adoptGRef(gst_query_new_buffering(GST_FORMAT_PERCENT));
 
-                m_isBuffering = m_bufferingPercentage == 100;
+                m_isBuffering = m_bufferingPercentage < 100;
                 if (gst_element_query(m_pipeline.get(), query.get())) {
                     gboolean isBuffering = m_isBuffering;
                     gst_query_parse_buffering_percent(query.get(), &isBuffering, nullptr);
@@ -2334,6 +2330,7 @@ void MediaPlayerPrivateGStreamer::updateStates()
             break;
         }
 
+        bool shouldPauseForBuffering = false;
         // Sync states where needed.
         if (m_currentState == GST_STATE_PAUSED) {
             if (!m_areVolumeAndMuteInitialized) {
@@ -2349,7 +2346,8 @@ void MediaPlayerPrivateGStreamer::updateStates()
         } else if (m_currentState == GST_STATE_PLAYING) {
             m_isPaused = false;
 
-            if ((m_isBuffering && !m_isLiveStream) || !m_playbackRate) {
+            shouldPauseForBuffering = (m_isBuffering && !m_isLiveStream.value_or(false));
+            if (shouldPauseForBuffering || !m_playbackRate) {
                 GST_INFO_OBJECT(pipeline(), "[Buffering] Pausing stream for buffering.");
                 changePipelineState(GST_STATE_PAUSED);
             }
@@ -2366,7 +2364,7 @@ void MediaPlayerPrivateGStreamer::updateStates()
         // the media element gets a chance to enable its page sleep disabler.
         // Emitting this notification in more cases triggers unwanted code paths
         // and test timeouts.
-        if (stateReallyChanged && (m_oldState != m_currentState) && (m_oldState == GST_STATE_PAUSED && m_currentState == GST_STATE_PLAYING)) {
+        if (stateReallyChanged && (m_oldState != m_currentState) && (m_oldState == GST_STATE_PAUSED && m_currentState == GST_STATE_PLAYING) && !shouldPauseForBuffering) {
             GST_INFO_OBJECT(pipeline(), "Playback state changed from %s to %s. Notifying the media player client", gst_element_state_get_name(m_oldState), gst_element_state_get_name(m_currentState));
             shouldUpdatePlaybackState = true;
         }
@@ -2429,7 +2427,8 @@ void MediaPlayerPrivateGStreamer::updateStates()
                 invalidateCachedPosition();
                 GST_DEBUG_OBJECT(pipeline(), "[Seek] seeking to %s failed", toString(m_seekTime).utf8().data());
             }
-        }
+        } else if (m_isSeeking && !(state == GST_STATE_PLAYING && pending == GST_STATE_PAUSED))
+            finishSeek();
     }
 
     if (oldIsPaused != m_isPaused)
@@ -2656,7 +2655,7 @@ void MediaPlayerPrivateGStreamer::updateDownloadBufferingFlag()
     bool diskCacheDisabled = isMediaDiskCacheDisabled();
     GST_DEBUG_OBJECT(pipeline(), "Media on-disk cache is %s", (diskCacheDisabled) ? "disabled" : "enabled");
 
-    bool shouldDownload = !m_isLiveStream && m_preload == MediaPlayer::Preload::Auto && !diskCacheDisabled;
+    bool shouldDownload = !m_isLiveStream.value_or(false) && m_preload == MediaPlayer::Preload::Auto && !diskCacheDisabled;
     if (shouldDownload) {
         GST_INFO_OBJECT(pipeline(), "Enabling on-disk buffering");
         g_object_set(m_pipeline.get(), "flags", flags | flagDownload, nullptr);
@@ -2900,7 +2899,7 @@ bool MediaPlayerPrivateGStreamer::didPassCORSAccessCheck() const
 
 bool MediaPlayerPrivateGStreamer::canSaveMediaData() const
 {
-    if (m_isLiveStream)
+    if (m_isLiveStream.value_or(false))
         return false;
 
     if (m_url.isLocalFile())
@@ -3490,7 +3489,7 @@ void MediaPlayerPrivateGStreamer::triggerRepaint(GstSample* sample)
             // still haven't received a sample to render. So we need to notify the media element in
             // such cases only after pre-rolling has completed. Otherwise the media element might
             // emit a play event too early, before pre-rolling has been completed.
-            if (m_isLiveStream && m_readyState < MediaPlayer::ReadyState::HaveEnoughData) {
+            if (m_isLiveStream.value_or(false) && m_readyState < MediaPlayer::ReadyState::HaveEnoughData) {
                 m_readyState = MediaPlayer::ReadyState::HaveEnoughData;
                 m_player->readyStateChanged();
             }
@@ -3771,7 +3770,7 @@ MediaPlayer::MovieLoadType MediaPlayerPrivateGStreamer::movieLoadType() const
     if (m_readyState == MediaPlayer::ReadyState::HaveNothing)
         return MediaPlayer::MovieLoadType::Unknown;
 
-    if (m_isLiveStream)
+    if (m_isLiveStream.value_or(false))
         return MediaPlayer::MovieLoadType::LiveStream;
 
     return MediaPlayer::MovieLoadType::Download;
@@ -4017,7 +4016,7 @@ InitData MediaPlayerPrivateGStreamer::parseInitDataFromProtectionMessage(GstMess
         // which of the UUIDs it is, so we just overwrite it. This is
         // a quirk of how GStreamer provides protection events, and
         // it's not very robust, so be careful here!
-        systemId = String::fromLatin1(eventKeySystemId);
+        systemId = GStreamerEMEUtilities::uuidToKeySystem(String::fromLatin1(eventKeySystemId));
         InitData initData { systemId, data };
         payloadBuilder.append(*initData.payload());
         m_handledProtectionEvents.add(GST_EVENT_SEQNUM(event.get()));
@@ -4139,7 +4138,7 @@ void MediaPlayerPrivateGStreamer::handleProtectionEvent(GstEvent* event)
     const char* eventKeySystemUUID = nullptr;
     GstBuffer* initData = nullptr;
     gst_event_parse_protection(event, &eventKeySystemUUID, &initData, nullptr);
-    initializationDataEncountered({ String::fromLatin1(eventKeySystemUUID), initData });
+    initializationDataEncountered({ GStreamerEMEUtilities::uuidToKeySystem(String::fromLatin1(eventKeySystemUUID)), initData });
 }
 
 bool MediaPlayerPrivateGStreamer::waitingForKey() const

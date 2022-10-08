@@ -26,6 +26,7 @@
 #include "config.h"
 #include "DFGOperations.h"
 
+#include "ArrayPrototypeInlines.h"
 #include "ButterflyInlines.h"
 #include "CacheableIdentifierInlines.h"
 #include "ClonedArguments.h"
@@ -44,6 +45,8 @@
 #include "FrameTracers.h"
 #include "HasOwnPropertyCache.h"
 #include "Interpreter.h"
+#include "InterpreterInlines.h"
+#include "JITCodeInlines.h"
 #include "JITWorklist.h"
 #include "JSArrayInlines.h"
 #include "JSArrayIterator.h"
@@ -751,6 +754,32 @@ JSC_DEFINE_JIT_OPERATION(operationArithTrunc, EncodedJSValue, (JSGlobalObject* g
     double truncatedValueOfArgument = argument.toIntegerPreserveNaN(globalObject);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
     return JSValue::encode(jsNumber(truncatedValueOfArgument));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationArithMinMultipleDouble, double, (const double* buffer, unsigned elementCount))
+{
+    double result = +std::numeric_limits<double>::infinity();
+    for (unsigned index = 0; index < elementCount; ++index) {
+        double val = buffer[index];
+        if (std::isnan(val))
+            return PNaN;
+        if (val < result || (!val && !result && std::signbit(val)))
+            result = val;
+    }
+    return result;
+}
+
+JSC_DEFINE_JIT_OPERATION(operationArithMaxMultipleDouble, double, (const double* buffer, unsigned elementCount))
+{
+    double result = -std::numeric_limits<double>::infinity();
+    for (unsigned index = 0; index < elementCount; ++index) {
+        double val = buffer[index];
+        if (std::isnan(val))
+            return PNaN;
+        if (val > result || (!val && !result && !std::signbit(val)))
+            result = val;
+    }
+    return result;
 }
 
 ALWAYS_INLINE EncodedJSValue getByValCellInt(JSGlobalObject* globalObject, VM& vm, JSCell* base, int32_t index)
@@ -2506,47 +2535,6 @@ JSC_DEFINE_JIT_OPERATION(operationStringValueOf, JSString*, (JSGlobalObject* glo
     return nullptr;
 }
 
-enum class StringReplaceSubstitutions : bool { Yes, No };
-enum class StringReplaceUseTable : bool { Yes, No };
-template<StringReplaceSubstitutions substitutions, StringReplaceUseTable useTable, typename TableType>
-static ALWAYS_INLINE JSString* stringReplaceStringString(JSGlobalObject* globalObject, JSString* stringCell, String string, String search, String replacement, const TableType* table)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    size_t matchStart;
-    if constexpr (useTable == StringReplaceUseTable::Yes)
-        matchStart = table->find(string, search);
-    else
-        matchStart = string.find(search);
-    if (matchStart == notFound)
-        return stringCell;
-
-    size_t searchLength = search.length();
-    size_t matchEnd = matchStart + searchLength;
-    if constexpr (substitutions == StringReplaceSubstitutions::Yes) {
-        size_t dollarSignPosition = replacement.find('$');
-        if (dollarSignPosition != WTF::notFound) {
-            StringBuilder builder(StringBuilder::OverflowHandler::RecordOverflow);
-            int ovector[2] = { static_cast<int>(matchStart),  static_cast<int>(matchEnd) };
-            substituteBackreferencesSlow(builder, replacement, string, ovector, nullptr, dollarSignPosition);
-            if (UNLIKELY(builder.hasOverflowed())) {
-                throwOutOfMemoryError(globalObject, scope);
-                return nullptr;
-            }
-            replacement = builder.toString();
-        }
-    }
-
-    auto result = tryMakeString(StringView(string).substring(0, matchStart), replacement, StringView(string).substring(matchEnd, string.length() - matchEnd));
-    if (UNLIKELY(!result)) {
-        throwOutOfMemoryError(globalObject, scope);
-        return nullptr;
-    }
-
-    return jsString(vm, WTFMove(result));
-}
-
 JSC_DEFINE_JIT_OPERATION(operationStringReplaceStringString, JSString*, (JSGlobalObject* globalObject, JSString* stringCell, JSString* searchCell, JSString* replacementCell))
 {
     VM& vm = globalObject->vm();
@@ -2681,6 +2669,24 @@ JSC_DEFINE_JIT_OPERATION(operationStringReplaceStringEmptyStringWithTable8, JSSt
     return jsString(vm, WTFMove(result));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationStringReplaceStringGeneric, JSString*, (JSGlobalObject* globalObject, JSString* stringCell, JSString* searchCell, EncodedJSValue encodedReplaceValue))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    String string = stringCell->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    String search = searchCell->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    JSValue replaceValue = JSValue::decode(encodedReplaceValue);
+
+    RELEASE_AND_RETURN(scope, replaceUsingStringSearch(vm, globalObject, stringCell, WTFMove(string), WTFMove(search), replaceValue, StringReplaceMode::Single));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationStringSubstr, JSCell*, (JSGlobalObject* globalObject, JSCell* cell, int32_t from, int32_t span))
 {
     VM& vm = globalObject->vm();
@@ -2699,6 +2705,24 @@ JSC_DEFINE_JIT_OPERATION(operationStringSlice, JSCell*, (JSGlobalObject* globalO
     JSString* string = asString(cell);
     static_assert(static_cast<uint64_t>(JSString::MaxLength) <= static_cast<uint64_t>(std::numeric_limits<int32_t>::max()));
     return stringSlice(globalObject, vm, string, string->length(), start, end);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationStringSubstring, JSString*, (JSGlobalObject* globalObject, JSString* string, int32_t start))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+
+    return stringSubstring(globalObject, string, start, std::nullopt);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationStringSubstringWithEnd, JSString*, (JSGlobalObject* globalObject, JSString* string, int32_t start, int32_t end))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+
+    return stringSubstring(globalObject, string, start, end);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationToLowerCase, JSString*, (JSGlobalObject* globalObject, JSString* string, uint32_t failingIndex))
@@ -3098,11 +3122,9 @@ JSC_DEFINE_JIT_OPERATION(operationNumberIsInteger, size_t, (JSGlobalObject* glob
     return NumberConstructor::isIntegerImpl(JSValue::decode(value));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationArrayIndexOfString, UCPUStrictInt32, (JSGlobalObject* globalObject, Butterfly* butterfly, JSString* searchElement, int32_t index))
+static ALWAYS_INLINE UCPUStrictInt32 arrayIndexOfString(JSGlobalObject* globalObject, Butterfly* butterfly, JSString* searchElement, int32_t index)
 {
     VM& vm = globalObject->vm();
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     int32_t length = butterfly->publicLength();
@@ -3114,13 +3136,22 @@ JSC_DEFINE_JIT_OPERATION(operationArrayIndexOfString, UCPUStrictInt32, (JSGlobal
         auto* string = asString(value);
         if (string == searchElement)
             return toUCPUStrictInt32(index);
-        if (string->equal(globalObject, searchElement)) {
+        if (string->equalInline(globalObject, searchElement)) {
             scope.assertNoExceptionExceptTermination();
             return toUCPUStrictInt32(index);
         }
         RETURN_IF_EXCEPTION(scope, { });
     }
     return toUCPUStrictInt32(-1);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationArrayIndexOfString, UCPUStrictInt32, (JSGlobalObject* globalObject, Butterfly* butterfly, JSString* searchElement, int32_t index))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+
+    return arrayIndexOfString(globalObject, butterfly, searchElement, index);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationArrayIndexOfValueInt32OrContiguous, UCPUStrictInt32, (JSGlobalObject* globalObject, Butterfly* butterfly, EncodedJSValue encodedValue, int32_t index))
@@ -3132,8 +3163,22 @@ JSC_DEFINE_JIT_OPERATION(operationArrayIndexOfValueInt32OrContiguous, UCPUStrict
 
     JSValue searchElement = JSValue::decode(encodedValue);
 
+    if (searchElement.isString())
+        RELEASE_AND_RETURN(scope, arrayIndexOfString(globalObject, butterfly, asString(searchElement), index));
+
     int32_t length = butterfly->publicLength();
     auto data = butterfly->contiguous().data();
+
+    if (index >= length)
+        return toUCPUStrictInt32(-1);
+
+    if (searchElement.isObject()) {
+        auto* result = bitwise_cast<const WriteBarrier<Unknown>*>(WTF::find64(bitwise_cast<const uint64_t*>(data + index), encodedValue, length - index));
+        if (result)
+            return toUCPUStrictInt32(result - data);
+        return toUCPUStrictInt32(-1);
+    }
+
     for (; index < length; ++index) {
         JSValue value = data[index].get();
         if (!value)
@@ -3405,6 +3450,60 @@ JSC_DEFINE_JIT_OPERATION(operationSpreadFastArray, JSCell*, (JSGlobalObject* glo
 
     return JSImmutableButterfly::createFromArray(globalObject, vm, array);
 }
+
+static ALWAYS_INLINE JSObject* newArrayWithSpeciesImpl(JSGlobalObject* globalObject, uint64_t length, JSObject* array, IndexingType indexingType)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    std::pair<SpeciesConstructResult, JSObject*> speciesResult = speciesConstructArray(globalObject, array, length);
+    EXCEPTION_ASSERT(!!scope.exception() == (speciesResult.first == SpeciesConstructResult::Exception));
+
+    if (UNLIKELY(speciesResult.first == SpeciesConstructResult::Exception))
+        return { };
+
+    if (LIKELY(speciesResult.first == SpeciesConstructResult::FastPath)) {
+        if (UNLIKELY(length > std::numeric_limits<unsigned>::max())) {
+            throwRangeError(globalObject, scope, "Array size is not a small enough positive integer."_s);
+            return nullptr;
+        }
+
+        Structure* structure = nullptr;
+        if (length >= MIN_ARRAY_STORAGE_CONSTRUCTION_LENGTH)
+            structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithArrayStorage);
+        else
+            structure = globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType);
+        JSArray* result = JSArray::tryCreate(vm, structure, length);
+        if (UNLIKELY(!result)) {
+            throwOutOfMemoryError(globalObject, scope);
+            return nullptr;
+        }
+        return result;
+    }
+
+    ASSERT(speciesResult.first == SpeciesConstructResult::CreatedObject);
+    return speciesResult.second;
+}
+
+JSC_DEFINE_JIT_OPERATION(operationNewArrayWithSpeciesInt32, JSObject*, (JSGlobalObject* globalObject, int32_t length, JSObject* array, IndexingType indexingType))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+
+    return newArrayWithSpeciesImpl(globalObject, length, array, indexingType);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationNewArrayWithSpecies, JSObject*, (JSGlobalObject* globalObject, EncodedJSValue encodedLength, JSObject* array, IndexingType indexingType))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+
+    uint64_t length = static_cast<uint64_t>(JSValue::decode(encodedLength).asNumber());
+    return newArrayWithSpeciesImpl(globalObject, length, array, indexingType);
+}
+
 
 JSC_DEFINE_JIT_OPERATION(operationProcessTypeProfilerLogDFG, void, (VM* vmPointer))
 {

@@ -33,6 +33,7 @@ WK_CLASS_AVAILABLE(macos(10.13), ios(11.0))
 
 - (instancetype)init; // Creates a persistent configuration.
 - (instancetype)initNonPersistentConfiguration WK_API_AVAILABLE(macos(10.15), ios(13.0));
+- (instancetype)initWithIdentifier:(NSUUID *)identifier WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA));
 
 @property (nonatomic, readonly, getter=isPersistent) BOOL persistent WK_API_AVAILABLE(macos(10.15), ios(13.0));
 
@@ -66,7 +67,6 @@ WK_CLASS_AVAILABLE(macos(10.13), ios(11.0))
 @property (nonatomic, copy, setter=_setWebSQLDatabaseDirectory:) NSURL *_webSQLDatabaseDirectory;
 @property (nonatomic, copy, setter=_setCookieStorageFile:) NSURL *_cookieStorageFile;
 @property (nonatomic, copy, setter=_setResourceLoadStatisticsDirectory:) NSURL *_resourceLoadStatisticsDirectory WK_API_AVAILABLE(macos(10.13.4), ios(11.3));
-@property (nonatomic, nullable, copy) NSURL *privateClickMeasurementStorageDirectory WK_API_AVAILABLE(macos(13.0), ios(16.0));
 @property (nonatomic, copy, setter=_setCacheStorageDirectory:) NSURL *_cacheStorageDirectory WK_API_AVAILABLE(macos(10.13.4), ios(11.3));
 @property (nonatomic, copy, setter=_setServiceWorkerRegistrationDirectory:) NSURL *_serviceWorkerRegistrationDirectory WK_API_AVAILABLE(macos(10.13.4), ios(11.3));
 @property (nonatomic) BOOL serviceWorkerProcessTerminationDelayEnabled WK_API_AVAILABLE(macos(10.15.4), ios(13.4));

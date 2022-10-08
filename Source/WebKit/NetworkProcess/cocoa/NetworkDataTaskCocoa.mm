@@ -59,6 +59,9 @@
 #import <WebKitAdditions/NetworkDataTaskCocoaAdditions.h>
 #else
 static void processPCMRequest(WebCore::PrivateClickMeasurement::PcmDataCarried, NSMutableURLRequest *) { }
+namespace WebKit {
+void enableNetworkConnectionIntegrity(NSMutableURLRequest *) { }
+}
 #endif
 
 namespace WebKit {
@@ -125,7 +128,7 @@ void NetworkDataTaskCocoa::applySniffingPoliciesAndBindRequestToInferfaceIfNeede
     nsRequest = WTFMove(mutableRequest);
 }
 
-#if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
+#if ENABLE(TRACKING_PREVENTION)
 NSHTTPCookieStorage *NetworkDataTaskCocoa::statelessCookieStorage()
 {
     static NeverDestroyed<RetainPtr<NSHTTPCookieStorage>> statelessCookieStorage;
@@ -328,7 +331,7 @@ NetworkDataTaskCocoa::NetworkDataTaskCocoa(NetworkSession& session, NetworkDataT
 #endif
 
     bool shouldBlockCookies = false;
-#if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
+#if ENABLE(TRACKING_PREVENTION)
     shouldBlockCookies = m_storedCredentialsPolicy == WebCore::StoredCredentialsPolicy::EphemeralStateless;
     if (auto* networkStorageSession = session.networkStorageSession()) {
         if (!shouldBlockCookies)
@@ -351,6 +354,9 @@ NetworkDataTaskCocoa::NetworkDataTaskCocoa(NetworkSession& session, NetworkDataT
     if (!parameters.allowPrivacyProxy)
         [mutableRequest _setProhibitPrivacyProxy:YES];
 #endif
+
+    if (parameters.networkConnectionIntegrityEnabled)
+        enableNetworkConnectionIntegrity(mutableRequest.get());
 
 #if ENABLE(APP_PRIVACY_REPORT)
     mutableRequest.get().attribution = request.isAppInitiated() ? NSURLRequestAttributionDeveloper : NSURLRequestAttributionUser;
@@ -403,7 +409,7 @@ NetworkDataTaskCocoa::NetworkDataTaskCocoa(NetworkSession& session, NetworkDataT
 #endif
     }
 
-#if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
+#if ENABLE(TRACKING_PREVENTION)
 #if HAVE(CFNETWORK_CNAME_AND_COOKIE_TRANSFORM_SPI)
     applyCookiePolicyForThirdPartyCNAMECloaking(request);
 #endif
@@ -568,7 +574,7 @@ void NetworkDataTaskCocoa::willPerformHTTPRedirection(WebCore::ResourceResponse&
     request.setIsAppInitiated(request.nsURLRequest(WebCore::HTTPBodyUpdatePolicy::DoNotUpdateHTTPBody).attribution == NSURLRequestAttributionDeveloper);
 #endif
 
-#if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
+#if ENABLE(TRACKING_PREVENTION)
 #if HAVE(CFNETWORK_CNAME_AND_COOKIE_TRANSFORM_SPI)
     applyCookiePolicyForThirdPartyCNAMECloaking(request);
 #endif

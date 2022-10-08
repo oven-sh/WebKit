@@ -79,23 +79,6 @@ static const char* serviceName(const ProcessLauncher::LaunchOptions& launchOptio
     }
 }
 
-static bool shouldLeakBoost(const ProcessLauncher::LaunchOptions& launchOptions)
-{
-#if PLATFORM(IOS_FAMILY)
-    UNUSED_PARAM(launchOptions);
-    // On iOS, we don't need to leak a boost message because RunningBoard process assertions give us the
-    // right priorities.
-    return false;
-#else
-    // On Mac, leak a boost onto the NetworkProcess and GPUProcess.
-#if ENABLE(GPU_PROCESS)
-    if (launchOptions.processType == ProcessLauncher::ProcessType::GPU)
-        return true;
-#endif
-    return launchOptions.processType == ProcessLauncher::ProcessType::Network;
-#endif
-}
-
 void ProcessLauncher::launchProcess()
 {
     ASSERT(!m_xpcConnection);
@@ -143,12 +126,6 @@ void ProcessLauncher::launchProcess()
     xpc_dictionary_set_string(initializationMessage.get(), "WebKitBundleVersion", [[NSBundle bundleWithIdentifier:@"com.apple.WebKit"].infoDictionary[(__bridge NSString *)kCFBundleVersionKey] UTF8String]);
 #endif
     xpc_connection_set_bootstrap(m_xpcConnection.get(), initializationMessage.get());
-
-    if (shouldLeakBoost(m_launchOptions)) {
-        auto preBootstrapMessage = adoptOSObject(xpc_dictionary_create(nullptr, nullptr, 0));
-        xpc_dictionary_set_string(preBootstrapMessage.get(), "message-name", "pre-bootstrap");
-        xpc_connection_send_message(m_xpcConnection.get(), preBootstrapMessage.get());
-    }
 
     // Create the listening port.
     mach_port_t listeningPort = MACH_PORT_NULL;

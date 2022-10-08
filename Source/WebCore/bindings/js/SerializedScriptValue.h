@@ -93,7 +93,7 @@ public:
     bool hasBlobURLs() const { return !m_blobHandles.isEmpty(); }
 
     Vector<String> blobURLs() const;
-    const Vector<URLKeepingBlobAlive>& blobHandles() const { return m_blobHandles; }
+    Vector<URLKeepingBlobAlive> blobHandles() const { return crossThreadCopy(m_blobHandles); }
     void writeBlobsToDiskForIndexedDB(CompletionHandler<void(IDBValue&&)>&&);
     IDBValue writeBlobsToDiskForIndexedDBSynchronously();
     static Ref<SerializedScriptValue> createFromWireBytes(Vector<uint8_t>&& data)
@@ -220,10 +220,11 @@ RefPtr<SerializedScriptValue> SerializedScriptValue::decode(Decoder& decoder)
 
     Vector<std::unique_ptr<DetachedRTCDataChannel>> detachedRTCDataChannels;
     while (detachedRTCDataChannelsSize--) {
-        auto detachedRTCDataChannel = DetachedRTCDataChannel::decode(decoder);
+        std::optional<DetachedRTCDataChannel> detachedRTCDataChannel;
+        decoder >> detachedRTCDataChannel;
         if (!detachedRTCDataChannel)
             return nullptr;
-        detachedRTCDataChannels.append(WTFMove(detachedRTCDataChannel));
+        detachedRTCDataChannels.append(makeUnique<DetachedRTCDataChannel>(WTFMove(*detachedRTCDataChannel)));
     }
 #endif
 

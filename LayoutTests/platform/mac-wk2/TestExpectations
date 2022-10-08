@@ -1171,9 +1171,6 @@ media/modern-media-controls/scrubber-support/scrubber-support-media-api.html [ P
 # <rdar://problem/61071209> [ macOS wk2 debug ] media/modern-media-controls/volume-support/volume-support-drag.html is flaky failing
 [ Debug ] media/modern-media-controls/volume-support/volume-support-drag.html [ Pass Failure ]
 
-# <rdar://problem/63626512> REGRESSION(20A279-20A291a): webrtc/simulcast-h264.html is a constant timeout
-webrtc/simulcast-h264.html [ Pass Timeout ]
-
 # <rdar://problem/63554249> [20A279] DQ bots are seeing http/tests/cache/disk-cache/disk-cache-validation-back-navigation-policy.html and http/tests/cache/disk-cache/disk-cache-validation-no-body.html are timing out
 webkit.org/b/179796 http/tests/cache/disk-cache/disk-cache-validation-back-navigation-policy.html [ Pass Failure Timeout ]
 [ BigSur+ Release ] http/tests/cache/disk-cache/disk-cache-validation-no-body.html [ Pass Timeout ]
@@ -1743,13 +1740,15 @@ webkit.org/b/242164 [ Debug ] imported/w3c/web-platform-tests/service-workers/se
 
 webkit.org/b/242138 imported/w3c/web-platform-tests/css/css-transforms/huge-length-tiny-scale.html [ Pass Crash ImageOnlyFailure ]
 
-webkit.org/b/242212 [ Monterey+ ] media/media-source/media-webm-vorbis-partial.html [ Failure ]
-
 webkit.org/b/227555 http/tests/privateClickMeasurement/attribution-conversion-through-fetch-keepalive.html [ Pass Failure ]
 
 webkit.org/b/242462 [ Monterey Release ] imported/w3c/web-platform-tests/IndexedDB/string-list-ordering.htm [ Pass Crash ]
 
 webkit.org/b/242804 media/track/track-forced-subtitles-in-band.html [ Pass Failure ]
+
+# Cocoa ports run WPT tests over localhost so the URL is treated as secure even though not HTTPs.
+imported/w3c/web-platform-tests/clear-site-data/navigation-insecure.html [ Skip ]
+imported/w3c/web-platform-tests/clear-site-data/resource.html [ Skip ]
 
 webkit.org/b/240987 fast/images/heic-as-background-image.html [ ImageOnlyFailure ]
 webkit.org/b/240987 fast/images/avif-heif-container-as-image.html [ ImageOnlyFailure ]
@@ -1770,4 +1769,8 @@ webkit.org/b/245007 imported/w3c/web-platform-tests/html/cross-origin-opener-pol
 
 webkit.org/b/245010 imported/w3c/web-platform-tests/html/browsers/browsing-the-web/navigating-across-documents/replace-before-load/location-setter.html [ Pass Failure ]
 
-webkit.org/b/245140 [ Monterey ] http/wpt/webrtc/video-script-transform-keyframe-only.html  [ Pass Failure ]
+webkit.org/b/245140 http/wpt/webrtc/video-script-transform-keyframe-only.html [ Pass Failure ]
+
+webkit.org/b/245727 [ Monterey ] imported/w3c/web-platform-tests/notifications/idlharness.https.any.sharedworker.html [ Failure ]
+
+webkit.org/b/245802 imported/w3c/web-platform-tests/permissions/permissions-cg.https.html [ Pass Failure ]

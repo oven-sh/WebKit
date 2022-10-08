@@ -121,6 +121,9 @@ class GitHub(object):
         api_url = GitHub.api_url(repository_url)
         if not api_url:
             return False
+        if not ews_comment:
+            _log.error('Unable to comment on GitHub for PR {} since comment is None.'.format(pr_number))
+            return False
 
         if comment_id != -1:
             comment_url = '{api_url}/issues/comments/{comment_id}'.format(api_url=api_url, comment_id=comment_id)
@@ -135,10 +138,10 @@ class GitHub(object):
                 json=dict(body=ews_comment),
             )
             if response.status_code // 100 != 2:
-                _log.error('Failed to post comment to PR {}. Unexpected response code from GitHub: {}\n'.format(pr_number, response.status_code))
+                _log.error('Failed to post comment to PR {}. Unexpected response code from GitHub: {}, url: {}\n'.format(pr_number, response.status_code, comment_url))
                 return -1
             new_comment_id = response.json().get('id')
-            comment_url = 'https://github.com/WebKit/WebKit/pull/{}#issuecomment-{}'.format(pr_number, new_comment_id)
+            comment_url = '{}/pull/{}#issuecomment-{}'.format(repository_url, pr_number, new_comment_id)
             _log.info('Commented on PR {}, link: {}'.format(pr_number, comment_url))
 
             if comment_id == -1 and new_comment_id != -1 and change:
@@ -212,11 +215,8 @@ class GitHubEWS(GitHub):
         return u'{}{}\n{}\n{}'.format(description, self.STATUS_BUBBLE_START, ews_comment, self.STATUS_BUBBLE_END)
 
     def generate_comment_text_for_change(self, change):
-        hash_url = 'https://github.com/WebKit/WebKit/commit/{}'.format(change.change_id)
+        hash_url = 'https://github.com/{}/commit/{}'.format(change.pr_project, change.change_id)
 
-        if change.comment_id == -1:
-            pr_url = GitHub.pr_url(change.pr_id)
-            return u'Starting EWS tests for {}. Live statuses available at the PR page, {}'.format(hash_url, pr_url)
         comment = '\n\n| Misc | iOS, tvOS & watchOS  | macOS  | Linux |  Windows |'
         comment += '\n| ----- | ---------------------- | ------- |  ----- |  --------- |'
 
@@ -230,9 +230,16 @@ class GitHubEWS(GitHub):
             comment += comment_for_row
 
         if change.obsolete:
-            return u'EWS run on previous version of this PR (hash {})<details>{}</details>'.format(hash_url, comment)
+            comment = u'EWS run on previous version of this PR (hash {})<details>{}</details>'.format(hash_url, comment)
+            return (comment, comment)
 
-        return u'{}{}'.format(hash_url, comment)
+        regular_comment = u'{}{}'.format(hash_url, comment)
+        folded_comment = u'EWS run on current version of this PR (hash {})<details>{}</details>'.format(hash_url, comment)
+        if change.comment_id == -1:
+            pr_url = GitHub.pr_url(change.pr_id)
+            folded_comment = u'Starting EWS tests for {}. Live statuses available at the PR page, {}'.format(hash_url, pr_url)
+
+        return (regular_comment, folded_comment)
 
     def github_status_for_queue(self, change, queue):
         name = queue
@@ -328,36 +335,34 @@ class GitHubEWS(GitHub):
             _log.error('Invalid pr_id: {}'.format(pr_id))
             return -1
 
-        if pr_project and pr_project != 'WebKit/WebKit':
-            _log.error('custom pr_project is not support yet.')
-            # FIXME: Add support for custom pr_project (e.g.: apple/WebKit) https://bugs.webkit.org/show_bug.cgi?id=243987
-            return -1
+        repository_url = GITHUB_URL + pr_project if pr_project else None
 
         change = Change.get_change(sha)
         if not change:
             _log.error('Change not found for hash: {}. Unable to generate github comment.'.format(sha))
             return -1
         gh = GitHubEWS()
-        comment_text = gh.generate_comment_text_for_change(change)
+        comment_text, folded_comment = gh.generate_comment_text_for_change(change)
+        if not change.obsolete:
+            gh.update_pr_description_with_status_bubble(pr_id, comment_text, repository_url)
+
         comment_id = change.comment_id
         if comment_id == -1:
             if not allow_new_comment:
                 # FIXME: improve this logic to use locking instead
                 return -1
             _log.info('Adding comment for hash: {}, PR: {}'.format(sha, pr_id))
-            new_comment_id = gh.update_or_leave_comment_on_pr(pr_id, comment_text, change=change)
+            new_comment_id = gh.update_or_leave_comment_on_pr(pr_id, folded_comment, repository_url=repository_url, change=change)
             obsolete_changes = Change.mark_old_changes_as_obsolete(pr_id, sha)
             for obsolete_change in obsolete_changes:
-                obsolete_comment_text = gh.generate_comment_text_for_change(obsolete_change)
-                gh.update_or_leave_comment_on_pr(pr_id, obsolete_comment_text, comment_id=obsolete_change.comment_id, change=obsolete_change)
+                obsolete_comment_text, _ = gh.generate_comment_text_for_change(obsolete_change)
+                gh.update_or_leave_comment_on_pr(pr_id, obsolete_comment_text, repository_url=repository_url, comment_id=obsolete_change.comment_id, change=obsolete_change)
                 _log.info('Updated obsolete status-bubble on pr {} for hash: {}'.format(pr_id, obsolete_change.change_id))
 
         else:
             _log.info('Updating comment for hash: {}, pr_id: {}, pr_id from db: {}.'.format(sha, pr_id, change.pr_id))
-            new_comment_id = gh.update_or_leave_comment_on_pr(pr_id, comment_text, comment_id=comment_id)
+            new_comment_id = gh.update_or_leave_comment_on_pr(pr_id, folded_comment, repository_url=repository_url, comment_id=comment_id)
 
-        if not change.obsolete:
-            gh.update_pr_description_with_status_bubble(pr_id, comment_text)
         return comment_id
 
     def _steps_messages(self, build):

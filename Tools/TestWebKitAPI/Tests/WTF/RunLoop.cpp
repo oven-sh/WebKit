@@ -28,6 +28,7 @@
 #include "Utilities.h"
 #include <wtf/RunLoop.h>
 #include <wtf/Threading.h>
+#include <wtf/threads/BinarySemaphore.h>
 
 namespace TestWebKitAPI {
 
@@ -70,7 +71,7 @@ TEST(WTF_RunLoop, NestedInOrder)
 
         Util::run(&done);
     });
-    RunLoop::main().dispatch([&didExecuteOuter] { 
+    RunLoop::main().dispatch([&didExecuteOuter] {
         didExecuteOuter = true;
     });
 
@@ -230,6 +231,63 @@ TEST(WTF_RunLoop, ThreadTerminationSelfReferenceCleanup)
     })->waitForCompletion();
 
     EXPECT_TRUE(runLoop->hasOneRef());
+}
+
+TEST(WTF_RunLoop, CapabilityIsCurrentIsSupported)
+{
+    WTF::initializeMainThread();
+    struct {
+        int i WTF_GUARDED_BY_CAPABILITY(RunLoop::main()) { 77 };
+    } z;
+    assertIsCurrent(RunLoop::main());
+    bool result = z.i == 77;
+    EXPECT_TRUE(result);
+}
+
+#if ASSERT_ENABLED
+#define MAYBE_CapabilityIsCurrentNegativeDeathTest CapabilityIsCurrentNegativeDeathTest
+#else
+#define MAYBE_CapabilityIsCurrentNegativeDeathTest DISABLED_CapabilityIsCurrentNegativeDeathTest
+#endif
+TEST(WTF_RunLoop, MAYBE_CapabilityIsCurrentNegativeDeathTest)
+{
+    ::testing::FLAGS_gtest_death_test_style = "threadsafe";
+    ASSERT_DEATH_IF_SUPPORTED({
+        WTF::initializeMainThread();
+        Thread::create("CapabilityIsCurrentNegative thread", [&] {
+            assertIsCurrent(RunLoop::main()); // This should assert.
+        })->waitForCompletion();
+    }, "ASSERTION FAILED: runLoop.isCurrent()");
+}
+
+TEST(WTF_RunLoop, Create)
+{
+    RefPtr<RunLoop> runLoop = RunLoop::create("RunLoopCreateTestThread"_s, ThreadType::Unknown);
+    Thread* runLoopThread = nullptr;
+    {
+        BinarySemaphore semaphore;
+        runLoop->dispatch([&] {
+            runLoopThread = &Thread::current();
+            semaphore.signal();
+        });
+        semaphore.wait();
+    }
+    {
+        Locker threadsLock { Thread::allThreadsLock() };
+        EXPECT_TRUE(Thread::allThreads().contains(runLoopThread));
+    }
+
+    runLoop->dispatch([] {
+        RunLoop::current().stop();
+    });
+    runLoop = nullptr;
+    Util::runFor(.2_s);
+
+    // Expect that RunLoop Thread does not leak.
+    {
+        Locker threadsLock { Thread::allThreadsLock() };
+        EXPECT_FALSE(Thread::allThreads().contains(runLoopThread));
+    }
 }
 
 } // namespace TestWebKitAPI

@@ -1142,6 +1142,12 @@ void FrameLoader::loadInSameDocument(URL url, RefPtr<SerializedScriptValue> stat
         // we have already saved away the scroll and doc state for the long slow load,
         // but it's not an obvious case.
 
+        auto* document = m_frame.document();
+        if (document && !document->hasRecentUserInteractionForNavigationFromJS() && !documentLoader()->triggeringAction().isRequestFromClientOrUserInput()) {
+            if (auto* currentItem = history().currentItem())
+                currentItem->setWasCreatedByJSWithoutUserInteraction(true);
+        }
+
         history().updateBackForwardListForFragmentScroll();
     }
 
@@ -3250,12 +3256,6 @@ void FrameLoader::continueFragmentScrollAfterNavigationPolicy(const ResourceRequ
         setProvisionalDocumentLoader(nullptr);
     }
 
-    auto* document = m_frame.document();
-    if (document && !document->hasRecentUserInteractionForNavigationFromJS() && !documentLoader()->triggeringAction().isRequestFromClientOrUserInput()) {
-        if (auto* currentItem = history().currentItem())
-            currentItem->setWasCreatedByJSWithoutUserInteraction(true);
-    }
-
     bool isRedirect = m_quickRedirectComing || policyChecker().loadType() == FrameLoadType::RedirectWithLockedBackForwardList;
     loadInSameDocument(request.url(), nullptr, requesterOrigin, !isRedirect);
 }
@@ -4331,6 +4331,14 @@ void FrameLoader::switchBrowsingContextsGroup()
 bool FrameLoader::shouldSuppressTextInputFromEditing() const
 {
     return m_frame.settings().shouldSuppressTextInputFromEditingDuringProvisionalNavigation() && m_state == FrameState::Provisional;
+}
+
+void FrameLoader::advanceStatePastInitialEmptyDocument()
+{
+    if (stateMachine().committingFirstRealLoad())
+        stateMachine().advanceTo(FrameLoaderStateMachine::DisplayingInitialEmptyDocumentPostCommit);
+    if (stateMachine().isDisplayingInitialEmptyDocument() && stateMachine().committedFirstRealDocumentLoad())
+        stateMachine().advanceTo(FrameLoaderStateMachine::CommittedFirstRealLoad);
 }
 
 } // namespace WebCore

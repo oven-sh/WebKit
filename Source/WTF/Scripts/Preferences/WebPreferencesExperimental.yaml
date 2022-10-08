@@ -85,11 +85,11 @@ AriaReflectionForElementReferencesEnabled:
   humanReadableDescription: "Enable ARIA reflection for attributes that refer to elements"
   defaultValue:
     WebKitLegacy:
-      default: true
+      default: false
     WebKit:
-      default: true
+      default: false
     WebCore:
-      default: true
+      default: false
 
 AspectRatioEnabled:
   type: bool
@@ -519,6 +519,18 @@ CompressionStreamEnabled:
     WebCore:
       default: false
 
+ConstructableStylesheetsEnabled:
+  type: bool
+  humanReadableName: "Constructable Stylesheets"
+  humanReadableDescription: "Enable Constructable Stylesheets"
+  defaultValue:
+    WebKitLegacy:
+      default: true
+    WebKit:
+      default: true
+    WebCore:
+      default: true
+
 ContactPickerAPIEnabled:
   type: bool
   humanReadableName: "Contact Picker API"
@@ -569,10 +581,34 @@ CrossOriginOpenerPolicyEnabled:
     WebCore:
       default: false
 
+DeclarativeShadowDOMEnabled:
+  type: bool
+  humanReadableName: "Declarative Shadow DOM"
+  humanReadableDescription: "Enable Declarative Shadow DOM"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
 DefaultARIAForCustomElementsEnabled:
   type: bool
   humanReadableName: "Default ARIA for Custom Elements"
   humanReadableDescription: "Enable Default ARIA for Custom Elements"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
+DeprecationReportingEnabled:
+  type: bool
+  humanReadableName: "Deprecation Reporting"
+  humanReadableDescription: "Enable Deprecation Reporting"
   defaultValue:
     WebKitLegacy:
       default: false
@@ -1100,7 +1136,6 @@ ModelDocumentEnabled:
     WebKitLegacy:
       default: false
     WebKit:
-      "ENABLE(SEPARATED_MODEL)": true
       default: false
 
 ModelElementEnabled:
@@ -1217,19 +1252,17 @@ PerformanceNavigationTimingAPIEnabled:
     WebCore:
       default: true
 
-# Note: This is off by default because of privacy concerns
-# such as https://github.com/w3c/resource-timing/issues/238
 PerformanceResourceTimingSensitivePropertiesEnabled:
   type: bool
   humanReadableName: "PerformanceResourceTiming.transferSize, encodedBodySize, and decodedBodySize"
   humanReadableDescription: "Enable all properties of PerformanceResourceTiming API"
   defaultValue:
     WebKitLegacy:
-      default: false
+      default: true
     WebKit:
-      default: false
+      default: true
     WebCore:
-      default: false
+      default: true
 
 PermissionsAPIEnabled:
   type: bool
@@ -1446,6 +1479,30 @@ ScreenCaptureEnabled:
       default: false
     WebCore:
       default: false
+
+ScreenOrientationAPIEnabled:
+  type: bool
+  humanReadableName: "Screen Orientation API"
+  humanReadableDescription: "Enable Screen Orientation API"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
+ScreenWakeLockAPIEnabled:
+  type: bool
+  humanReadableName: "Screen Wake Lock API"
+  humanReadableDescription: "Enable Screen Wake Lock API"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: true
+    WebCore:
+      default: false
       
 ScrollToTextFragmentEnabled:
   type: bool
@@ -1466,10 +1523,9 @@ ServerTimingEnabled:
   webcoreBinding: DeprecatedGlobalSettings
   defaultValue:
     WebKitLegacy:
-      default: false
+      default: true
     WebKit:
-      "ENABLE(EXPERIMENTAL_FEATURES)": true
-      default: false
+      default: true
 
 ServiceWorkerNavigationPreloadEnabled:
   type: bool
@@ -1804,6 +1860,19 @@ WebAuthenticationEnabled:
       default: true
     WebCore:
       default: true
+
+WebCodecsEnabled:
+  type: bool
+  humanReadableName: "Web Codecs"
+  humanReadableDescription: "Web Codecs"
+  condition: ENABLE(WEB_CODECS)
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
 
 WebGL2Enabled:
   type: bool

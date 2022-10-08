@@ -1975,8 +1975,8 @@ template<RGBFunctionMode Mode> static Color parseRGBParameters(CSSParserTokenRan
 static Color colorByNormalizingHSLComponents(AngleOrNumberOrNoneRaw hue, PercentOrNoneRaw saturation, PercentOrNoneRaw lightness, double alpha, RGBOrHSLSeparatorSyntax syntax)
 {
     auto normalizedHue = WTF::switchOn(hue,
-        [] (AngleRaw angle) { return normalizeHue(CSSPrimitiveValue::computeDegrees(angle.type, angle.value)); },
-        [] (NumberRaw number) { return normalizeHue(number.value); },
+        [] (AngleRaw angle) { return CSSPrimitiveValue::computeDegrees(angle.type, angle.value); },
+        [] (NumberRaw number) { return number.value; },
         [] (NoneRaw) { return std::numeric_limits<double>::quiet_NaN(); }
     );
     auto normalizedSaturation = WTF::switchOn(saturation,
@@ -1997,8 +1997,16 @@ static Color colorByNormalizingHSLComponents(AngleOrNumberOrNoneRaw hue, Percent
         return HSLA<float> { static_cast<float>(normalizedHue), static_cast<float>(normalizedSaturation), static_cast<float>(normalizedLightness), static_cast<float>(alpha) };
     }
 
-    // NOTE: The explicit conversion to SRGBA<uint8_t> is intentional for performance (no extra allocation for
-    // the extended color) and compatability, forcing serialiazation to use the rgb()/rgba() form.
+    if (normalizedHue < 0.0 || normalizedHue > 360.0) {
+        // If hue is not in the [0, 360] range, we store the value as a HSLA<float> to allow for correct interpolation
+        // using the "specified" hue interpolation method.
+        return HSLA<float> { static_cast<float>(normalizedHue), static_cast<float>(normalizedSaturation), static_cast<float>(normalizedLightness), static_cast<float>(alpha) };
+    }
+
+    // NOTE: The explicit conversion to SRGBA<uint8_t> is an intentional performance optimization that allows storing the
+    // color with no extra allocation for an extended color object. This is permissible due to the historical requirement
+    // that HSLA colors serialize using the legacy color syntax (rgb()/rgba()) and historically have used the 8-bit rgba
+    // internal representation in engines.
     return convertColor<SRGBA<uint8_t>>(HSLA<float> { static_cast<float>(normalizedHue), static_cast<float>(normalizedSaturation), static_cast<float>(normalizedLightness), static_cast<float>(alpha) });
 }
 
@@ -2109,8 +2117,8 @@ static Color parseHWBParameters(CSSParserTokenRange& args, ConsumerForHue&& hueC
         return { };
 
     auto normalizedHue = WTF::switchOn(*hue,
-        [] (AngleRaw angle) { return normalizeHue(CSSPrimitiveValue::computeDegrees(angle.type, angle.value)); },
-        [] (NumberRaw number) { return normalizeHue(number.value); },
+        [] (AngleRaw angle) { return CSSPrimitiveValue::computeDegrees(angle.type, angle.value); },
+        [] (NumberRaw number) { return number.value; },
         [] (NoneRaw) { return std::numeric_limits<double>::quiet_NaN(); }
     );
     auto clampedWhiteness = WTF::switchOn(*whiteness,
@@ -2125,14 +2133,22 @@ static Color parseHWBParameters(CSSParserTokenRange& args, ConsumerForHue&& hueC
     if (std::isnan(normalizedHue) || std::isnan(clampedWhiteness) || std::isnan(clampedBlackness) || std::isnan(*alpha)) {
         auto [normalizedWhitness, normalizedBlackness] = normalizeClampedWhitenessBlacknessAllowingNone(clampedWhiteness, clampedBlackness);
 
-        // If any component uses "none", we store the value as a HSLA<float> to allow for storage of the special value as NaN.
+        // If any component uses "none", we store the value as a HWBA<float> to allow for storage of the special value as NaN.
         return HWBA<float> { static_cast<float>(normalizedHue), static_cast<float>(normalizedWhitness), static_cast<float>(normalizedBlackness), static_cast<float>(*alpha) };
     }
 
     auto [normalizedWhitness, normalizedBlackness] = normalizeClampedWhitenessBlacknessDisallowingNone(clampedWhiteness, clampedBlackness);
 
-    // NOTE: The explicit conversion to SRGBA<uint8_t> is intentional for performance (no extra allocation for
-    // the extended color) and compatability, forcing serialiazation to use the rgb()/rgba() form.
+    if (normalizedHue < 0.0 || normalizedHue > 360.0) {
+        // If 'hue' is not in the [0, 360] range, we store the value as a HWBA<float> to allow for correct interpolation
+        // using the "specified" hue interpolation method.
+        return HWBA<float> { static_cast<float>(normalizedHue), static_cast<float>(normalizedWhitness), static_cast<float>(normalizedBlackness), static_cast<float>(*alpha) };
+    }
+
+    // NOTE: The explicit conversion to SRGBA<uint8_t> is an intentional performance optimization that allows storing the
+    // color with no extra allocation for an extended color object. This is permissible due to the historical requirement
+    // that HWBA colors serialize using the legacy color syntax (rgb()/rgba()) and historically have used the 8-bit rgba
+    // internal representation in engines.
     return convertColor<SRGBA<uint8_t>>(HWBA<float> { static_cast<float>(normalizedHue), static_cast<float>(normalizedWhitness), static_cast<float>(normalizedBlackness), static_cast<float>(*alpha) });
 }
 
@@ -2184,6 +2200,123 @@ static Color parseHWBParameters(CSSParserTokenRange& range, const CSSParserConte
     return parseNonRelativeHWBParameters(args, context);
 }
 
+// The NormalizePercentage structs are specialized for the color types
+// that have specified rules for normalizing percentages by component.
+// The structs contains static members for the component that describe
+// the normalized value when the percent is 100%. As all treat 0% as
+// normalizing to 0, that is not encoded in the struct.
+template<typename ColorType> struct NormalizePercentage;
+
+template<> struct NormalizePercentage<Lab<float>> {
+    //  for L: 0% = 0.0, 100% = 100.0
+    //  for a and b: -100% = -125, 100% = 125 (NOTE: 0% is 0)
+
+    static constexpr double lightnessScaleFactor = 100.0 / 100.0;
+    static constexpr double abScaleFactor = 125.0 / 100.0;
+};
+
+template<> struct NormalizePercentage<OKLab<float>> {
+    //  for L: 0% = 0.0, 100% = 1.0
+    //  for a and b: -100% = -0.4, 100% = 0.4 (NOTE: 0% is 0)
+
+    static constexpr double lightnessScaleFactor = 1.0 / 100.0;
+    static constexpr double abScaleFactor = 0.4 / 100.0;
+};
+
+template<> struct NormalizePercentage<LCHA<float>> {
+    //  for L: 0% = 0.0, 100% = 100.0
+    //  for C: 0% = 0, 100% = 150
+
+    static constexpr double lightnessScaleFactor = 100.0 / 100.0;
+    static constexpr double chromaScaleFactor = 150.0 / 100.0;
+};
+
+template<> struct NormalizePercentage<OKLCHA<float>> {
+    //  for L: 0% = 0.0, 100% = 1.0
+    //  for C: 0% = 0.0 100% = 0.4
+
+    static constexpr double lightnessScaleFactor = 1.0 / 100.0;
+    static constexpr double chromaScaleFactor = 0.4 / 100.0;
+};
+
+template<> struct NormalizePercentage<XYZA<float, WhitePoint::D50>> {
+    //  for X,Y,Z: 0% = 0.0, 100% = 1.0
+
+    static constexpr double xyzScaleFactor = 1.0 / 100.0;
+};
+
+template<> struct NormalizePercentage<XYZA<float, WhitePoint::D65>> {
+    //  for X,Y,Z: 0% = 0.0, 100% = 1.0
+
+    static constexpr double xyzScaleFactor = 1.0 / 100.0;
+};
+
+template<> struct NormalizePercentage<ExtendedA98RGB<float>> {
+    //  for R,G,B: 0% = 0.0, 100% = 1.0
+
+    static constexpr double rgbScaleFactor = 1.0 / 100.0;
+};
+
+template<> struct NormalizePercentage<ExtendedDisplayP3<float>> {
+    //  for R,G,B: 0% = 0.0, 100% = 1.0
+
+    static constexpr double rgbScaleFactor = 1.0 / 100.0;
+};
+
+template<> struct NormalizePercentage<ExtendedProPhotoRGB<float>> {
+    //  for R,G,B: 0% = 0.0, 100% = 1.0
+
+    static constexpr double rgbScaleFactor = 1.0 / 100.0;
+};
+
+template<> struct NormalizePercentage<ExtendedRec2020<float>> {
+    //  for R,G,B: 0% = 0.0, 100% = 1.0
+
+    static constexpr double rgbScaleFactor = 1.0 / 100.0;
+};
+
+template<> struct NormalizePercentage<ExtendedSRGBA<float>> {
+    //  for R,G,B: 0% = 0.0, 100% = 1.0
+
+    static constexpr double rgbScaleFactor = 1.0 / 100.0;
+};
+
+template<> struct NormalizePercentage<ExtendedLinearSRGBA<float>> {
+    //  for R,G,B: 0% = 0.0, 100% = 1.0
+
+    static constexpr double rgbScaleFactor = 1.0 / 100.0;
+};
+
+template<typename ColorType>
+static double normalizeLightnessPercent(double percent)
+{
+    return NormalizePercentage<ColorType>::lightnessScaleFactor * percent;
+}
+
+template<typename ColorType>
+static double normalizeABPercent(double percent)
+{
+    return NormalizePercentage<ColorType>::abScaleFactor * percent;
+}
+
+template<typename ColorType>
+static double normalizeChromaPercent(double percent)
+{
+    return NormalizePercentage<ColorType>::chromaScaleFactor * percent;
+}
+
+template<typename ColorType>
+static double normalizeXYZPercent(double percent)
+{
+    return NormalizePercentage<ColorType>::xyzScaleFactor * percent;
+}
+
+template<typename ColorType>
+static double normalizeRGBPercent(double percent)
+{
+    return NormalizePercentage<ColorType>::rgbScaleFactor * percent;
+}
+
 template<typename ColorType, typename ConsumerForLightness, typename ConsumerForAB, typename ConsumerForAlpha>
 static Color parseLabParameters(CSSParserTokenRange& args, ConsumerForLightness&& lightnessConsumer, ConsumerForAB&& abConsumer, ConsumerForAlpha&& alphaConsumer)
 {
@@ -2207,15 +2340,18 @@ static Color parseLabParameters(CSSParserTokenRange& args, ConsumerForLightness&
         return { };
 
     auto normalizedLightness = WTF::switchOn(*lightness,
-        [] (PercentRaw percent) { return std::max(0.0, percent.value); },
+        [] (NumberRaw number) { return std::max(0.0, number.value); },
+        [] (PercentRaw percent) { return std::max(0.0, normalizeLightnessPercent<ColorType>(percent.value)); },
         [] (NoneRaw) { return std::numeric_limits<double>::quiet_NaN(); }
     );
     auto normalizedA = WTF::switchOn(*aValue,
         [] (NumberRaw number) { return number.value; },
+        [] (PercentRaw percent) { return normalizeABPercent<ColorType>(percent.value); },
         [] (NoneRaw) { return std::numeric_limits<double>::quiet_NaN(); }
     );
     auto normalizedB = WTF::switchOn(*bValue,
         [] (NumberRaw number) { return number.value; },
+        [] (PercentRaw percent) { return normalizeABPercent<ColorType>(percent.value); },
         [] (NoneRaw) { return std::numeric_limits<double>::quiet_NaN(); }
     );
 
@@ -2235,14 +2371,14 @@ static Color parseRelativeLabParameters(CSSParserTokenRange& args, const CSSPars
     auto originColorAsLab = originColor.toColorTypeLossy<ColorType>().resolved();
 
     CSSCalcSymbolTable symbolTable {
-        { CSSValueL, CSSUnitType::CSS_PERCENTAGE, originColorAsLab.lightness },
+        { CSSValueL, CSSUnitType::CSS_NUMBER, originColorAsLab.lightness },
         { CSSValueA, CSSUnitType::CSS_NUMBER, originColorAsLab.a },
         { CSSValueB, CSSUnitType::CSS_NUMBER, originColorAsLab.b },
         { CSSValueAlpha, CSSUnitType::CSS_PERCENTAGE, originColorAsLab.alpha * 100.0 }
     };
 
-    auto lightnessConsumer = [&symbolTable](auto& args) { return consumePercentOrNoneRawAllowingSymbolTableIdent(args, symbolTable); };
-    auto abConsumer = [&symbolTable](auto& args) { return consumeNumberOrNoneRawAllowingSymbolTableIdent(args, symbolTable); };
+    auto lightnessConsumer = [&symbolTable](auto& args) { return consumeNumberOrPercentOrNoneRawAllowingSymbolTableIdent(args, symbolTable); };
+    auto abConsumer = [&symbolTable](auto& args) { return consumeNumberOrPercentOrNoneRawAllowingSymbolTableIdent(args, symbolTable); };
     auto alphaConsumer = [&symbolTable](auto& args) { return consumeOptionalAlphaAllowingSymbolTableIdent(args, symbolTable); };
 
     return parseLabParameters<ColorType>(args, WTFMove(lightnessConsumer), WTFMove(abConsumer), WTFMove(alphaConsumer));
@@ -2251,8 +2387,8 @@ static Color parseRelativeLabParameters(CSSParserTokenRange& args, const CSSPars
 template<typename ColorType>
 static Color parseNonRelativeLabParameters(CSSParserTokenRange& args)
 {
-    auto lightnessConsumer = [](auto& args) { return consumePercentOrNoneRaw(args); };
-    auto abConsumer = [](auto& args) { return consumeNumberOrNoneRaw(args); };
+    auto lightnessConsumer = [](auto& args) { return consumeNumberOrPercentOrNoneRaw(args); };
+    auto abConsumer = [](auto& args) { return consumeNumberOrPercentOrNoneRaw(args); };
     auto alphaConsumer = [](auto& args) { return consumeOptionalAlpha(args); };
 
     return parseLabParameters<ColorType>(args, WTFMove(lightnessConsumer), WTFMove(abConsumer), WTFMove(alphaConsumer));
@@ -2296,16 +2432,18 @@ static Color parseLCHParameters(CSSParserTokenRange& args, ConsumerForLightness&
         return { };
 
     auto normalizedLightness = WTF::switchOn(*lightness,
-        [] (PercentRaw percent) { return std::max(0.0, percent.value); },
+        [] (NumberRaw number) { return std::max(0.0, number.value); },
+        [] (PercentRaw percent) { return std::max(0.0, normalizeLightnessPercent<ColorType>(percent.value)); },
         [] (NoneRaw) { return std::numeric_limits<double>::quiet_NaN(); }
     );
     auto normalizedChroma = WTF::switchOn(*chroma,
         [] (NumberRaw number) { return std::max(0.0, number.value); },
+        [] (PercentRaw percent) { return std::max(0.0, normalizeChromaPercent<ColorType>(percent.value)); },
         [] (NoneRaw) { return std::numeric_limits<double>::quiet_NaN(); }
     );
     auto normalizedHue = WTF::switchOn(*hue,
-        [] (AngleRaw angle) { return normalizeHue(CSSPrimitiveValue::computeDegrees(angle.type, angle.value)); },
-        [] (NumberRaw number) { return normalizeHue(number.value); },
+        [] (AngleRaw angle) { return CSSPrimitiveValue::computeDegrees(angle.type, angle.value); },
+        [] (NumberRaw number) { return number.value; },
         [] (NoneRaw) { return std::numeric_limits<double>::quiet_NaN(); }
     );
 
@@ -2325,14 +2463,14 @@ static Color parseRelativeLCHParameters(CSSParserTokenRange& args, const CSSPars
     auto originColorAsLCH = originColor.toColorTypeLossy<ColorType>().resolved();
 
     CSSCalcSymbolTable symbolTable {
-        { CSSValueL, CSSUnitType::CSS_PERCENTAGE, originColorAsLCH.lightness },
+        { CSSValueL, CSSUnitType::CSS_NUMBER, originColorAsLCH.lightness },
         { CSSValueC, CSSUnitType::CSS_NUMBER, originColorAsLCH.chroma },
         { CSSValueH, CSSUnitType::CSS_DEG, originColorAsLCH.hue },
         { CSSValueAlpha, CSSUnitType::CSS_PERCENTAGE, originColorAsLCH.alpha * 100.0 }
     };
 
-    auto lightnessConsumer = [&symbolTable](auto& args) { return consumePercentOrNoneRawAllowingSymbolTableIdent(args, symbolTable); };
-    auto chromaConsumer = [&symbolTable](auto& args) { return consumeNumberOrNoneRawAllowingSymbolTableIdent(args, symbolTable); };
+    auto lightnessConsumer = [&symbolTable](auto& args) { return consumeNumberOrPercentOrNoneRawAllowingSymbolTableIdent(args, symbolTable); };
+    auto chromaConsumer = [&symbolTable](auto& args) { return consumeNumberOrPercentOrNoneRawAllowingSymbolTableIdent(args, symbolTable); };
     auto hueConsumer = [&symbolTable, &context](auto& args) { return consumeAngleOrNumberOrNoneRawAllowingSymbolTableIdent(args, symbolTable, context.mode); };
     auto alphaConsumer = [&symbolTable](auto& args) { return consumeOptionalAlphaAllowingSymbolTableIdent(args, symbolTable); };
 
@@ -2342,8 +2480,8 @@ static Color parseRelativeLCHParameters(CSSParserTokenRange& args, const CSSPars
 template<typename ColorType>
 static Color parseNonRelativeLCHParameters(CSSParserTokenRange& args, const CSSParserContext& context)
 {
-    auto lightnessConsumer = [](auto& args) { return consumePercentOrNoneRaw(args); };
-    auto chromaConsumer = [](auto& args) { return consumeNumberOrNoneRaw(args); };
+    auto lightnessConsumer = [](auto& args) { return consumeNumberOrPercentOrNoneRaw(args); };
+    auto chromaConsumer = [](auto& args) { return consumeNumberOrPercentOrNoneRaw(args); };
     auto hueConsumer = [&context](auto& args) { return consumeAngleOrNumberOrNoneRaw(args, context.mode); };
     auto alphaConsumer = [](auto& args) { return consumeOptionalAlpha(args); };
 
@@ -2375,8 +2513,8 @@ static Color parseColorFunctionForRGBTypes(CSSParserTokenRange& args, ConsumerFo
             break;
 
         channel = WTF::switchOn(*value,
-            [] (PercentRaw percent) { return percent.value / 100.0; },
             [] (NumberRaw number) { return number.value; },
+            [] (PercentRaw percent) { return normalizeRGBPercent<ColorType>(percent.value); },
             [] (NoneRaw) { return std::numeric_limits<double>::quiet_NaN(); }
         );
     }
@@ -2443,6 +2581,7 @@ static Color parseColorFunctionForXYZTypes(CSSParserTokenRange& args, ConsumerFo
 
         channel = WTF::switchOn(*value,
             [] (NumberRaw number) { return number.value; },
+            [] (PercentRaw percent) { return normalizeXYZPercent<ColorType>(percent.value); },
             [] (NoneRaw) { return std::numeric_limits<double>::quiet_NaN(); }
         );
     }
@@ -2475,7 +2614,7 @@ template<typename ColorType> static Color parseRelativeColorFunctionForXYZTypes(
         { CSSValueAlpha, CSSUnitType::CSS_PERCENTAGE, originColorAsXYZ.alpha * 100.0 }
     };
 
-    auto consumeXYZ = [&symbolTable](auto& args) { return consumeNumberOrNoneRawAllowingSymbolTableIdent(args, symbolTable); };
+    auto consumeXYZ = [&symbolTable](auto& args) { return consumeNumberOrPercentOrNoneRawAllowingSymbolTableIdent(args, symbolTable); };
     auto consumeAlpha = [&symbolTable](auto& args) { return consumeOptionalAlphaAllowingSymbolTableIdent(args, symbolTable); };
 
     return parseColorFunctionForXYZTypes<ColorType>(args, WTFMove(consumeXYZ), WTFMove(consumeAlpha));
@@ -2490,7 +2629,7 @@ template<typename ColorType> static Color parseColorFunctionForXYZTypes(CSSParse
 
     consumeIdentRaw(args);
 
-    auto consumeXYZ = [](auto& args) { return consumeNumberOrNoneRaw(args); };
+    auto consumeXYZ = [](auto& args) { return consumeNumberOrPercentOrNoneRaw(args); };
     auto consumeAlpha = [](auto& args) { return consumeOptionalAlpha(args); };
 
     return parseColorFunctionForXYZTypes<ColorType>(args, WTFMove(consumeXYZ), WTFMove(consumeAlpha));
@@ -2638,6 +2777,7 @@ static Color parseColorContrastFunctionParameters(CSSParserTokenRange& range, co
         }
     } while (consumeCommaIncludingWhitespace(args));
 
+    // Handle the invalid case where there is only one color in the "compare against" color list.
     if (colorsToCompareAgainst.size() == 1)
         return { };
 
@@ -2659,10 +2799,18 @@ static Color parseColorContrastFunctionParameters(CSSParserTokenRange& range, co
 
         if (!targetContrast)
             return { };
-        
+
+        // Handle the invalid case where there are additional tokens after the target contrast.
+        if (!args.atEnd())
+            return { };
+
         // When a target constast is specified, we select "the first color color to meet or exceed the target contrast."
         return selectFirstColorThatMeetsOrExceedsTargetContrast(originBackgroundColor, WTFMove(colorsToCompareAgainst), targetContrast->value);
     }
+
+    // Handle the invalid case where there are additional tokens after the "compare against" color list that are not the 'to' identifier.
+    if (!args.atEnd())
+        return { };
 
     // When a target constast is NOT specified, we select "the first color with the highest contrast to the single color."
     return selectFirstColorWithHighestContrast(originBackgroundColor, WTFMove(colorsToCompareAgainst));

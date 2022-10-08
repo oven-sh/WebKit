@@ -1061,7 +1061,7 @@ bool Quirks::shouldAvoidPastingImagesAsWebContent() const
 #endif
 }
 
-#if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
+#if ENABLE(TRACKING_PREVENTION)
 static bool isKinjaLoginAvatarElement(const Element& element)
 {
     // The click event handler has been found to trigger on a div or
@@ -1200,7 +1200,7 @@ Quirks::StorageAccessResult Quirks::triggerOptionalStorageAccessQuirk(Element& e
     if (!DeprecatedGlobalSettings::resourceLoadStatisticsEnabled() || !isParentProcessAFullWebBrowser)
         return Quirks::StorageAccessResult::ShouldNotCancelEvent;
 
-#if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
+#if ENABLE(TRACKING_PREVENTION)
     if (!needsQuirks())
         return Quirks::StorageAccessResult::ShouldNotCancelEvent;
 
@@ -1550,6 +1550,20 @@ bool Quirks::shouldEnableFontLoadingAPIQuirk() const
         m_shouldEnableFontLoadingAPIQuirk = equalLettersIgnoringASCIICase(m_document->url().host(), "play.hbomax.com"_s);
 
     return m_shouldEnableFontLoadingAPIQuirk.value();
+}
+
+bool Quirks::needsVideoShouldMaintainAspectRatioQuirk() const
+{
+    if (!needsQuirks())
+        return false;
+
+    if (m_needsVideoShouldMaintainAspectRatioQuirk)
+        return m_needsVideoShouldMaintainAspectRatioQuirk.value();
+
+    auto domain = RegistrableDomain(m_document->url()).string();
+    m_needsVideoShouldMaintainAspectRatioQuirk = domain == "hulu.com"_s;
+
+    return m_needsVideoShouldMaintainAspectRatioQuirk.value();
 }
 
 }

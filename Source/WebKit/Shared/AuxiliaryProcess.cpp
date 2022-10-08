@@ -50,7 +50,7 @@ using namespace WebCore;
 
 AuxiliaryProcess::AuxiliaryProcess()
     : m_terminationCounter(0)
-    , m_processSuppressionDisabled("Process Suppression Disabled by UIProcess")
+    , m_processSuppressionDisabled("Process Suppression Disabled by UIProcess"_s)
 {
 }
 
@@ -81,10 +81,6 @@ void AuxiliaryProcess::initialize(const AuxiliaryProcessInitializationParameters
     Process::setIdentifier(*parameters.processIdentifier);
 
     platformInitialize(parameters);
-
-#if PLATFORM(COCOA)
-    m_priorityBoostMessage = parameters.priorityBoostMessage;
-#endif
 
     SandboxInitializationParameters sandboxParameters;
     initializeSandbox(parameters, sandboxParameters);

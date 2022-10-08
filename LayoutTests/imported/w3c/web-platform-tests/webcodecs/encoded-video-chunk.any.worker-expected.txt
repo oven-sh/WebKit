@@ -1,0 +1,4 @@
+
+PASS Test we can construct an EncodedVideoChunk.
+PASS Test copyTo() exception if destiation invalid
+

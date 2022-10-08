@@ -36,6 +36,7 @@
 #include "HTTPParsers.h"
 #include "JSBlob.h"
 #include "JSDOMFormData.h"
+#include "RFC7230.h"
 #include "TextResourceDecoder.h"
 #include <wtf/StringExtras.h>
 #include <wtf/URLParser.h>

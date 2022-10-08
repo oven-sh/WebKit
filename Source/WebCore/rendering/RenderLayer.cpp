@@ -898,7 +898,7 @@ OptionSet<RenderLayer::UpdateLayerPositionsFlag> RenderLayer::flagsForUpdateLaye
     OptionSet<UpdateLayerPositionsFlag> flags = { CheckForRepaint };
 
     if (auto* parent = startingLayer.parent()) {
-        if (parent->hasFixedContainingBlockAncestor() || parent->renderer().canContainFixedPositionObjects())
+        if (parent->hasFixedContainingBlockAncestor() || (!parent->isRenderViewLayer() && parent->renderer().canContainFixedPositionObjects()))
             flags.add(SeenFixedContainingBlockLayer);
 
         if (parent->hasTransformedAncestor() || parent->transform())
@@ -2362,11 +2362,11 @@ static inline const RenderLayer* accumulateOffsetTowardsAncestor(const RenderLay
 {
     ASSERT(ancestorLayer != layer);
 
-    const RenderLayerModelObject& renderer = layer->renderer();
+    const auto& renderer = layer->renderer();
     auto position = renderer.style().position();
 
     // FIXME: Special casing RenderFragmentedFlow so much for fixed positioning here is not great.
-    RenderFragmentedFlow* fixedFragmentedFlowContainer = position == PositionType::Fixed ? renderer.enclosingFragmentedFlow() : nullptr;
+    auto* fixedFragmentedFlowContainer = position == PositionType::Fixed ? renderer.enclosingFragmentedFlow() : nullptr;
     if (fixedFragmentedFlowContainer && !fixedFragmentedFlowContainer->isOutOfFlowPositioned())
         fixedFragmentedFlowContainer = nullptr;
 
@@ -2378,8 +2378,7 @@ static inline const RenderLayer* accumulateOffsetTowardsAncestor(const RenderLay
     if (position == PositionType::Fixed && !fixedFragmentedFlowContainer && (!ancestorLayer || ancestorLayer == renderer.view().layer())) {
         // If the fixed layer's container is the root, just add in the offset of the view. We can obtain this by calling
         // localToAbsolute() on the RenderView.
-        FloatPoint absPos = renderer.localToAbsolute(FloatPoint(), IsFixed);
-        location += LayoutSize(absPos.x(), absPos.y());
+        location.moveBy(LayoutPoint(renderer.localToAbsolute({ }, IsFixed)));
         return ancestorLayer;
     }
 
@@ -2392,7 +2391,7 @@ static inline const RenderLayer* accumulateOffsetTowardsAncestor(const RenderLay
         // so we should always find the ancestor at or before we find the fixed position container.
         RenderLayer* fixedPositionContainerLayer = nullptr;
         bool foundAncestor = false;
-        for (RenderLayer* currLayer = layer->parent(); currLayer; currLayer = currLayer->parent()) {
+        for (auto* currLayer = layer->parent(); currLayer; currLayer = currLayer->parent()) {
             if (currLayer == ancestorLayer)
                 foundAncestor = true;
 
@@ -2406,9 +2405,9 @@ static inline const RenderLayer* accumulateOffsetTowardsAncestor(const RenderLay
         ASSERT(fixedPositionContainerLayer); // We should have hit the RenderView's layer at least.
 
         if (fixedPositionContainerLayer != ancestorLayer) {
-            LayoutSize fixedContainerCoords = layer->offsetFromAncestor(fixedPositionContainerLayer);
-            LayoutSize ancestorCoords = ancestorLayer->offsetFromAncestor(fixedPositionContainerLayer);
-            location += (fixedContainerCoords - ancestorCoords);
+            auto fixedContainerCoords = layer->offsetFromAncestor(fixedPositionContainerLayer);
+            auto ancestorCoords = ancestorLayer->offsetFromAncestor(fixedPositionContainerLayer);
+            location.move(fixedContainerCoords - ancestorCoords);
             return ancestorLayer;
         }
     }
@@ -2417,11 +2416,10 @@ static inline const RenderLayer* accumulateOffsetTowardsAncestor(const RenderLay
         ASSERT(ancestorLayer);
         if (ancestorLayer == renderer.view().layer()) {
             // Add location in flow thread coordinates.
-            location += toLayoutSize(layer->location());
+            location.moveBy(layer->location());
 
             // Add flow thread offset in view coordinates since the view may be scrolled.
-            FloatPoint absPos = renderer.view().localToAbsolute(FloatPoint(), IsFixed);
-            location += LayoutSize(absPos.x(), absPos.y());
+            location.moveBy(LayoutPoint(renderer.view().localToAbsolute({ }, IsFixed)));
             return ancestorLayer;
         }
     }
@@ -2454,10 +2452,10 @@ static inline const RenderLayer* accumulateOffsetTowardsAncestor(const RenderLay
         if (foundAncestorFirst) {
             // Found ancestorLayer before the abs. positioned container, so compute offset of both relative
             // to enclosingAncestorForPosition and subtract.
-            RenderLayer* positionedAncestor = parentLayer->enclosingAncestorForPosition(position);
-            LayoutSize thisCoords = layer->offsetFromAncestor(positionedAncestor);
-            LayoutSize ancestorCoords = ancestorLayer->offsetFromAncestor(positionedAncestor);
-            location += (thisCoords - ancestorCoords);
+            auto* positionedAncestor = parentLayer->enclosingAncestorForPosition(position);
+            auto thisCoords = layer->offsetFromAncestor(positionedAncestor);
+            auto ancestorCoords = ancestorLayer->offsetFromAncestor(positionedAncestor);
+            location.move(thisCoords - ancestorCoords);
             return ancestorLayer;
         }
     } else
@@ -2466,7 +2464,7 @@ static inline const RenderLayer* accumulateOffsetTowardsAncestor(const RenderLay
     if (!parentLayer)
         return nullptr;
 
-    location += toLayoutSize(layer->location());
+    location.moveBy(layer->location());
 
     if (adjustForColumns == RenderLayer::AdjustForColumns) {
         auto* parentLayer = layer->parent();
@@ -2486,10 +2484,17 @@ LayoutPoint RenderLayer::convertToLayerCoords(const RenderLayer* ancestorLayer, 
     if (ancestorLayer == this)
         return location;
 
-    const RenderLayer* currLayer = this;
-    LayoutPoint locationInLayerCoords = location;
+    const auto* currLayer = this;
+    auto locationInLayerCoords = location;
     while (currLayer && currLayer != ancestorLayer)
         currLayer = accumulateOffsetTowardsAncestor(currLayer, ancestorLayer, locationInLayerCoords, adjustForColumns);
+
+#if ENABLE(LAYER_BASED_SVG_ENGINE)
+    // Pixel snap the whole SVG subtree as one "block" -- not individual layers down the SVG render tree.
+    if (renderer().isSVGRoot())
+        return LayoutPoint(roundPointToDevicePixels(locationInLayerCoords, renderer().document().deviceScaleFactor()));
+#endif
+
     return locationInLayerCoords;
 }
 
@@ -3337,15 +3342,6 @@ void RenderLayer::paintLayerContents(GraphicsContext& context, const LayerPainti
 
 void RenderLayer::paintLayerByApplyingTransform(GraphicsContext& context, const LayerPaintingInfo& paintingInfo, OptionSet<PaintLayerFlag> paintFlags, const LayoutSize& translationOffset)
 {
-    auto usesSVGSubtreeTransformRules = [](const RenderLayerModelObject& renderer) {
-#if ENABLE(LAYER_BASED_SVG_ENGINE)
-        return renderer.document().settings().layerBasedSVGEngineEnabled() && renderer.isSVGLayerAwareRenderer() && !renderer.isSVGRoot();
-#else
-        UNUSED_PARAM(renderer);
-#endif
-        return false;
-    };
-
     // This involves subtracting out the position of the layer in our current coordinate space, but preserving
     // the accumulated error for sub-pixel layout.
     // Note: The pixel-snapping logic is disabled for the whole SVG render tree, except the outermost <svg>.
@@ -3355,7 +3351,7 @@ void RenderLayer::paintLayerByApplyingTransform(GraphicsContext& context, const 
     TransformationMatrix transform(renderableTransform(paintingInfo.paintBehavior));
     // Add the subpixel accumulation to the current layer's offset so that we can always snap the translateRight value to where the renderer() is supposed to be painting.
     LayoutSize offsetForThisLayer = offsetFromParent + paintingInfo.subpixelOffset;
-    FloatSize alignedOffsetForThisLayer = usesSVGSubtreeTransformRules(renderer()) ? offsetForThisLayer : toFloatSize(roundPointToDevicePixels(toLayoutPoint(offsetForThisLayer), deviceScaleFactor));
+    FloatSize alignedOffsetForThisLayer = rendererNeedsPixelSnapping(renderer()) ? toFloatSize(roundPointToDevicePixels(toLayoutPoint(offsetForThisLayer), deviceScaleFactor)) : offsetForThisLayer;
     // We handle accumulated subpixels through nested layers here. Since the context gets translated to device pixels,
     // all we need to do is add the delta to the accumulated pixels coming from ancestor layers.
     // Translate the graphics context to the snapping position to avoid off-device-pixel positing.
@@ -3368,11 +3364,14 @@ void RenderLayer::paintLayerByApplyingTransform(GraphicsContext& context, const 
     if (paintingInfo.eventRegionContext)
         paintingInfo.eventRegionContext->pushTransform(affineTransform);
 
-    // Now do a paint with the root layer shifted to be us.
+    // Only propagate the subpixel offsets to the descendant layers, if we're not the root
+    // of a SVG subtree, where no pixel snapping is applied -- only the outermost <svg> layer
+    // is pixel-snapped "as whole", if it's part of a compound document, e.g. inline SVG in HTML.
     LayoutSize adjustedSubpixelOffset;
-    if (!usesSVGSubtreeTransformRules(renderer()) && !renderer().isSVGRoot())
+    if (rendererNeedsPixelSnapping(renderer()) && !renderer().isSVGRoot())
         adjustedSubpixelOffset = offsetForThisLayer - LayoutSize(alignedOffsetForThisLayer);
 
+    // Now do a paint with the root layer shifted to be us.
     LayerPaintingInfo transformedPaintingInfo(paintingInfo);
     transformedPaintingInfo.rootLayer = this;
     transformedPaintingInfo.paintDirtyRect = LayoutRect(encloseRectToDevicePixels(valueOrDefault(transform.inverse()).mapRect(paintingInfo.paintDirtyRect), deviceScaleFactor));

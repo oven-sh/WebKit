@@ -34,10 +34,13 @@
 #include "HTMLIFrameElement.h"
 #include "HitTestResult.h"
 #include "ImageQualityController.h"
+#include "LayoutInitialContainingBlock.h"
+#include "LayoutState.h"
 #include "NodeTraversal.h"
 #include "Page.h"
 #include "RenderDescendantIterator.h"
 #include "RenderGeometryMap.h"
+#include "RenderImage.h"
 #include "RenderIterator.h"
 #include "RenderLayer.h"
 #include "RenderLayerBacking.h"
@@ -63,6 +66,7 @@ WTF_MAKE_ISO_ALLOCATED_IMPL(RenderView);
 RenderView::RenderView(Document& document, RenderStyle&& style)
     : RenderBlockFlow(document, WTFMove(style))
     , m_frameView(*document.view())
+    , m_initialContainingBlock(makeUniqueRef<Layout::InitialContainingBlock>(RenderStyle::clone(this->style())))
     , m_selection(*this)
     , m_lazyRepaintTimer(*this, &RenderView::lazyRepaintTimerFired)
 {
@@ -179,6 +183,8 @@ void RenderView::layout()
     if (!needsLayout())
         return;
 
+    ensureLayoutState().setViewportSize(frameView().size());
+
     LayoutStateMaintainer statePusher(*this, { }, false, valueOrDefault(m_pageLogicalSize).height(), m_pageLogicalHeightChanged);
 
     m_pageLogicalHeightChanged = false;
@@ -189,6 +195,19 @@ void RenderView::layout()
     frameView().layoutContext().checkLayoutState();
 #endif
     clearNeedsLayout();
+}
+
+Layout::LayoutState& RenderView::ensureLayoutState()
+{
+    if (!m_layoutState)
+        m_layoutState = makeUnique<Layout::LayoutState>(document(), m_initialContainingBlock.get(), Layout::LayoutState::FormattingContextIntegrationType::Inline);
+    return *m_layoutState;
+}
+
+void RenderView::updateQuirksMode()
+{
+    if (m_layoutState)
+        m_layoutState->updateQuirksMode(document());
 }
 
 LayoutUnit RenderView::pageOrViewLogicalHeight() const

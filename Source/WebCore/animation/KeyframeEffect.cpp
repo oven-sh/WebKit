@@ -28,7 +28,6 @@
 
 #include "Animation.h"
 #include "CSSAnimation.h"
-#include "CSSComputedStyleDeclaration.h"
 #include "CSSKeyframeRule.h"
 #include "CSSPropertyAnimation.h"
 #include "CSSPropertyNames.h"
@@ -37,6 +36,7 @@
 #include "CSSStyleDeclaration.h"
 #include "CSSTimingFunctionValue.h"
 #include "CSSTransition.h"
+#include "ComputedStyleExtractor.h"
 #include "Element.h"
 #include "FontCascade.h"
 #include "FrameView.h"
@@ -233,6 +233,8 @@ static inline ExceptionOr<KeyframeEffect::KeyframeLikeObject> processKeyframeLik
     Vector<JSC::Identifier> animationProperties;
     for (auto& inputProperty : inputProperties) {
         auto cssProperty = IDLAttributeNameToAnimationPropertyName(inputProperty.string());
+        if (!isCSSPropertyExposed(cssProperty, &document.settings()))
+            cssProperty = CSSPropertyInvalid;
         auto resolvedCSSProperty = CSSProperty::resolveDirectionAwareProperty(cssProperty, RenderStyle::initialDirection(), RenderStyle::initialWritingMode());
         if (CSSPropertyAnimation::isPropertyAnimatable(resolvedCSSProperty))
             animationProperties.append(inputProperty);
@@ -275,6 +277,7 @@ static inline ExceptionOr<KeyframeEffect::KeyframeLikeObject> processKeyframeLik
         // 4. Calculate the normalized property name as the result of applying the IDL attribute name to animation property name algorithm to property name.
         auto propertyName = animationProperties[i].string();
         auto cssPropertyID = IDLAttributeNameToAnimationPropertyName(propertyName);
+        ASSERT(isCSSPropertyExposed(cssPropertyID, &document.settings()));
 
         // 5. Add a property to to keyframe output with normalized property name as the property name, and property values as the property value.
         if (cssPropertyID == CSSPropertyCustom)
@@ -631,7 +634,6 @@ auto KeyframeEffect::getKeyframes(Document& document) -> Vector<ComputedKeyframe
     }
 
     auto* target = m_target.get();
-    auto* renderer = this->renderer();
     auto* lastStyleChangeEventStyle = targetStyleable()->lastStyleChangeEventStyle();
     auto& elementStyle = lastStyleChangeEventStyle ? *lastStyleChangeEventStyle : currentStyle();
 
@@ -704,7 +706,7 @@ auto KeyframeEffect::getKeyframes(Document& document) -> Vector<ComputedKeyframe
                 }
             }
             if (styleString.isEmpty()) {
-                if (auto cssValue = computedStyleExtractor.valueForPropertyInStyle(style, cssPropertyId, renderer))
+                if (auto cssValue = computedStyleExtractor.valueForPropertyInStyle(style, cssPropertyId, nullptr, ComputedStyleExtractor::PropertyValueType::Computed))
                     styleString = cssValue->cssText();
             }
             computedKeyframe.styleStrings.set(cssPropertyId, styleString);
@@ -1193,8 +1195,11 @@ void KeyframeEffect::setAnimation(WebAnimation* animation)
 {
     bool animationChanged = animation != this->animation();
     AnimationEffect::setAnimation(animation);
-    if (animationChanged)
+    if (animationChanged) {
+        if (m_blendingKeyframesSource == BlendingKeyframesSource::CSSAnimation)
+            clearBlendingKeyframes();
         updateEffectStackMembership();
+    }
 }
 
 const std::optional<const Styleable> KeyframeEffect::targetStyleable() const

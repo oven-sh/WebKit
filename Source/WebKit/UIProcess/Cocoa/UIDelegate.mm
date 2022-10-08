@@ -140,7 +140,6 @@ void UIDelegate::setDelegate(id <WKUIDelegate> delegate)
     m_delegateMethods.webViewDrawFooterInRectForPageWithTitleURL = [delegate respondsToSelector:@selector(_webView:drawFooterInRect:forPageWithTitle:URL:)];
     m_delegateMethods.webViewHeaderHeight = [delegate respondsToSelector:@selector(_webViewHeaderHeight:)];
     m_delegateMethods.webViewFooterHeight = [delegate respondsToSelector:@selector(_webViewFooterHeight:)];
-    m_delegateMethods.webViewDidExceedBackgroundResourceLimitWhileInForeground = [delegate respondsToSelector:@selector(_webView:didExceedBackgroundResourceLimitWhileInForeground:)];
     m_delegateMethods.webViewSaveDataToFileSuggestedFilenameMimeTypeOriginatingURL = [delegate respondsToSelector:@selector(_webView:saveDataToFile:suggestedFilename:mimeType:originatingURL:)];
     m_delegateMethods.webViewRunOpenPanelWithParametersInitiatedByFrameCompletionHandler = [delegate respondsToSelector:@selector(webView:runOpenPanelWithParameters:initiatedByFrame:completionHandler:)];
     m_delegateMethods.webViewConfigurationForLocalInspector = [delegate respondsToSelector:@selector(_webView:configurationForLocalInspector:)];
@@ -167,6 +166,10 @@ void UIDelegate::setDelegate(id <WKUIDelegate> delegate)
     m_delegateMethods.webViewActionsForElementDefaultActions = [delegate respondsToSelector:@selector(_webView:actionsForElement:defaultActions:)];
     m_delegateMethods.webViewDidNotHandleTapAsClickAtPoint = [delegate respondsToSelector:@selector(_webView:didNotHandleTapAsClickAtPoint:)];
     m_delegateMethods.webViewStatusBarWasTapped = [delegate respondsToSelector:@selector(_webViewStatusBarWasTapped:)];
+#endif
+#if PLATFORM(IOS)
+    m_delegateMethods.webViewLockScreenOrientation = [delegate respondsToSelector:@selector(_webViewLockScreenOrientation:lockType:)];
+    m_delegateMethods.webViewUnlockScreenOrientation = [delegate respondsToSelector:@selector(_webViewUnlockScreenOrientation:)];
 #endif
     m_delegateMethods.presentingViewControllerForWebView = [delegate respondsToSelector:@selector(_presentingViewControllerForWebView:)];
     m_delegateMethods.webViewIsMediaCaptureAuthorizedForFrameDecisionHandler = [delegate respondsToSelector:@selector(_webView:checkUserMediaPermissionForURL:mainFrameURL:frameIdentifier:decisionHandler:)] || [delegate respondsToSelector:@selector(_webView:includeSensitiveMediaDeviceDetails:)];
@@ -581,6 +584,61 @@ void UIDelegate::UIClient::exceededDatabaseQuota(WebPageProxy*, WebFrameProxy*, 
     }).get()];
 }
 
+#if PLATFORM(IOS)
+static _WKScreenOrientationLockType toWKScreenOrientationLockType(WebCore::ScreenOrientationLockType lockType)
+{
+    switch (lockType) {
+    case WebCore::ScreenOrientationLockType::Natural:
+    case WebCore::ScreenOrientationLockType::Portrait:
+        break;
+    case WebCore::ScreenOrientationLockType::Any:
+        return _WKScreenOrientationLockTypeAny;
+    case WebCore::ScreenOrientationLockType::Landscape:
+        return _WKScreenOrientationLockTypeLandscape;
+    case WebCore::ScreenOrientationLockType::PortraitPrimary:
+        return _WKScreenOrientationLockTypePortraitPrimary;
+    case WebCore::ScreenOrientationLockType::PortraitSecondary:
+        return _WKScreenOrientationLockTypePortraitSecondary;
+    case WebCore::ScreenOrientationLockType::LandscapePrimary:
+        return _WKScreenOrientationLockTypeLandscapePrimary;
+    case WebCore::ScreenOrientationLockType::LandscapeSecondary:
+        return _WKScreenOrientationLockTypeLandscapeSecondary;
+    }
+    return _WKScreenOrientationLockTypePortrait;
+}
+#endif
+
+bool UIDelegate::UIClient::lockScreenOrientation(WebCore::ScreenOrientationLockType lockType)
+{
+#if PLATFORM(IOS)
+    if (!m_uiDelegate)
+        return false;
+    if (!m_uiDelegate->m_delegateMethods.webViewLockScreenOrientation)
+        return false;
+    auto delegate = m_uiDelegate->m_delegate.get();
+    if (!delegate)
+        return false;
+
+    [(id<WKUIDelegatePrivate>)delegate _webViewLockScreenOrientation:m_uiDelegate->m_webView.get().get() lockType:toWKScreenOrientationLockType(lockType)];
+    return true;
+#else
+    UNUSED_PARAM(lockType);
+    return false;
+#endif
+}
+
+void UIDelegate::UIClient::unlockScreenOrientation()
+{
+#if PLATFORM(IOS)
+    if (!m_uiDelegate)
+        return;
+    if (!m_uiDelegate->m_delegateMethods.webViewUnlockScreenOrientation)
+        return;
+    if (auto delegate = m_uiDelegate->m_delegate.get())
+        [(id<WKUIDelegatePrivate>)delegate _webViewUnlockScreenOrientation:m_uiDelegate->m_webView.get().get()];
+#endif
+}
+
 static inline _WKFocusDirection toWKFocusDirection(WKFocusDirection direction)
 {
     switch (direction) {
@@ -882,33 +940,6 @@ void UIDelegate::UIClient::unfocus(WebPageProxy*)
         return;
     
     [(id <WKUIDelegatePrivate>)delegate _unfocusWebView:m_uiDelegate->m_webView.get().get()];
-}
-
-static _WKResourceLimit toWKResourceLimit(WKResourceLimit limit)
-{
-    switch (limit) {
-    case kWKResourceLimitMemory:
-        return _WKResourceLimitMemory;
-    case kWKResourceLimitCPU:
-        return _WKResourceLimitCPU;
-    }
-    ASSERT_NOT_REACHED();
-    return _WKResourceLimitMemory;
-}
-
-void UIDelegate::UIClient::didExceedBackgroundResourceLimitWhileInForeground(WebPageProxy&, WKResourceLimit limit)
-{
-    if (!m_uiDelegate)
-        return;
-
-    if (!m_uiDelegate->m_delegateMethods.webViewDidExceedBackgroundResourceLimitWhileInForeground)
-        return;
-    
-    auto delegate = m_uiDelegate->m_delegate.get();
-    if (!delegate)
-        return;
-    
-    [static_cast<id <WKUIDelegatePrivate>>(delegate) _webView:m_uiDelegate->m_webView.get().get() didExceedBackgroundResourceLimitWhileInForeground:toWKResourceLimit(limit)];
 }
 
 void UIDelegate::UIClient::didNotHandleWheelEvent(WebPageProxy*, const NativeWebWheelEvent& event)

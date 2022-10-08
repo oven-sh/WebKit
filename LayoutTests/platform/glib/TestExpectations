@@ -218,7 +218,6 @@ imported/w3c/web-platform-tests/css/selectors/selector-read-write-type-change-00
 imported/w3c/web-platform-tests/css/selectors/selector-required-type-change-002.html [ Pass ]
 
 imported/w3c/web-platform-tests/html/canvas/element/manual/drawing-images-to-the-canvas/image-orientation/drawImage-from-bitmap-swap-width-height.tentative.html [ Pass ]
-imported/w3c/web-platform-tests/html/canvas/element/manual/imagebitmap/imageBitmapRendering-transferFromImageBitmap-webgl.html [ Pass ]
 
 imported/w3c/web-platform-tests/html/dom/elements/global-attributes/dir_auto-pre-N-between-Rs.html [ Pass ]
 imported/w3c/web-platform-tests/html/dom/elements/global-attributes/dir_auto-textarea-N-between-Rs.html [ Pass ]
@@ -242,16 +241,13 @@ imported/w3c/web-platform-tests/compat/webkit-box-rtl-flex.html [ Pass ]
 
 imported/w3c/web-platform-tests/web-animations/timing-model/animations/update-playback-rate-zero.html [ Pass ]
 
+# Tests need rebasing
+imported/w3c/web-platform-tests/webcodecs [ Skip ]
+
 # Tests that timeout on Apple platforms.
 webkit.org/b/185859 imported/w3c/web-platform-tests/css/selectors/focus-visible-002.html [ Pass ]
 webkit.org/b/185859 imported/w3c/web-platform-tests/css/selectors/focus-visible-003.html [ Pass ]
 webkit.org/b/185859 imported/w3c/web-platform-tests/css/selectors/focus-visible-004.html [ Pass ]
-
-# These tests are expected to fail with GPU process and on Mac, but pass on GTK and WPE
-webkit.org/b/221951 fast/canvas/webgl/tex-image-and-sub-image-2d-with-video-rgb565.html [ Pass ]
-webkit.org/b/221951 fast/canvas/webgl/tex-image-and-sub-image-2d-with-video-rgba4444.html [ Pass ]
-webkit.org/b/221951 fast/canvas/webgl/tex-image-and-sub-image-2d-with-video-rgba5551.html [ Pass ]
-webkit.org/b/221951 fast/canvas/webgl/tex-image-and-sub-image-2d-with-video.html [ Pass ]
 
 # These tests are expected to fail with GPU process and on Mac, but pass on GTK and WPE
 http/tests/media/hls/hls-progress.html [ Pass ]
@@ -336,6 +332,10 @@ imported/w3c/web-platform-tests/notifications/idlharness.https.any.worker.html [
 http/tests/workers/service/getnotifications-stop.html [ Pass ]
 http/tests/workers/service/getnotifications.html [ Pass ]
 
+webkit.org/b/239550 fast/text/simple-line-hyphens-with-text-align.html [ Pass ]
+webkit.org/b/239550 fast/text/simple-line-layout-hyphen-limit-after.html [ Pass ]
+webkit.org/b/239550 fast/text/simple-line-layout-hyphen-limit-before.html [ Pass ]
+
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of PASSING tests.
 #////////////////////////////////////////////////////////////////////////////////////////
@@ -369,6 +369,9 @@ accessibility/aria-multiline.html [ Skip ]
 
 # Failing since added in https://bugs.webkit.org/show_bug.cgi?id=244069.
 accessibility/dynamically-ignored-canvas.html [ Skip ]
+
+# Missing AccessibilityUIElement::takeFocus().
+accessibility/basic-focusability.html [ Skip ]
 
 # Missing AccessibilityUIElement::uiElementForSearchPredicate implementation.
 accessibility/aria-modal-with-text-crash.html [ Skip ]
@@ -571,6 +574,10 @@ webkit.org/b/234606 fast/gradients/conic-gradient-alpha-unpremultiplied.html [ I
 webkit.org/b/234606 fast/gradients/conic-gradient-alpha.html [ ImageOnlyFailure ]
 webkit.org/b/234606 fast/gradients/alpha-premultiplied-representable-by-unpremultiplied.html [ ImageOnlyFailure ]
 webkit.org/b/234606 fast/gradients/alpha-premultiplied.html [ ImageOnlyFailure ]
+webkit.org/b/245622 fast/gradients/gradient-using-specified-hue-interpolation-method-hsl.html [ ImageOnlyFailure ]
+webkit.org/b/245622 fast/gradients/gradient-using-specified-hue-interpolation-method-hwb.html [ ImageOnlyFailure ]
+webkit.org/b/245622 fast/gradients/gradient-using-specified-hue-interpolation-method-lch.html [ ImageOnlyFailure ]
+webkit.org/b/245622 fast/gradients/gradient-using-specified-hue-interpolation-method-oklch.html [ ImageOnlyFailure ]
 
 webkit.org/b/169988 css3/filters/backdrop/backdrop-filter-with-border-radius-and-reflection-add.html [ ImageOnlyFailure ]
 webkit.org/b/169988 css3/filters/backdrop/backdrop-filter-with-border-radius-and-reflection.html [ ImageOnlyFailure ]
@@ -689,7 +696,10 @@ webkit.org/b/230277 imported/w3c/web-platform-tests/css/css-transforms/composite
 webkit.org/b/230277 imported/w3c/web-platform-tests/css/css-transforms/composited-under-rotateY-180deg.html
 webkit.org/b/230277 imported/w3c/web-platform-tests/css/css-transforms/transform-fixed-bg-007.html [ ImageOnlyFailure ]
 webkit.org/b/230277 imported/w3c/web-platform-tests/css/css-transforms/perspective-split-by-zero-w.html [ ImageOnlyFailure ]
-webkit.org/b/230277 imported/w3c/web-platform-tests/css/css-transforms/perspective-transforms-equivalence.html [ ImageOnlyFailure ]
+
+webkit.org/b/245862 imported/w3c/web-platform-tests/css/css-transforms/perspective-transforms-equivalence.html [ ImageOnlyFailure ]
+
+webkit.org/b/245716 imported/w3c/web-platform-tests/css/css-transforms/transform3d-rotatex-perspective-003.html [ ImageOnlyFailure ]
 
 webkit.org/b/237502 fast/dom/Range/getClientRects.html [ Failure ]
 webkit.org/b/237502 fast/multicol/newmulticol/hide-box-vertical-lr.html [ ImageOnlyFailure ]
@@ -710,9 +720,6 @@ imported/w3c/web-platform-tests/css/css-transforms/preserve3d-and-filter-no-pers
 imported/w3c/web-platform-tests/css/css-transforms/transform3d-scale-004.html [ Pass ]
 imported/w3c/web-platform-tests/css/css-transforms/transform3d-sorting-003.html [ Pass ]
 imported/w3c/web-platform-tests/css/css-transforms/transform3d-translate3d-001.html [ Pass ]
-imported/w3c/web-platform-tests/css/css-transforms/ttwf-css-3d-polygon-cycle.html [ Pass ]
-
-webkit.org/b/241568 imported/w3c/web-platform-tests/css/css-transforms/transform3d-rotatex-perspective-003.html [ ImageOnlyFailure ]
 
 # Changes to logical height/width computations (https://bugs.webkit.org/show_bug.cgi?id=241601)
 webkit.org/b/241601 css2.1/t090501-c414-flt-03-b-g.html [ Failure ]
@@ -907,6 +914,18 @@ webkit.org/b/237901 media/media-source/media-source-interruption-with-resume-all
 webkit.org/b/244776 media/media-source/media-source-seek-detach-crash.html [ Crash ]
 webkit.org/b/244776 media/media-source/media-source-unnecessary-seek-seeked.html [ Crash ]
 
+webkit.org/b/245639 media/video-as-img-with-alpha.html [ ImageOnlyFailure ]
+
+# Requires support for xHE-AAC audio codec, which we do have, but the FDK AAC
+# decoder emits errors on this file. File plays find in upstream GStreamer 1.21.
+# Pending investigation.
+webkit.org/b/239750 media/media-source/media-mp4-xhe-aac.html [ Skip ]
+
+# Doesn't render the same on GTK/WPE as in Apple ports. Probably related with
+# bad colorimetry handling, our baseline looks a bit greyish compared to the
+# Apple baseline.
+media/media-hevc-video-as-img.html [ ImageOnlyFailure ]
+
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of GStreamer-related bugs
 #////////////////////////////////////////////////////////////////////////////////////////
@@ -929,6 +948,8 @@ media/modern-media-controls/time-label/time-label.html [ Failure ]
 media/modern-media-controls/volume-support/volume-support-drag.html [ Failure ]
 media/modern-media-controls/media-documents/background-color-and-centering.html [ ImageOnlyFailure ]
 http/tests/media/modern-media-controls/skip-back-support/skip-back-support-button-click.html [ Failure ]
+
+media/modern-media-controls/scrubber-support/scrubber-support-drag.html [ Timeout ]
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of Media-controls-related bugs
@@ -1050,19 +1071,16 @@ webkit.org/b/209144 imported/w3c/web-platform-tests/html/canvas/offscreen/shadow
 webkit.org/b/209144 imported/w3c/web-platform-tests/html/canvas/offscreen/shadows/2d.shadow.pattern.transparent.1.html [ DumpJSConsoleLogInStdErr ]
 webkit.org/b/209144 imported/w3c/web-platform-tests/html/canvas/offscreen/shadows/2d.shadow.pattern.transparent.2.html [ DumpJSConsoleLogInStdErr ]
 
-# Tests requiring bitmaprenderer context support in OffscreenCanvas.
-# Might need glib-specific baselines when actually fixed as the root expectations fail with missing OffscreenCanvas support.
-webkit.org/b/197421 imported/w3c/web-platform-tests/imagebitmap-renderingcontext/context-creation-offscreen-with-alpha.html [ Failure ]
-webkit.org/b/197421 imported/w3c/web-platform-tests/imagebitmap-renderingcontext/context-creation-offscreen.html [ Failure ]
-webkit.org/b/197421 imported/w3c/web-platform-tests/imagebitmap-renderingcontext/tranferFromImageBitmap-ToBlob-offscreen.html [ Failure ]
-webkit.org/b/197421 imported/w3c/web-platform-tests/imagebitmap-renderingcontext/tranferFromImageBitmap-TransferToImageBitmap-offscreen.html [ Failure ]
-webkit.org/b/197421 imported/w3c/web-platform-tests/imagebitmap-renderingcontext/tranferFromImageBitmap-null-offscreen.html [ Failure ]
-
 webkit.org/b/221311 [ Debug ] imported/w3c/web-platform-tests/html/canvas/offscreen/filter/offscreencanvas.filter.w.html [ Slow ]
 webkit.org/b/221311 [ Debug ] imported/w3c/web-platform-tests/html/canvas/offscreen/manual/filter/offscreencanvas.filter.w.html [ Slow ]
 
 # Failing since r277543.
 webkit.org/b/225870 imported/w3c/web-platform-tests/html/canvas/offscreen/fill-and-stroke-styles/2d.gradient.conic.worker.html [ Failure ]
+
+webkit.org/b/245334 [ Debug ] imported/w3c/web-platform-tests/html/canvas/offscreen/2d.conformance.requirements.missingargs.html [ Crash ]
+webkit.org/b/245334 [ Debug ] imported/w3c/web-platform-tests/html/canvas/offscreen/conformance-requirements/2d.conformance.requirements.missingargs.html [ Crash ]
+webkit.org/b/245334 [ Debug ] imported/w3c/web-platform-tests/html/canvas/offscreen/manual/transformations/2d.transformation.getTransform.html [ Crash ]
+webkit.org/b/245334 [ Debug ] imported/w3c/web-platform-tests/html/canvas/offscreen/text/ [ Pass Crash ]
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of OffscreenCanvas-related bugs
@@ -1389,11 +1407,51 @@ webkit.org/b/229052 webgl/1.0.x/conformance/textures/misc/texture-corner-case-vi
 webgl/webgl-via-metal-flag-on.html [ Skip ]
 webgl/webgl-via-metal-flag-off.html [ Skip ]
 
-# Remove after ANGLE is the default backend.
+# Remove after ANGLE is the default backend and results have been triaged.
+fast/canvas/webgl/copy-tex-image-and-sub-image-2d-bad-input.html [ Failure ]
+fast/canvas/webgl/draw-elements-out-of-bounds-uint-index.html [ Failure ]
+fast/canvas/webgl/drawElements-empty-vertex-data.html [ Failure ]
+fast/canvas/webgl/drawingbuffer-test.html [ Failure ]
+fast/canvas/webgl/largeBuffer.html [ Failure ]
+fast/canvas/webgl/oes-texture-float-linear.html [ Failure ]
+fast/canvas/webgl/tex-image-and-sub-image-2d-with-video-rgb565.html [ Failure ]
+fast/canvas/webgl/tex-image-and-sub-image-2d-with-video-rgba5551.html [ Failure ]
+fast/canvas/webgl/tex-image-and-sub-image-2d-with-video.html [ Failure ]
+fast/canvas/webgl/tex-image-and-uniform-binding-bugs.html [ Failure ]
+fast/canvas/webgl/tex-image-webgl.html [ Failure ]
+fast/canvas/webgl/tex-image-with-format-and-type.html [ Failure ]
+fast/canvas/webgl/tex-image-with-greyscale-image.html [ Failure ]
+fast/canvas/webgl/tex-input-validation.html [ Failure ]
+fast/canvas/webgl/tex-sub-image-2d.html [ Failure ]
+fast/canvas/webgl/tex-sub-image-cube-maps.html [ Failure ]
+fast/canvas/webgl/texImage2D-mse-flipY-false.html [ Failure ]
+fast/canvas/webgl/texImage2D-mse-flipY-true.html [ Failure ]
+fast/canvas/webgl/texImage2D-video-flipY-false.html [ Failure ]
+fast/canvas/webgl/vertexAttribPointer-with-bad-offset.html [ Failure ]
+fast/canvas/webgl/webgl-compressed-texture-size-limit.html [ Failure ]
+fast/canvas/webgl/webgl-drawarrays-crash-2.html [ Failure ]
+fast/canvas/webgl/webgl-drawarrays-crash.html [ Failure ]
+fast/mediacapturefromelement/CanvasCaptureMediaStream-offscreencanvas.html [ Failure ]
+http/tests/canvas/webgl/origin-clean-conformance.html [ Failure ]
+http/tests/webgl/1.0.x/conformance/textures/misc/origin-clean-conformance-offscreencanvas.html [ Skip ]
+http/wpt/offscreen-canvas/getContext-webgl.html [ Failure ]
+http/wpt/offscreen-canvas/transferToImageBitmap-webgl.html [ Failure ]
+imported/w3c/web-platform-tests/html/canvas/element/manual/imagebitmap/imageBitmapRendering-transferFromImageBitmap-webgl.html [ Failure ]
+imported/w3c/web-platform-tests/html/canvas/offscreen/manual/the-offscreen-canvas/offscreencanvas.getcontext.html [ Failure ]
+imported/w3c/web-platform-tests/html/canvas/offscreen/manual/the-offscreen-canvas/offscreencanvas.getcontext.worker.html [ Failure ]
+imported/w3c/web-platform-tests/html/canvas/offscreen/manual/the-offscreen-canvas/offscreencanvas.resize.html [ Failure ]
+imported/w3c/web-platform-tests/html/canvas/offscreen/manual/the-offscreen-canvas/offscreencanvas.transfer.to.imagebitmap.html [ Failure ]
+imported/w3c/web-platform-tests/html/canvas/offscreen/manual/the-offscreen-canvas/offscreencanvas.transfer.to.imagebitmap.w.html [ Failure ]
+imported/w3c/web-platform-tests/html/canvas/offscreen/manual/the-offscreen-canvas/offscreencanvas.transferrable.html [ Failure ]
+imported/w3c/web-platform-tests/html/canvas/offscreen/manual/the-offscreen-canvas/offscreencanvas.transferrable.w.html [ Failure ]
 inspector/canvas/updateShader-webgl.html [ Failure ]
-webgl/webgl-draft-extensions-flag-default.html [ Failure ]
-webgl/webgl-draft-extensions-flag-off.html [ Failure ]
-webgl/webgl-draft-extensions-flag-on.html [ Failure ]
+webgl/1.0.3/conformance/extensions/oes-texture-float-with-video.html [ Failure ]
+webgl/1.0.3/conformance/extensions/oes-texture-half-float-with-video.html [ Failure ]
+webgl/1.0.3/conformance/textures/tex-image-and-sub-image-2d-with-video-rgb565.html [ Failure ]
+webgl/1.0.3/conformance/textures/tex-image-and-sub-image-2d-with-video-rgba4444.html [ Failure ]
+webgl/1.0.3/conformance/textures/tex-image-and-sub-image-2d-with-video-rgba5551.html [ Failure ]
+webgl/pending/conformance/textures/misc/tex-image-video-repeated.html [ Failure ]
+webgl/webgl2-primitive-restart.html [ Failure ]
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of WebGL-related bugs
@@ -1552,7 +1610,6 @@ webkit.org/b/235885 webrtc/vp9-svc.html [ Skip ]
 webkit.org/b/235885 imported/w3c/web-platform-tests/webrtc/simulcast [ Skip ]
 webkit.org/b/235885 imported/w3c/web-platform-tests/webrtc/protocol/simulcast-answer.html [ Skip ]
 webkit.org/b/235885 imported/w3c/web-platform-tests/webrtc/protocol/simulcast-offer.html [ Skip ]
-webkit.org/b/191006 webkit.org/b/235885 webrtc/simulcast-h264.html [ Skip ]
 
 # DTMF not supported.
 webkit.org/b/235885 imported/w3c/web-platform-tests/webrtc/RTCDTMFSender-insertDTMF.https.html [ Skip ]
@@ -1748,12 +1805,6 @@ webkit.org/b/216359 fast/text/emoji-synthesis.html [ ImageOnlyFailure ]
 # Failing since added in r268138.
 webkit.org/b/217815 imported/w3c/web-platform-tests/css/css-masking/clip-path/clip-path-filter-order.html [ ImageOnlyFailure ]
 
-# This test uses an MPEG-4 video
-media/video-seek-to-current-time.html [ Skip ]
-
-# This test uses an HEVC video
-media/media-hevc-video-as-img.html [ Skip ]
-
 # WIRELESS_PLAYBACK_TARGET not enabled.
 media/airplay-target-availability.html
 webkit.org/b/205112 media/remoteplayback-cancel-invalid.html [ Skip ]
@@ -1806,107 +1857,6 @@ webkit.org/b/232346 fast/canvas/canvas-createPattern-video-modify.html [ Failure
 webkit.org/b/232346 media/video-canvas-createPattern.html [ Failure ]
 webkit.org/b/232346 media/video-canvas-drawing-output.html [ Failure ]
 webkit.org/b/232346 media/video-orientation-canvas.html [ Failure ]
-
-# We run tests on http://web-platform.test so ServiceWorkers do not work on an insecure host and should be ran with https
-# it only worked on other ports because http://localhost was trustworthy.
-imported/w3c/web-platform-tests/dom/idlharness.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/content-security-policy/wasm-unsafe-eval/default-src-blocks-wasm.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/content-security-policy/wasm-unsafe-eval/default-src-unsafe-eval-allows-wasm.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/content-security-policy/wasm-unsafe-eval/default-src-wasm-unsafe-eval-allows-wasm.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/content-security-policy/wasm-unsafe-eval/script-src-blocks-wasm.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/content-security-policy/wasm-unsafe-eval/script-src-unsafe-eval-allows-wasm.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/content-security-policy/wasm-unsafe-eval/script-src-wasm-unsafe-eval-allows-wasm.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/compression/compression-bad-chunks.tentative.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/compression/compression-constructor-error.tentative.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/compression/compression-including-empty-chunk.tentative.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/compression/compression-multiple-chunks.tentative.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/compression/compression-output-length.tentative.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/compression/compression-stream.tentative.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/compression/decompression-bad-chunks.tentative.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/compression/decompression-buffersource.tentative.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/compression/decompression-constructor-error.tentative.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/compression/decompression-correct-input.tentative.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/compression/decompression-empty-input.tentative.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/compression/decompression-split-chunk.tentative.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/compression/decompression-uint8array-output.tentative.any.serviceworker.html
-imported/w3c/web-platform-tests/fetch/cross-origin-resource-policy/fetch-in-service-worker.html [ Skip ]
-imported/w3c/web-platform-tests/html/infrastructure/safe-passing-of-structured-data/messagechannel.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/module/import-meta/import-meta-object.any.serviceworker-module.html [ Skip ]
-imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/module/import-meta/import-meta-resolve.any.serviceworker-module.html [ Skip ]
-imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/module/import-meta/import-meta-url.any.serviceworker-module.html [ Skip ]
-imported/w3c/web-platform-tests/html/webappapis/microtask-queuing/queue-microtask-exceptions.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/html/webappapis/microtask-queuing/queue-microtask.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/IndexedDB/idlharness.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/IndexedDB/reading-autoincrement-indexes-cursors.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/IndexedDB/reading-autoincrement-indexes.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/IndexedDB/reading-autoincrement-store-cursors.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/IndexedDB/reading-autoincrement-store.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/service-workers/service-worker/no-dynamic-import-in-module.any.serviceworker-module.html [ Skip ]
-imported/w3c/web-platform-tests/service-workers/service-worker/no-dynamic-import.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/workers/Worker-base64.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/workers/Worker-constructor-proto.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/workers/Worker-custom-event.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/workers/Worker-replace-event-handler.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/workers/Worker-replace-global-constructor.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/workers/Worker-replace-self.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/workers/WorkerNavigator-hardware-concurrency.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/workers/WorkerNavigator.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/workers/examples/general.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/workers/importscripts_mime.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/workers/interfaces/WorkerGlobalScope/location/returns-same-object.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/workers/interfaces/WorkerGlobalScope/self.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/workers/interfaces/WorkerUtils/importScripts/catch.sub.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/workers/semantics/multiple-workers/exposure.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/eventsource/eventsource-constructor-empty-url.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/eventsource/eventsource-constructor-url-bogus.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/infrastructure/server/context.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/server-timing/service_worker_idl.html [ Skip ]
-imported/w3c/web-platform-tests/streams/idlharness.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/piping/abort.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/piping/close-propagation-backward.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/piping/close-propagation-forward.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/piping/error-propagation-backward.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/piping/error-propagation-forward.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/piping/flow-control.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/piping/general.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/piping/multiple-propagation.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/piping/pipe-through.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/piping/then-interception.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/piping/throwing-options.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/piping/transform-streams.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/queuing-strategies.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/readable-byte-streams/bad-buffers-and-views.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/readable-byte-streams/construct-byob-request.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/readable-byte-streams/general.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/readable-byte-streams/non-transferable-buffers.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/readable-byte-streams/tee.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/readable-streams/async-iterator.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/readable-streams/bad-strategies.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/readable-streams/bad-underlying-sources.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/readable-streams/cancel.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/readable-streams/constructor.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/readable-streams/count-queuing-strategy-integration.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/readable-streams/default-reader.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/readable-streams/floating-point-total-queue-size.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/readable-streams/garbage-collection.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/readable-streams/general.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/readable-streams/patched-global.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/readable-streams/reentrant-strategies.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/readable-streams/tee.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/readable-streams/templated.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/transform-streams/backpressure.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/transform-streams/errors.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/transform-streams/flush.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/transform-streams/general.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/transform-streams/lipfuzz.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/transform-streams/patched-global.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/transform-streams/properties.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/transform-streams/reentrant-strategies.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/transform-streams/strategies.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/streams/transform-streams/terminate.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/wasm/jsapi/exception/basic.tentative.any.serviceworker.html [ Skip ]
-imported/w3c/web-platform-tests/wasm/webapi/ [ Skip ]
-imported/w3c/web-platform-tests/xhr/sync-no-timeout.any.sharedworker.html [ Skip ]
 
 # These have randomly generated tokens in their URLs that make console messages unreliable.
 imported/w3c/web-platform-tests/cors/304.htm [ DumpJSConsoleLogInStdErr ]
@@ -1978,6 +1928,8 @@ webkit.org/b/189343 imported/w3c/web-platform-tests/xhr/sync-no-timeout.any.html
 webkit.org/b/189345 http/tests/media/clearkey/collect-webkit-media-session.html [ Skip ]
 
 media/encrypted-media [ Pass ]
+media/encrypted-media/encrypted-media-append-encrypted-unencrypted.html [ Pass ]
+
 webkit.org/b/205857 media/encrypted-media/mock-navigator-requestMediaKeySystemAccess.html [ Skip ]
 webkit.org/b/205860 media/encrypted-media/mock-MediaKeySession-remove.html [ Skip ]
 
@@ -2048,6 +2000,34 @@ imported/w3c/web-platform-tests/encrypted-media/clearkey-update-non-ascii-input.
 #////////////////////////////////////////////////////////////////////////////////////////
 # UNSUPPORTED tests. Things we must skip.
 #////////////////////////////////////////////////////////////////////////////////////////
+
+# Skip iOS and watchOS tests. Too many of those crashing, specially on WPE Debug
+# bot, leading to early bailout from the tests and filling the disks with crash
+# dumps.
+fast/css/ios [ Skip ]
+fast/css/variables/env/ios [ Skip ]
+fast/css/watchos [ Skip ]
+fast/dom/Window/watchos [ Skip ]
+fast/events/ios [ Skip ]
+fast/events/pointer/ios [ Skip ]
+fast/events/touch/ios [ Skip ]
+fast/events/watchos [ Skip ]
+fast/forms/ios [ Skip ]
+fast/forms/textarea/ios [ Skip ]
+fast/forms/watchos [ Skip ]
+fast/history/ios [ Skip ]
+fast/images/text-recognition/ios [ Skip ]
+fast/media/ios [ Skip ]
+fast/sandbox/ios [ Skip ]
+fast/scrolling/ios [ Skip ]
+fast/shadow-dom/ios [ Skip ]
+fast/speechrecognition/ios [ Skip ]
+fast/text-autosizing/ios [ Skip ]
+fast/viewport/ios [ Skip ]
+fast/viewport/watchos [ Skip ]
+fast/visual-viewport/ios [ Skip ]
+fast/visual-viewport/watchos [ Skip ]
+fast/zooming/ios [ Skip ]
 
 # Tests behavior specific to MediaSessionManagerCocoa
 media/audio-session-category.html [ Skip ]
@@ -2127,6 +2107,15 @@ webkit.org/b/211569 media/video-presentation-mode.html [ Skip ]
 webkit.org/b/206584 media/video-set-presentation-mode-to-inline.html [ Skip ]
 # Also crashing with others in webkit.org/b/198830
 webkit.org/b/201274 media/presentationmodechanged-fired-once.html [ Skip ]
+
+# Requires unsupported captive portal codec and container restrictions
+webkit.org/b/242145 media/mediacapabilities/mediacapabilities-allowed-codecs.html [ Skip ]
+webkit.org/b/242145 media/mediacapabilities/mediacapabilities-allowed-containers.html [ Skip ]
+
+# These tests require platform support.
+media/media-allowed-codecs.html [ Skip ]
+media/media-allowed-containers.html [ Skip ]
+media/media-source/media-source-allowed-codecs.html [ Skip ]
 
 webkit.org/b/214166 imported/w3c/web-platform-tests/media-source/idlharness.window.html [ Skip ]
 
@@ -3020,6 +3009,8 @@ webkit.org/b/236298 fast/text/simple-line-layout-with-justified-punctuation.html
 webkit.org/b/193628 fast/css/content-counter-010.htm [ ImageOnlyFailure ]
 
 http/tests/webgpu/webgpu/api/operation/memory_sync/buffer/multiple_buffers.html [ Skip ]
+
+webkit.org/b/245324 http/tests/notifications/notification.html  [ Crash ]
 
 # Failure since import.
 webkit.org/b/243614 imported/w3c/web-platform-tests/IndexedDB/idb-partitioned-coverage.tentative.sub.html [ Failure ]

@@ -45,7 +45,7 @@ NetworkSessionCurl::NetworkSessionCurl(NetworkProcess& networkProcess, const Net
         networkStorageSession()->setCookieDatabase(makeUniqueRef<CookieJarDB>(parameters.cookiePersistentStorageFile));
     networkStorageSession()->setProxySettings(parameters.proxySettings);
 
-#if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
+#if ENABLE(TRACKING_PREVENTION)
     m_resourceLoadStatisticsDirectory = parameters.resourceLoadStatisticsParameters.directory;
     m_shouldIncludeLocalhostInResourceLoadStatistics = parameters.resourceLoadStatisticsParameters.shouldIncludeLocalhost ? ShouldIncludeLocalhost::Yes : ShouldIncludeLocalhost::No;
     m_enableResourceLoadStatisticsDebugMode = parameters.resourceLoadStatisticsParameters.enableDebugMode ? EnableResourceLoadStatisticsDebugMode::Yes : EnableResourceLoadStatisticsDebugMode::No;
@@ -59,7 +59,7 @@ NetworkSessionCurl::~NetworkSessionCurl()
 
 }
 
-std::unique_ptr<WebSocketTask> NetworkSessionCurl::createWebSocketTask(WebPageProxyIdentifier, NetworkSocketChannel& channel, const WebCore::ResourceRequest& request, const String& protocol, const WebCore::ClientOrigin&, bool, bool)
+std::unique_ptr<WebSocketTask> NetworkSessionCurl::createWebSocketTask(WebPageProxyIdentifier, NetworkSocketChannel& channel, const WebCore::ResourceRequest& request, const String& protocol, const WebCore::ClientOrigin&, bool, bool, bool)
 {
     return makeUnique<WebSocketTask>(channel, request, protocol);
 }

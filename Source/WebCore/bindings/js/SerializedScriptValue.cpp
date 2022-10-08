@@ -1258,7 +1258,7 @@ private:
             }
             if (auto* blob = JSBlob::toWrapped(vm, obj)) {
                 write(BlobTag);
-                m_blobHandles.append(blob->handle());
+                m_blobHandles.append(blob->handle().isolatedCopy());
                 write(blob->url().string());
                 write(blob->type());
                 static_assert(sizeof(uint64_t) == sizeof(decltype(blob->size())));
@@ -1604,7 +1604,7 @@ private:
 
     void write(const File& file)
     {
-        m_blobHandles.append(file.handle());
+        m_blobHandles.append(file.handle().isolatedCopy());
         write(file.path());
         write(file.url().string());
         write(file.type());
@@ -4147,7 +4147,7 @@ SerializedScriptValue::SerializedScriptValue(Vector<uint8_t>&& buffer, Vector<UR
     , m_wasmModulesArray(WTFMove(wasmModulesArray))
     , m_wasmMemoryHandlesArray(WTFMove(wasmMemoryHandlesArray))
 #endif
-    , m_blobHandles(WTFMove(blobHandles))
+    , m_blobHandles(crossThreadCopy(WTFMove(blobHandles)))
 {
     m_memoryCost = computeMemoryCost();
 }
@@ -4350,7 +4350,8 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
             continue;
         }
         if (auto port = JSMessagePort::toWrapped(vm, transferable.get())) {
-            // FIXME: This should check if the port is detached as per https://html.spec.whatwg.org/multipage/infrastructure.html#istransferable.
+            if (port->isDetached())
+                return Exception { DataCloneError, "MessagePort is detached"_s };
             messagePorts.append(WTFMove(port));
             continue;
         }

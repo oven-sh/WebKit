@@ -386,6 +386,7 @@ public:
     bool overscrollBehaviorAllowsRubberBand() const { return horizontalOverscrollBehavior() != OverscrollBehavior::None || verticalOverscrollBehavior() != OverscrollBehavior::None; }
     bool shouldBlockScrollPropagation(const FloatSize&) const;
     FloatSize deltaForPropagation(const FloatSize&) const;
+    WEBCORE_EXPORT virtual float adjustVerticalPageScrollStepForFixedContent(float step);
 
 protected:
     WEBCORE_EXPORT ScrollableArea();
@@ -394,7 +395,6 @@ protected:
     void setScrollOrigin(const IntPoint&);
     void resetScrollOriginChanged() { m_scrollOriginChanged = false; }
 
-    WEBCORE_EXPORT virtual float adjustVerticalPageScrollStepForFixedContent(float step);
     virtual void invalidateScrollbarRect(Scrollbar&, const IntRect&) = 0;
     virtual void invalidateScrollCornerRect(const IntRect&) = 0;
 
@@ -406,7 +406,7 @@ protected:
 
     bool hasLayerForScrollCorner() const;
 
-    LayoutRect getRectToExposeForScrollIntoView(const LayoutRect& visibleRect, const LayoutRect& exposeRect, const ScrollAlignment& alignX, const ScrollAlignment& alignY) const;
+    LayoutRect getRectToExposeForScrollIntoView(const LayoutRect& visibleBounds, const LayoutRect& exposeRect, const ScrollAlignment& alignX, const ScrollAlignment& alignY, const std::optional<LayoutRect> = std::nullopt) const;
 
 private:
     WEBCORE_EXPORT virtual IntRect visibleContentRectInternal(VisibleContentRectIncludesScrollbars, VisibleContentRectBehavior) const;

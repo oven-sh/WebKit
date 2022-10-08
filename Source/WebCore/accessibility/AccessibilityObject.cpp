@@ -963,7 +963,7 @@ Vector<SimpleRange> AccessibilityObject::findTextRanges(const AccessibilitySearc
     return result;
 }
 
-Vector<String> AccessibilityObject::performTextOperation(AccessibilityTextOperation const& operation)
+Vector<String> AccessibilityObject::performTextOperation(const AccessibilityTextOperation& operation)
 {
     Vector<String> result;
 
@@ -2279,7 +2279,7 @@ const AtomString& AccessibilityObject::getAttribute(const QualifiedName& attribu
         if (!value.isNull())
             return value;
         if (auto* defaultARIA = element->customElementDefaultARIAIfExists())
-            return defaultARIA->valueForAttribute(attribute);
+            return defaultARIA->valueForAttribute(*element, attribute);
     }
     return nullAtom();
 }
@@ -3739,9 +3739,32 @@ Vector<Element*> AccessibilityObject::elementsFromAttribute(const QualifiedName&
     if (!node || !node->isElementNode())
         return { };
 
+    auto& element = downcast<Element>(*node);
+    if (document()->settings().ariaReflectionForElementReferencesEnabled()) {
+        if (Element::isElementReflectionAttribute(attribute)) {
+            if (auto reflectedElement = element.getElementAttribute(attribute)) {
+                Vector<Element*> elements;
+                elements.append(reflectedElement);
+                return elements;
+            }
+        } else if (Element::isElementsArrayReflectionAttribute(attribute)) {
+            if (auto reflectedElements = element.getElementsArrayAttribute(attribute)) {
+                return WTF::map(reflectedElements.value(), [](RefPtr<Element> element) -> Element* {
+                    return element.get();
+                });
+            }
+        }
+    }
+
     auto& idsString = getAttribute(attribute);
-    if (idsString.isEmpty())
+    if (idsString.isEmpty()) {
+        if (auto* defaultARIA = element.customElementDefaultARIAIfExists()) {
+            return WTF::map(defaultARIA->elementsForAttribute(element, attribute), [](RefPtr<Element> element) -> Element* {
+                return element.get();
+            });
+        }
         return { };
+    }
 
     Vector<Element*> elements;
     auto& treeScope = node->treeScope();
@@ -3989,7 +4012,7 @@ static bool isRadioButtonInDifferentAdhocGroup(RefPtr<AXCoreObject> axObject, AX
     return axObject->attributeValue("name"_s) != referenceObject->attributeValue("name"_s);
 }
 
-static bool isAccessibilityObjectSearchMatchAtIndex(RefPtr<AXCoreObject> axObject, AccessibilitySearchCriteria const& criteria, size_t index)
+static bool isAccessibilityObjectSearchMatchAtIndex(RefPtr<AXCoreObject> axObject, const AccessibilitySearchCriteria& criteria, size_t index)
 {
     switch (criteria.searchKeys[index]) {
     case AccessibilitySearchKey::AnyType:
@@ -4097,7 +4120,7 @@ static bool isAccessibilityObjectSearchMatchAtIndex(RefPtr<AXCoreObject> axObjec
     }
 }
 
-static bool isAccessibilityObjectSearchMatch(RefPtr<AXCoreObject> axObject, AccessibilitySearchCriteria const& criteria)
+static bool isAccessibilityObjectSearchMatch(RefPtr<AXCoreObject> axObject, const AccessibilitySearchCriteria& criteria)
 {
     if (!axObject)
         return false;
@@ -4113,7 +4136,7 @@ static bool isAccessibilityObjectSearchMatch(RefPtr<AXCoreObject> axObject, Acce
     return false;
 }
 
-static bool isAccessibilityTextSearchMatch(RefPtr<AXCoreObject> axObject, AccessibilitySearchCriteria const& criteria)
+static bool isAccessibilityTextSearchMatch(RefPtr<AXCoreObject> axObject, const AccessibilitySearchCriteria& criteria)
 {
     if (!axObject)
         return false;
@@ -4127,7 +4150,7 @@ static bool isAccessibilityTextSearchMatch(RefPtr<AXCoreObject> axObject, Access
         || containsPlainText(axObject->stringValue(), criteria.searchText, CaseInsensitive);
 }
 
-static bool objectMatchesSearchCriteriaWithResultLimit(RefPtr<AXCoreObject> object, AccessibilitySearchCriteria const& criteria, AXCoreObject::AccessibilityChildrenVector& results)
+static bool objectMatchesSearchCriteriaWithResultLimit(RefPtr<AXCoreObject> object, const AccessibilitySearchCriteria& criteria, AXCoreObject::AccessibilityChildrenVector& results)
 {
     if (isAccessibilityObjectSearchMatch(object, criteria) && isAccessibilityTextSearchMatch(object, criteria)) {
         results.append(object);
@@ -4191,7 +4214,7 @@ static void appendChildrenToArray(RefPtr<AXCoreObject> object, bool isForward, R
     }
 }
 
-void findMatchingObjects(AccessibilitySearchCriteria const& criteria, AXCoreObject::AccessibilityChildrenVector& results)
+void findMatchingObjects(const AccessibilitySearchCriteria& criteria, AXCoreObject::AccessibilityChildrenVector& results)
 {
     AXTRACE("Accessibility::findMatchingObjects"_s);
     AXLOG(criteria);

@@ -28,7 +28,6 @@
 
 #include "APINavigation.h"
 #include "ProvisionalPageProxy.h"
-#include "WebCertificateInfo.h"
 #include "WebFramePolicyListenerProxy.h"
 #include "WebPageMessages.h"
 #include "WebPasteboardProxy.h"
@@ -132,32 +131,10 @@ void WebFrameProxy::loadData(const IPC::DataReference& data, const String& MIMET
 
     m_page->send(Messages::WebPage::LoadDataInFrame(data, MIMEType, encodingName, baseURL, m_frameID));
 }
-
-void WebFrameProxy::stopLoading()
-{
-    if (!m_page)
-        return;
-
-    if (!m_page->hasRunningProcess())
-        return;
-
-    m_page->send(Messages::WebPage::StopLoadingFrame(m_frameID));
-
-    if (m_navigateCallback)
-        m_navigateCallback({ });
-}
     
 bool WebFrameProxy::canProvideSource() const
 {
     return isDisplayingMarkupDocument();
-}
-
-bool WebFrameProxy::canShowMIMEType(const String& mimeType) const
-{
-    if (!m_page)
-        return false;
-
-    return m_page->canShowMIMEType(mimeType);
 }
 
 bool WebFrameProxy::isDisplayingStandaloneImageDocument() const
@@ -206,13 +183,13 @@ void WebFrameProxy::didFailProvisionalLoad()
         m_navigateCallback({ });
 }
 
-void WebFrameProxy::didCommitLoad(const String& contentType, WebCertificateInfo& certificateInfo, bool containsPluginDocument)
+void WebFrameProxy::didCommitLoad(const String& contentType, const WebCore::CertificateInfo& certificateInfo, bool containsPluginDocument)
 {
     m_frameLoadState.didCommitLoad();
 
     m_title = String();
     m_MIMEType = contentType;
-    m_certificateInfo = &certificateInfo;
+    m_certificateInfo = certificateInfo;
     m_containsPluginDocument = containsPluginDocument;
 }
 

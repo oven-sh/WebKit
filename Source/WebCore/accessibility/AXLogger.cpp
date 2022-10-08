@@ -84,6 +84,11 @@ void AXLogger::log(const char* message)
         LOG(Accessibility, "%s", message);
 }
 
+void AXLogger::log(const AXCoreObject& object)
+{
+    log(const_cast<AXCoreObject*>(&object));
+}
+
 void AXLogger::log(RefPtr<AXCoreObject> object)
 {
     if (shouldLog()) {
@@ -367,9 +372,6 @@ TextStream& operator<<(TextStream& stream, AXObjectCache::AXNotification notific
     case AXObjectCache::AXNotification::AXActiveDescendantChanged:
         stream << "AXActiveDescendantChanged";
         break;
-    case AXObjectCache::AXNotification::AXAriaRoleChanged:
-        stream << "AXAriaRoleChanged";
-        break;
     case AXObjectCache::AXNotification::AXAutocorrectionOccured:
         stream << "AXAutocorrectionOccured";
         break;
@@ -463,6 +465,12 @@ TextStream& operator<<(TextStream& stream, AXObjectCache::AXNotification notific
     case AXObjectCache::AXNotification::AXPositionInSetChanged:
         stream << "AXPositionInSetChanged";
         break;
+    case AXObjectCache::AXNotification::AXRoleChanged:
+        stream << "AXRoleChanged";
+        break;
+    case AXObjectCache::AXNotification::AXRoleDescriptionChanged:
+        stream << "AXRoleDescriptionChanged";
+        break;
     case AXObjectCache::AXNotification::AXRowIndexChanged:
         stream << "AXRowIndexChanged";
         break;
@@ -471,6 +479,9 @@ TextStream& operator<<(TextStream& stream, AXObjectCache::AXNotification notific
         break;
     case AXObjectCache::AXNotification::AXSelectedChildrenChanged:
         stream << "AXSelectedChildrenChanged";
+        break;
+    case AXObjectCache::AXNotification::AXSelectedCellChanged:
+        stream << "AXSelectedCellChanged";
         break;
     case AXObjectCache::AXNotification::AXSelectedStateChanged:
         stream << "AXSelectedStateChanged";

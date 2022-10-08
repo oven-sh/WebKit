@@ -529,8 +529,8 @@ void RenderBox::updateFromStyle()
                 // Erase the overflow.
                 // Overflow changes have to result in immediate repaints of the entire layout overflow area because
                 // repaints issued by removal of descendants get clipped using the updated style when they shouldn't.
-                repaintRectangle(visualOverflowRect());
-                repaintRectangle(layoutOverflowRect());
+                issueRepaint(visualOverflowRect(), ClipRepaintToLayer::Yes, ForceRepaint::Yes);
+                issueRepaint(layoutOverflowRect(), ClipRepaintToLayer::Yes, ForceRepaint::Yes);
             }
             setHasNonVisibleOverflow();
         }
@@ -878,7 +878,7 @@ LayoutRect RenderBox::outlineBoundsForRepaint(const RenderLayerModelObject* repa
     return LayoutRect(snapRectToDevicePixels(box, document().deviceScaleFactor()));
 }
 
-void RenderBox::addFocusRingRects(Vector<LayoutRect>& rects, const LayoutPoint& additionalOffset, const RenderLayerModelObject*)
+void RenderBox::addFocusRingRects(Vector<LayoutRect>& rects, const LayoutPoint& additionalOffset, const RenderLayerModelObject*) const
 {
     if (!size().isEmpty())
         rects.append(LayoutRect(additionalOffset, size()));
@@ -2395,11 +2395,13 @@ LayoutSize RenderBox::offsetFromContainer(RenderElement& container, const Layout
     if (!isInline() || isReplacedOrInlineBlock())
         offset += topLeftLocationOffset();
 
-    if (is<RenderBox>(container))
-        offset -= toLayoutSize(downcast<RenderBox>(container).scrollPosition());
+    if (auto* boxContainer = dynamicDowncast<RenderBox>(container))
+        offset -= toLayoutSize(boxContainer->scrollPosition());
 
-    if (isAbsolutelyPositioned() && container.isInFlowPositioned() && is<RenderInline>(container))
-        offset += downcast<RenderInline>(container).offsetForInFlowPositionedInline(this);
+    if (isAbsolutelyPositioned() && container.isInFlowPositioned()) {
+        if (auto* inlineContainer = dynamicDowncast<RenderInline>(container))
+            offset += inlineContainer->offsetForInFlowPositionedInline(this);
+    }
 
     if (offsetDependsOnPoint)
         *offsetDependsOnPoint |= is<RenderFragmentedFlow>(container);
@@ -3386,6 +3388,9 @@ LayoutUnit RenderBox::computeReplacedLogicalWidth(ShouldComputePreferred shouldC
 
 LayoutUnit RenderBox::computeReplacedLogicalWidthRespectingMinMaxWidth(LayoutUnit logicalWidth, ShouldComputePreferred shouldComputePreferred) const
 {
+    if (shouldIgnoreMinMaxSizes())
+        return logicalWidth;
+
     auto& logicalMinWidth = style().logicalMinWidth();
     auto& logicalMaxWidth = style().logicalMaxWidth();
     bool useLogicalWidthForMinWidth = (shouldComputePreferred == ComputePreferred && logicalMinWidth.isPercentOrCalculated()) || logicalMinWidth.isUndefined();
@@ -5543,6 +5548,11 @@ LayoutUnit RenderBox::intrinsicLogicalWidth() const
     if (shouldApplyInlineSizeContainment())
         return LayoutUnit();
     return style().isHorizontalWritingMode() ? intrinsicSize().width() : intrinsicSize().height();
+}
+
+bool RenderBox::shouldIgnoreMinMaxSizes() const
+{
+    return isFlexItem() && downcast<RenderFlexibleBox>(parent())->isComputingFlexBaseSizes();
 }
 
 } // namespace WebCore

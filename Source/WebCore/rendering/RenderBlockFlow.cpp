@@ -68,6 +68,7 @@
 #include "TextAutoSizing.h"
 #include "VerticalPositionCache.h"
 #include "VisiblePosition.h"
+#include "rendering/LegacyRootInlineBox.h"
 #include <wtf/IsoMallocInlines.h>
 
 namespace WebCore {
@@ -2998,6 +2999,31 @@ std::optional<LayoutUnit> RenderBlockFlow::firstLineBaseline() const
     return LayoutUnit { firstRootBox()->logicalTop() + firstLineStyle().metricsOfPrimaryFont().ascent(firstRootBox()->baselineType()) };
 }
 
+std::optional<LayoutUnit> RenderBlockFlow::lastLineBaseline() const
+{
+    if (isWritingModeRoot() && !isRubyRun() && !isGridItem())
+        return std::nullopt;
+
+    if (shouldApplyLayoutContainment())
+        return std::nullopt;
+
+    if (!childrenInline())
+        return RenderBlock::lastLineBaseline();
+
+    if (!hasLines())
+        return std::nullopt;
+
+    if (auto* lineLayout = modernLineLayout())
+        return LayoutUnit { floorToInt(lineLayout->lastLinePhysicalBaseline()) };
+
+    ASSERT(lastRootBox()); 
+    auto rootBox = lastRootBox();
+    const RenderStyle& lastLineBoxStyle = InlineIterator::lastLineBoxFor(*this)->style();
+    if (style().isFlippedLinesWritingMode())
+        return LayoutUnit { rootBox->logicalTop() + lastLineBoxStyle.metricsOfPrimaryFont().descent(rootBox->baselineType()) };
+    return LayoutUnit { rootBox->logicalTop() + lastLineBoxStyle.metricsOfPrimaryFont().ascent(rootBox->baselineType()) };
+}
+
 std::optional<LayoutUnit> RenderBlockFlow::inlineBlockBaseline(LineDirectionMode lineDirection) const
 {
     if (isWritingModeRoot() && !isRubyRun())
@@ -3464,7 +3490,7 @@ VisiblePosition RenderBlockFlow::positionForPoint(const LayoutPoint& point, cons
     return RenderBlock::positionForPoint(point, nullptr);
 }
 
-void RenderBlockFlow::addFocusRingRectsForInlineChildren(Vector<LayoutRect>& rects, const LayoutPoint& additionalOffset, const RenderLayerModelObject*)
+void RenderBlockFlow::addFocusRingRectsForInlineChildren(Vector<LayoutRect>& rects, const LayoutPoint& additionalOffset, const RenderLayerModelObject*) const
 {
     ASSERT(childrenInline());
     for (auto box = InlineIterator::firstRootInlineBoxFor(*this); box; box.traverseNextInlineBox()) {
@@ -3589,15 +3615,16 @@ void RenderBlockFlow::layoutModernLines(bool relayoutChildren, LayoutUnit& repai
         if (relayoutChildren || (is<RenderBox>(renderer) && downcast<RenderBox>(renderer).hasRelativeDimensions()))
             renderer.setNeedsLayout(MarkOnlyThis);
 
+        if (renderer.isOutOfFlowPositioned())
+            renderer.containingBlock()->insertPositionedObject(downcast<RenderBox>(renderer));
+
         if (!renderer.needsLayout() && !needsUpdateReplacedDimensions)
             continue;
 
         auto shouldRunInFlowLayout = renderer.isInFlow() && is<RenderElement>(renderer) && !is<RenderLineBreak>(renderer) && !is<RenderInline>(renderer) && !is<RenderCounter>(renderer);
-        if (renderer.isOutOfFlowPositioned())
-            renderer.containingBlock()->insertPositionedObject(downcast<RenderBox>(renderer));
-        else if (shouldRunInFlowLayout || renderer.isFloating())
+        if (shouldRunInFlowLayout || renderer.isFloating())
             downcast<RenderElement>(renderer).layoutIfNeeded();
-        else
+        else if (!renderer.isOutOfFlowPositioned())
             renderer.clearNeedsLayout();
 
         if (is<RenderReplaced>(renderer)) {

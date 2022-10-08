@@ -720,13 +720,15 @@ private:
             
         case ArithMin:
         case ArithMax: {
-            if (m_graph.binaryArithShouldSpeculateInt32(node, FixupPass)) {
-                fixIntOrBooleanEdge(node->child1());
-                fixIntOrBooleanEdge(node->child2());
+            if (m_graph.variadicArithShouldSpeculateInt32(node, FixupPass)) {
+                m_graph.doToChildren(node, [&](Edge& child) {
+                    fixIntOrBooleanEdge(child);
+                });
                 break;
             }
-            fixDoubleOrBooleanEdge(node->child1());
-            fixDoubleOrBooleanEdge(node->child2());
+            m_graph.doToChildren(node, [&](Edge& child) {
+                fixDoubleOrBooleanEdge(child);
+            });
             node->setResult(NodeResultDouble);
             break;
         }
@@ -1511,11 +1513,12 @@ private:
             if (op == StringReplace
                 && node->child1()->shouldSpeculateString()
                 && node->child2()->shouldSpeculateString()
-                && node->child3()->shouldSpeculateString()
                 && m_graph.isWatchingStringSymbolReplaceWatchpoint(node)) {
+                node->setOp(StringReplaceString);
                 fixEdge<StringUse>(node->child1());
                 fixEdge<StringUse>(node->child2());
-                fixEdge<StringUse>(node->child3());
+                if (node->child3()->shouldSpeculateString())
+                    fixEdge<StringUse>(node->child3());
                 break;
             }
 
@@ -1541,6 +1544,14 @@ private:
                 fixEdge<StringUse>(node->child3());
                 break;
             }
+            break;
+        }
+
+        case StringReplaceString: {
+            fixEdge<StringUse>(node->child1());
+            fixEdge<StringUse>(node->child2());
+            if (node->child3()->shouldSpeculateString())
+                fixEdge<StringUse>(node->child3());
             break;
         }
             
@@ -1762,6 +1773,24 @@ private:
         case NewArrayWithSize: {
             watchHavingABadTime(node);
             fixEdge<Int32Use>(node->child1());
+            break;
+        }
+
+        case NewArrayWithSpecies: {
+            ArrayMode arrayMode = node->arrayMode().refine(m_graph, node, node->child2()->prediction(), ArrayMode::unusedIndexSpeculatedType);
+            node->setArrayMode(arrayMode);
+            Edge unusedEdge;
+            blessArrayOperation(node->child2(), Edge(), unusedEdge, neverNeedsStorage);
+            if (node->child1()->shouldSpeculateInt32()) {
+                fixEdge<Int32Use>(node->child1());
+                ArrayMode arrayMode = node->arrayMode();
+                if (arrayMode.isJSArrayWithOriginalStructure()) {
+                    if (m_graph.isWatchingArraySpeciesWatchpoint(node) && watchSaneChain(node)) {
+                        node->convertToNewArrayWithSize();
+                        watchHavingABadTime(node);
+                    }
+                }
+            }
             break;
         }
 
@@ -2671,7 +2700,8 @@ private:
             break;
         }
 
-        case StringSlice: {
+        case StringSlice:
+        case StringSubstring: {
             fixEdge<StringUse>(node->child1());
             fixEdge<Int32Use>(node->child2());
             if (node->child3())
@@ -3799,7 +3829,7 @@ private:
             setSaneChainIfPossible(node, *saneChainSpeculation);
     }
 
-    void setSaneChainIfPossible(Node* node, Array::Speculation speculation)
+    bool watchSaneChain(Node* node)
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(node->origin.semantic);
         Structure* arrayPrototypeStructure = globalObject->arrayPrototype()->structure();
@@ -3809,6 +3839,14 @@ private:
             && globalObject->arrayPrototypeChainIsSaneConcurrently(arrayPrototypeStructure, objectPrototypeStructure)) {
             m_graph.registerAndWatchStructureTransition(arrayPrototypeStructure);
             m_graph.registerAndWatchStructureTransition(objectPrototypeStructure);
+            return true;
+        }
+        return false;
+    }
+
+    void setSaneChainIfPossible(Node* node, Array::Speculation speculation)
+    {
+        if (watchSaneChain(node)) {
             node->setArrayMode(node->arrayMode().withSpeculation(speculation));
             node->clearFlags(NodeMustGenerate);
         }
@@ -4102,23 +4140,24 @@ private:
     {
         if (!isInt32Speculation(node->prediction()))
             return false;
-        CodeBlock* profiledBlock = m_graph.baselineCodeBlockFor(node->origin.semantic);
-        ArrayProfile* arrayProfile = 
-            profiledBlock->getArrayProfile(node->origin.semantic.bytecodeIndex());
         ArrayMode arrayMode = ArrayMode(Array::SelectUsingPredictions, Array::Read);
-        if (arrayProfile) {
+        {
+            CodeBlock* profiledBlock = m_graph.baselineCodeBlockFor(node->origin.semantic);
             ConcurrentJSLocker locker(profiledBlock->m_lock);
-            arrayProfile->computeUpdatedPrediction(locker, profiledBlock);
-            arrayMode = ArrayMode::fromObserved(locker, arrayProfile, Array::Read, false);
-            if (arrayMode.type() == Array::Unprofiled) {
-                // For normal array operations, it makes sense to treat Unprofiled
-                // accesses as ForceExit and get more data rather than using
-                // predictions and then possibly ending up with a Generic. But here,
-                // we treat anything that is Unprofiled as Generic and keep the
-                // GetById. I.e. ForceExit = Generic. So, there is no harm - and only
-                // profit - from treating the Unprofiled case as
-                // SelectUsingPredictions.
-                arrayMode = ArrayMode(Array::SelectUsingPredictions, Array::Read);
+            ArrayProfile* arrayProfile = profiledBlock->getArrayProfile(locker, node->origin.semantic.bytecodeIndex());
+            if (arrayProfile) {
+                arrayProfile->computeUpdatedPrediction(locker, profiledBlock);
+                arrayMode = ArrayMode::fromObserved(locker, arrayProfile, Array::Read, false);
+                if (arrayMode.type() == Array::Unprofiled) {
+                    // For normal array operations, it makes sense to treat Unprofiled
+                    // accesses as ForceExit and get more data rather than using
+                    // predictions and then possibly ending up with a Generic. But here,
+                    // we treat anything that is Unprofiled as Generic and keep the
+                    // GetById. I.e. ForceExit = Generic. So, there is no harm - and only
+                    // profit - from treating the Unprofiled case as
+                    // SelectUsingPredictions.
+                    arrayMode = ArrayMode(Array::SelectUsingPredictions, Array::Read);
+                }
             }
         }
             

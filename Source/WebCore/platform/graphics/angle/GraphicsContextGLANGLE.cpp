@@ -26,7 +26,7 @@
 
 #include "config.h"
 
-#if ENABLE(WEBGL) && USE(ANGLE)
+#if ENABLE(WEBGL)
 #include "GraphicsContextGLANGLE.h"
 
 #include "ANGLEHeaders.h"
@@ -3049,6 +3049,14 @@ void GraphicsContextGLANGLE::multiDrawElementsInstancedBaseVertexBaseInstanceANG
     checkGPUStatus();
 }
 
+void GraphicsContextGLANGLE::provokingVertexANGLE(GCGLenum mode)
+{
+    if (!makeContextCurrent())
+        return;
+
+    GL_ProvokingVertexANGLE(mode);
+}
+
 bool GraphicsContextGLANGLE::waitAndUpdateOldestFrame()
 {
     size_t oldestFrameCompletionFence = m_oldestFrameCompletionFence++ % maxPendingFrames;
@@ -3171,4 +3179,4 @@ GCGLenum GraphicsContextGLANGLE::adjustWebGL1TextureInternalFormat(GCGLenum inte
 
 }
 
-#endif // ENABLE(WEBGL) && USE(ANGLE)
+#endif // ENABLE(WEBGL)

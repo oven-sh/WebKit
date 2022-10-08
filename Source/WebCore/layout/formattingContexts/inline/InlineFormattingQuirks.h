@@ -37,8 +37,9 @@ class InlineFormattingQuirks : public FormattingQuirks {
 public:
     InlineFormattingQuirks(const InlineFormattingContext&);
 
-    InlineLayoutUnit initialLineHeight() const;
-    bool hasSoftWrapOpportunityAtImage() const;
+    bool shouldPreserveTrailingWhitespace(bool isInIntrinsicWidthMode, bool lineHasBidiContent, bool lineHasOverflow, bool lineEndWithLineBreak) const;
+    bool trailingNonBreakingSpaceNeedsAdjustment(bool isInIntrinsicWidthMode, bool lineHasOverflow) const;
+    InlineLayoutUnit initialLineHeight(bool isFirstLine) const;
     bool inlineLevelBoxAffectsLineBox(const InlineLevelBox&, const LineBox&) const;
 };
 

@@ -61,7 +61,12 @@ public:
     FontWidthVariant widthVariant() const { return static_cast<FontWidthVariant>(m_widthVariant); }
     const FontFeatureSettings& featureSettings() const { return m_featureSettings; }
     const FontVariationSettings& variationSettings() const { return m_variationSettings; }
-    FontSynthesis fontSynthesis() const { return static_cast<FontSynthesis>(m_fontSynthesis); }
+    FontSynthesisLonghandValue fontSynthesisWeight() const { return static_cast<FontSynthesisLonghandValue>(m_fontSynthesisWeight); }
+    FontSynthesisLonghandValue fontSynthesisStyle() const { return static_cast<FontSynthesisLonghandValue>(m_fontSynthesisStyle); }
+    FontSynthesisLonghandValue fontSynthesisSmallCaps() const { return static_cast<FontSynthesisLonghandValue>(m_fontSynthesisCaps); }
+    bool hasAutoFontSynthesisWeight() const { return fontSynthesisWeight() == FontSynthesisLonghandValue::Auto; }
+    bool hasAutoFontSynthesisStyle() const { return fontSynthesisStyle() == FontSynthesisLonghandValue::Auto; }
+    bool hasAutoFontSynthesisSmallCaps() const { return fontSynthesisSmallCaps() == FontSynthesisLonghandValue::Auto; }
     FontVariantLigatures variantCommonLigatures() const { return static_cast<FontVariantLigatures>(m_variantCommonLigatures); }
     FontVariantLigatures variantDiscretionaryLigatures() const { return static_cast<FontVariantLigatures>(m_variantDiscretionaryLigatures); }
     FontVariantLigatures variantHistoricalLigatures() const { return static_cast<FontVariantLigatures>(m_variantHistoricalLigatures); }
@@ -73,7 +78,7 @@ public:
     FontVariantNumericFraction variantNumericFraction() const { return static_cast<FontVariantNumericFraction>(m_variantNumericFraction); }
     FontVariantNumericOrdinal variantNumericOrdinal() const { return static_cast<FontVariantNumericOrdinal>(m_variantNumericOrdinal); }
     FontVariantNumericSlashedZero variantNumericSlashedZero() const { return static_cast<FontVariantNumericSlashedZero>(m_variantNumericSlashedZero); }
-    FontVariantAlternates variantAlternates() const { return static_cast<FontVariantAlternates>(m_variantAlternates); }
+    FontVariantAlternates variantAlternates() const { return m_variantAlternates; }
     FontVariantEastAsianVariant variantEastAsianVariant() const { return static_cast<FontVariantEastAsianVariant>(m_variantEastAsianVariant); }
     FontVariantEastAsianWidth variantEastAsianWidth() const { return static_cast<FontVariantEastAsianWidth>(m_variantEastAsianWidth); }
     FontVariantEastAsianRuby variantEastAsianRuby() const { return static_cast<FontVariantEastAsianRuby>(m_variantEastAsianRuby); }
@@ -114,7 +119,9 @@ public:
     void setSpecifiedLocale(const AtomString&);
     void setFeatureSettings(FontFeatureSettings&& settings) { m_featureSettings = WTFMove(settings); }
     void setVariationSettings(FontVariationSettings&& settings) { m_variationSettings = WTFMove(settings); }
-    void setFontSynthesis(FontSynthesis fontSynthesis) { m_fontSynthesis = fontSynthesis; }
+    void setFontSynthesisWeight(FontSynthesisLonghandValue value) { m_fontSynthesisWeight =  static_cast<unsigned>(value); }
+    void setFontSynthesisStyle(FontSynthesisLonghandValue value) { m_fontSynthesisStyle = static_cast<unsigned>(value); }
+    void setFontSynthesisSmallCaps(FontSynthesisLonghandValue value) { m_fontSynthesisCaps = static_cast<unsigned>(value); }
     void setVariantCommonLigatures(FontVariantLigatures variant) { m_variantCommonLigatures = static_cast<unsigned>(variant); }
     void setVariantDiscretionaryLigatures(FontVariantLigatures variant) { m_variantDiscretionaryLigatures = static_cast<unsigned>(variant); }
     void setVariantHistoricalLigatures(FontVariantLigatures variant) { m_variantHistoricalLigatures = static_cast<unsigned>(variant); }
@@ -126,7 +133,7 @@ public:
     void setVariantNumericFraction(FontVariantNumericFraction variant) { m_variantNumericFraction = static_cast<unsigned>(variant); }
     void setVariantNumericOrdinal(FontVariantNumericOrdinal variant) { m_variantNumericOrdinal = static_cast<unsigned>(variant); }
     void setVariantNumericSlashedZero(FontVariantNumericSlashedZero variant) { m_variantNumericSlashedZero = static_cast<unsigned>(variant); }
-    void setVariantAlternates(FontVariantAlternates variant) { m_variantAlternates = static_cast<unsigned>(variant); }
+    void setVariantAlternates(FontVariantAlternates variant) { m_variantAlternates = variant; }
     void setVariantEastAsianVariant(FontVariantEastAsianVariant variant) { m_variantEastAsianVariant = static_cast<unsigned>(variant); }
     void setVariantEastAsianWidth(FontVariantEastAsianWidth variant) { m_variantEastAsianWidth = static_cast<unsigned>(variant); }
     void setVariantEastAsianRuby(FontVariantEastAsianRuby variant) { m_variantEastAsianRuby = static_cast<unsigned>(variant); }
@@ -148,6 +155,7 @@ private:
     // FIXME: Investigate moving these into their own object on the heap (to save memory).
     FontFeatureSettings m_featureSettings;
     FontVariationSettings m_variationSettings;
+    FontVariantAlternates m_variantAlternates;
     FontPalette m_fontPalette;
     AtomString m_locale;
     AtomString m_specifiedLocale;
@@ -160,7 +168,9 @@ private:
     unsigned m_renderingMode : 1; // Used to switch between CG and GDI text on Windows.
     unsigned m_textRendering : 2; // TextRenderingMode
     unsigned m_script : 7; // Used to help choose an appropriate font for generic font families.
-    unsigned m_fontSynthesis : 3; // FontSynthesis type
+    unsigned m_fontSynthesisWeight : 1;
+    unsigned m_fontSynthesisStyle : 1;
+    unsigned m_fontSynthesisCaps : 1;
     unsigned m_variantCommonLigatures : 2; // FontVariantLigatures
     unsigned m_variantDiscretionaryLigatures : 2; // FontVariantLigatures
     unsigned m_variantHistoricalLigatures : 2; // FontVariantLigatures
@@ -172,7 +182,6 @@ private:
     unsigned m_variantNumericFraction : 2; // FontVariantNumericFraction
     unsigned m_variantNumericOrdinal : 1; // FontVariantNumericOrdinal
     unsigned m_variantNumericSlashedZero : 1; // FontVariantNumericSlashedZero
-    unsigned m_variantAlternates : 1; // FontVariantAlternates
     unsigned m_variantEastAsianVariant : 3; // FontVariantEastAsianVariant
     unsigned m_variantEastAsianWidth : 2; // FontVariantEastAsianWidth
     unsigned m_variantEastAsianRuby : 1; // FontVariantEastAsianRuby
@@ -194,7 +203,9 @@ inline bool FontDescription::operator==(const FontDescription& other) const
         && m_specifiedLocale == other.m_specifiedLocale
         && m_featureSettings == other.m_featureSettings
         && m_variationSettings == other.m_variationSettings
-        && m_fontSynthesis == other.m_fontSynthesis
+        && m_fontSynthesisWeight == other.m_fontSynthesisWeight
+        && m_fontSynthesisStyle == other.m_fontSynthesisStyle
+        && m_fontSynthesisCaps == other.m_fontSynthesisCaps
         && m_variantCommonLigatures == other.m_variantCommonLigatures
         && m_variantDiscretionaryLigatures == other.m_variantDiscretionaryLigatures
         && m_variantHistoricalLigatures == other.m_variantHistoricalLigatures
@@ -232,7 +243,9 @@ void FontDescription::encode(Encoder& encoder) const
     encoder << widthVariant();
     encoder << renderingMode();
     encoder << textRenderingMode();
-    encoder << fontSynthesis();
+    encoder << fontSynthesisWeight();
+    encoder << fontSynthesisStyle();
+    encoder << fontSynthesisSmallCaps();
     encoder << variantCommonLigatures();
     encoder << variantDiscretionaryLigatures();
     encoder << variantHistoricalLigatures();
@@ -319,9 +332,19 @@ std::optional<FontDescription> FontDescription::decode(Decoder& decoder)
     if (!textRenderingMode)
         return std::nullopt;
 
-    std::optional<FontSynthesis> fontSynthesis;
-    decoder >> fontSynthesis;
-    if (!fontSynthesis)
+    std::optional<FontSynthesisLonghandValue> fontSynthesisWeight;
+    decoder >> fontSynthesisWeight;
+    if (!fontSynthesisWeight)
+        return std::nullopt;
+
+    std::optional<FontSynthesisLonghandValue> fontSynthesisStyle;
+    decoder >> fontSynthesisStyle;
+    if (!fontSynthesisStyle)
+        return std::nullopt;
+
+    std::optional<FontSynthesisLonghandValue> fontSynthesisSmallCaps;
+    decoder >> fontSynthesisSmallCaps;
+    if (!fontSynthesisSmallCaps)
         return std::nullopt;
 
     std::optional<FontVariantLigatures> variantCommonLigatures;
@@ -436,7 +459,9 @@ std::optional<FontDescription> FontDescription::decode(Decoder& decoder)
     fontDescription.setWidthVariant(*widthVariant);
     fontDescription.setRenderingMode(*renderingMode);
     fontDescription.setTextRenderingMode(*textRenderingMode);
-    fontDescription.setFontSynthesis(*fontSynthesis);
+    fontDescription.setFontSynthesisWeight(*fontSynthesisWeight);
+    fontDescription.setFontSynthesisStyle(*fontSynthesisStyle);
+    fontDescription.setFontSynthesisSmallCaps(*fontSynthesisSmallCaps);
     fontDescription.setVariantCommonLigatures(*variantCommonLigatures);
     fontDescription.setVariantDiscretionaryLigatures(*variantDiscretionaryLigatures);
     fontDescription.setVariantHistoricalLigatures(*variantHistoricalLigatures);

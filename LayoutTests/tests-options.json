@@ -482,6 +482,15 @@
     "imported/w3c/html/syntax/xmldecl/xmldecl-3.html": [
         "slow"
     ],
+    "imported/w3c/pointerlock/movementX_Y_basic.html": [
+        "slow"
+    ],
+    "imported/w3c/pointerlock/pointerlock_remove_target.html": [
+        "slow"
+    ],
+    "imported/w3c/pointerlock/pointerlock_shadow.html": [
+        "slow"
+    ],
     "imported/w3c/quirks/hashless-hex-color/limited-quirks.html": [
         "slow"
     ],
@@ -2681,6 +2690,30 @@
     "imported/w3c/web-platform-tests/eventsource/shared-worker/eventsource-constructor-non-same-origin.htm": [
         "slow"
     ],
+    "imported/w3c/web-platform-tests/feature-policy/feature-policy-frame-policy-allowed-for-all.https.sub.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/feature-policy/feature-policy-frame-policy-allowed-for-self.https.sub.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/feature-policy/feature-policy-frame-policy-allowed-for-some-override.https.sub.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/feature-policy/feature-policy-frame-policy-allowed-for-some.https.sub.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/feature-policy/feature-policy-frame-policy-disallowed-for-all.https.sub.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/feature-policy/feature-policy-nested-header-policy-allowed-for-all.https.sub.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/feature-policy/feature-policy-nested-header-policy-allowed-for-self.https.sub.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/feature-policy/feature-policy-nested-header-policy-disallowed-for-all.https.sub.html": [
+        "slow"
+    ],
     "imported/w3c/web-platform-tests/fetch/api/basic/error-after-response.html": [
         "slow"
     ],
@@ -4116,6 +4149,15 @@
         "slow"
     ],
     "imported/w3c/web-platform-tests/image-decodes/image-decode.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/import-maps/bare-specifiers.sub.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/import-maps/data-url-specifiers.sub.html": [
+        "slow"
+    ],
+    "imported/w3c/web-platform-tests/import-maps/import-maps-base-url.sub.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/mathml/presentation-markup/operators/operator-dictionary-001.html": [

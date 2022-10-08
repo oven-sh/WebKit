@@ -1962,6 +1962,40 @@ void SpeculativeJIT::compileStringSlice(Node* node)
     cellResult(tempGPR, node);
 }
 
+void SpeculativeJIT::compileStringSubstring(Node* node)
+{
+    SpeculateCellOperand string(this, node->child1());
+
+    SpeculateInt32Operand start(this, node->child2());
+    if (node->child3()) {
+        SpeculateInt32Operand end(this, node->child3());
+
+        GPRReg stringGPR = string.gpr();
+        GPRReg startGPR = start.gpr();
+        GPRReg endGPR = end.gpr();
+
+        speculateString(node->child1(), stringGPR);
+
+        flushRegisters();
+        GPRFlushedCallResult result(this);
+        GPRReg resultGPR = result.gpr();
+        callOperation(operationStringSubstringWithEnd, resultGPR, JITCompiler::LinkableConstant(m_jit, m_graph.globalObjectFor(node->origin.semantic)), stringGPR, startGPR, endGPR);
+        cellResult(resultGPR, node);
+        return;
+    }
+
+    GPRReg stringGPR = string.gpr();
+    GPRReg startGPR = start.gpr();
+
+    speculateString(node->child1(), stringGPR);
+
+    flushRegisters();
+    GPRFlushedCallResult result(this);
+    GPRReg resultGPR = result.gpr();
+    callOperation(operationStringSubstring, resultGPR, JITCompiler::LinkableConstant(m_jit, m_graph.globalObjectFor(node->origin.semantic)), stringGPR, startGPR);
+    cellResult(resultGPR, node);
+}
+
 void SpeculativeJIT::compileToLowerCase(Node* node)
 {
     ASSERT(node->op() == ToLowerCase);
@@ -4219,7 +4253,7 @@ void SpeculativeJIT::compileGetPrivateNameById(Node* node)
         JSValueRegs baseRegs = JSValueRegs::payloadOnly(base.gpr());
         JSValueRegs resultRegs = result.regs();
 
-        cachedGetById(node->origin.semantic, baseRegs, resultRegs, stubInfoGPR, scratchGPR, node->cacheableIdentifier(), JITCompiler::Jump(), NeedToSpill, AccessType::GetPrivateName);
+        cachedGetById(node->origin.semantic, baseRegs, resultRegs, stubInfoGPR, scratchGPR, node->cacheableIdentifier(), JITCompiler::Jump(), NeedToSpill, AccessType::GetPrivateNameById);
 
         jsValueResult(resultRegs, node, DataFormatJS);
         break;
@@ -4244,7 +4278,7 @@ void SpeculativeJIT::compileGetPrivateNameById(Node* node)
 
         JITCompiler::Jump notCell = m_jit.branchIfNotCell(baseRegs);
 
-        cachedGetById(node->origin.semantic, baseRegs, resultRegs, stubInfoGPR, scratchGPR, node->cacheableIdentifier(), notCell, NeedToSpill, AccessType::GetPrivateName);
+        cachedGetById(node->origin.semantic, baseRegs, resultRegs, stubInfoGPR, scratchGPR, node->cacheableIdentifier(), notCell, NeedToSpill, AccessType::GetPrivateNameById);
 
         jsValueResult(resultRegs, node, DataFormatJS);
         break;
@@ -7117,74 +7151,99 @@ void SpeculativeJIT::compileArithSqrt(Node* node)
 
 void SpeculativeJIT::compileArithMinMax(Node* node)
 {
-    switch (node->binaryUseKind()) {
+    switch (m_graph.child(node, 0).useKind()) {
     case Int32Use: {
-        SpeculateStrictInt32Operand op1(this, node->child1());
-        SpeculateStrictInt32Operand op2(this, node->child2());
+        SpeculateStrictInt32Operand op1(this, m_graph.child(node, 0));
         GPRTemporary result(this, Reuse, op1);
 
         GPRReg op1GPR = op1.gpr();
-        GPRReg op2GPR = op2.gpr();
         GPRReg resultGPR = result.gpr();
 
-        MacroAssembler::Jump op1Less = m_jit.branch32(node->op() == ArithMin ? MacroAssembler::LessThan : MacroAssembler::GreaterThan, op1GPR, op2GPR);
-        m_jit.move(op2GPR, resultGPR);
-        if (op1GPR != resultGPR) {
-            MacroAssembler::Jump done = m_jit.jump();
-            op1Less.link(&m_jit);
-            m_jit.move(op1GPR, resultGPR);
-            done.link(&m_jit);
-        } else
-            op1Less.link(&m_jit);
+        m_jit.move(op1GPR, resultGPR);
+
+        for (unsigned index = 1; index < node->numChildren(); ++index) {
+            SpeculateStrictInt32Operand op2(this, m_graph.child(node, index));
+            GPRReg op2GPR = op2.gpr();
+#if CPU(ARM64) || CPU(X86_64)
+            m_jit.moveConditionally32(node->op() == ArithMin ? MacroAssembler::GreaterThan : MacroAssembler::LessThan, resultGPR, op2GPR, op2GPR, resultGPR);
+#else
+            auto resultLess = m_jit.branch32(node->op() == ArithMin ? MacroAssembler::LessThan : MacroAssembler::GreaterThan, resultGPR, op2GPR);
+            m_jit.move(op2GPR, resultGPR);
+            resultLess.link(&m_jit);
+#endif
+        }
 
         strictInt32Result(resultGPR, node);
         break;
     }
 
     case DoubleRepUse: {
-        SpeculateDoubleOperand op1(this, node->child1());
-        SpeculateDoubleOperand op2(this, node->child2());
-        FPRTemporary result(this, op1);
+        if (node->numChildren() == 2) {
+            SpeculateDoubleOperand op1(this, m_graph.child(node, 0));
+            SpeculateDoubleOperand op2(this, m_graph.child(node, 1));
+            FPRTemporary result(this, op1);
 
-        FPRReg op1FPR = op1.fpr();
-        FPRReg op2FPR = op2.fpr();
-        FPRReg resultFPR = result.fpr();
+            FPRReg op1FPR = op1.fpr();
+            FPRReg op2FPR = op2.fpr();
+            FPRReg resultFPR = result.fpr();
 
-        MacroAssembler::JumpList done;
+            MacroAssembler::JumpList done;
 
-        MacroAssembler::Jump op1Less = m_jit.branchDouble(node->op() == ArithMin ? MacroAssembler::DoubleLessThanAndOrdered : MacroAssembler::DoubleGreaterThanAndOrdered, op1FPR, op2FPR);
-        MacroAssembler::Jump opNotEqualOrUnordered = m_jit.branchDouble(MacroAssembler::DoubleNotEqualOrUnordered, op1FPR, op2FPR);
+            MacroAssembler::Jump op1Less = m_jit.branchDouble(node->op() == ArithMin ? MacroAssembler::DoubleLessThanAndOrdered : MacroAssembler::DoubleGreaterThanAndOrdered, op1FPR, op2FPR);
+            MacroAssembler::Jump opNotEqualOrUnordered = m_jit.branchDouble(MacroAssembler::DoubleNotEqualOrUnordered, op1FPR, op2FPR);
 
-        // The spec for Math.min and Math.max states that +0 is considered to be larger than -0.
-        if (node->op() == ArithMin)
-            m_jit.orDouble(op1FPR, op2FPR, resultFPR);
-        else
-            m_jit.andDouble(op1FPR, op2FPR, resultFPR);
+            // The spec for Math.min and Math.max states that +0 is considered to be larger than -0.
+            if (node->op() == ArithMin)
+                m_jit.orDouble(op1FPR, op2FPR, resultFPR);
+            else
+                m_jit.andDouble(op1FPR, op2FPR, resultFPR);
 
-        done.append(m_jit.jump());
-
-        opNotEqualOrUnordered.link(&m_jit);
-        // op2 is either the lesser one or one of then is NaN
-        MacroAssembler::Jump op2Less = m_jit.branchDouble(node->op() == ArithMin ? MacroAssembler::DoubleGreaterThanAndOrdered : MacroAssembler::DoubleLessThanAndOrdered, op1FPR, op2FPR);
-
-        // Unordered case. We don't know which of op1, op2 is NaN. Manufacture NaN by adding
-        // op1 + op2 and putting it into result.
-        m_jit.addDouble(op1FPR, op2FPR, resultFPR);
-        done.append(m_jit.jump());
-
-        op2Less.link(&m_jit);
-        m_jit.moveDouble(op2FPR, resultFPR);
-
-        if (op1FPR != resultFPR) {
             done.append(m_jit.jump());
 
-            op1Less.link(&m_jit);
-            m_jit.moveDouble(op1FPR, resultFPR);
-        } else
-            op1Less.link(&m_jit);
+            opNotEqualOrUnordered.link(&m_jit);
+            // op2 is either the lesser one or one of then is NaN
+            MacroAssembler::Jump op2Less = m_jit.branchDouble(node->op() == ArithMin ? MacroAssembler::DoubleGreaterThanAndOrdered : MacroAssembler::DoubleLessThanAndOrdered, op1FPR, op2FPR);
 
-        done.link(&m_jit);
+            // Unordered case. We don't know which of op1, op2 is NaN. Manufacture NaN by adding
+            // op1 + op2 and putting it into result.
+            m_jit.addDouble(op1FPR, op2FPR, resultFPR);
+            done.append(m_jit.jump());
 
+            op2Less.link(&m_jit);
+            m_jit.moveDouble(op2FPR, resultFPR);
+
+            if (op1FPR != resultFPR) {
+                done.append(m_jit.jump());
+
+                op1Less.link(&m_jit);
+                m_jit.moveDouble(op1FPR, resultFPR);
+            } else
+                op1Less.link(&m_jit);
+
+            done.link(&m_jit);
+
+            doubleResult(resultFPR, node);
+            break;
+        }
+
+        GPRTemporary buffer(this);
+
+        GPRReg bufferGPR = buffer.gpr();
+
+        size_t scratchSize = sizeof(double) * node->numChildren();
+        ScratchBuffer* scratchBuffer = vm().scratchBufferForSize(scratchSize);
+        m_jit.move(TrustedImmPtr(bitwise_cast<const double*>(scratchBuffer->dataBuffer())), bufferGPR);
+
+        for (unsigned index = 0; index < node->numChildren(); ++index) {
+            SpeculateDoubleOperand op(this, m_graph.child(node, index));
+            FPRReg opFPR = op.fpr();
+            m_jit.storeDouble(opFPR, CCallHelpers::Address(bufferGPR, sizeof(double) * index));
+        }
+
+        flushRegisters();
+        FPRResult result(this);
+        FPRReg resultFPR = result.fpr();
+        callOperation(node->op() == ArithMin ? operationArithMinMultipleDouble : operationArithMaxMultipleDouble, resultFPR, bufferGPR, TrustedImm32(node->numChildren()));
         doubleResult(resultFPR, node);
         break;
     }
@@ -12976,9 +13035,10 @@ void SpeculativeJIT::emitSwitchString(Node* node, SwitchData* data)
         
         GPRReg op1GPR = op1.gpr();
         
+        speculateString(node->child1(), op1GPR);
+
         op1.use();
 
-        speculateString(node->child1(), op1GPR);
         emitSwitchStringOnString(node, data, op1GPR);
         noResult(node, UseChildrenCalledExplicitly);
         break;
@@ -13414,10 +13474,65 @@ void SpeculativeJIT::compileStringReplace(Node* node)
             m_jit.decrementSuperSamplerCount();
     });
 
-    if (node->op() == StringReplace
-        && node->child1().useKind() == StringUse
-        && node->child2().useKind() == StringUse
+    if (node->child1().useKind() == StringUse
+        && node->child2().useKind() == RegExpObjectUse
         && node->child3().useKind() == StringUse) {
+        if (JSString* replace = node->child3()->dynamicCastConstant<JSString*>(); replace && !replace->length()) {
+            SpeculateCellOperand string(this, node->child1());
+            SpeculateCellOperand regExp(this, node->child2());
+            GPRReg stringGPR = string.gpr();
+            GPRReg regExpGPR = regExp.gpr();
+            speculateString(node->child1(), stringGPR);
+            speculateRegExpObject(node->child2(), regExpGPR);
+
+            flushRegisters();
+            GPRFlushedCallResult result(this);
+            callOperation(operationStringProtoFuncReplaceRegExpEmptyStr, result.gpr(), JITCompiler::LinkableConstant(m_jit, m_graph.globalObjectFor(node->origin.semantic)), stringGPR, regExpGPR);
+            m_jit.exceptionCheck();
+            cellResult(result.gpr(), node);
+            return;
+        }
+
+        SpeculateCellOperand string(this, node->child1());
+        SpeculateCellOperand regExp(this, node->child2());
+        SpeculateCellOperand replace(this, node->child3());
+        GPRReg stringGPR = string.gpr();
+        GPRReg regExpGPR = regExp.gpr();
+        GPRReg replaceGPR = replace.gpr();
+        speculateString(node->child1(), stringGPR);
+        speculateRegExpObject(node->child2(), regExpGPR);
+        speculateString(node->child3(), replaceGPR);
+
+        flushRegisters();
+        GPRFlushedCallResult result(this);
+        callOperation(operationStringProtoFuncReplaceRegExpString, result.gpr(), JITCompiler::LinkableConstant(m_jit, m_graph.globalObjectFor(node->origin.semantic)), stringGPR, regExpGPR, replaceGPR);
+        m_jit.exceptionCheck();
+        cellResult(result.gpr(), node);
+        return;
+    }
+
+    // If we fixed up the edge of child2, we inserted a Check(@child2, String).
+    OperandSpeculationMode child2SpeculationMode = AutomaticOperandSpeculation;
+    if (node->child2().useKind() == StringUse)
+        child2SpeculationMode = ManualOperandSpeculation;
+
+    JSValueOperand string(this, node->child1());
+    JSValueOperand search(this, node->child2(), child2SpeculationMode);
+    JSValueOperand replace(this, node->child3());
+    JSValueRegs stringRegs = string.jsValueRegs();
+    JSValueRegs searchRegs = search.jsValueRegs();
+    JSValueRegs replaceRegs = replace.jsValueRegs();
+
+    flushRegisters();
+    GPRFlushedCallResult result(this);
+    callOperation(operationStringProtoFuncReplaceGeneric, result.gpr(), JITCompiler::LinkableConstant(m_jit, m_graph.globalObjectFor(node->origin.semantic)), stringRegs, searchRegs, replaceRegs);
+    m_jit.exceptionCheck();
+    cellResult(result.gpr(), node);
+}
+
+void SpeculativeJIT::compileStringReplaceString(Node* node)
+{
+    if (node->child3().useKind() == StringUse) {
         const BoyerMooreHorspoolTable<uint8_t>* tablePointer = nullptr;
         String searchString = node->child2()->tryGetString(m_graph);
         if (!!searchString)
@@ -13488,60 +13603,20 @@ void SpeculativeJIT::compileStringReplace(Node* node)
         return;
     }
 
-    if (node->child1().useKind() == StringUse
-        && node->child2().useKind() == RegExpObjectUse
-        && node->child3().useKind() == StringUse) {
-        if (JSString* replace = node->child3()->dynamicCastConstant<JSString*>()) {
-            if (!replace->length()) {
-                SpeculateCellOperand string(this, node->child1());
-                SpeculateCellOperand regExp(this, node->child2());
-                GPRReg stringGPR = string.gpr();
-                GPRReg regExpGPR = regExp.gpr();
-                speculateString(node->child1(), stringGPR);
-                speculateRegExpObject(node->child2(), regExpGPR);
-
-                flushRegisters();
-                GPRFlushedCallResult result(this);
-                callOperation(operationStringProtoFuncReplaceRegExpEmptyStr, result.gpr(), JITCompiler::LinkableConstant(m_jit, m_graph.globalObjectFor(node->origin.semantic)), stringGPR, regExpGPR);
-                m_jit.exceptionCheck();
-                cellResult(result.gpr(), node);
-                return;
-            }
-        }
-
-        SpeculateCellOperand string(this, node->child1());
-        SpeculateCellOperand regExp(this, node->child2());
-        SpeculateCellOperand replace(this, node->child3());
-        GPRReg stringGPR = string.gpr();
-        GPRReg regExpGPR = regExp.gpr();
-        GPRReg replaceGPR = replace.gpr();
-        speculateString(node->child1(), stringGPR);
-        speculateRegExpObject(node->child2(), regExpGPR);
-        speculateString(node->child3(), replaceGPR);
-
-        flushRegisters();
-        GPRFlushedCallResult result(this);
-        callOperation(operationStringProtoFuncReplaceRegExpString, result.gpr(), JITCompiler::LinkableConstant(m_jit, m_graph.globalObjectFor(node->origin.semantic)), stringGPR, regExpGPR, replaceGPR);
-        m_jit.exceptionCheck();
-        cellResult(result.gpr(), node);
-        return;
-    }
-
-    // If we fixed up the edge of child2, we inserted a Check(@child2, String).
-    OperandSpeculationMode child2SpeculationMode = AutomaticOperandSpeculation;
-    if (node->child2().useKind() == StringUse)
-        child2SpeculationMode = ManualOperandSpeculation;
-
-    JSValueOperand string(this, node->child1());
-    JSValueOperand search(this, node->child2(), child2SpeculationMode);
+    // Otherwise, maybe function. Let's call slow path.
+    SpeculateCellOperand string(this, node->child1());
+    SpeculateCellOperand search(this, node->child2());
     JSValueOperand replace(this, node->child3());
-    JSValueRegs stringRegs = string.jsValueRegs();
-    JSValueRegs searchRegs = search.jsValueRegs();
+
+    GPRReg stringGPR = string.gpr();
+    GPRReg searchGPR = search.gpr();
     JSValueRegs replaceRegs = replace.jsValueRegs();
+    speculateString(node->child1(), stringGPR);
+    speculateString(node->child2(), searchGPR);
 
     flushRegisters();
     GPRFlushedCallResult result(this);
-    callOperation(operationStringProtoFuncReplaceGeneric, result.gpr(), JITCompiler::LinkableConstant(m_jit, m_graph.globalObjectFor(node->origin.semantic)), stringRegs, searchRegs, replaceRegs);
+    callOperation(operationStringReplaceStringGeneric, result.gpr(), JITCompiler::LinkableConstant(m_jit, m_graph.globalObjectFor(node->origin.semantic)), stringGPR, searchGPR, replaceRegs);
     m_jit.exceptionCheck();
     cellResult(result.gpr(), node);
 }
@@ -14735,6 +14810,40 @@ void SpeculativeJIT::compileNewArrayWithSize(Node* node)
     m_jit.move(TrustedImmPtr(m_graph.registerStructure(globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithArrayStorage))), structureGPR);
     done.link(&m_jit);
     callOperation(operationNewArrayWithSize, resultGPR, JITCompiler::LinkableConstant(m_jit, m_graph.globalObjectFor(node->origin.semantic)), structureGPR, sizeGPR, nullptr);
+    m_jit.exceptionCheck();
+    cellResult(resultGPR, node);
+}
+
+void SpeculativeJIT::compileNewArrayWithSpecies(Node* node)
+{
+    if (node->child1().useKind() == Int32Use) {
+        SpeculateInt32Operand size(this, node->child1());
+        SpeculateCellOperand array(this, node->child2());
+
+        GPRReg sizeGPR = size.gpr();
+        GPRReg arrayGPR = array.gpr();
+
+        flushRegisters();
+        GPRFlushedCallResult result(this);
+        GPRReg resultGPR = result.gpr();
+        callOperation(operationNewArrayWithSpeciesInt32, resultGPR, JITCompiler::LinkableConstant(m_jit, m_graph.globalObjectFor(node->origin.semantic)), sizeGPR, arrayGPR, node->indexingType());
+
+        m_jit.exceptionCheck();
+        cellResult(resultGPR, node);
+        return;
+    }
+
+    JSValueOperand size(this, node->child1());
+    SpeculateCellOperand array(this, node->child2());
+
+    JSValueRegs sizeRegs = size.jsValueRegs();
+    GPRReg arrayGPR = array.gpr();
+
+    flushRegisters();
+    GPRFlushedCallResult result(this);
+    GPRReg resultGPR = result.gpr();
+    callOperation(operationNewArrayWithSpecies, resultGPR, JITCompiler::LinkableConstant(m_jit, m_graph.globalObjectFor(node->origin.semantic)), sizeRegs, arrayGPR, node->indexingType());
+
     m_jit.exceptionCheck();
     cellResult(resultGPR, node);
 }
@@ -16186,11 +16295,11 @@ void SpeculativeJIT::compileHeapBigIntEquality(Node* node)
     GPRReg rightGPR = right.gpr();
     GPRReg resultGPR = result.gpr();
 
-    left.use();
-    right.use();
-
     speculateHeapBigInt(node->child1(), leftGPR);
     speculateHeapBigInt(node->child2(), rightGPR);
+
+    left.use();
+    right.use();
 
     JITCompiler::Jump notEqualCase = m_jit.branchPtr(JITCompiler::NotEqual, leftGPR, rightGPR);
 

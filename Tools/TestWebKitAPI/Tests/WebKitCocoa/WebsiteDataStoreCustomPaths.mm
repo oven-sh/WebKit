@@ -1296,3 +1296,110 @@ TEST(WebKit, OriginDirectoryExcludedFromBackup)
 }
 
 #endif
+
+TEST(WebKit, RemoveStaleWebSQLData)
+{
+    NSURL *resourceWebSQLDatabaseTrackerFile = [[NSBundle mainBundle] URLForResource:@"websql-database-tracker" withExtension:@"db" subdirectory:@"TestWebKitAPI.resources"];
+    NSURL *resourceWebSQLDatabaseFile = [[NSBundle mainBundle] URLForResource:@"websql-database" withExtension:@"db" subdirectory:@"TestWebKitAPI.resources"];
+    NSURL *resourceSalt = [[NSBundle mainBundle] URLForResource:@"general-storage-directory" withExtension:@"salt" subdirectory:@"TestWebKitAPI.resources"];
+    NSURL *customWebSQLDirectory = [NSURL fileURLWithPath:[@"~/Library/WebKit/com.apple.WebKit.TestWebKitAPI/CustomWebSQL" stringByExpandingTildeInPath] isDirectory:YES];
+    NSURL *databaseTrackerFile = [customWebSQLDirectory URLByAppendingPathComponent:@"Databases.db"];
+    NSURL *webkitSQLDirectory = [customWebSQLDirectory URLByAppendingPathComponent:@"http_webkit.org_0"];
+    NSURL *databaseFile = [webkitSQLDirectory URLByAppendingPathComponent:@"f3013c11-b9f1-4534-a9d6-f3426f777eb3.db"];
+    NSURL *salt = [customWebSQLDirectory URLByAppendingPathComponent:@"salt"];
+
+    /* Directory structure.
+    - CustomWebSQL
+        - salt
+        - Databases.db
+        - http_webkit.org_0
+            - f3013c11-b9f1-4534-a9d6-f3426f777eb3.db
+    */
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    [fileManager removeItemAtURL:customWebSQLDirectory error:nil];
+    [fileManager createDirectoryAtURL:customWebSQLDirectory withIntermediateDirectories:YES attributes:nil error:nil];
+    [fileManager copyItemAtURL:resourceWebSQLDatabaseTrackerFile toURL:databaseTrackerFile error:nil];
+    [fileManager createDirectoryAtURL:webkitSQLDirectory withIntermediateDirectories:YES attributes:nil error:nil];
+    [fileManager copyItemAtURL:resourceWebSQLDatabaseFile toURL:databaseFile error:nil];
+    [fileManager copyItemAtURL:resourceSalt toURL:salt error:nil];
+
+    // Ensure WebSQL files are deleted.
+    auto websiteDataStoreConfiguration = adoptNS([[_WKWebsiteDataStoreConfiguration alloc] init]);
+    websiteDataStoreConfiguration.get()._webSQLDatabaseDirectory = customWebSQLDirectory;
+    auto websiteDataStore = adoptNS([[WKWebsiteDataStore alloc] _initWithConfiguration:websiteDataStoreConfiguration.get()]);
+    done = false;
+    [websiteDataStore fetchDataRecordsOfTypes:[WKWebsiteDataStore allWebsiteDataTypes] completionHandler:^(NSArray*) {
+        done = true;
+    }];
+    TestWebKitAPI::Util::run(&done);
+    EXPECT_FALSE([fileManager fileExistsAtPath:databaseTrackerFile.path]);
+    EXPECT_FALSE([fileManager fileExistsAtPath:databaseFile.path]);
+    EXPECT_FALSE([fileManager fileExistsAtPath:webkitSQLDirectory.path]);
+    EXPECT_TRUE([fileManager fileExistsAtPath:salt.path]);
+
+    // Ensure WebSQL directory is deleted.
+    [fileManager removeItemAtURL:salt error:nil];
+    websiteDataStore = adoptNS([[WKWebsiteDataStore alloc] _initWithConfiguration:websiteDataStoreConfiguration.get()]);
+    done = false;
+    [websiteDataStore fetchDataRecordsOfTypes:[WKWebsiteDataStore allWebsiteDataTypes] completionHandler:^(NSArray*) {
+        done = true;
+    }];
+    TestWebKitAPI::Util::run(&done);
+    EXPECT_FALSE([fileManager fileExistsAtPath:customWebSQLDirectory.path]);
+}
+
+TEST(WKWebsiteDataStoreConfiguration, InitWithIdentifier)
+{
+    NSString *htmlString = @"<script> \
+        document.cookie = \"testkey=value; expires=Mon, 01 Jan 2035 00:00:00 GMT\"; \
+    </script>";
+    NSString *uuidString = @"68753a44-4d6f-1226-9c60-0050e4c00067";
+    auto uuid = adoptNS([[NSUUID alloc] initWithUUIDString:uuidString]);
+    auto websiteDataStoreConfiguration = adoptNS([[_WKWebsiteDataStoreConfiguration alloc] initWithIdentifier:uuid.get()]);
+    NSURL *cookieStorageFile = websiteDataStoreConfiguration.get()._cookieStorageFile;
+    EXPECT_TRUE([cookieStorageFile.path containsString:uuidString]);
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    [fileManager removeItemAtURL:cookieStorageFile error:nil];
+    EXPECT_FALSE([fileManager fileExistsAtPath:cookieStorageFile.path]);
+
+    auto websiteDataStore = adoptNS([[WKWebsiteDataStore alloc] _initWithConfiguration:websiteDataStoreConfiguration.get()]);
+    auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+    [configuration setWebsiteDataStore:websiteDataStore.get()];
+    auto webView = adoptNS([[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:configuration.get()]);
+    [webView loadHTMLString:htmlString baseURL:[NSURL URLWithString:@"https://webkit.org/"]];
+    while (![fileManager fileExistsAtPath:cookieStorageFile.path])
+        TestWebKitAPI::Util::spinRunLoop();
+
+    auto types = [NSSet setWithObject:WKWebsiteDataTypeCookies];
+    [websiteDataStore.get() fetchDataRecordsOfTypes:types completionHandler:^(NSArray<WKWebsiteDataRecord *> * records) {
+        EXPECT_EQ([records count], 1u);
+        EXPECT_WK_STREQ([[records firstObject] displayName], @"webkit.org");
+    }];
+}
+
+TEST(WKWebsiteDataStoreConfiguration, InitWithInvalidIdentifier)
+{
+    bool hasException = false;
+    @try {
+        auto websiteDataStoreConfiguration = adoptNS([[_WKWebsiteDataStoreConfiguration alloc] initWithIdentifier:[[NSUUID alloc] initWithUUIDString:@"1234"]]);
+    } @catch (NSException *exception) {
+        EXPECT_WK_STREQ(NSInvalidArgumentException, exception.name);
+        hasException = true;
+    }
+    EXPECT_TRUE(hasException);
+}
+
+TEST(WKWebsiteDataStoreConfiguration, SetPathOnConfigurationWithIdentifier)
+{
+    bool hasException = false;
+    @try {
+        auto uuid = adoptNS([[NSUUID alloc] initWithUUIDString:@"68753A44-4D6F-1226-9C60-0050E4C00067"]);
+        auto websiteDataStoreConfiguration = adoptNS([[_WKWebsiteDataStoreConfiguration alloc] initWithIdentifier:uuid.get()]);
+        NSURL *cookieStorageFile = [NSURL fileURLWithPath:[@"~/Library/WebKit/com.apple.WebKit.TestWebKitAPI/CustomWebsiteData/CookieStorage/Cookies.binarycookies" stringByExpandingTildeInPath] isDirectory:NO];
+        websiteDataStoreConfiguration.get()._cookieStorageFile = cookieStorageFile;
+    } @catch (NSException *exception) {
+        EXPECT_WK_STREQ(NSGenericException, exception.name);
+        hasException = true;
+    }
+    EXPECT_TRUE(hasException);
+}

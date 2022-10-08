@@ -50,8 +50,6 @@ public:
     static Ref<AXIsolatedObject> create(const Ref<AXCoreObject>&, AXIsolatedTree*);
     ~AXIsolatedObject();
 
-    void setObjectID(AXID id) override { m_id = id; }
-    AXID objectID() const override { return m_id; }
     void init() override;
 
     void attachPlatformWrapper(AccessibilityObjectWrapper*);
@@ -349,7 +347,7 @@ private:
 
     // Parameterized attribute retrieval.
     Vector<SimpleRange> findTextRanges(const AccessibilitySearchTextCriteria&) const override;
-    Vector<String> performTextOperation(AccessibilityTextOperation const&) override;
+    Vector<String> performTextOperation(const AccessibilityTextOperation&) override;
     void findMatchingObjects(AccessibilitySearchCriteria*, AccessibilityChildrenVector&) override;
 
     // Attributes retrieved from the root node only so that the data isn't duplicated on each node.
@@ -573,9 +571,9 @@ private:
     String innerHTML() const override;
     String outerHTML() const override;
 
-    WeakPtr<AXIsolatedTree> m_cachedTree;
+    // Ideally this would be a WeakPtr<AXIsolatedTree>, but WebKit's WeakPtr is not currently thread-safe.
+    RefPtr<AXIsolatedTree> m_cachedTree;
     AXID m_parentID;
-    AXID m_id;
     Vector<AXID> m_childrenIDs;
     Vector<RefPtr<AXCoreObject>> m_children;
     AXPropertyMap m_propertyMap;

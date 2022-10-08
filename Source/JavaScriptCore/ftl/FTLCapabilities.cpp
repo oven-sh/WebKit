@@ -230,6 +230,7 @@ inline CapabilityLevel canCompile(Node* node)
     case ObjectGetOwnPropertyNames:
     case MakeRope:
     case NewArrayWithSize:
+    case NewArrayWithSpecies:
     case TryGetById:
     case GetById:
     case GetByIdFlush:
@@ -345,7 +346,8 @@ inline CapabilityLevel canCompile(Node* node)
     case RegExpMatchFastGlobal:
     case NewRegexp:
     case StringReplace:
-    case StringReplaceRegExp: 
+    case StringReplaceRegExp:
+    case StringReplaceString:
     case GetRegExpObjectLastIndex:
     case SetRegExpObjectLastIndex:
     case RecordRegExpCachedResult:
@@ -370,6 +372,7 @@ inline CapabilityLevel canCompile(Node* node)
     case DefineAccessorProperty:
     case StringValueOf:
     case StringSlice:
+    case StringSubstring:
     case ToLowerCase:
     case NumberToStringWithRadix:
     case NumberToStringWithValidRadixConstant:

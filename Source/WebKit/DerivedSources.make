@@ -178,13 +178,16 @@ MESSAGE_RECEIVERS = \
 	UIProcess/WebProcessProxy \
 	UIProcess/Automation/WebAutomationSession \
 	UIProcess/WebProcessPool \
+        UIProcess/WebScreenOrientationManagerProxy \
 	UIProcess/Downloads/DownloadProxy \
+	UIProcess/Extensions/WebExtensionController \
 	UIProcess/Media/AudioSessionRoutingArbitratorProxy \
 	UIProcess/Media/RemoteMediaSessionCoordinatorProxy \
 	UIProcess/SpeechRecognitionRemoteRealtimeMediaSourceManager \
 	UIProcess/SpeechRecognitionServer \
 	UIProcess/XR/PlatformXRSystem \
 	WebProcess/Databases/IndexedDB/WebIDBConnectionToServer \
+	WebProcess/Extensions/WebExtensionControllerProxy \
 	WebProcess/GPU/GPUProcessConnection \
 	WebProcess/GPU/graphics/RemoteRenderingBackendProxy \
 	WebProcess/GPU/graphics/RemoteGraphicsContextGLProxy \
@@ -226,6 +229,7 @@ MESSAGE_RECEIVERS = \
 	WebProcess/WebCoreSupport/WebDeviceOrientationUpdateProvider \
 	WebProcess/WebCoreSupport/WebFileSystemStorageConnection \
 	WebProcess/WebCoreSupport/WebPermissionController \
+        WebProcess/WebCoreSupport/WebScreenOrientationManager \
 	WebProcess/WebCoreSupport/WebSpeechRecognitionConnection \
 	WebProcess/Speech/SpeechRecognitionRealtimeMediaSourceManager \
 	WebProcess/Storage/WebSharedWorkerContextManagerConnection \
@@ -450,9 +454,15 @@ $(WEB_PREFERENCES_PATTERNS) : $(WTF_BUILD_SCRIPTS_DIR)/GeneratePreferences.rb $(
 SERIALIZATION_DESCRIPTION_FILES = \
 	NetworkProcess/NetworkProcessCreationParameters.serialization.in \
 	Shared/API/APIGeometry.serialization.in \
+	Shared/Cocoa/WebCoreArgumentCodersCocoa.serialization.in \
+	Shared/FocusedElementInformation.serialization.in \
+	Shared/ShareableBitmap.serialization.in \
 	Shared/FrameInfoData.serialization.in \
 	Shared/FrameTreeNodeData.serialization.in \
+	Shared/LayerTreeContext.serialization.in \
+	Shared/TextFlags.serialization.in \
 	Shared/WebCoreArgumentCoders.serialization.in \
+	Shared/WebExtensionControllerParameters.serialization.in \
 	Shared/mac/SecItemResponseData.serialization.in \
 	Shared/WebsiteDataStoreParameters.serialization.in \
 	Shared/WebsiteData/WebsiteDataFetchOption.serialization.in \
@@ -482,7 +492,7 @@ SERIALIZATION_DESCRIPTION_FILES = \
 	Shared/WebGPU/WebGPUBindGroupEntry.serialization.in \
 #
 
-all : GeneratedSerializers.h GeneratedSerializers.cpp SerializedTypeInfo.cpp
+all : GeneratedSerializers.h GeneratedSerializers.cpp GeneratedSerializers.mm SerializedTypeInfo.cpp
 
-GeneratedSerializers.h GeneratedSerializers.cpp SerializedTypeInfo.cpp : $(WebKit2)/Scripts/generate-serializers.py $(SERIALIZATION_DESCRIPTION_FILES) $(WebKit2)/DerivedSources.make
+GeneratedSerializers.h GeneratedSerializers.cpp GeneratedSerializers.mm SerializedTypeInfo.cpp : $(WebKit2)/Scripts/generate-serializers.py $(SERIALIZATION_DESCRIPTION_FILES) $(WebKit2)/DerivedSources.make
 	$(PYTHON) $(WebKit2)/Scripts/generate-serializers.py $(WebKit2)/ $(SERIALIZATION_DESCRIPTION_FILES)

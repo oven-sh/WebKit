@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "Connection.h"
+#include "MessageReceiver.h"
 #include "WebEvent.h"
 #include <WebCore/PageIdentifier.h>
 #include <WebCore/PlatformWheelEvent.h>
@@ -37,6 +37,7 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/RefPtr.h>
 #include <wtf/ThreadingPrimitives.h>
+#include <wtf/WorkQueue.h>
 
 #if ENABLE(MAC_GESTURE_EVENTS)
 #include "WebGestureEvent.h"
@@ -59,9 +60,9 @@ class WebWheelEvent;
 class WebTouchEvent;
 #endif
 
-class EventDispatcher : public IPC::Connection::WorkQueueMessageReceiver {
+class EventDispatcher final : private IPC::MessageReceiver {
 public:
-    static Ref<EventDispatcher> create();
+    EventDispatcher();
     ~EventDispatcher();
 
     WorkQueue& queue() { return m_queue.get(); }
@@ -76,7 +77,7 @@ public:
     void takeQueuedTouchEventsForPage(const WebPage&, TouchEventQueue&);
 #endif
 
-    void initializeConnection(IPC::Connection*);
+    void initializeConnection(IPC::Connection&);
 
     void notifyScrollingTreesDisplayWasRefreshed(WebCore::PlatformDisplayID);
 
@@ -84,9 +85,7 @@ public:
     void internalWheelEvent(WebCore::PageIdentifier, const WebWheelEvent&, WebCore::RectEdges<bool> rubberBandableEdges, WheelEventOrigin);
 
 private:
-    EventDispatcher();
-
-    // IPC::Connection::WorkQueueMessageReceiver.
+    // IPC::MessageReceiver overrides.
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
 
     // Message handlers

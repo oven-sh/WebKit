@@ -186,6 +186,7 @@ public:
     void childrenChanged(Node*, Node* newChild = nullptr);
     void childrenChanged(RenderObject*, RenderObject* newChild = nullptr);
     void childrenChanged(AccessibilityObject*);
+    void onSelectedChanged(Node*);
     void valueChanged(Element*);
     void checkedStateChanged(Node*);
     void autofillTypeChanged(Node*);
@@ -277,7 +278,6 @@ public:
 
     enum AXNotification {
         AXActiveDescendantChanged,
-        AXAriaRoleChanged,
         AXAutocorrectionOccured,
         AXAutofillTypeChanged,
         AXCheckedStateChanged,
@@ -305,9 +305,12 @@ public:
         AXPageScrolled,
         AXPlaceholderChanged,
         AXPositionInSetChanged,
+        AXRoleChanged,
+        AXRoleDescriptionChanged,
         AXRowIndexChanged,
         AXRowSpanChanged,
         AXSelectedChildrenChanged,
+        AXSelectedCellChanged,
         AXSelectedStateChanged,
         AXSelectedTextChanged,
         AXSetSizeChanged,
@@ -488,6 +491,7 @@ private:
     void processDeferredChildrenChangedList();
     void handleChildrenChanged(AccessibilityObject&);
     void handleRoleChanged(Element*, const AtomString&, const AtomString&);
+    void handleRoleDescriptionChanged(Element*);
     void handleMenuOpened(Node*);
     void handleLiveRegionCreated(Node*);
     void handleMenuItemSelected(Node*);
@@ -496,7 +500,6 @@ private:
     bool shouldProcessAttributeChange(Element*, const QualifiedName&);
     void selectedChildrenChanged(Node*);
     void selectedChildrenChanged(RenderObject*);
-    void selectedStateChanged(Node*);
 
     void handleActiveDescendantChanged(Element&);
 
@@ -522,6 +525,7 @@ private:
     void addRelation(Element*, Element*, AXRelationType);
     void addRelation(AccessibilityObject*, AccessibilityObject*, AXRelationType, AddingSymmetricRelation = AddingSymmetricRelation::No);
     void updateRelationsIfNeeded();
+    void updateRelationsForTree(ContainerNode&);
     void relationsNeedUpdate(bool);
     HashMap<AXID, AXRelations> relations();
     const HashSet<AXID>& relationTargetIDs();
@@ -557,8 +561,7 @@ private:
 
     WeakPtr<Element, WeakPtrImplWithEventTargetData> m_currentModalElement;
     // Multiple aria-modals behavior is undefined by spec. We keep them sorted based on DOM order here.
-    // If that changes to require only one aria-modal we could change this to a WeakHashSet, or discard the set completely.
-    ListHashSet<Element*> m_modalElementsSet;
+    Vector<WeakPtr<Element, WeakPtrImplWithEventTargetData>> m_modalElements;
     bool m_modalNodesInitialized { false };
     bool m_isRetrievingCurrentModalNode { false };
 

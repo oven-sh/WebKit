@@ -31,8 +31,9 @@
 #include "InlineFormattingState.h"
 #include "LayoutBox.h"
 #include "LayoutBoxGeometry.h"
-#include "LayoutContainerBox.h"
 #include "LayoutContext.h"
+#include "LayoutElementBox.h"
+#include "LayoutInitialContainingBlock.h"
 #include "LayoutTreeBuilder.h"
 #include "LegacyInlineTextBox.h"
 #include "RenderBox.h"
@@ -113,7 +114,7 @@ static void collectInlineBoxes(const RenderBlockFlow& root, Vector<WebCore::Lega
     }
 }
 
-static bool outputMismatchingComplexLineInformationIfNeeded(TextStream& stream, const LayoutState& layoutState, const RenderBlockFlow& blockFlow, const ContainerBox& inlineFormattingRoot)
+static bool outputMismatchingComplexLineInformationIfNeeded(TextStream& stream, const LayoutState& layoutState, const RenderBlockFlow& blockFlow, const ElementBox& inlineFormattingRoot)
 {
     auto& inlineFormattingState = layoutState.formattingStateForFormattingContext(inlineFormattingRoot);
     auto& boxes = downcast<InlineFormattingState>(inlineFormattingState).boxes();
@@ -182,7 +183,7 @@ static bool outputMismatchingBlockBoxInformationIfNeeded(TextStream& stream, con
             return BoxGeometry::borderBoxRect(boxGeometry);
 
         // Produce a RenderBox matching margin box.
-        auto containingBlockWidth = layoutState.geometryForBox(layoutBox.containingBlock()).contentBoxWidth();
+        auto containingBlockWidth = layoutState.geometryForBox(FormattingContext::containingBlock(layoutBox)).contentBoxWidth();
         auto marginStart = LayoutUnit { };
         auto& marginStartStyle = layoutBox.style().marginStart();
         if (marginStartStyle.isFixed() || marginStartStyle.isPercent() || marginStartStyle.isCalculated())
@@ -195,8 +196,8 @@ static bool outputMismatchingBlockBoxInformationIfNeeded(TextStream& stream, con
 
         auto marginBefore = boxGeometry.marginBefore();
         auto marginAfter = boxGeometry.marginAfter();
-        if (layoutBox.formattingContextRoot().establishesBlockFormattingContext()) {
-            auto& formattingState = downcast<BlockFormattingState>(layoutState.formattingStateForBox(layoutBox));
+        if (FormattingContext::formattingContextRoot(layoutBox).establishesBlockFormattingContext()) {
+            auto& formattingState = downcast<BlockFormattingState>(layoutState.formattingStateForFormattingContext(FormattingContext::formattingContextRoot(layoutBox)));
             auto verticalMargin = formattingState.usedVerticalMargin(layoutBox);
             marginBefore = verticalMargin.nonCollapsedValues.before;
             marginAfter = verticalMargin.nonCollapsedValues.after;
@@ -219,7 +220,7 @@ static bool outputMismatchingBlockBoxInformationIfNeeded(TextStream& stream, con
     if (layoutBox.isTableBox()) {
         // When the <table> is out-of-flow positioned, the wrapper table box has the offset
         // while the actual table box is static, inflow.
-        auto& tableWrapperBoxGeometry = layoutState.geometryForBox(layoutBox.containingBlock());
+        auto& tableWrapperBoxGeometry = layoutState.geometryForBox(FormattingContext::containingBlock(layoutBox));
         boxGeometry.moveBy(BoxGeometry::borderBoxTopLeft(tableWrapperBoxGeometry));
         // Table wrapper box has the margin values for the table.
         boxGeometry.setHorizontalMargin(tableWrapperBoxGeometry.horizontalMargin());
@@ -286,15 +287,15 @@ static bool verifyAndOutputSubtree(TextStream& stream, const LayoutState& contex
 {
     // Rendering code does not have the concept of table wrapper box. Skip it by verifying the first child(table box) instead. 
     if (layoutBox.isTableWrapperBox())
-        return verifyAndOutputSubtree(stream, context, renderer, *downcast<ContainerBox>(layoutBox).firstChild()); 
+        return verifyAndOutputSubtree(stream, context, renderer, *downcast<ElementBox>(layoutBox).firstChild()); 
 
     auto mismtachingGeometry = outputMismatchingBlockBoxInformationIfNeeded(stream, context, renderer, layoutBox);
 
-    if (!is<ContainerBox>(layoutBox))
+    if (!is<ElementBox>(layoutBox))
         return mismtachingGeometry;
 
-    auto& containerBox = downcast<ContainerBox>(layoutBox);
-    auto* childLayoutBox = containerBox.firstChild();
+    auto& elementBox = downcast<ElementBox>(layoutBox);
+    auto* childLayoutBox = elementBox.firstChild();
     auto* childRenderer = renderer.firstChild();
 
     while (childRenderer) {
@@ -316,7 +317,7 @@ static bool verifyAndOutputSubtree(TextStream& stream, const LayoutState& contex
                 return true;
 
             auto& blockFlow = downcast<RenderBlockFlow>(*childRenderer);
-            auto& formattingRoot = downcast<ContainerBox>(*childLayoutBox);
+            auto& formattingRoot = downcast<ElementBox>(*childLayoutBox);
             mismtachingGeometry |= outputMismatchingComplexLineInformationIfNeeded(stream, context, blockFlow, formattingRoot);
         } else {
             auto mismatchingSubtreeGeometry = verifyAndOutputSubtree(stream, context, downcast<RenderBox>(*childRenderer), *childLayoutBox);
@@ -339,7 +340,7 @@ void LayoutContext::verifyAndOutputMismatchingLayoutTree(const LayoutState& layo
         return;
 #if ENABLE(TREE_DEBUGGING)
     showRenderTree(&rootRenderer);
-    showLayoutTree(layoutRoot, &layoutState);
+    showLayoutTree(downcast<InitialContainingBlock>(layoutRoot), &layoutState);
 #endif
     WTFLogAlways("%s", stream.release().utf8().data());
     ASSERT_NOT_REACHED();

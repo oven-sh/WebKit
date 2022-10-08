@@ -281,9 +281,8 @@ bool WebPage::executeKeypressCommandsInternal(const Vector<WebCore::KeypressComm
                     eventWasHandled |= performedNonEditingBehavior;
                 }
             } else {
-                bool commandWasHandledByUIProcess = false;
-                WebProcess::singleton().parentProcessConnection()->sendSync(Messages::WebPageProxy::ExecuteSavedCommandBySelector(commands[i].commandName),
-                    Messages::WebPageProxy::ExecuteSavedCommandBySelector::Reply(commandWasHandledByUIProcess), m_identifier);
+                auto sendResult = WebProcess::singleton().parentProcessConnection()->sendSync(Messages::WebPageProxy::ExecuteSavedCommandBySelector(commands[i].commandName), m_identifier);
+                auto [commandWasHandledByUIProcess] = sendResult.takeReplyOr(false);
                 eventWasHandled |= commandWasHandledByUIProcess;
             }
         }
@@ -412,9 +411,9 @@ DictionaryPopupInfo WebPage::dictionaryPopupInfoForSelectionInPDFPlugin(PDFSelec
     dataForSelection.presentationTransition = presentationTransition;
     
     dictionaryPopupInfo.origin = rangeRect.origin;
-    dictionaryPopupInfo.options = options;
+    dictionaryPopupInfo.platformData.options = options;
     dictionaryPopupInfo.textIndicator = dataForSelection;
-    dictionaryPopupInfo.attributedString = scaledNSAttributedString;
+    dictionaryPopupInfo.platformData.attributedString = scaledNSAttributedString;
     
     return dictionaryPopupInfo;
 }
@@ -730,15 +729,15 @@ void WebPage::drawPagesToPDFFromPDFDocument(CGContextRef context, PDFDocument *p
 #if ENABLE(WEBGL)
 WebCore::WebGLLoadPolicy WebPage::webGLPolicyForURL(WebFrame*, const URL& url)
 {
-    WebGLLoadPolicy policyResult = WebGLLoadPolicy::WebGLAllowCreation;
-    sendSync(Messages::WebPageProxy::WebGLPolicyForURL(url), Messages::WebPageProxy::WebGLPolicyForURL::Reply(policyResult));
+    auto sendResult = sendSync(Messages::WebPageProxy::WebGLPolicyForURL(url));
+    auto [policyResult] = sendResult.takeReplyOr(WebGLLoadPolicy::WebGLAllowCreation);
     return policyResult;
 }
 
 WebCore::WebGLLoadPolicy WebPage::resolveWebGLPolicyForURL(WebFrame*, const URL& url)
 {
-    WebGLLoadPolicy policyResult = WebGLLoadPolicy::WebGLAllowCreation;
-    sendSync(Messages::WebPageProxy::ResolveWebGLPolicyForURL(url), Messages::WebPageProxy::ResolveWebGLPolicyForURL::Reply(policyResult));
+    auto sendResult = sendSync(Messages::WebPageProxy::ResolveWebGLPolicyForURL(url));
+    auto [policyResult] = sendResult.takeReplyOr(WebGLLoadPolicy::WebGLAllowCreation);
     return policyResult;
 }
 #endif // ENABLE(WEBGL)

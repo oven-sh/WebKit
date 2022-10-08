@@ -71,7 +71,6 @@ class JSGlobalObject;
     v(InternalPromise, nullptr) \
     v(defaultPromiseThen, nullptr) \
     v(repeatCharacter, nullptr) \
-    v(arraySpeciesCreate, nullptr) \
     v(isArray, nullptr) \
     v(isArraySlow, nullptr) \
     v(concatMemcpy, nullptr) \
@@ -80,6 +79,7 @@ class JSGlobalObject;
     v(Set, nullptr) \
     v(Map, nullptr) \
     v(thisTimeValue, nullptr) \
+    v(importMapStatus, nullptr) \
     v(importInRealm, nullptr) \
     v(evalInRealm, nullptr) \
     v(moveFunctionToRealm, nullptr) \
@@ -104,7 +104,7 @@ class JSGlobalObject;
     v(stringIncludesInternal, nullptr) \
     v(stringIndexOfInternal, nullptr) \
     v(stringSplitFast, nullptr) \
-    v(stringSubstringInternal, nullptr) \
+    v(stringSubstring, nullptr) \
     v(makeBoundFunction, nullptr) \
     v(hasOwnLengthProperty, nullptr) \
     v(handleProxyGetTrapResult, nullptr) \

@@ -50,8 +50,8 @@
 #include "Document.h"
 #include "Element.h"
 #include "FontPaletteValues.h"
+#include "LegacyMediaQueryParser.h"
 #include "MediaList.h"
-#include "MediaQueryParser.h"
 #include "MediaQueryParserContext.h"
 #include "StyleProperties.h"
 #include "StyleRuleImport.h"
@@ -189,8 +189,10 @@ RefPtr<StyleRuleBase> CSSParserImpl::parseRule(const String& string, const CSSPa
 void CSSParserImpl::parseStyleSheet(const String& string, const CSSParserContext& context, StyleSheetContents& styleSheet)
 {
     CSSParserImpl parser(context, string, &styleSheet, nullptr);
-    bool firstRuleValid = parser.consumeRuleList(parser.tokenizer()->tokenRange(), TopLevelRuleList, [&styleSheet](RefPtr<StyleRuleBase> rule) {
+    bool firstRuleValid = parser.consumeRuleList(parser.tokenizer()->tokenRange(), TopLevelRuleList, [&](RefPtr<StyleRuleBase> rule) {
         if (rule->isCharsetRule())
+            return;
+        if (context.shouldIgnoreImportRules && rule->isImportRule())
             return;
         styleSheet.parserAppendRule(rule.releaseNonNull());
     });
@@ -510,7 +512,7 @@ RefPtr<StyleRuleImport> CSSParserImpl::consumeImportRule(CSSParserTokenRange pre
     };
 
     auto cascadeLayerName = consumeCascadeLayer();
-    auto mediaQuerySet = MediaQueryParser::parseMediaQuerySet(prelude, MediaQueryParserContext(m_context));
+    auto mediaQuerySet = LegacyMediaQueryParser::parseMediaQuerySet(prelude, MediaQueryParserContext(m_context));
     
     return StyleRuleImport::create(uri, mediaQuerySet.releaseNonNull(), WTFMove(cascadeLayerName));
 }
@@ -546,7 +548,7 @@ RefPtr<StyleRuleMedia> CSSParserImpl::consumeMediaRule(CSSParserTokenRange prelu
     if (m_observerWrapper)
         m_observerWrapper->observer().endRuleBody(m_observerWrapper->endOffset(block));
 
-    return StyleRuleMedia::create(MediaQueryParser::parseMediaQuerySet(prelude, { m_context }).releaseNonNull(), WTFMove(rules));
+    return StyleRuleMedia::create(LegacyMediaQueryParser::parseMediaQuerySet(prelude, { m_context }).releaseNonNull(), WTFMove(rules));
 }
 
 RefPtr<StyleRuleSupports> CSSParserImpl::consumeSupportsRule(CSSParserTokenRange prelude, CSSParserTokenRange block)

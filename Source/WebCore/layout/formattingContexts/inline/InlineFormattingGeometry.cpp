@@ -33,8 +33,7 @@
 #include "InlineFormattingQuirks.h"
 #include "InlineLineBoxVerticalAligner.h"
 #include "LayoutBox.h"
-#include "LayoutContainerBox.h"
-#include "LayoutReplacedBox.h"
+#include "LayoutElementBox.h"
 #include "LengthFunctions.h"
 
 namespace WebCore {
@@ -86,7 +85,7 @@ ContentWidthAndMargin InlineFormattingGeometry::inlineBlockContentWidthAndMargin
 
     // Exactly as inline replaced elements.
     if (formattingContextRoot.isReplacedBox())
-        return inlineReplacedContentWidthAndMargin(downcast<ReplacedBox>(formattingContextRoot), horizontalConstraints, { }, overriddenHorizontalValues);
+        return inlineReplacedContentWidthAndMargin(downcast<ElementBox>(formattingContextRoot), horizontalConstraints, { }, overriddenHorizontalValues);
 
     // 10.3.9 'Inline-block', non-replaced elements in normal flow
 
@@ -109,7 +108,7 @@ ContentHeightAndMargin InlineFormattingGeometry::inlineBlockContentHeightAndMarg
 
     // 10.6.2 Inline replaced elements, block-level replaced elements in normal flow, 'inline-block' replaced elements in normal flow and floating replaced elements
     if (layoutBox.isReplacedBox())
-        return inlineReplacedContentHeightAndMargin(downcast<ReplacedBox>(layoutBox), horizontalConstraints, { }, overriddenVerticalValues);
+        return inlineReplacedContentHeightAndMargin(downcast<ElementBox>(layoutBox), horizontalConstraints, { }, overriddenVerticalValues);
 
     // 10.6.6 Complicated cases
     // - 'Inline-block', non-replaced elements.
@@ -166,11 +165,10 @@ InlineLayoutUnit InlineFormattingGeometry::computedTextIndent(IsIntrinsicWidthMo
     if (!previousLineEndsWithLineBreak) {
         shouldIndent = !root.isAnonymous();
         if (root.isAnonymous()) {
-            auto isIntegratedRootBoxFirstChild = layoutState().isIntegratedRootBoxFirstChild();
-            if (isIntegratedRootBoxFirstChild == LayoutState::IsIntegratedRootBoxFirstChild::NotApplicable)
+            if (!root.isInlineIntegrationRoot())
                 shouldIndent = root.parent().firstInFlowChild() == &root;
             else
-                shouldIndent = isIntegratedRootBoxFirstChild == LayoutState::IsIntegratedRootBoxFirstChild::Yes;
+                shouldIndent = root.isFirstChildForIntegration();
         }
     } else
         shouldIndent = root.style().textIndentLine() == TextIndentLine::EachLine && *previousLineEndsWithLineBreak;
@@ -193,7 +191,7 @@ InlineLayoutUnit InlineFormattingGeometry::computedTextIndent(IsIntrinsicWidthMo
     return { minimumValueForLength(textIndent, availableWidth) };
 }
 
-std::tuple<const InlineDisplay::Box*, const InlineDisplay::Box*> InlineFormattingGeometry::previousAndNextDisplayBoxForStaticPosition(const Box& outOfFlowBox, const DisplayBoxes& displayBoxes)
+static std::tuple<const InlineDisplay::Box*, const InlineDisplay::Box*> previousAndNextDisplayBoxForStaticPosition(const Box& outOfFlowBox, const DisplayBoxes& displayBoxes)
 {
     // Both previous float and out-of-flow boxes are skipped here. A series of adjoining out-of-flow boxes should all be placed
     // at the same static position (they don't affect next-sibling positions) and while floats do participate in the inline layout
@@ -214,6 +212,8 @@ std::tuple<const InlineDisplay::Box*, const InlineDisplay::Box*> InlineFormattin
     // This is supposed to find the last display box of the "inflowBox" and return it with the next display box (first box of the next inflow content).
     auto foundFirstDisplayBox = false;
     for (size_t index = 0; index < displayBoxes.size(); ++index) {
+        if (displayBoxes[index].isRootInlineBox())
+            continue;
         if (foundFirstDisplayBox && &displayBoxes[index].layoutBox() != previousInFlowBox) {
             ASSERT(index);
             return { &displayBoxes[index - 1], &displayBoxes[index] };
@@ -225,11 +225,67 @@ std::tuple<const InlineDisplay::Box*, const InlineDisplay::Box*> InlineFormattin
     return { nullptr, nullptr };
 }
 
-InlineLayoutUnit InlineFormattingGeometry::initialLineHeight() const
+LayoutPoint InlineFormattingGeometry::staticPositionForOutOfFlowInlineLevelBox(const Box& outOfFlowBox) const
+{
+    ASSERT(outOfFlowBox.style().isOriginalDisplayInlineType());
+
+    auto& formattingState = formattingContext().formattingState();
+    auto& lines = formattingState.lines();
+    auto& boxes = formattingState.boxes();
+
+    auto [previousDisplayBox, nextDisplayBox] = previousAndNextDisplayBoxForStaticPosition(outOfFlowBox, boxes);
+
+    if (!previousDisplayBox && !nextDisplayBox)
+        return { boxes[0].left(), lines[0].top() };
+
+    if (!nextDisplayBox) {
+        auto& currentLine = lines[previousDisplayBox->lineIndex()];
+        auto shouldFitLine = previousDisplayBox->right() <= currentLine.right() && !previousDisplayBox->isLineBreakBox();
+        return shouldFitLine ? LayoutPoint { previousDisplayBox->right(), currentLine.top() } : LayoutPoint { currentLine.left(), currentLine.bottom() };
+    }
+
+    if (previousDisplayBox->isInlineBox()) {
+        // Special handling for cases when the previous content is an inline box:
+        // <div>text<span><img style="position: absolute">content</span></div>
+        // or
+        // <div>text<span>content</span><img style="position: absolute"></div>
+        auto isFirstContentInsideInlineBox = &outOfFlowBox.parent() == &previousDisplayBox->layoutBox();
+        auto& inlineBoxBoxGeometry = formattingContext().geometryForBox(previousDisplayBox->layoutBox());
+
+        return {
+            isFirstContentInsideInlineBox ? BoxGeometry::borderBoxLeft(inlineBoxBoxGeometry) + inlineBoxBoxGeometry.contentBoxLeft() : BoxGeometry::marginBoxRect(inlineBoxBoxGeometry).right(),
+            lines[previousDisplayBox->lineIndex()].top()
+        };
+    }
+    auto& currentLine = lines[previousDisplayBox->lineIndex()];
+    auto shouldFitLine = previousDisplayBox->lineIndex() == nextDisplayBox->lineIndex() || (previousDisplayBox->right() <= currentLine.left() && !previousDisplayBox->isLineBreakBox());
+    return shouldFitLine ? LayoutPoint { previousDisplayBox->right(), currentLine.top() } : LayoutPoint { nextDisplayBox->left(), lines[nextDisplayBox->lineIndex()].top() };
+}
+
+LayoutPoint InlineFormattingGeometry::staticPositionForOutOfFlowBlockLevelBox(const Box& outOfFlowBox) const
+{
+    ASSERT(outOfFlowBox.style().isOriginalDisplayBlockType());
+
+    auto& formattingState = formattingContext().formattingState();
+    auto& lines = formattingState.lines();
+    auto& boxes = formattingState.boxes();
+
+    // Block level boxes are placed under the current line as if they were normal inflow block level boxes.
+    const InlineDisplay::Box* previousDisplayBox = nullptr;
+    std::tie(previousDisplayBox, std::ignore) = previousAndNextDisplayBoxForStaticPosition(outOfFlowBox, boxes);
+
+    if (!previousDisplayBox)
+        return { boxes[0].left(), lines[0].top() };
+
+    auto& currentLine = lines[previousDisplayBox->lineIndex()];
+    return { currentLine.left(), currentLine.bottom() };
+}
+
+InlineLayoutUnit InlineFormattingGeometry::initialLineHeight(bool isFirstLine) const
 {
     if (layoutState().inStandardsMode())
-        return formattingContext().root().style().computedLineHeight();
-    return formattingContext().formattingQuirks().initialLineHeight();
+        return isFirstLine ? formattingContext().root().firstLineStyle().computedLineHeight() : formattingContext().root().style().computedLineHeight();
+    return formattingContext().formattingQuirks().initialLineHeight(isFirstLine);
 }
 
 std::optional<HorizontalConstraints> InlineFormattingGeometry::floatConstraintsForLine(const InlineRect& lineLogicalRect, const FloatingContext& floatingContext) const
@@ -237,7 +293,7 @@ std::optional<HorizontalConstraints> InlineFormattingGeometry::floatConstraintsF
     // Check for intruding floats and adjust logical left/available width for this line accordingly.
     auto toLogicalFloatPosition = [&] (const auto& constraints) {
         // FIXME: Move inline direction flip to FloatingContext.
-        if (floatingContext.isLeftToRightDirection() == formattingContext().root().style().isLeftToRightDirection())
+        if (floatingContext.floatingState().isLeftToRightDirection() == formattingContext().root().style().isLeftToRightDirection())
             return constraints;
         auto logicalConstraints = FloatingContext::Constraints { };
         auto borderBoxWidth = layoutState().geometryForBox(formattingContext().root()).borderBoxWidth();

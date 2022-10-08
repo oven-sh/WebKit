@@ -992,14 +992,14 @@ static WebCore::EditableLinkBehavior toEditableLinkBehavior(_WKEditableLinkBehav
     return _preferences->domTimersThrottlingEnabled();
 }
 
-- (void)_setWebArchiveTestingModeEnabled:(BOOL)enabled
+- (void)_setWebArchiveDebugModeEnabled:(BOOL)enabled
 {
-    _preferences->setWebArchiveTestingModeEnabled(enabled);
+    _preferences->setWebArchiveDebugModeEnabled(enabled);
 }
 
-- (BOOL)_webArchiveTestingModeEnabled
+- (BOOL)_webArchiveDebugModeEnabled
 {
-    return _preferences->webArchiveTestingModeEnabled();
+    return _preferences->webArchiveDebugModeEnabled();
 }
 
 - (void)_setLocalFileContentSniffingEnabled:(BOOL)enabled
@@ -1568,6 +1568,26 @@ static WebCore::EditableLinkBehavior toEditableLinkBehavior(_WKEditableLinkBehav
     return _preferences->modelDocumentEnabled();
 }
 
+- (void)_setInteractionRegionMinimumCornerRadius:(double)radius
+{
+    _preferences->setInteractionRegionMinimumCornerRadius(radius);
+}
+
+- (double)_interactionRegionMinimumCornerRadius
+{
+    return _preferences->interactionRegionMinimumCornerRadius();
+}
+
+- (void)_setInteractionRegionInlinePadding:(double)padding
+{
+    _preferences->setInteractionRegionInlinePadding(padding);
+}
+
+- (double)_interactionRegionInlinePadding
+{
+    return _preferences->interactionRegionInlinePadding();
+}
+
 @end
 
 @implementation WKPreferences (WKDeprecated)
@@ -1626,15 +1646,6 @@ static WebCore::EditableLinkBehavior toEditableLinkBehavior(_WKEditableLinkBehav
 }
 
 - (BOOL)_subpixelCSSOMElementMetricsEnabled
-{
-    return NO;
-}
-
-- (void)_setWebArchiveDebugModeEnabled:(BOOL)enabled
-{
-}
-
-- (BOOL)_webArchiveDebugModeEnabled
 {
     return NO;
 }

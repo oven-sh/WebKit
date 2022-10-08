@@ -236,6 +236,18 @@ op :new_array_with_spread,
         bitVector: unsigned,
     }
 
+op :new_array_with_species,
+    args: {
+        dst: VirtualRegister,
+        length: VirtualRegister,
+        array: VirtualRegister,
+    },
+    metadata: {
+        arrayAllocationProfile: ArrayAllocationProfile,
+        arrayProfile: ArrayProfile,
+        profile: ValueProfile,
+    }
+
 op :spread,
     args: {
         dst: VirtualRegister,
@@ -1912,6 +1924,43 @@ op :i31_get_u,
     args: {
         dst: VirtualRegister,
         ref: VirtualRegister,
+    }
+
+op :array_new,
+    args: {
+        dst: VirtualRegister,
+        size: VirtualRegister,
+        value: VirtualRegister,
+        typeIndex: unsigned,
+    }
+
+op :array_new_default,
+    args: {
+        dst: VirtualRegister,
+        size: VirtualRegister,
+        typeIndex: unsigned,
+    }
+
+op :array_get,
+    args: {
+        dst: VirtualRegister,
+        arrayref: VirtualRegister,
+        index: VirtualRegister,
+        typeIndex: unsigned,
+    }
+
+op :array_set,
+    args: {
+        arrayref: VirtualRegister,
+        index: VirtualRegister,
+        value: VirtualRegister,
+        typeIndex: unsigned,
+    }
+
+op :array_len,
+    args: {
+        dst: VirtualRegister,
+        arrayref: VirtualRegister,
     }
 
 end_section :Wasm

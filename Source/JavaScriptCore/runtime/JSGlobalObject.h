@@ -54,6 +54,15 @@
 #include <wtf/RetainPtr.h>
 #include <wtf/WeakPtr.h>
 
+#if USE(APPLE_INTERNAL_SDK)
+#include <WebKitAdditions/JSGlobalObjectAdditions.h>
+#else
+#define JS_GLOBAL_OBJECT_ADDITIONS_1
+#define JS_GLOBAL_OBJECT_ADDITIONS_2
+#define JS_GLOBAL_OBJECT_ADDITIONS_3
+#define JS_GLOBAL_OBJECT_ADDITIONS_4
+#endif
+
 struct OpaqueJSClass;
 struct OpaqueJSClassContextData;
 OBJC_CLASS JSWrapperMap;
@@ -83,6 +92,7 @@ class GeneratorPrototype;
 class GeneratorFunctionPrototype;
 class GetterSetter;
 class GlobalCodeBlock;
+class ImportMap;
 class IndirectEvalExecutable;
 class InputCursor;
 class IntlObject;
@@ -174,6 +184,7 @@ constexpr bool typeExposedByDefault = true;
 
 #if ENABLE(WEBASSEMBLY)
 #define FOR_EACH_WEBASSEMBLY_CONSTRUCTOR_TYPE(macro) \
+    macro(WebAssemblyArray,        webAssemblyArray,        webAssemblyArray,        JSWebAssemblyArray,        Array,        object, Options::useWebAssemblyGC()) \
     macro(WebAssemblyCompileError, webAssemblyCompileError, webAssemblyCompileError, ErrorInstance,             CompileError, error,  typeExposedByDefault) \
     macro(WebAssemblyException,    webAssemblyException,    webAssemblyException,    JSWebAssemblyException,    Exception,    object, typeExposedByDefault) \
     macro(WebAssemblyGlobal,       webAssemblyGlobal,       webAssemblyGlobal,       JSWebAssemblyGlobal,       Global,       object, typeExposedByDefault) \
@@ -307,6 +318,8 @@ public:
     WriteBarrier<JSCallee> m_globalCallee;
     WriteBarrier<JSCallee> m_stackOverflowFrameCallee;
 
+    JS_GLOBAL_OBJECT_ADDITIONS_1;
+
     LazyClassStructure m_evalErrorStructure;
     LazyClassStructure m_rangeErrorStructure;
     LazyClassStructure m_referenceErrorStructure;
@@ -327,6 +340,7 @@ public:
     LazyProperty<JSGlobalObject, IntlCollator> m_defaultCollator;
     LazyProperty<JSGlobalObject, Structure> m_collatorStructure;
     LazyProperty<JSGlobalObject, Structure> m_displayNamesStructure;
+    LazyProperty<JSGlobalObject, Structure> m_durationFormatStructure;
     LazyProperty<JSGlobalObject, Structure> m_listFormatStructure;
     LazyProperty<JSGlobalObject, Structure> m_localeStructure;
     LazyProperty<JSGlobalObject, Structure> m_pluralRulesStructure;
@@ -491,6 +505,8 @@ public:
 #define DECLARE_TYPED_ARRAY_TYPE_STRUCTURE(name) LazyClassStructure m_typedArray ## name;
     FOR_EACH_TYPED_ARRAY_TYPE(DECLARE_TYPED_ARRAY_TYPE_STRUCTURE)
 #undef DECLARE_TYPED_ARRAY_TYPE_STRUCTURE
+
+    LazyProperty<JSGlobalObject, JSInternalPromise> m_importMapStatusPromise;
 
     FixedVector<LazyProperty<JSGlobalObject, JSCell>> m_linkTimeConstants;
 
@@ -715,6 +731,8 @@ public:
     WeakGCSet<JSCustomGetterFunction, WeakCustomGetterOrSetterHash<JSCustomGetterFunction>>& customGetterFunctionSet() { return m_customGetterFunctionSet; }
     WeakGCSet<JSCustomSetterFunction, WeakCustomGetterOrSetterHash<JSCustomSetterFunction>>& customSetterFunctionSet() { return m_customSetterFunctionSet; }
 
+    Ref<ImportMap> m_importMap;
+
 #if ASSERT_ENABLED
     const JSGlobalObject* m_globalObjectAtDebuggerEntry { nullptr };
 #endif
@@ -831,6 +849,7 @@ public:
     JSFunction* functionProtoHasInstanceSymbolFunction() const { return m_functionProtoHasInstanceSymbolFunction.get(); }
     JSFunction* regExpProtoExecFunction() const;
     JSFunction* typedArrayProtoSort() const { return m_typedArrayProtoSort.get(this); }
+    JSFunction* stringProtoSubstringFunction() const;
     JSObject* regExpProtoSymbolReplaceFunction() const { return m_regExpProtoSymbolReplace.get(); }
     GetterSetter* regExpProtoGlobalGetter() const;
     GetterSetter* regExpProtoUnicodeGetter() const;
@@ -998,6 +1017,7 @@ public:
     Structure* collatorStructure() { return m_collatorStructure.get(this); }
     Structure* dateTimeFormatStructure() { return m_dateTimeFormatStructure.get(this); }
     Structure* displayNamesStructure() { return m_displayNamesStructure.get(this); }
+    Structure* durationFormatStructure() { return m_durationFormatStructure.get(this); }
     Structure* listFormatStructure() { return m_listFormatStructure.get(this); }
     Structure* numberFormatStructure() { return m_numberFormatStructure.get(this); }
     Structure* localeStructure() { return m_localeStructure.get(this); }
@@ -1307,6 +1327,20 @@ public:
     void installTypedArrayIteratorProtocolWatchpoint(JSObject* prototype, TypedArrayType);
     void installTypedArrayConstructorSpeciesWatchpoint(JSTypedArrayViewConstructor*);
     void installTypedArrayPrototypeIteratorProtocolWatchpoint(JSTypedArrayViewPrototype*);
+
+    const ImportMap& importMap() const { return m_importMap.get(); }
+    ImportMap& importMap() { return m_importMap.get(); }
+    JSInternalPromise* importMapStatusPromise() const
+    {
+        if (m_importMapStatusPromise.isInitialized())
+            return m_importMapStatusPromise.get(this);
+        return nullptr;
+    }
+    JS_EXPORT_PRIVATE void registerImportMap() const;
+    JS_EXPORT_PRIVATE bool isAcquiringImportMaps() const;
+    JS_EXPORT_PRIVATE void setAcquiringImportMaps();
+    JS_EXPORT_PRIVATE void setPendingImportMaps();
+    JS_EXPORT_PRIVATE void clearPendingImportMaps();
 
 protected:
     enum class HasSpeciesProperty : bool { Yes, No };

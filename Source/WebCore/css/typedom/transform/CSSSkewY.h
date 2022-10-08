@@ -32,19 +32,23 @@
 
 namespace WebCore {
 
+class CSSFunctionValue;
+
 template<typename> class ExceptionOr;
 
 class CSSSkewY : public CSSTransformComponent {
     WTF_MAKE_ISO_ALLOCATED(CSSSkewY);
 public:
     static ExceptionOr<Ref<CSSSkewY>> create(Ref<CSSNumericValue>);
-    
+    static ExceptionOr<Ref<CSSSkewY>> create(CSSFunctionValue&);
+
     const CSSNumericValue& ay() const { return m_ay.get(); }
-    void setAy(Ref<CSSNumericValue> ay) { m_ay = WTFMove(ay); }
+    ExceptionOr<void> setAy(Ref<CSSNumericValue>);
 
     void serialize(StringBuilder&) const final;
     ExceptionOr<Ref<DOMMatrix>> toMatrix() final;
-    
+    void setIs2D(bool) final { };
+
     CSSTransformType getType() const final { return CSSTransformType::SkewY; }
 
 private:

@@ -1,0 +1,5 @@
+
+
+PASS Feature-Policy allow="screen-wake-lock" allows same-origin relocation
+FAIL Feature-Policy allow="screen-wake-lock" disallows cross-origin relocation assert_false: navigator.wakeLock.request("screen") expected false got true
+

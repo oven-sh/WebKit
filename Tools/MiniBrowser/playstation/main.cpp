@@ -50,6 +50,9 @@ static void initialize()
 
     loadLibraryOrExit(ICU_LOAD_AT);
     loadLibraryOrExit(PNG_LOAD_AT);
+#if defined(JPEG_LOAD_AT)
+    loadLibraryOrExit(JPEG_LOAD_AT);
+#endif 
 #if defined(WebP_LOAD_AT)
     loadLibraryOrExit(WebP_LOAD_AT);
 #endif
@@ -59,6 +62,9 @@ static void initialize()
     loadLibraryOrExit(Cairo_LOAD_AT);
     loadLibraryOrExit(ToolKitten_LOAD_AT);
     loadLibraryOrExit(WebKitRequirements_LOAD_AT);
+#if defined(WPE_LOAD_AT)
+    loadLibraryOrExit(WPE_LOAD_AT);
+#endif
 #if !(defined(ENABLE_STATIC_JSC) && ENABLE_STATIC_JSC)
     loadLibraryOrExit("libJavaScriptCore");
 #endif

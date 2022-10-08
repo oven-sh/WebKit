@@ -32,6 +32,9 @@
 #include "Logging.h"
 #include "RenderBlockFlow.h"
 #include "RenderChildIterator.h"
+#include "RenderDeprecatedFlexibleBox.h"
+#include "RenderFlexibleBox.h"
+#include "RenderGrid.h"
 #include "RenderImage.h"
 #include "RenderInline.h"
 #include "RenderLineBreak.h"
@@ -349,7 +352,7 @@ static OptionSet<AvoidanceReason> canUseForRenderInlineChild(const RenderInline&
     return reasons;
 }
 
-static OptionSet<AvoidanceReason> canUseForChild(const RenderBlockFlow& flow, const RenderObject& child, IncludeReasons includeReasons)
+static OptionSet<AvoidanceReason> canUseForChild(const RenderObject& child, IncludeReasons includeReasons)
 {
     OptionSet<AvoidanceReason> reasons;
 
@@ -384,10 +387,6 @@ static OptionSet<AvoidanceReason> canUseForChild(const RenderBlockFlow& flow, co
         if (renderer.isFloating() && !renderer.parent()->style().isHorizontalWritingMode())
             return false;
 #endif
-        auto intrusiveFloatsWithMismatchingInlineDirection = flow.containsFloats() && flow.containingBlock() && flow.containingBlock()->style().isLeftToRightDirection() != flow.style().isLeftToRightDirection();
-        if (renderer.isFloating() && intrusiveFloatsWithMismatchingInlineDirection)
-            return false;
-
         if (renderer.style().shapeOutside())
             return false;
         if (renderer.isOutOfFlowPositioned()) {
@@ -428,7 +427,7 @@ static OptionSet<AvoidanceReason> canUseForChild(const RenderBlockFlow& flow, co
         return reasons;
     }
 
-    if (is<RenderBlockFlow>(renderer)) {
+    if (is<RenderBlockFlow>(renderer) || is<RenderGrid>(renderer) || is<RenderFlexibleBox>(renderer) || is<RenderDeprecatedFlexibleBox>(renderer)) {
         if (!isSupportedFloatingOrPositioned(renderer))
             SET_REASON_AND_RETURN_IF_NEEDED(ChildBoxIsFloatingOrPositioned, reasons, includeReasons)
         if (renderer.isRubyRun())
@@ -502,7 +501,7 @@ OptionSet<AvoidanceReason> canUseForLineLayoutWithReason(const RenderBlockFlow& 
 
     for (auto walker = InlineWalker(flow); !walker.atEnd(); walker.advance()) {
         auto& child = *walker.current();
-        if (auto childReasons = canUseForChild(flow, child, includeReasons))
+        if (auto childReasons = canUseForChild(child, includeReasons))
             ADD_REASONS_AND_RETURN_IF_NEEDED(childReasons, reasons, includeReasons);
     }
     auto styleReasons = canUseForStyle(flow, includeReasons);

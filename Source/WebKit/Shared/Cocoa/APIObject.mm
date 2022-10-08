@@ -104,6 +104,12 @@
 #import "_WKInspectorExtensionInternal.h"
 #endif
 
+#if ENABLE(WK_WEB_EXTENSIONS)
+#import "_WKWebExtensionControllerInternal.h"
+#import "_WKWebExtensionInternal.h"
+#import "_WKWebExtensionMatchPatternInternal.h"
+#endif
+
 static const size_t minimumObjectAlignment = alignof(std::aligned_storage<std::numeric_limits<size_t>::max()>::type);
 static_assert(minimumObjectAlignment >= alignof(void*), "Objects should always be at least pointer-aligned.");
 static const size_t maximumExtraSpaceForAlignment = minimumObjectAlignment - alignof(void*);
@@ -390,6 +396,20 @@ void* Object::newObject(size_t size, Type type)
     case Type::VisitedLinkStore:
         wrapper = [_WKVisitedLinkStore alloc];
         break;
+
+#if ENABLE(WK_WEB_EXTENSIONS)
+    case Type::WebExtension:
+        wrapper = [_WKWebExtension alloc];
+        break;
+
+    case Type::WebExtensionController:
+        wrapper = [_WKWebExtensionController alloc];
+        break;
+
+    case Type::WebExtensionMatchPattern:
+        wrapper = [_WKWebExtensionMatchPattern alloc];
+        break;
+#endif
 
     case Type::WebsiteDataRecord:
         wrapper = [WKWebsiteDataRecord alloc];

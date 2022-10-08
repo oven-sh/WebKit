@@ -623,6 +623,8 @@ public:
     WEBCORE_EXPORT SpeechSynthesis& speechSynthesis();
 #endif
 
+    bool hasSource() const { return hasCurrentSrc() || srcObject(); }
+
 protected:
     HTMLMediaElement(const QualifiedName&, Document&, bool createdByParser);
     virtual ~HTMLMediaElement();
@@ -796,6 +798,8 @@ private:
 
     void mediaPlayerBufferedTimeRangesChanged() final;
     bool mediaPlayerPrefersSandboxedParsing() const final;
+
+    bool mediaPlayerShouldDisableHDR() const final { return shouldDisableHDR(); }
 
 #if USE(GSTREAMER)
     void requestInstallMissingPlugins(const String& details, const String& description, MediaPlayerRequestInstallMissingPluginsCallback&) final;
@@ -1002,6 +1006,8 @@ private:
     const void* mediaPlayerLogIdentifier() final { return logIdentifier(); }
     const Logger& mediaPlayerLogger() final { return logger(); }
 #endif
+
+    bool shouldDisableHDR() const;
 
     Timer m_progressEventTimer;
     Timer m_playbackProgressTimer;

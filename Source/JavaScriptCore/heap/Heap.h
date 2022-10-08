@@ -170,6 +170,7 @@ class Heap;
 #if ENABLE(WEBASSEMBLY)
 #define FOR_EACH_JSC_WEBASSEMBLY_DYNAMIC_ISO_SUBSPACE(v) \
     v(jsToWasmICCalleeSpace, cellHeapCellType, JSToWasmICCallee) \
+    v(webAssemblyArraySpace, webAssemblyArrayHeapCellType, JSWebAssemblyArray) \
     v(webAssemblyExceptionSpace, webAssemblyExceptionHeapCellType, JSWebAssemblyException) \
     v(webAssemblyFunctionSpace, webAssemblyFunctionHeapCellType, WebAssemblyFunction) \
     v(webAssemblyGlobalSpace, webAssemblyGlobalHeapCellType, JSWebAssemblyGlobal) \
@@ -220,6 +221,7 @@ class Heap;
     v(intlCollatorSpace, intlCollatorHeapCellType, IntlCollator) \
     v(intlDateTimeFormatSpace, intlDateTimeFormatHeapCellType, IntlDateTimeFormat) \
     v(intlDisplayNamesSpace, intlDisplayNamesHeapCellType, IntlDisplayNames) \
+    v(intlDurationFormatSpace, intlDurationFormatHeapCellType, IntlDurationFormat) \
     v(intlListFormatSpace, intlListFormatHeapCellType, IntlListFormat) \
     v(intlLocaleSpace, intlLocaleHeapCellType, IntlLocale) \
     v(intlNumberFormatSpace, intlNumberFormatHeapCellType, IntlNumberFormat) \
@@ -956,6 +958,7 @@ public:
     IsoHeapCellType intlCollatorHeapCellType;
     IsoHeapCellType intlDateTimeFormatHeapCellType;
     IsoHeapCellType intlDisplayNamesHeapCellType;
+    IsoHeapCellType intlDurationFormatHeapCellType;
     IsoHeapCellType intlListFormatHeapCellType;
     IsoHeapCellType intlLocaleHeapCellType;
     IsoHeapCellType intlNumberFormatHeapCellType;
@@ -965,6 +968,7 @@ public:
     IsoHeapCellType intlSegmenterHeapCellType;
     IsoHeapCellType intlSegmentsHeapCellType;
 #if ENABLE(WEBASSEMBLY)
+    IsoHeapCellType webAssemblyArrayHeapCellType;
     IsoHeapCellType webAssemblyExceptionHeapCellType;
     IsoHeapCellType webAssemblyFunctionHeapCellType;
     IsoHeapCellType webAssemblyGlobalHeapCellType;

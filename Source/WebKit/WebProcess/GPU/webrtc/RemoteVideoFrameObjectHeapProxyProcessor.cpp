@@ -33,9 +33,12 @@
 #include "RemoteVideoFrameObjectHeapProxyProcessorMessages.h"
 #include "RemoteVideoFrameProxy.h"
 #include "WebCoreArgumentCoders.h"
+#include "WebProcess.h"
 #include <WebCore/PixelBufferConformerCV.h>
 
 namespace WebKit {
+
+using namespace WebCore;
 
 Ref<RemoteVideoFrameObjectHeapProxyProcessor> RemoteVideoFrameObjectHeapProxyProcessor::create(GPUProcessConnection& connection)
 {
@@ -157,12 +160,13 @@ RefPtr<NativeImage> RemoteVideoFrameObjectHeapProxyProcessor::getNativeImage(con
     if (!frame)
         return nullptr;
 
-    DestinationColorSpace destinationColorSpace { DestinationColorSpace::SRGB().platformColorSpace() };
-    auto result = connection.sendSync(Messages::RemoteVideoFrameObjectHeap::ConvertFrameBuffer { *frame }, Messages::RemoteVideoFrameObjectHeap::ConvertFrameBuffer::Reply { destinationColorSpace }, 0, GPUProcessConnection::defaultTimeout);
-    if (!result) {
+    auto sendResult = connection.sendSync(Messages::RemoteVideoFrameObjectHeap::ConvertFrameBuffer { *frame }, 0, GPUProcessConnection::defaultTimeout);
+    if (!sendResult) {
         m_sharedVideoFrameWriter.disable();
         return nullptr;
     }
+
+    auto [destinationColorSpace] = sendResult.takeReplyOr(DestinationColorSpace { DestinationColorSpace::SRGB().platformColorSpace() });
 
     m_conversionSemaphore.wait();
 

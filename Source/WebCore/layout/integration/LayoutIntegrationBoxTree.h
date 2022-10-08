@@ -45,43 +45,43 @@ struct InlineContent;
 class BoxTree {
 public:
     BoxTree(RenderBlock&);
+    ~BoxTree();
 
     void updateStyle(const RenderBoxModelObject&);
 
     const RenderBlock& rootRenderer() const { return m_rootRenderer; }
     RenderBlock& rootRenderer() { return m_rootRenderer; }
 
-    const Layout::ContainerBox& rootLayoutBox() const { return m_root; }
-    Layout::ContainerBox& rootLayoutBox() { return m_root; }
+    const Layout::ElementBox& rootLayoutBox() const;
+    Layout::ElementBox& rootLayoutBox();
 
     const Layout::Box& layoutBoxForRenderer(const RenderObject&) const;
     Layout::Box& layoutBoxForRenderer(const RenderObject&);
 
-    const Layout::ContainerBox& layoutBoxForRenderer(const RenderInline&) const;
-    Layout::ContainerBox& layoutBoxForRenderer(const RenderInline&);
+    const Layout::ElementBox& layoutBoxForRenderer(const RenderElement&) const;
+    Layout::ElementBox& layoutBoxForRenderer(const RenderElement&);
 
     const RenderObject& rendererForLayoutBox(const Layout::Box&) const;
     RenderObject& rendererForLayoutBox(const Layout::Box&);
 
-    size_t boxCount() const { return m_boxes.size(); }
+    size_t boxCount() const { return m_renderers.size(); }
 
-    struct BoxAndRenderer {
-        CheckedRef<Layout::Box> box;
-        RenderObject* renderer { nullptr };
-    };
-    const auto& boxAndRendererList() const { return m_boxes; }
+    const auto& renderers() const { return m_renderers; }
 
 private:
+    Layout::InitialContainingBlock& initialContainingBlock();
+
+    static UniqueRef<Layout::Box> createLayoutBox(RenderObject&);
+    static void adjustStyleIfNeeded(const RenderElement&, RenderStyle&, RenderStyle* firstLineStyle);
+
     void buildTreeForInlineContent();
     void buildTreeForFlexContent();
     void appendChild(UniqueRef<Layout::Box>, RenderObject&);
 
     RenderBlock& m_rootRenderer;
-    Layout::ContainerBox m_root;
-    Vector<BoxAndRenderer, 1> m_boxes;
+    Vector<WeakPtr<RenderObject>, 1> m_renderers;
 
-    HashMap<const RenderObject*, CheckedRef<Layout::Box>> m_rendererToBoxMap;
-    HashMap<CheckedRef<const Layout::Box>, RenderObject*> m_boxToRendererMap;
+    HashMap<CheckedRef<const Layout::Box>, WeakPtr<RenderObject>> m_boxToRendererMap;
 };
 
 #if ENABLE(TREE_DEBUGGING)

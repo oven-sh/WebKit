@@ -1279,6 +1279,8 @@ PluginInfo PDFPlugin::pluginInfo()
 {
     PluginInfo info;
     info.name = builtInPDFPluginName();
+    info.desc = pdfDocumentTypeDescription();
+    info.file = "internal-pdf-viewer"_s;
     info.isApplicationPlugin = true;
     info.clientLoadPolicy = PluginLoadClientPolicy::Undefined;
     info.bundleIdentifier = "com.apple.webkit.builtinpdfplugin"_s;
@@ -2308,8 +2310,8 @@ bool PDFPlugin::handleContextMenuEvent(const WebMouseEvent& event)
     }
     PDFContextMenu contextMenu { point, WTFMove(items), WTFMove(openInPreviewIndex) };
 
-    std::optional<int> selectedIndex = -1;
-    webPage->sendSync(Messages::WebPageProxy::ShowPDFContextMenu(contextMenu, m_identifier), Messages::WebPageProxy::ShowPDFContextMenu::Reply(selectedIndex));
+    auto sendResult = webPage->sendSync(Messages::WebPageProxy::ShowPDFContextMenu(contextMenu, m_identifier));
+    auto [selectedIndex] = sendResult.takeReplyOr(-1);
 
     if (selectedIndex && *selectedIndex >= 0 && *selectedIndex < itemCount)
         [nsMenu performActionForItemAtIndex:*selectedIndex];
@@ -2553,10 +2555,8 @@ void PDFPlugin::writeItemsToPasteboard(NSString *pasteboardName, NSArray *items,
     auto pasteboardTypes = makeVector<String>(types);
     auto pageIdentifier = m_frame && m_frame->coreFrame() ? m_frame->coreFrame()->pageID() : std::nullopt;
 
-    int64_t newChangeCount;
     auto& webProcess = WebProcess::singleton();
-    webProcess.parentProcessConnection()->sendSync(Messages::WebPasteboardProxy::SetPasteboardTypes(pasteboardName, pasteboardTypes, pageIdentifier),
-        Messages::WebPasteboardProxy::SetPasteboardTypes::Reply(newChangeCount), 0);
+    webProcess.parentProcessConnection()->sendSync(Messages::WebPasteboardProxy::SetPasteboardTypes(pasteboardName, pasteboardTypes, pageIdentifier), 0);
 
     for (NSUInteger i = 0, count = items.count; i < count; ++i) {
         NSString *type = [types objectAtIndex:i];
@@ -2570,10 +2570,10 @@ void PDFPlugin::writeItemsToPasteboard(NSString *pasteboardName, NSArray *items,
 
         if ([type isEqualToString:legacyStringPasteboardType()] || [type isEqualToString:NSPasteboardTypeString]) {
             auto plainTextString = adoptNS([[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]);
-            webProcess.parentProcessConnection()->sendSync(Messages::WebPasteboardProxy::SetPasteboardStringForType(pasteboardName, type, plainTextString.get(), pageIdentifier), Messages::WebPasteboardProxy::SetPasteboardStringForType::Reply(newChangeCount), 0);
+            webProcess.parentProcessConnection()->sendSync(Messages::WebPasteboardProxy::SetPasteboardStringForType(pasteboardName, type, plainTextString.get(), pageIdentifier), 0);
         } else {
             auto buffer = SharedBuffer::create(data);
-            webProcess.parentProcessConnection()->sendSync(Messages::WebPasteboardProxy::SetPasteboardBufferForType(pasteboardName, type, WTFMove(buffer), pageIdentifier), Messages::WebPasteboardProxy::SetPasteboardBufferForType::Reply(newChangeCount), 0);
+            webProcess.parentProcessConnection()->sendSync(Messages::WebPasteboardProxy::SetPasteboardBufferForType(pasteboardName, type, WTFMove(buffer), pageIdentifier), 0);
         }
     }
 }
@@ -2582,7 +2582,7 @@ void PDFPlugin::showDefinitionForAttributedString(NSAttributedString *string, CG
 {
     DictionaryPopupInfo dictionaryPopupInfo;
     dictionaryPopupInfo.origin = convertFromPDFViewToRootView(IntPoint(point));
-    dictionaryPopupInfo.attributedString = string;
+    dictionaryPopupInfo.platformData.attributedString = string;
     
     
     NSRect rangeRect;

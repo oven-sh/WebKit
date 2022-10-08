@@ -34,6 +34,7 @@
 #include "StorageNamespaceIdentifier.h"
 #include "WebPageProxyIdentifier.h"
 #include "WebsiteData.h"
+#include "WorkQueueMessageReceiver.h"
 #include <WebCore/ClientOrigin.h>
 #include <WebCore/FileSystemHandleIdentifier.h>
 #include <WebCore/FileSystemSyncAccessHandleIdentifier.h>
@@ -70,7 +71,7 @@ class IDBStorageRegistry;
 class StorageAreaBase;
 class StorageAreaRegistry;
 
-class NetworkStorageManager final : public IPC::Connection::WorkQueueMessageReceiver {
+class NetworkStorageManager final : public IPC::WorkQueueMessageReceiver {
 public:
     static void forEach(const Function<void(NetworkStorageManager&)>&);
     static Ref<NetworkStorageManager> create(PAL::SessionID, IPC::Connection::UniqueID, const String& path, const String& customLocalStoragePath, const String& customIDBStoragePath, const String& customCacheStoragePath, uint64_t defaultOriginQuota, uint64_t defaultThirdPartyOriginQuota, bool shouldUseCustomPaths);
@@ -178,6 +179,8 @@ private:
     void iterateCursor(const WebCore::IDBRequestData&, const WebCore::IDBIterateCursorData&);
     void getAllDatabaseNamesAndVersions(IPC::Connection&, const WebCore::IDBResourceIdentifier&, const WebCore::ClientOrigin&);
 
+    SuspendableWorkQueue& workQueue() WTF_RETURNS_CAPABILITY(m_queue.get()) { return m_queue; }
+
     PAL::SessionID m_sessionID;
     Ref<SuspendableWorkQueue> m_queue;
     String m_path;
@@ -195,7 +198,7 @@ private:
     uint64_t m_defaultThirdPartyOriginQuota;
     bool m_shouldUseCustomPaths;
     IPC::Connection::UniqueID m_parentConnection;
-    HashMap<IPC::Connection::UniqueID, HashSet<String>> m_temporaryBlobPathsByConnection;
+    HashMap<IPC::Connection::UniqueID, HashSet<String>> m_temporaryBlobPathsByConnection WTF_GUARDED_BY_CAPABILITY(workQueue());
 #if PLATFORM(IOS_FAMILY)
     Seconds m_backupExclusionPeriod;
 #endif

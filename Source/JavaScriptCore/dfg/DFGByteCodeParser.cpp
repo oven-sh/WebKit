@@ -161,7 +161,7 @@ private:
 
     // Helper for min and max.
     template<typename ChecksFunctor>
-    bool handleMinMax(Operand result, NodeType op, int registerOffset, int argumentCountIncludingThis, const ChecksFunctor& insertChecks);
+    void handleMinMax(Operand result, NodeType op, int registerOffset, int argumentCountIncludingThis, const ChecksFunctor& insertChecks);
     
     void refineStatically(CallLinkStatus&, Node* callTarget);
     // Blocks can either be targetable (i.e. in the m_blockLinkingTargets of one InlineStackEntry) with a well-defined bytecodeBegin,
@@ -986,13 +986,19 @@ private:
     ArrayMode getArrayMode(Array::Action action)
     {
         CodeBlock* codeBlock = m_inlineStackTop->m_profiledBlock;
-        ArrayProfile* profile = codeBlock->getArrayProfile(codeBlock->bytecodeIndex(m_currentInstruction));
-        return getArrayMode(*profile, action);
+        ConcurrentJSLocker locker(codeBlock->m_lock);
+        ArrayProfile* profile = codeBlock->getArrayProfile(locker, codeBlock->bytecodeIndex(m_currentInstruction));
+        return getArrayMode(locker, *profile, action);
     }
 
     ArrayMode getArrayMode(ArrayProfile& profile, Array::Action action)
     {
         ConcurrentJSLocker locker(m_inlineStackTop->m_profiledBlock->m_lock);
+        return getArrayMode(locker, profile, action);
+    }
+
+    ArrayMode getArrayMode(const ConcurrentJSLocker& locker, ArrayProfile& profile, Array::Action action)
+    {
         profile.computeUpdatedPrediction(locker, m_inlineStackTop->m_profiledBlock);
         bool makeSafe = profile.outOfBounds(locker);
         return ArrayMode::fromObserved(locker, &profile, action, makeSafe);
@@ -2074,7 +2080,7 @@ bool ByteCodeParser::handleVarargsInlining(Node* callTargetNode, Operand result,
             // arguments received inside the callee. But that probably won't matter for most
             // calls.
             if (codeBlock && argument < static_cast<unsigned>(codeBlock->numParameters())) {
-                ConcurrentJSLocker locker(codeBlock->m_lock);
+                ConcurrentJSLocker locker(codeBlock->valueProfileLock());
                 ValueProfile& profile = codeBlock->valueProfileForArgument(argument);
                 variable->predict(profile.computeUpdatedPrediction(locker));
             }
@@ -2294,7 +2300,7 @@ ByteCodeParser::CallOptimizationResult ByteCodeParser::handleInlining(
 }
 
 template<typename ChecksFunctor>
-bool ByteCodeParser::handleMinMax(Operand result, NodeType op, int registerOffset, int argumentCountIncludingThis, const ChecksFunctor& insertChecks)
+void ByteCodeParser::handleMinMax(Operand result, NodeType op, int registerOffset, int argumentCountIncludingThis, const ChecksFunctor& insertChecks)
 {
     ASSERT(op == ArithMin || op == ArithMax);
 
@@ -2302,7 +2308,7 @@ bool ByteCodeParser::handleMinMax(Operand result, NodeType op, int registerOffse
         insertChecks();
         double limit = op == ArithMax ? -std::numeric_limits<double>::infinity() : +std::numeric_limits<double>::infinity();
         set(result, addToGraph(JSConstant, OpInfo(m_graph.freeze(jsDoubleNumber(limit)))));
-        return true;
+        return;
     }
      
     if (argumentCountIncludingThis == 2) {
@@ -2310,17 +2316,14 @@ bool ByteCodeParser::handleMinMax(Operand result, NodeType op, int registerOffse
         Node* resultNode = get(VirtualRegister(virtualRegisterForArgumentIncludingThis(1, registerOffset)));
         addToGraph(Phantom, Edge(resultNode, NumberUse));
         set(result, resultNode);
-        return true;
+        return;
     }
     
-    if (argumentCountIncludingThis == 3) {
-        insertChecks();
-        set(result, addToGraph(op, get(virtualRegisterForArgumentIncludingThis(1, registerOffset)), get(virtualRegisterForArgumentIncludingThis(2, registerOffset))));
-        return true;
-    }
-    
-    // Don't handle >=3 arguments for now.
-    return false;
+    insertChecks();
+    for (int index = 1; index < argumentCountIncludingThis; ++index)
+        addVarArgChild(get(virtualRegisterForArgumentIncludingThis(index, registerOffset)));
+    set(result, addToGraph(Node::VarArg, op, OpInfo(), OpInfo()));
+    return;
 }
 
 template<typename ChecksFunctor>
@@ -2372,11 +2375,9 @@ bool ByteCodeParser::handleIntrinsicCall(Node* callee, Operand result, Intrinsic
 
         case MinIntrinsic:
         case MaxIntrinsic:
-            if (handleMinMax(result, intrinsic == MinIntrinsic ? ArithMin : ArithMax, registerOffset, argumentCountIncludingThis, insertChecks)) {
-                didSetResult = true;
-                return true;
-            }
-            return false;
+            handleMinMax(result, intrinsic == MinIntrinsic ? ArithMin : ArithMax, registerOffset, argumentCountIncludingThis, insertChecks);
+            didSetResult = true;
+            return true;
 
 #define DFG_ARITH_UNARY(capitalizedName, lowerName) \
         case capitalizedName##Intrinsic:
@@ -2603,8 +2604,11 @@ bool ByteCodeParser::handleIntrinsicCall(Node* callee, Operand result, Intrinsic
 
             if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadIndexingType)
                 || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadConstantCache)
-                || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadCache)
-                || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
+                || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadCache))
+                return false;
+
+            // index parameter's BadType is critical. But the other ones can be relaxed, so not giving up optimization.
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType) && argumentCountIncludingThis > 2)
                 return false;
 
             ArrayMode arrayMode = getArrayMode(Array::Read);
@@ -3052,6 +3056,16 @@ bool ByteCodeParser::handleIntrinsicCall(Node* callee, Operand result, Intrinsic
             
             insertChecks();
             Node* resultNode = addToGraph(StringReplaceRegExp, OpInfo(0), OpInfo(prediction), get(virtualRegisterForArgumentIncludingThis(0, registerOffset)), get(virtualRegisterForArgumentIncludingThis(1, registerOffset)), get(virtualRegisterForArgumentIncludingThis(2, registerOffset)));
+            setResult(resultNode);
+            return true;
+        }
+
+        case StringPrototypeReplaceStringIntrinsic: {
+            if (argumentCountIncludingThis < 3)
+                return false;
+
+            insertChecks();
+            Node* resultNode = addToGraph(StringReplaceString, OpInfo(0), OpInfo(prediction), get(virtualRegisterForArgumentIncludingThis(0, registerOffset)), get(virtualRegisterForArgumentIncludingThis(1, registerOffset)), get(virtualRegisterForArgumentIncludingThis(2, registerOffset)));
             setResult(resultNode);
             return true;
         }
@@ -3675,6 +3689,7 @@ bool ByteCodeParser::handleIntrinsicCall(Node* callee, Operand result, Intrinsic
             return true;
         }
 
+        case StringPrototypeSubstringIntrinsic:
         case StringPrototypeSliceIntrinsic: {
             if (argumentCountIncludingThis < 2)
                 return false;
@@ -3688,7 +3703,7 @@ bool ByteCodeParser::handleIntrinsicCall(Node* callee, Operand result, Intrinsic
             Node* end = nullptr;
             if (argumentCountIncludingThis > 2)
                 end = get(virtualRegisterForArgumentIncludingThis(2, registerOffset));
-            Node* resultNode = addToGraph(StringSlice, thisString, start, end);
+            Node* resultNode = addToGraph(intrinsic == StringPrototypeSubstringIntrinsic ? StringSubstring : StringSlice, thisString, start, end);
             setResult(resultNode);
             return true;
         }
@@ -5701,7 +5716,20 @@ void ByteCodeParser::parseBlock(unsigned limit)
             set(bytecode.m_dst, addToGraph(NewArrayWithSize, OpInfo(profile.selectIndexingTypeConcurrently()), get(bytecode.m_length)));
             NEXT_OPCODE(op_new_array_with_size);
         }
-            
+
+        case op_new_array_with_species: {
+            auto bytecode = currentInstruction->as<OpNewArrayWithSpecies>();
+            SpeculatedType prediction = getPrediction();
+            auto& metadata = bytecode.metadata(codeBlock);
+            ArrayAllocationProfile& profile = metadata.m_arrayAllocationProfile;
+            ArrayMode arrayMode = getArrayMode(metadata.m_arrayProfile, Array::Read);
+            NewArrayWithSpeciesData data { };
+            data.arrayMode = arrayMode.asWord();
+            data.indexingMode = profile.selectIndexingTypeConcurrently();
+            set(bytecode.m_dst, addToGraph(NewArrayWithSpecies, OpInfo(data.asQuadWord()), OpInfo(prediction), Edge(get(bytecode.m_length)), Edge(get(bytecode.m_array), KnownCellUse)));
+            NEXT_OPCODE(op_new_array_with_species);
+        }
+
         case op_new_array_buffer: {
             auto bytecode = currentInstruction->as<OpNewArrayBuffer>();
             // Unfortunately, we can't allocate a new JSImmutableButterfly if the profile tells us new information because we
@@ -7077,9 +7105,9 @@ void ByteCodeParser::parseBlock(unsigned limit)
             HashSet<unsigned, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> seenArguments;
 
             {
-                ConcurrentJSLocker locker(m_inlineStackTop->m_profiledBlock->m_lock);
+                ConcurrentJSLocker locker(m_inlineStackTop->m_profiledBlock->valueProfileLock());
 
-                buffer->forEach([&] (ValueProfileAndVirtualRegister& profile) {
+                buffer->forEach([&](ValueProfileAndVirtualRegister& profile) {
                     VirtualRegister operand(profile.m_operand);
                     SpeculatedType prediction = profile.computeUpdatedPrediction(locker);
                     if (operand.isLocal())

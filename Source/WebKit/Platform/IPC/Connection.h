@@ -66,10 +66,13 @@
 #include <wtf/glib/GSocketMonitor.h>
 #endif
 
+#if ENABLE(IPC_TESTING_API)
+#include "MessageObserver.h"
+#endif
 
 namespace IPC {
 
-enum class SendOption {
+enum class SendOption : uint8_t {
     // Whether this message should be dispatched when waiting for a sync reply.
     // This is the default for synchronous messages.
     DispatchMessageEvenWhenWaitingForSyncReply = 1 << 0,
@@ -114,6 +117,7 @@ template<typename AsyncReplyResult> struct AsyncReplyError {
 
 class MachMessage;
 class UnixMessage;
+class WorkQueueMessageReceiver;
 
 class Connection : public ThreadSafeRefCounted<Connection, WTF::DestructionThread::MainRunLoop>, public CanMakeWeakPtr<Connection> {
 public:
@@ -128,18 +132,6 @@ public:
     protected:
         virtual ~Client() { }
     };
-
-    class WorkQueueMessageReceiver : public MessageReceiver, public ThreadSafeRefCounted<WorkQueueMessageReceiver> {
-    };
-
-#if ENABLE(IPC_TESTING_API)
-    class MessageObserver : public CanMakeWeakPtr<MessageObserver> {
-    public:
-        virtual ~MessageObserver() = default;
-        virtual void willSendMessage(const Encoder&, OptionSet<SendOption>) = 0;
-        virtual void didReceiveMessage(const Decoder&) = 0;
-    };
-#endif
 
 #if USE(UNIX_DOMAIN_SOCKETS)
     using Handle = UnixFileDescriptor;
@@ -193,24 +185,10 @@ public:
 #endif
     };
 
-#if USE(UNIX_DOMAIN_SOCKETS)
-    struct SocketPair {
-        int client;
-        int server;
-    };
-
-    enum ConnectionOptions {
-        SetCloexecOnClient = 1 << 0,
-        SetCloexecOnServer = 1 << 1,
-    };
-
-    static Connection::SocketPair createPlatformConnection(unsigned options = SetCloexecOnClient | SetCloexecOnServer);
-#elif OS(DARWIN)
+#if OS(DARWIN)
     xpc_connection_t xpcConnection() const { return m_xpcConnection.get(); }
     std::optional<audit_token_t> getAuditToken();
     pid_t remoteProcessID() const;
-#elif OS(WINDOWS)
-    static bool createServerAndClientIdentifiers(HANDLE& serverIdentifier, HANDLE& clientIdentifier);
 #endif
 
     static Ref<Connection> createServerConnection(Identifier);
@@ -275,8 +253,35 @@ public:
 
     // Sync senders should check the SendSyncResult for true/false in case they need to know if the result was really received.
     // Sync senders should hold on to the SendSyncResult in case they reference the contents of the reply via DataRefererence / ArrayReference.
-    using SendSyncResult = std::unique_ptr<Decoder>;
-    template<typename T> SendSyncResult sendSync(T&& message, typename T::Reply&& reply, uint64_t destinationID, Timeout = Timeout::infinity(), OptionSet<SendSyncOption> sendSyncOptions = { }); // Main thread only.
+
+    template<typename T>
+    struct SendSyncResult {
+        std::unique_ptr<Decoder> decoder;
+        std::optional<typename T::ReplyArguments> replyArguments;
+
+        explicit operator bool() const { return !!decoder; }
+
+        typename T::ReplyArguments& reply()
+        {
+            ASSERT(!!replyArguments);
+            return *replyArguments;
+        }
+
+        typename T::ReplyArguments takeReply()
+        {
+            ASSERT(!!replyArguments);
+            return WTFMove(replyArguments).value();
+        }
+
+        template<typename... U>
+        typename T::ReplyArguments takeReplyOr(U&&... defaultValues)
+        {
+            return WTFMove(replyArguments).value_or(typename T::ReplyArguments { std::forward<U>(defaultValues)... });
+        }
+    };
+
+    template<typename T> SendSyncResult<T> sendSync(T&& message, uint64_t destinationID, Timeout = Timeout::infinity(), OptionSet<SendSyncOption> sendSyncOptions = { }); // Main thread only.
+
     template<typename> bool waitForAndDispatchImmediately(uint64_t destinationID, Timeout, OptionSet<WaitForOption> waitForOptions = { }); // Main thread only.
     template<typename> bool waitForAsyncCallbackAndDispatchImmediately(uint64_t callbackID, Timeout); // Main thread only.
 
@@ -296,9 +301,9 @@ public:
 
     // Main thread only.
     template<typename T, typename U>
-    SendSyncResult sendSync(T&& message, typename T::Reply&& reply, ObjectIdentifier<U> destinationID, Timeout timeout = Timeout::infinity(), OptionSet<SendSyncOption> sendSyncOptions = { })
+    SendSyncResult<T> sendSync(T&& message, ObjectIdentifier<U> destinationID, Timeout timeout = Timeout::infinity(), OptionSet<SendSyncOption> sendSyncOptions = { })
     {
-        return sendSync<T>(WTFMove(message), WTFMove(reply), destinationID.toUInt64(), timeout, sendSyncOptions);
+        return sendSync<T>(WTFMove(message), destinationID.toUInt64(), timeout, sendSyncOptions);
     }
     
     // Main thread only.
@@ -608,7 +613,7 @@ void moveTuple(std::tuple<A...>&& a, std::tuple<B...>& b)
     TupleMover<sizeof...(A), std::tuple<A...>, std::tuple<B...>>::move(WTFMove(a), b);
 }
 
-template<typename T> Connection::SendSyncResult Connection::sendSync(T&& message, typename T::Reply&& reply, uint64_t destinationID, Timeout timeout, OptionSet<SendSyncOption> sendSyncOptions)
+template<typename T> Connection::SendSyncResult<T> Connection::sendSync(T&& message, uint64_t destinationID, Timeout timeout, OptionSet<SendSyncOption> sendSyncOptions)
 {
     static_assert(T::isSync, "Sync message expected");
     RELEASE_ASSERT(RunLoop::isMain());
@@ -629,13 +634,12 @@ template<typename T> Connection::SendSyncResult Connection::sendSync(T&& message
     if (!replyDecoder)
         return { };
 
-    // Decode the reply.
-    std::optional<typename T::ReplyArguments> replyArguments;
-    *replyDecoder >> replyArguments;
-    if (!replyArguments)
+    SendSyncResult<T> result;
+    *replyDecoder >> result.replyArguments;
+    if (!result.replyArguments)
         return { };
-    moveTuple(WTFMove(*replyArguments), reply);
-    return replyDecoder;
+    result.decoder = WTFMove(replyDecoder);
+    return result;
 }
 
 template<typename T> bool Connection::waitForAndDispatchImmediately(uint64_t destinationID, Timeout timeout, OptionSet<WaitForOption> waitForOptions)

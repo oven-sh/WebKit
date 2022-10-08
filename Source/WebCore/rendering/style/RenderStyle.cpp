@@ -23,11 +23,11 @@
 #include "config.h"
 #include "RenderStyle.h"
 
-#include "CSSComputedStyleDeclaration.h"
 #include "CSSCustomPropertyValue.h"
 #include "CSSParser.h"
 #include "CSSPropertyNames.h"
 #include "CSSPropertyParser.h"
+#include "ComputedStyleExtractor.h"
 #include "ContentData.h"
 #include "CursorList.h"
 #include "FloatRoundedRect.h"
@@ -63,7 +63,7 @@
 namespace WebCore {
 
 struct SameSizeAsBorderValue {
-    Color m_color;
+    StyleColor m_color;
     float m_width;
     int m_restBits;
 };
@@ -1671,13 +1671,13 @@ void RenderStyle::setBoxShadow(std::unique_ptr<ShadowData> shadowData, bool add)
     rareData.boxShadow = WTFMove(shadowData);
 }
 
-static RoundedRect::Radii calcRadiiFor(const BorderData& border, const LayoutSize& size)
+static RoundedRect::Radii calcRadiiFor(const BorderData::Radii& radii, const LayoutSize& size)
 {
     return {
-        sizeForLengthSize(border.topLeftRadius(), size),
-        sizeForLengthSize(border.topRightRadius(), size),
-        sizeForLengthSize(border.bottomLeftRadius(), size),
-        sizeForLengthSize(border.bottomRightRadius(), size)
+        sizeForLengthSize(radii.topLeft, size),
+        sizeForLengthSize(radii.topRight, size),
+        sizeForLengthSize(radii.bottomLeft, size),
+        sizeForLengthSize(radii.bottomRight, size)
     };
 }
 
@@ -1736,7 +1736,7 @@ RoundedRect RenderStyle::getRoundedBorderFor(const LayoutRect& borderRect, bool 
 {
     RoundedRect roundedRect(borderRect);
     if (hasBorderRadius()) {
-        RoundedRect::Radii radii = calcRadiiFor(m_surroundData->border, borderRect.size());
+        RoundedRect::Radii radii = calcRadiiFor(m_surroundData->border.m_radii, borderRect.size());
         radii.scale(calcBorderRadiiConstraintScaleFor(borderRect, radii));
         roundedRect.includeLogicalEdges(radii, isHorizontalWritingMode(), includeLogicalLeftEdge, includeLogicalRightEdge);
     }
@@ -1756,6 +1756,13 @@ RoundedRect RenderStyle::getRoundedInnerBorderFor(const LayoutRect& borderRect, 
 RoundedRect RenderStyle::getRoundedInnerBorderFor(const LayoutRect& borderRect, LayoutUnit topWidth, LayoutUnit bottomWidth,
     LayoutUnit leftWidth, LayoutUnit rightWidth, bool includeLogicalLeftEdge, bool includeLogicalRightEdge) const
 {
+    auto radii = hasBorderRadius() ? std::make_optional(m_surroundData->border.m_radii) : std::nullopt;
+    return getRoundedInnerBorderFor(borderRect, topWidth, bottomWidth, leftWidth, rightWidth, radii, isHorizontalWritingMode(), includeLogicalLeftEdge, includeLogicalRightEdge);
+}
+
+RoundedRect RenderStyle::getRoundedInnerBorderFor(const LayoutRect& borderRect, LayoutUnit topWidth, LayoutUnit bottomWidth,
+    LayoutUnit leftWidth, LayoutUnit rightWidth, std::optional<BorderData::Radii> radii, bool isHorizontalWritingMode, bool includeLogicalLeftEdge, bool includeLogicalRightEdge)
+{
     auto width = std::max(0_lu, borderRect.width() - leftWidth - rightWidth);
     auto height = std::max(0_lu, borderRect.height() - topWidth - bottomWidth);
     auto roundedRect = RoundedRect {
@@ -1764,10 +1771,11 @@ RoundedRect RenderStyle::getRoundedInnerBorderFor(const LayoutRect& borderRect, 
         width,
         height
     };
-    if (hasBorderRadius()) {
-        auto radii = getRoundedBorderFor(borderRect).radii();
-        radii.shrink(topWidth, bottomWidth, leftWidth, rightWidth);
-        roundedRect.includeLogicalEdges(radii, isHorizontalWritingMode(), includeLogicalLeftEdge, includeLogicalRightEdge);
+    if (radii) {
+        auto adjustedRadii = calcRadiiFor(*radii, borderRect.size());
+        adjustedRadii.scale(calcBorderRadiiConstraintScaleFor(borderRect, adjustedRadii));
+        adjustedRadii.shrink(topWidth, bottomWidth, leftWidth, rightWidth);
+        roundedRect.includeLogicalEdges(adjustedRadii, isHorizontalWritingMode, includeLogicalLeftEdge, includeLogicalRightEdge);
     }
     return roundedRect;
 }
@@ -2191,7 +2199,7 @@ void RenderStyle::getShadowVerticalExtent(const ShadowData* shadow, LayoutUnit &
     }
 }
 
-Color RenderStyle::unresolvedColorForProperty(CSSPropertyID colorProperty, bool visitedLink) const
+StyleColor RenderStyle::unresolvedColorForProperty(CSSPropertyID colorProperty, bool visitedLink) const
 {
     switch (colorProperty) {
     case CSSPropertyAccentColor:
@@ -2249,21 +2257,6 @@ Color RenderStyle::unresolvedColorForProperty(CSSPropertyID colorProperty, bool 
 
 Color RenderStyle::colorResolvingCurrentColor(CSSPropertyID colorProperty, bool visitedLink) const
 {
-    auto computeBorderStyle = [&] {
-        switch (colorProperty) {
-        case CSSPropertyBorderLeftColor:
-            return borderLeftStyle();
-        case CSSPropertyBorderRightColor:
-            return borderRightStyle();
-        case CSSPropertyBorderTopColor:
-            return borderTopStyle();
-        case CSSPropertyBorderBottomColor:
-            return borderBottomStyle();
-        default:
-            return BorderStyle::None;
-        }
-    };
-
     auto result = unresolvedColorForProperty(colorProperty, visitedLink);
 
     if (isCurrentColor(result)) {
@@ -2278,22 +2271,33 @@ Color RenderStyle::colorResolvingCurrentColor(CSSPropertyID colorProperty, bool 
             return colorResolvingCurrentColor(CSSPropertyWebkitTextFillColor, visitedLink);
         }
 
-        auto borderStyle = computeBorderStyle();
+        auto borderStyle = [&] {
+            switch (colorProperty) {
+            case CSSPropertyBorderLeftColor:
+                return borderLeftStyle();
+            case CSSPropertyBorderRightColor:
+                return borderRightStyle();
+            case CSSPropertyBorderTopColor:
+                return borderTopStyle();
+            case CSSPropertyBorderBottomColor:
+                return borderBottomStyle();
+            default:
+                return BorderStyle::None;
+            }
+        }();
+
         if (!visitedLink && (borderStyle == BorderStyle::Inset || borderStyle == BorderStyle::Outset || borderStyle == BorderStyle::Ridge || borderStyle == BorderStyle::Groove))
-            return SRGBA<uint8_t> { 238, 238, 238 };
+            return { SRGBA<uint8_t> { 238, 238, 238 } };
 
         return visitedLink ? visitedLinkColor() : color();
     }
 
-    return result;
+    return colorResolvingCurrentColor(result);
 }
 
-Color RenderStyle::colorResolvingCurrentColor(const Color& color) const
+Color RenderStyle::colorResolvingCurrentColor(const StyleColor& color) const
 {
-    if (isCurrentColor(color))
-        return this->color();
-
-    return color;
+    return color.resolveColor(this->color());
 }
 
 Color RenderStyle::visitedDependentColor(CSSPropertyID colorProperty) const
@@ -2334,6 +2338,11 @@ Color RenderStyle::colorByApplyingColorFilter(const Color& color) const
     Color transformedColor = color;
     appleColorFilter().transformColor(transformedColor);
     return transformedColor;
+}
+
+Color RenderStyle::colorWithColorFilter(const StyleColor& color) const
+{
+    return colorByApplyingColorFilter(colorResolvingCurrentColor(color));
 }
 
 Color RenderStyle::effectiveAccentColor() const
@@ -2481,7 +2490,7 @@ TextEmphasisMark RenderStyle::textEmphasisMark() const
 
 #if ENABLE(TOUCH_EVENTS)
 
-Color RenderStyle::initialTapHighlightColor()
+StyleColor RenderStyle::initialTapHighlightColor()
 {
     return RenderTheme::tapHighlightColor();
 }

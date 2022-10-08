@@ -84,6 +84,7 @@
 #include <wtf/URL.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/StringBuilder.h>
+#include <wtf/text/TextStream.h>
 #include <wtf/text/WTFString.h>
 
 #if PLATFORM(COCOA)
@@ -329,7 +330,6 @@ void WebProcessProxy::setIsInProcessCache(bool value, WillShutDown willShutDown)
         RELEASE_ASSERT(m_pageMap.isEmpty());
         RELEASE_ASSERT(!m_suspendedPageCount);
         RELEASE_ASSERT(m_provisionalPages.isEmpty());
-        m_previouslyApprovedFilePaths.clear();
     }
 
     ASSERT(m_isInProcessCache != value);
@@ -550,7 +550,7 @@ WebPageProxy* WebProcessProxy::audioCapturingWebPage()
     return nullptr;
 }
 
-#if ENABLE(INTELLIGENT_TRACKING_PREVENTION)
+#if ENABLE(TRACKING_PREVENTION)
 void WebProcessProxy::notifyPageStatisticsAndDataRecordsProcessed()
 {
     for (auto& page : globalPageMap())
@@ -1133,18 +1133,6 @@ auto WebProcessProxy::visiblePageToken() const -> VisibleWebPageToken
     return m_visiblePageCounter.count();
 }
 
-void WebProcessProxy::addPreviouslyApprovedFileURL(const URL& url)
-{
-    ASSERT(url.isLocalFile());
-    m_previouslyApprovedFilePaths.add(url.fileSystemPath());
-}
-
-bool WebProcessProxy::wasPreviouslyApprovedFileURL(const URL& url) const
-{
-    ASSERT(url.isLocalFile());
-    return m_previouslyApprovedFilePaths.contains(url.fileSystemPath());
-}
-
 RefPtr<API::UserInitiatedAction> WebProcessProxy::userInitiatedActivity(uint64_t identifier)
 {
     if (!UserInitiatedActionMap::isValidKey(identifier) || !identifier)
@@ -1604,12 +1592,6 @@ void WebProcessProxy::logDiagnosticMessageForResourceLimitTermination(const Stri
         (*pages().begin())->logDiagnosticMessage(DiagnosticLoggingKeys::simulatedPageCrashKey(), limitKey, ShouldSample::No);
 }
 
-void WebProcessProxy::didExceedInactiveMemoryLimitWhileActive()
-{
-    for (auto& page : pages())
-        page->didExceedInactiveMemoryLimitWhileActive();
-}
-
 void WebProcessProxy::didExceedActiveMemoryLimit()
 {
     WEBPROCESSPROXY_RELEASE_LOG_ERROR(PerformanceLogging, "didExceedActiveMemoryLimit: Terminating WebProcess because it has exceeded the active memory limit");
@@ -1638,19 +1620,13 @@ void WebProcessProxy::didExceedCPULimit()
             WEBPROCESSPROXY_RELEASE_LOG(PerformanceLogging, "didExceedCPULimit: WebProcess has exceeded the background CPU limit but we are not terminating it because it is capturing audio / video");
             return;
         }
-    }
 
-    bool hasVisiblePage = false;
-    for (auto& page : pages()) {
         if (page->isViewVisible()) {
-            page->didExceedBackgroundCPULimitWhileInForeground();
-            hasVisiblePage = true;
+            // We only notify the client that the process exceeded the CPU limit when it is visible, we do not terminate it.
+            WEBPROCESSPROXY_RELEASE_LOG(PerformanceLogging, "didExceedCPULimit: WebProcess has exceeded the background CPU limit but we are not terminating it because it has a visible page");
+            return;
         }
     }
-
-    // We only notify the client that the process exceeded the CPU limit when it is visible, we do not terminate it.
-    if (hasVisiblePage)
-        return;
 
     WEBPROCESSPROXY_RELEASE_LOG_ERROR(PerformanceLogging, "didExceedCPULimit: Terminating background WebProcess that has exceeded the background CPU limit");
     logDiagnosticMessageForResourceLimitTermination(DiagnosticLoggingKeys::exceededBackgroundCPULimitKey());
@@ -2135,6 +2111,32 @@ void WebProcessProxy::permissionChanged(WebCore::PermissionName permissionName, 
 void WebProcessProxy::sendPermissionChanged(WebCore::PermissionName permissionName, const WebCore::SecurityOriginData& topOrigin)
 {
     send(Messages::WebPermissionController::permissionChanged(permissionName, topOrigin), 0);
+}
+
+TextStream& operator<<(TextStream& ts, const WebProcessProxy& process)
+{
+    auto appendCount = [&ts](unsigned value, ASCIILiteral description) {
+        if (value)
+            ts << ", " << description << ": " << value;
+    };
+    auto appendIf = [&ts](bool value, ASCIILiteral description) {
+        if (value)
+            ts << ", " << description;
+    };
+
+    ts << "pid: " << process.processIdentifier();
+    appendCount(process.pageCount(), "pages"_s);
+    appendCount(process.visiblePageCount(), "visible-pages"_s);
+    appendCount(process.provisionalPageCount(), "provisional-pages"_s);
+    appendCount(process.suspendedPageCount(), "suspended-pages"_s);
+    appendIf(process.isPrewarmed(), "prewarmed"_s);
+    appendIf(process.isInProcessCache(), "in-process-cache"_s);
+    appendIf(process.isRunningServiceWorkers(), "has-service-worker"_s);
+    appendIf(process.isRunningSharedWorkers(), "has-shared-worker"_s);
+    appendIf(process.isUnderMemoryPressure(), "under-memory-pressure"_s);
+    ts << ", " << process.throttler();
+
+    return ts;
 }
 
 } // namespace WebKit

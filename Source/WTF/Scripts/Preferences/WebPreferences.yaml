@@ -372,16 +372,6 @@ CSSTransformStyleOptimized3DEnabled:
     WebCore:
       default: false
 
-# FIXME: This is not relevent for WebKitLegacy, so should be excluded from WebKitLegacy entirely (though we should still set the default value to false when initializing settings).
-CacheAPIEnabled:
-  type: bool
-  webcoreBinding: DeprecatedGlobalSettings
-  defaultValue:
-    WebKitLegacy:
-      default: false
-    WebKit:
-      default: true
-
 CanvasUsesAcceleratedDrawing:
   type: bool
   defaultValue:
@@ -987,6 +977,26 @@ InspectorWindowFrame:
     WebKit:
       default: '""'
 
+InteractionRegionInlinePadding:
+  type: double
+  defaultValue:
+    WebKitLegacy:
+      default: 3
+    WebKit:
+      default: 3
+    WebCore:
+      default: 3
+
+InteractionRegionMinimumCornerRadius:
+  type: double
+  defaultValue:
+    WebKitLegacy:
+      default: 4
+    WebKit:
+      default: 4
+    WebCore:
+      default: 4
+
 # FIXME: This is handled via WebView SPI rather than WebPreferences for WebKitLegacy. We should change the SPI to lookup the WebPreferences value instead.
 InteractiveFormValidationEnabled:
   type: bool
@@ -1010,6 +1020,18 @@ InterruptAudioOnPageVisibilityChangeEnabled:
       default: false
     WebKit:
       "PLATFORM(IOS_FAMILY)": true
+    WebCore:
+      default: false
+
+InterruptVideoOnPageVisibilityChangeEnabled:
+  type: bool
+  condition: ENABLE(MEDIA_STREAM)
+  defaultValue:
+    WebKitLegacy:
+      "PLATFORM(IOS_FAMILY) && !HAVE(UIKIT_WEBKIT_INTERNALS)": true
+      default: false
+    WebKit:
+      "PLATFORM(IOS_FAMILY) && !HAVE(UIKIT_WEBKIT_INTERNALS)": true
       default: false
     WebCore:
       default: false
@@ -2473,17 +2495,6 @@ WantsBalancedSetDefersLoadingBehavior:
 WebArchiveDebugModeEnabled:
   type: bool
   webKitLegacyPreferenceKey: WebKitWebArchiveDebugModeEnabledPreferenceKey
-  condition: ENABLE(WEB_ARCHIVE)
-  defaultValue:
-    WebKitLegacy:
-      default: false
-    WebKit:
-      default: false
-    WebCore:
-      default: false
-
-WebArchiveTestingModeEnabled:
-  type: bool
   condition: ENABLE(WEB_ARCHIVE)
   defaultValue:
     WebKitLegacy:

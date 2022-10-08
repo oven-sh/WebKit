@@ -29,7 +29,6 @@
 #include <wtf/RetainPtr.h>
 #include <wtf/Vector.h>
 #include <wtf/cf/TypeCastsCF.h>
-#include <wtf/persistence/PersistentCoder.h>
 
 #if PLATFORM(COCOA)
 #include <Security/SecCertificate.h>
@@ -74,6 +73,16 @@ public:
 #endif
     }
 
+    bool operator==(const CertificateInfo& other) const
+    {
+#if PLATFORM(COCOA)
+        return trust() == other.trust();
+#elif PLATFORM(WIN)
+        return certificateChain() == other.certificateChain();
+#endif
+    }
+    bool operator!=(const CertificateInfo& other) const { return !(*this == other); }
+
 #if PLATFORM(COCOA)
     WEBCORE_EXPORT static RetainPtr<CFArrayRef> certificateChainFromSecTrust(SecTrustRef);
     WEBCORE_EXPORT static RetainPtr<SecTrustRef> secTrustFromCertificateChain(CFArrayRef);
@@ -98,12 +107,3 @@ WEBCORE_EXPORT bool certificatesMatch(SecTrustRef, SecTrustRef);
 #endif
 
 } // namespace WebCore
-
-namespace WTF::Persistence {
-
-template<> struct Coder<WebCore::CertificateInfo> {
-    static WEBCORE_EXPORT void encode(Encoder&, const WebCore::CertificateInfo&);
-    static WEBCORE_EXPORT std::optional<WebCore::CertificateInfo> decode(Decoder&);
-};
-
-} // namespace WTF::Persistence

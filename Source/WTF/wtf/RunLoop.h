@@ -37,7 +37,9 @@
 #include <wtf/Observer.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/Seconds.h>
+#include <wtf/ThreadSafetyAnalysis.h>
 #include <wtf/ThreadSpecific.h>
+#include <wtf/Threading.h>
 #include <wtf/ThreadingPrimitives.h>
 #include <wtf/WeakHashSet.h>
 #include <wtf/text/WTFString.h>
@@ -70,7 +72,7 @@ using RunLoopMode = unsigned;
 #define DefaultRunLoopMode 0
 #endif
 
-class RunLoop final : public FunctionDispatcher, public ThreadSafeRefCounted<RunLoop> {
+class WTF_CAPABILITY("is current") RunLoop final : public FunctionDispatcher, public ThreadSafeRefCounted<RunLoop> {
     WTF_MAKE_NONCOPYABLE(RunLoop);
 public:
     // Must be called from the main thread.
@@ -85,7 +87,10 @@ public:
     WTF_EXPORT_PRIVATE static RunLoop& web();
     WTF_EXPORT_PRIVATE static RunLoop* webIfExists();
 #endif
-    WTF_EXPORT_PRIVATE static bool isMain();
+    WTF_EXPORT_PRIVATE static Ref<RunLoop> create(const char* threadName, ThreadType = ThreadType::Unknown, Thread::QOS = Thread::QOS::UserInitiated);
+
+    static bool isMain() { return main().isCurrent(); }
+    WTF_EXPORT_PRIVATE bool isCurrent() const;
     WTF_EXPORT_PRIVATE ~RunLoop() final;
 
     WTF_EXPORT_PRIVATE void dispatch(Function<void()>&&) final;
@@ -276,7 +281,13 @@ private:
 #endif
 };
 
+inline void assertIsCurrent(const RunLoop& runLoop) WTF_ASSERTS_ACQUIRED_CAPABILITY(runLoop)
+{
+    ASSERT_UNUSED(runLoop, runLoop.isCurrent());
+}
+
 } // namespace WTF
 
 using WTF::RunLoop;
 using WTF::RunLoopMode;
+using WTF::assertIsCurrent;

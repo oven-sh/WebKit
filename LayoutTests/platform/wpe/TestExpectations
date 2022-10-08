@@ -161,8 +161,6 @@ imported/w3c/web-platform-tests/css/css-contain/contain-size-inline-block-003.ht
 
 
 # Accessibility
-webkit.org/b/225479 accessibility/aria-modal.html [ Timeout ]
-webkit.org/b/225479 accessibility/dialog-showModal.html [ Timeout ]
 webkit.org/b/237820 accessibility/native-text-control-attributed-string.html [ Timeout ]
 
 # Animations
@@ -433,10 +431,6 @@ fast/events/ondrop-text-html.html
 # https://bugs.webkit.org/show_bug.cgi?id=69417
 fast/events/wheel/wheelevent-direction-inverted-from-device.html
 
-fast/events/ios [ Skip ]
-fast/events/touch/ios [ Skip ]
-fast/events/touch/gesture [ Skip ]
-
 # These are failures that will be enabled once the relevant parts of implementation land.
 webkit.org/b/133122 crypto/workers/subtle/aes-indexeddb.html [ Skip ]
 webkit.org/b/133122 crypto/workers/subtle/ec-postMessage-worker.html [ Skip ]
@@ -485,7 +479,6 @@ webkit.org/b/200295 fast/events/autoscroll-when-input-is-offscreen.html [ Crash 
 webkit.org/b/200295 fast/events/autoscroll-with-software-keyboard.html [ Crash ]
 webkit.org/b/200295 fast/events/before-input-prevent-insert-replacement.html [ Crash ]
 webkit.org/b/200295 fast/events/input-event-insert-replacement.html [ Crash ]
-webkit.org/b/200295 fast/viewport/ios/ [ Crash ]
 webkit.org/b/200295 fast/visual-viewport/client-coordinates-relative-to-layout-viewport.html [ Crash ]
 webkit.org/b/200295 fast/visual-viewport/client-rects-relative-to-layout-viewport.html [ Crash ]
 
@@ -1326,6 +1319,10 @@ webkit.org/b/244482 webgl/webgl2-primitive-restart.html [ ImageOnlyFailure ]
 webkit.org/b/244489 fast/canvas/webgl/bufferData-offset-length.html [ Failure ]
 webkit.org/b/244490 fast/canvas/webgl/copyBufferSubData.html [ Failure ]
 webkit.org/b/244491 fast/canvas/webgl/webgl2-texture-upload-enums.html [ Failure ]
+
+webgl/webgl-draft-extensions-flag-default.html [ Failure ]
+webgl/webgl-draft-extensions-flag-off.html [ Failure ]
+webgl/webgl-draft-extensions-flag-on.html [ Failure ]
 
 ######################################################
 # Test failures from turning GPU Process on by default

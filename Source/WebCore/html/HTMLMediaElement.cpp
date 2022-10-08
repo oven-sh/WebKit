@@ -7233,6 +7233,7 @@ void HTMLMediaElement::createMediaPlayer() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     m_player = MediaPlayer::create(*this);
     m_player->setBufferingPolicy(m_bufferingPolicy);
     m_player->setPreferredDynamicRangeMode(m_overrideDynamicRangeMode.value_or(preferredDynamicRangeMode(document().view())));
+    m_player->setShouldDisableHDR(shouldDisableHDR());
     m_player->setMuted(effectiveMuted());
     m_player->setPageIsVisible(!m_elementIsHidden);
     m_player->setVisibleInViewport(isVisibleInViewport());
@@ -7636,15 +7637,21 @@ String HTMLMediaElement::sourceApplicationIdentifier() const
 
 void HTMLMediaElement::setPreferredDynamicRangeMode(DynamicRangeMode mode)
 {
-    if (m_player && !m_overrideDynamicRangeMode)
-        m_player->setPreferredDynamicRangeMode(mode);
+    if (!m_player || m_overrideDynamicRangeMode)
+        return;
+
+    m_player->setPreferredDynamicRangeMode(mode);
+    m_player->setShouldDisableHDR(shouldDisableHDR());
 }
 
 void HTMLMediaElement::setOverridePreferredDynamicRangeMode(DynamicRangeMode mode)
 {
     m_overrideDynamicRangeMode = mode;
-    if (m_player)
-        m_player->setPreferredDynamicRangeMode(mode);
+    if (!m_player)
+        return;
+
+    m_player->setPreferredDynamicRangeMode(mode);
+    m_player->setShouldDisableHDR(shouldDisableHDR());
 }
 
 Vector<String> HTMLMediaElement::mediaPlayerPreferredAudioCharacteristics() const
@@ -8107,7 +8114,7 @@ PlatformMediaSession::MediaType HTMLMediaElement::mediaType() const
 {
     if (m_player && m_readyState >= HAVE_METADATA) {
         auto hasVideo = this->hasVideo();
-        if (hasVideo && hasAudio() && !muted())
+        if (hasVideo && canProduceAudio())
             return PlatformMediaSession::MediaType::VideoAudio;
         return hasVideo ? PlatformMediaSession::MediaType::Video : PlatformMediaSession::MediaType::Audio;
     }
@@ -8148,8 +8155,16 @@ bool HTMLMediaElement::canProduceAudio() const
     if (isSuspended())
         return false;
 
+    if (!volume())
+        return false;
+
+    // For GStreamer ports the semantics of IsPlayingAudio slightly differ from Apple ports. The
+    // webkit_web_view_is_playing_audio() API is expected to return true if a page is producing
+    // audio even though it might be muted.
+#if !USE(GSTREAMER)
     if (muted())
         return false;
+#endif
 
     if (m_player && m_readyState >= HAVE_METADATA)
         return hasAudio();
@@ -8404,19 +8419,14 @@ MediaProducerMediaStateFlags HTMLMediaElement::mediaState() const
 
     if (hasActiveVideo && endedPlayback())
         state.add(MediaProducerMediaState::DidPlayToEnd);
+#else
+    UNUSED_VARIABLE(hasAudio);
 #endif
 
     if (!isPlaying())
         return state;
 
-    // For GStreamer ports the semantics of IsPlayingAudio slightly differ from Apple ports. The
-    // webkit_web_view_is_playing_audio() API is expected to return true if a page is producing
-    // audio even though it might be muted.
-    bool isPlayingAudio = hasAudio && volume();
-#if !USE(GSTREAMER)
-    isPlayingAudio = isPlayingAudio && !muted();
-#endif
-    if (isPlayingAudio)
+    if (canProduceAudio())
         state.add(MediaProducerMediaState::IsPlayingAudio);
 
     if (hasActiveVideo)
@@ -8777,6 +8787,10 @@ void HTMLMediaElement::updateMediaPlayer(IntSize elementSize, bool shouldMaintai
     m_player->setSize(elementSize);
     visibilityStateChanged();
     m_player->setVisibleInViewport(isVisibleInViewport());
+
+    if (document().quirks().needsVideoShouldMaintainAspectRatioQuirk())
+        shouldMaintainAspectRatio = true;
+
     m_player->setShouldMaintainAspectRatio(shouldMaintainAspectRatio);
 }
 
@@ -8829,6 +8843,11 @@ void HTMLMediaElement::setShowingStats(bool shouldShowStats)
         return resultValue.toBoolean(&lexicalGlobalObject);
     });
 #endif
+}
+
+bool HTMLMediaElement::shouldDisableHDR() const
+{
+    return !screenSupportsHighDynamicRange(document().view());
 }
 
 }

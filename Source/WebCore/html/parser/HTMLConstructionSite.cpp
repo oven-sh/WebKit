@@ -50,6 +50,8 @@
 #include "JSCustomElementInterface.h"
 #include "NotImplemented.h"
 #include "SVGElementInlines.h"
+#include "Settings.h"
+#include "ShadowRoot.h"
 #include "Text.h"
 #include <unicode/ubrk.h>
 #include <wtf/text/TextBreakIterator.h>
@@ -60,7 +62,7 @@ using namespace ElementNames;
 using namespace HTMLNames;
 
 enum class HasDuplicateAttribute : bool { No, Yes };
-static inline void setAttributes(Element& element, Vector<Attribute>& attributes, HasDuplicateAttribute hasDuplicateAttribute, ParserContentPolicy parserContentPolicy)
+static inline void setAttributes(Element& element, Vector<Attribute>& attributes, HasDuplicateAttribute hasDuplicateAttribute, OptionSet<ParserContentPolicy> parserContentPolicy)
 {
     if (!scriptingContentIsAllowed(parserContentPolicy))
         element.stripScriptingAttributes(attributes);
@@ -68,7 +70,7 @@ static inline void setAttributes(Element& element, Vector<Attribute>& attributes
     element.setHasDuplicateAttribute(hasDuplicateAttribute == HasDuplicateAttribute::Yes);
 }
 
-static inline void setAttributes(Element& element, AtomHTMLToken& token, ParserContentPolicy parserContentPolicy)
+static inline void setAttributes(Element& element, AtomHTMLToken& token, OptionSet<ParserContentPolicy> parserContentPolicy)
 {
     setAttributes(element, token.attributes(), token.hasDuplicateAttribute() ? HasDuplicateAttribute::Yes : HasDuplicateAttribute::No, parserContentPolicy);
 }
@@ -129,7 +131,7 @@ static inline bool isAllWhitespace(const String& string)
 static inline void insert(HTMLConstructionSiteTask& task)
 {
     if (is<HTMLTemplateElement>(*task.parent)) {
-        task.parent = &downcast<HTMLTemplateElement>(*task.parent).content();
+        task.parent = &downcast<HTMLTemplateElement>(*task.parent).fragmentForInsertion();
         task.nextChild = nullptr;
     }
 
@@ -252,7 +254,7 @@ void HTMLConstructionSite::executeQueuedTasks()
     // We might be detached now.
 }
 
-HTMLConstructionSite::HTMLConstructionSite(Document& document, ParserContentPolicy parserContentPolicy, unsigned maximumDOMTreeDepth)
+HTMLConstructionSite::HTMLConstructionSite(Document& document, OptionSet<ParserContentPolicy> parserContentPolicy, unsigned maximumDOMTreeDepth)
     : m_document(document)
     , m_attachmentRoot(document)
     , m_parserContentPolicy(parserContentPolicy)
@@ -265,7 +267,7 @@ HTMLConstructionSite::HTMLConstructionSite(Document& document, ParserContentPoli
     ASSERT(m_document.isHTMLDocument() || m_document.isXHTMLDocument());
 }
 
-HTMLConstructionSite::HTMLConstructionSite(DocumentFragment& fragment, ParserContentPolicy parserContentPolicy, unsigned maximumDOMTreeDepth)
+HTMLConstructionSite::HTMLConstructionSite(DocumentFragment& fragment, OptionSet<ParserContentPolicy> parserContentPolicy, unsigned maximumDOMTreeDepth)
     : m_document(fragment.document())
     , m_attachmentRoot(fragment)
     , m_parserContentPolicy(parserContentPolicy)
@@ -530,6 +532,36 @@ void HTMLConstructionSite::insertHTMLElement(AtomHTMLToken&& token)
     m_openElements.push(HTMLStackItem(WTFMove(element), WTFMove(token)));
 }
 
+void HTMLConstructionSite::insertHTMLTemplateElement(AtomHTMLToken&& token)
+{
+    if (m_document.settings().streamingDeclarativeShadowDOMEnabled() && m_parserContentPolicy.contains(ParserContentPolicy::AllowDeclarativeShadowDOM)
+        && !currentElement().document().templateDocumentHost()) {
+        std::optional<ShadowRootMode> mode;
+        bool delegatesFocus = false;
+        for (auto& attribute : token.attributes()) {
+            if (attribute.name() == HTMLNames::shadowrootAttr) {
+                if (equalLettersIgnoringASCIICase(attribute.value(), "closed"_s))
+                    mode = ShadowRootMode::Closed;
+                else if (equalLettersIgnoringASCIICase(attribute.value(), "open"_s))
+                    mode = ShadowRootMode::Open;
+            } else if (attribute.name() == HTMLNames::shadowrootdelegatesfocusAttr)
+                delegatesFocus = true;
+        }
+        if (mode) {
+            auto exceptionOrShadowRoot = currentElement().attachDeclarativeShadow(*mode, delegatesFocus);
+            if (!exceptionOrShadowRoot.hasException()) {
+                Ref shadowRoot = exceptionOrShadowRoot.releaseReturnValue();
+                auto element = createHTMLElement(token);
+                RELEASE_ASSERT(is<HTMLTemplateElement>(element));
+                downcast<HTMLTemplateElement>(element.get()).setDeclarativeShadowRoot(shadowRoot);
+                m_openElements.push(HTMLStackItem(WTFMove(element), WTFMove(token)));
+                return;
+            }
+        }
+    }
+    insertHTMLElement(WTFMove(token));
+}
+
 std::unique_ptr<CustomElementConstructionData> HTMLConstructionSite::insertHTMLElementOrFindCustomElementInterface(AtomHTMLToken&& token)
 {
     JSCustomElementInterface* elementInterface = nullptr;
@@ -577,7 +609,7 @@ void HTMLConstructionSite::insertScriptElement(AtomHTMLToken&& token)
     // For createContextualFragment, the specifications say to mark it parser-inserted and already-started and later unmark them.
     // However, we short circuit that logic to avoid the subtree traversal to find script elements since scripts can never see
     // those flags or effects thereof.
-    const bool parserInserted = m_parserContentPolicy != AllowScriptingContentAndDoNotMarkAlreadyStarted;
+    const bool parserInserted = !m_parserContentPolicy.contains(ParserContentPolicy::DoNotMarkAlreadyStarted);
     const bool alreadyStarted = m_isParsingFragment && parserInserted;
     auto element = HTMLScriptElement::create(scriptTag, ownerDocumentForCurrentNode(), parserInserted, alreadyStarted);
     setAttributes(element, token, m_parserContentPolicy);
@@ -726,8 +758,14 @@ Ref<Element> HTMLConstructionSite::createElement(AtomHTMLToken& token, const Ato
 inline Document& HTMLConstructionSite::ownerDocumentForCurrentNode()
 {
     if (is<HTMLTemplateElement>(currentNode()))
-        return downcast<HTMLTemplateElement>(currentNode()).content().document();
+        return downcast<HTMLTemplateElement>(currentNode()).fragmentForInsertion().document();
     return currentNode().document();
+}
+
+void HTMLConstructionSite::attachDeclarativeShadowRootIfNeeded(Element& shadowHost, HTMLTemplateElement& templateElement)
+{
+    if (m_parserContentPolicy.contains(ParserContentPolicy::AllowDeclarativeShadowDOM) && m_document.settings().declarativeShadowDOMEnabled() && !shadowHost.document().templateDocumentHost())
+        templateElement.attachAsDeclarativeShadowRootIfNeeded(shadowHost);
 }
 
 static inline JSCustomElementInterface* findCustomElementInterface(Document& ownerDocument, const AtomString& localName)

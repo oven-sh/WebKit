@@ -1218,8 +1218,8 @@ void RenderThemeIOS::adjustButtonLikeControlStyle(RenderStyle& style, const Elem
     if (element.isDisabledFormControl())
         return;
 
-    auto tintColor = style.effectiveAccentColor();
-    if (tintColor.isValid()) {
+    if (!style.hasAutoAccentColor()) {
+        auto tintColor = style.effectiveAccentColor();
         if (isSubmitStyleButton(element))
             style.setBackgroundColor(tintColor);
         else
@@ -1233,7 +1233,7 @@ void RenderThemeIOS::adjustButtonLikeControlStyle(RenderStyle& style, const Elem
     if (textColor.isValid())
         style.setColor(textColor.colorWithAlphaMultipliedBy(pressedStateOpacity));
 
-    auto backgroundColor = style.backgroundColor();
+    auto backgroundColor = style.colorResolvingCurrentColor(style.backgroundColor());
     if (backgroundColor.isValid())
         style.setBackgroundColor(backgroundColor.colorWithAlphaMultipliedBy(pressedStateOpacity));
 #endif
@@ -1328,21 +1328,10 @@ void RenderThemeIOS::paintFileUploadIconDecorations(const RenderObject&, const R
         thumbnailPictureFrameRect.contract(kMultipleThumbnailShrinkSize, kMultipleThumbnailShrinkSize);
         thumbnailRect.contract(kMultipleThumbnailShrinkSize, kMultipleThumbnailShrinkSize);
 
-        // Background picture frame and simple background icon with a gradient matching the button.
+        // Background picture frame and simple background icon.
         Color backgroundImageColor = buttonRenderer.style().visitedDependentColor(CSSPropertyBackgroundColor);
         paintInfo.context().fillRoundedRect(FloatRoundedRect(thumbnailPictureFrameRect, cornerSize, cornerSize, cornerSize, cornerSize), pictureFrameColor);
         paintInfo.context().fillRect(thumbnailRect, backgroundImageColor);
-        {
-            GraphicsContextStateSaver stateSaver2(paintInfo.context());
-            CGContextRef cgContext = paintInfo.context().platformContext();
-            paintInfo.context().clip(thumbnailRect);
-            if (shouldUseConvexGradient(backgroundImageColor))
-                drawAxialGradient(cgContext, gradientWithName(ConvexGradient), thumbnailRect.location(), FloatPoint(thumbnailRect.x(), thumbnailRect.maxY()), LinearInterpolation);
-            else {
-                drawAxialGradient(cgContext, gradientWithName(ShadeGradient), thumbnailRect.location(), FloatPoint(thumbnailRect.x(), thumbnailRect.maxY()), LinearInterpolation);
-                drawAxialGradient(cgContext, gradientWithName(ShineGradient), FloatPoint(thumbnailRect.x(), thumbnailRect.maxY()), thumbnailRect.location(), ExponentialInterpolation);
-            }
-        }
 
         // Move the rects for the Foreground picture frame and icon.
         int inset = kVisibleBackgroundImageWidth + kThumbnailBorderStrokeWidth;
@@ -1572,9 +1561,8 @@ Color RenderThemeIOS::systemColor(CSSValueID cssValueID, OptionSet<StyleColorOpt
 
 Color RenderThemeIOS::controlTintColor(const RenderStyle& style, OptionSet<StyleColorOptions> options) const
 {
-    Color tintColor = style.effectiveAccentColor();
-    if (tintColor.isValid())
-        return tintColor;
+    if (!style.hasAutoAccentColor())
+        return style.effectiveAccentColor();
 
     return systemColor(CSSValueAppleSystemBlue, options);
 }

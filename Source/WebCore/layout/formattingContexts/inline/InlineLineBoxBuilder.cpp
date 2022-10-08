@@ -29,8 +29,6 @@
 #include "InlineLineBoxVerticalAligner.h"
 #include "InlineLineBuilder.h"
 #include "LayoutBoxGeometry.h"
-#include "LayoutListMarkerBox.h"
-#include "LayoutReplacedBox.h"
 
 namespace WebCore {
 namespace Layout {
@@ -281,27 +279,24 @@ void LineBoxBuilder::constructInlineLevelBoxes(LineBox& lineBox, const LineBuild
         if (run.isBox()) {
             auto& inlineLevelBoxGeometry = formattingContext().geometryForBox(layoutBox);
             auto marginBoxHeight = inlineLevelBoxGeometry.marginBoxHeight();
-            auto ascent = InlineLayoutUnit { };
-            if (layoutState().shouldNotSynthesizeInlineBlockBaseline()) {
-                // Integration codepath constructs replaced boxes for inline-block content.
-                ASSERT(layoutBox.isReplacedBox());
-                ascent = downcast<ReplacedBox>(layoutBox).baseline().value_or(marginBoxHeight);
-            } else if (layoutBox.isInlineBlockBox()) {
-                // The baseline of an 'inline-block' is the baseline of its last line box in the normal flow, unless it has either no in-flow line boxes or
-                // if its 'overflow' property has a computed value other than 'visible', in which case the baseline is the bottom margin edge.
-                auto synthesizeBaseline = !layoutBox.establishesInlineFormattingContext() || !style.isOverflowVisible();
-                if (synthesizeBaseline)
-                    ascent = marginBoxHeight;
-                else {
-                    auto& formattingState = layoutState().formattingStateForInlineFormattingContext(downcast<ContainerBox>(layoutBox));
+            auto ascent = [&]() -> InlineLayoutUnit {
+                if (layoutState().shouldNotSynthesizeInlineBlockBaseline())
+                    return downcast<ElementBox>(layoutBox).baselineForIntegration().value_or(marginBoxHeight);
+
+                if (layoutBox.isInlineBlockBox()) {
+                    // The baseline of an 'inline-block' is the baseline of its last line box in the normal flow, unless it has either no in-flow line boxes or
+                    // if its 'overflow' property has a computed value other than 'visible', in which case the baseline is the bottom margin edge.
+                    auto synthesizeBaseline = !layoutBox.establishesInlineFormattingContext() || !style.isOverflowVisible();
+                    if (synthesizeBaseline)
+                        return marginBoxHeight;
+
+                    auto& formattingState = layoutState().formattingStateForInlineFormattingContext(downcast<ElementBox>(layoutBox));
                     auto& lastLine = formattingState.lines().last();
                     auto inlineBlockBaseline = lastLine.top() + lastLine.baseline();
-                    ascent = inlineLevelBoxGeometry.marginBefore() + inlineLevelBoxGeometry.borderBefore() + inlineLevelBoxGeometry.paddingBefore().value_or(0) + inlineBlockBaseline;
+                    return inlineLevelBoxGeometry.marginBefore() + inlineLevelBoxGeometry.borderBefore() + inlineLevelBoxGeometry.paddingBefore().value_or(0) + inlineBlockBaseline;
                 }
-            } else if (layoutBox.isReplacedBox())
-                ascent = downcast<ReplacedBox>(layoutBox).baseline().value_or(marginBoxHeight);
-            else
-                ascent = marginBoxHeight;
+                return marginBoxHeight;
+            }();
             logicalLeft += std::max(0_lu, inlineLevelBoxGeometry.marginStart());
             auto atomicInlineLevelBox = InlineLevelBox::createAtomicInlineLevelBox(layoutBox, style, logicalLeft, { inlineLevelBoxGeometry.borderBoxWidth(), marginBoxHeight });
             setBaselineAndLayoutBounds(atomicInlineLevelBox, { ascent, marginBoxHeight - ascent });
@@ -312,7 +307,7 @@ void LineBoxBuilder::constructInlineLevelBoxes(LineBox& lineBox, const LineBuild
             auto& listMarkerBoxGeometry = formattingContext().geometryForBox(layoutBox);
             auto marginBoxHeight = listMarkerBoxGeometry.marginBoxHeight();
             // Integration codepath constructs ReplacedBoxes for list markers.
-            auto baseline = downcast<ReplacedBox>(layoutBox).baseline();
+            auto baseline = downcast<ElementBox>(layoutBox).baselineForIntegration();
             auto ascent = baseline.value_or(marginBoxHeight);
 
             logicalLeft += std::max(0_lu, listMarkerBoxGeometry.marginStart());
@@ -430,7 +425,7 @@ void LineBoxBuilder::adjustIdeographicBaselineIfApplicable(LineBox& lineBox, siz
         if (!initiatesLayoutBoundsChange)
             return;
 
-        auto behavesAsText = inlineLevelBox.isLineBreakBox() || (inlineLevelBox.isListMarker() && !downcast<ListMarkerBox>(inlineLevelBox.layoutBox()).isImage());
+        auto behavesAsText = inlineLevelBox.isLineBreakBox() || (inlineLevelBox.isListMarker() && !downcast<ElementBox>(inlineLevelBox.layoutBox()).isListMarkerImage());
         auto layoutBoundsPrimaryMetrics = LayoutBoundsMetrics { };
         if (behavesAsText) {
             auto& parentInlineBox = lineBox.inlineLevelBoxForLayoutBox(inlineLevelBox.layoutBox().parent());
@@ -461,12 +456,8 @@ void LineBoxBuilder::adjustIdeographicBaselineIfApplicable(LineBox& lineBox, siz
                 // Integration codepath sets ideographic baseline by default for non-horizontal content.
                 continue;
             }
-            auto isInlineBlockWithNonSyntheticBaseline = layoutBox.isIntegrationInlineBlock() && downcast<ReplacedBox>(layoutBox).baseline().has_value();
-            // FIXME: While the layoutBox.isIntegrationInlineBlock check may seem redundant here, it's really just because currently
-            // the integration codepath turns inline-blocks into replaced type boxes.
-            auto isOrthogonalBlockFormattingRoot = (layoutBox.establishesBlockFormattingContext() || layoutBox.isIntegrationInlineBlock()) 
-                && layoutBox.style().isHorizontalWritingMode();
-            if (isInlineBlockWithNonSyntheticBaseline && !isOrthogonalBlockFormattingRoot)
+            auto isInlineBlockWithNonSyntheticBaseline = layoutBox.isInlineBlockBox() && downcast<ElementBox>(layoutBox).baselineForIntegration().has_value();
+            if (isInlineBlockWithNonSyntheticBaseline && !layoutBox.style().isHorizontalWritingMode())
                 continue;
         }
         adjustLayoutBoundsWithIdeographicBaseline(inlineLevelBox);

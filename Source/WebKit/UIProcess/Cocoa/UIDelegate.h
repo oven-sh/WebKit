@@ -102,6 +102,8 @@ private:
         void runBeforeUnloadConfirmPanel(WebPageProxy&, const WTF::String&, WebFrameProxy*, FrameInfoData&&, Function<void(bool)>&& completionHandler) final;
         void exceededDatabaseQuota(WebPageProxy*, WebFrameProxy*, API::SecurityOrigin*, const WTF::String& databaseName, const WTF::String& displayName, unsigned long long currentQuota, unsigned long long currentOriginUsage, unsigned long long currentUsage, unsigned long long expectedUsage, Function<void(unsigned long long)>&& completionHandler) final;
         void reachedApplicationCacheOriginQuota(WebPageProxy*, const WebCore::SecurityOrigin&, uint64_t currentQuota, uint64_t totalBytesNeeded, Function<void(unsigned long long)>&& completionHandler) final;
+        bool lockScreenOrientation(WebCore::ScreenOrientationLockType) final;
+        void unlockScreenOrientation() final;
         void didResignInputElementStrongPasswordAppearance(WebPageProxy&, API::Object*) final;
         bool takeFocus(WebPageProxy*, WKFocusDirection) final;
         void handleAutoplayEvent(WebPageProxy&, WebCore::AutoplayEvent, OptionSet<WebCore::AutoplayEventFlags>) final;
@@ -135,7 +137,6 @@ private:
         void didClickAutoFillButton(WebPageProxy&, API::Object*) final;
         void toolbarsAreVisible(WebPageProxy&, Function<void(bool)>&&) final;
         bool runOpenPanel(WebPageProxy&, WebFrameProxy*, FrameInfoData&&, API::OpenPanelParameters*, WebOpenPanelResultListenerProxy*) final;
-        void didExceedBackgroundResourceLimitWhileInForeground(WebPageProxy&, WKResourceLimit) final;
         void saveDataToFileInDownloadsFolder(WebPageProxy*, const WTF::String&, const WTF::String&, const URL&, API::Data&) final;
         Ref<API::InspectorConfiguration> configurationForLocalInspector(WebPageProxy&, WebInspectorUIProxy&) final;
         void didAttachLocalInspector(WebPageProxy&, WebInspectorUIProxy&) final;
@@ -228,7 +229,6 @@ private:
         bool webViewDrawFooterInRectForPageWithTitleURL : 1;
         bool webViewGetWindowFrameWithCompletionHandler : 1;
         bool webViewGetToolbarsAreVisibleWithCompletionHandler : 1;
-        bool webViewDidExceedBackgroundResourceLimitWhileInForeground : 1;
         bool webViewSaveDataToFileSuggestedFilenameMimeTypeOriginatingURL : 1;
         bool webViewRunOpenPanelWithParametersInitiatedByFrameCompletionHandler : 1;
         bool webViewConfigurationForLocalInspector : 1;
@@ -240,6 +240,10 @@ private:
 #endif
         bool webViewDecideDatabaseQuotaForSecurityOriginCurrentQuotaCurrentOriginUsageCurrentDatabaseUsageExpectedUsageDecisionHandler : 1;
         bool webViewDecideDatabaseQuotaForSecurityOriginDatabaseNameDisplayNameCurrentQuotaCurrentOriginUsageCurrentDatabaseUsageExpectedUsageDecisionHandler : 1;
+#if PLATFORM(IOS)
+        bool webViewLockScreenOrientation : 1;
+        bool webViewUnlockScreenOrientation : 1;
+#endif
         bool webViewDecideWebApplicationCacheQuotaForSecurityOriginCurrentQuotaTotalBytesNeeded : 1;
         bool webViewPrintFrame : 1;
         bool webViewPrintFramePDFFirstPageSizeCompletionHandler : 1;

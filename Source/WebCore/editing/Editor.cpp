@@ -1445,7 +1445,7 @@ void Editor::copyFont(FromMenuOrKeyBinding fromMenuOrKeyBinding)
     SetForScope copyScope { m_copyingFromMenuOrKeyBinding, fromMenuOrKeyBinding == FromMenuOrKeyBinding::Yes };
     if (tryDHTMLCopy())
         return; // DHTML did the whole operation
-    if (!canCopy()) {
+    if (!canCopyFont()) {
         SystemSoundManager::singleton().systemBeep();
         return;
     }
@@ -1453,6 +1453,14 @@ void Editor::copyFont(FromMenuOrKeyBinding fromMenuOrKeyBinding)
     willWriteSelectionToPasteboard(selectedRange());
     platformCopyFont();
     didWriteSelectionToPasteboard();
+}
+
+bool Editor::canCopyFont() const
+{
+    auto& selection = m_document.selection().selection();
+    if (selection.isNone() || (selection.isInPasswordField() && !selection.isInAutoFilledAndViewableField()))
+        return false;
+    return selection.isRange() || selection.isContentEditable();
 }
 
 void Editor::postTextStateChangeNotificationForCut(const String& text, const VisibleSelection& selection)
@@ -3326,8 +3334,7 @@ void Editor::changeSelectionAfterCommand(const VisibleSelection& newSelection, O
 {
     Ref<Document> protectedDocument(m_document);
 
-    // If the new selection is orphaned, then don't update the selection.
-    if (newSelection.start().isOrphan() || newSelection.end().isOrphan())
+    if (newSelection.isOrphan())
         return;
 
     // If there is no selection change, don't bother sending shouldChangeSelection, but still call setSelection,

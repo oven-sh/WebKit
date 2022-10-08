@@ -43,6 +43,7 @@
 #include "HTMLNames.h"
 #include "InlineIteratorLineBox.h"
 #include "InlineIteratorTextBox.h"
+#include "LayoutElementBox.h"
 #include "LengthFunctions.h"
 #include "Logging.h"
 #include "Page.h"
@@ -149,6 +150,16 @@ RenderElement::~RenderElement()
 {
     // Do not add any code here. Add it to willBeDestroyed() instead.
     ASSERT(!m_firstChild);
+}
+
+Layout::ElementBox* RenderElement::layoutBox()
+{
+    return downcast<Layout::ElementBox>(RenderObject::layoutBox());
+}
+
+const Layout::ElementBox* RenderElement::layoutBox() const
+{
+    return downcast<Layout::ElementBox>(RenderObject::layoutBox());
 }
 
 bool RenderElement::isContentDataSupported(const ContentData& contentData)
@@ -1724,12 +1735,12 @@ LayoutRect RenderElement::absoluteAnchorRect(bool* insideFixed) const
     return enclosingLayoutRect(FloatRect(upperLeft, lowerRight.expandedTo(upperLeft) - upperLeft));
 }
 
-LayoutRect RenderElement::absoluteAnchorRectWithScrollMargin(bool* insideFixed) const
+MarginRect RenderElement::absoluteAnchorRectWithScrollMargin(bool* insideFixed) const
 {
     LayoutRect anchorRect = absoluteAnchorRect(insideFixed);
     const LengthBox& scrollMargin = style().scrollMargin();
     if (scrollMargin.isZero())
-        return anchorRect;
+        return { anchorRect, anchorRect };
 
     // The scroll snap specification says that the scroll-margin should be applied in the
     // coordinate system of the scroll container and applied to the rectangular bounding
@@ -1740,8 +1751,9 @@ LayoutRect RenderElement::absoluteAnchorRectWithScrollMargin(bool* insideFixed) 
         valueForLength(scrollMargin.right(), anchorRect.width()),
         valueForLength(scrollMargin.bottom(), anchorRect.height()),
         valueForLength(scrollMargin.left(), anchorRect.width()));
-    anchorRect.expand(margin);
-    return anchorRect;
+    auto marginRect = anchorRect;
+    marginRect.expand(margin);
+    return { marginRect, anchorRect };
 }
 
 static bool usePlatformFocusRingColorForOutlineStyleAuto()
@@ -1789,7 +1801,7 @@ static bool drawFocusRing(GraphicsContext& context, Page& page, Vector<FloatRect
 }
 
 
-void RenderElement::paintFocusRing(PaintInfo& paintInfo, const RenderStyle& style, const Vector<LayoutRect>& focusRingRects)
+void RenderElement::paintFocusRing(const PaintInfo& paintInfo, const RenderStyle& style, const Vector<LayoutRect>& focusRingRects) const
 {
     ASSERT(style.outlineStyleIsAuto() == OutlineIsAuto::On);
     float outlineOffset = style.outlineOffset();
@@ -1817,77 +1829,13 @@ void RenderElement::paintFocusRing(PaintInfo& paintInfo, const RenderStyle& styl
 
 void RenderElement::paintOutline(PaintInfo& paintInfo, const LayoutRect& paintRect)
 {
-    GraphicsContext& graphicsContext = paintInfo.context();
-    if (graphicsContext.paintingDisabled())
+    if (paintInfo.context().paintingDisabled())
         return;
 
     if (!hasOutline())
         return;
 
-    auto& styleToUse = style();
-    float outlineWidth = floorToDevicePixel(styleToUse.outlineWidth(), document().deviceScaleFactor());
-    float outlineOffset = floorToDevicePixel(styleToUse.outlineOffset(), document().deviceScaleFactor());
-
-    // Only paint the focus ring by hand if the theme isn't able to draw it.
-    if (styleToUse.outlineStyleIsAuto() == OutlineIsAuto::On && !theme().supportsFocusRing(styleToUse)) {
-        Vector<LayoutRect> focusRingRects;
-        LayoutRect paintRectToUse { paintRect };
-        if (is<RenderBox>(*this))
-            paintRectToUse = theme().adjustedPaintRect(downcast<RenderBox>(*this), paintRectToUse);
-        addFocusRingRects(focusRingRects, paintRectToUse.location(), paintInfo.paintContainer);
-        paintFocusRing(paintInfo, styleToUse, focusRingRects);
-    }
-
-    if (hasOutlineAnnotation() && styleToUse.outlineStyleIsAuto() == OutlineIsAuto::Off && !theme().supportsFocusRing(styleToUse))
-        addPDFURLRect(paintInfo, paintRect.location());
-
-    if (styleToUse.outlineStyleIsAuto() == OutlineIsAuto::On || styleToUse.outlineStyle() == BorderStyle::None)
-        return;
-
-    FloatRect outer = paintRect;
-    outer.inflate(outlineOffset + outlineWidth);
-    FloatRect inner = outer;
-    inner.inflate(-outlineWidth);
-
-    // FIXME: This prevents outlines from painting inside the object. See bug 12042
-    if (outer.isEmpty())
-        return;
-
-    auto& document = this->document();
-    BorderStyle outlineStyle = styleToUse.outlineStyle();
-    Color outlineColor = styleToUse.visitedDependentColorWithColorFilter(CSSPropertyOutlineColor);
-
-    bool useTransparencyLayer = !outlineColor.isOpaque();
-    if (useTransparencyLayer) {
-        if (outlineStyle == BorderStyle::Solid) {
-            Path path;
-            path.addRect(outer);
-            path.addRect(inner);
-            graphicsContext.setFillRule(WindRule::EvenOdd);
-            graphicsContext.setFillColor(outlineColor);
-            graphicsContext.fillPath(path);
-            return;
-        }
-        graphicsContext.beginTransparencyLayer(outlineColor.alphaAsFloat());
-        outlineColor = outlineColor.opaqueColor();
-    }
-
-    float leftOuter = outer.x();
-    float leftInner = inner.x();
-    float rightOuter = outer.maxX();
-    float rightInner = std::min(inner.maxX(), rightOuter);
-    float topOuter = outer.y();
-    float topInner = inner.y();
-    float bottomOuter = outer.maxY();
-    float bottomInner = std::min(inner.maxY(), bottomOuter);
-
-    BorderPainter::drawLineForBoxSide(graphicsContext, document, FloatRect(FloatPoint(leftOuter, topOuter), FloatPoint(leftInner, bottomOuter)), BoxSide::Left, outlineColor, outlineStyle, outlineWidth, outlineWidth);
-    BorderPainter::drawLineForBoxSide(graphicsContext, document, FloatRect(FloatPoint(leftOuter, topOuter), FloatPoint(rightOuter, topInner)), BoxSide::Top, outlineColor, outlineStyle, outlineWidth, outlineWidth);
-    BorderPainter::drawLineForBoxSide(graphicsContext, document, FloatRect(FloatPoint(rightInner, topOuter), FloatPoint(rightOuter, bottomOuter)), BoxSide::Right, outlineColor, outlineStyle, outlineWidth, outlineWidth);
-    BorderPainter::drawLineForBoxSide(graphicsContext, document, FloatRect(FloatPoint(leftOuter, bottomInner), FloatPoint(rightOuter, bottomOuter)), BoxSide::Bottom, outlineColor, outlineStyle, outlineWidth, outlineWidth);
-
-    if (useTransparencyLayer)
-        graphicsContext.endTransparencyLayer();
+    BorderPainter { *this, paintInfo }.paintOutline(paintRect);
 }
 
 void RenderElement::issueRepaintForOutlineAuto(float outlineSize)

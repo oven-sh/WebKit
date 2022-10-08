@@ -71,6 +71,7 @@
 #include "Editing.h"
 #include "Editor.h"
 #include "ElementIterator.h"
+#include "ElementRareData.h"
 #include "FocusController.h"
 #include "Frame.h"
 #include "HTMLAreaElement.h"
@@ -112,6 +113,7 @@
 #include "SVGElement.h"
 #include "ScriptDisallowedScope.h"
 #include "ScrollView.h"
+#include "ShadowRoot.h"
 #include "TextBoundaries.h"
 #include "TextControlInnerElements.h"
 #include "TextIterator.h"
@@ -265,7 +267,7 @@ bool AXObjectCache::isModalElement(Element& element) const
     AtomString modalValue = element.attributeWithoutSynchronization(aria_modalAttr);
     if (modalValue.isNull()) {
         if (auto* defaultARIA = element.customElementDefaultARIAIfExists())
-            modalValue = defaultARIA->valueForAttribute(aria_modalAttr);
+            modalValue = defaultARIA->valueForAttribute(element, aria_modalAttr);
     }
     bool isAriaModal = equalLettersIgnoringASCIICase(modalValue, "true"_s);
     return (hasDialogRole && isAriaModal) || (is<HTMLDialogElement>(element) && downcast<HTMLDialogElement>(element).isModal());
@@ -276,7 +278,7 @@ void AXObjectCache::findModalNodes()
     // Traverse the DOM tree to look for the aria-modal=true nodes or modal <dialog> elements.
     for (Element* element = ElementTraversal::firstWithin(document().rootNode()); element; element = ElementTraversal::nextIncludingPseudo(*element)) {
         if (isModalElement(*element))
-            m_modalElementsSet.add(element);
+            m_modalElements.append(element);
     }
 
     m_modalNodesInitialized = true;
@@ -325,12 +327,12 @@ Element* AXObjectCache::updateCurrentModalNodeInternal()
 {
     // There might be multiple modal dialog nodes.
     // We use this function to pick the one we want.
-    if (m_modalElementsSet.isEmpty())
+    if (m_modalElements.isEmpty())
         return nullptr;
 
     // Pick the document active modal <dialog> element if it exists.
     if (Element* activeModalDialog = document().activeModalDialog()) {
-        ASSERT(m_modalElementsSet.contains(activeModalDialog));
+        ASSERT(m_modalElements.contains(activeModalDialog));
         return activeModalDialog;
     }
 
@@ -339,18 +341,18 @@ Element* AXObjectCache::updateCurrentModalNodeInternal()
     // If not, we want to pick the last visible dialog in the DOM.
     RefPtr<Element> focusedElement = document().focusedElement();
     RefPtr<Element> lastVisible;
-    for (auto& element : m_modalElementsSet) {
+    for (auto& element : m_modalElements) {
         // Elements in m_modalElementsSet may have become un-modal since we added them, but not yet removed
         // as part of the asynchronous m_deferredModalChangedList handling. Skip these.
         if (!element || !isModalElement(*element))
             continue;
 
         // To avoid trapping users in an empty modal, skip any non-visible element, or any element without accessible content.
-        if (!isNodeVisible(element) || !modalElementHasAccessibleContent(*element))
+        if (!isNodeVisible(element.get()) || !modalElementHasAccessibleContent(*element))
             continue;
 
-        lastVisible = element;
-        if (focusedElement && focusedElement->isDescendantOf(element))
+        lastVisible = element.get();
+        if (focusedElement && focusedElement->isDescendantOf(*element))
             break;
     }
     return lastVisible.get();
@@ -394,7 +396,7 @@ Node* AXObjectCache::modalNode()
     if (!m_modalNodesInitialized)
         findModalNodes();
 
-    if (m_modalElementsSet.isEmpty())
+    if (m_modalElements.isEmpty())
         return nullptr;
 
     // Check the cached current valid aria modal node first.
@@ -541,10 +543,11 @@ bool nodeHasRole(Node* node, StringView role)
     if (!node || !is<Element>(node))
         return false;
 
-    AtomString roleValue = downcast<Element>(*node).attributeWithoutSynchronization(roleAttr);
+    auto& element = downcast<Element>(*node);
+    AtomString roleValue = element.attributeWithoutSynchronization(roleAttr);
     if (roleValue.isNull()) {
-        if (auto* defaultARIA = downcast<Element>(*node).customElementDefaultARIAIfExists())
-            roleValue = defaultARIA->valueForAttribute(roleAttr);
+        if (auto* defaultARIA = element.customElementDefaultARIAIfExists())
+            roleValue = defaultARIA->valueForAttribute(element, roleAttr);
     }
     if (role.isNull())
         return roleValue.isEmpty();
@@ -737,6 +740,8 @@ AccessibilityObject* AXObjectCache::getOrCreate(Node* node)
         RefPtr<AccessibilityObject> object;
         if (select->usesMenuList()) {
             if (!isOptionElement)
+                return nullptr;
+            if (!select->renderer())
                 return nullptr;
             object = AccessibilityMenuListOption::create(downcast<HTMLOptionElement>(*node));
         } else
@@ -942,7 +947,9 @@ void AXObjectCache::remove(Node& node)
         m_deferredAttributeChange.removeAllMatching([&node] (const auto& entry) {
             return entry.element == &node;
         });
-        m_modalElementsSet.remove(downcast<Element>(&node));
+        m_modalElements.removeAllMatching([&node] (const auto& element) {
+            return downcast<Element>(&node) == element.get();
+        });
         m_deferredRecomputeIsIgnoredList.remove(downcast<Element>(node));
         m_deferredRecomputeTableIsExposedList.remove(downcast<Element>(node));
         m_deferredSelectedChildredChangedList.remove(downcast<Element>(node));
@@ -1218,7 +1225,7 @@ void AXObjectCache::notificationPostTimerFired()
     notificationsToPost.reserveInitialCapacity(notifications.size());
     for (const auto& note : notifications) {
         ASSERT(note.first);
-        if (!note.first->objectID() || !note.first->axObjectCache())
+        if (note.first->isDetached() || !note.first->axObjectCache())
             continue;
 
 #ifndef NDEBUG
@@ -1427,12 +1434,16 @@ void AXObjectCache::selectedChildrenChanged(RenderObject* renderer)
     postNotification(renderer, AXSelectedChildrenChanged, PostTarget::ObservableParent);
 }
 
-void AXObjectCache::selectedStateChanged(Node* node)
+static bool isARIATableCell(Node* node)
 {
-    // For a table cell, post AXSelectedStateChanged on the cell itself.
-    // For any other element, post AXSelectedChildrenChanged on the parent.
-    if (nodeHasRole(node, "gridcell"_s) || nodeHasRole(node, "cell"_s)
-        || nodeHasRole(node, "columnheader"_s) || nodeHasRole(node, "rowheader"_s))
+    return node && (nodeHasRole(node, "gridcell"_s) || nodeHasRole(node, "cell"_s) || nodeHasRole(node, "columnheader"_s) || nodeHasRole(node, "rowheader"_s));
+}
+
+void AXObjectCache::onSelectedChanged(Node* node)
+{
+    if (isARIATableCell(node))
+        postNotification(node, AXSelectedCellChanged);
+    else if (is<HTMLOptionElement>(node))
         postNotification(node, AXSelectedStateChanged);
     else
         selectedChildrenChanged(node);
@@ -1934,7 +1945,18 @@ void AXObjectCache::handleRoleChanged(AccessibilityObject* axObject)
     axObject->recomputeIsIgnored();
 
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
-    updateIsolatedTree(axObject, AXNotification::AXAriaRoleChanged);
+    updateIsolatedTree(axObject, AXNotification::AXRoleChanged);
+#endif
+}
+
+void AXObjectCache::handleRoleDescriptionChanged(Element* element)
+{
+    auto* object = get(element);
+    if (!object)
+        return;
+
+#if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+    updateIsolatedTree(object, AXNotification::AXRoleDescriptionChanged);
 #endif
 }
 
@@ -2083,7 +2105,7 @@ void AXObjectCache::handleAttributeChange(Element* element, const QualifiedName&
     else if (attrName == aria_relevantAttr)
         postNotification(element, AXLiveRegionRelevantChanged);
     else if (attrName == aria_selectedAttr)
-        selectedStateChanged(element);
+        onSelectedChanged(element);
     else if (attrName == aria_setsizeAttr)
         postNotification(element, AXSetSizeChanged);
     else if (attrName == aria_expandedAttr)
@@ -2113,6 +2135,8 @@ void AXObjectCache::handleAttributeChange(Element* element, const QualifiedName&
         postNotification(element, AXObjectCache::AXReadOnlyStatusChanged);
     else if (attrName == aria_requiredAttr)
         postNotification(element, AXObjectCache::AXRequiredStatusChanged);
+    else if (attrName == aria_roledescriptionAttr)
+        handleRoleDescriptionChanged(element);
     else if (attrName == aria_rowcountAttr)
         handleRowCountChanged(get(element), element ? &element->document() : nullptr);
     else if (attrName == aria_rowspanAttr) {
@@ -2478,7 +2502,7 @@ void AXObjectCache::setTextMarkerDataWithCharacterOffset(TextMarkerData& textMar
         vpOffset = deepPos.deprecatedEditingOffset();
     }
     
-    textMarkerData.axID = obj.get()->objectID();
+    textMarkerData.axID = obj->objectID();
     textMarkerData.node = domNode;
     textMarkerData.characterOffset = characterOffset.offset;
     textMarkerData.characterStartIndex = characterOffset.startIndex;
@@ -2771,7 +2795,7 @@ std::optional<TextMarkerData> AXObjectCache::textMarkerDataForVisiblePosition(co
     TextMarkerData textMarkerData;
     memset(static_cast<void*>(&textMarkerData), 0, sizeof(TextMarkerData));
     
-    textMarkerData.axID = obj.get()->objectID();
+    textMarkerData.axID = obj->objectID();
     textMarkerData.node = domNode;
     textMarkerData.offset = deepPos.deprecatedEditingOffset();
     textMarkerData.anchorType = deepPos.anchorType();
@@ -2804,7 +2828,7 @@ std::optional<TextMarkerData> AXObjectCache::textMarkerDataForFirstPositionInTex
     TextMarkerData textMarkerData;
     memset(static_cast<void*>(&textMarkerData), 0, sizeof(TextMarkerData));
     
-    textMarkerData.axID = obj.get()->objectID();
+    textMarkerData.axID = obj->objectID();
     textMarkerData.node = &textControl;
 
     cache->setNodeInUse(&textControl);
@@ -3408,7 +3432,6 @@ void AXObjectCache::prepareForDocumentDestruction(const Document& document)
 {
     HashSet<Ref<Node>> nodesToRemove;
     filterListForRemoval(m_textMarkerNodes, document, nodesToRemove);
-    filterListForRemoval(m_modalElementsSet, document, nodesToRemove);
     filterListForRemoval(m_deferredTextChangedList, document, nodesToRemove);
     filterListForRemoval(m_deferredNodeAddedOrRemovedList, document, nodesToRemove);
     filterWeakHashSetForRemoval(m_deferredRecomputeIsIgnoredList, document, nodesToRemove);
@@ -3422,6 +3445,11 @@ void AXObjectCache::prepareForDocumentDestruction(const Document& document)
     for (const auto& entry : m_deferredAttributeChange) {
         if (entry.element && (!entry.element->isConnected() || &entry.element->document() == &document))
             nodesToRemove.add(*entry.element);
+    }
+
+    for (const auto& element : m_modalElements) {
+        if (element && (!element->isConnected() || &element->document() == &document))
+            nodesToRemove.add(*element);
     }
 
     for (auto& node : nodesToRemove)
@@ -3535,9 +3563,12 @@ void AXObjectCache::performDeferredCacheUpdate()
         if (isModalElement(element)) {
             // Add the newly modified node to the modal nodes set.
             // We will recompute the current valid aria modal node in modalNode() when this node is not visible.
-            m_modalElementsSet.add(&element);
-        } else
-            m_modalElementsSet.remove(&element);
+            m_modalElements.append(&element);
+        } else {
+            m_modalElements.removeAllMatching([&element] (const auto& modalElement) {
+                return &element == modalElement.get();
+            });
+        }
     }
     m_deferredModalChangedList.clear();
 
@@ -3626,7 +3657,7 @@ void AXObjectCache::updateIsolatedTree(const Vector<std::pair<RefPtr<Accessibili
 
     for (const auto& notification : notifications) {
         AXLOG(notification);
-        if (!notification.first || !notification.first->objectID().isValid())
+        if (!notification.first || notification.first->isDetached())
             continue;
 
         switch (notification.second) {
@@ -3680,9 +3711,13 @@ void AXObjectCache::updateIsolatedTree(const Vector<std::pair<RefPtr<Accessibili
         case AXRequiredStatusChanged:
             tree->updateNodeProperty(*notification.first, AXPropertyName::IsRequired);
             break;
+        case AXRoleDescriptionChanged:
+            tree->updateNodeProperty(*notification.first, AXPropertyName::RoleDescription);
+            break;
         case AXRowIndexChanged:
             tree->updateNodeProperty(*notification.first, AXPropertyName::AXRowIndex);
             break;
+        case AXSelectedCellChanged:
         case AXSelectedStateChanged:
             tree->updateNodeProperty(*notification.first, AXPropertyName::IsSelected);
             break;
@@ -3697,7 +3732,7 @@ void AXObjectCache::updateIsolatedTree(const Vector<std::pair<RefPtr<Accessibili
             tree->updateNodeProperty(*notification.first, AXPropertyName::URL);
             break;
         case AXActiveDescendantChanged:
-        case AXAriaRoleChanged:
+        case AXRoleChanged:
         case AXColumnSpanChanged:
         case AXDescribedByChanged:
         case AXDropEffectChanged:
@@ -4015,24 +4050,53 @@ void AXObjectCache::updateRelationsIfNeeded()
     AXLOG("Updating relations.");
     m_relations.clear();
     m_relationTargets.clear();
+    updateRelationsForTree(m_document.rootNode());
+}
 
+void AXObjectCache::updateRelationsForTree(ContainerNode& rootNode)
+{
+    ASSERT(!rootNode.parentNode());
     struct RelationOrigin {
-        Element* originElement { nullptr };
+        RefPtr<Element> originElement;
         AtomString targetID;
         AXRelationType relationType;
     };
 
     struct RelationTarget {
-        Element* targetElement { nullptr };
+        RefPtr<Element> targetElement;
         AtomString targetID;
     };
 
     Vector<RelationOrigin> origins;
     Vector<RelationTarget> targets;
-    for (auto& element : descendantsOfType<Element>(m_document.rootNode())) {
+    for (auto& element : descendantsOfType<Element>(rootNode)) {
+        if (RefPtr shadowRoot = element.shadowRoot(); shadowRoot && shadowRoot->mode() != ShadowRootMode::UserAgent)
+            updateRelationsForTree(*shadowRoot);
         // Collect all possible origins, i.e., elements with non-empty relation attributes.
         for (const auto& attribute : relationAttributes()) {
+            if (m_document.settings().ariaReflectionForElementReferencesEnabled()) {
+                if (Element::isElementReflectionAttribute(attribute)) {
+                    if (auto reflectedElement = element.getElementAttribute(attribute)) {
+                        addRelation(&element, reflectedElement, attributeToRelationType(attribute));
+                        continue;
+                    }
+                } else if (Element::isElementsArrayReflectionAttribute(attribute)) {
+                    if (auto reflectedElements = element.getElementsArrayAttribute(attribute)) {
+                        for (auto reflectedElement : reflectedElements.value())
+                            addRelation(&element, reflectedElement.get(), attributeToRelationType(attribute));
+                        continue;
+                    }
+                }
+            }
+
             auto& idsString = element.attributeWithoutSynchronization(attribute);
+            if (idsString.isNull()) {
+                if (auto* defaultARIA = element.customElementDefaultARIAIfExists()) {
+                    for (auto& targetElement : defaultARIA->elementsForAttribute(element, attribute))
+                        addRelation(&element, targetElement.get(), attributeToRelationType(attribute));
+                }
+                continue;
+            }
             SpaceSplitString ids(idsString, SpaceSplitString::ShouldFoldCase::No);
             for (size_t i = 0; i < ids.size(); ++i)
                 origins.append({ &element, ids[i], attributeToRelationType(attribute) });
@@ -4052,7 +4116,7 @@ void AXObjectCache::updateRelationsIfNeeded()
             }
 
             if (origin.targetID == target.targetID)
-                addRelation(origin.originElement, target.targetElement, origin.relationType);
+                addRelation(origin.originElement.get(), target.targetElement.get(), origin.relationType);
         }
     }
 }

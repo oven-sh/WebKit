@@ -75,6 +75,7 @@ set(ANGLE_SOURCES
     ${angle_preprocessor_sources}
     ${angle_translator_glsl_base_sources}
     ${angle_translator_essl_sources}
+    ${angle_translator_essl_symbol_table_sources}
     ${angle_translator_glsl_and_vulkan_base_sources}
     ${angle_translator_glsl_sources}
     ${angle_translator_sources}
@@ -83,12 +84,6 @@ set(ANGLE_SOURCES
     src/libANGLE/capture/FrameCapture_mock.cpp
     src/libANGLE/capture/frame_capture_utils_mock.cpp
 )
-
-if (is_android)
-    list(APPEND ANGLE_SOURCES ${angle_translator_essl_symbol_table_sources})
-else ()
-    list(APPEND ANGLE_SOURCES ${angle_translator_glsl_symbol_table_sources})
-endif ()
 
 if (WIN32)
     # FIXME: DX11 support will not compile if this preprocessor definition is set
@@ -131,7 +126,7 @@ add_subdirectory(include)
 add_library(ANGLEFramework INTERFACE)
 add_dependencies(ANGLEFramework GLSLANGHeaders ANGLEHeaders)
 
-if (USE_ANGLE_EGL OR USE_ANGLE_WEBGL)
+if (USE_ANGLE_EGL OR ENABLE_WEBGL)
     add_library(ANGLE ${ANGLE_LIBRARY_TYPE}
         ${ANGLE_SOURCES}
         ${libangle_sources}
@@ -147,7 +142,7 @@ if (USE_ANGLE_EGL OR USE_ANGLE_WEBGL)
         LIBANGLE_IMPLEMENTATION
     )
     target_compile_definitions(ANGLE PUBLIC ${ANGLE_DEFINITIONS})
-    target_link_libraries(ANGLE PRIVATE ZLIB::ZLIB)
+    target_link_libraries(ANGLE PRIVATE ZLIB::ZLIB ${CMAKE_DL_LIBS})
 
     target_compile_definitions(ANGLEFramework INTERFACE ${gl_prototypes})
 
@@ -211,7 +206,7 @@ else ()
     )
 endif ()
 
-if (USE_ANGLE_WEBGL)
+if (ENABLE_WEBGL)
     set(libglesv2_entry_points_headers
         src/libGLESv2/entry_points_egl_autogen.h
         src/libGLESv2/entry_points_egl_ext_autogen.h
@@ -249,6 +244,7 @@ if (COMPILER_IS_GCC_OR_CLANG)
         if (TARGET ${angle_target})
             WEBKIT_ADD_TARGET_CXX_FLAGS(${angle_target}
                 -Wno-cast-align
+                -Wno-class-memaccess
                 -Wno-dangling-pointer
                 -Wno-extra
                 -Wno-suggest-attribute=format

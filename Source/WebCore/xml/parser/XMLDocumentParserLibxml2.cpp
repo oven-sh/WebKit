@@ -402,7 +402,7 @@ static bool externalEntityMimeTypeAllowed(const ResourceResponse& response)
     return MIMETypeRegistry::isXMLMIMEType(mimeType) || MIMETypeRegistry::isXMLEntityMIMEType(mimeType);
 }
 
-static inline void setAttributes(Element* element, Vector<Attribute>& attributeVector, ParserContentPolicy parserContentPolicy)
+static inline void setAttributes(Element* element, Vector<Attribute>& attributeVector, OptionSet<ParserContentPolicy> parserContentPolicy)
 {
     if (!scriptingContentIsAllowed(parserContentPolicy))
         element->stripScriptingAttributes(attributeVector);
@@ -598,8 +598,8 @@ bool XMLDocumentParser::supportsXMLVersion(const String& version)
     return version == "1.0"_s;
 }
 
-XMLDocumentParser::XMLDocumentParser(Document& document, FrameView* frameView)
-    : ScriptableDocumentParser(document)
+XMLDocumentParser::XMLDocumentParser(Document& document, FrameView* frameView, OptionSet<ParserContentPolicy> policy)
+    : ScriptableDocumentParser(document, policy)
     , m_view(frameView)
     , m_pendingCallbacks(makeUnique<PendingCallbacks>())
     , m_currentNode(&document)
@@ -607,7 +607,7 @@ XMLDocumentParser::XMLDocumentParser(Document& document, FrameView* frameView)
 {
 }
 
-XMLDocumentParser::XMLDocumentParser(DocumentFragment& fragment, HashMap<AtomString, AtomString>&& prefixToNamespaceMap, const AtomString& defaultNamespaceURI, ParserContentPolicy parserContentPolicy)
+XMLDocumentParser::XMLDocumentParser(DocumentFragment& fragment, HashMap<AtomString, AtomString>&& prefixToNamespaceMap, const AtomString& defaultNamespaceURI, OptionSet<ParserContentPolicy> parserContentPolicy)
     : ScriptableDocumentParser(fragment.document(), parserContentPolicy)
     , m_pendingCallbacks(makeUnique<PendingCallbacks>())
     , m_currentNode(&fragment)
@@ -910,9 +910,12 @@ void XMLDocumentParser::endElementNs()
         // FIXME: Script execution should be shared between
         // the libxml2 and Qt XMLDocumentParser implementations.
 
-        if (scriptElement.readyToBeParserExecuted())
-            scriptElement.executeClassicScript(ScriptSourceCode(scriptElement.scriptContent(), URL(document()->url()), m_scriptStartPosition, JSC::SourceProviderSourceType::Program, InlineClassicScript::create(scriptElement)));
-        else if (scriptElement.willBeParserExecuted() && scriptElement.loadableScript()) {
+        if (scriptElement.readyToBeParserExecuted()) {
+            if (scriptElement.scriptType() == ScriptType::Classic)
+                scriptElement.executeClassicScript(ScriptSourceCode(scriptElement.scriptContent(), URL(document()->url()), m_scriptStartPosition, JSC::SourceProviderSourceType::Program, InlineClassicScript::create(scriptElement)));
+            else
+                scriptElement.registerImportMap(ScriptSourceCode(scriptElement.scriptContent(), URL(document()->url()), m_scriptStartPosition, JSC::SourceProviderSourceType::ImportMap));
+        } else if (scriptElement.willBeParserExecuted() && scriptElement.loadableScript()) {
             m_pendingScript = PendingScript::create(scriptElement, *scriptElement.loadableScript());
             m_pendingScript->setClient(*this);
 

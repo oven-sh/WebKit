@@ -89,7 +89,6 @@
 #import "WKWebpagePreferencesInternal.h"
 #import "WKWebsiteDataStoreInternal.h"
 #import "WebBackForwardList.h"
-#import "WebCertificateInfo.h"
 #import "WebFullScreenManagerProxy.h"
 #import "WebPageGroup.h"
 #import "WebPageInspectorController.h"
@@ -847,11 +846,7 @@ static void hardwareKeyboardAvailabilityChangedCallback(CFNotificationCenterRef,
 
 - (SecTrustRef)serverTrust
 {
-    auto certificateInfo = _page->pageLoadState().certificateInfo();
-    if (!certificateInfo)
-        return nil;
-
-    return certificateInfo->certificateInfo().trust();
+    return _page->pageLoadState().certificateInfo().trust();
 }
 
 - (BOOL)canGoBack
@@ -1218,7 +1213,7 @@ static WKMediaPlaybackState toWKMediaPlaybackState(WebKit::MediaPlaybackState me
     // This code doesn't consider snapshotConfiguration.afterScreenUpdates since the software snapshot always
     // contains recent updates. If we ever have a UI-side snapshot mechanism on macOS, we will need to factor
     // in snapshotConfiguration.afterScreenUpdates at that time.
-    _page->takeSnapshot(WebCore::enclosingIntRect(rectInViewCoordinates), bitmapSize, WebKit::SnapshotOptionsInViewCoordinates, [handler, snapshotWidth, imageHeight](const WebKit::ShareableBitmap::Handle& imageHandle) {
+    _page->takeSnapshot(WebCore::enclosingIntRect(rectInViewCoordinates), bitmapSize, WebKit::SnapshotOptionsInViewCoordinates, [handler, snapshotWidth, imageHeight](const WebKit::ShareableBitmapHandle& imageHandle) {
         if (imageHandle.isNull()) {
             tracePoint(TakeSnapshotEnd, snapshotFailedTraceValue);
             handler(nil, createNSError(WKErrorUnknown).get());
@@ -2652,7 +2647,7 @@ static void convertAndAddHighlight(Vector<Ref<WebKit::SharedMemory>>& buffers, N
 - (NSArray *)_certificateChain
 {
     if (WebKit::WebFrameProxy* mainFrame = _page->mainFrame())
-        return mainFrame->certificateInfo() ? (__bridge NSArray *)WebCore::CertificateInfo::certificateChainFromSecTrust(mainFrame->certificateInfo()->certificateInfo().trust()).autorelease() : nil;
+        return (__bridge NSArray *)WebCore::CertificateInfo::certificateChainFromSecTrust(mainFrame->certificateInfo().trust()).autorelease();
 
     return nil;
 }
@@ -3952,11 +3947,7 @@ static inline OptionSet<WebKit::FindOptions> toFindOptions(_WKFindOptions wkFind
 
 - (NSArray *)certificateChain
 {
-    auto certificateInfo = _page->pageLoadState().certificateInfo();
-    if (!certificateInfo)
-        return @[ ];
-
-    return (__bridge NSArray *)WebCore::CertificateInfo::certificateChainFromSecTrust(certificateInfo->certificateInfo().trust()).autorelease() ?: @[ ];
+    return (__bridge NSArray *)WebCore::CertificateInfo::certificateChainFromSecTrust(_page->pageLoadState().certificateInfo().trust()).autorelease() ?: @[ ];
 }
 
 @end

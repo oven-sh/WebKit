@@ -153,10 +153,6 @@ def arguments_type(message):
     return 'std::tuple<%s>' % ', '.join(function_parameter_type(parameter.type, parameter.kind) for parameter in message.parameters)
 
 
-def reply_tuple(message):
-    return 'std::tuple<%s>' % (', '.join(reply_parameter_type(parameter.type) for parameter in message.reply_parameters))
-
-
 def reply_arguments_type(message):
     return 'std::tuple<%s>' % (', '.join(parameter.type for parameter in message.reply_parameters))
 
@@ -215,7 +211,6 @@ def message_to_struct_declaration(receiver, message):
             result.append('    static constexpr auto callbackThread = WTF::CompletionHandlerCallThread::MainThread;\n')
         else:
             result.append('    static constexpr auto callbackThread = WTF::CompletionHandlerCallThread::ConstructionThread;\n')
-        result.append('    using Reply = %s;\n' % reply_tuple(message))
         result.append('    using ReplyArguments = %s;\n' % reply_arguments_type(message))
 
     if len(function_parameters):
@@ -258,6 +253,7 @@ def forward_declarations_for_namespace(namespace, kind_and_types):
 def serialized_identifiers():
     return [
         'WebCore::BroadcastChannelIdentifier',
+        'WebCore::DOMCacheIdentifier',
         'WebCore::DisplayList::ItemBufferIdentifier',
         'WebCore::FetchIdentifier',
         'WebCore::FileSystemHandleIdentifier',
@@ -303,8 +299,6 @@ def serialized_identifiers():
         'WebKit::PageGroupIdentifier',
         'WebKit::PlaybackSessionContextIdentifier',
         'WebKit::QuotaIncreaseRequestIdentifier',
-        'WebKit::RTCDecoderIdentifier',
-        'WebKit::RTCEncoderIdentifier',
         'WebKit::RemoteAudioDestinationIdentifier',
         'WebKit::RemoteAudioHardwareListenerIdentifier',
         'WebKit::RemoteAudioSessionIdentifier',
@@ -325,6 +319,8 @@ def serialized_identifiers():
         'WebKit::TapIdentifier',
         'WebKit::TrackPrivateRemoteIdentifier',
         'WebKit::UserContentControllerIdentifier',
+        'WebKit::VideoDecoderIdentifier',
+        'WebKit::VideoEncoderIdentifier',
         'WebKit::WebGPUIdentifier',
         'WebKit::WebPageProxyIdentifier',
         'WebKit::WebURLSchemeHandlerIdentifier',
@@ -989,7 +985,7 @@ def headers_for_type(type):
         'WebKit::WebScriptMessageHandlerData': ['"WebUserContentControllerDataTypes.h"'],
         'WebKit::WebUserScriptData': ['"WebUserContentControllerDataTypes.h"'],
         'WebKit::WebUserStyleSheetData': ['"WebUserContentControllerDataTypes.h"'],
-        'webrtc::WebKitEncodedFrameInfo': ['<webrtc/sdk/WebKit/WebKitEncoder.h>', '<WebCore/LibWebRTCEnumTraits.h>'],
+        'webrtc::WebKitEncodedFrameInfo': ['"RTCWebKitEncodedFrameInfo.h"', '<WebCore/LibWebRTCEnumTraits.h>'],
     }
 
     headers = []

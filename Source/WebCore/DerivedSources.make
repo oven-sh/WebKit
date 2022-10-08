@@ -530,11 +530,16 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/remoteplayback/HTMLMediaElement+RemotePlayback.idl \
     $(WebCore)/Modules/remoteplayback/RemotePlayback.idl \
     $(WebCore)/Modules/remoteplayback/RemotePlaybackAvailabilityCallback.idl \
+    $(WebCore)/Modules/reporting/DeprecationReportBody.idl \
     $(WebCore)/Modules/reporting/Report.idl \
     $(WebCore)/Modules/reporting/ReportBody.idl \
     $(WebCore)/Modules/reporting/ReportingObserver.idl \
     $(WebCore)/Modules/reporting/ReportingObserverCallback.idl \
     $(WebCore)/Modules/reporting/TestReportBody.idl \
+    $(WebCore)/Modules/screen-wake-lock/Navigator+ScreenWakeLock.idl \
+    $(WebCore)/Modules/screen-wake-lock/WakeLock.idl \
+    $(WebCore)/Modules/screen-wake-lock/WakeLockSentinel.idl \
+    $(WebCore)/Modules/screen-wake-lock/WakeLockType.idl \
     $(WebCore)/Modules/speech/DOMWindow+SpeechSynthesis.idl \
     $(WebCore)/Modules/speech/SpeechSynthesis.idl \
     $(WebCore)/Modules/speech/SpeechSynthesisErrorCode.idl \
@@ -666,11 +671,31 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/webauthn/PublicKeyCredentialType.idl \
     $(WebCore)/Modules/webauthn/ResidentKeyRequirement.idl \
     $(WebCore)/Modules/webauthn/UserVerificationRequirement.idl \
-	$(WebCore)/Modules/webcodecs/VideoColorPrimaries.idl \
-	$(WebCore)/Modules/webcodecs/VideoColorSpace.idl \
-	$(WebCore)/Modules/webcodecs/VideoColorSpaceInit.idl \
-	$(WebCore)/Modules/webcodecs/VideoMatrixCoefficients.idl \
-	$(WebCore)/Modules/webcodecs/VideoTransferCharacteristics.idl \
+    $(WebCore)/Modules/webcodecs/BitrateMode.idl \
+    $(WebCore)/Modules/webcodecs/LatencyMode.idl \
+    $(WebCore)/Modules/webcodecs/HardwareAcceleration.idl \
+    $(WebCore)/Modules/webcodecs/PlaneLayout.idl \
+    $(WebCore)/Modules/webcodecs/VideoColorPrimaries.idl \
+    $(WebCore)/Modules/webcodecs/VideoColorSpace.idl \
+    $(WebCore)/Modules/webcodecs/VideoColorSpaceInit.idl \
+    $(WebCore)/Modules/webcodecs/VideoMatrixCoefficients.idl \
+    $(WebCore)/Modules/webcodecs/VideoPixelFormat.idl \
+    $(WebCore)/Modules/webcodecs/VideoTransferCharacteristics.idl \
+    $(WebCore)/Modules/webcodecs/WebCodecsEncodedVideoChunk.idl \
+    $(WebCore)/Modules/webcodecs/WebCodecsEncodedVideoChunkMetadata.idl \
+    $(WebCore)/Modules/webcodecs/WebCodecsEncodedVideoChunkOutputCallback.idl \
+    $(WebCore)/Modules/webcodecs/WebCodecsEncodedVideoChunkType.idl \
+    $(WebCore)/Modules/webcodecs/WebCodecsErrorCallback.idl \
+    $(WebCore)/Modules/webcodecs/WebCodecsCodecState.idl \
+    $(WebCore)/Modules/webcodecs/WebCodecsVideoDecoder.idl \
+    $(WebCore)/Modules/webcodecs/WebCodecsVideoDecoderConfig.idl \
+    $(WebCore)/Modules/webcodecs/WebCodecsVideoDecoderSupport.idl \
+    $(WebCore)/Modules/webcodecs/WebCodecsVideoEncoder.idl \
+    $(WebCore)/Modules/webcodecs/WebCodecsVideoEncoderConfig.idl \
+    $(WebCore)/Modules/webcodecs/WebCodecsVideoEncoderEncodeOptions.idl \
+    $(WebCore)/Modules/webcodecs/WebCodecsVideoEncoderSupport.idl \
+    $(WebCore)/Modules/webcodecs/WebCodecsVideoFrame.idl \
+    $(WebCore)/Modules/webcodecs/WebCodecsVideoFrameOutputCallback.idl \
     $(WebCore)/Modules/webdatabase/DOMWindow+WebDatabase.idl \
     $(WebCore)/Modules/webdatabase/Database.idl \
     $(WebCore)/Modules/webdatabase/DatabaseCallback.idl \
@@ -1159,6 +1184,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/html/canvas/EXTColorBufferHalfFloat.idl \
     $(WebCore)/html/canvas/EXTFloatBlend.idl \
     $(WebCore)/html/canvas/EXTFragDepth.idl \
+    $(WebCore)/html/canvas/EXTProvokingVertex.idl \
     $(WebCore)/html/canvas/EXTShaderTextureLOD.idl \
     $(WebCore)/html/canvas/EXTTextureCompressionBPTC.idl \
     $(WebCore)/html/canvas/EXTTextureCompressionRGTC.idl \
@@ -1299,6 +1325,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/page/ResizeObserverOptions.idl \
     $(WebCore)/page/ResizeObserverSize.idl \
     $(WebCore)/page/Screen.idl \
+    $(WebCore)/page/ScreenOrientation.idl \
     $(WebCore)/page/ScrollBehavior.idl \
     $(WebCore)/page/ScrollIntoViewOptions.idl \
     $(WebCore)/page/ScrollLogicalPosition.idl \
@@ -1471,7 +1498,6 @@ JS_BINDING_IDLS := \
     $(WebCore)/svg/SVGViewElement.idl \
     $(WebCore)/svg/SVGViewSpec.idl \
     $(WebCore)/svg/SVGZoomAndPan.idl \
-    $(WebCore)/svg/SVGZoomEvent.idl \
     $(WebCore)/testing/GCObservation.idl \
     $(WebCore)/testing/InternalSettings.idl \
     $(WebCore)/testing/Internals.idl \
@@ -1529,6 +1555,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/worklets/WorkletOptions.idl \
     $(WebCore)/xml/CustomXPathNSResolver.idl \
     $(WebCore)/xml/DOMParser.idl \
+    $(WebCore)/xml/ParseFromStringOptions.idl \
     $(WebCore)/xml/XMLHttpRequest.idl \
     $(WebCore)/xml/XMLHttpRequestEventTarget.idl \
     $(WebCore)/xml/XMLHttpRequestProgressEvent.idl \
@@ -1549,6 +1576,8 @@ JS_BINDING_IDLS := \
 ADDITIONAL_BINDING_IDLS = \
     DocumentTouch.idl \
     GestureEvent.idl \
+    Internals+Additions.idl \
+    InternalsAdditions.idl \
     Touch.idl \
     TouchEvent.idl \
     TouchList.idl \

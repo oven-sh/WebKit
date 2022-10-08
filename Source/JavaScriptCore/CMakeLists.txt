@@ -73,6 +73,8 @@ set(JavaScriptCore_OBJECT_LUT_SOURCES
     runtime/IntlDateTimeFormatPrototype.cpp
     runtime/IntlDisplayNamesConstructor.cpp
     runtime/IntlDisplayNamesPrototype.cpp
+    runtime/IntlDurationFormatConstructor.cpp
+    runtime/IntlDurationFormatPrototype.cpp
     runtime/IntlListFormatConstructor.cpp
     runtime/IntlListFormatPrototype.cpp
     runtime/IntlLocalePrototype.cpp
@@ -127,6 +129,8 @@ set(JavaScriptCore_OBJECT_LUT_SOURCES
 
     wasm/js/JSWebAssembly.cpp
     wasm/js/JSToWasmICCallee.cpp
+    wasm/js/WebAssemblyArrayConstructor.cpp
+    wasm/js/WebAssemblyArrayPrototype.cpp
     wasm/js/WebAssemblyCompileErrorConstructor.cpp
     wasm/js/WebAssemblyCompileErrorPrototype.cpp
     wasm/js/WebAssemblyExceptionConstructor.cpp
@@ -1046,6 +1050,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/Identifier.h
     runtime/IdentifierInlines.h
     runtime/ImplementationVisibility.h
+    runtime/ImportMap.h
     runtime/IndexingHeader.h
     runtime/IndexingHeaderInlines.h
     runtime/IndexingType.h

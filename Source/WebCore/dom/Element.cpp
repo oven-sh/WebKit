@@ -51,6 +51,7 @@
 #include "ElementAnimationRareData.h"
 #include "ElementInlines.h"
 #include "ElementIterator.h"
+#include "ElementName.h"
 #include "ElementRareData.h"
 #include "EventDispatcher.h"
 #include "EventHandler.h"
@@ -1012,14 +1013,14 @@ void Element::scrollIntoView(std::optional<std::variant<bool, ScrollIntoViewOpti
         renderer = listBoxScrollResult->first;
         absoluteBounds = listBoxScrollResult->second;
 
-        auto listBoxAbsoluteBounds = renderer->absoluteAnchorRectWithScrollMargin(&insideFixed);
+        auto listBoxAbsoluteBounds = renderer->absoluteAnchorRectWithScrollMargin(&insideFixed).marginRect;
         absoluteBounds.moveBy(listBoxAbsoluteBounds.location());
     } else {
         renderer = this->renderer();
         if (!renderer)
             return;
 
-        absoluteBounds = renderer->absoluteAnchorRectWithScrollMargin(&insideFixed);
+        absoluteBounds = renderer->absoluteAnchorRectWithScrollMargin(&insideFixed).marginRect;
     }
 
     ScrollIntoViewOptions options;
@@ -1055,7 +1056,7 @@ void Element::scrollIntoView(bool alignToTop)
         return;
 
     bool insideFixed;
-    LayoutRect absoluteBounds = renderer()->absoluteAnchorRectWithScrollMargin(&insideFixed);
+    LayoutRect absoluteBounds = renderer()->absoluteAnchorRectWithScrollMargin(&insideFixed).marginRect;
 
     // Align to the top / bottom and to the closest edge.
     auto alignY = alignToTop ? ScrollAlignment::alignTopAlways : ScrollAlignment::alignBottomAlways;
@@ -1073,7 +1074,7 @@ void Element::scrollIntoViewIfNeeded(bool centerIfNeeded)
         return;
 
     bool insideFixed;
-    LayoutRect absoluteBounds = renderer()->absoluteAnchorRectWithScrollMargin(&insideFixed);
+    LayoutRect absoluteBounds = renderer()->absoluteAnchorRectWithScrollMargin(&insideFixed).marginRect;
 
     auto alignY = centerIfNeeded ? ScrollAlignment::alignCenterIfNeeded : ScrollAlignment::alignToEdgeIfNeeded;
     auto alignX = centerIfNeeded ? ScrollAlignment::alignCenterIfNeeded : ScrollAlignment::alignToEdgeIfNeeded;
@@ -1090,7 +1091,7 @@ void Element::scrollIntoViewIfNotVisible(bool centerIfNotVisible)
         return;
     
     bool insideFixed;
-    LayoutRect absoluteBounds = renderer()->absoluteAnchorRectWithScrollMargin(&insideFixed);
+    LayoutRect absoluteBounds = renderer()->absoluteAnchorRectWithScrollMargin(&insideFixed).marginRect;
     auto align = centerIfNotVisible ? ScrollAlignment::alignCenterIfNotVisible : ScrollAlignment::alignToEdgeIfNotVisible;
     FrameView::scrollRectToVisible(absoluteBounds, *renderer(), insideFixed, { SelectionRevealMode::Reveal, align, align, ShouldAllowCrossOriginScrolling::No });
 }
@@ -1934,12 +1935,12 @@ static inline AtomString makeIdForStyleResolution(const AtomString& value, bool 
     return value;
 }
 
-static inline bool isElementReflectionAttribute(const QualifiedName& name)
+bool Element::isElementReflectionAttribute(const QualifiedName& name)
 {
     return name == HTMLNames::aria_activedescendantAttr;
 }
 
-static inline bool isElementsArrayReflectionAttribute(const QualifiedName& name)
+bool Element::isElementsArrayReflectionAttribute(const QualifiedName& name)
 {
     return name == HTMLNames::aria_controlsAttr
         || name == HTMLNames::aria_describedbyAttr
@@ -2084,11 +2085,7 @@ void Element::setElementAttribute(const QualifiedName& attributeName, Element* e
         return;
     }
 
-    auto id = element->getIdAttribute();
-    if (!id.isNull() && &rootNode() == &element->rootNode() && treeScope().getElementById(id) == element)
-        setAttribute(attributeName, id);
-    else
-        setAttribute(attributeName, emptyAtom());
+    setAttribute(attributeName, emptyAtom());
 
     explicitlySetAttrElementsMap().set(attributeName, Vector<WeakPtr<Element, WeakPtrImplWithEventTargetData>> { element });
 }
@@ -2136,24 +2133,13 @@ void Element::setElementsArrayAttribute(const QualifiedName& attributeName, std:
         return;
     }
 
+    setAttribute(attributeName, emptyAtom());
+
     Vector<WeakPtr<Element, WeakPtrImplWithEventTargetData>> newElements;
     newElements.reserveInitialCapacity(elements->size());
-    StringBuilder value;
     for (auto element : elements.value()) {
         newElements.uncheckedAppend(element);
-        if (value.isEmpty() && newElements.size() > 1)
-            continue;
-
-        auto id = element->getIdAttribute();
-        if (!id.isNull() && &rootNode() == &element->rootNode() && treeScope().getElementById(id) == element) {
-            if (!value.isEmpty())
-                value.append(' ');
-            value.append(id);
-        } else
-            value.clear();
     }
-    setAttribute(attributeName, value.toAtomString());
-
     explicitlySetAttrElementsMap().set(attributeName, WTFMove(newElements));
 }
 
@@ -2643,42 +2629,36 @@ void Element::removeShadowRoot()
 
 static bool canAttachAuthorShadowRoot(const Element& element)
 {
-    static NeverDestroyed tagNames = [] {
-        static constexpr std::array tagList {
-            &articleTag,
-            &asideTag,
-            &blockquoteTag,
-            &bodyTag,
-            &divTag,
-            &footerTag,
-            &h1Tag,
-            &h2Tag,
-            &h3Tag,
-            &h4Tag,
-            &h5Tag,
-            &h6Tag,
-            &headerTag,
-            &mainTag,
-            &navTag,
-            &pTag,
-            &sectionTag,
-            &spanTag
-        };
-        MemoryCompactLookupOnlyRobinHoodHashSet<AtomString> set;
-        set.reserveInitialCapacity(sizeof(tagList));
-        for (auto& name : tagList)
-            set.add(name->get().localName());
-        return set;
-    }();
+    using namespace ElementNames;
 
     if (!is<HTMLElement>(element))
         return false;
 
-    const auto& localName = element.localName();
-    if (tagNames.get().contains(localName))
+    switch (element.tagQName().elementName()) {
+    case HTML::article:
+    case HTML::aside:
+    case HTML::blockquote:
+    case HTML::body:
+    case HTML::div:
+    case HTML::footer:
+    case HTML::h1:
+    case HTML::h2:
+    case HTML::h3:
+    case HTML::h4:
+    case HTML::h5:
+    case HTML::h6:
+    case HTML::header:
+    case HTML::main:
+    case HTML::nav:
+    case HTML::p:
+    case HTML::section:
+    case HTML::span:
         return true;
+    default:
+        break;
+    }
 
-    if (Document::validateCustomElementName(localName) == CustomElementNameValidationStatus::Valid) {
+    if (auto localName = element.localName(); Document::validateCustomElementName(localName) == CustomElementNameValidationStatus::Valid) {
         if (auto* window = element.document().domWindow()) {
             auto* registry = window->customElementRegistry();
             if (registry && registry->isShadowDisabled(localName))
@@ -2695,14 +2675,31 @@ ExceptionOr<ShadowRoot&> Element::attachShadow(const ShadowRootInit& init)
 {
     if (!canAttachAuthorShadowRoot(*this))
         return Exception { NotSupportedError };
-    if (shadowRoot())
+    if (RefPtr shadowRoot = this->shadowRoot()) {
+        if (shadowRoot->isDeclarativeShadowRoot()) {
+            ChildListMutationScope mutation(*shadowRoot);
+            shadowRoot->removeChildren();
+            shadowRoot->setIsDeclarativeShadowRoot(false);
+            return *shadowRoot;
+        }
         return Exception { NotSupportedError };
+    }
     if (init.mode == ShadowRootMode::UserAgent)
         return Exception { TypeError };
     auto shadow = ShadowRoot::create(document(), init.mode, init.slotAssignment, init.delegatesFocus ? ShadowRoot::DelegatesFocus::Yes : ShadowRoot::DelegatesFocus::No, isPrecustomizedOrDefinedCustomElement() ? ShadowRoot::AvailableToElementInternals::Yes : ShadowRoot::AvailableToElementInternals::No);
     auto& result = shadow.get();
     addShadowRoot(WTFMove(shadow));
     return result;
+}
+
+ExceptionOr<ShadowRoot&> Element::attachDeclarativeShadow(ShadowRootMode mode, bool delegatesFocus)
+{
+    auto exceptionOrShadowRoot = attachShadow({ mode, delegatesFocus });
+    if (exceptionOrShadowRoot.hasException())
+        return exceptionOrShadowRoot.releaseException();
+    auto& shadowRoot = exceptionOrShadowRoot.releaseReturnValue();
+    shadowRoot.setIsDeclarativeShadowRoot(true);
+    return shadowRoot;
 }
 
 ShadowRoot* Element::shadowRootForBindings(JSC::JSGlobalObject& lexicalGlobalObject) const
@@ -3485,7 +3482,7 @@ ExceptionOr<void> Element::setOuterHTML(const String& html)
     RefPtr<Node> prev = previousSibling();
     RefPtr<Node> next = nextSibling();
 
-    auto fragment = createFragmentForInnerOuterHTML(*parent, html, AllowScriptingContent);
+    auto fragment = createFragmentForInnerOuterHTML(*parent, html, { ParserContentPolicy::AllowScriptingContent, ParserContentPolicy::AllowPluginContent });
     if (fragment.hasException())
         return fragment.releaseException();
 
@@ -3524,7 +3521,7 @@ ExceptionOr<void> Element::setInnerHTML(const String& html)
         return { };
     }
 
-    auto fragment = createFragmentForInnerOuterHTML(*this, html, AllowScriptingContent);
+    auto fragment = createFragmentForInnerOuterHTML(*this, html, { ParserContentPolicy::AllowScriptingContent, ParserContentPolicy::AllowPluginContent });
     if (fragment.hasException())
         return fragment.releaseException();
 
@@ -4866,7 +4863,7 @@ ExceptionOr<void> Element::insertAdjacentHTML(const String& where, const String&
     if (contextElement.hasException())
         return contextElement.releaseException();
     // Step 3.
-    auto fragment = createFragmentForInnerOuterHTML(contextElement.releaseReturnValue(), markup, AllowScriptingContent);
+    auto fragment = createFragmentForInnerOuterHTML(contextElement.releaseReturnValue(), markup, { ParserContentPolicy::AllowScriptingContent, ParserContentPolicy::AllowPluginContent });
     if (fragment.hasException())
         return fragment.releaseException();
 

@@ -165,8 +165,8 @@ namespace JSC { namespace DFG {
     macro(ArithDiv, NodeResultNumber | NodeMustGenerate) \
     macro(ArithMod, NodeResultNumber | NodeMustGenerate) \
     macro(ArithAbs, NodeResultNumber | NodeMustGenerate) \
-    macro(ArithMin, NodeResultNumber) \
-    macro(ArithMax, NodeResultNumber) \
+    macro(ArithMin, NodeResultNumber | NodeHasVarArgs) \
+    macro(ArithMax, NodeResultNumber | NodeHasVarArgs) \
     macro(ArithFRound, NodeResultDouble | NodeMustGenerate) \
     macro(ArithPow, NodeResultDouble) \
     macro(ArithRandom, NodeResultDouble | NodeMustGenerate) \
@@ -329,6 +329,7 @@ namespace JSC { namespace DFG {
     macro(RegExpMatchFastGlobal, NodeResultJS) \
     macro(StringReplace, NodeResultJS | NodeMustGenerate) \
     macro(StringReplaceRegExp, NodeResultJS | NodeMustGenerate) \
+    macro(StringReplaceString, NodeResultJS | NodeMustGenerate) \
     \
     /* Optimizations for string access */ \
     macro(StringCharCodeAt, NodeResultInt32) \
@@ -373,6 +374,7 @@ namespace JSC { namespace DFG {
     macro(NewAsyncGenerator, NodeResultJS) \
     macro(NewArray, NodeResultJS | NodeHasVarArgs) \
     macro(NewArrayWithSpread, NodeResultJS | NodeHasVarArgs) \
+    macro(NewArrayWithSpecies, NodeResultJS | NodeMustGenerate) \
     macro(NewArrayWithSize, NodeResultJS | NodeMustGenerate) \
     macro(NewArrayBuffer, NodeResultJS) \
     macro(NewInternalFieldObject, NodeResultJS) \
@@ -536,6 +538,7 @@ namespace JSC { namespace DFG {
     \
     macro(StringValueOf, NodeMustGenerate | NodeResultJS) \
     macro(StringSlice, NodeResultJS) \
+    macro(StringSubstring, NodeResultJS) \
     macro(ToLowerCase, NodeResultJS) \
     /* Nodes for DOM JIT */\
     macro(CallDOMGetter, NodeResultJS | NodeMustGenerate) \

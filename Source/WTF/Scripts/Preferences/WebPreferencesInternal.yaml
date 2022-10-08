@@ -142,6 +142,18 @@ CSSOMViewScrollingAPIEnabled:
     WebCore:
       default: false
 
+# FIXME: This is not relevent for WebKitLegacy, so should be excluded from WebKitLegacy entirely (though we should still set the default value to false when initializing settings).
+CacheAPIEnabled:
+  type: bool
+  humanReadableName: "Cache API"
+  humanReadableDescription: "Cache API"
+  webcoreBinding: DeprecatedGlobalSettings
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: true
+
 CaptureAudioInGPUProcessEnabled:
   type: bool
   humanReadableName: "GPU Process: Audio Capture"
@@ -256,16 +268,17 @@ EnterKeyHintEnabled:
       default: false
 
 EventHandlerDrivenSmoothKeyboardScrollingEnabled:
- type: bool
- humanReadableName: "EventHandler driven smooth keyboard scrolling"
- humanReadableDescription: "Enable EventHandler driven smooth keyboard scrolling"
- defaultValue:
-  WebKitLegacy:
-   default: false
-  WebKit:
-   default: false
-  WebCore:
-   default: false
+  type: bool
+  humanReadableName: "EventHandler driven smooth keyboard scrolling"
+  humanReadableDescription: "Enable EventHandler driven smooth keyboard scrolling"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      "PLATFORM(COCOA)": true
+      default: false
+    WebCore:
+      default: false
 
 FasterClicksEnabled:
   type: bool
@@ -276,6 +289,30 @@ FasterClicksEnabled:
   exposed: [ WebKit ]
   defaultValue:
     WebKit:
+      default: true
+
+FetchAPIEnabled:
+  type: bool
+  humanReadableName: "Fetch API"
+  humanReadableDescription: "Fetch API"
+  defaultValue:
+    WebKitLegacy:
+      default: true
+    WebKit:
+      default: true
+    WebCore:
+      default: true
+
+FileReaderAPIEnabled:
+  type: bool
+  humanReadableName: "FileReader API"
+  humanReadableDescription: "FileReader API"
+  defaultValue:
+    WebKitLegacy:
+      default: true
+    WebKit:
+      default: true
+    WebCore:
       default: true
 
 FlexFormattingContextIntegrationEnabled:
@@ -378,6 +415,18 @@ ImageAnalysisDuringFindInPageEnabled:
       default: false
     WebCore:
       default: false
+
+IndexedDBAPIEnabled:
+  type: bool
+  humanReadableName: "IndexedDB API"
+  humanReadableDescription: "IndexedDB API"
+  defaultValue:
+    WebKitLegacy:
+      default: true
+    WebKit:
+      default: true
+    WebCore:
+      default: true
 
 InlineFormattingContextIntegrationEnabled:
   type: bool
@@ -889,6 +938,30 @@ SpeakerSelectionRequiresUserGesture:
       default: true
     WebCore:
       default: true
+
+SpeechSynthesisAPIEnabled:
+  type: bool
+  humanReadableName: "SpeechSynthesis API"
+  humanReadableDescription: "SpeechSynthesis API"
+  defaultValue:
+    WebKitLegacy:
+      default: true
+    WebKit:
+      default: true
+    WebCore:
+      default: true
+
+StreamingDeclarativeShadowDOMEnabled:
+  type: bool
+  humanReadableName: "Streaming for Declarative Shadow DOM"
+  humanReadableDescription: "Enable Streaming for Declarative Shadow DOM"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
 
 # FIXME: Is this implemented for WebKitLegacy? If not, this should be excluded from WebKitLegacy entirely.
 TextAutosizingUsesIdempotentMode:

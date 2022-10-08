@@ -375,6 +375,7 @@ bool doesGC(Graph& graph, Node* node)
     case NewInternalFieldObject:
     case Spread:
     case NewArrayWithSize:
+    case NewArrayWithSpecies:
     case NewArrayBuffer:
     case NewRegexp:
     case NewStringObject:
@@ -398,7 +399,9 @@ bool doesGC(Graph& graph, Node* node)
     case StrCat:
     case StringReplace:
     case StringReplaceRegExp:
+    case StringReplaceString:
     case StringSlice:
+    case StringSubstring:
     case StringValueOf:
     case CreateRest:
     case ToLowerCase:

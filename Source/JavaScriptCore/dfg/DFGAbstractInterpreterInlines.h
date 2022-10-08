@@ -49,6 +49,7 @@
 #include "NumberConstructor.h"
 #include "PutByStatus.h"
 #include "RegExpObject.h"
+#include "RegExpPrototype.h"
 #include "SetPrivateBrandStatus.h"
 #include "StringObject.h"
 #include "StructureCache.h"
@@ -1171,29 +1172,54 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     }
 
     case ArithMin: {
-        JSValue left = forNode(node->child1()).value();
-        JSValue right = forNode(node->child2()).value();
-        switch (node->binaryUseKind()) {
-        case Int32Use:
-            if (left && right && left.isInt32() && right.isInt32()) {
-                setConstant(node, jsNumber(std::min(left.asInt32(), right.asInt32())));
+        switch (m_graph.child(node, 0).useKind()) {
+        case Int32Use: {
+            std::optional<int32_t> result;
+            bool found = true;
+            m_graph.doToChildren(node, [&](Edge& child) {
+                JSValue constant = forNode(child).value();
+                if (!constant || !constant.isInt32()) {
+                    found = false;
+                    return;
+                }
+                if (!result)
+                    result = constant.asInt32();
+                else
+                    result = std::min(result.value(), constant.asInt32());
+            });
+            if (found && result) {
+                setConstant(node, jsNumber(result.value()));
                 break;
             }
             setNonCellTypeForNode(node, SpecInt32Only);
             break;
-        case DoubleRepUse:
-            if (left && right && left.isNumber() && right.isNumber()) {
-                double a = left.asNumber();
-                double b = right.asNumber();
-                // The spec for Math.min states that +0 is considered to be larger than -0.
-                double result = a < b || (!a && !b && std::signbit(a)) ? a : (b <= a ? b : a + b);
-                setConstant(node, jsDoubleNumber(result));
+        }
+        case DoubleRepUse: {
+            std::optional<double> result;
+            bool found = true;
+            SpeculatedType type = SpecNone;
+            m_graph.doToChildren(node, [&](Edge& child) {
+                type = typeOfDoubleMinMax(type, forNode(child).m_type);
+                JSValue constant = forNode(child).value();
+                if (!constant || !constant.isNumber()) {
+                    found = false;
+                    return;
+                }
+                if (!result)
+                    result = constant.asNumber();
+                else {
+                    double a = result.value();
+                    double b = constant.asNumber();
+                    result = a < b || (!a && !b && std::signbit(a)) ? a : (b <= a ? b : a + b);
+                }
+            });
+            if (found && result) {
+                setConstant(node, jsDoubleNumber(result.value()));
                 break;
             }
-            setNonCellTypeForNode(node, 
-                typeOfDoubleMinMax(
-                    forNode(node->child1()).m_type, forNode(node->child2()).m_type));
+            setNonCellTypeForNode(node, type);
             break;
+        }
         default:
             RELEASE_ASSERT_NOT_REACHED();
             break;
@@ -1202,29 +1228,54 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     }
             
     case ArithMax: {
-        JSValue left = forNode(node->child1()).value();
-        JSValue right = forNode(node->child2()).value();
-        switch (node->binaryUseKind()) {
-        case Int32Use:
-            if (left && right && left.isInt32() && right.isInt32()) {
-                setConstant(node, jsNumber(std::max(left.asInt32(), right.asInt32())));
+        switch (m_graph.child(node, 0).useKind()) {
+        case Int32Use: {
+            std::optional<int32_t> result;
+            bool found = true;
+            m_graph.doToChildren(node, [&](Edge& child) {
+                JSValue constant = forNode(child).value();
+                if (!constant || !constant.isInt32()) {
+                    found = false;
+                    return;
+                }
+                if (!result)
+                    result = constant.asInt32();
+                else
+                    result = std::max(result.value(), constant.asInt32());
+            });
+            if (found && result) {
+                setConstant(node, jsNumber(result.value()));
                 break;
             }
             setNonCellTypeForNode(node, SpecInt32Only);
             break;
-        case DoubleRepUse:
-            if (left && right && left.isNumber() && right.isNumber()) {
-                double a = left.asNumber();
-                double b = right.asNumber();
-                // The spec for Math.max states that +0 is considered to be larger than -0.
-                double result = a > b || (!a && !b && !std::signbit(a)) ? a : (b >= a ? b : a + b);
-                setConstant(node, jsDoubleNumber(result));
+        }
+        case DoubleRepUse: {
+            std::optional<double> result;
+            bool found = true;
+            SpeculatedType type = SpecNone;
+            m_graph.doToChildren(node, [&](Edge& child) {
+                type = typeOfDoubleMinMax(type, forNode(child).m_type);
+                JSValue constant = forNode(child).value();
+                if (!constant || !constant.isNumber()) {
+                    found = false;
+                    return;
+                }
+                if (!result)
+                    result = constant.asNumber();
+                else {
+                    double a = result.value();
+                    double b = constant.asNumber();
+                    result = a > b || (!a && !b && !std::signbit(a)) ? a : (b >= a ? b : a + b);
+                }
+            });
+            if (found && result) {
+                setConstant(node, jsDoubleNumber(result.value()));
                 break;
             }
-            setNonCellTypeForNode(node, 
-                typeOfDoubleMinMax(
-                    forNode(node->child1()).m_type, forNode(node->child2()).m_type));
+            setNonCellTypeForNode(node, type);
             break;
+        }
         default:
             RELEASE_ASSERT_NOT_REACHED();
             break;
@@ -1405,6 +1456,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         break;
     }
 
+    case StringSubstring:
     case StringSlice: {
         setTypeForNode(node, SpecString);
         break;
@@ -2653,11 +2705,19 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     case StringReplace:
     case StringReplaceRegExp:
         if (node->child1().useKind() == StringUse
-            && (node->child2().useKind() == RegExpObjectUse || node->child2().useKind() == StringUse)
+            && node->child2().useKind() == RegExpObjectUse
             && node->child3().useKind() == StringUse) {
             // This doesn't clobber the world. It just reads and writes regexp state.
         } else
             clobberWorld();
+        setForNode(node, m_vm.stringStructure.get());
+        break;
+
+    case StringReplaceString:
+        if (node->child3().useKind() != StringUse) {
+            // child3 could be non String (e.g. function). In this case, any side effect can happen.
+            clobberWorld();
+        }
         setForNode(node, m_vm.stringStructure.get());
         break;
 
@@ -2956,6 +3016,11 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     case NewArrayBuffer:
         setForNode(node,
             m_graph.globalObjectFor(node->origin.semantic)->arrayStructureForIndexingTypeDuringAllocation(node->indexingMode()));
+        break;
+
+    case NewArrayWithSpecies:
+        clobberWorld();
+        setTypeForNode(node, SpecObject);
         break;
 
     case NewArrayWithSize:
@@ -3418,12 +3483,56 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         makeHeapTopForNode(node);
         break;
 
-    case TryGetById:
+    case TryGetById: {
+        // This is very adhoc, but @tryGetById is not used in user code, and it is used adhocly in very limited places.
+        // So adhoc one is fine.
+        AbstractValue& value = forNode(node->child1());
+        if (value.m_structure.isFinite()
+            && (node->child1().useKind() == CellUse || !(value.m_type & ~SpecCell))) {
+            if (RegisteredStructure structure = value.m_structure.onlyStructure()) {
+                JSGlobalObject* globalObject = m_graph.globalObjectFor(node->origin.semantic);
+                if (structure->typeInfo().type() == RegExpObjectType
+                    && !structure->hasPolyProto()
+                    && structure->storedPrototype() == globalObject->regExpPrototype()
+                    && !structure->isDictionary()
+                    && structure->propertyAccessesAreCacheable()
+                    && structure->propertyAccessesAreCacheableForAbsence()
+                    && m_graph.isWatchingRegExpPrimordialPropertiesWatchpoint(node)) {
+                    UniquedStringImpl* uid = node->cacheableIdentifier().uid();
+
+                    auto attemptToFold = [&](UniquedStringImpl* name, JSValue constant) -> bool {
+                        if (uid != name)
+                            return false;
+                        unsigned attributes;
+                        PropertyOffset offset = structure->getConcurrently(uid, attributes);
+                        if (isValidOffset(offset))
+                            return false;
+                        didFoldClobberWorld();
+                        setConstant(node, *m_graph.freeze(constant));
+                        return true;
+                    };
+
+                    if (attemptToFold(m_vm.propertyNames->exec.impl(), globalObject->regExpProtoExecFunction()))
+                        break;
+
+                    if (attemptToFold(m_vm.propertyNames->global.impl(), globalObject->regExpProtoGlobalGetter()))
+                        break;
+
+                    if (attemptToFold(m_vm.propertyNames->unicode.impl(), globalObject->regExpProtoUnicodeGetter()))
+                        break;
+
+                    if (attemptToFold(m_vm.propertyNames->replaceSymbol.impl(), globalObject->regExpProtoSymbolReplaceFunction()))
+                        break;
+                }
+            }
+        }
+
         // FIXME: This should constant fold at least as well as the normal GetById case.
         // https://bugs.webkit.org/show_bug.cgi?id=156422
         clobberWorld();
         makeHeapTopForNode(node);
         break;
+    }
 
     case GetPrivateNameById:
     case GetByIdDirect:

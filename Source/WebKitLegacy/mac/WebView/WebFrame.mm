@@ -860,7 +860,7 @@ static NSURL *createUniqueWebDataURL();
     if (!document)
         return nil;
 
-    return kit(createFragmentFromMarkup(*document, markupString, baseURLString, WebCore::DisallowScriptingContent).ptr());
+    return kit(createFragmentFromMarkup(*document, markupString, baseURLString, { WebCore::ParserContentPolicy::AllowPluginContent }).ptr());
 }
 
 - (DOMDocumentFragment *)_documentFragmentWithNodesAsParagraphs:(NSArray *)nodes
@@ -1234,9 +1234,10 @@ static WebFrameLoadType toWebFrameLoadType(WebCore::FrameLoadType frameLoadType)
 #if ENABLE(ORIENTATION_EVENTS)
         WebView *webView = getWebView(self);
         [webView _setDeviceOrientation:[[webView _UIKitDelegateForwarder] deviceOrientation]];
-#endif
+
         if (auto* frame = core(self))
             frame->orientationChanged();
+#endif
     });
 }
 

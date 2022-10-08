@@ -102,6 +102,7 @@ namespace WebCore {
     macro(dataavailable) \
     macro(datachannel) \
     macro(dblclick) \
+    macro(dequeue) \
     macro(devicechange) \
     macro(devicemotion) \
     macro(deviceorientation) \
@@ -223,6 +224,7 @@ namespace WebCore {
     macro(ratechange) \
     macro(readystatechange) \
     macro(rejectionhandled) \
+    macro(release) \
     macro(remove) \
     macro(removesourcebuffer) \
     macro(removestream) \

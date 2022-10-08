@@ -31,10 +31,10 @@
 #include "FormData.h"
 #include "Frame.h"
 #include "HTTPHeaderNames.h"
-#include "HTTPParsers.h"
 #include "NavigationRequester.h"
 #include "Page.h"
 #include "PingLoader.h"
+#include "RFC8941.h"
 #include "Report.h"
 #include "ReportingClient.h"
 #include "ResourceResponse.h"
@@ -149,7 +149,7 @@ static std::tuple<Ref<SecurityOrigin>, CrossOriginOpenerPolicy> computeResponseO
     // if the initiator and its top level document are same-origin, or default (unsafe-none) otherwise.
     // https://github.com/whatwg/html/issues/6913
     if (SecurityPolicy::shouldInheritSecurityOriginFromOwner(response.url()) && requester)
-        return std::make_tuple(requester->securityOrigin, requester->securityOrigin->isSameOriginAs(requester->topOrigin) ? requester->crossOriginOpenerPolicy : CrossOriginOpenerPolicy { });
+        return std::make_tuple(requester->securityOrigin, requester->securityOrigin->isSameOriginAs(requester->topOrigin) ? requester->policyContainer.crossOriginOpenerPolicy : CrossOriginOpenerPolicy { });
 
     // If the HTTP response contains a CSP header, it may set sandbox flags, which would cause the origin to become opaque.
     auto responseOrigin = responseCSP && responseCSP->sandboxFlags() != SandboxNone ? SecurityOrigin::createOpaque() : SecurityOrigin::create(response.url());
@@ -193,20 +193,25 @@ CrossOriginOpenerPolicy obtainCrossOriginOpenerPolicy(const ResourceResponse& re
         return *coep;
     };
     auto parseCOOP = [&response, &ensureCOEP](HTTPHeaderName headerName, auto& value, auto& reportingEndpoint) {
-        auto coopParsingResult = parseStructuredFieldValue(response.httpHeaderField(headerName));
+        auto coopParsingResult = RFC8941::parseItemStructuredFieldValue(response.httpHeaderField(headerName));
         if (!coopParsingResult)
             return;
 
-        if (coopParsingResult->first == "same-origin"_s) {
+        auto* policyString = std::get_if<RFC8941::Token>(&coopParsingResult->first);
+        if (!policyString)
+            return;
+
+        if (policyString->string() == "same-origin"_s) {
             auto& coep = ensureCOEP();
             if (coep.value == CrossOriginEmbedderPolicyValue::RequireCORP || (headerName == HTTPHeaderName::CrossOriginOpenerPolicyReportOnly && coep.reportOnlyValue == CrossOriginEmbedderPolicyValue::RequireCORP))
                 value = CrossOriginOpenerPolicyValue::SameOriginPlusCOEP;
             else
                 value = CrossOriginOpenerPolicyValue::SameOrigin;
-        } else if (coopParsingResult->first == "same-origin-allow-popups"_s)
+        } else if (policyString->string() == "same-origin-allow-popups"_s)
             value = CrossOriginOpenerPolicyValue::SameOriginAllowPopups;
 
-        reportingEndpoint = coopParsingResult->second.get<HashTranslatorASCIILiteral>("report-to"_s);
+        if (auto* reportToString = coopParsingResult->second.getIf<String>("report-to"_s))
+            reportingEndpoint = *reportToString;
     };
 
     CrossOriginOpenerPolicy policy;

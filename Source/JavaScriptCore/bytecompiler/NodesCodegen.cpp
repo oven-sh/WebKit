@@ -649,7 +649,7 @@ RegisterID* PropertyListNode::emitBytecode(BytecodeGenerator& generator, Registe
             continue;
         }
 
-        if (p->isStaticClassField()) {
+        if (p->isStaticClassElement()) {
             ASSERT(staticFieldLocations);
             staticFieldLocations->append(p->position());
             continue;
@@ -719,7 +719,7 @@ RegisterID* PropertyListNode::emitBytecode(BytecodeGenerator& generator, Registe
                 continue;
             }
 
-            if (p->isStaticClassField()) {
+            if (p->isStaticClassElement()) {
                 ASSERT(staticFieldLocations);
                 staticFieldLocations->append(p->position());
                 continue;
@@ -1261,6 +1261,25 @@ RegisterID* FunctionCallValueNode::emitBytecode(BytecodeGenerator& generator, Re
     RegisterID* ret = generator.emitCallInTailPosition(returnValue.get(), func.get(), NoExpectedFunction, callArguments, divot(), divotStart(), divotEnd(), DebuggableCall::Yes);
     generator.emitProfileType(returnValue.get(), divotStart(), divotEnd());
     return ret;
+}
+
+// ------------------------------ StaticBlockFunctionCallNode ----------------------------------
+
+RegisterID* StaticBlockFunctionCallNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
+{
+    // There are two possible optimizations in this implementation.
+    // https://bugs.webkit.org/show_bug.cgi?id=245925
+    RefPtr homeObject = emitHomeObjectForCallee(generator);
+    RefPtr function = generator.emitNode(m_expr);
+    emitPutHomeObject(generator, function.get(), homeObject.get()); 
+    RefPtr returnValue = generator.finalDestination(dst, function.get());
+
+    CallArguments callArguments(generator, nullptr);
+    generator.move(callArguments.thisRegister(), generator.thisRegister());
+    RefPtr result = generator.emitCallInTailPosition(returnValue.get(), function.get(), NoExpectedFunction, callArguments, divot(), divotStart(), divotEnd(), DebuggableCall::Yes);
+
+    generator.emitProfileType(returnValue.get(), divotStart(), divotEnd());
+    return result.get();
 }
 
 // ------------------------------ FunctionCallResolveNode ----------------------------------
@@ -1941,6 +1960,19 @@ RegisterID* BytecodeIntrinsicNode::emit_intrinsic_newArrayWithSize(JSC::Bytecode
 
     RefPtr<RegisterID> finalDestination = generator.finalDestination(dst);
     generator.emitNewArrayWithSize(finalDestination.get(), size.get());
+    return finalDestination.get();
+}
+
+RegisterID* BytecodeIntrinsicNode::emit_intrinsic_newArrayWithSpecies(JSC::BytecodeGenerator& generator, JSC::RegisterID* dst)
+{
+    ArgumentListNode* node = m_args->m_listNode;
+    RefPtr<RegisterID> size = generator.emitNode(node);
+    node = node->m_next;
+    RefPtr<RegisterID> array = generator.emitNode(node);
+    ASSERT(!node->m_next);
+
+    RefPtr<RegisterID> finalDestination = generator.finalDestination(dst);
+    generator.emitNewArrayWithSpecies(finalDestination.get(), size.get(), array.get());
     return finalDestination.get();
 }
 

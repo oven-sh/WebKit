@@ -118,6 +118,8 @@ Node::InsertedIntoAncestorResult ShadowRoot::insertedIntoAncestor(InsertionType 
     DocumentFragment::insertedIntoAncestor(insertionType, parentOfInsertedTree);
     if (insertionType.connectedToDocument)
         document().didInsertInDocumentShadowRoot(*this);
+    if (!adoptedStyleSheets().isEmpty() && document().frame())
+        styleScope().didChangeActiveStyleSheetCandidates();
     return InsertedIntoAncestorResult::Done;
 }
 
@@ -154,12 +156,16 @@ void ShadowRoot::childrenChanged(const ChildChange& childChange)
 
 void ShadowRoot::moveShadowRootToNewParentScope(TreeScope& newScope, Document& newDocument)
 {
+    auto& oldDocument = documentScope();
     setParentTreeScope(newScope);
-    moveShadowRootToNewDocument(newDocument);
+    moveShadowRootToNewDocument(oldDocument, newDocument);
 }
 
-void ShadowRoot::moveShadowRootToNewDocument(Document& newDocument)
+void ShadowRoot::moveShadowRootToNewDocument(Document& oldDocument, Document& newDocument)
 {
+    if (oldDocument.templateDocumentHost() != &newDocument && newDocument.templateDocumentHost() != &oldDocument)
+        setAdoptedStyleSheets({ });
+
     setDocumentScope(newDocument);
     RELEASE_ASSERT_WITH_SECURITY_IMPLICATION(!parentTreeScope() || &parentTreeScope()->documentScope() == &newDocument);
 
@@ -193,7 +199,7 @@ ExceptionOr<void> ShadowRoot::setInnerHTML(const String& markup)
         return { };
     }
 
-    auto fragment = createFragmentForInnerOuterHTML(*host(), markup, AllowScriptingContent);
+    auto fragment = createFragmentForInnerOuterHTML(*host(), markup, { ParserContentPolicy::AllowScriptingContent, ParserContentPolicy::AllowPluginContent });
     if (fragment.hasException())
         return fragment.releaseException();
     return replaceChildrenWithFragment(*this, fragment.releaseReturnValue());

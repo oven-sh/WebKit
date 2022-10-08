@@ -51,7 +51,9 @@
 #include "WorkletGlobalScope.h"
 #include <JavaScriptCore/AbstractModuleRecord.h>
 #include <JavaScriptCore/Completion.h>
+#include <JavaScriptCore/ImportMap.h>
 #include <JavaScriptCore/JSInternalPromise.h>
+#include <JavaScriptCore/JSNativeStdFunction.h>
 #include <JavaScriptCore/JSScriptFetchParameters.h>
 #include <JavaScriptCore/JSScriptFetcher.h>
 #include <JavaScriptCore/JSSourceCode.h>
@@ -89,25 +91,13 @@ static bool isRootModule(JSC::JSValue importerModuleKey)
     return importerModuleKey.isSymbol() || importerModuleKey.isUndefined();
 }
 
-static Expected<URL, String> resolveModuleSpecifier(ScriptExecutionContext& context, ScriptModuleLoader::OwnerType ownerType, const String& specifier, const URL& baseURL)
+static Expected<URL, String> resolveModuleSpecifier(ScriptExecutionContext& context, ScriptModuleLoader::OwnerType ownerType, JSC::ImportMap& importMap, const String& specifier, const URL& originalBaseURL)
 {
     // https://html.spec.whatwg.org/multipage/webappapis.html#resolve-a-module-specifier
 
-    URL absoluteURL { specifier };
-    if (absoluteURL.isValid())
-        return absoluteURL;
-
-    if (!specifier.startsWith('/') && !specifier.startsWith("./"_s) && !specifier.startsWith("../"_s))
-        return makeUnexpected(makeString("Module specifier, '"_s, specifier, "' does not start with \"/\", \"./\", or \"../\". Referenced from "_s, baseURL.string()));
-
-    URL result;
-    if (ownerType == ScriptModuleLoader::OwnerType::Document)
-        result = downcast<Document>(context).completeURL(specifier, baseURL);
-    else
-        result = URL(baseURL, specifier);
-
-    if (!result.isValid())
-        return makeUnexpected(makeString("Module name, '"_s, result.string(), "' does not resolve to a valid URL."_s));
+    URL result = importMap.resolve(specifier, ownerType == ScriptModuleLoader::OwnerType::Document ? downcast<Document>(context).baseURLForComplete(originalBaseURL) : originalBaseURL);
+    if (result.isNull())
+        return makeUnexpected(makeString("Module name, '"_s, specifier, "' does not resolve to a valid URL."_s));
     return result;
 }
 
@@ -133,9 +123,12 @@ JSC::Identifier ScriptModuleLoader::resolve(JSC::JSGlobalObject* jsGlobalObject,
     URL baseURL = responseURLFromRequestURL(*jsGlobalObject, importerModuleKey);
     RETURN_IF_EXCEPTION(scope, { });
 
-    auto result = resolveModuleSpecifier(m_context, m_ownerType, specifier, baseURL);
+    auto result = resolveModuleSpecifier(m_context, m_ownerType, jsGlobalObject->importMap(), specifier, baseURL);
     if (!result) {
-        JSC::throwTypeError(jsGlobalObject, scope, result.error());
+        auto* error = JSC::createTypeError(jsGlobalObject, result.error());
+        ASSERT(error);
+        error->putDirect(vm, builtinNames(vm).failureKindPrivateName(), JSC::jsNumber(static_cast<int32_t>(ModuleFetchFailureKind::WasResolveError)));
+        JSC::throwException(jsGlobalObject, scope, error);
         return { };
     }
 
@@ -244,7 +237,8 @@ URL ScriptModuleLoader::responseURLFromRequestURL(JSC::JSGlobalObject& jsGlobalO
     ASSERT_WITH_MESSAGE(URL(requestURL).isValid(), "Invalid module referrer never starts importing dependent modules.");
 
     auto iterator = m_requestURLToResponseURLMap.find(requestURL);
-    ASSERT_WITH_MESSAGE(iterator != m_requestURLToResponseURLMap.end(), "Module referrer must register itself to the map before starting importing dependent modules.");
+    if (iterator == m_requestURLToResponseURLMap.end())
+        return URL { requestURL }; // dynamic-import().
     URL result = iterator->value;
     ASSERT(result.isValid());
     return result;
@@ -384,17 +378,13 @@ JSC::JSInternalPromise* ScriptModuleLoader::importModule(JSC::JSGlobalObject* js
 
     auto specifier = moduleName->value(jsGlobalObject);
     RETURN_IF_EXCEPTION(scope, reject(scope));
-    auto result = resolveModuleSpecifier(m_context, m_ownerType, specifier, baseURL);
-    if (!result) {
-        scope.release();
-        return rejectPromise(globalObject, TypeError, result.error());
-    }
-
-    RELEASE_AND_RETURN(scope, JSC::importModule(jsGlobalObject, JSC::Identifier::fromString(vm, result->string()), JSC::JSScriptFetchParameters::create(vm, parameters.releaseNonNull()), JSC::JSScriptFetcher::create(vm, WTFMove(scriptFetcher))));
+    RELEASE_AND_RETURN(scope, JSC::importModule(jsGlobalObject, JSC::Identifier::fromString(vm, specifier), JSC::jsString(vm, baseURL.string()), JSC::JSScriptFetchParameters::create(vm, parameters.releaseNonNull()), JSC::JSScriptFetcher::create(vm, WTFMove(scriptFetcher))));
 }
 
 JSC::JSObject* ScriptModuleLoader::createImportMetaProperties(JSC::JSGlobalObject* jsGlobalObject, JSC::JSModuleLoader*, JSC::JSValue moduleKeyValue, JSC::JSModuleRecord*, JSC::JSValue)
 {
+    // https://html.spec.whatwg.org/multipage/webappapis.html#hostgetimportmetaproperties
+
     auto& vm = jsGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -406,6 +396,31 @@ JSC::JSObject* ScriptModuleLoader::createImportMetaProperties(JSC::JSGlobalObjec
 
     metaProperties->putDirect(vm, JSC::Identifier::fromString(vm, "url"_s), JSC::jsString(vm, responseURL.string()));
     RETURN_IF_EXCEPTION(scope, nullptr);
+
+    String resolveName = "resolve"_s;
+    OwnerType ownerType = m_ownerType;
+    auto* function = JSC::JSNativeStdFunction::create(vm, jsGlobalObject, 1, resolveName, [ownerType, responseURL](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
+        JSC::VM& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        auto specifier = callFrame->argument(0).toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+
+        auto* domGlobalObject = jsDynamicCast<JSDOMGlobalObject*>(globalObject);
+        if (UNLIKELY(!domGlobalObject))
+            return JSC::throwVMTypeError(globalObject, scope);
+
+        auto* context = domGlobalObject->scriptExecutionContext();
+        if (UNLIKELY(!context))
+            return JSC::throwVMTypeError(globalObject, scope);
+
+        auto result = resolveModuleSpecifier(*context, ownerType, domGlobalObject->importMap(), specifier, responseURL);
+        if (UNLIKELY(!result))
+            return JSC::throwVMTypeError(globalObject, scope, result.error());
+
+        return JSC::JSValue::encode(JSC::jsString(vm, result->string()));
+    });
+    metaProperties->putDirect(vm, JSC::Identifier::fromString(vm, resolveName), function);
 
     return metaProperties;
 }

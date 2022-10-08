@@ -524,6 +524,7 @@ static CGSize roundScrollViewContentSize(const WebKit::WebPageProxy& page, CGSiz
     _page->didLayoutForCustomContentProvider();
 }
 
+ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
 - (void)_handleKeyUIEvent:(::UIEvent *)event
 {
     // We only want to handle key events from the hardware keyboard when we are
@@ -538,6 +539,7 @@ static CGSize roundScrollViewContentSize(const WebKit::WebPageProxy& page, CGSiz
 
     [super _handleKeyUIEvent:event];
 }
+ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 
 - (void)_willInvokeUIScrollViewDelegateCallback
 {
@@ -1287,9 +1289,17 @@ static WebCore::FloatPoint constrainContentOffset(WebCore::FloatPoint contentOff
 
     [_scrollView _stopScrollingAndZoomingAnimations];
 
-    if (!CGPointEqualToPoint(contentOffsetInScrollViewCoordinates, [_scrollView contentOffset]))
+    CGPoint scrollViewContentOffset = [_scrollView contentOffset];
+
+    if (!CGPointEqualToPoint(contentOffsetInScrollViewCoordinates, scrollViewContentOffset)) {
+        if (WTF::areEssentiallyEqual<float>(scrollPosition.x(), 0) && scrollViewContentOffset.x < 0)
+            contentOffsetInScrollViewCoordinates.x = scrollViewContentOffset.x;
+
+        if (WTF::areEssentiallyEqual<float>(scrollPosition.y(), 0) && scrollViewContentOffset.y < 0)
+            contentOffsetInScrollViewCoordinates.y = scrollViewContentOffset.y;
+
         [_scrollView setContentOffset:contentOffsetInScrollViewCoordinates animated:animated];
-    else {
+    } else {
         // If we haven't changed anything, there would not be any VisibleContentRect update sent to the content.
         // The WebProcess would keep the invalid contentOffset as its scroll position.
         // To synchronize the WebProcess with what is on screen, we send the VisibleContentRect again.
@@ -1879,14 +1889,14 @@ static WebCore::FloatPoint constrainContentOffset(WebCore::FloatPoint contentOff
 #if HAVE(UISCROLLVIEW_ASYNCHRONOUS_SCROLL_EVENT_HANDLING)
 - (void)_scrollView:(UIScrollView *)scrollView asynchronouslyHandleScrollEvent:(UIScrollEvent *)scrollEvent completion:(void (^)(BOOL handled))completion
 {
+    BOOL isHandledByDefault = !scrollView.scrollEnabled;
+
 #if ENABLE(OVERLAY_REGIONS_IN_EVENT_REGION)
     if ([scrollEvent _scrollDeviceCategory] == _UIScrollDeviceCategoryOverlayScroll) {
-        completion(YES);
+        completion(isHandledByDefault);
         return;
     }
 #endif
-
-    BOOL isHandledByDefault = !scrollView.scrollEnabled;
 
     if (scrollEvent.phase == UIScrollPhaseMayBegin) {
         completion(isHandledByDefault);
@@ -2480,8 +2490,8 @@ static bool scrollViewCanScroll(UIScrollView *scrollView)
 
     CGFloat scaleFactor = contentZoomScale(self);
     CGRect unobscuredRect = UIEdgeInsetsInsetRect(self.bounds, computedContentInsetUnadjustedForKeyboard);
-    CGRect unobscuredRectInContentCoordinates = _perProcessState.frozenUnobscuredContentRect ? _perProcessState.frozenUnobscuredContentRect.value() : [self convertRect:unobscuredRect toView:_contentView.get()];
-    unobscuredRectInContentCoordinates = CGRectIntersection(unobscuredRectInContentCoordinates, [self _contentBoundsExtendedForRubberbandingWithScale:scaleFactor]);
+    WebCore::FloatRect unobscuredRectInContentCoordinates = WebCore::FloatRect(_perProcessState.frozenUnobscuredContentRect ? _perProcessState.frozenUnobscuredContentRect.value() : [self convertRect:unobscuredRect toView:_contentView.get()]);
+    unobscuredRectInContentCoordinates.intersect([self _contentBoundsExtendedForRubberbandingWithScale:scaleFactor]);
 
     auto contentInsets = [self currentlyVisibleContentInsetsWithScale:scaleFactor obscuredInsets:computedContentInsetUnadjustedForKeyboard];
 
@@ -3131,11 +3141,11 @@ static bool isLockdownModeWarningNeeded()
     if (attribution) {
         WebCore::PrivateClickMeasurement measurement(
             WebCore::PrivateClickMeasurement::SourceID(attribution.sourceIdentifier),
-            WebCore::PrivateClickMeasurement::SourceSite(attribution.reportEndpoint),
-            WebCore::PrivateClickMeasurement::AttributionDestinationSite(attribution.destinationURL),
+            WebCore::PCM::SourceSite(attribution.reportEndpoint),
+            WebCore::PCM::AttributionDestinationSite(attribution.destinationURL),
             WebCore::applicationBundleIdentifier(),
             WallTime::now(),
-            WebCore::PrivateClickMeasurement::AttributionEphemeral::No
+            WebCore::PCM::AttributionEphemeral::No
         );
         _page->setPrivateClickMeasurement({{ WTFMove(measurement), attribution.sourceDescription, attribution.purchaser }});
     } else
@@ -3151,7 +3161,7 @@ static bool isLockdownModeWarningNeeded()
         return nil;
 
     URL destinationURL { makeString("https://", measurement->pcm.destinationSite().registrableDomain.string()) };
-    return adoptNS([[UIEventAttribution alloc] initWithSourceIdentifier:measurement->pcm.sourceID().id destinationURL:destinationURL sourceDescription:measurement->sourceDescription purchaser:measurement->purchaser]).autorelease();
+    return adoptNS([[UIEventAttribution alloc] initWithSourceIdentifier:measurement->pcm.sourceID() destinationURL:destinationURL sourceDescription:measurement->sourceDescription purchaser:measurement->purchaser]).autorelease();
 #else
     return nil;
 #endif
@@ -3169,11 +3179,11 @@ static bool isLockdownModeWarningNeeded()
     if (attribution) {
         WebCore::PrivateClickMeasurement measurement(
             WebCore::PrivateClickMeasurement::SourceID(attribution.sourceIdentifier),
-            WebCore::PrivateClickMeasurement::SourceSite(attribution.reportEndpoint),
-            WebCore::PrivateClickMeasurement::AttributionDestinationSite(attribution.destinationURL),
+            WebCore::PCM::SourceSite(attribution.reportEndpoint),
+            WebCore::PCM::AttributionDestinationSite(attribution.destinationURL),
             bundleID,
             WallTime::now(),
-            WebCore::PrivateClickMeasurement::AttributionEphemeral::Yes
+            WebCore::PCM::AttributionEphemeral::Yes
         );
         _page->setPrivateClickMeasurement({{ WTFMove(measurement), attribution.sourceDescription, attribution.purchaser }});
     } else
@@ -3767,7 +3777,7 @@ static bool isLockdownModeWarningNeeded()
         return;
     }
 
-    _page->takeSnapshot(WebCore::enclosingIntRect(snapshotRectInContentCoordinates), WebCore::expandedIntSize(WebCore::FloatSize(imageSize)), WebKit::SnapshotOptionsExcludeDeviceScaleFactor, [completionHandler = makeBlockPtr(completionHandler)](const WebKit::ShareableBitmap::Handle& imageHandle) {
+    _page->takeSnapshot(WebCore::enclosingIntRect(snapshotRectInContentCoordinates), WebCore::expandedIntSize(WebCore::FloatSize(imageSize)), WebKit::SnapshotOptionsExcludeDeviceScaleFactor, [completionHandler = makeBlockPtr(completionHandler)](const WebKit::ShareableBitmapHandle& imageHandle) {
         if (imageHandle.isNull())
             return completionHandler(nil);
 

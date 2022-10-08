@@ -86,12 +86,16 @@ bool InlineTextItem::isZeroWidthSpaceSeparator() const
     return !m_length || (m_length == 1 && inlineTextBox().content()[start()] == zeroWidthSpace); 
 }
 
-bool InlineTextItem::isCollapsibleNonBreakingSpace() const
+bool InlineTextItem::isQuirkNonBreakingSpace() const
 {
-    if (style().nbspMode() != NBSPMode::Space)
+    if (style().nbspMode() != NBSPMode::Space || style().whiteSpace() == WhiteSpace::Pre || style().whiteSpace() == WhiteSpace::NoWrap || style().whiteSpace() == WhiteSpace::BreakSpaces)
         return false;
-    // Note that this text item may be longer than just one character.
     return m_length && inlineTextBox().content()[start()] == noBreakSpace;
+}
+
+bool InlineTextItem::isFullyTrimmable() const
+{
+    return isWhitespace() && !TextUtil::shouldPreserveSpacesAndTabs(layoutBox());
 }
 
 bool InlineTextItem::shouldPreserveSpacesAndTabs(const InlineTextItem& inlineTextItem)

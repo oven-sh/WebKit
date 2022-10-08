@@ -26,9 +26,8 @@
 #include "config.h"
 #include "FloatingState.h"
 
-#include "FormattingContext.h"
-#include "LayoutBox.h"
-#include "LayoutContainerBox.h"
+#include "LayoutContainingBlockChainIterator.h"
+#include "LayoutInitialContainingBlock.h"
 #include "LayoutState.h"
 #include <wtf/IsoMallocInlines.h>
 
@@ -37,9 +36,9 @@ namespace Layout {
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(FloatingState);
 
-FloatingState::FloatItem::FloatItem(const Box& layoutBox, BoxGeometry absoluteBoxGeometry)
+FloatingState::FloatItem::FloatItem(const Box& layoutBox, Position position, BoxGeometry absoluteBoxGeometry)
     : m_layoutBox(layoutBox)
-    , m_position(layoutBox.isLeftFloatingPositioned() ? Position::Left : Position::Right)
+    , m_position(position)
     , m_absoluteBoxGeometry(absoluteBoxGeometry)
 {
 }
@@ -50,7 +49,7 @@ FloatingState::FloatItem::FloatItem(Position position, BoxGeometry absoluteBoxGe
 {
 }
 
-FloatingState::FloatingState(LayoutState& layoutState, const ContainerBox& formattingContextRoot)
+FloatingState::FloatingState(LayoutState& layoutState, const ElementBox& formattingContextRoot)
     : m_layoutState(layoutState)
     , m_formattingContextRoot(formattingContextRoot)
     , m_isLeftToRightDirection(formattingContextRoot.style().isLeftToRightDirection())
@@ -89,6 +88,18 @@ void FloatingState::append(FloatItem floatItem)
             return m_floats.insert(i + 1, floatItem);
     }
     m_floats.insert(0, floatItem);
+}
+
+bool FloatingState::FloatItem::isInFormattingContextOf(const ElementBox& formattingContextRoot) const
+{
+    ASSERT(formattingContextRoot.establishesFormattingContext());
+    ASSERT(!is<InitialContainingBlock>(m_layoutBox));
+    for (auto& containingBlock : containingBlockChain(*m_layoutBox)) {
+        if (&containingBlock == &formattingContextRoot)
+            return true;
+    }
+    ASSERT_NOT_REACHED();
+    return false;
 }
 
 void FloatingState::clear()

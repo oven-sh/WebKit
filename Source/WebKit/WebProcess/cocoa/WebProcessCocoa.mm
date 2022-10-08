@@ -106,6 +106,7 @@
 #import <wtf/FileSystem.h>
 #import <wtf/Language.h>
 #import <wtf/LogInitialization.h>
+#import <wtf/MemoryPressureHandler.h>
 #import <wtf/ProcessPrivilege.h>
 #import <wtf/SoftLinking.h>
 #import <wtf/cocoa/NSURLExtras.h>
@@ -224,7 +225,8 @@ static Boolean isAXAuthenticatedCallback(audit_token_t auditToken)
     bool authenticated = false;
     // IPC must be done on the main runloop, so dispatch it to avoid crashes when the secondary AX thread handles this callback.
     callOnMainRunLoopAndWait([&authenticated, auditToken] {
-        WebProcess::singleton().parentProcessConnection()->sendSync(Messages::WebProcessProxy::IsAXAuthenticated(auditToken), Messages::WebProcessProxy::IsAXAuthenticated::Reply(authenticated), 0);
+        auto sendResult = WebProcess::singleton().parentProcessConnection()->sendSync(Messages::WebProcessProxy::IsAXAuthenticated(auditToken), 0);
+        std::tie(authenticated) = sendResult.takeReplyOr(false);
     });
     return authenticated;
 }
@@ -623,6 +625,8 @@ RetainPtr<NSDictionary> WebProcess::additionalStateForDiagnosticReport() const
 
         return [NSDate dateWithTimeIntervalSince1970:page->loadCommitTime().secondsSinceEpoch().seconds()];
     });
+    auto websamStateDescription = MemoryPressureHandler::processStateDescription().createNSString();
+    [stateDictionary setObject:websamStateDescription.get() forKey:@"Websam State"];
 
     // Adding an empty array to the process state may provide an
     // indication of the existance of private sessions, which we'd like

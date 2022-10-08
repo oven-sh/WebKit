@@ -30,6 +30,7 @@
 #include "BubblewrapLauncher.h"
 #include "Connection.h"
 #include "FlatpakLauncher.h"
+#include "IPCUtilities.h"
 #include "ProcessExecutablePath.h"
 #include <errno.h>
 #include <fcntl.h>
@@ -41,6 +42,10 @@
 #include <wtf/glib/Sandbox.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/WTFString.h>
+
+#if USE(LIBWPE)
+#include "ProcessProviderLibWPE.h"
+#endif
 
 #if !USE(SYSTEM_MALLOC) && OS(LINUX)
 #include <bmalloc/valgrind.h>
@@ -70,7 +75,36 @@ static bool isFlatpakSpawnUsable()
 
 void ProcessLauncher::launchProcess()
 {
-    IPC::Connection::SocketPair socketPair = IPC::Connection::createPlatformConnection(IPC::Connection::ConnectionOptions::SetCloexecOnServer);
+    IPC::SocketPair socketPair = IPC::createPlatformConnection(IPC::PlatformConnectionOptions::SetCloexecOnServer);
+
+    GUniquePtr<gchar> processIdentifier(g_strdup_printf("%" PRIu64, m_launchOptions.processIdentifier.toUInt64()));
+    GUniquePtr<gchar> webkitSocket(g_strdup_printf("%d", socketPair.client));
+
+#if USE(LIBWPE) && !ENABLE(BUBBLEWRAP_SANDBOX)
+    if (ProcessProviderLibWPE::singleton().isEnabled()) {
+        unsigned nargs = 3;
+        char** argv = g_newa(char*, nargs);
+        unsigned i = 0;
+        argv[i++] = processIdentifier.get();
+        argv[i++] = webkitSocket.get();
+        argv[i++] = nullptr;
+
+        m_processIdentifier = ProcessProviderLibWPE::singleton().launchProcess(m_launchOptions, argv, socketPair.client);
+        if (m_processIdentifier <= -1)
+            g_error("Unable to spawn a new child process");
+
+        // Don't expose the parent socket to potential future children.
+        if (!setCloseOnExec(socketPair.client))
+            RELEASE_ASSERT_NOT_REACHED();
+
+        // We've finished launching the process, message back to the main run loop.
+        RunLoop::main().dispatch([protectedThis = Ref { *this }, this, serverSocket = socketPair.server] {
+            didFinishLaunchingProcess(m_processIdentifier, IPC::Connection::Identifier { serverSocket });
+        });
+
+        return;
+    }
+#endif
 
     String executablePath;
     CString realExecutablePath;
@@ -92,8 +126,6 @@ void ProcessLauncher::launchProcess()
     }
 
     realExecutablePath = FileSystem::fileSystemRepresentation(executablePath);
-    GUniquePtr<gchar> processIdentifier(g_strdup_printf("%" PRIu64, m_launchOptions.processIdentifier.toUInt64()));
-    GUniquePtr<gchar> webkitSocket(g_strdup_printf("%d", socketPair.client));
     unsigned nargs = 4; // size of the argv array for g_spawn_async()
 
 #if ENABLE(DEVELOPER_MODE)
@@ -190,7 +222,15 @@ void ProcessLauncher::terminateProcess()
     if (!m_processIdentifier)
         return;
 
+#if USE(LIBWPE) && !ENABLE(BUBBLEWRAP_SANDBOX)
+    if (ProcessProviderLibWPE::singleton().isEnabled())
+        ProcessProviderLibWPE::singleton().kill(m_processIdentifier);
+    else
+        kill(m_processIdentifier, SIGKILL);
+#else
     kill(m_processIdentifier, SIGKILL);
+#endif
+
     m_processIdentifier = 0;
 }
 

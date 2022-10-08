@@ -332,6 +332,7 @@ public:
     void colorMaskiOES(GCGLuint buf, GCGLboolean red, GCGLboolean green, GCGLboolean blue, GCGLboolean alpha) final;
     void drawArraysInstancedBaseInstanceANGLE(GCGLenum mode, GCGLint first, GCGLsizei count, GCGLsizei instanceCount, GCGLuint baseInstance) final;
     void drawElementsInstancedBaseVertexBaseInstanceANGLE(GCGLenum mode, GCGLsizei count, GCGLenum type, GCGLintptr offset, GCGLsizei instanceCount, GCGLint baseVertex, GCGLuint baseInstance) final;
+    void provokingVertexANGLE(GCGLenum mode) final;
     void getInternalformativ(GCGLenum target, GCGLenum internalformat, GCGLenum pname, GCGLSpan<GCGLint> params) final;
     RefPtr<WebCore::PixelBuffer> paintRenderingResultsToPixelBuffer() final;
     // End of list used by generate-gpup-webgl script.
@@ -350,9 +351,9 @@ protected:
         return m_streamConnection.send(WTFMove(message), m_graphicsContextGLIdentifier, defaultSendTimeout);
     }
     template<typename T>
-    WARN_UNUSED_RETURN IPC::Connection::SendSyncResult sendSync(T&& message, typename T::Reply&& reply)
+    WARN_UNUSED_RETURN IPC::Connection::SendSyncResult<T> sendSync(T&& message)
     {
-        return m_streamConnection.sendSync(WTFMove(message), WTFMove(reply), m_graphicsContextGLIdentifier, defaultSendTimeout);
+        return m_streamConnection.sendSync(WTFMove(message), m_graphicsContextGLIdentifier, defaultSendTimeout);
     }
 
     GraphicsContextGLIdentifier m_graphicsContextGLIdentifier { GraphicsContextGLIdentifier::generate() };

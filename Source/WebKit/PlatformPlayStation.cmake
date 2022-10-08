@@ -7,24 +7,24 @@ list(APPEND WebProcess_SOURCES
 )
 list(APPEND WebProcess_PRIVATE_LIBRARIES
     ${EGL_LIBRARIES}
+    ${ProcessLauncher_LIBRARY}
     OpenSSL::Crypto
-    WebKitRequirements::ProcessLauncher
 )
 
 list(APPEND NetworkProcess_SOURCES
     NetworkProcess/EntryPoint/playstation/NetworkProcessMain.cpp
 )
 list(APPEND NetworkProcess_PRIVATE_LIBRARIES
+    ${ProcessLauncher_LIBRARY}
     OpenSSL::Crypto
-    WebKitRequirements::ProcessLauncher
 )
 
 list(APPEND GPUProcess_SOURCES
     GPUProcess/EntryPoint/unix/GPUProcessMain.cpp
 )
 list(APPEND GPUProcess_PRIVATE_LIBRARIES
+    ${ProcessLauncher_LIBRARY}
     ${EGL_LIBRARIES}
-    WebKitRequirements::ProcessLauncher
 )
 
 list(APPEND WebKit_SOURCES
@@ -61,13 +61,6 @@ list(APPEND WebKit_SOURCES
     Shared/API/c/curl/WKCertificateInfoCurl.cpp
 
     Shared/API/c/playstation/WKEventPlayStation.cpp
-
-    Shared/CoordinatedGraphics/CoordinatedGraphicsScene.cpp
-    Shared/CoordinatedGraphics/SimpleViewportController.cpp
-
-    Shared/CoordinatedGraphics/threadedcompositor/CompositingRunLoop.cpp
-    Shared/CoordinatedGraphics/threadedcompositor/ThreadedCompositor.cpp
-    Shared/CoordinatedGraphics/threadedcompositor/ThreadedDisplayRefreshMonitor.cpp
 
     Shared/Plugins/Netscape/NetscapePluginModuleNone.cpp
 
@@ -131,7 +124,6 @@ list(APPEND WebKit_SOURCES
 
     WebProcess/WebPage/CoordinatedGraphics/CompositingCoordinator.cpp
     WebProcess/WebPage/CoordinatedGraphics/DrawingAreaCoordinatedGraphics.cpp
-    WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
 
     WebProcess/WebPage/libwpe/AcceleratedSurfaceLibWPE.cpp
 
@@ -159,6 +151,63 @@ list(APPEND WebKit_INCLUDE_DIRECTORIES
     "${WEBKIT_DIR}/WebProcess/WebPage/CoordinatedGraphics"
     "${WEBKIT_DIR}/WebProcess/WebPage/libwpe"
 )
+
+if (USE_COORDINATED_GRAPHICS)
+    list(APPEND WebKit_SOURCES
+        Shared/CoordinatedGraphics/CoordinatedGraphicsScene.cpp
+        Shared/CoordinatedGraphics/SimpleViewportController.cpp
+
+        Shared/CoordinatedGraphics/threadedcompositor/CompositingRunLoop.cpp
+        Shared/CoordinatedGraphics/threadedcompositor/ThreadedCompositor.cpp
+        Shared/CoordinatedGraphics/threadedcompositor/ThreadedDisplayRefreshMonitor.cpp
+
+        WebProcess/WebPage/CoordinatedGraphics/LayerTreeHost.cpp
+    )
+endif ()
+
+if (USE_GRAPHICS_LAYER_WC)
+    list(APPEND WebKit_SOURCES
+        GPUProcess/graphics/RemoteGraphicsContextGLWC.cpp
+
+        GPUProcess/graphics/wc/RemoteWCLayerTreeHost.cpp
+        GPUProcess/graphics/wc/WCContentBufferManager.cpp
+        GPUProcess/graphics/wc/WCScene.cpp
+        GPUProcess/graphics/wc/WCSceneContext.cpp
+
+        UIProcess/wc/DrawingAreaProxyWC.cpp
+
+        WebProcess/GPU/graphics/wc/RemoteGraphicsContextGLProxyWC.cpp
+        WebProcess/GPU/graphics/wc/RemoteWCLayerTreeHostProxy.cpp
+
+        WebProcess/WebPage/CoordinatedGraphics/LayerTreeHostTextureMapper.cpp
+
+        WebProcess/WebPage/wc/DrawingAreaWC.cpp
+        WebProcess/WebPage/wc/GraphicsLayerWC.cpp
+        WebProcess/WebPage/wc/WCLayerFactory.cpp
+        WebProcess/WebPage/wc/WCTileGrid.cpp
+    )
+
+    list(APPEND WebKit_INCLUDE_DIRECTORIES
+        "${WEBKIT_DIR}/GPUProcess/graphics/wc"
+        "${WEBKIT_DIR}/Shared/wc"
+        "${WEBKIT_DIR}/UIProcess/wc"
+        "${WEBKIT_DIR}/WebProcess/GPU/graphics/wc"
+        "${WEBKIT_DIR}/WebProcess/WebPage/wc"
+    )
+
+    list(APPEND WebKit_MESSAGES_IN_FILES
+        GPUProcess/graphics/wc/RemoteWCLayerTreeHost
+    )
+endif ()
+
+if (USE_WPE_BACKEND_PLAYSTATION)
+    list(APPEND WebKit_SOURCES
+        UIProcess/Launcher/libwpe/ProcessProviderLibWPE.cpp
+
+        UIProcess/Launcher/playstation/ProcessProviderPlayStation.cpp
+    )
+    list(APPEND WebKit_INCLUDE_DIRECTORIES "${WEBKIT_DIR}/UIProcess/Launcher/libwpe")
+endif ()
 
 # PlayStation specific
 list(APPEND WebKit_PUBLIC_FRAMEWORK_HEADERS

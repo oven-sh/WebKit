@@ -504,6 +504,10 @@
 #define ENABLE_WEB_AUDIO 0
 #endif
 
+#if !defined(ENABLE_WK_WEB_EXTENSIONS)
+#define ENABLE_WK_WEB_EXTENSIONS 0
+#endif
+
 #if !defined(ENABLE_XSLT)
 #define ENABLE_XSLT 1
 #endif
@@ -597,6 +601,13 @@
 #undef ENABLE_JIT
 #define ENABLE_JIT 0
 #endif
+#endif
+
+#if CPU(RISCV64)
+#undef ENABLE_WEBASSEMBLY
+#define ENABLE_WEBASSEMBLY 1
+#undef ENABLE_WEBASSEMBLY_B3JIT
+#define ENABLE_WEBASSEMBLY_B3JIT 0
 #endif
 
 #if !defined(ENABLE_C_LOOP)

@@ -11,7 +11,7 @@
 
     <meta name="application-name" content="WebKit">
 
-    <link rel="stylesheet" type="text/css" href="<?php echo get_stylesheet_uri(); ?>?20200127" media="all">
+    <link rel="stylesheet" type="text/css" href="<?php echo get_stylesheet_uri(); ?>?2022100501" media="all">
     <link rel="stylesheet" href="https://www.apple.com/wss/fonts?families=SF+Pro,v1" type="text/css">
     <link rel="stylesheet" href="https://www.apple.com/wss/fonts?families=SF+Mono,v2" type="text/css">
     <meta name="supported-color-schemes" content="light dark">
@@ -39,7 +39,7 @@
 <?php wp_nav_menu( array(
 'walker'          => new Responsive_Toggle_Walker_Nav_Menu(),
 'theme_location'  => 'site-nav',
-'items_wrap'      => '<input type="checkbox" id="%1$s-toggle" class="menu-toggle" /><label for="%1$s-toggle" class="label-toggle main-menu" data-open="Main Menu" data-close="Close Menu"></label><ul id="%1$s" class="%2$s" role="menubar">%3$s</ul>',
+'items_wrap'      => '<input type="checkbox" id="%1$s-toggle" class="menu-toggle" /><label for="%1$s-toggle" class="label-toggle main-menu" data-open="Main Menu" data-close="Close Menu"></label><ul id="%1$s" class="%2$s" role="menubar">%3$s<li><form action="/" method="get"><input type="search" name="s" class="search-input" value="'.get_search_query(true).'"></form></li></ul>',
 ) ); ?></nav>
         </div>
     </header>
