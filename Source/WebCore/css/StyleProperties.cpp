@@ -38,6 +38,7 @@
 #include "CSSValuePool.h"
 #include "Color.h"
 #include "Document.h"
+#include "FontSelectionValueInlines.h"
 #include "PropertySetCSSStyleDeclaration.h"
 #include "Rect.h"
 #include "StylePropertyShorthand.h"
@@ -77,9 +78,9 @@ static bool isNormalValue(const RefPtr<CSSValue>& value)
     return value && value->isPrimitiveValue() && downcast<CSSPrimitiveValue>(value.get())->isValueID() && downcast<CSSPrimitiveValue>(value.get())->valueID() == CSSValueNormal;
 }
 
-static bool isValueID(const Ref<CSSValue>& value, CSSValueID id)
+static bool isValueID(const CSSValue& value, CSSValueID id)
 {
-    return value->isPrimitiveValue() && downcast<CSSPrimitiveValue>(value.get()).isValueID() && downcast<CSSPrimitiveValue>(value.get()).valueID() == id;
+    return value.isPrimitiveValue() && downcast<CSSPrimitiveValue>(value).isValueID() && downcast<CSSPrimitiveValue>(value).valueID() == id;
 }
 
 static bool isValueID(const RefPtr<CSSValue>& value, CSSValueID id)
@@ -87,12 +88,14 @@ static bool isValueID(const RefPtr<CSSValue>& value, CSSValueID id)
     return value && isValueID(*value, id);
 }
 
-static bool isValueIDIncludingList(const Ref<CSSValue>& value, CSSValueID id)
+static bool isValueIDIncludingList(const CSSValue& value, CSSValueID id)
 {
     if (is<CSSValueList>(value)) {
-        if (downcast<CSSValueList>(value.get()).size() != 1)
+        auto& valueList = downcast<CSSValueList>(value);
+        if (valueList.size() != 1)
             return false;
-        return isValueID(downcast<CSSValueList>(value.get()).item(0), id);
+        auto* item = valueList.item(0);
+        return item && isValueID(*item, id);
     }
     return isValueID(value, id);
 }
@@ -455,7 +458,7 @@ void StyleProperties::appendFontLonghandValueIfExplicit(CSSPropertyID propertyID
         return;
     }
 
-    char prefix = '\0';
+    const char* prefix = "";
     switch (propertyID) {
     case CSSPropertyFontStyle:
         break; // No prefix.
@@ -468,19 +471,17 @@ void StyleProperties::appendFontLonghandValueIfExplicit(CSSPropertyID propertyID
     case CSSPropertyFontVariantEastAsian:
     case CSSPropertyFontWeight:
     case CSSPropertyFontStretch:
-        prefix = ' ';
+        prefix = " ";
         break;
     case CSSPropertyLineHeight:
-        prefix = '/';
+        prefix = " / ";
         break;
     default:
         ASSERT_NOT_REACHED();
     }
 
-    if (prefix && !result.isEmpty())
-        result.append(prefix);
     String value = propertyAt(foundPropertyIndex).value()->cssText();
-    result.append(value);
+    result.append(result.isEmpty() ? "" : prefix, value);
     if (!commonValue.isNull() && commonValue != value)
         commonValue = String();
 }
@@ -561,6 +562,17 @@ std::optional<CSSValueID> StyleProperties::isSingleFontShorthand() const
     return sizeValueID;
 }
 
+static std::optional<CSSValueID> fontStretchKeyword(double value)
+{
+    // If the numeric value does not fit in the fixed point FontSelectionValue, don't convert it to a keyword even if it rounds to a keyword value.
+    float valueAsFloat = value;
+    FontSelectionValue valueAsFontSelectionValue { valueAsFloat };
+    float valueAsFloatAfterRoundTrip = valueAsFontSelectionValue;
+    if (value != valueAsFloatAfterRoundTrip)
+        return std::nullopt;
+    return fontStretchKeyword(valueAsFontSelectionValue);
+}
+
 String StyleProperties::fontValue() const
 {
     int fontSizePropertyIndex = findPropertyIndex(CSSPropertyFontSize);
@@ -576,19 +588,41 @@ String StyleProperties::fontValue() const
     if (auto shorthand = isSingleFontShorthand())
         return getValueNameAtomString(shorthand.value());
 
-    String commonValue = fontSizeProperty.value()->cssText();
+    // Font stretch values can only be serialized in the font shorthand as keywords, since percentages are also valid font sizes.
+    // If a font stretch percentage can be expressed as a keyword, then do that.
+    ASCIILiteral fontStretchPercentageAsKeyword;
+    bool fontStretchIsNormal = false;
+    if (int fontStretchPropertyIndex = findPropertyIndex(CSSPropertyFontStretch); fontStretchPropertyIndex != -1) {
+        if (auto fontStretch = dynamicDowncast<CSSPrimitiveValue>(*propertyAt(fontStretchPropertyIndex).value())) {
+            std::optional<CSSValueID> keyword;
+            if (!fontStretch->isPercentage())
+                keyword = fontStretch->valueID();
+            else {
+                keyword = fontStretchKeyword(fontStretch->doubleValue());
+                if (!keyword)
+                    return emptyString();
+                fontStretchPercentageAsKeyword = getValueName(*keyword);
+            }
+            fontStretchIsNormal = keyword == CSSValueNormal;
+        }
+    }
+
+    auto fontSizeString = fontSizeProperty.value()->cssText();
+    auto commonValue = fontSizeString;
     StringBuilder result;
     appendFontLonghandValueIfExplicit(CSSPropertyFontStyle, result, commonValue);
     appendFontLonghandValueIfExplicit(CSSPropertyFontVariantCaps, result, commonValue);
     appendFontLonghandValueIfExplicit(CSSPropertyFontWeight, result, commonValue);
-    appendFontLonghandValueIfExplicit(CSSPropertyFontStretch, result, commonValue);
-    if (!result.isEmpty())
-        result.append(' ');
-    result.append(fontSizeProperty.value()->cssText());
+    if (fontStretchIsNormal)
+        commonValue = { };
+    else if (!fontStretchPercentageAsKeyword.isNull()) {
+        result.append(result.isEmpty() ? "" : " ", fontStretchPercentageAsKeyword);
+        commonValue = { };
+    } else
+        appendFontLonghandValueIfExplicit(CSSPropertyFontStretch, result, commonValue);
+    result.append(result.isEmpty() ? "" : " ", fontSizeString);
     appendFontLonghandValueIfExplicit(CSSPropertyLineHeight, result, commonValue);
-    if (!result.isEmpty())
-        result.append(' ');
-    result.append(fontFamilyProperty.value()->cssText());
+    result.append(result.isEmpty() ? "" : " ", fontFamilyProperty.value()->cssText());
     if (isCSSWideValueKeyword(commonValue))
         return commonValue;
     return result.toString();
@@ -1680,6 +1714,19 @@ StringBuilder StyleProperties::asTextInternal() const
             shorthands.append(substitutionValue.shorthandPropertyId());
             value = substitutionValue.shorthandValue().cssText();
         } else {
+            // FIXME: could probably use matchingShorthandsForLonghand() instead of populating 'shorthands' manually.
+            switch (propertyID) {
+            case CSSPropertyCustom:
+            case CSSPropertyDirection:
+            case CSSPropertyUnicodeBidi:
+                // These are the only longhands not included in the 'all' shorthand.
+                break;
+            default:
+                ASSERT(propertyID >= firstCSSProperty);
+                ASSERT(propertyID < firstShorthandProperty);
+                shorthands.append(CSSPropertyAll);
+            }
+
             switch (propertyID) {
             case CSSPropertyAnimationName:
             case CSSPropertyAnimationDuration:
@@ -1968,6 +2015,8 @@ StringBuilder StyleProperties::asTextInternal() const
     // In 2007 we decided this was required because background-position-x/y are non-standard properties and WebKit generated output would not work in Firefox (<rdar://problem/5143183>).
     // FIXME: This can probably be cleaned up now that background-position-x/y are standardized.
     auto appendPositionOrProperty = [&] (int xIndex, int yIndex, const char* name, const StylePropertyShorthand& shorthand) {
+        if (shorthandPropertyUsed[CSSPropertyAll - firstShorthandProperty])
+            return;
         if (xIndex != -1 && yIndex != -1 && propertyAt(xIndex).isImportant() == propertyAt(yIndex).isImportant()) {
             String value;
             auto xProperty = propertyAt(xIndex);

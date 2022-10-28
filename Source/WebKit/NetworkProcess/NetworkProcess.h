@@ -106,6 +106,7 @@ class NetworkConnectionToWebProcess;
 class NetworkProcessSupplement;
 class NetworkProximityManager;
 class NetworkResourceLoader;
+class NetworkStorageManager;
 class ProcessAssertion;
 class WebPageNetworkParameters;
 enum class CallDownloadDidStart : bool;
@@ -244,7 +245,7 @@ public:
     void setNotifyPagesWhenDataRecordsWereScanned(PAL::SessionID, bool value, CompletionHandler<void()>&&);
     void setResourceLoadStatisticsTimeAdvanceForTesting(PAL::SessionID, Seconds, CompletionHandler<void()>&&);
     void setIsRunningResourceLoadStatisticsTest(PAL::SessionID, bool value, CompletionHandler<void()>&&);
-    void setResourceLoadStatisticsEnabled(PAL::SessionID, bool);
+    void setTrackingPreventionEnabled(PAL::SessionID, bool);
     void setResourceLoadStatisticsLogTestingEvent(bool);
     void setResourceLoadStatisticsDebugMode(PAL::SessionID, bool debugMode, CompletionHandler<void()>&&d);
     void isResourceLoadStatisticsEphemeral(PAL::SessionID, CompletionHandler<void(bool)>&&) const;
@@ -395,6 +396,9 @@ public:
 
     void deleteWebsiteDataForOrigins(PAL::SessionID, OptionSet<WebsiteDataType>, const Vector<WebCore::SecurityOriginData>& origins, const Vector<String>& cookieHostNames, const Vector<String>& HSTSCacheHostnames, const Vector<RegistrableDomain>&, CompletionHandler<void()>&&);
 
+    bool allowsFirstPartyForCookies(WebCore::ProcessIdentifier, const URL&);
+    void addAllowedFirstPartyForCookies(WebCore::ProcessIdentifier, WebCore::RegistrableDomain&&);
+
 private:
     void platformInitializeNetworkProcess(const NetworkProcessCreationParameters&);
 
@@ -489,6 +493,7 @@ private:
 #if PLATFORM(IOS_FAMILY)
     void setIsHoldingLockedFiles(bool);
 #endif
+    void stopRunLoopIfNecessary();
 
     // Connections to WebProcesses.
     HashMap<WebCore::ProcessIdentifier, Ref<NetworkConnectionToWebProcess>> m_webProcessConnections;
@@ -506,6 +511,7 @@ private:
 
     HashMap<PAL::SessionID, std::unique_ptr<NetworkSession>> m_networkSessions;
     HashMap<PAL::SessionID, std::unique_ptr<WebCore::NetworkStorageSession>> m_networkStorageSessions;
+    HashMap<WebCore::ProcessIdentifier, HashSet<WebCore::RegistrableDomain>> m_allowedFirstPartiesForCookies;
 
 #if PLATFORM(COCOA)
     void platformInitializeNetworkProcessCocoa(const NetworkProcessCreationParameters&);
@@ -536,10 +542,12 @@ private:
     Seconds m_serviceWorkerFetchTimeout { defaultServiceWorkerFetchTimeout };
 
     HashMap<WebCore::PageIdentifier, Vector<WebCore::UserContentURLPattern>> m_extensionCORSDisablingPatterns;
+    HashSet<RefPtr<NetworkStorageManager>> m_closingStorageManagers;
 
     bool m_privateClickMeasurementEnabled { true };
     bool m_ftpEnabled { false };
     bool m_isSuspended { false };
+    bool m_didSyncCookiesForClose { false };
 };
 
 #if !PLATFORM(COCOA)

@@ -254,6 +254,12 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         def(PureValue(node));
         return;
 
+    case StringLocaleCompare:
+        read(World);
+        write(SideState);
+        def(PureValue(node));
+        return;
+
     case ArithMin:
     case ArithMax:
         def(PureValue(graph, node));
@@ -765,6 +771,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case StringValueOf:
     case ObjectKeys:
     case ObjectGetOwnPropertyNames:
+    case ObjectToString:
         clobberTop();
         return;
 
@@ -811,6 +818,8 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case ValueBitRShift:
         // FIXME: this use of single-argument isBinaryUseKind would prevent us from specializing (for example) for a HeapBigInt left-operand and a BigInt32 right-operand.
         if (node->isBinaryUseKind(AnyBigIntUse) || node->isBinaryUseKind(BigInt32Use) || node->isBinaryUseKind(HeapBigIntUse)) {
+            read(World);
+            write(SideState);
             def(PureValue(node));
             return;
         }

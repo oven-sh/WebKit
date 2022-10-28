@@ -40,6 +40,7 @@
 #include "VideoEncoderIdentifier.h"
 #include "WorkQueueMessageReceiver.h"
 #include <map>
+#include <wtf/Deque.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
@@ -70,7 +71,7 @@ public:
 
     std::optional<VideoCodecType> videoCodecTypeFromWebCodec(const String&);
 
-    using DecoderCallback = Function<void(Ref<WebCore::VideoFrame>&&, uint64_t timestamp)>;
+    using DecoderCallback = Function<void(RefPtr<WebCore::VideoFrame>&&, int64_t timestamp)>;
     struct Decoder {
         WTF_MAKE_FAST_ALLOCATED;
     public:
@@ -81,16 +82,22 @@ public:
         Lock decodedImageCallbackLock;
         bool hasError { false };
         RefPtr<IPC::Connection> connection;
+        Deque<Function<void()>> flushCallbacks WTF_GUARDED_BY_LOCK(flushCallbacksLock);
+        Lock flushCallbacksLock;
     };
 
     Decoder* createDecoder(VideoCodecType);
     void createDecoderAndWaitUntilReady(VideoCodecType, Function<void(Decoder&)>&&);
 
     int32_t releaseDecoder(Decoder&);
-    int32_t decodeFrame(Decoder&, uint32_t timeStamp, const uint8_t*, size_t, uint16_t width, uint16_t height);
+    void flushDecoder(Decoder&, Function<void()>&&);
+    void setDecoderFormatDescription(Decoder&, const uint8_t*, size_t, uint16_t width, uint16_t height);
+    int32_t decodeFrame(Decoder&, int64_t timeStamp, const uint8_t*, size_t, uint16_t width, uint16_t height);
     void registerDecodeFrameCallback(Decoder&, void* decodedImageCallback);
     void registerDecodedVideoFrameCallback(Decoder&, DecoderCallback&&);
 
+    using DescriptionCallback = Function<void(Span<const uint8_t>&&)>;
+    using EncoderCallback = Function<void(Span<const uint8_t>&&, bool isKeyFrame, int64_t timestamp)>;
     struct EncoderInitializationData {
         uint16_t width;
         uint16_t height;
@@ -107,17 +114,28 @@ public:
         Vector<std::pair<String, String>> parameters;
         std::optional<EncoderInitializationData> initializationData;
         void* encodedImageCallback WTF_GUARDED_BY_LOCK(encodedImageCallbackLock) { nullptr };
+        EncoderCallback encoderCallback;
+        DescriptionCallback descriptionCallback;
         Lock encodedImageCallbackLock;
         RefPtr<IPC::Connection> connection;
         SharedVideoFrameWriter sharedVideoFrameWriter;
         bool hasSentInitialEncodeRates { false };
+        bool useAnnexB { true };
+        bool isRealtime { true };
+        Deque<Function<void()>> flushCallbacks WTF_GUARDED_BY_LOCK(flushCallbacksLock);
+        Lock flushCallbacksLock;
     };
 
     Encoder* createEncoder(VideoCodecType, const std::map<std::string, std::string>&);
+    void createEncoderAndWaitUntilReady(VideoCodecType, const std::map<std::string, std::string>&, bool isRealtime, bool useAnnexB, Function<void(Encoder&)>&&);
     int32_t releaseEncoder(Encoder&);
     int32_t initializeEncoder(Encoder&, uint16_t width, uint16_t height, unsigned startBitrate, unsigned maxBitrate, unsigned minBitrate, uint32_t maxFramerate);
+    int32_t encodeFrame(Encoder&, const WebCore::VideoFrame&, uint32_t timestamp, bool shouldEncodeAsKeyFrame);
     int32_t encodeFrame(Encoder&, const webrtc::VideoFrame&, bool shouldEncodeAsKeyFrame);
+    void flushEncoder(Encoder&, Function<void()>&&);
     void registerEncodeFrameCallback(Encoder&, void* encodedImageCallback);
+    void registerEncodedVideoFrameCallback(Encoder&, EncoderCallback&&);
+    void registerEncoderDescriptionCallback(Encoder&, DescriptionCallback&&);
     void setEncodeRates(Encoder&, uint32_t bitRate, uint32_t frameRate);
 
     CVPixelBufferPoolRef pixelBufferPool(size_t width, size_t height, OSType);
@@ -135,10 +153,13 @@ private:
     void gpuProcessConnectionMayNoLongerBeNeeded();
 
     void failedDecoding(VideoDecoderIdentifier);
-    void completedDecoding(VideoDecoderIdentifier, uint32_t timeStamp, uint32_t timeStampNs, RemoteVideoFrameProxy::Properties&&);
+    void flushDecoderCompleted(VideoDecoderIdentifier);
+    void completedDecoding(VideoDecoderIdentifier, int64_t timeStamp, int64_t timeStampNs, RemoteVideoFrameProxy::Properties&&);
     // FIXME: Will be removed once RemoteVideoFrameProxy providers are the only ones sending data.
-    void completedDecodingCV(VideoDecoderIdentifier, uint32_t timeStamp, uint32_t timeStampNs, RetainPtr<CVPixelBufferRef>&&);
+    void completedDecodingCV(VideoDecoderIdentifier, int64_t timeStamp, int64_t timeStampNs, RetainPtr<CVPixelBufferRef>&&);
     void completedEncoding(VideoEncoderIdentifier, IPC::DataReference&&, const webrtc::WebKitEncodedFrameInfo&);
+    void flushEncoderCompleted(VideoEncoderIdentifier);
+    void setEncodingDescription(WebKit::VideoEncoderIdentifier, IPC::DataReference&&);
     RetainPtr<CVPixelBufferRef> convertToBGRA(CVPixelBufferRef);
 
     // GPUProcessConnection::Client
@@ -153,6 +174,8 @@ private:
     WorkQueue& workQueue() const { return m_queue; }
 
     Decoder* createDecoderInternal(VideoCodecType, Function<void(Decoder&)>&&);
+    Encoder* createEncoderInternal(VideoCodecType, const std::map<std::string, std::string>&, bool isRealtime, bool useAnnexB, Function<void(Encoder&)>&&);
+    template<typename Frame> int32_t encodeFrameInternal(Encoder&, const Frame&, bool shouldEncodeAsKeyFrame, WebCore::VideoFrame::Rotation, MediaTime, uint32_t);
 
 private:
     HashMap<VideoDecoderIdentifier, std::unique_ptr<Decoder>> m_decoders WTF_GUARDED_BY_CAPABILITY(workQueue());

@@ -199,13 +199,13 @@ inline ToThisResult isToThisAnIdentity(ECMAMode ecmaMode, AbstractValue& valueFo
 
     if (JSValue value = valueForNode.value()) {
         if (value.isCell()) {
-            auto* toThisMethod = value.asCell()->classInfo()->methodTable.toThis;
-            if (toThisMethod == &JSObject::toThis)
+            if (value.asCell()->isObject()) {
+                if (value.asCell()->inherits<JSScope>()) {
+                    if (ecmaMode.isStrict())
+                        return ToThisResult::Undefined;
+                    return ToThisResult::GlobalThis;
+                }
                 return ToThisResult::Identity;
-            if (toThisMethod == &JSScope::toThis) {
-                if (ecmaMode.isStrict())
-                    return ToThisResult::Undefined;
-                return ToThisResult::GlobalThis;
             }
         }
     }
@@ -225,7 +225,7 @@ inline ToThisResult isToThisAnIdentity(ECMAMode ecmaMode, AbstractValue& valueFo
                 overridesToThis = true;
 
             // If all the structures are JSScope's ones, we know the details of JSScope::toThis() operation.
-            allStructuresAreJSScope &= structure->classInfoForCells()->methodTable.toThis == JSScope::info()->methodTable.toThis;
+            allStructuresAreJSScope &= structure->classInfoForCells()->isSubClassOf(JSScope::info());
         });
         if (!overridesToThis)
             return ToThisResult::Identity;
@@ -2053,9 +2053,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
                     break;
                 }
 
-                if (!(leftType & SpecOther) && m_graph.masqueradesAsUndefinedWatchpointIsStillValid(node->origin.semantic)) {
-                    JSGlobalObject* globalObject = m_graph.globalObjectFor(node->origin.semantic);
-                    m_graph.watchpoints().addLazily(globalObject->masqueradesAsUndefinedWatchpoint());
+                if (!(leftType & SpecOther) && m_graph.isWatchingMasqueradesAsUndefinedWatchpointSet(node)) {
                     setConstant(node, jsBoolean(false));
                     break;
                 }
@@ -2208,6 +2206,10 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         setForNode(node, m_vm.stringStructure.get());
         break;
 
+    case StringLocaleCompare:
+        setNonCellTypeForNode(node, SpecInt32Only);
+        break;
+
     case EnumeratorGetByVal: {
         // FIXME: This should be able to do code motion for OwnStructureMode but we'd need to teach AI about the enumerator's cached structure for that to be profitable.
         clobberWorld();
@@ -2296,14 +2298,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
                     }
 
                     if (node->arrayMode().isOutOfBounds()) {
-                        JSGlobalObject* globalObject = m_graph.globalObjectFor(node->origin.semantic);
-                        Structure* arrayPrototypeStructure = globalObject->arrayPrototype()->structure();
-                        Structure* objectPrototypeStructure = globalObject->objectPrototype()->structure();
-                        if (arrayPrototypeStructure->transitionWatchpointSetIsStillValid()
-                            && objectPrototypeStructure->transitionWatchpointSetIsStillValid()
-                            && globalObject->arrayPrototypeChainIsSaneConcurrently(arrayPrototypeStructure, objectPrototypeStructure)) {
-                            m_graph.registerAndWatchStructureTransition(arrayPrototypeStructure);
-                            m_graph.registerAndWatchStructureTransition(objectPrototypeStructure);
+                        if (m_graph.isWatchingArrayPrototypeChainIsSaneWatchpoint(node)) {
                             if (node->arrayMode().type() == Array::Double && node->arrayMode().isOutOfBoundsSaneChain() && !(node->flags() & NodeBytecodeUsesAsOther))
                                 setConstant(node, jsNumber(PNaN));
                             else
@@ -2576,6 +2571,13 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     }
             
     case ArrayPush:
+        switch (node->arrayMode().type()) {
+        case Array::ForceExit:
+            m_state.setIsValid(false);
+            break;
+        default:
+            break;
+        }
         clobberWorld();
         setNonCellTypeForNode(node, SpecBytecodeNumber);
         break;
@@ -2669,8 +2671,11 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
 
         if (JSValue globalObjectValue = forNode(node->child1()).m_value) {
             if (JSGlobalObject* globalObject = jsDynamicCast<JSGlobalObject*>(globalObjectValue)) {
+                if (m_graph.m_plan.isUnlinked() && globalObject != m_graph.globalObjectFor(node->origin.semantic))
+                    break;
+
                 if (!globalObject->isHavingABadTime()) {
-                    m_graph.watchpoints().addLazily(globalObject->havingABadTimeWatchpoint());
+                    m_graph.watchpoints().addLazily(globalObject->havingABadTimeWatchpointSet());
                     RegisteredStructureSet structureSet;
                     structureSet.add(m_graph.registerStructure(globalObject->regExpMatchesArrayStructure()));
                     structureSet.add(m_graph.registerStructure(globalObject->regExpMatchesArrayWithIndicesStructure()));
@@ -3082,8 +3087,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         if (JSValue base = forNode(node->child1()).m_value) {
             if (auto* function = jsDynamicCast<JSFunction*>(base)) {
                 if (FunctionRareData* rareData = function->rareData()) {
-                    JSGlobalObject* globalObject = m_graph.globalObjectFor(node->origin.semantic);
-                    if (rareData->allocationProfileWatchpointSet().isStillValid() && m_graph.isWatchingStructureCacheClearedWatchpoint(globalObject)) {
+                    if (rareData->allocationProfileWatchpointSet().isStillValid() && m_graph.isWatchingStructureCacheClearedWatchpoint(node)) {
                         if (Structure* structure = rareData->objectAllocationStructure()) {
                             m_graph.freeze(rareData);
                             m_graph.watchpoints().addLazily(rareData->allocationProfileWatchpointSet());
@@ -3112,7 +3116,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
             }
             if (auto* function = jsDynamicCast<JSFunction*>(base)) {
                 if (FunctionRareData* rareData = function->rareData()) {
-                    if (rareData->allocationProfileWatchpointSet().isStillValid() && m_graph.isWatchingStructureCacheClearedWatchpoint(globalObject)) {
+                    if (rareData->allocationProfileWatchpointSet().isStillValid() && m_graph.isWatchingStructureCacheClearedWatchpoint(node)) {
                         Structure* structure = rareData->internalFunctionAllocationStructure();
                         if (structure
                             && structure->classInfoForCells() == (node->isInternalPromise() ? JSInternalPromise::info() : JSPromise::info())
@@ -3140,7 +3144,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
             if (JSValue base = forNode(node->child1()).m_value) {
                 if (auto* function = jsDynamicCast<JSFunction*>(base)) {
                     if (FunctionRareData* rareData = function->rareData()) {
-                        if (rareData->allocationProfileWatchpointSet().isStillValid() && m_graph.isWatchingStructureCacheClearedWatchpoint(globalObject)) {
+                        if (rareData->allocationProfileWatchpointSet().isStillValid() && m_graph.isWatchingStructureCacheClearedWatchpoint(node)) {
                             Structure* structure = rareData->internalFunctionAllocationStructure();
                             if (structure
                                 && structure->classInfoForCells() == classInfo
@@ -3200,7 +3204,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
                 structure = globalObject->nullPrototypeObjectStructure();
             else if (base.isObject()) {
                 // Having a bad time clears the structureCache, and so it should invalidate this structure.
-                if (m_graph.isWatchingStructureCacheClearedWatchpoint(globalObject))
+                if (m_graph.isWatchingStructureCacheClearedWatchpoint(node))
                     structure = globalObject->structureCache().emptyObjectStructureConcurrently(base.getObject(), JSFinalObject::defaultInlineCapacity);
             }
 
@@ -3239,6 +3243,12 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
 
         clobberWorld();
         setTypeForNode(node, SpecArray);
+        break;
+    }
+
+    case ObjectToString: {
+        clobberWorld();
+        setTypeForNode(node, SpecString);
         break;
     }
 

@@ -637,11 +637,6 @@ RefPtr<Widget> EmptyFrameLoaderClient::createPlugin(const IntSize&, HTMLPlugInEl
     return nullptr;
 }
 
-std::optional<FrameIdentifier> EmptyFrameLoaderClient::frameID() const
-{
-    return std::nullopt;
-}
-
 std::optional<PageIdentifier> EmptyFrameLoaderClient::pageID() const
 {
     return std::nullopt;
@@ -793,7 +788,7 @@ void EmptyFrameLoaderClient::dispatchDidReceiveTitle(const StringWithDirection&)
 {
 }
 
-void EmptyFrameLoaderClient::dispatchDidCommitLoad(std::optional<HasInsecureContent>, std::optional<UsedLegacyTLS>)
+void EmptyFrameLoaderClient::dispatchDidCommitLoad(std::optional<HasInsecureContent>, std::optional<UsedLegacyTLS>, std::optional<WasPrivateRelayed>)
 {
 }
 
@@ -1050,9 +1045,6 @@ void EmptyFrameLoaderClient::didRunInsecureContent(SecurityOrigin&, const URL&)
 {
 }
 
-void EmptyFrameLoaderClient::didDetectXSS(const URL&, bool)
-{
-}
 
 ObjectContentType EmptyFrameLoaderClient::objectContentType(const URL&, const String&)
 {

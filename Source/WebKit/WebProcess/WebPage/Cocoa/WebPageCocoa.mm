@@ -35,7 +35,7 @@
 #import "WebPasteboardOverrides.h"
 #import "WebPaymentCoordinator.h"
 #import "WebRemoteObjectRegistry.h"
-#import <pal/spi/cocoa/LaunchServicesSPI.h>
+#import <WebCore/DeprecatedGlobalSettings.h>
 #import <WebCore/DictionaryLookup.h>
 #import <WebCore/DocumentMarkerController.h>
 #import <WebCore/Editing.h>
@@ -60,10 +60,13 @@
 #import <WebCore/RenderElement.h>
 #import <WebCore/RenderedDocumentMarker.h>
 #import <WebCore/TextIterator.h>
+#import <pal/spi/cocoa/LaunchServicesSPI.h>
 
 #if PLATFORM(IOS)
 #import <WebCore/ParentalControlsContentFilter.h>
 #endif
+
+#define WEBPAGE_RELEASE_LOG(channel, fmt, ...) RELEASE_LOG(channel, "%p - [webPageID=%" PRIu64 "] WebPage::" fmt, this, m_identifier.toUInt64(), ##__VA_ARGS__)
 
 #if PLATFORM(COCOA)
 
@@ -436,7 +439,7 @@ void WebPage::getProcessDisplayName(CompletionHandler<void(String&&)>&& completi
 
 void WebPage::getPlatformEditorStateCommon(const Frame& frame, EditorState& result) const
 {
-    if (result.isMissingPostLayoutData)
+    if (!result.hasPostLayoutAndVisualData())
         return;
 
     const auto& selection = frame.selection().selection();
@@ -444,7 +447,7 @@ void WebPage::getPlatformEditorStateCommon(const Frame& frame, EditorState& resu
     if (!result.isContentEditable || selection.isNone())
         return;
 
-    auto& postLayoutData = result.postLayoutData();
+    auto& postLayoutData = *result.postLayoutData;
     if (auto editingStyle = EditingStyle::styleAtSelectionStart(selection)) {
         if (editingStyle->hasStyle(CSSPropertyFontWeight, "bold"_s))
             postLayoutData.typingAttributes |= AttributeBold;
@@ -647,6 +650,15 @@ void WebPage::readSelectionFromPasteboard(const String& pasteboardName, Completi
     frame.editor().readSelectionFromPasteboard(pasteboardName);
     completionHandler(true);
 }
+
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebPageCocoaAdditions.mm>)
+#include <WebKitAdditions/WebPageCocoaAdditions.mm>
+#else
+URL WebPage::sanitizeForCopyOrShare(const URL& url) const
+{
+    return url;
+}
+#endif
 
 } // namespace WebKit
 

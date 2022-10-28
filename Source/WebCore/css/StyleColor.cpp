@@ -32,17 +32,11 @@
 #include "config.h"
 #include "StyleColor.h"
 
-#include "CSSPrimitiveValue.h"
 #include "ColorSerialization.h"
 #include "HashTools.h"
 #include "RenderTheme.h"
 
 namespace WebCore {
-
-String serializationForRenderTreeAsText(const StyleColor& color)
-{
-    return serializationForRenderTreeAsText(color.resolveColorWithoutCurrentColor());
-}
 
 String serializationForCSS(const StyleColor& color)
 {
@@ -143,14 +137,6 @@ Color StyleColor::resolveColor(const Color& currentColor) const
     if (isCurrentColor())
         return currentColor;
 
-    return { };
-}
-
-Color StyleColor::resolveColorWithoutCurrentColor() const
-{
-    if (isAbsoluteColor())
-        return absoluteColor();
-    
     return { };
 }
 

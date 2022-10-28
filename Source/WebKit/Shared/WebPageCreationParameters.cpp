@@ -125,7 +125,7 @@ void WebPageCreationParameters::encode(IPC::Encoder& encoder) const
 #if USE(WPE_RENDERER)
     encoder << hostFileDescriptor;
 #endif
-#if PLATFORM(WIN)
+#if USE(GRAPHICS_LAYER_TEXTURE_MAPPER) || USE(GRAPHICS_LAYER_WC)
     encoder << nativeWindowHandle;
 #endif
 #if USE(GRAPHICS_LAYER_WC)
@@ -145,6 +145,9 @@ void WebPageCreationParameters::encode(IPC::Encoder& encoder) const
     encoder << iceCandidateFilteringEnabled;
     encoder << enumeratingAllNetworkInterfacesEnabled;
     encoder << userContentControllerParameters;
+#if ENABLE(WK_WEB_EXTENSIONS)
+    encoder << webExtensionControllerParameters;
+#endif
     encoder << backgroundColor;
     encoder << oldPageID;
     encoder << overriddenMediaType;
@@ -427,7 +430,7 @@ std::optional<WebPageCreationParameters> WebPageCreationParameters::decode(IPC::
         return std::nullopt;
 #endif
 
-#if PLATFORM(WIN)
+#if USE(GRAPHICS_LAYER_TEXTURE_MAPPER) || USE(GRAPHICS_LAYER_WC)
     if (!decoder.decode(parameters.nativeWindowHandle))
         return std::nullopt;
 #endif
@@ -483,6 +486,14 @@ std::optional<WebPageCreationParameters> WebPageCreationParameters::decode(IPC::
     if (!userContentControllerParameters)
         return std::nullopt;
     parameters.userContentControllerParameters = WTFMove(*userContentControllerParameters);
+
+#if ENABLE(WK_WEB_EXTENSIONS)
+    std::optional<std::optional<WebExtensionControllerParameters>> webExtensionControllerParameters;
+    decoder >> webExtensionControllerParameters;
+    if (!webExtensionControllerParameters)
+        return std::nullopt;
+    parameters.webExtensionControllerParameters = WTFMove(*webExtensionControllerParameters);
+#endif
 
     std::optional<std::optional<WebCore::Color>> backgroundColor;
     decoder >> backgroundColor;

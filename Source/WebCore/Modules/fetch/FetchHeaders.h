@@ -36,6 +36,8 @@
 
 namespace WebCore {
 
+class ScriptExecutionContext;
+
 class FetchHeaders : public RefCounted<FetchHeaders> {
 public:
     enum class Guard {
@@ -75,8 +77,9 @@ public:
         Ref<FetchHeaders> m_headers;
         size_t m_currentIndex { 0 };
         Vector<String> m_keys;
+        size_t m_updateCounter { 0 };
     };
-    Iterator createIterator() { return Iterator { *this }; }
+    Iterator createIterator(ScriptExecutionContext*) { return Iterator { *this }; }
 
     void setInternalHeaders(HTTPHeaderMap&& headers) { m_headers = WTFMove(headers); }
     const HTTPHeaderMap& internalHeaders() const { return m_headers; }
@@ -90,6 +93,7 @@ private:
 
     Guard m_guard;
     HTTPHeaderMap m_headers;
+    uint64_t m_updateCounter { 0 };
 };
 
 inline FetchHeaders::FetchHeaders(Guard guard, HTTPHeaderMap&& headers)

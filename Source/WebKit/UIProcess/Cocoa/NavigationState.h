@@ -83,7 +83,7 @@ public:
 
     void didFirstPaint();
 
-#if PLATFORM(IOS_FAMILY)
+#if USE(RUNNINGBOARD)
     enum class NetworkActivityReleaseReason { LoadCompleted, ScreenLocked };
     void releaseNetworkActivity(NetworkActivityReleaseReason);
 #endif
@@ -137,8 +137,6 @@ private:
 #endif
 
 #if PLATFORM(MAC)
-        void webGLLoadPolicy(WebPageProxy&, const URL&, CompletionHandler<void(WebCore::WebGLLoadPolicy)>&&) const final;
-        void resolveWebGLLoadPolicy(WebPageProxy&, const URL&, CompletionHandler<void(WebCore::WebGLLoadPolicy)>&&) const final;
         bool didChangeBackForwardList(WebPageProxy&, WebBackForwardListItem*, const Vector<Ref<WebBackForwardListItem>>&) final;
 #endif
         bool willGoToBackForwardListItem(WebPageProxy&, WebBackForwardListItem&, bool inBackForwardCache) final;
@@ -181,6 +179,8 @@ private:
     void didChangeHasOnlySecureContent() override;
     void willChangeNegotiatedLegacyTLS() override;
     void didChangeNegotiatedLegacyTLS() override;
+    void willChangeWasPrivateRelayed() override;
+    void didChangeWasPrivateRelayed() override;
     void willChangeEstimatedProgress() override;
     void didChangeEstimatedProgress() override;
     void willChangeCanGoBack() override;
@@ -195,7 +195,7 @@ private:
     void didChangeWebProcessIsResponsive() override;
     void didSwapWebProcesses() override;
 
-#if PLATFORM(IOS_FAMILY)
+#if USE(RUNNINGBOARD)
     void releaseNetworkActivityAfterLoadCompletion() { releaseNetworkActivity(NetworkActivityReleaseReason::LoadCompleted); }
 #endif
 
@@ -257,8 +257,6 @@ private:
 #endif
 
 #if PLATFORM(MAC)
-        bool webViewWebGLLoadPolicyForURL : 1;
-        bool webViewResolveWebGLLoadPolicyForURL : 1;
         bool webViewBackForwardListItemAddedRemoved : 1;
 #endif
         bool webViewWillGoToBackForwardListItemInBackForwardCache : 1;
@@ -276,7 +274,7 @@ private:
         bool webViewDidUpdateHistoryTitleForURL : 1;
     } m_historyDelegateMethods;
 
-#if PLATFORM(IOS_FAMILY)
+#if USE(RUNNINGBOARD)
     std::unique_ptr<ProcessThrottler::BackgroundActivity> m_networkActivity;
     RunLoop::Timer<NavigationState> m_releaseNetworkActivityTimer;
 #endif

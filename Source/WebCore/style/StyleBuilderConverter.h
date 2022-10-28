@@ -36,7 +36,6 @@
 #include "CSSGridAutoRepeatValue.h"
 #include "CSSGridIntegerRepeatValue.h"
 #include "CSSGridLineNamesValue.h"
-#include "CSSImageGeneratorValue.h"
 #include "CSSImageSetValue.h"
 #include "CSSImageValue.h"
 #include "CSSOffsetRotateValue.h"
@@ -145,6 +144,7 @@ public:
     static bool convertSmoothScrolling(BuilderState&, const CSSValue&);
     static FontSelectionValue convertFontWeightFromValue(const CSSValue&);
     static FontSelectionValue convertFontStretchFromValue(const CSSValue&);
+    static FontSelectionValue convertFontStyleAngle(const CSSValue&);
     static std::optional<FontSelectionValue> convertFontStyleFromValue(const CSSValue&);
     static FontSelectionValue convertFontWeight(BuilderState&, const CSSValue&);
     static FontSelectionValue convertFontStretch(BuilderState&, const CSSValue&);
@@ -792,13 +792,11 @@ inline RefPtr<QuotesData> BuilderConverter::convertQuotes(BuilderState&, const C
 
 inline TextUnderlinePosition BuilderConverter::convertTextUnderlinePosition(BuilderState&, const CSSValue& value)
 {
-    ASSERT(is<CSSPrimitiveValue>(value));
     return downcast<CSSPrimitiveValue>(value);
 }
 
 inline TextUnderlineOffset BuilderConverter::convertTextUnderlineOffset(BuilderState& builderState, const CSSValue& value)
 {
-    ASSERT(is<CSSPrimitiveValue>(value));
     auto& primitiveValue = downcast<CSSPrimitiveValue>(value);
     switch (primitiveValue.valueID()) {
     case CSSValueAuto:
@@ -812,7 +810,6 @@ inline TextUnderlineOffset BuilderConverter::convertTextUnderlineOffset(BuilderS
 
 inline TextDecorationThickness BuilderConverter::convertTextDecorationThickness(BuilderState& builderState, const CSSValue& value)
 {
-    ASSERT(is<CSSPrimitiveValue>(value));
     auto& primitiveValue = downcast<CSSPrimitiveValue>(value);
     switch (primitiveValue.valueID()) {
     case CSSValueAuto:
@@ -901,11 +898,6 @@ inline OptionSet<LineBoxContain> BuilderConverter::convertLineBoxContain(Builder
     return downcast<CSSLineBoxContainValue>(value).value();
 }
 
-static inline bool isImageShape(const CSSValue& value)
-{
-    return is<CSSImageValue>(value) || is<CSSImageSetValue>(value) || is<CSSImageGeneratorValue>(value);
-}
-
 inline RefPtr<ShapeValue> BuilderConverter::convertShapeValue(BuilderState& builderState, CSSValue& value)
 {
     if (is<CSSPrimitiveValue>(value)) {
@@ -913,7 +905,7 @@ inline RefPtr<ShapeValue> BuilderConverter::convertShapeValue(BuilderState& buil
         return nullptr;
     }
 
-    if (isImageShape(value))
+    if (value.isImage())
         return ShapeValue::create(builderState.createStyleImage(value).releaseNonNull());
 
     RefPtr<BasicShape> shape;
@@ -974,7 +966,6 @@ inline ScrollSnapAlign BuilderConverter::convertScrollSnapAlign(BuilderState&, c
 
 inline ScrollSnapStop BuilderConverter::convertScrollSnapStop(BuilderState&, const CSSValue& value)
 {
-    ASSERT(is<CSSPrimitiveValue>(value));
     return downcast<CSSPrimitiveValue>(value);
 }
 
@@ -998,7 +989,6 @@ inline GridTrackSize BuilderConverter::createGridTrackSize(const CSSValue& value
     if (is<CSSPrimitiveValue>(value))
         return GridTrackSize(createGridTrackBreadth(downcast<CSSPrimitiveValue>(value), builderState));
 
-    ASSERT(is<CSSFunctionValue>(value));
     const auto& function = downcast<CSSFunctionValue>(value);
 
     if (function.length() == 1)
@@ -1012,9 +1002,15 @@ inline GridTrackSize BuilderConverter::createGridTrackSize(const CSSValue& value
 
 inline bool BuilderConverter::createGridTrackList(const CSSValue& value, GridTrackList& trackList, BuilderState& builderState)
 {
-    // Handle 'none'.
-    if (is<CSSPrimitiveValue>(value))
-        return downcast<CSSPrimitiveValue>(value).valueID() == CSSValueNone;
+    // Handle 'none' or 'masonry'.
+    if (auto* primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value)) {
+        if (primitiveValue->valueID() == CSSValueMasonry) {
+
+            trackList.append(GridTrackEntryMasonry());
+            return true;
+        }
+        return primitiveValue->valueID() == CSSValueNone;
+    }
 
     if (!is<CSSValueList>(value))
         return false;
@@ -1292,10 +1288,7 @@ inline std::optional<Length> BuilderConverter::convertMarqueeIncrement(BuilderSt
 
 inline std::optional<FilterOperations> BuilderConverter::convertFilterOperations(BuilderState& builderState, const CSSValue& value)
 {
-    FilterOperations operations;
-    if (builderState.createFilterOperations(value, operations))
-        return operations;
-    return std::nullopt;
+    return builderState.createFilterOperations(value);
 }
 
 inline FontFeatureSettings BuilderConverter::convertFontFeatureSettings(BuilderState&, const CSSValue& value)
@@ -1315,7 +1308,6 @@ inline FontFeatureSettings BuilderConverter::convertFontFeatureSettings(BuilderS
 
 inline FontSelectionValue BuilderConverter::convertFontWeightFromValue(const CSSValue& value)
 {
-    ASSERT(is<CSSPrimitiveValue>(value));
     auto& primitiveValue = downcast<CSSPrimitiveValue>(value);
 
     if (primitiveValue.isNumber())
@@ -1338,7 +1330,6 @@ inline FontSelectionValue BuilderConverter::convertFontWeightFromValue(const CSS
 
 inline FontSelectionValue BuilderConverter::convertFontStretchFromValue(const CSSValue& value)
 {
-    ASSERT(is<CSSPrimitiveValue>(value));
     const auto& primitiveValue = downcast<CSSPrimitiveValue>(value);
 
     if (primitiveValue.isPercentage())
@@ -1351,10 +1342,14 @@ inline FontSelectionValue BuilderConverter::convertFontStretchFromValue(const CS
     return normalStretchValue();
 }
 
+inline FontSelectionValue BuilderConverter::convertFontStyleAngle(const CSSValue& value)
+{
+    return FontSelectionValue { std::clamp(downcast<CSSPrimitiveValue>(value).value<float>(CSSUnitType::CSS_DEG), -90.0f, 90.0f) };
+}
+
 // The input value needs to parsed and valid, this function returns std::nullopt if the input was "normal".
 inline std::optional<FontSelectionValue> BuilderConverter::convertFontStyleFromValue(const CSSValue& value)
 {
-    ASSERT(is<CSSFontStyleValue>(value));
     const auto& fontStyleValue = downcast<CSSFontStyleValue>(value);
 
     auto valueID = fontStyleValue.fontStyleValue->valueID();
@@ -1364,13 +1359,12 @@ inline std::optional<FontSelectionValue> BuilderConverter::convertFontStyleFromV
         return italicValue();
     ASSERT(valueID == CSSValueOblique);
     if (auto* obliqueValue = fontStyleValue.obliqueValue.get())
-        return FontSelectionValue(obliqueValue->value<float>(CSSUnitType::CSS_DEG));
+        return convertFontStyleAngle(*obliqueValue);
     return italicValue();
 }
 
 inline FontSelectionValue BuilderConverter::convertFontWeight(BuilderState& builderState, const CSSValue& value)
 {
-    ASSERT(is<CSSPrimitiveValue>(value));
     auto& primitiveValue = downcast<CSSPrimitiveValue>(value);
     if (primitiveValue.isValueID()) {
         auto valueID = primitiveValue.valueID();
@@ -1592,9 +1586,15 @@ inline std::optional<Length> BuilderConverter::convertLineHeight(BuilderState& b
     if (CSSPropertyParserHelpers::isSystemFontShorthand(valueID))
         return RenderStyle::initialLineHeight();
 
-    if (primitiveValue.isLength()) {
+    if (primitiveValue.isLength() || primitiveValue.isCalculatedPercentageWithLength()) {
         auto conversionData = builderState.cssToLengthConversionData().copyForLineHeight(zoomWithTextZoomFactor(builderState));
-        Length length = primitiveValue.computeLength<Length>(conversionData);
+        Length length;
+        if (primitiveValue.isLength())
+            length = primitiveValue.computeLength<Length>(conversionData);
+        else {
+            auto value = primitiveValue.cssCalcValue()->createCalculationValue(conversionData)->evaluate(builderState.style().computedFontSize());
+            length = { clampTo<float>(value, minValueForCssLength, maxValueForCssLength), LengthType::Fixed };
+        }
         if (multiplier != 1.f)
             length = Length(length.value() * multiplier, LengthType::Fixed);
         return length;
@@ -1620,7 +1620,6 @@ inline std::optional<Length> BuilderConverter::convertLineHeight(BuilderState& b
 
 inline FontPalette BuilderConverter::convertFontPalette(BuilderState&, const CSSValue& value)
 {
-    ASSERT(is<CSSPrimitiveValue>(value));
     const auto& primitiveValue = downcast<CSSPrimitiveValue>(value);
     switch (primitiveValue.valueID()) {
     case CSSValueNormal:

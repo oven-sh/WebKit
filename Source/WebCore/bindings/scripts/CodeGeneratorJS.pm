@@ -2399,9 +2399,8 @@ sub GenerateEnumerationImplementationContent
     # FIXME: Change to take VM& instead of JSGlobalObject&.
     # FIXME: Consider using toStringOrNull to make exception checking faster.
     # FIXME: Consider finding a more efficient way to match against all the strings quickly.
-    $result .= "template<> std::optional<$className> parseEnumeration<$className>(JSGlobalObject& lexicalGlobalObject, JSValue value)\n";
+    $result .= "template<> std::optional<$className> parseEnumerationFromString<${className}>(const String& stringValue)\n";
     $result .= "{\n";
-    $result .= "    auto stringValue = value.toWTFString(&lexicalGlobalObject);\n";
     my @sortedEnumerationValues = sort @{$enumeration->values};
     if ($sortedEnumerationValues[0] eq "") {
         $result .= "    if (stringValue.isEmpty())\n";
@@ -2418,6 +2417,11 @@ sub GenerateEnumerationImplementationContent
     $result .= "    if (auto* enumerationValue = enumerationMapping.tryGet(stringValue); LIKELY(enumerationValue))\n";
     $result .= "        return *enumerationValue;\n";
     $result .= "    return std::nullopt;\n";
+    $result .= "}\n\n";
+
+    $result .= "template<> std::optional<$className> parseEnumeration<$className>(JSGlobalObject& lexicalGlobalObject, JSValue value)\n";
+    $result .= "{\n";
+    $result .= "    return parseEnumerationFromString<${className}>(value.toWTFString(&lexicalGlobalObject));\n";
     $result .= "}\n\n";
 
     $result .= "template<> const char* expectedEnumerationValues<$className>()\n";
@@ -2458,6 +2462,7 @@ sub GenerateEnumerationHeaderContent
 
     $result .= "${exportMacro}String convertEnumerationToString($className);\n";
     $result .= "template<> ${exportMacro}JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, $className);\n\n";
+    $result .= "template<> ${exportMacro}std::optional<$className> parseEnumerationFromString<${className}>(const String&);\n";
     $result .= "template<> ${exportMacro}std::optional<$className> parseEnumeration<$className>(JSC::JSGlobalObject&, JSC::JSValue);\n";
     $result .= "template<> ${exportMacro}const char* expectedEnumerationValues<$className>();\n\n";
     $result .= "#endif\n\n" if $conditionalString;
@@ -2927,7 +2932,7 @@ sub GenerateHeader
         AddIncludesForImplementationTypeInHeader($implType);
         push(@headerContent, "    static $className* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<$implType>&& impl)\n");
         push(@headerContent, "    {\n");
-        push(@headerContent, "        globalObject->masqueradesAsUndefinedWatchpoint()->fireAll(globalObject->vm(), \"Allocated masquerading object\");\n");
+        push(@headerContent, "        globalObject->masqueradesAsUndefinedWatchpointSet().fireAll(globalObject->vm(), \"Allocated masquerading object\");\n");
         push(@headerContent, "        $className* ptr = new (NotNull, JSC::allocateCell<$className>(globalObject->vm())) $className(structure, *globalObject, WTFMove(impl));\n");
         push(@headerContent, "        ptr->finishCreation(globalObject->vm());\n");
         push(@headerContent, "        return ptr;\n");
@@ -4188,7 +4193,7 @@ sub GetCastingHelperForThisObject
     return "jsDynamicCast<JS$interfaceName*>";
 }
 
-# http://heycam.github.io/webidl/#Unscopable
+# https://webidl.spec.whatwg.org/#Unscopable
 sub addUnscopableProperties
 {
     my $interface = shift;

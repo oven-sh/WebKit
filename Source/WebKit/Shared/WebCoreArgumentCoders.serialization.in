@@ -278,18 +278,6 @@ struct CGAffineTransform {
     WebCore::FloatSize size()
 }
 
-header: <WebCore/Pasteboard.h>
-[CustomHeader=True] struct WebCore::PasteboardURL {
-    URL url
-    String title
-#if PLATFORM(MAC)
-    String userVisibleForm
-#endif
-#if PLATFORM(GTK)
-    String markup
-#endif
-};
-
 [Return=Ref, CustomHeader=True] class WebCore::LinearTimingFunction {
 };
 
@@ -778,6 +766,16 @@ struct WebCore::DetachedRTCDataChannel {
 };
 #endif
 
+header: <WebCore/WebCodecsEncodedVideoChunk.h>
+#if ENABLE(WEB_CODECS)
+struct WebCore::WebCodecsEncodedVideoChunkData {
+    WebCore::WebCodecsEncodedVideoChunkType type;
+    int64_t timestamp;
+    std::optional<uint64_t> duration;
+    Vector<uint8_t> buffer;
+};
+#endif
+
 struct WebCore::HTMLModelElementCamera {
     double pitch;
     double yaw;
@@ -882,10 +880,9 @@ struct WebCore::WebLockManagerSnapshot {
 };
 
 #if ENABLE(WEB_AUTHN)
-struct WebCore::AuthenticationExtensionsClientInputs {
+[LegacyPopulateFrom=EmptyConstructor] struct WebCore::AuthenticationExtensionsClientInputs {
     String appid;
     bool googleLegacyAppidSupport;
-    bool credProps;
 }
 
 [Nested] struct WebCore::AuthenticationExtensionsClientOutputs::CredentialPropertiesOutput {
@@ -953,7 +950,173 @@ struct WebCore::PublicKeyCredentialRequestOptions {
     String rpId;
     Vector<WebCore::PublicKeyCredentialDescriptor> allowCredentials;
     WebCore::UserVerificationRequirement userVerification;
-    std::optional<WebCore::AuthenticatorAttachment> authenticatorAttachment;
     std::optional<WebCore::AuthenticationExtensionsClientInputs> extensions;
 #endif // ENABLE(WEB_AUTHN)
+};
+
+[CreateUsing=fromRawString] class WebCore::RegistrableDomain {
+    String string()
+}
+
+struct WebCore::AudioConfiguration {
+    String contentType;
+    String channels;
+    std::optional<uint64_t> bitrate;
+    std::optional<uint32_t> samplerate;
+    std::optional<bool> spatialRendering;
+};
+
+[Nested] enum class WebCore::Cookie::SameSitePolicy : uint8_t {
+    None
+    Lax
+    Strict
+};
+
+struct WebCore::Cookie {
+    String name;
+    String value;
+    String domain;
+    String path;
+    double created;
+    std::optional<double> expires;
+    bool httpOnly;
+    bool secure;
+    bool session;
+    String comment;
+    URL commentURL;
+    Vector<uint16_t> ports;
+    WebCore::Cookie::SameSitePolicy sameSite;
+};
+
+#if ENABLE(VIDEO)
+struct WebCore::VideoFrameMetadata {
+    double presentationTime;
+    double expectedDisplayTime;
+
+    unsigned width;
+    unsigned height;
+    double mediaTime;
+
+    unsigned presentedFrames;
+    std::optional<double> processingDuration;
+
+    std::optional<double> captureTime;
+    std::optional<double> receiveTime;
+    std::optional<unsigned> rtpTimestamp;
+};
+#endif // ENABLE(VIDEO)
+
+#if ENABLE(SERVICE_WORKER)
+struct WebCore::NavigationPreloadState {
+    bool enabled;
+    String headerValue;
+};
+#endif // ENABLE(SERVICE_WORKER)
+
+enum class WebCore::RenderingMode : bool
+
+enum class WebCore::RenderingPurpose : uint8_t {
+    Unspecified,
+    Canvas,
+    DOM,
+    LayerBacking,
+    Snapshot,
+    ShareableSnapshot,
+    MediaPainting
+};
+
+#if ENABLE(CONTENT_FILTERING_IN_NETWORKING_PROCESS)
+[LegacyPopulateFrom=EmptyConstructor] class WebCore::MockContentFilterSettings {
+    bool m_enabled;
+    WebCore::MockContentFilterSettings::DecisionPoint m_decisionPoint;
+    WebCore::MockContentFilterSettings::Decision m_decision;
+    WebCore::MockContentFilterSettings::Decision m_unblockRequestDecision;
+    String m_blockedString;
+    String m_modifiedRequestURL;
+}
+[Nested] enum class WebCore::MockContentFilterSettings::DecisionPoint : uint8_t {
+    AfterWillSendRequest,
+    AfterRedirect,
+    AfterResponse,
+    AfterAddData,
+    AfterFinishedAddingData,
+    Never
+};
+[Nested] enum class WebCore::MockContentFilterSettings::Decision : bool
+#endif
+
+enum class WebCore::AutoplayEvent : uint8_t {
+    DidPreventMediaFromPlaying,
+    DidPlayMediaWithUserGesture,
+    DidAutoplayMediaPastThresholdWithoutUserInterference,
+    UserDidInterfereWithPlayback
+};
+
+enum class WebCore::InputMode : uint8_t {
+    Unspecified,
+    None,
+    Text,
+    Telephone,
+    Url,
+    Email,
+    Numeric,
+    Decimal,
+    Search
+};
+
+enum class WebCore::NotificationDirection : uint8_t {
+    Auto,
+    Ltr,
+    Rtl
+};
+
+enum class WebCore::IndexedDB::GetAllType : bool
+
+enum class WebCore::WorkerType : bool
+
+enum class WebCore::StoredCredentialsPolicy : uint8_t {
+    DoNotUse,
+    Use,
+    EphemeralStateless
+};
+
+enum class WTFLogChannelState : uint8_t {
+    Off,
+    On,
+    OnWithAccumulation
+};
+
+enum class WebCore::ScrollSnapStrictness : uint8_t {
+    None,
+    Proximity,
+    Mandatory
+};
+
+enum class WebCore::LengthType : uint8_t {
+    Auto,
+    Relative,
+    Percent,
+    Fixed,
+    Intrinsic,
+    MinIntrinsic,
+    MinContent,
+    MaxContent,
+    FillAvailable,
+    FitContent,
+    Calculated,
+    Undefined
+};
+
+enum class WebCore::OverscrollBehavior : uint8_t {
+    Auto,
+    Contain,
+    None
+};
+
+struct WebCore::ExceptionDetails {
+    String message;
+    int lineNumber;
+    int columnNumber;
+    WebCore::ExceptionDetails::Type type;
+    String sourceURL;
 };

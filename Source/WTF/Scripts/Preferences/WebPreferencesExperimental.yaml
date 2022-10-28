@@ -85,11 +85,11 @@ AriaReflectionForElementReferencesEnabled:
   humanReadableDescription: "Enable ARIA reflection for attributes that refer to elements"
   defaultValue:
     WebKitLegacy:
-      default: false
+      default: true
     WebKit:
-      default: false
+      default: true
     WebCore:
-      default: false
+      default: true
 
 AspectRatioEnabled:
   type: bool
@@ -483,7 +483,6 @@ CSSTypedOMEnabled:
   type: bool
   humanReadableName: "CSS Typed OM"
   humanReadableDescription: "Enable the CSS Typed OM"
-  condition: ENABLE(CSS_TYPED_OM)
   defaultValue:
     WebKitLegacy:
       default: false
@@ -506,6 +505,19 @@ CanvasColorSpaceEnabled:
       default: false
     WebCore:
       default: false
+
+CanvasFiltersEnabled:
+   type: bool
+   webcoreOnChange: setNeedsRelayoutAllFrames
+   humanReadableName: "Canvas Filters"
+   humanReadableDescription: "Canvas Filters"
+   defaultValue:
+     WebKitLegacy:
+       default: false
+     WebKit:
+       default: false
+     WebCore:
+       default: false
 
 CompressionStreamEnabled:
   type: bool
@@ -845,17 +857,6 @@ ImageAnimationControlEnabled:
     WebCore:
       default: false
 
-ImageBitmapEnabled:
-  type: bool
-  humanReadableName: "ImageBitmap"
-  humanReadableDescription: "Support for the ImageBitmap APIs"
-  webcoreBinding: DeprecatedGlobalSettings
-  defaultValue:
-    WebKitLegacy:
-      default: true
-    WebKit:
-      default: true
-
 ImperativeSlotAPIEnabled:
   type: bool
   humanReadableName: "Imperative Slot API"
@@ -1044,6 +1045,18 @@ MaskWebGLStringsEnabled:
       default: true
     WebCore:
       default: true
+
+MasonryEnabled:
+  type: bool
+  humanReadableName: "CSS Masonry Layout"
+  humanReadableDescription: "Enable Masonry Layout for CSS Grid"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
 
 # FIXME: This is on by default in WebKit2. Perhaps we should consider turning it on for WebKitLegacy as well.
 MediaCapabilitiesExtensionsEnabled:
@@ -1488,7 +1501,7 @@ ScreenOrientationAPIEnabled:
     WebKitLegacy:
       default: false
     WebKit:
-      default: false
+      default: true
     WebCore:
       default: false
 
@@ -1503,7 +1516,7 @@ ScreenWakeLockAPIEnabled:
       default: true
     WebCore:
       default: false
-      
+
 ScrollToTextFragmentEnabled:
   type: bool
   humanReadableName: "Scroll To Text Fragment"
@@ -1568,6 +1581,18 @@ ShowMediaStatsContextMenuItemEnabled:
   type: bool
   humanReadableName: "Show Media Stats"
   humanReadableDescription: "Adds a 'Media Stats' context menu item to <video> when the Develop menu is enabled"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
+SiteIsolationEnabled:
+  type: bool
+  humanReadableName: "Site Isolation"
+  humanReadableDescription: "Put cross-origin iframes in a different process"
   defaultValue:
     WebKitLegacy:
       default: false
@@ -1676,6 +1701,18 @@ TransformStreamAPIEnabled:
     WebKit:
       default: true
 
+UnprefixedFullscreenAPIEnabled:
+  type: bool
+  humanReadableName: "Unprefixed Fullscreen API"
+  humanReadableDescription: "Enable Unprefixed Fullscreen API"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
 UseGPUProcessForDOMRenderingEnabled:
   type: bool
   humanReadableName: "GPU Process: DOM Rendering"
@@ -1685,7 +1722,7 @@ UseGPUProcessForDOMRenderingEnabled:
   exposed: [ WebKit ]
   defaultValue:
     WebKit:
-      "ENABLE(GPU_PROCESS_BY_DEFAULT) && PLATFORM(IOS_FAMILY) && !PLATFORM(WATCHOS) && !HAVE(UIKIT_WEBKIT_INTERNALS)": true
+      "ENABLE(GPU_PROCESS_BY_DEFAULT) && ENABLE(GPU_PROCESS_DOM_RENDERING_BY_DEFAULT)": true
       default: false
 
 UseGPUProcessForDisplayCapture:
@@ -1870,8 +1907,10 @@ WebCodecsEnabled:
     WebKitLegacy:
       default: false
     WebKit:
+      "PLATFORM(COCOA)": true
       default: false
     WebCore:
+      "PLATFORM(COCOA)": true
       default: false
 
 WebGL2Enabled:

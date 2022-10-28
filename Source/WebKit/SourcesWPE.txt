@@ -52,7 +52,6 @@ NetworkProcess/webrtc/LibWebRTCSocketClient.cpp
 NetworkProcess/webrtc/NetworkRTCMonitor.cpp
 NetworkProcess/webrtc/NetworkRTCProvider.cpp
 
-Platform/IPC/unix/AttachmentUnix.cpp
 Platform/IPC/unix/ConnectionUnix.cpp
 Platform/IPC/unix/IPCSemaphoreUnix.cpp
 
@@ -205,7 +204,7 @@ UIProcess/Automation/libwpe/WebAutomationSessionLibWPE.cpp
 
 UIProcess/CoordinatedGraphics/DrawingAreaProxyCoordinatedGraphics.cpp
 
-UIProcess/Gamepad/wpe/UIGamepadProviderWPE.cpp
+UIProcess/Gamepad/libwpe/UIGamepadProviderLibWPE.cpp
 
 UIProcess/geoclue/GeoclueGeolocationProvider.cpp
 

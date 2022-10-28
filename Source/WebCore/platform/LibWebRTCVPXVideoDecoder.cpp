@@ -28,6 +28,7 @@
 
 #if ENABLE(WEB_CODECS) && USE(LIBWEBRTC)
 
+#include "Logging.h"
 #include "VideoFrameLibWebRTC.h"
 #include <wtf/FastMalloc.h>
 #include <wtf/NeverDestroyed.h>
@@ -45,6 +46,8 @@ ALLOW_COMMA_BEGIN
 ALLOW_COMMA_END
 ALLOW_UNUSED_PARAMETERS_END
 
+#include "CoreVideoSoftLink.h"
+
 namespace WebCore {
 
 static WorkQueue& vpxQueue()
@@ -59,7 +62,7 @@ public:
     ~LibWebRTCVPXInternalVideoDecoder() = default;
 
     void postTask(Function<void()>&& task) { m_postTaskCallback(WTFMove(task)); }
-    void decode(Span<const uint8_t>, int64_t timestamp, std::optional<uint64_t> duration,  VideoDecoder::DecodeCallback&&);
+    void decode(Span<const uint8_t>, bool isKeyFrame, int64_t timestamp, std::optional<uint64_t> duration,  VideoDecoder::DecodeCallback&&);
     void close() { m_isClosed = true; }
 private:
     LibWebRTCVPXInternalVideoDecoder(LibWebRTCVPXVideoDecoder::Type, VideoDecoder::OutputCallback&&, VideoDecoder::PostTaskCallback&&);
@@ -73,6 +76,17 @@ private:
     bool m_isClosed { false };
 };
 
+void LibWebRTCVPXVideoDecoder::create(Type type, CreateCallback&& callback, OutputCallback&& outputCallback, PostTaskCallback&& postTaskCallback)
+{
+    auto decoder = makeUniqueRef<LibWebRTCVPXVideoDecoder>(type, WTFMove(outputCallback), WTFMove(postTaskCallback));
+    vpxQueue().dispatch([callback = WTFMove(callback), decoder = WTFMove(decoder)]() mutable {
+        auto internalDecoder = decoder->m_internalDecoder;
+        internalDecoder->postTask([callback = WTFMove(callback), decoder = WTFMove(decoder)]() mutable {
+            callback(UniqueRef<VideoDecoder> { WTFMove(decoder) });
+        });
+    });
+}
+
 LibWebRTCVPXVideoDecoder::LibWebRTCVPXVideoDecoder(Type type, OutputCallback&& outputCallback, PostTaskCallback&& postTaskCallback)
     : m_internalDecoder(LibWebRTCVPXInternalVideoDecoder::create(type, WTFMove(outputCallback), WTFMove(postTaskCallback)))
 {
@@ -84,8 +98,8 @@ LibWebRTCVPXVideoDecoder::~LibWebRTCVPXVideoDecoder()
 
 void LibWebRTCVPXVideoDecoder::decode(EncodedFrame&& frame, DecodeCallback&& callback)
 {
-    vpxQueue().dispatch([value = Vector<uint8_t> { frame.data }, timestamp = frame.timestamp, duration = frame.duration, decoder = m_internalDecoder, callback = WTFMove(callback)]() mutable {
-        decoder->decode({ value.data(), value.size() }, timestamp, duration, WTFMove(callback));
+    vpxQueue().dispatch([value = Vector<uint8_t> { frame.data }, isKeyFrame = frame.isKeyFrame, timestamp = frame.timestamp, duration = frame.duration, decoder = m_internalDecoder, callback = WTFMove(callback)]() mutable {
+        decoder->decode({ value.data(), value.size() }, isKeyFrame, timestamp, duration, WTFMove(callback));
     });
 }
 
@@ -107,14 +121,14 @@ void LibWebRTCVPXVideoDecoder::close()
 }
 
 
-void LibWebRTCVPXInternalVideoDecoder::decode(Span<const uint8_t> data, int64_t timestamp, std::optional<uint64_t> duration,  VideoDecoder::DecodeCallback&& callback)
+void LibWebRTCVPXInternalVideoDecoder::decode(Span<const uint8_t> data, bool isKeyFrame, int64_t timestamp, std::optional<uint64_t> duration,  VideoDecoder::DecodeCallback&& callback)
 {
     m_timestamp = timestamp;
     m_duration = duration;
 
     webrtc::EncodedImage image;
     image.SetEncodedData(webrtc::WebKitEncodedImageBufferWrapper::create(const_cast<uint8_t*>(data.data()), data.size()));
-    image._frameType = webrtc::VideoFrameType::kVideoFrameKey;
+    image._frameType = isKeyFrame ? webrtc::VideoFrameType::kVideoFrameKey : webrtc::VideoFrameType::kVideoFrameDelta;
 
     auto error = m_internalDecoder->Decode(image, false, 0);
 
@@ -122,10 +136,10 @@ void LibWebRTCVPXInternalVideoDecoder::decode(Span<const uint8_t> data, int64_t 
         if (protectedThis->m_isClosed)
             return;
 
-        String result;
         if (error)
-            result = makeString("VPx decoding failed with error ", error);
-        callback(WTFMove(result));
+            protectedThis->m_outputCallback(makeUnexpected(makeString("VPx decoding failed with error ", error)));
+
+        callback({ });
     });
 }
 
@@ -149,16 +163,35 @@ LibWebRTCVPXInternalVideoDecoder::LibWebRTCVPXInternalVideoDecoder(LibWebRTCVPXV
 
 int32_t LibWebRTCVPXInternalVideoDecoder::Decoded(webrtc::VideoFrame& frame)
 {
-    m_postTaskCallback([protectedThis = Ref { *this }, buffer = frame.video_frame_buffer(), timestamp = m_timestamp, duration = m_duration]() mutable {
+    m_postTaskCallback([protectedThis = Ref { *this }, colorSpace = VideoFrameLibWebRTC::colorSpaceFromFrame(frame), buffer = frame.video_frame_buffer(), timestamp = m_timestamp, duration = m_duration]() mutable {
         if (protectedThis->m_isClosed)
             return;
 
-        auto videoFrame = VideoFrameLibWebRTC::create({ }, false, VideoFrame::Rotation::None, WTFMove(buffer), [](auto&) {
-            // FIXME: To implement.
-            return nullptr;
+        auto videoFrame = VideoFrameLibWebRTC::create({ }, false, VideoFrame::Rotation::None, WTFMove(colorSpace), WTFMove(buffer), [](auto& buffer) {
+            return adoptCF(webrtc::createPixelBufferFromFrameBuffer(buffer, [](size_t width, size_t height, webrtc::BufferType bufferType) -> CVPixelBufferRef {
+                OSType pixelBufferType;
+                switch (bufferType) {
+                case webrtc::BufferType::I420:
+                    pixelBufferType = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
+                    break;
+                case webrtc::BufferType::I010:
+                    pixelBufferType = kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;
+                    break;
+                default:
+                    return nullptr;
+                }
+
+                CVPixelBufferRef pixelBuffer = nullptr;
+                auto status = CVPixelBufferCreate(kCFAllocatorDefault, width, height, pixelBufferType, nullptr, &pixelBuffer);
+                if (status != kCVReturnSuccess) {
+                    RELEASE_LOG_ERROR(Media, "Failed creating a pixel buffer for converting a VPX frame with error %d", status);
+                    return nullptr;
+                }
+                return pixelBuffer;
+            }));
         });
 
-        protectedThis->m_outputCallback({ WTFMove(videoFrame), timestamp, duration });
+        protectedThis->m_outputCallback(VideoDecoder::DecodedFrame { WTFMove(videoFrame), timestamp, duration });
     });
     return 0;
 }

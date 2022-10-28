@@ -52,7 +52,9 @@
 #include "WebEvent.h"
 #include "WebFrame.h"
 #include "WebFrameNetworkingContext.h"
+#include "WebFrameProxyMessages.h"
 #include "WebFullScreenManager.h"
+#include "WebHitTestResultData.h"
 #include "WebLoaderStrategy.h"
 #include "WebNavigationDataStore.h"
 #include "WebPage.h"
@@ -68,6 +70,7 @@
 #include <WebCore/Chrome.h>
 #include <WebCore/DOMWrapperWorld.h>
 #include <WebCore/DocumentLoader.h>
+#include <WebCore/EventHandler.h>
 #include <WebCore/FormState.h>
 #include <WebCore/Frame.h>
 #include <WebCore/FrameLoader.h>
@@ -100,7 +103,7 @@
 
 #define PREFIX_PARAMETERS "%p - [webFrame=%p, webFrameID=%" PRIu64 ", webPage=%p, webPageID=%" PRIu64 "] WebFrameLoaderClient::"
 #define WEBFRAME (&webFrame())
-#define WEBFRAMEID (webFrame().frameID().toUInt64())
+#define WEBFRAMEID (webFrame().frameID().object().toUInt64())
 #define WEBPAGE (webFrame().page())
 #define WEBPAGEID (WEBPAGE ? WEBPAGE->identifier().toUInt64() : 0)
 
@@ -135,11 +138,6 @@ std::optional<PageIdentifier> WebFrameLoaderClient::pageID() const
         return m_frame->page()->identifier();
 
     return std::nullopt;
-}
-
-std::optional<FrameIdentifier> WebFrameLoaderClient::frameID() const
-{
-    return m_frame->frameID();
 }
 
 #if ENABLE(TRACKING_PREVENTION)
@@ -543,7 +541,7 @@ void WebFrameLoaderClient::dispatchDidReceiveTitle(const StringWithDirection& ti
     webPage->send(Messages::WebPageProxy::DidReceiveTitleForFrame(m_frame->frameID(), truncatedTitle.string, UserData(WebProcess::singleton().transformObjectsToHandles(userData.get()).get())));
 }
 
-void WebFrameLoaderClient::dispatchDidCommitLoad(std::optional<HasInsecureContent> hasInsecureContent, std::optional<UsedLegacyTLS> usedLegacyTLSFromPageCache)
+void WebFrameLoaderClient::dispatchDidCommitLoad(std::optional<HasInsecureContent> hasInsecureContent, std::optional<UsedLegacyTLS> usedLegacyTLSFromPageCache, std::optional<WasPrivateRelayed> wasPrivateRelayedFromPageCache)
 {
     WebPage* webPage = m_frame->page();
     if (!webPage)
@@ -560,9 +558,13 @@ void WebFrameLoaderClient::dispatchDidCommitLoad(std::optional<HasInsecureConten
     bool usedLegacyTLS = documentLoader.response().usedLegacyTLS();
     if (!usedLegacyTLS && usedLegacyTLSFromPageCache)
         usedLegacyTLS = usedLegacyTLSFromPageCache == UsedLegacyTLS::Yes;
+
+    bool wasPrivateRelayed = documentLoader.response().wasPrivateRelayed();
+    if (!wasPrivateRelayed && wasPrivateRelayedFromPageCache)
+        wasPrivateRelayed = wasPrivateRelayedFromPageCache == WasPrivateRelayed::Yes;
     
     // Notify the UIProcess.
-    webPage->send(Messages::WebPageProxy::DidCommitLoadForFrame(m_frame->frameID(), m_frame->info(), documentLoader.request(), documentLoader.navigationID(), documentLoader.response().mimeType(), m_frameHasCustomContentProvider, m_frame->coreFrame()->loader().loadType(), valueOrCompute(documentLoader.response().certificateInfo(), [] { return CertificateInfo(); }), usedLegacyTLS, m_frame->coreFrame()->document()->isPluginDocument(), hasInsecureContent, documentLoader.mouseEventPolicy(), UserData(WebProcess::singleton().transformObjectsToHandles(userData.get()).get())));
+    webPage->send(Messages::WebPageProxy::DidCommitLoadForFrame(m_frame->frameID(), m_frame->info(), documentLoader.request(), documentLoader.navigationID(), documentLoader.response().mimeType(), m_frameHasCustomContentProvider, m_frame->coreFrame()->loader().loadType(), valueOrCompute(documentLoader.response().certificateInfo(), [] { return CertificateInfo(); }), usedLegacyTLS, wasPrivateRelayed, m_frame->coreFrame()->document()->isPluginDocument(), hasInsecureContent, documentLoader.mouseEventPolicy(), UserData(WebProcess::singleton().transformObjectsToHandles(userData.get()).get())));
     webPage->didCommitLoad(m_frame.ptr());
 }
 
@@ -826,13 +828,7 @@ void WebFrameLoaderClient::dispatchDecidePolicyForResponse(const ResourceRespons
 
     // Notify the bundle client.
     WKBundlePagePolicyAction policy = webPage->injectedBundlePolicyClient().decidePolicyForResponse(webPage, m_frame.ptr(), response, request, userData);
-    // If a browsing context switch is requested, we still need to send the IPC to the UIProcess in order to process-swap if necessary, even though the
-    // injected bundle has already handled the policy decision.
-    if (policy == WKBundlePagePolicyActionUse) {
-        WEBFRAMELOADERCLIENT_RELEASE_LOG(Network, "dispatchDecidePolicyForResponse: continuing because injected bundle says so");
-        function(PolicyAction::Use, identifier);
-        return;
-    }
+    RELEASE_ASSERT(policy == WKBundlePagePolicyActionPassThrough);
 
     bool canShowResponse = webPage->canShowResponse(response);
 
@@ -840,14 +836,28 @@ void WebFrameLoaderClient::dispatchDecidePolicyForResponse(const ResourceRespons
     auto* policyDocumentLoader = coreFrame ? coreFrame->loader().provisionalDocumentLoader() : nullptr;
     auto navigationID = policyDocumentLoader ? static_cast<WebDocumentLoader&>(*policyDocumentLoader).navigationID() : 0;
 
-    bool wasAllowedByInjectedBundle = policy == WKBundlePagePolicyActionUse;
     auto protector = m_frame.copyRef();
     uint64_t listenerID = m_frame->setUpPolicyListener(identifier, WTFMove(function), WebFrame::ForNavigationAction::No);
-    if (!webPage->send(Messages::WebPageProxy::DecidePolicyForResponse(m_frame->frameID(), m_frame->info(), identifier, navigationID, response, request, canShowResponse, downloadAttribute, wasAllowedByInjectedBundle, listenerID, UserData(WebProcess::singleton().transformObjectsToHandles(userData.get()).get())))) {
+    if (!webPage->send(Messages::WebPageProxy::DecidePolicyForResponse(m_frame->frameID(), m_frame->info(), identifier, navigationID, response, request, canShowResponse, downloadAttribute, listenerID, UserData(WebProcess::singleton().transformObjectsToHandles(userData.get()).get())))) {
         WEBFRAMELOADERCLIENT_RELEASE_LOG(Network, "dispatchDecidePolicyForResponse: ignoring because WebPageProxy::DecidePolicyForResponse failed");
         m_frame->didReceivePolicyDecision(listenerID, PolicyDecision { identifier, std::nullopt, PolicyAction::Ignore, 0, { }, { } });
     }
 }
+
+#if PLATFORM(MAC) || HAVE(UIKIT_WITH_MOUSE_SUPPORT)
+static void setWebHitTestResultDataInNavigationActionDataIfNecessary(const NavigationAction& navigationAction, NavigationActionData& navigationActionData, WebCore::Frame& coreFrame)
+{
+    auto mouseEventData = navigationAction.mouseEventData();
+    if (!mouseEventData)
+        return;
+
+    constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent, HitTestRequest::Type::AllowChildFrameContent };
+    HitTestResult hitTestResult = coreFrame.eventHandler().hitTestResultAtPoint(mouseEventData->absoluteLocation, hitType);
+
+    WebKit::WebHitTestResultData webHitTestResultData(hitTestResult, false);
+    navigationActionData.webHitTestResultData = WTFMove(webHitTestResultData);
+}
+#endif
 
 void WebFrameLoaderClient::dispatchDecidePolicyForNewWindowAction(const NavigationAction& navigationAction, const ResourceRequest& request,
     FormState* formState, const String& frameName, WebCore::PolicyCheckIdentifier identifier, FramePolicyFunction&& function)
@@ -864,10 +874,7 @@ void WebFrameLoaderClient::dispatchDecidePolicyForNewWindowAction(const Navigati
 
     // Notify the bundle client.
     WKBundlePagePolicyAction policy = webPage->injectedBundlePolicyClient().decidePolicyForNewWindowAction(webPage, m_frame.ptr(), action.ptr(), request, frameName, userData);
-    if (policy == WKBundlePagePolicyActionUse) {
-        function(PolicyAction::Use, identifier);
-        return;
-    }
+    RELEASE_ASSERT(policy == WKBundlePagePolicyActionPassThrough);
 
     uint64_t listenerID = m_frame->setUpPolicyListener(identifier, WTFMove(function), WebFrame::ForNavigationAction::No);
 
@@ -882,6 +889,11 @@ void WebFrameLoaderClient::dispatchDecidePolicyForNewWindowAction(const Navigati
     navigationActionData.shouldOpenExternalURLsPolicy = navigationAction.shouldOpenExternalURLsPolicy();
     navigationActionData.downloadAttribute = navigationAction.downloadAttribute();
     navigationActionData.privateClickMeasurement = navigationAction.privateClickMeasurement();
+
+#if PLATFORM(MAC) || HAVE(UIKIT_WITH_MOUSE_SUPPORT)
+    if (auto* coreFrame = m_frame->coreFrame())
+        setWebHitTestResultDataInNavigationActionDataIfNecessary(navigationAction, navigationActionData, *coreFrame);
+#endif
 
     webPage->send(Messages::WebPageProxy::DecidePolicyForNewWindowAction(m_frame->frameID(), m_frame->info(), identifier, navigationActionData, request,
         frameName, listenerID, UserData(WebProcess::singleton().transformObjectsToHandles(userData.get()).get())));
@@ -934,11 +946,7 @@ void WebFrameLoaderClient::dispatchDecidePolicyForNavigationAction(const Navigat
 
     // Notify the bundle client.
     WKBundlePagePolicyAction policy = webPage->injectedBundlePolicyClient().decidePolicyForNavigationAction(webPage, m_frame.ptr(), action.ptr(), request, userData);
-    if (policy == WKBundlePagePolicyActionUse) {
-        WEBFRAMELOADERCLIENT_RELEASE_LOG(Network, "dispatchDecidePolicyForNavigationAction: Injected Bundle responded with PolicyAction::Use");
-        function(PolicyAction::Use, requestIdentifier);
-        return;
-    }
+    RELEASE_ASSERT(policy == WKBundlePagePolicyActionPassThrough);
 
     uint64_t listenerID = m_frame->setUpPolicyListener(requestIdentifier, WTFMove(function), WebFrame::ForNavigationAction::Yes);
 
@@ -993,6 +1001,11 @@ void WebFrameLoaderClient::dispatchDecidePolicyForNavigationAction(const Navigat
     auto* coreFrame = m_frame->coreFrame();
     if (!coreFrame)
         return function(PolicyAction::Ignore, requestIdentifier);
+
+#if PLATFORM(MAC) || HAVE(UIKIT_WITH_MOUSE_SUPPORT)
+    setWebHitTestResultDataInNavigationActionDataIfNecessary(navigationAction, navigationActionData, *coreFrame);
+#endif
+
     WebDocumentLoader* documentLoader = static_cast<WebDocumentLoader*>(coreFrame->loader().policyDocumentLoader());
     if (!documentLoader) {
         // FIXME: When we receive a redirect after the navigation policy has been decided for the initial request,
@@ -1009,7 +1022,7 @@ void WebFrameLoaderClient::dispatchDecidePolicyForNavigationAction(const Navigat
     Ref protector { *coreFrame };
 
     if (policyDecisionMode == PolicyDecisionMode::Synchronous) {
-        auto sendResult = webPage->sendSync(Messages::WebPageProxy::DecidePolicyForNavigationActionSync(m_frame->frameID(), m_frame->isMainFrame(), m_frame->info(), requestIdentifier, documentLoader->navigationID(), navigationActionData, originatingFrameInfoData, originatingPageID, navigationAction.resourceRequest(), request, IPC::FormDataReference { request.httpBody() }, redirectResponse, UserData(WebProcess::singleton().transformObjectsToHandles(userData.get()).get())));
+        auto sendResult = m_frame->sendSync(Messages::WebFrameProxy::DecidePolicyForNavigationActionSync(m_frame->frameID(), m_frame->isMainFrame(), m_frame->info(), requestIdentifier, documentLoader->navigationID(), navigationActionData, originatingFrameInfoData, originatingPageID, navigationAction.resourceRequest(), request, IPC::FormDataReference { request.httpBody() }, redirectResponse, UserData(WebProcess::singleton().transformObjectsToHandles(userData.get()).get())));
         if (!sendResult) {
             WEBFRAMELOADERCLIENT_RELEASE_LOG_ERROR(Network, "dispatchDecidePolicyForNavigationAction: ignoring because of failing to send sync IPC");
             m_frame->didReceivePolicyDecision(listenerID, PolicyDecision { requestIdentifier, std::nullopt, PolicyAction::Ignore, 0, { }, { } });
@@ -1023,7 +1036,7 @@ void WebFrameLoaderClient::dispatchDecidePolicyForNavigationAction(const Navigat
     }
 
     ASSERT(policyDecisionMode == PolicyDecisionMode::Asynchronous);
-    if (!webPage->send(Messages::WebPageProxy::DecidePolicyForNavigationActionAsync(m_frame->frameID(), m_frame->info(), requestIdentifier, documentLoader->navigationID(), navigationActionData, originatingFrameInfoData, originatingPageID, navigationAction.resourceRequest(), request, IPC::FormDataReference { request.httpBody() }, redirectResponse, UserData(WebProcess::singleton().transformObjectsToHandles(userData.get()).get()), listenerID))) {
+    if (!m_frame->send(Messages::WebFrameProxy::DecidePolicyForNavigationActionAsync(m_frame->frameID(), m_frame->info(), requestIdentifier, documentLoader->navigationID(), navigationActionData, originatingFrameInfoData, originatingPageID, navigationAction.resourceRequest(), request, IPC::FormDataReference { request.httpBody() }, redirectResponse, UserData(WebProcess::singleton().transformObjectsToHandles(userData.get()).get()), listenerID))) {
         WEBFRAMELOADERCLIENT_RELEASE_LOG_ERROR(Network, "dispatchDecidePolicyForNavigationAction: ignoring because of failing to send async IPC");
         m_frame->didReceivePolicyDecision(listenerID, PolicyDecision { requestIdentifier, std::nullopt, PolicyAction::Ignore, 0, { }, { } });
     }
@@ -1291,19 +1304,6 @@ void WebFrameLoaderClient::didRunInsecureContent(SecurityOrigin&, const URL&)
     webPage->injectedBundleLoaderClient().didRunInsecureContentForFrame(*webPage, m_frame, userData);
 
     webPage->send(Messages::WebPageProxy::DidRunInsecureContentForFrame(m_frame->frameID(), UserData(WebProcess::singleton().transformObjectsToHandles(userData.get()).get())));
-}
-
-void WebFrameLoaderClient::didDetectXSS(const URL&, bool)
-{
-    WebPage* webPage = m_frame->page();
-    if (!webPage)
-        return;
-
-    RefPtr<API::Object> userData;
-
-    webPage->injectedBundleLoaderClient().didDetectXSSForFrame(*webPage, m_frame, userData);
-
-    webPage->send(Messages::WebPageProxy::DidDetectXSSForFrame(m_frame->frameID(), UserData(WebProcess::singleton().transformObjectsToHandles(userData.get()).get())));
 }
 
 ResourceError WebFrameLoaderClient::cancelledError(const ResourceRequest& request) const
@@ -1589,7 +1589,7 @@ void WebFrameLoaderClient::transitionToCommittedForNewPage()
     auto* drawingArea = webPage->drawingArea();
     view->setViewExposedRect(drawingArea->viewExposedRect());
     if (isMainFrame)
-        view->setDelegatesScrolling(drawingArea->usesDelegatedScrolling());
+        view->setDelegatedScrollingMode(drawingArea->delegatedScrollingMode());
 
     webPage->corePage()->setDelegatesScaling(drawingArea->usesDelegatedPageScaling());
 #endif
@@ -1599,7 +1599,7 @@ void WebFrameLoaderClient::transitionToCommittedForNewPage()
 
 #if USE(COORDINATED_GRAPHICS)
     if (shouldUseFixedLayout) {
-        view->setDelegatesScrolling(shouldUseFixedLayout);
+        view->setDelegatedScrollingMode(shouldUseFixedLayout ? DelegatedScrollingMode::DelegatedToNativeScrollView : DelegatedScrollingMode::NotDelegated);
         view->setPaintsEntireContents(shouldUseFixedLayout);
         return;
     }
@@ -1626,8 +1626,8 @@ void WebFrameLoaderClient::convertMainResourceLoadToDownload(DocumentLoader *doc
 RefPtr<Frame> WebFrameLoaderClient::createFrame(const AtomString& name, HTMLFrameOwnerElement& ownerElement)
 {
     auto* webPage = m_frame->page();
-
-    auto subframe = WebFrame::createSubframe(webPage, name, &ownerElement);
+    ASSERT(webPage);
+    auto subframe = WebFrame::createSubframe(*webPage, m_frame, name, ownerElement);
     auto* coreSubframe = subframe->coreFrame();
     if (!coreSubframe)
         return nullptr;
@@ -1660,26 +1660,6 @@ void WebFrameLoaderClient::redirectDataToPlugin(Widget& pluginWidget)
     m_pluginView = static_cast<PluginView*>(&pluginWidget);
 #endif
 }
-
-#if ENABLE(WEBGL)
-
-WebCore::WebGLLoadPolicy WebFrameLoaderClient::webGLPolicyForURL(const URL& url) const
-{
-    if (auto* webPage = m_frame->page())
-        return webPage->webGLPolicyForURL(m_frame.ptr(), url);
-
-    return WebGLLoadPolicy::WebGLAllowCreation;
-}
-
-WebCore::WebGLLoadPolicy WebFrameLoaderClient::resolveWebGLPolicyForURL(const URL& url) const
-{
-    if (auto* webPage = m_frame->page())
-        return webPage->resolveWebGLPolicyForURL(m_frame.ptr(), url);
-
-    return WebGLLoadPolicy::WebGLAllowCreation;
-}
-
-#endif
 
 static bool pluginSupportsExtension(const PluginData& pluginData, const String& extension)
 {
@@ -1943,15 +1923,6 @@ void WebFrameLoaderClient::getLoadDecisionForIcons(const Vector<std::pair<WebCor
 
     for (auto& icon : icons)
         webPage->send(Messages::WebPageProxy::GetLoadDecisionForIcon(icon.first, CallbackID::fromInteger(icon.second)));
-}
-
-void WebFrameLoaderClient::didCreateWindow(DOMWindow& window)
-{
-    auto* webPage = m_frame->page();
-    if (!webPage)
-        return;
-
-    webPage->send(Messages::WebPageProxy::DidCreateWindow(m_frame->frameID(), window.identifier()));
 }
 
 #if ENABLE(SERVICE_WORKER)

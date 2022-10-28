@@ -26,6 +26,7 @@
 #include "config.h"
 #include "WorkerOrWorkletThread.h"
 
+#include "FontCache.h"
 #include "ThreadGlobalData.h"
 #include "WorkerEventLoop.h"
 #include "WorkerOrWorkletGlobalScope.h"
@@ -80,6 +81,20 @@ WorkerOrWorkletThread::~WorkerOrWorkletThread()
     ASSERT(workerOrWorkletThreads().contains(this));
     workerOrWorkletThreads().remove(this);
 }
+
+void WorkerOrWorkletThread::dispatch(Function<void()>&& func)
+{
+    runLoop().postTask([func = WTFMove(func)](auto&) mutable {
+        func();
+    });
+}
+
+#if ASSERT_ENABLED
+void WorkerOrWorkletThread::assertIsCurrent() const
+{
+    return WTF::assertIsCurrent(*thread());
+}
+#endif
 
 void WorkerOrWorkletThread::startRunningDebuggerTasks()
 {
@@ -225,8 +240,11 @@ void WorkerOrWorkletThread::destroyWorkerGlobalScope(Ref<WorkerOrWorkletThread>&
     if (stoppedCallback)
         callOnMainThread(WTFMove(stoppedCallback));
 
-    // Clean up WebCore::ThreadGlobalData before WTF::Thread goes away!
+    // Clean up any TLS data that contains AtomStrings before WTF::Thread goes
+    // away, otherwise AtomStrings would be destroyed after the thread's atom
+    // string table is destroyed.
     threadGlobalData().destroy();
+    FontCache::destroy();
 
     // Send the last WorkerThread Ref to be Deref'ed on the main thread.
     callOnMainThread([protectedThis = WTFMove(protectedThis)] { });

@@ -46,6 +46,9 @@ inline Opcode moveFor(Bank bank, Width width)
         return bank == GP ? Move32 : MoveFloat;
     case Width64:
         return bank == GP ? Move : MoveDouble;
+    case Width128:
+        RELEASE_ASSERT(bank == FP);
+        return MoveVector;
     default:
         RELEASE_ASSERT_NOT_REACHED();
         return Oops;
@@ -63,6 +66,7 @@ public:
         , m_dst(dst)
         , m_width(width)
     {
+        ASSERT(width < Width128);
     }
 
     const Arg& src() const { return m_src; }

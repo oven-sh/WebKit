@@ -217,7 +217,7 @@ WebProcessPool::WebProcessPool(API::ProcessPoolConfiguration& configuration)
         WebCore::NetworkStorageSession::permitProcessToUseCookieAPI(true);
         Process::setIdentifier(WebCore::ProcessIdentifier::generate());
 #if PLATFORM(COCOA)
-        determineITPState();
+        determineTrackingPreventionState();
 
         // This can be removed once Safari calls _setLinkedOnOrAfterEverything everywhere that WebKit deploys.
 #if PLATFORM(IOS_FAMILY)
@@ -503,14 +503,14 @@ void WebProcessPool::createGPUProcessConnection(WebProcessProxy& webProcessProxy
     parameters.presentingApplicationAuditToken = configuration().presentingApplicationProcessToken();
 #endif
 
-    parameters.isCaptivePortalModeEnabled = webProcessProxy.captivePortalMode() == WebProcessProxy::CaptivePortalMode::Enabled;
+    parameters.isLockdownModeEnabled = webProcessProxy.lockdownMode() == WebProcessProxy::LockdownMode::Enabled;
     ensureGPUProcess().createGPUProcessConnection(webProcessProxy, WTFMove(connectionIdentifier), WTFMove(parameters));
 }
 #endif
 
 bool WebProcessPool::s_useSeparateServiceWorkerProcess = false;
 
-void WebProcessPool::establishRemoteWorkerContextConnectionToNetworkProcess(RemoteWorkerType workerType, RegistrableDomain&& registrableDomain, std::optional<WebCore::ProcessIdentifier> requestingProcessIdentifier, std::optional<ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, PAL::SessionID sessionID, CompletionHandler<void()>&& completionHandler)
+void WebProcessPool::establishRemoteWorkerContextConnectionToNetworkProcess(RemoteWorkerType workerType, RegistrableDomain&& registrableDomain, std::optional<WebCore::ProcessIdentifier> requestingProcessIdentifier, std::optional<ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, PAL::SessionID sessionID, CompletionHandler<void(WebCore::ProcessIdentifier)>&& completionHandler)
 {
     auto* websiteDataStore = WebsiteDataStore::existingDataStoreForSessionID(sessionID);
     if (!websiteDataStore)
@@ -575,7 +575,9 @@ void WebProcessPool::establishRemoteWorkerContextConnectionToNetworkProcess(Remo
     remoteWorkerProcesses().add(*remoteWorkerProcessProxy);
 
     auto& preferencesStore = processPool->m_remoteWorkerPreferences ? processPool->m_remoteWorkerPreferences.value() : processPool->m_defaultPageGroup->preferences().store();
-    remoteWorkerProcessProxy->establishRemoteWorkerContext(workerType, preferencesStore, registrableDomain, serviceWorkerPageIdentifier, WTFMove(completionHandler));
+    remoteWorkerProcessProxy->establishRemoteWorkerContext(workerType, preferencesStore, registrableDomain, serviceWorkerPageIdentifier, [completionHandler = WTFMove(completionHandler), remoteProcessIdentifier = remoteWorkerProcessProxy->coreProcessIdentifier()] () mutable {
+        completionHandler(remoteProcessIdentifier);
+    });
 
     if (!processPool->m_remoteWorkerUserAgent.isNull())
         remoteWorkerProcessProxy->setRemoteWorkerUserAgent(processPool->m_remoteWorkerUserAgent);
@@ -620,22 +622,30 @@ void WebProcessPool::resolvePathsForSandboxExtensions()
     platformResolvePathsForSandboxExtensions();
 }
 
-Ref<WebProcessProxy> WebProcessPool::createNewWebProcess(WebsiteDataStore* websiteDataStore, WebProcessProxy::CaptivePortalMode captivePortalMode, WebProcessProxy::IsPrewarmed isPrewarmed, CrossOriginMode crossOriginMode)
+Ref<WebProcessProxy> WebProcessPool::createNewWebProcess(WebsiteDataStore* websiteDataStore, WebProcessProxy::LockdownMode lockdownMode, WebProcessProxy::IsPrewarmed isPrewarmed, CrossOriginMode crossOriginMode)
 {
 #if PLATFORM(COCOA)
-    m_tccPreferenceEnabled = doesAppHaveITPEnabled();
-    if (websiteDataStore && !websiteDataStore->isItpStateExplicitlySet())
-        websiteDataStore->setResourceLoadStatisticsEnabled(m_tccPreferenceEnabled);
+    m_tccPreferenceEnabled = doesAppHaveTrackingPreventionEnabled();
+    if (websiteDataStore && !websiteDataStore->isTrackingPreventionStateExplicitlySet())
+        websiteDataStore->setTrackingPreventionEnabled(m_tccPreferenceEnabled);
 #endif
 
-    auto processProxy = WebProcessProxy::create(*this, websiteDataStore, captivePortalMode, isPrewarmed, crossOriginMode);
+    auto processProxy = WebProcessProxy::create(*this, websiteDataStore, lockdownMode, isPrewarmed, crossOriginMode);
     initializeNewWebProcess(processProxy, websiteDataStore, isPrewarmed);
     m_processes.append(processProxy.copyRef());
+
+#if ENABLE(WEBCONTENT_CRASH_TESTING)
+    if (shouldCrashWhenCreatingWebProcess()) {
+        auto crashyProcessProxy = WebProcessProxy::createForWebContentCrashy(*this);
+        initializeNewWebProcess(crashyProcessProxy, nullptr);
+        m_processes.append(crashyProcessProxy.copyRef());
+    }
+#endif
 
     return processProxy;
 }
 
-RefPtr<WebProcessProxy> WebProcessPool::tryTakePrewarmedProcess(WebsiteDataStore& websiteDataStore, WebProcessProxy::CaptivePortalMode captivePortalMode)
+RefPtr<WebProcessProxy> WebProcessPool::tryTakePrewarmedProcess(WebsiteDataStore& websiteDataStore, WebProcessProxy::LockdownMode lockdownMode)
 {
     if (!m_prewarmedProcess)
         return nullptr;
@@ -648,7 +658,7 @@ RefPtr<WebProcessProxy> WebProcessPool::tryTakePrewarmedProcess(WebsiteDataStore
         return nullptr;
     }
 
-    if (m_prewarmedProcess->captivePortalMode() != captivePortalMode)
+    if (m_prewarmedProcess->lockdownMode() != lockdownMode)
         return nullptr;
 
 #if PLATFORM(GTK) || PLATFORM(WPE)
@@ -762,7 +772,7 @@ WebProcessDataStoreParameters WebProcessPool::webProcessDataStoreParameters(WebP
         WTFMove(containerCachesDirectoryExtensionHandle),
         WTFMove(containerTemporaryDirectoryExtensionHandle),
 #endif
-        websiteDataStore.resourceLoadStatisticsEnabled()
+        websiteDataStore.trackingPreventionEnabled()
     };
 }
 
@@ -829,7 +839,7 @@ void WebProcessPool::initializeNewWebProcess(WebProcessProxy& process, WebsiteDa
     parameters.attrStyleEnabled = m_configuration->attrStyleEnabled();
     parameters.shouldThrowExceptionForGlobalConstantRedeclaration = m_configuration->shouldThrowExceptionForGlobalConstantRedeclaration();
     parameters.crossOriginMode = process.crossOriginMode();
-    parameters.isCaptivePortalModeEnabled = process.captivePortalMode() == WebProcessProxy::CaptivePortalMode::Enabled;
+    parameters.isLockdownModeEnabled = process.lockdownMode() == WebProcessProxy::LockdownMode::Enabled;
 
 #if ENABLE(SERVICE_CONTROLS)
     auto& serviceController = ServicesController::singleton();
@@ -896,11 +906,11 @@ void WebProcessPool::prewarmProcess()
 
     WEBPROCESSPOOL_RELEASE_LOG(PerformanceLogging, "prewarmProcess: Prewarming a WebProcess for performance");
 
-    auto captivePortalMode = WebProcessProxy::CaptivePortalMode::Disabled;
+    auto lockdownMode = WebProcessProxy::LockdownMode::Disabled;
     if (!m_processes.isEmpty())
-        captivePortalMode = m_processes.last()->captivePortalMode();
+        lockdownMode = m_processes.last()->lockdownMode();
 
-    createNewWebProcess(nullptr, captivePortalMode, WebProcessProxy::IsPrewarmed::Yes);
+    createNewWebProcess(nullptr, lockdownMode, WebProcessProxy::IsPrewarmed::Yes);
 }
 
 void WebProcessPool::enableProcessTermination()
@@ -998,24 +1008,24 @@ void WebProcessPool::disconnectProcess(WebProcessProxy& process)
     removeProcessFromOriginCacheSet(process);
 }
 
-Ref<WebProcessProxy> WebProcessPool::processForRegistrableDomain(WebsiteDataStore& websiteDataStore, const RegistrableDomain& registrableDomain, WebProcessProxy::CaptivePortalMode captivePortalMode)
+Ref<WebProcessProxy> WebProcessPool::processForRegistrableDomain(WebsiteDataStore& websiteDataStore, const RegistrableDomain& registrableDomain, WebProcessProxy::LockdownMode lockdownMode)
 {
     if (!registrableDomain.isEmpty()) {
-        if (auto process = webProcessCache().takeProcess(registrableDomain, websiteDataStore, captivePortalMode)) {
+        if (auto process = webProcessCache().takeProcess(registrableDomain, websiteDataStore, lockdownMode)) {
             WEBPROCESSPOOL_RELEASE_LOG(ProcessSwapping, "processForRegistrableDomain: Using WebProcess from WebProcess cache (process=%p, PID=%i)", process.get(), process->processIdentifier());
             ASSERT(m_processes.containsIf([&](auto& item) { return item.ptr() == process; }));
             return process.releaseNonNull();
         }
 
         // Check if we have a suspended page for the given registrable domain and use its process if we do, for performance reasons.
-        if (auto process = SuspendedPageProxy::findReusableSuspendedPageProcess(*this, registrableDomain, websiteDataStore, captivePortalMode)) {
+        if (auto process = SuspendedPageProxy::findReusableSuspendedPageProcess(*this, registrableDomain, websiteDataStore, lockdownMode)) {
             WEBPROCESSPOOL_RELEASE_LOG(ProcessSwapping, "processForRegistrableDomain: Using WebProcess from a SuspendedPage (process=%p, PID=%i)", process.get(), process->processIdentifier());
             ASSERT(m_processes.containsIf([&](auto& item) { return item.ptr() == process; }));
             return process.releaseNonNull();
         }
     }
 
-    if (auto process = tryTakePrewarmedProcess(websiteDataStore, captivePortalMode)) {
+    if (auto process = tryTakePrewarmedProcess(websiteDataStore, lockdownMode)) {
         WEBPROCESSPOOL_RELEASE_LOG(ProcessSwapping, "processForRegistrableDomain: Using prewarmed process (process=%p, PID=%i)", process.get(), process->processIdentifier());
         if (!registrableDomain.isEmpty())
             tryPrewarmWithDomainInformation(*process, registrableDomain);
@@ -1042,7 +1052,7 @@ Ref<WebProcessProxy> WebProcessPool::processForRegistrableDomain(WebsiteDataStor
             return process;
         }
     }
-    return createNewWebProcess(&websiteDataStore, captivePortalMode);
+    return createNewWebProcess(&websiteDataStore, lockdownMode);
 }
 
 UserContentControllerIdentifier WebProcessPool::userContentControllerIdentifierForRemoteWorkers()
@@ -1071,7 +1081,7 @@ Ref<WebPageProxy> WebProcessPool::createWebPage(PageClient& pageClient, Ref<API:
     }
 
     RefPtr<WebProcessProxy> process;
-    auto captivePortalMode = pageConfiguration->captivePortalModeEnabled() ? WebProcessProxy::CaptivePortalMode::Enabled : WebProcessProxy::CaptivePortalMode::Disabled;
+    auto lockdownMode = pageConfiguration->lockdownModeEnabled() ? WebProcessProxy::LockdownMode::Enabled : WebProcessProxy::LockdownMode::Disabled;
     auto* relatedPage = pageConfiguration->relatedPage();
     if (relatedPage && !relatedPage->isClosed()) {
         // Sharing processes, e.g. when creating the page via window.open().
@@ -1083,12 +1093,12 @@ Ref<WebPageProxy> WebProcessPool::createWebPage(PageClient& pageClient, Ref<API:
         // In the common case, we delay process launch until something is actually loaded in the page.
         process = dummyProcessProxy(pageConfiguration->websiteDataStore()->sessionID());
         if (!process) {
-            process = WebProcessProxy::create(*this, pageConfiguration->websiteDataStore(), captivePortalMode, WebProcessProxy::IsPrewarmed::No, CrossOriginMode::Shared, WebProcessProxy::ShouldLaunchProcess::No);
+            process = WebProcessProxy::create(*this, pageConfiguration->websiteDataStore(), lockdownMode, WebProcessProxy::IsPrewarmed::No, CrossOriginMode::Shared, WebProcessProxy::ShouldLaunchProcess::No);
             m_dummyProcessProxies.add(pageConfiguration->websiteDataStore()->sessionID(), *process);
             m_processes.append(*process);
         }
     } else
-        process = processForRegistrableDomain(*pageConfiguration->websiteDataStore(), { }, captivePortalMode);
+        process = processForRegistrableDomain(*pageConfiguration->websiteDataStore(), { }, lockdownMode);
 
     RefPtr<WebUserContentControllerProxy> userContentController = pageConfiguration->userContentController();
     
@@ -1807,15 +1817,17 @@ void WebProcessPool::removeProcessFromOriginCacheSet(WebProcessProxy& process)
     });
 }
 
-void WebProcessPool::processForNavigation(WebPageProxy& page, const API::Navigation& navigation, Ref<WebProcessProxy>&& sourceProcess, const URL& sourceURL, ProcessSwapRequestedByClient processSwapRequestedByClient, WebProcessProxy::CaptivePortalMode captivePortalMode, const FrameInfoData& frameInfo, Ref<WebsiteDataStore>&& dataStore, CompletionHandler<void(Ref<WebProcessProxy>&&, SuspendedPageProxy*, const String&)>&& completionHandler)
+void WebProcessPool::processForNavigation(WebPageProxy& page, const API::Navigation& navigation, Ref<WebProcessProxy>&& sourceProcess, const URL& sourceURL, ProcessSwapRequestedByClient processSwapRequestedByClient, WebProcessProxy::LockdownMode lockdownMode, const FrameInfoData& frameInfo, Ref<WebsiteDataStore>&& dataStore, CompletionHandler<void(Ref<WebProcessProxy>&&, SuspendedPageProxy*, const String&)>&& completionHandler)
 {
-    processForNavigationInternal(page, navigation, sourceProcess.copyRef(), sourceURL, processSwapRequestedByClient, captivePortalMode, frameInfo, WTFMove(dataStore), [this, page = Ref { page }, navigation = Ref { navigation }, sourceProcess = sourceProcess.copyRef(), sourceURL, processSwapRequestedByClient, completionHandler = WTFMove(completionHandler)](Ref<WebProcessProxy>&& process, SuspendedPageProxy* suspendedPage, const String& reason) mutable {
+    processForNavigationInternal(page, navigation, sourceProcess.copyRef(), sourceURL, processSwapRequestedByClient, lockdownMode, frameInfo, WTFMove(dataStore), [this, page = Ref { page }, navigation = Ref { navigation }, sourceProcess = sourceProcess.copyRef(), sourceURL, processSwapRequestedByClient, completionHandler = WTFMove(completionHandler)](Ref<WebProcessProxy>&& process, SuspendedPageProxy* suspendedPage, const String& reason) mutable {
         // We are process-swapping so automatic process prewarming would be beneficial if the client has not explicitly enabled / disabled it.
         bool doingAnAutomaticProcessSwap = processSwapRequestedByClient == ProcessSwapRequestedByClient::No && process.ptr() != sourceProcess.ptr();
         if (doingAnAutomaticProcessSwap && !configuration().wasAutomaticProcessWarmingSetByClient() && !configuration().clientWouldBenefitFromAutomaticProcessPrewarming()) {
             WEBPROCESSPOOL_RELEASE_LOG(PerformanceLogging, "processForNavigation: Automatically turning on process prewarming because the client would benefit from it");
             configuration().setClientWouldBenefitFromAutomaticProcessPrewarming(true);
         }
+
+        page->websiteDataStore().networkProcess().send(Messages::NetworkProcess::AddAllowedFirstPartyForCookies(process->coreProcessIdentifier(), RegistrableDomain(navigation->currentRequest().url())), 0);
 
         if (m_configuration->alwaysKeepAndReuseSwappedProcesses() && process.ptr() != sourceProcess.ptr()) {
             static std::once_flag onceFlag;
@@ -1832,20 +1844,20 @@ void WebProcessPool::processForNavigation(WebPageProxy& page, const API::Navigat
     });
 }
 
-void WebProcessPool::processForNavigationInternal(WebPageProxy& page, const API::Navigation& navigation, Ref<WebProcessProxy>&& sourceProcess, const URL& pageSourceURL, ProcessSwapRequestedByClient processSwapRequestedByClient, WebProcessProxy::CaptivePortalMode captivePortalMode, const FrameInfoData& frameInfo, Ref<WebsiteDataStore>&& dataStore, CompletionHandler<void(Ref<WebProcessProxy>&&, SuspendedPageProxy*, const String&)>&& completionHandler)
+void WebProcessPool::processForNavigationInternal(WebPageProxy& page, const API::Navigation& navigation, Ref<WebProcessProxy>&& sourceProcess, const URL& pageSourceURL, ProcessSwapRequestedByClient processSwapRequestedByClient, WebProcessProxy::LockdownMode lockdownMode, const FrameInfoData& frameInfo, Ref<WebsiteDataStore>&& dataStore, CompletionHandler<void(Ref<WebProcessProxy>&&, SuspendedPageProxy*, const String&)>&& completionHandler)
 {
     auto& targetURL = navigation.currentRequest().url();
     auto targetRegistrableDomain = WebCore::RegistrableDomain { targetURL };
 
-    auto createNewProcess = [this, protectedThis = Ref { *this }, targetRegistrableDomain, dataStore, captivePortalMode] () -> Ref<WebProcessProxy> {
-        return processForRegistrableDomain(dataStore, targetRegistrableDomain, captivePortalMode);
+    auto createNewProcess = [this, protectedThis = Ref { *this }, targetRegistrableDomain, dataStore, lockdownMode] () -> Ref<WebProcessProxy> {
+        return processForRegistrableDomain(dataStore, targetRegistrableDomain, lockdownMode);
     };
 
     if (usesSingleWebProcess())
         return completionHandler(WTFMove(sourceProcess), nullptr, "Single WebProcess mode is enabled"_s);
 
-    if (sourceProcess->captivePortalMode() != captivePortalMode)
-        return completionHandler(createNewProcess(), nullptr, "Process swap due to captive portal mode change"_s);
+    if (sourceProcess->lockdownMode() != lockdownMode)
+        return completionHandler(createNewProcess(), nullptr, "Process swap due to Lockdown mode change"_s);
 
     if (processSwapRequestedByClient == ProcessSwapRequestedByClient::Yes)
         return completionHandler(createNewProcess(), nullptr, "Process swap was requested by the client"_s);
@@ -2134,17 +2146,17 @@ bool WebProcessPool::hasServiceWorkerBackgroundActivityForTesting() const
 #endif
 
 #if !PLATFORM(COCOA)
-void addCaptivePortalModeObserver(CaptivePortalModeObserver&)
+void addLockdownModeObserver(LockdownModeObserver&)
 {
 }
-void removeCaptivePortalModeObserver(CaptivePortalModeObserver&)
+void removeLockdownModeObserver(LockdownModeObserver&)
 {
 }
-bool captivePortalModeEnabledBySystem()
+bool lockdownModeEnabledBySystem()
 {
     return false;
 }
-void setCaptivePortalModeEnabledGloballyForTesting(std::optional<bool>)
+void setLockdownModeEnabledGloballyForTesting(std::optional<bool>)
 {
 }
 #endif

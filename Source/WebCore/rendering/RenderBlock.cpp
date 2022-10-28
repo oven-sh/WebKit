@@ -2208,9 +2208,13 @@ VisiblePosition RenderBlock::positionForPoint(const LayoutPoint& point, const Re
         LayoutUnit pointLogicalLeft = isHorizontalWritingMode() ? point.x() : point.y();
         LayoutUnit pointLogicalTop = isHorizontalWritingMode() ? point.y() : point.x();
 
-        if (pointLogicalTop < 0 || (pointLogicalTop < logicalHeight() && pointLogicalLeft < 0))
+        if (pointLogicalTop < 0)
             return createVisiblePosition(caretMinOffset(), Affinity::Downstream);
-        if (pointLogicalTop >= logicalHeight() || (pointLogicalTop >= 0 && pointLogicalLeft >= logicalWidth()))
+        if (pointLogicalLeft >= logicalWidth())
+            return createVisiblePosition(caretMaxOffset(), Affinity::Downstream);
+        if (pointLogicalTop < 0)
+            return createVisiblePosition(caretMinOffset(), Affinity::Downstream);
+        if (pointLogicalTop >= logicalHeight())
             return createVisiblePosition(caretMaxOffset(), Affinity::Downstream);
     }
     if (isFlexibleBoxIncludingDeprecated() || isRenderGrid())
@@ -2265,8 +2269,12 @@ void RenderBlock::offsetForContents(LayoutPoint& offset) const
 void RenderBlock::computeIntrinsicLogicalWidths(LayoutUnit& minLogicalWidth, LayoutUnit& maxLogicalWidth) const
 {
     ASSERT(!childrenInline());
-    auto shouldIgnoreDescendantContentForLogicalWidth = shouldApplySizeOrInlineSizeContainment();
-    if (!shouldIgnoreDescendantContentForLogicalWidth)
+    if (shouldApplySizeContainment()) {
+        if (auto width = explicitIntrinsicInnerLogicalWidth()) {
+            minLogicalWidth = width.value();
+            maxLogicalWidth = width.value();
+        }
+    } else if (!shouldApplyInlineSizeContainment())
         computeBlockPreferredLogicalWidths(minLogicalWidth, maxLogicalWidth);
 
     maxLogicalWidth = std::max(minLogicalWidth, maxLogicalWidth);

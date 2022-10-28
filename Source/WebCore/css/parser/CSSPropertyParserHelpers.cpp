@@ -61,6 +61,13 @@ namespace WebCore {
 
 namespace CSSPropertyParserHelpers {
 
+using NumberOrPercentRaw = std::variant<NumberRaw, PercentRaw>;
+using NumberOrNoneRaw = std::variant<NumberRaw, NoneRaw>;
+using PercentOrNoneRaw = std::variant<PercentRaw, NoneRaw>;
+using NumberOrPercentOrNoneRaw = std::variant<NumberRaw, PercentRaw, NoneRaw>;
+using AngleOrNumberRaw = std::variant<AngleRaw, NumberRaw>;
+using AngleOrNumberOrNoneRaw = std::variant<AngleRaw, NumberRaw, NoneRaw>;
+
 bool consumeCommaIncludingWhitespace(CSSParserTokenRange& range)
 {
     CSSParserToken value = range.peek();
@@ -1029,20 +1036,20 @@ struct SameTokenMetaConsumer {
 
 // MARK: Integer
 
-template<typename IntType, IntegerRange intergerRange>
+template<typename IntType, IntegerRange integerRange>
 struct IntegerTypeRawConsumer {
     using Result = std::optional<IntType>;
 
-    using FunctionToken = IntegerTypeRawKnownTokenTypeFunctionConsumer<IntType, intergerRange>;
-    using NumberToken = IntegerTypeRawKnownTokenTypeNumberConsumer<IntType, intergerRange>;
+    using FunctionToken = IntegerTypeRawKnownTokenTypeFunctionConsumer<IntType, integerRange>;
+    using NumberToken = IntegerTypeRawKnownTokenTypeNumberConsumer<IntType, integerRange>;
 };
 
-template<typename IntType, IntegerRange intergerRange>
+template<typename IntType, IntegerRange integerRange>
 struct IntegerTypeConsumer {
     using Result = RefPtr<CSSPrimitiveValue>;
 
-    using FunctionToken = IntegerTypeKnownTokenTypeFunctionConsumer<IntType, intergerRange>;
-    using NumberToken = IntegerTypeKnownTokenTypeNumberConsumer<IntType, intergerRange>;
+    using FunctionToken = IntegerTypeKnownTokenTypeFunctionConsumer<IntType, integerRange>;
+    using NumberToken = IntegerTypeKnownTokenTypeNumberConsumer<IntType, integerRange>;
 };
 
 // MARK: Number
@@ -1293,14 +1300,14 @@ struct NumberOrPercentOrNoneRawAllowingSymbolTableIdentConsumer : NumberOrPercen
 
 // MARK: - Consumer functions - utilize consumer definitions above, giving more targetted interfaces and allowing exposure to other files.
 
-template<typename IntType, IntegerRange intergerRange> std::optional<IntType> consumeIntegerTypeRaw(CSSParserTokenRange& range)
+template<typename IntType, IntegerRange integerRange> std::optional<IntType> consumeIntegerTypeRaw(CSSParserTokenRange& range)
 {
-    return consumeMetaConsumer<IntegerTypeRawConsumer<IntType, intergerRange>>(range, { }, ValueRange::All, CSSParserMode::HTMLStandardMode, UnitlessQuirk::Forbid, UnitlessZeroQuirk::Forbid);
+    return consumeMetaConsumer<IntegerTypeRawConsumer<IntType, integerRange>>(range, { }, ValueRange::All, CSSParserMode::HTMLStandardMode, UnitlessQuirk::Forbid, UnitlessZeroQuirk::Forbid);
 }
 
-template<typename IntType, IntegerRange intergerRange> RefPtr<CSSPrimitiveValue> consumeIntegerType(CSSParserTokenRange& range, CSSValuePool& pool)
+template<typename IntType, IntegerRange integerRange> RefPtr<CSSPrimitiveValue> consumeIntegerType(CSSParserTokenRange& range, CSSValuePool& pool)
 {
-    return consumeMetaConsumer<IntegerTypeConsumer<IntType, intergerRange>>(range, { }, ValueRange::All, CSSParserMode::HTMLStandardMode, UnitlessQuirk::Forbid, UnitlessZeroQuirk::Forbid, pool);
+    return consumeMetaConsumer<IntegerTypeConsumer<IntType, integerRange>>(range, { }, ValueRange::All, CSSParserMode::HTMLStandardMode, UnitlessQuirk::Forbid, UnitlessZeroQuirk::Forbid, pool);
 }
 
 std::optional<int> consumeIntegerRaw(CSSParserTokenRange& range)
@@ -1338,26 +1345,14 @@ std::optional<NumberRaw> consumeNumberRaw(CSSParserTokenRange& range, ValueRange
     return consumeMetaConsumer<NumberRawConsumer<RawIdentityTransformer<NumberRaw>>>(range, { }, valueRange, CSSParserMode::HTMLStandardMode, UnitlessQuirk::Forbid, UnitlessZeroQuirk::Forbid);
 }
 
-template<typename Transformer = RawIdentityTransformer<NumberRaw>>
-static auto consumeNumberRawAllowingSymbolTableIdent(CSSParserTokenRange& range, const CSSCalcSymbolTable& symbolTable, ValueRange valueRange = ValueRange::All) -> typename Transformer::Result
-{
-    return consumeMetaConsumer<NumberRawAllowingSymbolTableIdentConsumer<Transformer>>(range, symbolTable, valueRange, CSSParserMode::HTMLStandardMode, UnitlessQuirk::Forbid, UnitlessZeroQuirk::Forbid);
-}
-
 RefPtr<CSSPrimitiveValue> consumeNumber(CSSParserTokenRange& range, ValueRange valueRange)
 {
     return consumeMetaConsumer<NumberConsumer>(range, { }, valueRange, CSSParserMode::HTMLStandardMode, UnitlessQuirk::Forbid, UnitlessZeroQuirk::Forbid, CSSValuePool::singleton());
 }
 
-std::optional<PercentRaw> consumePercentRaw(CSSParserTokenRange& range, ValueRange valueRange)
+static std::optional<PercentRaw> consumePercentRaw(CSSParserTokenRange& range)
 {
-    return consumeMetaConsumer<PercentRawConsumer<RawIdentityTransformer<PercentRaw>>>(range, { }, valueRange, CSSParserMode::HTMLStandardMode, UnitlessQuirk::Forbid, UnitlessZeroQuirk::Forbid);
-}
-
-template<typename Transformer = RawIdentityTransformer<PercentRaw>>
-static auto consumePercentRawAllowingSymbolTableIdent(CSSParserTokenRange& range, const CSSCalcSymbolTable& symbolTable, ValueRange valueRange = ValueRange::All) -> typename Transformer::Result
-{
-    return consumeMetaConsumer<PercentRawAllowingSymbolTableIdentConsumer<Transformer>>(range, symbolTable, valueRange, CSSParserMode::HTMLStandardMode, UnitlessQuirk::Forbid, UnitlessZeroQuirk::Forbid);
+    return consumeMetaConsumer<PercentRawConsumer<RawIdentityTransformer<PercentRaw>>>(range, { }, ValueRange::All, CSSParserMode::HTMLStandardMode, UnitlessQuirk::Forbid, UnitlessZeroQuirk::Forbid);
 }
 
 RefPtr<CSSPrimitiveValue> consumePercent(CSSParserTokenRange& range, ValueRange valueRange)
@@ -1370,20 +1365,17 @@ RefPtr<CSSPrimitiveValue> consumePercentWorkerSafe(CSSParserTokenRange& range, V
     return consumeMetaConsumer<PercentConsumer>(range, { }, valueRange, CSSParserMode::HTMLStandardMode, UnitlessQuirk::Forbid, UnitlessZeroQuirk::Forbid, pool);
 }
 
-std::optional<LengthRaw> consumeLengthRaw(CSSParserTokenRange& range, CSSParserMode parserMode, ValueRange valueRange, UnitlessQuirk unitless)
-{
-    return consumeMetaConsumer<LengthRawConsumer<RawIdentityTransformer<LengthRaw>>>(range, { }, valueRange, parserMode, unitless, UnitlessZeroQuirk::Forbid);
-}
-
 RefPtr<CSSPrimitiveValue> consumeLength(CSSParserTokenRange& range, CSSParserMode parserMode, ValueRange valueRange, UnitlessQuirk unitless)
 {
     return consumeMetaConsumer<LengthConsumer>(range, { }, valueRange, parserMode, unitless, UnitlessZeroQuirk::Forbid, CSSValuePool::singleton());
 }
 
-std::optional<AngleRaw> consumeAngleRaw(CSSParserTokenRange& range, CSSParserMode parserMode, UnitlessQuirk unitless, UnitlessZeroQuirk unitlessZero)
+#if ENABLE(VARIATION_FONTS)
+static std::optional<AngleRaw> consumeAngleRaw(CSSParserTokenRange& range, CSSParserMode parserMode, UnitlessQuirk unitless, UnitlessZeroQuirk unitlessZero)
 {
     return consumeMetaConsumer<AngleRawConsumer<RawIdentityTransformer<AngleRaw>>>(range, { }, ValueRange::All, parserMode, unitless, unitlessZero);
 }
+#endif
 
 RefPtr<CSSPrimitiveValue> consumeAngle(CSSParserTokenRange& range, CSSParserMode parserMode, UnitlessQuirk unitless, UnitlessZeroQuirk unitlessZero)
 {
@@ -1405,14 +1397,14 @@ RefPtr<CSSPrimitiveValue> consumeResolution(CSSParserTokenRange& range)
     return consumeMetaConsumer<ResolutionConsumer>(range, { }, ValueRange::All, CSSParserMode::HTMLStandardMode, UnitlessQuirk::Forbid, UnitlessZeroQuirk::Forbid, CSSValuePool::singleton());
 }
 
-static RefPtr<CSSPrimitiveValue> consumeAngleOrPercent(CSSParserTokenRange& range, CSSParserMode parserMode, ValueRange valueRange, UnitlessQuirk unitless, UnitlessZeroQuirk unitlessZero, CSSValuePool& pool = CSSValuePool::singleton())
+static RefPtr<CSSPrimitiveValue> consumeAngleOrPercent(CSSParserTokenRange& range, CSSParserMode parserMode)
 {
-    return consumeMetaConsumer<AngleOrPercentConsumer>(range, { }, valueRange, parserMode, unitless, unitlessZero, pool);
+    return consumeMetaConsumer<AngleOrPercentConsumer>(range, { }, ValueRange::All, parserMode, UnitlessQuirk::Forbid, UnitlessZeroQuirk::Allow, CSSValuePool::singleton());
 }
 
-std::optional<LengthOrPercentRaw> consumeLengthOrPercentRaw(CSSParserTokenRange& range, CSSParserMode parserMode, ValueRange valueRange, UnitlessQuirk unitless)
+static std::optional<LengthOrPercentRaw> consumeLengthOrPercentRaw(CSSParserTokenRange& range, CSSParserMode parserMode)
 {
-    return consumeMetaConsumer<LengthOrPercentRawConsumer<RawIdentityTransformer<LengthOrPercentRaw>>>(range, { }, valueRange, parserMode, unitless, UnitlessZeroQuirk::Forbid);
+    return consumeMetaConsumer<LengthOrPercentRawConsumer<RawIdentityTransformer<LengthOrPercentRaw>>>(range, { }, ValueRange::NonNegative, parserMode, UnitlessQuirk::Forbid, UnitlessZeroQuirk::Forbid);
 }
 
 // FIXME: This doesn't work with the current scheme due to the NegativePercentagePolicy parameter
@@ -1445,18 +1437,6 @@ RefPtr<CSSPrimitiveValue> consumeLengthOrPercent(CSSParserTokenRange& range, CSS
     return nullptr;
 }
 
-template<typename Transformer = RawIdentityTransformer<AngleOrNumberRaw>>
-static auto consumeAngleOrNumberRaw(CSSParserTokenRange& range, CSSParserMode parserMode) -> typename Transformer::Result
-{
-    return consumeMetaConsumer<AngleOrNumberRawConsumer<Transformer>>(range, { }, ValueRange::All, parserMode, UnitlessQuirk::Forbid, UnitlessZeroQuirk::Forbid);
-}
-
-template<typename Transformer = RawIdentityTransformer<AngleOrNumberRaw>>
-static auto consumeAngleOrNumberRawAllowingSymbolTableIdent(CSSParserTokenRange& range, const CSSCalcSymbolTable& symbolTable, CSSParserMode parserMode) -> typename Transformer::Result
-{
-    return consumeMetaConsumer<AngleOrNumberRawAllowingSymbolTableIdentConsumer<Transformer>>(range, symbolTable, ValueRange::All, parserMode, UnitlessQuirk::Forbid, UnitlessZeroQuirk::Forbid);
-}
-
 template<typename Transformer = RawIdentityTransformer<AngleOrNumberOrNoneRaw>>
 static auto consumeAngleOrNumberOrNoneRaw(CSSParserTokenRange& range, CSSParserMode parserMode) -> typename Transformer::Result
 {
@@ -1475,22 +1455,10 @@ static auto consumeNumberOrPercentRaw(CSSParserTokenRange& range, ValueRange val
     return consumeMetaConsumer<NumberOrPercentRawConsumer<Transformer>>(range, { }, valueRange, CSSParserMode::HTMLStandardMode, UnitlessQuirk::Forbid, UnitlessZeroQuirk::Forbid);
 }
 
-template<typename Transformer = RawIdentityTransformer<NumberOrPercentRaw>>
-static auto consumeNumberOrPercentRawAllowingSymbolTableIdent(CSSParserTokenRange& range, const CSSCalcSymbolTable& symbolTable, ValueRange valueRange = ValueRange::All) -> typename Transformer::Result
-{
-    return consumeMetaConsumer<NumberOrPercentRawAllowingSymbolTableIdentConsumer<Transformer>>(range, symbolTable, valueRange, CSSParserMode::HTMLStandardMode, UnitlessQuirk::Forbid, UnitlessZeroQuirk::Forbid);
-}
-
 template<typename Transformer = RawIdentityTransformer<NumberOrNoneRaw>>
 static auto consumeNumberOrNoneRaw(CSSParserTokenRange& range, ValueRange valueRange = ValueRange::All) -> typename Transformer::Result
 {
     return consumeMetaConsumer<NumberOrNoneRawConsumer<Transformer>>(range, { }, valueRange, CSSParserMode::HTMLStandardMode, UnitlessQuirk::Forbid, UnitlessZeroQuirk::Forbid);
-}
-
-template<typename Transformer = RawIdentityTransformer<NumberOrNoneRaw>>
-static auto consumeNumberOrNoneRawAllowingSymbolTableIdent(CSSParserTokenRange& range, const CSSCalcSymbolTable& symbolTable, ValueRange valueRange = ValueRange::All) -> typename Transformer::Result
-{
-    return consumeMetaConsumer<NumberOrNoneRawAllowingSymbolTableIdentConsumer<Transformer>>(range, symbolTable, valueRange, CSSParserMode::HTMLStandardMode, UnitlessQuirk::Forbid, UnitlessZeroQuirk::Forbid);
 }
 
 template<typename Transformer = RawIdentityTransformer<PercentOrNoneRaw>>
@@ -1516,7 +1484,6 @@ static auto consumeNumberOrPercentOrNoneRawAllowingSymbolTableIdent(CSSParserTok
 {
     return consumeMetaConsumer<NumberOrPercentOrNoneRawAllowingSymbolTableIdentConsumer<Transformer>>(range, symbolTable, valueRange, CSSParserMode::HTMLStandardMode, UnitlessQuirk::Forbid, UnitlessZeroQuirk::Forbid);
 }
-
 
 // FIXME: This needs a more clear name to indicate its behavior of dividing percents by 100 only if an explicit percent token, not if a result of a calc().
 RefPtr<CSSPrimitiveValue> consumeNumberOrPercent(CSSParserTokenRange& range, ValueRange valueRange)
@@ -1546,13 +1513,11 @@ RefPtr<CSSPrimitiveValue> consumeNumberOrPercent(CSSParserTokenRange& range, Val
 
 // MARK: - Non-primitive consumers.
 
-std::optional<double> consumeFontWeightNumberRaw(CSSParserTokenRange& range)
+static std::optional<double> consumeFontWeightNumberRaw(CSSParserTokenRange& range)
 {
-    // Values less than or equal to 0 or greater than or equal to 1000 are parse errors.
-
 #if !ENABLE(VARIATION_FONTS)
     auto isIntegerAndDivisibleBy100 = [](double value) {
-        ASSERT(value > 0 && value <= 1000);
+        ASSERT(value >= 1 && value <= 1000);
         return static_cast<int>(value / 100) * 100 == value;
     };
 #endif
@@ -1563,38 +1528,29 @@ std::optional<double> consumeFontWeightNumberRaw(CSSParserTokenRange& range)
         // "[For calc()], the used value resulting from an expression must be clamped to the range allowed in the target context."
         auto result = NumberRawKnownTokenTypeFunctionConsumer::consume(range, { }, ValueRange::All, CSSParserMode::HTMLStandardMode, UnitlessQuirk::Forbid, UnitlessZeroQuirk::Forbid);
         if (!result)
-            break;
+            return std::nullopt;
 #if !ENABLE(VARIATION_FONTS)
-        if (!(result->value > 0 && result->value < 1000) || !isIntegerAndDivisibleBy100(result->value))
-            break;
+        if (!(result->value >= 1 && result->value <= 1000) || !isIntegerAndDivisibleBy100(result->value))
+            return std::nullopt;
 #endif
-        return std::clamp(result->value, std::nextafter(0.0, 1.0), std::nextafter(1000.0, 0.0));
+        return std::clamp(result->value, 1.0, 1000.0);
     }
 
     case NumberToken: {
         auto result = token.numericValue();
-        
-        // FIXME: This allows value of 1000, unlike the comment above and the behavior of the FunctionToken parsing path.
         if (!(result >= 1 && result <= 1000))
-            break;
+            return std::nullopt;
 #if !ENABLE(VARIATION_FONTS)
         if (token.numericValueType() != IntegerValueType || !isIntegerAndDivisibleBy100(result))
-            break;
+            return std::nullopt;
 #endif
         range.consumeIncludingWhitespace();
         return result;
     }
-    
+
     default:
-        break;
+        return std::nullopt;
     }
-
-    return std::nullopt;
-}
-
-RefPtr<CSSPrimitiveValue> consumeFontWeightNumber(CSSParserTokenRange& range)
-{
-    return consumeFontWeightNumberWorkerSafe(range, CSSValuePool::singleton());
 }
 
 RefPtr<CSSPrimitiveValue> consumeFontWeightNumberWorkerSafe(CSSParserTokenRange& range, CSSValuePool& pool)
@@ -1623,7 +1579,7 @@ RefPtr<CSSPrimitiveValue> consumeIdentWorkerSafe(CSSParserTokenRange& range, CSS
     return nullptr;
 }
 
-std::optional<CSSValueID> consumeIdentRangeRaw(CSSParserTokenRange& range, CSSValueID lower, CSSValueID upper)
+static std::optional<CSSValueID> consumeIdentRangeRaw(CSSParserTokenRange& range, CSSValueID lower, CSSValueID upper)
 {
     if (range.peek().id() < lower || range.peek().id() > upper)
         return std::nullopt;
@@ -3228,6 +3184,7 @@ static std::optional<PositionCoordinates> positionFromTwoValues(CSSPrimitiveValu
     return PositionCoordinates { value1, value2 };
 }
 
+// FIXME: Merge this with the identical function in CSSPropertyParser.cpp.
 namespace CSSPropertyParserHelpersInternal {
 template<typename... Args>
 static Ref<CSSPrimitiveValue> createPrimitiveValuePair(Args&&... args)
@@ -3559,7 +3516,7 @@ static std::optional<CSSGradientColorStopList> consumeGradientColorStops(CSSPars
     
     auto consumeStopPosition = [&] {
         return gradientType == CSSConicGradient
-            ? consumeAngleOrPercent(range, context.mode, ValueRange::All, UnitlessQuirk::Forbid, UnitlessZeroQuirk::Allow)
+            ? consumeAngleOrPercent(range, context.mode)
             : consumeLengthOrPercent(range, context.mode, ValueRange::All);
     };
 
@@ -3568,7 +3525,7 @@ static std::optional<CSSGradientColorStopList> consumeGradientColorStops(CSSPars
     // The first color stop cannot be a color hint.
     bool previousStopWasColorHint = true;
     do {
-        CSSGradientColorStop stop { consumeColor(range, context), consumeStopPosition(), { } };
+        CSSGradientColorStop stop { consumeColor(range, context), consumeStopPosition() };
         if (!stop.color && !stop.position)
             return std::nullopt;
 
@@ -4016,18 +3973,25 @@ RefPtr<CSSValue> consumeImageOrNone(CSSParserTokenRange& range, const CSSParserC
 
 static RefPtr<CSSValue> consumeCrossFade(CSSParserTokenRange& args, const CSSParserContext& context, bool prefixed)
 {
-    auto fromImageValue = consumeImageOrNone(args, context);
-    if (!fromImageValue || !consumeCommaIncludingWhitespace(args))
+    // FIXME: The current CSS Images spec has a pretty different construction than is being parsed here:
+    //
+    //    cross-fade() = cross-fade( <cf-image># )
+    //    <cf-image> = <percentage [0,100]>? && [ <image> | <color> ]
+    //
+    //  https://drafts.csswg.org/css-images-4/#funcdef-cross-fade
+
+    auto fromImageValueOrNone = consumeImageOrNone(args, context);
+    if (!fromImageValueOrNone || !consumeCommaIncludingWhitespace(args))
         return nullptr;
-    auto toImageValue = consumeImageOrNone(args, context);
-    if (!toImageValue || !consumeCommaIncludingWhitespace(args))
+    auto toImageValueOrNone = consumeImageOrNone(args, context);
+    if (!toImageValueOrNone || !consumeCommaIncludingWhitespace(args))
         return nullptr;
 
     auto percentage = consumeNumberOrPercentRaw<NumberOrPercentDividedBy100Transformer>(args);
     if (!percentage)
         return nullptr;
     auto percentageValue = CSSValuePool::singleton().createValue(clampTo<double>(*percentage, 0, 1), CSSUnitType::CSS_NUMBER);
-    return CSSCrossfadeValue::create(fromImageValue.releaseNonNull(), toImageValue.releaseNonNull(), WTFMove(percentageValue), prefixed);
+    return CSSCrossfadeValue::create(fromImageValueOrNone.releaseNonNull(), toImageValueOrNone.releaseNonNull(), WTFMove(percentageValue), prefixed);
 }
 
 static RefPtr<CSSValue> consumeWebkitCanvas(CSSParserTokenRange& args)
@@ -4052,8 +4016,16 @@ static RefPtr<CSSValue> consumeWebkitNamedImage(CSSParserTokenRange& args)
 
 static RefPtr<CSSValue> consumeFilterImage(CSSParserTokenRange& args, const CSSParserContext& context)
 {
-    auto imageValue = consumeImageOrNone(args, context);
-    if (!imageValue || !consumeCommaIncludingWhitespace(args))
+    // FIXME: The current Filter Effects spec has a different construction than is being parsed here:
+    //
+    //    filter() = filter( [ <image> | <string> ], <filter-value-list> )
+    //
+    //  https://drafts.fxtf.org/filter-effects/#funcdef-filter
+    //
+    // Importantly, `none` is not a valid value for the first parameter.
+
+    auto imageValueOrNone = consumeImageOrNone(args, context);
+    if (!imageValueOrNone || !consumeCommaIncludingWhitespace(args))
         return nullptr;
 
     auto filterValue = consumeFilter(args, context, AllowedFilterFunctions::PixelFilters);
@@ -4064,7 +4036,7 @@ static RefPtr<CSSValue> consumeFilterImage(CSSParserTokenRange& args, const CSSP
     if (!args.atEnd())
         return nullptr;
 
-    return CSSFilterImageValue::create(imageValue.releaseNonNull(), filterValue.releaseNonNull());
+    return CSSFilterImageValue::create(imageValueOrNone.releaseNonNull(), filterValue.releaseNonNull());
 }
 
 #if ENABLE(CSS_PAINTING_API)
@@ -4454,19 +4426,9 @@ RefPtr<CSSPrimitiveValue> consumeSingleContainerName(CSSParserTokenRange& range)
     }
 }
 
-std::optional<CSSValueID> consumeFontVariantCSS21Raw(CSSParserTokenRange& range)
-{
-    return consumeIdentRaw<CSSValueNormal, CSSValueSmallCaps>(range);
-}
-
-std::optional<CSSValueID> consumeFontWeightKeywordValueRaw(CSSParserTokenRange& range)
-{
-    return consumeIdentRaw<CSSValueNormal, CSSValueBold, CSSValueBolder, CSSValueLighter>(range);
-}
-
 std::optional<FontWeightRaw> consumeFontWeightRaw(CSSParserTokenRange& range)
 {
-    if (auto result = consumeFontWeightKeywordValueRaw(range))
+    if (auto result = consumeIdentRaw<CSSValueNormal, CSSValueBold, CSSValueBolder, CSSValueLighter>(range))
         return { *result };
     if (auto result = consumeFontWeightNumberRaw(range))
         return { *result };
@@ -4478,34 +4440,32 @@ std::optional<CSSValueID> consumeFontStretchKeywordValueRaw(CSSParserTokenRange&
     return consumeIdentRaw<CSSValueUltraCondensed, CSSValueExtraCondensed, CSSValueCondensed, CSSValueSemiCondensed, CSSValueNormal, CSSValueSemiExpanded, CSSValueExpanded, CSSValueExtraExpanded, CSSValueUltraExpanded>(range);
 }
 
-std::optional<CSSValueID> consumeFontStyleKeywordValueRaw(CSSParserTokenRange& range)
-{
-    return consumeIdentRaw<CSSValueNormal, CSSValueItalic, CSSValueOblique>(range);
-}
-
 std::optional<FontStyleRaw> consumeFontStyleRaw(CSSParserTokenRange& range, CSSParserMode parserMode)
 {
-    auto result = consumeFontStyleKeywordValueRaw(range);
-    if (!result)
+#if ENABLE(VARIATION_FONTS)
+    CSSParserTokenRange rangeBeforeKeyword = range;
+#endif
+
+    auto keyword = consumeIdentRaw<CSSValueNormal, CSSValueItalic, CSSValueOblique>(range);
+    if (!keyword)
         return std::nullopt;
 
-    auto ident = *result;
-    if (ident == CSSValueNormal || ident == CSSValueItalic)
-        return { { ident, std::nullopt } };
-    ASSERT(ident == CSSValueOblique);
 #if ENABLE(VARIATION_FONTS)
-    if (!range.atEnd()) {
+    if (*keyword == CSSValueOblique && !range.atEnd()) {
         // FIXME: This angle does specify that unitless 0 is allowed - see https://drafts.csswg.org/css-fonts-4/#valdef-font-style-oblique-angle
         if (auto angle = consumeAngleRaw(range, parserMode, UnitlessQuirk::Forbid, UnitlessZeroQuirk::Allow)) {
             if (isFontStyleAngleInRange(CSSPrimitiveValue::computeDegrees(angle->type, angle->value)))
                 return { { CSSValueOblique, WTFMove(angle) } };
+            // Must not consume anything on error.
+            range = rangeBeforeKeyword;
             return std::nullopt;
         }
     }
 #else
     UNUSED_PARAM(parserMode);
 #endif
-    return { { CSSValueOblique, std::nullopt } };
+
+    return { { *keyword, std::nullopt } };
 }
 
 AtomString concatenateFamilyName(CSSParserTokenRange& range)
@@ -4534,16 +4494,24 @@ AtomString consumeFamilyNameRaw(CSSParserTokenRange& range)
     return concatenateFamilyName(range);
 }
 
-std::optional<CSSValueID> consumeGenericFamilyRaw(CSSParserTokenRange& range)
+Vector<AtomString> consumeFamilyNameList(CSSParserTokenRange& range)
 {
-    return consumeIdentRangeRaw(range, CSSValueSerif, CSSValueWebkitBody);
+    Vector<AtomString> result;
+    do {
+        auto name = consumeFamilyNameRaw(range);
+        if (name.isNull())
+            return { };
+        
+        result.append(name);
+    } while (consumeCommaIncludingWhitespace(range));
+    return result;
 }
 
-std::optional<Vector<FontFamilyRaw>> consumeFontFamilyRaw(CSSParserTokenRange& range)
+static std::optional<Vector<FontFamilyRaw>> consumeFontFamilyRaw(CSSParserTokenRange& range)
 {
     Vector<FontFamilyRaw> list;
     do {
-        if (auto ident = consumeGenericFamilyRaw(range))
+        if (auto ident = consumeIdentRangeRaw(range, CSSValueSerif, CSSValueWebkitBody))
             list.append({ *ident });
         else {
             auto familyName = consumeFamilyNameRaw(range);
@@ -4555,21 +4523,28 @@ std::optional<Vector<FontFamilyRaw>> consumeFontFamilyRaw(CSSParserTokenRange& r
     return list;
 }
 
-std::optional<FontSizeRaw> consumeFontSizeRaw(CSSParserTokenRange& range, CSSParserMode parserMode, UnitlessQuirk unitless)
+static std::optional<FontSizeRaw> consumeFontSizeRaw(CSSParserTokenRange& range, CSSParserMode parserMode)
 {
+    // -webkit-xxx-large is a parse-time alias.
+    if (range.peek().id() == CSSValueWebkitXxxLarge) {
+        if (auto ident = consumeIdentRaw(range); ident && ident == CSSValueWebkitXxxLarge)
+            return { CSSValueXxxLarge };
+        return std::nullopt;
+    }
+
     if (range.peek().id() >= CSSValueXxSmall && range.peek().id() <= CSSValueLarger) {
         if (auto ident = consumeIdentRaw(range))
             return { *ident };
         return std::nullopt;
     }
 
-    if (auto result = consumeLengthOrPercentRaw(range, parserMode, ValueRange::NonNegative, unitless))
+    if (auto result = consumeLengthOrPercentRaw(range, parserMode))
         return { *result };
 
     return std::nullopt;
 }
 
-std::optional<LineHeightRaw> consumeLineHeightRaw(CSSParserTokenRange& range, CSSParserMode parserMode)
+static std::optional<LineHeightRaw> consumeLineHeightRaw(CSSParserTokenRange& range, CSSParserMode parserMode)
 {
     if (range.peek().id() == CSSValueNormal) {
         if (auto ident = consumeIdentRaw(range))
@@ -4580,7 +4555,7 @@ std::optional<LineHeightRaw> consumeLineHeightRaw(CSSParserTokenRange& range, CS
     if (auto number = consumeNumberRaw(range, ValueRange::NonNegative))
         return { number->value };
 
-    if (auto lengthOrPercent = consumeLengthOrPercentRaw(range, parserMode, ValueRange::NonNegative))
+    if (auto lengthOrPercent = consumeLengthOrPercentRaw(range, parserMode))
         return { *lengthOrPercent };
 
     return std::nullopt;
@@ -4588,36 +4563,19 @@ std::optional<LineHeightRaw> consumeLineHeightRaw(CSSParserTokenRange& range, CS
 
 std::optional<FontRaw> consumeFontRaw(CSSParserTokenRange& range, CSSParserMode parserMode)
 {
-    // Let's check if there is an inherit or initial somewhere in the shorthand.
-    CSSParserTokenRange rangeCopy = range;
-    while (!rangeCopy.atEnd()) {
-        CSSValueID id = rangeCopy.consumeIncludingWhitespace().id();
-        if (id == CSSValueInherit || id == CSSValueInitial)
-            return std::nullopt;
-    }
-
     FontRaw result;
 
-    while (!range.atEnd()) {
-        CSSValueID id = range.peek().id();
-        if (!result.style) {
-            if ((result.style = consumeFontStyleRaw(range, parserMode)))
-                continue;
-        }
-        if (!result.variantCaps && (id == CSSValueNormal || id == CSSValueSmallCaps)) {
-            // Font variant in the shorthand is particular, it only accepts normal or small-caps.
-            // See https://drafts.csswg.org/css-fonts/#propdef-font
-            if ((result.variantCaps = consumeFontVariantCSS21Raw(range)))
-                continue;
-        }
-        if (!result.weight) {
-            if ((result.weight = consumeFontWeightRaw(range)))
-                continue;
-        }
-        if (!result.stretch) {
-            if ((result.stretch = consumeFontStretchKeywordValueRaw(range)))
-                continue;
-        }
+    for (unsigned i = 0; i < 4 && !range.atEnd(); ++i) {
+        if (consumeIdentRaw<CSSValueNormal>(range))
+            continue;
+        if (!result.style && (result.style = consumeFontStyleRaw(range, parserMode)))
+            continue;
+        if (!result.variantCaps && (result.variantCaps = consumeIdentRaw<CSSValueSmallCaps>(range)))
+            continue;
+        if (!result.weight && (result.weight = consumeFontWeightRaw(range)))
+            continue;
+        if (!result.stretch && (result.stretch = consumeFontStretchKeywordValueRaw(range)))
+            continue;
         break;
     }
 

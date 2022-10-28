@@ -361,6 +361,7 @@ public:
     ModalContainerObservationPolicy modalContainerObservationPolicy() const { return m_modalContainerObservationPolicy; }
     void setModalContainerObservationPolicy(ModalContainerObservationPolicy policy) { m_modalContainerObservationPolicy = policy; }
 
+    // FIXME: Why is this in a Loader?
     WEBCORE_EXPORT ColorSchemePreference colorSchemePreference() const;
     void setColorSchemePreference(ColorSchemePreference preference) { m_colorSchemePreference = preference; }
 
@@ -508,6 +509,10 @@ private:
     bool maybeCreateArchive();
 #if ENABLE(WEB_ARCHIVE) || ENABLE(MHTML)
     void clearArchiveResources();
+#endif
+
+#if ENABLE(WEB_ARCHIVE) || ENABLE(MHTML)
+    bool isLoadingRemoteArchive() const;
 #endif
 
     void willSendRequest(ResourceRequest&&, const ResourceResponse&, CompletionHandler<void(ResourceRequest&&)>&&);

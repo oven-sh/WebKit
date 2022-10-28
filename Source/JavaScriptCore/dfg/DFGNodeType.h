@@ -301,6 +301,7 @@ namespace JSC { namespace DFG {
     macro(ObjectCreate, NodeMustGenerate | NodeResultJS) \
     macro(ObjectKeys, NodeMustGenerate | NodeResultJS) \
     macro(ObjectGetOwnPropertyNames, NodeMustGenerate | NodeResultJS) \
+    macro(ObjectToString, NodeMustGenerate | NodeResultJS) \
     \
     /* Atomics object functions. */\
     macro(AtomicsAdd, NodeResultJS | NodeMustGenerate | NodeHasVarArgs) \
@@ -539,6 +540,7 @@ namespace JSC { namespace DFG {
     macro(StringValueOf, NodeMustGenerate | NodeResultJS) \
     macro(StringSlice, NodeResultJS) \
     macro(StringSubstring, NodeResultJS) \
+    macro(StringLocaleCompare, NodeMustGenerate | NodeResultInt32) \
     macro(ToLowerCase, NodeResultJS) \
     /* Nodes for DOM JIT */\
     macro(CallDOMGetter, NodeResultJS | NodeMustGenerate) \

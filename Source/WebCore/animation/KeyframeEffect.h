@@ -118,7 +118,7 @@ public:
     ExceptionOr<void> setKeyframes(JSC::JSGlobalObject&, Document&, JSC::Strong<JSC::JSObject>&&);
 
     IterationCompositeOperation iterationComposite() const { return m_iterationCompositeOperation; }
-    void setIterationComposite(IterationCompositeOperation iterationCompositeOperation) { m_iterationCompositeOperation = iterationCompositeOperation; }
+    void setIterationComposite(IterationCompositeOperation);
     CompositeOperation composite() const { return m_compositeOperation; }
     void setComposite(CompositeOperation);
     CompositeOperation bindingsComposite() const;
@@ -215,7 +215,7 @@ private:
     void addPendingAcceleratedAction(AcceleratedAction);
     bool isCompletelyAccelerated() const { return m_acceleratedPropertiesState == AcceleratedProperties::All; }
     void updateAcceleratedActions();
-    void setAnimatedPropertiesInStyle(RenderStyle&, double);
+    void setAnimatedPropertiesInStyle(RenderStyle&, double iterationProgress, double currentIteration);
     TimingFunction* timingFunctionForKeyframeAtIndex(size_t) const;
     TimingFunction* timingFunctionForBlendingKeyframe(const KeyframeValue&) const;
     Ref<const Animation> backingAnimationForCompositedRenderer() const;

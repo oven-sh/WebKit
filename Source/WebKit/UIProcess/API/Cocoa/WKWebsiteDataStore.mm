@@ -299,6 +299,32 @@ static Vector<WebKit::WebsiteDataRecord> toWebsiteDataRecords(NSArray *dataRecor
     return WebKit::WebsiteDataStore::deleteDefaultDataStoreForTesting();
 }
 
++ (void)_fetchAllIdentifiers:(void(^)(NSArray<NSUUID *> *))completionHandler
+{
+    auto completionHandlerCopy = makeBlockPtr(completionHandler);
+    WebKit::WebsiteDataStore::fetchAllDataStoreIdentifiers([completionHandlerCopy](auto&& identifiers) {
+        auto result = adoptNS([[NSMutableArray alloc] initWithCapacity:identifiers.size()]);
+        for (auto identifier : identifiers)
+            [result addObject:(NSUUID *)identifier];
+
+        completionHandlerCopy(result.autorelease());
+    });
+}
+
++ (void)_removeDataStoreWithIdentifier:(NSUUID *)identifier completionHandler:(void(^)(NSError* error))completionHandler
+{
+    if (!identifier)
+        [NSException raise:NSInvalidArgumentException format:@"Identifier cannot be nil"];
+
+    auto completionHandlerCopy = makeBlockPtr(completionHandler);
+    WebKit::WebsiteDataStore::removeDataStoreWithIdentifier(UUID(identifier), [completionHandlerCopy](const String& errorString) {
+        if (errorString.isEmpty())
+            return completionHandlerCopy(nil);
+
+        completionHandlerCopy([NSError errorWithDomain:@"WKWebSiteDataStore" code:WKErrorUnknown userInfo:@{ NSLocalizedDescriptionKey:(NSString *)errorString }]);
+    });
+}
+
 - (instancetype)_initWithConfiguration:(_WKWebsiteDataStoreConfiguration *)configuration
 {
     if (!(self = [super init]))
@@ -331,13 +357,13 @@ static Vector<WebKit::WebsiteDataRecord> toWebsiteDataRecords(NSArray *dataRecor
 
 - (BOOL)_resourceLoadStatisticsEnabled
 {
-    return _websiteDataStore->resourceLoadStatisticsEnabled();
+    return _websiteDataStore->trackingPreventionEnabled();
 }
 
 - (void)_setResourceLoadStatisticsEnabled:(BOOL)enabled
 {
-    _websiteDataStore->useExplicitITPState();
-    _websiteDataStore->setResourceLoadStatisticsEnabled(enabled);
+    _websiteDataStore->useExplicitTrackingPreventionState();
+    _websiteDataStore->setTrackingPreventionEnabled(enabled);
 }
 
 - (BOOL)_resourceLoadStatisticsDebugMode
@@ -448,7 +474,7 @@ static Vector<WebKit::WebsiteDataRecord> toWebsiteDataRecords(NSArray *dataRecor
     
     webPageProxy->getLoadedSubresourceDomains([completionHandler = makeBlockPtr(completionHandler)] (Vector<WebCore::RegistrableDomain>&& loadedSubresourceDomains) {
         Vector<RefPtr<API::Object>> apiDomains = WTF::map(loadedSubresourceDomains, [](auto& domain) {
-            return RefPtr<API::Object>(API::String::create(WTFMove(domain.string())));
+            return RefPtr<API::Object>(API::String::create(String(domain.string())));
         });
         completionHandler(wrapper(API::Array::create(WTFMove(apiDomains))));
     });

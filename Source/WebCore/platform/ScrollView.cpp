@@ -189,13 +189,13 @@ void ScrollView::setPaintsEntireContents(bool paintsEntireContents)
     m_paintsEntireContents = paintsEntireContents;
 }
 
-void ScrollView::setDelegatesScrolling(bool delegatesScrolling)
+void ScrollView::setDelegatedScrollingMode(DelegatedScrollingMode delegatedScrollingMode)
 {
-    if (m_delegatesScrolling == delegatesScrolling)
+    if (m_delegatedScrollingMode == delegatedScrollingMode)
         return;
 
-    m_delegatesScrolling = delegatesScrolling;
-    delegatesScrollingDidChange();
+    m_delegatedScrollingMode = delegatedScrollingMode;
+    delegatedScrollingModeDidChange();
 }
 
 IntPoint ScrollView::contentsScrollPosition() const
@@ -533,8 +533,8 @@ void ScrollView::setScrollPosition(const ScrollPosition& scrollPosition, const S
         return;
     }
 
-    ScrollPosition newScrollPosition = (!delegatesScrolling() && options.clamping == ScrollClamping::Clamped) ? adjustScrollPositionWithinRange(scrollPosition) : scrollPosition;
-    if ((!delegatesScrolling() || currentScrollType() == ScrollType::User) && newScrollPosition == this->scrollPosition()) {
+    ScrollPosition newScrollPosition = (!delegatesScrollingToNativeView() && options.clamping == ScrollClamping::Clamped) ? adjustScrollPositionWithinRange(scrollPosition) : scrollPosition;
+    if ((!delegatesScrollingToNativeView() || currentScrollType() == ScrollType::User) && newScrollPosition == this->scrollPosition()) {
         LOG_WITH_STREAM(Scrolling, stream << "ScrollView::setScrollPosition " << scrollPosition << " return for no change");
         return;
     }
@@ -578,12 +578,15 @@ IntSize ScrollView::overhangAmount() const
 bool ScrollView::managesScrollbars() const
 {
 #if PLATFORM(IOS_FAMILY)
+    // FIXME: We should be able to remove this. iOS should always hit the DelegatedToNativeScrollView condition below.
     return false;
 #else
     if (platformWidget())
         return false;
-    if (delegatesScrolling())
+
+    if (delegatedScrollingMode() == DelegatedScrollingMode::DelegatedToNativeScrollView)
         return false;
+
     return true;
 #endif
 }
@@ -867,7 +870,7 @@ void ScrollView::scrollContentsSlowPath(const IntRect& updateRect)
 
 IntPoint ScrollView::viewToContents(const IntPoint& point) const
 {
-    if (delegatesScrolling())
+    if (delegatesScrollingToNativeView())
         return point;
 
     return point + toIntSize(documentScrollPositionRelativeToViewOrigin());
@@ -875,7 +878,7 @@ IntPoint ScrollView::viewToContents(const IntPoint& point) const
 
 IntPoint ScrollView::contentsToView(const IntPoint& point) const
 {
-    if (delegatesScrolling())
+    if (delegatesScrollingToNativeView())
         return point;
 
     return point - toIntSize(documentScrollPositionRelativeToViewOrigin());
@@ -883,7 +886,7 @@ IntPoint ScrollView::contentsToView(const IntPoint& point) const
 
 FloatPoint ScrollView::viewToContents(const FloatPoint& point) const
 {
-    if (delegatesScrolling())
+    if (delegatesScrollingToNativeView())
         return point;
 
     return viewToContents(IntPoint(point));
@@ -891,14 +894,14 @@ FloatPoint ScrollView::viewToContents(const FloatPoint& point) const
 
 FloatPoint ScrollView::contentsToView(const FloatPoint& point) const
 {
-    if (delegatesScrolling())
+    if (delegatesScrollingToNativeView())
         return point;
     return point - toFloatSize(documentScrollPositionRelativeToViewOrigin());
 }
 
 IntRect ScrollView::viewToContents(IntRect rect) const
 {
-    if (delegatesScrolling())
+    if (delegatesScrollingToNativeView())
         return rect;
 
     rect.moveBy(documentScrollPositionRelativeToViewOrigin());
@@ -907,7 +910,7 @@ IntRect ScrollView::viewToContents(IntRect rect) const
 
 FloatRect ScrollView::viewToContents(FloatRect rect) const
 {
-    if (delegatesScrolling())
+    if (delegatesScrollingToNativeView())
         return rect;
 
     rect.moveBy(documentScrollPositionRelativeToViewOrigin());
@@ -916,7 +919,7 @@ FloatRect ScrollView::viewToContents(FloatRect rect) const
 
 IntRect ScrollView::contentsToView(IntRect rect) const
 {
-    if (delegatesScrolling())
+    if (delegatesScrollingToNativeView())
         return rect;
 
     rect.moveBy(-documentScrollPositionRelativeToViewOrigin());
@@ -925,7 +928,7 @@ IntRect ScrollView::contentsToView(IntRect rect) const
 
 FloatRect ScrollView::contentsToView(FloatRect rect) const
 {
-    if (delegatesScrolling())
+    if (delegatesScrollingToNativeView())
         return rect;
 
     rect.moveBy(-documentScrollPositionRelativeToViewOrigin());
@@ -1013,7 +1016,7 @@ FloatQuad ScrollView::contentsToRootView(const FloatQuad& quad) const
 
 IntPoint ScrollView::rootViewToTotalContents(const IntPoint& rootViewPoint) const
 {
-    if (delegatesScrolling())
+    if (delegatesScrollingToNativeView())
         return convertFromRootView(rootViewPoint);
 
     IntPoint viewPoint = convertFromRootView(rootViewPoint);

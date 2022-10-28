@@ -201,7 +201,7 @@ private:
     void inlineCall(Node* callTargetNode, Operand result, CallVariant, int registerOffset, int argumentCountIncludingThis, InlineCallFrame::Kind, BasicBlock* continuationBlock, const ChecksFunctor& insertChecks);
     // Handle intrinsic functions. Return true if it succeeded, false if we need to plant a call.
     template<typename ChecksFunctor>
-    bool handleIntrinsicCall(Node* callee, Operand result, Intrinsic, int registerOffset, int argumentCountIncludingThis, SpeculatedType prediction, const ChecksFunctor& insertChecks);
+    bool handleIntrinsicCall(Node* callee, Operand result, CallVariant, Intrinsic, int registerOffset, int argumentCountIncludingThis, SpeculatedType prediction, const ChecksFunctor& insertChecks);
     template<typename ChecksFunctor>
     bool handleDOMJITCall(Node* callee, Operand result, const DOMJIT::Signature*, int registerOffset, int argumentCountIncludingThis, SpeculatedType prediction, const ChecksFunctor& insertChecks);
     template<typename ChecksFunctor>
@@ -1935,7 +1935,7 @@ ByteCodeParser::CallOptimizationResult ByteCodeParser::handleCallVariant(Node* c
 
     Intrinsic intrinsic = callee.intrinsicFor(specializationKind);
     if (intrinsic != NoIntrinsic) {
-        if (handleIntrinsicCall(callTargetNode, result, intrinsic, registerOffset, argumentCountIncludingThis, prediction, insertChecksWithAccounting)) {
+        if (handleIntrinsicCall(callTargetNode, result, callee, intrinsic, registerOffset, argumentCountIncludingThis, prediction, insertChecksWithAccounting)) {
             endSpecialCase();
             return CallOptimizationResult::Inlined;
         }
@@ -2327,12 +2327,14 @@ void ByteCodeParser::handleMinMax(Operand result, NodeType op, int registerOffse
 }
 
 template<typename ChecksFunctor>
-bool ByteCodeParser::handleIntrinsicCall(Node* callee, Operand result, Intrinsic intrinsic, int registerOffset, int argumentCountIncludingThis, SpeculatedType prediction, const ChecksFunctor& insertChecks)
+bool ByteCodeParser::handleIntrinsicCall(Node* callee, Operand result, CallVariant variant, Intrinsic intrinsic, int registerOffset, int argumentCountIncludingThis, SpeculatedType prediction, const ChecksFunctor& insertChecks)
 {
     VERBOSE_LOG("       The intrinsic is ", intrinsic, "\n");
 
-    if (!isOpcodeShape<OpCallShape>(m_currentInstruction))
+    if (!isOpcodeShape<OpCallShape>(m_currentInstruction)) {
+        VERBOSE_LOG("    Failing because instruction is not OpCallShape.\n");
         return false;
+    }
 
     // It so happens that the code below doesn't handle the invalid result case. We could fix that, but
     // it would only benefit intrinsics called as setters, like if you do:
@@ -2340,8 +2342,10 @@ bool ByteCodeParser::handleIntrinsicCall(Node* callee, Operand result, Intrinsic
     //     o.__defineSetter__("foo", Math.pow)
     //
     // Which is extremely amusing, but probably not worth optimizing.
-    if (!result.isValid())
+    if (!result.isValid()) {
+        VERBOSE_LOG("    Failing result operand is invalid.\n");
         return false;
+    }
 
     bool didSetResult = false;
     auto setResult = [&] (Node* node) {
@@ -2462,6 +2466,13 @@ bool ByteCodeParser::handleIntrinsicCall(Node* callee, Operand result, Intrinsic
         case ArrayEntriesIntrinsic:
         case ArrayKeysIntrinsic:
         case ArrayValuesIntrinsic: {
+            JSGlobalObject* globalObject = m_graph.globalObjectFor(currentNodeOrigin().semantic);
+            auto* function = variant.function();
+            if (!function)
+                return false;
+            if (function->globalObject() != globalObject)
+                return false;
+
             insertChecks();
 
             std::optional<IterationKind> kind = interationKindForIntrinsic(intrinsic);
@@ -2474,7 +2485,6 @@ bool ByteCodeParser::handleIntrinsicCall(Node* callee, Operand result, Intrinsic
             unsigned errorStringIndex = UINT32_MAX;
             Node* object = addToGraph(ToObject, OpInfo(errorStringIndex), OpInfo(SpecNone), get(virtualRegisterForArgumentIncludingThis(0, registerOffset)));
 
-            JSGlobalObject* globalObject = m_graph.globalObjectFor(currentNodeOrigin().semantic);
             Node* iterator = addToGraph(NewInternalFieldObject, OpInfo(m_graph.registerStructure(globalObject->arrayIteratorStructure())));
 
             addToGraph(PutInternalField, OpInfo(static_cast<uint32_t>(JSArrayIterator::Field::IteratedObject)), iterator, object);
@@ -2491,24 +2501,15 @@ bool ByteCodeParser::handleIntrinsicCall(Node* callee, Operand result, Intrinsic
             ArrayMode arrayMode = getArrayMode(Array::Write);
             if (!arrayMode.isJSArray())
                 return false;
-            switch (arrayMode.type()) {
-            case Array::Int32:
-            case Array::Double:
-            case Array::Contiguous:
-            case Array::ArrayStorage: {
-                insertChecks();
 
-                addVarArgChild(nullptr); // For storage.
-                for (int i = 0; i < argumentCountIncludingThis; ++i)
-                    addVarArgChild(get(virtualRegisterForArgumentIncludingThis(i, registerOffset)));
-                Node* arrayPush = addToGraph(Node::VarArg, ArrayPush, OpInfo(arrayMode.asWord()), OpInfo(prediction));
-                setResult(arrayPush);
-                return true;
-            }
-                
-            default:
-                return false;
-            }
+            insertChecks();
+
+            addVarArgChild(nullptr); // For storage.
+            for (int i = 0; i < argumentCountIncludingThis; ++i)
+                addVarArgChild(get(virtualRegisterForArgumentIncludingThis(i, registerOffset)));
+            Node* arrayPush = addToGraph(Node::VarArg, ArrayPush, OpInfo(arrayMode.asWord()), OpInfo(prediction));
+            setResult(arrayPush);
+            return true;
         }
 
         case ArraySliceIntrinsic: {
@@ -2531,22 +2532,14 @@ bool ByteCodeParser::handleIntrinsicCall(Node* callee, Operand result, Intrinsic
             case Array::Int32:
             case Array::Contiguous: {
                 JSGlobalObject* globalObject = m_graph.globalObjectFor(currentNodeOrigin().semantic);
-
-                Structure* arrayPrototypeStructure = globalObject->arrayPrototype()->structure();
-                Structure* objectPrototypeStructure = globalObject->objectPrototype()->structure();
-
                 // FIXME: We could easily relax the Array/Object.prototype transition as long as we OSR exitted if we saw a hole.
                 // https://bugs.webkit.org/show_bug.cgi?id=173171
                 if (globalObject->arraySpeciesWatchpointSet().state() == IsWatched
-                    && globalObject->havingABadTimeWatchpoint()->isStillValid()
-                    && arrayPrototypeStructure->transitionWatchpointSetIsStillValid()
-                    && objectPrototypeStructure->transitionWatchpointSetIsStillValid()
-                    && globalObject->arrayPrototypeChainIsSaneConcurrently(arrayPrototypeStructure, objectPrototypeStructure)) {
-
+                    && globalObject->havingABadTimeWatchpointSet().isStillValid()
+                    && globalObject->arrayPrototypeChainIsSaneWatchpointSet().state() == IsWatched) {
                     m_graph.watchpoints().addLazily(globalObject->arraySpeciesWatchpointSet());
-                    m_graph.watchpoints().addLazily(globalObject->havingABadTimeWatchpoint());
-                    m_graph.registerAndWatchStructureTransition(arrayPrototypeStructure);
-                    m_graph.registerAndWatchStructureTransition(objectPrototypeStructure);
+                    m_graph.watchpoints().addLazily(globalObject->havingABadTimeWatchpointSet());
+                    m_graph.watchpoints().addLazily(globalObject->arrayPrototypeChainIsSaneWatchpointSet());
 
                     insertChecks();
 
@@ -2627,18 +2620,10 @@ bool ByteCodeParser::handleIntrinsicCall(Node* callee, Operand result, Intrinsic
             case Array::Int32:
             case Array::Contiguous: {
                 JSGlobalObject* globalObject = m_graph.globalObjectFor(currentNodeOrigin().semantic);
-
-                Structure* arrayPrototypeStructure = globalObject->arrayPrototype()->structure();
-                Structure* objectPrototypeStructure = globalObject->objectPrototype()->structure();
-
                 // FIXME: We could easily relax the Array/Object.prototype transition as long as we OSR exitted if we saw a hole.
                 // https://bugs.webkit.org/show_bug.cgi?id=173171
-                if (arrayPrototypeStructure->transitionWatchpointSetIsStillValid()
-                    && objectPrototypeStructure->transitionWatchpointSetIsStillValid()
-                    && globalObject->arrayPrototypeChainIsSaneConcurrently(arrayPrototypeStructure, objectPrototypeStructure)) {
-
-                    m_graph.registerAndWatchStructureTransition(arrayPrototypeStructure);
-                    m_graph.registerAndWatchStructureTransition(objectPrototypeStructure);
+                if (globalObject->arrayPrototypeChainIsSaneWatchpointSet().state() == IsWatched) {
+                    m_graph.watchpoints().addLazily(globalObject->arrayPrototypeChainIsSaneWatchpointSet());
 
                     insertChecks();
 
@@ -2846,6 +2831,22 @@ bool ByteCodeParser::handleIntrinsicCall(Node* callee, Operand result, Intrinsic
             setResult(charCode);
             return true;
         }
+
+        case StringPrototypeLocaleCompareIntrinsic: {
+            // Currently, only handling default locale case.
+            if (argumentCountIncludingThis != 2)
+                return false;
+
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
+                return false;
+
+            insertChecks();
+            VirtualRegister thisOperand = virtualRegisterForArgumentIncludingThis(0, registerOffset);
+            VirtualRegister indexOperand = virtualRegisterForArgumentIncludingThis(1, registerOffset);
+            setResult(addToGraph(StringLocaleCompare, get(thisOperand), get(indexOperand)));
+            return true;
+        }
+
         case Clz32Intrinsic: {
             insertChecks();
             if (argumentCountIncludingThis == 1)
@@ -3000,6 +3001,12 @@ bool ByteCodeParser::handleIntrinsicCall(Node* callee, Operand result, Intrinsic
 
             insertChecks();
             setResult(addToGraph(ObjectGetOwnPropertyNames, get(virtualRegisterForArgumentIncludingThis(1, registerOffset))));
+            return true;
+        }
+
+        case ObjectToStringIntrinsic: {
+            insertChecks();
+            setResult(addToGraph(ObjectToString, get(virtualRegisterForArgumentIncludingThis(0, registerOffset))));
             return true;
         }
 
@@ -3726,7 +3733,7 @@ bool ByteCodeParser::handleIntrinsicCall(Node* callee, Operand result, Intrinsic
             insertChecks();
             Node* thisNumber = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
             if (argumentCountIncludingThis == 1) {
-                Node* resultNode = addToGraph(ToString, thisNumber);
+                Node* resultNode = addToGraph(NumberToStringWithValidRadixConstant, OpInfo(10), thisNumber);
                 setResult(resultNode);
             } else {
                 Node* radix = get(virtualRegisterForArgumentIncludingThis(1, registerOffset));
@@ -4271,13 +4278,13 @@ bool ByteCodeParser::needsDynamicLookup(ResolveType type, OpcodeID opcode)
     ASSERT(opcode == op_resolve_scope || opcode == op_get_from_scope || opcode == op_put_to_scope);
 
     JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObject();
-    if (needsVarInjectionChecks(type) && globalObject->varInjectionWatchpoint()->hasBeenInvalidated())
+    if (needsVarInjectionChecks(type) && globalObject->varInjectionWatchpointSet().hasBeenInvalidated())
         return true;
 
     switch (type) {
     case GlobalVar:
     case GlobalVarWithVarInjectionChecks: {
-        if (opcode == op_put_to_scope && globalObject->varReadOnlyWatchpoint()->hasBeenInvalidated())
+        if (opcode == op_put_to_scope && globalObject->varReadOnlyWatchpointSet().hasBeenInvalidated())
             return true;
 
         return false;
@@ -5502,7 +5509,8 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 cachedStructure = cachedStructureID.decode();
             if (metadata.m_toThisStatus != ToThisOK
                 || !cachedStructure
-                || cachedStructure->classInfoForCells()->methodTable.toThis != JSObject::info()->methodTable.toThis
+                || !cachedStructure->classInfoForCells()->isSubClassOf(JSObject::info())
+                || cachedStructure->classInfoForCells()->isSubClassOf(JSScope::info())
                 || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadCache)
                 || (op1->op() == GetLocal && op1->variableAccessData()->structureCheckHoistingFailed())) {
                 setThis(addToGraph(ToThis, OpInfo(bytecode.m_ecmaMode), OpInfo(getPrediction()), op1));
@@ -5538,7 +5546,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
             if (function) {
                 if (FunctionRareData* rareData = function->rareData()) {
                     JSGlobalObject* globalObject = m_graph.globalObjectFor(currentNodeOrigin().semantic);
-                    if (rareData->allocationProfileWatchpointSet().isStillValid() && m_graph.isWatchingStructureCacheClearedWatchpoint(globalObject)) {
+                    if (rareData->allocationProfileWatchpointSet().isStillValid() && globalObject->structureCacheClearedWatchpointSet().isStillValid()) {
                         Structure* structure = rareData->objectAllocationStructure();
                         JSObject* prototype = rareData->objectAllocationPrototype();
                         if (structure
@@ -5546,6 +5554,8 @@ void ByteCodeParser::parseBlock(unsigned limit)
 
                             m_graph.freeze(rareData);
                             m_graph.watchpoints().addLazily(rareData->allocationProfileWatchpointSet());
+                            m_graph.freeze(globalObject);
+                            m_graph.watchpoints().addLazily(globalObject->structureCacheClearedWatchpointSet());
                             
                             Node* object = addToGraph(NewObject, OpInfo(m_graph.registerStructure(structure)));
                             if (structure->hasPolyProto()) {
@@ -5619,13 +5629,15 @@ void ByteCodeParser::parseBlock(unsigned limit)
 
                 if (function) {
                     if (FunctionRareData* rareData = function->rareData()) {
-                        if (rareData->allocationProfileWatchpointSet().isStillValid() && m_graph.isWatchingStructureCacheClearedWatchpoint(globalObject)) {
+                        if (rareData->allocationProfileWatchpointSet().isStillValid() && globalObject->structureCacheClearedWatchpointSet().isStillValid()) {
                             Structure* structure = rareData->internalFunctionAllocationStructure();
                             if (structure
                                 && structure->classInfoForCells() == (bytecode.m_isInternalPromise ? JSInternalPromise::info() : JSPromise::info())
                                 && structure->globalObject() == globalObject) {
                                 m_graph.freeze(rareData);
                                 m_graph.watchpoints().addLazily(rareData->allocationProfileWatchpointSet());
+                                m_graph.freeze(globalObject);
+                                m_graph.watchpoints().addLazily(globalObject->structureCacheClearedWatchpointSet());
 
                                 Node* promise = addToGraph(NewInternalFieldObject, OpInfo(m_graph.registerStructure(structure)));
                                 set(VirtualRegister(bytecode.m_dst), promise);
@@ -7745,7 +7757,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
 
             // get_from_scope and put_to_scope depend on this watchpoint forcing OSR exit, so they don't add their own watchpoints.
             if (needsVarInjectionChecks(resolveType))
-                m_graph.watchpoints().addLazily(m_inlineStackTop->m_codeBlock->globalObject()->varInjectionWatchpoint());
+                m_graph.watchpoints().addLazily(m_inlineStackTop->m_codeBlock->globalObject()->varInjectionWatchpointSet());
 
             if (resolveType == GlobalProperty || resolveType == GlobalPropertyWithVarInjectionChecks) {
                 JSGlobalObject* globalObject = m_inlineStackTop->m_codeBlock->globalObject();
@@ -7937,7 +7949,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
                     
                     JSValue value = pointer->get();
                     if (value) {
-                        m_graph.watchpoints().addLazily(watchpointSet);
+                        m_graph.watchpoints().addLazily(*watchpointSet);
                         set(bytecode.m_dst, weakJSConstant(value));
                         break;
                     }
@@ -8062,7 +8074,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
                     addToGraph(CheckNotEmpty, value);
                 }
                 if (resolveType == GlobalVar || resolveType == GlobalVarWithVarInjectionChecks)
-                    m_graph.watchpoints().addLazily(globalObject->varReadOnlyWatchpoint());
+                    m_graph.watchpoints().addLazily(globalObject->varReadOnlyWatchpointSet());
 
                 JSSegmentedVariableObject* scopeObject = jsCast<JSSegmentedVariableObject*>(JSScope::constantScopeForCodeBlock(resolveType, m_inlineStackTop->m_codeBlock));
                 if (watchpoints) {
@@ -9014,13 +9026,15 @@ void ByteCodeParser::handleCreateInternalFieldObject(const ClassInfo* classInfo,
 
     if (function) {
         if (FunctionRareData* rareData = function->rareData()) {
-            if (rareData->allocationProfileWatchpointSet().isStillValid() && m_graph.isWatchingStructureCacheClearedWatchpoint(globalObject)) {
+            if (rareData->allocationProfileWatchpointSet().isStillValid() && globalObject->structureCacheClearedWatchpointSet().isStillValid()) {
                 Structure* structure = rareData->internalFunctionAllocationStructure();
                 if (structure
                     && structure->classInfoForCells() == classInfo
                     && structure->globalObject() == globalObject) {
                     m_graph.freeze(rareData);
                     m_graph.watchpoints().addLazily(rareData->allocationProfileWatchpointSet());
+                    m_graph.freeze(globalObject);
+                    m_graph.watchpoints().addLazily(globalObject->structureCacheClearedWatchpointSet());
 
                     set(VirtualRegister(bytecode.m_dst), addToGraph(newOp, OpInfo(m_graph.registerStructure(structure))));
                     // The callee is still live up to this point.

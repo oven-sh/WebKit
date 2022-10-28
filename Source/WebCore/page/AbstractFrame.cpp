@@ -26,13 +26,21 @@
 #include "config.h"
 #include "AbstractFrame.h"
 
+#include "DocumentInlines.h"
+#include "HTMLFrameOwnerElement.h"
+#include "Page.h"
 #include "WindowProxy.h"
 
 namespace WebCore {
 
-AbstractFrame::AbstractFrame()
-    : m_windowProxy(WindowProxy::create(*this))
+AbstractFrame::AbstractFrame(Page& page, FrameIdentifier frameID, AbstractFrame* parent)
+    : m_page(page)
+    , m_frameID(frameID)
+    , m_treeNode(*this, parent)
+    , m_windowProxy(WindowProxy::create(*this))
 {
+    if (parent)
+        parent->tree().appendChild(*this);
 }
 
 AbstractFrame::~AbstractFrame()
@@ -44,6 +52,16 @@ void AbstractFrame::resetWindowProxy()
 {
     m_windowProxy->detachFromFrame();
     m_windowProxy = WindowProxy::create(*this);
+}
+
+Page* AbstractFrame::page() const
+{
+    return m_page.get();
+}
+
+void AbstractFrame::detachFromPage()
+{
+    m_page = nullptr;
 }
 
 } // namespace WebCore

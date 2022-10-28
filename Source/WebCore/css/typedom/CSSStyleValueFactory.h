@@ -25,8 +25,6 @@
 
 #pragma once
 
-#if ENABLE(CSS_TYPED_OM)
-
 #include "CSSImageValue.h"
 #include "CSSPropertyNames.h"
 #include "CSSStyleValue.h"
@@ -44,19 +42,16 @@ class StylePropertyShorthand;
 
 class CSSStyleValueFactory {
 public:
-    
     static ExceptionOr<Ref<CSSStyleValue>> reifyValue(Ref<CSSValue>, Document* = nullptr);
-    
-    static ExceptionOr<void> extractCSSValues(Vector<Ref<CSSValue>>&, const CSSPropertyID&, const String&);
-    static ExceptionOr<void> extractShorthandCSSValues(Vector<Ref<CSSValue>>&, const CSSPropertyID&, const String&);
-    static ExceptionOr<void> extractCustomCSSValues(Vector<Ref<CSSValue>>&, const AtomString&, const String&);
-
     static ExceptionOr<Vector<Ref<CSSStyleValue>>> parseStyleValue(const AtomString&, const String&, bool);
 
 protected:
     CSSStyleValueFactory() = delete;
+
+private:
+    static ExceptionOr<RefPtr<CSSValue>> extractCSSValue(const CSSPropertyID&, const String&);
+    static ExceptionOr<void> extractShorthandCSSValues(Vector<Ref<CSSValue>>&, const CSSPropertyID&, const String&);
+    static ExceptionOr<void> extractCustomCSSValues(Vector<Ref<CSSValue>>&, const AtomString&, const String&);
 };
 
 } // namespace WebCore
-
-#endif

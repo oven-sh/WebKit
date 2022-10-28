@@ -52,14 +52,13 @@ public:
     WEBCORE_EXPORT bool setInlineStyleProperty(CSSPropertyID, double value, CSSUnitType, bool important = false);
     WEBCORE_EXPORT bool setInlineStyleProperty(CSSPropertyID, const String& value, bool important = false);
     bool removeInlineStyleProperty(CSSPropertyID);
+    bool removeInlineStyleCustomProperty(const AtomString&);
     void removeAllInlineStyleProperties();
 
     void synchronizeStyleAttributeInternal() const { const_cast<StyledElement*>(this)->synchronizeStyleAttributeInternalImpl(); }
     
     WEBCORE_EXPORT CSSStyleDeclaration& cssomStyle();
-#if ENABLE(CSS_TYPED_OM)
     StylePropertyMap& ensureAttributeStyleMap();
-#endif
 
     // https://html.spec.whatwg.org/#presentational-hints
     const StyleProperties* presentationalHintStyle() const;

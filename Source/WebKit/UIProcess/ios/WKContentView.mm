@@ -36,7 +36,7 @@
 #import "Logging.h"
 #import "PageClientImplIOS.h"
 #import "PrintInfo.h"
-#import "RemoteLayerTreeDrawingAreaProxy.h"
+#import "RemoteLayerTreeDrawingAreaProxyIOS.h"
 #import "SmartMagnificationController.h"
 #import "UIKitSPI.h"
 #import "WKBrowsingContextControllerInternal.h"
@@ -173,7 +173,6 @@ static NSArray *keyCommandsPlaceholderHackForEvernote(id self, SEL _cmd)
     _page->initializeWebPage();
     _page->setIntrinsicDeviceScaleFactor(WebCore::screenScaleFactor([UIScreen mainScreen]));
     _page->setUseFixedLayout(true);
-    _page->setDelegatesScrolling(true);
     _page->setScreenIsBeingCaptured([[[self window] screen] isCaptured]);
 
     _page->windowScreenDidChange(_page->generateDisplayIDFromPageID(), std::nullopt);
@@ -679,7 +678,7 @@ static void storeAccessibilityRemoteConnectionInformation(id element, pid_t pid,
 
 - (std::unique_ptr<WebKit::DrawingAreaProxy>)_createDrawingAreaProxy:(WebKit::WebProcessProxy&)process
 {
-    return makeUnique<WebKit::RemoteLayerTreeDrawingAreaProxy>(*_page, process);
+    return makeUnique<WebKit::RemoteLayerTreeDrawingAreaProxyIOS>(*_page, process);
 }
 
 - (void)_processDidExit
@@ -769,7 +768,7 @@ static void storeAccessibilityRemoteConnectionInformation(id element, pid_t pid,
     // Updating the selection requires a full editor state. If the editor state is missing post layout
     // data then it means there is a layout pending and we're going to be called again after the layout
     // so we delay the selection update.
-    if (!_page->editorState().isMissingPostLayoutData)
+    if (_page->editorState().hasPostLayoutAndVisualData())
         [self _updateChangedSelection];
 }
 

@@ -30,17 +30,19 @@
 
 #include "Chrome.h"
 #include "ChromeClient.h"
+#include "DOMWindow.h"
 #include "ElementInlines.h"
 #include "EventLoop.h"
 #include "EventNames.h"
 #include "Frame.h"
+#include "HTMLDialogElement.h"
 #include "HTMLIFrameElement.h"
 #include "HTMLMediaElement.h"
+#include "JSDOMPromiseDeferred.h"
 #include "Logging.h"
 #include "Page.h"
+#include "PseudoClassChangeInvalidation.h"
 #include "QualifiedName.h"
-#include "RenderFullScreen.h"
-#include "RenderTreeBuilder.h"
 #include "Settings.h"
 #include <wtf/LoggerHelper.h>
 
@@ -58,45 +60,68 @@ FullscreenManager::FullscreenManager(Document& document)
 
 FullscreenManager::~FullscreenManager() = default;
 
-void FullscreenManager::requestFullscreenForElement(Ref<Element>&& element, FullscreenCheckType checkType)
+// https://fullscreen.spec.whatwg.org/#dom-element-requestfullscreen
+void FullscreenManager::requestFullscreenForElement(Ref<Element>&& element, RefPtr<DeferredPromise>&& promise, FullscreenCheckType checkType)
 {
-    auto failedPreflights = [this, weakThis = WeakPtr { *this }](Ref<Element>&& element) mutable {
+    // If pendingDoc is not fully active, then reject promise with a TypeError exception and return promise.
+    if (promise && !document().isFullyActive()) {
+        promise->reject(Exception { TypeError, "Document is not fully active"_s });
+        return;
+    }
+
+    auto failedPreflights = [this, weakThis = WeakPtr { *this }](Ref<Element>&& element, RefPtr<DeferredPromise>&& promise) mutable {
         if (!weakThis)
             return;
         m_fullscreenErrorEventTargetQueue.append(WTFMove(element));
+        if (promise)
+            promise->reject(Exception { TypeError });
         m_document.eventLoop().queueTask(TaskSource::MediaElement, [weakThis = WTFMove(weakThis)]() mutable {
             if (weakThis)
                 weakThis->dispatchFullscreenChangeEvents();
         });
     };
 
-    // 1. If any of the following conditions are true, terminate these steps and queue a task to fire
+    // If any of the following conditions are true, terminate these steps and queue a task to fire
     // an event named fullscreenerror with its bubbles attribute set to true on the context object's
     // node document:
+    if (is<HTMLDialogElement>(element)) {
+        ERROR_LOG(LOGIDENTIFIER, "Element to fullscreen is a <dialog>; failing.");
+        failedPreflights(WTFMove(element), WTFMove(promise));
+        return;
+    }
+
+    if (!document().domWindow() || !document().domWindow()->hasTransientActivation()) {
+        ERROR_LOG(LOGIDENTIFIER, "!hasTransientActivation; failing.");
+        failedPreflights(WTFMove(element), WTFMove(promise));
+        return;
+    }
 
     // This algorithm is not allowed to show a pop-up:
     //   An algorithm is allowed to show a pop-up if, in the task in which the algorithm is running, either:
     //   - an activation behavior is currently being processed whose click event was trusted, or
     //   - the event listener for a trusted click event is being handled.
-    if (!UserGestureIndicator::processingUserGesture()) {
-        ERROR_LOG(LOGIDENTIFIER, "!processingUserGesture; failing.");
-        failedPreflights(WTFMove(element));
-        return;
-    }
-
-    // We do not allow pressing the Escape key as a user gesture to enter fullscreen since this is the key
-    // to exit fullscreen.
-    if (UserGestureIndicator::currentUserGesture()->gestureType() == UserGestureType::EscapeKey) {
-        ERROR_LOG(LOGIDENTIFIER, "Current gesture is EscapeKey; failing.");
-        document().addConsoleMessage(MessageSource::Security, MessageLevel::Error, "The Escape key may not be used as a user gesture to enter fullscreen"_s);
-        failedPreflights(WTFMove(element));
-        return;
+    // FIXME: Align prefixed and unprefixed code paths if possible.
+    bool isFromPrefixedAPI = !promise;
+    if (isFromPrefixedAPI) {
+        if (!UserGestureIndicator::processingUserGesture()) {
+            ERROR_LOG(LOGIDENTIFIER, "!processingUserGesture; failing.");
+            failedPreflights(WTFMove(element), WTFMove(promise));
+            return;
+        }
+        // We do not allow pressing the Escape key as a user gesture to enter fullscreen since this is the key
+        // to exit fullscreen.
+        if (UserGestureIndicator::currentUserGesture()->gestureType() == UserGestureType::EscapeKey) {
+            ERROR_LOG(LOGIDENTIFIER, "Current gesture is EscapeKey; failing.");
+            document().addConsoleMessage(MessageSource::Security, MessageLevel::Error, "The Escape key may not be used as a user gesture to enter fullscreen"_s);
+            failedPreflights(WTFMove(element), WTFMove(promise));
+            return;
+        }
     }
 
     // There is a previously-established user preference, security risk, or platform limitation.
     if (!page() || !page()->settings().fullScreenEnabled()) {
         ERROR_LOG(LOGIDENTIFIER, "!page() or fullscreen not enabled; failing.");
-        failedPreflights(WTFMove(element));
+        failedPreflights(WTFMove(element), WTFMove(promise));
         return;
     }
 
@@ -108,7 +133,7 @@ void FullscreenManager::requestFullscreenForElement(Ref<Element>&& element, Full
 
         if (!page()->chrome().client().supportsFullScreenForElement(element, hasKeyboardAccess)) {
             ERROR_LOG(LOGIDENTIFIER, "page does not support fullscreen for element; failing.");
-            failedPreflights(WTFMove(element));
+            failedPreflights(WTFMove(element), WTFMove(promise));
             return;
         }
     }
@@ -117,36 +142,39 @@ void FullscreenManager::requestFullscreenForElement(Ref<Element>&& element, Full
 
     m_pendingFullscreenElement = RefPtr { element.ptr() };
 
-    m_document.eventLoop().queueTask(TaskSource::MediaElement, [this, weakThis = WeakPtr { *this }, element = WTFMove(element), checkType, hasKeyboardAccess, failedPreflights, identifier = LOGIDENTIFIER] () mutable {
-        if (!weakThis)
+    m_document.eventLoop().queueTask(TaskSource::MediaElement, [this, weakThis = WeakPtr { *this }, element = WTFMove(element), promise = WTFMove(promise), checkType, hasKeyboardAccess, failedPreflights, identifier = LOGIDENTIFIER] () mutable {
+        if (!weakThis) {
+            if (promise)
+                promise->reject(Exception { TypeError });
             return;
+        }
 
         // Don't allow fullscreen if it has been cancelled or a different fullscreen element
         // has requested fullscreen.
         if (m_pendingFullscreenElement != element.ptr()) {
             ERROR_LOG(identifier, "task - pending element mismatch; failing.");
-            failedPreflights(WTFMove(element));
+            failedPreflights(WTFMove(element), WTFMove(promise));
             return;
         }
 
         // Don't allow fullscreen if we're inside an exitFullscreen operation.
         if (m_pendingExitFullscreen) {
             ERROR_LOG(identifier, "task - pending exit fullscreen operation; failing.");
-            failedPreflights(WTFMove(element));
+            failedPreflights(WTFMove(element), WTFMove(promise));
             return;
         }
 
         // Don't allow fullscreen if document is hidden.
         if (document().hidden()) {
             ERROR_LOG(identifier, "task - document hidden; failing.");
-            failedPreflights(WTFMove(element));
+            failedPreflights(WTFMove(element), WTFMove(promise));
             return;
         }
 
         // The context object is not in a document.
         if (!element->isConnected()) {
             ERROR_LOG(identifier, "task - element not in document; failing.");
-            failedPreflights(WTFMove(element));
+            failedPreflights(WTFMove(element), WTFMove(promise));
             return;
         }
 
@@ -154,7 +182,7 @@ void FullscreenManager::requestFullscreenForElement(Ref<Element>&& element, Full
         // the fullscreen enabled flag set.
         if (checkType == EnforceIFrameAllowFullscreenRequirement && !isFeaturePolicyAllowedByDocumentAndAllOwners(FeaturePolicy::Type::Fullscreen, document())) {
             ERROR_LOG(identifier, "task - ancestor document does not enable fullscreen; failing.");
-            failedPreflights(WTFMove(element));
+            failedPreflights(WTFMove(element), WTFMove(promise));
             return;
         }
 
@@ -162,21 +190,24 @@ void FullscreenManager::requestFullscreenForElement(Ref<Element>&& element, Full
         // is not an ancestor of the context object.
         if (!m_fullscreenElementStack.isEmpty() && !m_fullscreenElementStack.last()->contains(element.get())) {
             ERROR_LOG(identifier, "task - fullscreen stack not empty; failing.");
-            failedPreflights(WTFMove(element));
+            failedPreflights(WTFMove(element), WTFMove(promise));
             return;
         }
 
         // A descendant browsing context's document has a non-empty fullscreen element stack.
         bool descendentHasNonEmptyStack = false;
-        for (Frame* descendant = frame() ? frame()->tree().traverseNext() : nullptr; descendant; descendant = descendant->tree().traverseNext()) {
-            if (descendant->document()->fullscreenManager().fullscreenElement()) {
+        for (AbstractFrame* descendant = frame() ? frame()->tree().traverseNext() : nullptr; descendant; descendant = descendant->tree().traverseNext()) {
+            auto* localFrame = dynamicDowncast<LocalFrame>(descendant);
+            if (!localFrame)
+                continue;
+            if (localFrame->document()->fullscreenManager().fullscreenElement()) {
                 descendentHasNonEmptyStack = true;
                 break;
             }
         }
         if (descendentHasNonEmptyStack) {
             ERROR_LOG(identifier, "task - descendent document has non-empty fullscreen stack; failing.");
-            failedPreflights(WTFMove(element));
+            failedPreflights(WTFMove(element), WTFMove(promise));
             return;
         }
 
@@ -229,18 +260,23 @@ void FullscreenManager::requestFullscreenForElement(Ref<Element>&& element, Full
         // 5. Return, and run the remaining steps asynchronously.
         // 6. Optionally, perform some animation.
         m_areKeysEnabledInFullscreen = hasKeyboardAccess;
-        m_document.eventLoop().queueTask(TaskSource::MediaElement, [this, weakThis = WTFMove(weakThis), element = WTFMove(element), failedPreflights = WTFMove(failedPreflights), identifier] () mutable {
-            if (!weakThis)
+        m_document.eventLoop().queueTask(TaskSource::MediaElement, [this, weakThis = WTFMove(weakThis), promise = WTFMove(promise), element = WTFMove(element), failedPreflights = WTFMove(failedPreflights), identifier] () mutable {
+            if (!weakThis) {
+                if (promise)
+                    promise->reject(Exception { TypeError });
                 return;
+            }
 
             auto page = this->page();
             if (!page || document().hidden() || m_pendingFullscreenElement != element.ptr() || !element->isConnected()) {
                 ERROR_LOG(identifier, "task - page, document, or element mismatch; failing.");
-                failedPreflights(WTFMove(element));
+                failedPreflights(WTFMove(element), WTFMove(promise));
                 return;
             }
             INFO_LOG(identifier, "task - success");
             page->chrome().client().enterFullScreenForElement(element);
+            if (promise)
+                promise->resolve();
         });
 
         // 7. Optionally, display a message indicating how the user can exit displaying the context object fullscreen.
@@ -296,9 +332,12 @@ void FullscreenManager::exitFullscreen()
     // element stack (if any), ordered so that the child of the doc is last and the document furthest
     // away from the doc is first.
     Deque<RefPtr<Document>> descendants;
-    for (Frame* descendant = frame() ? frame()->tree().traverseNext() : nullptr; descendant; descendant = descendant->tree().traverseNext()) {
-        if (descendant->document()->fullscreenManager().fullscreenElement())
-            descendants.prepend(descendant->document());
+    for (AbstractFrame* descendant = frame() ? frame()->tree().traverseNext() : nullptr; descendant; descendant = descendant->tree().traverseNext()) {
+        auto* localFrame = dynamicDowncast<LocalFrame>(descendant);
+        if (!localFrame)
+            continue;
+        if (localFrame->document()->fullscreenManager().fullscreenElement())
+            descendants.prepend(localFrame->document());
     }
 
     // 4. For each descendant in descendants, empty descendant's fullscreen element stack, and queue a
@@ -385,24 +424,8 @@ bool FullscreenManager::isFullscreenEnabled() const
     return isFeaturePolicyAllowedByDocumentAndAllOwners(FeaturePolicy::Type::Fullscreen, document());
 }
 
-static void unwrapFullscreenRenderer(RenderFullScreen* fullscreenRenderer, Element* fullscreenElement)
-{
-    if (!fullscreenRenderer)
-        return;
-    bool requiresRenderTreeRebuild;
-    fullscreenRenderer->unwrapRenderer(requiresRenderTreeRebuild);
-
-    if (requiresRenderTreeRebuild && fullscreenElement && fullscreenElement->parentElement())
-        fullscreenElement->parentElement()->invalidateStyleAndRenderersForSubtree();
-}
-
 bool FullscreenManager::willEnterFullscreen(Element& element)
 {
-    if (!hasLivingRenderTree()) {
-        ERROR_LOG(LOGIDENTIFIER, "No livingRenderTree(); bailing");
-        return false;
-    }
-
     if (backForwardCacheState() != Document::NotInBackForwardCache) {
         ERROR_LOG(LOGIDENTIFIER, "Document in the BackForwardCache; bailing");
         return false;
@@ -425,27 +448,11 @@ bool FullscreenManager::willEnterFullscreen(Element& element)
     INFO_LOG(LOGIDENTIFIER);
     ASSERT(page()->settings().fullScreenEnabled());
 
-    unwrapFullscreenRenderer(m_fullscreenRenderer.get(), m_fullscreenElement.get());
-
     element.willBecomeFullscreenElement();
 
     ASSERT(&element == m_pendingFullscreenElement);
     m_pendingFullscreenElement = nullptr;
     m_fullscreenElement = &element;
-
-    // Create a placeholder block for a the full-screen element, to keep the page from reflowing
-    // when the element is removed from the normal flow. Only do this for a RenderBox, as only
-    // a box will have a frameRect. The placeholder will be created in setFullscreenRenderer()
-    // during layout.
-    auto renderer = m_fullscreenElement->renderer();
-    bool shouldCreatePlaceholder = is<RenderBox>(renderer);
-    if (shouldCreatePlaceholder) {
-        m_savedPlaceholderFrameRect = downcast<RenderBox>(*renderer).frameRect();
-        m_savedPlaceholderRenderStyle = RenderStyle::clonePtr(renderer->style());
-    }
-
-    if (m_fullscreenElement != documentElement() && renderer)
-        RenderFullScreen::wrapExistingRenderer(*renderer, document());
 
     m_fullscreenElement->setContainsFullScreenElementOnAncestorsCrossingFrameBoundaries(true);
 
@@ -459,11 +466,6 @@ bool FullscreenManager::didEnterFullscreen()
 {
     if (!m_fullscreenElement) {
         ERROR_LOG(LOGIDENTIFIER, "No fullscreenElement; bailing");
-        return false;
-    }
-
-    if (!hasLivingRenderTree()) {
-        ERROR_LOG(LOGIDENTIFIER, "No livingRenderTree(); bailing");
         return false;
     }
 
@@ -482,11 +484,6 @@ bool FullscreenManager::willExitFullscreen()
     auto fullscreenElement = fullscreenOrPendingElement();
     if (!fullscreenElement) {
         ERROR_LOG(LOGIDENTIFIER, "No fullscreenOrPendingElement(); bailing");
-        return false;
-    }
-
-    if (!hasLivingRenderTree()) {
-        ERROR_LOG(LOGIDENTIFIER, "No livingRenderTree(); bailing");
         return false;
     }
 
@@ -509,11 +506,6 @@ bool FullscreenManager::didExitFullscreen()
         return false;
     }
 
-    if (!hasLivingRenderTree()) {
-        ERROR_LOG(LOGIDENTIFIER, "No livingRenderTree(); bailing");
-        return false;
-    }
-
     if (backForwardCacheState() != Document::NotInBackForwardCache) {
         ERROR_LOG(LOGIDENTIFIER, "Document in the BackForwardCache; bailing");
         return false;
@@ -527,11 +519,9 @@ bool FullscreenManager::didExitFullscreen()
 
     m_areKeysEnabledInFullscreen = false;
 
-    unwrapFullscreenRenderer(m_fullscreenRenderer.get(), m_fullscreenElement.get());
-
     m_fullscreenElement = nullptr;
     m_pendingFullscreenElement = nullptr;
-    scheduleFullStyleRebuild();
+    document().scheduleFullStyleRebuild();
 
     // When webkitCancelFullscreen is called, we call webkitExitFullscreen on the topDocument(). That
     // means that the events will be queued there. So if we have no events here, start the timer on
@@ -541,30 +531,6 @@ bool FullscreenManager::didExitFullscreen()
 
     exitingDocument.fullscreenManager().dispatchFullscreenChangeEvents();
     return true;
-}
-
-void FullscreenManager::setFullscreenRenderer(RenderTreeBuilder& builder, RenderFullScreen& renderer)
-{
-    if (&renderer == m_fullscreenRenderer)
-        return;
-
-    if (m_savedPlaceholderRenderStyle)
-        builder.createPlaceholderForFullScreen(renderer, WTFMove(m_savedPlaceholderRenderStyle), m_savedPlaceholderFrameRect);
-    else if (m_fullscreenRenderer && m_fullscreenRenderer->placeholder()) {
-        auto* placeholder = m_fullscreenRenderer->placeholder();
-        builder.createPlaceholderForFullScreen(renderer, RenderStyle::clonePtr(placeholder->style()), placeholder->frameRect());
-    }
-
-    if (m_fullscreenRenderer)
-        builder.destroy(*m_fullscreenRenderer);
-    ASSERT(!m_fullscreenRenderer);
-
-    m_fullscreenRenderer = renderer;
-}
-
-RenderFullScreen* FullscreenManager::fullscreenRenderer() const
-{
-    return m_fullscreenRenderer.get();
 }
 
 void FullscreenManager::dispatchFullscreenChangeEvents()
@@ -577,11 +543,28 @@ void FullscreenManager::dispatchFullscreenChangeEvents()
     m_fullscreenChangeEventTargetQueue.swap(changeQueue);
     Deque<GCReachableRef<Node>> errorQueue;
     m_fullscreenErrorEventTargetQueue.swap(errorQueue);
-    dispatchFullscreenChangeOrErrorEvent(changeQueue, eventNames().webkitfullscreenchangeEvent, /* shouldNotifyMediaElement */ true);
-    dispatchFullscreenChangeOrErrorEvent(errorQueue, eventNames().webkitfullscreenerrorEvent, /* shouldNotifyMediaElement */ false);
+    dispatchFullscreenChangeOrErrorEvent(changeQueue, EventType::Change, /* shouldNotifyMediaElement */ true);
+    dispatchFullscreenChangeOrErrorEvent(errorQueue, EventType::Error, /* shouldNotifyMediaElement */ false);
 }
 
-void FullscreenManager::dispatchFullscreenChangeOrErrorEvent(Deque<GCReachableRef<Node>>& queue, const AtomString& eventName, bool shouldNotifyMediaElement)
+void FullscreenManager::dispatchEventForNode(Node& node, EventType eventType)
+{
+    bool supportsUnprefixedAPI = document().settings().unprefixedFullscreenAPIEnabled();
+    switch (eventType) {
+    case EventType::Change:
+        if (supportsUnprefixedAPI)
+            node.dispatchEvent(Event::create(eventNames().fullscreenchangeEvent, Event::CanBubble::Yes, Event::IsCancelable::No, Event::IsComposed::Yes));
+        node.dispatchEvent(Event::create(eventNames().webkitfullscreenchangeEvent, Event::CanBubble::Yes, Event::IsCancelable::No, Event::IsComposed::Yes));
+        break;
+    case EventType::Error:
+        if (supportsUnprefixedAPI)
+            node.dispatchEvent(Event::create(eventNames().fullscreenerrorEvent, Event::CanBubble::Yes, Event::IsCancelable::No, Event::IsComposed::Yes));
+        node.dispatchEvent(Event::create(eventNames().webkitfullscreenerrorEvent, Event::CanBubble::Yes, Event::IsCancelable::No, Event::IsComposed::Yes));
+        break;
+    }
+}
+
+void FullscreenManager::dispatchFullscreenChangeOrErrorEvent(Deque<GCReachableRef<Node>>& queue, EventType eventType, bool shouldNotifyMediaElement)
 {
     // Step 3 of https://fullscreen.spec.whatwg.org/#run-the-fullscreen-steps
     while (!queue.isEmpty()) {
@@ -600,7 +583,7 @@ void FullscreenManager::dispatchFullscreenChangeOrErrorEvent(Deque<GCReachableRe
 #else
         UNUSED_PARAM(shouldNotifyMediaElement);
 #endif
-        node->dispatchEvent(Event::create(eventName, Event::CanBubble::Yes, Event::IsCancelable::No, Event::IsComposed::Yes));
+        dispatchEventForNode(node.get(), eventType);
     }
 }
 
@@ -632,14 +615,13 @@ void FullscreenManager::setAnimatingFullscreen(bool flag)
 {
     if (m_isAnimatingFullscreen == flag)
         return;
-    m_isAnimatingFullscreen = flag;
 
     INFO_LOG(LOGIDENTIFIER, flag);
 
-    if (m_fullscreenElement && m_fullscreenElement->isDescendantOf(document())) {
-        m_fullscreenElement->invalidateStyleForSubtree();
-        scheduleFullStyleRebuild();
-    }
+    std::optional<Style::PseudoClassChangeInvalidation> styleInvalidation;
+    if (m_fullscreenElement)
+        emplace(styleInvalidation, *m_fullscreenElement, { { CSSSelector::PseudoClassAnimatingFullScreenTransition, flag } });
+    m_isAnimatingFullscreen = flag;
 }
 
 bool FullscreenManager::areFullscreenControlsHidden() const
@@ -654,12 +636,10 @@ void FullscreenManager::setFullscreenControlsHidden(bool flag)
 
     INFO_LOG(LOGIDENTIFIER, flag);
 
+    std::optional<Style::PseudoClassChangeInvalidation> styleInvalidation;
+    if (m_fullscreenElement)
+        emplace(styleInvalidation, *m_fullscreenElement, { { CSSSelector::PseudoClassFullScreenControlsHidden, flag } });
     m_areFullscreenControlsHidden = flag;
-
-    if (m_fullscreenElement && m_fullscreenElement->isDescendantOf(document())) {
-        m_fullscreenElement->invalidateStyleForSubtree();
-        scheduleFullStyleRebuild();
-    }
 }
 
 void FullscreenManager::clear()

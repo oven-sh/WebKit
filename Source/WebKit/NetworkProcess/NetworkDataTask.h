@@ -146,6 +146,7 @@ public:
 
     PAL::SessionID sessionID() const;
 
+    const NetworkSession* networkSession() const;
     NetworkSession* networkSession();
 
 protected:
@@ -159,7 +160,6 @@ protected:
     };
     void scheduleFailure(FailureType);
 
-    bool isThirdPartyRequest(const WebCore::ResourceRequest&) const;
     void restrictRequestReferrerToOriginIfNeeded(WebCore::ResourceRequest&);
 
     WeakPtr<NetworkSession> m_session;

@@ -130,7 +130,7 @@ template<> struct ClientTraits<WKPagePolicyClientBase> {
 };
 
 template<> struct ClientTraits<WKPageUIClientBase> {
-    typedef std::tuple<WKPageUIClientV0, WKPageUIClientV1, WKPageUIClientV2, WKPageUIClientV3, WKPageUIClientV4, WKPageUIClientV5, WKPageUIClientV6, WKPageUIClientV7, WKPageUIClientV8, WKPageUIClientV9, WKPageUIClientV10, WKPageUIClientV11, WKPageUIClientV12, WKPageUIClientV13, WKPageUIClientV14, WKPageUIClientV15, WKPageUIClientV16, WKPageUIClientV17, WKPageUIClientV18> Versions;
+    typedef std::tuple<WKPageUIClientV0, WKPageUIClientV1, WKPageUIClientV2, WKPageUIClientV3, WKPageUIClientV4, WKPageUIClientV5, WKPageUIClientV6, WKPageUIClientV7, WKPageUIClientV8, WKPageUIClientV9, WKPageUIClientV10, WKPageUIClientV11, WKPageUIClientV12, WKPageUIClientV13, WKPageUIClientV14, WKPageUIClientV15, WKPageUIClientV16, WKPageUIClientV17, WKPageUIClientV18, WKPageUIClientV19> Versions;
 };
 
 #if ENABLE(CONTEXT_MENUS)
@@ -1178,8 +1178,6 @@ void WKPageSetPageLoaderClient(WKPageRef pageRef, const WKPageLoaderClientBase* 
             RELEASE_ASSERT(!m_client.pluginLoadPolicy_deprecatedForUseWithV2);
             RELEASE_ASSERT(!m_client.pluginDidFail);
             RELEASE_ASSERT(!m_client.pluginLoadPolicy);
-            RELEASE_ASSERT(!m_client.webGLLoadPolicy);
-            RELEASE_ASSERT(!m_client.resolveWebGLLoadPolicy);
             RELEASE_ASSERT(!m_client.navigationGestureDidBegin);
             RELEASE_ASSERT(!m_client.navigationGestureWillEnd);
             RELEASE_ASSERT(!m_client.navigationGestureDidEnd);
@@ -1774,7 +1772,7 @@ void WKPageSetPageUIClient(WKPageRef pageRef, const WKPageUIClientBase* wkClient
             m_client.setStatusText(toAPI(page), toAPI(text.impl()), m_client.base.clientInfo);
         }
 
-        void mouseDidMoveOverElement(WebPageProxy& page, const WebHitTestResultData& data, OptionSet<WebKit::WebEvent::Modifier> modifiers, API::Object* userData) final
+        void mouseDidMoveOverElement(WebPageProxy& page, const WebHitTestResultData& data, OptionSet<WebKit::WebEventModifier> modifiers, API::Object* userData) final
         {
             if (!m_client.mouseDidMoveOverElement && !m_client.mouseDidMoveOverElement_deprecatedForUseWithV0)
                 return;
@@ -2189,6 +2187,37 @@ void WKPageSetPageUIClient(WKPageRef pageRef, const WKPageUIClientBase* wkClient
                 return;
             }
             m_client.queryPermission(toAPI(API::String::create(permissionName).ptr()), toAPI(&origin), toAPI(QueryPermissionResultCallback::create(WTFMove(completionHandler)).ptr()));
+        }
+
+        static WKScreenOrientationType toWKScreenOrientationType(WebCore::ScreenOrientationType orientation)
+        {
+            switch (orientation) {
+            case WebCore::ScreenOrientationType::LandscapePrimary:
+                return kWKScreenOrientationTypeLandscapePrimary;
+            case WebCore::ScreenOrientationType::LandscapeSecondary:
+                return kWKScreenOrientationTypeLandscapeSecondary;
+            case WebCore::ScreenOrientationType::PortraitSecondary:
+                return kWKScreenOrientationTypePortraitSecondary;
+            case WebCore::ScreenOrientationType::PortraitPrimary:
+                return kWKScreenOrientationTypePortraitPrimary;
+            }
+            ASSERT_NOT_REACHED();
+            return kWKScreenOrientationTypePortraitPrimary;
+        }
+
+        bool lockScreenOrientation(WebPageProxy& page, WebCore::ScreenOrientationType orientation) final
+        {
+            if (!m_client.lockScreenOrientation)
+                return false;
+
+            m_client.lockScreenOrientation(toAPI(&page), toWKScreenOrientationType(orientation));
+            return true;
+        }
+
+        void unlockScreenOrientation(WebPageProxy& page) final
+        {
+            if (m_client.unlockScreenOrientation)
+                m_client.unlockScreenOrientation(toAPI(&page));
         }
     };
 
@@ -2769,7 +2798,7 @@ void WKPageSetControlledByAutomation(WKPageRef pageRef, bool controlled)
 bool WKPageGetAllowsRemoteInspection(WKPageRef page)
 {
 #if ENABLE(REMOTE_INSPECTOR)
-    return toImpl(page)->allowsRemoteInspection();
+    return toImpl(page)->inspectable();
 #else
     UNUSED_PARAM(page);
     return false;
@@ -2780,7 +2809,7 @@ void WKPageSetAllowsRemoteInspection(WKPageRef pageRef, bool allow)
 {
     CRASH_IF_SUSPENDED;
 #if ENABLE(REMOTE_INSPECTOR)
-    toImpl(pageRef)->setAllowsRemoteInspection(allow);
+    toImpl(pageRef)->setInspectable(allow);
 #else
     UNUSED_PARAM(pageRef);
     UNUSED_PARAM(allow);
@@ -2869,7 +2898,7 @@ WKArrayRef WKPageCopyRelatedPages(WKPageRef pageRef)
 WKFrameRef WKPageLookUpFrameFromHandle(WKPageRef pageRef, WKFrameHandleRef handleRef)
 {
     auto page = toImpl(pageRef);
-    auto frame = page->process().webFrame(toImpl(handleRef)->frameID());
+    auto frame = WebFrameProxy::webFrame(toImpl(handleRef)->frameID());
     if (!frame || frame->page() != page)
         return nullptr;
 
@@ -3170,7 +3199,7 @@ void WKPageLoadedSubresourceDomains(WKPageRef pageRef, WKPageLoadedSubresourceDo
 #if ENABLE(TRACKING_PREVENTION)
     toImpl(pageRef)->getLoadedSubresourceDomains([callbackContext, callback](Vector<RegistrableDomain>&& domains) {
         Vector<RefPtr<API::Object>> apiDomains = WTF::map(domains, [](auto& domain) {
-            return RefPtr<API::Object>(API::String::create(WTFMove(domain.string())));
+            return RefPtr<API::Object>(API::String::create(String(domain.string())));
         });
         callback(toAPI(API::Array::create(WTFMove(apiDomains)).ptr()), callbackContext);
     });

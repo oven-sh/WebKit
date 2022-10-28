@@ -52,6 +52,7 @@
 #include "RenderElement.h"
 #include "SharedBuffer.h"
 #include "SuspendableTimer.h"
+#include "WebCodecsVideoFrame.h"
 #include <variant>
 #include <wtf/IsoMallocInlines.h>
 #include <wtf/Scope.h>
@@ -418,6 +419,48 @@ void ImageBitmap::createPromise(ScriptExecutionContext& scriptExecutionContext, 
 }
 #endif
 
+#if ENABLE(WEB_CODECS)
+void ImageBitmap::createPromise(ScriptExecutionContext& scriptExecutionContext, RefPtr<WebCodecsVideoFrame>& videoFrame, ImageBitmapOptions&& options, std::optional<IntRect> rect, ImageBitmap::Promise&& promise)
+{
+    if (videoFrame->isDetached()) {
+        promise.reject(InvalidStateError, "Cannot create ImageBitmap from a detached video frame"_s);
+        return;
+    }
+    auto internalFrame = videoFrame->internalFrame();
+    if (!internalFrame) {
+        promise.reject(InvalidStateError, "Cannot create ImageBitmap from an empty video frame"_s);
+        return;
+    }
+
+    if (!videoFrame->codedWidth() || !videoFrame->codedHeight()) {
+        promise.reject(InvalidStateError, "Cannot create ImageBitmap from a video frame that has zero width or height"_s);
+        return;
+    }
+
+    auto sourceRectangle = croppedSourceRectangleWithFormatting({ static_cast<int>(videoFrame->displayWidth()), static_cast<int>(videoFrame->displayHeight()) }, options, WTFMove(rect));
+    if (sourceRectangle.hasException()) {
+        promise.reject(sourceRectangle.releaseException());
+        return;
+    }
+
+    auto outputSize = outputSizeForSourceRectangle(sourceRectangle.returnValue(), options);
+    auto bitmapData = createImageBuffer(scriptExecutionContext, outputSize, bufferRenderingMode, DestinationColorSpace::SRGB());
+
+    if (!bitmapData) {
+        resolveWithBlankImageBuffer(scriptExecutionContext, true, WTFMove(promise));
+        return;
+    }
+
+    FloatRect destRect(FloatPoint(), outputSize);
+    bitmapData->context().paintVideoFrame(*internalFrame, destRect, true);
+
+    OptionSet<SerializationState> serializationState { SerializationState::OriginClean };
+    auto imageBitmap = create(ImageBitmapBacking(WTFMove(bitmapData), serializationState));
+
+    promise.resolve(WTFMove(imageBitmap));
+}
+#endif
+
 void ImageBitmap::createPromise(ScriptExecutionContext& scriptExecutionContext, CanvasBase& canvas, ImageBitmapOptions&& options, std::optional<IntRect> rect, ImageBitmap::Promise&& promise)
 {
     // 2. If the canvas element's bitmap has either a horizontal dimension or a vertical
@@ -555,12 +598,10 @@ void ImageBitmap::createPromise(ScriptExecutionContext& scriptExecutionContext, 
 }
 #endif
 
-#if ENABLE(CSS_TYPED_OM)
 void ImageBitmap::createPromise(ScriptExecutionContext&, RefPtr<CSSStyleImageValue>&, ImageBitmapOptions&&, std::optional<IntRect>, ImageBitmap::Promise&& promise)
 {
     promise.reject(InvalidStateError, "Not implemented"_s);
 }
-#endif
 
 void ImageBitmap::createPromise(ScriptExecutionContext& scriptExecutionContext, RefPtr<ImageBitmap>& existingImageBitmap, ImageBitmapOptions&& options, std::optional<IntRect> rect, ImageBitmap::Promise&& promise)
 {

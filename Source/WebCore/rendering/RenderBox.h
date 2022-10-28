@@ -166,7 +166,7 @@ public:
     LayoutPoint contentBoxLocation() const;
 
     // https://www.w3.org/TR/css-transforms-1/#reference-box
-    FloatRect referenceBoxRect(CSSBoxType) const final;
+    FloatRect referenceBoxRect(CSSBoxType) const override;
 
     // The content box in absolute coords. Ignores transforms.
     IntRect absoluteContentBox() const;
@@ -672,6 +672,20 @@ override;
     bool shouldComputeLogicalHeightFromAspectRatio() const;
 
     bool shouldIgnoreMinMaxSizes() const;
+
+    // The explicit intrinsic inner size of contain-intrinsic-size
+    std::optional<LayoutUnit> explicitIntrinsicInnerWidth() const;
+    std::optional<LayoutUnit> explicitIntrinsicInnerHeight() const;
+
+    std::optional<LayoutUnit> explicitIntrinsicInnerLogicalWidth() const
+    {
+        return style().isHorizontalWritingMode() ? explicitIntrinsicInnerWidth() : explicitIntrinsicInnerHeight();
+    }
+
+    std::optional<LayoutUnit> explicitIntrinsicInnerLogicalHeight() const
+    {
+        return style().isHorizontalWritingMode() ? explicitIntrinsicInnerHeight() : explicitIntrinsicInnerWidth();
+    }
 
 protected:
     RenderBox(Element&, RenderStyle&&, BaseTypeFlags);

@@ -74,10 +74,8 @@ inline bool isValueType(Type type)
     case TypeKind::Ref:
     case TypeKind::RefNull:
         return Options::useWebAssemblyTypedFunctionReferences();
-    // Rec type kinds are used internally to represent `rec.<i>` references
-    // within recursion groups. They are invalid in other contexts.
-    case TypeKind::Rec:
-        return Options::useWebAssemblyGC();
+    case TypeKind::V128:
+        return Options::useWebAssemblySIMD();
     default:
         break;
     }
@@ -86,7 +84,7 @@ inline bool isValueType(Type type)
 
 inline JSString* typeToString(VM& vm, TypeKind type)
 {
-#define TYPE_CASE(macroName, value, b3, inc, wasmName) \
+#define TYPE_CASE(macroName, value, b3, inc, wasmName, ...) \
     case TypeKind::macroName: \
         return jsNontrivialString(vm, #wasmName""_s); \
 
@@ -156,6 +154,22 @@ inline bool isRefWithTypeIndex(Type type)
     return isRefType(type) && !isExternref(type) && !isFuncref(type) && !isI31ref(type) && !isArrayref(type);
 }
 
+// Determine if the ref type has a placeholder type index that is used
+// for an unresoled recursive reference in a recursion group.
+inline bool isRefWithRecursiveReference(Type type)
+{
+    if (!Options::useWebAssemblyGC())
+        return false;
+
+    if (isRefWithTypeIndex(type)) {
+        const TypeDefinition& def = TypeInformation::get(type.index);
+        if (def.is<Projection>())
+            return def.as<Projection>()->isPlaceholder();
+    }
+
+    return false;
+}
+
 inline bool isTypeIndexHeapType(int32_t heapType)
 {
     if (!Options::useWebAssemblyTypedFunctionReferences())
@@ -170,10 +184,10 @@ inline bool isSubtype(Type sub, Type parent)
         return false;
 
     if (isRefWithTypeIndex(sub)) {
-        if (TypeInformation::get(sub.index).is<ArrayType>() && isArrayref(parent))
+        if (TypeInformation::get(sub.index).expand().is<ArrayType>() && isArrayref(parent))
             return true;
 
-        if (TypeInformation::get(sub.index).is<FunctionSignature>() && isFuncref(parent))
+        if (TypeInformation::get(sub.index).expand().is<FunctionSignature>() && isFuncref(parent))
             return true;
     }
 
@@ -269,7 +283,8 @@ struct GlobalInformation {
         IsImport,
         FromGlobalImport,
         FromRefFunc,
-        FromExpression
+        FromExpression,
+        FromVector,
     };
 
     enum class BindingMode : uint8_t {
@@ -281,7 +296,10 @@ struct GlobalInformation {
     Type type;
     InitializationType initializationType { IsImport };
     BindingMode bindingMode { BindingMode::EmbeddedInInstance };
-    uint64_t initialBitsOrImportNumber { 0 };
+    union {
+        uint64_t initialBitsOrImportNumber;
+        v128_t initialVector { };
+    } initialBits;
 };
 
 struct FunctionData {

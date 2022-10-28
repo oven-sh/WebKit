@@ -62,7 +62,7 @@ static WebCore::IntRect screenRectOfContents(WebCore::Element* element)
         return { };
 
     if (element->renderer() && element->renderer()->hasLayer() && element->renderer()->enclosingLayer()->isComposited()) {
-        WebCore::FloatQuad contentsBox = static_cast<WebCore::FloatRect>(element->renderer()->enclosingLayer()->backing()->contentsBox());
+        WebCore::FloatQuad contentsBox = static_cast<WebCore::FloatRect>(element->renderer()->enclosingLayer()->backing()->compositedBounds());
         contentsBox = element->renderer()->localToAbsoluteQuad(contentsBox);
         return element->renderer()->view().frameView().contentsToScreen(contentsBox.enclosingBoundingBox());
     }
@@ -171,12 +171,13 @@ void WebFullScreenManager::enterFullScreenForElement(WebCore::Element* element)
 
     setElement(*element);
 
-    bool isVideoElement = false;
+    bool isVideoElementWithControls = false;
 #if PLATFORM(IOS_FAMILY) || (PLATFORM(MAC) && ENABLE(VIDEO_PRESENTATION_MODE))
-    if (auto* currentPlaybackControlsElement = m_page->playbackSessionManager().currentPlaybackControlsElement()) {
+    if (auto* videoElement = dynamicDowncast<HTMLVideoElement>(element))
+        isVideoElementWithControls = videoElement->controls();
+
+    if (auto* currentPlaybackControlsElement = m_page->playbackSessionManager().currentPlaybackControlsElement())
         currentPlaybackControlsElement->prepareForVideoFullscreenStandby();
-        isVideoElement = currentPlaybackControlsElement->controls();
-    }
 #endif
 
     m_initialFrame = screenRectOfContents(m_element.get());
@@ -186,7 +187,7 @@ void WebFullScreenManager::enterFullScreenForElement(WebCore::Element* element)
 #else
     FloatSize videoDimensions;
 #endif
-    m_page->injectedBundleFullScreenClient().enterFullScreenForElement(m_page.get(), element, m_element->document().quirks().blocksReturnToFullscreenFromPictureInPictureQuirk(), isVideoElement, videoDimensions);
+    m_page->injectedBundleFullScreenClient().enterFullScreenForElement(m_page.get(), element, m_element->document().quirks().blocksReturnToFullscreenFromPictureInPictureQuirk(), isVideoElementWithControls, videoDimensions);
 }
 
 void WebFullScreenManager::exitFullScreenForElement(WebCore::Element* element)
@@ -323,7 +324,7 @@ void WebFullScreenManager::requestEnterFullScreen()
         return;
 
     WebCore::UserGestureIndicator gestureIndicator(WebCore::ProcessingUserGesture);
-    m_element->document().fullscreenManager().requestFullscreenForElement(*m_element, WebCore::FullscreenManager::ExemptIFrameAllowFullscreenRequirement);
+    m_element->document().fullscreenManager().requestFullscreenForElement(*m_element, nullptr, WebCore::FullscreenManager::ExemptIFrameAllowFullscreenRequirement);
 }
 
 void WebFullScreenManager::requestExitFullScreen()

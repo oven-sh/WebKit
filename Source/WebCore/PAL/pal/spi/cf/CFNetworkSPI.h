@@ -186,6 +186,9 @@ typedef enum {
 #if HAVE(PROHIBIT_PRIVACY_PROXY)
 @property (setter=_setProhibitPrivacyProxy:) BOOL _prohibitPrivacyProxy;
 #endif
+#if ENABLE(TRACKER_DISPOSITION)
+@property (setter=_setNeedsNetworkTrackingPrevention:) BOOL _needsNetworkTrackingPrevention;
+#endif
 @end
 
 @interface NSURLProtocol ()
@@ -360,12 +363,10 @@ enum : NSUInteger {
     NSHTTPCookieAcceptPolicyExclusivelyFromMainDocumentDomain = 3,
 };
 
-#if HAVE(CFNETWORK_CNAME_AND_COOKIE_TRANSFORM_SPI)
 @interface NSURLSessionTask ()
 @property (nonatomic, copy, nullable) NSArray<NSHTTPCookie*>* (^_cookieTransformCallback)(NSArray<NSHTTPCookie*>* cookies);
 @property (nonatomic, readonly, nullable) NSArray<NSString*>* _resolvedCNAMEChain;
 @end
-#endif
 
 #endif // defined(__OBJC__)
 

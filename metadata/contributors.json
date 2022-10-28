@@ -232,12 +232,11 @@
    {
       "emails" : [
          "zalan@apple.com",
-         "zbujtas@gmail.com",
-         "zalan.bujtas@nokia.com"
+         "zbujtas@gmail.com"
       ],
       "expertise" : "Layout",
-      "github" : "alanbujtas",
-      "name" : "Alan Bujtas",
+      "github" : "alanbaradlay",
+      "name" : "Alan Baradlay",
       "nicks" : [
          "zalan"
       ],
@@ -797,8 +796,10 @@
    },
    {
       "emails" : [
-         "annevk@annevk.nl"
+         "annevk@annevk.nl",
+         "annevk@apple.com"
       ],
+      "github" : "annevk",
       "name" : "Anne van Kesteren",
       "nicks" : [
          "annevk"
@@ -1477,6 +1478,18 @@
    },
    {
       "emails" : [
+         "chirag_m_shah@apple.com",
+         "chirags@alumni.upenn.edu",
+         "chirags2793@gmail.com"
+      ],
+      "github" : "chirags27",
+      "name" : "Chirag M Shah",
+      "nicks" : [
+         "chirag_m_shah"
+      ]
+   },
+   {
+      "emails" : [
          "cblu@apple.com"
       ],
       "name" : "Chris Blumenberg",
@@ -1783,6 +1796,17 @@
       "name" : "Daniel Cheng",
       "nicks" : [
          "dcheng"
+      ]
+   },
+   {
+      "emails" : [
+         "jalkut@red-sweater.com"
+      ],
+      "github" : "danielpunkass",
+      "name" : "Daniel Jalkut",
+      "nicks" : [
+         "danielpunkass",
+         "dcj"
       ]
    },
    {
@@ -4465,6 +4489,7 @@
       "emails" : [
          "kpiddington@apple.com"
       ],
+      "github" : "kpiddington",
       "name" : "Kyle Piddington",
       "nicks" : [
          "kpiddington"
@@ -4961,7 +4986,8 @@
          "m_dubet@apple.com"
       ],
       "github" : "mdubet",
-      "name" : "Matthieu Dubet"
+      "name" : "Matthieu Dubet",
+      "status" : "committer"
    },
    {
       "emails" : [
@@ -5768,6 +5794,16 @@
    },
    {
       "emails" : [
+         "pgorszkowski@igalia.com"
+      ],
+      "github" : "pgorszkowski-igalia",
+      "name" : "Przemyslaw Gorszkowski",
+      "nicks" : [
+         "pgorszkowski"
+      ]
+   },
+   {
+      "emails" : [
          "qi.2.zhang@nokia.com",
          "qi.zhang02180@gmail.com"
       ],
@@ -6200,6 +6236,19 @@
       "nicks" : [
          "skyostil"
       ]
+   },
+   {
+      "emails" : [
+         "sammy.gill@apple.com",
+         "sgill26@apple.com"
+      ],
+      "github" : "sgill26",
+      "name" : "Sammy Gill",
+      "nicks" : [
+         "sgill26",
+         "sammy.gill"
+      ],
+      "status" : "committer"
    },
    {
       "emails" : [
@@ -7016,6 +7065,18 @@
       "name" : "Vineet Chaudhary",
       "nicks" : [
          "vineetc"
+      ]
+   },
+   {
+      "emails" : [
+         "vitaly@igalia.com",
+         "obyknovenius@me.com",
+         "obyknovenius@gmail.com"
+      ],
+      "github" : "obyknovenius",
+      "name" : "Vitaly Dyachkov",
+      "nicks" : [
+         "obyknovenius"
       ]
    },
    {

@@ -105,6 +105,7 @@ public:
     bool isGridTemplateAreasValue() const { return m_classType == GridTemplateAreasClass; }
     bool isGridLineNamesValue() const { return m_classType == GridLineNamesClass; }
     bool isSubgridValue() const { return m_classType == SubgridClass; }
+    bool isTransformListValue() const { return m_classType == TransformListClass; }
     bool isUnicodeRangeValue() const { return m_classType == UnicodeRangeClass; }
 
     bool isVariableReferenceValue() const { return m_classType == VariableReferenceClass; }
@@ -112,6 +113,10 @@ public:
 
     bool isOffsetRotateValue() const { return m_classType == OffsetRotateClass; }
     bool isRayValue() const { return m_classType == RayClass; }
+
+    // NOTE: This returns true for all image like values except CSSCursorImageValues, as these are
+    //       the values that corrispond to the CSS <image> production.
+    bool isImage() const { return isImageValue() || isImageSetValue() || isImageGeneratorValue(); }
 
     bool hasVariableReferences() const { return isVariableReferenceValue() || isPendingSubstitutionValue(); }
 
@@ -203,6 +208,7 @@ protected:
         GridAutoRepeatClass,
         GridIntegerRepeatClass,
         SubgridClass,
+        TransformListClass,
         // Do not append non-list class types here.
     };
 
@@ -254,10 +260,14 @@ private:
 inline void CSSValue::deref() const
 {
     unsigned tempRefCount = m_refCount - refCountIncrement;
+
     if (!tempRefCount) {
+IGNORE_GCC_WARNINGS_BEGIN("free-nonheap-object")
         delete this;
+IGNORE_GCC_WARNINGS_END
         return;
     }
+
     m_refCount = tempRefCount;
 }
 

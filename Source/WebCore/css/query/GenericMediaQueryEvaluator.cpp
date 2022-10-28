@@ -83,7 +83,46 @@ static EvaluationResult evaluateLengthComparison(LayoutUnit size, const std::opt
     return toEvaluationResult(compare(comparison->op, left, right));
 };
 
-EvaluationResult GenericMediaQueryEvaluatorBase::evaluateLengthFeature(const Feature& feature, LayoutUnit length, const CSSToLengthConversionData& conversionData) const
+static EvaluationResult evaluateNumberComparison(double number, const std::optional<Comparison>& comparison, Side side)
+{
+    if (!comparison)
+        return EvaluationResult::True;
+
+    auto expressionNumber = dynamicDowncast<CSSPrimitiveValue>(comparison->value.get())->doubleValue();
+
+    auto left = side == Side::Left ? expressionNumber : number;
+    auto right = side == Side::Left ? number : expressionNumber;
+
+    return toEvaluationResult(compare(comparison->op, left, right));
+};
+
+static EvaluationResult evaluateIntegerComparison(int number, const std::optional<Comparison>& comparison, Side side)
+{
+    if (!comparison)
+        return EvaluationResult::True;
+
+    auto expressionNumber = dynamicDowncast<CSSPrimitiveValue>(comparison->value.get())->intValue();
+
+    auto left = side == Side::Left ? expressionNumber : number;
+    auto right = side == Side::Left ? number : expressionNumber;
+
+    return toEvaluationResult(compare(comparison->op, left, right));
+};
+
+static EvaluationResult evaluateResolutionComparison(double resolution, const std::optional<Comparison>& comparison, Side side)
+{
+    if (!comparison)
+        return EvaluationResult::True;
+
+    auto expressionResolution = dynamicDowncast<CSSPrimitiveValue>(comparison->value.get())->doubleValue(CSSUnitType::CSS_DPPX);
+
+    auto left = side == Side::Left ? expressionResolution : resolution;
+    auto right = side == Side::Left ? resolution : expressionResolution;
+
+    return toEvaluationResult(compare(comparison->op, left, right));
+};
+
+EvaluationResult evaluateLengthFeature(const Feature& feature, LayoutUnit length, const CSSToLengthConversionData& conversionData)
 {
     if (!feature.leftComparison && !feature.rightComparison)
         return toEvaluationResult(!!length);
@@ -120,7 +159,7 @@ static EvaluationResult evaluateRatioComparison(double ratio, const std::optiona
     return toEvaluationResult(compare(comparison->op, left, right));
 };
 
-EvaluationResult GenericMediaQueryEvaluatorBase::evaluateRatioFeature(const Feature& feature, double ratio) const
+EvaluationResult evaluateRatioFeature(const Feature& feature, double ratio)
 {
     if (!feature.leftComparison && !feature.rightComparison)
         return toEvaluationResult(!!ratio);
@@ -131,18 +170,60 @@ EvaluationResult GenericMediaQueryEvaluatorBase::evaluateRatioFeature(const Feat
     return leftResult & rightResult;
 }
 
-EvaluationResult GenericMediaQueryEvaluatorBase::evaluateDiscreteFeature(const Feature& feature, CSSValueID expectedValue) const
+EvaluationResult evaluateBooleanFeature(const Feature& feature, bool currentValue)
 {
     if (!feature.rightComparison)
-        return EvaluationResult::Unknown;
-
-    auto& comparison = *feature.rightComparison;
-
-    if (!is<CSSPrimitiveValue>(comparison.value) || comparison.op != ComparisonOperator::Equal)
-        return EvaluationResult::Unknown;
+        return toEvaluationResult(currentValue);
 
     auto& value = downcast<CSSPrimitiveValue>(*feature.rightComparison->value);
-    return toEvaluationResult(value.valueID() == expectedValue);
+    auto expectedValue = value.intValue();
+
+    if (expectedValue && expectedValue != 1)
+        return EvaluationResult::Unknown;
+
+    return toEvaluationResult(expectedValue == currentValue);
+}
+
+EvaluationResult evaluateIntegerFeature(const Feature& feature, int currentValue)
+{
+    if (!feature.leftComparison && !feature.rightComparison)
+        return toEvaluationResult(!!currentValue);
+
+    auto leftResult = evaluateIntegerComparison(currentValue, feature.leftComparison, Side::Left);
+    auto rightResult = evaluateIntegerComparison(currentValue, feature.rightComparison, Side::Right);
+
+    return leftResult & rightResult;
+}
+
+EvaluationResult evaluateNumberFeature(const Feature& feature, double currentValue)
+{
+    if (!feature.leftComparison && !feature.rightComparison)
+        return toEvaluationResult(!!currentValue);
+
+    auto leftResult = evaluateNumberComparison(currentValue, feature.leftComparison, Side::Left);
+    auto rightResult = evaluateNumberComparison(currentValue, feature.rightComparison, Side::Right);
+
+    return leftResult & rightResult;
+}
+
+EvaluationResult evaluateResolutionFeature(const Feature& feature, double currentValue)
+{
+    if (!feature.leftComparison && !feature.rightComparison)
+        return toEvaluationResult(!!currentValue);
+
+    auto leftResult = evaluateResolutionComparison(currentValue, feature.leftComparison, Side::Left);
+    auto rightResult = evaluateResolutionComparison(currentValue, feature.rightComparison, Side::Right);
+
+    return leftResult & rightResult;
+}
+
+EvaluationResult evaluateIdentifierFeature(const Feature& feature, CSSValueID currentValue)
+{
+    if (!feature.rightComparison)
+        return toEvaluationResult(currentValue != CSSValueNone && currentValue != CSSValueNoPreference);
+
+    auto& value = downcast<CSSPrimitiveValue>(*feature.rightComparison->value);
+    return toEvaluationResult(value.valueID() == currentValue);
 }
 
 }

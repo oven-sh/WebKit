@@ -39,9 +39,6 @@
 
 namespace WebCore {
 
-class CSSPrimitiveValue;
-class StyleColor;
-
 enum class StyleColorOptions : uint8_t {
     ForVisitedLink = 1 << 0,
     UseSystemAppearance = 1 << 1,
@@ -50,7 +47,14 @@ enum class StyleColorOptions : uint8_t {
 };
 
 struct CurrentColor {
-    bool operator==(const CurrentColor&) const = default;
+    bool operator==(const CurrentColor&) const
+    {
+        return true;
+    }
+    bool operator!=(const CurrentColor& other) const
+    {
+        return !(*this == other);
+    }
 };
 
 class StyleColor {
@@ -75,7 +79,14 @@ public:
     StyleColor(const StyleColor&) = default;
     StyleColor(StyleColor&&) = default;
     StyleColor& operator=(const StyleColor&) = default;
-    bool operator==(const StyleColor&) const = default;
+    bool operator==(const StyleColor& other) const
+    {
+        return m_color == other.m_color;
+    }
+    bool operator!=(const StyleColor& other) const
+    {
+        return !(*this == other);
+    }
 
     static StyleColor currentColor() { return StyleColor { CurrentColor { } }; }
 
@@ -103,7 +114,6 @@ public:
     const Color& absoluteColor() const;
 
     WEBCORE_EXPORT Color resolveColor(const Color& colorPropertyValue) const;
-    WEBCORE_EXPORT Color resolveColorWithoutCurrentColor() const;
 
     friend WTF::TextStream& operator<<(WTF::TextStream&, const StyleColor&);
     String debugDescription() const;
@@ -119,7 +129,6 @@ private:
     ColorKind m_color;
 };
 
-WEBCORE_EXPORT String serializationForRenderTreeAsText(const StyleColor&);
 WEBCORE_EXPORT String serializationForCSS(const StyleColor&);
 
 } // namespace WebCore

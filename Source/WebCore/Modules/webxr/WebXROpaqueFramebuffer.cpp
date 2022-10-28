@@ -71,16 +71,16 @@ WebXROpaqueFramebuffer::~WebXROpaqueFramebuffer()
     if (auto gl = m_context.graphicsContextGL()) {
 #if USE(IOSURFACE_FOR_XR_LAYER_DATA)
         if (m_opaqueTexture)
-            gl->deleteTexture(m_opaqueTexture);
+            gl->deleteTexture(m_opaqueTexture.release());
 #endif
         if (m_stencilBuffer)
-            gl->deleteRenderbuffer(m_stencilBuffer);
+            gl->deleteRenderbuffer(m_stencilBuffer.release());
         if (m_depthStencilBuffer)
-            gl->deleteRenderbuffer(m_depthStencilBuffer);
+            gl->deleteRenderbuffer(m_depthStencilBuffer.release());
         if (m_multisampleColorBuffer)
-            gl->deleteRenderbuffer(m_multisampleColorBuffer);
+            gl->deleteRenderbuffer(m_multisampleColorBuffer.release());
         if (m_resolvedFBO)
-            gl->deleteFramebuffer(m_resolvedFBO);
+            gl->deleteFramebuffer(m_resolvedFBO.release());
         m_context.deleteFramebuffer(m_framebuffer.ptr());
     }
 }
@@ -92,6 +92,11 @@ void WebXROpaqueFramebuffer::startFrame(const PlatformXR::Device::FrameData::Lay
     auto& gl = *m_context.graphicsContextGL();
 
 #if USE(IOSURFACE_FOR_XR_LAYER_DATA)
+    ASSERT(data.surface);
+    auto size = data.surface->size();
+    auto bufferWidth = static_cast<uint32_t>(size.width());
+    auto bufferHeight = static_cast<uint32_t>(size.height());
+
     auto gCGL = static_cast<GraphicsContextGLCocoa*>(m_context.graphicsContextGL());
     GCGLenum textureTarget = gCGL->drawingBufferTextureTarget();
     GCGLenum textureTargetBinding = gCGL->drawingBufferTextureTargetQueryForDrawingTarget(textureTarget);
@@ -120,10 +125,10 @@ void WebXROpaqueFramebuffer::startFrame(const PlatformXR::Device::FrameData::Lay
     // the textures/renderbuffers.
 
 #if USE(IOSURFACE_FOR_XR_LAYER_DATA)
-    ASSERT(data.surface);
-
-    if (!m_opaqueTexture)
-        m_opaqueTexture = gCGL->createTexture();
+    if (!m_opaqueTexture) {
+        auto id = m_opaqueTexture.reset(gCGL->createTexture());
+        UNUSED_VARIABLE(id);
+    }
 
     gCGL->bindTexture(textureTarget, m_opaqueTexture);
     gCGL->texParameteri(textureTarget, GL::TEXTURE_MAG_FILTER, GL::LINEAR);
@@ -134,22 +139,40 @@ void WebXROpaqueFramebuffer::startFrame(const PlatformXR::Device::FrameData::Lay
     // Tell the GraphicsContextGL to use the IOSurface as the backing store for m_opaqueTexture.
     if (data.isShared) {
 #if !PLATFORM(IOS_FAMILY_SIMULATOR)
-        m_ioSurfaceTextureHandle = gCGL->attachIOSurfaceToSharedTexture(textureTarget, data.surface.get());
+        auto surfaceTextureAttachment = gCGL->attachIOSurfaceToSharedTexture(textureTarget, data.surface.get());
+        if (!surfaceTextureAttachment) {
+            gCGL->deleteTexture(m_opaqueTexture.release());
+            return;
+        }
+
+        auto [textureHandle, textureWidth, textureHeight] = surfaceTextureAttachment.value();
+        m_ioSurfaceTextureHandle = textureHandle;
+        bufferWidth = textureWidth;
+        bufferHeight = textureHeight;
+
         m_ioSurfaceTextureHandleIsShared = true;
 #else
         ASSERT_NOT_REACHED();
 #endif
     } else {
-        auto size = data.surface->size();
-        if (!size.width() || !size.height())
-            return;
-        m_ioSurfaceTextureHandle = gCGL->createPbufferAndAttachIOSurface(textureTarget, GraphicsContextGLCocoa::PbufferAttachmentUsage::Write, GL::BGRA, size.width(), size.height(), GL::UNSIGNED_BYTE, data.surface->surface(), 0);
+        m_ioSurfaceTextureHandle = gCGL->createPbufferAndAttachIOSurface(textureTarget, GraphicsContextGLCocoa::PbufferAttachmentUsage::Write, GL::BGRA, bufferWidth, bufferHeight, GL::UNSIGNED_BYTE, data.surface->surface(), 0);
         m_ioSurfaceTextureHandleIsShared = false;
     }
 
+    if (!bufferWidth || !bufferHeight)
+        return;
+
+    // The drawing target can change size at any point during the session. If this happens, we need
+    // to recreate the framebuffer.
+    if (bufferWidth != m_width || bufferHeight != m_height) {
+        m_width = bufferWidth;
+        m_height = bufferHeight;
+        if (!setupFramebuffer())
+            return;
+    }
+
     if (!m_ioSurfaceTextureHandle) {
-        gCGL->deleteTexture(m_opaqueTexture);
-        m_opaqueTexture = 0;
+        gCGL->deleteTexture(m_opaqueTexture.release());
         return;
     }
 
@@ -162,11 +185,16 @@ void WebXROpaqueFramebuffer::startFrame(const PlatformXR::Device::FrameData::Lay
 
     // At this point the framebuffer should be "complete".
     ASSERT(gl.checkFramebufferStatus(GL::FRAMEBUFFER) == GL::FRAMEBUFFER_COMPLETE);
-
 #else
-    m_opaqueTexture = data.opaqueTexture;
+    if (auto id = m_opaqueTexture.reset(data.opaqueTexture))
+        gl.deleteTexture(id);
     if (!m_multisampleColorBuffer)
         gl.framebufferTexture2D(GL::FRAMEBUFFER, GL::COLOR_ATTACHMENT0, GL::TEXTURE_2D, m_opaqueTexture, 0);
+#endif
+
+#if USE(MTLSHAREDEVENT_FOR_XR_FRAME_COMPLETION)
+    m_completionEvent = gCGL->newSharedEventWithMachPort(data.completionPort.sendRight());
+    m_renderingFrameIndex = data.renderingFrameIndex;
 #endif
 }
 
@@ -205,11 +233,24 @@ void WebXROpaqueFramebuffer::endFrame()
         gl.blitFramebuffer(0, 0, m_width, m_height, 0, 0, m_width, m_height, GL::COLOR_BUFFER_BIT, GL::NEAREST);
     }
 
+#if USE(MTLSHAREDEVENT_FOR_XR_FRAME_COMPLETION)
+    if (m_completionEvent) {
+        auto gCGL = static_cast<GraphicsContextGLCocoa*>(&gl);
+        auto completionSync = gCGL->createSyncWithSharedEvent(m_completionEvent, m_renderingFrameIndex);
+        ASSERT(completionSync);
+        constexpr uint64_t kTimeout = 1'000'000'000; // 1 second
+        gCGL->clientWaitSyncWithFlush(completionSync, kTimeout);
+        gCGL->destroySync(completionSync);
+    } else
+        gl.finish();
+#else
     // FIXME: We have to call finish rather than flush because we only want to disconnect
     // the IOSurface and signal the DeviceProxy when we know the content has been rendered.
     // It might be possible to set this up so the completion of the rendering triggers
     // the endFrame call.
     gl.finish();
+#endif
+
 
 #if USE(IOSURFACE_FOR_XR_LAYER_DATA)
     if (m_ioSurfaceTextureHandle) {
@@ -261,8 +302,12 @@ bool WebXROpaqueFramebuffer::setupFramebuffer()
     }
 
     if (m_attributes.antialias && m_context.isWebGL2()) {
-        m_resolvedFBO = gl.createFramebuffer();
-        m_multisampleColorBuffer = gl.createRenderbuffer();
+        if (auto id = m_resolvedFBO.reset(gl.createFramebuffer()))
+            gl.deleteFramebuffer(id);
+
+        if (auto id = m_multisampleColorBuffer.reset(gl.createRenderbuffer()))
+            gl.deleteRenderbuffer(id);
+
         gl.bindFramebuffer(GL::FRAMEBUFFER, m_framebuffer->object());
         gl.bindRenderbuffer(GL::RENDERBUFFER, m_multisampleColorBuffer);
 #if USE(IOSURFACE_FOR_XR_LAYER_DATA) && !PLATFORM(IOS_FAMILY_SIMULATOR)
@@ -272,7 +317,8 @@ bool WebXROpaqueFramebuffer::setupFramebuffer()
 #endif
         gl.framebufferRenderbuffer(GL::FRAMEBUFFER, GL::COLOR_ATTACHMENT0, GL::RENDERBUFFER, m_multisampleColorBuffer);
         if (hasDepthOrStencil) {
-            m_depthStencilBuffer = gl.createRenderbuffer();
+            if (auto id = m_depthStencilBuffer.reset(gl.createRenderbuffer()))
+                gl.deleteRenderbuffer(id);
             if (platformSupportsPackedDepthStencil) {
                 gl.bindRenderbuffer(GL::RENDERBUFFER, m_depthStencilBuffer);
                 gl.renderbufferStorageMultisample(GL::RENDERBUFFER, m_sampleCount, depthFormat, m_width, m_height);
@@ -282,7 +328,8 @@ bool WebXROpaqueFramebuffer::setupFramebuffer()
                     gl.framebufferRenderbuffer(GL::FRAMEBUFFER, GL::DEPTH_ATTACHMENT, GL::RENDERBUFFER, m_depthStencilBuffer);
             } else {
                 if (m_attributes.stencil) {
-                    m_stencilBuffer = gl.createRenderbuffer();
+                    if (auto id = m_stencilBuffer.reset(gl.createRenderbuffer()))
+                        gl.deleteRenderbuffer(id);
                     gl.bindRenderbuffer(GL::RENDERBUFFER, m_stencilBuffer);
                     gl.renderbufferStorageMultisample(GL::RENDERBUFFER, m_sampleCount, stencilFormat, m_width, m_height);
                     gl.framebufferRenderbuffer(GL::FRAMEBUFFER, GL::STENCIL_ATTACHMENT, GL::RENDERBUFFER, m_stencilBuffer);
@@ -299,7 +346,8 @@ bool WebXROpaqueFramebuffer::setupFramebuffer()
 
     if (hasDepthOrStencil) {
         gl.bindFramebuffer(GL::FRAMEBUFFER, m_framebuffer->object());
-        m_depthStencilBuffer = gl.createRenderbuffer();
+        if (auto id = m_depthStencilBuffer.reset(gl.createRenderbuffer()))
+            gl.deleteRenderbuffer(id);
         if (platformSupportsPackedDepthStencil) {
             gl.bindRenderbuffer(GL::RENDERBUFFER, m_depthStencilBuffer);
             gl.renderbufferStorage(GL::RENDERBUFFER, depthFormat, m_width, m_height);
@@ -309,12 +357,13 @@ bool WebXROpaqueFramebuffer::setupFramebuffer()
                 if (m_attributes.depth)
                     gl.framebufferRenderbuffer(GL::FRAMEBUFFER, GL::DEPTH_ATTACHMENT, GL::RENDERBUFFER, m_depthStencilBuffer);
             } else {
-                if (m_attributes.stencil || m_attributes.depth)
-                    gl.framebufferRenderbuffer(GL::FRAMEBUFFER, GL::DEPTH_STENCIL_ATTACHMENT, GL::RENDERBUFFER, m_depthStencilBuffer);
+                ASSERT(m_attributes.stencil || m_attributes.depth);
+                gl.framebufferRenderbuffer(GL::FRAMEBUFFER, GL::DEPTH_STENCIL_ATTACHMENT, GL::RENDERBUFFER, m_depthStencilBuffer);
             }
         } else {
             if (m_attributes.stencil) {
-                m_stencilBuffer = gl.createRenderbuffer();
+                if (auto id = m_stencilBuffer.reset(gl.createRenderbuffer()))
+                    gl.deleteRenderbuffer(id);
                 gl.bindRenderbuffer(GL::RENDERBUFFER, m_stencilBuffer);
                 gl.renderbufferStorage(GL::RENDERBUFFER, stencilFormat, m_width, m_height);
                 gl.framebufferRenderbuffer(GL::FRAMEBUFFER, GL::STENCIL_ATTACHMENT, GL::RENDERBUFFER, m_stencilBuffer);
@@ -327,7 +376,7 @@ bool WebXROpaqueFramebuffer::setupFramebuffer()
         }
     }
 
-    return true;
+    return gl.checkFramebufferStatus(GL::FRAMEBUFFER) == GL::FRAMEBUFFER_COMPLETE;
 }
 
 } // namespace WebCore

@@ -29,7 +29,11 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "SIMDInfo.h"
 #include "WasmOps.h"
+#include "WasmSIMDOpcodes.h"
+#include "Width.h"
+#include "WriteBarrier.h"
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/HashSet.h>
 #include <wtf/HashTraits.h>
@@ -38,14 +42,103 @@
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/Vector.h>
 
+#if ENABLE(WEBASSEMBLY_B3JIT)
+#include "B3Type.h"
+#endif
+
 namespace JSC {
 
 namespace Wasm {
+
+#if ENABLE(B3_JIT)
+#define CREATE_ENUM_VALUE(name, id, ...) name = id,
+enum class ExtSIMDOpType : uint8_t {
+    FOR_EACH_WASM_EXT_SIMD_OP(CREATE_ENUM_VALUE)
+};
+#undef CREATE_ENUM_VALUE
+
+constexpr Type simdScalarType(SIMDLane lane)
+{
+    switch (lane) {
+    case SIMDLane::v128:
+        RELEASE_ASSERT_NOT_REACHED();
+        return Types::Void;
+    case SIMDLane::i64x2:
+        return Types::I64;
+    case SIMDLane::f64x2:
+        return Types::F64;
+    case SIMDLane::i8x16:
+    case SIMDLane::i16x8:
+    case SIMDLane::i32x4:
+        return Types::I32;
+    case SIMDLane::f32x4:
+        return Types::F32;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+#endif
 
 using FunctionArgCount = uint32_t;
 using StructFieldCount = uint32_t;
 using RecursionGroupCount = uint32_t;
 using ProjectionIndex = uint32_t;
+
+inline Width Type::width() const
+{
+    switch (kind) {
+#define CREATE_CASE(name, id, b3type, inc, wasmName, width, ...) case TypeKind::name: return widthForBytes(width / 8);
+    FOR_EACH_WASM_TYPE(CREATE_CASE)
+#undef CREATE_CASE
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+#if ENABLE(WEBASSEMBLY_B3JIT)
+#define CREATE_CASE(name, id, b3type, ...) case TypeKind::name: return b3type;
+inline B3::Type toB3Type(Type type)
+{
+    switch (type.kind) {
+    FOR_EACH_WASM_TYPE(CREATE_CASE)
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+    return B3::Void;
+}
+#undef CREATE_CASE
+#endif
+
+constexpr size_t typeKindSizeInBytes(TypeKind kind)
+{
+    switch (kind) {
+    case TypeKind::I32:
+    case TypeKind::F32: {
+        return 4;
+    }
+    case TypeKind::I64:
+    case TypeKind::F64: {
+        return 8;
+    }
+
+    case TypeKind::Arrayref:
+    case TypeKind::Funcref:
+    case TypeKind::Externref:
+    case TypeKind::Ref:
+    case TypeKind::RefNull: {
+        return sizeof(WriteBarrierBase<Unknown>);
+    }
+    case TypeKind::V128:
+    case TypeKind::Array:
+    case TypeKind::Func:
+    case TypeKind::Struct:
+    case TypeKind::Void:
+    case TypeKind::Rec:
+    case TypeKind::I31ref: {
+        break;
+    }
+    }
+
+    ASSERT_NOT_REACHED();
+    return 0;
+}
 
 class FunctionSignature {
 public:
@@ -53,14 +146,27 @@ public:
         : m_payload(payload)
         , m_argCount(argumentCount)
         , m_retCount(returnCount)
+        , m_hasRecursiveReference(false)
     {
     }
 
     FunctionArgCount argumentCount() const { return m_argCount; }
     FunctionArgCount returnCount() const { return m_retCount; }
+    bool hasRecursiveReference() const { return m_hasRecursiveReference; }
+    void setHasRecursiveReference(bool value) { m_hasRecursiveReference = value; }
     Type returnType(FunctionArgCount i) const { ASSERT(i < returnCount()); return const_cast<FunctionSignature*>(this)->getReturnType(i); }
     bool returnsVoid() const { return !returnCount(); }
     Type argumentType(FunctionArgCount i) const { return const_cast<FunctionSignature*>(this)->getArgumentType(i); }
+
+    size_t numVectors() const
+    {
+        size_t n = 0;
+        for (size_t i = 0; i < argumentCount(); ++i) {
+            if (argumentType(i).isV128())
+                ++n;
+        }
+        return n;
+    }
 
     bool operator==(const FunctionSignature& other) const
     {
@@ -86,6 +192,7 @@ private:
     Type* m_payload;
     FunctionArgCount m_argCount;
     FunctionArgCount m_retCount;
+    bool m_hasRecursiveReference;
 };
 
 // FIXME auto-generate this. https://bugs.webkit.org/show_bug.cgi?id=165231
@@ -104,13 +211,11 @@ struct FieldType {
 
 class StructType {
 public:
-    StructType(FieldType* payload, StructFieldCount fieldCount)
-        : m_payload(payload)
-        , m_fieldCount(fieldCount)
-    {
-    }
+    StructType(FieldType*, StructFieldCount, const FieldType*);
 
     StructFieldCount fieldCount() const { return m_fieldCount; }
+    bool hasRecursiveReference() const { return m_hasRecursiveReference; }
+    void setHasRecursiveReference(bool value) { m_hasRecursiveReference = value; }
     FieldType field(StructFieldCount i) const { return const_cast<StructType*>(this)->getField(i); }
 
     WTF::String toString() const;
@@ -120,19 +225,30 @@ public:
     FieldType* storage(StructFieldCount i) { return i + m_payload; }
     const FieldType* storage(StructFieldCount i) const { return const_cast<StructType*>(this)->storage(i); }
 
+    const unsigned* getFieldOffset(StructFieldCount i) const { ASSERT(i < fieldCount()); return bitwise_cast<const unsigned*>(m_payload + m_fieldCount) + i; }
+    unsigned* getFieldOffset(StructFieldCount i) { return const_cast<unsigned*>(const_cast<const StructType*>(this)->getFieldOffset(i)); }
+
+    size_t instancePayloadSize() const { return m_instancePayloadSize; }
+
 private:
+    // Payload is structured this way = | field types | precalculated field offsets |.
     FieldType* m_payload;
     StructFieldCount m_fieldCount;
+    bool m_hasRecursiveReference;
+    size_t m_instancePayloadSize;
 };
 
 class ArrayType {
 public:
     ArrayType(FieldType* payload)
         : m_payload(payload)
+        , m_hasRecursiveReference(false)
     {
     }
 
     FieldType elementType() const { return const_cast<ArrayType*>(this)->getElementType(); }
+    bool hasRecursiveReference() const { return m_hasRecursiveReference; }
+    void setHasRecursiveReference(bool value) { m_hasRecursiveReference = value; }
 
     WTF::String toString() const;
     void dump(WTF::PrintStream& out) const;
@@ -143,6 +259,7 @@ public:
 
 private:
     FieldType* m_payload;
+    bool m_hasRecursiveReference;
 };
 
 class RecursionGroup {
@@ -177,6 +294,9 @@ private:
 // We store projections rather than the implied unfolding because the actual type being
 // represented may be recursive and infinite. Projections are unfolded into a concrete type
 // when operations on the type require a specific concrete type.
+//
+// A projection with an invalid PlaceholderGroup index represents a recursive reference
+// that has not yet been resolved. The expand() function on type definitions resolves it.
 class Projection {
 public:
     Projection(TypeIndex* payload)
@@ -194,6 +314,9 @@ public:
     ProjectionIndex& getIndex() { return *reinterpret_cast<ProjectionIndex*>(storage(1)); }
     TypeIndex* storage(uint32_t i) { ASSERT(i <= 1); return i + m_payload; }
     const TypeIndex* storage(uint32_t i) const { return const_cast<Projection*>(this)->storage(i); }
+
+    static constexpr TypeIndex PlaceholderGroup = 0;
+    bool isPlaceholder() const { return recursionGroup() == PlaceholderGroup; }
 
 private:
     TypeIndex* m_payload;
@@ -220,13 +343,16 @@ class TypeDefinition : public ThreadSafeRefCounted<TypeDefinition> {
         RELEASE_ASSERT(kind == TypeDefinitionKind::FunctionSignature);
     }
 
-    TypeDefinition(TypeDefinitionKind kind, uint32_t fieldCount)
-        : m_typeHeader { StructType { static_cast<FieldType*>(payload()), static_cast<StructFieldCount>(fieldCount) } }
+    TypeDefinition(TypeDefinitionKind kind, uint32_t fieldCount, const FieldType* fields)
+        : m_typeHeader { StructType { static_cast<FieldType*>(payload()), static_cast<StructFieldCount>(fieldCount), fields } }
     {
-        if (kind == TypeDefinitionKind::RecursionGroup)
-            m_typeHeader = { RecursionGroup { static_cast<TypeIndex*>(payload()), static_cast<RecursionGroupCount>(fieldCount) } };
-        else
-            RELEASE_ASSERT(kind == TypeDefinitionKind::StructType);
+        RELEASE_ASSERT(kind == TypeDefinitionKind::StructType);
+    }
+
+    TypeDefinition(TypeDefinitionKind kind, uint32_t fieldCount)
+        : m_typeHeader { RecursionGroup { static_cast<TypeIndex*>(payload()), static_cast<RecursionGroupCount>(fieldCount) } }
+    {
+        RELEASE_ASSERT(kind == TypeDefinitionKind::RecursionGroup);
     }
 
     TypeDefinition(TypeDefinitionKind kind)
@@ -242,7 +368,7 @@ class TypeDefinition : public ThreadSafeRefCounted<TypeDefinition> {
     void* payload() { return this + 1; }
 
     static size_t allocatedFunctionSize(Checked<FunctionArgCount> retCount, Checked<FunctionArgCount> argCount) { return sizeof(TypeDefinition) + (retCount + argCount) * sizeof(Type); }
-    static size_t allocatedStructSize(Checked<StructFieldCount> fieldCount) { return sizeof(TypeDefinition) + fieldCount * sizeof(FieldType); }
+    static size_t allocatedStructSize(Checked<StructFieldCount> fieldCount) { return sizeof(TypeDefinition) + fieldCount * (sizeof(FieldType) + sizeof(unsigned)); }
     static size_t allocatedArraySize() { return sizeof(TypeDefinition) + sizeof(FieldType); }
     static size_t allocatedRecursionGroupSize(Checked<RecursionGroupCount> typeCount) { return sizeof(TypeDefinition) + typeCount * sizeof(TypeIndex); }
     static size_t allocatedProjectionSize() { return sizeof(TypeDefinition) + 2 * sizeof(TypeIndex); }
@@ -279,7 +405,7 @@ private:
     friend struct ProjectionParameterTypes;
 
     static RefPtr<TypeDefinition> tryCreateFunctionSignature(FunctionArgCount returnCount, FunctionArgCount argumentCount);
-    static RefPtr<TypeDefinition> tryCreateStructType(StructFieldCount);
+    static RefPtr<TypeDefinition> tryCreateStructType(StructFieldCount, const FieldType*);
     static RefPtr<TypeDefinition> tryCreateArrayType();
     static RefPtr<TypeDefinition> tryCreateRecursionGroup(RecursionGroupCount);
     static RefPtr<TypeDefinition> tryCreateProjection();

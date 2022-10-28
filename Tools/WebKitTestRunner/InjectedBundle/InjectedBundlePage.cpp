@@ -49,6 +49,7 @@
 #include <WebKit/WKSecurityOriginRef.h>
 #include <WebKit/WKURLRequest.h>
 #include <wtf/HashMap.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/RunLoop.h>
 #include <wtf/URL.h>
 #include <wtf/text/CString.h>
@@ -268,7 +269,7 @@ InjectedBundlePage::InjectedBundlePage(WKBundlePageRef page)
         didHandleOnloadEventsForFrame,
         0, // didLayoutForFrame
         0, // didNewFirstVisuallyNonEmptyLayout_unavailable
-        didDetectXSSForFrame,
+        0, // didDetectXSSForFrame
         0, // shouldGoToBackForwardListItem
         0, // didCreateGlobalObjectForFrame
         0, // willDisconnectDOMWindowExtensionFromGlobalObject
@@ -562,11 +563,6 @@ void InjectedBundlePage::didHandleOnloadEventsForFrame(WKBundlePageRef page, WKB
 void InjectedBundlePage::didDisplayInsecureContentForFrame(WKBundlePageRef page, WKBundleFrameRef frame, WKTypeRef*, const void* clientInfo)
 {
     static_cast<InjectedBundlePage*>(const_cast<void*>(clientInfo))->didDisplayInsecureContentForFrame(frame);
-}
-
-void InjectedBundlePage::didDetectXSSForFrame(WKBundlePageRef page, WKBundleFrameRef frame, WKTypeRef*, const void* clientInfo)
-{
-    static_cast<InjectedBundlePage*>(const_cast<void*>(clientInfo))->didDetectXSSForFrame(frame);
 }
 
 void InjectedBundlePage::didRunInsecureContentForFrame(WKBundlePageRef page, WKBundleFrameRef frame, WKTypeRef*, const void* clientInfo)
@@ -1002,13 +998,6 @@ void InjectedBundlePage::didRunInsecureContentForFrame(WKBundleFrameRef)
         injectedBundle.outputText("didRunInsecureContent\n"_s);
 }
 
-void InjectedBundlePage::didDetectXSSForFrame(WKBundleFrameRef)
-{
-    auto& injectedBundle = InjectedBundle::singleton();
-    if (injectedBundle.testRunner()->shouldDumpFrameLoadCallbacks())
-        injectedBundle.outputText("didDetectXSS\n"_s);
-}
-
 void InjectedBundlePage::didInitiateLoadForResource(WKBundlePageRef page, WKBundleFrameRef, uint64_t identifier, WKURLRequestRef request, bool)
 {
     if (!InjectedBundle::singleton().isTestRunning())
@@ -1210,7 +1199,7 @@ WKBundlePagePolicyAction InjectedBundlePage::decidePolicyForNavigationAction(WKB
 {
     auto& injectedBundle = InjectedBundle::singleton();
     if (!injectedBundle.isTestRunning())
-        return WKBundlePagePolicyActionUse;
+        return WKBundlePagePolicyActionPassThrough;
 
     if (injectedBundle.testRunner()->shouldDumpPolicyCallbacks()) {
         injectedBundle.outputText(makeString(" - decidePolicyForNavigationAction\n", string(request),
@@ -1720,18 +1709,34 @@ void InjectedBundlePage::exitFullScreenForElement(WKBundleNodeHandleRef elementR
     m_fullscreenState = NotInFullscreen;
 }
 
-void InjectedBundlePage::beganEnterFullScreen(WKBundlePageRef, WKRect, WKRect)
+void InjectedBundlePage::beganEnterFullScreen(WKBundlePageRef, WKRect initialRect, WKRect finalRect)
 {
     auto& injectedBundle = InjectedBundle::singleton();
-    if (injectedBundle.testRunner()->shouldDumpFullScreenCallbacks())
-        injectedBundle.outputText("beganEnterFullScreen()\n"_s);
+    if (!injectedBundle.testRunner()->shouldDumpFullScreenCallbacks())
+        return;
+
+    injectedBundle.outputText(makeString("beganEnterFullScreen() - initialRect.size: {",
+        initialRect.size.width, ", ",
+        initialRect.size.height,
+        "}, finalRect.size: {",
+        finalRect.size.width, ", ",
+        finalRect.size.height,
+        "}\n"));
 }
 
-void InjectedBundlePage::beganExitFullScreen(WKBundlePageRef, WKRect, WKRect)
+void InjectedBundlePage::beganExitFullScreen(WKBundlePageRef, WKRect initialRect, WKRect finalRect)
 {
     auto& injectedBundle = InjectedBundle::singleton();
-    if (injectedBundle.testRunner()->shouldDumpFullScreenCallbacks())
-        injectedBundle.outputText("beganExitFullScreen()\n"_s);
+    if (!injectedBundle.testRunner()->shouldDumpFullScreenCallbacks())
+        return;
+
+    injectedBundle.outputText(makeString("beganExitFullScreen() - initialRect.size: {",
+        initialRect.size.width, ", ",
+        initialRect.size.height,
+        "}, finalRect.size: {",
+        finalRect.size.width, ", ",
+        finalRect.size.height,
+        "}\n"));
 }
 
 void InjectedBundlePage::closeFullScreen(WKBundlePageRef pageRef)

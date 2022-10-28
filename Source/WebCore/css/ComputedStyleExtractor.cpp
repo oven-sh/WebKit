@@ -45,6 +45,7 @@
 #include "CSSReflectValue.h"
 #include "CSSShadowValue.h"
 #include "CSSTimingFunctionValue.h"
+#include "CSSTransformListValue.h"
 #include "CSSValueList.h"
 #include "CSSValuePool.h"
 #include "ComposedTreeAncestorIterator.h"
@@ -349,7 +350,7 @@ static RefPtr<CSSValue> valueForNinePieceImage(CSSPropertyID propertyID, const N
 
     RefPtr<CSSValue> imageValue;
     if (image.image())
-        imageValue = image.image()->cssValue();
+        imageValue = image.image()->computedStyleValue(style);
 
     // -webkit-border-image has a legacy behavior that makes fixed border slices also set the border widths.
     const LengthBox& slices = image.borderSlices();
@@ -365,20 +366,20 @@ static RefPtr<CSSValue> valueForNinePieceImage(CSSPropertyID propertyID, const N
     return createBorderImageValue(WTFMove(imageValue), WTFMove(imageSlices), WTFMove(borderSlices), WTFMove(outset), WTFMove(repeat));
 }
 
-Ref<CSSPrimitiveValue> ComputedStyleExtractor::zoomAdjustedPixelValue(double value, const RenderStyle& style)
+static Ref<CSSPrimitiveValue> fontSizeAdjustFromStyle(const RenderStyle& style)
+{
+    return CSSValuePool::singleton().createValue(style.fontSizeAdjust());
+}
+
+static Ref<CSSPrimitiveValue> zoomAdjustedPixelValue(double value, const RenderStyle& style)
 {
     return CSSValuePool::singleton().createValue(adjustFloatForAbsoluteZoom(value, style), CSSUnitType::CSS_PX);
 }
 
-static inline Ref<CSSPrimitiveValue> zoomAdjustedNumberValue(double value, const RenderStyle& style)
-{
-    return CSSValuePool::singleton().createValue(value / style.effectiveZoom(), CSSUnitType::CSS_NUMBER);
-}
-
-Ref<CSSPrimitiveValue> ComputedStyleExtractor::zoomAdjustedPixelValueForLength(const Length& length, const RenderStyle& style)
+static Ref<CSSPrimitiveValue> zoomAdjustedPixelValueForLength(const Length& length, const RenderStyle& style)
 {
     if (length.isFixed())
-        return ComputedStyleExtractor::zoomAdjustedPixelValue(length.value(), style);
+        return zoomAdjustedPixelValue(length.value(), style);
     return CSSValuePool::singleton().createValue(length, style);
 }
 
@@ -391,7 +392,7 @@ static inline Ref<CSSValue> valueForReflection(const StyleReflection* reflection
     if (reflection->offset().isPercentOrCalculated())
         offset = CSSValuePool::singleton().createValue(reflection->offset().percent(), CSSUnitType::CSS_PERCENTAGE);
     else
-        offset = ComputedStyleExtractor::zoomAdjustedPixelValue(reflection->offset().value(), style);
+        offset = zoomAdjustedPixelValue(reflection->offset().value(), style);
 
     RefPtr<CSSPrimitiveValue> direction;
     switch (reflection->direction()) {
@@ -419,12 +420,12 @@ static Ref<CSSValueList> createPositionListForLayer(CSSPropertyID propertyID, co
         ASSERT_UNUSED(propertyID, propertyID == CSSPropertyBackgroundPosition || propertyID == CSSPropertyMaskPosition || propertyID == CSSPropertyWebkitMaskPosition);
         list->append(CSSValuePool::singleton().createValue(layer.backgroundXOrigin()));
     }
-    list->append(ComputedStyleExtractor::zoomAdjustedPixelValueForLength(layer.xPosition(), style));
+    list->append(zoomAdjustedPixelValueForLength(layer.xPosition(), style));
     if (layer.isBackgroundYOriginSet() && layer.backgroundYOrigin() != Edge::Top) {
         ASSERT(propertyID == CSSPropertyBackgroundPosition || propertyID == CSSPropertyMaskPosition || propertyID == CSSPropertyWebkitMaskPosition);
         list->append(CSSValuePool::singleton().createValue(layer.backgroundYOrigin()));
     }
-    list->append(ComputedStyleExtractor::zoomAdjustedPixelValueForLength(layer.yPosition(), style));
+    list->append(zoomAdjustedPixelValueForLength(layer.yPosition(), style));
     return list;
 }
 
@@ -432,20 +433,20 @@ static Ref<CSSValue> createSingleAxisPositionValueForLayer(CSSPropertyID propert
 {
     if (propertyID == CSSPropertyBackgroundPositionX || propertyID == CSSPropertyWebkitMaskPositionX) {
         if (!layer.isBackgroundXOriginSet() || layer.backgroundXOrigin() == Edge::Left)
-            return ComputedStyleExtractor::zoomAdjustedPixelValueForLength(layer.xPosition(), style);
+            return zoomAdjustedPixelValueForLength(layer.xPosition(), style);
 
         auto list = CSSValueList::createSpaceSeparated();
         list->append(CSSValuePool::singleton().createValue(layer.backgroundXOrigin()));
-        list->append(ComputedStyleExtractor::zoomAdjustedPixelValueForLength(layer.xPosition(), style));
+        list->append(zoomAdjustedPixelValueForLength(layer.xPosition(), style));
         return list;
     }
 
     if (!layer.isBackgroundYOriginSet() || layer.backgroundYOrigin() == Edge::Top)
-        return ComputedStyleExtractor::zoomAdjustedPixelValueForLength(layer.yPosition(), style);
+        return zoomAdjustedPixelValueForLength(layer.yPosition(), style);
 
     auto list = CSSValueList::createSpaceSeparated();
     list->append(CSSValuePool::singleton().createValue(layer.backgroundYOrigin()));
-    list->append(ComputedStyleExtractor::zoomAdjustedPixelValueForLength(layer.yPosition(), style));
+    list->append(zoomAdjustedPixelValueForLength(layer.yPosition(), style));
     return list;
 }
 
@@ -531,7 +532,7 @@ static RefPtr<CSSValue> positionOffsetValue(const RenderStyle& style, CSSPropert
 
     // If the element is not displayed; return the "computed value".
     if (!renderer || !renderer->isBox())
-        return ComputedStyleExtractor::zoomAdjustedPixelValueForLength(offset, style);
+        return zoomAdjustedPixelValueForLength(offset, style);
 
     auto& box = downcast<RenderBox>(*renderer);
     auto* containingBlock = box.containingBlock();
@@ -563,24 +564,24 @@ static RefPtr<CSSValue> positionOffsetValue(const RenderStyle& style, CSSPropert
                     : box.containingBlockLogicalWidthForContent();
             }
         }
-        return ComputedStyleExtractor::zoomAdjustedPixelValue(floatValueForLength(offset, containingBlockSize), style);
+        return zoomAdjustedPixelValue(floatValueForLength(offset, containingBlockSize), style);
     }
 
     // Return a "computed value" length.
     if (!offset.isAuto())
-        return ComputedStyleExtractor::zoomAdjustedPixelValueForLength(offset, style);
+        return zoomAdjustedPixelValueForLength(offset, style);
 
     // The property won't be overconstrained if its computed value is "auto", so the "used value" can be returned.
     if (box.isRelativelyPositioned())
-        return ComputedStyleExtractor::zoomAdjustedPixelValue(getOffsetUsedStyleRelative(box, propertyID), style);
+        return zoomAdjustedPixelValue(getOffsetUsedStyleRelative(box, propertyID), style);
 
     if (containingBlock && box.isOutOfFlowPositioned())
-        return ComputedStyleExtractor::zoomAdjustedPixelValue(getOffsetUsedStyleOutOfFlowPositioned(*containingBlock, box, propertyID), style);
+        return zoomAdjustedPixelValue(getOffsetUsedStyleOutOfFlowPositioned(*containingBlock, box, propertyID), style);
 
     return CSSValuePool::singleton().createIdentifierValue(CSSValueAuto);
 }
 
-Ref<CSSPrimitiveValue> ComputedStyleExtractor::currentColorOrValidColor(const RenderStyle& style, const StyleColor& color) const
+Ref<CSSPrimitiveValue> ComputedStyleExtractor::currentColorOrValidColor(const RenderStyle& style, const StyleColor& color)
 {
     // This function does NOT look at visited information, so that computed style doesn't expose that.
     return CSSValuePool::singleton().createColorValue(style.colorResolvingCurrentColor(color));
@@ -591,7 +592,7 @@ static Ref<CSSPrimitiveValue> percentageOrZoomAdjustedValue(Length length, const
     if (length.isPercent())
         return CSSValuePool::singleton().createValue(length.percent(), CSSUnitType::CSS_PERCENTAGE);
 
-    return ComputedStyleExtractor::zoomAdjustedPixelValueForLength(length, style);
+    return zoomAdjustedPixelValueForLength(length, style);
 }
 
 static Ref<CSSPrimitiveValue> autoOrZoomAdjustedValue(Length length, const RenderStyle& style)
@@ -599,7 +600,7 @@ static Ref<CSSPrimitiveValue> autoOrZoomAdjustedValue(Length length, const Rende
     if (length.isAuto())
         return CSSValuePool::singleton().createIdentifierValue(CSSValueAuto);
 
-    return ComputedStyleExtractor::zoomAdjustedPixelValueForLength(length, style);
+    return zoomAdjustedPixelValueForLength(length, style);
 }
 
 static Ref<CSSValueList> borderRadiusCornerValues(const LengthSize& radius, const RenderStyle& style)
@@ -686,6 +687,7 @@ static LayoutRect sizingBox(RenderObject& renderer)
 static Ref<CSSFunctionValue> matrixTransformValue(const TransformationMatrix& transform, const RenderStyle& style)
 {
     RefPtr<CSSFunctionValue> transformValue;
+    auto zoom = style.effectiveZoom();
     auto& cssValuePool = CSSValuePool::singleton();
     if (transform.isAffine()) {
         transformValue = CSSFunctionValue::create(CSSValueMatrix);
@@ -694,29 +696,29 @@ static Ref<CSSFunctionValue> matrixTransformValue(const TransformationMatrix& tr
         transformValue->append(cssValuePool.createValue(transform.b(), CSSUnitType::CSS_NUMBER));
         transformValue->append(cssValuePool.createValue(transform.c(), CSSUnitType::CSS_NUMBER));
         transformValue->append(cssValuePool.createValue(transform.d(), CSSUnitType::CSS_NUMBER));
-        transformValue->append(zoomAdjustedNumberValue(transform.e(), style));
-        transformValue->append(zoomAdjustedNumberValue(transform.f(), style));
+        transformValue->append(cssValuePool.createValue(transform.e() / zoom, CSSUnitType::CSS_NUMBER));
+        transformValue->append(cssValuePool.createValue(transform.f() / zoom, CSSUnitType::CSS_NUMBER));
     } else {
         transformValue = CSSFunctionValue::create(CSSValueMatrix3d);
 
         transformValue->append(cssValuePool.createValue(transform.m11(), CSSUnitType::CSS_NUMBER));
         transformValue->append(cssValuePool.createValue(transform.m12(), CSSUnitType::CSS_NUMBER));
         transformValue->append(cssValuePool.createValue(transform.m13(), CSSUnitType::CSS_NUMBER));
-        transformValue->append(cssValuePool.createValue(transform.m14(), CSSUnitType::CSS_NUMBER));
+        transformValue->append(cssValuePool.createValue(transform.m14() * zoom, CSSUnitType::CSS_NUMBER));
 
         transformValue->append(cssValuePool.createValue(transform.m21(), CSSUnitType::CSS_NUMBER));
         transformValue->append(cssValuePool.createValue(transform.m22(), CSSUnitType::CSS_NUMBER));
         transformValue->append(cssValuePool.createValue(transform.m23(), CSSUnitType::CSS_NUMBER));
-        transformValue->append(cssValuePool.createValue(transform.m24(), CSSUnitType::CSS_NUMBER));
+        transformValue->append(cssValuePool.createValue(transform.m24() * zoom, CSSUnitType::CSS_NUMBER));
 
         transformValue->append(cssValuePool.createValue(transform.m31(), CSSUnitType::CSS_NUMBER));
         transformValue->append(cssValuePool.createValue(transform.m32(), CSSUnitType::CSS_NUMBER));
         transformValue->append(cssValuePool.createValue(transform.m33(), CSSUnitType::CSS_NUMBER));
-        transformValue->append(cssValuePool.createValue(transform.m34(), CSSUnitType::CSS_NUMBER));
+        transformValue->append(cssValuePool.createValue(transform.m34() * zoom, CSSUnitType::CSS_NUMBER));
 
-        transformValue->append(zoomAdjustedNumberValue(transform.m41(), style));
-        transformValue->append(zoomAdjustedNumberValue(transform.m42(), style));
-        transformValue->append(zoomAdjustedNumberValue(transform.m43(), style));
+        transformValue->append(cssValuePool.createValue(transform.m41() / zoom, CSSUnitType::CSS_NUMBER));
+        transformValue->append(cssValuePool.createValue(transform.m42() / zoom, CSSUnitType::CSS_NUMBER));
+        transformValue->append(cssValuePool.createValue(transform.m43() / zoom, CSSUnitType::CSS_NUMBER));
         transformValue->append(cssValuePool.createValue(transform.m44(), CSSUnitType::CSS_NUMBER));
     }
 
@@ -739,7 +741,7 @@ static Ref<CSSValue> computedTransform(RenderElement* renderer, const RenderStyl
     if (renderer) {
         TransformationMatrix transform;
         style.applyTransform(transform, renderer->transformReferenceBoxRect(style), { });
-        auto list = CSSValueList::createSpaceSeparated();
+        auto list = CSSTransformListValue::create();
         list->append(matrixTransformValue(transform, style));
         return list;
     }
@@ -750,12 +752,12 @@ static Ref<CSSValue> computedTransform(RenderElement* renderer, const RenderStyl
     if (valueType == ComputedStyleExtractor::PropertyValueType::Resolved)
         return cssValuePool.createIdentifierValue(CSSValueNone);
 
-    auto list = CSSValueList::createSpaceSeparated();
+    auto list = CSSTransformListValue::create();
 
     auto translateLengthAsCSSValue = [&](const Length& length) {
         if (length.isZero())
             return cssValuePool.createValue(0, CSSUnitType::CSS_PX);
-        return ComputedStyleExtractor::zoomAdjustedPixelValueForLength(length, style);
+        return zoomAdjustedPixelValueForLength(length, style);
     };
 
     auto includeLength = [](const Length& length) -> bool {
@@ -866,7 +868,7 @@ static Ref<CSSValue> computedTransform(RenderElement* renderer, const RenderStyl
         case TransformOperation::PERSPECTIVE:
             functionValue = CSSFunctionValue::create(CSSValuePerspective);
             if (auto perspective = downcast<PerspectiveTransformOperation>(*operation).perspective())
-                functionValue->append(ComputedStyleExtractor::zoomAdjustedPixelValueForLength(*perspective, style));
+                functionValue->append(zoomAdjustedPixelValueForLength(*perspective, style));
             else
                 functionValue->append(cssValuePool.createIdentifierValue(CSSValueNone));
             break;
@@ -901,17 +903,17 @@ static Ref<CSSValue> computedTranslate(RenderObject* renderer, const RenderStyle
         return CSSValuePool::singleton().createIdentifierValue(CSSValueNone);
 
     auto list = CSSValueList::createSpaceSeparated();
-    list->append(ComputedStyleExtractor::zoomAdjustedPixelValueForLength(translate->x(), style));
+    list->append(zoomAdjustedPixelValueForLength(translate->x(), style));
 
     auto includeLength = [](const Length& length) -> bool {
         return !length.isZero() || length.isPercent();
     };
 
     if (includeLength(translate->y()) || includeLength(translate->z()))
-        list->append(ComputedStyleExtractor::zoomAdjustedPixelValueForLength(translate->y(), style));
+        list->append(zoomAdjustedPixelValueForLength(translate->y(), style));
 
     if (includeLength(translate->z()))
-        list->append(ComputedStyleExtractor::zoomAdjustedPixelValueForLength(translate->z(), style));
+        list->append(zoomAdjustedPixelValueForLength(translate->z(), style));
 
     return list;
 }
@@ -962,12 +964,12 @@ static Ref<CSSValue> computedRotate(RenderObject* renderer, const RenderStyle& s
 
 static inline Ref<CSSPrimitiveValue> adjustLengthForZoom(double length, const RenderStyle& style, ComputedStyleExtractor::AdjustPixelValuesForComputedStyle adjust)
 {
-    return adjust == ComputedStyleExtractor::AdjustPixelValuesForComputedStyle::Yes ? ComputedStyleExtractor::zoomAdjustedPixelValue(length, style) : CSSValuePool::singleton().createValue(length, CSSUnitType::CSS_PX);
+    return adjust == ComputedStyleExtractor::AdjustPixelValuesForComputedStyle::Yes ? zoomAdjustedPixelValue(length, style) : CSSValuePool::singleton().createValue(length, CSSUnitType::CSS_PX);
 }
 
 static inline Ref<CSSPrimitiveValue> adjustLengthForZoom(const Length& length, const RenderStyle& style, ComputedStyleExtractor::AdjustPixelValuesForComputedStyle adjust)
 {
-    return adjust == ComputedStyleExtractor::AdjustPixelValuesForComputedStyle::Yes ? ComputedStyleExtractor::zoomAdjustedPixelValue(length.value(), style) : CSSValuePool::singleton().createValue(length);
+    return adjust == ComputedStyleExtractor::AdjustPixelValuesForComputedStyle::Yes ? zoomAdjustedPixelValue(length.value(), style) : CSSValuePool::singleton().createValue(length);
 }
 
 Ref<CSSValue> ComputedStyleExtractor::valueForShadow(const ShadowData* shadow, CSSPropertyID propertyID, const RenderStyle& style, AdjustPixelValuesForComputedStyle adjust)
@@ -1083,7 +1085,7 @@ static Ref<CSSValue> specifiedValueForGridTrackBreadth(const GridLength& trackBr
     const Length& trackBreadthLength = trackBreadth.length();
     if (trackBreadthLength.isAuto())
         return CSSValuePool::singleton().createIdentifierValue(CSSValueAuto);
-    return ComputedStyleExtractor::zoomAdjustedPixelValueForLength(trackBreadthLength, style);
+    return zoomAdjustedPixelValueForLength(trackBreadthLength, style);
 }
 
 static Ref<CSSValue> specifiedValueForGridTrackSize(const GridTrackSize& trackSize, const RenderStyle& style)
@@ -1093,7 +1095,7 @@ static Ref<CSSValue> specifiedValueForGridTrackSize(const GridTrackSize& trackSi
         return specifiedValueForGridTrackBreadth(trackSize.minTrackBreadth(), style);
     case FitContentTrackSizing: {
         auto fitContentTrackSize = CSSFunctionValue::create(CSSValueFitContent);
-        fitContentTrackSize->append(ComputedStyleExtractor::zoomAdjustedPixelValueForLength(trackSize.fitContentTrackBreadth().length(), style));
+        fitContentTrackSize->append(zoomAdjustedPixelValueForLength(trackSize.fitContentTrackBreadth().length(), style));
         return fitContentTrackSize;
     }
     default:
@@ -1156,6 +1158,7 @@ static Ref<CSSValue> valueForGridTrackList(GridTrackSizingDirection direction, R
     bool isRowAxis = direction == ForColumns;
     bool isRenderGrid = is<RenderGrid>(renderer);
     bool isSubgrid = isRowAxis ? style.gridSubgridColumns() : style.gridSubgridRows();
+    bool isMasonry = (direction == ForRows) ? style.gridMasonryRows() : style.gridMasonryColumns();
     auto& trackSizes = isRowAxis ? style.gridColumns() : style.gridRows();
     auto& autoRepeatTrackSizes = isRowAxis ? style.gridAutoRepeatColumns() : style.gridAutoRepeatRows();
 
@@ -1170,7 +1173,7 @@ static Ref<CSSValue> valueForGridTrackList(GridTrackSizingDirection direction, R
     }
 
     if (trackListIsEmpty && !isSubgrid)
-        return CSSValuePool::singleton().createIdentifierValue(CSSValueNone);
+        return isMasonry ? CSSValuePool::singleton().createIdentifierValue(CSSValueMasonry) : CSSValuePool::singleton().createIdentifierValue(CSSValueNone);
 
     auto list = CSSValueList::createSpaceSeparated();
 
@@ -1192,7 +1195,7 @@ static Ref<CSSValue> valueForGridTrackList(GridTrackSizingDirection direction, R
         // So we need to subtract the number of leading implicit tracks in order to get the proper line index.
         int offset = -grid->explicitGridStartForDirection(direction);
         populateGridTrackList(list.get(), collector, grid->trackSizesForComputedStyle(direction), [&](const LayoutUnit& v) {
-            return ComputedStyleExtractor::zoomAdjustedPixelValue(v, style);
+            return zoomAdjustedPixelValue(v, style);
         }, offset);
         return list;
     }
@@ -1237,6 +1240,8 @@ static Ref<CSSValue> valueForGridTrackList(GridTrackSizingDirection direction, R
         list->append(repeatedValues);
     }, [&](const GridTrackEntrySubgrid&) {
         list->append(CSSValuePool::singleton().createIdentifierValue(CSSValueSubgrid));
+    }, [&](const GridTrackEntryMasonry) {
+        list->append(CSSValuePool::singleton().createIdentifierValue(CSSValueMasonry));
     });
 
     for (const auto& entry : computedTracks)
@@ -1724,8 +1729,8 @@ static Element* styleElementForNode(Node* node)
 static Ref<CSSValue> valueForPosition(const RenderStyle& style, const LengthPoint& position)
 {
     auto list = CSSValueList::createSpaceSeparated();
-    list->append(ComputedStyleExtractor::zoomAdjustedPixelValueForLength(position.x(), style));
-    list->append(ComputedStyleExtractor::zoomAdjustedPixelValueForLength(position.y(), style));
+    list->append(zoomAdjustedPixelValueForLength(position.x(), style));
+    list->append(zoomAdjustedPixelValueForLength(position.y(), style));
     return list;
 }
 
@@ -1805,14 +1810,14 @@ static Ref<CSSValue> valueForContainIntrinsicSize(const RenderStyle& style, cons
         return cssValuePool.createIdentifierValue(CSSValueNone);
     case ContainIntrinsicSizeType::Length: {
         ASSERT(containIntrinsicLength.has_value());
-        return ComputedStyleExtractor::zoomAdjustedPixelValueForLength(containIntrinsicLength.value(), style);
+        return zoomAdjustedPixelValueForLength(containIntrinsicLength.value(), style);
     }
     case ContainIntrinsicSizeType::AutoAndLength: {
         auto autoValue = cssValuePool.createIdentifierValue(CSSValueAuto);
         auto list = CSSValueList::createSpaceSeparated();
         list->append(autoValue);
         ASSERT(containIntrinsicLength.has_value());
-        list->append(ComputedStyleExtractor::zoomAdjustedPixelValueForLength(containIntrinsicLength.value(), style));
+        list->append(zoomAdjustedPixelValueForLength(containIntrinsicLength.value(), style));
         return list;
     }
     }
@@ -2118,11 +2123,11 @@ static Ref<CSSValue> fillSizeToCSSValue(CSSPropertyID propertyID, const FillSize
         return CSSValuePool::singleton().createIdentifierValue(CSSValueCover);
 
     if (fillSize.size.height.isAuto() && (propertyID == CSSPropertyMaskSize || fillSize.size.width.isAuto()))
-        return ComputedStyleExtractor::zoomAdjustedPixelValueForLength(fillSize.size.width, style);
+        return zoomAdjustedPixelValueForLength(fillSize.size.width, style);
 
     auto list = CSSValueList::createSpaceSeparated();
-    list->append(ComputedStyleExtractor::zoomAdjustedPixelValueForLength(fillSize.size.width, style));
-    list->append(ComputedStyleExtractor::zoomAdjustedPixelValueForLength(fillSize.size.height, style));
+    list->append(zoomAdjustedPixelValueForLength(fillSize.size.width, style));
+    list->append(zoomAdjustedPixelValueForLength(fillSize.size.height, style));
     return list;
 }
 
@@ -2139,7 +2144,7 @@ static Ref<CSSValueList> contentToCSSValue(const RenderStyle& style)
         if (is<CounterContentData>(*contentData))
             list->append(cssValuePool.createValue(downcast<CounterContentData>(*contentData).counter().identifier(), CSSUnitType::CSS_COUNTER_NAME));
         else if (is<ImageContentData>(*contentData))
-            list->append(downcast<ImageContentData>(*contentData).image().cssValue());
+            list->append(downcast<ImageContentData>(*contentData).image().computedStyleValue(style));
         else if (is<TextContentData>(*contentData))
             list->append(cssValuePool.createValue(downcast<TextContentData>(*contentData).text(), CSSUnitType::CSS_STRING));
     }
@@ -2169,7 +2174,7 @@ static Ref<CSSValue> counterToCSSValue(const RenderStyle& style, CSSPropertyID p
     return CSSValuePool::singleton().createIdentifierValue(CSSValueNone);
 }
 
-static Ref<CSSValueList> fontFamilyListFromStyle(const RenderStyle& style)
+static Ref<CSSValueList> fontFamilyList(const RenderStyle& style)
 {
     auto list = CSSValueList::createCommaSeparated();
     for (unsigned i = 0; i < style.fontCascade().familyCount(); ++i)
@@ -2177,34 +2182,47 @@ static Ref<CSSValueList> fontFamilyListFromStyle(const RenderStyle& style)
     return list;
 }
 
-static Ref<CSSValue> fontFamilyFromStyle(const RenderStyle& style)
+static Ref<CSSValue> fontFamily(const RenderStyle& style)
 {
     if (style.fontCascade().familyCount() == 1)
         return valueForFamily(style.fontCascade().familyAt(0));
-    return fontFamilyListFromStyle(style);
+    return fontFamilyList(style);
 }
 
-static Ref<CSSPrimitiveValue> lineHeightFromStyle(const RenderStyle& style)
+static RefPtr<CSSPrimitiveValue> optionalLineHeight(const RenderStyle& style, ComputedStyleExtractor::PropertyValueType valueType)
 {
     Length length = style.lineHeight();
     if (length.isNegative())
-        return CSSValuePool::singleton().createIdentifierValue(CSSValueNormal);
+        return nullptr;
     if (length.isPercent()) {
+        // BuilderConverter::convertLineHeight() will convert a percentage value to a fixed value,
+        // and a number value to a percentage value. To be able to roundtrip a number value, we thus
+        // look for a percent value and convert it back to a number.
+        if (valueType == ComputedStyleExtractor::PropertyValueType::Computed)
+            return CSSValuePool::singleton().createValue(length.value() / 100, CSSUnitType::CSS_NUMBER);
+
         // This is imperfect, because it doesn't include the zoom factor and the real computation
         // for how high to be in pixels does include things like minimum font size and the zoom factor.
         // On the other hand, since font-size doesn't include the zoom factor, we really can't do
         // that here either.
-        return ComputedStyleExtractor::zoomAdjustedPixelValue(static_cast<double>(length.percent() * style.fontDescription().computedSize()) / 100, style);
+        return zoomAdjustedPixelValue(static_cast<double>(length.percent() * style.fontDescription().computedSize()) / 100, style);
     }
-    return ComputedStyleExtractor::zoomAdjustedPixelValue(floatValueForLength(length, 0), style);
+    return zoomAdjustedPixelValue(floatValueForLength(length, 0), style);
 }
 
-static Ref<CSSPrimitiveValue> fontSizeFromStyle(const RenderStyle& style)
+static Ref<CSSPrimitiveValue> lineHeight(const RenderStyle& style, ComputedStyleExtractor::PropertyValueType valueType)
 {
-    return ComputedStyleExtractor::zoomAdjustedPixelValue(style.fontDescription().computedSize(), style);
+    if (auto lineHeight = optionalLineHeight(style, valueType))
+        return lineHeight.releaseNonNull();
+    return CSSValuePool::singleton().createIdentifierValue(CSSValueNormal);
 }
 
-static Ref<CSSPrimitiveValue> fontPaletteFromStyle(const RenderStyle& style)
+static Ref<CSSPrimitiveValue> fontSize(const RenderStyle& style)
+{
+    return zoomAdjustedPixelValue(style.fontDescription().computedSize(), style);
+}
+
+static Ref<CSSPrimitiveValue> fontPalette(const RenderStyle& style)
 {
     auto fontPalette = style.fontDescription().fontPalette();
     switch (fontPalette.type) {
@@ -2220,55 +2238,36 @@ static Ref<CSSPrimitiveValue> fontPaletteFromStyle(const RenderStyle& style)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-Ref<CSSPrimitiveValue> ComputedStyleExtractor::fontNonKeywordWeightFromStyleValue(FontSelectionValue weight)
+static Ref<CSSPrimitiveValue> fontWeight(FontSelectionValue weight)
 {
     return CSSValuePool::singleton().createValue(static_cast<float>(weight), CSSUnitType::CSS_NUMBER);
 }
 
-static Ref<CSSPrimitiveValue> fontNonKeywordWeightFromStyle(const RenderStyle& style)
+static Ref<CSSPrimitiveValue> fontWeight(const RenderStyle& style)
 {
-    return ComputedStyleExtractor::fontNonKeywordWeightFromStyleValue(style.fontDescription().weight());
+    return fontWeight(style.fontDescription().weight());
 }
 
-Ref<CSSPrimitiveValue> ComputedStyleExtractor::fontWeightFromStyleValue(FontSelectionValue weight)
-{
-    if (auto value = fontWeightKeyword(weight))
-        return CSSValuePool::singleton().createIdentifierValue(value.value());
-    return fontNonKeywordWeightFromStyleValue(weight);
-}
-
-Ref<CSSPrimitiveValue> ComputedStyleExtractor::fontNonKeywordStretchFromStyleValue(FontSelectionValue stretch)
+static Ref<CSSPrimitiveValue> fontStretch(FontSelectionValue stretch)
 {
     return CSSValuePool::singleton().createValue(static_cast<float>(stretch), CSSUnitType::CSS_PERCENTAGE);
 }
 
-Ref<CSSPrimitiveValue> ComputedStyleExtractor::fontStretchFromStyleValue(FontSelectionValue stretch)
+static Ref<CSSPrimitiveValue> fontStretch(const RenderStyle& style)
 {
-    if (auto keyword = fontStretchKeyword(stretch))
-        return CSSValuePool::singleton().createIdentifierValue(keyword.value());
-    return fontNonKeywordStretchFromStyleValue(stretch);
+    return fontStretch(style.fontDescription().stretch());
 }
 
-static Ref<CSSPrimitiveValue> fontStretchFromStyle(const RenderStyle& style)
+static Ref<CSSFontStyleValue> fontStyle(std::optional<FontSelectionValue> italic, FontStyleAxis axis)
 {
-    return ComputedStyleExtractor::fontStretchFromStyleValue(style.fontDescription().stretch());
-}
-
-Ref<CSSFontStyleValue> ComputedStyleExtractor::fontNonKeywordStyleFromStyleValue(FontSelectionValue italic)
-{
-    return CSSFontStyleValue::create(CSSValuePool::singleton().createIdentifierValue(CSSValueOblique), CSSValuePool::singleton().createValue(static_cast<float>(italic), CSSUnitType::CSS_DEG));
-}
-
-Ref<CSSFontStyleValue> ComputedStyleExtractor::fontStyleFromStyleValue(std::optional<FontSelectionValue> italic, FontStyleAxis fontStyleAxis)
-{
-    if (auto keyword = fontStyleKeyword(italic, fontStyleAxis))
+    if (auto keyword = fontStyleKeyword(italic, axis))
         return CSSFontStyleValue::create(CSSValuePool::singleton().createIdentifierValue(keyword.value()));
-    return fontNonKeywordStyleFromStyleValue(italic.value());
+    return CSSFontStyleValue::create(CSSValuePool::singleton().createIdentifierValue(CSSValueOblique), CSSValuePool::singleton().createValue(static_cast<float>(*italic), CSSUnitType::CSS_DEG));
 }
 
-static Ref<CSSFontStyleValue> fontStyleFromStyle(const RenderStyle& style)
+static Ref<CSSFontStyleValue> fontStyle(const RenderStyle& style)
 {
-    return ComputedStyleExtractor::fontStyleFromStyleValue(style.fontDescription().italic(), style.fontDescription().fontStyleAxis());
+    return fontStyle(style.fontDescription().italic(), style.fontDescription().fontStyleAxis());
 }
 
 Ref<CSSValue> ComputedStyleExtractor::fontVariantShorthandValue()
@@ -2286,7 +2285,7 @@ Ref<CSSValue> ComputedStyleExtractor::fontVariantShorthandValue()
     return list;
 }
 
-static Ref<CSSValue> fontSynthesisFromStyle(const RenderStyle& style)
+static Ref<CSSValue> fontSynthesis(const RenderStyle& style)
 {
     auto list = CSSValueList::createSpaceSeparated();
     if (style.fontDescription().hasAutoFontSynthesisWeight())
@@ -2295,7 +2294,6 @@ static Ref<CSSValue> fontSynthesisFromStyle(const RenderStyle& style)
         list->append(CSSValuePool::singleton().createIdentifierValue(CSSValueStyle));
     if (style.fontDescription().hasAutoFontSynthesisSmallCaps())
         list->append(CSSValuePool::singleton().createIdentifierValue(CSSValueSmallCaps));
-
     if (!list->length())
         return CSSValuePool::singleton().createIdentifierValue(CSSValueNone);
     return list;
@@ -2306,17 +2304,17 @@ static Ref<CSSValue> fontSynthesisLonghandToCSSValue(FontSynthesisLonghandValue 
     return CSSValuePool::singleton().createIdentifierValue(value == FontSynthesisLonghandValue::Auto ? CSSValueAuto : CSSValueNone);
 }
 
-static Ref<CSSValue> fontSynthesisWeightFromStyle(const RenderStyle& style)
+static Ref<CSSValue> fontSynthesisWeight(const RenderStyle& style)
 {
     return fontSynthesisLonghandToCSSValue(style.fontDescription().fontSynthesisWeight());
 }
 
-static Ref<CSSValue> fontSynthesisStyleFromStyle(const RenderStyle& style)
+static Ref<CSSValue> fontSynthesisStyle(const RenderStyle& style)
 {
     return fontSynthesisLonghandToCSSValue(style.fontDescription().fontSynthesisStyle());
 }
 
-static Ref<CSSValue> fontSynthesisSmallCapsFromStyle(const RenderStyle& style)
+static Ref<CSSValue> fontSynthesisSmallCaps(const RenderStyle& style)
 {
     return fontSynthesisLonghandToCSSValue(style.fontDescription().fontSynthesisSmallCaps());
 }
@@ -2329,8 +2327,8 @@ static RefPtr<CSSValue> zoomAdjustedPaddingOrMarginPixelValue(const RenderStyle&
 {
     Length unzoomzedLength = (style.*lengthGetter)();
     if (!is<RenderBox>(renderer) || unzoomzedLength.isFixed())
-        return ComputedStyleExtractor::zoomAdjustedPixelValueForLength(unzoomzedLength, style);
-    return ComputedStyleExtractor::zoomAdjustedPixelValue((downcast<RenderBox>(*renderer).*computedCSSValueGetter)(), style);
+        return zoomAdjustedPixelValueForLength(unzoomzedLength, style);
+    return zoomAdjustedPixelValue((downcast<RenderBox>(*renderer).*computedCSSValueGetter)(), style);
 }
 
 template<RenderStyleLengthGetter lengthGetter>
@@ -2583,7 +2581,7 @@ static Ref<CSSValue> shapePropertyValue(const RenderStyle& style, const ShapeVal
 
     if (shapeValue->type() == ShapeValue::Type::Image) {
         if (shapeValue->image())
-            return shapeValue->image()->cssValue();
+            return shapeValue->image()->computedStyleValue(style);
         return CSSValuePool::singleton().createIdentifierValue(CSSValueNone);
     }
 
@@ -2763,27 +2761,23 @@ static Ref<CSSFontValue> fontShorthandValueForSelectionProperties(const FontDesc
     auto variantCaps = fontDescription.variantCaps();
     if (variantCaps == FontVariantCaps::Small)
         computedFont->variant = CSSValuePool::singleton().createIdentifierValue(CSSValueSmallCaps);
-    else if (variantCaps == FontVariantCaps::Normal)
-        computedFont->variant = CSSValuePool::singleton().createIdentifierValue(CSSValueNormal);
-    else
+    else if (variantCaps != FontVariantCaps::Normal)
         return CSSFontValue::create();
 
-    auto weight = fontDescription.weight();
-    if (auto value = fontWeightKeyword(weight))
-        computedFont->weight = CSSValuePool::singleton().createIdentifierValue(value.value());
-    else if (isCSS21Weight(weight))
-        computedFont->weight = CSSValuePool::singleton().createValue(static_cast<float>(weight), CSSUnitType::CSS_NUMBER);
-    else
+    float weight = fontDescription.weight();
+    if (weight != 400)
+        computedFont->weight = CSSValuePool::singleton().createValue(weight, CSSUnitType::CSS_NUMBER);
+
+    if (auto keyword = fontStretchKeyword(fontDescription.stretch())) {
+        if (*keyword != CSSValueNormal)
+            computedFont->stretch = CSSValuePool::singleton().createIdentifierValue(keyword.value());
+    } else
         return CSSFontValue::create();
 
-    if (auto keyword = fontStretchKeyword(fontDescription.stretch()))
-        computedFont->stretch = CSSValuePool::singleton().createIdentifierValue(keyword.value());
-    else
-        return CSSFontValue::create();
-
-    if (auto italic = fontStyleKeyword(fontDescription.italic(), fontDescription.fontStyleAxis()))
-        computedFont->style = CSSFontStyleValue::create(CSSValuePool::singleton().createIdentifierValue(italic.value()));
-    else
+    if (auto italic = fontStyleKeyword(fontDescription.italic(), fontDescription.fontStyleAxis())) {
+        if (*italic != CSSValueNormal)
+            computedFont->style = CSSFontStyleValue::create(CSSValuePool::singleton().createIdentifierValue(italic.value()));
+    } else
         return CSSFontValue::create();
 
     return computedFont;
@@ -2862,13 +2856,13 @@ RefPtr<CSSValue> ComputedStyleExtractor::valueForPropertyInStyle(const RenderSty
         auto& layers = propertyID == CSSPropertyMaskImage ? style.maskLayers() : style.backgroundLayers();
         if (!layers.next()) {
             if (layers.image())
-                return layers.image()->cssValue();
+                return layers.image()->computedStyleValue(style);
             return cssValuePool.createIdentifierValue(CSSValueNone);
         }
         auto list = CSSValueList::createCommaSeparated();
         for (auto* currLayer = &layers; currLayer; currLayer = currLayer->next()) {
             if (currLayer->image())
-                list->append(currLayer->image()->cssValue());
+                list->append(currLayer->image()->computedStyleValue(style));
             else
                 list->append(cssValuePool.createIdentifierValue(CSSValueNone));
         }
@@ -3000,7 +2994,7 @@ RefPtr<CSSValue> ComputedStyleExtractor::valueForPropertyInStyle(const RenderSty
         return zoomAdjustedPixelValue(style.verticalBorderSpacing(), style);
     case CSSPropertyBorderImageSource:
         if (style.borderImageSource())
-            return style.borderImageSource()->cssValue();
+            return style.borderImageSource()->computedStyleValue(style);
         return cssValuePool.createIdentifierValue(CSSValueNone);
     case CSSPropertyBorderTopColor:
         return m_allowVisitedStyle ? cssValuePool.createColorValue(style.visitedDependentColor(CSSPropertyBorderTopColor)) : currentColorOrValidColor(style, style.borderTopColor());
@@ -3110,7 +3104,7 @@ RefPtr<CSSValue> ComputedStyleExtractor::valueForPropertyInStyle(const RenderSty
             list = CSSValueList::createCommaSeparated();
             for (unsigned i = 0; i < cursors->size(); ++i) {
                 if (StyleImage* image = cursors->at(i).image())
-                    list->append(image->cssValue());
+                    list->append(image->computedStyleValue(style));
             }
         }
         auto value = cssValuePool.createValue(style.cursor());
@@ -3170,33 +3164,35 @@ RefPtr<CSSValue> ComputedStyleExtractor::valueForPropertyInStyle(const RenderSty
         return cssValuePool.createValue(style.floating());
     case CSSPropertyFont: {
         auto computedFont = fontShorthandValueForSelectionProperties(style.fontDescription());
-        computedFont->size = fontSizeFromStyle(style);
-        computedFont->lineHeight = lineHeightFromStyle(style);
-        computedFont->family = fontFamilyListFromStyle(style);
+        computedFont->size = fontSize(style);
+        computedFont->lineHeight = optionalLineHeight(style, valueType);
+        computedFont->family = fontFamilyList(style);
         return computedFont;
     }
     case CSSPropertyFontFamily:
-        return fontFamilyFromStyle(style);
+        return fontFamily(style);
     case CSSPropertyFontSize:
-        return fontSizeFromStyle(style);
+        return fontSize(style);
+    case CSSPropertyFontSizeAdjust:
+        return fontSizeAdjustFromStyle(style);
     case CSSPropertyFontStyle:
-        return fontStyleFromStyle(style);
+        return fontStyle(style);
     case CSSPropertyFontStretch:
-        return fontStretchFromStyle(style);
+        return fontStretch(style);
     case CSSPropertyFontVariant:
         return fontVariantShorthandValue();
     case CSSPropertyFontWeight:
-        return fontNonKeywordWeightFromStyle(style);
+        return fontWeight(style);
     case CSSPropertyFontPalette:
-        return fontPaletteFromStyle(style);
+        return fontPalette(style);
     case CSSPropertyFontSynthesis:
-        return fontSynthesisFromStyle(style);
+        return fontSynthesis(style);
     case CSSPropertyFontSynthesisWeight:
-        return fontSynthesisWeightFromStyle(style);
+        return fontSynthesisWeight(style);
     case CSSPropertyFontSynthesisStyle:
-        return fontSynthesisStyleFromStyle(style);
+        return fontSynthesisStyle(style);
     case CSSPropertyFontSynthesisSmallCaps:
-        return fontSynthesisSmallCapsFromStyle(style);
+        return fontSynthesisSmallCaps(style);
     case CSSPropertyFontFeatureSettings: {
         const FontFeatureSettings& featureSettings = style.fontDescription().featureSettings();
         if (!featureSettings.size())
@@ -3323,10 +3319,10 @@ RefPtr<CSSValue> ComputedStyleExtractor::valueForPropertyInStyle(const RenderSty
             return cssValuePool.createIdentifierValue(CSSValueNone);
         return cssValuePool.createValue(style.lineClamp().value(), style.lineClamp().isPercentage() ? CSSUnitType::CSS_PERCENTAGE : CSSUnitType::CSS_INTEGER);
     case CSSPropertyLineHeight:
-        return lineHeightFromStyle(style);
+        return lineHeight(style, valueType);
     case CSSPropertyListStyleImage:
         if (style.listStyleImage())
-            return style.listStyleImage()->cssValue();
+            return style.listStyleImage()->computedStyleValue(style);
         return cssValuePool.createIdentifierValue(CSSValueNone);
     case CSSPropertyListStylePosition:
         return cssValuePool.createValue(style.listStylePosition());
@@ -3736,7 +3732,7 @@ RefPtr<CSSValue> ComputedStyleExtractor::valueForPropertyInStyle(const RenderSty
         return valueForNinePieceImageQuad(style.maskBoxImage().borderSlices(), style);
     case CSSPropertyWebkitMaskBoxImageSource:
         if (style.maskBoxImageSource())
-            return style.maskBoxImageSource()->cssValue();
+            return style.maskBoxImageSource()->computedStyleValue(style);
         return cssValuePool.createIdentifierValue(CSSValueNone);
     case CSSPropertyWebkitInitialLetter: {
         auto drop = !style.initialLetterDrop() ? cssValuePool.createIdentifierValue(CSSValueNormal) : cssValuePool.createValue(style.initialLetterDrop(), CSSUnitType::CSS_NUMBER);
@@ -4354,8 +4350,8 @@ Ref<MutableStyleProperties> ComputedStyleExtractor::copyPropertiesInSet(const CS
 Ref<MutableStyleProperties> ComputedStyleExtractor::copyProperties()
 {
     Vector<CSSProperty> list;
-    list.reserveInitialCapacity(numCSSProperties);
-    for (unsigned i = firstCSSProperty; i < lastCSSProperty; ++i) {
+    list.reserveInitialCapacity(firstShorthandProperty - firstCSSProperty);
+    for (unsigned i = firstCSSProperty; i < firstShorthandProperty; ++i) {
         auto propertyID = convertToCSSPropertyID(i);
         if (auto value = propertyValue(propertyID))
             list.append(CSSProperty(propertyID, WTFMove(value)));

@@ -55,6 +55,7 @@ class DatasetDOMStringMap;
 class DOMRect;
 class DOMRectList;
 class DOMTokenList;
+class DeferredPromise;
 class Document;
 class ElementAnimationRareData;
 class ElementData;
@@ -82,10 +83,12 @@ class WebAnimation;
 enum class AnimationImpact;
 enum class EventHandling : uint8_t;
 enum class EventProcessing : uint8_t;
+enum class FullscreenNavigationUI : uint8_t;
 enum class IsSyntheticClick : bool { No, Yes };
 enum class ResolveURLs : uint8_t { No, NoExcludingURLsForPrivacy, Yes, YesExcludingURLsForPrivacy };
 enum class SelectionRestorationMode : uint8_t;
 
+struct FullscreenOptions;
 struct GetAnimationsOptions;
 struct IntersectionObserverData;
 struct KeyframeAnimationOptions;
@@ -565,7 +568,8 @@ public:
     bool containsFullScreenElement() const { return hasNodeFlag(NodeFlag::ContainsFullScreenElement); }
     void setContainsFullScreenElement(bool);
     void setContainsFullScreenElementOnAncestorsCrossingFrameBoundaries(bool);
-    WEBCORE_EXPORT virtual void webkitRequestFullscreen();
+    WEBCORE_EXPORT void webkitRequestFullscreen();
+    virtual void requestFullscreen(FullscreenOptions&&, RefPtr<DeferredPromise>&&);
 #endif
 
     ExceptionOr<void> setPointerCapture(int32_t);
@@ -691,12 +695,13 @@ public:
 
     virtual void updateUserAgentShadowTree() { }
 
-#if ENABLE(CSS_TYPED_OM)
     StylePropertyMapReadOnly* computedStyleMap();
-#endif
 
     ExplicitlySetAttrElementsMap& explicitlySetAttrElementsMap();
     ExplicitlySetAttrElementsMap* explicitlySetAttrElementsMapIfExists() const;
+
+    bool displayContentsChanged() const { return m_displayContentsChanged; }
+    void setDisplayContentsChanged(bool changed = true) { m_displayContentsChanged = changed; }
 
 protected:
     Element(const QualifiedName&, Document&, ConstructionType);
@@ -716,10 +721,8 @@ protected:
 
     static ExceptionOr<void> mergeWithNextTextNode(Text&);
 
-#if ENABLE(CSS_TYPED_OM)
     StylePropertyMap* attributeStyleMap();
     void setAttributeStyleMap(Ref<StylePropertyMap>&&);
-#endif
 
     void updateLabel(TreeScope&, const AtomString& oldForAttributeValue, const AtomString& newForAttributeValue);
 
@@ -822,7 +825,10 @@ private:
     QualifiedName m_tagName;
     RefPtr<ElementData> m_elementData;
 
+    // FIXME: these flags should move somewhere else and then we should have a static assert on
+    // Element size and ideally stick to that size.
     bool m_hasDuplicateAttribute { false };
+    bool m_displayContentsChanged { false };
 };
 
 inline void Element::setSavedLayerScrollPosition(const IntPoint& position)

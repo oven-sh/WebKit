@@ -153,7 +153,7 @@ void WebPage::getPlatformEditorState(Frame& frame, EditorState& result) const
 
     result.canEnableAutomaticSpellingCorrection = result.isContentEditable && frame.editor().canEnableAutomaticSpellingCorrection();
 
-    if (result.isMissingPostLayoutData)
+    if (!result.hasPostLayoutAndVisualData())
         return;
 
     auto& selection = frame.selection().selection();
@@ -161,7 +161,7 @@ void WebPage::getPlatformEditorState(Frame& frame, EditorState& result) const
     if (!selectedRange)
         return;
 
-    auto& postLayoutData = result.postLayoutData();
+    auto& postLayoutData = *result.postLayoutData;
     VisiblePosition selectionStart = selection.visibleStart();
     auto selectionStartBoundary = makeBoundaryPoint(selectionStart);
     auto selectionEnd = makeBoundaryPoint(selection.visibleEnd());
@@ -725,22 +725,6 @@ void WebPage::drawPagesToPDFFromPDFDocument(CGContextRef context, PDFDocument *p
         CGPDFContextEndPage(context);
     }
 }
-
-#if ENABLE(WEBGL)
-WebCore::WebGLLoadPolicy WebPage::webGLPolicyForURL(WebFrame*, const URL& url)
-{
-    auto sendResult = sendSync(Messages::WebPageProxy::WebGLPolicyForURL(url));
-    auto [policyResult] = sendResult.takeReplyOr(WebGLLoadPolicy::WebGLAllowCreation);
-    return policyResult;
-}
-
-WebCore::WebGLLoadPolicy WebPage::resolveWebGLPolicyForURL(WebFrame*, const URL& url)
-{
-    auto sendResult = sendSync(Messages::WebPageProxy::ResolveWebGLPolicyForURL(url));
-    auto [policyResult] = sendResult.takeReplyOr(WebGLLoadPolicy::WebGLAllowCreation);
-    return policyResult;
-}
-#endif // ENABLE(WEBGL)
 
 #if ENABLE(TELEPHONE_NUMBER_DETECTION)
 void WebPage::handleTelephoneNumberClick(const String& number, const IntPoint& point, const IntRect& rect)

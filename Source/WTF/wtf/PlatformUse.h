@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2006-2022 Apple Inc. All rights reserved.
  * Copyright (C) 2007-2009 Torch Mobile, Inc.
  * Copyright (C) 2010, 2011 Research In Motion Limited. All rights reserved.
  *
@@ -272,7 +272,7 @@
 #define USE_CFNETWORK_CONTENT_ENCODING_SNIFFING_OVERRIDE 1
 #endif
 
-#if PLATFORM(MAC) || PLATFORM(WPE) || PLATFORM(GTK)
+#if PLATFORM(MAC) || PLATFORM(WPE) || PLATFORM(GTK) || PLATFORM(WIN_CAIRO)
 /* FIXME: This really needs a descriptive name, this "new theme" was added in 2008. */
 #define USE_NEW_THEME 1
 #endif
@@ -342,6 +342,7 @@
 #if PLATFORM(COCOA)
 #define USE_OPENXR 0
 #define USE_IOSURFACE_FOR_XR_LAYER_DATA 1
+#define USE_MTLSHAREDEVENT_FOR_XR_FRAME_COMPLETION 0
 #if !defined(HAVE_WEBXR_INTERNALS) && !HAVE(WEBXR_INTERNALS)
 #define USE_EMPTYXR 1
 #endif
@@ -365,4 +366,8 @@
 
 #if PLATFORM(IOS_FAMILY) || (PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 130000)
 #define USE_RUNNINGBOARD 1
+#endif
+
+#if (PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED < 130000)
+#define USE_AVIF 1
 #endif

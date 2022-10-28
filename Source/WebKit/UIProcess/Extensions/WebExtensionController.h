@@ -28,15 +28,28 @@
 #if ENABLE(WK_WEB_EXTENSIONS)
 
 #include "APIObject.h"
+#include "APIPageConfiguration.h"
 #include "MessageReceiver.h"
+#include "WebExtensionContext.h"
+#include "WebExtensionContextIdentifier.h"
 #include "WebExtensionControllerIdentifier.h"
+#include "WebExtensionURLSchemeHandler.h"
 #include <wtf/Forward.h>
+#include <wtf/URLHash.h>
+#include <wtf/WeakHashSet.h>
+
+#if PLATFORM(COCOA)
+OBJC_CLASS NSError;
+OBJC_CLASS _WKWebExtensionController;
+#endif
 
 namespace WebKit {
 
+class WebExtensionContext;
+class WebPageProxy;
 struct WebExtensionControllerParameters;
 
-class WebExtensionController : public API::ObjectImpl<API::Object::Type::WebExtensionController>, private IPC::MessageReceiver {
+class WebExtensionController : public API::ObjectImpl<API::Object::Type::WebExtensionController>, public IPC::MessageReceiver {
     WTF_MAKE_NONCOPYABLE(WebExtensionController);
 
 public:
@@ -46,14 +59,41 @@ public:
     explicit WebExtensionController();
     ~WebExtensionController();
 
+    using WebExtensionContextSet = HashSet<Ref<WebExtensionContext>>;
+    using WebExtensionSet = HashSet<Ref<WebExtension>>;
+    using WebExtensionContextBaseURLMap = HashMap<URL, Ref<WebExtensionContext>>;
+
     WebExtensionControllerIdentifier identifier() const { return m_identifier; }
     WebExtensionControllerParameters parameters() const;
+
+#if PLATFORM(COCOA)
+    bool load(WebExtensionContext&, NSError ** = nullptr);
+    bool unload(WebExtensionContext&, NSError ** = nullptr);
+
+    void addPage(WebPageProxy&);
+    void removePage(WebPageProxy&);
+
+    RefPtr<WebExtensionContext> extensionContext(const WebExtension&) const;
+    RefPtr<WebExtensionContext> extensionContext(const URL&) const;
+
+    const WebExtensionContextSet& extensionContexts() const { return m_extensionContexts; }
+    WebExtensionSet extensions() const;
+
+    _WKWebExtensionController *wrapper() const { return (_WKWebExtensionController *)API::ObjectImpl<API::Object::Type::WebExtensionController>::wrapper(); }
+#endif
 
 private:
     // IPC::MessageReceiver.
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
 
     WebExtensionControllerIdentifier m_identifier;
+
+#if PLATFORM(COCOA)
+    WebExtensionContextSet m_extensionContexts;
+    WebExtensionContextBaseURLMap m_extensionContextBaseURLMap;
+    WeakHashSet<WebPageProxy> m_pages;
+    HashMap<String, Ref<WebExtensionURLSchemeHandler>> m_registeredSchemeHandlers;
+#endif
 };
 
 } // namespace WebKit

@@ -243,7 +243,7 @@ private:
     {
         if (stringView.is8Bit() || !isAll8BitData())
             return stringView.toString();
-        return String::make8BitFrom16BitSource(stringView.characters16(), stringView.length());
+        return String::make8Bit(stringView.characters16(), stringView.length());
     }
 
     StringView m_text;
@@ -1564,7 +1564,7 @@ void HTMLTreeBuilder::callTheAdoptionAgency(AtomHTMLToken& token)
             // 4.13.4.
             bool nodeIsInListOfActiveFormattingElements = m_tree.activeFormattingElements().contains(node->element());
             if (innerLoopCounter > innerIterationLimit && nodeIsInListOfActiveFormattingElements)
-                m_tree.activeFormattingElements().remove(node->element());
+                m_tree.activeFormattingElements().removeUpdatingBookmark(node->element(), bookmark);
             // 4.13.5.
             auto* nodeEntry = m_tree.activeFormattingElements().find(node->element());
             if (!nodeEntry) {

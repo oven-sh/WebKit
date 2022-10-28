@@ -487,14 +487,17 @@ private:
         case RegExpExecNonGlobalOrSticky: {
             JSGlobalObject* globalObject = m_node->child1()->dynamicCastConstant<JSGlobalObject*>();
             if (!globalObject) {
-                if (verbose)
-                    dataLog("Giving up because no global object.\n");
+                dataLogLnIf(verbose, "Giving up because no global object.");
                 break;
             }
 
             if (globalObject->isHavingABadTime()) {
-                if (verbose)
-                    dataLog("Giving up because bad time.\n");
+                dataLogLnIf(verbose, "Giving up because bad time.");
+                break;
+            }
+
+            if (m_graph.m_plan.isUnlinked() && globalObject != m_graph.globalObjectFor(m_node->origin.semantic)) {
+                dataLogLnIf(verbose, "Giving up because unlinked DFG requires globalObject is the same to the node's origin.");
                 break;
             }
 
@@ -510,7 +513,7 @@ private:
                             dataLog("Giving up because RegExp recompile happens.\n");
                         break;
                     }
-                    m_graph.watchpoints().addLazily(globalObject->regExpRecompiledWatchpoint());
+                    m_graph.watchpoints().addLazily(globalObject->regExpRecompiledWatchpointSet());
                     regExp = regExpObject->regExp();
                     regExpObjectNodeIsConstant = true;
                 } else if (regExpObjectNode->op() == NewRegexp) {
@@ -520,7 +523,7 @@ private:
                             dataLog("Giving up because RegExp recompile happens.\n");
                         break;
                     }
-                    m_graph.watchpoints().addLazily(globalObject->regExpRecompiledWatchpoint());
+                    m_graph.watchpoints().addLazily(globalObject->regExpRecompiledWatchpointSet());
                     regExp = regExpObjectNode->castOperand<RegExp*>();
                 } else {
                     if (verbose)
@@ -640,7 +643,7 @@ private:
                     }
                 }
 
-                m_graph.watchpoints().addLazily(globalObject->havingABadTimeWatchpoint());
+                m_graph.watchpoints().addLazily(globalObject->havingABadTimeWatchpointSet());
 
                 Structure* structure = globalObject->regExpMatchesArrayStructure();
                 if (structure->indexingType() != ArrayWithContiguous) {
@@ -901,21 +904,27 @@ private:
             RegExp* regExp;
             if (RegExpObject* regExpObject = regExpObjectNode->dynamicCastConstant<RegExpObject*>()) {
                 JSGlobalObject* globalObject = regExpObject->globalObject();
-                if (globalObject->isRegExpRecompiled()) {
-                    if (verbose)
-                        dataLog("Giving up because RegExp recompile happens.\n");
+                if (m_graph.m_plan.isUnlinked() && globalObject != m_graph.globalObjectFor(m_node->origin.semantic)) {
+                    dataLogLnIf(verbose, "Giving up because unlinked DFG requires globalObject is the same to the node's origin.");
                     break;
                 }
-                m_graph.watchpoints().addLazily(globalObject->regExpRecompiledWatchpoint());
+                if (globalObject->isRegExpRecompiled()) {
+                    dataLogLnIf(verbose, "Giving up because RegExp recompile happens.");
+                    break;
+                }
+                m_graph.watchpoints().addLazily(globalObject->regExpRecompiledWatchpointSet());
                 regExp = regExpObject->regExp();
             } else if (regExpObjectNode->op() == NewRegexp) {
                 JSGlobalObject* globalObject = m_graph.globalObjectFor(regExpObjectNode->origin.semantic);
-                if (globalObject->isRegExpRecompiled()) {
-                    if (verbose)
-                        dataLog("Giving up because RegExp recompile happens.\n");
+                if (m_graph.m_plan.isUnlinked() && globalObject != m_graph.globalObjectFor(m_node->origin.semantic)) {
+                    dataLogLnIf(verbose, "Giving up because unlinked DFG requires globalObject is the same to the node's origin.");
                     break;
                 }
-                m_graph.watchpoints().addLazily(globalObject->regExpRecompiledWatchpoint());
+                if (globalObject->isRegExpRecompiled()) {
+                    dataLogLnIf(verbose, "Giving up because RegExp recompile happens.");
+                    break;
+                }
+                m_graph.watchpoints().addLazily(globalObject->regExpRecompiledWatchpointSet());
                 regExp = regExpObjectNode->castOperand<RegExp*>();
             } else {
                 if (verbose)
@@ -1052,11 +1061,9 @@ private:
             break;
         }
 
-        case StringSubstring: {
+        case StringSubstring:
+        case StringSlice: {
             Node* stringNode = m_node->child1().node();
-            String string = stringNode->tryGetString(m_graph);
-            if (!string)
-                break;
 
             if (!m_node->child2()->isInt32Constant())
                 break;
@@ -1067,10 +1074,26 @@ private:
                 if (!m_node->child3()->isInt32Constant())
                     break;
                 endValue = m_node->child3()->asInt32();
+                if (endValue.value() == startValue) {
+                    // Regardless of whatever the string is, it generates empty string (Even if both are negative index).
+                    m_changed = true;
+                    m_insertionSet.insertNode(m_nodeIndex, SpecNone, Check, m_node->origin, m_node->children.justChecks());
+                    m_node->convertToLazyJSConstant(m_graph, LazyJSValue::newString(m_graph, emptyString()));
+                    break;
+                }
             }
 
+            String string = stringNode->tryGetString(m_graph);
+            if (!string)
+                break;
+
             int32_t length = string.length();
-            auto [start, end] = extractSubstringOffsets(length, startValue, endValue);
+            int32_t start = 0;
+            int32_t end = 0;
+            if (m_node->op() == StringSubstring)
+                std::tie(start, end) = extractSubstringOffsets(length, startValue, endValue);
+            else
+                std::tie(start, end) = extractSliceOffsets(length, startValue, endValue);
 
             m_changed = true;
             m_insertionSet.insertNode(m_nodeIndex, SpecNone, Check, m_node->origin, m_node->children.justChecks());

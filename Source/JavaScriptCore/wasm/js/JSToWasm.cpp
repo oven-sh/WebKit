@@ -93,7 +93,7 @@ void marshallJSResult(CCallHelpers& jit, const TypeDefinition& typeDefinition, c
     else if (signature.returnCount() == 1) {
         if (signature.returnType(0).isI64()) {
             JIT_COMMENT(jit, "convert wasm return to big int");
-            JSValueRegs inputJSR = wasmFrameConvention.results[0].jsr();
+            JSValueRegs inputJSR = wasmFrameConvention.results[0].location.jsr();
             GPRReg wasmContextInstanceGPR = PinnedRegisterInfo::get().wasmContextInstancePointer;
             if (Context::useFastTLS()) {
                 wasmContextInstanceGPR = inputJSR.payloadGPR() == GPRInfo::argumentGPR1 ? GPRInfo::argumentGPR0 : GPRInfo::argumentGPR1;
@@ -104,7 +104,7 @@ void marshallJSResult(CCallHelpers& jit, const TypeDefinition& typeDefinition, c
             jit.setupArguments<decltype(operationConvertToBigInt)>(wasmContextInstanceGPR, inputJSR);
             jit.callOperation(operationConvertToBigInt);
         } else
-            boxWasmResult(jit, signature.returnType(0), wasmFrameConvention.results[0], JSRInfo::returnValueJSR);
+            boxWasmResult(jit, signature.returnType(0), wasmFrameConvention.results[0].location, JSRInfo::returnValueJSR);
     } else {
         IndexingType indexingType = ArrayWithUndecided;
         JSValueRegs scratchJSR = JSValueRegs {
@@ -125,7 +125,7 @@ void marshallJSResult(CCallHelpers& jit, const TypeDefinition& typeDefinition, c
         JIT_COMMENT(jit, "scratchFPR: ", fprScratch, " - Scratch jsr: ", scratchJSR, " - saved result registers: ", savedResultRegisters);
         bool hasI64 = false;
         for (unsigned i = 0; i < signature.returnCount(); ++i) {
-            ValueLocation loc = wasmFrameConvention.results[i];
+            ValueLocation loc = wasmFrameConvention.results[i].location;
             Type type = signature.returnType(i);
 
             hasI64 |= type.isI64();
@@ -193,7 +193,7 @@ void marshallJSResult(CCallHelpers& jit, const TypeDefinition& typeDefinition, c
         // This is required to convert values to BigInt.
         if (hasI64) {
             for (unsigned i = 0; i < signature.returnCount(); ++i) {
-                ValueLocation loc = wasmFrameConvention.results[i];
+                ValueLocation loc = wasmFrameConvention.results[i].location;
                 Type type = signature.returnType(i);
                 if (!type.isI64())
                     continue;
@@ -264,19 +264,22 @@ std::unique_ptr<InternalFunction> createJSToWasmWrapper(CCallHelpers& jit, const
     });
 
     const PinnedRegisterInfo& pinnedRegs = PinnedRegisterInfo::get();
-    RegisterSet toSave = pinnedRegs.toSave(mode);
+    RegisterSetBuilder toSave = pinnedRegs.toSave(mode);
 
 #if ASSERT_ENABLED
     unsigned toSaveSize = toSave.numberOfSetGPRs();
     // They should all be callee saves.
-    toSave.filter(RegisterSet::calleeSaveRegisters());
+    toSave.filter(RegisterSetBuilder::calleeSaveRegisters());
     ASSERT(toSave.numberOfSetGPRs() == toSaveSize);
 #endif
 
-    RegisterAtOffsetList registersToSpill(toSave, RegisterAtOffsetList::OffsetBaseType::FramePointerBased);
+    RegisterAtOffsetList registersToSpill(toSave.buildAndValidate(), RegisterAtOffsetList::OffsetBaseType::FramePointerBased);
     result->entrypoint.calleeSaveRegisters = registersToSpill;
 
     size_t totalFrameSize = registersToSpill.sizeOfAreaInBytes();
+#if USE(JSVALUE64)
+    ASSERT(totalFrameSize == toSave.numberOfSetGPRs() * sizeof(CPURegister));
+#endif
     CallInformation wasmFrameConvention = wasmCallingConvention().callInformationFor(typeDefinition);
     RegisterAtOffsetList savedResultRegisters = wasmFrameConvention.computeResultsOffsetList();
     totalFrameSize += wasmFrameConvention.headerAndArgumentStackSizeInBytes;
@@ -298,6 +301,26 @@ std::unique_ptr<InternalFunction> createJSToWasmWrapper(CCallHelpers& jit, const
 
     GPRReg wasmContextInstanceGPR = pinnedRegs.wasmContextInstancePointer;
 
+    // https://webassembly.github.io/spec/js-api/index.html#exported-function-exotic-objects
+    // If parameters or results contain v128, throw a TypeError.
+    // Note: the above error is thrown each time the [[Call]] method is invoked.
+    if (Options::useWebAssemblySIMD() && (wasmFrameConvention.argumentsOrResultsIncludeV128)) {
+        GPRReg currentInstanceGPR = InvalidGPRReg;
+        if (Context::useFastTLS()) {
+            currentInstanceGPR = pinnedRegs.baseMemoryPointer;
+            jit.loadWasmContextInstance(currentInstanceGPR);
+        } else {
+            currentInstanceGPR = pinnedRegs.wasmContextInstancePointer;
+            jit.loadPtr(CCallHelpers::Address(GPRInfo::callFrameRegister, JSCallingConvention::instanceStackOffset), wasmContextInstanceGPR);
+            jit.loadPtr(CCallHelpers::Address(wasmContextInstanceGPR, JSWebAssemblyInstance::offsetOfInstance()), wasmContextInstanceGPR);
+        }
+        ASSERT(currentInstanceGPR != InvalidGPRReg);
+
+        JIT_COMMENT(jit, "Throw an exception because this function uses v128");
+        emitThrowWasmToJSException(jit, currentInstanceGPR, ExceptionType::TypeErrorInvalidV128Use);
+        return result;
+    }
+
     {
         CallInformation jsFrameConvention = jsCallingConvention().callInformationFor(typeDefinition, CallRole::Callee);
 
@@ -317,13 +340,13 @@ std::unique_ptr<InternalFunction> createJSToWasmWrapper(CCallHelpers& jit, const
 
         const auto& signature = *typeDefinition.as<FunctionSignature>();
         for (unsigned i = 0; i < signature.argumentCount(); i++) {
-            RELEASE_ASSERT(jsFrameConvention.params[i].isStack());
+            RELEASE_ASSERT(jsFrameConvention.params[i].location.isStack());
 
             Type type = signature.argumentType(i);
             JIT_COMMENT(jit, "Arg ", i, " : ", type);
-            CCallHelpers::Address jsParam(GPRInfo::callFrameRegister, jsFrameConvention.params[i].offsetFromFP());
-            if (wasmFrameConvention.params[i].isStackArgument()) {
-                CCallHelpers::Address addr { calleeFrame.withOffset(wasmFrameConvention.params[i].offsetFromSP()) };
+            CCallHelpers::Address jsParam(GPRInfo::callFrameRegister, jsFrameConvention.params[i].location.offsetFromFP());
+            if (wasmFrameConvention.params[i].location.isStackArgument()) {
+                CCallHelpers::Address addr { calleeFrame.withOffset(wasmFrameConvention.params[i].location.offsetFromSP()) };
                 if (type.isI32() || type.isF32()) {
                     jit.load32(jsParam, scratchJSR.payloadGPR());
                     jit.store32(scratchJSR.payloadGPR(), addr.withOffset(PayloadOffset));
@@ -336,16 +359,16 @@ std::unique_ptr<InternalFunction> createJSToWasmWrapper(CCallHelpers& jit, const
                 }
             } else {
                 if (type.isF32())
-                    jit.loadFloat(jsParam, wasmFrameConvention.params[i].fpr());
+                    jit.loadFloat(jsParam, wasmFrameConvention.params[i].location.fpr());
                 else if (type.isF64())
-                    jit.loadDouble(jsParam, wasmFrameConvention.params[i].fpr());
+                    jit.loadDouble(jsParam, wasmFrameConvention.params[i].location.fpr());
                 else if (type.isI32()) {
-                    jit.load32(jsParam, wasmFrameConvention.params[i].jsr().payloadGPR());
+                    jit.load32(jsParam, wasmFrameConvention.params[i].location.jsr().payloadGPR());
 #if USE(JSVALUE32_64)
-                    jit.move(CCallHelpers::TrustedImm32(0), wasmFrameConvention.params[i].jsr().tagGPR());
+                    jit.move(CCallHelpers::TrustedImm32(0), wasmFrameConvention.params[i].location.jsr().tagGPR());
 #endif
                 } else
-                    jit.loadValue(jsParam, wasmFrameConvention.params[i].jsr());
+                    jit.loadValue(jsParam, wasmFrameConvention.params[i].location.jsr());
             }
         }
     }

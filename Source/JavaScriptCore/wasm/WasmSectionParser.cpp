@@ -34,6 +34,7 @@
 #include "WasmMemoryInformation.h"
 #include "WasmNameSectionParser.h"
 #include "WasmOps.h"
+#include "WasmSIMDOpcodes.h"
 #include "WasmTypeDefinitionInlines.h"
 #include <wtf/HexNumber.h>
 #include <wtf/SetForScope.h>
@@ -52,6 +53,10 @@ auto SectionParser::parseType() -> PartialResult
         int8_t typeKind;
         WASM_PARSER_FAIL_IF(!parseInt7(typeKind), "can't get ", i, "th Type's type");
         RefPtr<TypeDefinition> signature;
+
+        // When GC is enabled, recursive references can show up in any of these cases.
+        SetForScope<RecursionGroupInformation> recursionGroupInfo(m_recursionGroupInformation, Options::useWebAssemblyGC() ? RecursionGroupInformation { true, m_info->typeCount(), m_info->typeCount() + 1 } : RecursionGroupInformation { false, 0, 0 });
+
         switch (static_cast<TypeKind>(typeKind)) {
         case TypeKind::Func: {
             WASM_FAIL_IF_HELPER_FAILS(parseFunctionType(i, signature));
@@ -83,10 +88,33 @@ auto SectionParser::parseType() -> PartialResult
         }
 
         WASM_PARSER_FAIL_IF(!signature, "can't allocate enough memory for Type section's ", i, "th signature");
-        // Recursion group parsing will append the entries itself, as there may
-        // be multiple entries that need to be added to the type section for
-        // each recursion group.
-        if (!signature->is<RecursionGroup>())
+
+        // When GC is enabled, type definitions that appear on their own are shorthand
+        // notations for recursion groups with one type. Here we ensure that if such a
+        // shorthand type is actually recursive, it is represented with a recursion group.
+        if (Options::useWebAssemblyGC()) {
+            bool hasRecursiveReference = false;
+            if (signature->is<FunctionSignature>())
+                hasRecursiveReference = signature->as<FunctionSignature>()->hasRecursiveReference();
+            else if (signature->is<StructType>())
+                hasRecursiveReference = signature->as<StructType>()->hasRecursiveReference();
+            else if (signature->is<ArrayType>())
+                hasRecursiveReference = signature->as<ArrayType>()->hasRecursiveReference();
+
+            if (hasRecursiveReference) {
+                Vector<TypeIndex> types;
+                bool result = types.tryAppend(signature->index());
+                WASM_PARSER_FAIL_IF(!result, "can't allocate enough memory for Type section's ", i, "th signature");
+                RefPtr<TypeDefinition> group = TypeInformation::typeDefinitionForRecursionGroup(types);
+                RefPtr<TypeDefinition> projection = TypeInformation::typeDefinitionForProjection(group->index(), 0);
+                m_info->typeSignatures.uncheckedAppend(projection.releaseNonNull());
+            } else if (!signature->is<RecursionGroup>()) {
+                // Recursion group parsing will append the entries itself, as there may
+                // be multiple entries that need to be added to the type section for
+                // each recursion group.
+                m_info->typeSignatures.uncheckedAppend(signature.releaseNonNull());
+            }
+        } else
             m_info->typeSignatures.uncheckedAppend(signature.releaseNonNull());
     }
     return { };
@@ -318,10 +346,17 @@ auto SectionParser::parseGlobal() -> PartialResult
     for (uint32_t globalIndex = 0; globalIndex < globalCount; ++globalIndex) {
         GlobalInformation global;
         uint8_t initOpcode;
+        v128_t initVector { };
+        uint64_t initialBitsOrImportNumber = 0;
 
         WASM_FAIL_IF_HELPER_FAILS(parseGlobalType(global));
         Type typeForInitOpcode;
-        WASM_FAIL_IF_HELPER_FAILS(parseInitExpr(initOpcode, global.initialBitsOrImportNumber, typeForInitOpcode));
+        WASM_FAIL_IF_HELPER_FAILS(parseInitExpr(initOpcode, initialBitsOrImportNumber, initVector, typeForInitOpcode));
+        if (typeForInitOpcode.isV128())
+            global.initialBits.initialVector = initVector;
+        else
+            global.initialBits.initialBitsOrImportNumber = initialBitsOrImportNumber;
+
         if (initOpcode == GetGlobal)
             global.initializationType = GlobalInformation::FromGlobalImport;
         else if (initOpcode == RefFunc)
@@ -330,8 +365,10 @@ auto SectionParser::parseGlobal() -> PartialResult
             global.initializationType = GlobalInformation::FromExpression;
         WASM_PARSER_FAIL_IF(!isSubtype(typeForInitOpcode, global.type), "Global init_expr opcode of type ", typeForInitOpcode.kind, " doesn't match global's type ", global.type.kind);
 
-        if (initOpcode == RefFunc)
-            m_info->addDeclaredFunction(global.initialBitsOrImportNumber);
+        if (initOpcode == RefFunc) {
+            ASSERT(global.initializationType != GlobalInformation::FromVector);
+            m_info->addDeclaredFunction(global.initialBits.initialBitsOrImportNumber);
+        }
 
         m_info->globals.uncheckedAppend(WTFMove(global));
     }
@@ -575,7 +612,7 @@ auto SectionParser::parseCode() -> PartialResult
     return { };
 }
 
-auto SectionParser::parseInitExpr(uint8_t& opcode, uint64_t& bitsOrImportNumber, Type& resultType) -> PartialResult
+auto SectionParser::parseInitExpr(uint8_t& opcode, uint64_t& bitsOrImportNumber, v128_t& vectorBits, Type& resultType) -> PartialResult
 {
     WASM_PARSER_FAIL_IF(!parseUInt8(opcode), "can't get init_expr's opcode");
 
@@ -611,6 +648,25 @@ auto SectionParser::parseInitExpr(uint8_t& opcode, uint64_t& bitsOrImportNumber,
         resultType = Types::F64;
         break;
     }
+
+#if ENABLE(B3_JIT)
+    case ExtSIMD: {
+        WASM_PARSER_FAIL_IF(!Options::useWebAssemblySIMD(), "SIMD must be enabled");
+        WASM_PARSER_FAIL_IF(!parseUInt8(opcode), "can't get init_expr's simd opcode");
+        WASM_PARSER_FAIL_IF(static_cast<ExtSIMDOpType>(opcode) != ExtSIMDOpType::V128Const, "unknown init_expr simd opcode ", opcode);
+        v128_t constant;
+        WASM_PARSER_FAIL_IF(!parseImmByteArray16(constant), "get constant value for init_expr's v128.const");
+
+        vectorBits = constant;
+        resultType = Types::V128;
+        break;
+    }
+#else
+    case ExtSIMD:
+        WASM_PARSER_FAIL_IF(true, "wasm-simd is not supported");
+        (void) vectorBits;
+        break;
+#endif
 
     case GetGlobal: {
         uint32_t index;
@@ -683,7 +739,8 @@ auto SectionParser::parseI32InitExpr(std::optional<I32InitExpr>& initExpr, ASCII
     uint8_t initOpcode;
     uint64_t initExprBits;
     Type initExprType;
-    WASM_FAIL_IF_HELPER_FAILS(parseInitExpr(initOpcode, initExprBits, initExprType));
+    v128_t unused;
+    WASM_FAIL_IF_HELPER_FAILS(parseInitExpr(initOpcode, initExprBits, unused, initExprType));
     WASM_PARSER_FAIL_IF(!initExprType.isI32(), failMessage);
     initExpr = makeI32InitExpr(initOpcode, initExprBits);
 
@@ -729,6 +786,7 @@ auto SectionParser::parseStructType(uint32_t position, RefPtr<TypeDefinition>& s
     Vector<FieldType> fields;
     WASM_PARSER_FAIL_IF(!fields.tryReserveCapacity(fieldCount), "can't allocate enough memory for struct fields ", fieldCount, " entries");
 
+    Checked<unsigned, RecordOverflow> structInstancePayloadSize { 0 };
     for (uint32_t fieldIndex = 0; fieldIndex < fieldCount; ++fieldIndex) {
         Type fieldType;
         WASM_PARSER_FAIL_IF(!parseValueType(m_info, fieldType), "can't get ", fieldIndex, "th field Type");
@@ -738,6 +796,8 @@ auto SectionParser::parseStructType(uint32_t position, RefPtr<TypeDefinition>& s
         WASM_PARSER_FAIL_IF(mutability != 0x0 && mutability != 0x1, "invalid Field's mutability: 0x", hex(mutability, 2, Lowercase));
 
         fields.uncheckedAppend(FieldType { fieldType, static_cast<Mutability>(mutability) });
+        structInstancePayloadSize += typeKindSizeInBytes(fieldType.kind);
+        WASM_PARSER_FAIL_IF(structInstancePayloadSize.hasOverflowed(), "struct layout is too big");
     }
 
     structType = TypeInformation::typeDefinitionForStruct(fields);

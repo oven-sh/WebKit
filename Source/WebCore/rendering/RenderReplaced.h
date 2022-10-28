@@ -40,8 +40,14 @@ public:
 
     LayoutSize intrinsicSize() const final
     {
-        if (shouldApplySizeContainment())
-            return LayoutSize();
+        if (shouldApplySizeContainment()) {
+            LayoutSize size;
+            if (auto width = explicitIntrinsicInnerWidth())
+                size.setWidth(width.value());
+            if (auto height = explicitIntrinsicInnerHeight())
+                size.setHeight(height.value());
+            return size;
+        }
         return m_intrinsicSize;
     }
     
@@ -52,6 +58,8 @@ public:
 
     double computeIntrinsicAspectRatio() const;
 
+    void computeIntrinsicRatioInformation(FloatSize& intrinsicSize, double& intrinsicRatio) const override;
+
 protected:
     RenderReplaced(Element&, RenderStyle&&);
     RenderReplaced(Element&, RenderStyle&&, const LayoutSize& intrinsicSize);
@@ -59,7 +67,6 @@ protected:
 
     void layout() override;
 
-    void computeIntrinsicRatioInformation(FloatSize& intrinsicSize, double& intrinsicRatio) const override;
 
     void computeIntrinsicLogicalWidths(LayoutUnit& minLogicalWidth, LayoutUnit& maxLogicalWidth) const final;
 

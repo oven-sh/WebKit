@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "FontTaggedSettings.h"
 #include <optional>
 #include <variant>
 #include <vector>
@@ -36,6 +37,8 @@ class TextStream;
 }
 
 namespace WebCore {
+
+class FontFeatureValues;
 
 enum class TextRenderingMode : uint8_t {
     AutoTextRendering,
@@ -163,13 +166,36 @@ enum class FontVariantNumericOrdinal : bool { Normal, Yes };
 enum class FontVariantNumericSlashedZero : bool { Normal, Yes };
 
 struct FontVariantAlternatesNormal {
-    bool operator==(const FontVariantAlternatesNormal&) const = default;
+    bool operator==(const FontVariantAlternatesNormal&) const
+    {
+        return true;
+    }
+    bool operator!=(const FontVariantAlternatesNormal& other) const
+    {
+        return !(*this == other);
+    }
 };
 
 struct FontVariantAlternatesValues {
-    bool operator==(const FontVariantAlternatesValues&) const = default;
+    bool operator==(const FontVariantAlternatesValues& other) const
+    {
+        return stylistic == other.stylistic
+            && styleset == other.styleset
+            && characterVariant == other.characterVariant
+            && swash == other.swash
+            && ornaments == other.ornaments
+            && annotation == other.annotation
+            && historicalForms == other.historicalForms;
+    }
+
+    bool operator!=(const FontVariantAlternatesValues& other) const
+    {
+        return !(*this == other);
+    }
 
     std::optional<String> stylistic;
+    // FIXME: supports a list of strings for styleset and characterVariant.
+    // https://bugs.webkit.org/show_bug.cgi?id=246811
     std::optional<String> styleset;
     std::optional<String> characterVariant;
     std::optional<String> swash;
@@ -184,7 +210,10 @@ class FontVariantAlternates {
     using Values = FontVariantAlternatesValues;
 
 public:
-    bool operator==(const FontVariantAlternates&) const = default;
+    bool operator==(const FontVariantAlternates& other) const
+    {
+        return m_val == other.m_val;
+    }
 
     bool isNormal() const
     {
@@ -456,5 +485,8 @@ enum class AllowUserInstalledFonts : uint8_t {
     No,
     Yes
 };
+
+using FeaturesMap = HashMap<FontTag, int, FourCharacterTagHash, FourCharacterTagHashTraits>;
+FeaturesMap computeFeatureSettingsFromVariants(const FontVariantSettings&, RefPtr<FontFeatureValues>);
 
 }

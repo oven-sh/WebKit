@@ -74,13 +74,15 @@ struct WebKitEncodedFrameInfo {
 
 using LocalEncoder = void*;
 using LocalEncoderCallback = void (^)(const uint8_t* buffer, size_t size, const webrtc::WebKitEncodedFrameInfo&);
-void* createLocalEncoder(const webrtc::SdpVideoFormat&, LocalEncoderCallback);
+using LocalEncoderDescriptionCallback = void (^)(const uint8_t* buffer, size_t size);
+void* createLocalEncoder(const webrtc::SdpVideoFormat&, bool useAnnexB, LocalEncoderCallback, LocalEncoderDescriptionCallback);
 void releaseLocalEncoder(LocalEncoder);
 void initializeLocalEncoder(LocalEncoder, uint16_t width, uint16_t height, unsigned int startBitrate, unsigned int maxBitrate, unsigned int minBitrate, uint32_t maxFramerate);
 void encodeLocalEncoderFrame(LocalEncoder, CVPixelBufferRef, int64_t timeStampNs, uint32_t timeStamp, webrtc::VideoRotation, bool isKeyframeRequired);
 void setLocalEncoderRates(LocalEncoder, uint32_t bitRate, uint32_t frameRate);
 void setLocalEncoderLowLatency(LocalEncoder, bool isLowLatencyEnabled);
 void encoderVideoTaskComplete(void*, webrtc::VideoCodecType, const uint8_t* buffer, size_t length, const WebKitEncodedFrameInfo&);
+void flushLocalEncoder(LocalEncoder);
 
 template<class Decoder>
 bool WebKitEncodedFrameInfo::decode(Decoder& decoder, WebKitEncodedFrameInfo& info)

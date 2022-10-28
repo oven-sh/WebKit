@@ -33,7 +33,6 @@
 #include "LayoutPoint.h"
 #include "LayoutState.h"
 #include "RenderObjectEnums.h"
-#include "layout/integration/inline/LayoutIntegrationLine.h"
 #include <wtf/CheckedPtr.h>
 
 namespace WebCore {
@@ -77,13 +76,7 @@ public:
     bool shouldSwitchToLegacyOnInvalidation() const;
 
     void updateFormattingRootGeometryAndInvalidate();
-    void updateReplacedDimensions(const RenderBox&);
-    void updateInlineBlockDimensions(const RenderBlock&);
-    void updateLineBreakBoxDimensions(const RenderLineBreak&);
-    void updateInlineBoxDimensions(const RenderInline&);
-    void updateInlineTableDimensions(const RenderTable&);
-    void updateListItemDimensions(const RenderListItem&);
-    void updateListMarkerDimensions(const RenderListMarker&);
+    void updateInlineContentDimensions();
     void updateStyle(const RenderBoxModelObject&, const RenderStyle& oldStyle);
     void updateOverflow();
 
@@ -126,6 +119,14 @@ public:
 #endif
 
 private:
+    void updateReplacedDimensions(const RenderBox&);
+    void updateInlineBlockDimensions(const RenderBlock&);
+    void updateLineBreakBoxDimensions(const RenderLineBreak&);
+    void updateInlineBoxDimensions(const RenderInline&);
+    void updateInlineTableDimensions(const RenderTable&);
+    void updateListItemDimensions(const RenderListItem&);
+    void updateListMarkerDimensions(const RenderListMarker&);
+
     void prepareLayoutState();
     void prepareFloatingState();
     void constructContent();

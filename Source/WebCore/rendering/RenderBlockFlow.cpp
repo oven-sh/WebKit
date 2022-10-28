@@ -2,7 +2,7 @@
  * Copyright (C) 1999 Lars Knoll (knoll@kde.org)
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)
  *           (C) 2007 David Smith (catfish.man@gmail.com)
- * Copyright (C) 2003-2015 Apple Inc. All rights reserved.
+ * Copyright (C) 2003-2022 Apple Inc. All rights reserved.
  * Copyright (C) Research In Motion Limited 2010. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
@@ -344,8 +344,12 @@ void RenderBlockFlow::adjustIntrinsicLogicalWidthsForColumns(LayoutUnit& minLogi
 
 void RenderBlockFlow::computeIntrinsicLogicalWidths(LayoutUnit& minLogicalWidth, LayoutUnit& maxLogicalWidth) const
 {
-    auto shouldIgnoreDescendantContentForLogicalWidth = shouldApplySizeOrInlineSizeContainment();
-    if (!shouldIgnoreDescendantContentForLogicalWidth) {
+    if (shouldApplySizeContainment()) {
+        if (auto width = explicitIntrinsicInnerLogicalWidth()) {
+            minLogicalWidth = width.value();
+            maxLogicalWidth = width.value();
+        }
+    } else if (!shouldApplyInlineSizeContainment()) {
         if (childrenInline())
             computeInlinePreferredLogicalWidths(minLogicalWidth, maxLogicalWidth);
         else
@@ -3627,34 +3631,6 @@ void RenderBlockFlow::layoutModernLines(bool relayoutChildren, LayoutUnit& repai
         else if (!renderer.isOutOfFlowPositioned())
             renderer.clearNeedsLayout();
 
-        if (is<RenderReplaced>(renderer)) {
-            layoutFormattingContextLineLayout.updateReplacedDimensions(downcast<RenderReplaced>(renderer));
-            continue;
-        }
-        if (is<RenderTable>(renderer)) {
-            layoutFormattingContextLineLayout.updateInlineTableDimensions(downcast<RenderTable>(renderer));
-            continue;
-        }
-        if (is<RenderListMarker>(renderer)) {
-            layoutFormattingContextLineLayout.updateListMarkerDimensions(downcast<RenderListMarker>(renderer));
-            continue;
-        }
-        if (is<RenderListItem>(renderer)) {
-            layoutFormattingContextLineLayout.updateListItemDimensions(downcast<RenderListItem>(renderer));
-            continue;
-        }
-        if (is<RenderBlock>(renderer)) {
-            layoutFormattingContextLineLayout.updateInlineBlockDimensions(downcast<RenderBlock>(renderer));
-            continue;
-        }
-        if (is<RenderLineBreak>(renderer)) {
-            layoutFormattingContextLineLayout.updateLineBreakBoxDimensions(downcast<RenderLineBreak>(renderer));
-            continue;
-        }
-        if (is<RenderInline>(renderer)) {
-            layoutFormattingContextLineLayout.updateInlineBoxDimensions(downcast<RenderInline>(renderer));
-            continue;
-        }
         if (is<RenderCounter>(renderer)) {
             // The counter content gets updated unconventionally by involving computePreferredLogicalWidths() (see RenderCounter::updateCounter())
             // Here we assume that every time the content of a counter changes, we already handled the update by re-constructing the associated InlineTextBox (see BoxTree::buildTreeForInlineContent).
@@ -3663,6 +3639,8 @@ void RenderBlockFlow::layoutModernLines(bool relayoutChildren, LayoutUnit& repai
             continue;
         }
     }
+
+    layoutFormattingContextLineLayout.updateInlineContentDimensions();
 
     auto contentBoxTop = borderAndPaddingBefore();
 
@@ -4250,7 +4228,14 @@ void RenderBlockFlow::computeInlinePreferredLogicalWidths(LayoutUnit& minLogical
                 // Case (2). Inline replaced elements and floats.
                 // Terminate the current line as far as minwidth is concerned.
                 LayoutUnit childMinPreferredLogicalWidth, childMaxPreferredLogicalWidth;
-                computeChildPreferredLogicalWidths(*child, childMinPreferredLogicalWidth, childMaxPreferredLogicalWidth);
+                if (is<RenderBox>(*child) && child->isHorizontalWritingMode() != isHorizontalWritingMode()) {
+                    auto& box = downcast<RenderBox>(*child);
+                    auto extent = box.computeLogicalHeight(box.borderAndPaddingLogicalHeight(), 0).m_extent;
+                    childMinPreferredLogicalWidth = extent;
+                    childMaxPreferredLogicalWidth = extent;
+                } else
+                    computeChildPreferredLogicalWidths(*child, childMinPreferredLogicalWidth, childMaxPreferredLogicalWidth);
+
                 childMin += childMinPreferredLogicalWidth.ceilToFloat();
                 childMax += childMaxPreferredLogicalWidth.ceilToFloat();
 
@@ -4496,18 +4481,7 @@ bool RenderBlockFlow::tryComputePreferredWidthsUsingModernPath(LayoutUnit& minLo
     if (!modernLineLayout())
         m_lineLayout = makeUnique<LayoutIntegration::LineLayout>(*this);
 
-    auto& layoutFormattingContextLineLayout = *this->modernLineLayout();
-    for (auto walker = InlineWalker(*this); !walker.atEnd(); walker.advance()) {
-        auto& renderer = *walker.current();
-        if (renderer.isText() || is<RenderLineBreak>(renderer))
-            continue;
-        if (is<RenderInline>(renderer)) {
-            layoutFormattingContextLineLayout.updateInlineBoxDimensions(downcast<RenderInline>(renderer));
-            continue;
-        }
-        // FIXME: Add other, inline level box cases.
-        ASSERT_NOT_IMPLEMENTED_YET();
-    }
+    modernLineLayout()->updateInlineContentDimensions();
 
     std::tie(minLogicalWidth, maxLogicalWidth) = modernLineLayout()->computeIntrinsicWidthConstraints();
     for (auto walker = InlineWalker(*this); !walker.atEnd(); walker.advance())

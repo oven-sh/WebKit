@@ -380,7 +380,7 @@ void JITCompiler::link(LinkBuffer& linkBuffer)
     if (m_pcToCodeOriginMapBuilder.didBuildMapping())
         m_jitCode->common.m_pcToCodeOriginMap = makeUnique<PCToCodeOriginMap>(WTFMove(m_pcToCodeOriginMapBuilder), linkBuffer);
 
-    m_jitCode->m_linkerIR = LinkerIR(WTFMove(m_constantPool));
+    m_jitCode->m_linkerIR = LinkerIR(WTFMove(m_graph.m_constantPool));
 }
 
 static void emitStackOverflowCheck(JITCompiler& jit, MacroAssembler::JumpList& stackOverflow)
@@ -768,6 +768,15 @@ JITCompiler::LinkableConstant::LinkableConstant(JITCompiler& jit, void* pointer,
     m_pointer = pointer;
 }
 
+JITCompiler::LinkableConstant::LinkableConstant(JITCompiler& jit, GlobalObjectTag, CodeOrigin codeOrigin)
+{
+    if (jit.m_graph.m_plan.isUnlinked()) {
+        m_index = jit.addToConstantPool(LinkerIR::Type::GlobalObject, nullptr);
+        return;
+    }
+    m_pointer = jit.m_graph.globalObjectFor(codeOrigin);
+}
+
 void JITCompiler::LinkableConstant::materialize(CCallHelpers& jit, GPRReg resultGPR)
 {
 #if USE(JSVALUE64)
@@ -793,9 +802,9 @@ void JITCompiler::LinkableConstant::store(CCallHelpers& jit, CCallHelpers::Addre
 LinkerIR::Constant JITCompiler::addToConstantPool(LinkerIR::Type type, void* payload)
 {
     LinkerIR::Value value { payload, type };
-    auto result = m_constantPoolMap.add(value, m_constantPoolMap.size());
+    auto result = m_graph.m_constantPoolMap.add(value, m_graph.m_constantPoolMap.size());
     if (result.isNewEntry)
-        m_constantPool.append(value);
+        m_graph.m_constantPool.append(value);
     return result.iterator->value;
 }
 

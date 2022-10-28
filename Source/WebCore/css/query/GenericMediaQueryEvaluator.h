@@ -24,37 +24,50 @@
 
 #pragma once
 
+#include "CSSToLengthConversionData.h"
 #include "CSSValueKeywords.h"
 #include "GenericMediaQueryTypes.h"
 #include "LayoutUnit.h"
 
 namespace WebCore {
 
-class CSSToLengthConversionData;
+class RenderElement;
 
 namespace MQ {
 
-enum class EvaluationResult : uint8_t { False, True, Unknown };
-
-class GenericMediaQueryEvaluatorBase {
-public:
-    EvaluationResult evaluateLengthFeature(const Feature&, LayoutUnit, const CSSToLengthConversionData&) const;
-    EvaluationResult evaluateRatioFeature(const Feature&, double) const;
-    EvaluationResult evaluateDiscreteFeature(const Feature&, CSSValueID) const;
-};
+EvaluationResult evaluateLengthFeature(const Feature&, LayoutUnit, const CSSToLengthConversionData&);
+EvaluationResult evaluateRatioFeature(const Feature&, double);
+EvaluationResult evaluateBooleanFeature(const Feature&, bool);
+EvaluationResult evaluateIntegerFeature(const Feature&, int);
+EvaluationResult evaluateNumberFeature(const Feature&, double);
+EvaluationResult evaluateResolutionFeature(const Feature&, double);
+EvaluationResult evaluateIdentifierFeature(const Feature&, CSSValueID);
 
 template<typename ConcreteEvaluator>
-class GenericMediaQueryEvaluator : public GenericMediaQueryEvaluatorBase {
+class GenericMediaQueryEvaluator {
 public:
-    template<typename ConditionType, typename Context> EvaluationResult evaluateCondition(const ConditionType&, const Context&) const;
+    EvaluationResult evaluateQueryInParens(const QueryInParens&, const FeatureEvaluationContext&) const;
+    EvaluationResult evaluateCondition(const Condition&, const FeatureEvaluationContext&) const;
+    EvaluationResult evaluateFeature(const Feature&, const FeatureEvaluationContext&) const;
 
 private:
     const ConcreteEvaluator& concreteEvaluator() const { return static_cast<const ConcreteEvaluator&>(*this); }
 };
 
 template<typename ConcreteEvaluator>
-template<typename ConditionType, typename Context>
-EvaluationResult GenericMediaQueryEvaluator<ConcreteEvaluator>::evaluateCondition(const ConditionType& condition,  const Context& context) const
+EvaluationResult GenericMediaQueryEvaluator<ConcreteEvaluator>::evaluateQueryInParens(const QueryInParens& queryInParens, const FeatureEvaluationContext& context) const
+{
+    return WTF::switchOn(queryInParens, [&](const Condition& condition) {
+        return evaluateCondition(condition, context);
+    }, [&](const MQ::Feature& feature) {
+        return concreteEvaluator().evaluateFeature(feature, context);
+    }, [&](const MQ::GeneralEnclosed&) {
+        return MQ::EvaluationResult::Unknown;
+    });
+}
+
+template<typename ConcreteEvaluator>
+EvaluationResult GenericMediaQueryEvaluator<ConcreteEvaluator>::evaluateCondition(const Condition& condition, const FeatureEvaluationContext& context) const
 {
     if (condition.queries.isEmpty())
         return EvaluationResult::Unknown;
@@ -89,6 +102,16 @@ EvaluationResult GenericMediaQueryEvaluator<ConcreteEvaluator>::evaluateConditio
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
+
+template<typename ConcreteEvaluator>
+EvaluationResult GenericMediaQueryEvaluator<ConcreteEvaluator>::evaluateFeature(const Feature& feature, const FeatureEvaluationContext& context) const
+{
+    if (!feature.schema)
+        return MQ::EvaluationResult::Unknown;
+
+    return feature.schema->evaluate(feature, context);
+}
+
 
 inline EvaluationResult operator&(EvaluationResult left, EvaluationResult right)
 {

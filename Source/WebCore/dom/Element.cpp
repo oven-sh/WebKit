@@ -63,6 +63,7 @@
 #include "FrameSelection.h"
 #include "FrameView.h"
 #include "FullscreenManager.h"
+#include "FullscreenOptions.h"
 #include "GetAnimationsOptions.h"
 #include "HTMLBodyElement.h"
 #include "HTMLCanvasElement.h"
@@ -81,6 +82,7 @@
 #include "IdChangeInvalidation.h"
 #include "IdTargetObserverRegistry.h"
 #include "InspectorInstrumentation.h"
+#include "JSDOMPromiseDeferred.h"
 #include "JSLazyEventListener.h"
 #include "KeyboardEvent.h"
 #include "KeyframeAnimationOptions.h"
@@ -250,12 +252,10 @@ Element::~Element()
     if (hasSyntheticAttrChildNodes())
         detachAllAttrNodesFromElement();
 
-#if ENABLE(CSS_TYPED_OM)
     if (hasRareData()) {
         if (auto* map = elementRareData()->attributeStyleMap())
             map->clearElement();
     }
-#endif
 }
 
 inline ElementRareData& Element::ensureElementRareData()
@@ -3716,11 +3716,14 @@ const RenderStyle* Element::resolveComputedStyle(ResolveComputedStyleMode mode)
 
     // Resolve and cache styles starting from the most distant ancestor.
     for (auto& element : elementsRequiringComputedStyle) {
+        bool hadDisplayContents = element->hasDisplayContents();
         auto style = document().styleForElementIgnoringPendingStylesheets(*element, computedStyle);
         computedStyle = style.get();
         ElementRareData& rareData = element->ensureElementRareData();
         rareData.setComputedStyle(WTFMove(style));
         element->clearNodeFlag(NodeFlag::IsComputedStyleInvalidFlag);
+        if (hadDisplayContents && computedStyle->display() != DisplayType::Contents)
+            setDisplayContentsChanged();
 
         if (mode == ResolveComputedStyleMode::RenderedOnly && computedStyle->display() == DisplayType::None)
             return nullptr;
@@ -4093,7 +4096,13 @@ static Element* parentCrossingFrameBoundaries(const Element* element)
 
 void Element::webkitRequestFullscreen()
 {
-    document().fullscreenManager().requestFullscreenForElement(*this, FullscreenManager::EnforceIFrameAllowFullscreenRequirement);
+    requestFullscreen({ }, nullptr);
+}
+
+// FIXME: Options are currently ignored.
+void Element::requestFullscreen(FullscreenOptions&&, RefPtr<DeferredPromise>&& promise)
+{
+    document().fullscreenManager().requestFullscreenForElement(*this, WTFMove(promise), FullscreenManager::EnforceIFrameAllowFullscreenRequirement);
 }
 
 void Element::setContainsFullScreenElement(bool flag)
@@ -5002,8 +5011,6 @@ Element* Element::fromIdentifier(ElementIdentifier identifier)
     return nullptr;
 }
 
-#if ENABLE(CSS_TYPED_OM)
-
 StylePropertyMap* Element::attributeStyleMap()
 {
     if (!hasRareData())
@@ -5026,7 +5033,5 @@ StylePropertyMapReadOnly* Element::computedStyleMap()
     rareData.setComputedStyleMap(WTFMove(map));
     return rareData.computedStyleMap();
 }
-
-#endif
 
 } // namespace WebCore

@@ -29,6 +29,7 @@
 
 #pragma once
 
+#include "CSSAtRuleID.h"
 #include "CSSParser.h"
 #include "CSSParserTokenRange.h"
 #include "CSSProperty.h"
@@ -50,6 +51,8 @@ class StyleRuleBase;
 class StyleRuleCharset;
 class StyleRuleContainer;
 class StyleRuleFontFace;
+class StyleRuleFontFeatureValues;
+class StyleRuleFontFeatureValuesBlock;
 class StyleRuleFontPaletteValues;
 class StyleRuleImport;
 class StyleRuleKeyframes;
@@ -82,6 +85,7 @@ public:
         RegularRules,
         KeyframeRules,
         CounterStyleRules,
+        FontFeatureValuesRules,
         NoRules, // For parsing at-rules inside declaration lists
     };
 
@@ -98,6 +102,9 @@ public:
     bool supportsDeclaration(CSSParserTokenRange&);
     const CSSParserContext& context() const { return m_context; }
 
+    // This function updates the range it's given.
+    RefPtr<StyleRuleBase> consumeAtRule(CSSParserTokenRange&, AllowedRulesType);
+
     static void parseDeclarationListForInspector(const String&, const CSSParserContext&, CSSParserObserver&);
     static void parseStyleSheetForInspector(const String&, const CSSParserContext&, StyleSheetContents*, CSSParserObserver&);
 
@@ -109,15 +116,15 @@ private:
     enum RuleListType {
         TopLevelRuleList,
         RegularRuleList,
-        KeyframesRuleList
+        KeyframesRuleList,
+        FontFeatureValuesRuleList,
     };
 
     // Returns whether the first encountered rule was valid
     template<typename T>
     bool consumeRuleList(CSSParserTokenRange, RuleListType, T callback);
 
-    // These two functions update the range they're given
-    RefPtr<StyleRuleBase> consumeAtRule(CSSParserTokenRange&, AllowedRulesType);
+    // This function updates the range it's given.
     RefPtr<StyleRuleBase> consumeQualifiedRule(CSSParserTokenRange&, AllowedRulesType);
 
     static RefPtr<StyleRuleCharset> consumeCharsetRule(CSSParserTokenRange prelude);
@@ -127,6 +134,8 @@ private:
     RefPtr<StyleRuleSupports> consumeSupportsRule(CSSParserTokenRange prelude, CSSParserTokenRange block);
     RefPtr<StyleRuleViewport> consumeViewportRule(CSSParserTokenRange prelude, CSSParserTokenRange block);
     RefPtr<StyleRuleFontFace> consumeFontFaceRule(CSSParserTokenRange prelude, CSSParserTokenRange block);
+    RefPtr<StyleRuleFontFeatureValuesBlock> consumeFontFeatureValuesRuleBlock(CSSAtRuleID, CSSParserTokenRange prelude, CSSParserTokenRange block);
+    RefPtr<StyleRuleFontFeatureValues> consumeFontFeatureValuesRule(CSSParserTokenRange prelude, CSSParserTokenRange block);
     RefPtr<StyleRuleFontPaletteValues> consumeFontPaletteValuesRule(CSSParserTokenRange prelude, CSSParserTokenRange block);
     RefPtr<StyleRuleKeyframes> consumeKeyframesRule(CSSParserTokenRange prelude, CSSParserTokenRange block);
     RefPtr<StyleRulePage> consumePageRule(CSSParserTokenRange prelude, CSSParserTokenRange block);

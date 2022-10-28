@@ -27,6 +27,7 @@
 
 #if ENABLE(WEB_CODECS)
 
+#include "PlatformVideoColorSpace.h"
 #include "VideoFrame.h"
 #include <wtf/CompletionHandler.h>
 #include <wtf/Expected.h>
@@ -41,6 +42,19 @@ public:
     struct Config {
         uint64_t width { 0 };
         uint64_t height { 0 };
+        bool useAnnexB { false };
+        uint64_t bitRate { 0 };
+        double frameRate { 0 };
+        bool isRealtime { true };
+    };
+    struct ActiveConfiguration {
+        String codec;
+        std::optional<size_t> visibleWidth;
+        std::optional<size_t> visibleHeight;
+        std::optional<size_t> displayWidth;
+        std::optional<size_t> displayHeight;
+        std::optional<Vector<uint8_t>> description;
+        std::optional<PlatformVideoColorSpace> colorSpace;
     };
     struct EncodedFrame {
         Vector<uint8_t> data;
@@ -56,9 +70,15 @@ public:
     using CreateResult = Expected<UniqueRef<VideoEncoder>, String>;
 
     using PostTaskCallback = Function<void(Function<void()>&&)>;
+    using DescriptionCallback = Function<void(ActiveConfiguration&&)>;
     using OutputCallback = Function<void(EncodedFrame&&)>;
-    using CreateCallback = CompletionHandler<void(CreateResult&&)>;
-    static void create(const String&, const Config&, CreateCallback&&, OutputCallback&&, PostTaskCallback&&);
+    using CreateCallback = Function<void(CreateResult&&)>;
+
+    using CreatorFunction = void(*)(const String&, const Config&, CreateCallback&&, DescriptionCallback&&, OutputCallback&&, PostTaskCallback&&);
+    WEBCORE_EXPORT static void setCreatorCallback(CreatorFunction&&);
+
+    static void create(const String&, const Config&, CreateCallback&&, DescriptionCallback&&, OutputCallback&&, PostTaskCallback&&);
+    WEBCORE_EXPORT static void createLocalEncoder(const String&, const Config&, CreateCallback&&, DescriptionCallback&&, OutputCallback&&, PostTaskCallback&&);
 
     using EncodeCallback = Function<void(String&&)>;
     virtual void encode(RawFrame&&, bool shouldGenerateKeyFrame, EncodeCallback&&) = 0;
@@ -66,6 +86,8 @@ public:
     virtual void flush(Function<void()>&&) = 0;
     virtual void reset() = 0;
     virtual void close() = 0;
+
+    static CreatorFunction s_customCreator;
 };
 
 }

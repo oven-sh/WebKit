@@ -76,6 +76,12 @@
 /* The domain and application using the camera and/or microphone. The first argument is domain, the second is the application name (iOS only). */
 "%@ in %%@" = "%@ in %%@";
 
+/* Label for an inspectable Web Extension background page */
+"%@ — Extension Background Page" = "%@ — Extension Background Page";
+
+/* Label for an inspectable Web Extension service worker */
+"%@ — Extension Service Worker" = "%@ — Extension Service Worker";
+
 /* Label to describe the number of files selected in a file upload control that allows multiple files */
 "%d files" = "%d files";
 
@@ -204,6 +210,9 @@
 
 /* WKWebExtensionErrorUnknown description */
 "An unknown error has occurred." = "An unknown error has occurred.";
+
+/* WKWebExtensionContextErrorUnknown description */
+"An unknown error has occurred. (WKWebExtensionContext)" = "An unknown error has occurred.";
 
 /* WKErrorUnknown description */
 "An unknown error occurred" = "An unknown error occurred";
@@ -510,6 +519,12 @@
 
 /* menu item */
 "Exit Picture in Picture" = "Exit Picture in Picture";
+
+/* WKWebExtensionContextErrorAlreadyLoaded description */
+"Extension context is already loaded." = "Extension context is already loaded.";
+
+/* WKWebExtensionContextErrorNotLoaded description */
+"Extension context is not loaded." = "Extension context is not loaded.";
 
 /* WKWebExtensionErrorInvalidActionIcon description for failing to load single image for action */
 "Failed to load image for `default_icon` in the `action` manifest entry." = "Failed to load image for `default_icon` in the `action` manifest entry.";

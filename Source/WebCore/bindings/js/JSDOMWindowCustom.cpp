@@ -157,7 +157,7 @@ bool jsDOMWindowGetOwnPropertySlotRestrictedAccess(JSDOMGlobalObject* thisObject
     // FIXME: Add support to named attributes on RemoteFrames.
     auto* frame = window.frame();
     if (frame && is<Frame>(*frame)) {
-        if (auto* scopedChild = downcast<Frame>(*frame).tree().scopedChild(propertyNameToAtomString(propertyName))) {
+        if (auto* scopedChild = dynamicDowncast<LocalFrame>(downcast<Frame>(*frame).tree().scopedChild(propertyNameToAtomString(propertyName)))) {
             slot.setValue(thisObject, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum, toJS(&lexicalGlobalObject, scopedChild->document()->domWindow()));
             return true;
         }
@@ -236,8 +236,10 @@ bool JSDOMWindow::getOwnPropertySlotByIndex(JSObject* object, JSGlobalObject* le
 
     // These are also allowed cross-origin, so come before the access check.
     if (frame && index < frame->tree().scopedChildCount()) {
-        slot.setValue(thisObject, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly), toJS(lexicalGlobalObject, frame->tree().scopedChild(index)->document()->domWindow()));
-        return true;
+        if (auto* scopedChild = dynamicDowncast<LocalFrame>(frame->tree().scopedChild(index))) {
+            slot.setValue(thisObject, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly), toJS(lexicalGlobalObject, scopedChild->document()->domWindow()));
+            return true;
+        }
     }
 
     if (!BindingSecurity::shouldAllowAccessToDOMWindow(lexicalGlobalObject, window, ThrowSecurityError))
@@ -501,8 +503,11 @@ JSC_DEFINE_CUSTOM_GETTER(showModalDialogGetter, (JSGlobalObject* lexicalGlobalOb
     if (UNLIKELY(!thisObject))
         return throwVMDOMAttributeGetterTypeError(lexicalGlobalObject, scope, JSDOMWindow::info(), propertyName);
 
+    if (auto* document = thisObject->wrapped().document())
+        document->addConsoleMessage(MessageSource::JS, MessageLevel::Warning, "Window 'showModalDialog' function is deprecated and will be removed soon."_s);
+
     if (auto* frame = thisObject->wrapped().frame()) {
-        if (DOMWindow::canShowModalDialog(*frame)) {
+        if (frame->settings().showModalDialogEnabled() && DOMWindow::canShowModalDialog(*frame)) {
             auto* jsFunction = JSFunction::create(vm, lexicalGlobalObject, 1, "showModalDialog"_s, showModalDialog, ImplementationVisibility::Public);
             thisObject->putDirect(vm, propertyName, jsFunction);
             return JSValue::encode(jsFunction);

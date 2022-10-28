@@ -316,7 +316,11 @@ void RenderGrid::layoutBlock(bool relayoutChildren, LayoutUnit)
                 shouldRecomputeHeight = true;
         } else
             computeTrackSizesForDefiniteSize(ForRows, availableLogicalHeight(ExcludeMarginBorderPadding));
-        LayoutUnit trackBasedLogicalHeight = m_trackSizingAlgorithm.computeTrackBasedSize() + borderAndPaddingLogicalHeight() + scrollbarLogicalHeight();
+        LayoutUnit trackBasedLogicalHeight = borderAndPaddingLogicalHeight() + scrollbarLogicalHeight();
+        if (auto size = explicitIntrinsicInnerLogicalSize(ForRows))
+            trackBasedLogicalHeight += size.value();
+        else
+            trackBasedLogicalHeight += m_trackSizingAlgorithm.computeTrackBasedSize();
         if (shouldRecomputeHeight)
             computeTrackSizesForDefiniteSize(ForRows, trackBasedLogicalHeight);
 
@@ -496,7 +500,7 @@ void RenderGrid::computeIntrinsicLogicalWidths(LayoutUnit& minLogicalWidth, Layo
 
         computeTrackSizesForIndefiniteSize(algorithm, ForColumns, &minLogicalWidth, &maxLogicalWidth);
     } else {
-        LayoutUnit totalGuttersSize = guttersSize(m_grid, ForColumns, 0, numTracks(ForColumns), std::nullopt);
+        LayoutUnit totalGuttersSize = explicitIntrinsicInnerLogicalSize(ForColumns).has_value() ? 0_lu : guttersSize(m_grid, ForColumns, 0, numTracks(ForColumns), std::nullopt);
         minLogicalWidth = *m_minContentSize + totalGuttersSize;
         maxLogicalWidth = *m_maxContentSize + totalGuttersSize;
     }
@@ -518,7 +522,7 @@ void RenderGrid::computeTrackSizesForIndefiniteSize(GridTrackSizingAlgorithm& al
     algorithm.run();
 
     size_t numberOfTracks = algorithm.tracks(direction).size();
-    LayoutUnit totalGuttersSize = guttersSize(grid, direction, 0, numberOfTracks, std::nullopt);
+    LayoutUnit totalGuttersSize = direction == ForColumns && explicitIntrinsicInnerLogicalSize(direction).has_value() ? 0_lu : guttersSize(grid, direction, 0, numberOfTracks, std::nullopt);
 
     if (minIntrinsicSize)
         *minIntrinsicSize = algorithm.minContentSize() + totalGuttersSize;
@@ -526,6 +530,15 @@ void RenderGrid::computeTrackSizesForIndefiniteSize(GridTrackSizingAlgorithm& al
         *maxIntrinsicSize = algorithm.maxContentSize() + totalGuttersSize;
 
     ASSERT(algorithm.tracksAreWiderThanMinTrackBreadth());
+}
+
+std::optional<LayoutUnit> RenderGrid::explicitIntrinsicInnerLogicalSize(GridTrackSizingDirection direction) const
+{
+    if (!shouldApplySizeContainment())
+        return std::nullopt;
+    if (direction == ForColumns)
+        return explicitIntrinsicInnerLogicalWidth();
+    return explicitIntrinsicInnerLogicalHeight();
 }
 
 unsigned RenderGrid::computeAutoRepeatTracksCount(GridTrackSizingDirection direction, std::optional<LayoutUnit> availableSize) const
@@ -556,8 +569,9 @@ unsigned RenderGrid::computeAutoRepeatTracksCount(GridTrackSizingDirection direc
         const Length& minSize = isRowAxis ? style().logicalMinWidth() : style().logicalMinHeight();
         const auto& minSizeForOrthogonalAxis = isRowAxis ? style().logicalMinHeight() : style().logicalMinWidth();
         bool shouldComputeMinSizeFromAspectRatio = minSizeForOrthogonalAxis.isSpecified() && !shouldIgnoreAspectRatio();
+        auto explicitIntrinsicInnerSize = explicitIntrinsicInnerLogicalSize(direction);
 
-        if (!availableMaxSize && !minSize.isSpecified() && !shouldComputeMinSizeFromAspectRatio)
+        if (!availableMaxSize && !minSize.isSpecified() && !shouldComputeMinSizeFromAspectRatio && !explicitIntrinsicInnerSize)
             return autoRepeatTrackListLength;
 
         std::optional<LayoutUnit> availableMinSize;
@@ -570,10 +584,12 @@ unsigned RenderGrid::computeAutoRepeatTracksCount(GridTrackSizingDirection direc
             auto [logicalMinWidth, logicalMaxWidth] = computeMinMaxLogicalWidthFromAspectRatio();
             availableMinSize = logicalMinWidth;
         }
-        if (!maxSize.isSpecified())
+        if (!maxSize.isSpecified() || explicitIntrinsicInnerSize)
             needsToFulfillMinimumSize = true;
 
-        availableSize = std::max(valueOrDefault(availableMinSize), valueOrDefault(availableMaxSize));
+        availableSize = std::max(std::max(valueOrDefault(availableMinSize), valueOrDefault(availableMaxSize)), valueOrDefault(explicitIntrinsicInnerSize));
+        if (maxSize.isSpecified() && availableMaxSize < availableSize)
+            availableSize = std::max(availableMinSize, availableMaxSize);
     }
 
     LayoutUnit autoRepeatTracksSize;
@@ -637,7 +653,7 @@ std::unique_ptr<OrderedTrackIndexSet> RenderGrid::computeEmptyTracksForAutoRepea
     unsigned firstAutoRepeatTrack = insertionPoint + grid.explicitGridStart(direction);
     unsigned lastAutoRepeatTrack = firstAutoRepeatTrack + grid.autoRepeatTracks(direction);
 
-    if (!grid.hasGridItems() || shouldApplySizeOrInlineSizeContainment()) {
+    if (!grid.hasGridItems() || shouldApplyInlineSizeContainment() || (shouldApplySizeContainment() && !explicitIntrinsicInnerLogicalSize(direction))) {
         emptyTrackIndexes = makeUnique<OrderedTrackIndexSet>();
         for (unsigned trackIndex = firstAutoRepeatTrack; trackIndex < lastAutoRepeatTrack; ++trackIndex)
             emptyTrackIndexes->add(trackIndex);
@@ -1430,22 +1446,8 @@ std::optional<LayoutUnit> RenderGrid::firstLineBaseline() const
     if (isWritingModeRoot() || !m_grid.hasGridItems() || shouldApplyLayoutContainment())
         return std::nullopt;
 
-    const RenderBox* baselineChild = nullptr;
     // Finding the first grid item in grid order.
-    unsigned numColumns = m_grid.numTracks(ForColumns);
-    for (size_t column = 0; column < numColumns; column++) {
-        for (auto& child : m_grid.cell(0, column)) {
-            ASSERT(child.get());
-            // If an item participates in baseline alignment, we select such item.
-            if (isBaselineAlignmentForChild(*child, GridColumnAxis, FirstLine)) {
-                // FIXME: self-baseline and content-baseline alignment not implemented yet.
-                baselineChild = child.get();
-                break;
-            }
-            if (!baselineChild)
-                baselineChild = child.get();
-        }
-    }
+    auto baselineChild = getBaselineChild(ItemPosition::Baseline);
 
     if (!baselineChild)
         return std::nullopt;
@@ -1459,6 +1461,52 @@ std::optional<LayoutUnit> RenderGrid::firstLineBaseline() const
         return synthesizedBaselineFromBorderBox(*baselineChild, direction) + logicalTopForChild(*baselineChild);
     }
     return baseline.value() + baselineChild->logicalTop().toInt();
+}
+
+std::optional<LayoutUnit> RenderGrid::lastLineBaseline() const
+{
+    if (isWritingModeRoot() || !m_grid.hasGridItems() || shouldApplyLayoutContainment())
+        return std::nullopt;
+
+    auto baselineChild = getBaselineChild(ItemPosition::LastBaseline);
+    if (!baselineChild)
+        return std::nullopt;
+
+    auto baseline = GridLayoutFunctions::isOrthogonalChild(*this, *baselineChild) ? std::nullopt : baselineChild->lastLineBaseline();
+    if (!baseline) {
+        LineDirectionMode direction = isHorizontalWritingMode() ? HorizontalLine : VerticalLine;
+        return synthesizedBaselineFromBorderBox(*baselineChild, direction) + logicalTopForChild(*baselineChild);
+
+    }
+
+    return baseline.value() + baselineChild->logicalTop().toInt();
+}
+
+WeakPtr<RenderBox> RenderGrid::getBaselineChild(ItemPosition alignment) const
+{
+    ASSERT(alignment == ItemPosition::Baseline || alignment == ItemPosition::LastBaseline);
+    const RenderBox* baselineChild = nullptr;
+    unsigned numColumns = m_grid.numTracks(ForColumns);
+    unsigned numRows = m_grid.numTracks(ForRows);
+
+    for (size_t column = 0; column < numColumns; column++) {
+        auto cell = m_grid.cell(0, column);
+        if (alignment == ItemPosition::LastBaseline)
+            cell = m_grid.cell(numRows - 1, numColumns - column - 1);
+
+        for (auto& child : cell) {
+            ASSERT(child.get());
+            // If an item participates in baseline alignment, we select such item.
+            if (isBaselineAlignmentForChild(*child, GridColumnAxis, FirstLine)) {
+                // FIXME: self-baseline and content-baseline alignment not implemented yet.
+                baselineChild = child.get();
+                break;
+            }
+            if (!baselineChild)
+                baselineChild = child.get();
+        } 
+    }
+    return baselineChild;
 }
 
 std::optional<LayoutUnit> RenderGrid::inlineBlockBaseline(LineDirectionMode) const
@@ -1541,11 +1589,10 @@ GridAxisPosition RenderGrid::columnAxisPositionForChild(const RenderBox& child) 
     case ItemPosition::End:
         return GridAxisEnd;
     case ItemPosition::Stretch:
-        return GridAxisStart;
     case ItemPosition::Baseline:
-    case ItemPosition::LastBaseline:
-        // FIXME: Implement the previous values. For now, we always 'start' align the child.
         return GridAxisStart;
+    case ItemPosition::LastBaseline:
+        return GridAxisEnd;
     case ItemPosition::Legacy:
     case ItemPosition::Auto:
     case ItemPosition::Normal:
@@ -1630,19 +1677,19 @@ LayoutUnit RenderGrid::columnAxisOffsetForChild(const RenderBox& child) const
     LayoutUnit endOfRow;
     gridAreaPositionForChild(child, ForRows, startOfRow, endOfRow);
     LayoutUnit startPosition = startOfRow + marginBeforeForChild(child);
+    LayoutUnit columnAxisChildSize = GridLayoutFunctions::isOrthogonalChild(*this, child) ? child.logicalWidth() + child.marginLogicalWidth() : child.logicalHeight() + child.marginLogicalHeight();
+    auto overflow = alignSelfForChild(child).overflow();
+        LayoutUnit offsetFromStartPosition = computeOverflowAlignmentOffset(overflow, endOfRow - startOfRow, columnAxisChildSize);
     if (hasAutoMarginsInColumnAxis(child))
         return startPosition;
     GridAxisPosition axisPosition = columnAxisPositionForChild(child);
     switch (axisPosition) {
     case GridAxisStart:
         return startPosition + columnAxisBaselineOffsetForChild(child);
-    case GridAxisEnd:
-    case GridAxisCenter: {
-        LayoutUnit columnAxisChildSize = GridLayoutFunctions::isOrthogonalChild(*this, child) ? child.logicalWidth() + child.marginLogicalWidth() : child.logicalHeight() + child.marginLogicalHeight();
-        auto overflow = alignSelfForChild(child).overflow();
-        LayoutUnit offsetFromStartPosition = computeOverflowAlignmentOffset(overflow, endOfRow - startOfRow, columnAxisChildSize);
-        return startPosition + (axisPosition == GridAxisEnd ? offsetFromStartPosition : offsetFromStartPosition / 2);
-    }
+    case GridAxisEnd: 
+        return (startPosition + offsetFromStartPosition) - columnAxisBaselineOffsetForChild(child);
+    case GridAxisCenter: 
+        return startPosition + (offsetFromStartPosition / 2);
     }
 
     ASSERT_NOT_REACHED();

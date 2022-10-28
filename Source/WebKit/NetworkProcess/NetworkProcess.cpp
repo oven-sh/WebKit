@@ -205,6 +205,7 @@ void NetworkProcess::removeNetworkConnectionToWebProcess(NetworkConnectionToWebP
 {
     ASSERT(m_webProcessConnections.contains(connection.webProcessIdentifier()));
     m_webProcessConnections.remove(connection.webProcessIdentifier());
+    m_allowedFirstPartiesForCookies.remove(connection.webProcessIdentifier());
 }
 
 bool NetworkProcess::shouldTerminate()
@@ -255,21 +256,25 @@ bool NetworkProcess::didReceiveSyncMessage(IPC::Connection& connection, IPC::Dec
     return didReceiveSyncNetworkProcessMessage(connection, decoder, replyEncoder);
 }
 
+void NetworkProcess::stopRunLoopIfNecessary()
+{
+    if (m_didSyncCookiesForClose && m_closingStorageManagers.isEmpty())
+        stopRunLoop();
+}
+
 void NetworkProcess::didClose(IPC::Connection&)
 {
     ASSERT(RunLoop::isMain());
 
     auto callbackAggregator = CallbackAggregator::create([this] {
         ASSERT(RunLoop::isMain());
-        stopRunLoop();
+        m_didSyncCookiesForClose = true;
+        stopRunLoopIfNecessary();
     });
 
     forEachNetworkSession([&](auto& session) {
         platformFlushCookies(session.sessionID(), [callbackAggregator] { });
-    });
-
-    NetworkStorageManager::forEach([&](auto& manager) {
-        manager.syncLocalStorage([callbackAggregator] { });
+        session.storageManager().syncLocalStorage([callbackAggregator] { });
     });
 }
 
@@ -336,6 +341,9 @@ void NetworkProcess::initializeNetworkProcess(NetworkProcessCreationParameters&&
     setPrivateClickMeasurementEnabled(parameters.enablePrivateClickMeasurement);
     m_ftpEnabled = parameters.ftpEnabled;
 
+    for (auto [processIdentifier, domain] : parameters.allowedFirstPartiesForCookies)
+        addAllowedFirstPartyForCookies(processIdentifier, WTFMove(domain));
+
     for (auto& supplement : m_supplements.values())
         supplement->initialize(parameters);
 
@@ -390,6 +398,42 @@ void NetworkProcess::createNetworkConnectionToWebProcess(ProcessIdentifier ident
 
     if (auto* session = networkSession(sessionID))
         session->storageManager().startReceivingMessageFromConnection(connection.connection());
+}
+
+void NetworkProcess::addAllowedFirstPartyForCookies(WebCore::ProcessIdentifier processIdentifier, WebCore::RegistrableDomain&& firstPartyForCookies)
+{
+    m_allowedFirstPartiesForCookies.ensure(processIdentifier, [] {
+        return HashSet<RegistrableDomain> { };
+    }).iterator->value.add(WTFMove(firstPartyForCookies));
+}
+
+bool NetworkProcess::allowsFirstPartyForCookies(WebCore::ProcessIdentifier processIdentifier, const URL& firstParty)
+{
+    if (!decltype(m_allowedFirstPartiesForCookies)::isValidKey(processIdentifier)) {
+        ASSERT_NOT_REACHED();
+        return false;
+    }
+
+    // FIXME: This should probably not be necessary. If about:blank is the first party for cookies,
+    // we should set it to be the inherited origin then remove this exception.
+    if (firstParty.isAboutBlank())
+        return true;
+
+    auto iterator = m_allowedFirstPartiesForCookies.find(processIdentifier);
+    if (iterator == m_allowedFirstPartiesForCookies.end()) {
+        ASSERT_NOT_REACHED();
+        return false;
+    }
+    if (firstParty.isNull())
+        return true; // FIXME: This shouldn't be allowed.
+    RegistrableDomain firstPartyDomain(firstParty);
+    if (!decltype(iterator->value)::isValidValue(firstPartyDomain)) {
+        ASSERT_NOT_REACHED();
+        return false;
+    }
+    auto result = iterator->value.contains(firstPartyDomain);
+    ASSERT(result);
+    return result;
 }
 
 void NetworkProcess::clearCachedCredentials(PAL::SessionID sessionID)
@@ -525,8 +569,15 @@ void NetworkProcess::destroySession(PAL::SessionID sessionID)
     ASSERT(sessionID != PAL::SessionID::defaultSessionID());
 #endif
 
-    if (auto session = m_networkSessions.take(sessionID))
+    if (auto session = m_networkSessions.take(sessionID)) {
         session->invalidateAndCancel();
+        auto& storageManager = session->storageManager();
+        m_closingStorageManagers.add(&storageManager);
+        storageManager.close([this, protectedThis = Ref { *this }, storageManager = &storageManager]() {
+            m_closingStorageManagers.remove(storageManager);
+            stopRunLoopIfNecessary();
+        });
+    }
     m_networkStorageSessions.remove(sessionID);
     m_sessionsControlledByAutomation.remove(sessionID);
 }
@@ -702,7 +753,7 @@ void NetworkProcess::getResourceLoadStatisticsDataSummary(PAL::SessionID session
 void NetworkProcess::resetParametersToDefaultValues(PAL::SessionID sessionID, CompletionHandler<void()>&& completionHandler)
 {
     if (auto* session = networkSession(sessionID)) {
-        session->resetCNAMEDomainData();
+        session->resetFirstPartyDNSData();
         if (auto* resourceLoadStatistics = session->resourceLoadStatistics())
             resourceLoadStatistics->resetParametersToDefaultValues(WTFMove(completionHandler));
         else
@@ -1116,10 +1167,10 @@ void NetworkProcess::setShouldClassifyResourcesBeforeDataRecordsRemoval(PAL::Ses
     }
 }
 
-void NetworkProcess::setResourceLoadStatisticsEnabled(PAL::SessionID sessionID, bool enabled)
+void NetworkProcess::setTrackingPreventionEnabled(PAL::SessionID sessionID, bool enabled)
 {
     if (auto* session = networkSession(sessionID))
-        session->setResourceLoadStatisticsEnabled(enabled);
+        session->setTrackingPreventionEnabled(enabled);
 }
 
 void NetworkProcess::setResourceLoadStatisticsLogTestingEvent(bool enabled)

@@ -37,6 +37,8 @@ struct StylePropertyMetadata {
         , m_implicit(implicit)
         , m_inherited(inherited)
     {
+        ASSERT(propertyID != CSSPropertyInvalid);
+        ASSERT(propertyID < firstShorthandProperty);
     }
 
     CSSPropertyID shorthandID() const;
@@ -85,6 +87,8 @@ public:
     static bool areInSameLogicalPropertyGroupWithDifferentMappingLogic(CSSPropertyID, CSSPropertyID);
     static bool isDescriptorOnly(CSSPropertyID);
     static bool isColorProperty(CSSPropertyID);
+    static UChar listValuedPropertySeparator(CSSPropertyID);
+    static bool isListValuedProperty(CSSPropertyID propertyID) { return !!listValuedPropertySeparator(propertyID); }
 
     const StylePropertyMetadata& metadata() const { return m_metadata; }
 

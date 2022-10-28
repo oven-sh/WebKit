@@ -33,20 +33,22 @@
 #include <WebCore/IntPoint.h>
 #include <WebCore/IntSize.h>
 
-OBJC_CLASS WKOneShotDisplayLinkHandler;
-
 namespace WebKit {
 
+class RemoteScrollingCoordinatorProxy;
 class RemoteLayerTreeTransaction;
+class RemoteScrollingCoordinatorProxy;
 class RemoteScrollingCoordinatorTransaction;
 
-class RemoteLayerTreeDrawingAreaProxy final : public DrawingAreaProxy {
+class RemoteLayerTreeDrawingAreaProxy : public DrawingAreaProxy {
 public:
     RemoteLayerTreeDrawingAreaProxy(WebPageProxy&, WebProcessProxy&);
     virtual ~RemoteLayerTreeDrawingAreaProxy();
 
     const RemoteLayerTreeHost& remoteLayerTreeHost() const { return *m_remoteLayerTreeHost; }
     std::unique_ptr<RemoteLayerTreeHost> detachRemoteLayerTreeHost();
+    
+    virtual std::unique_ptr<RemoteScrollingCoordinatorProxy> createScrollingCoordinatorProxy() const;
 
     void acceleratedAnimationDidStart(uint64_t layerID, const String& key, MonotonicTime startTime);
     void acceleratedAnimationDidEnd(uint64_t layerID, const String& key);
@@ -64,6 +66,11 @@ public:
     void updateOverlayRegionIDs(const HashSet<WebCore::GraphicsLayer::PlatformLayerID> &overlayRegionIDs) { m_remoteLayerTreeHost->updateOverlayRegionIDs(overlayRegionIDs); }
 #endif
 
+protected:
+    void updateDebugIndicatorPosition();
+
+    bool shouldCoalesceVisualEditorStateUpdates() const override { return true; }
+
 private:
     void sizeDidChange() final;
     void deviceScaleFactorDidChange() final;
@@ -73,19 +80,13 @@ private:
     // For now, all callbacks are called before committing changes, because that's what the only client requires.
     // Once we have other callbacks, it may make sense to have a before-commit/after-commit option.
     void dispatchAfterEnsuringDrawing(WTF::Function<void (CallbackBase::Error)>&&) final;
-
-#if PLATFORM(MAC)
-    void didChangeViewExposedRect() final;
-#endif
-
-#if PLATFORM(IOS_FAMILY)
-    WKOneShotDisplayLinkHandler *displayLinkHandler();
-#endif
+    
+    virtual void scheduleDisplayRefreshCallbacks() { }
+    virtual void pauseDisplayRefreshCallbacks() { }
 
     float indicatorScale(WebCore::IntSize contentsSize) const;
     void updateDebugIndicator() final;
     void updateDebugIndicator(WebCore::IntSize contentsSize, bool rootLayerChanged, float scale, const WebCore::IntPoint& scrollPosition);
-    void updateDebugIndicatorPosition();
     void initializeDebugIndicator();
 
     void waitForDidUpdateActivityState(ActivityStateChangeID) final;
@@ -101,7 +102,7 @@ private:
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
 
     // Message handlers
-    void setPreferredFramesPerSecond(WebCore::FramesPerSecond);
+    virtual void setPreferredFramesPerSecond(WebCore::FramesPerSecond) { }
     void willCommitLayerTree(TransactionID);
     void commitLayerTree(const RemoteLayerTreeTransaction&, const RemoteScrollingCoordinatorTransaction&);
     
@@ -125,8 +126,6 @@ private:
     ActivityStateChangeID m_activityStateChangeID { ActivityStateChangeAsynchronous };
 
     CallbackMap m_callbacks;
-
-    RetainPtr<WKOneShotDisplayLinkHandler> m_displayLinkHandler;
 };
 
 } // namespace WebKit

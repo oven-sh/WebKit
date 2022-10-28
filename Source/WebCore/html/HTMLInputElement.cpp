@@ -70,7 +70,7 @@
 #include "SearchInputType.h"
 #include "Settings.h"
 #include "StepRange.h"
-#include "StyleGeneratedImage.h"
+#include "StyleGradientImage.h"
 #include "TextControlInnerElements.h"
 #include "TypedElementDescendantIterator.h"
 #include <wtf/IsoMallocInlines.h>
@@ -1270,8 +1270,8 @@ ExceptionOr<void> HTMLInputElement::showPicker()
     // In cross-origin iframes it should throw a "SecurityError" DOMException except on file and color. In same-origin iframes it should work fine.
     // https://github.com/whatwg/html/issues/6909#issuecomment-917138991
     if (!m_inputType->allowsShowPickerAcrossFrames()) {
-        Frame& topFrame = frame->tree().top();
-        if (!frame->document()->securityOrigin().isSameOriginAs(topFrame.document()->securityOrigin()))
+        auto* localTopFrame = dynamicDowncast<LocalFrame>(frame->tree().top());
+        if (!localTopFrame || !frame->document()->securityOrigin().isSameOriginAs(localTopFrame->document()->securityOrigin()))
             return Exception { SecurityError, "Input showPicker() called from cross-origin iframe."_s };
     }
 
@@ -2145,18 +2145,22 @@ ExceptionOr<void> HTMLInputElement::setSelectionRangeForBindings(unsigned start,
     return { };
 }
 
-static Ref<CSSLinearGradientValue> autoFillStrongPasswordMaskImage()
+static Ref<StyleGradientImage> autoFillStrongPasswordMaskImage()
 {
-    CSSGradientColorStopList stops {
-        { CSSValuePool::singleton().createColorValue(Color::black), CSSValuePool::singleton().createValue(50, CSSUnitType::CSS_PERCENTAGE), { } },
-        { CSSValuePool::singleton().createColorValue(Color::transparentBlack), CSSValuePool::singleton().createValue(100, CSSUnitType::CSS_PERCENTAGE), { } }
+    Vector<StyleGradientImage::Stop> stops {
+        { Color::black, CSSValuePool::singleton().createValue(50, CSSUnitType::CSS_PERCENTAGE) },
+        { Color::transparentBlack, CSSValuePool::singleton().createValue(100, CSSUnitType::CSS_PERCENTAGE) }
     };
 
-    auto colorInterpolationMethod = CSSGradientColorInterpolationMethod::legacyMethod(AlphaPremultiplication::Unpremultiplied);
-    auto gradient = CSSLinearGradientValue::create(CSSGradientRepeat::NonRepeating, CSSGradientType::CSSLinearGradient, colorInterpolationMethod, WTFMove(stops));
-    gradient->setAngle(CSSValuePool::singleton().createValue(90, CSSUnitType::CSS_DEG));
-    gradient->resolveRGBColors();
-    return gradient;
+    return StyleGradientImage::create(
+        StyleGradientImage::LinearData {
+            nullptr, nullptr, nullptr, nullptr, CSSValuePool::singleton().createValue(90, CSSUnitType::CSS_DEG)
+        },
+        CSSGradientRepeat::NonRepeating,
+        CSSGradientType::CSSLinearGradient,
+        CSSGradientColorInterpolationMethod::legacyMethod(AlphaPremultiplication::Unpremultiplied),
+        WTFMove(stops)
+    );
 }
 
 RenderStyle HTMLInputElement::createInnerTextStyle(const RenderStyle& style)
@@ -2178,7 +2182,7 @@ RenderStyle HTMLInputElement::createInnerTextStyle(const RenderStyle& style)
         textBlockStyle.setMaxWidth(Length { 100, LengthType::Percent });
         textBlockStyle.setColor(Color::black.colorWithAlphaByte(153));
         textBlockStyle.setTextOverflow(TextOverflow::Clip);
-        textBlockStyle.setMaskImage(StyleGeneratedImage::create(autoFillStrongPasswordMaskImage()));
+        textBlockStyle.setMaskImage(autoFillStrongPasswordMaskImage());
         // A stacking context is needed for the mask.
         if (textBlockStyle.hasAutoUsedZIndex())
             textBlockStyle.setUsedZIndex(0);

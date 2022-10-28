@@ -157,6 +157,7 @@ inline CapabilityLevel canCompile(Node* node)
     case GetArgument:
     case InvalidationPoint:
     case StringCharAt:
+    case StringLocaleCompare:
     case CheckIsConstant:
     case CheckBadValue:
     case CheckNotEmpty:
@@ -228,6 +229,7 @@ inline CapabilityLevel canCompile(Node* node)
     case ObjectCreate:
     case ObjectKeys:
     case ObjectGetOwnPropertyNames:
+    case ObjectToString:
     case MakeRope:
     case NewArrayWithSize:
     case NewArrayWithSpecies:

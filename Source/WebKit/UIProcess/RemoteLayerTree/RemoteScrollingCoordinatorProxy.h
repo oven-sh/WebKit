@@ -60,7 +60,7 @@ public:
 
     // Inform the web process that the scroll position changed (called from the scrolling tree)
     void scrollingTreeNodeDidScroll(WebCore::ScrollingNodeID, const WebCore::FloatPoint& newScrollPosition, const std::optional<WebCore::FloatPoint>& layoutViewportOrigin, WebCore::ScrollingLayerPositionAction);
-    bool scrollingTreeNodeRequestsScroll(WebCore::ScrollingNodeID, const WebCore::RequestedScrollData&);
+    virtual bool scrollingTreeNodeRequestsScroll(WebCore::ScrollingNodeID, const WebCore::RequestedScrollData&);
     void scrollingTreeNodeDidStopAnimatedScroll(WebCore::ScrollingNodeID);
 
     WebCore::TrackingType eventTrackingTypeForPoint(WebCore::EventTrackingRegions::EventType, WebCore::IntPoint) const;
@@ -117,12 +117,17 @@ public:
     const HashSet<WebCore::GraphicsLayer::PlatformLayerID>& fixedScrollingNodeLayerIDs() const { return m_fixedScrollingNodeLayerIDs; }
 #endif
 
+protected:
+    RemoteScrollingTree* scrollingTree() const { return m_scrollingTree.get(); }
+
 private:
     void connectStateNodeLayers(WebCore::ScrollingStateTree&, const RemoteLayerTreeHost&);
     void establishLayerTreeScrollingRelations(const RemoteLayerTreeHost&);
 
     bool shouldSnapForMainFrameScrolling(WebCore::ScrollEventAxis) const;
     std::pair<float, std::optional<unsigned>> closestSnapOffsetForMainFrameScrolling(WebCore::ScrollEventAxis, float currentScrollOffset, WebCore::FloatPoint scrollDestination, float velocity) const;
+
+    virtual void didReceiveWheelEvent(bool /* wasHandled */) { }
 
     void sendUIStateChangedIfNecessary();
     void sendScrollingTreeNodeDidScroll();

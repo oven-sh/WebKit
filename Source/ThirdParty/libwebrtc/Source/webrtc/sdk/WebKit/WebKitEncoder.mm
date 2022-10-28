@@ -48,6 +48,9 @@
 - (NSInteger)encode:(RTCVideoFrame *)frame codecSpecificInfo:(nullable id<RTCCodecSpecificInfo>)info frameTypes:(NSArray<NSNumber *> *)frameTypes;
 - (int)setBitrate:(uint32_t)bitrateKbit framerate:(uint32_t)framerate;
 - (void)setLowLatency:(bool)lowLatencyEnabled;
+- (void)setUseAnnexB:(bool)useAnnexB;
+- (void)setDescriptionCallback:(RTCVideoEncoderDescriptionCallback)callback;
+- (void)flush;
 @end
 
 @implementation WK_RTCLocalVideoH264H265Encoder {
@@ -104,6 +107,30 @@
 - (void)setLowLatency:(bool)lowLatencyEnabled {
     if (m_h264Encoder)
         [m_h264Encoder setH264LowLatencyEncoderEnabled:lowLatencyEnabled];
+}
+
+- (void)setUseAnnexB:(bool)useAnnexB {
+    if (m_h264Encoder) {
+        [m_h264Encoder setUseAnnexB:useAnnexB];
+        return;
+    }
+    [m_h265Encoder setUseAnnexB:useAnnexB];
+}
+
+- (void)setDescriptionCallback:(RTCVideoEncoderDescriptionCallback)callback {
+    if (m_h264Encoder) {
+        [m_h264Encoder setDescriptionCallback:callback];
+        return;
+    }
+    [m_h265Encoder setDescriptionCallback:callback];
+}
+
+- (void)flush {
+    if (m_h264Encoder) {
+        [m_h264Encoder flush];
+        return;
+    }
+    [m_h265Encoder flush];
 }
 @end
 
@@ -311,7 +338,7 @@ void encoderVideoTaskComplete(void* callback, webrtc::VideoCodecType codecType, 
     static_cast<EncodedImageCallback*>(callback)->OnEncodedImage(encodedImage, &codecSpecificInfo);
 }
 
-void* createLocalEncoder(const webrtc::SdpVideoFormat& format, LocalEncoderCallback callback)
+void* createLocalEncoder(const webrtc::SdpVideoFormat& format, bool useAnnexB, LocalEncoderCallback frameCallback, LocalEncoderDescriptionCallback descriptionCallback)
 {
     auto *codecInfo = [[RTCVideoCodecInfo alloc] initWithNativeSdpVideoFormat: format];
     auto *encoder = [[WK_RTCLocalVideoH264H265Encoder alloc] initWithCodecInfo:codecInfo];
@@ -331,12 +358,14 @@ void* createLocalEncoder(const webrtc::SdpVideoFormat& format, LocalEncoderCallb
         info.qp = encodedImage.qp_;
         info.timing = encodedImage.timing_;
 
-        callback(encodedImage.data(), encodedImage.size(), info);
+        frameCallback(encodedImage.data(), encodedImage.size(), info);
         return YES;
     }];
 
-    return (__bridge_retained void*)encoder;
+    [encoder setUseAnnexB:useAnnexB];
+    [encoder setDescriptionCallback:descriptionCallback];
 
+    return (__bridge_retained void*)encoder;
 }
 
 void releaseLocalEncoder(LocalEncoder localEncoder)
@@ -384,6 +413,12 @@ void setLocalEncoderLowLatency(LocalEncoder localEncoder, bool isLowLatencyEnabl
 {
     auto *encoder = (__bridge WK_RTCLocalVideoH264H265Encoder *)(localEncoder);
     [encoder setLowLatency:isLowLatencyEnabled];
+}
+
+void flushLocalEncoder(LocalEncoder localEncoder)
+{
+    auto *encoder = (__bridge WK_RTCLocalVideoH264H265Encoder *)(localEncoder);
+    [encoder flush];
 }
 
 }

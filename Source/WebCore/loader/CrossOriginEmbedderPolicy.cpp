@@ -90,21 +90,21 @@ CrossOriginEmbedderPolicy CrossOriginEmbedderPolicy::isolatedCopy() &&
     };
 }
 
-void addCrossOriginEmbedderPolicyHeaders(ResourceResponse& response, const CrossOriginEmbedderPolicy& coep)
+void CrossOriginEmbedderPolicy::addPolicyHeadersTo(ResourceResponse& response) const
 {
-    if (coep.value != CrossOriginEmbedderPolicyValue::UnsafeNone) {
-        ASSERT(coep.value == CrossOriginEmbedderPolicyValue::RequireCORP);
-        if (coep.reportingEndpoint.isEmpty())
+    if (value != CrossOriginEmbedderPolicyValue::UnsafeNone) {
+        ASSERT(value == CrossOriginEmbedderPolicyValue::RequireCORP);
+        if (reportingEndpoint.isEmpty())
             response.setHTTPHeaderField(HTTPHeaderName::CrossOriginEmbedderPolicy, "require-corp"_s);
         else
-            response.setHTTPHeaderField(HTTPHeaderName::CrossOriginEmbedderPolicy, makeString("require-corp; report-to=\"", coep.reportingEndpoint, '\"'));
+            response.setHTTPHeaderField(HTTPHeaderName::CrossOriginEmbedderPolicy, makeString("require-corp; report-to=\"", reportingEndpoint, '\"'));
     }
-    if (coep.reportOnlyValue != CrossOriginEmbedderPolicyValue::UnsafeNone) {
-        ASSERT(coep.reportOnlyValue == CrossOriginEmbedderPolicyValue::RequireCORP);
-        if (coep.reportOnlyReportingEndpoint.isEmpty())
+    if (reportOnlyValue != CrossOriginEmbedderPolicyValue::UnsafeNone) {
+        ASSERT(reportOnlyValue == CrossOriginEmbedderPolicyValue::RequireCORP);
+        if (reportOnlyReportingEndpoint.isEmpty())
             response.setHTTPHeaderField(HTTPHeaderName::CrossOriginEmbedderPolicyReportOnly, "require-corp"_s);
         else
-            response.setHTTPHeaderField(HTTPHeaderName::CrossOriginEmbedderPolicyReportOnly, makeString("require-corp; report-to=\"", coep.reportOnlyReportingEndpoint, '\"'));
+            response.setHTTPHeaderField(HTTPHeaderName::CrossOriginEmbedderPolicyReportOnly, makeString("require-corp; report-to=\"", reportOnlyReportingEndpoint, '\"'));
     }
 }
 
@@ -118,7 +118,7 @@ void sendCOEPInheritenceViolation(ReportingClient& reportingClient, const URL& e
     if (endpoint.isEmpty())
         return;
 
-    auto reportFormData = Report::createReportFormDataForViolation("coep"_s, embedderURL, reportingClient.httpUserAgent(), [&](auto& body) {
+    auto reportFormData = Report::createReportFormDataForViolation("coep"_s, embedderURL, reportingClient.httpUserAgent(), endpoint, [&](auto& body) {
         body.setString("disposition"_s, disposition == COEPDisposition::Reporting ? "reporting"_s : "enforce"_s);
         body.setString("type"_s, type);
         body.setString("blockedURL"_s, PingLoader::sanitizeURLForReport(blockedURL));
@@ -136,7 +136,7 @@ void sendCOEPCORPViolation(ReportingClient& reportingClient, const URL& embedder
     if (endpoint.isEmpty())
         return;
 
-    auto reportFormData = Report::createReportFormDataForViolation("coep"_s, embedderURL, reportingClient.httpUserAgent(), [&](auto& body) {
+    auto reportFormData = Report::createReportFormDataForViolation("coep"_s, embedderURL, reportingClient.httpUserAgent(), endpoint, [&](auto& body) {
         body.setString("disposition"_s, disposition == COEPDisposition::Reporting ? "reporting"_s : "enforce"_s);
         body.setString("type"_s, "corp"_s);
         body.setString("blockedURL"_s, PingLoader::sanitizeURLForReport(blockedURL));

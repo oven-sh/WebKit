@@ -55,14 +55,10 @@ Ref<WebInspectorUI> WebInspectorUI::create(WebPage& page)
 
 void WebInspectorUI::enableFrontendFeatures(WebPage& page)
 {
-    // FIXME: These should be enabled in the UIProcess by the preferences for the inspector page's WKWebView.
-    DeprecatedGlobalSettings::setImageBitmapEnabled(true);
 #if ENABLE(WEBGL2)
     page.corePage()->settings().setWebGL2Enabled(true);
 #endif
-#if ENABLE(CSS_TYPED_OM)
     page.corePage()->settings().setCSSTypedOMEnabled(true);
-#endif
 }
 
 WebInspectorUI::WebInspectorUI(WebPage& page)

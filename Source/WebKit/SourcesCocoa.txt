@@ -176,6 +176,7 @@ Shared/Cocoa/WKNSURL.mm
 Shared/Cocoa/WKNSURLExtras.mm
 Shared/Cocoa/WKNSURLRequest.mm
 Shared/Cocoa/WKObject.mm
+Shared/Cocoa/WebIconUtilities.mm
 Shared/Cocoa/WebPreferencesDefaultValuesCocoa.mm
 
 Shared/Daemon/DaemonUtilities.mm
@@ -190,11 +191,9 @@ Shared/ios/NativeWebKeyboardEventIOS.mm
 Shared/ios/NativeWebMouseEventIOS.mm
 Shared/ios/NativeWebTouchEventIOS.mm
 Shared/ios/WebAutocorrectionData.mm
-Shared/ios/WebIconUtilities.mm
 Shared/ios/WebIOSEventFactory.mm
 Shared/ios/WebPlatformTouchPointIOS.cpp
 Shared/ios/WebPreferencesDefaultValuesIOS.mm
-Shared/ios/WebTouchEventIOS.cpp
 
 Shared/mac/AuxiliaryProcessMac.mm
 Shared/mac/HangDetectionDisablerMac.mm
@@ -512,6 +511,7 @@ UIProcess/Launcher/cocoa/ProcessLauncherCocoa.mm
 UIProcess/mac/CorrectionPanel.mm
 UIProcess/mac/DisplayCaptureSessionManager.mm
 UIProcess/mac/DisplayLink.cpp
+UIProcess/mac/DisplayLinkProcessProxyClient.cpp
 UIProcess/mac/HighPerformanceGPUManager.mm
 UIProcess/mac/LegacySessionStateCoding.cpp
 UIProcess/mac/PageClientImplMac.mm
@@ -548,13 +548,18 @@ UIProcess/Network/CustomProtocols/LegacyCustomProtocolManagerProxy.cpp
 
 UIProcess/RemoteLayerTree/cocoa/RemoteLayerTreeLayers.mm
 
+UIProcess/RemoteLayerTree/mac/RemoteLayerTreeDrawingAreaProxyMac.mm
+UIProcess/RemoteLayerTree/mac/RemoteScrollingCoordinatorProxyMac.mm
+UIProcess/RemoteLayerTree/mac/RemoteScrollingTreeMac.cpp
 UIProcess/RemoteLayerTree/mac/ScrollerMac.mm
 UIProcess/RemoteLayerTree/mac/ScrollerPairMac.mm
 UIProcess/RemoteLayerTree/mac/ScrollingTreeFrameScrollingNodeRemoteMac.cpp
 UIProcess/RemoteLayerTree/mac/ScrollingTreeOverflowScrollingNodeRemoteMac.cpp
 
+UIProcess/RemoteLayerTree/ios/RemoteLayerTreeDrawingAreaProxyIOS.mm
 UIProcess/RemoteLayerTree/ios/RemoteLayerTreeHostIOS.mm
 UIProcess/RemoteLayerTree/ios/RemoteScrollingCoordinatorProxyIOS.mm
+UIProcess/RemoteLayerTree/ios/RemoteScrollingTreeIOS.cpp
 UIProcess/RemoteLayerTree/ios/ScrollingTreeFrameScrollingNodeRemoteIOS.mm
 UIProcess/RemoteLayerTree/ios/ScrollingTreeOverflowScrollingNodeIOS.mm
 UIProcess/RemoteLayerTree/ios/ScrollingTreeScrollingNodeDelegateIOS.mm
@@ -691,6 +696,7 @@ WebProcess/WebPage/ios/WebPageIOS.mm
 
 WebProcess/WebPage/mac/DisplayRefreshMonitorMac.cpp
 WebProcess/WebPage/mac/PageBannerMac.mm
+WebProcess/WebPage/mac/RemoteLayerTreeDrawingAreaMac.mm
 WebProcess/WebPage/mac/TiledCoreAnimationScrollingCoordinator.mm
 WebProcess/WebPage/mac/TiledCoreAnimationDrawingArea.mm
 WebProcess/WebPage/mac/WebPageMac.mm

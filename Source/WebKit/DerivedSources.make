@@ -163,6 +163,7 @@ MESSAGE_RECEIVERS = \
 	UIProcess/DrawingAreaProxy \
 	UIProcess/Network/NetworkProcessProxy \
 	UIProcess/Network/CustomProtocols/LegacyCustomProtocolManagerProxy \
+	UIProcess/WebFrameProxy \
 	UIProcess/WebPageProxy \
 	UIProcess/VisitedLinkStore \
 	UIProcess/ios/WebDeviceOrientationUpdateProviderProxy \
@@ -178,8 +179,9 @@ MESSAGE_RECEIVERS = \
 	UIProcess/WebProcessProxy \
 	UIProcess/Automation/WebAutomationSession \
 	UIProcess/WebProcessPool \
-        UIProcess/WebScreenOrientationManagerProxy \
+	UIProcess/WebScreenOrientationManagerProxy \
 	UIProcess/Downloads/DownloadProxy \
+	UIProcess/Extensions/WebExtensionContext \
 	UIProcess/Extensions/WebExtensionController \
 	UIProcess/Media/AudioSessionRoutingArbitratorProxy \
 	UIProcess/Media/RemoteMediaSessionCoordinatorProxy \
@@ -187,6 +189,7 @@ MESSAGE_RECEIVERS = \
 	UIProcess/SpeechRecognitionServer \
 	UIProcess/XR/PlatformXRSystem \
 	WebProcess/Databases/IndexedDB/WebIDBConnectionToServer \
+	WebProcess/Extensions/WebExtensionContextProxy \
 	WebProcess/Extensions/WebExtensionControllerProxy \
 	WebProcess/GPU/GPUProcessConnection \
 	WebProcess/GPU/graphics/RemoteRenderingBackendProxy \
@@ -229,7 +232,7 @@ MESSAGE_RECEIVERS = \
 	WebProcess/WebCoreSupport/WebDeviceOrientationUpdateProvider \
 	WebProcess/WebCoreSupport/WebFileSystemStorageConnection \
 	WebProcess/WebCoreSupport/WebPermissionController \
-        WebProcess/WebCoreSupport/WebScreenOrientationManager \
+	WebProcess/WebCoreSupport/WebScreenOrientationManager \
 	WebProcess/WebCoreSupport/WebSpeechRecognitionConnection \
 	WebProcess/Speech/SpeechRecognitionRealtimeMediaSourceManager \
 	WebProcess/Storage/WebSharedWorkerContextManagerConnection \
@@ -250,6 +253,7 @@ MESSAGE_RECEIVERS = \
 	WebProcess/WebPage/RemoteLayerTree/RemoteScrollingCoordinator \
 	WebProcess/WebPage/ViewGestureGeometryCollector \
 	WebProcess/WebPage/DrawingArea \
+	WebProcess/WebPage/WebFrame \
 	WebProcess/WebPage/WebPage \
 	WebProcess/WebPage/VisitedLinkTableController \
 	WebProcess/WebPage/Cocoa/TextCheckingControllerProxy \
@@ -452,20 +456,72 @@ $(WEB_PREFERENCES_PATTERNS) : $(WTF_BUILD_SCRIPTS_DIR)/GeneratePreferences.rb $(
 	$(RUBY) $< --frontend WebKit --base $(WEB_PREFERENCES_COMBINED_INPUT_FILE) --debug ${WTF_BUILD_SCRIPTS_DIR}/Preferences/WebPreferencesDebug.yaml --experimental ${WTF_BUILD_SCRIPTS_DIR}/Preferences/WebPreferencesExperimental.yaml	--internal ${WTF_BUILD_SCRIPTS_DIR}/Preferences/WebPreferencesInternal.yaml $(addprefix --template , $(WEB_PREFERENCES_TEMPLATES))
 
 SERIALIZATION_DESCRIPTION_FILES = \
+	GPUProcess/GPUProcessSessionParameters.serialization.in \
+	GPUProcess/graphics/RemoteRenderingBackendCreationParameters.serialization.in \
+	GPUProcess/media/InitializationSegmentInfo.serialization.in \
+	GPUProcess/media/MediaDescriptionInfo.serialization.in \
+	GPUProcess/media/TextTrackPrivateRemoteConfiguration.serialization.in \
 	NetworkProcess/NetworkProcessCreationParameters.serialization.in \
 	Shared/API/APIGeometry.serialization.in \
 	Shared/Cocoa/WebCoreArgumentCodersCocoa.serialization.in \
+	Shared/EditorState.serialization.in \
 	Shared/FocusedElementInformation.serialization.in \
-	Shared/ShareableBitmap.serialization.in \
 	Shared/FrameInfoData.serialization.in \
 	Shared/FrameTreeNodeData.serialization.in \
+	Shared/ios/InteractionInformationAtPosition.serialization.in \
 	Shared/LayerTreeContext.serialization.in \
+	Shared/Pasteboard.serialization.in \
+	Shared/ShareableBitmap.serialization.in \
 	Shared/TextFlags.serialization.in \
+	Shared/WTFArgumentCoders.serialization.in \
 	Shared/WebCoreArgumentCoders.serialization.in \
+	Shared/WebExtensionContextParameters.serialization.in \
+	Shared/WebEvent.serialization.in \
 	Shared/WebExtensionControllerParameters.serialization.in \
+	Shared/WebPushDaemonConnectionConfiguration.serialization.in \
+	Shared/WebPushMessage.serialization.in \
 	Shared/mac/SecItemResponseData.serialization.in \
 	Shared/WebsiteDataStoreParameters.serialization.in \
 	Shared/WebsiteData/WebsiteDataFetchOption.serialization.in \
+	Shared/WebGPU/WebGPUBindGroupDescriptor.serialization.in \
+	Shared/WebGPU/WebGPUBindGroupLayoutDescriptor.serialization.in \
+	Shared/WebGPU/WebGPUBindGroupLayoutEntry.serialization.in \
+	Shared/WebGPU/WebGPUBufferDescriptor.serialization.in \
+	Shared/WebGPU/WebGPUCommandBufferDescriptor.serialization.in \
+	Shared/WebGPU/WebGPUCommandEncoderDescriptor.serialization.in \
+	Shared/WebGPU/WebGPUCompilationMessage.serialization.in \
+	Shared/WebGPU/WebGPUComputePassDescriptor.serialization.in \
+	Shared/WebGPU/WebGPUComputePipelineDescriptor.serialization.in \
+	Shared/WebGPU/WebGPUDepthStencilState.serialization.in \
+	Shared/WebGPU/WebGPUDeviceDescriptor.serialization.in \
+	Shared/WebGPU/WebGPUExtent3D.serialization.in \
+	Shared/WebGPU/WebGPUExternalTextureBindingLayout.serialization.in \
+	Shared/WebGPU/WebGPUExternalTextureDescriptor.serialization.in \
+	Shared/WebGPU/WebGPUFragmentState.serialization.in \
+	Shared/WebGPU/WebGPUImageCopyBuffer.serialization.in \
+	Shared/WebGPU/WebGPUImageCopyExternalImage.serialization.in \
+	Shared/WebGPU/WebGPUImageCopyTexture.serialization.in \
+	Shared/WebGPU/WebGPUImageCopyTextureTagged.serialization.in \
+	Shared/WebGPU/WebGPUImageDataLayout.serialization.in \
+	Shared/WebGPU/WebGPUMultisampleState.serialization.in \
+	Shared/WebGPU/WebGPUOrigin2D.serialization.in \
+	Shared/WebGPU/WebGPUOutOfMemoryError.serialization.in \
+	Shared/WebGPU/WebGPUPipelineDescriptorBase.serialization.in \
+	Shared/WebGPU/WebGPUPipelineLayoutDescriptor.serialization.in \
+	Shared/WebGPU/WebGPUQuerySetDescriptor.serialization.in \
+	Shared/WebGPU/WebGPURenderBundleDescriptor.serialization.in \
+	Shared/WebGPU/WebGPURenderBundleEncoderDescriptor.serialization.in \
+	Shared/WebGPU/WebGPURenderPassDescriptor.serialization.in \
+	Shared/WebGPU/WebGPURenderPassLayout.serialization.in \
+	Shared/WebGPU/WebGPURenderPipelineDescriptor.serialization.in \
+	Shared/WebGPU/WebGPURequestAdapterOptions.serialization.in \
+	Shared/WebGPU/WebGPUSamplerBindingLayout.serialization.in \
+	Shared/WebGPU/WebGPUSamplerDescriptor.serialization.in \
+	Shared/WebGPU/WebGPUShaderModuleCompilationHint.serialization.in \
+	Shared/WebGPU/WebGPUShaderModuleDescriptor.serialization.in \
+	Shared/WebGPU/WebGPUTextureDescriptor.serialization.in \
+	Shared/WebGPU/WebGPUTextureViewDescriptor.serialization.in \
+	Shared/WebGPU/WebGPUVertexState.serialization.in \
 	Shared/WebGPU/WebGPUVertexBufferLayout.serialization.in \
  	Shared/WebGPU/WebGPUVertexAttribute.serialization.in \
 	Shared/WebGPU/WebGPUValidationError.serialization.in \

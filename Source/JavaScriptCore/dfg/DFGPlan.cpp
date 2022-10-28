@@ -69,10 +69,10 @@
 #include "DFGTypeCheckHoistingPhase.h"
 #include "DFGUnificationPhase.h"
 #include "DFGValidate.h"
+#include "DFGValidateUnlinked.h"
 #include "DFGValueRepReductionPhase.h"
 #include "DFGVarargsForwardingPhase.h"
 #include "DFGVirtualRegisterAllocationPhase.h"
-#include "DFGWatchpointCollectionPhase.h"
 #include "JSCJSValueInlines.h"
 #include "OperandsInlines.h"
 #include "ProfilerDatabase.h"
@@ -332,7 +332,12 @@ Plan::CompilationPath Plan::compileInThreadImpl()
         RUN_PHASE(performPhantomInsertion);
         RUN_PHASE(performStackLayout);
         RUN_PHASE(performVirtualRegisterAllocation);
-        RUN_PHASE(performWatchpointCollection);
+        if (m_mode == JITCompilationMode::UnlinkedDFG) {
+            if (DFG::canCompileUnlinked(dfg) == DFG::CannotCompile) {
+                m_finalizer = makeUnique<FailedFinalizer>(*this);
+                return FailPath;
+            }
+        }
         dumpAndVerifyGraph(dfg, "Graph after optimization:");
         
         {
@@ -429,7 +434,6 @@ Plan::CompilationPath Plan::compileInThreadImpl()
         RUN_PHASE(performStackLayout);
         RUN_PHASE(performLivenessAnalysis);
         RUN_PHASE(performOSRAvailabilityAnalysis);
-        RUN_PHASE(performWatchpointCollection);
         
         if (FTL::canCompile(dfg) == FTL::CannotCompile) {
             m_finalizer = makeUnique<FailedFinalizer>(*this);
@@ -536,6 +540,11 @@ CompilationResult Plan::finalize()
     ASSERT(m_vm->heap.isDeferred());
 
     CompilationResult result = [&] {
+        if (m_finalizer->isFailed()) {
+            CODEBLOCK_LOG_EVENT(m_codeBlock, "dfgFinalize", ("failed"));
+            return CompilationFailed;
+        }
+
         if (!isStillValidOnMainThread() || !isStillValid()) {
             CODEBLOCK_LOG_EVENT(m_codeBlock, "dfgFinalize", ("invalidated"));
             return CompilationInvalidated;
@@ -683,12 +692,11 @@ void Plan::cleanMustHandleValuesIfNecessary()
     }
 }
 
-std::unique_ptr<JITData> Plan::finalizeJITData(const JITCode& jitCode)
+std::unique_ptr<JITData> Plan::tryFinalizeJITData(const JITCode& jitCode)
 {
     auto osrExitThunk = m_vm->getCTIStub(osrExitGenerationThunkGenerator).retagged<OSRExitPtrTag>();
     auto exits = JITData::ExitVector::createWithSizeAndConstructorArguments(jitCode.m_osrExit.size(), osrExitThunk);
-    auto jitData = JITData::create(*m_vm, jitCode, WTFMove(exits));
-    return jitData;
+    return JITData::tryCreate(*m_vm, m_codeBlock, jitCode, WTFMove(exits));
 }
 
 } } // namespace JSC::DFG

@@ -57,6 +57,10 @@
 #include <WebCore/ApplicationManifest.h>
 #endif
 
+#if ENABLE(WK_WEB_EXTENSIONS)
+#include "WebExtensionControllerParameters.h"
+#endif
+
 namespace IPC {
 class Decoder;
 class Encoder;
@@ -185,9 +189,9 @@ struct WebPageCreationParameters {
     WebCore::Color accentColor;
 #endif
 #if USE(WPE_RENDERER)
-    IPC::Attachment hostFileDescriptor;
+    UnixFileDescriptor hostFileDescriptor;
 #endif
-#if PLATFORM(WIN)
+#if USE(GRAPHICS_LAYER_TEXTURE_MAPPER) || USE(GRAPHICS_LAYER_WC)
     uint64_t nativeWindowHandle;
 #endif
 #if USE(GRAPHICS_LAYER_WC)
@@ -215,6 +219,10 @@ struct WebPageCreationParameters {
     bool enumeratingAllNetworkInterfacesEnabled { false };
 
     UserContentControllerParameters userContentControllerParameters;
+
+#if ENABLE(WK_WEB_EXTENSIONS)
+    std::optional<WebExtensionControllerParameters> webExtensionControllerParameters;
+#endif
 
     std::optional<WebCore::Color> backgroundColor;
 

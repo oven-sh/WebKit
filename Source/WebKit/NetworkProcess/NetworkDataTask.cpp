@@ -60,7 +60,7 @@ Ref<NetworkDataTask> NetworkDataTask::create(NetworkSession& session, NetworkDat
     return NetworkDataTaskSoup::create(session, client, parameters);
 #endif
 #if USE(CURL)
-    return NetworkDataTaskCurl::create(session, client, parameters.request, parameters.webFrameID, parameters.webPageID, parameters.storedCredentialsPolicy, parameters.contentSniffingPolicy, parameters.contentEncodingSniffingPolicy, parameters.shouldClearReferrerOnHTTPSToHTTPRedirect, parameters.isMainFrameNavigation, parameters.shouldRelaxThirdPartyCookieBlocking);
+    return NetworkDataTaskCurl::create(session, client, parameters);
 #endif
 }
 
@@ -139,6 +139,8 @@ void NetworkDataTask::didReceiveResponse(ResourceResponse&& response, Negotiated
     response.setSource(ResourceResponse::Source::Network);
     if (negotiatedLegacyTLS == NegotiatedLegacyTLS::Yes)
         response.setUsedLegacyTLS(UsedLegacyTLS::Yes);
+    if (privateRelayed == PrivateRelayed::Yes)
+        response.setWasPrivateRelayed(WasPrivateRelayed::Yes);
 
     if (m_client)
         m_client->didReceiveResponse(WTFMove(response), negotiatedLegacyTLS, privateRelayed, WTFMove(completionHandler));
@@ -167,20 +169,20 @@ PAL::SessionID NetworkDataTask::sessionID() const
     return m_session->sessionID();
 }
 
+const NetworkSession* NetworkDataTask::networkSession() const
+{
+    return m_session.get();
+}
+
 NetworkSession* NetworkDataTask::networkSession()
 {
     return m_session.get();
 }
 
-bool NetworkDataTask::isThirdPartyRequest(const WebCore::ResourceRequest& request) const
-{
-    return !WebCore::areRegistrableDomainsEqual(request.url(), request.firstPartyForCookies());
-}
-
 void NetworkDataTask::restrictRequestReferrerToOriginIfNeeded(WebCore::ResourceRequest& request)
 {
 #if ENABLE(TRACKING_PREVENTION)
-    if ((m_session->sessionID().isEphemeral() || m_session->isResourceLoadStatisticsEnabled()) && m_session->shouldDowngradeReferrer() && isThirdPartyRequest(request))
+    if ((m_session->sessionID().isEphemeral() || m_session->isTrackingPreventionEnabled()) && m_session->shouldDowngradeReferrer() && request.isThirdParty())
         request.setExistingHTTPReferrerToOriginString();
 #endif
 }

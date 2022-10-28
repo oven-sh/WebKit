@@ -40,7 +40,7 @@
 #include "WebProcessPool.h"
 #include <WebCore/CompositionUnderline.h>
 #if ENABLE(GAMEPAD)
-#include <WebCore/WPEGamepadProvider.h>
+#include <WebCore/GamepadProviderLibWPE.h>
 #endif
 #include <wpe/wpe.h>
 #include <wtf/NeverDestroyed.h>
@@ -377,10 +377,10 @@ void View::setInputMethodState(std::optional<InputMethodState>&& state)
 void View::selectionDidChange()
 {
     const auto& editorState = m_pageProxy->editorState();
-    if (!editorState.isMissingPostLayoutData) {
-        m_inputMethodFilter.notifyCursorRect(editorState.postLayoutData().caretRectAtStart);
-        m_inputMethodFilter.notifySurrounding(editorState.postLayoutData().surroundingContext, editorState.postLayoutData().surroundingContextCursorPosition,
-            editorState.postLayoutData().surroundingContextSelectionPosition);
+    if (editorState.hasPostLayoutAndVisualData()) {
+        m_inputMethodFilter.notifyCursorRect(editorState.visualData->caretRectAtStart);
+        m_inputMethodFilter.notifySurrounding(editorState.postLayoutData->surroundingContext, editorState.postLayoutData->surroundingContextCursorPosition,
+            editorState.postLayoutData->surroundingContextSelectionPosition);
     }
 }
 
@@ -466,7 +466,7 @@ WebKit::WebPageProxy* View::platformWebPageProxyForGamepadInput()
     if (views.isEmpty())
         return nullptr;
 
-    struct wpe_view_backend* viewBackend = WebCore::WPEGamepadProvider::singleton().inputView();
+    struct wpe_view_backend* viewBackend = WebCore::GamepadProviderLibWPE::singleton().inputView();
 
     size_t index = notFound;
 

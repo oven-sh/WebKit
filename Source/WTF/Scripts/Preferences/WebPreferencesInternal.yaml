@@ -108,6 +108,20 @@ AutomaticLiveResizeEnabled:
       "HAVE(UIKIT_WEBKIT_INTERNALS)": true
       default: false
 
+BackgroundWebContentRunningBoardThrottlingEnabled:
+  type: bool
+  humanReadableName: "Enable background web content throttling via RunningBoard"
+  humanReadableDescription: "Enable background web content throttling via RunningBoard"
+  exposed: [ WebKit ]
+  condition: PLATFORM(MAC) && USE(RUNNINGBOARD)
+  defaultValue:
+    WebCore:
+      default: false
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+
 BlockIOKitInWebContentSandbox:
   type: bool
   humanReadableName: "IOKit blocking in the WebContent sandbox"
@@ -275,9 +289,19 @@ EventHandlerDrivenSmoothKeyboardScrollingEnabled:
     WebKitLegacy:
       default: false
     WebKit:
-      "PLATFORM(COCOA)": true
+      "PLATFORM(COCOA) || PLATFORM(WIN)": true
       default: false
     WebCore:
+      default: false
+
+ExperimentalSandboxEnabled:
+  type: bool
+  humanReadableName: "Enable experimental sandbox features"
+  humanReadableDescription: "Enable experimental sandbox features"
+  webcoreBinding: none
+  exposed: [ WebKit ]
+  defaultValue:
+    WebKit:
       default: false
 
 FasterClicksEnabled:
@@ -352,6 +376,18 @@ FullScreenEnabled:
       default: false
     WebCore:
       default: false
+
+FullscreenRequirementForScreenOrientationLockingEnabled:
+  type: bool
+  humanReadableName: "Require being in Fullscreen to lock screen orientation"
+  humanReadableDescription: "Require being in Fullscreen to lock screen orientation"
+  defaultValue:
+    WebKitLegacy:
+      default: true
+    WebKit:
+      default: true
+    WebCore:
+      default: true
 
 GetUserMediaRequiresFocus:
   type: bool
@@ -608,13 +644,15 @@ LegacyOverflowScrollingTouchEnabled:
 LineHeightUnitsEnabled:
   type: bool
   humanReadableName: "lh / rlh units"
-  humanReadableDescription: "Enable the lh and lhr units"
+  humanReadableDescription: "Enable the lh and rlh units"
   webcoreBinding: DeprecatedGlobalSettings
   defaultValue:
     WebKitLegacy:
-      default: false
+      default: true
     WebKit:
-      default: false
+      default: true
+    WebCore:
+      default: true
 
 LiveRangeSelectionEnabled:
   type: bool
@@ -850,6 +888,16 @@ SampleBufferContentKeySessionSupportEnabled:
     WebCore:
       default: false
 
+SanitizeLookalikeCharactersInLinksEnabled:
+  type: bool
+  humanReadableName: "Sanitize Lookalike Characters in Links"
+  humanReadableDescription: "Enable Sanitization for Lookalike Characters in Links"
+  webcoreBinding: none
+  condition: ENABLE(NETWORK_CONNECTION_INTEGRITY)
+  defaultValue:
+    WebKit:
+      default: true
+
 ScrollingPerformanceTestingEnabled:
   type: bool
   humanReadableName: "Scroll Performance Testing Enabled"
@@ -907,6 +955,18 @@ ServiceWorkersUserGestureEnabled:
   defaultValue:
     WebKitLegacy:
       default: false
+    WebKit:
+      default: true
+    WebCore:
+      default: true
+
+ShouldTakeSuspendedAssertions:
+  type: bool
+  humanReadableName: "Take WebKit:Suspended assertions on background web content processes"
+  humanReadableDescription: "Take WebKit:Suspended assertions on background web content processes"
+  defaultValue:
+    WebKitLegacy:
+      default: true
     WebKit:
       default: true
     WebCore:

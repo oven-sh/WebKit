@@ -170,7 +170,7 @@ NetworkSession::NetworkSession(NetworkProcess& networkProcess, const NetworkSess
     m_isStaleWhileRevalidateEnabled = parameters.staleWhileRevalidateEnabled;
 
 #if ENABLE(TRACKING_PREVENTION)
-    setResourceLoadStatisticsEnabled(parameters.resourceLoadStatisticsParameters.enabled);
+    setTrackingPreventionEnabled(parameters.resourceLoadStatisticsParameters.enabled);
 #endif
 
 #if ENABLE(SERVICE_WORKER)
@@ -218,7 +218,6 @@ void NetworkSession::invalidateAndCancel()
     if (m_resourceLoadStatistics)
         m_resourceLoadStatistics->invalidateAndCancel();
 #endif
-    m_storageManager->close();
     m_cacheEngine = nullptr;
 #if ASSERT_ENABLED
     m_isInvalidated = true;
@@ -231,11 +230,11 @@ void NetworkSession::destroyPrivateClickMeasurementStore(CompletionHandler<void(
 }
 
 #if ENABLE(TRACKING_PREVENTION)
-void NetworkSession::setResourceLoadStatisticsEnabled(bool enable)
+void NetworkSession::setTrackingPreventionEnabled(bool enable)
 {
     ASSERT(!m_isInvalidated);
     if (auto* storageSession = networkStorageSession())
-        storageSession->setResourceLoadStatisticsEnabled(enable);
+        storageSession->setTrackingPreventionEnabled(enable);
     if (!enable) {
         destroyResourceLoadStatistics([] { });
         return;
@@ -264,7 +263,7 @@ void NetworkSession::forwardResourceLoadStatisticsSettings()
     m_resourceLoadStatistics->setStandaloneApplicationDomain(m_standaloneApplicationDomain, [] { });
 }
 
-bool NetworkSession::isResourceLoadStatisticsEnabled() const
+bool NetworkSession::isTrackingPreventionEnabled() const
 {
     return !!m_resourceLoadStatistics;
 }
@@ -323,20 +322,14 @@ void NetworkSession::setShouldEnbleSameSiteStrictEnforcement(WebCore::SameSiteSt
 
 void NetworkSession::setFirstPartyHostCNAMEDomain(String&& firstPartyHost, WebCore::RegistrableDomain&& cnameDomain)
 {
-#if HAVE(CFNETWORK_CNAME_AND_COOKIE_TRANSFORM_SPI)
     ASSERT(!firstPartyHost.isEmpty() && !cnameDomain.isEmpty() && firstPartyHost != cnameDomain.string());
     if (firstPartyHost.isEmpty() || cnameDomain.isEmpty() || firstPartyHost == cnameDomain.string())
         return;
     m_firstPartyHostCNAMEDomains.add(WTFMove(firstPartyHost), WTFMove(cnameDomain));
-#else
-    UNUSED_PARAM(firstPartyHost);
-    UNUSED_PARAM(cnameDomain);
-#endif
 }
 
 std::optional<WebCore::RegistrableDomain> NetworkSession::firstPartyHostCNAMEDomain(const String& firstPartyHost)
 {
-#if HAVE(CFNETWORK_CNAME_AND_COOKIE_TRANSFORM_SPI)
     if (!decltype(m_firstPartyHostCNAMEDomains)::isValidKey(firstPartyHost))
         return std::nullopt;
 
@@ -344,16 +337,34 @@ std::optional<WebCore::RegistrableDomain> NetworkSession::firstPartyHostCNAMEDom
     if (iterator == m_firstPartyHostCNAMEDomains.end())
         return std::nullopt;
     return iterator->value;
-#else
-    UNUSED_PARAM(firstPartyHost);
-    return std::nullopt;
-#endif
 }
 
-void NetworkSession::resetCNAMEDomainData()
+void NetworkSession::resetFirstPartyDNSData()
 {
     m_firstPartyHostCNAMEDomains.clear();
+    m_firstPartyHostIPAddresses.clear();
     m_thirdPartyCNAMEDomainForTesting = std::nullopt;
+}
+
+void NetworkSession::setFirstPartyHostIPAddress(const String& firstPartyHost, const String& addressString)
+{
+    if (firstPartyHost.isEmpty() || addressString.isEmpty())
+        return;
+
+    if (auto address = WebCore::IPAddress::fromString(addressString))
+        m_firstPartyHostIPAddresses.set(firstPartyHost, WTFMove(*address));
+}
+
+std::optional<WebCore::IPAddress> NetworkSession::firstPartyHostIPAddress(const String& firstPartyHost)
+{
+    if (firstPartyHost.isEmpty())
+        return std::nullopt;
+
+    auto iterator = m_firstPartyHostIPAddresses.find(firstPartyHost);
+    if (iterator == m_firstPartyHostIPAddresses.end())
+        return std::nullopt;
+
+    return { iterator->value };
 }
 #endif // ENABLE(TRACKING_PREVENTION)
 
@@ -361,7 +372,7 @@ void NetworkSession::storePrivateClickMeasurement(WebCore::PrivateClickMeasureme
 {
     if (m_isRunningEphemeralMeasurementTest)
         unattributedPrivateClickMeasurement.setEphemeral(WebCore::PCM::AttributionEphemeral::Yes);
-    if (unattributedPrivateClickMeasurement.isEphemeral()) {
+    if (unattributedPrivateClickMeasurement.isEphemeral() == WebCore::PCM::AttributionEphemeral::Yes) {
         m_ephemeralMeasurement = WTFMove(unattributedPrivateClickMeasurement);
         return;
     }
@@ -647,8 +658,12 @@ SWServer& NetworkSession::ensureSWServer()
             ServiceWorkerSoftUpdateLoader::start(this, WTFMove(jobData), shouldRefreshCache, WTFMove(request), WTFMove(completionHandler));
         }, [this](auto& registrableDomain, std::optional<ProcessIdentifier> requestingProcessIdentifier, std::optional<ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, auto&& completionHandler) {
             ASSERT(!registrableDomain.isEmpty());
-            m_networkProcess->parentProcessConnection()->sendWithAsyncReply(Messages::NetworkProcessProxy::EstablishRemoteWorkerContextConnectionToNetworkProcess { RemoteWorkerType::ServiceWorker, registrableDomain, requestingProcessIdentifier, serviceWorkerPageIdentifier, m_sessionID }, WTFMove(completionHandler), 0);
-        }, WTFMove(appBoundDomainsCallback));
+            m_networkProcess->parentProcessConnection()->sendWithAsyncReply(Messages::NetworkProcessProxy::EstablishRemoteWorkerContextConnectionToNetworkProcess { RemoteWorkerType::ServiceWorker, registrableDomain, requestingProcessIdentifier, serviceWorkerPageIdentifier, m_sessionID }, [completionHandler = WTFMove(completionHandler)] (auto) mutable {
+                completionHandler();
+            }, 0);
+        }, WTFMove(appBoundDomainsCallback), [this](auto webProcessIdentifier, auto&& firstPartyForCookies) {
+            m_networkProcess->addAllowedFirstPartyForCookies(webProcessIdentifier, WTFMove(firstPartyForCookies));
+        });
     }
     return *m_swServer;
 }
@@ -691,5 +706,16 @@ void NetworkSession::setEmulatedConditions(std::optional<int64_t>&& bytesPerSeco
 }
 
 #endif // ENABLE(INSPECTOR_NETWORK_THROTTLING)
+
+bool NetworkSession::needsAdditionalNetworkConnectionIntegritySettings(const ResourceRequest& request)
+{
+    if (request.isThirdParty())
+        return false;
+
+    if (request.url().host() == request.firstPartyForCookies().host())
+        return false;
+
+    return true;
+}
 
 } // namespace WebKit

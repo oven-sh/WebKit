@@ -84,8 +84,8 @@
 #define WEBLOADERSTRATEGY_RELEASE_LOG_ERROR_BASIC(fmt, ...) RELEASE_LOG_ERROR(Network, "%p - WebLoaderStrategy::" fmt, this, ##__VA_ARGS__)
 
 #define WEBLOADERSTRATEGY_RELEASE_LOG_STANDARD_TEMPLATE "%p - [resourceLoader=%p, frameLoader=%p, frame=%p, webPageID=%" PRIu64 ", frameID=%" PRIu64 ", resourceID=%" PRIu64 "] WebLoaderStrategy::"
-#define WEBLOADERSTRATEGY_RELEASE_LOG_STANDARD_PARAMETERS this, &resourceLoader, resourceLoader.frameLoader(), resourceLoader.frame(), trackingParameters.pageID.toUInt64(), trackingParameters.frameID.toUInt64(), trackingParameters.resourceID.toUInt64()
-#define WEBLOADERSTRATEGY_WITH_FRAMELOADER_RELEASE_LOG_STANDARD_PARAMETERS this, nullptr, &frameLoader, &frameLoader.frame(), trackingParameters.pageID.toUInt64(), trackingParameters.frameID.toUInt64(), trackingParameters.resourceID.toUInt64()
+#define WEBLOADERSTRATEGY_RELEASE_LOG_STANDARD_PARAMETERS this, &resourceLoader, resourceLoader.frameLoader(), resourceLoader.frame(), trackingParameters.pageID.toUInt64(), trackingParameters.frameID.object().toUInt64(), trackingParameters.resourceID.toUInt64()
+#define WEBLOADERSTRATEGY_WITH_FRAMELOADER_RELEASE_LOG_STANDARD_PARAMETERS this, nullptr, &frameLoader, &frameLoader.frame(), trackingParameters.pageID.toUInt64(), trackingParameters.frameID.object().toUInt64(), trackingParameters.resourceID.toUInt64()
 
 #define WEBLOADERSTRATEGY_RELEASE_LOG(fmt, ...) RELEASE_LOG(Network, WEBLOADERSTRATEGY_RELEASE_LOG_STANDARD_TEMPLATE fmt, WEBLOADERSTRATEGY_RELEASE_LOG_STANDARD_PARAMETERS, ##__VA_ARGS__)
 #define WEBLOADERSTRATEGY_RELEASE_LOG_ERROR(fmt, ...) RELEASE_LOG_ERROR(Network, WEBLOADERSTRATEGY_RELEASE_LOG_STANDARD_TEMPLATE fmt, WEBLOADERSTRATEGY_RELEASE_LOG_STANDARD_PARAMETERS, ##__VA_ARGS__)
@@ -118,7 +118,7 @@ void WebLoaderStrategy::loadResource(Frame& frame, CachedResource& resource, Res
         if (loader)
             scheduleLoad(*loader, resource.get(), referrerPolicy == ReferrerPolicy::NoReferrerWhenDowngrade);
         else
-            RELEASE_LOG(Network, "%p - [webPageID=%" PRIu64 ", frameID=%" PRIu64 "] WebLoaderStrategy::loadResource: Unable to create SubresourceLoader", this, valueOrDefault(frame->pageID()).toUInt64(), valueOrDefault(frame->frameID()).toUInt64());
+            RELEASE_LOG(Network, "%p - [webPageID=%" PRIu64 ", frameID=%" PRIu64 "] WebLoaderStrategy::loadResource: Unable to create SubresourceLoader", this, valueOrDefault(frame->pageID()).toUInt64(), frame->frameID().object().toUInt64());
         completionHandler(WTFMove(loader));
     });
 }
@@ -176,7 +176,9 @@ void WebLoaderStrategy::scheduleLoad(ResourceLoader& resourceLoader, CachedResou
     auto identifier = resourceLoader.identifier();
     ASSERT(identifier);
 
-    auto& frameLoaderClient = resourceLoader.frameLoader()->client();
+    auto* frameLoader = resourceLoader.frameLoader();
+    ASSERT(frameLoader);
+    auto& frameLoaderClient = frameLoader->client();
 
     WebResourceLoader::TrackingParameters trackingParameters;
     if (auto* webFrameLoaderClient = toWebFrameLoaderClient(frameLoaderClient))
@@ -184,7 +186,7 @@ void WebLoaderStrategy::scheduleLoad(ResourceLoader& resourceLoader, CachedResou
     else if (is<RemoteWorkerFrameLoaderClient>(frameLoaderClient))
         trackingParameters.webPageProxyID = downcast<RemoteWorkerFrameLoaderClient>(frameLoaderClient).webPageProxyID();
     trackingParameters.pageID = valueOrDefault(frameLoaderClient.pageID());
-    trackingParameters.frameID = valueOrDefault(frameLoaderClient.frameID());
+    trackingParameters.frameID = frameLoader->frameID();
     trackingParameters.resourceID = identifier;
 
 #if ENABLE(WEB_ARCHIVE) || ENABLE(MHTML)
@@ -484,8 +486,12 @@ void WebLoaderStrategy::scheduleLoadFromNetworkProcess(ResourceLoader& resourceL
 
     if (resourceLoader.options().mode == FetchOptions::Mode::Navigate) {
         Vector<RefPtr<SecurityOrigin>> frameAncestorOrigins;
-        for (auto* frame = resourceLoader.frame()->tree().parent(); frame; frame = frame->tree().parent())
-            frameAncestorOrigins.append(&frame->document()->securityOrigin());
+        for (auto* frame = resourceLoader.frame()->tree().parent(); frame; frame = frame->tree().parent()) {
+            auto* localFrame = dynamicDowncast<LocalFrame>(frame);
+            if (!localFrame)
+                continue;
+            frameAncestorOrigins.append(&localFrame->document()->securityOrigin());
+        }
         loadParameters.frameAncestorOrigins = WTFMove(frameAncestorOrigins);
     }
 

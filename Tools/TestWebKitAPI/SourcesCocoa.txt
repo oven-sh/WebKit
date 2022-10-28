@@ -63,7 +63,7 @@ Tests/WebKitCocoa/BundleParameters.mm
 Tests/WebKitCocoa/BundleRangeHandle.mm
 Tests/WebKitCocoa/CSSViewportUnits.mm
 Tests/WebKitCocoa/CancelFontSubresource.mm
-Tests/WebKitCocoa/CaptivePortalModeFonts.mm
+Tests/WebKitCocoa/LockdownModeFonts.mm
 Tests/WebKitCocoa/Challenge.mm
 Tests/WebKitCocoa/ClickAutoFillButton.mm
 Tests/WebKitCocoa/ClipboardTests.mm
@@ -227,6 +227,7 @@ Tests/WebKitCocoa/SessionStorage.mm
 Tests/WebKitCocoa/ShouldGoToBackForwardListItem.mm
 Tests/WebKitCocoa/ShouldOpenExternalURLsInNewWindowActions.mm
 Tests/WebKitCocoa/ShrinkToFit.mm
+Tests/WebKitCocoa/SiteIsolation.mm
 Tests/WebKitCocoa/SnapshotStore.mm
 Tests/WebKitCocoa/SpeechRecognition.mm
 Tests/WebKitCocoa/StopSuspendResumeAllMedia.mm
@@ -280,6 +281,8 @@ Tests/WebKitCocoa/WKRequestActivatedElementInfo.mm
 Tests/WebKitCocoa/WKURLSchemeHandler-1.mm
 Tests/WebKitCocoa/WKURLSchemeHandler-leaks.mm
 Tests/WebKitCocoa/WKWebExtension.mm
+Tests/WebKitCocoa/WKWebExtensionContext.mm
+Tests/WebKitCocoa/WKWebExtensionController.mm
 Tests/WebKitCocoa/WKWebExtensionMatchPattern.mm
 Tests/WebKitCocoa/WKWebViewAlwaysShowsScroller.mm
 Tests/WebKitCocoa/WKWebViewCandidateTests.mm
@@ -306,7 +309,6 @@ Tests/WebKitCocoa/WKWebViewUnderPageBackgroundColor.mm
 Tests/WebKitCocoa/WKWebsiteDatastore.mm
 Tests/WebKitCocoa/WebContentProcessDidTerminate.mm
 Tests/WebKitCocoa/WebCryptoMasterKey.mm
-Tests/WebKitCocoa/WebGLPolicy.mm
 Tests/WebKitCocoa/WebLocks.mm
 Tests/WebKitCocoa/WebProcessKillIDBCleanup.mm
 Tests/WebKitCocoa/WebProcessTerminate.mm

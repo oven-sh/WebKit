@@ -371,6 +371,7 @@ public:
     float specifiedFontSize() const;
     float computedFontSize() const;
     unsigned computedFontPixelSize() const;
+    std::optional<float> fontSizeAdjust() const { return fontDescription().fontSizeAdjust(); }
     std::pair<FontOrientation, NonCJKGlyphOrientation> fontAndGlyphOrientation();
 
     FontVariationSettings fontVariationSettings() const { return fontDescription().variationSettings(); }
@@ -604,6 +605,8 @@ public:
     GridAutoFlow gridAutoFlow() const { return static_cast<GridAutoFlow>(m_rareNonInheritedData->grid->gridAutoFlow); }
     bool gridSubgridRows() const { return m_rareNonInheritedData->grid->subgridRows(); }
     bool gridSubgridColumns() const { return m_rareNonInheritedData->grid->subgridColumns(); }
+    bool gridMasonryRows() const { return m_rareNonInheritedData->grid->masonryRows(); }
+    bool gridMasonryColumns() const { return m_rareNonInheritedData->grid->masonryColumns(); }
     bool isGridAutoFlowDirectionRow() const { return (m_rareNonInheritedData->grid->gridAutoFlow & InternalAutoFlowDirectionRow); }
     bool isGridAutoFlowDirectionColumn() const { return (m_rareNonInheritedData->grid->gridAutoFlow & InternalAutoFlowDirectionColumn); }
     bool isGridAutoFlowAlgorithmSparse() const { return (m_rareNonInheritedData->grid->gridAutoFlow & InternalAutoFlowAlgorithmSparse); }
@@ -1019,6 +1022,7 @@ public:
 
     // Only used for blending font sizes when animating, for MathML anonymous blocks, and for text autosizing.
     void setFontSize(float);
+    void setFontSizeAdjust(std::optional<float>);
 
     void setFontVariationSettings(FontVariationSettings);
     void setFontWeight(FontSelectionValue);
@@ -2463,7 +2467,8 @@ inline bool RenderStyle::isDisplayBlockType(DisplayType display)
 {
     return display == DisplayType::Block || display == DisplayType::Table
         || display == DisplayType::FlowRoot || display == DisplayType::Grid
-        || display == DisplayType::Flex || display == DisplayType::ListItem;
+        || display == DisplayType::Flex || display == DisplayType::Box
+        || display == DisplayType::ListItem;
 }
 
 inline bool RenderStyle::setWritingMode(WritingMode v)

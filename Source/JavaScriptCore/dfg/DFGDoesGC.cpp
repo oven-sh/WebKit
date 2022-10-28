@@ -341,6 +341,7 @@ bool doesGC(Graph& graph, Node* node)
     case ResolveScopeForHoistingFuncDeclInEval:
     case Return:
     case StringCharAt:
+    case StringLocaleCompare:
     case TailCall:
     case TailCallForwardVarargs:
     case TailCallForwardVarargsInlinedCaller:
@@ -363,6 +364,7 @@ bool doesGC(Graph& graph, Node* node)
     case ObjectCreate:
     case ObjectKeys:
     case ObjectGetOwnPropertyNames:
+    case ObjectToString:
     case AllocatePropertyStorage:
     case ReallocatePropertyStorage:
     case Arrayify:

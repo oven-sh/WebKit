@@ -1051,10 +1051,8 @@ bool Internals::isImageAnimating(HTMLImageElement& element)
 
 void Internals::setImageAnimationEnabled(bool enabled)
 {
-    if (auto* page = contextDocument() ? contextDocument()->page() : nullptr) {
-        if (page->settings().imageAnimationControlEnabled())
-            page->setImageAnimationEnabled(enabled);
-    }
+    if (auto* page = contextDocument() ? contextDocument()->page() : nullptr)
+        page->setImageAnimationEnabled(enabled);
 }
 
 void Internals::resumeImageAnimation(HTMLImageElement& element)
@@ -1222,8 +1220,11 @@ ExceptionOr<void> Internals::suspendAnimations() const
         return Exception { InvalidAccessError };
 
     document->ensureTimelinesController().suspendAnimations();
-    for (Frame* frame = document->frame(); frame; frame = frame->tree().traverseNext()) {
-        if (Document* document = frame->document())
+    for (AbstractFrame* frame = document->frame(); frame; frame = frame->tree().traverseNext()) {
+        auto* localFrame = dynamicDowncast<LocalFrame>(frame);
+        if (!localFrame)
+            continue;
+        if (auto* document = localFrame->document())
             document->ensureTimelinesController().suspendAnimations();
     }
 
@@ -1237,8 +1238,11 @@ ExceptionOr<void> Internals::resumeAnimations() const
         return Exception { InvalidAccessError };
 
     document->ensureTimelinesController().resumeAnimations();
-    for (Frame* frame = document->frame(); frame; frame = frame->tree().traverseNext()) {
-        if (Document* document = frame->document())
+    for (AbstractFrame* frame = document->frame(); frame; frame = frame->tree().traverseNext()) {
+        auto* localFrame = dynamicDowncast<LocalFrame>(frame);
+        if (!localFrame)
+            continue;
+        if (auto* document = localFrame->document())
             document->ensureTimelinesController().resumeAnimations();
     }
 
@@ -2320,7 +2324,7 @@ ExceptionOr<void> Internals::setDelegatesScrolling(bool enabled)
     if (!document || !document->view() || !document->page() || &document->page()->mainFrame() != document->frame())
         return Exception { InvalidAccessError };
 
-    document->view()->setDelegatesScrolling(enabled);
+    document->view()->setDelegatedScrollingMode(enabled ? DelegatedScrollingMode::DelegatedToNativeScrollView : DelegatedScrollingMode::NotDelegated);
     return { };
 }
 
@@ -2868,7 +2872,7 @@ bool Internals::isElementAlive(uint64_t elementIdentifier) const
 uint64_t Internals::frameIdentifier(const Document& document) const
 {
     if (auto* page = document.page())
-        return valueOrDefault(page->mainFrame().loader().frameID()).toUInt64();
+        return page->mainFrame().loader().frameID().object().toUInt64();
     return 0;
 }
 
@@ -2931,9 +2935,15 @@ unsigned Internals::numberOfScrollableAreas()
     if (frame->view()->scrollableAreas())
         count += frame->view()->scrollableAreas()->size();
 
-    for (Frame* child = frame->tree().firstChild(); child; child = child->tree().nextSibling()) {
-        if (child->view() && child->view()->scrollableAreas())
-            count += child->view()->scrollableAreas()->size();
+    for (AbstractFrame* child = frame->tree().firstChild(); child; child = child->tree().nextSibling()) {
+        auto* localChild = dynamicDowncast<LocalFrame>(child);
+        if (!localChild)
+            continue;
+        auto* frameView = localChild->view();
+        if (!frameView)
+            continue;
+        if (frameView->scrollableAreas())
+            count += frameView->scrollableAreas()->size();
     }
 
     return count;
@@ -4277,6 +4287,17 @@ ExceptionOr<Ref<DOMRect>> Internals::selectionBounds()
     return DOMRect::create(document->frame()->selection().selectionBounds());
 }
 
+ExceptionOr<RefPtr<StaticRange>> Internals::selectedRange()
+{
+    RefPtr document = contextDocument();
+    if (!document)
+        return Exception { InvalidAccessError };
+    auto range = contextDocument()->selection().selection().range();
+    if (!range)
+        return nullptr;
+    return RefPtr { StaticRange::create(*range) };
+}
+
 void Internals::setSelectionWithoutValidation(Ref<Node> baseNode, unsigned baseOffset, RefPtr<Node> extentNode, unsigned extentOffset)
 {
     contextDocument()->frame()->selection().moveTo(
@@ -4765,16 +4786,18 @@ ExceptionOr<RefPtr<VTTCue>> Internals::mediaElementCurrentlySpokenCue(HTMLMediaE
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
 void Internals::setMockMediaPlaybackTargetPickerEnabled(bool enabled)
 {
-    Page* page = contextDocument()->frame()->page();
-    ASSERT(page);
+    auto frame = this->frame();
+    if (!frame || !frame->page())
+        return;
 
-    page->setMockMediaPlaybackTargetPickerEnabled(enabled);
+    frame->page()->setMockMediaPlaybackTargetPickerEnabled(enabled);
 }
 
 ExceptionOr<void> Internals::setMockMediaPlaybackTargetPickerState(const String& deviceName, const String& deviceState)
 {
-    Page* page = contextDocument()->frame()->page();
-    ASSERT(page);
+    auto frame = this->frame();
+    if (!frame || !frame->page())
+        return Exception { InvalidAccessError };
 
     MediaPlaybackTargetContext::MockState state = MediaPlaybackTargetContext::MockState::Unknown;
 
@@ -4787,18 +4810,18 @@ ExceptionOr<void> Internals::setMockMediaPlaybackTargetPickerState(const String&
     else
         return Exception { InvalidAccessError };
 
-    page->setMockMediaPlaybackTargetPickerState(deviceName, state);
+    frame->page()->setMockMediaPlaybackTargetPickerState(deviceName, state);
     return { };
 }
 
 void Internals::mockMediaPlaybackTargetPickerDismissPopup()
 {
-    auto* page = contextDocument()->frame()->page();
-    ASSERT(page);
+    auto frame = this->frame();
+    if (!frame || !frame->page())
+        return;
 
-    page->mockMediaPlaybackTargetPickerDismissPopup();
+    frame->page()->mockMediaPlaybackTargetPickerDismissPopup();
 }
-
 #endif
 
 ExceptionOr<Ref<MockPageOverlay>> Internals::installMockPageOverlay(PageOverlayType type)
@@ -5180,9 +5203,9 @@ String Internals::resourceLoadStatisticsForURL(const DOMURL& url)
     return ResourceLoadObserver::shared().statisticsForURL(url.href());
 }
 
-void Internals::setResourceLoadStatisticsEnabled(bool enable)
+void Internals::setTrackingPreventionEnabled(bool enable)
 {
-    DeprecatedGlobalSettings::setResourceLoadStatisticsEnabled(enable);
+    DeprecatedGlobalSettings::setTrackingPreventionEnabled(enable);
 }
 
 String Internals::composedTreeAsText(Node& node)
@@ -6402,6 +6425,19 @@ bool Internals::hasSandboxMachLookupAccessToXPCServiceName(const String& process
 #endif
 }
 
+bool Internals::hasSandboxUnixSyscallAccess(const String& process, unsigned syscall) const
+{
+#if PLATFORM(COCOA)
+    RELEASE_ASSERT(process == "com.apple.WebKit.WebContent"_s);
+    auto pid = getpid();
+    return !sandbox_check(pid, "syscall-unix", static_cast<enum sandbox_filter_type>(SANDBOX_FILTER_SYSCALL_NUMBER | SANDBOX_CHECK_NO_REPORT), syscall);
+#else
+    UNUSED_PARAM(process);
+    UNUSED_PARAM(syscall);
+    return false;
+#endif
+}
+
 String Internals::windowLocationHost(DOMWindow& window)
 {
     return window.location().host();
@@ -6912,4 +6948,11 @@ void Internals::avoidIOSurfaceSizeCheckInWebProcess(HTMLCanvasElement& element)
     HTMLCanvasElement::setMaxPixelMemoryForTesting(UINT_MAX);
     element.setAvoidIOSurfaceSizeCheckInWebProcessForTesting();
 }
+
+bool Internals::hasSleepDisabler() const
+{
+    auto* document = contextDocument();
+    return document ? document->hasSleepDisabler() : false;
+}
+
 } // namespace WebCore

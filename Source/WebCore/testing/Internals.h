@@ -120,6 +120,7 @@ class SerializedScriptValue;
 class SharedBuffer;
 class SourceBuffer;
 class SpeechSynthesisUtterance;
+class StaticRange;
 class StringCallback;
 class StyleSheet;
 class TextIterator;
@@ -738,6 +739,7 @@ public:
 #endif
 
     ExceptionOr<Ref<DOMRect>> selectionBounds();
+    ExceptionOr<RefPtr<StaticRange>> selectedRange();
     void setSelectionWithoutValidation(Ref<Node> baseNode, unsigned baseOffset, RefPtr<Node> extentNode, unsigned extentOffset);
 
     ExceptionOr<bool> isPluginUnavailabilityIndicatorObscured(Element&);
@@ -827,7 +829,7 @@ public:
     void setShowAllPlugins(bool);
 
     String resourceLoadStatisticsForURL(const DOMURL&);
-    void setResourceLoadStatisticsEnabled(bool);
+    void setTrackingPreventionEnabled(bool);
 
     bool isReadableStreamDisturbed(JSC::JSGlobalObject&, JSC::JSValue);
     JSC::JSValue cloneArrayBuffer(JSC::JSGlobalObject&, JSC::JSValue, JSC::JSValue, JSC::JSValue);
@@ -1237,7 +1239,8 @@ public:
     bool hasSandboxMachLookupAccessToGlobalName(const String& process, const String& service);
     bool hasSandboxMachLookupAccessToXPCServiceName(const String& process, const String& service);
     bool hasSandboxIOKitOpenAccessToClass(const String& process, const String& ioKitClass);
-
+    bool hasSandboxUnixSyscallAccess(const String& process, unsigned syscall) const;
+        
     String highlightPseudoElementColor(const AtomString& highlightName, Element&);
 
     String windowLocationHost(DOMWindow&);
@@ -1347,6 +1350,7 @@ public:
 #endif
 
     void avoidIOSurfaceSizeCheckInWebProcess(HTMLCanvasElement&);
+    bool hasSleepDisabler() const;
 
 private:
     explicit Internals(Document&);

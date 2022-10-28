@@ -17,6 +17,7 @@ headers: "StructHeader.h" "FirstMemberType.h" "SecondMemberType.h"
     [ReturnEarlyIfTrue] bool isNull
     int a
     bool b
+    [SecureCodingAllowed=[NSArray.class, PAL::getDDScannerResultClass()]] RetainPtr<NSArray> dataDetectorResults;
 }
 
 [Return=Ref] class Namespace::ReturnRefClass {
@@ -47,12 +48,22 @@ class WithoutNamespace {
 }
 
 class WebCore::InheritsFrom : WithoutNamespace {
-    int b;
+    float b;
+}
+
+class WebCore::InheritanceGrandchild : WebCore::InheritsFrom {
+    double c;
 }
 
 #if ENABLE(BOOL_ENUM)
 enum class EnumNamespace::BoolEnumType : bool
 #endif
+
+enum class EnumWithoutNamespace : uint8_t {
+    Value1,
+    Value2,
+    Value3
+}
 
 #if ENABLE(UINT16_ENUM)
 enum class EnumNamespace::EnumType : uint16_t {
@@ -69,4 +80,12 @@ enum class EnumNamespace::EnumType : uint16_t {
     OptionSetSecondValue,
 #endif
     OptionSetThirdValue
+}
+
+class WTF::Seconds {
+    double value()
+}
+
+[CreateUsing=fromDouble] class WTF::CreateUsingClass {
+    double value
 }

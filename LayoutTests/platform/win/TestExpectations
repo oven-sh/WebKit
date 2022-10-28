@@ -147,6 +147,9 @@ webkit.org/b/185076 css3/color-filters [ Skip ]
 # The Screen Wake Lock API is not supportted in WebKit1.
 imported/w3c/web-platform-tests/screen-wake-lock [ Skip ]
 
+# The Screen Orientation API is not supportted in WebKit1.
+imported/w3c/web-platform-tests/screen-orientation [ Skip ]
+
 # IntersectionObserver is off by default
 webkit.org/b/188613 intersection-observer [ Skip ]
 webkit.org/b/188613 http/tests/intersection-observer [ Skip ]
@@ -172,8 +175,12 @@ http/tests/referrer-policy-img/unsafe-url/cross-origin-http.https.html [ Skip ]
 # Tests that rely on custom domain names.
 imported/w3c/web-platform-tests/html/browsers/browsing-the-web/overlapping-navigations-and-traversals/tentative/nav-cancelation-2.sub.html [ Skip ]
 
+http/wpt/webcodecs [ Skip ]
+imported/w3c/web-platform-tests/webcodecs [ Skip ]
+
 # Shared workers are only implemented for WebKit2.
 http/tests/navigation/page-cache-shared-worker.html [ Skip ]
+http/tests/workers/shared [ Skip ]
 imported/w3c/web-platform-tests/content-security-policy/connect-src/shared-worker-connect-src-allowed.sub.html [ Skip ]
 imported/w3c/web-platform-tests/content-security-policy/connect-src/shared-worker-connect-src-blocked.sub.html [ Skip ]
 imported/w3c/web-platform-tests/content-security-policy/gen/top.http-rp/script-src-self/sharedworker-classic.http.html [ Skip ]
@@ -1802,7 +1809,6 @@ webkit.org/b/193371 accessibility/set-selected-editable.html [ Skip ]
 webkit.org/b/140798 accessibility/aria-expanded-supported-roles.html [ Skip ]
 
 # The following timeouts are caused by the same problem: [ Failure ]
-webkit.org/b/126066 accessibility/loading-iframe-updates-axtree.html [ Skip ]
 webkit.org/b/140798 accessibility/aria-hidden-false-works-in-subtrees.html [ Skip ]
 
 # The following fail because of missing numerical output support.
@@ -1810,6 +1816,7 @@ webkit.org/b/140832 [ Release ] accessibility/aria-slider-value-change.html [ Fa
 webkit.org/b/140832 [ Debug ] accessibility/aria-slider-value-change.html [ Skip ] # Debug assertion
 webkit.org/b/140832 [ Release ] accessibility/aria-slider-value.html [ Failure ]
 webkit.org/b/140832 [ Debug ] accessibility/aria-slider-value.html [ Skip ] # Debug assertion
+webkit.org/b/140832 accessibility/appearance-none-meter-and-progress-elements.html [ Skip ]
 webkit.org/b/140832 [ Release ] accessibility/meter-element.html [ Failure ]
 webkit.org/b/140832 [ Debug ] accessibility/meter-element.html [ Skip ] # Debug assertion
 webkit.org/b/140832 [ Release ] accessibility/progressbar.html [ Failure ]
@@ -2237,6 +2244,7 @@ imported/mozilla/svg/svg-effects-area-unzoomed.xhtml
 imported/mozilla/svg/svg-effects-area-zoomed-in.xhtml
 imported/mozilla/svg/svg-effects-area-zoomed-out.xhtml
 svg/filters/feImage-self-and-other-referencing.html
+svg/filters/feDisplacementMap-filterUnits.svg [ ImageOnlyFailure ]
 
 # GCController.collect() issues.
 svg/animations/svglength-element-removed-crash.svg [ Failure ]
@@ -2516,6 +2524,9 @@ http/tests/security/contentSecurityPolicy/block-mixed-content-hides-warning.html
 http/tests/security/contentSecurityPolicy/object-src-url-allowed.html [ Failure ]
 http/tests/security/contentSecurityPolicy/object-src-url-blocked.html [ Failure ]
 http/tests/security/contentSecurityPolicy/script-src-star-cross-scheme.html [ Failure ]
+http/tests/security/contentSecurityPolicy/prefetch-src/prefetch-allowed.html [ Skip ]
+http/tests/security/contentSecurityPolicy/prefetch-src/prefetch-blocked.html [ Skip ]
+http/tests/security/contentSecurityPolicy/prefetch-src/prefetch-blocked-by-default.html [ Skip ]
 
 # Crashes
 http/tests/misc/drag-not-loaded-image.html [ Skip ] # Crash
@@ -5143,6 +5154,8 @@ fast/custom-elements/perform-microtask-checkpoint-before-construction-xml-parser
 fast/custom-elements/throw-on-dynamic-markup-insertion-counter-construct-xml-parser.xhtml [ Skip ]
 fast/custom-elements/throw-on-dynamic-markup-insertion-counter-reactions-xml-parser.xhtml [ Skip ]
 
+webkit.org/b/246470 http/wpt/selection-live-range [ Skip ]
+
 # css3-text failures.
 fast/css3-text/font-synthesis.html [ ImageOnlyFailure ]
 fast/css3-text/css3-text-decoration/repaint/underline-outside-of-layout-rect-removed.html [ ImageOnlyFailure ]
@@ -5165,6 +5178,23 @@ webkit.org/b/243648 scrollbars/transparent-scrollbar.html [ ImageOnlyFailure ]
 
 webkit.org/b/243992 fast/text/punctuation-break-all.html [ ImageOnlyFailure ]
 
+webkit.org/b/246536 accessibility/table-row-role-changes.html [ Skip ]
+
+webkit.org/b/246537 fast/block/positioning/border-change-relayout-test.html [ Skip ]
+
+webkit.org/b/246544 fast/events/mouse-cursor-multiframecur.html [ Failure ]
+
 webkit.org/b/142087 fast/css3-text/css3-text-decoration/text-decoration-skip/text-decoration-skip-ink-inherit.html [ ImageOnlyFailure ]
 webkit.org/b/142087 fast/css3-text/css3-text-decoration/no-gap-between-two-rounded-textboxes.html [ ImageOnlyFailure ]
 
+# webkit.org/b/246869 REGRESSION(255399@main-255410@main): [ Win EWS ] 10X CSS Layout-tests are constant ImageOnlyFailures
+css3/filters/effect-blur.html [ ImageOnlyFailure ]
+css3/filters/effect-combined.html [ ImageOnlyFailure ]
+css3/filters/effect-contrast.html [ ImageOnlyFailure ]
+css3/filters/effect-grayscale.html [ ImageOnlyFailure ]
+css3/filters/effect-hue-rotate.html [ ImageOnlyFailure ]
+css3/filters/effect-invert.html [ ImageOnlyFailure ]
+css3/filters/effect-opacity.html [ ImageOnlyFailure ]
+css3/filters/effect-saturate.html [ ImageOnlyFailure ]
+css3/filters/effect-sepia.html [ ImageOnlyFailure ]
+fast/css/aspect-ratio-min-height-replaced.html [ ImageOnlyFailure ]

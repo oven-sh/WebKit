@@ -810,6 +810,7 @@ typedef (FetchRequest or FetchResponse) FetchObject;
     boolean isPluginSnapshotted(Element element);
 
     DOMRect selectionBounds();
+    StaticRange? selectedRange();
     undefined setSelectionWithoutValidation(Node baseNode, unsigned long baseOffset, Node? extentNode, unsigned long extentOffset);
 
     [Conditional=MEDIA_SOURCE] undefined initializeMockMediaSource();
@@ -892,7 +893,7 @@ typedef (FetchRequest or FetchResponse) FetchObject;
     [CallWith=CurrentGlobalObject] boolean isReadableStreamDisturbed(any stream);
 
     DOMString resourceLoadStatisticsForURL(DOMURL url);
-    undefined setResourceLoadStatisticsEnabled(boolean enable);
+    undefined setTrackingPreventionEnabled(boolean enable);
 
     undefined setCanShowModalDialogOverride(boolean allow);
 
@@ -1102,6 +1103,7 @@ typedef (FetchRequest or FetchResponse) FetchObject;
     boolean hasSandboxMachLookupAccessToGlobalName(DOMString process, DOMString service);
     boolean hasSandboxMachLookupAccessToXPCServiceName(DOMString process, DOMString service);
     boolean hasSandboxIOKitOpenAccessToClass(DOMString process, DOMString ioKitClass);
+    boolean hasSandboxUnixSyscallAccess(DOMString process, unsigned long syscall);
 
     DOMString systemColorForCSSValue(DOMString cssValue, boolean useDarkModeAppearance, boolean useElevatedUserInterfaceLevel);
     DOMString focusRingColor();
@@ -1171,4 +1173,6 @@ typedef (FetchRequest or FetchResponse) FetchObject;
     [Conditional=ARKIT_INLINE_PREVIEW_MAC] Promise<sequence<DOMString>> modelInlinePreviewUUIDs();
     [Conditional=ARKIT_INLINE_PREVIEW_MAC] DOMString modelInlinePreviewUUIDForModelElement(HTMLModelElement modelElement);
     undefined avoidIOSurfaceSizeCheckInWebProcess(HTMLCanvasElement element);
+
+    boolean hasSleepDisabler();
 };

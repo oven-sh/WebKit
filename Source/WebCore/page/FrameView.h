@@ -162,6 +162,10 @@ public:
     void setNeedsOneShotDrawingSynchronization();
 
     WEBCORE_EXPORT GraphicsLayer* graphicsLayerForPlatformWidget(PlatformWidget);
+    WEBCORE_EXPORT GraphicsLayer* graphicsLayerForPageScale();
+#if HAVE(RUBBER_BANDING)
+    WEBCORE_EXPORT GraphicsLayer* graphicsLayerForTransientZoomShadow();
+#endif
 
     WEBCORE_EXPORT TiledBacking* tiledBacking() const;
 
@@ -785,7 +789,7 @@ private:
     void scrollToFocusedElementTimerFired();
     void scrollToFocusedElementInternal();
 
-    void delegatesScrollingDidChange() final;
+    void delegatedScrollingModeDidChange() final;
 
     void unobscuredContentSizeChanged() final;
     

@@ -152,16 +152,6 @@
 #include "PointerLockController.h"
 #endif
 
-#if USE(APPLE_INTERNAL_SDK)
-#include <WebKitAdditions/EventHandlerAdditions.cpp>
-#else
-
-static void addPointerTypeToHitTestRequest(OptionSet<WebCore::HitTestRequest::Type> &, String )
-{
-}
-
-#endif
-
 namespace WebCore {
 
 using namespace HTMLNames;
@@ -1271,13 +1261,17 @@ bool EventHandler::scrollRecursively(ScrollDirection direction, ScrollGranularit
     if (scrollOverflow(direction, granularity, startingNode))
         return true;    
     RefPtr frame = &m_frame;
-    RefPtr view = frame->view();
+    RefPtr localFrame = frame;
+    if (!localFrame)
+        return false;
+    RefPtr view = localFrame->view();
     if (view && view->scroll(direction, granularity))
         return true;
-    frame = frame->tree().parent();
-    if (!frame)
+    RefPtr parent = frame->tree().parent();
+    if (!parent)
         return false;
-    return frame->eventHandler().scrollRecursively(direction, granularity, m_frame.ownerElement());
+    RefPtr localParent = dynamicDowncast<LocalFrame>(parent.get());
+    return localParent->eventHandler().scrollRecursively(direction, granularity, m_frame.ownerElement());
 }
 
 bool EventHandler::logicalScrollRecursively(ScrollLogicalDirection direction, ScrollGranularity granularity, Node* startingNode)
@@ -1304,11 +1298,14 @@ bool EventHandler::logicalScrollRecursively(ScrollLogicalDirection direction, Sc
     if (scrolled)
         return true;
 
-    frame = frame->tree().parent();
-    if (!frame)
+    RefPtr parent = frame->tree().parent();
+    if (!parent)
+        return false;
+    RefPtr localParent = dynamicDowncast<LocalFrame>(parent.get());
+    if (!localParent)
         return false;
 
-    return frame->eventHandler().logicalScrollRecursively(direction, granularity, m_frame.ownerElement());
+    return localParent->eventHandler().logicalScrollRecursively(direction, granularity, m_frame.ownerElement());
 }
 
 IntPoint EventHandler::lastKnownMousePosition() const
@@ -1998,7 +1995,10 @@ bool EventHandler::handleMouseMoveEvent(const PlatformMouseEvent& platformMouseE
     }
 #endif
     
-    addPointerTypeToHitTestRequest(hitType, platformMouseEvent.pointerType());
+#if ENABLE(PENCIL_HOVER)
+    if (platformMouseEvent.pointerType() == WebCore::penPointerEventType())
+        hitType.add(WebCore::HitTestRequest::Type::PenEvent);
+#endif
     
     HitTestRequest request(hitType);
     MouseEventWithHitTestResults mouseEvent = prepareMouseEvent(request, platformMouseEvent);
@@ -4174,7 +4174,7 @@ bool EventHandler::handleDrag(const MouseEventWithHitTestResults& event, CheckDr
             }
         }
 
-        if (dragState().source && dragState().type == DragSourceAction::Image) {
+        if (dragState().source && dragState().type.containsAny({ DragSourceAction::DHTML, DragSourceAction::Image })) {
             if (auto* renderImage = dynamicDowncast<RenderImage>(dragState().source->renderer())) {
                 auto* image = renderImage->cachedImage();
                 if (image && !image->isCORSSameOrigin())
@@ -4460,11 +4460,14 @@ bool EventHandler::keyboardScrollRecursively(std::optional<ScrollDirection> dire
         return true;
 
     RefPtr frame = &m_frame;
-    frame = frame->tree().parent();
-    if (!frame)
+    RefPtr parent = frame->tree().parent();
+    if (!parent)
+        return false;
+    RefPtr localParent = dynamicDowncast<LocalFrame>(parent.get());
+    if (!localParent)
         return false;
 
-    return frame->eventHandler().keyboardScrollRecursively(direction, granularity, m_frame.ownerElement());
+    return localParent->eventHandler().keyboardScrollRecursively(direction, granularity, m_frame.ownerElement());
 }
 
 void EventHandler::defaultArrowEventHandler(FocusDirection focusDirection, KeyboardEvent& event)

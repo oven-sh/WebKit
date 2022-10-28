@@ -29,6 +29,32 @@
 
 #include "JSCJSValue.h"
 
+#define DEFINE_SIMD_FUNC(name, func, lane) \
+    template <typename ...Args> \
+    void name(Args&&... args) { func(lane, std::forward<Args>(args)...); }
+
+#define DEFINE_SIMD_FUNC_WITH_SIGN_EXTEND_MODE(name, func, lane, mode) \
+    template <typename ...Args> \
+    void name(Args&&... args) { func(lane, mode, std::forward<Args>(args)...); }
+
+#define DEFINE_SIMD_FUNCS(name) \
+    DEFINE_SIMD_FUNC(name##Int8, name, SIMDLane::i8x16) \
+    DEFINE_SIMD_FUNC(name##Int16, name, SIMDLane::i16x8) \
+    DEFINE_SIMD_FUNC(name##Int32, name, SIMDLane::i32x4) \
+    DEFINE_SIMD_FUNC(name##Int64, name, SIMDLane::i64x2) \
+    DEFINE_SIMD_FUNC(name##Float32, name, SIMDLane::f32x4) \
+    DEFINE_SIMD_FUNC(name##Float64, name, SIMDLane::f64x2)
+
+#define DEFINE_SIGNED_SIMD_FUNCS(name) \
+    DEFINE_SIMD_FUNC_WITH_SIGN_EXTEND_MODE(name##SignedInt8, name, SIMDLane::i8x16, SIMDSignMode::Signed) \
+    DEFINE_SIMD_FUNC_WITH_SIGN_EXTEND_MODE(name##UnsignedInt8, name, SIMDLane::i8x16, SIMDSignMode::Unsigned) \
+    DEFINE_SIMD_FUNC_WITH_SIGN_EXTEND_MODE(name##SignedInt16, name, SIMDLane::i16x8, SIMDSignMode::Signed) \
+    DEFINE_SIMD_FUNC_WITH_SIGN_EXTEND_MODE(name##UnsignedInt16, name, SIMDLane::i16x8, SIMDSignMode::Unsigned) \
+    DEFINE_SIMD_FUNC_WITH_SIGN_EXTEND_MODE(name##Int32, name, SIMDLane::i32x4, SIMDSignMode::None) \
+    DEFINE_SIMD_FUNC_WITH_SIGN_EXTEND_MODE(name##Int64, name, SIMDLane::i64x2, SIMDSignMode::None) \
+    DEFINE_SIMD_FUNC(name##Float32, name, SIMDLane::f32x4) \
+    DEFINE_SIMD_FUNC(name##Float64, name, SIMDLane::f64x2)
+
 #if CPU(ARM_THUMB2)
 #define TARGET_ASSEMBLER ARMv7Assembler
 #define TARGET_MACROASSEMBLER MacroAssemblerARMv7
@@ -741,6 +767,16 @@ public:
         load32(address, dest);
     }
 
+    void loadPairPtr(RegisterID src, RegisterID dest1, RegisterID dest2)
+    {
+        loadPair32(src, dest1, dest2);
+    }
+
+    void loadPairPtr(RegisterID src, TrustedImm32 offset, RegisterID dest1, RegisterID dest2)
+    {
+        loadPair32(src, offset, dest1, dest2);
+    }
+
 #if ENABLE(FAST_TLS_JIT)
     void loadFromTLSPtr(uint32_t offset, RegisterID dst)
     {
@@ -801,6 +837,16 @@ public:
     void storePtr(TrustedImmPtr imm, BaseIndex address)
     {
         store32(TrustedImm32(imm), address);
+    }
+
+    void storePairPtr(RegisterID src1, RegisterID src2, RegisterID dest)
+    {
+        storePair32(src1, src2, dest);
+    }
+
+    void storePairPtr(RegisterID src1, RegisterID src2, RegisterID dest, TrustedImm32 offset)
+    {
+        storePair32(src1, src2, dest, offset);
     }
 
     Jump branchPtr(RelationalCondition cond, RegisterID left, RegisterID right)
@@ -1090,6 +1136,16 @@ public:
         load64(address, dest);
     }
 
+    void loadPairPtr(RegisterID src, RegisterID dest1, RegisterID dest2)
+    {
+        loadPair64(src, dest1, dest2);
+    }
+
+    void loadPairPtr(RegisterID src, TrustedImm32 offset, RegisterID dest1, RegisterID dest2)
+    {
+        loadPair64(src, offset, dest1, dest2);
+    }
+
 #if ENABLE(FAST_TLS_JIT)
     void loadFromTLSPtr(uint32_t offset, RegisterID dst)
     {
@@ -1129,6 +1185,16 @@ public:
     void storePtr(TrustedImmPtr imm, BaseIndex address)
     {
         store64(TrustedImm64(imm), address);
+    }
+
+    void storePairPtr(RegisterID src1, RegisterID src2, RegisterID dest)
+    {
+        storePair64(src1, src2, dest);
+    }
+
+    void storePairPtr(RegisterID src1, RegisterID src2, RegisterID dest, TrustedImm32 offset)
+    {
+        storePair64(src1, src2, dest, offset);
     }
 
     void comparePtr(RelationalCondition cond, RegisterID left, TrustedImm32 right, RegisterID dest)

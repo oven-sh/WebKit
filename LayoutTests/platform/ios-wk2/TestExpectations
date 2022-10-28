@@ -1999,6 +1999,8 @@ webkit.org/b/227273 fast/css-custom-paint/out-of-memory-while-adding-worklet-mod
 
 webkit.org/b/229338 animations/unprefixed-events.html [ Pass Failure ]
 
+webkit.org/b/227369 http/tests/privateClickMeasurement/store-private-click-measurement-with-source-nonce.html [ Pass Failure ]
+
 webkit.org/b/227931 imported/w3c/web-platform-tests/css/css-conditional/idlharness.html [ Pass Failure ]
 
 webkit.org/b/228114 imported/w3c/web-platform-tests/fetch/content-type/script.window.html [ Pass Failure ]
@@ -2027,7 +2029,6 @@ webkit.org/b/228604 [ Release ] http/wpt/mediarecorder/set-srcObject-MediaStream
 
 # These tests currently fail or are flaky in EWS on iOS 14.
 editing/selection/ios/changing-selection-does-not-trigger-autocapitalization.html [ Pass Timeout ]
-webkit.org/b/245984 editing/selection/ios/do-not-hide-selection-in-visible-container.html [ Timeout ]
 editing/selection/ios/do-not-hide-selection-in-visible-field.html [ Failure ]
 
 webkit.org/b/231962 editing/selection/modal-dialog-select-paragraph.html [ Failure ]
@@ -2381,8 +2382,6 @@ webkit.org/b/245592 imported/w3c/web-platform-tests/css/css-counter-styles/mongo
 
 webkit.org/b/245595 imported/blink/svg/canvas/canvas-draw-pattern-size.html [ ImageOnlyFailure ]
 
-webkit.org/b/245597 fast/canvas/canvas-large-dimensions-drawing.html [ ImageOnlyFailure ]
-
 webkit.org/b/245600 fast/attachment/attachment-wrapping-action.html [ ImageOnlyFailure ]
 
 webkit.org/b/245608 imported/w3c/web-platform-tests/cookies/value/value-ctl.html [ Failure ]
@@ -2391,14 +2390,14 @@ webkit.org/b/245613 scrollingcoordinator/ios/fixed-in-frame-layer-reconcile-laye
 
 webkit.org/b/245686 fast/text/system-font-fallback.html [ ImageOnlyFailure ]
 
-webkit.org/b/245708 fast/text/capitalize-boundaries.html [ Failure ]
-
 webkit.org/b/245710 media/video-played-reset.html [ Pass Failure ]
 
 webkit.org/b/237547 fast/canvas/webgl/gl-teximage-imagebitmap-memory.html [ Pass Timeout ]
 
 webkit.org/b/245745 [ Debug ] svg/compositing/inline-svg-non-integer-position-display-inline-composited.html [ Skip ]
 webkit.org/b/245745 [ Debug ] svg/compositing/inline-svg-non-integer-position-display-block-composited.html [ Skip ]
+
+webkit.org/b/246357 imported/w3c/web-platform-tests/feature-policy/reporting/payment-reporting.https.html [ Pass Failure ]
 
 # webkit.org/b/245967 3X imported/w3c/web-platform-tests/feature-policy/(Layout tests) failing since added
 imported/w3c/web-platform-tests/feature-policy/reporting/picture-in-picture-reporting.html [ Pass Failure ]
@@ -2412,3 +2411,22 @@ webkit.org/b/245994 imported/w3c/web-platform-tests/streams/readable-byte-stream
 [ Release ] http/wpt/webauthn/public-key-credential-get-success-u2f.https.html [ Skip ]
 [ Release ] http/wpt/webauthn/public-key-credential-get-failure-hid-silent.https.html [ Skip ]
 [ Release ] http/wpt/webauthn/public-key-credential-create-success-hid.https.html [ Skip ]
+
+webkit.org/b/246427 imported/w3c/web-platform-tests/preload/preload-referrer-policy.html [ Pass Failure ]
+
+# webkit.org/b/243681  Newly imported tests that fail on iOS16
+imported/w3c/web-platform-tests/IndexedDB/structured-clone.any.html?101-last [ Failure ]
+imported/w3c/web-platform-tests/IndexedDB/structured-clone.any.worker.html?101-last [ Failure ]
+
+webkit.org/b/246547 animations/steps-transform-rendering-updates.html [ Pass Failure ]
+
+webkit.org/b/246698 media/video-object-fit.html [ ImageOnlyFailure ]
+
+# webkit.org/b/246701 Flaky failure only on iOS
+imported/w3c/web-platform-tests/screen-orientation/active-lock.html [ Pass Failure ]
+imported/w3c/web-platform-tests/screen-orientation/event-before-promise.html [ Pass Failure ]
+imported/w3c/web-platform-tests/screen-orientation/lock-basic.html [ Pass Failure ]
+imported/w3c/web-platform-tests/screen-orientation/lock-unlock-check.html [ Pass Failure ]
+imported/w3c/web-platform-tests/screen-orientation/onchange-event-subframe.html [ Pass Failure ]
+imported/w3c/web-platform-tests/screen-orientation/orientation-reading.html [ Pass Failure ]
+imported/w3c/web-platform-tests/screen-orientation/onchange-event.html [ Pass Failure ]

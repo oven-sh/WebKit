@@ -30,8 +30,7 @@
 #include "config.h"
 #include "CSSKeywordValue.h"
 
-#if ENABLE(CSS_TYPED_OM)
-
+#include "CSSMarkup.h"
 #include "ExceptionOr.h"
 #include <wtf/IsoMallocInlines.h>
 
@@ -70,9 +69,7 @@ ExceptionOr<void> CSSKeywordValue::setValue(const String& value)
 void CSSKeywordValue::serialize(StringBuilder& builder, OptionSet<SerializationArguments>) const
 {
     // https://drafts.css-houdini.org/css-typed-om/#keywordvalue-serialization
-    builder.append(m_value);
+    serializeIdentifier(m_value, builder);
 }
 
 } // namespace WebCore
-
-#endif

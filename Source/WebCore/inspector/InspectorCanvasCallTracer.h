@@ -80,13 +80,9 @@ enum class CanvasTextAlign;
 enum class CanvasTextBaseline;
 enum ImageSmoothingQuality;
 
-#if ENABLE(CSS_TYPED_OM)
 #define FOR_EACH_INSPECTOR_CANVAS_CALL_TRACER_CSS_TYPED_OM_ARGUMENT(macro) \
     macro(RefPtr<CSSStyleImageValue>&) \
 // end of FOR_EACH_INSPECTOR_CANVAS_CALL_TRACER_CSS_TYPED_OM_ARGUMENT
-#else
-#define FOR_EACH_INSPECTOR_CANVAS_CALL_TRACER_CSS_TYPED_OM_ARGUMENT(macro)
-#endif // ENABLE(CSS_TYPED_OM)
 
 #if ENABLE(OFFSCREEN_CANVAS)
 #define FOR_EACH_INSPECTOR_CANVAS_CALL_TRACER_OFFSCREEN_CANVAS_ARGUMENT(macro) \
@@ -103,6 +99,14 @@ enum ImageSmoothingQuality;
 #else
 #define FOR_EACH_INSPECTOR_CANVAS_CALL_TRACER_VIDEO_ARGUMENT(macro)
 #endif // ENABLE(VIDEO)
+
+#if ENABLE(WEB_CODECS)
+#define FOR_EACH_INSPECTOR_CANVAS_CALL_TRACER_VIDEOFRAME_ARGUMENT(macro) \
+    macro(RefPtr<WebCodecsVideoFrame>&) \
+// end of FOR_EACH_INSPECTOR_CANVAS_CALL_TRACER_VIDEOFRAME_ARGUMENT
+#else
+#define FOR_EACH_INSPECTOR_CANVAS_CALL_TRACER_VIDEOFRAME_ARGUMENT(macro)
+#endif // ENABLE(WEB_CODECS)
 
 #if ENABLE(WEBGL)
 #define FOR_EACH_INSPECTOR_CANVAS_CALL_TRACER_WEBGL_ARGUMENT(macro) \
@@ -122,7 +126,6 @@ enum ImageSmoothingQuality;
     macro(WebGLSync*) \
     macro(WebGLTexture*) \
     macro(WebGLUniformLocation*) \
-    macro(WebGLVertexArrayObject*) \
 // end of FOR_EACH_INSPECTOR_CANVAS_CALL_TRACER_WEBGL_ARGUMENT
 #else
 #define FOR_EACH_INSPECTOR_CANVAS_CALL_TRACER_WEBGL_ARGUMENT(macro)
@@ -132,6 +135,7 @@ enum ImageSmoothingQuality;
 #define FOR_EACH_INSPECTOR_CANVAS_CALL_TRACER_WEBGL2_ARGUMENT(macro) \
     macro(WebGLTransformFeedback*) \
     macro(WebGL2RenderingContext::Uint32List::VariantType&) \
+    macro(WebGLVertexArrayObject*) \
 // end of FOR_EACH_INSPECTOR_CANVAS_CALL_TRACER_WEBGL2_ARGUMENT
 #else
 #define FOR_EACH_INSPECTOR_CANVAS_CALL_TRACER_WEBGL2_ARGUMENT(macro)
@@ -188,6 +192,7 @@ enum ImageSmoothingQuality;
     FOR_EACH_INSPECTOR_CANVAS_CALL_TRACER_VIDEO_ARGUMENT(macro) \
     FOR_EACH_INSPECTOR_CANVAS_CALL_TRACER_WEBGL_ARGUMENT(macro) \
     FOR_EACH_INSPECTOR_CANVAS_CALL_TRACER_WEBGL2_ARGUMENT(macro) \
+    FOR_EACH_INSPECTOR_CANVAS_CALL_TRACER_VIDEOFRAME_ARGUMENT(macro) \
 // end of FOR_EACH_INSPECTOR_CANVAS_CALL_TRACER_ARGUMENT
 
 class InspectorCanvasCallTracer {

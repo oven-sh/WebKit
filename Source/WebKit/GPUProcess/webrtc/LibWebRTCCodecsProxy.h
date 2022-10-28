@@ -82,13 +82,16 @@ private:
 
     void createDecoder(VideoDecoderIdentifier, VideoCodecType, bool useRemoteFrames);
     void releaseDecoder(VideoDecoderIdentifier);
-    void decodeFrame(VideoDecoderIdentifier, uint32_t timeStamp, const IPC::DataReference&);
+    void flushDecoder(VideoDecoderIdentifier);
+    void setDecoderFormatDescription(VideoDecoderIdentifier, const IPC::DataReference&, uint16_t width, uint16_t height);
+    void decodeFrame(VideoDecoderIdentifier, int64_t timeStamp, const IPC::DataReference&);
     void setFrameSize(VideoDecoderIdentifier, uint16_t width, uint16_t height);
 
-    void createEncoder(VideoEncoderIdentifier, VideoCodecType, const Vector<std::pair<String, String>>&, bool useLowLatency);
+    void createEncoder(VideoEncoderIdentifier, VideoCodecType, const Vector<std::pair<String, String>>&, bool useLowLatency, bool useAnnexB);
     void releaseEncoder(VideoEncoderIdentifier);
     void initializeEncoder(VideoEncoderIdentifier, uint16_t width, uint16_t height, unsigned startBitrate, unsigned maxBitrate, unsigned minBitrate, uint32_t maxFramerate);
     void encodeFrame(VideoEncoderIdentifier, SharedVideoFrame&&, uint32_t timeStamp, bool shouldEncodeAsKeyFrame);
+    void flushEncoder(VideoEncoderIdentifier);
     void setEncodeRates(VideoEncoderIdentifier, uint32_t bitRate, uint32_t frameRate);
     void setSharedVideoFrameSemaphore(VideoEncoderIdentifier, IPC::Semaphore&&);
     void setSharedVideoFrameMemory(VideoEncoderIdentifier, const SharedMemory::Handle&);

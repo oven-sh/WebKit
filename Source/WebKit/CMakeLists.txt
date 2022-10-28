@@ -233,6 +233,7 @@ set(WebKit_MESSAGES_IN_FILES
     UIProcess/SpeechRecognitionRemoteRealtimeMediaSourceManager
     UIProcess/SpeechRecognitionServer
     UIProcess/VisitedLinkStore
+    UIProcess/WebFrameProxy
     UIProcess/WebFullScreenManagerProxy
     UIProcess/WebGeolocationManagerProxy
     UIProcess/WebLockRegistryProxy
@@ -329,6 +330,7 @@ set(WebKit_MESSAGES_IN_FILES
     WebProcess/WebPage/DrawingArea
     WebProcess/WebPage/EventDispatcher
     WebProcess/WebPage/VisitedLinkTableController
+    WebProcess/WebPage/WebFrame
     WebProcess/WebPage/WebPage
 
     WebProcess/WebStorage/StorageAreaMap
@@ -514,46 +516,98 @@ endmacro()
 GENERATE_MESSAGE_SOURCES(WebKit_DERIVED_SOURCES "${WebKit_MESSAGES_IN_FILES}")
 
 set(WebKit_SERIALIZATION_IN_FILES
+    GPUProcess/GPUProcessSessionParameters.serialization.in
+
+    GPUProcess/graphics/RemoteRenderingBackendCreationParameters.serialization.in
+
+    GPUProcess/media/InitializationSegmentInfo.serialization.in
+    GPUProcess/media/MediaDescriptionInfo.serialization.in
+    GPUProcess/media/TextTrackPrivateRemoteConfiguration.serialization.in
+
     NetworkProcess/NetworkProcessCreationParameters.serialization.in
 
+    Shared/EditorState.serialization.in
     Shared/FocusedElementInformation.serialization.in
     Shared/FrameInfoData.serialization.in
     Shared/FrameTreeNodeData.serialization.in
     Shared/LayerTreeContext.serialization.in
+    Shared/Pasteboard.serialization.in
     Shared/ShareableBitmap.serialization.in
     Shared/TextFlags.serialization.in
+    Shared/WTFArgumentCoders.serialization.in
     Shared/WebCoreArgumentCoders.serialization.in
+    Shared/WebEvent.serialization.in
+    Shared/WebPushDaemonConnectionConfiguration.serialization.in
+    Shared/WebPushMessage.serialization.in
     Shared/WebsiteDataStoreParameters.serialization.in
 
     Shared/API/APIGeometry.serialization.in
 
     Shared/Cocoa/WebCoreArgumentCodersCocoa.serialization.in
 
+    Shared/WebGPU/WebGPUBindGroupDescriptor.serialization.in
     Shared/WebGPU/WebGPUBindGroupEntry.serialization.in
+    Shared/WebGPU/WebGPUBindGroupLayoutDescriptor.serialization.in
+    Shared/WebGPU/WebGPUBindGroupLayoutEntry.serialization.in
     Shared/WebGPU/WebGPUBlendComponent.serialization.in
     Shared/WebGPU/WebGPUBlendState.serialization.in
     Shared/WebGPU/WebGPUBufferBinding.serialization.in
     Shared/WebGPU/WebGPUBufferBindingLayout.serialization.in
+    Shared/WebGPU/WebGPUBufferDescriptor.serialization.in
     Shared/WebGPU/WebGPUCanvasConfiguration.serialization.in
     Shared/WebGPU/WebGPUColor.serialization.in
     Shared/WebGPU/WebGPUColorTargetState.serialization.in
+    Shared/WebGPU/WebGPUCommandBufferDescriptor.serialization.in
+    Shared/WebGPU/WebGPUCommandEncoderDescriptor.serialization.in
+    Shared/WebGPU/WebGPUCompilationMessage.serialization.in
+    Shared/WebGPU/WebGPUComputePassDescriptor.serialization.in
     Shared/WebGPU/WebGPUComputePassTimestampWrites.serialization.in
+    Shared/WebGPU/WebGPUComputePipelineDescriptor.serialization.in
+    Shared/WebGPU/WebGPUDepthStencilState.serialization.in
+    Shared/WebGPU/WebGPUDeviceDescriptor.serialization.in
+    Shared/WebGPU/WebGPUExtent3D.serialization.in
+    Shared/WebGPU/WebGPUExternalTextureBindingLayout.serialization.in
+    Shared/WebGPU/WebGPUExternalTextureDescriptor.serialization.in
+    Shared/WebGPU/WebGPUFragmentState.serialization.in
+    Shared/WebGPU/WebGPUImageCopyBuffer.serialization.in
+    Shared/WebGPU/WebGPUImageCopyExternalImage.serialization.in
+    Shared/WebGPU/WebGPUImageCopyTexture.serialization.in
+    Shared/WebGPU/WebGPUImageCopyTextureTagged.serialization.in
+    Shared/WebGPU/WebGPUImageDataLayout.serialization.in
+    Shared/WebGPU/WebGPUMultisampleState.serialization.in
     Shared/WebGPU/WebGPUObjectDescriptorBase.serialization.in
-
+    Shared/WebGPU/WebGPUOrigin2D.serialization.in
     Shared/WebGPU/WebGPUOrigin3D.serialization.in
+    Shared/WebGPU/WebGPUOutOfMemoryError.serialization.in
+    Shared/WebGPU/WebGPUPipelineDescriptorBase.serialization.in
+    Shared/WebGPU/WebGPUPipelineLayoutDescriptor.serialization.in
     Shared/WebGPU/WebGPUPrimitiveState.serialization.in
     Shared/WebGPU/WebGPUProgrammableStage.serialization.in
+    Shared/WebGPU/WebGPUQuerySetDescriptor.serialization.in
+    Shared/WebGPU/WebGPURenderBundleDescriptor.serialization.in
+    Shared/WebGPU/WebGPURenderBundleEncoderDescriptor.serialization.in
     Shared/WebGPU/WebGPURenderPassColorAttachment.serialization.in
     Shared/WebGPU/WebGPURenderPassDepthStencilAttachment.serialization.in
+    Shared/WebGPU/WebGPURenderPassDescriptor.serialization.in
+    Shared/WebGPU/WebGPURenderPassLayout.serialization.in
     Shared/WebGPU/WebGPURenderPassTimestampWrites.serialization.in
+    Shared/WebGPU/WebGPURenderPipelineDescriptor.serialization.in
+    Shared/WebGPU/WebGPURequestAdapterOptions.serialization.in
+    Shared/WebGPU/WebGPUSamplerBindingLayout.serialization.in
+    Shared/WebGPU/WebGPUSamplerDescriptor.serialization.in
+    Shared/WebGPU/WebGPUShaderModuleCompilationHint.serialization.in
+    Shared/WebGPU/WebGPUShaderModuleDescriptor.serialization.in
     Shared/WebGPU/WebGPUStencilFaceState.serialization.in
     Shared/WebGPU/WebGPUStorageTextureBindingLayout.serialization.in
     Shared/WebGPU/WebGPUSupportedFeatures.serialization.in
     Shared/WebGPU/WebGPUSupportedLimits.serialization.in
     Shared/WebGPU/WebGPUTextureBindingLayout.serialization.in
+    Shared/WebGPU/WebGPUTextureDescriptor.serialization.in
+    Shared/WebGPU/WebGPUTextureViewDescriptor.serialization.in
     Shared/WebGPU/WebGPUValidationError.serialization.in
     Shared/WebGPU/WebGPUVertexAttribute.serialization.in
     Shared/WebGPU/WebGPUVertexBufferLayout.serialization.in
+    Shared/WebGPU/WebGPUVertexState.serialization.in
 
     Shared/WebsiteData/WebsiteDataFetchOption.serialization.in
 )

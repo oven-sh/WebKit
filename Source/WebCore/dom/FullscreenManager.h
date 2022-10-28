@@ -36,8 +36,7 @@
 
 namespace WebCore {
 
-class RenderFullScreen;
-class RenderTreeBuilder;
+class DeferredPromise;
 class RenderStyle;
 
 class FullscreenManager final : public CanMakeWeakPtr<FullscreenManager> {
@@ -52,9 +51,7 @@ public:
     Page* page() const { return m_document.page(); }
     Frame* frame() const { return m_document.frame(); }
     Element* documentElement() const { return m_document.documentElement(); }
-    bool hasLivingRenderTree() const { return m_document.hasLivingRenderTree(); }
     Document::BackForwardCacheState backForwardCacheState() const { return m_document.backForwardCacheState(); }
-    void scheduleFullStyleRebuild() { m_document.scheduleFullStyleRebuild(); }
 
     // W3C Fullscreen API
     Element* fullscreenElement() const { return !m_fullscreenElementStack.isEmpty() ? m_fullscreenElementStack.last().get() : nullptr; }
@@ -71,15 +68,12 @@ public:
         EnforceIFrameAllowFullscreenRequirement,
         ExemptIFrameAllowFullscreenRequirement,
     };
-    WEBCORE_EXPORT void requestFullscreenForElement(Ref<Element>&&, FullscreenCheckType);
+    WEBCORE_EXPORT void requestFullscreenForElement(Ref<Element>&&, RefPtr<DeferredPromise>&&, FullscreenCheckType);
 
     WEBCORE_EXPORT bool willEnterFullscreen(Element&);
     WEBCORE_EXPORT bool didEnterFullscreen();
     WEBCORE_EXPORT bool willExitFullscreen();
     WEBCORE_EXPORT bool didExitFullscreen();
-
-    void setFullscreenRenderer(RenderTreeBuilder&, RenderFullScreen&);
-    RenderFullScreen* fullscreenRenderer() const;
 
     void dispatchFullscreenChangeEvents();
     void fullscreenElementRemoved();
@@ -98,7 +92,9 @@ public:
 protected:
     friend class Document;
 
-    void dispatchFullscreenChangeOrErrorEvent(Deque<GCReachableRef<Node>>&, const AtomString& eventName, bool shouldNotifyMediaElement);
+    enum class EventType : bool { Change, Error };
+    void dispatchFullscreenChangeOrErrorEvent(Deque<GCReachableRef<Node>>&, EventType, bool shouldNotifyMediaElement);
+    void dispatchEventForNode(Node&, EventType);
     void clearFullscreenElementStack();
     void popFullscreenElementStack();
     void pushFullscreenElementStack(Element&);
@@ -120,11 +116,8 @@ private:
     RefPtr<Element> m_pendingFullscreenElement;
     RefPtr<Element> m_fullscreenElement;
     Vector<RefPtr<Element>> m_fullscreenElementStack;
-    WeakPtr<RenderFullScreen> m_fullscreenRenderer { nullptr };
     Deque<GCReachableRef<Node>> m_fullscreenChangeEventTargetQueue;
     Deque<GCReachableRef<Node>> m_fullscreenErrorEventTargetQueue;
-    LayoutRect m_savedPlaceholderFrameRect;
-    std::unique_ptr<RenderStyle> m_savedPlaceholderRenderStyle;
 
     bool m_areKeysEnabledInFullscreen { false };
     bool m_isAnimatingFullscreen { false };

@@ -38,6 +38,7 @@
 #include "WebPageProxyIdentifier.h"
 #include "WebResourceLoadStatisticsStore.h"
 #include <WebCore/BlobRegistryImpl.h>
+#include <WebCore/DNS.h>
 #include <WebCore/FetchIdentifier.h>
 #include <WebCore/NetworkStorageSession.h>
 #include <WebCore/PrivateClickMeasurement.h>
@@ -120,8 +121,8 @@ public:
 
 #if ENABLE(TRACKING_PREVENTION)
     WebResourceLoadStatisticsStore* resourceLoadStatistics() const { return m_resourceLoadStatistics.get(); }
-    void setResourceLoadStatisticsEnabled(bool);
-    bool isResourceLoadStatisticsEnabled() const;
+    void setTrackingPreventionEnabled(bool);
+    bool isTrackingPreventionEnabled() const;
     void notifyResourceLoadStatisticsProcessed();
     void deleteAndRestrictWebsiteDataForRegistrableDomains(OptionSet<WebsiteDataType>, RegistrableDomainsToDeleteOrRestrictWebsiteDataFor&&, bool shouldNotifyPage, CompletionHandler<void(HashSet<WebCore::RegistrableDomain>&&)>&&);
     void registrableDomainsWithWebsiteData(OptionSet<WebsiteDataType>, bool shouldNotifyPage, CompletionHandler<void(HashSet<WebCore::RegistrableDomain>&&)>&&);
@@ -136,9 +137,11 @@ public:
     void setShouldEnbleSameSiteStrictEnforcement(WebCore::SameSiteStrictEnforcementEnabled);
     void setFirstPartyHostCNAMEDomain(String&& firstPartyHost, WebCore::RegistrableDomain&& cnameDomain);
     std::optional<WebCore::RegistrableDomain> firstPartyHostCNAMEDomain(const String& firstPartyHost);
+    void setFirstPartyHostIPAddress(const String& firstPartyHost, const String& addressString);
+    std::optional<WebCore::IPAddress> firstPartyHostIPAddress(const String& firstPartyHost);
     void setThirdPartyCNAMEDomainForTesting(WebCore::RegistrableDomain&& domain) { m_thirdPartyCNAMEDomainForTesting = WTFMove(domain); };
     std::optional<WebCore::RegistrableDomain> thirdPartyCNAMEDomainForTesting() const { return m_thirdPartyCNAMEDomainForTesting; }
-    void resetCNAMEDomainData();
+    void resetFirstPartyDNSData();
     void destroyResourceLoadStatistics(CompletionHandler<void()>&&);
 #endif
     
@@ -246,6 +249,8 @@ public:
     void setEmulatedConditions(std::optional<int64_t>&& bytesPerSecondLimit);
 #endif
 
+    static bool needsAdditionalNetworkConnectionIntegritySettings(const WebCore::ResourceRequest&);
+
 protected:
     NetworkSession(NetworkProcess&, const NetworkSessionCreationParameters&);
 
@@ -269,6 +274,7 @@ protected:
     WebCore::FirstPartyWebsiteDataRemovalMode m_firstPartyWebsiteDataRemovalMode { WebCore::FirstPartyWebsiteDataRemovalMode::AllButCookies };
     WebCore::RegistrableDomain m_standaloneApplicationDomain;
     HashMap<String, WebCore::RegistrableDomain> m_firstPartyHostCNAMEDomains;
+    HashMap<String, WebCore::IPAddress> m_firstPartyHostIPAddresses;
     std::optional<WebCore::RegistrableDomain> m_thirdPartyCNAMEDomainForTesting;
 #endif
     bool m_isStaleWhileRevalidateEnabled { false };

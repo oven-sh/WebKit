@@ -27,6 +27,7 @@
 
 #include "CSSPropertyParserHelpers.h"
 #include "CSSValue.h"
+#include "MediaQueryParserContext.h"
 
 namespace WebCore {
 namespace MQ {
@@ -41,8 +42,8 @@ static AtomString consumeFeatureName(CSSParserTokenRange& range)
 std::optional<Feature> GenericMediaQueryParserBase::consumeFeature(CSSParserTokenRange& range)
 {
     auto rangeCopy = range;
-    if (auto sizeFeature = consumeBooleanOrPlainFeature(range))
-        return sizeFeature;
+    if (auto feature = consumeBooleanOrPlainFeature(range))
+        return feature;
 
     range = rangeCopy;
     return consumeRangeFeature(range);
@@ -58,6 +59,10 @@ std::optional<Feature> GenericMediaQueryParserBase::consumeBooleanOrPlainFeature
             return { StringView(name).substring(4).toAtomString(), ComparisonOperator::GreaterThanOrEqual };
         if (name.startsWith("max-"_s))
             return { StringView(name).substring(4).toAtomString(), ComparisonOperator::LessThanOrEqual };
+        if (name.startsWith("-webkit-min-"_s))
+            return { "-webkit-"_s + StringView(name).substring(12), ComparisonOperator::GreaterThanOrEqual };
+        if (name.startsWith("-webkit-max-"_s))
+            return { "-webkit-"_s + StringView(name).substring(12), ComparisonOperator::LessThanOrEqual };
 
         return { name, ComparisonOperator::Equal };
     };
@@ -194,7 +199,66 @@ RefPtr<CSSValue> GenericMediaQueryParserBase::consumeValue(CSSParserTokenRange& 
         return value;
     if (auto value = CSSPropertyParserHelpers::consumeAspectRatioValue(range))
         return value;
+    if (auto value = CSSPropertyParserHelpers::consumeResolution(range))
+        return value;
+
     return nullptr;
+}
+
+bool GenericMediaQueryParserBase::validateFeatureAgainstSchema(Feature& feature, const FeatureSchema& schema)
+{
+    auto valueTypeForValue = [](auto& value) -> std::optional<FeatureSchema::ValueType> {
+        if (value.isInteger())
+            return FeatureSchema::ValueType::Integer;
+        if (value.isNumber())
+            return FeatureSchema::ValueType::Number;
+        if (value.isLength())
+            return FeatureSchema::ValueType::Length;
+        if (value.isResolution())
+            return FeatureSchema::ValueType::Resolution;
+        return { };
+    };
+
+    auto validateValue = [&](auto& value) {
+        if (auto* primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value)) {
+            if (primitiveValue->isValueID())
+                return schema.valueIdentifiers.contains(primitiveValue->valueID());
+            auto valueType = valueTypeForValue(*primitiveValue);
+            return valueType && schema.valueTypes.contains(*valueType);
+        }
+        if (auto* list = dynamicDowncast<CSSValueList>(value)) {
+            if (!schema.valueTypes.contains(FeatureSchema::ValueType::Ratio))
+                return false;
+            if (list->length() != 2 || list->separator() != CSSValue::SlashSeparator)
+                return false;
+            auto first = dynamicDowncast<CSSPrimitiveValue>(list->item(0));
+            auto second = dynamicDowncast<CSSPrimitiveValue>(list->item(1));
+            return first && second && first->isNumberOrInteger() && second->isNumberOrInteger();
+        }
+        return false;
+    };
+
+    auto isValid = [&] {
+        if (schema.type == FeatureSchema::Type::Discrete) {
+            if (feature.syntax == Syntax::Range)
+                return false;
+            if (feature.rightComparison && feature.rightComparison->op != ComparisonOperator::Equal)
+                return false;
+        }
+
+        if (feature.leftComparison) {
+            if (!validateValue(*feature.leftComparison->value))
+                return false;
+        }
+        if (feature.rightComparison) {
+            if (!validateValue(*feature.rightComparison->value))
+                return false;
+        }
+        return true;
+    }();
+
+    feature.schema = isValid ? &schema : nullptr;
+    return isValid;
 }
 
 }

@@ -38,7 +38,10 @@
 #include <Namespace/EmptyConstructorNullable.h>
 #include <Namespace/EmptyConstructorStruct.h>
 #include <Namespace/ReturnRefClass.h>
+#include <WebCore/InheritanceGrandchild.h>
 #include <WebCore/InheritsFrom.h>
+#include <wtf/CreateUsingClass.h>
+#include <wtf/Seconds.h>
 
 namespace IPC {
 
@@ -53,6 +56,11 @@ template<> struct ArgumentCoder<Namespace::OtherClass> {
 
 void ArgumentCoder<Namespace::Subnamespace::StructName>::encode(Encoder& encoder, const Namespace::Subnamespace::StructName& instance)
 {
+    static_assert(std::is_same_v<std::remove_const_t<std::remove_reference_t<decltype(instance.firstMemberName)>>, FirstMemberType>);
+#if ENABLE(SECOND_MEMBER)
+    static_assert(std::is_same_v<std::remove_const_t<std::remove_reference_t<decltype(instance.secondMemberName)>>, SecondMemberType>);
+#endif
+    static_assert(std::is_same_v<std::remove_const_t<std::remove_reference_t<decltype(instance.nullableTestMember)>>, RetainPtr<CFTypeRef>>);
     encoder << instance.firstMemberName;
 #if ENABLE(SECOND_MEMBER)
     encoder << instance.secondMemberName;
@@ -64,6 +72,11 @@ void ArgumentCoder<Namespace::Subnamespace::StructName>::encode(Encoder& encoder
 
 void ArgumentCoder<Namespace::Subnamespace::StructName>::encode(OtherEncoder& encoder, const Namespace::Subnamespace::StructName& instance)
 {
+    static_assert(std::is_same_v<std::remove_const_t<std::remove_reference_t<decltype(instance.firstMemberName)>>, FirstMemberType>);
+#if ENABLE(SECOND_MEMBER)
+    static_assert(std::is_same_v<std::remove_const_t<std::remove_reference_t<decltype(instance.secondMemberName)>>, SecondMemberType>);
+#endif
+    static_assert(std::is_same_v<std::remove_const_t<std::remove_reference_t<decltype(instance.nullableTestMember)>>, RetainPtr<CFTypeRef>>);
     encoder << instance.firstMemberName;
 #if ENABLE(SECOND_MEMBER)
     encoder << instance.secondMemberName;
@@ -99,13 +112,15 @@ std::optional<Namespace::Subnamespace::StructName> ArgumentCoder<Namespace::Subn
     } else
         nullableTestMember = std::optional<RetainPtr<CFTypeRef>> { RetainPtr<CFTypeRef> { } };
 
-    return { Namespace::Subnamespace::StructName {
-        WTFMove(*firstMemberName),
+    return {
+        Namespace::Subnamespace::StructName {
+            WTFMove(*firstMemberName),
 #if ENABLE(SECOND_MEMBER)
-        WTFMove(*secondMemberName),
+            WTFMove(*secondMemberName),
 #endif
-        WTFMove(*nullableTestMember)
-    } };
+            WTFMove(*nullableTestMember)
+        }
+    };
 }
 
 #endif
@@ -113,11 +128,16 @@ std::optional<Namespace::Subnamespace::StructName> ArgumentCoder<Namespace::Subn
 
 void ArgumentCoder<Namespace::OtherClass>::encode(Encoder& encoder, const Namespace::OtherClass& instance)
 {
+    static_assert(std::is_same_v<std::remove_const_t<std::remove_reference_t<decltype(instance.isNull)>>, bool>);
+    static_assert(std::is_same_v<std::remove_const_t<std::remove_reference_t<decltype(instance.a)>>, int>);
+    static_assert(std::is_same_v<std::remove_const_t<std::remove_reference_t<decltype(instance.b)>>, bool>);
+    static_assert(std::is_same_v<std::remove_const_t<std::remove_reference_t<decltype(instance.dataDetectorResults)>>, RetainPtr<NSArray>>);
     encoder << instance.isNull;
     if (instance.isNull)
         return;
     encoder << instance.a;
     encoder << instance.b;
+    encoder << instance.dataDetectorResults;
 }
 
 std::optional<Namespace::OtherClass> ArgumentCoder<Namespace::OtherClass>::decode(Decoder& decoder)
@@ -139,16 +159,27 @@ std::optional<Namespace::OtherClass> ArgumentCoder<Namespace::OtherClass>::decod
     if (!b)
         return std::nullopt;
 
-    return { Namespace::OtherClass {
-        WTFMove(*isNull),
-        WTFMove(*a),
-        WTFMove(*b)
-    } };
+    std::optional<RetainPtr<NSArray>> dataDetectorResults;
+    dataDetectorResults = IPC::decode<NSArray>(decoder, @[ NSArray.class, PAL::getDDScannerResultClass() ]);
+    if (!dataDetectorResults)
+        return std::nullopt;
+
+    return {
+        Namespace::OtherClass {
+            WTFMove(*isNull),
+            WTFMove(*a),
+            WTFMove(*b),
+            WTFMove(*dataDetectorResults)
+        }
+    };
 }
 
 
 void ArgumentCoder<Namespace::ReturnRefClass>::encode(Encoder& encoder, const Namespace::ReturnRefClass& instance)
 {
+    static_assert(std::is_same_v<std::remove_const_t<std::remove_reference_t<decltype(instance.functionCall().member1)>>, double>);
+    static_assert(std::is_same_v<std::remove_const_t<std::remove_reference_t<decltype(instance.functionCall().member2)>>, double>);
+    static_assert(std::is_same_v<std::remove_const_t<std::remove_reference_t<decltype(instance.uniqueMember)>>, std::unique_ptr<int>>);
     encoder << instance.functionCall().member1;
     encoder << instance.functionCall().member2;
     encoder << !!instance.uniqueMember;
@@ -182,16 +213,20 @@ std::optional<Ref<Namespace::ReturnRefClass>> ArgumentCoder<Namespace::ReturnRef
     } else
         uniqueMember = std::optional<std::unique_ptr<int>> { std::unique_ptr<int> { } };
 
-    return { Namespace::ReturnRefClass::create(
-        WTFMove(*functionCallmember1),
-        WTFMove(*functionCallmember2),
-        WTFMove(*uniqueMember)
-    ) };
+    return {
+        Namespace::ReturnRefClass::create(
+            WTFMove(*functionCallmember1),
+            WTFMove(*functionCallmember2),
+            WTFMove(*uniqueMember)
+        )
+    };
 }
 
 
 void ArgumentCoder<Namespace::EmptyConstructorStruct>::encode(Encoder& encoder, const Namespace::EmptyConstructorStruct& instance)
 {
+    static_assert(std::is_same_v<std::remove_const_t<std::remove_reference_t<decltype(instance.m_int)>>, int>);
+    static_assert(std::is_same_v<std::remove_const_t<std::remove_reference_t<decltype(instance.m_double)>>, double>);
     encoder << instance.m_int;
     encoder << instance.m_double;
 }
@@ -217,6 +252,13 @@ std::optional<Namespace::EmptyConstructorStruct> ArgumentCoder<Namespace::EmptyC
 
 void ArgumentCoder<Namespace::EmptyConstructorNullable>::encode(Encoder& encoder, const Namespace::EmptyConstructorNullable& instance)
 {
+    static_assert(std::is_same_v<std::remove_const_t<std::remove_reference_t<decltype(instance.m_isNull)>>, bool>);
+#if CONDITION_AROUND_M_TYPE_AND_M_VALUE
+    static_assert(std::is_same_v<std::remove_const_t<std::remove_reference_t<decltype(instance.m_type)>>, MemberType>);
+#endif
+#if CONDITION_AROUND_M_TYPE_AND_M_VALUE
+    static_assert(std::is_same_v<std::remove_const_t<std::remove_reference_t<decltype(instance.m_value)>>, OtherMemberType>);
+#endif
     encoder << instance.m_isNull;
     if (instance.m_isNull)
         return;
@@ -265,6 +307,7 @@ std::optional<Namespace::EmptyConstructorNullable> ArgumentCoder<Namespace::Empt
 
 void ArgumentCoder<WithoutNamespace>::encode(Encoder& encoder, const WithoutNamespace& instance)
 {
+    static_assert(std::is_same_v<std::remove_const_t<std::remove_reference_t<decltype(instance.a)>>, int>);
     encoder << instance.a;
 }
 
@@ -275,19 +318,23 @@ std::optional<WithoutNamespace> ArgumentCoder<WithoutNamespace>::decode(Decoder&
     if (!a)
         return std::nullopt;
 
-    return { WithoutNamespace {
-        WTFMove(*a)
-    } };
+    return {
+        WithoutNamespace {
+            WTFMove(*a)
+        }
+    };
 }
 
 
 void ArgumentCoder<WithoutNamespaceWithAttributes>::encode(Encoder& encoder, const WithoutNamespaceWithAttributes& instance)
 {
+    static_assert(std::is_same_v<std::remove_const_t<std::remove_reference_t<decltype(instance.a)>>, int>);
     encoder << instance.a;
 }
 
 void ArgumentCoder<WithoutNamespaceWithAttributes>::encode(OtherEncoder& encoder, const WithoutNamespaceWithAttributes& instance)
 {
+    static_assert(std::is_same_v<std::remove_const_t<std::remove_reference_t<decltype(instance.a)>>, int>);
     encoder << instance.a;
 }
 
@@ -298,14 +345,18 @@ std::optional<WithoutNamespaceWithAttributes> ArgumentCoder<WithoutNamespaceWith
     if (!a)
         return std::nullopt;
 
-    return { WithoutNamespaceWithAttributes {
-        WTFMove(*a)
-    } };
+    return {
+        WithoutNamespaceWithAttributes {
+            WTFMove(*a)
+        }
+    };
 }
 
 
 void ArgumentCoder<WebCore::InheritsFrom>::encode(Encoder& encoder, const WebCore::InheritsFrom& instance)
 {
+    static_assert(std::is_same_v<std::remove_const_t<std::remove_reference_t<decltype(instance.a)>>, int>);
+    static_assert(std::is_same_v<std::remove_const_t<std::remove_reference_t<decltype(instance.b)>>, float>);
     encoder << instance.a;
     encoder << instance.b;
 }
@@ -317,22 +368,122 @@ std::optional<WebCore::InheritsFrom> ArgumentCoder<WebCore::InheritsFrom>::decod
     if (!a)
         return std::nullopt;
 
-    std::optional<int> b;
+    std::optional<float> b;
     decoder >> b;
     if (!b)
         return std::nullopt;
 
-    return { WebCore::InheritsFrom {
-        {
-            WTFMove(*a),
-        },
-        WTFMove(*b)
-    } };
+    return {
+        WebCore::InheritsFrom {
+            WithoutNamespace {
+                WTFMove(*a)
+            }
+            ,
+            WTFMove(*b)
+        }
+    };
+}
+
+
+void ArgumentCoder<WebCore::InheritanceGrandchild>::encode(Encoder& encoder, const WebCore::InheritanceGrandchild& instance)
+{
+    static_assert(std::is_same_v<std::remove_const_t<std::remove_reference_t<decltype(instance.a)>>, int>);
+    static_assert(std::is_same_v<std::remove_const_t<std::remove_reference_t<decltype(instance.b)>>, float>);
+    static_assert(std::is_same_v<std::remove_const_t<std::remove_reference_t<decltype(instance.c)>>, double>);
+    encoder << instance.a;
+    encoder << instance.b;
+    encoder << instance.c;
+}
+
+std::optional<WebCore::InheritanceGrandchild> ArgumentCoder<WebCore::InheritanceGrandchild>::decode(Decoder& decoder)
+{
+    std::optional<int> a;
+    decoder >> a;
+    if (!a)
+        return std::nullopt;
+
+    std::optional<float> b;
+    decoder >> b;
+    if (!b)
+        return std::nullopt;
+
+    std::optional<double> c;
+    decoder >> c;
+    if (!c)
+        return std::nullopt;
+
+    return {
+        WebCore::InheritanceGrandchild {
+            WebCore::InheritsFrom {
+                WithoutNamespace {
+                    WTFMove(*a)
+                }
+                ,
+                WTFMove(*b)
+            }
+            ,
+            WTFMove(*c)
+        }
+    };
+}
+
+
+void ArgumentCoder<WTF::Seconds>::encode(Encoder& encoder, const WTF::Seconds& instance)
+{
+    static_assert(std::is_same_v<std::remove_const_t<std::remove_reference_t<decltype(instance.value())>>, double>);
+    encoder << instance.value();
+}
+
+std::optional<WTF::Seconds> ArgumentCoder<WTF::Seconds>::decode(Decoder& decoder)
+{
+    std::optional<double> value;
+    decoder >> value;
+    if (!value)
+        return std::nullopt;
+
+    return {
+        WTF::Seconds {
+            WTFMove(*value)
+        }
+    };
+}
+
+
+void ArgumentCoder<WTF::CreateUsingClass>::encode(Encoder& encoder, const WTF::CreateUsingClass& instance)
+{
+    static_assert(std::is_same_v<std::remove_const_t<std::remove_reference_t<decltype(instance.value)>>, double>);
+    encoder << instance.value;
+}
+
+std::optional<WTF::CreateUsingClass> ArgumentCoder<WTF::CreateUsingClass>::decode(Decoder& decoder)
+{
+    std::optional<double> value;
+    decoder >> value;
+    if (!value)
+        return std::nullopt;
+
+    return {
+        WTF::CreateUsingClass::fromDouble(
+            WTFMove(*value)
+        )
+    };
 }
 
 } // namespace IPC
 
 namespace WTF {
+
+template<> bool isValidEnum<EnumWithoutNamespace, void>(uint8_t value)
+{
+    switch (static_cast<EnumWithoutNamespace>(value)) {
+    case EnumWithoutNamespace::Value1:
+    case EnumWithoutNamespace::Value2:
+    case EnumWithoutNamespace::Value3:
+        return true;
+    default:
+        return false;
+    }
+}
 
 #if ENABLE(UINT16_ENUM)
 template<> bool isValidEnum<EnumNamespace::EnumType, void>(uint16_t value)

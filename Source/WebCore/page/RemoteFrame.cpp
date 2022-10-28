@@ -30,18 +30,26 @@
 
 namespace WebCore {
 
-RemoteFrame::RemoteFrame(GlobalFrameIdentifier&& frameIdentifier)
-    : m_identifier(WTFMove(frameIdentifier))
+RemoteFrame::RemoteFrame(Page& page, FrameIdentifier frameID, AbstractFrame* parent)
+    : AbstractFrame(page, frameID, parent)
 {
 }
 
-RemoteFrame::~RemoteFrame()
-{
-}
+RemoteFrame::~RemoteFrame() = default;
 
 AbstractDOMWindow* RemoteFrame::virtualWindow() const
 {
     return window();
+}
+
+void RemoteFrame::setWindow(RemoteDOMWindow* window)
+{
+    m_window = WeakPtr { window };
+}
+
+RemoteDOMWindow* RemoteFrame::window() const
+{
+    return m_window.get();
 }
 
 } // namespace WebCore

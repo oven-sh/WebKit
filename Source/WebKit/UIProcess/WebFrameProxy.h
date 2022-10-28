@@ -28,11 +28,14 @@
 #include "APIObject.h"
 #include "FrameLoadState.h"
 #include "GenericCallback.h"
+#include "MessageReceiver.h"
+#include "MessageSender.h"
 #include "WebFramePolicyListenerProxy.h"
 #include "WebPageProxy.h"
 #include <WebCore/FrameLoaderTypes.h>
 #include <wtf/Forward.h>
 #include <wtf/Function.h>
+#include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
 
 #if ENABLE(CONTENT_FILTERING)
@@ -54,14 +57,18 @@ class WebFramePolicyListenerProxy;
 class WebsiteDataStore;
 enum class ShouldExpectSafeBrowsingResult : bool;
 enum class ProcessSwapRequestedByClient : bool;
+struct NavigationActionData;
 struct WebsitePoliciesData;
 
-class WebFrameProxy : public API::ObjectImpl<API::Object::Type::Frame> {
+class WebFrameProxy : public API::ObjectImpl<API::Object::Type::Frame>, public IPC::MessageReceiver, public IPC::MessageSender {
 public:
-    static Ref<WebFrameProxy> create(WebPageProxy& page, WebCore::FrameIdentifier frameID)
+    static Ref<WebFrameProxy> create(WebPageProxy& page, WebProcessProxy& process, WebCore::PageIdentifier pageID, WebCore::FrameIdentifier frameID)
     {
-        return adoptRef(*new WebFrameProxy(page, frameID));
+        return adoptRef(*new WebFrameProxy(page, process, pageID, frameID));
     }
+
+    static WebFrameProxy* webFrame(WebCore::FrameIdentifier);
+    static bool canCreateFrame(WebCore::FrameIdentifier);
 
     virtual ~WebFrameProxy();
 
@@ -76,7 +83,7 @@ public:
 
     FrameLoadState& frameLoadState() { return m_frameLoadState; }
 
-    void navigateServiceWorkerClient(WebCore::ScriptExecutionContextIdentifier, const URL&, CompletionHandler<void(std::optional<WebCore::PageIdentifier>)>&&);
+    void navigateServiceWorkerClient(WebCore::ScriptExecutionContextIdentifier, const URL&, CompletionHandler<void(std::optional<WebCore::PageIdentifier>, std::optional<WebCore::FrameIdentifier>)>&&);
 
     void loadURL(const URL&, const String& referrer = String());
     // Sub frames only. For main frames, use WebPageProxy::loadData.
@@ -128,14 +135,33 @@ public:
 #endif
 
     void transferNavigationCallbackToFrame(WebFrameProxy&);
-    void setNavigationCallback(CompletionHandler<void(std::optional<WebCore::PageIdentifier>)>&&);
+    void setNavigationCallback(CompletionHandler<void(std::optional<WebCore::PageIdentifier>, std::optional<WebCore::FrameIdentifier>)>&&);
+
+    void disconnect();
+    void didCreateSubframe(WebCore::FrameIdentifier);
+    ProcessID processIdentifier() const;
+    void swapToProcess(WebProcessProxy&);
+
+    void didReceiveMessage(IPC::Connection&, IPC::Decoder&);
+    bool didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&);
+
+    void decidePolicyForNavigationActionAsync(WebCore::FrameIdentifier, FrameInfoData&&, WebCore::PolicyCheckIdentifier, uint64_t navigationID, NavigationActionData&&, FrameInfoData&& originatingFrameInfo,
+        std::optional<WebPageProxyIdentifier> originatingPageID, const WebCore::ResourceRequest& originalRequest, WebCore::ResourceRequest&&, IPC::FormDataReference&& requestBody,
+        WebCore::ResourceResponse&& redirectResponse, const UserData&, uint64_t listenerID);
+    void decidePolicyForNavigationActionSync(WebCore::FrameIdentifier, bool isMainFrame, FrameInfoData&&, WebCore::PolicyCheckIdentifier, uint64_t navigationID, NavigationActionData&&, FrameInfoData&& originatingFrameInfo,
+        std::optional<WebPageProxyIdentifier> originatingPageID, const WebCore::ResourceRequest& originalRequest, WebCore::ResourceRequest&&, IPC::FormDataReference&& requestBody,
+        WebCore::ResourceResponse&& redirectResponse, const UserData&, CompletionHandler<void(const PolicyDecision&)>&&);
 
 private:
-    WebFrameProxy(WebPageProxy&, WebCore::FrameIdentifier);
+    WebFrameProxy(WebPageProxy&, WebProcessProxy&, WebCore::PageIdentifier, WebCore::FrameIdentifier);
 
     std::optional<WebCore::PageIdentifier> pageIdentifier() const;
 
+    IPC::Connection* messageSenderConnection() const final;
+    uint64_t messageSenderDestinationID() const final;
+
     WeakPtr<WebPageProxy> m_page;
+    Ref<WebProcessProxy> m_process;
 
     FrameLoadState m_frameLoadState;
 
@@ -144,11 +170,14 @@ private:
     bool m_containsPluginDocument { false };
     WebCore::CertificateInfo m_certificateInfo;
     RefPtr<WebFramePolicyListenerProxy> m_activeListener;
+    WebCore::PageIdentifier m_webPageID;
     WebCore::FrameIdentifier m_frameID;
+    HashSet<Ref<WebFrameProxy>> m_childFrames;
+    WeakPtr<WebFrameProxy> m_parentFrame;
 #if ENABLE(CONTENT_FILTERING)
     WebCore::ContentFilterUnblockHandler m_contentFilterUnblockHandler;
 #endif
-    CompletionHandler<void(std::optional<WebCore::PageIdentifier>)> m_navigateCallback;
+    CompletionHandler<void(std::optional<WebCore::PageIdentifier>, std::optional<WebCore::FrameIdentifier>)> m_navigateCallback;
 };
 
 } // namespace WebKit

@@ -256,7 +256,7 @@ public:
         RefPtr<JSON::Object> data = JSON::Object::create();
 
 #if ENABLE(FULLSCREEN_API)
-        if (event.type() == eventNames().webkitfullscreenchangeEvent)
+        if (event.type() == eventNames().webkitfullscreenchangeEvent || event.type() == eventNames().fullscreenchangeEvent)
             data->setBoolean("enabled"_s, !!node->document().fullscreenManager().fullscreenElement());
 #endif // ENABLE(FULLSCREEN_API)
 
@@ -343,8 +343,11 @@ void InspectorDOMAgent::willDestroyFrontendAndBackend(Inspector::DisconnectReaso
 Vector<Document*> InspectorDOMAgent::documents()
 {
     Vector<Document*> result;
-    for (Frame* frame = m_document->frame(); frame; frame = frame->tree().traverseNext()) {
-        Document* document = frame->document();
+    for (AbstractFrame* frame = m_document->frame(); frame; frame = frame->tree().traverseNext()) {
+        auto* localFrame = dynamicDowncast<LocalFrame>(frame);
+        if (!localFrame)
+            continue;
+        auto* document = localFrame->document();
         if (!document)
             continue;
         result.append(document);

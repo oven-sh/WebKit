@@ -45,6 +45,7 @@
 #include <WebCore/SharedBuffer.h>
 #include <WebCore/ShouldRelaxThirdPartyCookieBlocking.h>
 #include <WebCore/SynchronousLoaderClient.h>
+#include <WebCore/TimingAllowOrigin.h>
 #include <pal/text/TextEncoding.h>
 #include <wtf/FileSystem.h>
 
@@ -52,13 +53,14 @@ namespace WebKit {
 
 using namespace WebCore;
 
-NetworkDataTaskCurl::NetworkDataTaskCurl(NetworkSession& session, NetworkDataTaskClient& client, const ResourceRequest& requestWithCredentials, FrameIdentifier frameID, PageIdentifier& pageID, StoredCredentialsPolicy storedCredentialsPolicy, ContentSniffingPolicy shouldContentSniff, ContentEncodingSniffingPolicy, bool shouldClearReferrerOnHTTPSToHTTPRedirect, bool dataTaskIsForMainFrameNavigation, WebCore::ShouldRelaxThirdPartyCookieBlocking shouldRelaxThirdPartyCookieBlocking)
-    : NetworkDataTask(session, client, requestWithCredentials, storedCredentialsPolicy, shouldClearReferrerOnHTTPSToHTTPRedirect, dataTaskIsForMainFrameNavigation)
-    , m_frameID(frameID)
-    , m_pageID(pageID)
-    , m_shouldRelaxThirdPartyCookieBlocking(shouldRelaxThirdPartyCookieBlocking)
+NetworkDataTaskCurl::NetworkDataTaskCurl(NetworkSession& session, NetworkDataTaskClient& client, const NetworkLoadParameters& parameters)
+    : NetworkDataTask(session, client, parameters.request, parameters.storedCredentialsPolicy, parameters.shouldClearReferrerOnHTTPSToHTTPRedirect, parameters.isMainFrameNavigation)
+    , m_frameID(parameters.webFrameID)
+    , m_pageID(parameters.webPageID)
+    , m_shouldRelaxThirdPartyCookieBlocking(parameters.shouldRelaxThirdPartyCookieBlocking)
+    , m_sourceOrigin(parameters.sourceOrigin)
 {
-    auto request = requestWithCredentials;
+    auto request = parameters.request;
     if (request.url().protocolIsInHTTPFamily()) {
         if (m_storedCredentialsPolicy == StoredCredentialsPolicy::Use) {
             auto url = request.url();
@@ -159,6 +161,8 @@ void NetworkDataTaskCurl::curlDidReceiveResponse(CurlRequest& request, CurlRespo
 
     m_response = ResourceResponse(receivedResponse);
     m_response.setCertificateInfo(WTFMove(receivedResponse.certificateInfo));
+
+    updateNetworkLoadMetrics(receivedResponse.networkLoadMetrics);
     m_response.setDeprecatedNetworkLoadMetrics(Box<NetworkLoadMetrics>::create(WTFMove(receivedResponse.networkLoadMetrics)));
 
     handleCookieHeaders(request.resourceRequest(), receivedResponse);
@@ -221,6 +225,8 @@ void NetworkDataTaskCurl::curlDidComplete(CurlRequest&, NetworkLoadMetrics&& net
         download->didFinish();
         return;
     }
+
+    updateNetworkLoadMetrics(networkLoadMetrics);
 
     m_client->didCompleteWithError({ }, WTFMove(networkLoadMetrics));
 }
@@ -372,7 +378,7 @@ void NetworkDataTaskCurl::willPerformHTTPRedirection()
         blockCookies();
 #endif
     auto response = ResourceResponse(m_response);
-    m_client->willPerformHTTPRedirection(WTFMove(response), WTFMove(request), [this, protectedThis = Ref { *this }, didChangeCredential, isCrossOrigin](const ResourceRequest& newRequest) {
+    m_client->willPerformHTTPRedirection(WTFMove(response), WTFMove(request), [this, protectedThis = Ref { *this }, didChangeCredential](const ResourceRequest& newRequest) {
         if (newRequest.isNull() || m_state == State::Canceling)
             return;
 
@@ -517,7 +523,7 @@ void NetworkDataTaskCurl::restartWithCredential(const ProtectionSpace& protectio
 void NetworkDataTaskCurl::appendCookieHeader(WebCore::ResourceRequest& request)
 {
     auto includeSecureCookies = request.url().protocolIs("https"_s) ? IncludeSecureCookies::Yes : IncludeSecureCookies::No;
-    auto cookieHeaderField = m_session->networkStorageSession()->cookieRequestHeaderFieldValue(request.firstPartyForCookies(), WebCore::SameSiteInfo::create(request), request.url(), std::nullopt, std::nullopt, includeSecureCookies, ShouldAskITP::Yes, WebCore::ShouldRelaxThirdPartyCookieBlocking::No).first;
+    auto cookieHeaderField = m_session->networkStorageSession()->cookieRequestHeaderFieldValue(request.firstPartyForCookies(), WebCore::SameSiteInfo::create(request), request.url(), std::nullopt, std::nullopt, includeSecureCookies, ApplyTrackingPrevention::Yes, WebCore::ShouldRelaxThirdPartyCookieBlocking::No).first;
     if (!cookieHeaderField.isEmpty())
         request.addHTTPHeaderField(HTTPHeaderName::Cookie, cookieHeaderField);
 }
@@ -577,6 +583,17 @@ bool NetworkDataTaskCurl::shouldBlockCookies(const WebCore::ResourceRequest& req
 bool NetworkDataTaskCurl::isThirdPartyRequest(const WebCore::ResourceRequest& request)
 {
     return !WebCore::areRegistrableDomainsEqual(request.url(), request.firstPartyForCookies());
+}
+
+void NetworkDataTaskCurl::updateNetworkLoadMetrics(WebCore::NetworkLoadMetrics& networkLoadMetrics)
+{
+    if (!m_failsTAOCheck) {
+        RefPtr<SecurityOrigin> origin = isTopLevelNavigation() ? SecurityOrigin::create(firstRequest().url()) : m_sourceOrigin;
+        if (origin)
+            m_failsTAOCheck = !passesTimingAllowOriginCheck(m_response, *origin);
+    }
+
+    networkLoadMetrics.failsTAOCheck = m_failsTAOCheck;
 }
 
 } // namespace WebKit

@@ -126,11 +126,14 @@ static int32_t deviceOrientationForUIInterfaceOrientation(UIInterfaceOrientation
 
 - (void)setFrame:(CGRect)frame
 {
-    CGRect oldFrame = self.frame;
+    bool sizeChanged = !CGSizeEqualToSize(self.frame.size, frame.size);
+    if (sizeChanged)
+        [self _frameOrBoundsWillChange];
+
     [super setFrame:frame];
 
-    if (!CGSizeEqualToSize(oldFrame.size, frame.size)) {
-        [self _frameOrBoundsChanged];
+    if (sizeChanged) {
+        [self _frameOrBoundsMayHaveChanged];
 
 #if HAVE(UIKIT_RESIZABLE_WINDOWS)
         [self _acquireResizeAssertionForReason:@"-[WKWebView setFrame:]"];
@@ -140,12 +143,15 @@ static int32_t deviceOrientationForUIInterfaceOrientation(UIInterfaceOrientation
 
 - (void)setBounds:(CGRect)bounds
 {
-    CGRect oldBounds = self.bounds;
+    bool sizeChanged = !CGSizeEqualToSize(self.bounds.size, bounds.size);
+    if (sizeChanged)
+        [self _frameOrBoundsWillChange];
+
     [super setBounds:bounds];
     [_customContentFixedOverlayView setFrame:self.bounds];
 
-    if (!CGSizeEqualToSize(oldBounds.size, bounds.size)) {
-        [self _frameOrBoundsChanged];
+    if (sizeChanged) {
+        [self _frameOrBoundsMayHaveChanged];
 
 #if HAVE(UIKIT_RESIZABLE_WINDOWS)
         [self _acquireResizeAssertionForReason:@"-[WKWebView setBounds:]"];
@@ -157,7 +163,7 @@ static int32_t deviceOrientationForUIInterfaceOrientation(UIInterfaceOrientation
 {
     [_safeBrowsingWarning setFrame:self.bounds];
     [super layoutSubviews];
-    [self _frameOrBoundsChanged];
+    [self _frameOrBoundsMayHaveChanged];
 }
 
 #pragma mark - iOS implementation methods
@@ -1659,14 +1665,16 @@ static WebCore::FloatPoint constrainContentOffset(WebCore::FloatPoint contentOff
         [self _dispatchSetDeviceOrientation:[self _deviceOrientation]];
     _page->activityStateDidChange(WebCore::ActivityState::allFlags());
     _page->webViewDidMoveToWindow();
-    [self _presentCaptivePortalModeAlertIfNeeded];
+    [self _presentLockdownModeAlertIfNeeded];
 #if HAVE(UIKIT_RESIZABLE_WINDOWS)
     if (_page->hasRunningProcess() && self.window)
         _page->setIsWindowResizingEnabled(self._isWindowResizingEnabled);
     [self _invalidateResizeAssertions];
 #endif
+#if HAVE(UI_WINDOW_SCENE_LIVE_RESIZE)
     [self _destroyEndLiveResizeObserver];
     [self _endLiveResize];
+#endif
 }
 
 #if HAVE(UIKIT_RESIZABLE_WINDOWS)
@@ -2104,6 +2112,8 @@ static WebCore::FloatPoint constrainContentOffset(WebCore::FloatPoint contentOff
 #endif
 }
 
+#if HAVE(UI_WINDOW_SCENE_LIVE_RESIZE)
+
 - (void)_beginAutomaticLiveResizeIfNeeded
 {
     if (_perProcessState.liveResizeParameters)
@@ -2112,14 +2122,12 @@ static WebCore::FloatPoint constrainContentOffset(WebCore::FloatPoint contentOff
     if (!self.window)
         return;
 
-    // FIXME: This should use explicit live resize notifications instead of inferring it,
-    // especially since this means we may do some spurious live resizes.
-    if (self.window.windowScene.activationState != UISceneActivationStateForegroundInactive)
+    if (!self.window.windowScene._isInLiveResize)
         return;
 
     [self _beginLiveResize];
     
-    _endLiveResizeNotificationObserver = [[NSNotificationCenter defaultCenter] addObserverForName:UISceneDidActivateNotification object:self.window.windowScene queue:NSOperationQueue.mainQueue usingBlock:makeBlockPtr([weakSelf = WeakObjCPtr<WKWebView>(self)] (NSNotification *) {
+    _endLiveResizeNotificationObserver = [[NSNotificationCenter defaultCenter] addObserverForName:_UIWindowSceneDidEndLiveResizeNotification object:self.window.windowScene queue:NSOperationQueue.mainQueue usingBlock:makeBlockPtr([weakSelf = WeakObjCPtr<WKWebView>(self)] (NSNotification *) {
         auto strongSelf = weakSelf.get();
         if (!strongSelf)
             return;
@@ -2152,17 +2160,26 @@ static WebCore::FloatPoint constrainContentOffset(WebCore::FloatPoint contentOff
     [_resizeAnimationView setTransform:transform];
 }
 
-- (void)_frameOrBoundsChanged
+#endif // HAVE(UI_WINDOW_SCENE_LIVE_RESIZE)
+
+- (void)_frameOrBoundsWillChange
+{
+#if HAVE(UI_WINDOW_SCENE_LIVE_RESIZE)
+    if (_page && _page->preferences().automaticLiveResizeEnabled())
+        [self _beginAutomaticLiveResizeIfNeeded];
+#endif
+}
+
+- (void)_frameOrBoundsMayHaveChanged
 {
     CGRect bounds = self.bounds;
     [_scrollView setFrame:bounds];
 
-    if (_page && _page->preferences().automaticLiveResizeEnabled())
-        [self _beginAutomaticLiveResizeIfNeeded];
-
+#if HAVE(UI_WINDOW_SCENE_LIVE_RESIZE)
     if (_perProcessState.liveResizeParameters)
         [self _updateLiveResizeTransform];
-    
+#endif
+
     if (!self._shouldDeferGeometryUpdates) {
         if (!_viewLayoutSizeOverride)
             [self _dispatchSetViewLayoutSize:[self activeViewLayoutSize:self.bounds]];
@@ -2961,6 +2978,8 @@ static WebCore::UserInterfaceLayoutDirection toUserInterfaceLayoutDirection(UISe
     return [_contentView _shouldAvoidSecurityHeuristicScoreUpdates];
 }
 
+#if HAVE(UI_WINDOW_SCENE_LIVE_RESIZE)
+
 - (void)_beginLiveResize
 {
     if (_perProcessState.liveResizeParameters) {
@@ -3002,6 +3021,8 @@ static WebCore::UserInterfaceLayoutDirection toUserInterfaceLayoutDirection(UISe
     }];    
 }
 
+#endif // HAVE(UI_WINDOW_SCENE_LIVE_RESIZE)
+
 #if HAVE(UIFINDINTERACTION)
 
 - (id<UITextSearching>)_searchableObject
@@ -3039,7 +3060,7 @@ static WebCore::UserInterfaceLayoutDirection toUserInterfaceLayoutDirection(UISe
 
 #if ENABLE(LOCKDOWN_MODE_API)
 
-constexpr auto WebKitCaptivePortalModeAlertShownKey = @"WebKitCaptivePortalModeAlertShown";
+constexpr auto WebKitLockdownModeAlertShownKey = @"WebKitLockdownModeAlertShown";
 
 static bool lockdownModeWarningNeeded = true;
 
@@ -3055,13 +3076,13 @@ static bool isLockdownModeWarningNeeded()
     if (WebCore::IOSApplication::isMobileSafari())
         return false;
 
-    if (![WKProcessPool _lockdownModeEnabledGloballyForTesting] || [[NSUserDefaults standardUserDefaults] boolForKey:WebKitCaptivePortalModeAlertShownKey])
+    if (![WKProcessPool _lockdownModeEnabledGloballyForTesting] || [[NSUserDefaults standardUserDefaults] boolForKey:WebKitLockdownModeAlertShownKey])
         return false;
 
     return true;
 }
 
-- (void)_presentCaptivePortalMode
+- (void)_presentLockdownMode
 {
     lockdownModeWarningNeeded = isLockdownModeWarningNeeded();
     if (!lockdownModeWarningNeeded)
@@ -3078,7 +3099,7 @@ static bool isLockdownModeWarningNeeded()
         lockdownModeWarningNeeded = false;
 
         if (result == WKDialogResultHandled) {
-            [[NSUserDefaults standardUserDefaults] setBool:YES forKey:WebKitCaptivePortalModeAlertShownKey];
+            [[NSUserDefaults standardUserDefaults] setBool:YES forKey:WebKitLockdownModeAlertShownKey];
             return;
         }
 
@@ -3093,7 +3114,7 @@ static bool isLockdownModeWarningNeeded()
 
             UIViewController *presentationViewController = [UIViewController _viewControllerForFullScreenPresentationFromView:protectedSelf.get()];
             [presentationViewController presentViewController:alert animated:YES completion:nil];
-            [[NSUserDefaults standardUserDefaults] setBool:YES forKey:WebKitCaptivePortalModeAlertShownKey];
+            [[NSUserDefaults standardUserDefaults] setBool:YES forKey:WebKitLockdownModeAlertShownKey];
         });
     });
     
@@ -3107,11 +3128,11 @@ static bool isLockdownModeWarningNeeded()
     decisionHandler(WKDialogResultShowDefault);
 }
 
-- (void)_presentCaptivePortalModeAlertIfNeeded
+- (void)_presentLockdownModeAlertIfNeeded
 {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        [self _presentCaptivePortalMode];
+        [self _presentLockdownMode];
         _needsToPresentLockdownModeMessage = NO;
     });
 
@@ -3121,11 +3142,11 @@ static bool isLockdownModeWarningNeeded()
     if (!_needsToPresentLockdownModeMessage)
         return;
 
-    [self _presentCaptivePortalMode];
+    [self _presentLockdownMode];
     _needsToPresentLockdownModeMessage = NO;
 }
 #else
-- (void)_presentCaptivePortalModeAlertIfNeeded
+- (void)_presentLockdownModeAlertIfNeeded
 {
 }
 #endif
@@ -3325,6 +3346,9 @@ static bool isLockdownModeWarningNeeded()
 
 - (void)_setInterfaceOrientationOverride:(UIInterfaceOrientation)interfaceOrientation
 {
+    if (_overridesInterfaceOrientation && interfaceOrientation == _interfaceOrientationOverride)
+        return;
+
     _overridesInterfaceOrientation = YES;
     _interfaceOrientationOverride = interfaceOrientation;
 
@@ -3587,7 +3611,7 @@ static bool isLockdownModeWarningNeeded()
             _perProcessState.waitingForEndAnimatedResize = YES;
         }
 
-        [self _frameOrBoundsChanged];
+        [self _frameOrBoundsMayHaveChanged];
         if (_viewLayoutSizeOverride)
             [self _dispatchSetViewLayoutSize:newViewLayoutSize];
         if (_minimumUnobscuredSizeOverride)

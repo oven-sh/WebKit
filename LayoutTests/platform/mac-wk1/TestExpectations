@@ -42,6 +42,7 @@ webkit.org/b/235072 imported/w3c/web-platform-tests/video-rvfc/request-video-fra
 
 webkit.org/b/244736 imported/w3c/web-platform-tests/video-rvfc/request-video-frame-callback.html [ Pass Failure ]
 
+http/wpt/webcodecs [ Skip ]
 imported/w3c/web-platform-tests/webcodecs [ Skip ]
 
 #//////////////////////////////////////////////////////////////////////////////////////////
@@ -78,8 +79,12 @@ http/tests/clear-site-data [ Skip ]
 # The Screen Wake Lock API is not supportted in WebKit1.
 imported/w3c/web-platform-tests/screen-wake-lock [ Skip ]
 
+# The Screen Orientation API is not supportted in WebKit1.
+imported/w3c/web-platform-tests/screen-orientation [ Skip ]
+
 # Shared workers are only implemented for WebKit2.
 http/tests/navigation/page-cache-shared-worker.html [ Skip ]
+http/tests/workers/shared [ Skip ]
 imported/w3c/web-platform-tests/content-security-policy/connect-src/shared-worker-connect-src-allowed.sub.html [ Skip ]
 imported/w3c/web-platform-tests/content-security-policy/connect-src/shared-worker-connect-src-blocked.sub.html [ Skip ]
 imported/w3c/web-platform-tests/content-security-policy/gen/top.http-rp/script-src-self/sharedworker-classic.http.html [ Skip ]
@@ -299,12 +304,12 @@ imported/w3c/web-platform-tests/IndexedDB/reading-autoincrement-store-cursors.an
 imported/w3c/web-platform-tests/IndexedDB/reading-autoincrement-store.any.sharedworker.html [ Skip ]
 imported/w3c/web-platform-tests/IndexedDB/storage-buckets.https.any.sharedworker.html [ Skip ]
 
-# Reporting API "generate_test_report" is not supported on WebKitLegacy
-imported/w3c/web-platform-tests/reporting/bufferSize.html [ Skip ]
-imported/w3c/web-platform-tests/reporting/disconnect.html [ Skip ]
-imported/w3c/web-platform-tests/reporting/generateTestReport.html [ Skip ]
-imported/w3c/web-platform-tests/reporting/nestedReport.html [ Skip ]
-imported/w3c/web-platform-tests/reporting/order.html [ Skip ]
+# WebKitLegacy doesn't support https-based WPT
+webkit.org/b/246719 imported/w3c/web-platform-tests/reporting/generateTestReport-honors-endpoint.https.sub.html [ Failure ]
+webkit.org/b/246719 imported/w3c/web-platform-tests/reporting/cross-origin-report-no-credentials.https.sub.html [ Failure ]
+webkit.org/b/246719 imported/w3c/web-platform-tests/reporting/cross-origin-reports-isolated.https.sub.html [ Failure ]
+webkit.org/b/246351 imported/w3c/web-platform-tests/reporting/reporting-api-honors-limits.https.sub.html [ Failure ]
+webkit.org/b/246350 imported/w3c/web-platform-tests/content-security-policy/reporting-api/reporting-api-sends-reports-on-violation.https.sub.html [ Pass Failure ]
 
 http/wpt/mediarecorder [ Skip ]
 imported/w3c/web-platform-tests/mediacapture-record [ Skip ]
@@ -783,9 +788,6 @@ fast/forms/validation-message-in-relative-body.html
 fast/forms/validation-message-appearance.html
 fast/forms/validation-message-on-textarea.html
 
-# WK1 doesn't do pending WebGL policies 
-fast/canvas/webgl/useWhilePending.html [ Skip ]
-
 # Mac-WK1 only caches frames containing HTML at the moment.
 http/tests/navigation/page-cache-iframe-no-current-historyItem.html
 
@@ -1066,8 +1068,6 @@ fast/html/details-remove-summary-6-and-click.html [ Pass Failure ]
 
 #rdar://96906411 (REGRESSION(251850@main): imported/w3c/web-platform-tests/html/canvas/element/manual/wide-gamut-canvas/canvas-createImageBitmap-e_srgb.html is a constant text failure)
 imported/w3c/web-platform-tests/html/canvas/element/manual/wide-gamut-canvas/canvas-createImageBitmap-e_srgb.html [ Skip ]
-imported/w3c/web-platform-tests/reporting/cross-origin-report-no-credentials.https.sub.html [ Failure ]
-imported/w3c/web-platform-tests/reporting/cross-origin-reports-isolated.https.sub.html [ Failure ]
 
 webkit.org/b/165541 compositing/layer-creation/fixed-overlap-extent-rtl.html [ Failure ]
 webkit.org/b/165541 compositing/rtl/rtl-fixed-overflow.html [ Failure ]
@@ -2131,6 +2131,9 @@ webkit.org/b/245014 imported/w3c/web-platform-tests/cookies/value/value-ctl.html
 
 webkit.org/b/245035 imported/w3c/web-platform-tests/fetch/metadata/script.https.sub.html [ Pass Failure ]
 
+# webkit.org/b/246973 This test renders incorrectly after enabling accelerated drawing
+compositing/geometry/css-clip-oversize.html [ Pass ImageOnlyFailure ]
+
 webkit.org/b/245102 imported/w3c/web-platform-tests/html/browsers/windows/auxiliary-browsing-contexts/opener-noreferrer.html [ Pass Failure ]
 
 # webkit.org/b/245801 These tests are flakily crashing with a WorkerOrWorkletThread error
@@ -2140,3 +2143,5 @@ webkit.org/b/245102 imported/w3c/web-platform-tests/html/browsers/windows/auxili
 [ Debug ] imported/w3c/web-platform-tests/upgrade-insecure-requests/gen/worker-module.http-rp/upgrade/worker-module.https.html [ Skip ]
 
 webkit.org/b/245902 [ Debug ] contentfiltering/allow-media-document.html [ Skip ]
+
+webkit.org/b/246653 [ Debug ] media/modern-media-controls/media-documents/click-on-video-should-not-pause.html [ Skip ]

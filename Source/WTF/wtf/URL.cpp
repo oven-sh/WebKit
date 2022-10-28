@@ -557,7 +557,7 @@ template<typename StringType>
 static String percentEncodeCharacters(const StringType& input, bool(*shouldEncode)(UChar))
 {
     auto encode = [shouldEncode] (const StringType& input) {
-        auto result = input.tryGetUTF8ForRange([&](Span<const char> span) -> String {
+        auto result = input.tryGetUTF8([&](Span<const char> span) -> String {
             StringBuilder builder;
             for (unsigned j = 0; j < span.size(); j++) {
                 auto c = span[j];
@@ -569,7 +569,7 @@ static String percentEncodeCharacters(const StringType& input, bool(*shouldEncod
                     builder.append(c);
             }
             return builder.toString();
-        }, 0, input.length());
+        });
         RELEASE_ASSERT(result);
         return result.value();
     };
@@ -1311,14 +1311,31 @@ void removeQueryParameters(URL& url, const HashSet<String>& keysToRemove)
 {
     if (keysToRemove.isEmpty())
         return;
-    
+
+    if (!url.hasQuery())
+        return;
+
+    bool removedAnyKey = false;
     StringBuilder queryWithoutRemovalKeys;
-    for (auto& parameter : URLParser::parseURLEncodedForm(url.query())) {
-        if (!keysToRemove.contains(parameter.key))
-            queryWithoutRemovalKeys.append(queryWithoutRemovalKeys.isEmpty() ? "" : "&", parameter.key, '=', parameter.value);
+    for (auto bytes : url.query().split('&')) {
+        auto nameAndValue = URLParser::parseQueryNameAndValue(bytes);
+        if (!nameAndValue)
+            continue;
+
+        auto& key = nameAndValue->key;
+        if (key.isEmpty())
+            continue;
+
+        if (keysToRemove.contains(key)) {
+            removedAnyKey = true;
+            continue;
+        }
+
+        queryWithoutRemovalKeys.append(queryWithoutRemovalKeys.isEmpty() ? "" : "&", bytes);
     }
-    
-    url.setQuery(queryWithoutRemovalKeys);
+
+    if (removedAnyKey)
+        url.setQuery(queryWithoutRemovalKeys);
 }
 
 } // namespace WTF

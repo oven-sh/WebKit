@@ -44,7 +44,7 @@ InlineFormattingGeometry::InlineFormattingGeometry(const InlineFormattingContext
 {
 }
 
-InlineLayoutUnit InlineFormattingGeometry::logicalTopForNextLine(const LineBuilder::LineContent& lineContent, const InlineRect& lineInitialRect, const InlineRect& lineLogicalRect, const FloatingContext& floatingContext) const
+InlineLayoutUnit InlineFormattingGeometry::logicalTopForNextLine(const LineBuilder::LineContent& lineContent, const InlineRect& lineLogicalRect, const FloatingContext& floatingContext) const
 {
     if (!lineContent.inlineItemRange.isEmpty()) {
         // Normally the next line's logical top is the previous line's logical bottom, but when the line ends
@@ -59,11 +59,14 @@ InlineLayoutUnit InlineFormattingGeometry::logicalTopForNextLine(const LineBuild
             return lineLogicalRect.bottom();
         return std::max(lineLogicalRect.bottom(), InlineLayoutUnit(positionWithClearance->position));
     }
+    // Floats must have prevented us placing any content on the line.
     // Move the next line below the intrusive float(s).
     ASSERT(lineContent.runs.isEmpty() || lineContent.runs[0].isLineSpanningInlineBoxStart());
     ASSERT(lineContent.hasIntrusiveFloat);
-    auto lineBottomWithNoInlineContent = std::max(lineLogicalRect.bottom(), lineInitialRect.bottom());
-    auto floatConstraints = floatingContext.constraints(toLayoutUnit(lineInitialRect.top()), toLayoutUnit(lineBottomWithNoInlineContent), FloatingContext::MayBeAboveLastFloat::Yes);
+    // FIXME: Moving the bottom position by the initial line height may be too much meaning that we miss vertical positions where atomic inline content could very well fit.
+    // The spec is unclear of how much we should move down at this point and while 1px should be the most precise it's also rather expensive. 
+    auto inflatedLineRectBottom = lineLogicalRect.top() + formattingContext().root().style().computedLineHeight();
+    auto floatConstraints = floatingContext.constraints(toLayoutUnit(lineLogicalRect.top()), toLayoutUnit(inflatedLineRectBottom), FloatingContext::MayBeAboveLastFloat::Yes);
     ASSERT(floatConstraints.left || floatConstraints.right);
     if (floatConstraints.left && floatConstraints.right) {
         // In case of left and right constraints, we need to pick the one that's closer to the current line.
@@ -74,7 +77,8 @@ InlineLayoutUnit InlineFormattingGeometry::logicalTopForNextLine(const LineBuild
     if (floatConstraints.right)
         return floatConstraints.right->y;
     ASSERT_NOT_REACHED();
-    return lineBottomWithNoInlineContent;
+    // Do not get stuck on the same vertical position.
+    return lineLogicalRect.bottom() + 1.0f;
 }
 
 ContentWidthAndMargin InlineFormattingGeometry::inlineBlockContentWidthAndMargin(const Box& formattingContextRoot, const HorizontalConstraints& horizontalConstraints, const OverriddenHorizontalValues& overriddenHorizontalValues) const
@@ -117,12 +121,15 @@ ContentHeightAndMargin InlineFormattingGeometry::inlineBlockContentHeightAndMarg
 
 bool InlineFormattingGeometry::inlineLevelBoxAffectsLineBox(const InlineLevelBox& inlineLevelBox, const LineBox& lineBox) const
 {
+    if (!inlineLevelBox.lineBoxContain())
+        return false;
+
     if (inlineLevelBox.isInlineBox() || inlineLevelBox.isLineBreakBox())
         return layoutState().inStandardsMode() ? true : formattingContext().formattingQuirks().inlineLevelBoxAffectsLineBox(inlineLevelBox, lineBox);
     if (inlineLevelBox.isListMarker())
-        return inlineLevelBox.layoutBounds().height();
+        return inlineLevelBox.logicalHeight();
     if (inlineLevelBox.isAtomicInlineLevelBox()) {
-        if (inlineLevelBox.layoutBounds().height())
+        if (inlineLevelBox.logicalHeight())
             return true;
         // While in practice when the negative vertical margin makes the layout bounds empty (e.g: height: 100px; margin-top: -100px;), and this inline
         // level box contributes 0px to the line box height, it still needs to be taken into account while computing line box geometries.
@@ -191,104 +198,130 @@ InlineLayoutUnit InlineFormattingGeometry::computedTextIndent(IsIntrinsicWidthMo
     return { minimumValueForLength(textIndent, availableWidth) };
 }
 
-static std::tuple<const InlineDisplay::Box*, const InlineDisplay::Box*> previousAndNextDisplayBoxForStaticPosition(const Box& outOfFlowBox, const DisplayBoxes& displayBoxes)
+static std::optional<size_t> firstDisplayBoxIndexForLayoutBox(const Box& layoutBox, const DisplayBoxes& displayBoxes)
 {
-    // Both previous float and out-of-flow boxes are skipped here. A series of adjoining out-of-flow boxes should all be placed
-    // at the same static position (they don't affect next-sibling positions) and while floats do participate in the inline layout
-    // their positions have already been taken into account during the inline layout.
-    auto previousInFlowBox = [&] () -> const Box* {
-        if (auto* previousInFlowSibling = outOfFlowBox.previousInFlowSibling())
-            return previousInFlowSibling;
-        // Parent is either the root here or another inline box (e.g. <span><img style="position: absolute"></span>)
-        auto& parent = outOfFlowBox.parent();
-        return parent.isInlineBox() ? &parent : nullptr;
-    }();
-
-    if (!previousInFlowBox) {
-        // This is the first content. It sits on the edge of the first root inline box. We don't need to provide the next display box.
-        return { nullptr, nullptr };
-    }
-
-    // This is supposed to find the last display box of the "inflowBox" and return it with the next display box (first box of the next inflow content).
-    auto foundFirstDisplayBox = false;
+    // FIXME: Build a first/last hashmap for these boxes.
     for (size_t index = 0; index < displayBoxes.size(); ++index) {
         if (displayBoxes[index].isRootInlineBox())
             continue;
-        if (foundFirstDisplayBox && &displayBoxes[index].layoutBox() != previousInFlowBox) {
-            ASSERT(index);
-            return { &displayBoxes[index - 1], &displayBoxes[index] };
-        }
-        foundFirstDisplayBox = foundFirstDisplayBox || &displayBoxes[index].layoutBox() == previousInFlowBox;
+        if (&displayBoxes[index].layoutBox() == &layoutBox)
+            return index;
     }
-    if (foundFirstDisplayBox)
-        return { &displayBoxes[displayBoxes.size() - 1], nullptr };
-    return { nullptr, nullptr };
+    return { };
 }
 
-LayoutPoint InlineFormattingGeometry::staticPositionForOutOfFlowInlineLevelBox(const Box& outOfFlowBox) const
+static std::optional<size_t> lastDisplayBoxIndexForLayoutBox(const Box& layoutBox, const DisplayBoxes& displayBoxes)
+{
+    // FIXME: Build a first/last hashmap for these boxes.
+    for (auto index = displayBoxes.size(); index--;) {
+        if (displayBoxes[index].isRootInlineBox())
+            continue;
+        if (&displayBoxes[index].layoutBox() == &layoutBox)
+            return index;
+    }
+    return { };
+}
+
+static std::optional<size_t> previousDisplayBoxIndex(const Box& outOfFlowBox, const DisplayBoxes& displayBoxes)
+{
+    auto previousDisplayBoxIndexOf = [&] (auto& layoutBox) -> std::optional<size_t> {
+        for (auto* box = &layoutBox; box; box = box->previousInFlowSibling()) {
+            if (auto displayBoxIndex = lastDisplayBoxIndexForLayoutBox(*box, displayBoxes))
+                return displayBoxIndex;
+        }
+        return { };
+    };
+
+    auto* canidateBox = outOfFlowBox.previousInFlowSibling();
+    if (!canidateBox)
+        canidateBox = outOfFlowBox.parent().isInlineBox() ? &outOfFlowBox.parent() : nullptr;
+    while (canidateBox) {
+        if (auto displayBoxIndex = previousDisplayBoxIndexOf(*canidateBox))
+            return displayBoxIndex;
+        canidateBox = canidateBox->parent().isInlineBox() ? &canidateBox->parent() : nullptr;
+    }
+    return { };
+}
+
+static std::optional<size_t> nextDisplayBoxIndex(const Box& outOfFlowBox, const DisplayBoxes& displayBoxes)
+{
+    auto nextDisplayBoxIndexOf = [&] (auto& layoutBox) -> std::optional<size_t> {
+        for (auto* box = &layoutBox; box; box = box->nextInFlowSibling()) {
+            if (auto displayBoxIndex = firstDisplayBoxIndexForLayoutBox(*box, displayBoxes))
+                return displayBoxIndex;
+        }
+        return { };
+    };
+
+    auto* canidateBox = outOfFlowBox.nextInFlowSibling();
+    if (!canidateBox)
+        canidateBox = outOfFlowBox.parent().isInlineBox() ? &outOfFlowBox.parent() : nullptr;
+    while (canidateBox) {
+        if (auto displayBoxIndex = nextDisplayBoxIndexOf(*canidateBox))
+            return displayBoxIndex;
+        canidateBox = canidateBox->parent().isInlineBox() ? &canidateBox->parent() : nullptr;
+    }
+    return { };
+}
+
+LayoutPoint InlineFormattingGeometry::staticPositionForOutOfFlowInlineLevelBox(const Box& outOfFlowBox, LayoutPoint contentBoxTopLeft) const
 {
     ASSERT(outOfFlowBox.style().isOriginalDisplayInlineType());
-
     auto& formattingState = formattingContext().formattingState();
     auto& lines = formattingState.lines();
     auto& boxes = formattingState.boxes();
 
-    auto [previousDisplayBox, nextDisplayBox] = previousAndNextDisplayBoxForStaticPosition(outOfFlowBox, boxes);
-
-    if (!previousDisplayBox && !nextDisplayBox)
+    auto previousDisplayBoxIndexBeforeOutOfFlowBox = previousDisplayBoxIndex(outOfFlowBox, boxes);
+    if (!previousDisplayBoxIndexBeforeOutOfFlowBox)
         return { boxes[0].left(), lines[0].top() };
 
-    if (!nextDisplayBox) {
-        auto& currentLine = lines[previousDisplayBox->lineIndex()];
-        auto shouldFitLine = previousDisplayBox->right() <= currentLine.right() && !previousDisplayBox->isLineBreakBox();
-        return shouldFitLine ? LayoutPoint { previousDisplayBox->right(), currentLine.top() } : LayoutPoint { currentLine.left(), currentLine.bottom() };
-    }
-
-    if (previousDisplayBox->isInlineBox()) {
-        // Special handling for cases when the previous content is an inline box:
+    auto& previousDisplayBox = boxes[*previousDisplayBoxIndexBeforeOutOfFlowBox];
+    auto& currentLine = lines[previousDisplayBox.lineIndex()];
+    if (previousDisplayBox.isInlineBox() && &outOfFlowBox.parent() == &previousDisplayBox.layoutBox()) {
+        // Special handling for cases when this is the first box inside an inline box:
         // <div>text<span><img style="position: absolute">content</span></div>
-        // or
-        // <div>text<span>content</span><img style="position: absolute"></div>
-        auto isFirstContentInsideInlineBox = &outOfFlowBox.parent() == &previousDisplayBox->layoutBox();
-        auto& inlineBoxBoxGeometry = formattingContext().geometryForBox(previousDisplayBox->layoutBox());
-
-        return {
-            isFirstContentInsideInlineBox ? BoxGeometry::borderBoxLeft(inlineBoxBoxGeometry) + inlineBoxBoxGeometry.contentBoxLeft() : BoxGeometry::marginBoxRect(inlineBoxBoxGeometry).right(),
-            lines[previousDisplayBox->lineIndex()].top()
-        };
+        auto& inlineBox = previousDisplayBox.layoutBox();
+        auto firstDisplayBox = boxes[*firstDisplayBoxIndexForLayoutBox(inlineBox, boxes)];
+        auto& inlineBoxBoxGeometry = formattingContext().geometryForBox(inlineBox);
+        return { LayoutUnit(firstDisplayBox.left()) + inlineBoxBoxGeometry.borderAndPaddingStart(), lines[firstDisplayBox.lineIndex()].top() };
     }
-    auto& currentLine = lines[previousDisplayBox->lineIndex()];
-    auto shouldFitLine = previousDisplayBox->lineIndex() == nextDisplayBox->lineIndex() || (previousDisplayBox->right() <= currentLine.left() && !previousDisplayBox->isLineBreakBox());
-    return shouldFitLine ? LayoutPoint { previousDisplayBox->right(), currentLine.top() } : LayoutPoint { nextDisplayBox->left(), lines[nextDisplayBox->lineIndex()].top() };
+
+    auto previousBoxOverflows = previousDisplayBox.right() > currentLine.right() || previousDisplayBox.isLineBreakBox();
+    if (!previousBoxOverflows)
+        return { previousDisplayBox.right(), currentLine.top() };
+
+    auto nextDisplayBoxIndexAfterOutOfFlow = nextDisplayBoxIndex(outOfFlowBox, boxes);
+    if (!nextDisplayBoxIndexAfterOutOfFlow) {
+        // This is the last content on the block and it does not fit the last line.
+        // FIXME: This still has line tyoe of constraints like text-align.
+        return LayoutPoint { contentBoxTopLeft.x(), currentLine.bottom() };
+    }
+    auto& nextDisplayBox = boxes[*nextDisplayBoxIndexAfterOutOfFlow];
+    return { nextDisplayBox.left(), lines[nextDisplayBox.lineIndex()].top() };
 }
 
-LayoutPoint InlineFormattingGeometry::staticPositionForOutOfFlowBlockLevelBox(const Box& outOfFlowBox) const
+LayoutPoint InlineFormattingGeometry::staticPositionForOutOfFlowBlockLevelBox(const Box& outOfFlowBox, LayoutPoint contentBoxTopLeft) const
 {
-    ASSERT(outOfFlowBox.style().isOriginalDisplayBlockType());
+    ASSERT(outOfFlowBox.style().isDisplayBlockLevel());
 
     auto& formattingState = formattingContext().formattingState();
     auto& lines = formattingState.lines();
     auto& boxes = formattingState.boxes();
-
     // Block level boxes are placed under the current line as if they were normal inflow block level boxes.
-    const InlineDisplay::Box* previousDisplayBox = nullptr;
-    std::tie(previousDisplayBox, std::ignore) = previousAndNextDisplayBoxForStaticPosition(outOfFlowBox, boxes);
-
-    if (!previousDisplayBox)
-        return { boxes[0].left(), lines[0].top() };
-
-    auto& currentLine = lines[previousDisplayBox->lineIndex()];
-    return { currentLine.left(), currentLine.bottom() };
+    auto previousDisplayBoxIndexBeforeOutOfFlowBox = previousDisplayBoxIndex(outOfFlowBox, boxes);
+    if (!previousDisplayBoxIndexBeforeOutOfFlowBox)
+        return { contentBoxTopLeft.x(), lines[0].top() };
+    return { contentBoxTopLeft.x(), previousDisplayBoxIndexBeforeOutOfFlowBox ? LayoutUnit(lines[boxes[*previousDisplayBoxIndexBeforeOutOfFlowBox].lineIndex()].bottom()) : contentBoxTopLeft.y() };
 }
 
 InlineLayoutUnit InlineFormattingGeometry::initialLineHeight(bool isFirstLine) const
 {
     if (layoutState().inStandardsMode())
         return isFirstLine ? formattingContext().root().firstLineStyle().computedLineHeight() : formattingContext().root().style().computedLineHeight();
-    return formattingContext().formattingQuirks().initialLineHeight(isFirstLine);
+    return formattingContext().formattingQuirks().initialLineHeight();
 }
 
-std::optional<HorizontalConstraints> InlineFormattingGeometry::floatConstraintsForLine(const InlineRect& lineLogicalRect, const FloatingContext& floatingContext) const
+FloatingContext::Constraints InlineFormattingGeometry::floatConstraintsForLine(InlineLayoutUnit lineLogicalTop, InlineLayoutUnit contentLogicalHeight, const FloatingContext& floatingContext) const
 {
     // Check for intruding floats and adjust logical left/available width for this line accordingly.
     auto toLogicalFloatPosition = [&] (const auto& constraints) {
@@ -303,31 +336,7 @@ std::optional<HorizontalConstraints> InlineFormattingGeometry::floatConstraintsF
             logicalConstraints.left = PointInContextRoot { borderBoxWidth - constraints.right->x, constraints.right->y };
         return logicalConstraints;
     };
-    auto constraints = toLogicalFloatPosition(floatingContext.constraints(toLayoutUnit(lineLogicalRect.top()), toLayoutUnit(lineLogicalRect.bottom()), FloatingContext::MayBeAboveLastFloat::Yes));
-
-    // Check if these values actually constrain the line.
-    if (constraints.left && constraints.left->x <= lineLogicalRect.left())
-        constraints.left = { };
-
-    if (constraints.right && constraints.right->x >= lineLogicalRect.right())
-        constraints.right = { };
-
-    if (!constraints.left && !constraints.right)
-        return { };
-
-    auto lineLogicalLeft = lineLogicalRect.left();
-    auto lineLogicalRight = lineLogicalRect.right();
-    if (constraints.left && constraints.right) {
-        lineLogicalRight = constraints.right->x;
-        lineLogicalLeft = constraints.left->x;
-    } else if (constraints.left) {
-        ASSERT(constraints.left->x >= lineLogicalLeft);
-        lineLogicalLeft = constraints.left->x;
-    } else if (constraints.right) {
-        // Right float boxes may overflow the containing block on the left.
-        lineLogicalRight = std::max<InlineLayoutUnit>(lineLogicalLeft, constraints.right->x);
-    }
-    return HorizontalConstraints { toLayoutUnit(lineLogicalLeft), toLayoutUnit(lineLogicalRight - lineLogicalLeft) };
+    return toLogicalFloatPosition(floatingContext.constraints(toLayoutUnit(lineLogicalTop), toLayoutUnit(lineLogicalTop + contentLogicalHeight), FloatingContext::MayBeAboveLastFloat::Yes));
 }
 
 }

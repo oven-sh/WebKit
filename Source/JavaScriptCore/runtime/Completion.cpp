@@ -83,8 +83,7 @@ bool checkModuleSyntax(JSGlobalObject* globalObject, const SourceCode& source, P
 
     PrivateName privateName(PrivateName::Description, "EntryPointModule"_s);
     ModuleAnalyzer moduleAnalyzer(globalObject, Identifier::fromUid(privateName), source, moduleProgramNode->varDeclarations(), moduleProgramNode->lexicalVariables(), moduleProgramNode->features());
-    moduleAnalyzer.analyze(*moduleProgramNode);
-    return true;
+    return !!moduleAnalyzer.analyze(*moduleProgramNode);
 }
 
 RefPtr<CachedBytecode> generateProgramBytecode(VM& vm, const SourceCode& source, FileSystem::PlatformFileHandle fd, BytecodeCacheError& error)
@@ -317,6 +316,26 @@ HashMap<RefPtr<UniquedStringImpl>, String> retrieveAssertionsFromDynamicImportOp
     }
 
     return result;
+}
+
+std::optional<ScriptFetchParameters::Type> retrieveTypeAssertion(JSGlobalObject* globalObject, const HashMap<RefPtr<UniquedStringImpl>, String>& assertions)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (assertions.isEmpty())
+        return { };
+
+    auto iterator = assertions.find(vm.propertyNames->type.impl());
+    if (iterator == assertions.end())
+        return { };
+
+    String value = iterator->value;
+    if (auto result = ScriptFetchParameters::parseType(value))
+        return result;
+
+    throwTypeError(globalObject, scope, makeString("Import assertion type \""_s, value, "\" is not valid"_s));
+    return { };
 }
 
 } // namespace JSC

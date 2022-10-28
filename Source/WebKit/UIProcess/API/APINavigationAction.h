@@ -30,6 +30,7 @@
 #include "APIObject.h"
 #include "APIUserInitiatedAction.h"
 #include "NavigationActionData.h"
+#include "WebHitTestResultData.h"
 #include <WebCore/ResourceRequest.h>
 #include <wtf/URL.h>
 
@@ -50,9 +51,12 @@ public:
     const WTF::URL& originalURL() const { return !m_originalURL.isNull() ? m_originalURL : m_request.url(); }
 
     WebCore::NavigationType navigationType() const { return m_navigationActionData.navigationType; }
-    OptionSet<WebKit::WebEvent::Modifier> modifiers() const { return m_navigationActionData.modifiers; }
-    WebKit::WebMouseEvent::Button mouseButton() const { return m_navigationActionData.mouseButton; }
-    WebKit::WebMouseEvent::SyntheticClickType syntheticClickType() const { return m_navigationActionData.syntheticClickType; }
+    OptionSet<WebKit::WebEventModifier> modifiers() const { return m_navigationActionData.modifiers; }
+    WebKit::WebMouseEventButton mouseButton() const { return m_navigationActionData.mouseButton; }
+    WebKit::WebMouseEventSyntheticClickType syntheticClickType() const { return m_navigationActionData.syntheticClickType; }
+#if PLATFORM(MAC) || HAVE(UIKIT_WITH_MOUSE_SUPPORT)
+    const std::optional<WebKit::WebHitTestResultData>& webHitTestResultData() const { return m_navigationActionData.webHitTestResultData; }
+#endif
     WebCore::FloatPoint clickLocationInRootViewCoordinates() const { return m_navigationActionData.clickLocationInRootViewCoordinates; }
     bool canHandleRequest() const { return m_navigationActionData.canHandleRequest; }
     bool shouldOpenExternalSchemes() const { return m_navigationActionData.shouldOpenExternalURLsPolicy == WebCore::ShouldOpenExternalURLsPolicy::ShouldAllow || m_navigationActionData.shouldOpenExternalURLsPolicy == WebCore::ShouldOpenExternalURLsPolicy::ShouldAllowExternalSchemesButNotAppLinks; }

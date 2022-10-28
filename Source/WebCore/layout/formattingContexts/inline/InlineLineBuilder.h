@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "FloatingContext.h"
 #include "FormattingConstraints.h"
 #include "InlineContentBreaker.h"
 #include "InlineFormattingState.h"
@@ -33,7 +34,6 @@
 namespace WebCore {
 namespace Layout {
 
-class FloatingContext;
 struct LineCandidate;
 
 class LineBuilder {
@@ -102,7 +102,7 @@ private:
         bool isConstrainedByFloat { false };
     };
     UsedConstraints initialConstraintsForLine(const InlineRect& initialLineLogicalRect, std::optional<bool> previousLineEndsWithLineBreak) const;
-    std::optional<HorizontalConstraints> floatConstraints(const InlineRect& lineLogicalRect) const;
+    FloatingContext::Constraints floatConstraints(const InlineRect& lineLogicalRect) const;
 
     struct Result {
         InlineContentBreaker::IsEndOfLine isEndOfLine { InlineContentBreaker::IsEndOfLine::No };
@@ -117,7 +117,7 @@ private:
     enum LineBoxConstraintApplies : uint8_t { Yes, No };
     bool tryPlacingFloatBox(const InlineItem&, LineBoxConstraintApplies);
     Result handleInlineContent(InlineContentBreaker&, const InlineItemRange& needsLayoutRange, const LineCandidate&);
-    InlineRect lineRectForCandidateInlineContent(const LineCandidate&) const;
+    std::tuple<InlineRect, bool> lineBoxForCandidateInlineContent(const LineCandidate&) const;
     size_t rebuildLineWithInlineContent(const InlineItemRange& needsLayoutRange, const InlineItem& lastInlineItemToAdd);
     size_t rebuildLineForTrailingSoftHyphen(const InlineItemRange& layoutRange);
     void commitPartialContent(const InlineContentBreaker::ContinuousContent::RunList&, const InlineContentBreaker::Result::PartialTrailingContent&);
@@ -146,6 +146,7 @@ private:
     const FloatingState* floatingState() const { return m_floatingState; }
     const ElementBox& root() const;
     const LayoutState& layoutState() const;
+    const RenderStyle& rootStyle() const;
 
 private:
     std::optional<PreviousLine> m_previousLine { };
@@ -167,7 +168,7 @@ private:
     Vector<const InlineItem*> m_wrapOpportunityList;
     Vector<InlineItem> m_lineSpanningInlineBoxes;
     unsigned m_successiveHyphenatedLineCount { 0 };
-    bool m_contentIsConstrainedByFloat { false };
+    bool m_lineIsConstrainedByFloat { false };
 };
 
 inline LineBuilder::PartialContent::PartialContent(size_t length, std::optional<InlineLayoutUnit> width)

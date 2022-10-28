@@ -31,12 +31,6 @@ imported/w3c/web-platform-tests/css/css-color/t425-hsla-onscreen-multiple-boxes-
 imported/w3c/web-platform-tests/html/semantics/embedded-content/the-embed-element/embed-represent-nothing-02.html [ Pass ]
 imported/w3c/web-platform-tests/html/semantics/embedded-content/the-area-element/area-coords.html [ Pass ]
 
-fast/css/accent-color/checkbox.html [ Pass ]
-fast/css/accent-color/progress.html [ Pass ]
-fast/css/accent-color/radio.html [ Pass ]
-fast/css/accent-color/range.html [ Pass ]
-fast/css/accent-color/text.html [ Pass ]
-
 # Some Apple ports don't support RTL scrollbars.
 fast/scrolling/rtl-scrollbars-alternate-body-dir-attr-does-not-update-scrollbar-placement.html [ Pass ]
 fast/scrolling/rtl-scrollbars-iframe-scrolled.html [ Pass ]
@@ -450,10 +444,28 @@ webkit.org/b/245840 webgl/1.0.3/conformance/more/functions/readPixelsBadArgs.htm
 webkit.org/b/245840 webgl/1.0.3/conformance/more/functions/texImage2DHTML.html [ Failure ]
 webkit.org/b/245840 webgl/1.0.3/conformance/more/functions/texSubImage2DHTML.html [ Failure ]
 webkit.org/b/245840 webgl/webgl2-primitive-restart.html [ ImageOnlyFailure ]
-webkit.org/b/245840 fast/canvas/webgl/webgl-composite-modes-repaint.html [ ImageOnlyFailure Failure ]
-webkit.org/b/245840 fast/canvas/webgl/webgl-composite-modes.html [ ImageOnlyFailure Failure ]
+webkit.org/b/245840 webgl/1.0.3/conformance/textures/tex-image-and-sub-image-2d-with-video-rgb565.html [ Failure ]
+webkit.org/b/245840 fast/canvas/webgl/copy-tex-image-and-sub-image-2d-bad-input.html [ Failure ]
+webkit.org/b/245840 fast/canvas/webgl/drawElements-empty-vertex-data.html [ Failure ]
+webkit.org/b/245840 fast/canvas/webgl/drawingbuffer-test.html [ Failure ]
+webkit.org/b/245840 fast/canvas/webgl/largeBuffer.html [ Failure ]
+webkit.org/b/245840 fast/canvas/webgl/tex-image-and-sub-image-2d-with-video-rgb565.html [ Failure ]
+webkit.org/b/245840 fast/canvas/webgl/tex-image-and-sub-image-2d-with-video-rgba5551.html [ Failure ]
+webkit.org/b/245840 fast/canvas/webgl/tex-image-and-sub-image-2d-with-video.html [ Failure ]
+webkit.org/b/245840 fast/canvas/webgl/tex-image-and-uniform-binding-bugs.html [ Failure ]
+webkit.org/b/245840 fast/canvas/webgl/tex-image-with-format-and-type.html [ Failure ]
+webkit.org/b/245840 fast/canvas/webgl/tex-image-with-greyscale-image.html [ Failure ]
+webkit.org/b/245840 fast/canvas/webgl/tex-sub-image-2d.html [ Failure ]
+webkit.org/b/245840 fast/canvas/webgl/tex-sub-image-cube-maps.html [ Failure ]
+webkit.org/b/245840 fast/canvas/webgl/vertexAttribPointer-with-bad-offset.html [ Failure ]
+webkit.org/b/245840 fast/canvas/webgl/webgl-drawarrays-crash-2.html [ Failure ]
+webkit.org/b/245840 fast/canvas/webgl/webgl-drawarrays-crash.html [ Failure ]
 
 # WebGL ANGLE backed flaky tests
+webkit.org/b/245840 webgl/1.0.3/conformance/textures/copy-tex-image-2d-formats.html [ Failure Pass ]
+webkit.org/b/245840 webgl/1.0.3/conformance/rendering/point-no-attributes.html [ Pass Failure ]
+webkit.org/b/245840 webgl/1.0.3/conformance/textures/tex-image-and-sub-image-2d-with-video-rgba5551.html [ Timeout Failure ]
+webkit.org/b/245840 webgl/pending/conformance/context/context-attributes-alpha-depth-stencil-antialias.html [ Pass Timeout ]
 webkit.org/b/245840 webgl/1.0.3/conformance/extensions/oes-texture-float-with-video.html [ Pass Timeout ]
 webkit.org/b/245840 webgl/1.0.3/conformance/extensions/oes-texture-half-float-with-video.html [ Pass Timeout ]
 webkit.org/b/245840 webgl/pending/conformance/textures/misc/tex-image-video-repeated.html [ Pass Timeout ]
@@ -485,6 +497,14 @@ webkit.org/b/245840 fast/canvas/webgl/premultiplyalpha-test.html [ Failure ]
 webkit.org/b/245840 fast/canvas/webgl/tex-image-and-sub-image-2d-with-video-rgba4444.html [ Failure ]
 webkit.org/b/245840 fast/canvas/webgl/texImage2D-mse-flipY-false.html [ Timeout Failure ]
 webkit.org/b/245840 fast/canvas/webgl/webgl-clear-composited-notshowing.html [ Pass Failure ]
+webkit.org/b/245840 fast/canvas/webgl/tex-image-and-sub-image-2d-with-image-data.html [ Failure Pass ]
+webkit.org/b/245840 fast/canvas/webgl/tex-input-validation.html [ Failure Pass ]
+webkit.org/b/245840 fast/canvas/webgl/texImage2D-mse-flipY-true.html [ Failure Timeout ]
+webkit.org/b/245840 fast/canvas/webgl/webgl-composite-modes-repaint.html [ ImageOnlyFailure Failure ]
+webkit.org/b/245840 fast/canvas/webgl/webgl-composite-modes.html [ ImageOnlyFailure Failure ]
+webkit.org/b/245840 webgl/1.0.3/conformance/textures/tex-image-webgl.html [ Pass Failure ]
+webkit.org/b/245840 webgl/conformance/extensions/ext-float-blend.html [ Pass Failure ]
+webkit.org/b/245840 webgl/conformance/extensions/oes-fbo-render-mipmap.html [ Pass Failure ]
 
 # WebGL 2.0 still not enabled
 webkit.org/b/166536 webgl/webgl2-rendering-context-defined.html [ Skip ]
@@ -511,9 +531,6 @@ webkit.org/b/166536 webgl/2.0.0/ [ Skip ]
 webkit.org/b/166536 webgl/2.0.y/ [ Skip ]
 webkit.org/b/166536 webgl/pending/conformance2/ [ Skip ]
 webkit.org/b/166536 http/tests/webgl/2.0.y/ [ Skip ]
-
-webgl/webgl-draft-extensions-flag-default.html [ Skip ]
-webgl/webgl-draft-extensions-flag-on.html [ Skip ]
 
 # These tests reference specific fonts on Mac port.
 Bug(GTK) fast/text/font-weights.html [ WontFix ]
@@ -558,12 +575,7 @@ editing/inserting/smart-link-when-caret-is-moved-before-URL.html [ Skip ]
 editing/inserting/smart-quote-with-all-configurations.html [ Skip ]
 
 # Tests in the gesture folder exercise IOS-specific code, non appliable to GTK+
-fast/events/touch/gesture [ Skip ]
 fast/shadow-dom/touch-event-on-text-assigned-to-slot.html [ Skip ]
-
-# These tests require touch support
-fast/events/touch [ Skip ]
-imported/w3c/web-platform-tests/touch-events [ Skip ]
 
 # HighDPI support is not enabled
 webkit.org/b/131347 fast/forms/hidpi-textfield-background-bleeding.html [ ImageOnlyFailure ]
@@ -939,6 +951,7 @@ webkit.org/b/207605 [ Debug ] http/tests/websocket/tests/hybi/no-subprotocol.htm
 
 webkit.org/b/212232 editing/async-clipboard/clipboard-read-while-pasting.html [ Crash ]
 
+webkit.org/b/246858 http/tests/security/cookies/cookie-theft-with-javascript-doc.html [ Crash Pass ]
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of Crashing tests
@@ -1921,10 +1934,42 @@ imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/js
 imported/w3c/web-platform-tests/css/css-contain/content-visibility/content-visibility-048.html [ Pass Failure ]
 
 webkit.org/b/206881 imported/w3c/web-platform-tests/css/css-fonts/font-variant-01.html [ ImageOnlyFailure ]
+webkit.org/b/206881 imported/w3c/web-platform-tests/css/css-fonts/font-variant-02.html [ ImageOnlyFailure ]
 webkit.org/b/206881 imported/w3c/web-platform-tests/css/css-fonts/font-variant-caps-03.html [ ImageOnlyFailure ]
 webkit.org/b/206881 imported/w3c/web-platform-tests/css/css-fonts/font-variant-caps-05.html [ ImageOnlyFailure ]
 webkit.org/b/206881 imported/w3c/web-platform-tests/css/css-fonts/font-variant-caps.html [ ImageOnlyFailure ]
+webkit.org/b/206881 imported/w3c/web-platform-tests/css/css-fonts/font-face-stretch-auto-variable.html [ ImageOnlyFailure ]
+webkit.org/b/206881 imported/w3c/web-platform-tests/css/css-fonts/font-face-stretch-default-variable.html [ ImageOnlyFailure ]
+webkit.org/b/206881 imported/w3c/web-platform-tests/css/css-fonts/variations/font-weight-metrics.html [ ImageOnlyFailure ]
+
+webkit.org/b/178624 imported/w3c/web-platform-tests/css/css-fonts/system-ui-ar.html [ ImageOnlyFailure ]
+webkit.org/b/178624 imported/w3c/web-platform-tests/css/css-fonts/system-ui-ja-vs-zh.html [ ImageOnlyFailure ]
+webkit.org/b/178624 imported/w3c/web-platform-tests/css/css-fonts/system-ui-ja.html [ ImageOnlyFailure ]
+webkit.org/b/178624 imported/w3c/web-platform-tests/css/css-fonts/system-ui-mixed.html [ ImageOnlyFailure ]
+webkit.org/b/178624 imported/w3c/web-platform-tests/css/css-fonts/system-ui-ur-vs-ar.html [ ImageOnlyFailure ]
+webkit.org/b/178624 imported/w3c/web-platform-tests/css/css-fonts/system-ui-ur.html [ ImageOnlyFailure ]
+webkit.org/b/178624 imported/w3c/web-platform-tests/css/css-fonts/system-ui-zh.html [ ImageOnlyFailure ]
+webkit.org/b/178624 imported/w3c/web-platform-tests/css/css-fonts/system-ui.html [ ImageOnlyFailure ]
 
 webkit.org/b/214463 imported/w3c/web-platform-tests/css/css-sizing/contain-intrinsic-size/contain-intrinsic-size-032.html [ Failure ]
 
 webkit.org/b/245900 [ Debug ] fast/inline/inline-box-adjust-position-crash2.html [ Skip ]
+
+# http version of this test fails, but https passes. May be a PingLoad issue in GTK
+webkit.org/b/246766 imported/w3c/web-platform-tests/reporting/generateTestReport-honors-endpoint.http.sub.html [ Failure ]
+
+# font-variant-alternates https://bugs.webkit.org/show_bug.cgi?id=246952
+webkit.org/b/246952 imported/w3c/web-platform-tests/css/css-fonts/font-variant-alternates-03.html [ ImageOnlyFailure ]
+webkit.org/b/246952 imported/w3c/web-platform-tests/css/css-fonts/font-variant-alternates-04.html [ ImageOnlyFailure ]
+webkit.org/b/246952 imported/w3c/web-platform-tests/css/css-fonts/font-variant-alternates-05.html [ ImageOnlyFailure ]
+webkit.org/b/246952 imported/w3c/web-platform-tests/css/css-fonts/font-variant-alternates-06.html [ ImageOnlyFailure ]
+webkit.org/b/246952 imported/w3c/web-platform-tests/css/css-fonts/font-variant-alternates-07.html [ ImageOnlyFailure ]
+webkit.org/b/246952 imported/w3c/web-platform-tests/css/css-fonts/font-variant-alternates-08.html [ ImageOnlyFailure ]
+webkit.org/b/246952 imported/w3c/web-platform-tests/css/css-fonts/font-variant-alternates-09.html [ ImageOnlyFailure ]
+webkit.org/b/246952 imported/w3c/web-platform-tests/css/css-fonts/font-variant-alternates-10.html [ ImageOnlyFailure ]
+webkit.org/b/246952 imported/w3c/web-platform-tests/css/css-fonts/font-variant-alternates-11.html [ ImageOnlyFailure ]
+webkit.org/b/246952 imported/w3c/web-platform-tests/css/css-fonts/font-variant-alternates-12.html [ ImageOnlyFailure ]
+webkit.org/b/246952 imported/w3c/web-platform-tests/css/css-fonts/font-variant-alternates-15.html [ ImageOnlyFailure ]
+webkit.org/b/246952 imported/w3c/web-platform-tests/css/css-fonts/font-variant-alternates-16.html [ ImageOnlyFailure ]
+webkit.org/b/246952 imported/w3c/web-platform-tests/css/css-fonts/font-variant-alternates-17.html [ ImageOnlyFailure ]
+webkit.org/b/246952 imported/w3c/web-platform-tests/css/css-fonts/font-variant-alternates-18.html [ ImageOnlyFailure ]

@@ -147,15 +147,16 @@ size_t videoPixelFormatToSampleByteSizePerPlane()
     return 1;
 }
 
-static inline size_t sampleCountPerPixel(VideoPixelFormat format)
+static inline size_t sampleCountPerPixel(VideoPixelFormat format, size_t planeNumber)
 {
     switch (format) {
     case VideoPixelFormat::I420:
     case VideoPixelFormat::I420A:
     case VideoPixelFormat::I444:
     case VideoPixelFormat::I422:
-    case VideoPixelFormat::NV12:
         return 1;
+    case VideoPixelFormat::NV12:
+        return planeNumber ? 2 : 1;
     case VideoPixelFormat::RGBA:
     case VideoPixelFormat::RGBX:
     case VideoPixelFormat::BGRA:
@@ -190,11 +191,14 @@ ExceptionOr<CombinedPlaneLayout> computeLayoutAndAllocationSize(const DOMRectIni
     if (layout && layout->size() != planeCount)
         return Exception { TypeError, "layout size is invalid"_s };
 
-    size_t pixelSampleCount = sampleCountPerPixel(format);
     size_t minAllocationSize = 0;
     Vector<ComputedPlaneLayout> computedLayouts;
     computedLayouts.reserveInitialCapacity(planeCount);
+    Vector<size_t> endOffsets;
+    endOffsets.reserveInitialCapacity(planeCount);
     for (size_t i = 0; i < planeCount; ++i) {
+        size_t pixelSampleCount = sampleCountPerPixel(format, i);
+
         auto sampleBytes = videoPixelFormatToSampleByteSizePerPlane();
         auto sampleWidth = videoPixelFormatToSubSampling(format, i);
         auto sampleHeight = videoPixelFormatToSubSampling(format, i);
@@ -216,13 +220,22 @@ ExceptionOr<CombinedPlaneLayout> computeLayoutAndAllocationSize(const DOMRectIni
             computedLayout.destinationOffset = minAllocationSize;
             computedLayout.destinationStride = computedLayout.sourceWidthBytes;
         }
-        // FIXME: validate we do not get over max values.
-        auto planeSize = computedLayout.destinationStride * computedLayout.sourceHeight;
-        auto planeEnd = planeSize + computedLayout.destinationOffset;
 
+        size_t planeSize, planeEnd;
+        if (!WTF::safeMultiply(computedLayout.destinationStride, computedLayout.sourceHeight, planeSize) || planeSize > std::numeric_limits<uint32_t>::max())
+            return Exception { TypeError, "planeSize is too big"_s };
+
+        if (!WTF::safeAdd(planeSize, computedLayout.destinationOffset, planeEnd) || planeEnd > std::numeric_limits<uint32_t>::max())
+            return Exception { TypeError, "planeEnd is too big"_s };
+
+        endOffsets.uncheckedAppend(planeEnd);
         minAllocationSize = std::max(minAllocationSize, planeEnd);
 
-        // FIXME validate endOffsets.
+        for (size_t j = 1; j < i; ++j) {
+            if (planeEnd > computedLayouts[j].destinationOffset && endOffsets[j] > computedLayout.destinationOffset)
+                return Exception { TypeError, "planes are overlapping"_s };
+        }
+
         computedLayouts.uncheckedAppend(computedLayout);
     }
 
@@ -250,26 +263,62 @@ ExceptionOr<CombinedPlaneLayout> parseVideoFrameCopyToOptions(const WebCodecsVid
 // https://w3c.github.io/webcodecs/#videoframe-initialize-visible-rect-and-display-size
 void initializeVisibleRectAndDisplaySize(WebCodecsVideoFrame& frame, const WebCodecsVideoFrame::Init& init, const DOMRectInit& defaultVisibleRect, size_t defaultDisplayWidth, size_t defaultDisplayHeight)
 {
-    frame.setVisibleRect(init.visibleRect);
+    auto visibleRect = init.visibleRect.value_or(defaultVisibleRect);
+    frame.setVisibleRect(visibleRect);
     if (init.displayWidth && init.displayHeight)
         frame.setDisplaySize(*init.displayWidth, *init.displayHeight);
     else {
         auto widthScale = defaultDisplayWidth / defaultVisibleRect.width;
         auto heightScale = defaultDisplayHeight / defaultVisibleRect.height;
-        frame.setDisplaySize(init.visibleRect.width * widthScale, init.visibleRect.height * heightScale);
+        frame.setDisplaySize(visibleRect.width * widthScale, visibleRect.height * heightScale);
     }
 }
 
 // https://w3c.github.io/webcodecs/#videoframe-pick-color-space
-Ref<VideoColorSpace> videoFramePickColorSpace(const std::optional<VideoColorSpaceInit>& overrideColorSpace, VideoPixelFormat format)
+VideoColorSpaceInit videoFramePickColorSpace(const std::optional<VideoColorSpaceInit>& overrideColorSpace, VideoPixelFormat format)
 {
     if (overrideColorSpace)
-        return VideoColorSpace::create(*overrideColorSpace);
+        return *overrideColorSpace;
 
     if (isRGBVideoPixelFormat(format))
-        return VideoColorSpace::create({ PlatformVideoColorPrimaries::Bt709, PlatformVideoTransferCharacteristics::Iec6196621, PlatformVideoMatrixCoefficients::Rgb, true });
+        return { PlatformVideoColorPrimaries::Bt709, PlatformVideoTransferCharacteristics::Iec6196621, PlatformVideoMatrixCoefficients::Rgb, true };
 
-    return VideoColorSpace::create({ PlatformVideoColorPrimaries::Bt709, PlatformVideoTransferCharacteristics::Bt709, PlatformVideoMatrixCoefficients::Bt709, false });
+    return { PlatformVideoColorPrimaries::Bt709, PlatformVideoTransferCharacteristics::Bt709, PlatformVideoMatrixCoefficients::Bt709, false };
+}
+
+// https://w3c.github.io/webcodecs/#validate-videoframeinit
+static bool isNegativeOrNonFinite(double value)
+{
+    return value < 0 || !std::isfinite(value);
+}
+
+bool validateVideoFrameInit(const WebCodecsVideoFrame::Init& init, size_t codedWidth, size_t codedHeight, VideoPixelFormat format)
+{
+    if (init.visibleRect) {
+        auto& visibleRect = *init.visibleRect;
+        if (!verifyRectOffsetAlignment(format, visibleRect))
+            return false;
+
+        if (isNegativeOrNonFinite(visibleRect.x) || isNegativeOrNonFinite(visibleRect.y) || isNegativeOrNonFinite(visibleRect.width) || isNegativeOrNonFinite(visibleRect.height))
+            return false;
+        if (!visibleRect.width || !visibleRect.height)
+            return false;
+
+        if (visibleRect.y + visibleRect.height > codedHeight)
+            return false;
+        if (visibleRect.x + visibleRect.width > codedWidth)
+            return false;
+    }
+
+    if (!codedWidth || !codedHeight)
+        return false;
+
+    if (!!init.displayWidth != !!init.displayHeight)
+        return false;
+    if (init.displayWidth && (!*init.displayWidth || !*init.displayHeight))
+        return false;
+
+    return true;
 }
 
 } // namespace WebCore

@@ -1205,17 +1205,17 @@ static void activateSessionCleanup(NetworkSessionCocoa& session, const NetworkSe
 {
 #if (PLATFORM(IOS) && __IPHONE_OS_VERSION_MIN_REQUIRED >= 140000) || (PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 110000)
     // Don't override an explicitly set value.
-    if (parameters.resourceLoadStatisticsParameters.isItpStateExplicitlySet)
+    if (parameters.resourceLoadStatisticsParameters.isTrackingPreventionStateExplicitlySet)
         return;
 
 #if !PLATFORM(IOS_FAMILY_SIMULATOR)
-    bool itpEnabled = doesParentProcessHaveITPEnabled(session.networkProcess(), parameters.appHasRequestedCrossWebsiteTrackingPermission);
-    bool passedEnabledState = session.isResourceLoadStatisticsEnabled();
+    bool trackingPreventionEnabled = doesParentProcessHaveTrackingPreventionEnabled(session.networkProcess(), parameters.appHasRequestedCrossWebsiteTrackingPermission);
+    bool passedEnabledState = session.isTrackingPreventionEnabled();
 
     // We do not need to log a discrepancy between states for WebKitTestRunner or TestWebKitAPI.
-    if (itpEnabled != passedEnabledState && !isRunningTest(WebCore::applicationBundleIdentifier()))
-        WTFLogAlways("Passed ITP enabled state (%d) does not match TCC setting (%d)\n", passedEnabledState, itpEnabled);
-    session.setResourceLoadStatisticsEnabled(passedEnabledState);
+    if (trackingPreventionEnabled != passedEnabledState && !isRunningTest(WebCore::applicationBundleIdentifier()))
+        WTFLogAlways("Passed ITP enabled state (%d) does not match TCC setting (%d)\n", passedEnabledState, trackingPreventionEnabled);
+    session.setTrackingPreventionEnabled(passedEnabledState);
 #endif
 #endif
 }
@@ -1715,7 +1715,7 @@ std::unique_ptr<WebSocketTask> NetworkSessionCocoa::createWebSocketTask(WebPageP
     }
 
     if (networkConnectionIntegrityEnabled)
-        enableNetworkConnectionIntegrity(ensureMutableRequest());
+        enableNetworkConnectionIntegrity(ensureMutableRequest(), needsAdditionalNetworkConnectionIntegritySettings(request));
 
     auto& sessionSet = sessionSetForPage(webPageProxyID);
     RetainPtr task = [sessionSet.sessionWithCredentialStorage.session webSocketTaskWithRequest:nsRequest.get()];
@@ -1830,7 +1830,7 @@ void NetworkSessionCocoa::donateToSKAdNetwork(WebCore::PrivateClickMeasurement&&
     config.get().adNetworkRegistrableDomain = pcm.destinationSite().registrableDomain.string();
     config.get().impressionId = pcm.ephemeralSourceNonce()->nonce;
     config.get().sourceWebRegistrableDomain = pcm.sourceSite().registrableDomain.string();
-    config.get().version = @"3";
+    config.get().version = @"4.0";
     config.get().attributionContext = AttributionTypeDefault;
     [[ASDInstallAttribution sharedInstance] addInstallWebAttributionParamsWithConfig:config.get() completionHandler:^(NSError *) { }];
 #endif

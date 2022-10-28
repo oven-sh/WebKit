@@ -60,7 +60,6 @@ imported/w3c/web-platform-tests/speech-api/ [ Pass ]
 http/tests/media/fairplay [ Pass ]
 media/track/track-description-cue.html [ Pass ]
 media/track/track-extended-descriptions.html [ Pass ]
-svg/filters/feDisplacementMap-filterUnits.svg [ Pass ]
 
 #//////////////////////////////////////////////////////////////////////////////////////////
 # End platform-specific directories.
@@ -2535,8 +2534,6 @@ imported/w3c/web-platform-tests/css/css-flexbox/flex-one-sets-flex-basis-to-zero
 # These tests fail due to slight differences in font rendering.
 webkit.org/b/211891 imported/w3c/web-platform-tests/css/css-flexbox/flexbox-align-self-vert-003.xhtml [ ImageOnlyFailure ]
 webkit.org/b/211891 imported/w3c/web-platform-tests/css/css-flexbox/flexbox-align-self-vert-004.xhtml [ ImageOnlyFailure ]
-webkit.org/b/211891 imported/w3c/web-platform-tests/css/css-flexbox/flexbox-align-self-vert-rtl-001.xhtml [ ImageOnlyFailure ]
-webkit.org/b/211891 imported/w3c/web-platform-tests/css/css-flexbox/flexbox-align-self-vert-rtl-002.xhtml [ ImageOnlyFailure ]
 webkit.org/b/211891 fast/flexbox/flex-with-min-max-height.html [ ImageOnlyFailure ]
 
 # min-width: auto issues.
@@ -3710,8 +3707,6 @@ webkit.org/b/243690 imported/w3c/web-platform-tests/html/cross-origin-opener-pol
 webkit.org/b/243690 imported/w3c/web-platform-tests/html/cross-origin-opener-policy/javascript-url.https.html [ Pass Failure ]
 webkit.org/b/243690 imported/w3c/web-platform-tests/html/cross-origin-opener-policy/tentative/restrict-properties/iframe-popup-to-so.https.html [ Pass Failure ]
 
-webkit.org/b/243836 imported/w3c/web-platform-tests/css/css-flexbox/negative-overflow-002.html [ Pass Failure ]
-
 webkit.org/b/243962 imported/w3c/web-platform-tests/css/css-pseudo/target-text-008.html [ Pass ImageOnlyFailure ]
 webkit.org/b/243962 imported/w3c/web-platform-tests/css/css-pseudo/highlight-paired-cascade-005.html [ Pass ImageOnlyFailure ]
 
@@ -3759,3 +3754,6 @@ webkit.org/b/244740 http/wpt/cross-origin-opener-policy/non-secure-to-secure-con
 [ Debug ] imported/w3c/web-platform-tests/dom/nodes/NodeList-static-length-getter-tampered-indexOf-1.html [ Pass Timeout Failure ]
 [ Debug ] imported/w3c/web-platform-tests/dom/nodes/NodeList-static-length-getter-tampered-indexOf-2.html [ Pass Timeout Failure ]
 [ Debug ] imported/w3c/web-platform-tests/dom/nodes/NodeList-static-length-getter-tampered-indexOf-3.html [ Pass Timeout Failure ]
+
+fast/images/animated-avif.html [ Pass ]
+http/tests/images/avif-partial-load-crash.html [ Pass ]

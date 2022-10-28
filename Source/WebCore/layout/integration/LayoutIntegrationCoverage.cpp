@@ -123,9 +123,6 @@ static void printReason(AvoidanceReason reason, TextStream& stream)
     case AvoidanceReason::FlowHasTextCombine:
         stream << "text combine";
         break;
-    case AvoidanceReason::FlowHasAfterWhiteSpaceLineBreak:
-        stream << "line-break is after-white-space";
-        break;
     case AvoidanceReason::FlowTextIsCombineText:
         stream << "text is combine";
         break;
@@ -153,11 +150,11 @@ static void printReason(AvoidanceReason reason, TextStream& stream)
     case AvoidanceReason::ContentIsSVG:
         stream << "SVG content";
         break;
-    case AvoidanceReason::BoxDecorationBreakClone:
-        stream << "webkit-box-decoration-break: clone";
-        break;
     case AvoidanceReason::FlowIsUnsupportedListItem:
         stream << "list item with text-indent";
+        break;
+    case AvoidanceReason::FlowHasInitialLetter:
+        stream << "intial letter";
         break;
     default:
         break;
@@ -315,14 +312,10 @@ static OptionSet<AvoidanceReason> canUseForStyle(const RenderElement& renderer, 
         SET_REASON_AND_RETURN_IF_NEEDED(FlowHasTextCombine, reasons, includeReasons);
     if (!style.hangingPunctuation().isEmpty())
         SET_REASON_AND_RETURN_IF_NEEDED(FlowHasHangingPunctuation, reasons, includeReasons)
-#if ENABLE(CSS_BOX_DECORATION_BREAK)
-    if (style.boxDecorationBreak() == BoxDecorationBreak::Clone)
-        SET_REASON_AND_RETURN_IF_NEEDED(BoxDecorationBreakClone, reasons, includeReasons);
-#endif
+    if (style.styleType() == PseudoId::FirstLetter && (!style.initialLetter().isEmpty() || style.initialLetterDrop() || style.initialLetterHeight()))
+        SET_REASON_AND_RETURN_IF_NEEDED(FlowHasInitialLetter, reasons, includeReasons);
     // These are non-standard properties.
-    if (style.lineBreak() == LineBreak::AfterWhiteSpace)
-        SET_REASON_AND_RETURN_IF_NEEDED(FlowHasAfterWhiteSpaceLineBreak, reasons, includeReasons);
-    if (style.lineBoxContain() != RenderStyle::initialLineBoxContain())
+    if (style.lineBoxContain().containsAny({ LineBoxContain::Glyphs, LineBoxContain::InlineBox }))
         SET_REASON_AND_RETURN_IF_NEEDED(FlowHasLineBoxContainProperty, reasons, includeReasons);
     if (style.lineAlign() != LineAlign::None)
         SET_REASON_AND_RETURN_IF_NEEDED(FlowHasLineAlignEdges, reasons, includeReasons);
@@ -368,13 +361,13 @@ static OptionSet<AvoidanceReason> canUseForChild(const RenderObject& child, Incl
     if (is<RenderLineBreak>(child))
         return reasons;
 
+    auto& style = child.style();
+    if (style.styleType() == PseudoId::FirstLetter) {
+        if (auto styleReasons = canUseForStyle(downcast<RenderElement>(child), includeReasons))
+            ADD_REASONS_AND_RETURN_IF_NEEDED(styleReasons, reasons, includeReasons);
+    }
+
     auto isSupportedFloatingOrPositioned = [&] (auto& renderer) {
-        if (renderer.style().styleType() == PseudoId::FirstLetter) {
-            // Initial letter implementation uses a specialized float behavior internally.
-            auto& style = renderer.style();
-            if (renderer.isFloating() && (!style.initialLetter().isEmpty() || style.initialLetterDrop() || style.initialLetterHeight()))
-                return false;
-        }
 #if !ALLOW_FLOATS
         if (renderer.isFloating())
             return false;
@@ -387,12 +380,15 @@ static OptionSet<AvoidanceReason> canUseForChild(const RenderObject& child, Incl
         if (renderer.isFloating() && !renderer.parent()->style().isHorizontalWritingMode())
             return false;
 #endif
-        if (renderer.style().shapeOutside())
+        if (style.shapeOutside())
             return false;
         if (renderer.isOutOfFlowPositioned()) {
-            if (!is<RenderReplaced>(renderer))
+            // FIXME: We don't collect out-of-flow boxes from nested subtrees.
+            if (renderer.parent() != renderer.containingBlock())
                 return false;
-            if (!renderer.parent()->style().isLeftToRightDirection())
+            if (!renderer.parent()->style().isLeftToRightDirection() || !renderer.parent()->style().isHorizontalWritingMode())
+                return false;
+            if (is<RenderLayerModelObject>(renderer.parent()) && downcast<RenderLayerModelObject>(*renderer.parent()).shouldPlaceVerticalScrollbarOnLeft())
                 return false;
             // This simply checks the not-yet supported case when the out-of-flow positioned
             // content has a relatively positioned inline containing block (has to call container to not skip RenderInlines).

@@ -146,10 +146,11 @@ medium
 large
 x-large
 xx-large
--webkit-xxx-large
+xxx-large
 -webkit-ruby-text
 smaller
 larger
+-webkit-xxx-large
 
 //
 // CSS_PROP_FONT_STRETCH:
@@ -1411,6 +1412,7 @@ span
 // grid-template-{columns|rows}
 minmax
 subgrid
+masonry
 
 // grid-auto-flow
 auto-flow
@@ -1543,7 +1545,7 @@ dark
 #if defined(ENABLE_DARK_MODE_CSS) && ENABLE_DARK_MODE_CSS
 // color-scheme
 // normal
-only
+// only
 // light
 // dark
 #endif
@@ -1638,6 +1640,7 @@ sides
 and
 or
 not
+only
 
 // overflow-anchor
 // none

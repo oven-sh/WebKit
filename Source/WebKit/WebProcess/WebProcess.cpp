@@ -483,6 +483,7 @@ void WebProcess::initializeWebProcess(WebProcessCreationParameters&& parameters)
         });
     }
 
+#if !RELEASE_LOG_DISABLED
     PAL::registerNotifyCallback("com.apple.WebKit.logPageState"_s, [this] {
         for (auto& page : m_pageMap.values()) {
             int64_t loadCommitTime = 0;
@@ -496,6 +497,7 @@ void WebProcess::initializeWebProcess(WebProcessCreationParameters&& parameters)
             RELEASE_LOG(ActivityState, "WebPage %p - load_time: %lld, visible: %d, throttleable: %d , suspended: %d , websam_state: %" PUBLIC_LOG_STRING ", activity_state: %" PUBLIC_LOG_STRING ", url: %" PRIVATE_LOG_STRING, page.get(), loadCommitTime, page->isVisible(), page->isThrottleable(), page->isSuspended(), MemoryPressureHandler::processStateDescription().characters(), activityStateStream.release().utf8().data(), page->mainWebFrame().url().string().utf8().data());
         }
     });
+#endif
 
     SandboxExtension::consumePermanently(parameters.additionalSandboxExtensionHandles);
 
@@ -576,8 +578,8 @@ void WebProcess::initializeWebProcess(WebProcessCreationParameters&& parameters)
     commonVM().setGlobalConstRedeclarationShouldThrow(parameters.shouldThrowExceptionForGlobalConstantRedeclaration);
 
     ScriptExecutionContext::setCrossOriginMode(parameters.crossOriginMode);
-    m_isCaptivePortalModeEnabled = parameters.isCaptivePortalModeEnabled;
-    DeprecatedGlobalSettings::setArePDFImagesEnabled(!m_isCaptivePortalModeEnabled);
+    m_isLockdownModeEnabled = parameters.isLockdownModeEnabled;
+    DeprecatedGlobalSettings::setArePDFImagesEnabled(!m_isLockdownModeEnabled);
 
 #if ENABLE(SERVICE_CONTROLS)
     setEnabledServices(parameters.hasImageServices, parameters.hasSelectionServices, parameters.hasRichContentServices);
@@ -632,11 +634,11 @@ void WebProcess::setWebsiteDataStoreParameters(WebProcessDataStoreParameters&& p
         ARKitInlinePreviewModelPlayerMac::setModelElementCacheDirectory(parameters.modelElementCacheDirectory);
 #endif
 
-    setResourceLoadStatisticsEnabled(parameters.resourceLoadStatisticsEnabled);
+    setTrackingPreventionEnabled(parameters.trackingPreventionEnabled);
 
 #if ENABLE(TRACKING_PREVENTION)
     m_thirdPartyCookieBlockingMode = parameters.thirdPartyCookieBlockingMode;
-    if (parameters.resourceLoadStatisticsEnabled) {
+    if (parameters.trackingPreventionEnabled) {
         if (!ResourceLoadObserver::sharedIfExists())
             ResourceLoadObserver::setShared(*new WebResourceLoadObserver(parameters.sessionID.isEphemeral() ? WebCore::ResourceLoadStatistics::IsEphemeral::Yes : WebCore::ResourceLoadStatistics::IsEphemeral::No));
         ResourceLoadObserver::shared().setDomainsWithUserInteraction(WTFMove(parameters.domainsWithUserInteraction));
@@ -944,12 +946,7 @@ void WebProcess::didReceiveMessage(IPC::Connection& connection, IPC::Decoder& de
 
 WebFrame* WebProcess::webFrame(FrameIdentifier frameID) const
 {
-    return m_frameMap.get(frameID);
-}
-
-Vector<WebFrame*> WebProcess::webFrames() const
-{
-    return copyToVector(m_frameMap.values());
+    return m_frameMap.get(frameID).get();
 }
 
 void WebProcess::addWebFrame(FrameIdentifier frameID, WebFrame* frame)
@@ -957,7 +954,7 @@ void WebProcess::addWebFrame(FrameIdentifier frameID, WebFrame* frame)
     m_frameMap.set(frameID, frame);
 }
 
-void WebProcess::removeWebFrame(FrameIdentifier frameID)
+void WebProcess::removeWebFrame(FrameIdentifier frameID, std::optional<WebPageProxyIdentifier> pageID)
 {
     m_frameMap.remove(frameID);
 
@@ -967,7 +964,10 @@ void WebProcess::removeWebFrame(FrameIdentifier frameID)
     if (!parentProcessConnection())
         return;
 
-    parentProcessConnection()->send(Messages::WebProcessProxy::DidDestroyFrame(frameID), 0);
+    if (!pageID)
+        return;
+
+    parentProcessConnection()->send(Messages::WebProcessProxy::DidDestroyFrame(frameID, *pageID), 0);
 }
 
 WebPageGroupProxy* WebProcess::webPageGroup(PageGroup* pageGroup)
@@ -1663,11 +1663,11 @@ WeakPtr<StorageAreaMap> WebProcess::storageAreaMap(StorageAreaMapIdentifier iden
     return m_storageAreaMaps.get(identifier);
 }
 
-void WebProcess::setResourceLoadStatisticsEnabled(bool enabled)
+void WebProcess::setTrackingPreventionEnabled(bool enabled)
 {
-    if (WebCore::DeprecatedGlobalSettings::resourceLoadStatisticsEnabled() == enabled)
+    if (WebCore::DeprecatedGlobalSettings::trackingPreventionEnabled() == enabled)
         return;
-    WebCore::DeprecatedGlobalSettings::setResourceLoadStatisticsEnabled(enabled);
+    WebCore::DeprecatedGlobalSettings::setTrackingPreventionEnabled(enabled);
 #if ENABLE(TRACKING_PREVENTION)
     if (enabled && !ResourceLoadObserver::sharedIfExists())
         WebCore::ResourceLoadObserver::setShared(*new WebResourceLoadObserver(m_sessionID && m_sessionID->isEphemeral() ? WebCore::ResourceLoadStatistics::IsEphemeral::Yes : WebCore::ResourceLoadStatistics::IsEphemeral::No));

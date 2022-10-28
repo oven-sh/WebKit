@@ -156,6 +156,10 @@
 #include "PlatformXRSystemProxy.h"
 #endif
 
+#if ENABLE(WK_WEB_EXTENSIONS)
+#include "WebExtensionControllerProxy.h"
+#endif
+
 #if PLATFORM(COCOA)
 #include <WebCore/VisibleSelection.h>
 #include <wtf/RetainPtr.h>
@@ -567,11 +571,6 @@ public:
 
     std::optional<WebCore::SimpleRange> currentSelectionAsRange();
 
-#if ENABLE(WEBGL)
-    WebCore::WebGLLoadPolicy webGLPolicyForURL(WebFrame*, const URL&);
-    WebCore::WebGLLoadPolicy resolveWebGLPolicyForURL(WebFrame*, const URL&);
-#endif
-    
     enum class ShouldPerformLayout : bool { Default, Yes };
     EditorState editorState(ShouldPerformLayout = ShouldPerformLayout::Default) const;
     void updateEditorStateAfterLayoutIfEditabilityChanged();
@@ -786,15 +785,15 @@ public:
     bool allowsUserScaling() const;
     bool hasStablePageScaleFactor() const { return m_hasStablePageScaleFactor; }
 
-    void attemptSyntheticClick(const WebCore::IntPoint&, OptionSet<WebKit::WebEvent::Modifier>, TransactionID lastLayerTreeTransactionId);
+    void attemptSyntheticClick(const WebCore::IntPoint&, OptionSet<WebKit::WebEventModifier>, TransactionID lastLayerTreeTransactionId);
     void potentialTapAtPosition(WebKit::TapIdentifier, const WebCore::FloatPoint&, bool shouldRequestMagnificationInformation);
-    void commitPotentialTap(OptionSet<WebKit::WebEvent::Modifier>, TransactionID lastLayerTreeTransactionId, WebCore::PointerID);
+    void commitPotentialTap(OptionSet<WebKit::WebEventModifier>, TransactionID lastLayerTreeTransactionId, WebCore::PointerID);
     void commitPotentialTapFailed();
     void cancelPotentialTap();
     void cancelPotentialTapInFrame(WebFrame&);
     void tapHighlightAtPosition(WebKit::TapIdentifier, const WebCore::FloatPoint&);
     void didRecognizeLongPress();
-    void handleDoubleTapForDoubleClickAtPoint(const WebCore::IntPoint&, OptionSet<WebKit::WebEvent::Modifier>, TransactionID lastLayerTreeTransactionId);
+    void handleDoubleTapForDoubleClickAtPoint(const WebCore::IntPoint&, OptionSet<WebKit::WebEventModifier>, TransactionID lastLayerTreeTransactionId);
 
     void inspectorNodeSearchMovedToPosition(const WebCore::FloatPoint&);
     void inspectorNodeSearchEndedAtPosition(const WebCore::FloatPoint&);
@@ -843,7 +842,7 @@ public:
     bool isShowingInputViewForFocusedElement() const { return m_isShowingInputViewForFocusedElement; }
     void updateSelectionAppearance();
     void getSelectionContext(CompletionHandler<void(const String&, const String&, const String&)>&&);
-    void handleTwoFingerTapAtPoint(const WebCore::IntPoint&, OptionSet<WebKit::WebEvent::Modifier>, WebKit::TapIdentifier);
+    void handleTwoFingerTapAtPoint(const WebCore::IntPoint&, OptionSet<WebKit::WebEventModifier>, WebKit::TapIdentifier);
     void getRectsForGranularityWithSelectionOffset(WebCore::TextGranularity, int32_t, CompletionHandler<void(const Vector<WebCore::SelectionGeometry>&)>&&);
     void getRectsAtSelectionOffsetWithText(int32_t, const String&, CompletionHandler<void(const Vector<WebCore::SelectionGeometry>&)>&&);
     void storeSelectionForAccessibility(bool);
@@ -1304,6 +1303,8 @@ public:
     void didConcludeDrop();
 #endif
 
+    void updateImageAnimationEnabled();
+
     void didFinishLoadingImageForElement(WebCore::HTMLImageElement&);
 
     WebURLSchemeHandlerProxy* urlSchemeHandlerForScheme(StringView);
@@ -1362,7 +1363,7 @@ public:
     void getTextFragmentMatch(CompletionHandler<void(const String&)>&&);
 
 #if USE(WPE_RENDERER)
-    int hostFileDescriptor() const { return m_hostFileDescriptor.fd().value(); }
+    int hostFileDescriptor() const { return m_hostFileDescriptor.value(); }
 #endif
 
     void updateCurrentModifierState(OptionSet<WebCore::PlatformEvent::Modifier> modifiers);
@@ -1475,6 +1476,8 @@ public:
 
     void isPlayingMediaDidChange(WebCore::MediaProducerMediaStateFlags);
 
+    URL sanitizeForCopyOrShare(const URL&) const;
+
 #if ENABLE(IMAGE_ANALYSIS)
     void requestTextRecognition(WebCore::Element&, WebCore::TextRecognitionOptions&&, CompletionHandler<void(RefPtr<WebCore::Element>&&)>&& = { });
     void updateWithTextRecognitionResult(const WebCore::TextRecognitionResult&, const WebCore::ElementContext&, const WebCore::FloatPoint& location, CompletionHandler<void(TextRecognitionUpdateResult)>&&);
@@ -1491,7 +1494,7 @@ public:
     void showMediaControlsContextMenu(WebCore::FloatRect&&, Vector<WebCore::MediaControlsContextMenuItem>&&, CompletionHandler<void(WebCore::MediaControlsContextMenuItem::ID)>&&);
 #endif // ENABLE(MEDIA_CONTROLS_CONTEXT_MENUS) && USE(UICONTEXTMENU)
 
-#if PLATFORM(WIN)
+#if USE(GRAPHICS_LAYER_TEXTURE_MAPPER) || USE(GRAPHICS_LAYER_WC)
     uint64_t nativeWindowHandle() { return m_nativeWindowHandle; }
 #endif
 
@@ -1610,8 +1613,8 @@ private:
 #if PLATFORM(IOS_FAMILY)
     std::optional<FocusedElementInformation> focusedElementInformation();
     void generateSyntheticEditingCommand(SyntheticEditingCommandType);
-    void handleSyntheticClick(WebCore::Node& nodeRespondingToClick, const WebCore::FloatPoint& location, OptionSet<WebKit::WebEvent::Modifier>, WebCore::PointerID = WebCore::mousePointerID);
-    void completeSyntheticClick(WebCore::Node& nodeRespondingToClick, const WebCore::FloatPoint& location, OptionSet<WebKit::WebEvent::Modifier>, WebCore::SyntheticClickType, WebCore::PointerID = WebCore::mousePointerID);
+    void handleSyntheticClick(WebCore::Node& nodeRespondingToClick, const WebCore::FloatPoint& location, OptionSet<WebKit::WebEventModifier>, WebCore::PointerID = WebCore::mousePointerID);
+    void completeSyntheticClick(WebCore::Node& nodeRespondingToClick, const WebCore::FloatPoint& location, OptionSet<WebKit::WebEventModifier>, WebCore::SyntheticClickType, WebCore::PointerID = WebCore::mousePointerID);
     void sendTapHighlightForNodeIfNecessary(WebKit::TapIdentifier, WebCore::Node*);
     WebCore::VisiblePosition visiblePositionInFocusedNodeForPoint(const WebCore::Frame&, const WebCore::IntPoint&, bool isInteractingWithFocusedElement);
     std::optional<WebCore::SimpleRange> rangeForGranularityAtPoint(WebCore::Frame&, const WebCore::IntPoint&, WebCore::TextGranularity, bool isInteractingWithFocusedElement);
@@ -1797,7 +1800,6 @@ private:
 #else
     void didReceivePolicyDecision(WebCore::FrameIdentifier, uint64_t listenerID, PolicyDecision&&, const Vector<SandboxExtension::Handle>&);
 #endif
-    void continueWillSubmitForm(WebCore::FrameIdentifier, FormSubmitListenerIdentifier);
     void setUserAgent(const String&);
     void setCustomTextEncodingName(const String&);
     void suspendActiveDOMObjectsAndAnimations();
@@ -2141,7 +2143,7 @@ private:
     RefPtr<WebCore::AccessibilityRootAtspi> m_accessibilityRootObject;
 #endif
 
-#if PLATFORM(WIN)
+#if USE(GRAPHICS_LAYER_TEXTURE_MAPPER) || USE(GRAPHICS_LAYER_WC)
     uint64_t m_nativeWindowHandle { 0 };
 #endif
 
@@ -2213,6 +2215,11 @@ private:
     RefPtr<NotificationPermissionRequestManager> m_notificationPermissionRequestManager;
 
     Ref<WebUserContentController> m_userContentController;
+
+#if ENABLE(WK_WEB_EXTENSIONS)
+    RefPtr<WebExtensionControllerProxy> m_webExtensionController;
+#endif
+
     UniqueRef<WebScreenOrientationManager> m_screenOrientationManager;
 
 #if ENABLE(GEOLOCATION)
@@ -2323,6 +2330,7 @@ private:
         ScheduledDuringAccessibilitySelectionChange,
     };
     PendingEditorStateUpdateStatus m_pendingEditorStateUpdateStatus { PendingEditorStateUpdateStatus::NotScheduled };
+    bool m_needsEditorStateVisualDataUpdate { false };
 
 #if ENABLE(META_VIEWPORT)
     WebCore::ViewportConfiguration m_viewportConfiguration;
@@ -2371,7 +2379,7 @@ private:
     RefPtr<WebCore::Node> m_pendingSyntheticClickNode;
     WebCore::FloatPoint m_pendingSyntheticClickLocation;
     WebCore::FloatRect m_previousExposedContentRect;
-    OptionSet<WebKit::WebEvent::Modifier> m_pendingSyntheticClickModifiers;
+    OptionSet<WebKit::WebEventModifier> m_pendingSyntheticClickModifiers;
     WebCore::PointerID m_pendingSyntheticClickPointerId { 0 };
     FocusedElementInformationIdentifier m_lastFocusedElementInformationIdentifier;
     std::optional<DynamicViewportSizeUpdateID> m_pendingDynamicViewportSizeUpdateID;
@@ -2435,7 +2443,7 @@ private:
     const std::optional<double> m_cpuLimit;
 
 #if USE(WPE_RENDERER)
-    IPC::Attachment m_hostFileDescriptor;
+    UnixFileDescriptor m_hostFileDescriptor;
 #endif
 
     HashMap<String, RefPtr<WebURLSchemeHandlerProxy>> m_schemeToURLSchemeHandlerProxyMap;
@@ -2522,6 +2530,10 @@ private:
     WebCore::HighlightVisibility m_appHighlightsVisible { WebCore::HighlightVisibility::Hidden };
 #endif
 
+#if ENABLE(NETWORK_CONNECTION_INTEGRITY)
+    bool m_sanitizeLookalikeCharactersInLinksEnabled { false };
+#endif
+
 #if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
     WeakHashSet<WebCore::HTMLImageElement, WebCore::WeakPtrImplWithEventTargetData> m_elementsToExcludeFromRemoveBackground;
 #endif
@@ -2535,6 +2547,10 @@ inline void WebPage::prepareToRunModalJavaScriptDialog() { }
 
 #if !PLATFORM(MAC)
 inline bool WebPage::shouldAvoidComputingPostLayoutDataForEditorState() const { return false; }
+#endif
+
+#if !PLATFORM(COCOA)
+inline URL WebPage::sanitizeForCopyOrShare(const URL& url) const { return url; }
 #endif
 
 #if PLATFORM(IOS_FAMILY)

@@ -80,6 +80,7 @@ class AsyncFunctionPrototype;
 class AsyncGeneratorPrototype;
 class AsyncGeneratorFunctionPrototype;
 class BooleanPrototype;
+class ChainedWatchpoint;
 class ConsoleClient;
 class Debugger;
 class ErrorConstructor;
@@ -193,6 +194,7 @@ constexpr bool typeExposedByDefault = true;
     macro(WebAssemblyMemory,       webAssemblyMemory,       webAssemblyMemory,       JSWebAssemblyMemory,       Memory,       object, typeExposedByDefault) \
     macro(WebAssemblyModule,       webAssemblyModule,       webAssemblyModule,       JSWebAssemblyModule,       Module,       object, typeExposedByDefault) \
     macro(WebAssemblyRuntimeError, webAssemblyRuntimeError, webAssemblyRuntimeError, ErrorInstance,             RuntimeError, error,  typeExposedByDefault) \
+    macro(WebAssemblyStruct,       webAssemblyStruct,       webAssemblyStruct,       JSWebAssemblyStruct,       Struct,       object, Options::useWebAssemblyGC()) \
     macro(WebAssemblyTable,        webAssemblyTable,        webAssemblyTable,        JSWebAssemblyTable,        Table,        object, typeExposedByDefault) \
     macro(WebAssemblyTag,          webAssemblyTag,          webAssemblyTag,          JSWebAssemblyTag,          Tag,          object, typeExposedByDefault) 
 #else
@@ -519,15 +521,16 @@ public:
     Debugger* m_debugger;
 
 #if ENABLE(REMOTE_INSPECTOR)
+    // FIXME: <http://webkit.org/b/246237> Local inspection should be controlled by `inspectable` API.
     std::unique_ptr<Inspector::JSGlobalObjectInspectorController> m_inspectorController;
     std::unique_ptr<JSGlobalObjectDebuggable> m_inspectorDebuggable;
 #endif
 
-    RefPtr<WatchpointSet> m_masqueradesAsUndefinedWatchpoint;
-    RefPtr<WatchpointSet> m_havingABadTimeWatchpoint;
-    RefPtr<WatchpointSet> m_varInjectionWatchpoint;
-    RefPtr<WatchpointSet> m_varReadOnlyWatchpoint;
-    RefPtr<WatchpointSet> m_regExpRecompiledWatchpoint;
+    Ref<WatchpointSet> m_masqueradesAsUndefinedWatchpointSet;
+    Ref<WatchpointSet> m_havingABadTimeWatchpointSet;
+    Ref<WatchpointSet> m_varInjectionWatchpointSet;
+    Ref<WatchpointSet> m_varReadOnlyWatchpointSet;
+    Ref<WatchpointSet> m_regExpRecompiledWatchpointSet;
 
     std::unique_ptr<JSGlobalObjectRareData> m_rareData;
 
@@ -546,8 +549,11 @@ public:
     InlineWatchpointSet m_setAddWatchpointSet { IsWatched };
     InlineWatchpointSet m_arraySpeciesWatchpointSet { ClearWatchpoint };
     InlineWatchpointSet m_arrayJoinWatchpointSet { IsWatched };
+    InlineWatchpointSet m_arrayPrototypeChainIsSaneWatchpointSet { IsWatched };
+    InlineWatchpointSet m_objectPrototypeChainIsSaneWatchpointSet { IsWatched };
+    InlineWatchpointSet m_stringPrototypeChainIsSaneWatchpointSet { IsWatched };
     InlineWatchpointSet m_numberToStringWatchpointSet { IsWatched };
-    InlineWatchpointSet m_structureCacheClearedWatchpoint { IsWatched };
+    InlineWatchpointSet m_structureCacheClearedWatchpointSet { IsWatched };
     InlineWatchpointSet m_arrayBufferSpeciesWatchpointSet { ClearWatchpoint };
     InlineWatchpointSet m_sharedArrayBufferSpeciesWatchpointSet { ClearWatchpoint };
     InlineWatchpointSet m_typedArrayConstructorSpeciesWatchpointSet { IsWatched };
@@ -562,6 +568,11 @@ public:
     std::unique_ptr<ObjectPropertyChangeAdaptiveWatchpoint<InlineWatchpointSet>> m_arrayPrototypeConstructorWatchpoint;
     std::unique_ptr<ObjectPropertyChangeAdaptiveWatchpoint<InlineWatchpointSet>> m_arrayPrototypeSymbolIteratorWatchpoint;
     std::unique_ptr<ObjectPropertyChangeAdaptiveWatchpoint<InlineWatchpointSet>> m_arrayPrototypeJoinWatchpoint;
+    std::unique_ptr<ObjectAdaptiveStructureWatchpoint> m_arrayPrototypeAbsenceOfIndexedPropertiesWatchpoint;
+    std::unique_ptr<ObjectAdaptiveStructureWatchpoint> m_stringPrototypeAbsenceOfIndexedPropertiesWatchpoint;
+    std::unique_ptr<ObjectAdaptiveStructureWatchpoint> m_objectPrototypeAbsenceOfIndexedPropertiesWatchpoint;
+    std::unique_ptr<ChainedWatchpoint> m_objectPrototypeAbsenceOfIndexedPropertiesWatchpointForArray;
+    std::unique_ptr<ChainedWatchpoint> m_objectPrototypeAbsenceOfIndexedPropertiesWatchpointForString;
     std::unique_ptr<ObjectPropertyChangeAdaptiveWatchpoint<InlineWatchpointSet>> m_arrayIteratorPrototypeNext;
     std::unique_ptr<ObjectPropertyChangeAdaptiveWatchpoint<InlineWatchpointSet>> m_mapPrototypeSymbolIteratorWatchpoint;
     std::unique_ptr<ObjectPropertyChangeAdaptiveWatchpoint<InlineWatchpointSet>> m_mapIteratorPrototypeNextWatchpoint;
@@ -643,13 +654,16 @@ public:
     InlineWatchpointSet& mapSetWatchpointSet() { return m_mapSetWatchpointSet; }
     InlineWatchpointSet& setAddWatchpointSet() { return m_setAddWatchpointSet; }
     InlineWatchpointSet& arraySpeciesWatchpointSet() { return m_arraySpeciesWatchpointSet; }
+    InlineWatchpointSet& arrayPrototypeChainIsSaneWatchpointSet() { return m_arrayPrototypeChainIsSaneWatchpointSet; }
+    InlineWatchpointSet& objectPrototypeChainIsSaneWatchpointSet() { return m_objectPrototypeChainIsSaneWatchpointSet; }
+    InlineWatchpointSet& stringPrototypeChainIsSaneWatchpointSet() { return m_stringPrototypeChainIsSaneWatchpointSet; }
     InlineWatchpointSet& arrayJoinWatchpointSet() { return m_arrayJoinWatchpointSet; }
     InlineWatchpointSet& numberToStringWatchpointSet()
     {
         RELEASE_ASSERT(Options::useJIT());
         return m_numberToStringWatchpointSet;
     }
-    InlineWatchpointSet& structureCacheClearedWatchpoint() { return m_structureCacheClearedWatchpoint; }
+    InlineWatchpointSet& structureCacheClearedWatchpointSet() { return m_structureCacheClearedWatchpointSet; }
     InlineWatchpointSet& arrayBufferSpeciesWatchpointSet(ArrayBufferSharingMode sharingMode)
     {
         switch (sharingMode) {
@@ -698,7 +712,7 @@ public:
     bool isStringPrototypeIteratorProtocolFastAndNonObservable();
     bool isMapPrototypeSetFastAndNonObservable();
     bool isSetPrototypeAddFastAndNonObservable();
-
+    bool isArgumentsPrototypeIteratorProtocolFastAndNonObservable();
 
 #if ENABLE(DFG_JIT)
     using ReferencedGlobalPropertyWatchpointSets = HashMap<RefPtr<UniquedStringImpl>, Ref<WatchpointSet>, IdentifierRepHash>;
@@ -1040,8 +1054,8 @@ public:
     Structure* plainTimeStructure() { return m_plainTimeStructure.get(this); }
     Structure* timeZoneStructure() { return m_timeZoneStructure.get(this); }
 
-    JS_EXPORT_PRIVATE void setRemoteDebuggingEnabled(bool);
-    JS_EXPORT_PRIVATE bool remoteDebuggingEnabled() const;
+    JS_EXPORT_PRIVATE void setInspectable(bool);
+    JS_EXPORT_PRIVATE bool inspectable() const;
 
     void setIsITML();
 
@@ -1052,11 +1066,12 @@ public:
     static ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(JSGlobalObject, m_vm); }
     static ptrdiff_t offsetOfGlobalLexicalEnvironment() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalLexicalEnvironment); }
     static ptrdiff_t offsetOfGlobalLexicalBindingEpoch() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalLexicalBindingEpoch); }
-    static ptrdiff_t offsetOfVarInjectionWatchpoint() { return OBJECT_OFFSETOF(JSGlobalObject, m_varInjectionWatchpoint); }
-    static ptrdiff_t offsetOfVarReadOnlyWatchpoint() { return OBJECT_OFFSETOF(JSGlobalObject, m_varReadOnlyWatchpoint); }
+    static ptrdiff_t offsetOfVarInjectionWatchpoint() { return OBJECT_OFFSETOF(JSGlobalObject, m_varInjectionWatchpointSet); }
+    static ptrdiff_t offsetOfVarReadOnlyWatchpoint() { return OBJECT_OFFSETOF(JSGlobalObject, m_varReadOnlyWatchpointSet); }
     static ptrdiff_t offsetOfFunctionProtoHasInstanceSymbolFunction() { return OBJECT_OFFSETOF(JSGlobalObject, m_functionProtoHasInstanceSymbolFunction); }
 
 #if ENABLE(REMOTE_INSPECTOR)
+    // FIXME: <http://webkit.org/b/246237> Local inspection should be controlled by `inspectable` API.
     Inspector::JSGlobalObjectInspectorController& inspectorController() const { return *m_inspectorController.get(); }
     JSGlobalObjectDebuggable& inspectorDebuggable() { return *m_inspectorDebuggable.get(); }
 #endif
@@ -1187,15 +1202,15 @@ public:
         return result;
     }
 
-    WatchpointSet* masqueradesAsUndefinedWatchpoint() { return m_masqueradesAsUndefinedWatchpoint.get(); }
-    WatchpointSet* havingABadTimeWatchpoint() { return m_havingABadTimeWatchpoint.get(); }
-    WatchpointSet* varInjectionWatchpoint() { return m_varInjectionWatchpoint.get(); }
-    WatchpointSet* varReadOnlyWatchpoint() { return m_varReadOnlyWatchpoint.get(); }
-    WatchpointSet* regExpRecompiledWatchpoint() { return m_regExpRecompiledWatchpoint.get(); }
+    WatchpointSet& masqueradesAsUndefinedWatchpointSet() { return m_masqueradesAsUndefinedWatchpointSet.get(); }
+    WatchpointSet& havingABadTimeWatchpointSet() { return m_havingABadTimeWatchpointSet.get(); }
+    WatchpointSet& varInjectionWatchpointSet() { return m_varInjectionWatchpointSet.get(); }
+    WatchpointSet& varReadOnlyWatchpointSet() { return m_varReadOnlyWatchpointSet.get(); }
+    WatchpointSet& regExpRecompiledWatchpointSet() { return m_regExpRecompiledWatchpointSet.get(); }
         
     bool isHavingABadTime() const
     {
-        return m_havingABadTimeWatchpoint->hasBeenInvalidated();
+        return m_havingABadTimeWatchpointSet->hasBeenInvalidated();
     }
         
     void haveABadTime(VM&);
@@ -1204,12 +1219,13 @@ public:
     static bool objectPrototypeIsSaneConcurrently(Structure* objectPrototypeStructure);
     bool arrayPrototypeChainIsSaneConcurrently(Structure* arrayPrototypeStructure, Structure* objectPrototypeStructure);
     bool stringPrototypeChainIsSaneConcurrently(Structure* stringPrototypeStructure, Structure* objectPrototypeStructure);
+    bool objectPrototypeChainIsSane();
     bool arrayPrototypeChainIsSane();
     bool stringPrototypeChainIsSane();
 
     bool isRegExpRecompiled() const
     {
-        return m_regExpRecompiledWatchpoint->hasBeenInvalidated();
+        return m_regExpRecompiledWatchpointSet->hasBeenInvalidated();
     }
 
     void setProfileGroup(unsigned value) { createRareDataIfNeeded(); m_rareData->profileGroup = value; }
@@ -1318,7 +1334,8 @@ public:
     void setWrapperMap(std::unique_ptr<WrapperMap>&&);
 #endif
 
-    void tryInstallArraySpeciesWatchpoint();
+    void installArraySpeciesWatchpoint();
+    void installSaneChainWatchpoints();
     void installNumberPrototypeWatchpoint(NumberPrototype*);
     void installMapPrototypeWatchpoint(MapPrototype*);
     void installSetPrototypeWatchpoint(SetPrototype*);

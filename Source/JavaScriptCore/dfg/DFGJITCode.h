@@ -53,7 +53,7 @@ class JITCompiler;
 
 struct UnlinkedStructureStubInfo : JSC::UnlinkedStructureStubInfo {
     CodeOrigin codeOrigin;
-    RegisterSet usedRegisters;
+    ScalarRegisterSet usedRegisters;
     CallSiteIndex callSiteIndex;
     GPRReg m_baseGPR { InvalidGPRReg };
     GPRReg m_valueGPR { InvalidGPRReg };
@@ -100,6 +100,20 @@ public:
         CallLinkInfo,
         CellPointer,
         NonCellPointer,
+        GlobalObject,
+
+        // WatchpointSet.
+        HavingABadTimeWatchpointSet,
+        MasqueradesAsUndefinedWatchpointSet,
+        ArrayIteratorProtocolWatchpointSet,
+        NumberToStringWatchpointSet,
+        StructureCacheClearedWatchpointSet,
+        StringSymbolReplaceWatchpointSet,
+        RegExpPrimordialPropertiesWatchpointSet,
+        ArraySpeciesWatchpointSet,
+        ArrayPrototypeChainIsSaneWatchpointSet,
+        StringPrototypeChainIsSaneWatchpointSet,
+        ObjectPrototypeChainIsSaneWatchpointSet,
     };
 
     using Value = CompactPointerTuple<void*, Type>;
@@ -154,7 +168,7 @@ public:
     static ptrdiff_t offsetOfExits() { return OBJECT_OFFSETOF(JITData, m_exits); }
     static ptrdiff_t offsetOfIsInvalidated() { return OBJECT_OFFSETOF(JITData, m_isInvalidated); }
 
-    static std::unique_ptr<JITData> create(VM&, const JITCode&, ExitVector&& exits);
+    static std::unique_ptr<JITData> tryCreate(VM&, CodeBlock*, const JITCode&, ExitVector&& exits);
 
     void setExitCode(unsigned exitIndex, MacroAssemblerCodeRef<OSRExitPtrTag> code)
     {
@@ -170,12 +184,16 @@ public:
     }
 
     FixedVector<StructureStubInfo>& stubInfos() { return m_stubInfos; }
+    FixedVector<OptimizingCallLinkInfo>& callLinkInfos() { return m_callLinkInfos; }
 
 private:
-    explicit JITData(VM&, const JITCode&, ExitVector&&);
+    explicit JITData(const JITCode&, ExitVector&&);
+
+    bool tryInitialize(VM&, CodeBlock*, const JITCode&);
 
     FixedVector<StructureStubInfo> m_stubInfos;
     FixedVector<OptimizingCallLinkInfo> m_callLinkInfos;
+    FixedVector<CodeBlockJettisoningWatchpoint> m_watchpoints;
     ExitVector m_exits;
     uint8_t m_isInvalidated { 0 };
 };
@@ -224,7 +242,7 @@ public:
     
     void shrinkToFit(const ConcurrentJSLocker&) final;
 
-    RegisterSet liveRegistersToPreserveAtExceptionHandlingCallSite(CodeBlock*, CallSiteIndex) final;
+    RegisterSetBuilder liveRegistersToPreserveAtExceptionHandlingCallSite(CodeBlock*, CallSiteIndex) final;
 #if ENABLE(FTL_JIT)
     CodeBlock* osrEntryBlock() { return m_osrEntryBlock.get(); }
     void setOSREntryBlock(VM&, const JSCell* owner, CodeBlock* osrEntryBlock);
@@ -287,9 +305,12 @@ public:
 #endif // ENABLE(FTL_JIT)
 };
 
-inline std::unique_ptr<JITData> JITData::create(VM& vm, const JITCode& jitCode, ExitVector&& exits)
+inline std::unique_ptr<JITData> JITData::tryCreate(VM& vm, CodeBlock* codeBlock, const JITCode& jitCode, ExitVector&& exits)
 {
-    return std::unique_ptr<JITData> { new (NotNull, fastMalloc(Base::allocationSize(jitCode.m_linkerIR.size()))) JITData(vm, jitCode, WTFMove(exits)) };
+    auto result = std::unique_ptr<JITData> { new (NotNull, fastMalloc(Base::allocationSize(jitCode.m_linkerIR.size()))) JITData(jitCode, WTFMove(exits)) };
+    if (result->tryInitialize(vm, codeBlock, jitCode))
+        return result;
+    return nullptr;
 }
 
 } } // namespace JSC::DFG

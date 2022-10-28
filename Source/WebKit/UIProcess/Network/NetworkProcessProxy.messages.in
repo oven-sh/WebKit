@@ -54,7 +54,7 @@ messages -> NetworkProcessProxy LegacyReceiver {
     StartServiceWorkerBackgroundProcessing(WebCore::ProcessIdentifier serviceWorkerProcessIdentifier)
     EndServiceWorkerBackgroundProcessing(WebCore::ProcessIdentifier serviceWorkerProcessIdentifier)
 #endif
-    EstablishRemoteWorkerContextConnectionToNetworkProcess(enum:bool WebKit::RemoteWorkerType workerType, WebCore::RegistrableDomain registrableDomain, std::optional<WebCore::ProcessIdentifier> requestingProcessIdentifier, std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, PAL::SessionID sessionID) -> ()
+    EstablishRemoteWorkerContextConnectionToNetworkProcess(enum:bool WebKit::RemoteWorkerType workerType, WebCore::RegistrableDomain registrableDomain, std::optional<WebCore::ProcessIdentifier> requestingProcessIdentifier, std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, PAL::SessionID sessionID) -> (WebCore::ProcessIdentifier remoteProcessIdentifier)
     RemoteWorkerContextConnectionNoLongerNeeded(enum:bool WebKit::RemoteWorkerType workerType, WebCore::ProcessIdentifier identifier)
     RegisterRemoteWorkerClientProcess(enum:bool WebKit::RemoteWorkerType workerType, WebCore::ProcessIdentifier clientProcessIdentifier, WebCore::ProcessIdentifier remoteWorkerProcessIdentifier);
     UnregisterRemoteWorkerClientProcess(enum:bool WebKit::RemoteWorkerType workerType, WebCore::ProcessIdentifier clientProcessIdentifier, WebCore::ProcessIdentifier remoteWorkerProcessIdentifier);
@@ -91,7 +91,7 @@ messages -> NetworkProcessProxy LegacyReceiver {
     DataTaskDidCompleteWithError(WebKit::DataTaskIdentifier identifier, WebCore::ResourceError error)
 
     OpenWindowFromServiceWorker(PAL::SessionID sessionID, String urlString, struct WebCore::SecurityOriginData serviceWorkerOrigin) -> (std::optional<WebCore::PageIdentifier> newPage)
-    NavigateServiceWorkerClient(WebCore::FrameIdentifier frameIdentifier, WebCore::ScriptExecutionContextIdentifier documentIdentifier, URL url) -> (std::optional<WebCore::PageIdentifier> page)
+    NavigateServiceWorkerClient(WebCore::FrameIdentifier frameIdentifier, WebCore::ScriptExecutionContextIdentifier documentIdentifier, URL url) -> (std::optional<WebCore::PageIdentifier> page, std::optional<WebCore::FrameIdentifier> frame)
 
     CookiesDidChange(PAL::SessionID sessionID)
 }

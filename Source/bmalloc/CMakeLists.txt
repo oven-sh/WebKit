@@ -130,6 +130,7 @@ set(bmalloc_SOURCES
     libpas/src/libpas/pas_lock.c
     libpas/src/libpas/pas_lock_free_read_ptr_ptr_hashtable.c
     libpas/src/libpas/pas_log.c
+    libpas/src/libpas/pas_malloc_stack_logging.c
     libpas/src/libpas/pas_medium_megapage_cache.c
     libpas/src/libpas/pas_megapage_cache.c
     libpas/src/libpas/pas_monotonic_time.c
@@ -517,6 +518,7 @@ set(bmalloc_PUBLIC_HEADERS
     libpas/src/libpas/pas_lock_free_read_ptr_ptr_hashtable.h
     libpas/src/libpas/pas_lock.h
     libpas/src/libpas/pas_log.h
+    libpas/src/libpas/pas_malloc_stack_logging.h
     libpas/src/libpas/pas_medium_megapage_cache.h
     libpas/src/libpas/pas_megapage_cache.h
     libpas/src/libpas/pas_min_heap.h
@@ -674,6 +676,16 @@ set(bmalloc_INTERFACE_DEPENDENCIES bmalloc_CopyHeaders)
 
 add_definitions(-D_GNU_SOURCE)
 
+set_source_files_properties(
+    libpas/src/libpas/pas_bitfit_page_config_kind.c
+    libpas/src/libpas/jit_heap.c
+    libpas/src/libpas/bmalloc_heap.c
+    libpas/src/libpas/bmalloc_heap_config.c
+    libpas/src/libpas/pas_heap_config_kind.c
+    libpas/src/libpas/pas_segregated_page_config_kind.c
+    PROPERTIES LANGUAGE CXX
+)
+
 WEBKIT_FRAMEWORK_DECLARE(bmalloc)
 WEBKIT_INCLUDE_CONFIG_FILES_IF_EXISTS()
 
@@ -685,15 +697,6 @@ WEBKIT_COPY_FILES(bmalloc_CopyHeaders
 
 WEBKIT_FRAMEWORK(bmalloc)
 WEBKIT_FRAMEWORK_TARGET(bmalloc)
-
-set_source_files_properties(
-    libpas/src/libpas/pas_bitfit_page_config_kind.c
-    libpas/src/libpas/jit_heap.c
-    libpas/src/libpas/bmalloc_heap.c
-    libpas/src/libpas/bmalloc_heap_config.c
-    libpas/src/libpas/pas_heap_config_kind.c
-    libpas/src/libpas/pas_segregated_page_config_kind.c
-    PROPERTIES LANGUAGE CXX)
 
 WEBKIT_ADD_TARGET_CXX_FLAGS(bmalloc
     -Wno-missing-field-initializers

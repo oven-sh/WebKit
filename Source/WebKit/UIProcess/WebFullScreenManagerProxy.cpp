@@ -36,6 +36,7 @@
 #include "WebProcessPool.h"
 #include "WebProcessProxy.h"
 #include <WebCore/IntRect.h>
+#include <WebCore/ScreenOrientationType.h>
 
 namespace WebKit {
 using namespace WebCore;
@@ -171,19 +172,19 @@ bool WebFullScreenManagerProxy::blocksReturnToFullscreenFromPictureInPicture() c
 }
 
 #if HAVE(UIKIT_WEBKIT_INTERNALS)
-bool WebFullScreenManagerProxy::isVideoElement() const
+bool WebFullScreenManagerProxy::isVideoElementWithControls() const
 {
-    return m_isVideoElement;
+    return m_isVideoElementWithControls;
 }
 #endif
 
-void WebFullScreenManagerProxy::enterFullScreen(bool blocksReturnToFullscreenFromPictureInPicture, bool isVideoElement, FloatSize videoDimensions)
+void WebFullScreenManagerProxy::enterFullScreen(bool blocksReturnToFullscreenFromPictureInPicture, bool isVideoElementWithControls, FloatSize videoDimensions)
 {
     m_blocksReturnToFullscreenFromPictureInPicture = blocksReturnToFullscreenFromPictureInPicture;
 #if HAVE(UIKIT_WEBKIT_INTERNALS)
-    m_isVideoElement = isVideoElement;
+    m_isVideoElementWithControls = isVideoElementWithControls;
 #else
-    UNUSED_PARAM(isVideoElement);
+    UNUSED_PARAM(isVideoElementWithControls);
 #endif
 #if PLATFORM(IOS_FAMILY)
     m_client.enterFullScreen(videoDimensions);
@@ -209,6 +210,16 @@ void WebFullScreenManagerProxy::beganEnterFullScreen(const IntRect& initialFrame
 void WebFullScreenManagerProxy::beganExitFullScreen(const IntRect& initialFrame, const IntRect& finalFrame)
 {
     m_client.beganExitFullScreen(initialFrame, finalFrame);
+}
+
+bool WebFullScreenManagerProxy::lockFullscreenOrientation(WebCore::ScreenOrientationType orientation)
+{
+    return m_client.lockFullscreenOrientation(orientation);
+}
+
+void WebFullScreenManagerProxy::unlockFullscreenOrientation()
+{
+    m_client.unlockFullscreenOrientation();
 }
 
 } // namespace WebKit

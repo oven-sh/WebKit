@@ -28,6 +28,7 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "WasmFormat.h"
 #include "WasmTypeDefinitionInlines.h"
 #include <wtf/CommaPrinter.h>
 #include <wtf/FastMalloc.h>
@@ -96,6 +97,25 @@ void StructType::dump(PrintStream& out) const
         out.print(comma, field(fieldIndex).mutability ? "immutable" : "mutable");
     }
     out.print(")");
+}
+
+StructType::StructType(FieldType* payload, StructFieldCount fieldCount, const FieldType* fieldTypes)
+    : m_payload(payload)
+    , m_fieldCount(fieldCount)
+    , m_hasRecursiveReference(false)
+{
+    bool hasRecursiveReference = false;
+    unsigned currentFieldOffset = 0;
+    for (unsigned fieldIndex = 0; fieldIndex < m_fieldCount; ++fieldIndex) {
+        const auto& fieldType = fieldTypes[fieldIndex];
+        hasRecursiveReference |= isRefWithRecursiveReference(fieldType.type);
+        getField(fieldIndex) = fieldType;
+        *getFieldOffset(fieldIndex) = currentFieldOffset;
+        currentFieldOffset += typeKindSizeInBytes(field(fieldIndex).type.kind);
+    }
+
+    m_instancePayloadSize = WTF::roundUpToMultipleOf<sizeof(uint64_t)>(currentFieldOffset);
+    setHasRecursiveReference(hasRecursiveReference);
 }
 
 String ArrayType::toString() const
@@ -230,14 +250,14 @@ RefPtr<TypeDefinition> TypeDefinition::tryCreateFunctionSignature(FunctionArgCou
     return adoptRef(signature);
 }
 
-RefPtr<TypeDefinition> TypeDefinition::tryCreateStructType(StructFieldCount fieldCount)
+RefPtr<TypeDefinition> TypeDefinition::tryCreateStructType(StructFieldCount fieldCount, const FieldType* fields)
 {
     // We use WTF_MAKE_FAST_ALLOCATED for this class.
     auto result = tryFastMalloc(allocatedStructSize(fieldCount));
     void* memory = nullptr;
     if (!result.getValue(memory))
         return nullptr;
-    TypeDefinition* signature = new (NotNull, memory) TypeDefinition(TypeDefinitionKind::StructType, fieldCount);
+    TypeDefinition* signature = new (NotNull, memory) TypeDefinition(TypeDefinitionKind::StructType, fieldCount, fields);
     return adoptRef(signature);
 }
 
@@ -284,10 +304,13 @@ RefPtr<TypeDefinition> TypeDefinition::tryCreateProjection()
 // functions below are used to implement this substitution.
 Type TypeDefinition::substitute(Type type, TypeIndex projectee)
 {
-    if (type.kind == TypeKind::Rec) {
-        RefPtr<TypeDefinition> projection = TypeInformation::typeDefinitionForProjection(projectee, static_cast<ProjectionIndex>(type.index));
-        TypeKind kind = type.isNullable() ? TypeKind::RefNull : TypeKind::Ref;
-        return Type { kind, projection->index() };
+    if (isRefWithTypeIndex(type) && TypeInformation::get(type.index).is<Projection>()) {
+        const Projection* projection = TypeInformation::get(type.index).as<Projection>();
+        if (projection->isPlaceholder()) {
+            RefPtr<TypeDefinition> newProjection = TypeInformation::typeDefinitionForProjection(projectee, projection->index());
+            TypeKind kind = type.isNullable() ? TypeKind::RefNull : TypeKind::Ref;
+            return Type { kind, newProjection->index() };
+        }
     }
 
     return type;
@@ -352,7 +375,7 @@ const TypeDefinition& TypeDefinition::expand() const
 
 TypeInformation::TypeInformation()
 {
-#define MAKE_THUNK_SIGNATURE(type, enc, str, val, _) \
+#define MAKE_THUNK_SIGNATURE(type, enc, str, val, ...) \
     do { \
         if (TypeKind::type != TypeKind::Void) { \
             RefPtr<TypeDefinition> sig = TypeDefinition::tryCreateFunctionSignature(1, 0); \
@@ -413,12 +436,19 @@ struct FunctionParameterTypes {
     {
         RefPtr<TypeDefinition> signature = TypeDefinition::tryCreateFunctionSignature(params.returnTypes.size(), params.argumentTypes.size());
         RELEASE_ASSERT(signature);
+        bool hasRecursiveReference = false;
 
-        for (unsigned i = 0; i < params.returnTypes.size(); ++i)
+        for (unsigned i = 0; i < params.returnTypes.size(); ++i) {
             signature->as<FunctionSignature>()->getReturnType(i) = params.returnTypes[i];
+            hasRecursiveReference |= isRefWithRecursiveReference(params.returnTypes[i]);
+        }
 
-        for (unsigned i = 0; i < params.argumentTypes.size(); ++i)
+        for (unsigned i = 0; i < params.argumentTypes.size(); ++i) {
             signature->as<FunctionSignature>()->getArgumentType(i) = params.argumentTypes[i];
+            hasRecursiveReference |= isRefWithRecursiveReference(params.argumentTypes[i]);
+        }
+
+        signature->as<FunctionSignature>()->setHasRecursiveReference(hasRecursiveReference);
 
         entry.key = WTFMove(signature);
     }
@@ -451,13 +481,8 @@ struct StructParameterTypes {
 
     static void translate(TypeHash& entry, const StructParameterTypes& params, unsigned)
     {
-        RefPtr<TypeDefinition> signature = TypeDefinition::tryCreateStructType(params.fields.size());
+        RefPtr<TypeDefinition> signature = TypeDefinition::tryCreateStructType(params.fields.size(), params.fields.data());
         RELEASE_ASSERT(signature);
-
-        StructType* structType = signature->as<StructType>();
-        for (unsigned i = 0; i < params.fields.size(); ++i)
-            structType->getField(i) = params.fields[i];
-
         entry.key = WTFMove(signature);
     }
 };
@@ -490,6 +515,7 @@ struct ArrayParameterTypes {
 
         ArrayType* arrayType = signature->as<ArrayType>();
         arrayType->getElementType() = params.elementType;
+        arrayType->setHasRecursiveReference(isRefWithRecursiveReference(params.elementType.type));
 
         entry.key = WTFMove(signature);
     }

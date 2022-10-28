@@ -28,6 +28,8 @@
 #include "APIObject.h"
 #include "DownloadID.h"
 #include "IdentifierTypes.h"
+#include "MessageReceiver.h"
+#include "MessageSender.h"
 #include "PolicyDecision.h"
 #include "ShareableBitmap.h"
 #include "TransactionID.h"
@@ -49,6 +51,7 @@ class Array;
 }
 
 namespace WebCore {
+class AbstractFrame;
 class CertificateInfo;
 class Frame;
 class HTMLFrameOwnerElement;
@@ -68,10 +71,10 @@ class WebPage;
 struct FrameInfoData;
 struct WebsitePoliciesData;
 
-class WebFrame : public API::ObjectImpl<API::Object::Type::BundleFrame>, public CanMakeWeakPtr<WebFrame> {
+class WebFrame : public API::ObjectImpl<API::Object::Type::BundleFrame>, public IPC::MessageReceiver, public IPC::MessageSender {
 public:
-    static Ref<WebFrame> create() { return adoptRef(*new WebFrame); }
-    static Ref<WebFrame> createSubframe(WebPage*, const AtomString& frameName, WebCore::HTMLFrameOwnerElement*);
+    static Ref<WebFrame> create(WebPage& page) { return adoptRef(*new WebFrame(page)); }
+    static Ref<WebFrame> createSubframe(WebPage&, WebFrame& parent, const AtomString& frameName, WebCore::HTMLFrameOwnerElement&);
     ~WebFrame();
 
     void initWithCoreMainFrame(WebPage&, WebCore::Frame&);
@@ -81,11 +84,11 @@ public:
 
     WebPage* page() const;
 
-    static WebFrame* fromCoreFrame(const WebCore::Frame&);
+    static WebFrame* fromCoreFrame(const WebCore::AbstractFrame&);
     WebCore::Frame* coreFrame() const;
 
     FrameInfoData info() const;
-    WebCore::FrameIdentifier frameID() const { return m_frameID; }
+    WebCore::FrameIdentifier frameID() const;
 
     enum class ForNavigationAction { No, Yes };
     uint64_t setUpPolicyListener(WebCore::PolicyCheckIdentifier, WebCore::FramePolicyFunction&&, ForNavigationAction);
@@ -199,10 +202,16 @@ public:
     std::optional<NavigatingToAppBoundDomain> isTopFrameNavigatingToAppBoundDomain() const;
 #endif
 
-private:
-    WebFrame();
+    void didReceiveMessage(IPC::Connection&, IPC::Decoder&);
 
-    WeakPtr<WebCore::Frame> m_coreFrame;
+private:
+    WebFrame(WebPage&);
+
+    IPC::Connection* messageSenderConnection() const final;
+    uint64_t messageSenderDestinationID() const final;
+
+    WeakPtr<WebCore::AbstractFrame> m_coreFrame;
+    WeakPtr<WebPage> m_page;
 
     struct PolicyCheck {
         WebCore::PolicyCheckIdentifier corePolicyIdentifier;
@@ -215,7 +224,7 @@ private:
     std::optional<DownloadID> m_policyDownloadID;
 
     WeakPtr<LoadListener> m_loadListener;
-    
+
     WebCore::FrameIdentifier m_frameID;
 
 #if PLATFORM(IOS_FAMILY)

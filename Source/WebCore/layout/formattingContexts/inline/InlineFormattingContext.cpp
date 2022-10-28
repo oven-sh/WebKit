@@ -140,7 +140,7 @@ void InlineFormattingContext::layoutInFlowContent(const ConstraintsForInFlowCont
 
     auto& inlineItems = formattingState().inlineItems();
     lineLayout(inlineItems, { 0, inlineItems.size() }, constraints);
-    computeStaticPositionForOutOfFlowContent(formattingState().outOfFlowBoxes());
+    computeStaticPositionForOutOfFlowContent(formattingState().outOfFlowBoxes(), { constraints.horizontal().logicalLeft, constraints.logicalTop() });
     InlineDisplayContentBuilder::computeIsFirstIsLastBoxForInlineContent(formattingState().boxes());
     LOG_WITH_STREAM(FormattingContextLayout, stream << "[End] -> inline formatting context -> formatting root(" << &root() << ")");
 }
@@ -151,7 +151,7 @@ void InlineFormattingContext::layoutInFlowContentForIntegration(const Constraint
     collectContentIfNeeded();
     auto& inlineItems = formattingState().inlineItems();
     lineLayout(inlineItems, { 0, inlineItems.size() }, constraints);
-    computeStaticPositionForOutOfFlowContent(formattingState().outOfFlowBoxes());
+    computeStaticPositionForOutOfFlowContent(formattingState().outOfFlowBoxes(), { constraints.horizontal().logicalLeft, constraints.logicalTop() });
     InlineDisplayContentBuilder::computeIsFirstIsLastBoxForInlineContent(formattingState().boxes());
 }
 
@@ -231,20 +231,20 @@ void InlineFormattingContext::lineLayout(InlineItems& inlineItems, const LineBui
         auto lineContent = lineBuilder.layoutInlineContent({ firstInlineItemNeedsLayout, needsLayoutRange.end }, lineInitialRect, previousLine);
         auto lineLogicalRect = computeGeometryForLineContent(lineContent);
         if (lineContent.isLastLineWithInlineContent)
-            formattingState.setClearGapAfterLastLine(formattingGeometry().logicalTopForNextLine(lineContent, lineInitialRect, lineLogicalRect, floatingContext) - lineLogicalRect.bottom());
+            formattingState.setClearGapAfterLastLine(formattingGeometry().logicalTopForNextLine(lineContent, lineLogicalRect, floatingContext) - lineLogicalRect.bottom());
 
         firstInlineItemNeedsLayout = indexOfFirstInlineItemForNextLine(lineContent, previousLine, previousLineLastInlineItemIndex);
         auto isAtEnd = firstInlineItemNeedsLayout == needsLayoutRange.end && lineContent.overflowingFloats.isEmpty();
         if (isAtEnd)
             break;
 
-        lineLogicalTop = formattingGeometry().logicalTopForNextLine(lineContent, lineInitialRect, lineLogicalRect, floatingContext);
+        lineLogicalTop = formattingGeometry().logicalTopForNextLine(lineContent, lineLogicalRect, floatingContext);
         previousLine = LineBuilder::PreviousLine { !lineContent.runs.isEmpty() && lineContent.runs.last().isLineBreak(), lineContent.inlineBaseDirection, lineContent.partialOverflowingContent, WTFMove(lineContent.overflowingFloats), lineContent.trailingOverflowingContentWidth };
         previousLineLastInlineItemIndex = lineContent.inlineItemRange.end;
     }
 }
 
-void InlineFormattingContext::computeStaticPositionForOutOfFlowContent(const FormattingState::OutOfFlowBoxList& outOfFlowBoxes)
+void InlineFormattingContext::computeStaticPositionForOutOfFlowContent(const FormattingState::OutOfFlowBoxList& outOfFlowBoxes, LayoutPoint contentBoxTopLeft)
 {
     // This function computes the static position for out-of-flow content inside the inline formatting context.
     // As per spec, the static position of an out-of-flow box is computed as if the position was set to static.
@@ -256,10 +256,10 @@ void InlineFormattingContext::computeStaticPositionForOutOfFlowContent(const For
 
     for (auto& outOfFlowBox : outOfFlowBoxes) {
         if (outOfFlowBox->style().isOriginalDisplayInlineType()) {
-            formattingState.boxGeometry(outOfFlowBox).setLogicalTopLeft(formattingGeometry.staticPositionForOutOfFlowInlineLevelBox(outOfFlowBox));
+            formattingState.boxGeometry(outOfFlowBox).setLogicalTopLeft(formattingGeometry.staticPositionForOutOfFlowInlineLevelBox(outOfFlowBox, contentBoxTopLeft));
             continue;
         }
-        formattingState.boxGeometry(outOfFlowBox).setLogicalTopLeft(formattingGeometry.staticPositionForOutOfFlowBlockLevelBox(outOfFlowBox));
+        formattingState.boxGeometry(outOfFlowBox).setLogicalTopLeft(formattingGeometry.staticPositionForOutOfFlowBlockLevelBox(outOfFlowBox, contentBoxTopLeft));
     }
 }
 

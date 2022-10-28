@@ -62,6 +62,11 @@ void DrawingAreaProxy::startReceivingMessages()
     process().addMessageReceiver(Messages::DrawingAreaProxy::messageReceiverName(), m_identifier, *this);
 }
 
+DelegatedScrollingMode DrawingAreaProxy::delegatedScrollingMode() const
+{
+    return DelegatedScrollingMode::NotDelegated;
+}
+
 bool DrawingAreaProxy::setSize(const IntSize& size, const IntSize& scrollDelta)
 { 
     if (m_size == size && scrollDelta.isZero())
@@ -85,9 +90,14 @@ IPC::Connection* DrawingAreaProxy::messageSenderConnection() const
     return process().connection();
 }
 
-bool DrawingAreaProxy::sendMessage(UniqueRef<IPC::Encoder>&& encoder, OptionSet<IPC::SendOption> sendOptions, std::optional<std::pair<CompletionHandler<void(IPC::Decoder*)>, uint64_t>>&& asyncReplyInfo)
+bool DrawingAreaProxy::sendMessage(UniqueRef<IPC::Encoder>&& encoder, OptionSet<IPC::SendOption> sendOptions)
 {
-    return process().sendMessage(WTFMove(encoder), sendOptions, WTFMove(asyncReplyInfo));
+    return process().sendMessage(WTFMove(encoder), sendOptions);
+}
+
+bool DrawingAreaProxy::sendMessageWithAsyncReply(UniqueRef<IPC::Encoder>&& encoder, AsyncReplyHandler handler, OptionSet<IPC::SendOption> sendOptions)
+{
+    return m_process->sendMessage(WTFMove(encoder), sendOptions, WTFMove(handler));
 }
 
 #if PLATFORM(MAC)

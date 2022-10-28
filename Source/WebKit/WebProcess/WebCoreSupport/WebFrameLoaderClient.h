@@ -27,6 +27,7 @@
 
 #include "SameDocumentNavigationType.h"
 #include "WebPageProxyIdentifier.h"
+#include <WebCore/FrameIdentifier.h>
 #include <WebCore/FrameLoaderClient.h>
 #include <pal/SessionID.h>
 
@@ -51,7 +52,6 @@ public:
 
     std::optional<WebPageProxyIdentifier> webPageProxyID() const;
     std::optional<WebCore::PageIdentifier> pageID() const final;
-    std::optional<WebCore::FrameIdentifier> frameID() const final;
 
 #if ENABLE(TRACKING_PREVENTION)
     bool hasFrameSpecificStorageAccess() final { return !!m_frameSpecificStorageAccessIdentifier; }
@@ -117,7 +117,7 @@ private:
     void dispatchWillClose() final;
     void dispatchDidStartProvisionalLoad() final;
     void dispatchDidReceiveTitle(const WebCore::StringWithDirection&) final;
-    void dispatchDidCommitLoad(std::optional<WebCore::HasInsecureContent>, std::optional<WebCore::UsedLegacyTLS>) final;
+    void dispatchDidCommitLoad(std::optional<WebCore::HasInsecureContent>, std::optional<WebCore::UsedLegacyTLS>, std::optional<WebCore::WasPrivateRelayed>) final;
     void dispatchDidFailProvisionalLoad(const WebCore::ResourceError&, WebCore::WillContinueLoading) final;
     void dispatchDidFailLoad(const WebCore::ResourceError&) final;
     void dispatchDidFinishDocumentLoad() final;
@@ -164,7 +164,6 @@ private:
 
     void didDisplayInsecureContent() final;
     void didRunInsecureContent(WebCore::SecurityOrigin&, const URL&) final;
-    void didDetectXSS(const URL&, bool didBlockEntirePage) final;
 
 #if ENABLE(SERVICE_WORKER)
     void didFinishServiceWorkerPageRegistration(bool success) final;
@@ -224,11 +223,6 @@ private:
     RefPtr<WebCore::Widget> createPlugin(const WebCore::IntSize&, WebCore::HTMLPlugInElement&, const URL&, const Vector<AtomString>&, const Vector<AtomString>&, const String&, bool loadManually) final;
     void redirectDataToPlugin(WebCore::Widget&) final;
     
-#if ENABLE(WEBGL)
-    WebCore::WebGLLoadPolicy webGLPolicyForURL(const URL&) const final;
-    WebCore::WebGLLoadPolicy resolveWebGLPolicyForURL(const URL&) const final;
-#endif // ENABLE(WEBGL)
-
     WebCore::ObjectContentType objectContentType(const URL&, const String& mimeType) final;
     String overrideMediaType() const final;
 
@@ -274,8 +268,6 @@ private:
     void didRestoreScrollPosition() final;
 
     void getLoadDecisionForIcons(const Vector<std::pair<WebCore::LinkIcon&, uint64_t>>&) final;
-
-    void didCreateWindow(WebCore::DOMWindow&) final;
 
     inline bool hasPlugInView() const;
 

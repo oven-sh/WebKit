@@ -287,7 +287,7 @@ struct _WebKitWebViewPrivate {
     GRefPtr<GMainLoop> modalLoop;
 
     GRefPtr<WebKitHitTestResult> mouseTargetHitTestResult;
-    OptionSet<WebEvent::Modifier> mouseTargetModifiers;
+    OptionSet<WebEventModifier> mouseTargetModifiers;
 
     GRefPtr<WebKitFindController> findController;
 
@@ -535,7 +535,7 @@ static gboolean webkitWebViewDecidePolicy(WebKitWebView*, WebKitPolicyDecision* 
         return TRUE;
     }
 
-    if (webkit_response_policy_decision_is_mime_type_supported(WEBKIT_RESPONSE_POLICY_DECISION(decision)))
+    if (webkit_response_policy_decision_is_mime_type_supported(WEBKIT_RESPONSE_POLICY_DECISION(decision)) || webkit_uri_response_get_status_code(response) == SOUP_STATUS_NO_CONTENT)
         webkit_policy_decision_use(decision);
     else
         webkit_policy_decision_ignore(decision);
@@ -2709,7 +2709,7 @@ void webkitWebViewMakePermissionRequest(WebKitWebView* webView, WebKitPermission
     g_signal_emit(webView, signals[PERMISSION_REQUEST], 0, request, &returnValue);
 }
 
-void webkitWebViewMouseTargetChanged(WebKitWebView* webView, const WebHitTestResultData& hitTestResult, OptionSet<WebEvent::Modifier> modifiers)
+void webkitWebViewMouseTargetChanged(WebKitWebView* webView, const WebHitTestResultData& hitTestResult, OptionSet<WebEventModifier> modifiers)
 {
 #if PLATFORM(GTK)
     webkitWebViewBaseSetTooltipArea(WEBKIT_WEB_VIEW_BASE(webView), hitTestResult.elementBoundingBox);

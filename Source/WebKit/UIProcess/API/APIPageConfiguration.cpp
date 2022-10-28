@@ -39,6 +39,10 @@
 #include "APIApplicationManifest.h"
 #endif
 
+#if ENABLE(WK_WEB_EXTENSIONS)
+#include "WebExtensionController.h"
+#endif
+
 namespace API {
 using namespace WebKit;
 
@@ -59,6 +63,9 @@ Ref<PageConfiguration> PageConfiguration::copy() const
 
     copy->m_processPool = this->m_processPool;
     copy->m_userContentController = this->m_userContentController;
+#if ENABLE(WK_WEB_EXTENSIONS)
+    copy->m_webExtensionController = this->m_webExtensionController;
+#endif
     copy->m_pageGroup = this->m_pageGroup;
     copy->m_preferences = this->m_preferences;
     copy->m_relatedPage = this->m_relatedPage;
@@ -130,6 +137,18 @@ void PageConfiguration::setUserContentController(WebUserContentControllerProxy* 
     m_userContentController = userContentController;
 }
 
+#if ENABLE(WK_WEB_EXTENSIONS)
+WebExtensionController* PageConfiguration::webExtensionController()
+{
+    return m_webExtensionController.get();
+}
+
+void PageConfiguration::setWebExtensionController(WebExtensionController* webExtensionController)
+{
+    m_webExtensionController = webExtensionController;
+}
+#endif // ENABLE(WK_WEB_EXTENSIONS)
+
 WebPageGroup* PageConfiguration::pageGroup()
 {
     return m_pageGroup.get();
@@ -200,16 +219,16 @@ void PageConfiguration::setURLSchemeHandlerForURLScheme(Ref<WebKit::WebURLScheme
     m_urlSchemeHandlers.set(scheme, WTFMove(handler));
 }
 
-bool PageConfiguration::captivePortalModeEnabled() const
+bool PageConfiguration::lockdownModeEnabled() const
 {
     if (m_defaultWebsitePolicies)
-        return m_defaultWebsitePolicies->captivePortalModeEnabled();
-    return captivePortalModeEnabledBySystem();
+        return m_defaultWebsitePolicies->lockdownModeEnabled();
+    return lockdownModeEnabledBySystem();
 }
 
-bool PageConfiguration::isCaptivePortalModeExplicitlySet() const
+bool PageConfiguration::isLockdownModeExplicitlySet() const
 {
-    return m_defaultWebsitePolicies && m_defaultWebsitePolicies->isCaptivePortalModeExplicitlySet();
+    return m_defaultWebsitePolicies && m_defaultWebsitePolicies->isLockdownModeExplicitlySet();
 }
 
 #if ENABLE(APPLICATION_MANIFEST)

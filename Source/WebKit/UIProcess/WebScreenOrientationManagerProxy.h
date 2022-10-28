@@ -62,9 +62,13 @@ public:
     void setWindow(UIWindow *);
 #endif
 
+    void unlockIfNecessary();
+
 private:
     void platformInitialize();
     void platformDestroy();
+
+    std::optional<WebCore::Exception> platformShouldRejectLockRequest() const;
 
     // IPC message handlers.
     void currentOrientation(CompletionHandler<void(WebCore::ScreenOrientationType)>&&);
@@ -82,6 +86,8 @@ private:
 
     WebPageProxy& m_page;
     Ref<WebCore::ScreenOrientationProvider> m_provider;
+    std::optional<WebCore::ScreenOrientationType> m_currentlyLockedOrientation;
+    CompletionHandler<void(std::optional<WebCore::Exception>&&)> m_currentLockRequest;
 };
 
 } // namespace WebKit
