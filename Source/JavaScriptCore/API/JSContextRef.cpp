@@ -189,8 +189,6 @@ JSObjectRef JSContextGetGlobalObject(JSContextRef ctx)
         return nullptr;
     }
     JSGlobalObject* globalObject = toJS(ctx);
-    VM& vm = globalObject->vm();
-
 
     return toRef(jsCast<JSObject*>(globalObject->methodTable()->toThis(globalObject, globalObject, ECMAMode::sloppy())));
 }
