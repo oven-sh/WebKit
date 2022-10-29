@@ -408,6 +408,7 @@ public:
 
 
     // FIXME: Do these functions really belong in StringImpl?
+    template<typename CharacterType> static void copyCharacters(CharacterType* destination, const CharacterType* source, unsigned length);
     static void copyCharacters(UChar* destination, const LChar* source, unsigned length);
     static void copyCharacters(LChar* destination, const UChar* source, unsigned length);
     template<typename SourceCharacterType> static void iterCharacters(jsstring_iterator* iter, unsigned start, const SourceCharacterType* source, unsigned numCharacters);
@@ -1156,6 +1157,13 @@ inline void StringImpl::iterCharacters(jsstring_iterator* iter, unsigned start, 
     }
 }
 
+template<typename CharacterType> inline void StringImpl::copyCharacters(CharacterType* destination, const CharacterType* source, unsigned length)
+{
+    if (length == 1)
+        *destination = *source;
+    else if (length)
+        std::memcpy(destination, source, length * sizeof(CharacterType));
+}
 
 inline void StringImpl::copyCharacters(UChar* destination, const LChar* source, unsigned length)
 {
