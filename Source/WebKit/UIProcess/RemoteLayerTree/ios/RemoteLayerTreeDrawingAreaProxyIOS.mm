@@ -28,6 +28,7 @@
 
 #if PLATFORM(IOS_FAMILY)
 
+#import "RemoteScrollingCoordinatorProxyIOS.h"
 #import "WebPageProxy.h"
 
 @interface WKDisplayLinkHandler : NSObject {
@@ -78,9 +79,9 @@
             if (page.preferences().webAnimationsCustomFrameRateEnabled() || !page.preferences().preferPageRenderingUpdatesNear60FPSEnabled()) {
                 auto minimumRefreshInterval = _displayLink.maximumRefreshRate;
                 if (minimumRefreshInterval > 0) {
-                    if (auto displayId = page.displayId()) {
+                    if (auto displayID = page.displayID()) {
                         WebCore::FramesPerSecond frameRate = std::round(1.0 / minimumRefreshInterval);
-                        page.windowScreenDidChange(*displayId, frameRate);
+                        page.windowScreenDidChange(*displayID, frameRate);
                     }
                 }
             }
@@ -157,6 +158,11 @@ RemoteLayerTreeDrawingAreaProxyIOS::RemoteLayerTreeDrawingAreaProxyIOS(WebPagePr
 RemoteLayerTreeDrawingAreaProxyIOS::~RemoteLayerTreeDrawingAreaProxyIOS()
 {
     [m_displayLinkHandler invalidate];
+}
+
+std::unique_ptr<RemoteScrollingCoordinatorProxy> RemoteLayerTreeDrawingAreaProxyIOS::createScrollingCoordinatorProxy() const
+{
+    return makeUnique<RemoteScrollingCoordinatorProxyIOS>(m_webPageProxy);
 }
 
 DelegatedScrollingMode RemoteLayerTreeDrawingAreaProxyIOS::delegatedScrollingMode() const

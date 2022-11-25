@@ -29,7 +29,7 @@
 #include "CSSBorderImage.h"
 #include "CSSBorderImageSliceValue.h"
 #include "CSSFontFeatureValue.h"
-#include "CSSFontStyleValue.h"
+#include "CSSFontStyleWithAngleValue.h"
 #include "CSSFontValue.h"
 #include "CSSFontVariantAlternatesValue.h"
 #include "CSSFontVariationValue.h"
@@ -275,7 +275,7 @@ static inline Ref<CSSBorderImageSliceValue> valueForNinePieceImageSlice(const Ni
     quad->setBottom(WTFMove(bottom));
     quad->setLeft(WTFMove(left));
 
-    return CSSBorderImageSliceValue::create(CSSValuePool::singleton().createValue(WTFMove(quad)), image.fill());
+    return CSSBorderImageSliceValue::create(WTFMove(quad), image.fill());
 }
 
 static Ref<CSSPrimitiveValue> valueForNinePieceImageQuad(const LengthBox& box, const RenderStyle& style)
@@ -725,12 +725,6 @@ static Ref<CSSFunctionValue> matrixTransformValue(const TransformationMatrix& tr
     return transformValue.releaseNonNull();
 }
 
-static bool rendererCanBeTransformed(RenderObject* renderer)
-{
-    // Inline renderers do not support transforms.
-    return renderer && !is<RenderInline>(*renderer);
-}
-
 static Ref<CSSValue> computedTransform(RenderElement* renderer, const RenderStyle& style, ComputedStyleExtractor::PropertyValueType valueType)
 {
     auto& cssValuePool = CSSValuePool::singleton();
@@ -899,7 +893,7 @@ static Ref<CSSValue> computedTransform(RenderElement* renderer, const RenderStyl
 static Ref<CSSValue> computedTranslate(RenderObject* renderer, const RenderStyle& style)
 {
     auto* translate = style.translate();
-    if (!translate || !rendererCanBeTransformed(renderer) || translate->isIdentity())
+    if (!translate || is<RenderInline>(renderer) || translate->isIdentity())
         return CSSValuePool::singleton().createIdentifierValue(CSSValueNone);
 
     auto list = CSSValueList::createSpaceSeparated();
@@ -922,7 +916,7 @@ static Ref<CSSValue> computedScale(RenderObject* renderer, const RenderStyle& st
 {
     auto* scale = style.scale();
     auto& cssValuePool = CSSValuePool::singleton();
-    if (!scale || !rendererCanBeTransformed(renderer) || scale->isIdentity())
+    if (!scale || is<RenderInline>(renderer) || scale->isIdentity())
         return cssValuePool.createIdentifierValue(CSSValueNone);
 
     auto list = CSSValueList::createSpaceSeparated();
@@ -939,7 +933,7 @@ static Ref<CSSValue> computedRotate(RenderObject* renderer, const RenderStyle& s
 {
     auto* rotate = style.rotate();
     auto& cssValuePool = CSSValuePool::singleton();
-    if (!rotate || !rendererCanBeTransformed(renderer) || rotate->isIdentity())
+    if (!rotate || is<RenderInline>(renderer) || rotate->isIdentity())
         return cssValuePool.createIdentifierValue(CSSValueNone);
 
     if (!rotate->is3DOperation() || (!rotate->x() && !rotate->y() && rotate->z()))
@@ -1281,7 +1275,7 @@ static Ref<CSSValue> createTransitionPropertyValue(const Animation& animation)
     case Animation::TransitionMode::All:
         return CSSValuePool::singleton().createIdentifierValue(CSSValueAll);
     case Animation::TransitionMode::SingleProperty:
-        return CSSValuePool::singleton().createCustomIdent(getPropertyNameString(animation.property().id));
+        return CSSValuePool::singleton().createCustomIdent(nameString(animation.property().id));
     case Animation::TransitionMode::UnknownProperty:
         return CSSValuePool::singleton().createCustomIdent(animation.unknownProperty());
     }
@@ -2258,14 +2252,15 @@ static Ref<CSSPrimitiveValue> fontStretch(const RenderStyle& style)
     return fontStretch(style.fontDescription().stretch());
 }
 
-static Ref<CSSFontStyleValue> fontStyle(std::optional<FontSelectionValue> italic, FontStyleAxis axis)
+static Ref<CSSValue> fontStyle(std::optional<FontSelectionValue> italic, FontStyleAxis axis)
 {
     if (auto keyword = fontStyleKeyword(italic, axis))
-        return CSSFontStyleValue::create(CSSValuePool::singleton().createIdentifierValue(keyword.value()));
-    return CSSFontStyleValue::create(CSSValuePool::singleton().createIdentifierValue(CSSValueOblique), CSSValuePool::singleton().createValue(static_cast<float>(*italic), CSSUnitType::CSS_DEG));
+        return CSSValuePool::singleton().createIdentifierValue(keyword.value());
+    float angle = *italic;
+    return CSSFontStyleWithAngleValue::create(CSSValuePool::singleton().createValue(angle, CSSUnitType::CSS_DEG));
 }
 
-static Ref<CSSFontStyleValue> fontStyle(const RenderStyle& style)
+static Ref<CSSValue> fontStyle(const RenderStyle& style)
 {
     return fontStyle(style.fontDescription().italic(), style.fontDescription().fontStyleAxis());
 }
@@ -2488,6 +2483,11 @@ static inline bool hasValidStyleForProperty(Element& element, CSSPropertyID prop
         return false;
     if (!element.document().childNeedsStyleRecalc())
         return true;
+
+    if (auto* keyframeEffectStack = Styleable(element, PseudoId::None).keyframeEffectStack()) {
+        if (keyframeEffectStack->containsProperty(propertyID))
+            return false;
+    }
 
     auto isQueryContainer = [&](Element& element) {
         auto* style = element.renderStyle();
@@ -2754,31 +2754,46 @@ String ComputedStyleExtractor::customPropertyText(const AtomString& propertyName
     return propertyValue ? propertyValue->cssText() : emptyString();
 }
 
-static Ref<CSSFontValue> fontShorthandValueForSelectionProperties(const FontDescription& fontDescription)
+static Ref<CSSFontValue> fontShorthandValue(const RenderStyle& style, ComputedStyleExtractor::PropertyValueType valueType)
 {
+    auto& description = style.fontDescription();
+    auto fontStretch = fontStretchKeyword(description.stretch());
+    auto fontStyle = fontStyleKeyword(description.italic(), description.fontStyleAxis());
+
+    auto propertiesResetByShorthandAreExpressible = [&] {
+        // The font shorthand can express "font-variant-caps: small-caps". Overwrite with "normal" so we can use isAllNormal to check that all the other settings are normal.
+        auto variantSettingsOmittingExpressible = description.variantSettings();
+        if (variantSettingsOmittingExpressible.caps == FontVariantCaps::Small)
+            variantSettingsOmittingExpressible.caps = FontVariantCaps::Normal;
+
+        // When we add font-language-override, also add code to check for non-expressible values for it here.
+        return variantSettingsOmittingExpressible.isAllNormal()
+            && fontStretch
+            && fontStyle
+            && !description.fontSizeAdjust()
+            && description.kerning() == Kerning::Auto
+            && description.featureSettings().isEmpty()
+            && description.opticalSizing() == FontOpticalSizing::Enabled
+            && description.variationSettings().isEmpty()
+            && description.fontPalette().type == FontPalette::Type::Normal;
+    };
+
     auto computedFont = CSSFontValue::create();
 
-    auto variantCaps = fontDescription.variantCaps();
-    if (variantCaps == FontVariantCaps::Small)
+    if (!propertiesResetByShorthandAreExpressible())
+        return computedFont;
+
+    if (description.variantCaps() == FontVariantCaps::Small)
         computedFont->variant = CSSValuePool::singleton().createIdentifierValue(CSSValueSmallCaps);
-    else if (variantCaps != FontVariantCaps::Normal)
-        return CSSFontValue::create();
-
-    float weight = fontDescription.weight();
-    if (weight != 400)
+    if (float weight = description.weight(); weight != 400)
         computedFont->weight = CSSValuePool::singleton().createValue(weight, CSSUnitType::CSS_NUMBER);
-
-    if (auto keyword = fontStretchKeyword(fontDescription.stretch())) {
-        if (*keyword != CSSValueNormal)
-            computedFont->stretch = CSSValuePool::singleton().createIdentifierValue(keyword.value());
-    } else
-        return CSSFontValue::create();
-
-    if (auto italic = fontStyleKeyword(fontDescription.italic(), fontDescription.fontStyleAxis())) {
-        if (*italic != CSSValueNormal)
-            computedFont->style = CSSFontStyleValue::create(CSSValuePool::singleton().createIdentifierValue(italic.value()));
-    } else
-        return CSSFontValue::create();
+    if (*fontStretch != CSSValueNormal)
+        computedFont->stretch = CSSValuePool::singleton().createIdentifierValue(*fontStretch);
+    if (*fontStyle != CSSValueNormal)
+        computedFont->style = CSSValuePool::singleton().createIdentifierValue(*fontStyle);
+    computedFont->size = fontSize(style);
+    computedFont->lineHeight = optionalLineHeight(style, valueType);
+    computedFont->family = fontFamilyList(style);
 
     return computedFont;
 }
@@ -2789,7 +2804,7 @@ RefPtr<CSSValue> ComputedStyleExtractor::propertyValue(CSSPropertyID propertyID,
     if (!styledElement)
         return nullptr;
 
-    if (!isCSSPropertyExposed(propertyID, &m_element->document().settings())) {
+    if (!isExposed(propertyID, m_element->document().settings())) {
         // Exit quickly, and avoid us ever having to update layout in this case.
         return nullptr;
     }
@@ -2839,7 +2854,7 @@ RefPtr<CSSValue> ComputedStyleExtractor::valueForPropertyInStyle(const RenderSty
     auto& cssValuePool = CSSValuePool::singleton();
     propertyID = CSSProperty::resolveDirectionAwareProperty(propertyID, style.direction(), style.writingMode());
 
-    ASSERT(isCSSPropertyExposed(propertyID, &m_element->document().settings()));
+    ASSERT(isExposed(propertyID, m_element->document().settings()));
 
     switch (propertyID) {
     case CSSPropertyInvalid:
@@ -3118,8 +3133,14 @@ RefPtr<CSSValue> ComputedStyleExtractor::valueForPropertyInStyle(const RenderSty
     case CSSPropertyWebkitCursorVisibility:
         return cssValuePool.createValue(style.cursorVisibility());
 #endif
-    case CSSPropertyDirection:
-        return cssValuePool.createValue(style.direction());
+    case CSSPropertyDirection:  {
+        auto direction = [&] {
+            if (m_element == m_element->document().documentElement() && !style.hasExplicitlySetDirection())
+                return RenderStyle::initialDirection();
+            return style.direction();
+        }();
+        return cssValuePool.createValue(direction);
+    }
     case CSSPropertyDisplay:
         return cssValuePool.createValue(style.display());
     case CSSPropertyEmptyCells:
@@ -3162,13 +3183,8 @@ RefPtr<CSSValue> ComputedStyleExtractor::valueForPropertyInStyle(const RenderSty
         if (style.display() != DisplayType::None && style.hasOutOfFlowPosition())
             return cssValuePool.createIdentifierValue(CSSValueNone);
         return cssValuePool.createValue(style.floating());
-    case CSSPropertyFont: {
-        auto computedFont = fontShorthandValueForSelectionProperties(style.fontDescription());
-        computedFont->size = fontSize(style);
-        computedFont->lineHeight = optionalLineHeight(style, valueType);
-        computedFont->family = fontFamilyList(style);
-        return computedFont;
-    }
+    case CSSPropertyFont:
+        return fontShorthandValue(style, valueType);
     case CSSPropertyFontFamily:
         return fontFamily(style);
     case CSSPropertyFontSize:
@@ -3204,12 +3220,17 @@ RefPtr<CSSValue> ComputedStyleExtractor::valueForPropertyInStyle(const RenderSty
     }
 #if ENABLE(VARIATION_FONTS)
     case CSSPropertyFontVariationSettings: {
-        const FontVariationSettings& variationSettings = style.fontDescription().variationSettings();
+        auto& variationSettings = style.fontDescription().variationSettings();
         if (variationSettings.isEmpty())
             return cssValuePool.createIdentifierValue(CSSValueNormal);
-        auto list = CSSValueList::createCommaSeparated();
+        HashCountedSet<FontTag, FourCharacterTagHash, FourCharacterTagHashTraits> duplicateTagChecker;
         for (auto& feature : variationSettings)
-            list->append(CSSFontVariationValue::create(feature.tag(), feature.value()));
+            duplicateTagChecker.add(feature.tag());
+        auto list = CSSValueList::createCommaSeparated();
+        for (auto& feature : variationSettings) {
+            if (duplicateTagChecker.remove(feature.tag()))
+                list->append(CSSFontVariationValue::create(feature.tag(), feature.value()));
+        }
         return list;
     }
     case CSSPropertyFontOpticalSizing:
@@ -3588,8 +3609,12 @@ RefPtr<CSSValue> ComputedStyleExtractor::valueForPropertyInStyle(const RenderSty
         return willChangePropertyValue(style.willChange());
     case CSSPropertyWordBreak:
         return cssValuePool.createValue(style.wordBreak());
-    case CSSPropertyWordSpacing:
-        return zoomAdjustedPixelValue(style.fontCascade().wordSpacing(), style);
+    case CSSPropertyWordSpacing: {
+        auto& wordSpacingLength = style.wordSpacing();
+        if (wordSpacingLength.isFixed() || wordSpacingLength.isAuto())
+            return zoomAdjustedPixelValue(style.fontCascade().wordSpacing(), style);
+        return cssValuePool.createValue(wordSpacingLength, style);
+    }
     case CSSPropertyLineBreak:
         return cssValuePool.createValue(style.lineBreak());
     case CSSPropertyWebkitNbspMode:
@@ -3862,8 +3887,14 @@ RefPtr<CSSValue> ComputedStyleExtractor::valueForPropertyInStyle(const RenderSty
         return CSSPrimitiveValue::create(style.lineSnap());
     case CSSPropertyWebkitLineAlign:
         return CSSPrimitiveValue::create(style.lineAlign());
-    case CSSPropertyWritingMode:
-        return cssValuePool.createValue(style.writingMode());
+    case CSSPropertyWritingMode: {
+        auto writingMode = [&] {
+            if (m_element == m_element->document().documentElement() && !style.hasExplicitlySetWritingMode())
+                return RenderStyle::initialWritingMode();
+            return style.writingMode();
+        }();
+        return cssValuePool.createValue(writingMode);
+    }
     case CSSPropertyWebkitTextCombine:
         if (style.textCombine() == TextCombine::All)
             return CSSPrimitiveValue::createIdentifier(CSSValueHorizontal);
@@ -4040,10 +4071,6 @@ RefPtr<CSSValue> ComputedStyleExtractor::valueForPropertyInStyle(const RenderSty
         return valueForScrollSnapType(style.scrollSnapType());
     case CSSPropertyOverflowAnchor:
         return cssValuePool.createValue(style.overflowAnchor());
-#if ENABLE(CSS_TRAILING_WORD)
-    case CSSPropertyAppleTrailingWord:
-        return cssValuePool.createValue(style.trailingWord());
-#endif
 
 #if ENABLE(APPLE_PAY)
     case CSSPropertyApplePayButtonStyle:
@@ -4160,7 +4187,7 @@ RefPtr<CSSValue> ComputedStyleExtractor::valueForPropertyInStyle(const RenderSty
         ASSERT_NOT_REACHED();
         return nullptr;
 
-    // Internal properties should be handled by isCSSPropertyExposed above.
+    // Internal properties should be handled by isExposed above.
     case CSSPropertyWebkitFontSizeDelta:
     case CSSPropertyWebkitMarqueeDirection:
     case CSSPropertyWebkitMarqueeIncrement:
@@ -4349,15 +4376,12 @@ Ref<MutableStyleProperties> ComputedStyleExtractor::copyPropertiesInSet(const CS
 
 Ref<MutableStyleProperties> ComputedStyleExtractor::copyProperties()
 {
-    Vector<CSSProperty> list;
-    list.reserveInitialCapacity(firstShorthandProperty - firstCSSProperty);
-    for (unsigned i = firstCSSProperty; i < firstShorthandProperty; ++i) {
-        auto propertyID = convertToCSSPropertyID(i);
-        if (auto value = propertyValue(propertyID))
-            list.append(CSSProperty(propertyID, WTFMove(value)));
-    }
-    list.shrinkToFit();
-    return MutableStyleProperties::create(WTFMove(list));
+    return MutableStyleProperties::create(WTF::compactMap(allLonghandCSSProperties(), [this] (auto property) -> std::optional<CSSProperty> {
+        auto value = propertyValue(property);
+        if (!value)
+            return std::nullopt;
+        return { { property, WTFMove(value) } };
+    }));
 }
 
 size_t ComputedStyleExtractor::getLayerCount(CSSPropertyID property)

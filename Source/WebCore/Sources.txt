@@ -26,7 +26,6 @@ Modules/WebGPU/GPUAdapter.cpp
 Modules/WebGPU/GPUBindGroup.cpp
 Modules/WebGPU/GPUBindGroupLayout.cpp
 Modules/WebGPU/GPUBuffer.cpp
-Modules/WebGPU/GPUCanvasContext.cpp
 Modules/WebGPU/GPUCommandBuffer.cpp
 Modules/WebGPU/GPUCommandEncoder.cpp
 Modules/WebGPU/GPUCompilationInfo.cpp
@@ -47,6 +46,8 @@ Modules/WebGPU/GPUSampler.cpp
 Modules/WebGPU/GPUShaderModule.cpp
 Modules/WebGPU/GPUSupportedFeatures.cpp
 Modules/WebGPU/GPUSupportedLimits.cpp
+Modules/WebGPU/GPUSurface.cpp
+Modules/WebGPU/GPUSwapChain.cpp
 Modules/WebGPU/GPUTexture.cpp
 Modules/WebGPU/GPUTextureView.cpp
 Modules/WebGPU/GPUUncapturedErrorEvent.cpp
@@ -230,14 +231,6 @@ Modules/mediastream/SFrameUtils.cpp
 Modules/mediastream/STUNMessageParsing.cpp
 Modules/mediastream/UserMediaController.cpp
 Modules/mediastream/UserMediaRequest.cpp
-Modules/mediastream/libwebrtc/LibWebRTCCertificateGenerator.cpp
-Modules/mediastream/libwebrtc/LibWebRTCDtlsTransportBackend.cpp
-Modules/mediastream/libwebrtc/LibWebRTCIceTransportBackend.cpp
-Modules/mediastream/libwebrtc/LibWebRTCRtpReceiverTransformBackend.cpp
-Modules/mediastream/libwebrtc/LibWebRTCRtpSenderTransformBackend.cpp
-Modules/mediastream/libwebrtc/LibWebRTCRtpTransformBackend.cpp
-Modules/mediastream/libwebrtc/LibWebRTCRtpTransformableFrame.cpp
-Modules/mediastream/libwebrtc/LibWebRTCSctpTransportBackend.cpp
 Modules/model-element/HTMLModelElement.cpp
 Modules/model-element/ModelPlayer.cpp
 Modules/model-element/ModelPlayerClient.cpp
@@ -761,7 +754,7 @@ css/CSSFontPaletteValuesOverrideColorsValue.cpp
 css/CSSFontPaletteValuesRule.cpp
 css/CSSFontSelector.cpp
 css/CSSFontStyleRangeValue.cpp
-css/CSSFontStyleValue.cpp
+css/CSSFontStyleWithAngleValue.cpp
 css/CSSFontValue.cpp
 css/CSSFontVariantAlternatesValue.cpp
 css/CSSFontVariationValue.cpp
@@ -1224,7 +1217,6 @@ fileapi/ThreadableBlobRegistry.cpp
 fileapi/URLKeepingBlobAlive.cpp
 history/BackForwardCache.cpp
 history/BackForwardController.cpp
-history/BackForwardItemIdentifier.cpp
 history/CachedFrame.cpp
 history/CachedPage.cpp
 history/HistoryItem.cpp
@@ -1252,8 +1244,8 @@ html/EnterKeyHint.cpp
 html/FTPDirectoryDocument.cpp
 html/FeaturePolicy.cpp
 html/FileInputType.cpp
-html/FormAssociatedElement.cpp
 html/FormController.cpp
+html/FormListedElement.cpp
 html/GenericCachedHTMLCollection.cpp
 html/HTMLAllCollection.cpp
 html/HTMLAnchorElement.cpp
@@ -1369,6 +1361,7 @@ html/MediaElementSession.cpp
 html/MediaFragmentURIParser.cpp
 html/ModelDocument.cpp
 html/MonthInputType.cpp
+html/NavigatorUserActivation.cpp
 html/NumberInputType.cpp
 html/OffscreenCanvas.cpp
 html/PasswordInputType.cpp
@@ -1396,6 +1389,7 @@ html/URLDecomposition.cpp
 html/URLInputType.cpp
 html/URLRegistry.cpp
 html/URLSearchParams.cpp
+html/UserActivation.cpp
 html/ValidationMessage.cpp
 html/WeekInputType.cpp
 html/canvas/ANGLEInstancedArrays.cpp
@@ -1411,7 +1405,6 @@ html/canvas/EXTColorBufferFloat.cpp
 html/canvas/EXTColorBufferHalfFloat.cpp
 html/canvas/EXTFloatBlend.cpp
 html/canvas/EXTFragDepth.cpp
-html/canvas/EXTProvokingVertex.cpp
 html/canvas/EXTShaderTextureLOD.cpp
 html/canvas/EXTTextureCompressionBPTC.cpp
 html/canvas/EXTTextureCompressionRGTC.cpp
@@ -1419,6 +1412,7 @@ html/canvas/EXTTextureFilterAnisotropic.cpp
 html/canvas/EXTTextureNorm16.cpp
 html/canvas/EXTsRGB.cpp
 html/canvas/GPUBasedCanvasRenderingContext.cpp
+html/canvas/GPUCanvasContext.cpp
 html/canvas/ImageBitmapRenderingContext.cpp
 html/canvas/KHRParallelShaderCompile.cpp
 html/canvas/OESDrawBuffersIndexed.cpp
@@ -1439,7 +1433,6 @@ html/canvas/WebGL2RenderingContext.cpp
 html/canvas/WebGLBuffer.cpp
 html/canvas/WebGLColorBufferFloat.cpp
 html/canvas/WebGLCompressedTextureASTC.cpp
-html/canvas/WebGLCompressedTextureATC.cpp
 html/canvas/WebGLCompressedTextureETC.cpp
 html/canvas/WebGLCompressedTextureETC1.cpp
 html/canvas/WebGLCompressedTexturePVRTC.cpp
@@ -1460,6 +1453,7 @@ html/canvas/WebGLMultiDraw.cpp
 html/canvas/WebGLMultiDrawInstancedBaseVertexBaseInstance.cpp
 html/canvas/WebGLObject.cpp
 html/canvas/WebGLProgram.cpp
+html/canvas/WebGLProvokingVertex.cpp
 html/canvas/WebGLQuery.cpp
 html/canvas/WebGLRenderbuffer.cpp
 html/canvas/WebGLRenderingContext.cpp
@@ -1957,7 +1951,6 @@ platform/LengthBox.cpp
 platform/LengthFunctions.cpp
 platform/LengthPoint.cpp
 platform/LengthSize.cpp
-platform/LibWebRTCVPXVideoDecoder.cpp
 platform/LocalizedStrings.cpp
 platform/LogInitialization.cpp
 platform/Logging.cpp
@@ -1984,11 +1977,11 @@ platform/ProcessIdentity.cpp
 platform/ReferrerPolicy.cpp
 platform/RemoteCommandListener.cpp
 platform/RuntimeApplicationChecks.cpp
-platform/SSLKeyGenerator.cpp
 platform/ScreenOrientationManager.cpp
 platform/ScreenOrientationProvider.cpp
 platform/ScrollAlignment.cpp
 platform/ScrollAnimation.cpp
+platform/ScrollAnimationKeyboard.cpp
 platform/ScrollAnimationKinetic.cpp
 platform/ScrollAnimationMomentum.cpp
 platform/ScrollAnimationSmooth.cpp
@@ -2017,6 +2010,7 @@ platform/ThreadGlobalData.cpp
 platform/ThreadTimers.cpp
 platform/Timer.cpp
 platform/UserActivity.cpp
+platform/VideoEncoder.cpp
 platform/VideoDecoder.cpp
 platform/VideoFrame.cpp
 platform/VideoPixelFormat.cpp
@@ -2029,6 +2023,7 @@ platform/animation/AnimationList.cpp
 platform/animation/TimingFunction.cpp
 platform/audio/AudioBus.cpp
 platform/audio/AudioChannel.cpp
+platform/audio/AudioDestinationResampler.cpp
 platform/audio/AudioDSPKernelProcessor.cpp
 platform/audio/AudioHardwareListener.cpp
 platform/audio/AudioResampler.cpp
@@ -2144,6 +2139,7 @@ platform/graphics/GraphicsLayer.cpp
 platform/graphics/GraphicsLayerContentsDisplayDelegate.cpp
 platform/graphics/GraphicsLayerTransform.cpp
 platform/graphics/GraphicsLayerUpdater.cpp
+platform/graphics/GraphicsStyle.cpp
 platform/graphics/GraphicsTypes.cpp
 platform/graphics/HEVCUtilities.cpp
 platform/graphics/Icon.cpp
@@ -2302,9 +2298,6 @@ platform/mediastream/RealtimeOutgoingVideoSource.cpp
 platform/mediastream/RealtimeVideoCaptureSource.cpp
 platform/mediastream/RealtimeVideoSource.cpp
 platform/mediastream/WebRTCProvider.cpp
-platform/mediastream/libwebrtc/LibWebRTCDTMFSenderBackend.cpp
-platform/mediastream/libwebrtc/LibWebRTCProvider.cpp
-platform/mediastream/libwebrtc/VideoFrameLibWebRTC.cpp
 platform/mock/DeviceOrientationClientMock.cpp
 platform/mock/GeolocationClientMock.cpp
 platform/mock/MediaEngineConfigurationFactoryMock.cpp
@@ -2965,6 +2958,7 @@ xml/parser/XMLDocumentParserScope.cpp
 
 // Derived Sources
 
+CSSPropertyParsing.cpp
 CSSValueKeywords.cpp
 ColorData.cpp
 EventFactory.cpp
@@ -3239,7 +3233,6 @@ JSEXTColorBufferFloat.cpp
 JSEXTColorBufferHalfFloat.cpp
 JSEXTFloatBlend.cpp
 JSEXTFragDepth.cpp
-JSEXTProvokingVertex.cpp
 JSEXTShaderTextureLOD.cpp
 JSEXTTextureCompressionBPTC.cpp
 JSEXTTextureCompressionRGTC.cpp
@@ -3640,6 +3633,7 @@ JSMessageEvent.cpp
 JSMessagePort.cpp
 JSMouseEvent.cpp
 JSMouseEventInit.cpp
+JSMultiCacheQueryOptions.cpp
 JSMutationCallback.cpp
 JSMutationEvent.cpp
 JSMutationObserver.cpp
@@ -4119,6 +4113,7 @@ JSFullscreenOptions.cpp
 JSUIEvent.cpp
 JSUIEventInit.cpp
 JSURLSearchParams.cpp
+JSUserActivation.cpp
 JSUndoItem.cpp
 JSUndoManager.cpp
 JSUserMessageHandler.cpp
@@ -4171,7 +4166,6 @@ JSWebGLActiveInfo.cpp
 JSWebGLBuffer.cpp
 JSWebGLColorBufferFloat.cpp
 JSWebGLCompressedTextureASTC.cpp
-JSWebGLCompressedTextureATC.cpp
 JSWebGLCompressedTextureETC.cpp
 JSWebGLCompressedTextureETC1.cpp
 JSWebGLCompressedTexturePVRTC.cpp
@@ -4189,6 +4183,7 @@ JSWebGLLoseContext.cpp
 JSWebGLMultiDraw.cpp
 JSWebGLMultiDrawInstancedBaseVertexBaseInstance.cpp
 JSWebGLProgram.cpp
+JSWebGLProvokingVertex.cpp
 JSWebGLQuery.cpp
 JSWebGLRenderbuffer.cpp
 JSWebGLRenderingContext.cpp

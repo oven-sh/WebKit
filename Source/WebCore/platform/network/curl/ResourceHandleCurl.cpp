@@ -376,8 +376,7 @@ void ResourceHandle::platformLoadResourceSynchronously(NetworkingContext* contex
 
     bool defersLoading = false;
     bool shouldContentSniff = true;
-    bool shouldContentEncodingSniff = true;
-    RefPtr<ResourceHandle> handle = adoptRef(new ResourceHandle(context, request, &client, defersLoading, shouldContentSniff, shouldContentEncodingSniff, nullptr, false));
+    RefPtr<ResourceHandle> handle = adoptRef(new ResourceHandle(context, request, &client, defersLoading, shouldContentSniff, ContentEncodingSniffingPolicy::Default, nullptr, false));
     handle->d->m_messageQueue = &client.messageQueue();
 
     if (request.url().protocolIsData()) {
@@ -481,6 +480,12 @@ void ResourceHandle::willSendRequest()
         newRequest.clearHTTPAuthorization();
         newRequest.clearHTTPOrigin();
     }
+
+    // Check if the redirected url is allowed to access the redirecting url's timing information.
+    if (!hasCrossOriginRedirect() && !WebCore::SecurityOrigin::create(newRequest.url())->canRequest(delegate()->response().url()))
+        markAsHavingCrossOriginRedirect();
+
+    incrementRedirectCount();
 
     ResourceResponse responseCopy = delegate()->response();
     client()->willSendRequestAsync(this, WTFMove(newRequest), WTFMove(responseCopy), [this, protectedThis = Ref { *this }] (ResourceRequest&& request) {

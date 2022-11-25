@@ -81,7 +81,7 @@ public:
     static const URLSchemeSet& supportedSchemes();
 
     bool operator==(const WebExtensionMatchPattern&) const;
-    bool operator!=(const WebExtensionMatchPattern& other) const { return !(*this == other); }
+    bool operator!=(const WebExtensionMatchPattern& other) const { return !(this == &other); }
 
     bool isValid() const { return m_valid; }
     bool isSupported() const;
@@ -101,7 +101,9 @@ public:
 
     unsigned hash() const { return m_hash; }
 
+#ifdef __OBJC__
     _WKWebExtensionMatchPattern *wrapper() const { return (_WKWebExtensionMatchPattern *)API::ObjectImpl<API::Object::Type::WebExtensionMatchPattern>::wrapper(); }
+#endif
 #endif
 
 private:

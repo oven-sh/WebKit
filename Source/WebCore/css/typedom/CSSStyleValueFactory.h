@@ -37,6 +37,7 @@ namespace WebCore {
 
 template<typename T> class ExceptionOr;
 struct CSSParserContext;
+class CSSUnparsedValue;
 class Document;
 class StylePropertyShorthand;
 
@@ -44,14 +45,16 @@ class CSSStyleValueFactory {
 public:
     static ExceptionOr<Ref<CSSStyleValue>> reifyValue(Ref<CSSValue>, Document* = nullptr);
     static ExceptionOr<Vector<Ref<CSSStyleValue>>> parseStyleValue(const AtomString&, const String&, bool);
+    static ExceptionOr<RefPtr<CSSStyleValue>> constructStyleValueForShorthandProperty(CSSPropertyID, const Function<RefPtr<CSSValue>(CSSPropertyID)>& propertyValue, Document* = nullptr);
+    static Vector<Ref<CSSStyleValue>> vectorFromStyleValuesOrStrings(const AtomString& property, FixedVector<std::variant<RefPtr<CSSStyleValue>, String>>&& values);
 
 protected:
     CSSStyleValueFactory() = delete;
 
 private:
     static ExceptionOr<RefPtr<CSSValue>> extractCSSValue(const CSSPropertyID&, const String&);
-    static ExceptionOr<void> extractShorthandCSSValues(Vector<Ref<CSSValue>>&, const CSSPropertyID&, const String&);
-    static ExceptionOr<void> extractCustomCSSValues(Vector<Ref<CSSValue>>&, const AtomString&, const String&);
+    static ExceptionOr<RefPtr<CSSStyleValue>> extractShorthandCSSValues(const CSSPropertyID&, const String&);
+    static ExceptionOr<Ref<CSSUnparsedValue>> extractCustomCSSValues(const String&);
 };
 
 } // namespace WebCore

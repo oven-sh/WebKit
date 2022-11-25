@@ -759,12 +759,11 @@ Vector<InspectorStyleProperty> InspectorStyle::collectProperties(bool includeAll
     }
 
     if (includeAll) {
-        for (auto i = firstCSSProperty; i < lastCSSProperty; ++i) {
-            auto id = convertToCSSPropertyID(i);
-            if (!isCSSPropertyExposed(id, m_style->settings()))
+        for (auto id : allCSSProperties()) {
+            if (!isExposed(id, m_style->settings()))
                 continue;
 
-            auto name = getPropertyNameString(id);
+            auto name = nameString(id);
             if (!sourcePropertyNames.add(lowercasePropertyName(name)))
                 continue;
 
@@ -809,7 +808,7 @@ Ref<Protocol::CSS::CSSStyle> InspectorStyle::styleWithProperties() const
         CSSPropertyID propertyId = cssPropertyID(name);
 
         // Default "parsedOk" == true.
-        if (!propertyEntry.parsedOk || !isCSSPropertyExposed(propertyId, m_style->settings()))
+        if (!propertyEntry.parsedOk || !isExposed(propertyId, m_style->settings()))
             property->setParsedOk(false);
         if (it->hasRawText())
             property->setText(it->rawText);
@@ -839,7 +838,7 @@ Ref<Protocol::CSS::CSSStyle> InspectorStyle::styleWithProperties() const
                 bool shouldInactivate = false;
 
                 // Canonicalize property names to treat non-prefixed and vendor-prefixed property names the same (opacity vs. -webkit-opacity).
-                String canonicalPropertyName = propertyId ? getPropertyNameString(propertyId) : name;
+                String canonicalPropertyName = propertyId ? nameString(propertyId) : name;
                 HashMap<String, RefPtr<Protocol::CSS::CSSProperty>>::iterator activeIt = propertyNameToPreviousActiveProperty.find(canonicalPropertyName);
                 if (activeIt != propertyNameToPreviousActiveProperty.end()) {
                     if (propertyEntry.parsedOk) {
@@ -1237,12 +1236,12 @@ static Ref<Protocol::CSS::CSSSelector> buildObjectForSelectorHelper(const String
         .setText(selectorText)
         .release();
 
-    auto specificity = selector.computeSpecificity();
+    auto specificity = selector.computeSpecificityTuple();
 
     auto tuple = JSON::ArrayOf<int>::create();
-    tuple->addItem(static_cast<int>((specificity & CSSSelector::idMask) >> 16));
-    tuple->addItem(static_cast<int>((specificity & CSSSelector::classMask) >> 8));
-    tuple->addItem(static_cast<int>(specificity & CSSSelector::elementMask));
+    tuple->addItem(specificity[0]);
+    tuple->addItem(specificity[1]);
+    tuple->addItem(specificity[2]);
     inspectorSelector->setSpecificity(WTFMove(tuple));
 
     return inspectorSelector;

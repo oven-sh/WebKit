@@ -466,16 +466,16 @@ void CurlRequest::didCompleteTransfer(CURLcode result)
         return;
     }
 
-    if (needToInvokeDidReceiveResponse()) {
-        // Processing of didReceiveResponse() has not been completed. (For example, HEAD method)
-        // When completeDidReceiveResponse() is called, didCompleteTransfer() will be called again.
-
-        m_finishedResultCode = result;
-        invokeDidReceiveResponse(m_response, Action::FinishTransfer);
-        return;
-    }
-
     if (result == CURLE_OK) {
+        if (needToInvokeDidReceiveResponse()) {
+            // Processing of didReceiveResponse() has not been completed. (For example, HEAD method)
+            // When completeDidReceiveResponse() is called, didCompleteTransfer() will be called again.
+
+            m_finishedResultCode = result;
+            invokeDidReceiveResponse(m_response, Action::FinishTransfer);
+            return;
+        }
+
         if (m_multipartHandle)
             m_multipartHandle->didComplete();
 
@@ -756,11 +756,12 @@ NetworkLoadMetrics CurlRequest::networkLoadMetrics()
     if (!networkLoadMetrics)
         return NetworkLoadMetrics();
 
+    networkLoadMetrics->responseBodyDecodedSize = m_totalReceivedSize;
+
     if (m_captureExtraMetrics) {
         m_curlHandle->addExtraNetworkLoadMetrics(*networkLoadMetrics);
         if (auto* additionalMetrics = networkLoadMetrics->additionalNetworkLoadMetricsForWebInspector.get())
             additionalMetrics->requestHeaders = m_requestHeaders;
-        networkLoadMetrics->responseBodyDecodedSize = m_totalReceivedSize;
     }
 
     return WTFMove(*networkLoadMetrics);

@@ -380,6 +380,7 @@ static inline WebKit::WebExtensionContext::PermissionState toImpl(_WKWebExtensio
 
 - (void)setPermissionState:(_WKWebExtensionContextPermissionState)state forURL:(NSURL *)url
 {
+    NSParameterAssert(state == _WKWebExtensionContextPermissionStateDeniedExplicitly || state == _WKWebExtensionContextPermissionStateUnknown || state == _WKWebExtensionContextPermissionStateGrantedExplicitly);
     NSParameterAssert(url);
 
     [self setPermissionState:state forURL:url expirationDate:nil];
@@ -387,6 +388,7 @@ static inline WebKit::WebExtensionContext::PermissionState toImpl(_WKWebExtensio
 
 - (void)setPermissionState:(_WKWebExtensionContextPermissionState)state forURL:(NSURL *)url expirationDate:(NSDate *)expirationDate
 {
+    NSParameterAssert(state == _WKWebExtensionContextPermissionStateDeniedExplicitly || state == _WKWebExtensionContextPermissionStateUnknown || state == _WKWebExtensionContextPermissionStateGrantedExplicitly);
     NSParameterAssert(url);
 
     _webExtensionContext->setPermissionState(toImpl(state), url, toImpl(expirationDate));
@@ -451,6 +453,16 @@ static inline WebKit::WebExtensionContext::PermissionState toImpl(_WKWebExtensio
     NSParameterAssert(tab);
 
     _webExtensionContext->cancelUserGesture(tab);
+}
+
+- (BOOL)_inTestingMode
+{
+    return _webExtensionContext->inTestingMode();
+}
+
+- (void)_setTestingMode:(BOOL)testingMode
+{
+    _webExtensionContext->setTestingMode(testingMode);
 }
 
 #pragma mark WKObject protocol implementation
@@ -659,6 +671,15 @@ static inline WebKit::WebExtensionContext::PermissionState toImpl(_WKWebExtensio
 }
 
 - (void)cancelUserGestureForTab:(id<_WKWebExtensionTab>)tab
+{
+}
+
+- (BOOL)_inTestingMode
+{
+    return NO;
+}
+
+- (void)_setTestingMode:(BOOL)testingMode
 {
 }
 

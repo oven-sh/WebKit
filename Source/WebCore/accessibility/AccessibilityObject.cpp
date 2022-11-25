@@ -2189,7 +2189,7 @@ bool AccessibilityObject::isModalDescendant(Node* modalNode) const
     
     // ARIA 1.1 aria-modal, indicates whether an element is modal when displayed.
     // For the decendants of the modal object, they should also be considered as aria-modal=true.
-    return node->isDescendantOf(*modalNode);
+    return node->isDescendantOrShadowDescendantOf(*modalNode);
 }
 
 bool AccessibilityObject::isModalNode() const
@@ -2227,7 +2227,7 @@ bool AccessibilityObject::hasTagName(const QualifiedName& tagName) const
     Node* node = this->node();
     return is<Element>(node) && downcast<Element>(*node).hasTagName(tagName);
 }
-    
+
 bool AccessibilityObject::hasAttribute(const QualifiedName& attribute) const
 {
     RefPtr element = this->element();
@@ -3006,7 +3006,7 @@ bool AccessibilityObject::supportsPosInSet() const
 {
     return hasAttribute(aria_posinsetAttr);
 }
-    
+
 int AccessibilityObject::setSize() const
 {
     return getIntegralAttribute(aria_setsizeAttr);

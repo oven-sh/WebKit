@@ -38,9 +38,15 @@ public:
 private:
     void didReceiveWheelEvent(bool) override;
     bool scrollingTreeNodeRequestsScroll(WebCore::ScrollingNodeID, const WebCore::RequestedScrollData&) override;
+    void hasNodeWithAnimatedScrollChanged(bool) override;
+    void displayDidRefresh(WebCore::PlatformDisplayID) override;
+
+    void connectStateNodeLayers(WebCore::ScrollingStateTree&, const RemoteLayerTreeHost&) override;
+    void establishLayerTreeScrollingRelations(const RemoteLayerTreeHost&) override;
 };
 
-
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_REMOTE_SCROLLING_COORDINATOR_PROXY(RemoteScrollingCoordinatorProxyMac, isRemoteScrollingCoordinatorProxyMac());
 
 #endif // PLATFORM(MAC) && ENABLE(UI_SIDE_COMPOSITING)

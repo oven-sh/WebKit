@@ -49,20 +49,15 @@ public:
 
     CurlSSLVerifier(void* sslCtx);
 
-    int sslErrors() { return m_sslErrors; }
-    const CertificateInfo& certificateInfo() const { return m_certificateInfo; }
+    std::unique_ptr<WebCore::CertificateInfo> createCertificateInfo(std::optional<long>&&);
+
+    static SSLCertificateFlags convertToSSLCertificateFlags(unsigned);
 
 private:
     static int verifyCallback(int, X509_STORE_CTX*);
     void collectInfo(X509_STORE_CTX*);
 
-#if ENABLE(TLS_DEBUG)
-    static void infoCallback(const SSL*, int, int);
-    void logTLSKey(const SSL*);
-#endif
-
-    int m_sslErrors { 0 };
-    CertificateInfo m_certificateInfo;
+    CertificateInfo::CertificateChain m_certificateChain;
 };
 
 } // namespace WebCore

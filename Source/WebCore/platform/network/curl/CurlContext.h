@@ -129,11 +129,6 @@ public:
     bool isVerbose() const { return m_verbose; }
 #endif
 
-#if ENABLE(TLS_DEBUG)
-    bool shouldLogTLSKey() const { return !m_tlsKeyLogFilePath.isEmpty(); }
-    const String& tlsKeyLogFilePath() const { return m_tlsKeyLogFilePath; }
-#endif
-
 private:
     CurlContext();
     void initShareHandle();
@@ -150,10 +145,6 @@ private:
 #ifndef NDEBUG
     FILE* m_logFile { nullptr };
     bool m_verbose { false };
-#endif
-
-#if ENABLE(TLS_DEBUG)
-    String m_tlsKeyLogFilePath;
 #endif
 };
 
@@ -272,12 +263,14 @@ public:
 
     void disableServerTrustEvaluation();
     void setCACertPath(const char*);
+    void setCACertBlob(void*, size_t);
     void setSslVerifyPeer(VerifyPeer);
     void setSslVerifyHost(VerifyHost);
     void setSslCert(const char*);
     void setSslCertType(const char*);
     void setSslKeyPassword(const char*);
     void setSslCipherList(const char*);
+    void setSslECCurves(const char*);
 
     void enableProxyIfExists();
 
@@ -300,6 +293,7 @@ public:
     std::optional<long> getHttpAuthAvail();
     std::optional<long> getProxyAuthAvail();
     std::optional<long> getHttpVersion();
+    std::optional<long> getSSLVerifyResult() const;
     std::optional<NetworkLoadMetrics> getNetworkLoadMetrics(MonotonicTime startTime);
     void addExtraNetworkLoadMetrics(NetworkLoadMetrics&);
 

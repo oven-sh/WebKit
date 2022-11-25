@@ -158,10 +158,13 @@ class GitHubMixin(object):
     addURLs = False
     pr_open_states = ['open']
     pr_closed_states = ['closed']
+    SKIP_EWS_LABEL = 'skip-ews'
     BLOCKED_LABEL = 'merging-blocked'
     MERGE_QUEUE_LABEL = 'merge-queue'
     UNSAFE_MERGE_QUEUE_LABEL = 'unsafe-merge-queue'
     REQUEST_MERGE_QUEUE_LABEL = 'request-merge-queue'
+    PER_PAGE_LIMIT = 100
+    NUM_PAGE_LIMIT = 10
 
     def fetch_data_from_url_with_authentication_github(self, url):
         response = None
@@ -198,7 +201,7 @@ class GitHubMixin(object):
                     return pr_json
             except Exception as e:
                 self._addToLog('stdio', 'Failed to get pull request data from {}, error: {}'.format(pr_url, e))
-            
+
             self._addToLog('stdio', 'Unable to fetch pull request {}.\n'.format(pr_number))
             if attempt > retry:
                 return None
@@ -213,17 +216,35 @@ class GitHubMixin(object):
         if not api_url:
             return []
 
-        reviews_url = f'{api_url}/pulls/{pr_number}/reviews'
-        content = self.fetch_data_from_url_with_authentication_github(reviews_url)
-        if not content:
-            return []
+        reviews = []
+        reviews_url = f'{api_url}/pulls/{pr_number}/reviews?per_page={self.PER_PAGE_LIMIT}'
+        for page in range(1, self.NUM_PAGE_LIMIT + 1):
+            content = self.fetch_data_from_url_with_authentication_github(
+                f'{api_url}/pulls/{pr_number}/reviews?per_page={self.PER_PAGE_LIMIT}&page={page}'
+            )
+            if not content:
+                break
+            response_content = content.json() or []
+            if not isinstance(response_content, list):
+                self._addToLog('stdio', f"Malformed response when listing reviews with '{url}'\n")
+                break
+            reviews += response_content
+            if len(response_content) < self.PER_PAGE_LIMIT:
+                break
+            page += 1
 
-        result = []
-        for review in (content.json() or []):
+        last_approved = dict()
+        last_rejected = dict()
+        for review in reviews:
             reviewer = review.get('user', {}).get('login')
-            if reviewer and review.get('state') == 'APPROVED':
-                result.append(reviewer)
-        return result
+            if not reviewer:
+                continue
+            review_id = review.get('id', 0)
+            if review.get('state') == 'APPROVED':
+                last_approved[reviewer] = max(review_id, last_approved.get(reviewer, 0))
+            elif review.get('state') == 'CHANGES_REQUESTED':
+                last_rejected[reviewer] = max(review_id, last_rejected.get(reviewer, 0))
+        return sorted([reviewer for reviewer, _id in last_approved.items() if _id > last_rejected.get(reviewer, 0)])
 
     def _is_pr_closed(self, pr_json):
         if not pr_json or not pr_json.get('state'):
@@ -243,6 +264,12 @@ class GitHubMixin(object):
     def _is_pr_blocked(self, pr_json):
         for label in (pr_json or {}).get('labels', {}):
             if label.get('name', '') == self.BLOCKED_LABEL:
+                return 1
+        return 0
+
+    def _does_pr_has_skip_label(self, pr_json):
+        for label in (pr_json or {}).get('labels', {}):
+            if label.get('name', '') == self.SKIP_EWS_LABEL:
                 return 1
         return 0
 
@@ -1106,6 +1133,7 @@ class CheckChangeRelevance(AnalyzeChange):
         re.compile(rb'Tools/Scripts/libraries', re.IGNORECASE),
         re.compile(rb'Tools/Scripts/commit-log-editor', re.IGNORECASE),
         re.compile(rb'Source/WebKit/Scripts', re.IGNORECASE),
+        re.compile(rb'metadata/contributors.json', re.IGNORECASE),
     ]
 
     group_to_paths_mapping = {
@@ -1509,6 +1537,7 @@ class ValidateChange(buildstep.BuildStep, BugzillaMixin, GitHubMixin):
         verifycqplus=False,
         verifyMergeQueue=False,
         verifyNoDraftForMergeQueue=False,
+        enableSkipEWSLabel=True,
     ):
         self.verifyObsolete = verifyObsolete
         self.verifyBugClosed = verifyBugClosed
@@ -1516,6 +1545,7 @@ class ValidateChange(buildstep.BuildStep, BugzillaMixin, GitHubMixin):
         self.verifycqplus = verifycqplus
         self.verifyMergeQueue = verifyMergeQueue
         self.verifyNoDraftForMergeQueue = verifyNoDraftForMergeQueue
+        self.enableSkipEWSLabel = enableSkipEWSLabel
         self.addURLs = addURLs
         buildstep.BuildStep.__init__(self)
 
@@ -1575,6 +1605,8 @@ class ValidateChange(buildstep.BuildStep, BugzillaMixin, GitHubMixin):
             self._addToLog('stdio', 'Change is not a draft.\n')
         if self.verifyMergeQueue and pr_number:
             self._addToLog('stdio', 'Change is in merge queue.\n')
+        if self.enableSkipEWSLabel and pr_number:
+            self._addToLog('stdio', f'PR does not have {self.SKIP_EWS_LABEL} label.\n')
         self.finished(SUCCESS)
         return None
 
@@ -1633,10 +1665,15 @@ class ValidateChange(buildstep.BuildStep, BugzillaMixin, GitHubMixin):
             self.skip_build("PR {} has been marked as '{}'".format(pr_number, self.BLOCKED_LABEL))
             return False
 
+        skip_ews = self._does_pr_has_skip_label(pr_json) if self.enableSkipEWSLabel else 0
+        if skip_ews == 1:
+            self.skip_build(f'Skipping as PR {pr_number} has {self.SKIP_EWS_LABEL} label')
+            return False
+
         if self.verifyMergeQueue:
             if not pr_json:
                 self.send_email_for_github_failure()
-                self.skip_build("Infrastructure issue: unable to check PR status")
+                self.skip_build('Infrastructure issue: unable to check PR status, please contact an admin')
                 return False
             merge_queue = self._is_pr_in_merge_queue(pr_json)
             if merge_queue == 0:
@@ -1690,6 +1727,10 @@ class ValidateChange(buildstep.BuildStep, BugzillaMixin, GitHubMixin):
 class ValidateCommitterAndReviewer(buildstep.BuildStep, GitHubMixin, AddToLogMixin):
     name = 'validate-commiter-and-reviewer'
     descriptionDone = ['Validated commiter and reviewer']
+    VALIDATORS_FOR = {
+        # FIXME: This should be a bot, for now validation is manual
+        'apple': ['geoffreygaren', 'markcgee', 'rjepstein', 'jbedard', 'ryanhaddad'],
+    }
 
     def __init__(self, *args, **kwargs):
         super(ValidateCommitterAndReviewer, self).__init__(*args, **kwargs)
@@ -1700,7 +1741,7 @@ class ValidateCommitterAndReviewer(buildstep.BuildStep, GitHubMixin, AddToLogMix
             return {'step': self.descriptionDone}
         return buildstep.BuildStep.getResultSummary(self)
 
-    def fail_build(self, email_or_username, status):
+    def fail_build_due_to_invalid_status(self, email_or_username, status):
         patch_id = self.getProperty('patch_id', '')
         pr_number = self.getProperty('github.number', '')
 
@@ -1711,6 +1752,28 @@ class ValidateCommitterAndReviewer(buildstep.BuildStep, GitHubMixin, AddToLogMix
         elif pr_number:
             comment += f'\n\nIf you do have {status} permmissions, please ensure that your GitHub username is added to contributors.json.'
             comment += f'\n\nRejecting {self.getProperty("github.head.sha", f"#{pr_number}")} from merge queue.'
+        return self.fail_build(reason, comment)
+
+    def fail_build_due_to_no_validators(self, validators):
+        patch_id = self.getProperty('patch_id', '')
+        pr_number = self.getProperty('github.number', '')
+        remote = self.getProperty('remote', DEFAULT_REMOTE)
+
+        user_prefix = "@" if pr_number else ""
+        if len(validators) == 1:
+            validator_list = f'{user_prefix}{validators[0]}'
+        else:
+            validator_list = f'{", ".join(f"{user_prefix}{v}" for v in validators[:-1])} or {user_prefix}{validators[-1]}'
+        reason = f"Landing changes on '{remote}' remote requires validation from {validator_list}"
+        comment = reason
+        if patch_id:
+            comment += f'\n\nRejecting attachment {patch_id} from commit queue.'
+        elif pr_number:
+            comment += f'\n\nRejecting {self.getProperty("github.head.sha", f"#{pr_number}")} from merge queue.'
+
+        return self.fail_build(reason, comment)
+
+    def fail_build(self, reason, comment):
         self.setProperty('comment_text', comment)
 
         self._addToLog('stdio', reason)
@@ -1753,17 +1816,24 @@ class ValidateCommitterAndReviewer(buildstep.BuildStep, GitHubMixin, AddToLogMix
             committer = self.getProperty('patch_committer', '').lower()
 
         if not self.is_committer(committer):
-            self.fail_build(committer, 'committer')
+            self.fail_build_due_to_invalid_status(committer, 'committer')
             return None
         self._addToLog('stdio', f'{committer} is a valid commiter.\n')
 
         if pr_number:
             reviewers = self.get_reviewers(pr_number, self.getProperty('repository', ''))
-            if any([self.is_reviewer(reviewer) for reviewer in reviewers]):
-                reviewers = list(filter(self.is_reviewer, reviewers))
         else:
             reviewer = self.getProperty('reviewer', '').lower()
             reviewers = [reviewer] if reviewer else []
+
+        remote = self.getProperty('remote', DEFAULT_REMOTE)
+        validators = self.VALIDATORS_FOR.get(remote, [])
+        if validators and not any([validator in reviewers for validator in validators]):
+            self.fail_build_due_to_no_validators(validators)
+            return None
+
+        if any([self.is_reviewer(reviewer) for reviewer in reviewers]):
+            reviewers = list(filter(self.is_reviewer, reviewers))
         reviewers = set(reviewers)
 
         if not reviewers:
@@ -1775,7 +1845,7 @@ class ValidateCommitterAndReviewer(buildstep.BuildStep, GitHubMixin, AddToLogMix
 
         for reviewer in reviewers:
             if not self.is_reviewer(reviewer):
-                self.fail_build(reviewer, 'reviewer')
+                self.fail_build_due_to_invalid_status(reviewer, 'reviewer')
                 return None
             self._addToLog('stdio', f'{reviewer} is a valid reviewer.\n')
         self.setProperty('reviewers_full_names', [self.full_name_from_email(reviewer) for reviewer in reviewers])
@@ -2434,9 +2504,6 @@ class CompileWebKit(shell.Compile, AddToLogMixin):
 
     def __init__(self, skipUpload=False, **kwargs):
         self.skipUpload = skipUpload
-        # https://bugs.webkit.org/show_bug.cgi?id=239455: The timeout needs to be >20 min to work
-        # around log output delays on slower machines.
-        kwargs.setdefault('timeout', 60 * 30)
         super(CompileWebKit, self).__init__(logEnviron=False, **kwargs)
 
     def doStepIf(self, step):
@@ -2480,6 +2547,17 @@ class CompileWebKit(shell.Compile, AddToLogMixin):
         appendCustomBuildFlags(self, platform, self.getProperty('fullPlatform'))
 
         return shell.Compile.start(self)
+
+    def buildCommandKwargs(self, warnings):
+        kwargs = super(CompileWebKit, self).buildCommandKwargs(warnings)
+        # https://bugs.webkit.org/show_bug.cgi?id=239455: The timeout needs to be >20 min to
+        # work around log output delays on slower machines.
+        # https://bugs.webkit.org/show_bug.cgi?id=247506: Only applies to Xcode 12.x.
+        if self.getProperty('fullPlatform') == 'mac-bigsur':
+            kwargs['timeout'] = 60 * 60
+        else:
+            kwargs['timeout'] = 60 * 30
+        return kwargs
 
     def errorReceived(self, error):
         self._addToLog('errors', error + '\n')
@@ -4599,7 +4677,7 @@ class PushCommitToWebKitRepo(shell.ShellCommand):
                         ShowIdentifier(),
                         CheckOutPullRequest(),
                         AddReviewerToCommitMessage(),
-                        ValidateChange(verifyMergeQueue=True, verifyNoDraftForMergeQueue=True, verifyObsolete=False),
+                        ValidateChange(verifyMergeQueue=True, verifyNoDraftForMergeQueue=True, verifyObsolete=False, enableSkipEWSLabel=False),
                         Canonicalize(),
                         PushPullRequestBranch(),
                         UpdatePullRequest(),
@@ -4813,6 +4891,81 @@ class ValidateRemote(shell.ShellCommand):
         if not remote:
             return False
         return remote != DEFAULT_REMOTE
+
+    def hideStepIf(self, results, step):
+        return not self.doStepIf(step)
+
+
+# There are cases where we have a branch alias tracking a more traditional static branch.
+# We want contributors to be able to land changes on the branch alias instead of the possibly
+# changing branch.
+class MapBranchAlias(shell.ShellCommand):
+    name = 'map-branch-alias'
+    haltOnFailure = False
+    flunkOnFailure = True
+    DEV_BRANCHES = re.compile(r'.*[(eng)(dev)(bug)]/.+')
+    PROD_BRANCHES = re.compile(r'\S+-[\d+\.]+-branch')
+
+    def __init__(self, **kwargs):
+        self.summary = ''
+        super(MapBranchAlias, self).__init__(logEnviron=False, timeout=60, **kwargs)
+
+    def start(self, BufferLogObserverClass=logobserver.BufferLogObserver):
+        base_ref = self.getProperty('github.base.ref', DEFAULT_BRANCH)
+        remote = self.getProperty('remote', DEFAULT_REMOTE)
+
+        self.command = ['git', 'branch', '-a', '--contains', f'remotes/{remote}/{base_ref}']
+
+        self.log_observer = BufferLogObserverClass(wantStderr=True)
+        self.addLogObserver('stdio', self.log_observer)
+
+        return super(MapBranchAlias, self).start()
+
+    def getResultSummary(self):
+        if self.results in (FAILURE, SUCCESS):
+            return {'step': self.summary}
+        return super(MapBranchAlias, self).getResultSummary()
+
+    def evaluateCommand(self, cmd):
+        remote = self.getProperty('remote', DEFAULT_REMOTE)
+        branch = self.getProperty('github.base.ref', DEFAULT_BRANCH)
+        rc = super(MapBranchAlias, self).evaluateCommand(cmd)
+
+        if rc == FAILURE:
+            self.summary = f"Failed to query checkout for aliases of '{branch}'"
+            return FAILURE
+        elif rc != SUCCESS:
+            return rc
+
+        aliases = set()
+        log_text = self.log_observer.getStdout()
+        for line in log_text.splitlines():
+            line = line.lstrip().rstrip()
+            if not line.startswith(f'remotes/{remote}'):
+                continue
+            candidate = line.split('/', 2)[-1]
+            if self.DEV_BRANCHES.match(candidate):
+                continue
+            aliases.add(candidate)
+
+        if DEFAULT_BRANCH in aliases:
+            branch = DEFAULT_BRANCH
+        if branch != DEFAULT_BRANCH and self.DEV_BRANCHES.match(branch) and aliases:
+            branch = next(iter(aliases))
+        if branch != DEFAULT_BRANCH and not self.PROD_BRANCHES.match(branch):
+            for alias in aliases:
+                if self.PROD_BRANCHES.match(alias):
+                    branch = alias
+                    break
+
+        self.summary = f"'{branch}' is the prevailing alias"
+        self.setProperty('github.base.ref', branch)
+        return rc
+
+    def doStepIf(self, step):
+        if not self.getProperty('github.number'):
+            return False
+        return self.getProperty('github.base.ref', DEFAULT_BRANCH) != DEFAULT_BRANCH
 
     def hideStepIf(self, results, step):
         return not self.doStepIf(step)

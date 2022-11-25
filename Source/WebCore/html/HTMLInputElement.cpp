@@ -1940,16 +1940,16 @@ bool HTMLInputElement::shouldAppearIndeterminate() const
 MediaCaptureType HTMLInputElement::mediaCaptureType() const
 {
     if (!isFileUpload())
-        return MediaCaptureTypeNone;
+        return MediaCaptureType::MediaCaptureTypeNone;
     
     auto& captureAttribute = attributeWithoutSynchronization(captureAttr);
     if (captureAttribute.isNull())
-        return MediaCaptureTypeNone;
+        return MediaCaptureType::MediaCaptureTypeNone;
     
     if (equalLettersIgnoringASCIICase(captureAttribute, "user"_s))
-        return MediaCaptureTypeUser;
+        return MediaCaptureType::MediaCaptureTypeUser;
     
-    return MediaCaptureTypeEnvironment;
+    return MediaCaptureType::MediaCaptureTypeEnvironment;
 }
 #endif
 
@@ -2154,10 +2154,11 @@ static Ref<StyleGradientImage> autoFillStrongPasswordMaskImage()
 
     return StyleGradientImage::create(
         StyleGradientImage::LinearData {
-            nullptr, nullptr, nullptr, nullptr, CSSValuePool::singleton().createValue(90, CSSUnitType::CSS_DEG)
+            {
+                CSSLinearGradientValue::Angle { CSSValuePool::singleton().createValue(90, CSSUnitType::CSS_DEG) }
+            },
+            CSSGradientRepeat::NonRepeating
         },
-        CSSGradientRepeat::NonRepeating,
-        CSSGradientType::CSSLinearGradient,
         CSSGradientColorInterpolationMethod::legacyMethod(AlphaPremultiplication::Unpremultiplied),
         WTFMove(stops)
     );

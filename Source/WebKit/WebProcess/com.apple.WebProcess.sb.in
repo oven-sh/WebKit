@@ -41,8 +41,10 @@
 (allow process-info-rusage (target self))
 
 (allow iokit-open-service (iokit-user-client-class "IOSurfaceRoot"))
-(allow iokit-open-service (iokit-registry-entry-class "IOAccelerator"))
-(allow iokit-open-service (iokit-registry-entry-class "AppleM2ScalerCSCDriver"))
+(allow iokit-open-service (iokit-registry-entry-class
+    "AGPM"
+    "IOAccelerator"
+    "AppleM2ScalerCSCDriver"))
 
 (deny iokit-open-service (with no-report) (iokit-registry-entry-class "AppleJPEGDriver"))
 
@@ -339,19 +341,9 @@
         (preference-domain "com.apple.opengl")
         (preference-domain "com.nvidia.OpenGL"))
     ;; CVMS
-    (allow mach-lookup
-        (require-all
-            (extension "com.apple.webkit.extension.mach")
-            (global-name "com.apple.cvmsServ")
-        )
-    )
-    (deny mach-lookup
-        (require-all
-            (require-not (extension "com.apple.webkit.extension.mach"))
-            (global-name "com.apple.cvmsServ")
-        )
-    )
-    (allow file-read*
+    (deny mach-lookup (with telemetry-backtrace)
+        (global-name "com.apple.cvmsServ"))
+    (deny file-read*
         (prefix "/private/var/db/CVMS/cvmsCodeSignObj"))
     ;; OpenCL
     (if (equal? (param "ENABLE_SANDBOX_MESSAGE_FILTER") "YES")
@@ -1503,7 +1495,7 @@
 
 (allow file-read-data
     (literal "/dev/autofs_nowait")) ; Used by CF to circumvent automount triggers
-#if __MAC_OS_X_VERSION_MIN_REQUIRED <= 110000
+#if PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED <= 110000
 (allow ipc-posix-shm
     (ipc-posix-name-prefix "CFPBS:")) ; <rdar://problem/13757475>
 #endif
@@ -2349,11 +2341,6 @@
 )
 
 #if HAVE(SANDBOX_STATE_FLAGS)
-;; This rule enables the WebContent process to enable the "BlockIOKitInWebContentSandbox" sandbox variable
-;; by reading a preference from the domain "com.apple.WebKit.WebContent.BlockIOKitInWebContentSandbox".
-(deny user-preference-read (with enable-state-flag "BlockIOKitInWebContentSandbox")
-    (preference-domain "com.apple.WebKit.WebContent.BlockIOKitInWebContentSandbox"))
-
 (with-filter (state-flag "BlockIOKitInWebContentSandbox")
     (deny iokit-open-service (with telemetry-backtrace))
     (deny iokit-open-user-client (with telemetry-backtrace))

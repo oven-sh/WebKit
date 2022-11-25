@@ -132,8 +132,7 @@ if (COMPILER_IS_GCC_OR_CLANG)
                                          -Wformat-security
                                          -Wmissing-format-attribute
                                          -Wpointer-arith
-                                         -Wundef
-                                         -Wwrite-strings)
+                                         -Wundef)
 
     # Warnings to be disabled
     # FIXME: We should probably not be disabling -Wno-maybe-uninitialized?
@@ -142,6 +141,12 @@ if (COMPILER_IS_GCC_OR_CLANG)
                                          -Wno-parentheses-equality
                                          -Wno-misleading-indentation
                                          -Wno-psabi)
+
+    # GCC < 12.0 gives false warnings for mismatched-new-delete <https://webkit.org/b/241516>
+    if ((CMAKE_CXX_COMPILER_ID MATCHES "GNU") AND (CMAKE_CXX_COMPILER_VERSION VERSION_LESS "12.0.0"))
+        WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-Wno-mismatched-new-delete)
+        WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-Wno-uninitialized)
+    endif ()
 
     WEBKIT_PREPEND_GLOBAL_CXX_FLAGS(-Wno-noexcept-type)
 
@@ -438,4 +443,8 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
     ")
     check_cxx_source_compiles("${REMOVE_CVREF_TEST_SOURCE}" STD_REMOVE_CVREF_IS_AVAILABLE)
     unset(CMAKE_REQUIRED_FLAGS)
+endif ()
+
+if (COMPILER_IS_GCC_OR_CLANG)
+    set(COMPILE_C_AS_CXX "-xc++")
 endif ()

@@ -25,6 +25,7 @@
 #pragma once
 
 #include "ExceptionOr.h"
+#include "ScriptExecutionContext.h"
 #include <variant>
 #include <wtf/Vector.h>
 #include <wtf/WeakPtr.h>
@@ -33,6 +34,7 @@
 namespace WebCore {
 
 class DOMURL;
+class ScriptExecutionContext;
 
 class URLSearchParams : public RefCounted<URLSearchParams> {
 public:

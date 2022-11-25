@@ -1,6 +1,6 @@
 #!/usr/bin/env ruby
 
-# Copyright (C) 2013-2021 Apple Inc. All rights reserved.
+# Copyright (C) 2013-2022 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -1282,6 +1282,18 @@ BASE_MODES = [
         ]
     ],
     [
+        "Lockdown",
+        "lockdown",
+        [
+            "--useJIT=false",
+            "--useGenerationalGC=false",
+            "--useConcurrentGC=false",
+            "--useLLIntICs=false",
+            "--useZombieMode=true",
+            "--allowDoubleShape=false",
+        ]
+    ],
+    [
         "MiniMode",
         "mini-mode",
         [
@@ -1488,6 +1500,7 @@ def defaultRunCfg(cfg, subsetOptions, *optionalTestSpecificOptions)
         runDefaultCfg(cfg, *optionalTestSpecificOptions)
         runBytecodeCacheCfg(cfg, *optionalTestSpecificOptions)
         runMiniModeCfg(cfg, *optionalTestSpecificOptions)
+        runLockdownCfg(cfg, *optionalTestSpecificOptions) unless $skipModes.include?(:lockdown)
         if $jitTests
             if not subsetOptions.has_key?(:skipNoLLInt)
                 runNoLLIntCfg(cfg, *optionalTestSpecificOptions)
@@ -1899,7 +1912,11 @@ def runWebAssemblyReferenceSpecTest(mode)
 end
 
 def runWebAssemblyFunctionReferenceSpecTest(mode)
-    runWebAssemblySpecTestBase(mode, "spec-harness", "--useWebAssemblyTypedFunctionReferences=true")
+    runWebAssemblySpecTestBase(mode, "funcref-spec-harness", "--useWebAssemblyTypedFunctionReferences=true")
+end
+
+def runWebAssemblyGCSpecTest(mode)
+    runWebAssemblySpecTestBase(mode, "gc-spec-harness", "--useWebAssemblyTypedFunctionReferences=true", "--useWebAssemblyGC=true")
 end
 
 def runWebAssemblySIMDSpecTest(mode)
@@ -2373,7 +2390,7 @@ def handleCollectionDirectory(collection)
             | path |
             
             $benchmark = path.basename
-            
+            $skipModes = Set.new
             $runCommandOptions = {}
             $testSpecificRequiredOptions = []
             defaultRun unless parseRunCommands

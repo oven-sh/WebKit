@@ -33,8 +33,6 @@
 
 namespace WebCore {
 
-static CurlSSLVerifier::SSLCertificateFlags convertToSSLCertificateFlags(unsigned);
-
 CurlSSLVerifier::CurlSSLVerifier(void* sslCtx)
 {
     auto* ctx = static_cast<SSL_CTX*>(sslCtx);
@@ -43,33 +41,29 @@ CurlSSLVerifier::CurlSSLVerifier(void* sslCtx)
     SSL_CTX_set_app_data(ctx, this);
     SSL_CTX_set_verify(ctx, SSL_CTX_get_verify_mode(ctx), verifyCallback);
 
-#if defined(LIBRESSL_VERSION_NUMBER)
-    if (auto data = std::get_if<CertificateInfo::Certificate>(&sslHandle.getCACertInfo()))
-        SSL_CTX_load_verify_mem(ctx, static_cast<void*>(const_cast<uint8_t*>(data->data())), data->size());
-#endif
-
 #if (!defined(LIBRESSL_VERSION_NUMBER))
-    const auto& signatureAlgorithmsList = sslHandle.getSignatureAlgorithmsList();
-    if (!signatureAlgorithmsList.isEmpty())
-        SSL_CTX_set1_sigalgs_list(ctx, signatureAlgorithmsList.utf8().data());
+    if (const auto& signatureAlgorithmsList = sslHandle.signatureAlgorithmsList(); !signatureAlgorithmsList.isNull())
+        SSL_CTX_set1_sigalgs_list(ctx, signatureAlgorithmsList.data());
 #endif
+}
 
-    const auto& curvesList = sslHandle.getCurvesList();
-    if (!curvesList.isEmpty())
-        SSL_CTX_set1_curves_list(ctx, curvesList.utf8().data());
+std::unique_ptr<WebCore::CertificateInfo> CurlSSLVerifier::createCertificateInfo(std::optional<long>&& verifyResult)
+{
+    if (!verifyResult)
+        return nullptr;
 
-#if ENABLE(TLS_DEBUG)
-    SSL_CTX_set_info_callback(ctx, infoCallback);
-#endif
+    if (m_certificateChain.isEmpty())
+        return nullptr;
+
+    return makeUnique<CertificateInfo>(*verifyResult, WTFMove(m_certificateChain));
 }
 
 void CurlSSLVerifier::collectInfo(X509_STORE_CTX* ctx)
 {
-    if (auto certificateInfo = OpenSSL::createCertificateInfo(ctx))
-        m_certificateInfo = WTFMove(*certificateInfo);
+    if (!ctx)
+        return;
 
-    if (auto error = m_certificateInfo.verificationError())
-        m_sslErrors = static_cast<int>(convertToSSLCertificateFlags(error));
+    m_certificateChain = OpenSSL::createCertificateChain(ctx);
 }
 
 int CurlSSLVerifier::verifyCallback(int preverified, X509_STORE_CTX* ctx)
@@ -83,63 +77,7 @@ int CurlSSLVerifier::verifyCallback(int preverified, X509_STORE_CTX* ctx)
     return preverified;
 }
 
-#if ENABLE(TLS_DEBUG)
-
-void CurlSSLVerifier::infoCallback(const SSL* ssl, int where, int)
-{
-    auto sslCtx = SSL_get_SSL_CTX(ssl);
-    auto verifier = static_cast<CurlSSLVerifier*>(SSL_CTX_get_app_data(sslCtx));
-
-    if (where & SSL_CB_HANDSHAKE_DONE)
-        verifier->logTLSKey(ssl);
-}
-
-void CurlSSLVerifier::logTLSKey(const SSL* ssl)
-{
-    // See https://developer.mozilla.org/en-US/docs/Mozilla/Projects/NSS/Key_Log_Format
-
-    if (!CurlContext::singleton().shouldLogTLSKey())
-        return;
-
-    auto* session = SSL_get_session(ssl);
-    if (!session)
-        return;
-
-    auto& version = session->ssl_version;
-    if (version != TLS1_VERSION && version != TLS1_1_VERSION && version != TLS1_2_VERSION)
-        return;
-
-    auto requiredSize = SSL_get_client_random(ssl, nullptr, 0);
-    Vector<uint8_t> clientRandom(requiredSize);
-    if (SSL_get_client_random(ssl, clientRandom.data(), clientRandom.size()) != clientRandom.size())
-        return;
-
-    requiredSize = SSL_SESSION_get_master_key(session, nullptr, 0);
-    Vector<uint8_t> masterKey(requiredSize);
-    if (SSL_SESSION_get_master_key(session, masterKey.data(), masterKey.size()) != masterKey.size())
-        return;
-
-    auto fp = fopen(CurlContext::singleton().tlsKeyLogFilePath().utf8().data(), "a");
-    if (!fp)
-        return;
-
-    fprintf(fp, "CLIENT_RANDOM ");
-
-    for (size_t i = 0; i < clientRandom.size(); i++)
-        fprintf(fp, "%02X", clientRandom[i]);
-
-    fprintf(fp, " ");
-
-    for (size_t i = 0; i < masterKey.size(); i++)
-        fprintf(fp, "%02X", masterKey[i]);
-
-    fprintf(fp, "\n");
-    fclose(fp);
-}
-
-#endif
-
-static CurlSSLVerifier::SSLCertificateFlags convertToSSLCertificateFlags(unsigned sslError)
+CurlSSLVerifier::SSLCertificateFlags CurlSSLVerifier::convertToSSLCertificateFlags(unsigned sslError)
 {
     switch (sslError) {
     case X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT : // the issuer certificate could not be found: this occurs if the issuer certificate of an untrusted certificate cannot be found.

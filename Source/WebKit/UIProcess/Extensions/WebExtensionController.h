@@ -34,6 +34,8 @@
 #include "WebExtensionContextIdentifier.h"
 #include "WebExtensionControllerIdentifier.h"
 #include "WebExtensionURLSchemeHandler.h"
+#include "WebPageProxy.h"
+#include "WebProcessProxy.h"
 #include <wtf/Forward.h>
 #include <wtf/URLHash.h>
 #include <wtf/WeakHashSet.h>
@@ -47,6 +49,7 @@ namespace WebKit {
 
 class WebExtensionContext;
 class WebPageProxy;
+class WebProcessPool;
 struct WebExtensionControllerParameters;
 
 class WebExtensionController : public API::ObjectImpl<API::Object::Type::WebExtensionController>, public IPC::MessageReceiver {
@@ -66,9 +69,14 @@ public:
     WebExtensionControllerIdentifier identifier() const { return m_identifier; }
     WebExtensionControllerParameters parameters() const;
 
+    bool operator==(const WebExtensionController& other) const { return (this == &other); }
+    bool operator!=(const WebExtensionController& other) const { return !(this == &other); }
+
 #if PLATFORM(COCOA)
     bool load(WebExtensionContext&, NSError ** = nullptr);
     bool unload(WebExtensionContext&, NSError ** = nullptr);
+
+    void unloadAll();
 
     void addPage(WebPageProxy&);
     void removePage(WebPageProxy&);
@@ -79,7 +87,12 @@ public:
     const WebExtensionContextSet& extensionContexts() const { return m_extensionContexts; }
     WebExtensionSet extensions() const;
 
+    template<typename T, typename U>
+    void sendToAllProcesses(const T& message, ObjectIdentifier<U> destinationID);
+
+#ifdef __OBJC__
     _WKWebExtensionController *wrapper() const { return (_WKWebExtensionController *)API::ObjectImpl<API::Object::Type::WebExtensionController>::wrapper(); }
+#endif
 #endif
 
 private:
@@ -92,9 +105,28 @@ private:
     WebExtensionContextSet m_extensionContexts;
     WebExtensionContextBaseURLMap m_extensionContextBaseURLMap;
     WeakHashSet<WebPageProxy> m_pages;
+    WeakHashSet<WebProcessPool> m_processPools;
     HashMap<String, Ref<WebExtensionURLSchemeHandler>> m_registeredSchemeHandlers;
 #endif
 };
+
+template<typename T, typename U>
+void WebExtensionController::sendToAllProcesses(const T& message, ObjectIdentifier<U> destinationID)
+{
+    HashSet<WebProcessProxy*> seenProcesses;
+    seenProcesses.reserveInitialCapacity(m_pages.capacity());
+
+    for (auto& page : m_pages) {
+        auto& process = page.process();
+        if (seenProcesses.contains(&process))
+            continue;
+
+        seenProcesses.add(&process);
+
+        if (process.canSendMessage())
+            process.send(T(message), destinationID);
+    }
+}
 
 } // namespace WebKit
 

@@ -69,15 +69,18 @@ void WebMessagePortChannelProvider::createNewMessagePortChannel(const MessagePor
 void WebMessagePortChannelProvider::entangleLocalPortInThisProcessToRemote(const MessagePortIdentifier& local, const MessagePortIdentifier& remote)
 {
     m_inProcessPortMessages.add(local, Vector<MessageWithMessagePorts> { });
-    ASSERT(!m_inProcessPortMessages.get(local).size());
 
     networkProcessConnection().send(Messages::NetworkConnectionToWebProcess::EntangleLocalPortInThisProcessToRemote { local, remote }, 0);
 }
 
 void WebMessagePortChannelProvider::messagePortDisentangled(const MessagePortIdentifier& port)
 {
-    auto inProcessPortMessages = m_inProcessPortMessages.take(port);
     networkProcessConnection().send(Messages::NetworkConnectionToWebProcess::MessagePortDisentangled { port }, 0);
+}
+
+void WebMessagePortChannelProvider::messagePortSentToRemote(const WebCore::MessagePortIdentifier& port)
+{
+    auto inProcessPortMessages = m_inProcessPortMessages.take(port);
     for (auto& message : inProcessPortMessages)
         postMessageToRemote(WTFMove(message), port);
 }
@@ -113,19 +116,10 @@ void WebMessagePortChannelProvider::postMessageToRemote(MessageWithMessagePorts&
         return;
     }
 
-    networkProcessConnection().send(Messages::NetworkConnectionToWebProcess::PostMessageToRemote { message, remoteTarget }, 0);
-}
+    for (auto& port : message.transferredPorts)
+        messagePortSentToRemote(port.first);
 
-void WebMessagePortChannelProvider::checkRemotePortForActivity(const MessagePortIdentifier& remoteTarget, CompletionHandler<void(HasActivity)>&& completionHandler)
-{
-    networkProcessConnection().sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::CheckRemotePortForActivity { remoteTarget }, [completionHandler = WTFMove(completionHandler), remoteTarget](bool hasActivity) mutable {
-        if (!hasActivity) {
-            auto& inProcessPorts = WebMessagePortChannelProvider::singleton().m_inProcessPortMessages;
-            auto iterator = inProcessPorts.find(remoteTarget);
-            hasActivity = iterator != inProcessPorts.end() && iterator->value.size();
-        }
-        completionHandler(hasActivity ? HasActivity::Yes : HasActivity::No);
-    }, 0);
+    networkProcessConnection().send(Messages::NetworkConnectionToWebProcess::PostMessageToRemote { message, remoteTarget }, 0);
 }
 
 } // namespace WebKit

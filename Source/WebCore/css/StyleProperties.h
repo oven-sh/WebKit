@@ -93,7 +93,7 @@ public:
     WEBCORE_EXPORT String getPropertyValue(CSSPropertyID) const;
 
     WEBCORE_EXPORT std::optional<Color> propertyAsColor(CSSPropertyID) const;
-    WEBCORE_EXPORT CSSValueID propertyAsValueID(CSSPropertyID) const;
+    WEBCORE_EXPORT std::optional<CSSValueID> propertyAsValueID(CSSPropertyID) const;
 
     bool propertyIsImportant(CSSPropertyID) const;
     String getPropertyShorthand(CSSPropertyID) const;
@@ -169,9 +169,7 @@ private:
     String fontSynthesisValue() const;
     String textDecorationSkipValue() const;
     String offsetValue() const;
-    void appendFontLonghandValueIfExplicit(CSSPropertyID, StringBuilder& result, String& value) const;
-    std::optional<CSSValueID> isSingleFontShorthand() const;
-    bool shorthandHasVariableReference(CSSPropertyID, String&) const;
+    String commonShorthandChecks(CSSPropertyID) const;
     StringBuilder asTextInternal() const;
 
     friend class PropertySetCSSStyleDeclaration;
@@ -228,8 +226,8 @@ public:
     bool addParsedProperty(const CSSProperty&);
 
     // These expand shorthand properties into multiple properties.
-    bool setProperty(CSSPropertyID, const String& value, bool important, CSSParserContext);
-    bool setProperty(CSSPropertyID, const String& value, bool important = false);
+    bool setProperty(CSSPropertyID, const String& value, bool important, CSSParserContext, bool* didFailParsing = nullptr);
+    bool setProperty(CSSPropertyID, const String& value, bool important = false, bool* didFailParsing = nullptr);
     void setProperty(CSSPropertyID, RefPtr<CSSValue>&&, bool important = false);
 
     // These do not. FIXME: This is too messy, we can do better.

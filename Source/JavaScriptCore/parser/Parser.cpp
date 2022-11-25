@@ -952,7 +952,12 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseVariableDecl
             }
         } else {
             lastIdent = nullptr;
-            auto pattern = parseDestructuringPattern(context, destructuringKindFromDeclarationType(declarationType), exportType, nullptr, nullptr, assignmentContext);
+            TreeDestructuringPattern pattern;
+            {
+                bool allowsInOperator = true;
+                SetForScope allowsInScope(m_allowsIn, allowsInOperator);
+                pattern = parseDestructuringPattern(context, destructuringKindFromDeclarationType(declarationType), exportType, nullptr, nullptr, assignmentContext);
+            }
             failIfFalse(pattern, "Cannot parse this destructuring pattern");
             hasInitializer = match(EQUAL);
             failIfTrue(declarationListContext == VarDeclarationContext && !hasInitializer, "Expected an initializer in destructuring variable declaration");
@@ -1198,7 +1203,7 @@ template <class TreeBuilder> TreeDestructuringPattern Parser<LexerType>::parseDe
 {
     failIfStackOverflow();
     m_parserState.assignmentCount++;
-    int nonLHSCount = m_parserState.nonLHSCount;
+    SetForScope nonLHSCountScope(m_parserState.nonLHSCount);
     TreeDestructuringPattern pattern;
     switch (m_token.m_type) {
     case OPENBRACKET: {
@@ -1290,13 +1295,16 @@ template <class TreeBuilder> TreeDestructuringPattern Parser<LexerType>::parseDe
                     innerPattern = parseBindingOrAssignmentElement(context, kind, exportType, duplicateIdentifier, hasDestructuringPattern, bindingContext, depth + 1);
                 else {
                     semanticFailIfTrue(escapedKeyword, "Cannot use abbreviated destructuring syntax for keyword '", propertyName->impl(), "'");
+                    semanticFailIfTrue(isDisallowedIdentifierAwait(identifierToken), "Cannot use 'await' as a ", destructuringKindToVariableKindName(kind), " ", disallowedIdentifierAwaitReason());
                     if (kind == DestructuringKind::DestructureToExpressions) {
                         bool isEvalOrArguments = m_vm.propertyNames->eval == *propertyName || m_vm.propertyNames->arguments == *propertyName;
                         if (isEvalOrArguments && strictMode())
                             reclassifyExpressionError(ErrorIndicatesPattern, ErrorIndicatesNothing);
                         failIfTrueIfStrict(isEvalOrArguments, "Cannot modify '", propertyName->impl(), "' in strict mode");
+
+                        if (match(EQUAL))
+                            currentScope()->useVariable(propertyName, m_vm.propertyNames->eval == *propertyName);
                     }
-                    semanticFailIfTrue(isDisallowedIdentifierAwait(identifierToken), "Cannot use 'await' as a ", destructuringKindToVariableKindName(kind), " ", disallowedIdentifierAwaitReason());
                     innerPattern = createBindingPattern(context, kind, exportType, *propertyName, identifierToken, bindingContext, duplicateIdentifier);
                 }
             } else {
@@ -1311,7 +1319,8 @@ template <class TreeBuilder> TreeDestructuringPattern Parser<LexerType>::parseDe
                     wasString = true;
                     break;
                 case BIGINT:
-                    propertyName = &m_parserArena.identifierArena().makeBigIntDecimalIdentifier(const_cast<VM&>(m_vm), *m_token.m_data.bigIntString, m_token.m_data.radix);
+                    propertyName = m_parserArena.identifierArena().makeBigIntDecimalIdentifier(const_cast<VM&>(m_vm), *m_token.m_data.bigIntString, m_token.m_data.radix);
+                    failIfFalse(propertyName, "Cannot parse big int property name");
                     break;
                 case OPENBRACKET:
                     next();
@@ -1377,7 +1386,6 @@ template <class TreeBuilder> TreeDestructuringPattern Parser<LexerType>::parseDe
         break;
     }
     }
-    m_parserState.nonLHSCount = nonLHSCount;
     return pattern;
 }
 
@@ -1521,7 +1529,7 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseForStatement(
         if (match(OPENBRACE) || match(OPENBRACKET)) {
             SavePoint savePoint = createSavePoint(context);
             declsStart = tokenStartPosition();
-            pattern = tryParseDestructuringPatternExpression(context, AssignmentContext::DeclarationStatement);
+            pattern = tryParseDestructuringPatternExpression(context, AssignmentContext::AssignmentExpression);
             declsEnd = lastTokenEndPosition();
             if (pattern && (match(INTOKEN) || matchContextualKeyword(m_vm.propertyNames->of)))
                 goto enumerationLoop;
@@ -1918,15 +1926,17 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseBlockStatemen
     if (shouldPushLexicalScope) {
         ScopeRef newScope = pushScope();
         newScope->setIsLexicalScope();
-        newScope->preventVarDeclarations();
         switch (type) {
         case BlockType::CatchBlock:
             newScope->setIsCatchBlockScope();
+            newScope->preventVarDeclarations();
             break;
         case BlockType::StaticBlock:
-            newScope->setIsStaticBlock();
+            newScope->setSourceParseMode(SourceParseMode::ClassStaticBlockMode);
+            newScope->setExpectedSuperBinding(SuperBinding::Needed);
             break;
         case BlockType::Normal:
+            newScope->preventVarDeclarations();
             break;
         default:
             RELEASE_ASSERT_NOT_REACHED();
@@ -3049,8 +3059,8 @@ parseMethod:
             next();
             break;
         case BIGINT:
-            ident = &m_parserArena.identifierArena().makeBigIntDecimalIdentifier(const_cast<VM&>(m_vm), *m_token.m_data.bigIntString, m_token.m_data.radix);
-            ASSERT(ident);
+            ident = m_parserArena.identifierArena().makeBigIntDecimalIdentifier(const_cast<VM&>(m_vm), *m_token.m_data.bigIntString, m_token.m_data.radix);
+            failIfFalse(ident, "Cannot parse big int property name");
             next();
             break;
         case ESCAPED_KEYWORD:
@@ -3194,7 +3204,6 @@ parseMethod:
             matchOrFail(OPENBRACE, "Expected block statement for class static block");
             size_t usedVariablesSize = currentScope()->currentUsedVariablesSize();
             currentScope()->pushUsedVariableSet();
-            SetForScope parsingWithClassStaticBlockMode(m_parseMode, parseMode);
             DepthManager statementDepth(&m_statementDepth);
             m_statementDepth = 1;
             failIfFalse(parseBlockStatement(context, BlockType::StaticBlock), "Cannot parse class static block");
@@ -3311,8 +3320,8 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseClassFie
                 next();
                 break;
             case BIGINT:
-                ident = &m_parserArena.identifierArena().makeBigIntDecimalIdentifier(const_cast<VM&>(m_vm), *m_token.m_data.bigIntString, m_token.m_data.radix);
-                ASSERT(ident);
+                ident = m_parserArena.identifierArena().makeBigIntDecimalIdentifier(const_cast<VM&>(m_vm), *m_token.m_data.bigIntString, m_token.m_data.radix);
+                failIfFalse(ident, "Cannot parse big int property name");
                 next();
                 break;
             case DOUBLE:
@@ -4608,7 +4617,8 @@ namedProperty:
         return context.createProperty(const_cast<VM&>(m_vm), m_parserArena, propertyName, node, PropertyNode::Constant, SuperBinding::NotNeeded, ClassElementTag::No);
     }
     case BIGINT: {
-        const Identifier* ident = &m_parserArena.identifierArena().makeBigIntDecimalIdentifier(const_cast<VM&>(m_vm), *m_token.m_data.bigIntString, m_token.m_data.radix);
+        const Identifier* ident = m_parserArena.identifierArena().makeBigIntDecimalIdentifier(const_cast<VM&>(m_vm), *m_token.m_data.bigIntString, m_token.m_data.radix);
+        failIfFalse(ident, "Cannot parse big int property name");
         next();
 
         if (match(OPENPAREN)) {
@@ -4700,7 +4710,8 @@ template <class TreeBuilder> TreeProperty Parser<LexerType>::parseGetterSetter(T
         numericPropertyName = m_token.m_data.doubleValue;
         next();
     } else if (match(BIGINT)) {
-        stringPropertyName = &m_parserArena.identifierArena().makeBigIntDecimalIdentifier(const_cast<VM&>(m_vm), *m_token.m_data.bigIntString, m_token.m_data.radix);
+        stringPropertyName = m_parserArena.identifierArena().makeBigIntDecimalIdentifier(const_cast<VM&>(m_vm), *m_token.m_data.bigIntString, m_token.m_data.radix);
+        failIfFalse(stringPropertyName, "Cannot parse big int property name");
         next();
     } else if (match(OPENBRACKET)) {
         next();
@@ -4772,8 +4783,8 @@ template <typename LexerType>
 template <class TreeBuilder> TreeExpression Parser<LexerType>::parseObjectLiteral(TreeBuilder& context)
 {
     consumeOrFail(OPENBRACE, "Expected opening '{' at the start of an object literal");
-    
-    int oldNonLHSCount = m_parserState.nonLHSCount;
+
+    SetForScope nonLHSCountScope(m_parserState.nonLHSCount);
 
     JSTokenLocation location(tokenLocation());
     if (match(CLOSEBRACE)) {
@@ -4806,8 +4817,6 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseObjectLitera
     location = tokenLocation();
     handleProductionOrFail2(CLOSEBRACE, "}", "end", "object literal");
 
-    m_parserState.nonLHSCount = oldNonLHSCount;
-
     return context.createObjectLiteral(location, propertyList);
 }
 
@@ -4815,9 +4824,9 @@ template <typename LexerType>
 template <class TreeBuilder> TreeExpression Parser<LexerType>::parseArrayLiteral(TreeBuilder& context)
 {
     consumeOrFailWithFlags(OPENBRACKET, TreeBuilder::DontBuildStrings, "Expected an opening '[' at the beginning of an array literal");
-    
-    int oldNonLHSCount = m_parserState.nonLHSCount;
-    
+
+    SetForScope nonLHSCountScope(m_parserState.nonLHSCount);
+
     int elisions = 0;
     while (match(COMMA)) {
         next(TreeBuilder::DontBuildStrings);
@@ -4879,9 +4888,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseArrayLiteral
         failIfFalse(match(DOTDOTDOT), "Expected either a closing ']' or a ',' following an array element");
         semanticFail("The '...' operator should come before a target expression");
     }
-    
-    m_parserState.nonLHSCount = oldNonLHSCount;
-    
+
     return context.createArray(location, elementList);
 }
 
@@ -4889,6 +4896,7 @@ template <typename LexerType>
 template <class TreeBuilder> TreeClassExpression Parser<LexerType>::parseClassExpression(TreeBuilder& context)
 {
     ASSERT(match(CLASSTOKEN));
+    SetForScope nonLHSCountScope(m_parserState.nonLHSCount);
     ParserClassInfo<TreeBuilder> info;
     info.className = &m_vm.propertyNames->nullIdentifier;
     return parseClass(context, FunctionNameRequirements::None, info);
@@ -4898,6 +4906,7 @@ template <typename LexerType>
 template <class TreeBuilder> TreeExpression Parser<LexerType>::parseFunctionExpression(TreeBuilder& context)
 {
     ASSERT(match(FUNCTION));
+    SetForScope nonLHSCountScope(m_parserState.nonLHSCount);
     JSTokenLocation location(tokenLocation());
     unsigned functionKeywordStart = tokenStart();
     next();
@@ -4953,6 +4962,7 @@ template <typename LexerType>
 template <class TreeBuilder> typename TreeBuilder::TemplateLiteral Parser<LexerType>::parseTemplateLiteral(TreeBuilder& context, typename LexerType::RawStringsBuildMode rawStringsBuildMode)
 {
     ASSERT(match(BACKQUOTE));
+    SetForScope nonLHSCountScope(m_parserState.nonLHSCount);
     JSTokenLocation location(tokenLocation());
     bool elementIsTail = false;
 
@@ -5014,9 +5024,8 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parsePrimaryExpre
         return parseArrayLiteral(context);
     case OPENPAREN: {
         next();
-        int oldNonLHSCount = m_parserState.nonLHSCount;
+        SetForScope nonLHSCountScope(m_parserState.nonLHSCount);
         TreeExpression result = parseExpression(context);
-        m_parserState.nonLHSCount = oldNonLHSCount;
         handleProductionOrFail(CLOSEPAREN, ")", "end", "compound expression");
         return result;
     }
@@ -5312,6 +5321,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseMemberExpres
         } else {
             semanticFailIfTrue(newCount, "Cannot use new with import");
             consumeOrFail(OPENPAREN, "import call expects one or two arguments");
+            SetForScope nonLHSCountScope(m_parserState.nonLHSCount);
             TreeExpression expr = parseAssignmentExpression(context);
             failIfFalse(expr, "Cannot parse expression");
             TreeExpression optionExpression = 0;
@@ -5370,7 +5380,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseMemberExpres
                 m_parserState.nonTrivialExpressionCount++;
                 JSTextPosition expressionEnd = lastTokenEndPosition();
                 next();
-                int nonLHSCount = m_parserState.nonLHSCount;
+                SetForScope nonLHSCountScope(m_parserState.nonLHSCount);
                 int initialAssignments = m_parserState.assignmentCount;
                 TreeExpression property = parseExpression(context);
                 failIfFalse(property, "Cannot parse subscript expression");
@@ -5380,14 +5390,13 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseMemberExpres
                     currentFunctionScope()->setInnerArrowFunctionUsesSuperProperty();
 
                 handleProductionOrFail(CLOSEBRACKET, "]", "end", "subscript expression");
-                m_parserState.nonLHSCount = nonLHSCount;
                 break;
             }
             case OPENPAREN: {
                 if (baseIsSuper)
                     failIfTrue(m_parserState.isParsingClassFieldInitializer, "super call is not valid in class field initializer context");
                 m_parserState.nonTrivialExpressionCount++;
-                int nonLHSCount = m_parserState.nonLHSCount;
+                SetForScope nonLHSCountScope(m_parserState.nonLHSCount);
                 if (newCount) {
                     newCount--;
                     semanticFailIfTrue(baseIsSuper, "Cannot use new with super call");
@@ -5435,7 +5444,6 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseMemberExpres
                     if (isOptionalCall)
                         optionalChainBase = base;
                 }
-                m_parserState.nonLHSCount = nonLHSCount;
                 break;
             }
             case DOT: {
@@ -5466,11 +5474,10 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseMemberExpres
                 semanticFailIfTrue(optionalChainBase, "Cannot use tagged templates in an optional chain");
                 semanticFailIfTrue(baseIsSuper, "Cannot use super as tag for tagged templates");
                 JSTextPosition expressionEnd = lastTokenEndPosition();
-                int nonLHSCount = m_parserState.nonLHSCount;
+                SetForScope nonLHSCountScope(m_parserState.nonLHSCount);
                 typename TreeBuilder::TemplateLiteral templateLiteral = parseTemplateLiteral(context, LexerType::RawStringsBuildMode::BuildRawStrings);
                 failIfFalse(templateLiteral, "Cannot parse template literal");
                 base = context.createTaggedTemplate(startLocation, base, templateLiteral, expressionStart, expressionEnd, lastTokenEndPosition());
-                m_parserState.nonLHSCount = nonLHSCount;
                 m_seenTaggedTemplateInNonReparsingFunctionMode = true;
                 break;
             }

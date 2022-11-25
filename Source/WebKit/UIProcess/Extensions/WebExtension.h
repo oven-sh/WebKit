@@ -141,7 +141,7 @@ public:
     static const PermissionsSet& supportedPermissions();
 
     bool operator==(const WebExtension& other) const { return (this == &other); }
-    bool operator!=(const WebExtension& other) const { return !(*this == other); }
+    bool operator!=(const WebExtension& other) const { return !(this == &other); }
 
     bool manifestParsedSuccessfully();
     NSDictionary *manifest();
@@ -181,6 +181,7 @@ public:
 
     bool hasBackgroundContent();
     bool backgroundContentIsPersistent();
+    bool backgroundContentUsesModules();
     bool backgroundContentIsServiceWorker();
 
     NSString *backgroundContentPath();
@@ -213,7 +214,9 @@ public:
 
     NSArray *errors();
 
+#ifdef __OBJC__
     _WKWebExtension *wrapper() const { return (_WKWebExtension *)API::ObjectImpl<API::Object::Type::WebExtension>::wrapper(); }
+#endif
 #endif
 
 private:
@@ -265,6 +268,7 @@ private:
     RetainPtr<NSString> m_backgroundServiceWorkerPath;
     RetainPtr<NSString> m_generatedBackgroundContent;
     bool m_backgroundContentIsPersistent = false;
+    bool m_backgroundPageUsesModules = false;
 
     bool m_parsedManifest = false;
     bool m_parsedManifestDisplayStrings = false;

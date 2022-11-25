@@ -148,6 +148,7 @@
 #include "MediaUsageInfo.h"
 #include "MemoryCache.h"
 #include "MemoryInfo.h"
+#include "MessagePort.h"
 #include "MockAudioDestinationCocoa.h"
 #include "MockLibWebRTCPeerConnection.h"
 #include "MockPageOverlay.h"
@@ -304,6 +305,10 @@
 
 #if ENABLE(WEB_RTC)
 #include "RTCPeerConnection.h"
+#endif
+
+#if USE(LIBWEBRTC)
+#include "LibWebRTCProvider.h"
 #endif
 
 #if ENABLE(MEDIA_SOURCE)
@@ -781,6 +786,17 @@ ExceptionOr<double> Internals::svgAnimationsInterval(SVGSVGElement& element) con
         return 0;
 
     return element.timeContainer().animationFrameDelay().value();
+}
+
+Vector<Ref<SVGSVGElement>> Internals::allSVGSVGElements() const
+{
+    Vector<Ref<SVGSVGElement>> elements;
+    for (auto* document : Document::allDocuments()) {
+        if (!document->svgExtensions())
+            continue;
+        elements.appendVector(document->accessSVGExtensions().allSVGSVGElements());
+    }
+    return elements;
 }
 
 String Internals::address(Node& node)
@@ -1874,11 +1890,6 @@ void Internals::invalidateFontCache()
     FontCache::invalidateAllFontCaches();
 }
 
-void Internals::setFontSmoothingEnabled(bool enabled)
-{
-    FontCascade::setShouldUseSmoothingForTesting(enabled);
-}
-
 ExceptionOr<void> Internals::setLowPowerModeEnabled(bool isEnabled)
 {
     auto* document = contextDocument();
@@ -2848,6 +2859,17 @@ bool Internals::isDocumentAlive(const String& documentIdentifier) const
     auto uuid = UUID::parseVersion4(documentIdentifier);
     ASSERT(uuid);
     return uuid ? Document::allDocumentsMap().contains({ *uuid, Process::identifier() }) : false;
+}
+
+uint64_t Internals::messagePortIdentifier(const MessagePort& port) const
+{
+    return port.identifier().portIdentifier.toUInt64();
+}
+
+bool Internals::isMessagePortAlive(uint64_t messagePortIdentifier) const
+{
+    MessagePortIdentifier portIdentifier { Process::identifier(), makeObjectIdentifier<MessagePortIdentifier::PortIdentifierType>(messagePortIdentifier) };
+    return MessagePort::isMessagePortAliveForTesting(portIdentifier);
 }
 
 uint64_t Internals::storageAreaMapCount() const
@@ -5250,6 +5272,15 @@ bool Internals::hasTransientActivation()
     return false;
 }
 
+bool Internals::consumeTransientActivation()
+{
+    if (auto* document = contextDocument()) {
+        if (auto* window = document->domWindow())
+            return window->consumeTransientActivation();
+    }
+    return false;
+}
+
 double Internals::lastHandledUserGestureTimestamp()
 {
     Document* document = contextDocument();
@@ -6953,6 +6984,11 @@ bool Internals::hasSleepDisabler() const
 {
     auto* document = contextDocument();
     return document ? document->hasSleepDisabler() : false;
+}
+
+void Internals::acceptTypedArrays(Int32Array&)
+{
+    // Do nothing.
 }
 
 } // namespace WebCore

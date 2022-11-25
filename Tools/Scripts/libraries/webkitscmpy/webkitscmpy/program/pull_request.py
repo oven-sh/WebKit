@@ -38,6 +38,7 @@ class PullRequest(Command):
     aliases = ['pr', 'pfr', 'upload']
     help = 'Push the current checkout state as a pull-request'
     BLOCKED_LABEL = 'merging-blocked'
+    SKIP_EWS_LABEL = 'skip-ews'
     MERGE_LABELS = ['merge-queue']
     UNSAFE_MERGE_LABELS = ['unsafe-merge-queue']
 
@@ -199,12 +200,21 @@ class PullRequest(Command):
                     if remote in bp_remotes:
                         source_remote = remote
                         break
-            if source_remote and source_remote != 'origin':
+            if source_remote != repository.default_remote:
+                print("Making pull request against '{}' because that is where the branch point is from".format(source_remote))
+                if branch_point.branch in repository.DEFAULT_BRANCHES:
+                    sys.stderr.write('Branch point is on the default branch\n')
+                    sys.stderr.write("Local record of '{}' may be out of date\n".format(repository.default_remote))
+                    sys.stderr.write("Update with 'git fetch {}'\n".format(repository.default_remote))
+            if source_remote and source_remote != repository.default_remote:
                 args.remote = source_remote
         if not source_remote:
             source_remote = repository.default_remote
 
-        if repository.branch is None or repository.branch in repository.DEFAULT_BRANCHES or repository.PROD_BRANCHES.match(repository.branch):
+        if repository.branch is None or repository.branch in repository.DEFAULT_BRANCHES or \
+                repository.PROD_BRANCHES.match(repository.branch) or \
+                repository.branch in repository.branches_for(remote=source_remote):
+
             if not args.issue:
                 head = repository.commit(include_log=True, include_identifier=False)
                 if run([
@@ -345,18 +355,26 @@ class PullRequest(Command):
         remote_repo = repository.remote(name=source_remote)
         if isinstance(remote_repo, remote.GitHub):
             if issue and issue.redacted and args.remote is None:
-                print("Your issue is redacted, diverting to a secure, non-origin remote you have access to.")
+                print('{} is considered the primary issue for your pull request'.format(issue.link))
+                print("{} {}".format(issue.link, issue.redacted))
+                print("Pull request needs to be sent to a secure remote for review")
                 original_remote = source_remote
                 if len(repository.source_remotes()) < 2:
-                    print("Error. You do not have access to a secure, non-origin remote")
+                    sys.stderr.write("Error. You do not have access to a secure remote to make a pull request for a redacted issue\n")
                     if args.defaults or Terminal.choose(
                         "Would you like to proceed anyways? \n",
                         default='No',
                     ) == 'No':
-                        sys.stderr.write("Failed to create pull request due to non-suitable remote\n")
+                        sys.stderr.write("Failed to create pull request due to unsuitable remote\n")
                         return 1
                 else:
                     source_remote = repository.source_remotes()[1]
+                    if args.defaults or Terminal.choose(
+                        "Would you like to make a pull request against '{}' instead of '{}'? \n".format(source_remote, original_remote),
+                        default='Yes',
+                    ) == 'No':
+                        sys.stderr.write("User declined to create a pull request against the secure remote '{}'\n".format(source_remote))
+                        return 1
                     remote_repo = repository.remote(name=source_remote)
                     print("Making PR against '{}' instead of '{}'".format(source_remote, original_remote))
             target = 'fork' if source_remote == repository.default_remote else '{}-fork'.format(source_remote)
@@ -424,7 +442,7 @@ class PullRequest(Command):
             pr_issue = existing_pr._metadata['issue']
             labels = pr_issue.labels
             did_remove = False
-            for to_remove in cls.MERGE_LABELS + cls.UNSAFE_MERGE_LABELS + ([cls.BLOCKED_LABEL] if unblock else []):
+            for to_remove in cls.MERGE_LABELS + cls.UNSAFE_MERGE_LABELS + ([cls.BLOCKED_LABEL] if unblock else []) + [cls.SKIP_EWS_LABEL]:
                 if to_remove in labels:
                     log.info("Removing '{}' from PR #{}...".format(to_remove, existing_pr.number))
                     labels.remove(to_remove)
@@ -520,11 +538,8 @@ class PullRequest(Command):
             component = issue.component
             if pr_issue.component == component or component not in pr_issue.tracker.projects.get(project, {}).get('components', {}):
                 component = None
-            version = issue.version
-            if pr_issue.version == version or version not in pr_issue.tracker.projects.get(project, {}).get('versions', []):
-                version = None
-            if component or version:
-                pr_issue.set_component(component=component, version=version)
+            if component:
+                pr_issue.set_component(component=component)
                 log.info('Synced PR labels with issue component!')
             else:
                 log.info('No label syncing required')

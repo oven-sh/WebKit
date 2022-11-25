@@ -33,7 +33,11 @@
 #if ENABLE(WK_WEB_EXTENSIONS)
 
 #import "CocoaHelpers.h"
+#import "WebExtensionContextMessages.h"
+#import "WebExtensionControllerMessages.h"
+#import "WebExtensionControllerProxyMessages.h"
 #import "WebPageProxy.h"
+#import "WebProcessPool.h"
 #import <wtf/HashMap.h>
 #import <wtf/HashSet.h>
 #import <wtf/NeverDestroyed.h>
@@ -75,6 +79,11 @@ bool WebExtensionController::load(WebExtensionContext& extensionContext, NSError
         return handler;
     });
 
+    for (auto& processPool : m_processPools)
+        processPool.addMessageReceiver(Messages::WebExtensionContext::messageReceiverName(), extensionContext.identifier(), extensionContext);
+
+    sendToAllProcesses(Messages::WebExtensionControllerProxy::Load(extensionContext.parameters()), m_identifier);
+
     return true;
 }
 
@@ -82,6 +91,8 @@ bool WebExtensionController::unload(WebExtensionContext& extensionContext, NSErr
 {
     if (outError)
         *outError = nil;
+
+    Ref protectedExtensionContext = extensionContext;
 
     if (!m_extensionContexts.remove(extensionContext)) {
         if (outError)
@@ -92,17 +103,32 @@ bool WebExtensionController::unload(WebExtensionContext& extensionContext, NSErr
     ASSERT(m_extensionContextBaseURLMap.contains(extensionContext.baseURL()));
     m_extensionContextBaseURLMap.remove(extensionContext.baseURL());
 
+    sendToAllProcesses(Messages::WebExtensionControllerProxy::Unload(extensionContext.identifier()), m_identifier);
+
+    for (auto& processPool : m_processPools)
+        processPool.removeMessageReceiver(Messages::WebExtensionContext::messageReceiverName(), extensionContext.identifier());
+
     if (!extensionContext.unload(outError))
         return false;
 
     return true;
 }
 
+void WebExtensionController::unloadAll()
+{
+    auto contextsCopy = m_extensionContexts;
+    for (auto& context : contextsCopy)
+        unload(context, nullptr);
+}
+
 void WebExtensionController::addPage(WebPageProxy& page)
 {
     ASSERT(!m_pages.contains(page));
-
     m_pages.add(page);
+
+    auto& processPool = page.process().processPool();
+    if (m_processPools.add(processPool))
+        processPool.addMessageReceiver(Messages::WebExtensionController::messageReceiverName(), m_identifier, *this);
 
     for (auto& entry : m_registeredSchemeHandlers)
         page.setURLSchemeHandlerForScheme(entry.value.copyRef(), entry.key);
@@ -111,8 +137,21 @@ void WebExtensionController::addPage(WebPageProxy& page)
 void WebExtensionController::removePage(WebPageProxy& page)
 {
     ASSERT(m_pages.contains(page));
-
     m_pages.remove(page);
+
+    // The process pool might have already been deallocated and removed from the weak set.
+    auto& processPool = page.process().processPool();
+    if (!m_processPools.contains(processPool))
+        return;
+
+    // Only remove the message receiver and process pool if no other pages use the same process pool.
+    for (auto& knownPage : m_pages) {
+        if (knownPage.process().processPool() == processPool)
+            return;
+    }
+
+    processPool.removeMessageReceiver(Messages::WebExtensionController::messageReceiverName(), m_identifier);
+    m_processPools.remove(processPool);
 }
 
 RefPtr<WebExtensionContext> WebExtensionController::extensionContext(const WebExtension& extension) const

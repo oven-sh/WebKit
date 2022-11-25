@@ -2298,7 +2298,7 @@ bool FrameView::scrollToFragment(const URL& url)
                 // FIXME: <http://webkit.org/b/245262> (Scroll To Text Fragment should use DelegateMainFrameScroll)
                 TemporarySelectionChange selectionChange(document, { range }, { TemporarySelectionOption::RevealSelection, TemporarySelectionOption::RevealSelectionBounds, TemporarySelectionOption::UserTriggered, TemporarySelectionOption::ForceCenterScroll });
                 maintainScrollPositionAtScrollToTextFragmentRange(range);
-                if (frame().settings().scrollToTextFragmentIndicatorEnabled())
+                if (frame().settings().scrollToTextFragmentIndicatorEnabled() && !frame().page()->isControlledByAutomation())
                     m_delayedTextFragmentIndicatorTimer.startOneShot(100_ms);
                 return true;
             }
@@ -2600,6 +2600,9 @@ bool FrameView::scrollRectToVisible(const LayoutRect& absoluteRect, const Render
     if (options.revealMode == SelectionRevealMode::DoNotReveal)
         return false;
 
+    if (renderer.isSkippedContent())
+        return false;
+
     auto* layer = renderer.enclosingLayer();
     if (!layer)
         return false;
@@ -2877,13 +2880,10 @@ void FrameView::resumeVisibleImageAnimations(const IntRect& visibleRect)
         renderView->resumePausedImageAnimationsIfNeeded(visibleRect);
 }
 
-void FrameView::repaintVisibleImageAnimations(const IntRect& visibleRect)
+void FrameView::updatePlayStateForAllAnimations(const IntRect& visibleRect)
 {
-    if (visibleRect.isEmpty())
-        return;
-
     if (auto* renderView = frame().contentRenderer())
-        renderView->repaintImageAnimationsIfNeeded(visibleRect);
+        renderView->updatePlayStateForAllAnimations(visibleRect);
 }
 
 void FrameView::updateScriptedAnimationsAndTimersThrottlingState(const IntRect& visibleRect)
@@ -2921,10 +2921,10 @@ void FrameView::resumeVisibleImageAnimationsIncludingSubframes()
     });
 }
 
-void FrameView::repaintVisibleImageAnimationsIncludingSubframes()
+void FrameView::updatePlayStateForAllAnimationsIncludingSubframes()
 {
     applyRecursivelyWithVisibleRect([] (FrameView& frameView, const IntRect& visibleRect) {
-        frameView.repaintVisibleImageAnimations(visibleRect);
+        frameView.updatePlayStateForAllAnimations(visibleRect);
     });
 }
 
@@ -3010,6 +3010,22 @@ bool FrameView::isRubberBandInProgress() const
 
     if (auto scrollAnimator = existingScrollAnimator())
         return scrollAnimator->isRubberBandInProgress();
+
+    return false;
+}
+
+bool FrameView::requestStartKeyboardScrollAnimation(const KeyboardScroll& scrollData)
+{
+    if (auto scrollingCoordinator = this->scrollingCoordinator())
+        return scrollingCoordinator->requestStartKeyboardScrollAnimation(*this, scrollData);
+
+    return false;
+}
+
+bool FrameView::requestStopKeyboardScrollAnimation(bool immediate)
+{
+    if (auto scrollingCoordinator = this->scrollingCoordinator())
+        return scrollingCoordinator->requestStopKeyboardScrollAnimation(*this, immediate);
 
     return false;
 }
@@ -3631,11 +3647,13 @@ void FrameView::scrollToTextFragmentRange()
     if (!m_pendingTextFragmentIndicatorRange)
         return;
 
-    auto rangeText = plainText(m_pendingTextFragmentIndicatorRange.value());
-    if (m_pendingTextFragmentIndicatorText != plainText(m_pendingTextFragmentIndicatorRange.value()))
+    if (needsLayout())
         return;
 
-    auto range = m_pendingTextFragmentIndicatorRange.value();
+    auto range = *m_pendingTextFragmentIndicatorRange;
+    auto rangeText = plainText(range);
+    if (m_pendingTextFragmentIndicatorText != plainText(range))
+        return;
 
     LOG_WITH_STREAM(Scrolling, stream << *this << " scrollToTextFragmentRange() " << range);
 

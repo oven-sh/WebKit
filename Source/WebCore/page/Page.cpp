@@ -1995,7 +1995,7 @@ void Page::setImageAnimationEnabled(bool enabled)
     if (m_imageAnimationEnabled == enabled)
         return;
     m_imageAnimationEnabled = enabled;
-    repaintAnimatedImages();
+    updatePlayStateForAllAnimations();
 }
 
 void Page::suspendScriptedAnimations()
@@ -3828,13 +3828,14 @@ void Page::recomputeTextAutoSizingInAllFrames()
 
 #endif
 
-bool Page::acceleratedFiltersEnabled() const
+OptionSet<FilterRenderingMode> Page::preferredFilterRenderingModes() const
 {
+    OptionSet<FilterRenderingMode> modes = FilterRenderingMode::Software;
 #if USE(CORE_IMAGE)
-    return settings().acceleratedFiltersEnabled();
-#else
-    return false;
+    if (settings().acceleratedFiltersEnabled())
+        modes = modes | FilterRenderingMode::Accelerated;
 #endif
+    return modes;
 }
 
 bool Page::shouldDisableCorsForRequestTo(const URL& url) const
@@ -4097,10 +4098,10 @@ void Page::forceRepaintAllFrames()
     }
 }
 
-void Page::repaintAnimatedImages()
+void Page::updatePlayStateForAllAnimations()
 {
     if (auto* view = mainFrame().view())
-        view->repaintVisibleImageAnimationsIncludingSubframes();
+        view->updatePlayStateForAllAnimationsIncludingSubframes();
 }
 
 ScreenOrientationManager* Page::screenOrientationManager() const

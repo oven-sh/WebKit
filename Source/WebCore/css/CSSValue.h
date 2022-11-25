@@ -66,13 +66,14 @@ public:
     bool isFontFeatureValue() const { return m_classType == FontFeatureClass; }
     bool isFontVariationValue() const { return m_classType == FontVariationClass; }
     bool isFontVariantAlternatesValue() const { return m_classType == FontVariantAlternatesClass; }
-    bool isFontFaceSrcValue() const { return m_classType == FontFaceSrcClass; }
+    bool isFontFaceSrcLocalValue() const { return m_classType == FontFaceSrcLocalClass; }
+    bool isFontFaceSrcResourceValue() const { return m_classType == FontFaceSrcResourceClass; }
     bool isFontPaletteValuesOverrideColorsValue() const { return m_classType == FontPaletteValuesOverrideColorsClass; }
     bool isFontValue() const { return m_classType == FontClass; }
-    bool isFontStyleValue() const { return m_classType == FontStyleClass; }
     bool isFontStyleRangeValue() const { return m_classType == FontStyleRangeClass; }
-    bool isImageGeneratorValue() const { return m_classType >= CanvasClass && m_classType <= ConicGradientClass; }
-    bool isGradientValue() const { return m_classType >= LinearGradientClass && m_classType <= ConicGradientClass; }
+    bool isFontStyleWithAngleValue() const { return m_classType == FontStyleWithAngleClass; }
+    bool isImageGeneratorValue() const { return m_classType >= CanvasClass && m_classType <= PrefixedRadialGradientClass; }
+    bool isGradientValue() const { return m_classType >= LinearGradientClass && m_classType <= PrefixedRadialGradientClass; }
     bool isNamedImageValue() const { return m_classType == NamedImageClass; }
     bool isImageSetValue() const { return m_classType == ImageSetClass; }
     bool isImageValue() const { return m_classType == ImageClass; }
@@ -88,6 +89,10 @@ public:
     bool isLinearGradientValue() const { return m_classType == LinearGradientClass; }
     bool isRadialGradientValue() const { return m_classType == RadialGradientClass; }
     bool isConicGradientValue() const { return m_classType == ConicGradientClass; }
+    bool isDeprecatedLinearGradientValue() const { return m_classType == DeprecatedLinearGradientClass; }
+    bool isDeprecatedRadialGradientValue() const { return m_classType == DeprecatedRadialGradientClass; }
+    bool isPrefixedLinearGradientValue() const { return m_classType == PrefixedLinearGradientClass; }
+    bool isPrefixedRadialGradientValue() const { return m_classType == PrefixedRadialGradientClass; }
     bool isReflectValue() const { return m_classType == ReflectClass; }
     bool isShadowValue() const { return m_classType == ShadowClass; }
     bool isCubicBezierTimingFunctionValue() const { return m_classType == CubicBezierTimingFunctionClass; }
@@ -161,6 +166,10 @@ protected:
         LinearGradientClass,
         RadialGradientClass,
         ConicGradientClass,
+        DeprecatedLinearGradientClass,
+        DeprecatedRadialGradientClass,
+        PrefixedLinearGradientClass,
+        PrefixedRadialGradientClass,
 
         // Timing function classes.
         CubicBezierTimingFunctionClass,
@@ -176,9 +185,10 @@ protected:
         FontVariationClass,
         FontVariantAlternatesClass,
         FontClass,
-        FontStyleClass,
         FontStyleRangeClass,
-        FontFaceSrcClass,
+        FontStyleWithAngleClass,
+        FontFaceSrcLocalClass,
+        FontFaceSrcResourceClass,
         FontPaletteValuesOverrideColorsClass,
         FunctionClass,
 

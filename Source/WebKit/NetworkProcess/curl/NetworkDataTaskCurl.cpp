@@ -34,6 +34,7 @@
 #include "NetworkProcess.h"
 #include "NetworkSessionCurl.h"
 #include "PrivateRelayed.h"
+#include "WebErrors.h"
 #include <WebCore/AuthenticationChallenge.h>
 #include <WebCore/CookieJar.h>
 #include <WebCore/CurlRequest.h>
@@ -335,6 +336,8 @@ void NetworkDataTaskCurl::willPerformHTTPRedirection()
         redirectedURL.setFragmentIdentifier(request.url().fragmentIdentifier());
     request.setURL(redirectedURL);
 
+    m_hasCrossOriginRedirect = m_hasCrossOriginRedirect || !SecurityOrigin::create(m_response.url())->canRequest(request.url());
+
     // Should not set Referer after a redirect from a secure resource to non-secure one.
     if (m_shouldClearReferrerOnHTTPSToHTTPRedirect && !request.url().protocolIs("https"_s) && protocolIs(request.httpReferrer(), "https"_s))
         request.clearHTTPReferrer();
@@ -439,7 +442,7 @@ void NetworkDataTaskCurl::tryHttpAuthentication(AuthenticationChallenge&& challe
 
         if (disposition == AuthenticationChallengeDisposition::Cancel) {
             cancel();
-            m_client->didCompleteWithError(ResourceError::httpError(CURLE_COULDNT_RESOLVE_HOST, m_response.url()));
+            m_client->didCompleteWithError(cancelledError(m_curlRequest->resourceRequest()));
             return;
         }
 
@@ -465,7 +468,7 @@ void NetworkDataTaskCurl::tryProxyAuthentication(WebCore::AuthenticationChalleng
 
         if (disposition == AuthenticationChallengeDisposition::Cancel) {
             cancel();
-            m_client->didCompleteWithError(ResourceError::httpError(CURLE_COULDNT_RESOLVE_PROXY, m_response.url()));
+            m_client->didCompleteWithError(cancelledError(m_curlRequest->resourceRequest()));
             return;
         }
 
@@ -587,13 +590,19 @@ bool NetworkDataTaskCurl::isThirdPartyRequest(const WebCore::ResourceRequest& re
 
 void NetworkDataTaskCurl::updateNetworkLoadMetrics(WebCore::NetworkLoadMetrics& networkLoadMetrics)
 {
+    if (!m_startTime)
+        m_startTime = networkLoadMetrics.fetchStart;
+
     if (!m_failsTAOCheck) {
         RefPtr<SecurityOrigin> origin = isTopLevelNavigation() ? SecurityOrigin::create(firstRequest().url()) : m_sourceOrigin;
         if (origin)
             m_failsTAOCheck = !passesTimingAllowOriginCheck(m_response, *origin);
     }
 
+    networkLoadMetrics.redirectStart = m_startTime;
+    networkLoadMetrics.redirectCount = m_redirectCount;
     networkLoadMetrics.failsTAOCheck = m_failsTAOCheck;
+    networkLoadMetrics.hasCrossOriginRedirect = m_hasCrossOriginRedirect;
 }
 
 } // namespace WebKit

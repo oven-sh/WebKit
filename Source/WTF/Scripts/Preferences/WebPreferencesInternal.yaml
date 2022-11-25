@@ -97,6 +97,18 @@ AsyncOverflowScrollingEnabled:
     WebCore:
       default: false
 
+AttachmentElementEnabled:
+  type: bool
+  webcoreBinding: DeprecatedGlobalSettings
+  humanReadableName: "Attachment Element"
+  humanReadableDescription: "Enable rendering of <attachment> elements"
+  condition: ENABLE(ATTACHMENT_ELEMENT)
+  defaultValue:
+    WebKitLegacy:
+      default: WebKit::defaultAttachmentElementEnabled()
+    WebKit:
+      default: false
+
 AutomaticLiveResizeEnabled:
   type: bool
   humanReadableName: "Enable Automatic Live Resize"
@@ -289,7 +301,8 @@ EventHandlerDrivenSmoothKeyboardScrollingEnabled:
     WebKitLegacy:
       default: false
     WebKit:
-      "PLATFORM(COCOA) || PLATFORM(WIN)": true
+      "PLATFORM(MAC)": WebKit::defaultScrollAnimatorEnabled()
+      "PLATFORM(GTK) || PLATFORM(WPE)": true
       default: false
     WebCore:
       default: false

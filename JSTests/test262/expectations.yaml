@@ -807,18 +807,6 @@ test/built-ins/Proxy/construct/return-not-object-throws-undefined-realm.js:
 test/built-ins/Proxy/construct/trap-is-not-callable-realm.js:
   default: 'Test262Error: Expected a TypeError but got a different error constructor with the same name'
   strict mode: 'Test262Error: Expected a TypeError but got a different error constructor with the same name'
-test/built-ins/RegExp/named-groups/duplicate-names-group-property-enumeration-order.js:
-  default: 'SyntaxError: Invalid regular expression: duplicate group specifier name'
-  strict mode: 'SyntaxError: Invalid regular expression: duplicate group specifier name'
-test/built-ins/RegExp/named-groups/duplicate-names-match-indices.js:
-  default: 'SyntaxError: Invalid regular expression: duplicate group specifier name'
-  strict mode: 'SyntaxError: Invalid regular expression: duplicate group specifier name'
-test/built-ins/RegExp/named-groups/duplicate-names-replace.js:
-  default: 'SyntaxError: Invalid regular expression: duplicate group specifier name'
-  strict mode: 'SyntaxError: Invalid regular expression: duplicate group specifier name'
-test/built-ins/RegExp/named-groups/duplicate-names.js:
-  default: 'SyntaxError: Invalid regular expression: duplicate group specifier name'
-  strict mode: 'SyntaxError: Invalid regular expression: duplicate group specifier name'
 test/built-ins/RegExp/property-escapes/generated/Alphabetic.js:
   default: 'Test262Error: `\p{Alphabetic}` should match U+U+01B132 (`𛄲`)'
   strict mode: 'Test262Error: `\p{Alphabetic}` should match U+U+01B132 (`𛄲`)'
@@ -1053,6 +1041,24 @@ test/built-ins/RegExp/prototype/exec/u-lastindex-adv.js:
 test/built-ins/RegExp/quantifier-integer-limit.js:
   default: 'SyntaxError: Invalid regular expression: number too large in {} quantifier'
   strict mode: 'SyntaxError: Invalid regular expression: number too large in {} quantifier'
+test/built-ins/Temporal/Duration/prototype/add/precision-exact-mathematical-values.js:
+  default: 'Test262Error: duration1.add(duration2) nanoseconds result Expected SameValue(«24», «0») to be true'
+  strict mode: 'Test262Error: duration1.add(duration2) nanoseconds result Expected SameValue(«24», «0») to be true'
+test/built-ins/Temporal/Duration/prototype/round/precision-exact-in-round-duration.js:
+  default: 'Test262Error:  hours result Expected SameValue(«100000», «100001») to be true'
+  strict mode: 'Test262Error:  hours result Expected SameValue(«100000», «100001») to be true'
+test/built-ins/Temporal/Duration/prototype/subtract/precision-exact-mathematical-values.js:
+  default: 'Test262Error: duration1.subtract(duration2) nanoseconds result Expected SameValue(«24», «0») to be true'
+  strict mode: 'Test262Error: duration1.subtract(duration2) nanoseconds result Expected SameValue(«24», «0») to be true'
+test/built-ins/Temporal/Duration/prototype/toString/precision-exact-mathematical-values.js:
+  default: 'Test262Error: Expected SameValue(«PT10000000000000.004096S», «PT10000000000000.004097S») to be true'
+  strict mode: 'Test262Error: Expected SameValue(«PT10000000000000.004096S», «PT10000000000000.004097S») to be true'
+test/built-ins/Temporal/Duration/prototype/total/precision-exact-mathematical-values-1.js:
+  default: 'Test262Error: return value of total() Expected SameValue(«4000», «4000.0000000000005») to be true'
+  strict mode: 'Test262Error: return value of total() Expected SameValue(«4000», «4000.0000000000005») to be true'
+test/built-ins/Temporal/Duration/prototype/total/precision-exact-mathematical-values-2.js:
+  default: 'Test262Error: Expected SameValue(«4001», «4000.9999999999995») to be true'
+  strict mode: 'Test262Error: Expected SameValue(«4001», «4000.9999999999995») to be true'
 test/built-ins/Temporal/Instant/prototype/since/largestunit.js:
   default: 'Test262Error: does not include higher units than necessary (largest unit unspecified) nanoseconds result Expected SameValue(«40», «101») to be true'
   strict mode: 'Test262Error: does not include higher units than necessary (largest unit unspecified) nanoseconds result Expected SameValue(«40», «101») to be true'
@@ -1119,9 +1125,33 @@ test/built-ins/Temporal/PlainDateTime/prototype/with/order-of-operations.js:
 test/built-ins/Temporal/PlainDateTime/prototype/with/overflow-wrong-type.js:
   default: 'Test262Error: Expected [get overflow.toString, call overflow.toString] and [get overflow.toString, call overflow.toString, get overflow.toString, call overflow.toString] to have the same contents. order of operations'
   strict mode: 'Test262Error: Expected [get overflow.toString, call overflow.toString] and [get overflow.toString, call overflow.toString, get overflow.toString, call overflow.toString] to have the same contents. order of operations'
+test/built-ins/Temporal/PlainTime/prototype/add/precision-exact-mathematical-values-1.js:
+  default: 'Test262Error:  microsecond result Expected SameValue(«992», «993») to be true'
+  strict mode: 'Test262Error:  microsecond result Expected SameValue(«992», «993») to be true'
+test/built-ins/Temporal/PlainTime/prototype/add/precision-exact-mathematical-values-2.js:
+  default: 'RangeError: hour is out of range'
+  strict mode: 'RangeError: hour is out of range'
+test/built-ins/Temporal/PlainTime/prototype/add/precision-exact-mathematical-values-3.js:
+  default: 'RangeError: hour is out of range'
+  strict mode: 'RangeError: hour is out of range'
+test/built-ins/Temporal/PlainTime/prototype/subtract/precision-exact-mathematical-values-1.js:
+  default: 'Test262Error:  microsecond result Expected SameValue(«992», «993») to be true'
+  strict mode: 'Test262Error:  microsecond result Expected SameValue(«992», «993») to be true'
+test/built-ins/Temporal/PlainTime/prototype/subtract/precision-exact-mathematical-values-2.js:
+  default: 'RangeError: hour is out of range'
+  strict mode: 'RangeError: hour is out of range'
+test/built-ins/Temporal/PlainTime/prototype/subtract/precision-exact-mathematical-values-3.js:
+  default: 'RangeError: hour is out of range'
+  strict mode: 'RangeError: hour is out of range'
 test/built-ins/Temporal/getOwnPropertyNames.js:
   default: 'Test262Error: ZonedDateTime'
   strict mode: 'Test262Error: ZonedDateTime'
+test/built-ins/TypedArray/prototype/map/callbackfn-resize.js:
+  default: 'Test262Error: Expected [0, 1, 2] and [0, 1, NaN] to have the same contents. result (shrink) (Testing with Float64Array.)'
+  strict mode: 'Test262Error: Expected [0, 1, 2] and [0, 1, NaN] to have the same contents. result (shrink) (Testing with Float64Array.)'
+test/harness/temporalHelpers-cross-date-line-time-zone.js:
+  default: "TypeError: afterOffset.getOffsetNanosecondsFor is not a function. (In 'afterOffset.getOffsetNanosecondsFor(instant)', 'afterOffset.getOffsetNanosecondsFor' is undefined)"
+  strict mode: "TypeError: afterOffset.getOffsetNanosecondsFor is not a function. (In 'afterOffset.getOffsetNanosecondsFor(instant)', 'afterOffset.getOffsetNanosecondsFor' is undefined)"
 test/harness/temporalHelpers-one-shift-time-zone.js:
   default: "TypeError: realTz.getOffsetNanosecondsFor is not a function. (In 'realTz.getOffsetNanosecondsFor(shiftInstant)', 'realTz.getOffsetNanosecondsFor' is undefined)"
   strict mode: "TypeError: realTz.getOffsetNanosecondsFor is not a function. (In 'realTz.getOffsetNanosecondsFor(shiftInstant)', 'realTz.getOffsetNanosecondsFor' is undefined)"
@@ -2166,12 +2196,6 @@ test/language/statements/for-of/dstr/array-rest-iter-thrw-close.js:
 test/language/statements/for-of/dstr/array-rest-lref-err.js:
   default: 'Test262Error: Expected SameValue(«1», «0») to be true'
   strict mode: 'Test262Error: Expected SameValue(«1», «0») to be true'
-test/language/statements/for-of/dstr/obj-id-put-const.js:
-  default: 'Test262Error: Expected a TypeError to be thrown but no exception was thrown at all'
-  strict mode: 'Test262Error: Expected a TypeError to be thrown but no exception was thrown at all'
-test/language/statements/for-of/dstr/obj-id-put-let.js:
-  default: 'Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all'
-  strict mode: 'Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all'
 test/language/statements/for/dstr/const-ary-init-iter-get-err-array-prototype.js:
   default: 'Test262Error: Expected a TypeError to be thrown but no exception was thrown at all'
   strict mode: 'Test262Error: Expected a TypeError to be thrown but no exception was thrown at all'

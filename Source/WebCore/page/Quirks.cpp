@@ -37,6 +37,7 @@
 #include "EventNames.h"
 #include "FrameLoader.h"
 #include "HTMLBodyElement.h"
+#include "HTMLCollection.h"
 #include "HTMLDivElement.h"
 #include "HTMLMetaElement.h"
 #include "HTMLObjectElement.h"
@@ -225,59 +226,6 @@ bool Quirks::shouldHideSearchFieldResultsButton() const
     return false;
 }
 
-bool Quirks::shouldDisableResolutionMediaQuery() const
-{
-    if (!needsQuirks())
-        return false;
-    auto host = m_document->url().host();
-
-    if (equalLettersIgnoringASCIICase(host, "www.carrentals.com"_s))
-        return true;
-
-    if (equalLettersIgnoringASCIICase(host, "www.cheaptickets.com"_s))
-        return true;
-
-#if ENABLE(PUBLIC_SUFFIX_LIST)
-    if (topPrivatelyControlledDomain(host.toString()).startsWith("ebookers."_s))
-        return true;
-
-    if (topPrivatelyControlledDomain(host.toString()).startsWith("expedia."_s))
-        return true;
-#endif
-
-    if (host.endsWithIgnoringASCIICase(".hoteis.com"_s))
-        return true;
-
-    if (host.endsWithIgnoringASCIICase(".hoteles.com"_s))
-        return true;
-
-    if (equalLettersIgnoringASCIICase(host, "www.hotels.cn"_s))
-        return true;
-
-    if (host.endsWithIgnoringASCIICase(".hotels.com"_s))
-        return true;
-
-    if (equalLettersIgnoringASCIICase(host, "www.mrjet.se"_s))
-        return true;
-
-    if (equalLettersIgnoringASCIICase(host, "www.orbitz.com"_s))
-        return true;
-
-    if (equalLettersIgnoringASCIICase(host, "www.travelocity.ca"_s))
-        return true;
-
-    if (equalLettersIgnoringASCIICase(host, "www.travelocity.com"_s))
-        return true;
-
-    if (equalLettersIgnoringASCIICase(host, "www.wotif.com"_s))
-        return true;
-
-    if (equalLettersIgnoringASCIICase(host, "www.wotif.co.nz"_s))
-        return true;
-
-    return false;
-}
-
 bool Quirks::needsMillisecondResolutionForHighResTimeStamp() const
 {
     if (!needsQuirks())
@@ -337,7 +285,7 @@ bool Quirks::isNeverRichlyEditableForTouchBar() const
     return false;
 }
 
-static bool shouldSuppressAutocorrectionAndAutocaptializationInHiddenEditableAreasForHost(StringView host)
+static bool shouldSuppressAutocorrectionAndAutocapitalizationInHiddenEditableAreasForHost(StringView host)
 {
 #if PLATFORM(IOS_FAMILY)
     return equalLettersIgnoringASCIICase(host, "docs.google.com"_s);
@@ -393,12 +341,12 @@ bool Quirks::shouldAvoidUsingIOS13ForGmail() const
 #endif
 }
 
-bool Quirks::shouldSuppressAutocorrectionAndAutocaptializationInHiddenEditableAreas() const
+bool Quirks::shouldSuppressAutocorrectionAndAutocapitalizationInHiddenEditableAreas() const
 {
     if (!needsQuirks())
         return false;
 
-    return shouldSuppressAutocorrectionAndAutocaptializationInHiddenEditableAreasForHost(m_document->topDocument().url().host());
+    return shouldSuppressAutocorrectionAndAutocapitalizationInHiddenEditableAreasForHost(m_document->topDocument().url().host());
 }
 
 #if ENABLE(TOUCH_EVENTS)
@@ -439,8 +387,6 @@ bool Quirks::shouldDispatchSimulatedMouseEvents(const EventTarget* target) const
             return startsWithLettersIgnoringASCIICase(url.path(), "/website/templates/"_s) ? ShouldDispatchSimulatedMouseEvents::No : ShouldDispatchSimulatedMouseEvents::Yes;
         }
 
-        if ((host == "desmos.com"_s || host.endsWith(".desmos.com"_s)) && startsWithLettersIgnoringASCIICase(url.path(), "/calculator/"_s))
-            return ShouldDispatchSimulatedMouseEvents::Yes;
         if (host == "trello.com"_s || host.endsWith(".trello.com"_s))
             return ShouldDispatchSimulatedMouseEvents::Yes;
         if (host == "airtable.com"_s || host.endsWith(".airtable.com"_s))
@@ -1575,6 +1521,33 @@ bool Quirks::shouldExposeShowModalDialog() const
         m_shouldExposeShowModalDialog = domain == "pandora.com"_s || domain == "marcus.com"_s;
     }
     return *m_shouldExposeShowModalDialog;
+}
+
+bool Quirks::shouldDisableLazyImageLoadingQuirk() const
+{
+    // Images are displaying as fully grey when loaded lazily in significant percentage of page loads.
+    // This issue is not observed when lazy image loading is disabled, and has been fixed in future Gatsby versions.
+    // This quirk is only applied to IKEA.com when "<meta name="generator" content="Gatsby 4.24.1" />" is present.
+    // This quirk can be removed once the gatsby version has been upgraded.
+    // Further discussion can be found here https://github.com/webcompat/web-bugs/issues/113635.
+
+    if (!needsQuirks())
+        return false;
+
+    if (m_shouldDisableLazyImageLoadingQuirk)
+        return m_shouldDisableLazyImageLoadingQuirk.value();
+
+    m_shouldDisableLazyImageLoadingQuirk = false;
+
+    if (RegistrableDomain(m_document->url()).string() != "ikea.com"_s)
+        return false;
+
+    auto* metaElement = m_document->getElementsByTagName("meta"_s)->namedItem("generator"_s);
+    
+    if (metaElement && metaElement->getAttribute("content"_s) == "Gatsby 4.24.1"_s)
+        m_shouldDisableLazyImageLoadingQuirk = true;
+
+    return m_shouldDisableLazyImageLoadingQuirk.value();
 }
 
 }

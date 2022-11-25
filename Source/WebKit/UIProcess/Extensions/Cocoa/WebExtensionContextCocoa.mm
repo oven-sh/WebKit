@@ -183,6 +183,7 @@ bool WebExtensionContext::load(WebExtensionController& controller, NSError **out
     }
 
     m_extensionController = controller;
+    m_contentScriptWorld = API::ContentWorld::sharedWorldWithName(makeString("WebExtension-", m_uniqueIdentifier));
 
     loadBackgroundWebViewDuringLoad();
 
@@ -203,6 +204,7 @@ bool WebExtensionContext::unload(NSError **outError)
     }
 
     m_extensionController = nil;
+    m_contentScriptWorld = nullptr;
 
     unloadBackgroundWebView();
 
@@ -984,13 +986,24 @@ void WebExtensionContext::cancelUserGesture(_WKWebExtensionTab *tab)
     [m_temporaryTabPermissionMatchPatterns removeObjectForKey:tab];
 }
 
+void WebExtensionContext::setTestingMode(bool testingMode)
+{
+    ASSERT(!isLoaded());
+    if (isLoaded())
+        return;
+
+    m_testingMode = testingMode;
+}
+
 WKWebViewConfiguration *WebExtensionContext::webViewConfiguration()
 {
     ASSERT(isLoaded());
 
     WKWebViewConfiguration *configuration = [[WKWebViewConfiguration alloc] init];
 
-    configuration._webExtensionController = m_extensionController->wrapper();
+    // Use the weak property to avoid a reference cycle while an extension web view is being held by the context.
+    configuration._weakWebExtensionController = m_extensionController->wrapper();
+
     configuration._processDisplayName = extension().webProcessDisplayName();
 
     WKPreferences *preferences = configuration.preferences;
@@ -1046,7 +1059,7 @@ void WebExtensionContext::loadBackgroundWebView()
         return;
     }
 
-    [m_backgroundWebView _loadServiceWorker:backgroundContentURL() completionHandler:makeBlockPtr([&, protectedThis = Ref { *this }](BOOL success) {
+    [m_backgroundWebView _loadServiceWorker:backgroundContentURL() usingModules:extension().backgroundContentUsesModules() completionHandler:makeBlockPtr([&, protectedThis = Ref { *this }](BOOL success) {
         if (!success) {
             extension().recordError(extension().createError(WebExtension::Error::BackgroundContentFailedToLoad), WebExtension::SuppressNotification::No);
             return;
@@ -1110,6 +1123,7 @@ void WebExtensionContext::webViewWebContentProcessDidTerminate(WKWebView *webVie
     // FIXME: <https://webkit.org/b/246484> Disconnect message ports for the crashed web view.
 
     if (webView == m_backgroundWebView) {
+        m_backgroundWebView = nullptr;
         loadBackgroundWebView();
         return;
     }

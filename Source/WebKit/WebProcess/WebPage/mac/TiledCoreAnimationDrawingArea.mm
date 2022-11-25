@@ -30,6 +30,7 @@
 
 #import "DisplayRefreshMonitorMac.h"
 #import "DrawingAreaProxyMessages.h"
+#import "EventDispatcher.h"
 #import "LayerHostingContext.h"
 #import "LayerTreeContext.h"
 #import "Logging.h"
@@ -134,6 +135,16 @@ void TiledCoreAnimationDrawingArea::sendEnterAcceleratedCompositingModeIfNeeded(
     LayerTreeContext layerTreeContext;
     layerTreeContext.contextID = m_layerHostingContext->contextID();
     send(Messages::DrawingAreaProxy::EnterAcceleratedCompositingMode(0, layerTreeContext));
+}
+
+void TiledCoreAnimationDrawingArea::registerScrollingTree()
+{
+    WebProcess::singleton().eventDispatcher().addScrollingTreeForPage(m_webPage);
+}
+
+void TiledCoreAnimationDrawingArea::unregisterScrollingTree()
+{
+    WebProcess::singleton().eventDispatcher().removeScrollingTreeForPage(m_webPage);
 }
 
 void TiledCoreAnimationDrawingArea::setNeedsDisplay()
@@ -632,6 +643,11 @@ void TiledCoreAnimationDrawingArea::setLayerHostingMode(LayerHostingMode)
 void TiledCoreAnimationDrawingArea::setColorSpace(std::optional<WebCore::DestinationColorSpace> colorSpace)
 {
     m_layerHostingContext->setColorSpace(colorSpace ? colorSpace->platformColorSpace() : nullptr);
+}
+
+std::optional<WebCore::DestinationColorSpace> TiledCoreAnimationDrawingArea::displayColorSpace() const
+{
+    return DestinationColorSpace { m_layerHostingContext->colorSpace() };
 }
 
 RefPtr<WebCore::DisplayRefreshMonitor> TiledCoreAnimationDrawingArea::createDisplayRefreshMonitor(PlatformDisplayID displayID)

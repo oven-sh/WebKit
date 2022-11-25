@@ -71,6 +71,7 @@ OBJC_CLASS AVPlayerViewController;
 OBJC_CLASS CALayer;
 OBJC_CLASS NSFileWrapper;
 OBJC_CLASS NSMenu;
+OBJC_CLASS NSObject;
 OBJC_CLASS NSSet;
 OBJC_CLASS NSTextAlternatives;
 OBJC_CLASS UIGestureRecognizer;
@@ -197,6 +198,10 @@ class InstallMissingMediaPluginsPermissionRequest;
 
 #if HAVE(VISIBILITY_PROPAGATION_VIEW)
 using LayerHostingContextID = uint32_t;
+#endif
+
+#if PLATFORM(GTK) || PLATFORM(WPE)
+class WebKitWebResourceLoadManager;
 #endif
 
 class PageClient : public CanMakeWeakPtr<PageClient> {
@@ -664,6 +669,10 @@ public:
 #if ENABLE(VIDEO_PRESENTATION_MODE)
     virtual void didEnterFullscreen() = 0;
     virtual void didExitFullscreen() = 0;
+#endif
+
+#if PLATFORM(GTK) || PLATFORM(WPE)
+    virtual WebKitWebResourceLoadManager* webResourceLoadManager() = 0;
 #endif
 };
 

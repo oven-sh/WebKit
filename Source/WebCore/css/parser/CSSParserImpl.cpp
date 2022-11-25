@@ -57,10 +57,9 @@
 #include "MediaQueryParser.h"
 #include "MediaQueryParserContext.h"
 #include "StyleProperties.h"
+#include "StyleRule.h"
 #include "StyleRuleImport.h"
 #include "StyleSheetContents.h"
-#include "css/StyleRule.h"
-
 #include <bitset>
 #include <memory>
 
@@ -70,7 +69,6 @@ CSSParserImpl::CSSParserImpl(const CSSParserContext& context, StyleSheetContents
     : m_context(context)
     , m_styleSheet(styleSheet)
 {
-    
 }
 
 CSSParserImpl::CSSParserImpl(const CSSParserContext& context, const String& string, StyleSheetContents* styleSheet, CSSParserObserverWrapper* wrapper)
@@ -1092,7 +1090,7 @@ void CSSParserImpl::consumeDeclaration(CSSParserTokenRange range, StyleRuleType 
 
     size_t propertiesCount = m_parsedProperties.size();
 
-    if (!isCSSPropertyExposed(propertyID, &m_context.propertySettings))
+    if (!isExposed(propertyID, &m_context.propertySettings))
         propertyID = CSSPropertyInvalid;
 
     if (propertyID == CSSPropertyInvalid && CSSVariableParser::isValidVariableName(token)) {

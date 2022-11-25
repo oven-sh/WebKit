@@ -4,7 +4,7 @@
  *           (C) 2000 Dirk Mueller (mueller@kde.org)
  *           (C) 2004 Allan Sandfeld Jensen (kde@carewolf.com)
  * Copyright (C) 2004-2020 Apple Inc. All rights reserved.
- * Copyright (C) 2009 Google Inc. All rights reserved.
+ * Copyright (C) 2009-2022 Google Inc. All rights reserved.
  * Copyright (C) 2009 Torch Mobile Inc. All rights reserved. (http://www.torchmobile.com/)
  *
  * This library is free software; you can redistribute it and/or
@@ -115,11 +115,12 @@ struct SameSizeAsRenderObject {
     bool weakPtrFactorWasConstructedOnMainThread;
     HashSet<void*> cachedResourceClientAssociatedResources;
 #endif
-    void* pointers[6];
+    void* pointers[5];
 #if ASSERT_ENABLED
     unsigned m_debugBitfields : 2;
 #endif
     unsigned m_bitfields;
+    WeakPtr<Node> m_node;
 };
 
 #if CPU(ADDRESS64)
@@ -526,8 +527,13 @@ static inline bool objectIsRelayoutBoundary(const RenderElement* object)
     if (object->document().settings().layerBasedSVGEngineEnabled() && object->isSVGLayerAwareRenderer())
         return false;
 #endif
-
-    if (object->style().width().isIntrinsicOrAuto() || object->style().height().isIntrinsicOrAuto() || object->style().height().isPercentOrCalculated())
+    
+    // If either dimension is percent-based, intrinsic, or anything but fixed
+    // this object cannot form a re-layout boundary. A non-fixed computed logical
+    // height will allow the object to grow and shrink based on the content
+    // inside. The same goes for for logical width, if this objects is inside a
+    // shrink-to-fit container, for instance.
+    if (!object->style().width().isFixed() || !object->style().height().isFixed())
         return false;
 
     // Table parts can't be relayout roots since the table is responsible for layouting all the parts.
@@ -705,10 +711,13 @@ RenderBlock* RenderObject::containingBlockForPositionType(PositionType positionT
     }
 
     if (positionType == PositionType::Fixed) {
-        auto containingBlockForFixedPosition = [&] {
+        auto containingBlockForFixedPosition = [&] () -> RenderBlock* {
             auto* ancestor = renderer.parent();
-            while (ancestor && !ancestor->canContainFixedPositionObjects())
+            while (ancestor && !ancestor->canContainFixedPositionObjects()) {
+                if (isInTopLayerOrBackdrop(ancestor->style(), ancestor->element()))
+                    return &renderer.view();
                 ancestor = ancestor->parent();
+            }
             return nearestNonAnonymousContainingBlockIncludingSelf(ancestor);
         };
         return containingBlockForFixedPosition();
@@ -1557,20 +1566,20 @@ static inline RenderElement* containerForElement(const RenderObject& renderer, c
     // This does mean that computePositionedLogicalWidth and computePositionedLogicalHeight have to use container().
     if (!is<RenderElement>(renderer))
         return renderer.parent();
-    if (isInTopLayerOrBackdrop(renderer.style(), downcast<RenderElement>(renderer).element())) {
-        auto updateRepaintContainerSkippedFlagIfApplicable = [&] {
-            if (!repaintContainerSkipped)
-                return;
-            *repaintContainerSkipped = false;
-            if (repaintContainer == &renderer.view())
-                return;
-            for (auto& ancestor : ancestorsOfType<RenderElement>(renderer)) {
-                if (repaintContainer == &ancestor) {
-                    *repaintContainerSkipped = true;
-                    break;
-                }
+    auto updateRepaintContainerSkippedFlagIfApplicable = [&] {
+        if (!repaintContainerSkipped)
+            return;
+        *repaintContainerSkipped = false;
+        if (repaintContainer == &renderer.view())
+            return;
+        for (auto& ancestor : ancestorsOfType<RenderElement>(renderer)) {
+            if (repaintContainer == &ancestor) {
+                *repaintContainerSkipped = true;
+                break;
             }
-        };
+        }
+    };
+    if (isInTopLayerOrBackdrop(renderer.style(), downcast<RenderElement>(renderer).element())) {
         updateRepaintContainerSkippedFlagIfApplicable();
         return &renderer.view();
     }
@@ -1578,7 +1587,18 @@ static inline RenderElement* containerForElement(const RenderObject& renderer, c
     if (position == PositionType::Static || position == PositionType::Relative || position == PositionType::Sticky)
         return renderer.parent();
     auto* parent = renderer.parent();
-    for (; parent && (position == PositionType::Absolute ? !parent->canContainAbsolutelyPositionedObjects() : !parent->canContainFixedPositionObjects()); parent = parent->parent()) {
+    if (position == PositionType::Absolute) {
+        for (; parent && !parent->canContainAbsolutelyPositionedObjects(); parent = parent->parent()) {
+            if (repaintContainerSkipped && repaintContainer == parent)
+                *repaintContainerSkipped = true;
+        }
+        return parent;
+    }
+    for (; parent && !parent->canContainFixedPositionObjects(); parent = parent->parent()) {
+        if (isInTopLayerOrBackdrop(parent->style(), parent->element())) {
+            updateRepaintContainerSkippedFlagIfApplicable();
+            return &renderer.view();
+        }
         if (repaintContainerSkipped && repaintContainer == parent)
             *repaintContainerSkipped = true;
     }
@@ -1652,11 +1672,6 @@ void RenderObject::destroy()
     RELEASE_ASSERT(!m_bitfields.beingDestroyed());
 
     m_bitfields.setBeingDestroyed(true);
-
-#if PLATFORM(IOS_FAMILY)
-    if (hasLayer())
-        downcast<RenderBoxModelObject>(*this).layer()->willBeDestroyed();
-#endif
 
     willBeDestroyed();
 
@@ -2551,6 +2566,16 @@ String RenderObject::debugDescription() const
         builder.append(' ', node()->debugDescription());
     
     return builder.toString();
+}
+
+bool RenderObject::isSkippedContent() const
+{
+    return parent() && parent()->style().effectiveSkipsContent();
+}
+
+bool RenderObject::shouldSkipContent() const
+{
+    return style().contentVisibility() == ContentVisibility::Hidden;
 }
 
 TextStream& operator<<(TextStream& ts, const RenderObject& renderer)

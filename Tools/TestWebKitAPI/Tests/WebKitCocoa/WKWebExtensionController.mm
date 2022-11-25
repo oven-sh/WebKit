@@ -113,19 +113,14 @@ TEST(WKWebExtensionController, LoadingAndUnloadingContexts)
     EXPECT_FALSE(testContextOne.loaded);
 }
 
-// FIXME Re-enable when https://bugs.webkit.org/show_bug.cgi?id=246632 is resolved 
-#if PLATFORM(IOS)
-TEST(WKWebExtensionController, DISABLED_BackgroundPageLoading)
-#else
 TEST(WKWebExtensionController, BackgroundPageLoading)
-#endif
 {
     NSDictionary *resources = @{
         @"background.html": @"<body>Hello world!</body>",
         @"background.js": @"console.log('Hello World!')"
     };
 
-    NSMutableDictionary *manifest = [@{ @"manifest_version": @2, @"name": @"Test One", @"description": @"Test One", @"version": @"1.0", @"background": @{ @"page": @"background.html" } } mutableCopy];
+    NSMutableDictionary *manifest = [@{ @"manifest_version": @2, @"name": @"Test One", @"description": @"Test One", @"version": @"1.0", @"background": @{ @"page": @"background.html", @"persistent": @NO } } mutableCopy];
 
     _WKWebExtension *testExtension = [[_WKWebExtension alloc] _initWithManifestDictionary:manifest resources:resources];
     _WKWebExtensionContext *testContext = [[_WKWebExtensionContext alloc] initWithExtension:testExtension];
@@ -183,6 +178,53 @@ TEST(WKWebExtensionController, BackgroundPageLoading)
     EXPECT_TRUE([testController unloadExtensionContext:testContext error:&error]);
     EXPECT_NULL(error);
 
+    EXPECT_NULL(testExtension.errors);
+}
+
+TEST(WKWebExtensionController, BackgroundPageWithModulesLoading)
+{
+    NSDictionary *resources = @{
+        @"main.js": @"import { x } from './exports.js'; x;",
+        @"exports.js": @"const x = 805; export { x };",
+    };
+
+    NSMutableDictionary *manifest = [@{ @"manifest_version": @2, @"name": @"Test One", @"description": @"Test One", @"version": @"1.0", @"background": @{ @"scripts": @[ @"main.js", @"exports.js" ], @"type": @"module", @"persistent": @NO } } mutableCopy];
+
+    _WKWebExtension *testExtension = [[_WKWebExtension alloc] _initWithManifestDictionary:manifest resources:resources];
+    _WKWebExtensionContext *testContext = [[_WKWebExtensionContext alloc] initWithExtension:testExtension];
+    _WKWebExtensionController *testController = [[_WKWebExtensionController alloc] init];
+
+    EXPECT_NULL(testExtension.errors);
+
+    NSError *error;
+    EXPECT_TRUE([testController loadExtensionContext:testContext error:&error]);
+    EXPECT_NULL(error);
+
+    // Wait for the background to load.
+    TestWebKitAPI::Util::runFor(4_s);
+
+    // No errors means success.
+    EXPECT_NULL(testExtension.errors);
+
+    EXPECT_TRUE([testController unloadExtensionContext:testContext error:&error]);
+    EXPECT_NULL(error);
+
+    EXPECT_NULL(testExtension.errors);
+
+    manifest[@"background"] = @{ @"service_worker": @"main.js", @"type": @"module" };
+
+    testExtension = [[_WKWebExtension alloc] _initWithManifestDictionary:manifest resources:resources];
+    testContext = [[_WKWebExtensionContext alloc] initWithExtension:testExtension];
+
+    EXPECT_NULL(testExtension.errors);
+
+    EXPECT_TRUE([testController loadExtensionContext:testContext error:&error]);
+    EXPECT_NULL(error);
+
+    // Wait for the background to load.
+    TestWebKitAPI::Util::runFor(4_s);
+
+    // No errors means success.
     EXPECT_NULL(testExtension.errors);
 }
 

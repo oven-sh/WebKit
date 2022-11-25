@@ -271,6 +271,11 @@ LayoutPoint InlineFormattingGeometry::staticPositionForOutOfFlowInlineLevelBox(c
     auto& lines = formattingState.lines();
     auto& boxes = formattingState.boxes();
 
+    if (lines.isEmpty()) {
+        ASSERT(boxes.isEmpty());
+        return contentBoxTopLeft;
+    }
+
     auto previousDisplayBoxIndexBeforeOutOfFlowBox = previousDisplayBoxIndex(outOfFlowBox, boxes);
     if (!previousDisplayBoxIndexBeforeOutOfFlowBox)
         return { boxes[0].left(), lines[0].top() };
@@ -324,19 +329,7 @@ InlineLayoutUnit InlineFormattingGeometry::initialLineHeight(bool isFirstLine) c
 FloatingContext::Constraints InlineFormattingGeometry::floatConstraintsForLine(InlineLayoutUnit lineLogicalTop, InlineLayoutUnit contentLogicalHeight, const FloatingContext& floatingContext) const
 {
     // Check for intruding floats and adjust logical left/available width for this line accordingly.
-    auto toLogicalFloatPosition = [&] (const auto& constraints) {
-        // FIXME: Move inline direction flip to FloatingContext.
-        if (floatingContext.floatingState().isLeftToRightDirection() == formattingContext().root().style().isLeftToRightDirection())
-            return constraints;
-        auto logicalConstraints = FloatingContext::Constraints { };
-        auto borderBoxWidth = layoutState().geometryForBox(formattingContext().root()).borderBoxWidth();
-        if (constraints.left)
-            logicalConstraints.right = PointInContextRoot { borderBoxWidth - constraints.left->x, constraints.left->y };
-        if (constraints.right)
-            logicalConstraints.left = PointInContextRoot { borderBoxWidth - constraints.right->x, constraints.right->y };
-        return logicalConstraints;
-    };
-    return toLogicalFloatPosition(floatingContext.constraints(toLayoutUnit(lineLogicalTop), toLayoutUnit(lineLogicalTop + contentLogicalHeight), FloatingContext::MayBeAboveLastFloat::Yes));
+    return floatingContext.constraints(toLayoutUnit(lineLogicalTop), toLayoutUnit(lineLogicalTop + contentLogicalHeight), FloatingContext::MayBeAboveLastFloat::Yes);
 }
 
 }

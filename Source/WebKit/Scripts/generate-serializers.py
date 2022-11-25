@@ -34,6 +34,7 @@ class SerializedType(object):
         self.parent_class_name = parent_class_name
         self.parent_class = None
         self.members = members
+        self.alias = None
         self.condition = condition
         self.encoders = ['Encoder']
         self.serialize_with_function_calls = False
@@ -53,6 +54,8 @@ class SerializedType(object):
                         self.create_using = value
                     if key == 'LegacyPopulateFrom' and value == 'EmptyConstructor':
                         self.populate_from_empty_constructor = True
+                    if key == 'Alias':
+                        self.alias = value
                 else:
                     if attribute == 'Nested':
                         self.nested = True
@@ -183,6 +186,11 @@ def argument_coder_declarations(serialized_types, skip_nested):
     return result
 
 
+def remove_template_parameters(alias):
+    match = re.search(r'(.*)<', alias)
+    assert match
+    return match.groups()[0]
+
 def generate_header(serialized_types, serialized_enums):
     result = []
     result.append(_license_header)
@@ -208,10 +216,16 @@ def generate_header(serialized_types, serialized_enums):
             continue
         if type.condition is not None:
             result.append('#if ' + type.condition)
-        if type.namespace is None:
-            result.append(type.struct_or_class + ' ' + type.name + ';')
+        if type.alias is not None:
+            result.append('namespace ' + type.namespace + ' {')
+            result.append('template<typename> class ' + remove_template_parameters(type.alias) + ';')
+            result.append('using ' + type.name + ' = ' + type.alias + ';')
+            result.append('}')
         else:
-            result.append('namespace ' + type.namespace + ' { ' + type.struct_or_class + ' ' + type.name + '; }')
+            if type.namespace is None:
+                result.append(type.struct_or_class + ' ' + type.name + ';')
+            else:
+                result.append('namespace ' + type.namespace + ' { ' + type.struct_or_class + ' ' + type.name + '; }')
         if type.condition is not None:
             result.append('#endif')
     result.append('')
@@ -261,7 +275,7 @@ def check_type_members(type):
     for member in type.members:
         if member.condition is not None:
             result.append('#if ' + member.condition)
-        result.append('    static_assert(std::is_same_v<std::remove_const_t<std::remove_reference_t<decltype(instance.' + member.name + ')>>, ' + member.type + '>);')
+        result.append('    static_assert(std::is_same_v<std::remove_cvref_t<decltype(instance.' + member.name + ')>, ' + member.type + '>);')
         if member.condition is not None:
             result.append('#endif')
     return result
@@ -621,27 +635,27 @@ def parse_serialized_types(file, file_name):
             assert underlying_type != 'bool'
             continue
 
-        match = re.search(r'\[(.*)\] (struct|class) (.*)::(.*) : (.*) {', line)
+        match = re.search(r'\[(.*)\] (struct|class|alias) (.*)::(.*) : (.*) {', line)
         if match:
             attributes, struct_or_class, namespace, name, parent_class_name = match.groups()
             continue
-        match = re.search(r'(struct|class) (.*)::(.*) : (.*) {', line)
+        match = re.search(r'(struct|class|alias) (.*)::(.*) : (.*) {', line)
         if match:
             struct_or_class, namespace, name, parent_class_name = match.groups()
             continue
-        match = re.search(r'\[(.*)\] (struct|class) (.*)::(.*) {', line)
+        match = re.search(r'\[(.*)\] (struct|class|alias) (.*)::(.*) {', line)
         if match:
             attributes, struct_or_class, namespace, name = match.groups()
             continue
-        match = re.search(r'(struct|class) (.*)::(.*) {', line)
+        match = re.search(r'(struct|class|alias) (.*)::(.*) {', line)
         if match:
             struct_or_class, namespace, name = match.groups()
             continue
-        match = re.search(r'\[(.*)\] (struct|class) (.*) {', line)
+        match = re.search(r'\[(.*)\] (struct|class|alias) (.*) {', line)
         if match:
             attributes, struct_or_class, name = match.groups()
             continue
-        match = re.search(r'(struct|class) (.*) {', line)
+        match = re.search(r'(struct|class|alias) (.*) {', line)
         if match:
             struct_or_class, name = match.groups()
             continue

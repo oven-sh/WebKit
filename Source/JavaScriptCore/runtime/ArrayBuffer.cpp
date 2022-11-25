@@ -29,8 +29,12 @@
 #include "JSArrayBufferView.h"
 #include "JSCellInlines.h"
 #include <wtf/Gigacage.h>
+#include <wtf/SafeStrerror.h>
 
 namespace JSC {
+namespace ArrayBufferInternal {
+static constexpr bool verbose = false;
+}
 
 Ref<SharedTask<void(void*)>> ArrayBuffer::primitiveGigacageDestructor()
 {
@@ -40,6 +44,75 @@ Ref<SharedTask<void(void*)>> ArrayBuffer::primitiveGigacageDestructor()
         destructor.construct(createSharedTask<void(void*)>([] (void* p) { Gigacage::free(Gigacage::Primitive, p); }));
     });
     return destructor.get().copyRef();
+}
+
+template<typename Func>
+static bool tryAllocate(VM* vm, const Func& allocate)
+{
+    unsigned numTries = 2;
+    bool success = false;
+    for (unsigned i = 0; i < numTries && !success; ++i) {
+        switch (allocate()) {
+        case BufferMemoryResult::Success:
+            success = true;
+            break;
+        case BufferMemoryResult::SuccessAndNotifyMemoryPressure:
+            if (vm)
+                vm->heap.collectAsync(CollectionScope::Full);
+            success = true;
+            break;
+        case BufferMemoryResult::SyncTryToReclaimMemory:
+            if (i + 1 == numTries)
+                break;
+            if (vm)
+                vm->heap.collectSync(CollectionScope::Full);
+            break;
+        }
+    }
+    return success;
+}
+
+static RefPtr<BufferMemoryHandle> tryAllocateResizableMemory(VM* vm, size_t sizeInBytes, size_t maxByteLength)
+{
+    // Make sure malloc actually allocates something, but not too much. We use null to mean that the buffer is detached.
+    size_t initialBytes = roundUpToMultipleOf<PageCount::pageSize>(sizeInBytes);
+    if (!initialBytes)
+        initialBytes = PageCount::pageSize;
+    size_t maximumBytes = roundUpToMultipleOf<PageCount::pageSize>(maxByteLength);
+    if (!maximumBytes)
+        maximumBytes = PageCount::pageSize;
+
+    bool done = tryAllocate(vm,
+        [&] () -> BufferMemoryResult::Kind {
+            return BufferMemoryManager::singleton().tryAllocatePhysicalBytes(initialBytes);
+        });
+    if (!done)
+        return nullptr;
+
+    char* slowMemory = nullptr;
+    tryAllocate(vm,
+        [&] () -> BufferMemoryResult::Kind {
+            auto result = BufferMemoryManager::singleton().tryAllocateGrowableBoundsCheckingMemory(maximumBytes);
+            slowMemory = bitwise_cast<char*>(result.basePtr);
+            return result.kind;
+        });
+    if (!slowMemory) {
+        BufferMemoryManager::singleton().freePhysicalBytes(initialBytes);
+        return nullptr;
+    }
+
+    constexpr bool readable = false;
+    constexpr bool writable = false;
+    if (!OSAllocator::protect(slowMemory + initialBytes, maximumBytes - initialBytes, readable, writable)) {
+#if OS(WINDOWS)
+        dataLogLn("mprotect failed: ", static_cast<int>(GetLastError()));
+#else
+        dataLogLn("mprotect failed: ", safeStrerror(errno).data());
+#endif
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    return adoptRef(*new BufferMemoryHandle(slowMemory, initialBytes, maximumBytes, PageCount::fromBytes(initialBytes), PageCount::fromBytes(maximumBytes), MemorySharingMode::Shared, MemoryMode::BoundsChecking));
 }
 
 void ArrayBufferContents::tryAllocate(size_t numElements, unsigned elementByteSize, InitializationPolicy policy)
@@ -62,24 +135,26 @@ void ArrayBufferContents::tryAllocate(size_t numElements, unsigned elementByteSi
         return;
     }
     
-    if (policy == ZeroInitialize)
+    if (policy == InitializationPolicy::ZeroInitialize)
         memset(data, 0, allocationSize);
 
     m_sizeInBytes = sizeInBytes.value();
     RELEASE_ASSERT(m_sizeInBytes <= MAX_ARRAY_BUFFER_SIZE);
+    m_maxByteLength = m_sizeInBytes;
+    m_hasMaxByteLength = false;
     m_destructor = ArrayBuffer::primitiveGigacageDestructor();
 }
 
 void ArrayBufferContents::makeShared()
 {
-    m_shared = adoptRef(new SharedArrayBufferContents(data(), sizeInBytes(), WTFMove(m_destructor)));
+    m_shared = SharedArrayBufferContents::create(data(), sizeInBytes(), maxByteLength(), m_memoryHandle, WTFMove(m_destructor), SharedArrayBufferContents::Mode::Default);
     m_destructor = nullptr;
 }
 
 void ArrayBufferContents::copyTo(ArrayBufferContents& other)
 {
     ASSERT(!other.m_data);
-    other.tryAllocate(m_sizeInBytes, sizeof(char), ArrayBufferContents::DontInitialize);
+    other.tryAllocate(m_sizeInBytes, sizeof(char), ArrayBufferContents::InitializationPolicy::DontInitialize);
     if (!other.m_data)
         return;
     memcpy(other.data(), data(), m_sizeInBytes);
@@ -94,7 +169,10 @@ void ArrayBufferContents::shareWith(ArrayBufferContents& other)
     other.m_data = m_data;
     other.m_destructor = nullptr;
     other.m_shared = m_shared;
+    other.m_memoryHandle = m_memoryHandle;
     other.m_sizeInBytes = m_sizeInBytes;
+    other.m_maxByteLength = m_maxByteLength;
+    other.m_hasMaxByteLength = m_hasMaxByteLength;
     RELEASE_ASSERT(other.m_sizeInBytes <= MAX_ARRAY_BUFFER_SIZE);
 }
 
@@ -145,12 +223,22 @@ Ref<ArrayBuffer> ArrayBuffer::createFromBytes(const void* data, size_t byteLengt
     if (data && !Gigacage::isCaged(Gigacage::Primitive, data))
         Gigacage::disablePrimitiveGigacage();
     
-    return adoptRef(*new ArrayBuffer(const_cast<void*>(data), byteLength, WTFMove(destructor)));
+    ArrayBufferContents contents(const_cast<void*>(data), byteLength, std::nullopt, WTFMove(destructor));
+    return create(WTFMove(contents));
 }
 
-RefPtr<ArrayBuffer> ArrayBuffer::tryCreate(size_t numElements, unsigned elementByteSize)
+Ref<ArrayBuffer> ArrayBuffer::createShared(Ref<SharedArrayBufferContents>&& shared)
 {
-    return tryCreate(numElements, elementByteSize, ArrayBufferContents::ZeroInitialize);
+    void* memory = shared->data();
+    size_t sizeInBytes = shared->sizeInBytes(std::memory_order_seq_cst);
+    auto maxByteLength = shared->maxByteLength();
+    ArrayBufferContents contents(memory, sizeInBytes, maxByteLength, WTFMove(shared));
+    return create(WTFMove(contents));
+}
+
+RefPtr<ArrayBuffer> ArrayBuffer::tryCreate(size_t numElements, unsigned elementByteSize, std::optional<size_t> maxByteLength)
+{
+    return tryCreate(numElements, elementByteSize, maxByteLength, ArrayBufferContents::InitializationPolicy::ZeroInitialize);
 }
 
 RefPtr<ArrayBuffer> ArrayBuffer::tryCreate(ArrayBuffer& other)
@@ -161,7 +249,7 @@ RefPtr<ArrayBuffer> ArrayBuffer::tryCreate(ArrayBuffer& other)
 RefPtr<ArrayBuffer> ArrayBuffer::tryCreate(const void* source, size_t byteLength)
 {
     ArrayBufferContents contents;
-    contents.tryAllocate(byteLength, 1, ArrayBufferContents::DontInitialize);
+    contents.tryAllocate(byteLength, 1, ArrayBufferContents::InitializationPolicy::DontInitialize);
     if (!contents.m_data)
         return nullptr;
     return createInternal(WTFMove(contents), source, byteLength);
@@ -169,17 +257,17 @@ RefPtr<ArrayBuffer> ArrayBuffer::tryCreate(const void* source, size_t byteLength
 
 Ref<ArrayBuffer> ArrayBuffer::createUninitialized(size_t numElements, unsigned elementByteSize)
 {
-    return create(numElements, elementByteSize, ArrayBufferContents::DontInitialize);
+    return create(numElements, elementByteSize, ArrayBufferContents::InitializationPolicy::DontInitialize);
 }
 
 RefPtr<ArrayBuffer> ArrayBuffer::tryCreateUninitialized(size_t numElements, unsigned elementByteSize)
 {
-    return tryCreate(numElements, elementByteSize, ArrayBufferContents::DontInitialize);
+    return tryCreate(numElements, elementByteSize, std::nullopt, ArrayBufferContents::InitializationPolicy::DontInitialize);
 }
 
 Ref<ArrayBuffer> ArrayBuffer::create(size_t numElements, unsigned elementByteSize, ArrayBufferContents::InitializationPolicy policy)
 {
-    auto buffer = tryCreate(numElements, elementByteSize, policy);
+    auto buffer = tryCreate(numElements, elementByteSize, std::nullopt, policy);
     if (!buffer)
         CRASH();
     return buffer.releaseNonNull();
@@ -195,13 +283,31 @@ Ref<ArrayBuffer> ArrayBuffer::createInternal(ArrayBufferContents&& contents, con
     return buffer;
 }
 
-RefPtr<ArrayBuffer> ArrayBuffer::tryCreate(size_t numElements, unsigned elementByteSize, ArrayBufferContents::InitializationPolicy policy)
+RefPtr<ArrayBuffer> ArrayBuffer::tryCreate(size_t numElements, unsigned elementByteSize, std::optional<size_t> maxByteLength, ArrayBufferContents::InitializationPolicy policy)
 {
-    ArrayBufferContents contents;
-    contents.tryAllocate(numElements, elementByteSize, policy);
-    if (!contents.m_data)
+    if (!maxByteLength) {
+        ArrayBufferContents contents;
+        contents.tryAllocate(numElements, elementByteSize, policy);
+        if (!contents.m_data)
+            return nullptr;
+        return adoptRef(*new ArrayBuffer(WTFMove(contents)));
+    }
+
+    CheckedSize sizeInBytes = numElements;
+    sizeInBytes *= elementByteSize;
+    if (sizeInBytes.hasOverflowed() || sizeInBytes.value() > MAX_ARRAY_BUFFER_SIZE)
         return nullptr;
-    return adoptRef(*new ArrayBuffer(WTFMove(contents)));
+
+    if (sizeInBytes.value() > maxByteLength.value() || maxByteLength.value() > MAX_ARRAY_BUFFER_SIZE)
+        return nullptr;
+
+    auto handle = tryAllocateResizableMemory(nullptr, sizeInBytes.value(), maxByteLength.value());
+    if (!handle)
+        return nullptr;
+
+    void* memory = handle->memory();
+    ArrayBufferContents contents(memory, sizeInBytes.value(), maxByteLength.value(), handle.releaseNonNull());
+    return create(WTFMove(contents));
 }
 
 ArrayBuffer::ArrayBuffer(ArrayBufferContents&& contents)
@@ -310,7 +416,7 @@ bool ArrayBuffer::transferTo(VM& vm, ArrayBufferContents& result)
         return true;
     }
 
-    result = WTFMove(m_contents);
+    result = m_contents.detach();
     notifyDetaching(vm);
     return true;
 }
@@ -319,7 +425,7 @@ bool ArrayBuffer::transferTo(VM& vm, ArrayBufferContents& result)
 void ArrayBuffer::detach(VM& vm)
 {
     ASSERT(isWasmMemory());
-    ArrayBufferContents unused = WTFMove(m_contents);
+    auto unused = m_contents.detach();
     notifyDetaching(vm);
 }
 
@@ -331,6 +437,181 @@ void ArrayBuffer::notifyDetaching(VM& vm)
             view->detach();
     }
     m_detachingWatchpointSet.fireAll(vm, "Array buffer was detached");
+}
+
+Expected<void, GrowFailReason> ArrayBuffer::grow(VM& vm, size_t newByteLength)
+{
+    auto shared = m_contents.m_shared;
+    if (UNLIKELY(!shared))
+        return makeUnexpected(GrowFailReason::GrowSharedUnavailable);
+    return shared->grow(vm, newByteLength);
+}
+
+Expected<void, GrowFailReason> ArrayBuffer::resize(VM& vm, size_t newByteLength)
+{
+    auto memoryHandle = m_contents.m_memoryHandle;
+    if (UNLIKELY(!memoryHandle || m_contents.m_shared))
+        return makeUnexpected(GrowFailReason::GrowSharedUnavailable);
+
+    Locker { memoryHandle->lock() };
+
+    // Keep in mind that newByteLength may not be page-size-aligned.
+    if (m_contents.m_maxByteLength < newByteLength)
+        return makeUnexpected(GrowFailReason::InvalidGrowSize);
+
+    if (m_contents.m_sizeInBytes == newByteLength)
+        return { };
+
+    auto newPageCount = PageCount::fromBytesWithRoundUp(newByteLength);
+    auto oldPageCount = PageCount::fromBytes(memoryHandle->size()); // MemoryHandle's size is always page-size aligned.
+    if (newPageCount.bytes() > MAX_ARRAY_BUFFER_SIZE)
+        return makeUnexpected(GrowFailReason::WouldExceedMaximum);
+
+    if (newPageCount != oldPageCount) {
+        ASSERT(memoryHandle->maximum() >= newPageCount);
+        size_t desiredSize = newPageCount.bytes();
+        RELEASE_ASSERT(desiredSize <= MAX_ARRAY_BUFFER_SIZE);
+
+        if (desiredSize > memoryHandle->size()) {
+            size_t bytesToAdd = desiredSize - memoryHandle->size();
+            ASSERT(bytesToAdd);
+            ASSERT(roundUpToMultipleOf<PageCount::pageSize>(bytesToAdd) == bytesToAdd);
+            bool allocationSuccess = tryAllocate(&vm,
+                [&] () -> BufferMemoryResult::Kind {
+                    return BufferMemoryManager::singleton().tryAllocatePhysicalBytes(bytesToAdd);
+                });
+            if (!allocationSuccess)
+                return makeUnexpected(GrowFailReason::OutOfMemory);
+
+            void* memory = memoryHandle->memory();
+            RELEASE_ASSERT(memory);
+
+            // Signaling memory must have been pre-allocated virtually.
+            uint8_t* startAddress = static_cast<uint8_t*>(memory) + memoryHandle->size();
+
+            dataLogLnIf(ArrayBufferInternal::verbose, "Marking memory's ", RawPointer(memory), " as read+write in range [", RawPointer(startAddress), ", ", RawPointer(startAddress + bytesToAdd), ")");
+            constexpr bool readable = true;
+            constexpr bool writable = true;
+            if (!OSAllocator::protect(startAddress, bytesToAdd, readable, writable)) {
+#if OS(WINDOWS)
+                dataLogLn("mprotect failed: ", static_cast<int>(GetLastError()));
+#else
+                dataLogLn("mprotect failed: ", safeStrerror(errno).data());
+#endif
+                RELEASE_ASSERT_NOT_REACHED();
+            }
+        } else {
+            size_t bytesToSubtract = memoryHandle->size() - desiredSize;
+            ASSERT(bytesToSubtract);
+            ASSERT(roundUpToMultipleOf<PageCount::pageSize>(bytesToSubtract) == bytesToSubtract);
+            BufferMemoryManager::singleton().freePhysicalBytes(bytesToSubtract);
+
+            void* memory = memoryHandle->memory();
+            RELEASE_ASSERT(memory);
+
+            // Signaling memory must have been pre-allocated virtually.
+            uint8_t* startAddress = static_cast<uint8_t*>(memory) + desiredSize;
+
+            dataLogLnIf(ArrayBufferInternal::verbose, "Marking memory's ", RawPointer(memory), " as none in range [", RawPointer(startAddress), ", ", RawPointer(startAddress + bytesToSubtract), ")");
+            constexpr bool readable = false;
+            constexpr bool writable = false;
+            if (!OSAllocator::protect(startAddress, bytesToSubtract, readable, writable)) {
+#if OS(WINDOWS)
+                dataLogLn("mprotect failed: ", static_cast<int>(GetLastError()));
+#else
+                dataLogLn("mprotect failed: ", safeStrerror(errno).data());
+#endif
+                RELEASE_ASSERT_NOT_REACHED();
+            }
+        }
+        memoryHandle->updateSize(desiredSize);
+    }
+
+    if (m_contents.m_sizeInBytes < newByteLength)
+        memset(bitwise_cast<uint8_t*>(data()) + m_contents.m_sizeInBytes, 0, newByteLength - m_contents.m_sizeInBytes);
+
+    m_contents.m_sizeInBytes = newByteLength;
+    return { };
+}
+
+RefPtr<ArrayBuffer> ArrayBuffer::tryCreateShared(VM& vm, size_t numElements, unsigned elementByteSize, size_t maxByteLength)
+{
+    CheckedSize sizeInBytes = numElements;
+    sizeInBytes *= elementByteSize;
+    if (sizeInBytes.hasOverflowed() || sizeInBytes.value() > MAX_ARRAY_BUFFER_SIZE || (sizeInBytes.value() > maxByteLength))
+        return nullptr;
+
+    auto handle = tryAllocateResizableMemory(&vm, sizeInBytes.value(), maxByteLength);
+    if (!handle)
+        return nullptr;
+
+    void* memory = handle->memory();
+    return createShared(SharedArrayBufferContents::create(memory, sizeInBytes.value(), maxByteLength, WTFMove(handle), nullptr, SharedArrayBufferContents::Mode::Default));
+}
+
+Expected<void, GrowFailReason> SharedArrayBufferContents::grow(VM& vm, size_t newByteLength)
+{
+    if (!m_hasMaxByteLength)
+        return makeUnexpected(GrowFailReason::GrowSharedUnavailable);
+    ASSERT(m_memoryHandle);
+    return grow(Locker { m_memoryHandle->lock() }, vm, newByteLength);
+}
+
+Expected<void, GrowFailReason> SharedArrayBufferContents::grow(const AbstractLocker&, VM& vm, size_t newByteLength)
+{
+    // Keep in mind that newByteLength may not be page-size-aligned.
+    size_t sizeInBytes = m_sizeInBytes.load(std::memory_order_seq_cst);
+    if (sizeInBytes > newByteLength || m_maxByteLength < newByteLength)
+        return makeUnexpected(GrowFailReason::InvalidGrowSize);
+
+    if (sizeInBytes == newByteLength)
+        return { };
+
+    auto newPageCount = PageCount::fromBytesWithRoundUp(newByteLength);
+    auto oldPageCount = PageCount::fromBytes(m_memoryHandle->size()); // MemoryHandle's size is always page-size aligned.
+    if (newPageCount.bytes() > MAX_ARRAY_BUFFER_SIZE)
+        return makeUnexpected(GrowFailReason::WouldExceedMaximum);
+
+    if (newPageCount != oldPageCount) {
+        ASSERT(m_memoryHandle->maximum() >= newPageCount);
+        size_t desiredSize = newPageCount.bytes();
+        RELEASE_ASSERT(desiredSize <= MAX_ARRAY_BUFFER_SIZE);
+        RELEASE_ASSERT(desiredSize > m_memoryHandle->size());
+
+        size_t extraBytes = desiredSize - m_memoryHandle->size();
+        RELEASE_ASSERT(extraBytes);
+        bool allocationSuccess = tryAllocate(&vm,
+            [&] () -> BufferMemoryResult::Kind {
+                return BufferMemoryManager::singleton().tryAllocatePhysicalBytes(extraBytes);
+            });
+        if (!allocationSuccess)
+            return makeUnexpected(GrowFailReason::OutOfMemory);
+
+        void* memory = m_memoryHandle->memory();
+        RELEASE_ASSERT(memory);
+
+        // Signaling memory must have been pre-allocated virtually.
+        uint8_t* startAddress = static_cast<uint8_t*>(memory) + m_memoryHandle->size();
+
+        dataLogLnIf(ArrayBufferInternal::verbose, "Marking memory's ", RawPointer(memory), " as read+write in range [", RawPointer(startAddress), ", ", RawPointer(startAddress + extraBytes), ")");
+        constexpr bool readable = true;
+        constexpr bool writable = true;
+        if (!OSAllocator::protect(startAddress, extraBytes, readable, writable)) {
+#if OS(WINDOWS)
+            dataLogLn("mprotect failed: ", static_cast<int>(GetLastError()));
+#else
+            dataLogLn("mprotect failed: ", safeStrerror(errno).data());
+#endif
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+
+        m_memoryHandle->updateSize(desiredSize);
+    }
+
+    memset(bitwise_cast<uint8_t*>(data()) + sizeInBytes, 0, newByteLength - sizeInBytes);
+
+    updateSize(newByteLength);
+    return { };
 }
 
 ASCIILiteral errorMesasgeForTransfer(ArrayBuffer* buffer)

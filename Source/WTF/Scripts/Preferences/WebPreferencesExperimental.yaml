@@ -519,6 +519,18 @@ CanvasFiltersEnabled:
      WebCore:
        default: false
 
+ClearSiteDataHTTPHeaderEnabled:
+   type: bool
+   humanReadableName: "Clear-Site-Data HTTP Header"
+   humanReadableDescription: "Enable Clear-Site-Data HTTP Header support"
+   defaultValue:
+     WebKitLegacy:
+       default: false
+     WebKit:
+       default: false
+     WebCore:
+       default: false
+
 CompressionStreamEnabled:
   type: bool
   humanReadableName: "Compression Stream API"
@@ -738,11 +750,11 @@ FetchMetadataEnabled:
   humanReadableDescription: "Enable Fetch Metadata headers"
   defaultValue:
     WebCore:
-      default: false
+      default: true
     WebKit:
-      default: false
+      default: true
     WebKitLegacy:
-      default: false
+      default: true
 
 FileSystemAccessEnabled:
   type: bool
@@ -1723,6 +1735,7 @@ UseGPUProcessForDOMRenderingEnabled:
   defaultValue:
     WebKit:
       "ENABLE(GPU_PROCESS_BY_DEFAULT) && ENABLE(GPU_PROCESS_DOM_RENDERING_BY_DEFAULT)": true
+      "PLATFORM(WIN)": true
       default: false
 
 UseGPUProcessForDisplayCapture:
@@ -1753,6 +1766,18 @@ UseGPUProcessForWebGLEnabled:
       "PLATFORM(WIN)": true
       default: false
 
+UserActivationAPIEnabled:
+   type: bool
+   humanReadableName: "User Activation API"
+   humanReadableDescription: "Enable User Activation API"
+   defaultValue:
+     WebKitLegacy:
+       default: false
+     WebKit:
+       default: false
+     WebCore:
+       default: false
+
 UserGesturePromisePropagationEnabled:
   type: bool
   humanReadableName: "UserGesture Promise Propagation"
@@ -1772,6 +1797,18 @@ VP9SWDecoderEnabledOnBattery:
   condition: ENABLE(VP9)
   defaultValue:
     WebKit:
+      default: false
+
+VerticalFormControlsEnabled:
+  type: bool
+  humanReadableName: "Vertical form control support"
+  humanReadableDescription: "Enable support for form controls in vertical writing mode"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
       default: false
 
 VisualViewportAPIEnabled:

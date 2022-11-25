@@ -51,6 +51,7 @@ VPATH = \
     $(WebKit2)/WebProcess/Automation \
     $(WebKit2)/WebProcess/Cache \
     $(WebKit2)/WebProcess/Databases/IndexedDB \
+    $(WebKit2)/WebProcess/Extensions/Interfaces \
     $(WebKit2)/WebProcess/FullScreen \
     $(WebKit2)/WebProcess/Geolocation \
     $(WebKit2)/WebProcess/GPU \
@@ -151,6 +152,7 @@ MESSAGE_RECEIVERS = \
 	Shared/IPCStreamTester \
 	Shared/IPCStreamTesterProxy \
 	Shared/IPCTester \
+	Shared/IPCTesterReceiver \
 	UIProcess/WebFullScreenManagerProxy \
 	UIProcess/RemoteLayerTree/RemoteLayerTreeDrawingAreaProxy \
 	UIProcess/GPU/GPUProcessProxy \
@@ -283,6 +285,8 @@ MESSAGE_RECEIVERS = \
 	GPUProcess/graphics/WebGPU/RemoteRenderPipeline \
 	GPUProcess/graphics/WebGPU/RemoteSampler \
 	GPUProcess/graphics/WebGPU/RemoteShaderModule \
+	GPUProcess/graphics/WebGPU/RemoteSurface \
+	GPUProcess/graphics/WebGPU/RemoteSwapChain \
 	GPUProcess/graphics/WebGPU/RemoteTexture \
 	GPUProcess/graphics/WebGPU/RemoteTextureView \
 	GPUProcess/webrtc/LibWebRTCCodecsProxy \
@@ -325,6 +329,14 @@ GENERATE_MESSAGE_RECEIVER_SCRIPTS = \
 
 FRAMEWORK_FLAGS := $(shell echo $(BUILT_PRODUCTS_DIR) $(FRAMEWORK_SEARCH_PATHS) $(SYSTEM_FRAMEWORK_SEARCH_PATHS) | perl -e 'print "-F " . join(" -F ", split(" ", <>));')
 HEADER_FLAGS := $(shell echo $(BUILT_PRODUCTS_DIR) $(HEADER_SEARCH_PATHS) $(SYSTEM_HEADER_SEARCH_PATHS) | perl -e 'print "-I" . join(" -I", split(" ", <>));')
+
+platform_h_compiler_command = $(CC) -std=c++2a -x c++ $(1) $(SDK_FLAGS) $(TARGET_TRIPLE_FLAGS) $(FRAMEWORK_FLAGS) $(HEADER_FLAGS) -include "wtf/Platform.h" /dev/null
+
+FEATURE_AND_PLATFORM_DEFINES := $(shell $(call platform_h_compiler_command,-E -P -dM) | $(PERL) -ne "print if s/\#define ((HAVE_|USE_|ENABLE_|WTF_PLATFORM_)\w+) 1/\1/")
+
+PLATFORM_HEADER_DIR := $(realpath $(BUILT_PRODUCTS_DIR)$(WK_LIBRARY_HEADERS_FOLDER_PATH))
+PLATFORM_HEADER_DEPENDENCIES := $(filter $(PLATFORM_HEADER_DIR)/%,$(realpath $(shell $(call platform_h_compiler_command,-M) | $(PERL) -e "local \$$/; my (\$$target, \$$deps) = split(/:/, <>); print split(/\\\\/, \$$deps);")))
+FEATURE_AND_PLATFORM_DEFINE_DEPENDENCIES = $(WebKit2)/DerivedSources.make $(PLATFORM_HEADER_DEPENDENCIES)
 
 MESSAGE_RECEIVER_FILES := $(addsuffix MessageReceiver.cpp,$(notdir $(MESSAGE_RECEIVERS)))
 MESSAGES_FILES := $(addsuffix Messages.h,$(notdir $(MESSAGE_RECEIVERS)))
@@ -470,7 +482,9 @@ SERIALIZATION_DESCRIPTION_FILES = \
 	Shared/FrameTreeNodeData.serialization.in \
 	Shared/ios/InteractionInformationAtPosition.serialization.in \
 	Shared/LayerTreeContext.serialization.in \
+	Shared/Model.serialization.in \
 	Shared/Pasteboard.serialization.in \
+	Shared/SessionState.serialization.in \
 	Shared/ShareableBitmap.serialization.in \
 	Shared/TextFlags.serialization.in \
 	Shared/WTFArgumentCoders.serialization.in \
@@ -480,6 +494,7 @@ SERIALIZATION_DESCRIPTION_FILES = \
 	Shared/WebExtensionControllerParameters.serialization.in \
 	Shared/WebPushDaemonConnectionConfiguration.serialization.in \
 	Shared/WebPushMessage.serialization.in \
+	Shared/mac/SecItemRequestData.serialization.in \
 	Shared/mac/SecItemResponseData.serialization.in \
 	Shared/WebsiteDataStoreParameters.serialization.in \
 	Shared/WebsiteData/WebsiteDataFetchOption.serialization.in \
@@ -497,6 +512,7 @@ SERIALIZATION_DESCRIPTION_FILES = \
 	Shared/WebGPU/WebGPUExtent3D.serialization.in \
 	Shared/WebGPU/WebGPUExternalTextureBindingLayout.serialization.in \
 	Shared/WebGPU/WebGPUExternalTextureDescriptor.serialization.in \
+	Shared/WebGPU/WebGPUFeatureName.serialization.in \
 	Shared/WebGPU/WebGPUFragmentState.serialization.in \
 	Shared/WebGPU/WebGPUImageCopyBuffer.serialization.in \
 	Shared/WebGPU/WebGPUImageCopyExternalImage.serialization.in \
@@ -519,6 +535,8 @@ SERIALIZATION_DESCRIPTION_FILES = \
 	Shared/WebGPU/WebGPUSamplerDescriptor.serialization.in \
 	Shared/WebGPU/WebGPUShaderModuleCompilationHint.serialization.in \
 	Shared/WebGPU/WebGPUShaderModuleDescriptor.serialization.in \
+	Shared/WebGPU/WebGPUSurfaceDescriptor.serialization.in \
+	Shared/WebGPU/WebGPUSwapChainDescriptor.serialization.in \
 	Shared/WebGPU/WebGPUTextureDescriptor.serialization.in \
 	Shared/WebGPU/WebGPUTextureViewDescriptor.serialization.in \
 	Shared/WebGPU/WebGPUVertexState.serialization.in \
@@ -546,9 +564,36 @@ SERIALIZATION_DESCRIPTION_FILES = \
 	Shared/WebGPU/WebGPUBlendState.serialization.in \
 	Shared/WebGPU/WebGPUBlendComponent.serialization.in \
 	Shared/WebGPU/WebGPUBindGroupEntry.serialization.in \
+	Shared/XR/XRSystem.serialization.in \
+	WebProcess/GPU/media/RemoteMediaPlayerState.serialization.in \
 #
 
 all : GeneratedSerializers.h GeneratedSerializers.cpp GeneratedSerializers.mm SerializedTypeInfo.cpp
 
 GeneratedSerializers.h GeneratedSerializers.cpp GeneratedSerializers.mm SerializedTypeInfo.cpp : $(WebKit2)/Scripts/generate-serializers.py $(SERIALIZATION_DESCRIPTION_FILES) $(WebKit2)/DerivedSources.make
 	$(PYTHON) $(WebKit2)/Scripts/generate-serializers.py $(WebKit2)/ $(SERIALIZATION_DESCRIPTION_FILES)
+
+EXTENSIONS_DIR = $(WebKit2)/WebProcess/Extensions
+EXTENSIONS_SCRIPTS_DIR = $(EXTENSIONS_DIR)/Bindings/Scripts
+EXTENSIONS_INTERFACES_DIR = $(EXTENSIONS_DIR)/Interfaces
+IDL_ATTRIBUTES_FILE = $(EXTENSIONS_SCRIPTS_DIR)/IDLAttributes.json
+
+BINDINGS_SCRIPTS = \
+    $(WebCorePrivateHeaders)/generate-bindings.pl \
+    $(WebCorePrivateHeaders)/IDLParser.pm \
+    $(WebCorePrivateHeaders)/CodeGenerator.pm \
+    $(EXTENSIONS_SCRIPTS_DIR)/CodeGeneratorExtensions.pm \
+#
+
+EXTENSION_INTERFACES = \
+    WebExtensionAPIExtension \
+    WebExtensionAPINamespace \
+    WebExtensionAPIRuntime \
+    WebExtensionAPITest \
+#
+
+JS%.h JS%.mm : %.idl $(BINDINGS_SCRIPTS) $(IDL_ATTRIBUTES_FILE) $(FEATURE_AND_PLATFORM_DEFINE_DEPENDENCIES)
+	@echo Generating bindings for $*...
+	$(PERL) -I $(WebCorePrivateHeaders) -I $(EXTENSIONS_SCRIPTS_DIR) $(WebCorePrivateHeaders)/generate-bindings.pl --defines "$(FEATURE_AND_PLATFORM_DEFINES)" --include $(EXTENSIONS_INTERFACES_DIR) --outputDir . --generator Extensions --idlAttributesFile $(IDL_ATTRIBUTES_FILE) $<
+
+all : $(EXTENSION_INTERFACES:%=JS%.h) $(EXTENSION_INTERFACES:%=JS%.mm)
