@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -24,26 +24,27 @@
  */
 
 #include "config.h"
-#include "JSFileSystemDirectoryHandle.h"
+#include "ArgumentCodersUnix.h"
 
-#include "JSDOMAsyncIterator.h"
-#include "JSFileSystemDirectoryHandleIterator.h"
+#include "Decoder.h"
+#include "Encoder.h"
+#include <wtf/unix/UnixFileDescriptor.h>
 
-namespace WebCore {
-
-JSC::JSValue JSFileSystemDirectoryHandle::entries(JSC::JSGlobalObject&, JSC::CallFrame&)
+namespace IPC {
+    
+void ArgumentCoder<UnixFileDescriptor>::encode(Encoder& encoder, const UnixFileDescriptor& fd)
 {
-    return iteratorCreate<JSFileSystemDirectoryHandleIterator>(*this, JSC::IterationKind::Entries);
+    encoder.addAttachment(fd.duplicate());
 }
 
-JSC::JSValue JSFileSystemDirectoryHandle::keys(JSC::JSGlobalObject&, JSC::CallFrame&)
+void ArgumentCoder<UnixFileDescriptor>::encode(Encoder& encoder, UnixFileDescriptor&& fd)
 {
-    return iteratorCreate<JSFileSystemDirectoryHandleIterator>(*this, JSC::IterationKind::Keys);
+    encoder.addAttachment(WTFMove(fd));
 }
 
-JSC::JSValue JSFileSystemDirectoryHandle::values(JSC::JSGlobalObject&, JSC::CallFrame&)
+std::optional<UnixFileDescriptor> ArgumentCoder<UnixFileDescriptor>::decode(Decoder& decoder)
 {
-    return iteratorCreate<JSFileSystemDirectoryHandleIterator>(*this, JSC::IterationKind::Values);
+    return decoder.takeLastAttachment();
 }
 
-} // namespace WebCore
+}
