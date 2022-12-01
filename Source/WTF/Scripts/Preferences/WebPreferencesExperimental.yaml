@@ -142,18 +142,6 @@ AudioDescriptionsEnabled:
     WebCore:
       default: false
 
-BlankAnchorTargetImpliesNoOpenerEnabled:
-  type: bool
-  humanReadableName: "Blank anchor target implies rel=noopener"
-  humanReadableDescription: "target=_blank on anchor elements implies rel=noopener"
-  defaultValue:
-    WebKitLegacy:
-      default: true
-    WebKit:
-      default: true
-    WebCore:
-      default: true
-
 # We would have to partition BroadcastChannel based on PageGroups if we wanted to enable this for WebKitLegacy.
 BroadcastChannelEnabled:
   type: bool
@@ -394,6 +382,18 @@ CSSInputSecurityEnabled:
     WebCore:
       default: false
 
+CSSLeadingTrimEnabled:
+  type: bool
+  humanReadableName: "CSS leading-trim property"
+  humanReadableDescription: "Enable leading-trim"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
 CSSMotionPathEnabled:
   type: bool
   humanReadableName: "CSS Motion Path"
@@ -475,6 +475,19 @@ CSSTextJustifyEnabled:
     WebKitLegacy:
       default: false
     WebKit:
+      default: false
+    WebCore:
+      default: false
+
+CSSTypedOMColorEnabled:
+  type: bool
+  humanReadableName: "CSS Typed OM: Color Support"
+  humanReadableDescription: "Enable the CSS Typed OM Color support"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      "ENABLE(EXPERIMENTAL_FEATURES)": true
       default: false
     WebCore:
       default: false
@@ -819,19 +832,6 @@ GoogleAntiFlickerOptimizationQuirkEnabled:
       default: true
     WebCore:
       default: true
-
-# FIXME: This is on by default in WebKit2. Perhaps we should consider turning it on for WebKitLegacy as well.
-HDRMediaCapabilitiesEnabled:
-  type: bool
-  humanReadableName: "HDR Media Capabilities"
-  humanReadableDescription: "HDR Media Capabilities"
-  defaultValue:
-    WebKitLegacy:
-      default: false
-    WebKit:
-      default: true
-    WebCore:
-      default: false
 
 HasPseudoClassEnabled:
   type: bool
@@ -1774,7 +1774,7 @@ UserActivationAPIEnabled:
      WebKitLegacy:
        default: false
      WebKit:
-       default: false
+       default: true
      WebCore:
        default: false
 
@@ -1890,11 +1890,11 @@ WebAnimationsIterationCompositeEnabled:
   humanReadableDescription: "Support for the KeyframeEffect.iterationComposite property"
   defaultValue:
     WebKitLegacy:
-      default: false
+      default: true
     WebKit:
-      default: false
+      default: true
     WebCore:
-      default: false
+      default: true
 
 WebAnimationsMutableTimelinesEnabled:
   type: bool

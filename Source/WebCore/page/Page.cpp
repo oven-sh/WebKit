@@ -1730,6 +1730,10 @@ void Page::updateRendering()
         document.serviceRequestAnimationFrameCallbacks();
     });
 
+    runProcessingStep(RenderingUpdateStep::CaretAnimation, [] (Document& document) {
+        document.serviceCaretAnimation();
+    });
+
     layoutIfNeeded();
 
     runProcessingStep(RenderingUpdateStep::ResizeObservations, [&] (Document& document) {
@@ -3464,7 +3468,7 @@ bool Page::useDarkAppearance() const
 {
 #if ENABLE(DARK_MODE_CSS)
     FrameView* view = mainFrame().view();
-    if (!view || !equalLettersIgnoringASCIICase(view->mediaType(), "screen"_s))
+    if (!view || view->mediaType() != screenAtom())
         return false;
     if (m_useDarkAppearanceOverride)
         return m_useDarkAppearanceOverride.value();
@@ -3833,7 +3837,11 @@ OptionSet<FilterRenderingMode> Page::preferredFilterRenderingModes() const
     OptionSet<FilterRenderingMode> modes = FilterRenderingMode::Software;
 #if USE(CORE_IMAGE)
     if (settings().acceleratedFiltersEnabled())
-        modes = modes | FilterRenderingMode::Accelerated;
+        modes.add(FilterRenderingMode::Accelerated);
+#endif
+#if USE(GRAPHICS_CONTEXT_FILTERS)
+    if (settings().graphicsContextFiltersEnabled())
+        modes.add(FilterRenderingMode::GraphicsContext);
 #endif
     return modes;
 }
@@ -3931,6 +3939,7 @@ WTF::TextStream& operator<<(WTF::TextStream& ts, RenderingUpdateStep step)
 #endif
     case RenderingUpdateStep::VideoFrameCallbacks: ts << "VideoFrameCallbacks"; break;
     case RenderingUpdateStep::PrepareCanvasesForDisplay: ts << "PrepareCanvasesForDisplay"; break;
+    case RenderingUpdateStep::CaretAnimation: ts << "CaretAnimation"; break;
     }
     return ts;
 }

@@ -32,7 +32,6 @@
 
 namespace WebCore {
 
-struct AttachmentLayout;
 class BorderData;
 class Element;
 class FileList;
@@ -157,8 +156,8 @@ public:
     Color inactiveSelectionForegroundColor(OptionSet<StyleColorOptions>) const;
 
     // List box selection colors
-    Color activeListBoxSelectionBackgroundColor(OptionSet<StyleColorOptions>) const;
-    Color activeListBoxSelectionForegroundColor(OptionSet<StyleColorOptions>) const;
+    WEBCORE_EXPORT Color activeListBoxSelectionBackgroundColor(OptionSet<StyleColorOptions>) const;
+    WEBCORE_EXPORT Color activeListBoxSelectionForegroundColor(OptionSet<StyleColorOptions>) const;
     Color inactiveListBoxSelectionBackgroundColor(OptionSet<StyleColorOptions>) const;
     Color inactiveListBoxSelectionForegroundColor(OptionSet<StyleColorOptions>) const;
 
@@ -333,7 +332,6 @@ protected:
 
 #if ENABLE(ATTACHMENT_ELEMENT)
     virtual bool paintAttachment(const RenderObject&, const PaintInfo&, const IntRect&);
-    virtual void paintAttachmentText(GraphicsContext&, AttachmentLayout*) { }
 #endif
 
 #if ENABLE(DATALIST_ELEMENT)

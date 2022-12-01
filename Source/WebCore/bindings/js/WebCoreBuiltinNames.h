@@ -462,6 +462,7 @@ namespace WebCore {
     macro(XRWebGLLayer) \
     macro(abortAlgorithm) \
     macro(abortSteps) \
+    macro(addAbortAlgorithmToSignal) \
     macro(appendFromJS) \
     macro(applicationCache) \
     macro(associatedReadableByteStreamController) \
@@ -515,6 +516,7 @@ namespace WebCore {
     macro(flushAlgorithm) \
     macro(focus) \
     macro(frames) \
+    macro(getInternalReadableStream) \
     macro(getInternalWritableStream) \
     macro(getMatchedCSSRules) \
     macro(getTracks) \
@@ -529,6 +531,7 @@ namespace WebCore {
     macro(inFlightWriteRequest) \
     macro(indexedDB) \
     macro(initializeWith) \
+    macro(internalReadable) \
     macro(internalStream) \
     macro(internalWritable) \
     macro(isAbortSignal) \
@@ -588,6 +591,7 @@ namespace WebCore {
     macro(reader) \
     macro(readyPromise) \
     macro(readyPromiseCapability) \
+    macro(removeAbortAlgorithmFromSignal) \
     macro(requestAnimationFrame) \
     macro(requestIdleCallback) \
     macro(response) \
@@ -647,7 +651,6 @@ namespace WebCore {
     macro(webkitOfflineAudioContext) \
     macro(webkitOscillatorNode) \
     macro(webkitSpeechRecognition) \
-    macro(whenSignalAborted) \
     macro(window) \
     macro(writable) \
     macro(writeAlgorithm) \

@@ -629,11 +629,6 @@ sub AddToIncludesForIDLType
         return;
     }
 
-    if ($type->name eq "ReadableStream") {
-        AddToIncludes("ReadableStream.h", $includesRef, $conditional);
-        return;
-    }
-
     if ($type->name eq "XPathNSResolver") {
         AddToIncludes("JSXPathNSResolver.h", $includesRef, $conditional);
         AddToIncludes("JSDOMConvertXPathNSResolver.h", $includesRef, $conditional);
@@ -6684,7 +6679,8 @@ sub GenerateCallbackImplementationContent
                 push(@$contentRef, "        auto throwScope = DECLARE_THROW_SCOPE(vm);\n");
                 push(@$contentRef, "        throwException(&lexicalGlobalObject, throwScope, returnedException);\n");
             } else {
-                push(@$contentRef, "        reportException(&lexicalGlobalObject, returnedException);\n");
+                push(@$contentRef, "        UNUSED_PARAM(lexicalGlobalObject);\n");
+                push(@$contentRef, "        reportException(m_data->callback()->globalObject(), returnedException);\n");
             }
             push(@$contentRef, "        return CallbackResultType::ExceptionThrown;\n");
             push(@$contentRef, "     }\n\n");

@@ -118,9 +118,6 @@ static void printReason(AvoidanceReason reason, TextStream& stream)
     case AvoidanceReason::FlowHasLineSnap:
         stream << "-webkit-line-snap property";
         break;
-    case AvoidanceReason::FlowHasTextCombine:
-        stream << "text combine";
-        break;
     case AvoidanceReason::FlowTextIsSVGInlineText:
         stream << "SVGInlineText";
         break;
@@ -145,8 +142,8 @@ static void printReason(AvoidanceReason reason, TextStream& stream)
     case AvoidanceReason::ContentIsSVG:
         stream << "SVG content";
         break;
-    case AvoidanceReason::FlowIsUnsupportedListItem:
-        stream << "list item with text-indent";
+    case AvoidanceReason::ChildIsUnsupportedListItem:
+        stream << "list item with floats";
         break;
     case AvoidanceReason::FlowHasInitialLetter:
         stream << "intial letter";
@@ -306,8 +303,6 @@ static OptionSet<AvoidanceReason> canUseForStyle(const RenderElement& renderer, 
     OptionSet<AvoidanceReason> reasons;
     if (style.writingMode() == WritingMode::BottomToTop)
         SET_REASON_AND_RETURN_IF_NEEDED(FlowHasUnsupportedWritingMode, reasons, includeReasons);
-    if (style.hasTextCombine())
-        SET_REASON_AND_RETURN_IF_NEEDED(FlowHasTextCombine, reasons, includeReasons);
     if (!style.hangingPunctuation().isEmpty())
         SET_REASON_AND_RETURN_IF_NEEDED(FlowHasHangingPunctuation, reasons, includeReasons)
     if (style.styleType() == PseudoId::FirstLetter && (!style.initialLetter().isEmpty() || style.initialLetterDrop() || style.initialLetterHeight()))
@@ -372,8 +367,6 @@ static OptionSet<AvoidanceReason> canUseForChild(const RenderObject& child, Incl
     OptionSet<AvoidanceReason> reasons;
 
     if (is<RenderText>(child)) {
-        if (child.isCombineText())
-            SET_REASON_AND_RETURN_IF_NEEDED(FlowHasTextCombine, reasons, includeReasons);
         if (child.isSVGInlineText())
             SET_REASON_AND_RETURN_IF_NEEDED(FlowTextIsSVGInlineText, reasons, includeReasons);
 
@@ -437,7 +430,7 @@ static OptionSet<AvoidanceReason> canUseForChild(const RenderObject& child, Incl
         auto* associatedListItem = listMarker.listItem();
         for (auto* ancestor = listMarker.containingBlock(); ancestor; ancestor = ancestor->containingBlock()) {
             if (ancestor->containsFloats())
-                SET_REASON_AND_RETURN_IF_NEEDED(FlowIsUnsupportedListItem, reasons, includeReasons);
+                SET_REASON_AND_RETURN_IF_NEEDED(ChildIsUnsupportedListItem, reasons, includeReasons);
             if (ancestor == associatedListItem)
                 break;
         }
@@ -500,8 +493,6 @@ OptionSet<AvoidanceReason> canUseForLineLayoutWithReason(const RenderBlockFlow& 
     }
     if (flow.isRubyText() || flow.isRubyBase())
         SET_REASON_AND_RETURN_IF_NEEDED(ContentIsRuby, reasons, includeReasons);
-    if (is<RenderListItem>(flow) && (flow.isPositioned() || flow.isFloating()))
-        SET_REASON_AND_RETURN_IF_NEEDED(FlowIsUnsupportedListItem, reasons, includeReasons);
 #if ENABLE(VIDEO)
     if (is<RenderVTTCue>(flow) || is<RenderVTTCue>(flow.parent())) {
         // First child of the RenderVTTCue is the backdropBox.
