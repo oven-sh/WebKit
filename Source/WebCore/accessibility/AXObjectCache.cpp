@@ -300,6 +300,14 @@ bool AXObjectCache::modalElementHasAccessibleContent(Element& element)
             if (auto* axObject = getOrCreate(node)) {
                 if (!axObject->computeAccessibilityIsIgnored())
                     return true;
+
+#if USE(ATSPI)
+                // When using ATSPI, an accessibility object with 'StaticText' role is ignored.
+                // Its content is exposed by its parent.
+                // Treat such elements as having accessible content.
+                if (axObject->roleValue() == AccessibilityRole::StaticText)
+                    return true;
+#endif
             }
 
             // Don't descend into subtrees for non-visible nodes.
@@ -2097,6 +2105,8 @@ void AXObjectCache::handleAttributeChange(Element* element, const QualifiedName&
         postNotification(element, AXFlowToChanged);
     else if (attrName == aria_grabbedAttr)
         postNotification(element, AXGrabbedStateChanged);
+    else if (attrName == aria_keyshortcutsAttr)
+        postNotification(element, AXKeyShortcutsChanged);
     else if (attrName == aria_levelAttr)
         postNotification(element, AXLevelChanged);
     else if (attrName == aria_liveAttr)
@@ -3746,6 +3756,9 @@ void AXObjectCache::updateIsolatedTree(const Vector<std::pair<RefPtr<Accessibili
             break;
         case AXURLChanged:
             tree->updateNodeProperty(*notification.first, AXPropertyName::URL);
+            break;
+        case AXKeyShortcutsChanged:
+            tree->updateNodeProperty(*notification.first, AXPropertyName::KeyShortcuts);
             break;
         case AXActiveDescendantChanged:
         case AXRoleChanged:

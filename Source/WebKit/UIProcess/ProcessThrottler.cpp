@@ -159,9 +159,6 @@ std::optional<ProcessAssertionType> ProcessThrottler::assertionTypeForState(Proc
 
 void ProcessThrottler::setThrottleState(ProcessThrottleState newState)
 {
-    if (m_state == newState && (m_assertion && m_assertion->isValid()))
-        return;
-
     m_state = newState;
     m_process.didChangeThrottleState(newState);
 
@@ -172,6 +169,9 @@ void ProcessThrottler::setThrottleState(ProcessThrottleState newState)
         m_assertion = nullptr;
         return;
     }
+
+    if (m_assertion && m_assertion->isValid() && m_assertion->type() == newType)
+        return;
 
     PROCESSTHROTTLER_RELEASE_LOG("setThrottleState: Updating process assertion type to %u (foregroundActivities=%u, backgroundActivities=%u)", newType, m_foregroundActivities.size(), m_backgroundActivities.size());
 
@@ -317,6 +317,7 @@ void ProcessThrottler::setAllowsActivities(bool allow)
 void ProcessThrottler::setShouldTakeSuspendedAssertion(bool shouldTakeSuspendedAssertion)
 {
     m_shouldTakeSuspendedAssertion = shouldTakeSuspendedAssertion;
+    updateThrottleStateIfNeeded();
 }
 
 ProcessThrottler::TimedActivity::TimedActivity(Seconds timeout, ProcessThrottler::ActivityVariant&& activity)

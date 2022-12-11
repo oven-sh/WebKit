@@ -149,19 +149,6 @@ bool Quirks::needsPerDocumentAutoplayBehavior() const
 #endif
 }
 
-bool Quirks::shouldAutoplayForArbitraryUserGesture() const
-{
-#if PLATFORM(MAC)
-    return needsQuirks() && allowedAutoplayQuirks(*m_document).contains(AutoplayQuirk::ArbitraryUserGestures);
-#else
-    if (!needsQuirks())
-        return false;
-
-    auto domain = RegistrableDomain { m_document->topDocument().url() };
-    return domain == "twitter.com"_s || domain == "facebook.com"_s;
-#endif
-}
-
 bool Quirks::shouldAutoplayWebAudioForArbitraryUserGesture() const
 {
     if (!needsQuirks())
@@ -233,15 +220,6 @@ bool Quirks::needsMillisecondResolutionForHighResTimeStamp() const
     // webkit.org/b/210527
     auto host = m_document->url().host();
     return equalLettersIgnoringASCIICase(host, "www.icourse163.org"_s);
-}
-
-bool Quirks::shouldStripQuotationMarkInFontFaceSetFamily() const
-{
-    if (!needsQuirks())
-        return false;
-
-    auto host = m_document->topDocument().url().host();
-    return equalLettersIgnoringASCIICase(host, "docs.google.com"_s);
 }
 
 bool Quirks::isTouchBarUpdateSupressedForHiddenContentEditable() const
@@ -1299,21 +1277,6 @@ bool Quirks::needsFlightAwareSerializationQuirk() const
     return *m_needsFlightAwareSerializationQuirk;
 }
 
-bool Quirks::needsBlackFullscreenBackgroundQuirk() const
-{
-    // MLB.com sets a black background-color on the :backdrop pseudo element, which WebKit does not yet support. This
-    // quirk can be removed once support for :backdrop psedue element is added.
-    if (!needsQuirks())
-        return false;
-
-    if (!m_needsBlackFullscreenBackgroundQuirk) {
-        auto host = m_document->topDocument().url().host();
-        m_needsBlackFullscreenBackgroundQuirk = equalLettersIgnoringASCIICase(host, "mlb.com"_s) || host.endsWithIgnoringASCIICase(".mlb.com"_s);
-    }
-
-    return *m_needsBlackFullscreenBackgroundQuirk;
-}
-
 bool Quirks::requiresUserGestureToPauseInPictureInPicture() const
 {
 #if ENABLE(VIDEO_PRESENTATION_MODE)
@@ -1490,9 +1453,28 @@ bool Quirks::shouldExposeShowModalDialog() const
         return false;
     if (!m_shouldExposeShowModalDialog) {
         auto domain = RegistrableDomain(m_document->url()).string();
-        m_shouldExposeShowModalDialog = domain == "pandora.com"_s || domain == "marcus.com"_s;
+        // Marcus: <rdar://101086391>.
+        // Pandora: <rdar://100243111>.
+        // Soundcloud: <rdar://102913500>.
+        m_shouldExposeShowModalDialog = domain == "pandora.com"_s || domain == "marcus.com"_s || domain == "soundcloud.com"_s;
     }
     return *m_shouldExposeShowModalDialog;
+}
+
+bool Quirks::shouldNavigatorPluginsBeEmpty() const
+{
+#if PLATFORM(IOS_FAMILY)
+    if (!needsQuirks())
+        return false;
+    if (!m_shouldNavigatorPluginsBeEmpty) {
+        auto domain = RegistrableDomain(m_document->url()).string();
+        // Marcus login issue: <rdar://103011164>.
+        m_shouldNavigatorPluginsBeEmpty = domain == "marcus.com"_s;
+    }
+    return *m_shouldNavigatorPluginsBeEmpty;
+#else
+    return false;
+#endif
 }
 
 bool Quirks::shouldDisableLazyImageLoadingQuirk() const

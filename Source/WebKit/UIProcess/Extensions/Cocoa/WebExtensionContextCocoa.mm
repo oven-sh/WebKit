@@ -32,6 +32,7 @@
 
 #if ENABLE(WK_WEB_EXTENSIONS)
 
+#import "CocoaHelpers.h"
 #import "InjectUserScriptImmediately.h"
 #import "WKNavigationActionPrivate.h"
 #import "WKNavigationDelegatePrivate.h"
@@ -43,16 +44,25 @@
 #import "WebPageProxy.h"
 #import "WebUserContentControllerProxy.h"
 #import "_WKWebExtensionContextInternal.h"
+#import "_WKWebExtensionMatchPatternInternal.h"
 #import "_WKWebExtensionPermission.h"
 #import "_WKWebExtensionTab.h"
 #import <WebCore/LocalizedStrings.h>
 #import <WebCore/UserScript.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/FileSystem.h>
 #import <wtf/URLParser.h>
 #import <wtf/cocoa/VectorCocoa.h>
 
 // This number was chosen arbitrarily based on testing with some popular extensions.
 static constexpr size_t maximumCachedPermissionResults = 256;
+
+static constexpr NSString *backgroundPageListenersStateKey = @"BackgroundPageListenersState";
+static constexpr NSString *lastSeenBaseURLStateKey = @"LastSeenBaseURL";
+static constexpr NSString *lastSeenVersionStateKey = @"LastSeenVersion";
+
+// Update this value when any changes are made to the WebExtensionEventListenerType enum.
+static constexpr NSInteger currentBackgroundPageListenerStateVersion = 1;
 
 @interface _WKWebExtensionContextDelegate : NSObject <WKNavigationDelegate, WKUIDelegate> {
     WeakPtr<WebKit::WebExtensionContext> _webExtensionContext;
@@ -119,12 +129,7 @@ WebExtensionContext::WebExtensionContext(Ref<WebExtension>&& extension)
     : WebExtensionContext()
 {
     m_extension = extension.ptr();
-
-    StringBuilder baseURLBuilder;
-    baseURLBuilder.append("webkit-extension://", uniqueIdentifier(), "/");
-
-    m_baseURL = URL { baseURLBuilder.toString() };
-
+    m_baseURL = URL { makeString("webkit-extension://", uniqueIdentifier(), '/') };
     m_delegate = [[_WKWebExtensionContextDelegate alloc] initWithWebExtensionContext:*this];
 }
 
@@ -175,7 +180,7 @@ NSError *WebExtensionContext::createError(Error error, NSString *customLocalized
     return [[NSError alloc] initWithDomain:_WKWebExtensionContextErrorDomain code:errorCode userInfo:userInfo];
 }
 
-bool WebExtensionContext::load(WebExtensionController& controller, NSError **outError)
+bool WebExtensionContext::load(WebExtensionController& controller, String storageDirectory, NSError **outError)
 {
     if (outError)
         *outError = nil;
@@ -186,10 +191,15 @@ bool WebExtensionContext::load(WebExtensionController& controller, NSError **out
         return false;
     }
 
+    m_storageDirectory = storageDirectory;
     m_extensionController = controller;
     m_contentScriptWorld = API::ContentWorld::sharedWorldWithName(makeString("WebExtension-", m_uniqueIdentifier));
 
+    readStateFromStorage();
+
     // FIXME: <https://webkit.org/b/248430> Move local storage (if base URL changed).
+
+    // FIXME: <https://webkit.org/b/248889> Check to see if extension is being loaded as part of startup.
 
     loadBackgroundWebViewDuringLoad();
 
@@ -211,13 +221,73 @@ bool WebExtensionContext::unload(NSError **outError)
         return false;
     }
 
+    writeStateToStorage();
+
     unloadBackgroundWebView();
     removeInjectedContent();
 
+    m_storageDirectory = nullString();
     m_extensionController = nil;
     m_contentScriptWorld = nullptr;
 
     return true;
+}
+
+String WebExtensionContext::stateFilePath() const
+{
+    if (!storageIsPersistent())
+        return nullString();
+    return FileSystem::pathByAppendingComponent(m_storageDirectory, "State.plist"_s);
+}
+
+NSDictionary *WebExtensionContext::currentState() const
+{
+    [m_state setObject:(NSString *)m_baseURL.string() forKey:lastSeenBaseURLStateKey];
+    [m_state setObject:m_extension->version() ?: @"" forKey:lastSeenVersionStateKey];
+
+    return [m_state.get() copy];
+}
+
+NSDictionary *WebExtensionContext::readStateFromStorage()
+{
+    if (!storageIsPersistent()) {
+        m_state = [NSMutableDictionary dictionary];
+        return @{ };
+    }
+
+    NSFileCoordinator *fileCoordinator = [[NSFileCoordinator alloc] initWithFilePresenter:nil];
+
+    __block NSMutableDictionary *savedState;
+
+    NSError *coordinatorError;
+    [fileCoordinator coordinateReadingItemAtURL:[NSURL fileURLWithPath:stateFilePath()] options:NSFileCoordinatorReadingWithoutChanges error:&coordinatorError byAccessor:^(NSURL *fileURL) {
+        savedState = [NSMutableDictionary dictionaryWithContentsOfURL:fileURL] ?: [NSMutableDictionary dictionary];
+    }];
+
+    if (coordinatorError)
+        RELEASE_LOG(Extensions, "Failed to coordinate reading extension state %{public}@", coordinatorError.debugDescription);
+
+    m_state = savedState;
+
+    return [savedState copy];
+}
+
+void WebExtensionContext::writeStateToStorage() const
+{
+    if (!storageIsPersistent())
+        return;
+
+    NSFileCoordinator *fileCoordinator = [[NSFileCoordinator alloc] initWithFilePresenter:nil];
+
+    NSError *coordinatorError;
+    [fileCoordinator coordinateWritingItemAtURL:[NSURL fileURLWithPath:stateFilePath()] options:NSFileCoordinatorWritingForReplacing error:&coordinatorError byAccessor:^(NSURL *fileURL) {
+        NSError *error;
+        if (![currentState() writeToURL:fileURL error:&error])
+            RELEASE_LOG(Extensions, "Unable to save extension state: %{public}@", error.debugDescription);
+    }];
+
+    if (coordinatorError)
+        RELEASE_LOG(Extensions, "Failed to coordinate writing extension state %{public}@", coordinatorError.debugDescription);
 }
 
 void WebExtensionContext::setBaseURL(URL&& url)
@@ -229,15 +299,7 @@ void WebExtensionContext::setBaseURL(URL&& url)
     if (!url.isValid())
         return;
 
-    auto canonicalScheme = WTF::URLParser::maybeCanonicalizeScheme(url.protocol());
-    ASSERT(canonicalScheme);
-    if (!canonicalScheme)
-        return;
-
-    StringBuilder baseURLBuilder;
-    baseURLBuilder.append(canonicalScheme.value(), "://", url.host(), "/");
-
-    m_baseURL = URL { baseURLBuilder.toString() };
+    m_baseURL = URL { makeString(url.protocol(), "://", url.host(), '/') };
 }
 
 bool WebExtensionContext::isURLForThisExtension(const URL& url)
@@ -251,8 +313,10 @@ void WebExtensionContext::setUniqueIdentifier(String&& uniqueIdentifier)
     if (isLoaded())
         return;
 
+    m_customUniqueIdentifier = !uniqueIdentifier.isEmpty();
+
     if (uniqueIdentifier.isEmpty())
-        uniqueIdentifier = m_baseURL.host().toString();
+        uniqueIdentifier = UUID::createVersion4().toString();
 
     m_uniqueIdentifier = uniqueIdentifier;
 }
@@ -1078,8 +1142,21 @@ void WebExtensionContext::loadBackgroundWebViewDuringLoad()
     if (!extension().hasBackgroundContent())
         return;
 
-    // FIXME: <https://webkit.org/b/246483> Handle non-persistent background pages differently here.
-    loadBackgroundWebView();
+    if (!extension().backgroundContentIsPersistent()) {
+        uint64_t backgroundPageListenersVersionNumber = loadBackgroundPageListenersVersionNumberFromStorage();
+        bool savedVersionNumberDoesNotMatchCurrentVersionNumber = backgroundPageListenersVersionNumber != currentBackgroundPageListenerStateVersion;
+
+        // FIXME: <https://webkit.org/b/248889> Check to see if the background page listens to onStartup().
+        bool backgroundPageListensToOnStartup = false;
+        loadBackgroundPageListenersFromStorage();
+
+        // FIXME: <https://webkit.org/b/248889> Check to see if the extension is being loaded as part of startup.
+        if (m_backgroundPageListeners.isEmpty() || savedVersionNumberDoesNotMatchCurrentVersionNumber || backgroundPageListensToOnStartup)
+            loadBackgroundWebView();
+        else
+            m_shouldFireStartupEvent = false;
+    } else
+        loadBackgroundWebView();
 }
 
 void WebExtensionContext::loadBackgroundWebView()
@@ -1128,9 +1205,48 @@ void WebExtensionContext::unloadBackgroundWebView()
     m_backgroundWebView = nil;
 }
 
+void WebExtensionContext::loadBackgroundPageListenersFromStorage()
+{
+    NSData *listenersData = [m_state objectForKey:backgroundPageListenersStateKey];
+    NSCountedSet *savedListeners = [NSKeyedUnarchiver unarchivedObjectOfClasses:[NSSet setWithArray:@[ NSCountedSet.class, NSNumber.class ]] fromData:listenersData error:nil];
+
+    m_backgroundPageListeners.clear();
+    for (NSNumber *entry in savedListeners)
+        m_backgroundPageListeners.add(static_cast<WebExtensionEventListenerType>(entry.unsignedIntValue), [savedListeners countForObject:entry]);
+}
+
+void WebExtensionContext::saveBackgroundPageListenersToStorage()
+{
+    if (extension().backgroundContentIsPersistent())
+        return;
+
+    NSCountedSet *listeners = [NSCountedSet set];
+    for (auto& entry : m_backgroundPageListeners)
+        [listeners addObject:@(static_cast<uint8_t>(entry.key))];
+
+    NSData *newBackgroundPageListenersAsData = [NSKeyedArchiver archivedDataWithRootObject:listeners requiringSecureCoding:YES error:nil];
+    NSData *savedBackgroundPageListenersAsData = [m_state objectForKey:backgroundPageListenersStateKey];
+    [m_state setObject:newBackgroundPageListenersAsData forKey:backgroundPageListenersStateKey];
+
+    NSNumber *savedListenerVersionNumber = [m_state objectForKey:lastSeenVersionStateKey];
+    [m_state setObject:@(currentBackgroundPageListenerStateVersion) forKey:lastSeenVersionStateKey];
+
+    bool hasListenerStateChanged = ![newBackgroundPageListenersAsData isEqualToData:savedBackgroundPageListenersAsData];
+    bool hasVersionNumberChanged = savedListenerVersionNumber.integerValue != currentBackgroundPageListenerStateVersion;
+    if (hasListenerStateChanged || hasVersionNumberChanged)
+        writeStateToStorage();
+}
+
+uint64_t WebExtensionContext::loadBackgroundPageListenersVersionNumberFromStorage()
+{
+    return static_cast<uint64_t>([[m_state objectForKey:lastSeenVersionStateKey] integerValue]);
+}
+
 void WebExtensionContext::performTasksAfterBackgroundContentLoads()
 {
     // FIXME: <https://webkit.org/b/246483> Implement. Fire setup and install events (if needed), perform pending actions, schedule non-persistent page to unload (if needed), etc.
+
+    saveBackgroundPageListenersToStorage();
 }
 
 bool WebExtensionContext::decidePolicyForNavigationAction(WKWebView *webView, WKNavigationAction *navigationAction)

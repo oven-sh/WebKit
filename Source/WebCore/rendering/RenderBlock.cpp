@@ -2033,6 +2033,19 @@ bool RenderBlock::isPointInOverflowControl(HitTestResult& result, const LayoutPo
 
 Node* RenderBlock::nodeForHitTest() const
 {
+    // If we're a ::backdrop pseudo-element, we should hit-test to the element that generated it.
+    // This matches the behavior that other browsers have.
+    if (style().styleType() == PseudoId::Backdrop) {
+        for (auto& element : document().topLayerElements()) {
+            if (!element->renderer())
+                continue;
+            ASSERT(element->renderer()->backdropRenderer());
+            if (element->renderer()->backdropRenderer() == this)
+                return element.ptr();
+        }
+        ASSERT_NOT_REACHED();
+    }
+
     // If we are in the margins of block elements that are part of a
     // continuation we're actually still inside the enclosing element
     // that was split. Use the appropriate inner node.
@@ -2415,7 +2428,7 @@ void RenderBlock::computeChildPreferredLogicalWidths(RenderObject& child, Layout
         auto& box = downcast<RenderBox>(child);
         if (box.shouldComputeLogicalHeightFromAspectRatio() && box.style().logicalWidth().isFixed()) {
             LayoutUnit logicalWidth = LayoutUnit(box.style().logicalWidth().value());
-            minPreferredLogicalWidth = maxPreferredLogicalWidth = blockSizeFromAspectRatio(box.horizontalBorderAndPaddingExtent(), box.verticalBorderAndPaddingExtent(), LayoutUnit(box.style().logicalAspectRatio()), box.style().boxSizingForAspectRatio(), logicalWidth);
+            minPreferredLogicalWidth = maxPreferredLogicalWidth = blockSizeFromAspectRatio(box.horizontalBorderAndPaddingExtent(), box.verticalBorderAndPaddingExtent(), LayoutUnit(box.style().logicalAspectRatio()), box.style().boxSizingForAspectRatio(), logicalWidth, style().aspectRatioType(), isRenderReplaced());
             return;
         }
         minPreferredLogicalWidth = maxPreferredLogicalWidth = box.computeLogicalHeightWithoutLayout();
@@ -2563,7 +2576,7 @@ std::optional<LayoutUnit> RenderBlock::lastLineBaseline() const
 std::optional<LayoutUnit> RenderBlock::inlineBlockBaseline(LineDirectionMode lineDirection) const
 {
     if (shouldApplyLayoutContainment())
-        return synthesizedBaselineFromBorderBox(*this, lineDirection) + (lineDirection == HorizontalLine ? marginBottom() : marginLeft());
+        return synthesizedBaseline(*this, *parentStyle(), lineDirection, BorderBox) + (lineDirection == HorizontalLine ? marginBottom() : marginLeft());
 
     if (isWritingModeRoot() && !isRubyRun())
         return std::optional<LayoutUnit>();
@@ -3189,7 +3202,7 @@ std::optional<LayoutUnit> RenderBlock::availableLogicalHeightForPercentageComput
         // Only grid is expected to be in a state where it is calculating pref width and having unknown logical width.
         if (isRenderGrid() && preferredLogicalWidthsDirty() && !style().logicalWidth().isSpecified())
             return availableHeight;
-        availableHeight = blockSizeFromAspectRatio(horizontalBorderAndPaddingExtent(), verticalBorderAndPaddingExtent(), LayoutUnit(style().logicalAspectRatio()), style().boxSizingForAspectRatio(), logicalWidth());
+        availableHeight = blockSizeFromAspectRatio(horizontalBorderAndPaddingExtent(), verticalBorderAndPaddingExtent(), LayoutUnit(style().logicalAspectRatio()), style().boxSizingForAspectRatio(), logicalWidth(), style().aspectRatioType(), isRenderReplaced());
     } else if (isOutOfFlowPositionedWithSpecifiedHeight) {
         // Don't allow this to affect the block' size() member variable, since this
         // can get called while the block is still laying out its kids.

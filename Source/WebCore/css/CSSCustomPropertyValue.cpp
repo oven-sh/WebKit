@@ -26,8 +26,10 @@
 #include "config.h"
 #include "CSSCustomPropertyValue.h"
 
+#include "CSSCalcValue.h"
 #include "CSSParserIdioms.h"
 #include "CSSTokenizer.h"
+#include "ColorSerialization.h"
 
 namespace WebCore {
 
@@ -54,13 +56,28 @@ bool CSSCustomPropertyValue::equals(const CSSCustomPropertyValue& other) const
         return value == std::get<CSSValueID>(other.m_value);
     }, [&](const Ref<CSSVariableData>& value) {
         return value.get() == std::get<Ref<CSSVariableData>>(other.m_value).get();
-    }, [&](const Length& value) {
-        return value == std::get<Length>(other.m_value);
+    }, [&](const SyntaxValue& value) {
+        return value == std::get<SyntaxValue>(other.m_value);
     });
 }
 
 String CSSCustomPropertyValue::customCSSText() const
 {
+    auto serializeSyntaxValue = [](const SyntaxValue& syntaxValue) -> String {
+        return WTF::switchOn(syntaxValue, [&](const Length& value) {
+            return CSSPrimitiveValue::create(value, RenderStyle::defaultStyle())->cssText();
+        }, [&](const NumericSyntaxValue& value) {
+            return CSSPrimitiveValue::create(value.value, value.unitType)->cssText();
+        }, [&](const StyleColor& value) {
+            return serializationForCSS(value);
+        }, [&](const RefPtr<StyleImage>& value) {
+            // FIXME: This is not right for gradients that use `currentcolor`. There should be a way preserve it.
+            return value->computedStyleValue(RenderStyle::defaultStyle())->cssText();
+        }, [&](const String& value) {
+            return serializeURL(value);
+        });
+    };
+
     if (m_stringValue.isNull()) {
         WTF::switchOn(m_value, [&](const std::monostate&) {
             m_stringValue = emptyString();
@@ -70,8 +87,8 @@ String CSSCustomPropertyValue::customCSSText() const
             m_stringValue = nameString(value);
         }, [&](const Ref<CSSVariableData>& value) {
             m_stringValue = value->tokenRange().serialize();
-        }, [&](const Length& value) {
-            m_stringValue = CSSPrimitiveValue::create(value.value(), CSSUnitType::CSS_PX)->cssText();
+        }, [&](const SyntaxValue& syntaxValue) {
+            m_stringValue = serializeSyntaxValue(syntaxValue);
         });
     }
     return m_stringValue;

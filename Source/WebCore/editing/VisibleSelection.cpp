@@ -108,7 +108,13 @@ Position VisibleSelection::uncanonicalizedEnd() const
 
 std::optional<SimpleRange> VisibleSelection::range() const
 {
-    return makeSimpleRange(uncanonicalizedStart().parentAnchoredEquivalent(), uncanonicalizedEnd().parentAnchoredEquivalent());
+    auto start = uncanonicalizedStart();
+    auto end = uncanonicalizedEnd();
+    ASSERT(!start.document() || !end.document()
+        || start.document()->settings().liveRangeSelectionEnabled() == end.document()->settings().liveRangeSelectionEnabled());
+    if (start.document() && start.document()->settings().liveRangeSelectionEnabled())
+        return makeSimpleRange(start, end);
+    return makeSimpleRange(start.parentAnchoredEquivalent(), end.parentAnchoredEquivalent());
 }
 
 void VisibleSelection::setBase(const Position& position)
@@ -239,6 +245,10 @@ void VisibleSelection::appendTrailingWhitespace()
         if ((!isSpaceOrNewline(c) && c != noBreakSpace) || c == '\n')
             break;
         m_end = makeDeprecatedLegacyPosition(charIt.range().end);
+        if (m_anchorIsFirst)
+            m_focus = m_end;
+        else
+            m_anchor = m_end;
     }
 }
 

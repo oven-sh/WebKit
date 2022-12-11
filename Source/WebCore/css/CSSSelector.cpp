@@ -463,7 +463,10 @@ String CSSSelector::selectorText(StringView separator, StringView rightSide) con
                 builder.append(":-webkit-full-page-media");
                 break;
 #if ENABLE(FULLSCREEN_API)
-            case CSSSelector::PseudoClassFullScreen:
+            case CSSSelector::PseudoClassFullscreen:
+                builder.append(":fullscreen");
+                break;
+            case CSSSelector::PseudoClassWebkitFullScreen:
                 builder.append(":-webkit-full-screen");
                 break;
             case CSSSelector::PseudoClassFullScreenAncestor:
@@ -474,9 +477,6 @@ String CSSSelector::selectorText(StringView separator, StringView rightSide) con
                 break;
             case CSSSelector::PseudoClassFullScreenControlsHidden:
                 builder.append(":-webkit-full-screen-controls-hidden");
-                break;
-            case CSSSelector::PseudoClassFullScreenParent:
-                builder.append(":-webkit-full-screen-parent");
                 break;
 #endif
 #if ENABLE(PICTURE_IN_PICTURE_API)

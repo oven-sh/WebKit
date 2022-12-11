@@ -32,6 +32,7 @@
 #include "RenderFlexibleBox.h"
 
 #include "FlexibleBoxAlgorithm.h"
+#include "FontBaseline.h"
 #include "HitTestResult.h"
 #include "InspectorInstrumentation.h"
 #include "LayoutIntegrationCoverage.h"
@@ -53,7 +54,7 @@
 #include <wtf/IsoMallocInlines.h>
 #include <wtf/MathExtras.h>
 #include <wtf/SetForScope.h>
-
+#include <wtf/TypeCasts.h>
 namespace WebCore {
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(RenderFlexibleBox);
@@ -254,7 +255,7 @@ LayoutUnit RenderFlexibleBox::baselinePosition(FontBaseline, bool, LineDirection
 {
     auto baseline = firstLineBaseline();
     if (!baseline)
-        return synthesizedBaselineFromBorderBox(*this, direction) + marginLogicalHeight();
+        return synthesizedBaseline(*this, *parentStyle(), direction, BorderBox) + marginLogicalHeight();
 
     return baseline.value() + (direction == HorizontalLine ? marginTop() : marginRight()).toInt();
 }
@@ -278,7 +279,7 @@ std::optional<LayoutUnit> RenderFlexibleBox::firstLineBaseline() const
         // FIXME: We should pass |direction| into firstLineBoxBaseline and stop bailing out if we're a writing mode root.
         // This would also fix some cases where the flexbox is orthogonal to its container.
         LineDirectionMode direction = isHorizontalWritingMode() ? HorizontalLine : VerticalLine;
-        return synthesizedBaselineFromBorderBox(*baselineChild, direction) + baselineChild->logicalTop();
+        return synthesizedBaseline(*baselineChild, style(), direction, BorderBox) + baselineChild->logicalTop();
     }
 
     return LayoutUnit { (baseline.value() + baselineChild->logicalTop()).toInt() };
@@ -303,7 +304,7 @@ std::optional <LayoutUnit> RenderFlexibleBox::lastLineBaseline() const
         // FIXME: We should pass |direction| into firstLineBoxBaseline and stop bailing out if we're a writing mode root.
         // This would also fix some cases where the flexbox is orthogonal to its container.
         LineDirectionMode direction = isHorizontalWritingMode() ? HorizontalLine : VerticalLine;
-        return synthesizedBaselineFromBorderBox(*baselineChild, direction) + baselineChild->logicalTop();
+        return synthesizedBaseline(*baselineChild, style(), direction, BorderBox) + baselineChild->logicalTop();
     }
 
     return LayoutUnit { (baseline.value() + baselineChild->logicalTop()).toInt() }; 
@@ -993,8 +994,12 @@ LayoutUnit RenderFlexibleBox::computeMainSizeFromAspectRatioUsing(const RenderBo
             else
                 borderAndPadding = isHorizontalFlow() ? child.horizontalBorderAndPaddingExtent() : child.verticalBorderAndPaddingExtent();
         } else {
-            ASSERT(childIntrinsicSize.height());
-            ratio = childIntrinsicSize.width().toFloat() / childIntrinsicSize.height().toFloat();
+            if (auto* replacedElement = dynamicDowncast<RenderReplaced>(child))
+                ratio = replacedElement->computeIntrinsicAspectRatio();
+            else {
+                ASSERT(childIntrinsicSize.height());
+                ratio = childIntrinsicSize.width().toFloat() / childIntrinsicSize.height().toFloat();
+            }
             crossSize = adjustForBoxSizing(child, crossSize);
         }
     }
@@ -1381,8 +1386,11 @@ bool RenderFlexibleBox::updateAutoMarginsInCrossAxis(RenderBox& child, LayoutUni
 
 LayoutUnit RenderFlexibleBox::marginBoxAscentForChild(const RenderBox& child)
 {
-    LayoutUnit ascent = alignmentForChild(child) == ItemPosition::LastBaseline ? child.lastLineBaseline().value_or(crossAxisExtentForChild(child)) : child.firstLineBaseline().value_or(crossAxisExtentForChild(child));
-    return ascent + flowAwareMarginBeforeForChild(child);
+    auto ascent = alignmentForChild(child) == ItemPosition::LastBaseline ? child.lastLineBaseline() : child.firstLineBaseline();
+    auto direction = isHorizontalFlow() ? HorizontalLine : VerticalLine;
+    if (!ascent) 
+        return synthesizedBaseline(child, style(), direction, BorderBox) + flowAwareMarginBeforeForChild(child);
+    return *ascent + flowAwareMarginBeforeForChild(child);
 }
 
 LayoutUnit RenderFlexibleBox::computeChildMarginValue(Length margin)
@@ -1443,7 +1451,7 @@ std::pair<LayoutUnit, LayoutUnit> RenderFlexibleBox::computeFlexItemMinMaxSizes(
         else
             contentSize = computeMainAxisExtentForChild(child, MinSize, Length(LengthType::MinContent)).value_or(0_lu);
 
-        if (childHasComputableAspectRatio(child) && (!crossSizeLengthForChild(MinSize, child).isAuto() || !crossSizeLengthForChild(MaxSize, child).isAuto()))
+        if (childHasAspectRatio(child) && (!crossSizeLengthForChild(MinSize, child).isAuto() || !crossSizeLengthForChild(MaxSize, child).isAuto()))
             contentSize = adjustChildSizeForAspectRatioCrossAxisMinAndMax(child, contentSize);
         ASSERT(contentSize >= 0);
         contentSize = std::min(contentSize, maxExtent.value_or(contentSize));

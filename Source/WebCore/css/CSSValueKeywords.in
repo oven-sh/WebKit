@@ -1040,6 +1040,15 @@ no-punctuation
 antialiased
 subpixel-antialiased
 
+// text-edge
+leading
+// text
+cap
+ex
+// ideographic
+ideographic-ink
+// alphabetic
+
 // text-rendering
 //auto
 optimizeSpeed
@@ -1395,7 +1404,12 @@ span
 // grid-template-{columns|rows}
 minmax
 subgrid
+// grid masonry keywords
 masonry
+pack
+next
+definite-first
+ordered
 
 // grid-auto-flow
 auto-flow

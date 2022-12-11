@@ -396,7 +396,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 
 @property (assign) WebKit::PDFPlugin* pdfPlugin;
 
-- (id)initWithPDFPlugin:(WebKit::PDFPlugin *)plugin;
+- (id)initWithPDFPlugin:(WebKit::PDFPlugin *)plugin shouldFlip:(BOOL)shouldFlip;
 
 @end
 
@@ -404,12 +404,17 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 
 @synthesize pdfPlugin = _pdfPlugin;
 
-- (id)initWithPDFPlugin:(WebKit::PDFPlugin *)plugin
+- (id)initWithPDFPlugin:(WebKit::PDFPlugin *)plugin shouldFlip:(BOOL)shouldFlip
 {
     if (!(self = [super init]))
         return nil;
     
     _pdfPlugin = plugin;
+    
+    // Due to an issue where the scrollbars are flipped using UI-side compositng
+    // flip the geometry in this case.
+    if (shouldFlip)
+        [self setGeometryFlipped:YES];
     
     return self;
 }
@@ -638,7 +643,7 @@ PDFPlugin::PDFPlugin(HTMLPlugInElement& element)
     : m_frame(*WebFrame::fromCoreFrame(*element.document().frame()))
     , m_containerLayer(adoptNS([[CALayer alloc] init]))
     , m_contentLayer(adoptNS([[CALayer alloc] init]))
-    , m_scrollCornerLayer(adoptNS([[WKPDFPluginScrollbarLayer alloc] initWithPDFPlugin:this]))
+    , m_scrollCornerLayer(adoptNS([[WKPDFPluginScrollbarLayer alloc] initWithPDFPlugin:this shouldFlip:NO]))
     , m_pdfLayerController(adoptNS([allocPDFLayerControllerInstance() init]))
     , m_pdfLayerControllerDelegate(adoptNS([[WKPDFLayerControllerDelegate alloc] initWithPDFPlugin:this]))
 #if HAVE(INCREMENTAL_PDF_APIS)
@@ -647,6 +652,10 @@ PDFPlugin::PDFPlugin(HTMLPlugInElement& element)
 #endif
     , m_identifier(PDFPluginIdentifier::generate())
 {
+    // FIXME: <rdar://101787977> Replace this with SPI once we get it from PDFKit
+    [[NSUserDefaults standardUserDefaults] setBool:NO forKey:@"PDFKit2_UseIOSurfaceForTiles"];
+    [[NSUserDefaults standardUserDefaults] setBool:NO forKey:@"PDFKit2_UseWhippet"];
+
     auto& document = element.document();
 
 #if ENABLE(UI_PROCESS_PDF_HUD)
@@ -1369,11 +1378,12 @@ void PDFPlugin::updateScrollbars()
 Ref<Scrollbar> PDFPlugin::createScrollbar(ScrollbarOrientation orientation)
 {
     auto widget = Scrollbar::createNativeScrollbar(*this, orientation, ScrollbarControlSize::Regular);
+    auto shouldFlip = m_view->isUsingUISideCompositing();
     if (orientation == ScrollbarOrientation::Horizontal) {
-        m_horizontalScrollbarLayer = adoptNS([[WKPDFPluginScrollbarLayer alloc] initWithPDFPlugin:this]);
+        m_horizontalScrollbarLayer = adoptNS([[WKPDFPluginScrollbarLayer alloc] initWithPDFPlugin:this shouldFlip:shouldFlip]);
         [m_containerLayer addSublayer:m_horizontalScrollbarLayer.get()];
     } else {
-        m_verticalScrollbarLayer = adoptNS([[WKPDFPluginScrollbarLayer alloc] initWithPDFPlugin:this]);
+        m_verticalScrollbarLayer = adoptNS([[WKPDFPluginScrollbarLayer alloc] initWithPDFPlugin:this shouldFlip:shouldFlip]);
         [m_containerLayer addSublayer:m_verticalScrollbarLayer.get()];
     }
     didAddScrollbar(widget.ptr(), orientation);
@@ -1582,12 +1592,12 @@ FloatSize PDFPlugin::pdfDocumentSizeForPrinting() const
 
 JSObjectRef PDFPlugin::makeJSPDFDoc(JSContextRef ctx)
 {
-    static JSStaticFunction jsPDFDocStaticFunctions[] = {
+    static const JSStaticFunction jsPDFDocStaticFunctions[] = {
         { "print", jsPDFDocPrint, kJSPropertyAttributeReadOnly | kJSPropertyAttributeDontDelete },
         { 0, 0, 0 },
     };
 
-    static JSClassDefinition jsPDFDocClassDefinition = {
+    static const JSClassDefinition jsPDFDocClassDefinition = {
         0,
         kJSClassAttributeNone,
         "Doc",
@@ -1956,7 +1966,6 @@ RefPtr<ShareableBitmap> PDFPlugin::snapshot()
 
     context->scale(FloatSize(contentsScaleFactor, -contentsScaleFactor));
     context->translate(-m_scrollOffset.width(), -m_pdfDocumentSize.height() + m_scrollOffset.height());
-
     [m_pdfLayerController snapshotInContext:context->platformContext()];
 
     return bitmap;

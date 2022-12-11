@@ -788,6 +788,16 @@ enum class LeadingTrim : uint8_t {
     Both
 };
 
+enum class TextEdgeType : uint8_t {
+    Leading,
+    Text,
+    CapHeight,
+    ExHeight,
+    Alphabetic,
+    CJKIdeographic,
+    CJKIdeographicInk
+};
+
 enum class TextZoom : uint8_t {
     Normal,
     Reset
@@ -1092,6 +1102,16 @@ enum GridAutoFlow {
     AutoFlowColumnDense = InternalAutoFlowAlgorithmDense | InternalAutoFlowDirectionColumn
 };
 
+enum class MasonryAutoFlowPlacementAlgorithm {
+    Pack,
+    Next
+};
+
+enum class MasonryAutoFlowPlacementOrder {
+    DefiniteFirst,
+    Ordered
+};
+
 enum class AutoRepeatType : uint8_t {
     None,
     Fill,
@@ -1324,6 +1344,7 @@ WTF::TextStream& operator<<(WTF::TextStream&, TextSecurity);
 WTF::TextStream& operator<<(WTF::TextStream&, TextTransform);
 WTF::TextStream& operator<<(WTF::TextStream&, TextUnderlinePosition);
 WTF::TextStream& operator<<(WTF::TextStream&, LeadingTrim);
+WTF::TextStream& operator<<(WTF::TextStream&, TextEdgeType);
 WTF::TextStream& operator<<(WTF::TextStream&, TextZoom);
 WTF::TextStream& operator<<(WTF::TextStream&, TransformBox);
 WTF::TextStream& operator<<(WTF::TextStream&, TransformStyle3D);

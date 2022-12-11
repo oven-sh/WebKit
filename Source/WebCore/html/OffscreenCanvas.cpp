@@ -295,7 +295,7 @@ ExceptionOr<RefPtr<ImageBitmap>> OffscreenCanvas::transferToImageBitmap()
             return { RefPtr<ImageBitmap> { nullptr } };
 
         if (!m_hasCreatedImageBuffer) {
-            auto buffer = ImageBitmap::createImageBuffer(*canvasBaseScriptExecutionContext(), size(), RenderingMode::Unaccelerated, m_context->colorSpace());
+            auto buffer = ImageBitmap::createImageBuffer(*canvasBaseScriptExecutionContext(), size(), m_context->colorSpace());
             if (!buffer)
                 return { RefPtr<ImageBitmap> { nullptr } };
             return { ImageBitmap::create(ImageBitmapBacking(WTFMove(buffer))) };
@@ -486,8 +486,7 @@ void OffscreenCanvas::commitToPlaceholderCanvas()
     }
 
     if (m_placeholderData->bufferPipeSource) {
-        if (auto bufferCopy = imageBuffer->clone())
-            m_placeholderData->bufferPipeSource->handle(WTFMove(bufferCopy));
+        m_placeholderData->bufferPipeSource->handle(*imageBuffer);
     }
 
     Locker locker { m_placeholderData->bufferLock };
@@ -527,7 +526,7 @@ void OffscreenCanvas::createImageBuffer() const
         return;
 
     auto colorSpace = m_context ? m_context->colorSpace() : DestinationColorSpace::SRGB();
-    setImageBuffer(ImageBitmap::createImageBuffer(*canvasBaseScriptExecutionContext(), size(), RenderingMode::Unaccelerated, colorSpace));
+    setImageBuffer(ImageBitmap::createImageBuffer(*canvasBaseScriptExecutionContext(), size(), colorSpace));
 }
 
 void OffscreenCanvas::setImageBufferAndMarkDirty(RefPtr<ImageBuffer>&& buffer)

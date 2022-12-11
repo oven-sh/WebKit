@@ -340,9 +340,8 @@ FEATURE_AND_PLATFORM_DEFINE_DEPENDENCIES = $(WebKit2)/DerivedSources.make $(PLAT
 
 MESSAGE_RECEIVER_FILES := $(addsuffix MessageReceiver.cpp,$(notdir $(MESSAGE_RECEIVERS)))
 MESSAGES_FILES := $(addsuffix Messages.h,$(notdir $(MESSAGE_RECEIVERS)))
-MESSAGE_REPLIES_FILES := $(addsuffix MessagesReplies.h,$(notdir $(MESSAGE_RECEIVERS)))
 
-GENERATED_MESSAGES_FILES := $(MESSAGE_RECEIVER_FILES) $(MESSAGES_FILES) $(MESSAGE_REPLIES_FILES) MessageNames.h MessageNames.cpp MessageArgumentDescriptions.cpp
+GENERATED_MESSAGES_FILES := $(MESSAGE_RECEIVER_FILES) $(MESSAGES_FILES) MessageNames.h MessageNames.cpp MessageArgumentDescriptions.cpp
 GENERATED_MESSAGES_FILES_AS_PATTERNS := $(subst .,%,$(GENERATED_MESSAGES_FILES))
 
 MESSAGES_IN_FILES := $(addsuffix .messages.in,$(MESSAGE_RECEIVERS))
@@ -475,6 +474,8 @@ SERIALIZATION_DESCRIPTION_FILES = \
 	GPUProcess/media/TextTrackPrivateRemoteConfiguration.serialization.in \
 	NetworkProcess/NetworkProcessCreationParameters.serialization.in \
 	Shared/API/APIGeometry.serialization.in \
+	Shared/Cocoa/DataDetectionResult.serialization.in \
+	Shared/Cocoa/RevealItem.serialization.in \
 	Shared/Cocoa/WebCoreArgumentCodersCocoa.serialization.in \
 	Shared/EditorState.serialization.in \
 	Shared/FocusedElementInformation.serialization.in \
@@ -493,8 +494,12 @@ SERIALIZATION_DESCRIPTION_FILES = \
 	Shared/WebEvent.serialization.in \
 	Shared/WebExtensionControllerParameters.serialization.in \
 	Shared/WebHitTestResultData.serialization.in \
+	Shared/WebPopupItem.serialization.in \
 	Shared/WebPushDaemonConnectionConfiguration.serialization.in \
 	Shared/WebPushMessage.serialization.in \
+	Shared/ApplePay/ApplePayPaymentSetupFeatures.serialization.in \
+	Shared/ApplePay/PaymentSetupConfiguration.serialization.in \
+	Shared/Databases/IndexedDB/WebIDBResult.serialization.in \
 	Shared/mac/SecItemRequestData.serialization.in \
 	Shared/mac/SecItemResponseData.serialization.in \
 	Shared/mac/WebHitTestResultPlatformData.serialization.in \
@@ -570,10 +575,10 @@ SERIALIZATION_DESCRIPTION_FILES = \
 	WebProcess/GPU/media/RemoteMediaPlayerState.serialization.in \
 #
 
-all : GeneratedSerializers.h GeneratedSerializers.cpp GeneratedSerializers.mm SerializedTypeInfo.cpp
+all : GeneratedSerializers.h GeneratedSerializers.mm SerializedTypeInfo.mm
 
-GeneratedSerializers.h GeneratedSerializers.cpp GeneratedSerializers.mm SerializedTypeInfo.cpp : $(WebKit2)/Scripts/generate-serializers.py $(SERIALIZATION_DESCRIPTION_FILES) $(WebKit2)/DerivedSources.make
-	$(PYTHON) $(WebKit2)/Scripts/generate-serializers.py $(WebKit2)/ $(SERIALIZATION_DESCRIPTION_FILES)
+GeneratedSerializers.h GeneratedSerializers.mm SerializedTypeInfo.mm : $(WebKit2)/Scripts/generate-serializers.py $(SERIALIZATION_DESCRIPTION_FILES) $(WebKit2)/DerivedSources.make
+	$(PYTHON) $(WebKit2)/Scripts/generate-serializers.py mm $(WebKit2)/ $(SERIALIZATION_DESCRIPTION_FILES)
 
 EXTENSIONS_DIR = $(WebKit2)/WebProcess/Extensions
 EXTENSIONS_SCRIPTS_DIR = $(EXTENSIONS_DIR)/Bindings/Scripts
@@ -588,10 +593,13 @@ BINDINGS_SCRIPTS = \
 #
 
 EXTENSION_INTERFACES = \
+    WebExtensionAPIEvent \
     WebExtensionAPIExtension \
     WebExtensionAPINamespace \
     WebExtensionAPIRuntime \
     WebExtensionAPITest \
+    WebExtensionAPIWebNavigation \
+    WebExtensionAPIWebNavigationEvent \
 #
 
 JS%.h JS%.mm : %.idl $(BINDINGS_SCRIPTS) $(IDL_ATTRIBUTES_FILE) $(FEATURE_AND_PLATFORM_DEFINE_DEPENDENCIES)

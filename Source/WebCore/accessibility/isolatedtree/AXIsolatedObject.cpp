@@ -151,7 +151,8 @@ void AXIsolatedObject::initializeProperties(const Ref<AXCoreObject>& coreObject,
     setProperty(AXPropertyName::LinkRelValue, object.linkRelValue().isolatedCopy());
     setProperty(AXPropertyName::CurrentState, static_cast<int>(object.currentState()));
     setProperty(AXPropertyName::SupportsCurrent, object.supportsCurrent());
-    setProperty(AXPropertyName::KeyShortcutsValue, object.keyShortcutsValue().isolatedCopy());
+    setProperty(AXPropertyName::SupportsKeyShortcuts, object.supportsKeyShortcuts());
+    setProperty(AXPropertyName::KeyShortcuts, object.keyShortcuts().isolatedCopy());
     setProperty(AXPropertyName::SupportsSetSize, object.supportsSetSize());
     setProperty(AXPropertyName::SupportsPath, object.supportsPath());
     setProperty(AXPropertyName::SupportsPosInSet, object.supportsPosInSet());
@@ -685,15 +686,6 @@ void AXIsolatedObject::setSelectedTextRange(const PlainTextRange& value)
         object->setSelectedTextRange(value);
     });
 }
-
-#if PLATFORM(COCOA) && !PLATFORM(IOS_FAMILY)
-void AXIsolatedObject::setCaretBrowsingEnabled(bool value)
-{
-    performFunctionOnMainThread([&value](AXCoreObject* object) {
-        object->setCaretBrowsingEnabled(value);
-    });
-}
-#endif
 
 String AXIsolatedObject::computedLabel()
 {

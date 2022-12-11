@@ -365,6 +365,7 @@ LineBuilder::LineContent LineBuilder::layoutInlineContent(const LineInput& lineI
         , m_line.contentLogicalWidth()
         , m_line.contentLogicalRight()
         , m_line.hangingTrailingContentWidth()
+        , isFirstLine() ? LineContent::FirstFormattedLine::WithinIFC : LineContent::FirstFormattedLine::No
         , isLastLine
         , m_line.nonSpanningInlineLevelBoxCount()
         , computedVisualOrder(m_line)
@@ -956,7 +957,7 @@ bool LineBuilder::tryPlacingFloatBox(const InlineItem& floatItem, LineBoxConstra
     boxGeometry.setLogicalTopLeft(floatingPosition);
     auto floatBoxItem = floatingContext.toFloatItem(floatBox);
     auto isLogicalLeftPositionedInFloatingState = floatBoxItem.isLeftPositioned();
-    floatingState()->append(WTFMove(floatBoxItem));
+    floatingState()->append(floatBoxItem);
     m_placedFloats.append(&floatItem);
 
     auto intersects = [&] {

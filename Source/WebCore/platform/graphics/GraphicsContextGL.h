@@ -34,6 +34,7 @@
 #include "Image.h"
 #include "IntRect.h"
 #include "IntSize.h"
+#include <wtf/FunctionDispatcher.h>
 #include <wtf/HashSet.h>
 #include <wtf/RefCounted.h>
 #include <wtf/text/WTFString.h>
@@ -1465,7 +1466,7 @@ public:
     virtual void multiDrawElementsInstancedBaseVertexBaseInstanceANGLE(GCGLenum mode, GCGLSpanTuple<const GCGLsizei, const GCGLsizei, const GCGLsizei, const GCGLint, const GCGLuint> countsOffsetsInstanceCountsBaseVerticesAndBaseInstances, GCGLenum type) = 0;
 
     // GL_ANGLE_provoking_vertex
-    virtual void provokingVertexANGLE(GCGLenum mode) = 0;
+    virtual void provokingVertexANGLE(GCGLenum provokeMode) = 0;
 
     // ========== Other functions.
     GCGLfloat getFloat(GCGLenum pname);
@@ -1601,7 +1602,7 @@ private:
     GraphicsContextGLAttributes m_attrs;
 };
 
-WEBCORE_EXPORT RefPtr<GraphicsContextGL> createWebProcessGraphicsContextGL(const GraphicsContextGLAttributes&);
+WEBCORE_EXPORT RefPtr<GraphicsContextGL> createWebProcessGraphicsContextGL(const GraphicsContextGLAttributes&, SerialFunctionDispatcher* = nullptr);
 
 inline GCGLfloat GraphicsContextGL::getFloat(GCGLenum pname)
 {

@@ -64,6 +64,11 @@ class Git(Scm):
                 for branch in self._ordered_commits.keys():
                     if branch == self.repo.default_branch:
                         continue
+                    if not self._ordered_commits[branch]:
+                        for d in [self._ordered_commits, self._ordered_revisions, self._last_populated]:
+                            if branch in d:
+                                del d[branch]
+                        continue
                     self._fill(branch)
             except BaseException:
                 pass
@@ -76,8 +81,10 @@ class Git(Scm):
             default_branch = self.repo.default_branch
             if branch == default_branch:
                 branch_point = None
-            else:
+            elif self._ordered_commits[branch]:
                 branch_point = int(self._hash_to_identifiers[self._ordered_commits[branch][0]].split('@')[0])
+            else:
+                return
 
             index = len(self._ordered_commits[branch]) - 1
             while index:
@@ -177,18 +184,20 @@ class Git(Scm):
             hashes.reverse()
             revisions.reverse()
 
+            intersected = False
             order = len(self._ordered_commits[branch]) - 1
             while order > 0:
                 if hashes[0] == self._ordered_commits[branch][order]:
                     order -= 1
+                    intersected = True
                     break
                 order -= 1
+            if intersected or branch == self.repo.default_branch:
+                self._ordered_commits[branch] = self._ordered_commits[branch][:order + 1] + hashes
+                self._ordered_revisions[branch] = self._ordered_revisions[branch][:order + 1] + revisions
             else:
-                if order == 0 and hashes[0] == self._ordered_commits[branch][0]:
-                    order = -1
-
-            self._ordered_commits[branch] = self._ordered_commits[branch][:order + 1] + hashes
-            self._ordered_revisions[branch] = self._ordered_revisions[branch][:order + 1] + revisions
+                self._ordered_commits[branch] = hashes
+                self._ordered_revisions[branch] = revisions
             self._fill(branch)
 
             try:
@@ -313,6 +322,7 @@ class Git(Scm):
         'webkitscmpy.update-fork': ['true', 'false'],
         'webkitscmpy.auto-check': ['true', 'false'],
         'webkitscmpy.auto-create-commit': ['true', 'false'],
+        'webkitscmpy.auto-prune': ['only-source', 'true', 'false'],
     }
     CONFIG_LOCATIONS = ['global', 'repository', 'project']
 
@@ -933,7 +943,7 @@ class Git(Scm):
             pass
         return argument
 
-    def checkout(self, argument):
+    def checkout(self, argument, prune=None):
         self._branch = None
 
         if log.level > logging.WARNING:
@@ -978,7 +988,13 @@ class Git(Scm):
             if not rc:
                 return self.commit()
             if rc == 128:
-                run([self.executable(), 'fetch', name], cwd=self.root_path)
+                command = [self.executable(), 'fetch', name]
+                if prune is None:
+                    if self.config()['webkitscmpy.auto-prune'] == 'true':
+                        command.append('--prune')
+                    elif name in self.source_remotes() and self.config()['webkitscmpy.auto-prune'] == 'only-source':
+                        command.append('--prune')
+                run(command, cwd=self.root_path)
             return None if run(
                 [self.executable(), 'checkout'] + ['-B', branch, '{}/{}'.format(name, branch)] + log_arg,
                 cwd=self.root_path,
@@ -1019,19 +1035,24 @@ class Git(Scm):
             ), 'refs/heads/{}...{}'.format(target, head),
         ], cwd=self.root_path, env={'FILTER_BRANCH_SQUELCH_WARNING': '1'}, capture_output=True).returncode
 
-    def fetch(self, branch, remote=None):
-        return run(
-            [self.executable(), 'fetch', remote or self.default_remote, '{}:{}'.format(branch, branch)],
-            cwd=self.root_path,
-        ).returncode
+    def fetch(self, branch, remote=None, prune=None):
+        remote = remote or self.default_remote
+        if prune is None and self.config()['webkitscmpy.auto-prune'] == 'true':
+            prune = True
+        elif prune is None and self.config()['webkitscmpy.auto-prune'] == 'only-source':
+            prune = remote in self.source_remotes()
+        command = [self.executable(), 'fetch', remote, '{}:{}'.format(branch, branch)]
+        if prune:
+            command.append('--prune')
+        return run(command, cwd=self.root_path).returncode
 
-    def pull(self, rebase=None, branch=None, remote=None):
+    def pull(self, rebase=None, branch=None, remote=None, prune=None):
         remote = remote or self.default_remote
         commit = self.commit() if self.is_svn or branch else None
 
         code = 0
         if branch and self.branch != branch:
-            code = self.fetch(branch=branch, remote=remote)
+            code = self.fetch(branch=branch, remote=remote, prune=prune)
         if not code:
             command = [self.executable(), 'pull'] + ([remote, branch] if branch else [])
             if rebase is True:

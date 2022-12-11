@@ -83,6 +83,7 @@ namespace WebCore {
     macro(AudioParamMap) \
     macro(AudioProcessingEvent) \
     macro(AudioScheduledSourceNode) \
+    macro(AudioSession) \
     macro(AudioWorklet) \
     macro(AudioWorkletGlobalScope) \
     macro(AudioWorkletNode) \
@@ -493,6 +494,7 @@ namespace WebCore {
     macro(consumeChunk) \
     macro(controlledReadableStream) \
     macro(controller) \
+    macro(createAbortSignal) \
     macro(createImageBitmap) \
     macro(createReadableStream) \
     macro(createWritableStreamFromInternal) \
@@ -516,7 +518,6 @@ namespace WebCore {
     macro(flushAlgorithm) \
     macro(focus) \
     macro(frames) \
-    macro(getInternalReadableStream) \
     macro(getInternalWritableStream) \
     macro(getMatchedCSSRules) \
     macro(getTracks) \
@@ -531,7 +532,6 @@ namespace WebCore {
     macro(inFlightWriteRequest) \
     macro(indexedDB) \
     macro(initializeWith) \
-    macro(internalReadable) \
     macro(internalStream) \
     macro(internalWritable) \
     macro(isAbortSignal) \
@@ -602,6 +602,8 @@ namespace WebCore {
     macro(setBodyFromInputRequest) \
     macro(setStatus) \
     macro(showModalDialog) \
+    macro(signal) \
+    macro(signalAbort) \
     macro(SpeechSynthesis) \
     macro(SpeechSynthesisErrorEvent) \
     macro(SpeechSynthesisEvent) \

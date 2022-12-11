@@ -93,6 +93,8 @@ public:
     // FIXME: expose the tree and pass this to that?
     bool handleWheelEvent(const WebCore::PlatformWheelEvent&);
     void handleMouseEvent(const WebCore::PlatformMouseEvent&);
+    
+    virtual WebCore::PlatformWheelEvent filteredWheelEvent(const WebCore::PlatformWheelEvent& wheelEvent) { return wheelEvent; }
 
     WebCore::ScrollingNodeID rootScrollingNodeID() const;
 
@@ -120,6 +122,7 @@ public:
 
     virtual void displayDidRefresh(WebCore::PlatformDisplayID);
     void reportExposedUnfilledArea(MonotonicTime, unsigned unfilledArea);
+    void reportSynchronousScrollingReasonsChanged(MonotonicTime, OptionSet<WebCore::SynchronousScrollingReason>);
 
 protected:
     RemoteScrollingTree* scrollingTree() const { return m_scrollingTree.get(); }

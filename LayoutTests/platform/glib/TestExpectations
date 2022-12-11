@@ -454,6 +454,7 @@ webkit.org/b/228915 accessibility/selected-state-changed-notifications.html [ Ti
 
 # Not supported
 accessibility/embedded-image-description.html [ Skip ]
+accessibility/aria-keyshortcuts.html [ Skip ]
 
 # Not supported. Skipped also in mac-wk1 and win ports.
 accessibility/nested-textareas-value-changed-notifications.html [ Skip ]
@@ -1143,13 +1144,6 @@ webkit.org/b/212202 fast/scrolling/overflow-scrollable-after-back.html [ Skip ]
 # Previous: webkit.org/b/223729 [ Debug ] css3/scroll-snap/scroll-snap-wheel-event.html [ Pass ]
 webkit.org/b/212202 css3/scroll-snap/scroll-snap-wheel-event.html [ Skip ]
 
-
-
-# Warning: this test is expected to fail in the global expectations file, but
-# we expect it to Pass because we support RTL scrollbars. When fixed, it should
-# not be removed, but moved to the expected passes section of this file.
-webkit.org/b/186665 fast/scrolling/rtl-scrollbars-alternate-iframe-body-dir-attr-does-not-update-scrollbar-placement.html [ ImageOnlyFailure ]
-
 webkit.org/b/213921 fast/visual-viewport/scroll-event-fired-during-scroll-alone.html [ Crash ]
 
 #////////////////////////////////////////////////////////////////////////////////////////
@@ -1228,6 +1222,17 @@ webkit.org/b/233796 imported/w3c/web-platform-tests/html/browsers/browsing-the-w
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of SOUP and Networking-related bugs
 #////////////////////////////////////////////////////////////////////////////////////////
+
+#////////////////////////////////////////////////////////////////////////////////////////
+# Media-related bugs
+#////////////////////////////////////////////////////////////////////////////////////////
+
+media/audioSession [ Skip ]
+
+#////////////////////////////////////////////////////////////////////////////////////////
+# End of Media-related bugs
+#////////////////////////////////////////////////////////////////////////////////////////
+
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # Streams-related bugs
@@ -1460,6 +1465,7 @@ webgl/webgl-draft-extensions-flag-on.html [ Skip ]
 
 webgl/conformance/extensions/s3tc-and-rgtc.html [ Pass Failure ]
 
+webgl/tex-2d-video-no-change-wrap.html [ Failure ]
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of WebGL-related bugs
@@ -1486,6 +1492,8 @@ webkit.org/b/227987 http/tests/media/media-stream/get-display-media-prompt.html 
 webkit.org/b/235885 webrtc/datachannel/datachannel-stats.html [ Skip ]
 webkit.org/b/235885 webrtc/datachannel/getStats-no-prflx-remote-candidate.html [ Skip ]
 webkit.org/b/235885 fast/mediastream/RTCPeerConnection-statsSelector.html [ Skip ]
+
+webrtc/video-av1.html [ Skip ]
 
 # GStreamer's DTLS agent currently generates RSA certificates only. DTLS 1.2 is not supported yet (AFAIK).
 webrtc/datachannel/dtls10.html [ Failure ]
@@ -3008,7 +3016,6 @@ webkit.org/b/237108 http/tests/websocket/tests/hybi/handshake-ok-with-legacy-sec
 webkit.org/b/237108 http/tests/websocket/tests/hybi/imported/blink/permessage-deflate-invalid-parameter.html [ Failure ]
 webkit.org/b/237108 http/tests/websocket/tests/hybi/simple-wss.html [ Failure ]
 
-webkit.org/b/236298 fast/sub-pixel/ellipsis-table.html [ ImageOnlyFailure ]
 webkit.org/b/236298 fast/text/combining-character-sequence-vertical.html [ ImageOnlyFailure ]
 webkit.org/b/236298 fast/text/fallback-font-and-zero-width-glyph.html [ ImageOnlyFailure ]
 webkit.org/b/236298 fast/text/hanging-punctuation-allow-end-basic.html [ ImageOnlyFailure ]

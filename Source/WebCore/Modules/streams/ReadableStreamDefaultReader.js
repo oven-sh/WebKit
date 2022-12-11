@@ -27,14 +27,8 @@ function initializeReadableStreamDefaultReader(stream)
 {
     "use strict";
 
-    if (!@isReadableStream(stream)) {
-        // FIXME: We should pass a single type.
-        let potentialInternalStream = @getInternalReadableStream(stream);
-        if (potentialInternalStream === @undefined)
-            @throwTypeError("ReadableStreamDefaultReader needs a ReadableStream");
-        stream = potentialInternalStream;
-    }
-
+    if (!@isReadableStream(stream))
+        @throwTypeError("ReadableStreamDefaultReader needs a ReadableStream");
     if (@isReadableStreamLocked(stream))
         @throwTypeError("ReadableStream is locked");
 
@@ -44,7 +38,7 @@ function initializeReadableStreamDefaultReader(stream)
     return this;
 }
 
-function cancel(reason)
+function cancel()
 {
     "use strict";
 
@@ -54,6 +48,7 @@ function cancel(reason)
     if (!@getByIdDirectPrivate(this, "ownerReadableStream"))
         return @Promise.@reject(@makeTypeError("cancel() called on a reader owned by no readable stream"));
 
+    const reason = arguments[0];
     return @readableStreamReaderGenericCancel(this, reason);
 }
 

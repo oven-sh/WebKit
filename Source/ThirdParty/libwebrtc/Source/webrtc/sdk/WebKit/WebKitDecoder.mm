@@ -161,7 +161,7 @@ private:
 
 class RemoteVideoDecoder final : public webrtc::VideoDecoder {
 public:
-    RemoteVideoDecoder(WebKitVideoDecoder, bool isVP9);
+    RemoteVideoDecoder(WebKitVideoDecoder::Value, bool isVP9);
     ~RemoteVideoDecoder();
 
     bool isVP9() const { return m_isVP9; }
@@ -173,7 +173,7 @@ private:
     int32_t Release() final;
     const char* ImplementationName() const final { return "RemoteVideoToolBox"; }
 
-    WebKitVideoDecoder m_internalDecoder;
+    WebKitVideoDecoder::Value m_internalDecoder;
     bool m_isVP9 { false };
 };
 
@@ -198,7 +198,7 @@ void setVideoDecoderCallbacks(VideoDecoderCreateCallback createCallback, VideoDe
     callbacks.registerDecodeCompleteCallback = registerDecodeCompleteCallback;
 }
 
-RemoteVideoDecoder::RemoteVideoDecoder(WebKitVideoDecoder internalDecoder, bool isVP9)
+RemoteVideoDecoder::RemoteVideoDecoder(WebKitVideoDecoder::Value internalDecoder, bool isVP9)
     : m_internalDecoder(internalDecoder)
     , m_isVP9(isVP9)
 {
@@ -280,19 +280,22 @@ std::unique_ptr<VideoDecoder> RemoteVideoDecoderFactory::CreateVideoDecoder(cons
     if (!videoDecoderCallbacks().createCallback)
         return m_internalFactory->CreateVideoDecoder(format);
 
-    auto identifier = videoDecoderCallbacks().createCallback(format);
-    if (!identifier)
+    auto createdDecoder = videoDecoderCallbacks().createCallback(format);
+    if (!createdDecoder.value)
         return m_internalFactory->CreateVideoDecoder(format);
 
-    auto decoder = std::make_unique<RemoteVideoDecoder>(identifier, format.name == "VP9");
+    if (createdDecoder.isWebRTCVideoDecoder)
+        return std::unique_ptr<VideoDecoder> { static_cast<VideoDecoder*>(createdDecoder.value) };
+
+    auto decoder = std::make_unique<RemoteVideoDecoder>(createdDecoder.value, format.name == "VP9");
     if (!decoder->isVP9())
         return decoder;
     return webrtc::CreateVideoDecoderSoftwareFallbackWrapper(m_internalFactory->CreateVideoDecoder(format), std::move(decoder));
 }
 
-std::unique_ptr<webrtc::VideoDecoderFactory> createWebKitDecoderFactory(WebKitH265 supportsH265, WebKitVP9 supportsVP9, WebKitVP9VTB supportsVP9VTB)
+std::unique_ptr<webrtc::VideoDecoderFactory> createWebKitDecoderFactory(WebKitH265 supportsH265, WebKitVP9 supportsVP9, WebKitVP9VTB supportsVP9VTB, WebKitAv1 supportsAv1)
 {
-    auto internalFactory = ObjCToNativeVideoDecoderFactory([[RTCDefaultVideoDecoderFactory alloc] initWithH265: supportsH265 == WebKitH265::On vp9Profile0:supportsVP9 > WebKitVP9::Off vp9Profile2:supportsVP9 == WebKitVP9::Profile0And2 vp9VTB: supportsVP9VTB == WebKitVP9VTB::On]);
+    auto internalFactory = ObjCToNativeVideoDecoderFactory([[RTCDefaultVideoDecoderFactory alloc] initWithH265: supportsH265 == WebKitH265::On vp9Profile0:supportsVP9 > WebKitVP9::Off vp9Profile2:supportsVP9 == WebKitVP9::Profile0And2 vp9VTB: supportsVP9VTB == WebKitVP9VTB::On av1:supportsAv1==WebKitAv1::On]);
     return std::make_unique<RemoteVideoDecoderFactory>(std::move(internalFactory));
 }
 

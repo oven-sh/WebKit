@@ -1551,7 +1551,7 @@ public:
     void addDouble(FPRegisterID op1, FPRegisterID op2, FPRegisterID dest)
     {
         if (supportsAVX())
-            m_assembler.vaddsd_rr(op1, op2, dest);
+            m_assembler.vaddsd_rrr(op1, op2, dest);
         else {
             if (op1 == dest)
                 m_assembler.addsd_rr(op2, dest);
@@ -1614,7 +1614,7 @@ public:
     void addFloat(FPRegisterID op1, FPRegisterID op2, FPRegisterID dest)
     {
         if (supportsAVX())
-            m_assembler.vaddss_rr(op1, op2, dest);
+            m_assembler.vaddss_rrr(op1, op2, dest);
         else {
             if (op1 == dest)
                 m_assembler.addss_rr(op2, dest);
@@ -1696,7 +1696,7 @@ public:
     void subDouble(FPRegisterID op1, FPRegisterID op2, FPRegisterID dest)
     {
         if (supportsAVX())
-            m_assembler.vsubsd_rr(op1, op2, dest);
+            m_assembler.vsubsd_rrr(op1, op2, dest);
         else {
             // B := A - B is invalid.
             ASSERT(op1 == dest || op2 != dest);
@@ -1738,7 +1738,7 @@ public:
     void subFloat(FPRegisterID op1, FPRegisterID op2, FPRegisterID dest)
     {
         if (supportsAVX())
-            m_assembler.vsubss_rr(op1, op2, dest);
+            m_assembler.vsubss_rrr(op1, op2, dest);
         else {
             // B := A - B is invalid.
             ASSERT(op1 == dest || op2 != dest);
@@ -1780,7 +1780,7 @@ public:
     void mulDouble(FPRegisterID op1, FPRegisterID op2, FPRegisterID dest)
     {
         if (supportsAVX())
-            m_assembler.vmulsd_rr(op1, op2, dest);
+            m_assembler.vmulsd_rrr(op1, op2, dest);
         else {
             if (op1 == dest)
                 m_assembler.mulsd_rr(op2, dest);
@@ -1842,7 +1842,7 @@ public:
     void mulFloat(FPRegisterID op1, FPRegisterID op2, FPRegisterID dest)
     {
         if (supportsAVX())
-            m_assembler.vmulss_rr(op1, op2, dest);
+            m_assembler.vmulss_rrr(op1, op2, dest);
         else {
             if (op1 == dest)
                 m_assembler.mulss_rr(op2, dest);
@@ -3972,6 +3972,13 @@ public:
         return X86Assembler::patchableJumpSize();
     }
 
+    static bool supportsSSE4_1()
+    {
+        if (s_sse4_1CheckState == CPUIDCheckState::NotChecked)
+            collectCPUFeatures();
+        return s_sse4_1CheckState == CPUIDCheckState::Set;
+    }
+
     static bool supportsFloatingPointRounding()
     {
         if (s_sse4_1CheckState == CPUIDCheckState::NotChecked)
@@ -3986,10 +3993,38 @@ public:
         return s_popcntCheckState == CPUIDCheckState::Set;
     }
 
+    static bool supportsSSE3()
+    {
+        if (s_sse3CheckState == CPUIDCheckState::NotChecked)
+            collectCPUFeatures();
+        return s_sse3CheckState == CPUIDCheckState::Set;
+    }
+
+    static bool supportsSupplementalSSE3()
+    {
+        if (s_supplementalSSE3CheckState == CPUIDCheckState::NotChecked)
+            collectCPUFeatures();
+        return s_supplementalSSE3CheckState == CPUIDCheckState::Set;
+    }
+
     static bool supportsAVX()
     {
         // AVX still causes mysterious regressions and those regressions can be massive.
         return false;
+    }
+
+    static bool supportsAVXForSIMD()
+    {
+        if (s_avxCheckState == CPUIDCheckState::NotChecked)
+            collectCPUFeatures();
+        return s_avxCheckState == CPUIDCheckState::Set;
+    }
+
+    static bool supportsAVX2()
+    {
+        if (s_avx2CheckState == CPUIDCheckState::NotChecked)
+            collectCPUFeatures();
+        return s_avx2CheckState == CPUIDCheckState::Set;
     }
 
     void lfence()
@@ -4274,9 +4309,12 @@ private:
     static CPUID getCPUIDEx(unsigned level, unsigned count);
     JS_EXPORT_PRIVATE static void collectCPUFeatures();
 
+    JS_EXPORT_PRIVATE static CPUIDCheckState s_sse3CheckState;
+    JS_EXPORT_PRIVATE static CPUIDCheckState s_supplementalSSE3CheckState;
     JS_EXPORT_PRIVATE static CPUIDCheckState s_sse4_1CheckState;
     JS_EXPORT_PRIVATE static CPUIDCheckState s_sse4_2CheckState;
     JS_EXPORT_PRIVATE static CPUIDCheckState s_avxCheckState;
+    JS_EXPORT_PRIVATE static CPUIDCheckState s_avx2CheckState;
     JS_EXPORT_PRIVATE static CPUIDCheckState s_lzcntCheckState;
     JS_EXPORT_PRIVATE static CPUIDCheckState s_bmi1CheckState;
     JS_EXPORT_PRIVATE static CPUIDCheckState s_popcntCheckState;

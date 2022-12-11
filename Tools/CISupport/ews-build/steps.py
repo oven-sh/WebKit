@@ -21,7 +21,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 from buildbot.plugins import steps, util
-from buildbot.process import buildstep, logobserver, properties
+from buildbot.process import buildstep, logobserver, properties, remotecommand
 from buildbot.process.results import Results, SUCCESS, FAILURE, CANCELLED, WARNINGS, SKIPPED, EXCEPTION, RETRY
 from buildbot.steps import master, shell, transfer, trigger
 from buildbot.steps.source import git
@@ -35,6 +35,7 @@ from send_email import send_email_to_patch_author, send_email_to_bot_watchers, s
 from results_db import ResultsDatabase
 
 import json
+import mock
 import os
 import re
 import requests
@@ -178,7 +179,7 @@ class GitHubMixin(object):
             )
             if response.status_code // 100 != 2:
                 self._addToLog('stdio', 'Accessed {url} with unexpected status code {status_code}.\n'.format(url=url, status_code=response.status_code))
-                return None
+                return False if response.status_code // 100 == 4 else None
         except Exception as e:
             # Catching all exceptions here to safeguard access token.
             self._addToLog('stdio', 'Failed to access {url}.\n'.format(url=url))
@@ -193,7 +194,7 @@ class GitHubMixin(object):
         pr_url = '{}/pulls/{}'.format(api_url, pr_number)
         content = self.fetch_data_from_url_with_authentication_github(pr_url)
         if not content:
-            return None
+            return content
 
         for attempt in range(retry + 1):
             try:
@@ -248,6 +249,9 @@ class GitHubMixin(object):
         return sorted([reviewer for reviewer, _id in last_approved.items() if _id > last_rejected.get(reviewer, 0)])
 
     def _is_pr_closed(self, pr_json):
+        # If pr_json is "False", we received a 400 family error, which likely means the PR was deleted
+        if pr_json is False:
+            return 1
         if not pr_json or not pr_json.get('state'):
             self._addToLog('stdio', 'Cannot determine pull request status.\n')
             return -1
@@ -256,6 +260,9 @@ class GitHubMixin(object):
         return 0
 
     def _is_hash_outdated(self, pr_json):
+        # If pr_json is "False", we received a 400 family error, which likely means the PR was deleted
+        if pr_json is False:
+            return 1
         pr_sha = (pr_json or {}).get('head', {}).get('sha', '')
         if not pr_sha:
             self._addToLog('stdio', 'Cannot determine if hash is outdated or not.\n')
@@ -658,6 +665,17 @@ class CheckOutSource(git.Git):
         else:
             return {'step': 'Cleaned and updated working directory'}
 
+    def _dovccmd(self, *args, **kwargs):
+        if kwargs.get('collectStdout') or not self.getProperty('sensitive', False):
+            return super(CheckOutSource, self)._dovccmd(*args, **kwargs)
+
+        class ScrubbedRemoteCommand(remotecommand.RemoteShellCommand):
+            def useLog(self, *args, **kwargs):
+                pass
+
+        with mock.patch('buildbot.process.remotecommand.RemoteShellCommand', ScrubbedRemoteCommand):
+            return super(CheckOutSource, self)._dovccmd(*args, **kwargs)
+
     def run(self):
         project = self.getProperty('project', '') or GITHUB_PROJECTS[0]
         self.repourl = f'{GITHUB_URL}{project}.git'
@@ -711,14 +729,24 @@ class CheckOutSpecificRevision(shell.ShellCommand):
     flunkOnFailure = False
     haltOnFailure = False
 
+    @staticmethod
+    def doCheckOutSpecificRevision(obj):
+        return obj.getProperty('ews_revision', False)
+
     def __init__(self, **kwargs):
         super(CheckOutSpecificRevision, self).__init__(logEnviron=False, **kwargs)
 
     def doStepIf(self, step):
-        return self.getProperty('ews_revision', False) and not self.getProperty('github.number', False)
+        return self.doCheckOutSpecificRevision(self)
 
     def hideStepIf(self, results, step):
         return not self.doStepIf(step)
+
+    def buildCommandKwargs(self, warnings):
+        result = super(CheckOutSpecificRevision, self).buildCommandKwargs(warnings)
+        if self.getProperty('sensitive', False):
+            result['stdioLogName'] = None
+        return result
 
     def start(self):
         self.setCommand(['git', 'checkout', self.getProperty('ews_revision')])
@@ -796,8 +824,7 @@ class ShowIdentifier(shell.ShellCommand):
             if identifier:
                 identifier = identifier.replace('master', DEFAULT_BRANCH)
             self.setProperty('identifier', identifier)
-            if self.getProperty('ews_revision', False) and not self.getProperty('github.number', False):
-                # Note that this if condition matches with CheckOutSpecificRevision.doStepIf
+            if CheckOutSpecificRevision.doCheckOutSpecificRevision(self):
                 step = self.getLastBuildStepByName(CheckOutSpecificRevision.name)
             else:
                 step = self.getLastBuildStepByName(CheckOutSource.name)
@@ -1014,6 +1041,14 @@ class CheckOutPullRequest(steps.ShellSequence, ShellMixin):
 
     def hideStepIf(self, results, step):
         return not self.doStepIf(step)
+
+    def makeRemoteShellCommand(self, collectStdout=False, collectStderr=False, stdioLogName='stdio', **overrides):
+        if self.getProperty('sensitive', False):
+            stdioLogName = None
+        return super(CheckOutPullRequest, self).makeRemoteShellCommand(
+            collectStdout=collectStdout, collectStderr=collectStderr,
+            stdioLogName=stdioLogName, **overrides
+        )
 
     def run(self):
         self.commands = []
@@ -3147,8 +3182,9 @@ class RunWebKitTests(shell.Test, AddToLogMixin):
     jsonFileName = 'layout-test-results/full_results.json'
     logfiles = {'json': jsonFileName}
     test_failures_log_name = 'test-failures'
+    results_db_log_name = 'results-db'
     ENABLE_GUARD_MALLOC = False
-    EXIT_AFTER_FAILURES = '30'
+    EXIT_AFTER_FAILURES = '60'
     command = ['python3', 'Tools/Scripts/run-webkit-tests',
                '--no-build',
                '--no-show-results',
@@ -3236,8 +3272,10 @@ class RunWebKitTests(shell.Test, AddToLogMixin):
 
         self.incorrectLayoutLines = incorrectLayoutLines
 
-    def commandComplete(self, cmd):
-        shell.Test.commandComplete(self, cmd)
+    @defer.inlineCallbacks
+    def runCommand(self, command):
+        yield shell.Test.runCommand(self, command)
+
         logText = self.log_observer.getStdout() + self.log_observer.getStderr()
         logTextJson = self.log_observer_json.getStdout()
 
@@ -3249,12 +3287,15 @@ class RunWebKitTests(shell.Test, AddToLogMixin):
             self.setProperty('first_run_flakies', sorted(first_results.flaky_tests))
             if first_results.failing_tests:
                 self._addToLog(self.test_failures_log_name, '\n'.join(first_results.failing_tests))
-                self.filter_failures_using_results_db(first_results.failing_tests)
+
+            if first_results.failing_tests and not first_results.did_exceed_test_failure_limit:
+                yield self.filter_failures_using_results_db(first_results.failing_tests)
                 self.setProperty('first_run_failures_filtered', sorted(self.failing_tests_filtered))
                 self.setProperty('results-db_first_run_pre_existing', sorted(self.preexisting_failures_in_results_db))
 
         self._parseRunWebKitTestsOutput(logText)
 
+    @defer.inlineCallbacks
     def filter_failures_using_results_db(self, failing_tests):
         self.failing_tests_filtered = failing_tests.copy()
         identifier = self.getProperty('identifier', None)
@@ -3266,10 +3307,15 @@ class RunWebKitTests(shell.Test, AddToLogMixin):
         if style and style in ['debug', 'release']:
             configuration['style'] = style
 
-        self._addToLog('stdio', f'\nChecking Results database for failing tests. Identifier: {identifier}, configuration: {configuration}')
+        if self.getProperty('use-dump-render-tree', False):
+            configuration['flavor'] = 'wk1'
+        else:
+            configuration['flavor'] = 'wk2'
+
+        self._addToLog(self.results_db_log_name, f'Checking Results database for failing tests. Identifier: {identifier}, configuration: {configuration}')
         for test in failing_tests:
-            data = ResultsDatabase().is_test_pre_existing_failure(test, commit=identifier, configuration=configuration)
-            self._addToLog('stdio', f"\n{test}: pass_rate: {data['pass_rate']}, pre-existing-failure={data['is_existing_failure']}\nResponse from results-db: {data['raw_data']}\n{data['logs']}")
+            data = yield ResultsDatabase().is_test_pre_existing_failure(test, commit=identifier, configuration=configuration)
+            self._addToLog(self.results_db_log_name, f"\n{test}: pass_rate: {data['pass_rate']}, pre-existing-failure={data['is_existing_failure']}\nResponse from results-db: {data['raw_data']}\n{data['logs']}")
             if data['is_existing_failure']:
                 self.preexisting_failures_in_results_db.append(test)
                 self.failing_tests_filtered.remove(test)
@@ -3298,18 +3344,21 @@ class RunWebKitTests(shell.Test, AddToLogMixin):
 
     def evaluateCommand(self, cmd):
         rc = self.evaluateResult(cmd)
-        if (self.preexisting_failures_in_results_db and len(self.failing_tests_filtered) == 0):
-            # This means all the tests which failed in this run were also failing or flaky in results database
-            message = f"Ignored pre-existing failure: {', '.join(self.preexisting_failures_in_results_db)}"
-            self.descriptionDone = message
-            self.finished(WARNINGS)
-            self.build.buildFinished([message], SUCCESS)
-
         if rc == SUCCESS or rc == WARNINGS:
             message = 'Passed layout tests'
             self.descriptionDone = message
             self.build.results = SUCCESS
             self.setProperty('build_summary', message)
+        elif (self.preexisting_failures_in_results_db and len(self.failing_tests_filtered) == 0):
+            # This means all the tests which failed in this run were also failing or flaky in results database
+            message = f"Ignored pre-existing failure: {', '.join(self.preexisting_failures_in_results_db)}"
+            self.descriptionDone = message
+            self.build.results = SUCCESS
+            self.setProperty('build_summary', message)
+            self.build.addStepsAfterCurrentStep([ArchiveTestResults(),
+                                                UploadTestResults(),
+                                                ExtractTestResults()])
+            self.finished(WARNINGS)
         else:
             self.build.addStepsAfterCurrentStep([
                 ArchiveTestResults(),
@@ -3388,23 +3437,16 @@ class ReRunWebKitTests(RunWebKitTests):
 
     def evaluateCommand(self, cmd):
         rc = self.evaluateResult(cmd)
-        first_results_did_exceed_test_failure_limit = self.getProperty('first_results_exceed_failure_limit')
+        first_results_did_exceed_test_failure_limit = self.getProperty('first_results_exceed_failure_limit', False)
         first_results_failing_tests = set(self.getProperty('first_run_failures', []))
-        second_results_did_exceed_test_failure_limit = self.getProperty('second_results_exceed_failure_limit')
+        second_results_did_exceed_test_failure_limit = self.getProperty('second_results_exceed_failure_limit', False)
         second_results_failing_tests = set(self.getProperty('second_run_failures', []))
         # FIXME: here it can be a good idea to also use the info from second_run_flakies and first_run_flakies
         tests_that_consistently_failed = first_results_failing_tests.intersection(second_results_failing_tests)
         flaky_failures = first_results_failing_tests.union(second_results_failing_tests) - first_results_failing_tests.intersection(second_results_failing_tests)
+        num_flaky_failures = len(flaky_failures)
         flaky_failures = sorted(list(flaky_failures))[:self.NUM_FAILURES_TO_DISPLAY]
         flaky_failures_string = ', '.join(flaky_failures)
-
-        if (self.preexisting_failures_in_results_db and len(self.failing_tests_filtered) == 0):
-            # This means all the tests which failed in this run were also failing or flaky in results database
-            message = f"Ignored pre-existing failure: {', '.join(self.preexisting_failures_in_results_db)}"
-            self.descriptionDone = message
-            self.build.results = SUCCESS
-            self.finished(WARNINGS)
-            self.build.buildFinished([message], SUCCESS)
 
         if rc == SUCCESS or rc == WARNINGS:
             message = 'Passed layout tests'
@@ -3416,7 +3458,30 @@ class ReRunWebKitTests(RunWebKitTests):
                 for flaky_failure in flaky_failures:
                     self.send_email_for_flaky_failure(flaky_failure)
             self.setProperty('build_summary', message)
+        elif (self.preexisting_failures_in_results_db and len(self.failing_tests_filtered) == 0):
+            # This means all the tests which failed in this run were also failing or flaky in results database
+            message = f"Ignored pre-existing failure: {', '.join(self.preexisting_failures_in_results_db)}"
+            self.descriptionDone = message
+            self.build.results = SUCCESS
+            self.setProperty('build_summary', message)
+            self.build.addStepsAfterCurrentStep([ArchiveTestResults(),
+                                                UploadTestResults(identifier='rerun'),
+                                                ExtractTestResults(identifier='rerun')])
+            self.finished(WARNINGS)
         else:
+            if (second_results_failing_tests and len(tests_that_consistently_failed) == 0 and num_flaky_failures <= 10
+                    and not first_results_did_exceed_test_failure_limit and not second_results_did_exceed_test_failure_limit):
+                # This means that test failures in first and second run were different and limited.
+                pluralSuffix = 's' if len(flaky_failures) > 1 else ''
+                message = 'Found flaky test{} in re-run: {}'.format(pluralSuffix, flaky_failures_string)
+                for flaky_failure in flaky_failures:
+                    self.send_email_for_flaky_failure(flaky_failure)
+                self.descriptionDone = message
+                self.build.results = SUCCESS
+                self.finished(WARNINGS)
+                self.build.buildFinished([message], SUCCESS)
+                return rc
+
             self.build.addStepsAfterCurrentStep([ArchiveTestResults(),
                                                 UploadTestResults(identifier='rerun'),
                                                 ExtractTestResults(identifier='rerun'),
@@ -3429,8 +3494,10 @@ class ReRunWebKitTests(RunWebKitTests):
                                                 RunWebKitTestsWithoutChange()])
         return rc
 
-    def commandComplete(self, cmd):
-        shell.Test.commandComplete(self, cmd)
+    @defer.inlineCallbacks
+    def runCommand(self, command):
+        yield shell.Test.runCommand(self, command)
+
         logText = self.log_observer.getStdout() + self.log_observer.getStderr()
         logTextJson = self.log_observer_json.getStdout()
 
@@ -3442,9 +3509,11 @@ class ReRunWebKitTests(RunWebKitTests):
             self.setProperty('second_run_flakies', sorted(second_results.flaky_tests))
             if second_results.failing_tests:
                 self._addToLog(self.test_failures_log_name, '\n'.join(second_results.failing_tests))
-                self.filter_failures_using_results_db(second_results.failing_tests)
+
+            if second_results.failing_tests and not second_results.did_exceed_test_failure_limit:
+                yield self.filter_failures_using_results_db(second_results.failing_tests)
                 self.setProperty('second_run_failures_filtered', sorted(self.failing_tests_filtered))
-                self.setProperty('results-db-second_run_pre_existing', sorted(self.preexisting_failures_in_results_db))
+                self.setProperty('results-db_second_run_pre_existing', sorted(self.preexisting_failures_in_results_db))
         self._parseRunWebKitTestsOutput(logText)
 
     def send_email_for_flaky_failure(self, test_name):
@@ -3473,8 +3542,10 @@ class RunWebKitTestsWithoutChange(RunWebKitTests):
         self.setProperty('clean_tree_run_status', rc)
         return rc
 
-    def commandComplete(self, cmd):
-        shell.Test.commandComplete(self, cmd)
+    @defer.inlineCallbacks
+    def runCommand(self, command):
+        yield shell.Test.runCommand(self, command)
+
         logText = self.log_observer.getStdout() + self.log_observer.getStderr()
         logTextJson = self.log_observer_json.getStdout()
 
@@ -3514,11 +3585,11 @@ class AnalyzeLayoutTestsResults(buildstep.BuildStep, BugzillaMixin, GitHubMixin)
     descriptionDone = ['analyze-layout-tests-results']
     NUM_FAILURES_TO_DISPLAY = 10
 
-    def report_failure(self, new_failures, exceed_failure_limit=False):
+    def report_failure(self, new_failures=None, exceed_failure_limit=False, failure_message=''):
         self.finished(FAILURE)
         self.build.results = FAILURE
         if not new_failures:
-            message = 'Found unexpected failure with change'
+            message = 'Found unexpected failure with change' if not failure_message else failure_message
         else:
             pluralSuffix = 's' if len(new_failures) > 1 else ''
             if exceed_failure_limit:
@@ -3697,6 +3768,8 @@ class AnalyzeLayoutTestsResults(buildstep.BuildStep, BugzillaMixin, GitHubMixin)
         clean_tree_results_did_exceed_test_failure_limit = self.getProperty('clean_tree_results_exceed_failure_limit')
         clean_tree_results_failing_tests = set(self.getProperty('clean_tree_run_failures', []))
         flaky_failures = first_results_failing_tests.union(second_results_failing_tests) - first_results_failing_tests.intersection(second_results_failing_tests)
+        num_flaky_failures = len(flaky_failures)
+        flaky_failures_string = ', '.join(sorted(flaky_failures))
 
         if (not first_results_failing_tests) and (not second_results_failing_tests):
             # If we've made it here, then layout-tests and re-run-layout-tests failed, which means
@@ -3746,6 +3819,8 @@ class AnalyzeLayoutTestsResults(buildstep.BuildStep, BugzillaMixin, GitHubMixin)
                 failures_introduced_by_patch = tests_that_consistently_failed - clean_tree_results_failing_tests
                 if failures_introduced_by_patch:
                     return self.report_failure(failures_introduced_by_patch)
+            elif num_flaky_failures > 10:
+                return self.report_failure(failure_message=f'Too many flaky failures: {flaky_failures_string}')
 
             # At this point we know that at least one test flaked, but no consistent failures
             # were introduced. This is a bit of a grey-zone. It's possible that the patch introduced some flakiness.
@@ -4615,16 +4690,28 @@ class CleanGitRepo(steps.ShellSequence, ShellMixin):
 
     def run(self):
         self.commands = []
+        if self.getProperty('platform', '*') == 'wincairo':
+            self.commands.append(util.ShellArg(
+                command=self.shell_command(r'del .git\gc.log || {}'.format(self.shell_exit_0())),
+                logname='stdio',
+            ))
+        else:
+            self.commands.append(util.ShellArg(
+                command=self.shell_command('rm -f .git/gc.log || {}'.format(self.shell_exit_0())),
+                logname='stdio',
+            ))
+
         for command in [
             self.shell_command('git rebase --abort || {}'.format(self.shell_exit_0())),
             self.shell_command('git am --abort || {}'.format(self.shell_exit_0())),
             self.shell_command('git cherry-pick --abort || {}'.format(self.shell_exit_0())),
             ['git', 'clean', '-f', '-d'],  # Remove any left-over layout test results, added files, etc.
             ['git', 'checkout', '{}/{}'.format(self.git_remote, self.default_branch), '-f'],  # Checkout branch from specific remote
-            ['git', 'branch', '-D', '{}'.format(self.default_branch)],  # Delete any local cache of the specified branch
-            ['git', 'checkout', '-b', '{}'.format(self.default_branch)],  # Checkout local instance of branch from remote
-            self.shell_command('git branch | grep -v {} | xargs git branch -D || {}'.format(self.default_branch, self.shell_exit_0())),
-            self.shell_command('git remote | grep -v {} | xargs -L 1 git remote rm || {}'.format(self.git_remote, self.shell_exit_0())),
+            ['git', 'branch', '-D', self.default_branch],  # Delete any local cache of the specified branch
+            ['git', 'branch', self.default_branch],  # Create local instance of branch from remote, but don't track it
+            self.shell_command("git branch | grep -v ' {}$' | xargs git branch -D || {}".format(self.default_branch, self.shell_exit_0())),
+            self.shell_command("git remote | grep -v '{}$' | xargs -L 1 git remote rm || {}".format(self.git_remote, self.shell_exit_0())),
+            ['git', 'prune'],
         ]:
             self.commands.append(util.ShellArg(command=command, logname='stdio'))
         return super(CleanGitRepo, self).run()

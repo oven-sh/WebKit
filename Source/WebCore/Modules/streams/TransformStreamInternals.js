@@ -59,7 +59,7 @@ function createTransformStream(startAlgorithm, transformAlgorithm, flushAlgorith
     const startPromiseCapability = @newPromiseCapability(@Promise);
     @initializeTransformStream(stream, startPromiseCapability.@promise, writableHighWaterMark, writableSizeAlgorithm, readableHighWaterMark, readableSizeAlgorithm);
 
-    const controller = new @TransformStreamDefaultController();
+    const controller = new @TransformStreamDefaultController(@isTransformStream);
     @setUpTransformStreamDefaultController(stream, controller, transformAlgorithm, flushAlgorithm);
 
     startAlgorithm().@then(() => {
@@ -100,11 +100,7 @@ function initializeTransformStream(stream, startPromise, writableHighWaterMark, 
     // The writable to use for the actual transform algorithms.
     @putByIdDirectPrivate(stream, "internalWritable", @getInternalWritableStream(writable));
 
-    // The readable to expose to JS through readable getter.
     @putByIdDirectPrivate(stream, "readable", readable);
-    // The readable to use for the actual transform algorithms.
-    @putByIdDirectPrivate(stream, "internalReadable", @getInternalReadableStream(readable));
-
     @putByIdDirectPrivate(stream, "backpressure", @undefined);
     @putByIdDirectPrivate(stream, "backpressureChangePromise", @undefined);
 
@@ -116,8 +112,7 @@ function transformStreamError(stream, e)
 {
     "use strict";
 
-    const readable = @getByIdDirectPrivate(stream, "internalReadable");
-    @assert(!!readable);
+    const readable = @getByIdDirectPrivate(stream, "readable");
     const readableController = @getByIdDirectPrivate(readable, "readableStreamController");
     @readableStreamDefaultControllerError(readableController, e);
 
@@ -169,7 +164,7 @@ function setUpTransformStreamDefaultControllerFromTransformer(stream, transforme
 {
     "use strict";
 
-    const controller = new @TransformStreamDefaultController();
+    const controller = new @TransformStreamDefaultController(@isTransformStream);
     let transformAlgorithm = (chunk) => {
         try {
             @transformStreamDefaultControllerEnqueue(controller, chunk);
@@ -208,7 +203,7 @@ function transformStreamDefaultControllerEnqueue(controller, chunk)
     "use strict";
 
     const stream = @getByIdDirectPrivate(controller, "stream");
-    const readable = @getByIdDirectPrivate(stream, "internalReadable");
+    const readable = @getByIdDirectPrivate(stream, "readable");
     const readableController = @getByIdDirectPrivate(readable, "readableStreamController");
 
     @assert(readableController !== @undefined);
@@ -257,8 +252,7 @@ function transformStreamDefaultControllerTerminate(controller)
     "use strict";
 
     const stream = @getByIdDirectPrivate(controller, "stream");
-    const readable = @getByIdDirectPrivate(stream, "internalReadable");
-    @assert(!!readable);
+    const readable = @getByIdDirectPrivate(stream, "readable");
     const readableController = @getByIdDirectPrivate(readable, "readableStreamController");
 
     // FIXME: Update readableStreamDefaultControllerClose to make this check.
@@ -316,8 +310,7 @@ function transformStreamDefaultSinkAbortAlgorithm(stream, reason)
 function transformStreamDefaultSinkCloseAlgorithm(stream)
 {
     "use strict";
-    const readable = @getByIdDirectPrivate(stream, "internalReadable");
-    @assert(!!readable);
+    const readable = @getByIdDirectPrivate(stream, "readable");
     const controller = @getByIdDirectPrivate(stream, "controller");
     const readableController = @getByIdDirectPrivate(readable, "readableStreamController");
 

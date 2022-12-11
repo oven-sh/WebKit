@@ -62,6 +62,7 @@
 #include "StyleBuilderState.h"
 #include "StyleGridData.h"
 #include "StyleScrollSnapPoints.h"
+#include "StyleTextEdge.h"
 #include "TabSize.h"
 #include "TouchAction.h"
 #include "TransformFunctions.h"
@@ -115,6 +116,7 @@ public:
     static TextUnderlineOffset convertTextUnderlineOffset(BuilderState&, const CSSValue&);
     static TextDecorationThickness convertTextDecorationThickness(BuilderState&, const CSSValue&);
     static RefPtr<StyleReflection> convertReflection(BuilderState&, const CSSValue&);
+    static TextEdge convertTextEdge(BuilderState&, const CSSValue&);
     static IntSize convertInitialLetter(BuilderState&, const CSSValue&);
     static float convertTextStrokeWidth(BuilderState&, const CSSValue&);
     static OptionSet<LineBoxContain> convertLineBoxContain(BuilderState&, const CSSValue&);
@@ -126,6 +128,7 @@ public:
     static Vector<GridTrackSize> convertGridTrackSizeList(BuilderState&, const CSSValue&);
     static std::optional<GridPosition> convertGridPosition(BuilderState&, const CSSValue&);
     static GridAutoFlow convertGridAutoFlow(BuilderState&, const CSSValue&);
+    static MasonryAutoFlow convertMasonryAutoFlow(BuilderState&, const CSSValue&);
     static std::optional<Length> convertWordSpacing(BuilderState&, const CSSValue&);
     static std::optional<float> convertPerspective(BuilderState&, const CSSValue&);
     static std::optional<Length> convertMarqueeIncrement(BuilderState&, const CSSValue&);
@@ -842,6 +845,59 @@ inline RefPtr<StyleReflection> BuilderConverter::convertReflection(BuilderState&
     return reflection;
 }
 
+inline TextEdge BuilderConverter::convertTextEdge(BuilderState&, const CSSValue& value)
+{
+    auto& values = downcast<CSSValueList>(value);
+    auto& firstValue = downcast<CSSPrimitiveValue>(*values.item(0));
+
+    auto overValue = [&] {
+        switch (firstValue.valueID()) {
+        case CSSValueLeading:
+            return TextEdgeType::Leading;
+        case CSSValueText:
+            return TextEdgeType::Text;
+        case CSSValueCap:
+            return TextEdgeType::CapHeight;
+        case CSSValueEx:
+            return TextEdgeType::ExHeight;
+        case CSSValueIdeographic:
+            return TextEdgeType::CJKIdeographic;
+        case CSSValueIdeographicInk:
+            return TextEdgeType::CJKIdeographicInk;
+        default:
+            ASSERT_NOT_REACHED();
+            return TextEdgeType::Leading;
+        }
+    };
+
+    auto underValue = [&] {
+        if (firstValue.valueID() == CSSValueLeading)
+            return TextEdgeType::Leading;
+        if (values.length() == 1) {
+            // https://www.w3.org/TR/css-inline-3/#text-edges
+            // "If only one value is specified, both edges are assigned that same keyword if possible; else text is assumed as the missing value."
+            // FIXME: Figure out what "if possible" means here.
+            return TextEdgeType::Text;
+        }
+
+        auto& secondValue = downcast<CSSPrimitiveValue>(*values.item(1));
+        switch (secondValue.valueID()) {
+        case CSSValueText:
+            return TextEdgeType::Text;
+        case CSSValueAlphabetic:
+            return TextEdgeType::Alphabetic;
+        case CSSValueIdeographic:
+            return TextEdgeType::CJKIdeographic;
+        case CSSValueIdeographicInk:
+            return TextEdgeType::CJKIdeographicInk;
+        default:
+            ASSERT_NOT_REACHED();
+            return TextEdgeType::Leading;
+        }
+    };
+    return { overValue(), underValue() };
+}
+
 inline IntSize BuilderConverter::convertInitialLetter(BuilderState&, const CSSValue& value)
 {
     auto& primitiveValue = downcast<CSSPrimitiveValue>(value);
@@ -1224,6 +1280,42 @@ inline GridAutoFlow BuilderConverter::convertGridAutoFlow(BuilderState&, const C
     }
 
     return autoFlow;
+}
+
+inline MasonryAutoFlow BuilderConverter::convertMasonryAutoFlow(BuilderState&, const CSSValue& value)
+{
+    auto& valueList = downcast<CSSValueList>(value);
+    ASSERT(valueList.size() == 1 || valueList.size() == 2);
+    if (!(valueList.size() == 1 || valueList.size() == 2))
+        return RenderStyle::initialMasonryAutoFlow();
+
+    auto* firstValue = downcast<CSSPrimitiveValue>(valueList.item(0));
+    auto* secondValue = downcast<CSSPrimitiveValue>(valueList.length() == 2 ? valueList.item(1) : nullptr);
+    MasonryAutoFlow masonryAutoFlow;
+    if (valueList.size() == 2 && firstValue && secondValue) {
+        ASSERT(firstValue->valueID() == CSSValueID::CSSValuePack || firstValue->valueID() == CSSValueID::CSSValueNext);
+        ASSERT(secondValue->valueID() == CSSValueID::CSSValueOrdered);
+        if (firstValue->valueID() == CSSValueID::CSSValuePack)
+            masonryAutoFlow = { MasonryAutoFlowPlacementAlgorithm::Pack, MasonryAutoFlowPlacementOrder::Ordered };
+        else
+            masonryAutoFlow = { MasonryAutoFlowPlacementAlgorithm::Next, MasonryAutoFlowPlacementOrder::Ordered };
+
+    } else if (valueList.size() == 1 && firstValue)  {
+        if (firstValue->valueID() == CSSValueID::CSSValuePack)
+            masonryAutoFlow = { MasonryAutoFlowPlacementAlgorithm::Pack, MasonryAutoFlowPlacementOrder::DefiniteFirst };
+        else if (firstValue->valueID() == CSSValueID::CSSValueNext)
+            masonryAutoFlow = { MasonryAutoFlowPlacementAlgorithm::Next, MasonryAutoFlowPlacementOrder::DefiniteFirst };
+        else if (firstValue->valueID() == CSSValueID::CSSValueOrdered)
+            masonryAutoFlow = { MasonryAutoFlowPlacementAlgorithm::Pack, MasonryAutoFlowPlacementOrder::Ordered };
+        else {
+            ASSERT_NOT_REACHED();
+            return RenderStyle::initialMasonryAutoFlow();
+        }
+    } else {
+        ASSERT_NOT_REACHED();
+        return RenderStyle::initialMasonryAutoFlow();
+    }
+    return masonryAutoFlow;
 }
 
 inline float zoomWithTextZoomFactor(BuilderState& builderState)

@@ -615,6 +615,8 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCustomXPathNSResolver.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSCustomXPathNSResolver.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSDOMApplicationCache.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSDOMApplicationCache.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSDOMAudioSession.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSDOMAudioSession.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSDOMBindingInternalsBuiltins.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSDOMBindingInternalsBuiltins.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSDOMCSSCustomPropertyDescriptor.cpp
@@ -973,6 +975,8 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSGPUAdapter.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSGPUAdapter.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSGPUAddressMode.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSGPUAddressMode.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSGPUAutoLayoutMode.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSGPUAutoLayoutMode.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSGPUBindGroup.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSGPUBindGroup.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSGPUBindGroupDescriptor.cpp
@@ -1745,6 +1749,8 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSNavigationPreloadManager.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSNavigationPreloadManager.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSNavigationPreloadState.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSNavigationPreloadState.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSNavigator+AudioSession.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSNavigator+AudioSession.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSNavigator+Beacon.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSNavigator+Beacon.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSNavigator+Clipboard.cpp
@@ -3090,6 +3096,8 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/ReadableStreamBYOBReaderBuiltins.cp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/ReadableStreamBYOBReaderBuiltins.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/ReadableStreamBYOBRequestBuiltins.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/ReadableStreamBYOBRequestBuiltins.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/ReadableStreamBuiltins.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/ReadableStreamBuiltins.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/ReadableStreamDefaultControllerBuiltins.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/ReadableStreamDefaultControllerBuiltins.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/ReadableStreamDefaultReaderBuiltins.cpp

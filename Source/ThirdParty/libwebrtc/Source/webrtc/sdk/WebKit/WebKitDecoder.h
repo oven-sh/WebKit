@@ -45,15 +45,19 @@ namespace webrtc {
 struct SdpVideoFormat;
 class VideoDecoderFactory;
 
-using WebKitVideoDecoder = void*;
+struct WebKitVideoDecoder {
+    using Value = void*;
+    Value value { nullptr };
+    bool isWebRTCVideoDecoder { false };
+};
 using VideoDecoderCreateCallback = WebKitVideoDecoder(*)(const SdpVideoFormat& format);
-using VideoDecoderReleaseCallback = int32_t(*)(WebKitVideoDecoder);
-using VideoDecoderDecodeCallback = int32_t(*)(WebKitVideoDecoder, uint32_t timeStamp, const uint8_t*, size_t length, uint16_t width, uint16_t height);
-using VideoDecoderRegisterDecodeCompleteCallback = int32_t(*)(WebKitVideoDecoder, void* decodedImageCallback);
+using VideoDecoderReleaseCallback = int32_t(*)(WebKitVideoDecoder::Value);
+using VideoDecoderDecodeCallback = int32_t(*)(WebKitVideoDecoder::Value, uint32_t timeStamp, const uint8_t*, size_t length, uint16_t width, uint16_t height);
+using VideoDecoderRegisterDecodeCompleteCallback = int32_t(*)(WebKitVideoDecoder::Value, void* decodedImageCallback);
 
 void setVideoDecoderCallbacks(VideoDecoderCreateCallback, VideoDecoderReleaseCallback, VideoDecoderDecodeCallback, VideoDecoderRegisterDecodeCompleteCallback);
 
-std::unique_ptr<webrtc::VideoDecoderFactory> createWebKitDecoderFactory(WebKitH265, WebKitVP9, WebKitVP9VTB);
+std::unique_ptr<webrtc::VideoDecoderFactory> createWebKitDecoderFactory(WebKitH265, WebKitVP9, WebKitVP9VTB, WebKitAv1);
 void videoDecoderTaskComplete(void* callback, uint32_t timeStamp, uint32_t timeStampRTP, CVPixelBufferRef);
 void videoDecoderTaskComplete(void* callback, uint32_t timeStamp, uint32_t timeStampRTP, void*, GetBufferCallback, ReleaseBufferCallback, int width, int height);
 

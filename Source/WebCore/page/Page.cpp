@@ -281,7 +281,7 @@ Page::Page(PageConfiguration&& pageConfiguration)
     , m_settings(Settings::create(this))
     , m_progress(makeUnique<ProgressTracker>(*this, WTFMove(pageConfiguration.progressTrackerClient)))
     , m_backForwardController(makeUnique<BackForwardController>(*this, WTFMove(pageConfiguration.backForwardClient)))
-    , m_mainFrame(Frame::create(this, nullptr, WTFMove(pageConfiguration.loaderClientForMainFrame)))
+    , m_mainFrame(Frame::create(this, nullptr, WTFMove(pageConfiguration.loaderClientForMainFrame), pageConfiguration.mainFrameIdentifier ? *pageConfiguration.mainFrameIdentifier : FrameIdentifier::generate()))
     , m_editorClient(WTFMove(pageConfiguration.editorClient))
     , m_validationMessageClient(WTFMove(pageConfiguration.validationMessageClient))
     , m_diagnosticLoggingClient(WTFMove(pageConfiguration.diagnosticLoggingClient))
@@ -600,6 +600,7 @@ void Page::settingsDidChange()
 #if USE(LIBWEBRTC)
     m_webRTCProvider->setH265Support(settings().webRTCH265CodecEnabled());
     m_webRTCProvider->setVP9Support(settings().webRTCVP9Profile0CodecEnabled(), settings().webRTCVP9Profile2CodecEnabled());
+    m_webRTCProvider->setAV1Support(settings().webRTCAV1CodecEnabled());
 #endif
 }
 
@@ -1547,16 +1548,6 @@ void Page::setPagination(const Pagination& pagination)
     setNeedsRecalcStyleInAllFrames();
 }
 
-void Page::setPaginationLineGridEnabled(bool enabled)
-{
-    if (m_paginationLineGridEnabled == enabled)
-        return;
-    
-    m_paginationLineGridEnabled = enabled;
-    
-    setNeedsRecalcStyleInAllFrames();
-}
-
 unsigned Page::pageCount() const
 {
     if (m_pagination.mode == Pagination::Unpaginated)
@@ -1994,13 +1985,15 @@ void Page::setLoadSchedulingMode(LoadSchedulingMode mode)
     platformStrategies()->loaderStrategy()->setResourceLoadSchedulingMode(*this, m_loadSchedulingMode);
 }
 
+#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
 void Page::setImageAnimationEnabled(bool enabled)
 {
-    if (m_imageAnimationEnabled == enabled)
+    if (m_imageAnimationEnabled == enabled || !settings().imageAnimationControlEnabled())
         return;
     m_imageAnimationEnabled = enabled;
     updatePlayStateForAllAnimations();
 }
+#endif
 
 void Page::suspendScriptedAnimations()
 {
@@ -3399,6 +3392,8 @@ void Page::accessibilitySettingsDidChange()
         document.updateElementsAffectedByMediaQueries();
         document.scheduleRenderingUpdate(RenderingUpdateStep::MediaQueryEvaluation);
     });
+
+    InspectorInstrumentation::accessibilitySettingsDidChange(*this);
 }
 
 void Page::appearanceDidChange()

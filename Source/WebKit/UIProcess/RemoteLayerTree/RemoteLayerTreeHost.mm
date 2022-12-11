@@ -66,10 +66,6 @@ RemoteLayerTreeHost::~RemoteLayerTreeHost()
 
 RemoteLayerBackingStore::LayerContentsType RemoteLayerTreeHost::layerContentsType() const
 {
-#if PLATFORM(MAC) || PLATFORM(MACCATALYST)
-    // CAMachPort currently does not work on macOS (or macCatalyst): rdar://problem/31247730
-    return RemoteLayerBackingStore::LayerContentsType::IOSurface;
-#else
     // If a surface will be referenced by multiple layers (as in the tile debug indicator), CAMachPort cannot be used.
     if (m_drawingArea->hasDebugIndicator())
         return RemoteLayerBackingStore::LayerContentsType::IOSurface;
@@ -78,7 +74,10 @@ RemoteLayerBackingStore::LayerContentsType RemoteLayerTreeHost::layerContentsTyp
     if (m_drawingArea->page().windowKind() == WindowKind::InProcessSnapshotting)
         return RemoteLayerBackingStore::LayerContentsType::IOSurface;
 
+#if HAVE(MACH_PORT_CALAYER_CONTENTS)
     return RemoteLayerBackingStore::LayerContentsType::CAMachPort;
+#else
+    return RemoteLayerBackingStore::LayerContentsType::IOSurface;
 #endif
 }
 
@@ -296,8 +295,13 @@ std::unique_ptr<RemoteLayerTreeNode> RemoteLayerTreeHost::makeNode(const RemoteL
 #if ENABLE(MODEL_ELEMENT)
     case PlatformCALayer::LayerTypeModelLayer:
 #endif
-    case PlatformCALayer::LayerTypeContentsProvidedLayer:
-        return RemoteLayerTreeNode::createWithPlainLayer(properties.layerID);
+    case PlatformCALayer::LayerTypeContentsProvidedLayer: {
+        auto layer = RemoteLayerTreeNode::createWithPlainLayer(properties.layerID);
+        // So that the scrolling thread's performance logging code can find all the tiles, mark this as being a tile.
+        if (properties.type == PlatformCALayer::LayerTypeTiledBackingTileLayer)
+            [layer->layer() setValue:@YES forKey:@"isTile"];
+        return layer;
+    }
 
     case PlatformCALayer::LayerTypeTransformLayer:
         return makeWithLayer(adoptNS([[CATransformLayer alloc] init]));
@@ -313,7 +317,7 @@ std::unique_ptr<RemoteLayerTreeNode> RemoteLayerTreeHost::makeNode(const RemoteL
     case PlatformCALayer::LayerTypeAVPlayerLayer:
         if (m_isDebugLayerTreeHost)
             return RemoteLayerTreeNode::createWithPlainLayer(properties.layerID);
-        return makeWithLayer([CALayer _web_renderLayerWithContextID:properties.hostingContextID]);
+        return makeWithLayer([CALayer _web_renderLayerWithContextID:properties.hostingContextID shouldPreserveFlip:properties.preservesFlip]);
 
     case PlatformCALayer::LayerTypeShapeLayer:
         return makeWithLayer(adoptNS([[CAShapeLayer alloc] init]));

@@ -804,6 +804,8 @@ void MacroAssemblerX86Common::collectCPUFeatures()
     std::call_once(onceKey, [] {
         {
             CPUID cpuid = getCPUID(0x1);
+            s_sse3CheckState = (cpuid[2] & (1 << 0)) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
+            s_supplementalSSE3CheckState = (cpuid[2] & (1 << 9)) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
             s_sse4_1CheckState = (cpuid[2] & (1 << 19)) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
             s_sse4_2CheckState = (cpuid[2] & (1 << 20)) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
             s_popcntCheckState = (cpuid[2] & (1 << 23)) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
@@ -815,11 +817,15 @@ void MacroAssemblerX86Common::collectCPUFeatures()
             size_t valSize = sizeof(val);
             int rc = sysctlbyname("hw.optional.bmi1", &val, &valSize, nullptr, 0);
             s_bmi1CheckState = (rc >= 0 && val) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
+
+            rc = sysctlbyname("hw.optional.avx2_0", &val, &valSize, nullptr, 0);
+            s_avx2CheckState = (rc >= 0 && val) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
         }
 #else
         {
             CPUID cpuid = getCPUID(0x7);
             s_bmi1CheckState = (cpuid[2] & (1 << 3)) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
+            s_avx2CheckState = (cpuid[2] & (1 << 5)) ? CPUIDCheckState::Set : CPUIDCheckState::Clear;
         }
 #endif
         {
@@ -829,9 +835,12 @@ void MacroAssemblerX86Common::collectCPUFeatures()
     });
 }
 
+MacroAssemblerX86Common::CPUIDCheckState MacroAssemblerX86Common::s_sse3CheckState = CPUIDCheckState::NotChecked;
+MacroAssemblerX86Common::CPUIDCheckState MacroAssemblerX86Common::s_supplementalSSE3CheckState = CPUIDCheckState::NotChecked;
 MacroAssemblerX86Common::CPUIDCheckState MacroAssemblerX86Common::s_sse4_1CheckState = CPUIDCheckState::NotChecked;
 MacroAssemblerX86Common::CPUIDCheckState MacroAssemblerX86Common::s_sse4_2CheckState = CPUIDCheckState::NotChecked;
 MacroAssemblerX86Common::CPUIDCheckState MacroAssemblerX86Common::s_avxCheckState = CPUIDCheckState::NotChecked;
+MacroAssemblerX86Common::CPUIDCheckState MacroAssemblerX86Common::s_avx2CheckState = CPUIDCheckState::NotChecked;
 MacroAssemblerX86Common::CPUIDCheckState MacroAssemblerX86Common::s_lzcntCheckState = CPUIDCheckState::NotChecked;
 MacroAssemblerX86Common::CPUIDCheckState MacroAssemblerX86Common::s_bmi1CheckState = CPUIDCheckState::NotChecked;
 MacroAssemblerX86Common::CPUIDCheckState MacroAssemblerX86Common::s_popcntCheckState = CPUIDCheckState::NotChecked;

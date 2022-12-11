@@ -49,6 +49,7 @@
 #include "StyleResolver.h"
 #include "StyleScrollSnapPoints.h"
 #include "StyleSelfAlignmentData.h"
+#include "StyleTextEdge.h"
 #include "StyleTreeResolver.h"
 #include "WillChangeData.h"
 #include <wtf/MathExtras.h>
@@ -806,6 +807,10 @@ static bool rareNonInheritedDataChangeRequiresLayout(const StyleRareNonInherited
 
     if (first.effectiveContainment().contains(Containment::Size) != second.effectiveContainment().contains(Containment::Size)
         || first.effectiveContainment().contains(Containment::InlineSize) != second.effectiveContainment().contains(Containment::InlineSize))
+        return true;
+
+    // content-visibiliy:hidden turns on contain:size which requires relayout.
+    if ((static_cast<ContentVisibility>(first.contentVisibility) == ContentVisibility::Hidden) != (static_cast<ContentVisibility>(second.contentVisibility) == ContentVisibility::Hidden))
         return true;
 
     if (first.scrollPadding != second.scrollPadding)
@@ -1642,7 +1647,7 @@ void RenderStyle::setPageScaleTransform(float scale)
     if (scale == 1)
         return;
     TransformOperations transform;
-    transform.operations().append(ScaleTransformOperation::create(scale, scale, ScaleTransformOperation::SCALE));
+    transform.operations().append(ScaleTransformOperation::create(scale, scale, TransformOperation::Type::Scale));
     setTransform(transform);
     setTransformOriginX(Length(0, LengthType::Fixed));
     setTransformOriginY(Length(0, LengthType::Fixed));
@@ -2803,6 +2808,21 @@ bool RenderStyle::hasSnapPosition() const
 {
     const ScrollSnapAlign& alignment = this->scrollSnapAlign();
     return alignment.blockAlign != ScrollSnapAxisAlignType::None || alignment.inlineAlign != ScrollSnapAxisAlignType::None;
+}
+
+TextEdge RenderStyle::textEdge() const
+{
+    return m_rareInheritedData->textEdge;
+}
+
+void RenderStyle::setTextEdge(TextEdge textEdgeValue)
+{
+    SET_VAR(m_rareInheritedData, textEdge, textEdgeValue);
+}
+
+TextEdge RenderStyle::initialTextEdge()
+{
+    return { TextEdgeType::Leading, TextEdgeType::Leading };
 }
 
 bool RenderStyle::hasReferenceFilterOnly() const

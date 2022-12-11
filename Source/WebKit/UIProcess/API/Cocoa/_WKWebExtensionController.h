@@ -27,9 +27,11 @@
 
 #import <Foundation/Foundation.h>
 
+#import <WebKit/_WKWebExtensionControllerDelegate.h>
+
 @class _WKWebExtension;
 @class _WKWebExtensionContext;
-@protocol _WKWebExtensionControllerDelegate;
+@class _WKWebExtensionControllerConfiguration;
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -41,16 +43,34 @@ NS_ASSUME_NONNULL_BEGIN
 WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA))
 @interface _WKWebExtensionController : NSObject
 
+/*!
+ @abstract Returns a web extension controller initialized with the default configuration.
+ @result An initialized web extension controller, or nil if the object could not be initialized.
+ @discussion This is a designated initializer. You can use @link -initWithConfiguration: @/link to
+ initialize an instance with a configuration.
+ @seealso initWithConfiguration:
+*/
+- (instancetype)init NS_DESIGNATED_INITIALIZER;
+
+/*!
+ @abstract Returns a web extension controller initialized with the specified configuration.
+ @param configuration The configuration for the new web extension controller.
+ @result An initialized web extension controller, or nil if the object could not be initialized.
+ @discussion This is a designated initializer. You can use @link -init: @/link to initialize an
+ instance with the default configuration. The initializer copies the specified configuration, so mutating
+ the configuration after invoking the initializer has no effect on the web extension controller.
+ @seealso init
+*/
+- (instancetype)initWithConfiguration:(_WKWebExtensionControllerConfiguration *)configuration NS_DESIGNATED_INITIALIZER;
+
 /*! @abstract The extension controller delegate. */
 @property (nonatomic, weak) id <_WKWebExtensionControllerDelegate> delegate;
 
 /*!
- @abstract Loads the specified extension context.
- @discussion Causes the context to start, loading any background content, and injecting any content into relevant tabs.
- @result A Boolean value indicating if the context was successfully loaded.
- @seealso loadExtensionContext:error:
+ @abstract A copy of the configuration with which the web extension controller was initialized.
+ @discussion Mutating the configuration has no effect on the web extension controller.
 */
-- (BOOL)loadExtensionContext:(_WKWebExtensionContext *)extensionContext NS_SWIFT_UNAVAILABLE("Use error version");
+@property (nonatomic, readonly, copy) _WKWebExtensionControllerConfiguration *configuration;
 
 /*!
  @abstract Loads the specified extension context.
@@ -60,14 +80,6 @@ WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA))
  @seealso loadExtensionContext:
 */
 - (BOOL)loadExtensionContext:(_WKWebExtensionContext *)extensionContext error:(NSError **)error;
-
-/*!
- @abstract Unloads the specified extension context.
- @discussion Causes the context to stop running.
- @result A Boolean value indicating if the context was successfully unloaded.
- @seealso unloadExtensionContext:error:
-*/
-- (BOOL)unloadExtensionContext:(_WKWebExtensionContext *)extensionContext NS_SWIFT_UNAVAILABLE("Use error version");
 
 /*!
  @abstract Unloads the specified extension context.

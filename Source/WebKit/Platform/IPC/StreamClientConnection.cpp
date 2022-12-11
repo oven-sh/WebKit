@@ -30,7 +30,7 @@ namespace IPC {
 
 // FIXME(http://webkit.org/b/238986): Workaround for not being able to deliver messages from the dedicated connection to the work queue the client uses.
 
-StreamClientConnection::DedicatedConnectionClient::DedicatedConnectionClient(MessageReceiver& receiver)
+StreamClientConnection::DedicatedConnectionClient::DedicatedConnectionClient(Connection::Client& receiver)
     : m_receiver(receiver)
 {
 }
@@ -45,9 +45,10 @@ bool StreamClientConnection::DedicatedConnectionClient::didReceiveSyncMessage(Co
     return m_receiver.didReceiveSyncMessage(connection, decoder, replyEncoder);
 }
 
-void StreamClientConnection::DedicatedConnectionClient::didClose(Connection&)
+void StreamClientConnection::DedicatedConnectionClient::didClose(Connection& connection)
 {
     // Client is expected to listen to Connection::didClose() from the connection it sent to the dedicated connection to.
+    m_receiver.didClose(connection);
 }
 
 void StreamClientConnection::DedicatedConnectionClient::didReceiveInvalidMessage(Connection&, MessageName)
@@ -65,7 +66,7 @@ StreamClientConnection::StreamConnectionPair StreamClientConnection::create(size
     // The "Client" in StreamClientConnection means the party that mostly does sending, e.g. untrusted party.
     // The "Server" in StreamServerConnection means the party that mostly does receiving, e.g. the trusted party which holds the destination object to communicate with.
     auto dedicatedConnection = Connection::createServerConnection(connectionIdentifiers->server);
-    std::unique_ptr<StreamClientConnection> clientConnection { new StreamClientConnection(WTFMove(dedicatedConnection), bufferSize) };
+    RefPtr<StreamClientConnection> clientConnection { new StreamClientConnection(WTFMove(dedicatedConnection), bufferSize) };
     StreamServerConnection::Handle serverHandle {
         WTFMove(connectionIdentifiers->client),
         clientConnection->streamBuffer().createHandle()
@@ -88,7 +89,7 @@ StreamClientConnection::~StreamClientConnection()
     ASSERT(!m_connection->isValid());
 }
 
-void StreamClientConnection::open(MessageReceiver& receiver, SerialFunctionDispatcher& dispatcher)
+void StreamClientConnection::open(Connection::Client& receiver, SerialFunctionDispatcher& dispatcher)
 {
     m_dedicatedConnectionClient.emplace(receiver);
     m_connection->open(*m_dedicatedConnectionClient, dispatcher);

@@ -32,6 +32,7 @@
 
 namespace WebCore {
 
+struct AttachmentLayout;
 class BorderData;
 class Element;
 class FileList;
@@ -92,9 +93,6 @@ public:
     virtual String mediaControlsFormattedStringForDuration(double) { return String(); }
 #endif // ENABLE(MODERN_MEDIA_CONTROLS)
 #endif // ENABLE(VIDEO)
-#if ENABLE(FULLSCREEN_API)
-    virtual String extraFullScreenStyleSheet() { return String(); }
-#endif
 #if ENABLE(ATTACHMENT_ELEMENT)
     virtual String attachmentStyleSheet() const;
 #endif
@@ -332,6 +330,7 @@ protected:
 
 #if ENABLE(ATTACHMENT_ELEMENT)
     virtual bool paintAttachment(const RenderObject&, const PaintInfo&, const IntRect&);
+    virtual void paintAttachmentText(GraphicsContext&, AttachmentLayout*) { }
 #endif
 
 #if ENABLE(DATALIST_ELEMENT)

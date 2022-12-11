@@ -25,6 +25,7 @@
 #include "CSSParserTokenRange.h"
 #include "CSSPropertyParserHelpers.h"
 #include "CSSPropertyParserWorkerSafe.h"
+#include "CSSPropertySyntax.h"
 #include "StyleRuleType.h"
 #include <wtf/text/StringView.h>
 
@@ -51,7 +52,7 @@ public:
     // Parses a non-shorthand CSS property
     static RefPtr<CSSValue> parseSingleValue(CSSPropertyID, const CSSParserTokenRange&, const CSSParserContext&);
     static bool canParseTypedCustomPropertyValue(const String& syntax, const CSSParserTokenRange&, const CSSParserContext&);
-    static RefPtr<CSSCustomPropertyValue> parseTypedCustomPropertyValue(const AtomString& name, const String& syntax, const CSSParserTokenRange&, const Style::BuilderState&, const CSSParserContext&);
+    static RefPtr<CSSCustomPropertyValue> parseTypedCustomPropertyValue(const AtomString& name, const String& syntax, const CSSParserTokenRange&, Style::BuilderState&, const CSSParserContext&);
     static void collectParsedCustomPropertyValueDependencies(const String& syntax, bool isRoot, HashSet<CSSPropertyID>& dependencies, const CSSParserTokenRange&, const CSSParserContext&);
 
     static RefPtr<CSSValue> parseCounterStyleDescriptor(CSSPropertyID, CSSParserTokenRange&, const CSSParserContext&);
@@ -63,8 +64,9 @@ private:
     bool parseValueStart(CSSPropertyID, bool important);
     bool consumeCSSWideKeyword(CSSPropertyID, bool important);
     RefPtr<CSSValue> parseSingleValue(CSSPropertyID, CSSPropertyID = CSSPropertyInvalid);
+    std::pair<RefPtr<CSSValue>, CSSPropertySyntax::Type> parseCustomPropertyValueWithSyntaxDefinition(const CSSPropertySyntax::Definition&);
     bool canParseTypedCustomPropertyValue(const String& syntax);
-    RefPtr<CSSCustomPropertyValue> parseTypedCustomPropertyValue(const AtomString& name, const String& syntax, const Style::BuilderState&);
+    RefPtr<CSSCustomPropertyValue> parseTypedCustomPropertyValue(const AtomString& name, const String& syntax, Style::BuilderState&);
     void collectParsedCustomPropertyValueDependencies(const String& syntax, bool isRoot, HashSet<CSSPropertyID>& dependencies);
 
     bool inQuirksMode() const { return m_context.mode == HTMLQuirksMode; }

@@ -195,7 +195,7 @@ messages -> WebPageProxy {
     WillGoToBackForwardListItem(WebCore::BackForwardItemIdentifier itemID, bool inBackForwardCache)
 
     # Undo/Redo messages
-    RegisterEditCommandForUndo(uint64_t commandID, String label)
+    RegisterEditCommandForUndo(uint64_t commandID, String label) AllowedWhenWaitingForSyncReply
     ClearAllEditCommands()
     RegisterInsertionUndoGrouping()
     CanUndoRedo(enum:bool WebKit::UndoOrRedo undoOrRedo) -> (bool result) Synchronous
@@ -361,7 +361,7 @@ messages -> WebPageProxy {
 #endif
 #if PLATFORM(MAC)
     # Autocorrection messages
-    ShowCorrectionPanel(int32_t panelType, WebCore::FloatRect boundingBoxOfReplacedString, String replacedString, String replacementString, Vector<String> alternativeReplacementStrings)
+    ShowCorrectionPanel(enum:uint8_t WebCore::AlternativeTextType panelType, WebCore::FloatRect boundingBoxOfReplacedString, String replacedString, String replacementString, Vector<String> alternativeReplacementStrings)
     DismissCorrectionPanel(int32_t reason)
     DismissCorrectionPanelSoon(int32_t reason) -> (String result) Synchronous
     RecordAutocorrectionResponse(int32_t response, String replacedString, String replacementString);
@@ -575,7 +575,7 @@ messages -> WebPageProxy {
     SendMessageToWebViewWithReply(struct WebKit::UserMessage userMessage) -> (struct WebKit::UserMessage replyMessage)
 #endif
 
-    DidFindTextManipulationItems(Vector<WebCore::TextManipulationController::ManipulationItem> items)
+    DidFindTextManipulationItems(Vector<WebCore::TextManipulationItem> items)
 
 #if ENABLE(MEDIA_USAGE)
     AddMediaUsageManagerSession(WebCore::MediaSessionIdentifier identifier, String bundleIdentifier, URL pageURL);

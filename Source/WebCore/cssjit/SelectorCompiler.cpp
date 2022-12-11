@@ -104,9 +104,9 @@ static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(operationIsWindowInactive,
 static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(operationMatchesDir, bool, (const Element&, uint32_t));
 static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(operationMatchesLangPseudoClass, bool, (const Element&, const FixedVector<PossiblyQuotedIdentifier>&));
 #if ENABLE(FULLSCREEN_API)
-static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(operationMatchesFullScreenPseudoClass, bool, (const Element&));
+static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(operationMatchesFullscreenPseudoClass, bool, (const Element&));
+static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(operationMatchesWebkitFullScreenPseudoClass, bool, (const Element&));
 static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(operationMatchesFullScreenDocumentPseudoClass, bool, (const Element&));
-static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(operationMatchesFullScreenParentPseudoClass, bool, (const Element&));
 static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(operationMatchesFullScreenAncestorPseudoClass, bool, (const Element&));
 static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(operationMatchesFullScreenAnimatingFullScreenTransitionPseudoClass, bool, (const Element&));
 static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(operationMatchesFullScreenControlsHiddenPseudoClass, bool, (const Element&));
@@ -717,19 +717,19 @@ JSC_DEFINE_JIT_OPERATION(operationIsWindowInactive, bool, (const Element& elemen
 }
 
 #if ENABLE(FULLSCREEN_API)
-JSC_DEFINE_JIT_OPERATION(operationMatchesFullScreenPseudoClass, bool, (const Element& element))
+JSC_DEFINE_JIT_OPERATION(operationMatchesFullscreenPseudoClass, bool, (const Element& element))
 {
-    return matchesFullScreenPseudoClass(element);
+    return matchesFullscreenPseudoClass(element);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationMatchesWebkitFullScreenPseudoClass, bool, (const Element& element))
+{
+    return matchesWebkitFullScreenPseudoClass(element);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationMatchesFullScreenDocumentPseudoClass, bool, (const Element& element))
 {
     return matchesFullScreenDocumentPseudoClass(element);
-}
-
-JSC_DEFINE_JIT_OPERATION(operationMatchesFullScreenParentPseudoClass, bool, (const Element& element))
-{
-    return matchesFullScreenParentPseudoClass(element);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationMatchesFullScreenAncestorPseudoClass, bool, (const Element& element))
@@ -902,14 +902,14 @@ static inline FunctionType addPseudoClassType(const CSSSelector& selector, Selec
         return FunctionType::SimpleSelectorChecker;
 
 #if ENABLE(FULLSCREEN_API)
-    case CSSSelector::PseudoClassFullScreen:
-        fragment.unoptimizedPseudoClasses.append(CodePtr<JSC::OperationPtrTag>(operationMatchesFullScreenPseudoClass));
+    case CSSSelector::PseudoClassFullscreen:
+        fragment.unoptimizedPseudoClasses.append(CodePtr<JSC::OperationPtrTag>(operationMatchesFullscreenPseudoClass));
+        return FunctionType::SimpleSelectorChecker;
+    case CSSSelector::PseudoClassWebkitFullScreen:
+        fragment.unoptimizedPseudoClasses.append(CodePtr<JSC::OperationPtrTag>(operationMatchesWebkitFullScreenPseudoClass));
         return FunctionType::SimpleSelectorChecker;
     case CSSSelector::PseudoClassFullScreenDocument:
         fragment.unoptimizedPseudoClasses.append(CodePtr<JSC::OperationPtrTag>(operationMatchesFullScreenDocumentPseudoClass));
-        return FunctionType::SimpleSelectorChecker;
-    case CSSSelector::PseudoClassFullScreenParent:
-        fragment.unoptimizedPseudoClasses.append(CodePtr<JSC::OperationPtrTag>(operationMatchesFullScreenParentPseudoClass));
         return FunctionType::SimpleSelectorChecker;
     case CSSSelector::PseudoClassFullScreenAncestor:
         fragment.unoptimizedPseudoClasses.append(CodePtr<JSC::OperationPtrTag>(operationMatchesFullScreenAncestorPseudoClass));

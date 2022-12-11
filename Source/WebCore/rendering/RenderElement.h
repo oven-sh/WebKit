@@ -142,7 +142,7 @@ public:
     void setChildNeedsLayout(MarkingBehavior = MarkContainingBlockChain);
     void clearChildNeedsLayout();
     void setNeedsPositionedMovementLayout(const RenderStyle* oldStyle);
-    void setNeedsSimplifiedNormalFlowLayout(const RenderStyle* oldStyle);
+    void setNeedsSimplifiedNormalFlowLayout();
 
     // paintOffset is the offset from the origin of the GraphicsContext at which to paint the current object.
     virtual void paint(PaintInfo&, const LayoutPoint& paintOffset) = 0;
@@ -310,6 +310,7 @@ public:
     void paintFocusRing(const PaintInfo&, const RenderStyle&, const Vector<LayoutRect>& focusRingRects) const;
 
     virtual bool establishesIndependentFormattingContext() const;
+    bool createsNewFormattingContext() const;
 
 protected:
     enum BaseTypeFlag {
@@ -362,8 +363,6 @@ protected:
     void adjustFragmentedFlowStateOnContainingBlockChangeIfNeeded(const RenderStyle& oldStyle, const RenderStyle& newStyle);
 
     bool isVisibleInViewport() const;
-
-    bool createsNewFormattingContext() const;
 
     bool shouldApplyLayoutOrPaintContainment(bool) const;
     bool shouldApplySizeOrStyleContainment(bool) const;
@@ -545,7 +544,7 @@ inline bool RenderElement::shouldApplySizeContainment() const
 
 inline bool RenderElement::shouldApplyInlineSizeContainment() const
 {
-    return shouldApplySizeOrStyleContainment(style().containsInlineSize() || style().contentVisibility() == ContentVisibility::Hidden);
+    return shouldApplySizeOrStyleContainment(style().containsInlineSize());
 }
 
 inline bool RenderElement::shouldApplySizeOrInlineSizeContainment() const

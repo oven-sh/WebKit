@@ -186,9 +186,9 @@ struct CompletionHandlerTypeDeduction<R(Args...) const, N> : CompletionHandlerTy
 
 template<typename CHType, typename ReplyType> struct CompletionHandlerValidation : std::false_type { };
 
-template<typename... CHArgumentTypes, typename... ReplyArgumentTypes>
-struct CompletionHandlerValidation<CompletionHandler<void(CHArgumentTypes...)>, CompletionHandler<void(ReplyArgumentTypes...)>>
-    : std::is_same<std::tuple<std::remove_cvref_t<CHArgumentTypes>...>, std::tuple<std::remove_cvref_t<ReplyArgumentTypes>...>> { };
+template<typename... CHArgumentTypes, typename ReplyArgumentsTupleType>
+struct CompletionHandlerValidation<CompletionHandler<void(CHArgumentTypes...)>, ReplyArgumentsTupleType>
+    : std::is_same<std::tuple<std::remove_cvref_t<CHArgumentTypes>...>, ReplyArgumentsTupleType> { };
 
 // Main dispatch functions
 
@@ -232,7 +232,7 @@ bool handleMessageSynchronous(Connection& connection, Decoder& decoder, UniqueRe
         return false;
 
     using CompletionHandlerFromMF = typename CompletionHandlerTypeDeduction<MF, std::tuple_size_v<typename MessageType::Arguments>>::Type;
-    static_assert(CompletionHandlerValidation<CompletionHandlerFromMF, typename MessageType::DelayedReply>::value);
+    static_assert(CompletionHandlerValidation<CompletionHandlerFromMF, typename MessageType::ReplyArguments>::value);
 
     logMessage(connection, MessageType::name(), object, *arguments);
     callMemberFunction(object, function, WTFMove(*arguments),
@@ -252,7 +252,7 @@ bool handleMessageSynchronousWantsConnection(Connection& connection, Decoder& de
         return false;
     
     using CompletionHandlerFromMF = typename CompletionHandlerTypeDeduction<MF, 1 + std::tuple_size_v<typename MessageType::Arguments>>::Type;
-    static_assert(CompletionHandlerValidation<CompletionHandlerFromMF, typename MessageType::DelayedReply>::value);
+    static_assert(CompletionHandlerValidation<CompletionHandlerFromMF, typename MessageType::ReplyArguments>::value);
 
     logMessage(connection, MessageType::name(), object, *arguments);
     callMemberFunction(object, function, connection, WTFMove(*arguments),
@@ -276,7 +276,7 @@ void handleMessageSynchronous(StreamServerConnection& connection, Decoder& decod
         return;
 
     using CompletionHandlerFromMF = typename CompletionHandlerTypeDeduction<MF, std::tuple_size_v<typename MessageType::Arguments>>::Type;
-    static_assert(CompletionHandlerValidation<CompletionHandlerFromMF, typename MessageType::DelayedReply>::value);
+    static_assert(CompletionHandlerValidation<CompletionHandlerFromMF, typename MessageType::ReplyArguments>::value);
 
     logMessage(connection.connection(), MessageType::name(), object, *arguments);
     callMemberFunction(object, function, WTFMove(*arguments),
@@ -292,17 +292,17 @@ void handleMessageAsync(Connection& connection, Decoder& decoder, T* object, MF 
     auto arguments = decoder.decode<typename CodingType<typename MessageType::Arguments>::Type>();
     if (UNLIKELY(!arguments))
         return;
-    auto replyID = decoder.decode<uint64_t>();
+    auto replyID = decoder.decode<Connection::AsyncReplyID>();
     if (UNLIKELY(!replyID))
         return;
 
     using CompletionHandlerFromMF = typename CompletionHandlerTypeDeduction<MF, std::tuple_size_v<typename MessageType::Arguments>>::Type;
-    static_assert(CompletionHandlerValidation<CompletionHandlerFromMF, typename MessageType::AsyncReply>::value);
+    static_assert(CompletionHandlerValidation<CompletionHandlerFromMF, typename MessageType::ReplyArguments>::value);
 
     logMessage(connection, MessageType::name(), object, *arguments);
     callMemberFunction(object, function, WTFMove(*arguments),
         CompletionHandlerFromMF { [replyID = *replyID, connection = Ref { connection }] (auto&&... args) mutable {
-            auto encoder = makeUniqueRef<Encoder>(MessageType::asyncMessageReplyName(), replyID);
+            auto encoder = makeUniqueRef<Encoder>(MessageType::asyncMessageReplyName(), replyID.toUInt64());
             logReply(connection, MessageType::name(), args...);
             (encoder.get() << ... << std::forward<decltype(args)>(args));
             connection->sendSyncReply(WTFMove(encoder));
@@ -315,17 +315,17 @@ void handleMessageAsyncWantsConnection(Connection& connection, Decoder& decoder,
     auto arguments = decoder.decode<typename CodingType<typename MessageType::Arguments>::Type>();
     if (UNLIKELY(!arguments))
         return;
-    auto replyID = decoder.decode<uint64_t>();
+    auto replyID = decoder.decode<Connection::AsyncReplyID>();
     if (UNLIKELY(!replyID))
         return;
 
     using CompletionHandlerFromMF = typename CompletionHandlerTypeDeduction<MF, 1 + std::tuple_size_v<typename MessageType::Arguments>>::Type;
-    static_assert(CompletionHandlerValidation<CompletionHandlerFromMF, typename MessageType::AsyncReply>::value);
+    static_assert(CompletionHandlerValidation<CompletionHandlerFromMF, typename MessageType::ReplyArguments>::value);
 
     logMessage(connection, MessageType::name(), object, *arguments);
     callMemberFunction(object, function, connection, WTFMove(*arguments),
         CompletionHandlerFromMF { [replyID = *replyID, connection = Ref { connection }] (auto&&... args) mutable {
-            auto encoder = makeUniqueRef<Encoder>(MessageType::asyncMessageReplyName(), replyID);
+            auto encoder = makeUniqueRef<Encoder>(MessageType::asyncMessageReplyName(), replyID.toUInt64());
             logReply(connection, MessageType::name(), args...);
             (encoder.get() << ... << std::forward<decltype(args)>(args));
             connection->sendSyncReply(WTFMove(encoder));

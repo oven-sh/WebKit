@@ -32,21 +32,20 @@
 
 namespace WebCore {
 
-ASCIILiteral ResourceError::curlErrorDomain = "CurlErrorDomain"_s;
-
-ResourceError ResourceError::httpError(int errorCode, const URL& failingURL, Type type)
+static const String& curlErrorDomain()
 {
-    return ResourceError(curlErrorDomain, errorCode, failingURL, CurlHandle::errorDescription(static_cast<CURLcode>(errorCode)), type);
+    static NeverDestroyed<const String> errorDomain(MAKE_STATIC_STRING_IMPL("CurlErrorDomain"));
+    return errorDomain;
 }
 
-bool ResourceError::isSSLConnectError() const
+ResourceError::ResourceError(int curlCode, const URL& failingURL, Type type)
+    : ResourceErrorBase(curlErrorDomain(), curlCode, failingURL, CurlHandle::errorDescription(static_cast<CURLcode>(curlCode)), type, IsSanitized::No)
 {
-    return errorCode() == CURLE_SSL_CONNECT_ERROR;
 }
 
-bool ResourceError::isSSLCertVerificationError() const
+bool ResourceError::isCertificationVerificationError() const
 {
-    return errorCode() == CURLE_PEER_FAILED_VERIFICATION;
+    return domain() == curlErrorDomain() && errorCode() == CURLE_PEER_FAILED_VERIFICATION;
 }
 
 void ResourceError::doPlatformIsolatedCopy(const ResourceError&)

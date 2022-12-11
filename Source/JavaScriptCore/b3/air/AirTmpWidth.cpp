@@ -68,7 +68,7 @@ void TmpWidth::recompute(Code& code)
     
     auto assumeTheWorst = [&] (Tmp tmp) {
         if (bank == Arg(tmp).bank()) {
-            Width conservative = Options::useWebAssemblySIMD() ? conservativeWidth(bank) : conservativeWidthWithoutVectors(bank);
+            Width conservative = code.usesSIMD() ? conservativeWidth(bank) : conservativeWidthWithoutVectors(bank);
             addWidths(tmp, { conservative, conservative });
         }
     };
@@ -129,7 +129,7 @@ void TmpWidth::recompute(Code& code)
                     if (Arg::isZDef(role))
                         tmpWidths.def = std::max(tmpWidths.def, width);
                     else if (Arg::isAnyDef(role))
-                        tmpWidths.def = Options::useWebAssemblySIMD() ? conservativeWidth(tmpBank) : conservativeWidthWithoutVectors(tmpBank);
+                        tmpWidths.def = code.usesSIMD() ? conservativeWidth(tmpBank) : conservativeWidthWithoutVectors(tmpBank);
                 });
         }
     }
@@ -171,7 +171,7 @@ void TmpWidth::recompute(Code& code)
     if (verbose) {
         dataLogLn("bank: ", bank, ", widthsVector: ");
         for (unsigned i = 0; i < bankWidthsVector.size(); ++i)
-            dataLogLn("\t", i, " : ", bankWidthsVector[i]);
+            dataLogLn("\t", AbsoluteTmpMapper<bank>::tmpFromAbsoluteIndex(i), " : ", bankWidthsVector[i]);
     }
 }
 

@@ -58,7 +58,6 @@ list(APPEND WebCore_LIBRARIES
     ${VIDEOTOOLBOX_LIBRARY}
     ${XML2_LIBRARY}
     opus
-    usrsctp
     vpx
     webm
     yuv
@@ -275,6 +274,7 @@ list(APPEND WebCore_SOURCES
     platform/graphics/ca/TileGrid.cpp
     platform/graphics/ca/TransformationMatrixCA.cpp
 
+    platform/graphics/ca/cocoa/GraphicsLayerAsyncContentsDisplayDelegateCocoa.mm
     platform/graphics/ca/cocoa/PlatformCAAnimationCocoa.mm
     platform/graphics/ca/cocoa/PlatformCAFiltersCocoa.mm
     platform/graphics/ca/cocoa/PlatformCALayerCocoa.mm
@@ -644,6 +644,7 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/ca/PlatformCALayerClient.h
     platform/graphics/ca/TileController.h
 
+    platform/graphics/ca/cocoa/GraphicsLayerAsyncContentsDisplayDelegateCocoa.h
     platform/graphics/ca/cocoa/PlatformCAAnimationCocoa.h
     platform/graphics/ca/cocoa/PlatformCALayerCocoa.h
     platform/graphics/ca/cocoa/WebVideoContainerLayer.h

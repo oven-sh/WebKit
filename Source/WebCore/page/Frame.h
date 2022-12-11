@@ -117,7 +117,7 @@ using NodeQualifier = Function<Node* (const HitTestResult&, Node* terminationNod
 // FIXME: Rename Frame to LocalFrame and AbstractFrame to Frame.
 class Frame final : public AbstractFrame {
 public:
-    WEBCORE_EXPORT static Ref<Frame> create(Page*, HTMLFrameOwnerElement*, UniqueRef<FrameLoaderClient>&&);
+    WEBCORE_EXPORT static Ref<Frame> create(Page*, HTMLFrameOwnerElement*, UniqueRef<FrameLoaderClient>&&, FrameIdentifier);
 
     WEBCORE_EXPORT void init();
 #if PLATFORM(IOS_FAMILY)
@@ -192,7 +192,7 @@ public:
 
     Settings& settings() const { return *m_settings; }
 
-    void setPrinting(bool printing, const FloatSize& pageSize, const FloatSize& originalPageSize, float maximumShrinkRatio, AdjustViewSizeOrNot);
+    WEBCORE_EXPORT void setPrinting(bool printing, const FloatSize& pageSize, const FloatSize& originalPageSize, float maximumShrinkRatio, AdjustViewSizeOrNot);
     bool shouldUsePrintingLayout() const;
     WEBCORE_EXPORT FloatSize resizePageRectsKeepingRatio(const FloatSize& originalSize, const FloatSize& expectedSize);
 
@@ -258,8 +258,8 @@ public:
     WEBCORE_EXPORT std::optional<SimpleRange> rangeForPoint(const IntPoint& framePoint);
 
     WEBCORE_EXPORT String searchForLabelsAboveCell(const JSC::Yarr::RegularExpression&, HTMLTableCellElement*, size_t* resultDistanceFromStartOfCell);
-    String searchForLabelsBeforeElement(const Vector<String>& labels, Element*, size_t* resultDistance, bool* resultIsInCellAbove);
-    String matchLabelsAgainstElement(const Vector<String>& labels, Element*);
+    WEBCORE_EXPORT String searchForLabelsBeforeElement(const Vector<String>& labels, Element*, size_t* resultDistance, bool* resultIsInCellAbove);
+    WEBCORE_EXPORT String matchLabelsAgainstElement(const Vector<String>& labels, Element*);
 
 #if PLATFORM(IOS_FAMILY)
     WEBCORE_EXPORT int preferredHeight() const;
@@ -298,10 +298,12 @@ public:
 
     WEBCORE_EXPORT bool arePluginsEnabled();
 
+    WEBCORE_EXPORT void didFinishLoadInAnotherProcess();
+
 private:
     friend class NavigationDisabler;
 
-    Frame(Page&, HTMLFrameOwnerElement*, UniqueRef<FrameLoaderClient>&&);
+    Frame(Page&, HTMLFrameOwnerElement*, UniqueRef<FrameLoaderClient>&&, FrameIdentifier);
 
     void dropChildren();
 

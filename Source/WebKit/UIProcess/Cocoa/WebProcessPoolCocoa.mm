@@ -183,7 +183,7 @@ SOFT_LINK_PRIVATE_FRAMEWORK(BackBoardServices)
 SOFT_LINK(BackBoardServices, BKSDisplayBrightnessGetCurrent, float, (), ());
 #endif
 
-#if HAVE(ACCESSIBILITY_ANIMATED_IMAGE_CONTROL)
+#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
 SOFT_LINK_LIBRARY_OPTIONAL(libAccessibility)
 SOFT_LINK_OPTIONAL(libAccessibility, _AXSReduceMotionAutoplayAnimatedImagesEnabled, Boolean, (), ());
 SOFT_LINK_CONSTANT_MAY_FAIL(libAccessibility, kAXSReduceMotionAutoplayAnimatedImagesChangedNotification, CFStringRef)
@@ -267,7 +267,7 @@ static AccessibilityPreferences accessibilityPreferences()
     preferences.invertColorsEnabled = _AXSInvertColorsEnabledApp(appId.get());
 #endif
     preferences.enhanceTextLegibilityOverall = _AXSEnhanceTextLegibilityEnabled();
-#if HAVE(ACCESSIBILITY_ANIMATED_IMAGE_CONTROL)
+#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
     if (auto* functionPointer = _AXSReduceMotionAutoplayAnimatedImagesEnabledPtr())
         preferences.imageAnimationEnabled = functionPointer();
 #endif
@@ -506,7 +506,7 @@ void WebProcessPool::platformInitializeWebProcess(const WebProcessProxy& process
 
 #if HAVE(VIDEO_RESTRICTED_DECODING)
 #if PLATFORM(MAC)
-    if (!isFullWebBrowser() || isRunningTest(WebCore::applicationBundleIdentifier())) {
+    if (!isFullWebBrowser()) {
         if (auto trustdExtensionHandle = SandboxExtension::createHandleForMachLookup("com.apple.trustd.agent"_s, std::nullopt))
             parameters.trustdExtensionHandle = WTFMove(*trustdExtensionHandle);
         parameters.enableDecodingHEIC = true;
@@ -667,7 +667,7 @@ void WebProcessPool::remoteWebInspectorEnabledCallback(CFNotificationCenterRef, 
 #endif
 
 #if PLATFORM(COCOA)
-void WebProcessPool::lockdownModeConfigUpdateCallback(CFNotificationCenterRef, void* observer, CFStringRef, const void*, CFDictionaryRef)
+void WebProcessPool::lockdownModeConfigurationUpdateCallback(CFNotificationCenterRef, void* observer, CFStringRef, const void*, CFDictionaryRef)
 {
     if (auto pool = extractWebProcessPool(observer))
         pool->lockdownModeStateChanged();
@@ -821,7 +821,7 @@ void WebProcessPool::registerNotificationObservers()
     });
 
 #if PLATFORM(COCOA)
-    addCFNotificationObserver(lockdownModeConfigUpdateCallback, (__bridge CFStringRef)WKLockdownModeContainerConfigurationChangedNotification);
+    addCFNotificationObserver(lockdownModeConfigurationUpdateCallback, (__bridge CFStringRef)WKLockdownModeContainerConfigurationChangedNotification);
 #endif
 
 #if HAVE(PER_APP_ACCESSIBILITY_PREFERENCES)
@@ -831,7 +831,7 @@ void WebProcessPool::registerNotificationObservers()
     addCFNotificationObserver(accessibilityPreferencesChangedCallback, kAXSDarkenSystemColorsEnabledNotification);
     addCFNotificationObserver(accessibilityPreferencesChangedCallback, kAXSInvertColorsEnabledNotification);
 #endif
-#if HAVE(ACCESSIBILITY_ANIMATED_IMAGE_CONTROL)
+#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
     if (canLoadkAXSReduceMotionAutoplayAnimatedImagesChangedNotification())
         addCFNotificationObserver(accessibilityPreferencesChangedCallback, getkAXSReduceMotionAutoplayAnimatedImagesChangedNotification());
 #endif

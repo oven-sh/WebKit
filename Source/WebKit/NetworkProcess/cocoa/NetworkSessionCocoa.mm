@@ -163,6 +163,24 @@ static WebCore::PrivacyStance toPrivacyStance(nw_connection_privacy_stance_t sta
     ASSERT_NOT_REACHED();
     return WebCore::PrivacyStance::Unknown;
 }
+
+static NSString* privacyStanceToString(WebCore::PrivacyStance stance)
+{
+    switch (stance) {
+    case WebCore::PrivacyStance::Unknown:
+        return @"Unknown";
+    case WebCore::PrivacyStance::NotEligible:
+        return @"NotEligible";
+    case WebCore::PrivacyStance::Proxied:
+        return @"Proxied";
+    case WebCore::PrivacyStance::Failed:
+        return @"Failed";
+    case WebCore::PrivacyStance::Direct:
+        return @"Direct";
+    }
+    ASSERT_NOT_REACHED();
+    return @"Unknown";
+}
 #endif
 
 #if HAVE(CFNETWORK_METRICS_APIS_V4)
@@ -444,6 +462,14 @@ static String stringForSSLCipher(SSLCipherSuite cipher)
 #undef STRINGIFY_CIPHER
 }
 #endif // HAVE(CFNETWORK_METRICS_APIS_V4)
+
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/NetworkSessionCocoaAdditions.mm>)
+#import <WebKitAdditions/NetworkSessionCocoaAdditions.mm>
+#else
+namespace WebKit {
+inline static void applyAdditionalSettings(NSURLSession *) { }
+}
+#endif
 
 @interface WKNetworkSessionDelegate : NSObject <NSURLSessionDataDelegate
 #if HAVE(NSURLSESSION_WEBSOCKET)
@@ -780,6 +806,10 @@ ALLOW_DEPRECATED_DECLARATIONS_END
         NSDictionary *oldUserInfo = [error userInfo];
         NSMutableDictionary *newUserInfo = oldUserInfo ? [NSMutableDictionary dictionaryWithDictionary:oldUserInfo] : [NSMutableDictionary dictionary];
         newUserInfo[@"networkTaskDescription"] = [task description];
+#if HAVE(NETWORK_CONNECTION_PRIVACY_STANCE)
+        if (auto* networkDataTask = [self existingTask:task])
+            newUserInfo[@"networkTaskMetricsPrivacyStance"] = privacyStanceToString(networkDataTask->networkLoadMetrics().privacyStance);
+#endif
         error = [NSError errorWithDomain:[error domain] code:[error code] userInfo:newUserInfo];
     }
 
@@ -1075,6 +1105,13 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 namespace WebKit {
 
+static RetainPtr<NSURLSession> createURLSession(NSURLSessionConfiguration *configuration, id<NSURLSessionDelegate> delegate)
+{
+    RetainPtr session = [NSURLSession sessionWithConfiguration:configuration delegate:delegate delegateQueue:NSOperationQueue.mainQueue];
+    applyAdditionalSettings(session.get());
+    return session;
+}
+
 #if ASSERT_ENABLED
 static bool sessionsCreated = false;
 #endif
@@ -1198,7 +1235,7 @@ void SessionWrapper::initialize(NSURLSessionConfiguration *configuration, Networ
         configuration._sourceApplicationSecondaryIdentifier = @"com.apple.WebKit.InAppBrowser";
 
     delegate = adoptNS([[WKNetworkSessionDelegate alloc] initWithNetworkSession:networkSession wrapper:*this withCredentials:storedCredentialsPolicy == WebCore::StoredCredentialsPolicy::Use]);
-    session = [NSURLSession sessionWithConfiguration:configuration delegate:delegate.get() delegateQueue:[NSOperationQueue mainQueue]];
+    session = createURLSession(configuration, delegate.get());
 }
 
 #if HAVE(SESSION_CLEANUP)
@@ -1580,10 +1617,10 @@ void NetworkSessionCocoa::clearCredentials()
     ASSERT(m_downloadMap.isEmpty());
     // FIXME: Use resetWithCompletionHandler instead.
     m_sessionWithCredentialStorage = [NSURLSession sessionWithConfiguration:m_sessionWithCredentialStorage.get().configuration delegate:static_cast<id>(m_sessionWithCredentialStorageDelegate.get()) delegateQueue:[NSOperationQueue mainQueue]];
-    m_statelessSession = [NSURLSession sessionWithConfiguration:m_statelessSession.get().configuration delegate:static_cast<id>(m_statelessSessionDelegate.get()) delegateQueue:[NSOperationQueue mainQueue]];
+    m_statelessSession = createURLSession([m_statelessSession configuration], static_cast<id>(m_statelessSessionDelegate.get()));
     for (auto& entry : m_isolatedSessions.values())
-        entry.session = [NSURLSession sessionWithConfiguration:entry.session.get().configuration delegate:static_cast<id>(entry.delegate.get()) delegateQueue:[NSOperationQueue mainQueue]];
-    m_appBoundSession.session = [NSURLSession sessionWithConfiguration:m_appBoundSession.session.get().configuration delegate:static_cast<id>(m_appBoundSession.delegate.get()) delegateQueue:[NSOperationQueue mainQueue]];
+        entry.session = createURLSession([entry.session configuration], static_cast<id>(entry.delegate.get()));
+    m_appBoundSession.session = createURLSession([m_appBoundSession.session configuration], m_appBoundSession.delegate.get());
 #endif
 }
 

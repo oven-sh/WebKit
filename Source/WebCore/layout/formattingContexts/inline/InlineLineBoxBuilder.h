@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "BlockLayoutState.h"
 #include "InlineFormattingContext.h"
 #include "InlineLineBuilder.h"
 #include "TextUtil.h"
@@ -35,28 +36,38 @@ namespace Layout {
 class Box;
 class ElementBox;
 class LayoutState;
+struct AscentAndDescent;
 
 class LineBoxBuilder {
 public:
-    LineBoxBuilder(const InlineFormattingContext&);
+    LineBoxBuilder(const InlineFormattingContext&, const LineBuilder::LineContent&, BlockLayoutState::LeadingTrim);
 
-    LineBox build(const LineBuilder::LineContent&, size_t lineIndex);
+    LineBox build(size_t lineIndex);
 
 private:
     void setVerticalPropertiesForInlineLevelBox(const LineBox&, InlineLevelBox&) const;
-    void adjustInlineBoxHeightsForLineBoxContainIfApplicable(const LineBuilder::LineContent&, LineBox&, size_t lineIndex);
+    void setLayoutBoundsForInlineBox(InlineLevelBox&, FontBaseline) const;
+    AscentAndDescent computedAsentAndDescentForInlineBox(const InlineLevelBox&, FontBaseline) const;
+    void adjustInlineBoxHeightsForLineBoxContainIfApplicable(LineBox&);
+    void computeLineBoxGeometry(LineBox&) const;
     InlineLevelBox::LayoutBounds adjustedLayoutBoundsWithFallbackFonts(InlineLevelBox&, const TextUtil::FallbackFontList& fallbackFontsForContent, FontBaseline) const;
     TextUtil::FallbackFontList collectFallbackFonts(const InlineLevelBox& parentInlineBox, const Line::Run&, const RenderStyle&);
 
-    void constructInlineLevelBoxes(LineBox&, const LineBuilder::LineContent&, size_t lineIndex);
-    void adjustIdeographicBaselineIfApplicable(LineBox&, size_t lineIndex);
+    void constructInlineLevelBoxes(LineBox&);
+    void adjustIdeographicBaselineIfApplicable(LineBox&);
 
+    bool isFirstLine() const { return m_lineContent.isFirstFormattedLine != LineBuilder::LineContent::FirstFormattedLine::No; }
+    bool isLastLine() const { return m_lineContent.isLastLineWithInlineContent; }
     const InlineFormattingContext& formattingContext() const { return m_inlineFormattingContext; }
+    const LineBuilder::LineContent lineContent() const { return m_lineContent; }
     const Box& rootBox() const { return formattingContext().root(); }
+    const RenderStyle& rootStyle() const { return isFirstLine() ? rootBox().firstLineStyle() : rootBox().style(); }
     LayoutState& layoutState() const { return formattingContext().layoutState(); }
 
 private:
     const InlineFormattingContext& m_inlineFormattingContext;
+    const LineBuilder::LineContent& m_lineContent;
+    BlockLayoutState::LeadingTrim m_leadingTrim;
     bool m_fallbackFontRequiresIdeographicBaseline { false };
     HashMap<const InlineLevelBox*, TextUtil::FallbackFontList> m_fallbackFontsForInlineBoxes;
 };

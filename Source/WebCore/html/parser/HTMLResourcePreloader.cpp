@@ -30,7 +30,9 @@
 #include "CrossOriginAccessControl.h"
 #include "DefaultResourceLoadPriority.h"
 #include "Document.h"
-#include "LegacyMediaQueryEvaluator.h"
+#include "MediaQueryEvaluator.h"
+#include "MediaQueryParser.h"
+#include "NodeRenderStyle.h"
 #include "RenderView.h"
 #include "ScriptElementCachedScriptFetcher.h"
 
@@ -63,7 +65,7 @@ CachedResourceRequest PreloadRequest::resourceRequest(Document& document)
     if (m_resourceType == CachedResource::Type::Script || m_resourceType == CachedResource::Type::ImageResource)
         options.referrerPolicy = m_referrerPolicy;
     auto request = createPotentialAccessControlRequest(completeURL(document), WTFMove(options), document, crossOriginMode);
-    request.setInitiator(m_initiator);
+    request.setInitiatorType(m_initiatorType);
 
     if (m_scriptIsAsync && m_resourceType == CachedResource::Type::Script && m_scriptType == ScriptType::Classic)
         request.setPriority(DefaultResourceLoadPriority::asyncScript);
@@ -81,11 +83,12 @@ void HTMLResourcePreloader::preload(std::unique_ptr<PreloadRequest> preload)
 {
     ASSERT(m_document.frame());
     ASSERT(m_document.renderView());
-    if (!preload->media().isEmpty() && !LegacyMediaQueryEvaluator::mediaAttributeMatches(m_document, preload->media()))
+
+    auto queries = MQ::MediaQueryParser::parse(preload->media(), { m_document });
+    if (!MQ::MediaQueryEvaluator { screenAtom(), m_document, m_document.renderStyle() }.evaluate(queries))
         return;
 
     m_document.cachedResourceLoader().preload(preload->resourceType(), preload->resourceRequest(m_document));
 }
-
 
 }

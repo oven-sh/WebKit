@@ -35,8 +35,11 @@
 #include "WebExtension.h"
 #include "WebExtensionContextIdentifier.h"
 #include "WebExtensionController.h"
+#include "WebExtensionEventListenerType.h"
 #include "WebExtensionMatchPattern.h"
+#include "WebPageProxyIdentifier.h"
 #include <wtf/Forward.h>
+#include <wtf/HashCountedSet.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/ListHashSet.h>
@@ -48,6 +51,7 @@
 
 OBJC_CLASS NSDictionary;
 OBJC_CLASS NSMapTable;
+OBJC_CLASS NSMutableDictionary;
 OBJC_CLASS NSString;
 OBJC_CLASS NSURL;
 OBJC_CLASS NSUUID;
@@ -91,6 +95,8 @@ public:
     using InjectedContentData = WebExtension::InjectedContentData;
     using InjectedContentVector = WebExtension::InjectedContentVector;
 
+    using EventListenterTypeCountedSet = HashCountedSet<WebExtensionEventListenerType, WTF::IntHash<WebKit::WebExtensionEventListenerType>, WTF::StrongEnumHashTraits<WebKit::WebExtensionEventListenerType>>;
+
     enum class EqualityOnly : bool { No, Yes };
 
     enum class Error : uint8_t {
@@ -123,7 +129,9 @@ public:
 
     NSError *createError(Error, NSString *customLocalizedDescription = nil, NSError *underlyingError = nil);
 
-    bool load(WebExtensionController&, NSError ** = nullptr);
+    bool storageIsPersistent() const { return hasCustomUniqueIdentifier(); }
+
+    bool load(WebExtensionController&, String storageDirectory, NSError ** = nullptr);
     bool unload(NSError ** = nullptr);
 
     bool isLoaded() const { return !!m_extensionController; }
@@ -135,6 +143,8 @@ public:
     void setBaseURL(URL&&);
 
     bool isURLForThisExtension(const URL&);
+
+    bool hasCustomUniqueIdentifier() const { return m_customUniqueIdentifier; }
 
     const String& uniqueIdentifier() const { return m_uniqueIdentifier; }
     void setUniqueIdentifier(String&&);
@@ -211,6 +221,11 @@ public:
 private:
     explicit WebExtensionContext();
 
+    String stateFilePath() const;
+    NSDictionary *currentState() const;
+    NSDictionary *readStateFromStorage();
+    void writeStateToStorage() const;
+
     void postAsyncNotification(NSString *notificationName, PermissionsSet&);
     void postAsyncNotification(NSString *notificationName, MatchPatternSet&);
 
@@ -227,6 +242,10 @@ private:
     void loadBackgroundWebViewDuringLoad();
     void loadBackgroundWebView();
     void unloadBackgroundWebView();
+
+    uint64_t loadBackgroundPageListenersVersionNumberFromStorage();
+    void loadBackgroundPageListenersFromStorage();
+    void saveBackgroundPageListenersToStorage();
 
     void performTasksAfterBackgroundContentLoads();
 
@@ -248,16 +267,25 @@ private:
     void testYielded(String message, String sourceURL, unsigned lineNumber);
     void testFinished(bool result, String message, String sourceURL, unsigned lineNumber);
 
+    // Event APIs
+    void addListener(WebPageProxyIdentifier, WebExtensionEventListenerType);
+    void removeListener(WebPageProxyIdentifier, WebExtensionEventListenerType);
+
     // IPC::MessageReceiver.
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
 
     WebExtensionContextIdentifier m_identifier;
+
+    String m_storageDirectory;
+
+    RetainPtr<NSMutableDictionary> m_state;
 
     RefPtr<WebExtension> m_extension;
     WeakPtr<WebExtensionController> m_extensionController;
 
     URL m_baseURL;
     String m_uniqueIdentifier = UUID::createVersion4().toString();
+    bool m_customUniqueIdentifier { false };
 
     RefPtr<API::ContentWorld> m_contentScriptWorld;
 
@@ -278,6 +306,9 @@ private:
 #else
     bool m_testingMode { true };
 #endif
+
+    EventListenterTypeCountedSet m_backgroundPageListeners;
+    bool m_shouldFireStartupEvent { false };
 
     RetainPtr<WKWebView> m_backgroundWebView;
     RetainPtr<_WKWebExtensionContextDelegate> m_delegate;

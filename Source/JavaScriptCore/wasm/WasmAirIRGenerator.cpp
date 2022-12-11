@@ -517,6 +517,10 @@ public:
         AIR_OP_CASE(AnyTrue)
         AIR_OP_CASE(AllTrue)
         result = tmpForType(Types::I32);
+        if (isX86() && (op == SIMDLaneOperation::AllTrue || op == SIMDLaneOperation::Bitmask)) {
+            append(airOp, Arg::simdInfo(info), v, result, tmpForType(Types::V128));
+            return { };
+        }
         if (isValidForm(airOp, Arg::Tmp, Arg::Tmp)) {
             append(airOp, v, result);
             return { };
@@ -532,11 +536,9 @@ public:
     auto addSIMDV_V(SIMDLaneOperation op, SIMDInfo info, ExpressionType v, ExpressionType& result) -> PartialResult
     {
         AIR_OP_CASES()
-        AIR_OP_CASE(Not)
         AIR_OP_CASE(Demote)
         AIR_OP_CASE(Promote)
         AIR_OP_CASE(Abs)
-        AIR_OP_CASE(Neg)
         AIR_OP_CASE(Popcnt)
         AIR_OP_CASE(Ceil)
         AIR_OP_CASE(Floor)
@@ -549,7 +551,67 @@ public:
         AIR_OP_CASE(ExtendHigh)
         AIR_OP_CASE(ExtendLow)
         AIR_OP_CASE(TruncSat)
+#if CPU(X86_64)
+        else if (op == SIMDLaneOperation::Not) {
+            // x86_64 has no vector bitwise NOT instruction, so we expand vxv.not v into vxv.xor -1, v
+            // here to give B3/Air a chance to optimize out repeated usage of the mask.
+            v128_t mask;
+            mask.u64x2[0] = 0xffffffffffffffff;
+            mask.u64x2[1] = 0xffffffffffffffff;
+            TypedTmp ones = addConstant(mask);
+            result = tmpForType(Types::V128);
+            append(VectorXor, Arg::simdInfo({ SIMDLane::v128, SIMDSignMode::None }), ones, v, result);
+            return { };
+        }
+        else if (op == SIMDLaneOperation::Neg) {
+            // x86_64 has no vector negate instruction, so we expand vxv.neg v into vxv.sub 0, v
+            // here to give B3/Air a chance to optimize out repeated vector zeroing.
+            TypedTmp zero = addConstant(v128_t());
+            result = tmpForType(Types::V128);
+            append(VectorSub, Arg::simdInfo(info), zero, v, result);
+            return { };
+        }
+#else
+        AIR_OP_CASE(Not)
+        AIR_OP_CASE(Neg)
+#endif
+
         result = tmpForType(Types::V128);
+
+        if (isX86()) {
+            if (airOp == B3::Air::VectorExtaddPairwise) {
+                if (info.lane == SIMDLane::i16x8 && info.signMode == SIMDSignMode::Unsigned)
+                    append(VectorExtaddPairwiseUnsignedInt16, v, result, tmpForType(Types::V128), tmpForType(Types::V128));
+                else
+                    append(airOp, Arg::simdInfo(info), v, result, tmpForType(Types::I64), tmpForType(Types::V128));
+                return { };
+            }
+
+
+            if (airOp == B3::Air::VectorConvert && info.signMode == SIMDSignMode::Unsigned) {
+                append(VectorConvertUnsigned, v, result, tmpForType(Types::V128));
+                return { };
+            }
+
+            if (airOp == B3::Air::VectorConvertLow) {
+                if (info.signMode == SIMDSignMode::Signed)
+                    append(VectorConvertLowSignedInt32, v, result);
+                else
+                    append(VectorConvertLowUnsignedInt32, v, result, tmpForType(Types::I64), tmpForType(Types::V128));
+                return { };
+            }
+
+            if (airOp == B3::Air::VectorTruncSat) {
+                if (info.lane == SIMDLane::f64x2) {
+                    if (info.signMode == SIMDSignMode::Signed)
+                        append(VectorTruncSatSignedFloat64, v, result, tmpForType(Types::I64), tmpForType(Types::V128), tmpForType(Types::V128));
+                    else
+                        append(VectorTruncSatUnsignedFloat64, v, result, tmpForType(Types::I64), tmpForType(Types::V128), tmpForType(Types::V128));
+                }
+                return { };
+            }
+        }
+
         if (isValidForm(airOp, Arg::Tmp, Arg::Tmp)) {
             append(airOp, v, result);
             return { };
@@ -581,12 +643,68 @@ public:
             append(airOp, relOp, Arg::simdInfo(info), lhs, rhs, result);
             return { };
         }
+
         if (isValidForm(airOp, Arg::RelCond, Arg::SIMDInfo, Arg::Tmp, Arg::Tmp, Arg::Tmp)) {
-            append(airOp, relOp, Arg::simdInfo(info), lhs, rhs, result);
+            if (isX86()) {
+                // On Intel, the best codegen for a bitwise-complement of an integer vector is to
+                // XOR with a vector of all ones. This is necessary here since Intel also doesn't
+                // directly implement most relational conditions between vectors: the cases below
+                // are best emitted as inversions of conditions that are supported.
+                v128_t allOnes;
+                allOnes.u64x2[0] = 0xffffffffffffffff;
+                allOnes.u64x2[1] = 0xffffffffffffffff;
+
+                switch (relOp.asRelationalCondition()) {
+                case MacroAssembler::NotEqual:
+                    append(airOp, Arg::relCond(MacroAssembler::Equal), Arg::simdInfo(info), lhs, rhs, result);
+                    append(VectorXor, Arg::simdInfo(info), result, addConstant(allOnes), result);
+                    break;
+                case MacroAssembler::Above:
+                    append(airOp, Arg::relCond(MacroAssembler::BelowOrEqual), Arg::simdInfo(info), lhs, rhs, result);
+                    append(VectorXor, Arg::simdInfo(info), result, addConstant(allOnes), result);
+                    break;
+                case MacroAssembler::Below:
+                    append(airOp, Arg::relCond(MacroAssembler::AboveOrEqual), Arg::simdInfo(info), lhs, rhs, result);
+                    append(VectorXor, Arg::simdInfo(info), result, addConstant(allOnes), result);
+                    break;
+                case MacroAssembler::GreaterThanOrEqual:
+                    if (info.lane == SIMDLane::i64x2) {
+                        append(airOp, Arg::relCond(MacroAssembler::GreaterThan), Arg::simdInfo(info), rhs, lhs, result);
+                        append(VectorXor, Arg::simdInfo(info), result, addConstant(allOnes), result);
+                    } else
+                        append(airOp, relOp, Arg::simdInfo(info), lhs, rhs, result);
+                    break;
+                case MacroAssembler::LessThanOrEqual:
+                    if (info.lane == SIMDLane::i64x2) {
+                        append(airOp, Arg::relCond(MacroAssembler::GreaterThan), Arg::simdInfo(info), lhs, rhs, result);
+                        append(VectorXor, Arg::simdInfo(info), result, addConstant(allOnes), result);
+                    } else
+                        append(airOp, relOp, Arg::simdInfo(info), lhs, rhs, result);
+                    break;
+                default:
+                    append(airOp, relOp, Arg::simdInfo(info), lhs, rhs, result);
+                }
+            } else
+                append(airOp, relOp, Arg::simdInfo(info), lhs, rhs, result);
             return { };
         }
         RELEASE_ASSERT_NOT_REACHED();
         return { };
+    }
+
+    void addSIMDSwizzle(ExpressionType& a, ExpressionType& b, ExpressionType& result)
+    {
+        ASSERT(result.type() == Types::V128);
+        // Let each byte mask be 112 (0x70) then after VectorAddSat
+        // each index > 15 would set the saturated index's bit 7 to 1, 
+        // whose corresponding byte will be zero cleared in VectorSwizzle.
+        // https://github.com/WebAssembly/simd/issues/93
+        v128_t mask;
+        mask.u64x2[0] = 0x7070707070707070;
+        mask.u64x2[1] = 0x7070707070707070;
+        auto saturatedIndexes = addConstant(mask);
+        append(VectorAddSat, Arg::simdInfo(SIMDInfo { SIMDLane::i16x8, SIMDSignMode::Unsigned }), saturatedIndexes, b, saturatedIndexes);
+        append(B3::Air::VectorSwizzle, a, saturatedIndexes, result);
     }
 
     auto addSIMDV_VV(SIMDLaneOperation op, SIMDInfo info, ExpressionType a, ExpressionType b, ExpressionType& result) -> PartialResult
@@ -613,6 +731,16 @@ public:
         AIR_OP_CASE(Min)
         result = tmpForType(Types::V128);
 
+        if (isX86() && airOp == B3::Air::VectorMulSat) {
+            append(airOp, a, b, result, tmpForType(Types::I64), tmpForType(Types::V128));
+            return { };
+        }
+
+        if (isX86() && airOp == B3::Air::VectorSwizzle) {
+            addSIMDSwizzle(a, b, result);
+            return { };
+        }
+
         if (isValidForm(airOp, Arg::Tmp, Arg::Tmp, Arg::Tmp)) {
             append(airOp, a, b, result);
             return { };
@@ -623,6 +751,10 @@ public:
         }
         if (isValidForm(airOp, Arg::Tmp, Arg::Tmp, Arg::Tmp, Arg::Tmp)) {
             append(airOp, a, b, result, tmpForType(Types::V128));
+            return { };
+        }
+        if (isValidForm(airOp, Arg::SIMDInfo, Arg::Tmp, Arg::Tmp, Arg::Tmp, Arg::Tmp)) {
+            append(airOp, Arg::simdInfo(info), a, b, result, tmpForType(Types::V128));
             return { };
         }
         ASSERT_NOT_REACHED();
@@ -1543,23 +1675,19 @@ auto AirIRGenerator::addLocal(Type type, uint32_t count) -> PartialResult
             break;
         case TypeKind::I32:
         case TypeKind::I64: {
-            append(Xor64, local, local);
+            append(Move, Arg::imm(0), local);
             break;
         }
         case TypeKind::F32:
         case TypeKind::F64: {
             auto temp = g64();
             // IEEE 754 "0" is just int32/64 zero.
-            append(Xor64, temp, temp);
+            append(Move, Arg::imm(0), temp);
             append(type.isF32() ? Move32ToFloat : Move64ToDouble, temp, local);
             break;
         }
         case TypeKind::V128: {
-            auto temp = g64();
-            append(Xor64, temp, temp);
-            // FIXME clear local
-            append(VectorReplaceLaneInt64, Arg::imm(0), temp, local);
-            append(VectorReplaceLaneInt64, Arg::imm(1), temp, local);
+            append(MoveZeroToVector, local);
             break;
         }
         default:
@@ -1603,10 +1731,21 @@ auto AirIRGenerator::addConstant(BasicBlock* block, Type type, uint64_t value) -
 
 auto AirIRGenerator::addConstant(v128_t value) -> ExpressionType
 {
+    auto result = tmpForType(Types::V128);
+
+    if (!value.u64x2[0] && !value.u64x2[1]) {
+        append(VectorXor, Arg::simdInfo({ SIMDLane::v128, SIMDSignMode::None }), result, result, result);
+        return result;
+    }
+    if (value.u64x2[0] == 0xffffffffffffffff && value.u64x2[1] == 0xffffffffffffffff) {
+        append(CompareIntegerVector, Arg::relCond(MacroAssembler::RelationalCondition::Equal), Arg::simdInfo({ SIMDLane::i32x4, SIMDSignMode::None }), result, result, result);
+        return result;
+    }
+
     // FIXME: this is bad, we should load
     auto a = g64();
-    auto result = tmpForType(Types::V128);
     append(Move, Arg::bigImm(value.u64x2[0]), a);
+    append(MoveZeroToVector, result);
     append(VectorReplaceLaneInt64, Arg::imm(0), a, result);
     append(Move, Arg::bigImm(value.u64x2[1]), a);
     append(VectorReplaceLaneInt64, Arg::imm(1), a, result);
@@ -3537,7 +3676,7 @@ auto AirIRGenerator::addArrayNewDefault(uint32_t typeIndex, ExpressionType size,
         append(Move, Arg::bigImm(JSValue::encode(jsNull())), tmpForValue);
     } else {
         tmpForValue = g64();
-        append(Xor64, tmpForValue, tmpForValue);
+        append(Move, Arg::imm(0), tmpForValue);
     }
 
     result = tmpForType(Wasm::Type { Wasm::TypeKind::Ref, Wasm::TypeInformation::get(arraySignature) });
@@ -3807,6 +3946,38 @@ auto AirIRGenerator::addSIMDStore(ExpressionType value, ExpressionType pointer, 
 
 auto AirIRGenerator::addSIMDSplat(SIMDLane lane, ExpressionType scalar, ExpressionType& result) -> PartialResult
 {
+    // FIXME: We should optimize this code.
+    if (isX86()) {
+        B3::Air::Opcode op;
+
+        switch (lane) {
+        case SIMDLane::i8x16:
+            op = VectorSplat8;
+            break;
+        case SIMDLane::i16x8:
+            op = VectorSplat16;
+            break;
+        case SIMDLane::i32x4:
+            op = VectorSplat32;
+            break;
+        case SIMDLane::i64x2:
+            op = VectorSplat64;
+            break;
+        case SIMDLane::f32x4:
+            op = VectorSplatFloat32;
+            break;
+        case SIMDLane::f64x2:
+            op = VectorSplatFloat64;
+            break;
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+
+        result = v128();
+        append(op, scalar, result.tmp());
+        return { };
+    }
+
     Tmp toSplat = scalar.tmp();
     if (scalarTypeIsFloatingPoint(lane)) {
         Tmp gpCast = newTmp(B3::GP);
@@ -3834,7 +4005,6 @@ auto AirIRGenerator::addSIMDSplat(SIMDLane lane, ExpressionType scalar, Expressi
 
     result = v128();
     append(op, toSplat, result.tmp());
-
     return { };
 }
 
@@ -3856,9 +4026,19 @@ auto AirIRGenerator::addSIMDShift(SIMDLaneOperation op, SIMDInfo info, Expressio
         append(info.signMode == SIMDSignMode::Signed ? VectorSshl : VectorUshl, Arg::simdInfo(info), v.tmp(), shiftVector, result.tmp());
 
         return { };
+    } else if (isX86()) {
+        Tmp shiftAmount = newTmp(B3::GP);
+        Tmp shiftVector = newTmp(B3::FP);
+        append(And32, Arg::bitImm(mask), shift.tmp(), shiftAmount);
+        append(VectorSplat8, shiftAmount, shiftVector);
+
+        if (op == SIMDLaneOperation::Shl)
+            append(VectorUshl, Arg::simdInfo(info), v.tmp(), shiftVector, result.tmp());
+        else
+            append(info.signMode == SIMDSignMode::Signed ? VectorSshr : VectorUshr, Arg::simdInfo(info), v.tmp(), shiftVector, result.tmp());
+        return { };
     }
 
-    // FIXME: implement x86
     RELEASE_ASSERT_NOT_REACHED();
     return { };
 }
@@ -3883,6 +4063,26 @@ auto AirIRGenerator::addSIMDExtmul(SIMDLaneOperation op, SIMDInfo info, Expressi
 auto AirIRGenerator::addSIMDShuffle(v128_t imm, ExpressionType a, ExpressionType b, ExpressionType& result) -> PartialResult
 {
     result = v128();
+
+    if (isX86()) {
+        // Store each byte (w/ index < 16) of `a` to result
+        // and zero clear each byte (w/ index > 15) in result.
+        auto indexes = addConstant(imm);
+        addSIMDSwizzle(a, indexes, result);
+
+        // Store each byte (w/ index - 16 >= 0) of `b` to result2
+        // and zero clear each byte (w/ index - 16 < 0) in result2.
+        auto result2 = v128();
+        v128_t mask;
+        mask.u64x2[0] = 0x1010101010101010;
+        mask.u64x2[1] = 0x1010101010101010;
+        append(VectorSub, Arg::simdInfo(SIMDInfo { SIMDLane::i16x8, SIMDSignMode::None }), addConstant(mask), indexes, indexes); // indexes = indexes VectorSub mask
+        append(B3::Air::VectorSwizzle, b, indexes, result2);
+
+        // Since each index in [0, 31], we can return result2 VectorOr result.
+        append(VectorOr, result, result2, result);
+        return { };
+    }
 
     append(VectorShuffle, Arg::bigImm(imm.u64x2[0]), Arg::bigImm(imm.u64x2[1]), a, b, result);
 
@@ -4095,8 +4295,9 @@ void AirIRGenerator::emitEntryTierUpCheck()
             ScratchRegisterAllocator::restoreRegistersFromStackForCall(jit, registersToSpill, { }, numberOfStackBytesUsedForRegisterPreservation, extraPaddingBytes);
             jit.jump(tierUpResume);
 
+            bool isSIMD = m_proc.usesSIMD();
             jit.addLinkTask([=] (LinkBuffer& linkBuffer) {
-                MacroAssembler::repatchNearCall(linkBuffer.locationOfNearCall<NoPtrTag>(call), CodeLocationLabel<JITThunkPtrTag>(Thunks::singleton().stub(triggerOMGEntryTierUpThunkGenerator).code()));
+                MacroAssembler::repatchNearCall(linkBuffer.locationOfNearCall<NoPtrTag>(call), CodeLocationLabel<JITThunkPtrTag>(Thunks::singleton().stub(triggerOMGEntryTierUpThunkGenerator(isSIMD)).code()));
             });
         });
     });
@@ -4294,7 +4495,7 @@ auto AirIRGenerator::addCatchToUnreachable(unsigned exceptionIndex, const TypeDe
         Type type = signature.as<FunctionSignature>()->argumentType(i);
         TypedTmp tmp = tmpForType(type);
         if (type.isV128())
-            append(VectorXor, Arg::simdInfo({ SIMDLane::v128, SIMDSignMode::None }), tmp, tmp, tmp);
+            append(MoveZeroToVector, tmp);
         else
             emitLoad(buffer, i * sizeof(uint64_t), tmp);
         results.append(tmp);
@@ -4349,7 +4550,7 @@ Tmp AirIRGenerator::emitCatchImpl(CatchKind kind, ControlType& data, unsigned ex
     B3::PatchpointValue* patch = addPatchpoint(m_proc.addTuple({ B3::pointerType(), B3::pointerType() }));
     patch->effects.exitsSideways = true;
     patch->clobber(RegisterSetBuilder::macroClobberedRegisters());
-    auto clobberLate = RegisterSetBuilder::registersToSaveForJSCall(Options::useWebAssemblySIMD() ? RegisterSetBuilder::allRegisters() : RegisterSetBuilder::allScalarRegisters());
+    auto clobberLate = RegisterSetBuilder::registersToSaveForJSCall(m_proc.usesSIMD() ? RegisterSetBuilder::allRegisters() : RegisterSetBuilder::allScalarRegisters());
     clobberLate.add(GPRInfo::argumentGPR0, IgnoreVectors);
     patch->clobberLate(clobberLate);
     patch->resultConstraints.append(B3::ValueRep::reg(GPRInfo::returnValueGPR));
@@ -4390,7 +4591,7 @@ auto AirIRGenerator::addThrow(unsigned exceptionIndex, Vector<ExpressionType>& a
 {
     B3::PatchpointValue* patch = addPatchpoint(B3::Void);
     patch->effects.terminal = true;
-    patch->clobber(RegisterSetBuilder::registersToSaveForJSCall(Options::useWebAssemblySIMD() ? RegisterSetBuilder::allRegisters() : RegisterSetBuilder::allScalarRegisters()));
+    patch->clobber(RegisterSetBuilder::registersToSaveForJSCall(m_proc.usesSIMD() ? RegisterSetBuilder::allRegisters() : RegisterSetBuilder::allScalarRegisters()));
 
     Vector<ConstrainedTmp, 8> patchArgs;
     patchArgs.append(ConstrainedTmp(instanceValue(), B3::ValueRep::reg(GPRInfo::argumentGPR0)));
@@ -4418,7 +4619,7 @@ auto AirIRGenerator::addThrow(unsigned exceptionIndex, Vector<ExpressionType>& a
 auto AirIRGenerator::addRethrow(unsigned, ControlType& data) -> PartialResult
 {
     B3::PatchpointValue* patch = addPatchpoint(B3::Void);
-    patch->clobber(RegisterSetBuilder::registersToSaveForJSCall(Options::useWebAssemblySIMD() ? RegisterSetBuilder::allRegisters() : RegisterSetBuilder::allScalarRegisters()));
+    patch->clobber(RegisterSetBuilder::registersToSaveForJSCall(m_proc.usesSIMD() ? RegisterSetBuilder::allRegisters() : RegisterSetBuilder::allScalarRegisters()));
     patch->effects.terminal = true;
 
     Vector<ConstrainedTmp, 3> patchArgs;
@@ -4627,7 +4828,7 @@ std::pair<B3::PatchpointValue*, PatchpointExceptionHandle> AirIRGenerator::emitC
     patchpoint->effects.writesPinned = true;
     patchpoint->effects.readsPinned = true;
     patchpoint->clobberEarly(RegisterSetBuilder::macroClobberedRegisters());
-    patchpoint->clobberLate(RegisterSetBuilder::registersToSaveForJSCall(Options::useWebAssemblySIMD() ? RegisterSetBuilder::allRegisters() : RegisterSetBuilder::allScalarRegisters()));
+    patchpoint->clobberLate(RegisterSetBuilder::registersToSaveForJSCall(m_proc.usesSIMD() ? RegisterSetBuilder::allRegisters() : RegisterSetBuilder::allScalarRegisters()));
 
     CallInformation locations = wasmCallingConvention().callInformationFor(signature);
     m_code.requestCallArgAreaSizeInBytes(WTF::roundUpToMultipleOf(stackAlignmentBytes(), locations.headerAndArgumentStackSizeInBytes));
@@ -5004,6 +5205,10 @@ Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileAir(Compilati
     compilationContext.procedure = makeUnique<B3::Procedure>();
     auto& procedure = *compilationContext.procedure;
     Code& code = procedure.code();
+
+    bool usesSIMD = info.isSIMDFunction(functionIndex);
+    if (usesSIMD)
+        procedure.setUsessSIMD();
 
     procedure.setOriginPrinter([] (PrintStream& out, B3::Origin origin) {
         if (origin.data())

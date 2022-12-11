@@ -24,6 +24,7 @@ set(WebCore_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBCORE_DIR}/Modules/applepay/paymentrequest"
     "${WEBCORE_DIR}/Modules/applicationmanifest"
     "${WEBCORE_DIR}/Modules/async-clipboard"
+    "${WEBCORE_DIR}/Modules/audiosession"
     "${WEBCORE_DIR}/Modules/beacon"
     "${WEBCORE_DIR}/Modules/cache"
     "${WEBCORE_DIR}/Modules/compression"
@@ -255,6 +256,9 @@ set(WebCore_NON_SVG_IDL_FILES
     Modules/async-clipboard/Clipboard.idl
     Modules/async-clipboard/ClipboardItem.idl
     Modules/async-clipboard/Navigator+Clipboard.idl
+
+    Modules/audiosession/DOMAudioSession.idl
+    Modules/audiosession/Navigator+AudioSession.idl
 
     Modules/beacon/Navigator+Beacon.idl
 
@@ -1571,6 +1575,7 @@ list(APPEND WebCore_NON_SVG_IDL_FILES
     Modules/WebGPU/GPU.idl
     Modules/WebGPU/GPUAdapter.idl
     Modules/WebGPU/GPUAddressMode.idl
+    Modules/WebGPU/GPUAutoLayoutMode.idl
     Modules/WebGPU/GPUBindGroup.idl
     Modules/WebGPU/GPUBindGroupDescriptor.idl
     Modules/WebGPU/GPUBindGroupEntry.idl
@@ -2485,6 +2490,7 @@ set(WebCore_BUILTINS_SOURCES
     ${WEBCORE_DIR}/Modules/streams/CountQueuingStrategy.js
     ${WEBCORE_DIR}/Modules/streams/ReadableByteStreamController.js
     ${WEBCORE_DIR}/Modules/streams/ReadableByteStreamInternals.js
+    ${WEBCORE_DIR}/Modules/streams/ReadableStream.js
     ${WEBCORE_DIR}/Modules/streams/ReadableStreamBYOBReader.js
     ${WEBCORE_DIR}/Modules/streams/ReadableStreamBYOBRequest.js
     ${WEBCORE_DIR}/Modules/streams/ReadableStreamDefaultController.js

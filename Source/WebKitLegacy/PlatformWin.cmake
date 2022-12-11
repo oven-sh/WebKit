@@ -7,20 +7,17 @@ if (${WTF_PLATFORM_WIN_CAIRO})
         win/WebDownloadCURL.cpp
         win/WebURLAuthenticationChallengeSenderCURL.cpp
     )
-    list(APPEND WebKitLegacy_PRIVATE_LIBRARIES
-        $<TARGET_OBJECTS:WebCore>
-    )
 else ()
     list(APPEND WebKitLegacy_SOURCES_Classes
         win/WebDownloadCFNet.cpp
         win/WebURLAuthenticationChallengeSenderCFNet.cpp
     )
     list(APPEND WebKitLegacy_PRIVATE_LIBRARIES
-        CFNetwork${DEBUG_SUFFIX}
-        CoreGraphics${DEBUG_SUFFIX}
-        CoreText${DEBUG_SUFFIX}
-        QuartzCore${DEBUG_SUFFIX}
-        libdispatch${DEBUG_SUFFIX}
+        Apple::CFNetwork
+        Apple::CoreGraphics
+        Apple::CoreText
+        Apple::QuartzCore
+        Apple::libdispatch
         libxml2${DEBUG_SUFFIX}
         libxslt${DEBUG_SUFFIX}
         zdll${DEBUG_SUFFIX}
@@ -225,7 +222,7 @@ if (USE_CF)
     )
 
     list(APPEND WebKitLegacy_LIBRARIES
-        ${COREFOUNDATION_LIBRARY}
+        Apple::CoreFoundation
     )
 endif ()
 
@@ -486,9 +483,4 @@ endif ()
 
 set(WebKitLegacy_OUTPUT_NAME
     WebKit${DEBUG_SUFFIX}
-)
-
-list(APPEND WebKitLegacy_PRIVATE_DEFINITIONS
-    STATICALLY_LINKED_WITH_PAL
-    STATICALLY_LINKED_WITH_WebCore
 )

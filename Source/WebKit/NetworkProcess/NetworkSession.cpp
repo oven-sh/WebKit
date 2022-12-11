@@ -113,6 +113,7 @@ static Ref<NetworkStorageManager> createNetworkStorageManager(IPC::Connection* c
 
 NetworkSession::NetworkSession(NetworkProcess& networkProcess, const NetworkSessionCreationParameters& parameters)
     : m_sessionID(parameters.sessionID)
+    , m_dataStoreIdentifier(parameters.dataStoreIdentifier)
     , m_networkProcess(networkProcess)
 #if ENABLE(TRACKING_PREVENTION)
     , m_resourceLoadStatisticsDirectory(parameters.resourceLoadStatisticsParameters.directory)
@@ -222,6 +223,12 @@ void NetworkSession::invalidateAndCancel()
 #if ASSERT_ENABLED
     m_isInvalidated = true;
 #endif
+
+    if (m_cache) {
+        auto networkCacheDirectory = m_cache->storageDirectory();
+        m_cache = nullptr;
+        FileSystem::markPurgeable(networkCacheDirectory);
+    }
 }
 
 void NetworkSession::destroyPrivateClickMeasurementStore(CompletionHandler<void()>&& completionHandler)
@@ -661,7 +668,11 @@ SWServer& NetworkSession::ensureSWServer()
             m_networkProcess->parentProcessConnection()->sendWithAsyncReply(Messages::NetworkProcessProxy::EstablishRemoteWorkerContextConnectionToNetworkProcess { RemoteWorkerType::ServiceWorker, registrableDomain, requestingProcessIdentifier, serviceWorkerPageIdentifier, m_sessionID }, [completionHandler = WTFMove(completionHandler)] (auto) mutable {
                 completionHandler();
             }, 0);
-        }, WTFMove(appBoundDomainsCallback), [this](auto webProcessIdentifier, auto&& firstPartyForCookies) {
+        }, WTFMove(appBoundDomainsCallback), [this](auto webProcessIdentifier, auto requestingProcessIdentifier, auto&& firstPartyForCookies) {
+            if (requestingProcessIdentifier && (requestingProcessIdentifier != webProcessIdentifier) && !m_networkProcess->allowsFirstPartyForCookies(requestingProcessIdentifier.value(), firstPartyForCookies)) {
+                ASSERT_NOT_REACHED();
+                return;
+            }
             m_networkProcess->addAllowedFirstPartyForCookies(webProcessIdentifier, WTFMove(firstPartyForCookies), [] { });
         });
     }

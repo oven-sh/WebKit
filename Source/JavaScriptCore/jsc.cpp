@@ -2471,14 +2471,14 @@ JSC_DEFINE_HOST_FUNCTION(functionTotalCompileTime, (JSGlobalObject*, CallFrame*)
 #endif
 }
 
+IGNORE_GCC_WARNINGS_BEGIN("unused-but-set-parameter")
 template<typename ValueType>
-typename std::enable_if<!std::is_fundamental<ValueType>::value>::type addOption(VM&, JSObject*, const Identifier&, ValueType) { }
-
-template<typename ValueType>
-typename std::enable_if<std::is_fundamental<ValueType>::value>::type addOption(VM& vm, JSObject* optionsObject, const Identifier& identifier, ValueType value)
+void addOption(VM& vm, JSObject* optionsObject, const Identifier& identifier, ValueType value)
 {
-    optionsObject->putDirect(vm, identifier, JSValue(value));
+    if constexpr (std::is_fundamental_v<ValueType>)
+        optionsObject->putDirect(vm, identifier, JSValue(value));
 }
+IGNORE_GCC_WARNINGS_END
 
 JSC_DEFINE_HOST_FUNCTION(functionJSCOptions, (JSGlobalObject* globalObject, CallFrame*))
 {
@@ -3738,7 +3738,7 @@ void CommandLine::parseArguments(int argc, char** argv)
 
         // See if the -- option is a JSC VM option.
         if (strstr(arg, "--") == arg) {
-            if (!JSC::Options::setOption(&arg[2])) {
+            if (!JSC::Options::setOption(&arg[2], /* verify = */ false)) {
                 hasBadJSCOptions = true;
                 dataLog("ERROR: invalid option: ", arg, "\n");
             }
@@ -3754,6 +3754,8 @@ void CommandLine::parseArguments(int argc, char** argv)
     if (hasBadJSCOptions && JSC::Options::validateOptions())
         CRASH();
 
+    JSC::Options::notifyOptionsChanged();
+
     if (m_scripts.isEmpty())
         m_interactive = true;
 
@@ -3766,7 +3768,7 @@ void CommandLine::parseArguments(int argc, char** argv)
             : "All JSC runtime options:";
         JSC::Options::dumpAllOptions(dumpOptionsLevel, optionsTitle);
     }
-    JSC::Options::ensureOptionsAreCoherent();
+    JSC::Options::assertOptionsAreCoherent();
     if (needToExit)
         jscExit(EXIT_SUCCESS);
 }

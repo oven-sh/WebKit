@@ -32,6 +32,7 @@
 
 #import "WebExtensionController.h"
 #import "_WKWebExtensionContextInternal.h"
+#import "_WKWebExtensionControllerConfigurationInternal.h"
 #import "_WKWebExtensionInternal.h"
 #import <WebCore/WebCoreObjCExtras.h>
 
@@ -44,7 +45,19 @@
     if (!(self = [super init]))
         return nil;
 
-    API::Object::constructInWrapper<WebKit::WebExtensionController>(self);
+    API::Object::constructInWrapper<WebKit::WebExtensionController>(self, WebKit::WebExtensionControllerConfiguration::createDefault());
+
+    return self;
+}
+
+- (instancetype)initWithConfiguration:(_WKWebExtensionControllerConfiguration *)configuration
+{
+    NSParameterAssert(configuration);
+
+    if (!(self = [super init]))
+        return nil;
+
+    API::Object::constructInWrapper<WebKit::WebExtensionController>(self, configuration._webExtensionControllerConfiguration.copy());
 
     return self;
 }
@@ -57,11 +70,9 @@
     _webExtensionController->~WebExtensionController();
 }
 
-- (BOOL)loadExtensionContext:(_WKWebExtensionContext *)extensionContext
+- (_WKWebExtensionControllerConfiguration *)configuration
 {
-    NSParameterAssert(extensionContext);
-
-    return [self loadExtensionContext:extensionContext error:nullptr];
+    return _webExtensionController->configuration().copy()->wrapper();
 }
 
 - (BOOL)loadExtensionContext:(_WKWebExtensionContext *)extensionContext error:(NSError **)outError
@@ -69,13 +80,6 @@
     NSParameterAssert(extensionContext);
 
     return _webExtensionController->load(extensionContext._webExtensionContext, outError);
-}
-
-- (BOOL)unloadExtensionContext:(_WKWebExtensionContext *)extensionContext
-{
-    NSParameterAssert(extensionContext);
-
-    return [self unloadExtensionContext:extensionContext error:nullptr];
 }
 
 - (BOOL)unloadExtensionContext:(_WKWebExtensionContext *)extensionContext error:(NSError **)outError
@@ -133,17 +137,22 @@ static inline NSSet *toAPI(const T& inputSet)
 
 #else // ENABLE(WK_WEB_EXTENSIONS)
 
-- (BOOL)loadExtensionContext:(_WKWebExtensionContext *)extensionContext
+- (instancetype)init
 {
-    return NO;
+    return nil;
+}
+
+- (instancetype)initWithConfiguration:(_WKWebExtensionControllerConfiguration *)configuration
+{
+    return nil;
+}
+
+- (_WKWebExtensionControllerConfiguration *)configuration
+{
+    return nil;
 }
 
 - (BOOL)loadExtensionContext:(_WKWebExtensionContext *)extensionContext error:(NSError **)error
-{
-    return NO;
-}
-
-- (BOOL)unloadExtensionContext:(_WKWebExtensionContext *)extensionContext
 {
     return NO;
 }

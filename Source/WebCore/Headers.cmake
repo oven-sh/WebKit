@@ -2,6 +2,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/WebGPU/GPU.h
     Modules/WebGPU/GPUAdapter.h
     Modules/WebGPU/GPUAddressMode.h
+    Modules/WebGPU/GPUAutoLayoutMode.h
     Modules/WebGPU/GPUBindGroup.h
     Modules/WebGPU/GPUBindGroupDescriptor.h
     Modules/WebGPU/GPUBindGroupEntry.h
@@ -625,9 +626,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     css/DeprecatedCSSOMValue.h
     css/DeprecatedCSSOMValueList.h
     css/FontLoadTimingOverride.h
-    css/LegacyMediaQueryEvaluator.h
     css/MediaList.h
-    css/MediaQueryExpression.h
     css/MediaQueryParserContext.h
     css/Rect.h
     css/StyleColor.h
@@ -853,6 +852,8 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     editing/TextIterator.h
     editing/TextIteratorBehavior.h
     editing/TextManipulationController.h
+    editing/TextManipulationItem.h
+    editing/TextManipulationToken.h
     editing/UndoStep.h
     editing/VisiblePosition.h
     editing/VisibleSelection.h
@@ -1295,6 +1296,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/WheelEventTestMonitor.h
     page/WindowFeatures.h
     page/WindowOrWorkerGlobalScope.h
+    page/WorkerClient.h
 
     page/csp/CSPViolationReportBody.h
     page/csp/ContentSecurityPolicy.h
@@ -1791,8 +1793,13 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/opentype/OpenTypeVerticalData.h
 
     platform/graphics/transforms/AffineTransform.h
+    platform/graphics/transforms/IdentityTransformOperation.h
+    platform/graphics/transforms/Matrix3DTransformOperation.h
+    platform/graphics/transforms/MatrixTransformOperation.h
+    platform/graphics/transforms/PerspectiveTransformOperation.h
     platform/graphics/transforms/RotateTransformOperation.h
     platform/graphics/transforms/ScaleTransformOperation.h
+    platform/graphics/transforms/SkewTransformOperation.h
     platform/graphics/transforms/TransformOperation.h
     platform/graphics/transforms/TransformOperations.h
     platform/graphics/transforms/TransformState.h
@@ -1937,6 +1944,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     plugins/PluginViewBase.h
 
     rendering/BreakLines.h
+    rendering/CaretRectComputation.h
     rendering/CSSFilter.h
     rendering/ClipRect.h
     rendering/EventRegion.h
@@ -2050,6 +2058,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     rendering/style/StyleScrollSnapPoints.h
     rendering/style/StyleSelfAlignmentData.h
     rendering/style/StyleSurroundData.h
+    rendering/style/StyleTextEdge.h
     rendering/style/StyleTransformData.h
     rendering/style/StyleVisualData.h
     rendering/style/TextDecorationThickness.h

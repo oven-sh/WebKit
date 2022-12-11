@@ -177,7 +177,6 @@ enum AutoplayPolicy {
     boolean isMediaDocumentAndNotOwnerElement;
     boolean pageExplicitlyAllowsElementToAutoplayInline;
     boolean requiresFullscreenForVideoPlaybackAndFullscreenNotPermitted;
-    boolean hasHadUserInteractionAndQuirksContainsShouldAutoplayForArbitraryUserGesture;
     boolean isVideoAndRequiresUserGestureForVideoRateChange;
     boolean isAudioAndRequiresUserGestureForAudioRateChange;
     boolean isVideoAndRequiresUserGestureForVideoDueToLowPowerMode;
@@ -457,7 +456,6 @@ typedef (FetchRequest or FetchResponse) FetchObject;
     undefined setViewBaseBackgroundColor(DOMString colorValue);
 
     undefined setPagination(DOMString mode, long gap, optional long pageLength = 0);
-    undefined setPaginationLineGridEnabled(boolean enabled);
     unsigned long long lineIndexAfterPageBreak(Element element);
 
     DOMString configurationForViewport(unrestricted float devicePixelRatio, long deviceWidth, long deviceHeight, long availableWidth, long availableHeight);
@@ -553,9 +551,9 @@ typedef (FetchRequest or FetchResponse) FetchObject;
     undefined setImageFrameDecodingDuration(HTMLImageElement element, unrestricted float duration);
     undefined resetImageAnimation(HTMLImageElement element);
     boolean isImageAnimating(HTMLImageElement element);
-    undefined setImageAnimationEnabled(boolean enabled);
-    undefined resumeImageAnimation(HTMLImageElement element);
-    undefined pauseImageAnimation(HTMLImageElement element);
+    [Conditional=ACCESSIBILITY_ANIMATION_CONTROL] undefined setImageAnimationEnabled(boolean enabled);
+    [Conditional=ACCESSIBILITY_ANIMATION_CONTROL] undefined resumeImageAnimation(HTMLImageElement element);
+    [Conditional=ACCESSIBILITY_ANIMATION_CONTROL] undefined pauseImageAnimation(HTMLImageElement element);
     unsigned long imagePendingDecodePromisesCountForTesting(HTMLImageElement element);
     undefined setClearDecoderAfterAsyncFrameRequestForTesting(HTMLImageElement element, boolean enabled);
     unsigned long imageDecodeCount(HTMLImageElement element);
@@ -890,7 +888,7 @@ typedef (FetchRequest or FetchResponse) FetchObject;
     undefined setShowAllPlugins(boolean showAll);
 
     [CallWith=CurrentGlobalObject] any cloneArrayBuffer(any buffer, any srcByteOffset, any byteLength);
-    boolean isReadableStreamDisturbed(ReadableStream stream);
+    [CallWith=CurrentGlobalObject] boolean isReadableStreamDisturbed(any stream);
 
     DOMString resourceLoadStatisticsForURL(DOMURL url);
     undefined setTrackingPreventionEnabled(boolean enable);

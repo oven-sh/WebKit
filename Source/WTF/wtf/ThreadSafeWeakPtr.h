@@ -213,7 +213,7 @@ public:
         return *this;
     }
 
-    RefPtr<T> get() const { return m_controlBlock->makeStrongReferenceIfPossible(); }
+    RefPtr<T> get() const { return m_controlBlock ? m_controlBlock->makeStrongReferenceIfPossible() : nullptr; }
 
 private:
     template<typename U, std::enable_if_t<std::is_convertible_v<U*, T*>>* = nullptr>

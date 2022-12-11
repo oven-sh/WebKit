@@ -81,7 +81,7 @@ fast/images/animated-heics-draw.html [ Pass ]
 # No fullscreen API on iOS
 fullscreen
 http/tests/fullscreen
-compositing/no-compositing-when-fulll-screen-is-present.html
+compositing/no-compositing-when-full-screen-is-present.html
 webkit.org/b/200308 fast/events/touch/ios/content-observation/non-visible-content-change-in-fullscreen-mode.html [ Skip ]
 
 media/video-supports-fullscreen.html [ Skip ]
@@ -431,6 +431,7 @@ editing/selection/select-bidi-run.html [ Skip ]
 editing/selection/select-line-break-with-opposite-directionality.html [ Skip ]
 editing/selection/select-out-of-editable.html [ Skip ]
 editing/selection/shift-click.html [ Skip ]
+editing/selection/shift-click-live-range.html [ Skip ]
 editing/selection/undo-crash.html [ Skip ]
 editing/selection/user-select-all-image-with-single-click.html [ Skip ]
 editing/selection/user-select-all-selection.html [ Skip ]
@@ -3113,8 +3114,6 @@ webkit.org/b/213516 imported/w3c/web-platform-tests/websockets/Close-reason-unpa
 
 webkit.org/b/207762 http/wpt/service-workers/check-service-worker-header.https.html [ Pass Failure ]
 
-webkit.org/b/207763 http/wpt/service-workers/file-upload.html [ Pass Failure ]
-
 webkit.org/b/207766 http/wpt/service-workers/header-filtering.https.html [ Pass Failure ]
 
 webkit.org/b/207767 http/wpt/service-workers/online.https.html [ Pass Failure ]
@@ -3756,6 +3755,9 @@ imported/w3c/web-platform-tests/css/css-writing-modes/forms/select-size-scrollin
 imported/w3c/web-platform-tests/css/css-writing-modes/forms/range-input-vertical-ltr-painting.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-writing-modes/forms/range-input-vertical-rtl-painting.html [ ImageOnlyFailure ]
 
+webkit.org/b/203451 imported/w3c/web-platform-tests/css/css-position/static-position/htb-ltr-ltr.html [ ImageOnlyFailure ]
+webkit.org/b/203451 imported/w3c/web-platform-tests/css/css-position/static-position/vlr-ltr-ltr.html [ ImageOnlyFailure ]
+
 webkit.org/b/244208 imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-no-sink.https.html [ Pass Failure Slow ]
 webkit.org/b/244208 imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-peerconnection.https.html [ Pass Failure Slow ]
 
@@ -3790,3 +3792,9 @@ webkit.org/b/247831 fast/images/animated-avif.html [ Timeout ]
 
 # Screen Orientation API doesn't support nested frames yet
 imported/w3c/web-platform-tests/screen-orientation/onchange-event-subframe.html [ Skip ]
+
+webkit.org/b/248919 editing/selection/doubleclick-whitespace-live-range.html [ Failure ]
+
+webkit.org/b/248921 fast/forms/ios/focus-button.html [ Pass Crash ]
+
+webkit.org/b/248923 fast/rendering/render-style-null-optgroup-crash.html [ Pass Failure ]

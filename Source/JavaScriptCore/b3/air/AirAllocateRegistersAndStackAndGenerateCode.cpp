@@ -177,7 +177,7 @@ ALWAYS_INLINE void GenerateAndAllocateRegisters::flush(Tmp tmp, Reg reg)
     JIT_COMMENT(*m_jit, "Flush(", tmp, ", ", reg, ", offset=", offset, ")");
     if (tmp.isGP())
         m_jit->store64(reg.gpr(), callFrameAddr(*m_jit, offset));
-    else if (B3::conservativeRegisterBytes(B3::FP) == sizeof(double) || !Options::useWebAssemblySIMD()) {
+    else if (B3::conservativeRegisterBytes(B3::FP) == sizeof(double) || !m_code.usesSIMD()) {
         ASSERT(m_map[tmp].spillSlot->byteSize() == bytesForWidth(Width64));
         m_jit->storeDouble(reg.fpr(), callFrameAddr(*m_jit, offset));
     } else {
@@ -213,7 +213,7 @@ ALWAYS_INLINE void GenerateAndAllocateRegisters::alloc(Tmp tmp, Reg reg, Arg::Ro
         intptr_t offset = m_map[tmp].spillSlot->offsetFromFP();
         if (tmp.bank() == GP)
             m_jit->load64(callFrameAddr(*m_jit, offset), reg.gpr());
-        else if (B3::conservativeRegisterBytes(B3::FP) == sizeof(double) || !Options::useWebAssemblySIMD()) {
+        else if (B3::conservativeRegisterBytes(B3::FP) == sizeof(double) || !m_code.usesSIMD()) {
             ASSERT(m_map[tmp].spillSlot->byteSize() == bytesForWidth(Width64));
             m_jit->loadDouble(callFrameAddr(*m_jit, offset), reg.fpr());
         } else {
@@ -375,7 +375,7 @@ void GenerateAndAllocateRegisters::prepareForGeneration()
                 }
 
                 unsigned slotSize = conservativeRegisterBytes(tmp.bank());
-                if (!Options::useWebAssemblySIMD())
+                if (!m_code.usesSIMD())
                     slotSize = conservativeRegisterBytesWithoutVectors(tmp.bank());
 
                 if (freeSlots.size() && freeSlots.last()->byteSize() >= slotSize)
@@ -429,7 +429,7 @@ void GenerateAndAllocateRegisters::prepareForGeneration()
             m_allowedRegisters.add(reg, IgnoreVectors);
             TmpData& data = m_map[Tmp(reg)];
             unsigned slotSize = conservativeRegisterBytes(bank);
-            if (!Options::useWebAssemblySIMD())
+            if (!m_code.usesSIMD())
                 slotSize = conservativeRegisterBytesWithoutVectors(bank);
             data.spillSlot = m_code.addStackSlot(slotSize, StackSlotKind::Spill);
             dataLogLnIf(GenerateAndAllocateRegistersInternal::verbose, "allowedRegisters: reg: ", reg, " -> slot ", data.spillSlot);
@@ -634,9 +634,10 @@ void GenerateAndAllocateRegisters::generate(CCallHelpers& jit)
                 if (!source.isTmp() || !dest.isTmp())
                     return true;
 
-                // FIXME: We don't track where the last use of a reg is globally so we don't know where we can elide them.
                 ASSERT(source.isReg() || m_liveRangeEnd[source.tmp()] >= m_globalInstIndex);
-                if (source.isReg() || m_liveRangeEnd[source.tmp()] != m_globalInstIndex)
+                const auto sourceIsAtEndOfLifetime = m_liveRangeEnd[source.tmp()] == m_globalInstIndex;
+                // FIXME: We don't track where the last use of a reg is globally so we don't know where we can elide them.
+                if (source.isReg())
                     return true;
 
                 // If we are doing a self move at the end of the temps liveness we can trivially elide the move.
@@ -649,8 +650,29 @@ void GenerateAndAllocateRegisters::generate(CCallHelpers& jit)
                     return true;
 
                 ASSERT(m_currentAllocation->at(sourceReg) == source.tmp());
+                if (dest.isReg()) {
+                    const auto destReg = dest.reg();
+                    if (destReg != sourceReg)
+                        return true;
 
-                if (dest.isReg() && dest.reg() != sourceReg)
+                    // In this situation, we are moving a source tmp into the
+                    // dest reg where it is currently available--so we just need
+                    // to do a small amount of bookkeeping to elide the move:
+                    //
+                    // If the source tmp isn't dead after here, we need to
+                    // spill it to the stack, but we don't want to generate
+                    // the move as that will generate a redundant load and
+                    // store and use an unnecessary register
+                    if (!sourceIsAtEndOfLifetime)
+                        spill(source.tmp(), sourceReg);
+                    else
+                        release(source.tmp(), sourceReg);
+
+                    alloc(dest.tmp(), destReg, Arg::Def);
+                    return false;
+                }
+
+                if (!sourceIsAtEndOfLifetime)
                     return true;
 
                 if (Reg oldReg = m_map[dest.tmp()].reg)
@@ -694,7 +716,7 @@ void GenerateAndAllocateRegisters::generate(CCallHelpers& jit)
                 auto& entry = m_map[tmp];
                 if (!entry.reg) {
                     // We're a cold use, and our current location is already on the stack. Just use that.
-                    ASSERT(entry.spillSlot->byteSize() <= bytesForWidth(Width64) || Options::useWebAssemblySIMD());
+                    ASSERT(entry.spillSlot->byteSize() <= bytesForWidth(Width64) || m_code.usesSIMD());
                     arg = Arg::addr(Tmp(GPRInfo::callFrameRegister), entry.spillSlot->offsetFromFP());
                 }
             });
@@ -806,7 +828,7 @@ void GenerateAndAllocateRegisters::generate(CCallHelpers& jit)
                 RegisterSetBuilder registerSetBuilder;
                 for (size_t i = 0; i < currentAllocation.size(); ++i) {
                     if (currentAllocation[i])
-                        registerSetBuilder.add(Reg::fromIndex(i), Options::useWebAssemblySIMD() ? conservativeWidth(Reg::fromIndex(i)) : conservativeWidthWithoutVectors(Reg::fromIndex(i)));
+                        registerSetBuilder.add(Reg::fromIndex(i), m_code.usesSIMD() ? conservativeWidth(Reg::fromIndex(i)) : conservativeWidthWithoutVectors(Reg::fromIndex(i)));
                 }
                 inst.reportUsedRegisters(registerSetBuilder);
             }

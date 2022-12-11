@@ -393,12 +393,14 @@ void GPUProcessProxy::processWillShutDown(IPC::Connection& connection)
 
 #if ENABLE(VP9)
 std::optional<bool> GPUProcessProxy::s_hasVP9HardwareDecoder;
+std::optional<bool> GPUProcessProxy::s_hasVP9ExtensionSupport;
 #endif
 
 void GPUProcessProxy::createGPUProcessConnection(WebProcessProxy& webProcessProxy, IPC::Connection::Handle&& connectionIdentifier, GPUProcessConnectionParameters&& parameters)
 {
 #if ENABLE(VP9)
     parameters.hasVP9HardwareDecoder = s_hasVP9HardwareDecoder;
+    parameters.hasVP9ExtensionSupport = s_hasVP9ExtensionSupport;
 #endif
 
     if (auto* store = webProcessProxy.websiteDataStore())
@@ -609,7 +611,7 @@ void GPUProcessProxy::terminateWebProcess(WebCore::ProcessIdentifier webProcessI
 void GPUProcessProxy::didCreateContextForVisibilityPropagation(WebPageProxyIdentifier webPageProxyID, WebCore::PageIdentifier pageID, LayerHostingContextID contextID)
 {
     RELEASE_LOG(Process, "GPUProcessProxy::didCreateContextForVisibilityPropagation: webPageProxyID: %" PRIu64 ", pagePID: %" PRIu64 ", contextID: %u", webPageProxyID.toUInt64(), pageID.toUInt64(), contextID);
-    auto* page = WebProcessProxy::webPage(webPageProxyID);
+    auto page = WebProcessProxy::webPage(webPageProxyID);
     if (!page) {
         RELEASE_LOG(Process, "GPUProcessProxy::didCreateContextForVisibilityPropagation() No WebPageProxy with this identifier");
         return;
@@ -692,7 +694,7 @@ void GPUProcessProxy::requestBitmapImageForCurrentTime(ProcessIdentifier process
 #if ENABLE(MEDIA_STREAM) && PLATFORM(IOS_FAMILY)
 void GPUProcessProxy::statusBarWasTapped(CompletionHandler<void()>&& completionHandler)
 {
-    if (auto* page = WebProcessProxy::audioCapturingWebPage())
+    if (auto page = WebProcessProxy::audioCapturingWebPage())
         page->statusBarWasTapped();
     // Find the web page capturing audio and put focus on it.
     completionHandler();

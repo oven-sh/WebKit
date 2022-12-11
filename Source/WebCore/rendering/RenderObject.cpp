@@ -4,7 +4,7 @@
  *           (C) 2000 Dirk Mueller (mueller@kde.org)
  *           (C) 2004 Allan Sandfeld Jensen (kde@carewolf.com)
  * Copyright (C) 2004-2020 Apple Inc. All rights reserved.
- * Copyright (C) 2009-2022 Google Inc. All rights reserved.
+ * Copyright (C) 2009 Google Inc. All rights reserved.
  * Copyright (C) 2009 Torch Mobile Inc. All rights reserved. (http://www.torchmobile.com/)
  *
  * This library is free software; you can redistribute it and/or
@@ -527,13 +527,8 @@ static inline bool objectIsRelayoutBoundary(const RenderElement* object)
     if (object->document().settings().layerBasedSVGEngineEnabled() && object->isSVGLayerAwareRenderer())
         return false;
 #endif
-    
-    // If either dimension is percent-based, intrinsic, or anything but fixed
-    // this object cannot form a re-layout boundary. A non-fixed computed logical
-    // height will allow the object to grow and shrink based on the content
-    // inside. The same goes for for logical width, if this objects is inside a
-    // shrink-to-fit container, for instance.
-    if (!object->style().width().isFixed() || !object->style().height().isFixed())
+
+    if (object->style().width().isIntrinsicOrAuto() || object->style().height().isIntrinsicOrAuto() || object->style().height().isPercentOrCalculated())
         return false;
 
     // Table parts can't be relayout roots since the table is responsible for layouting all the parts.
@@ -866,6 +861,13 @@ LayoutRect RenderObject::paintingRootRect(LayoutRect& topLevelRect)
     return result;
 }
 
+static inline bool canRelyOnAncestorLayerFullRepaint(const RenderObject& rendererToRepaint, const RenderLayer& ancestorLayer)
+{
+    if (!is<RenderElement>(rendererToRepaint) || !downcast<RenderElement>(rendererToRepaint).hasSelfPaintingLayer())
+        return true;
+    return ancestorLayer.renderer().hasNonVisibleOverflow();
+}
+
 RenderObject::RepaintContainerStatus RenderObject::containerForRepaint() const
 {
     RenderLayerModelObject* repaintContainer = nullptr;
@@ -876,7 +878,7 @@ RenderObject::RepaintContainerStatus RenderObject::containerForRepaint() const
             auto compLayerStatus = parentLayer->enclosingCompositingLayerForRepaint();
             if (compLayerStatus.layer) {
                 repaintContainer = &compLayerStatus.layer->renderer();
-                fullRepaintAlreadyScheduled = compLayerStatus.fullRepaintAlreadyScheduled;
+                fullRepaintAlreadyScheduled = compLayerStatus.fullRepaintAlreadyScheduled && canRelyOnAncestorLayerFullRepaint(*this, *compLayerStatus.layer);
             }
         }
     }
@@ -884,7 +886,7 @@ RenderObject::RepaintContainerStatus RenderObject::containerForRepaint() const
         if (auto* parentLayer = enclosingLayer()) {
             auto* enclosingFilterLayer = parentLayer->enclosingFilterLayer();
             if (enclosingFilterLayer) {
-                fullRepaintAlreadyScheduled = parentLayer->needsFullRepaint();
+                fullRepaintAlreadyScheduled = parentLayer->needsFullRepaint() && canRelyOnAncestorLayerFullRepaint(*this, *parentLayer);
                 return { fullRepaintAlreadyScheduled, &enclosingFilterLayer->renderer() };
             }
         }
@@ -981,7 +983,7 @@ static inline bool fullRepaintIsScheduled(const RenderObject& renderer)
         return false;
     for (auto* ancestorLayer = renderer.enclosingLayer(); ancestorLayer; ancestorLayer = ancestorLayer->paintOrderParent()) {
         if (ancestorLayer->needsFullRepaint())
-            return true;
+            return canRelyOnAncestorLayerFullRepaint(renderer, *ancestorLayer);
     }
     return false;
 }
@@ -1382,7 +1384,7 @@ void RenderObject::outputRenderSubTreeAndMark(TextStream& stream, const RenderOb
 
 FloatPoint RenderObject::localToAbsolute(const FloatPoint& localPoint, OptionSet<MapCoordinatesMode> mode, bool* wasFixed) const
 {
-    TransformState transformState(TransformState::ApplyTransformDirection, localPoint);
+    TransformState transformState(settings().css3DTransformInteroperabilityEnabled(), TransformState::ApplyTransformDirection, localPoint);
     mapLocalToContainer(nullptr, transformState, mode | ApplyContainerFlip, wasFixed);
     transformState.flatten();
     
@@ -1391,7 +1393,7 @@ FloatPoint RenderObject::localToAbsolute(const FloatPoint& localPoint, OptionSet
 
 FloatPoint RenderObject::absoluteToLocal(const FloatPoint& containerPoint, OptionSet<MapCoordinatesMode> mode) const
 {
-    TransformState transformState(TransformState::UnapplyInverseTransformDirection, containerPoint);
+    TransformState transformState(settings().css3DTransformInteroperabilityEnabled(), TransformState::UnapplyInverseTransformDirection, containerPoint);
     mapAbsoluteToLocalPoint(mode, transformState);
     transformState.flatten();
     
@@ -1400,7 +1402,7 @@ FloatPoint RenderObject::absoluteToLocal(const FloatPoint& containerPoint, Optio
 
 FloatQuad RenderObject::absoluteToLocalQuad(const FloatQuad& quad, OptionSet<MapCoordinatesMode> mode) const
 {
-    TransformState transformState(TransformState::UnapplyInverseTransformDirection, quad.boundingBox().center(), quad);
+    TransformState transformState(settings().css3DTransformInteroperabilityEnabled(), TransformState::UnapplyInverseTransformDirection, quad.boundingBox().center(), quad);
     mapAbsoluteToLocalPoint(mode, transformState);
     transformState.flatten();
     return transformState.lastPlanarQuad();
@@ -1459,7 +1461,14 @@ void RenderObject::mapAbsoluteToLocalPoint(OptionSet<MapCoordinatesMode> mode, T
 bool RenderObject::shouldUseTransformFromContainer(const RenderObject* containerObject) const
 {
 #if ENABLE(3D_TRANSFORMS)
-    return hasTransform() || (containerObject && containerObject->style().hasPerspective());
+    if (hasTransform())
+        return true;
+    if (containerObject && containerObject->style().hasPerspective()) {
+        if (settings().css3DTransformInteroperabilityEnabled())
+            return containerObject == parent();
+        return true;
+    }
+    return false;
 #else
     UNUSED_PARAM(containerObject);
     return hasTransform();
@@ -1475,13 +1484,17 @@ void RenderObject::getTransformFromContainer(const RenderObject* containerObject
         transform.multiply(layer->currentTransform());
     
 #if ENABLE(3D_TRANSFORMS)
-    if (containerObject && containerObject->hasLayer() && containerObject->style().hasPerspective()) {
+    const RenderObject* perspectiveObject = containerObject;
+    if (settings().css3DTransformInteroperabilityEnabled())
+        perspectiveObject = parent();
+
+    if (perspectiveObject && perspectiveObject->hasLayer() && perspectiveObject->style().hasPerspective()) {
         // Perpsective on the container affects us, so we have to factor it in here.
-        ASSERT(containerObject->hasLayer());
-        FloatPoint perspectiveOrigin = downcast<RenderLayerModelObject>(*containerObject).layer()->perspectiveOrigin();
+        ASSERT(perspectiveObject->hasLayer());
+        FloatPoint perspectiveOrigin = downcast<RenderLayerModelObject>(*perspectiveObject).layer()->perspectiveOrigin();
 
         TransformationMatrix perspectiveMatrix;
-        perspectiveMatrix.applyPerspective(containerObject->style().usedPerspective());
+        perspectiveMatrix.applyPerspective(perspectiveObject->style().usedPerspective());
         
         transform.translateRight3d(-perspectiveOrigin.x(), -perspectiveOrigin.y(), 0);
         transform = perspectiveMatrix * transform;
@@ -1494,7 +1507,7 @@ void RenderObject::getTransformFromContainer(const RenderObject* containerObject
 
 void RenderObject::pushOntoTransformState(TransformState& transformState, OptionSet<MapCoordinatesMode> mode, const RenderLayerModelObject* repaintContainer, const RenderElement* container, const LayoutSize& offsetInContainer, bool containerSkipped) const
 {
-    bool preserve3D = mode.contains(UseTransforms) && (container->style().preserves3D() || style().preserves3D());
+    bool preserve3D = mode.contains(UseTransforms) && participatesInPreserve3D(container);
     if (mode.contains(UseTransforms) && shouldUseTransformFromContainer(container)) {
         TransformationMatrix matrix;
         getTransformFromContainer(container, offsetInContainer, matrix);
@@ -1523,7 +1536,7 @@ void RenderObject::pushOntoGeometryMap(RenderGeometryMap& geometryMap, const Ren
     bool offsetDependsOnPoint = false;
     LayoutSize containerOffset = offsetFromContainer(*container, LayoutPoint(), &offsetDependsOnPoint);
 
-    bool preserve3D = container->style().preserves3D() || style().preserves3D();
+    bool preserve3D = participatesInPreserve3D(container);
     if (shouldUseTransformFromContainer(container) && (geometryMap.mapCoordinatesFlags() & UseTransforms)) {
         TransformationMatrix t;
         getTransformFromContainer(container, containerOffset, t);
@@ -1540,7 +1553,7 @@ FloatQuad RenderObject::localToContainerQuad(const FloatQuad& localQuad, const R
 {
     // Track the point at the center of the quad's bounding box. As mapLocalToContainer() calls offsetFromContainer(),
     // it will use that point as the reference point to decide which column's transform to apply in multiple-column blocks.
-    TransformState transformState(TransformState::ApplyTransformDirection, localQuad.boundingBox().center(), localQuad);
+    TransformState transformState(settings().css3DTransformInteroperabilityEnabled(), TransformState::ApplyTransformDirection, localQuad.boundingBox().center(), localQuad);
     mapLocalToContainer(container, transformState, mode | ApplyContainerFlip, wasFixed);
     transformState.flatten();
     
@@ -1549,7 +1562,7 @@ FloatQuad RenderObject::localToContainerQuad(const FloatQuad& localQuad, const R
 
 FloatPoint RenderObject::localToContainerPoint(const FloatPoint& localPoint, const RenderLayerModelObject* container, OptionSet<MapCoordinatesMode> mode, bool* wasFixed) const
 {
-    TransformState transformState(TransformState::ApplyTransformDirection, localPoint);
+    TransformState transformState(settings().css3DTransformInteroperabilityEnabled(), TransformState::ApplyTransformDirection, localPoint);
     mapLocalToContainer(container, transformState, mode | ApplyContainerFlip, wasFixed);
     transformState.flatten();
 
@@ -1588,6 +1601,13 @@ LayoutSize RenderObject::offsetFromAncestorContainer(const RenderElement& contai
     } while (currContainer != &container);
 
     return offset;
+}
+
+bool RenderObject::participatesInPreserve3D(const RenderElement* container) const
+{
+    if (settings().css3DTransformInteroperabilityEnabled())
+        return hasLayer() && downcast<RenderLayerModelObject>(*this).layer()->participatesInPreserve3D();
+    return container->style().preserves3D() || style().preserves3D();
 }
 
 HostWindow* RenderObject::hostWindow() const

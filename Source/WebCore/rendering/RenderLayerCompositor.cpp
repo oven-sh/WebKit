@@ -2670,6 +2670,10 @@ static FullScreenDescendant isDescendantOfFullScreenLayer(const RenderLayer& lay
     if (!fullScreenRenderer || !fullScreenLayer)
         return FullScreenDescendant::NotApplicable;
 
+    auto backdropRenderer = fullScreenRenderer->backdropRenderer();
+    if (backdropRenderer && backdropRenderer.get() == &layer.renderer())
+        return FullScreenDescendant::Yes;
+
     return layer.isDescendantOf(*fullScreenLayer) ? FullScreenDescendant::Yes : FullScreenDescendant::No;
 }
 #endif
@@ -4522,8 +4526,11 @@ FixedPositionViewportConstraints RenderLayerCompositor::computeFixedViewportCons
 {
     ASSERT(layer.isComposited());
 
-    ASSERT(layer.backing()->viewportAnchorLayer());
     auto* anchorLayer = layer.backing()->viewportAnchorLayer();
+    if (!anchorLayer) {
+        ASSERT_NOT_REACHED();
+        return { };
+    }
 
     FixedPositionViewportConstraints constraints;
     constraints.setLayerPositionAtLastLayout(anchorLayer->position());
@@ -4560,8 +4567,11 @@ StickyPositionViewportConstraints RenderLayerCompositor::computeStickyViewportCo
 
     auto& renderer = downcast<RenderBoxModelObject>(layer.renderer());
 
-    ASSERT(layer.backing()->viewportAnchorLayer());
     auto* anchorLayer = layer.backing()->viewportAnchorLayer();
+    if (!anchorLayer) {
+        ASSERT_NOT_REACHED();
+        return { };
+    }
 
     StickyPositionViewportConstraints constraints;
     renderer.computeStickyPositionConstraints(constraints, renderer.constrainingRectForStickyPosition());

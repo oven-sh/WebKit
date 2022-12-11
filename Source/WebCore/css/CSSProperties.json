@@ -510,6 +510,17 @@
                 "url": "https://www.w3.org/TR/css-fonts-4/#font-stretch-prop"
             }
         },
+        "text-edge": {
+            "codegen-properties": {
+                "converter": "TextEdge",
+                "custom-parser": true,
+                "settings-flag": "cssLeadingTrimEnabled"
+            },
+            "specification": {
+                "category": "css-inline",
+                "url": "https://www.w3.org/TR/css-inline-3/#text-edges"
+            }
+        },
         "text-rendering": {
             "inherited": true,
             "values": [
@@ -3936,6 +3947,17 @@
                 "url": "https://drafts.fxtf.org/css-masking-1/#propdef-mask-type"
             }
         },
+        "masonry-auto-flow": {
+            "codegen-properties": {
+                "converter": "MasonryAutoFlow",
+                "settings-flag": "masonryEnabled",
+                "custom-parser": true
+            },
+            "specification": {
+                "category": "css-grid",
+                "url": "https://drafts.csswg.org/css-grid-3/#masonry-auto-flow"
+            }
+        },
         "math-style": {
             "values": [
                 "normal",
@@ -4848,6 +4870,7 @@
         },
         "size": {
             "codegen-properties": {
+                "computable": false,
                 "custom": "All",
                 "custom-parser": true,
                 "parser-requires-context-mode": true

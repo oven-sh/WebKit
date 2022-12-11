@@ -54,7 +54,6 @@ void WebPageCreationParameters::encode(IPC::Encoder& encoder) const
     encoder << paginationBehavesLikeColumns;
     encoder << pageLength;
     encoder << gapBetweenPages;
-    encoder << paginationLineGridEnabled;
     encoder << userAgent;
     encoder << itemStatesWereRestoredByAPIRequest;
     encoder << itemStates;
@@ -199,6 +198,7 @@ void WebPageCreationParameters::encode(IPC::Encoder& encoder) const
 #endif
 
     encoder << contentSecurityPolicyModeForExtension;
+    encoder << mainFrameIdentifier;
 }
 
 std::optional<WebPageCreationParameters> WebPageCreationParameters::decode(IPC::Decoder& decoder)
@@ -255,8 +255,6 @@ std::optional<WebPageCreationParameters> WebPageCreationParameters::decode(IPC::
     if (!decoder.decode(parameters.pageLength))
         return std::nullopt;
     if (!decoder.decode(parameters.gapBetweenPages))
-        return std::nullopt;
-    if (!decoder.decode(parameters.paginationLineGridEnabled))
         return std::nullopt;
 
     std::optional<String> userAgent;
@@ -631,7 +629,10 @@ std::optional<WebPageCreationParameters> WebPageCreationParameters::decode(IPC::
     if (!decoder.decode(parameters.contentSecurityPolicyModeForExtension))
         return std::nullopt;
 
-    return parameters;
+    if (!decoder.decode(parameters.mainFrameIdentifier))
+        return std::nullopt;
+
+    return { WTFMove(parameters) };
 }
 
 } // namespace WebKit

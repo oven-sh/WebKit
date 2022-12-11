@@ -718,6 +718,9 @@ WebPage::WebPage(PageIdentifier pageID, WebPageCreationParameters&& parameters)
         WebProcess::singleton().switchFromStaticFontRegistryToUserFontRegistry(WTFMove(*parameters.fontMachExtensionHandle));
 #endif
 
+    pageConfiguration.mainFrameIdentifier = parameters.mainFrameIdentifier;
+    bool receivedMainFrameIdentifierFromUIProcess = !!pageConfiguration.mainFrameIdentifier;
+    
     m_page = makeUnique<Page>(WTFMove(pageConfiguration));
 
     WebStorageNamespaceProvider::incrementUseCount(*m_pageGroup, sessionStorageNamespaceIdentifier());
@@ -747,7 +750,7 @@ WebPage::WebPage(PageIdentifier pageID, WebPageCreationParameters&& parameters)
     // in modern WebKit.
     m_page->settings().setBackForwardCacheExpirationInterval(Seconds::infinity());
 
-    m_mainFrame->initWithCoreMainFrame(*this, m_page->mainFrame());
+    m_mainFrame->initWithCoreMainFrame(*this, m_page->mainFrame(), receivedMainFrameIdentifierFromUIProcess);
 
     m_drawingArea->updatePreferences(parameters.store);
 
@@ -800,7 +803,6 @@ WebPage::WebPage(PageIdentifier pageID, WebPageCreationParameters&& parameters)
     setPaginationBehavesLikeColumns(parameters.paginationBehavesLikeColumns);
     setPageLength(parameters.pageLength);
     setGapBetweenPages(parameters.gapBetweenPages);
-    setPaginationLineGridEnabled(parameters.paginationLineGridEnabled);
 
     effectiveAppearanceDidChange(parameters.useDarkAppearance, parameters.useElevatedUserInterfaceLevel);
 
@@ -967,10 +969,15 @@ WebPage::WebPage(PageIdentifier pageID, WebPageCreationParameters&& parameters)
         sandbox_enable_state_flag("EnableExperimentalSandboxWithProbability", *auditToken);
     }
 #endif // USE(APPLE_INTERNAL_SDK)
+
+    if (WebProcess::singleton().isLockdownModeEnabled())
+        sandbox_enable_state_flag("LockdownModeEnabled", *auditToken);
 #endif // HAVE(SANDBOX_STATE_FLAGS)
 
     updateThrottleState();
+#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
     updateImageAnimationEnabled();
+#endif
 }
 
 #if ENABLE(GPU_PROCESS)
@@ -2580,11 +2587,6 @@ void WebPage::setGapBetweenPages(double gap)
     Pagination pagination = m_page->pagination();
     pagination.gap = gap;
     m_page->setPagination(pagination);
-}
-
-void WebPage::setPaginationLineGridEnabled(bool lineGridEnabled)
-{
-    m_page->setPaginationLineGridEnabled(lineGridEnabled);
 }
 
 void WebPage::postInjectedBundleMessage(const String& messageName, const UserData& userData)
@@ -5800,8 +5802,8 @@ void WebPage::drawRectToImage(FrameIdentifier frameID, const PrintInfo& printInf
 #else
         ASSERT(coreFrame->document()->printing());
 #endif
-
-        image = WebImage::create(imageSize, ImageOptionsShareable, DestinationColorSpace::SRGB(), &m_page->chrome().client());
+        
+        image = WebImage::create(imageSize, ImageOptionsLocal, DestinationColorSpace::SRGB(), &m_page->chrome().client());
         if (!image) {
             ASSERT_NOT_REACHED();
             return completionHandler({ });
@@ -7763,7 +7765,7 @@ void WebPage::startTextManipulations(Vector<WebCore::TextManipulationController:
     if (!mainDocument)
         return;
 
-    mainDocument->textManipulationController().startObservingParagraphs([webPage = WeakPtr { *this }] (Document& document, const Vector<WebCore::TextManipulationController::ManipulationItem>& items) {
+    mainDocument->textManipulationController().startObservingParagraphs([webPage = WeakPtr { *this }] (Document& document, const Vector<WebCore::TextManipulationItem>& items) {
         auto* frame = document.frame();
         if (!webPage || !frame || webPage->mainFrame() != frame)
             return;
@@ -7778,7 +7780,7 @@ void WebPage::startTextManipulations(Vector<WebCore::TextManipulationController:
     completionHandler();
 }
 
-void WebPage::completeTextManipulation(const Vector<WebCore::TextManipulationController::ManipulationItem>& items,
+void WebPage::completeTextManipulation(const Vector<WebCore::TextManipulationItem>& items,
     CompletionHandler<void(bool allFailed, const Vector<WebCore::TextManipulationController::ManipulationFailure>&)>&& completionHandler)
 {
     if (!m_page) {
@@ -8339,10 +8341,20 @@ void WebPage::generateTestReport(String&& message, String&& group)
         document->reportingScope().generateTestReport(WTFMove(message), WTFMove(group));
 }
 
+#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
 void WebPage::updateImageAnimationEnabled()
 {
-    bool enabled = !m_page->settings().imageAnimationControlEnabled() || WebProcess::singleton().imageAnimationEnabled();
-    corePage()->setImageAnimationEnabled(enabled);
+    corePage()->setImageAnimationEnabled(WebProcess::singleton().imageAnimationEnabled());
+}
+#endif
+
+bool WebPage::isUsingUISideCompositing() const
+{
+#if PLATFORM(COCOA)
+    return m_drawingAreaType == DrawingAreaType::RemoteLayerTree;
+#else
+    return false;
+#endif
 }
 
 } // namespace WebKit

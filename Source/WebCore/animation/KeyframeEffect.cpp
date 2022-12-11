@@ -2042,7 +2042,7 @@ bool KeyframeEffect::computeExtentOfTransformAnimation(LayoutRect& bounds) const
 static bool containsRotation(const Vector<RefPtr<TransformOperation>>& operations)
 {
     for (const auto& operation : operations) {
-        if (operation->type() == TransformOperation::ROTATE)
+        if (operation->type() == TransformOperation::Type::Rotate)
             return true;
     }
     return false;
@@ -2061,7 +2061,7 @@ bool KeyframeEffect::computeTransformedExtentViaTransformList(const FloatRect& r
     }
 
     for (const auto& operation : style.transform().operations()) {
-        if (operation->type() == TransformOperation::ROTATE) {
+        if (operation->type() == TransformOperation::Type::Rotate) {
             // For now, just treat this as a full rotation. This could take angle into account to reduce inflation.
             floatBounds = boundsOfRotatingRect(floatBounds);
         } else {
@@ -2070,7 +2070,7 @@ bool KeyframeEffect::computeTransformedExtentViaTransformList(const FloatRect& r
             if (!transform.isAffine())
                 return false;
 
-            if (operation->type() == TransformOperation::MATRIX || operation->type() == TransformOperation::MATRIX_3D) {
+            if (operation->type() == TransformOperation::Type::Matrix || operation->type() == TransformOperation::Type::Matrix3D) {
                 TransformationMatrix::Decomposed2Type toDecomp;
                 transform.decompose2(toDecomp);
                 // Any rotation prevents us from using a simple start/end rect union.
@@ -2271,8 +2271,8 @@ void KeyframeEffect::computeHasImplicitKeyframeForAcceleratedProperty()
             HashSet<CSSPropertyID> explicitZeroProperties;
             HashSet<CSSPropertyID> explicitOneProperties;
             auto styleProperties = keyframe.style;
-            for (unsigned i = 0; i < styleProperties->propertyCount(); ++i) {
-                auto property = styleProperties->propertyAt(i).id();
+            for (auto propertyReference : styleProperties.get()) {
+                auto property = propertyReference.id();
                 // All properties may end up being implicit.
                 implicitProperties.add(property);
                 if (!keyframe.computedOffset)
@@ -2324,9 +2324,8 @@ void KeyframeEffect::computeHasKeyframeComposingAcceleratedProperty()
             if (keyframe.composite != CompositeOperationOrAuto::Add && keyframe.composite != CompositeOperationOrAuto::Accumulate)
                 continue;
             auto styleProperties = keyframe.style;
-            for (unsigned i = 0; i < styleProperties->propertyCount(); ++i) {
-                auto property = styleProperties->propertyAt(i).id();
-                if (CSSPropertyAnimation::animationOfPropertyIsAccelerated(property))
+            for (auto property : styleProperties.get()) {
+                if (CSSPropertyAnimation::animationOfPropertyIsAccelerated(property.id()))
                     return true;
             }
         }

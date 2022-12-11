@@ -303,9 +303,6 @@ ScrollOffset RenderLayerScrollableArea::scrollToOffset(const ScrollOffset& scrol
         scrollAnimator().cancelAnimations();
         stopAsyncAnimatedScroll();
     }
-    
-    registerScrollableArea();
-
     ScrollOffset clampedScrollOffset = options.clamping == ScrollClamping::Clamped ? clampScrollOffset(scrollOffset) : scrollOffset;
     if (clampedScrollOffset == this->scrollOffset())
         return clampedScrollOffset;
@@ -315,9 +312,10 @@ ScrollOffset RenderLayerScrollableArea::scrollToOffset(const ScrollOffset& scrol
 
     ScrollOffset snappedOffset = ceiledIntPoint(scrollAnimator().scrollOffsetAdjustedForSnapping(clampedScrollOffset, options.snapPointSelectionMethod));
     auto snappedPosition = scrollPositionFromOffset(snappedOffset);
-    if (options.animated == ScrollIsAnimated::Yes)
+    if (options.animated == ScrollIsAnimated::Yes) {
+        registerScrollableAreaForAnimatedScroll();
         ScrollableArea::scrollToPositionWithAnimation(snappedPosition);
-    else if (!requestScrollPositionUpdate(snappedPosition, options.type, options.clamping))
+    } else if (!requestScrollPositionUpdate(snappedPosition, options.type, options.clamping))
         scrollToPositionWithoutAnimation(snappedPosition, options.clamping);
 
     setCurrentScrollType(previousScrollType);
@@ -1098,7 +1096,17 @@ void RenderLayerScrollableArea::computeScrollOrigin()
 
 void RenderLayerScrollableArea::computeHasCompositedScrollableOverflow()
 {
-    m_hasCompositedScrollableOverflow = canUseCompositedScrolling() && (hasScrollableHorizontalOverflow() || hasScrollableVerticalOverflow());
+    bool hasCompositedScrollableOverflow = canUseCompositedScrolling() && (hasScrollableHorizontalOverflow() || hasScrollableVerticalOverflow());
+    if (hasCompositedScrollableOverflow == m_hasCompositedScrollableOverflow)
+        return;
+
+    // Whether this layer does composited scrolling affects the configuration of descendant sticky layers. We have to
+    // dirty from the enclosing stacking context because overflow scroll doesn't create stacking context so those
+    // containing block descendants may not be paint-order descendants, and the compositing dirty bits on RenderLayer act in paint order.
+    if (auto* paintParent = m_layer.stackingContext())
+        paintParent->setDescendantsNeedUpdateBackingAndHierarchyTraversal();
+
+    m_hasCompositedScrollableOverflow = hasCompositedScrollableOverflow;
 }
 
 bool RenderLayerScrollableArea::hasScrollableHorizontalOverflow() const
@@ -1699,14 +1707,13 @@ void RenderLayerScrollableArea::updateScrollableAreaSet(bool hasOverflow)
 #endif
 }
 
-void RenderLayerScrollableArea::registerScrollableArea()
+void RenderLayerScrollableArea::registerScrollableAreaForAnimatedScroll()
 {
     auto& renderer = m_layer.renderer();
     FrameView& frameView = renderer.view().frameView();
-
     if (!m_registeredScrollableArea) {
-        frameView.addScrollableArea(this);
-        m_registeredScrollableArea = true;
+        frameView.addScrollableAreaForAnimatedScroll(this);
+        m_isRegisteredForAnimatedScroll = true;
     }
 }
 
@@ -1939,6 +1946,16 @@ String RenderLayerScrollableArea::debugDescription() const
 void RenderLayerScrollableArea::didStartScrollAnimation()
 {
     m_layer.page().scheduleRenderingUpdate({ RenderingUpdateStep::Scroll });
+}
+
+void RenderLayerScrollableArea::animatedScrollDidEnd()
+{
+    if (m_isRegisteredForAnimatedScroll) {
+        auto& renderer = m_layer.renderer();
+        FrameView& frameView = renderer.view().frameView();
+        m_isRegisteredForAnimatedScroll = false;
+        frameView.removeScrollableAreaForAnimatedScroll(this);
+    }
 }
 
 } // namespace WebCore

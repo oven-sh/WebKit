@@ -4654,9 +4654,7 @@ AtomString consumeCounterStyleNameInPrelude(CSSParserTokenRange& prelude)
 RefPtr<CSSPrimitiveValue> consumeSingleContainerName(CSSParserTokenRange& range)
 {
     switch (range.peek().id()) {
-    case CSSValueNormal:
     case CSSValueNone:
-    case CSSValueAuto:
     case CSSValueAnd:
     case CSSValueOr:
     case CSSValueNot:
@@ -5629,16 +5627,15 @@ RefPtr<CSSValue> consumeClip(CSSParserTokenRange& range, CSSParserMode cssParser
 
 RefPtr<CSSValue> consumeTouchAction(CSSParserTokenRange& range)
 {
-    CSSValueID id = range.peek().id();
-    if (id == CSSValueNone || id == CSSValueAuto || id == CSSValueManipulation)
-        return consumeIdent(range);
+    if (auto ident = consumeIdent<CSSValueNone, CSSValueAuto, CSSValueManipulation>(range))
+        return ident;
 
     auto list = CSSValueList::createSpaceSeparated();
     while (true) {
         auto ident = consumeIdent<CSSValuePanX, CSSValuePanY, CSSValuePinchZoom>(range);
         if (!ident)
             break;
-        if (list->hasValue(ident.get()))
+        if (list->hasValue(*ident))
             return nullptr;
         list->append(ident.releaseNonNull());
     }
@@ -5894,12 +5891,12 @@ RefPtr<CSSValue> consumeTextDecorationLine(CSSParserTokenRange& range)
     if (id == CSSValueNone)
         return consumeIdent(range);
 
-    RefPtr<CSSValueList> list = CSSValueList::createSpaceSeparated();
+    auto list = CSSValueList::createSpaceSeparated();
     while (true) {
-        RefPtr<CSSPrimitiveValue> ident = consumeIdent<CSSValueBlink, CSSValueUnderline, CSSValueOverline, CSSValueLineThrough>(range);
+        auto ident = consumeIdent<CSSValueBlink, CSSValueUnderline, CSSValueOverline, CSSValueLineThrough>(range);
         if (!ident)
             break;
-        if (list->hasValue(ident.get()))
+        if (list->hasValue(*ident))
             return nullptr;
         list->append(ident.releaseNonNull());
     }
@@ -6608,6 +6605,27 @@ RefPtr<CSSValue> consumeScrollSnapType(CSSParserTokenRange& range)
     return typeValue;
 }
 
+RefPtr<CSSValue> consumeTextEdge(CSSParserTokenRange& range)
+{
+    auto typeValue = CSSValueList::createSpaceSeparated();
+    if (range.peek().id() == CSSValueLeading) {
+        typeValue->append(consumeIdent(range).releaseNonNull());
+        return typeValue;
+    }
+
+    auto firstGroupValue = consumeIdent<CSSValueText, CSSValueCap, CSSValueEx, CSSValueIdeographic, CSSValueIdeographicInk>(range);
+    if (!firstGroupValue)
+        return nullptr;
+    typeValue->append(firstGroupValue.releaseNonNull());
+
+    auto secondGroupValue = consumeIdent<CSSValueText, CSSValueAlphabetic, CSSValueIdeographic, CSSValueIdeographicInk>(range);
+    if (secondGroupValue)
+        typeValue->append(secondGroupValue.releaseNonNull());
+
+    return typeValue;
+}
+
+    
 RefPtr<CSSValue> consumeBorderRadiusCorner(CSSParserTokenRange& range, CSSParserMode cssParserMode)
 {
     RefPtr<CSSPrimitiveValue> parsedValue1 = consumeLengthOrPercent(range, cssParserMode, ValueRange::NonNegative);
@@ -7267,6 +7285,29 @@ RefPtr<CSSValue> consumeGridAutoFlow(CSSParserTokenRange& range)
     }
     if (denseAlgorithm)
         parsedValues->append(denseAlgorithm.releaseNonNull());
+    return parsedValues;
+}
+
+RefPtr<CSSValueList> consumeMasonryAutoFlow(CSSParserTokenRange& range)
+{
+    RefPtr<CSSPrimitiveValue> packOrNextValue = consumeIdent<CSSValuePack, CSSValueNext>(range);
+    RefPtr<CSSPrimitiveValue> definiteFirstOrOrderedValue = consumeIdent<CSSValueDefiniteFirst, CSSValueOrdered>(range);
+
+    if (!packOrNextValue) {
+        packOrNextValue = consumeIdent<CSSValuePack, CSSValueNext>(range);
+        if (!packOrNextValue)
+            packOrNextValue = CSSValuePool::singleton().createIdentifierValue(CSSValuePack);
+    }
+
+    RefPtr<CSSValueList> parsedValues = CSSValueList::createSpaceSeparated();
+    if (packOrNextValue) {
+        CSSValueID packOrNextValueID = packOrNextValue->valueID();
+        if (!definiteFirstOrOrderedValue || (definiteFirstOrOrderedValue && definiteFirstOrOrderedValue->valueID() == CSSValueID::CSSValueDefiniteFirst) || packOrNextValueID == CSSValueID::CSSValueNext)
+            parsedValues->append(packOrNextValue.releaseNonNull());
+    }
+    if (definiteFirstOrOrderedValue && definiteFirstOrOrderedValue->valueID() == CSSValueID::CSSValueOrdered)
+        parsedValues->append(definiteFirstOrOrderedValue.releaseNonNull());
+
     return parsedValues;
 }
 

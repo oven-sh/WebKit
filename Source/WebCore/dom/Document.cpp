@@ -3530,8 +3530,41 @@ void Document::setURL(const URL& url)
     m_url = WTFMove(newURL);
 
     m_documentURI = m_url.url().string();
+    m_adjustedURL = adjustedURL();
     updateBaseURL();
 }
+
+const URL& Document::urlForBindings() const
+{
+    auto shouldAdjustURL = [this] {
+        if (m_url.url().isEmpty() || !loader() || !isTopDocument())
+            return false;
+
+        auto* topDocumentLoader = topDocument().loader();
+        if (!topDocumentLoader || !topDocumentLoader->networkConnectionIntegrityPolicy().contains(WebCore::NetworkConnectionIntegrity::Enabled))
+            return false;
+
+        auto preNavigationURL = loader()->originalRequest().httpReferrer();
+        if (preNavigationURL.isEmpty() || RegistrableDomain { URL { preNavigationURL } }.matches(securityOrigin().data()))
+            return false;
+
+        return true;
+    }();
+
+    if (shouldAdjustURL)
+        return m_adjustedURL;
+
+    return m_url.url().isEmpty() ? aboutBlankURL() : m_url.url();
+}
+
+#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/DocumentAdditions.cpp>)
+#include <WebKitAdditions/DocumentAdditions.cpp>
+#else
+URL Document::adjustedURL() const
+{
+    return m_url.url();
+}
+#endif
 
 // https://html.spec.whatwg.org/#fallback-base-url
 URL Document::fallbackBaseURL() const
@@ -4454,11 +4487,14 @@ void Document::runScrollSteps()
     if (frameView) {
         MonotonicTime now = MonotonicTime::now();
         bool scrollAnimationsInProgress = serviceScrollAnimationForScrollableArea(frameView.get(), now);
-        if (auto* scrollableAreas = frameView->scrollableAreas()) {
-            for (auto* scrollableArea : *scrollableAreas) {
-                if (serviceScrollAnimationForScrollableArea(scrollableArea, now))
-                    scrollAnimationsInProgress = true;
-            }
+        HashSet<ScrollableArea*> scrollableAreasToUpdate;
+        if (auto userScrollableAreas = frameView->scrollableAreas())
+            scrollableAreasToUpdate.add(userScrollableAreas->begin(), userScrollableAreas->end());
+        if (auto nonUserScrollableAreas = frameView->scrollableAreasForAnimatedScroll())
+            scrollableAreasToUpdate.add(nonUserScrollableAreas->begin(), nonUserScrollableAreas->end());
+        for (auto* scrollableArea : scrollableAreasToUpdate) {
+            if (serviceScrollAnimationForScrollableArea(scrollableArea, now))
+                scrollAnimationsInProgress = true;
         }
         if (scrollAnimationsInProgress)
             page()->scheduleRenderingUpdate({ RenderingUpdateStep::Scroll });
@@ -5021,10 +5057,6 @@ void Document::nodeChildrenWillBeRemoved(ContainerNode& container)
     adjustFocusedNodeOnNodeRemoval(container, NodeRemoval::ChildrenOfNode);
     adjustFocusNavigationNodeOnNodeRemoval(container, NodeRemoval::ChildrenOfNode);
 
-#if ENABLE(FULLSCREEN_API)
-    m_fullscreenManager->adjustFullscreenElementOnNodeRemoval(container, NodeRemoval::ChildrenOfNode);
-#endif
-
     for (auto* range : m_ranges)
         range->nodeChildrenWillBeRemoved(container);
 
@@ -5053,10 +5085,6 @@ void Document::nodeWillBeRemoved(Node& node)
 
     adjustFocusedNodeOnNodeRemoval(node);
     adjustFocusNavigationNodeOnNodeRemoval(node);
-
-#if ENABLE(FULLSCREEN_API)
-    m_fullscreenManager->adjustFullscreenElementOnNodeRemoval(node, NodeRemoval::Node);
-#endif
 
     for (auto* it : m_nodeIterators)
         it->nodeWillBeRemoved(node);
@@ -7124,6 +7152,15 @@ void Document::cancelIdleCallback(int id)
     m_idleCallbackController->removeIdleCallback(id);
 }
 
+HttpEquivPolicy Document::httpEquivPolicy() const
+{
+    if (shouldEnforceContentDispositionAttachmentSandbox())
+        return HttpEquivPolicy::DisabledByContentDispositionAttachmentSandbox;
+    if (page() && !page()->settings().httpEquivEnabled())
+        return HttpEquivPolicy::DisabledBySettings;
+    return HttpEquivPolicy::Enabled;
+}
+
 void Document::wheelEventHandlersChanged(Node* node)
 {
     Page* page = this->page();
@@ -7136,9 +7173,9 @@ void Document::wheelEventHandlersChanged(Node* node)
     }
 
 #if ENABLE(WHEEL_EVENT_REGIONS)
-    if (is<Element>(node)) {
+    if (auto* element = dynamicDowncast<Element>(node)) {
         // Style is affected via eventListenerRegionTypes().
-        downcast<Element>(*node).invalidateStyle();
+        element->invalidateStyle();
     }
 
     m_frame->invalidateContentEventRegionsIfNeeded(Frame::InvalidateContentEventRegionsReason::EventHandlerChange);
@@ -7160,15 +7197,6 @@ void Document::didAddWheelEventHandler(Node& node)
 
     if (RefPtr frame = this->frame())
         DebugPageOverlays::didChangeEventHandlers(*frame);
-}
-
-HttpEquivPolicy Document::httpEquivPolicy() const
-{
-    if (shouldEnforceContentDispositionAttachmentSandbox())
-        return HttpEquivPolicy::DisabledByContentDispositionAttachmentSandbox;
-    if (page() && !page()->settings().httpEquivEnabled())
-        return HttpEquivPolicy::DisabledBySettings;
-    return HttpEquivPolicy::Enabled;
 }
 
 static bool removeHandlerFromSet(EventTargetSet& handlerSet, Node& node, EventHandlerRemoval removal)
@@ -7272,6 +7300,23 @@ unsigned Document::touchEventHandlerCount() const
 #else
     return 0;
 #endif
+}
+
+void Document::didAddOrRemoveMouseEventHandler(Node& node)
+{
+#if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
+    if (auto* element = dynamicDowncast<Element>(node)) {
+        // Style is affected via eventListenerRegionTypes().
+        element->invalidateStyle();
+    }
+
+    m_frame->invalidateContentEventRegionsIfNeeded(Frame::InvalidateContentEventRegionsReason::EventHandlerChange);
+#else
+    UNUSED_PARAM(node);
+#endif
+
+    if (RefPtr frame = this->frame())
+        DebugPageOverlays::didChangeEventHandlers(*frame);
 }
 
 LayoutRect Document::absoluteEventHandlerBounds(bool& includesFixedPositionElements)
@@ -8222,7 +8267,7 @@ static std::optional<IntersectionObservationState> computeIntersectionState(Fram
     FloatRect rootLocalIntersectionRect = localRootBounds;
 
     IntersectionObservationState intersectionState;
-    intersectionState.isIntersecting = rootLocalTargetRect && rootLocalIntersectionRect.edgeInclusiveIntersect(*rootLocalTargetRect);
+    intersectionState.isIntersecting = rootLocalTargetRect && rootLocalIntersectionRect.edgeInclusiveIntersect(*rootLocalTargetRect) && !targetRenderer->isSkippedContent();
     intersectionState.absoluteTargetRect = targetRenderer->localToAbsoluteQuad(FloatRect(localTargetBounds)).boundingBox();
     intersectionState.absoluteRootBounds = rootRenderer->localToAbsoluteQuad(localRootBounds).boundingBox();
 

@@ -682,18 +682,29 @@ void FrameSelection::textWasReplaced(CharacterData& node, unsigned offset, unsig
     if (isNone() || !node.isConnected())
         return;
 
+    Position anchor = m_selection.anchor();
+    Position focus = m_selection.focus();
     Position base = m_selection.base();
     Position extent = m_selection.extent();
     Position start = m_selection.start();
     Position end = m_selection.end();
+    if (m_document->settings().liveRangeSelectionEnabled()) {
+        updatePositionAfterAdoptingTextReplacement(anchor, node, offset, oldLength, newLength);
+        updatePositionAfterAdoptingTextReplacement(focus, node, offset, oldLength, newLength);
+    }
     updatePositionAfterAdoptingTextReplacement(base, node, offset, oldLength, newLength);
     updatePositionAfterAdoptingTextReplacement(extent, node, offset, oldLength, newLength);
     updatePositionAfterAdoptingTextReplacement(start, node, offset, oldLength, newLength);
     updatePositionAfterAdoptingTextReplacement(end, node, offset, oldLength, newLength);
 
-    if (base != m_selection.base() || extent != m_selection.extent() || start != m_selection.start() || end != m_selection.end()) {
+    bool liveRangeSelectionEnabled = node.document().settings().liveRangeSelectionEnabled();
+    if ((liveRangeSelectionEnabled && (anchor != m_selection.anchor() || focus != m_selection.focus()))
+        || base != m_selection.base() || extent != m_selection.extent() || start != m_selection.start() || end != m_selection.end()) {
         VisibleSelection newSelection;
-        if (base != extent)
+
+        if (liveRangeSelectionEnabled)
+            newSelection.setWithoutValidation(anchor, focus);
+        else if (base != extent)
             newSelection.setWithoutValidation(base, extent);
         else if (m_selection.isDirectional() && !m_selection.isBaseFirst())
             newSelection.setWithoutValidation(end, start);
@@ -1707,6 +1718,15 @@ bool CaretBase::updateCaretRect(Document& document, const VisiblePosition& caret
     return !m_caretLocalRect.isEmpty();
 }
 
+#if USE(APPLE_INTERNAL_SDK)
+#import <WebKitAdditions/FrameSelectionAdditions.cpp>
+#else
+void CaretBase::fillCaretRect(const Node&, GraphicsContext& context, const FloatRect& caret, const Color& color) const
+{
+    context.fillRect(caret, color);
+}
+#endif
+
 RenderBlock* FrameSelection::caretRendererWithoutUpdatingLayout() const
 {
     return rendererForCaretPainting(m_selection.start().deprecatedNode());
@@ -1886,7 +1906,7 @@ void CaretBase::paintCaret(const Node& node, GraphicsContext& context, const Lay
         caretColor = CaretBase::computeCaretColor(element->renderer()->style(), &node);
 
     auto pixelSnappedCaretRect = snapRectToDevicePixels(caret, node.document().deviceScaleFactor());
-    context.fillRect(pixelSnappedCaretRect, caretColor);
+    fillCaretRect(node, context, pixelSnappedCaretRect, caretColor);
 #else
     UNUSED_PARAM(node);
     UNUSED_PARAM(context);

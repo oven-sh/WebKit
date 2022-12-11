@@ -73,6 +73,16 @@ struct GridTrackEntryAutoRepeat {
     AutoRepeatType type;
     RepeatTrackList list;
 };
+
+struct MasonryAutoFlow {
+    bool operator==(const MasonryAutoFlow& other) const
+    { 
+        return placementAlgorithm == other.placementAlgorithm && placementOrder == other.placementOrder;
+    }
+
+    MasonryAutoFlowPlacementAlgorithm placementAlgorithm;
+    MasonryAutoFlowPlacementOrder placementOrder;
+};
 typedef std::variant<GridTrackSize, Vector<String>, GridTrackEntryRepeat, GridTrackEntryAutoRepeat, GridTrackEntrySubgrid, GridTrackEntryMasonry> GridTrackEntry;
 typedef Vector<GridTrackEntry> GridTrackList;
 
@@ -86,7 +96,7 @@ public:
 
     bool operator==(const StyleGridData& o) const
     {
-        return columns() == o.columns() && rows() == o.rows() && implicitNamedGridColumnLines == o.implicitNamedGridColumnLines && implicitNamedGridRowLines == o.implicitNamedGridRowLines && gridAutoFlow == o.gridAutoFlow && gridAutoRows == o.gridAutoRows && gridAutoColumns == o.gridAutoColumns && namedGridArea == o.namedGridArea && namedGridAreaRowCount == o.namedGridAreaRowCount && namedGridAreaColumnCount == o.namedGridAreaColumnCount && m_masonryRows == o.m_masonryRows && m_masonryColumns == o.m_masonryColumns;
+        return columns() == o.columns() && rows() == o.rows() && implicitNamedGridColumnLines == o.implicitNamedGridColumnLines && implicitNamedGridRowLines == o.implicitNamedGridRowLines && gridAutoFlow == o.gridAutoFlow && gridAutoRows == o.gridAutoRows && gridAutoColumns == o.gridAutoColumns && namedGridArea == o.namedGridArea && namedGridAreaRowCount == o.namedGridAreaRowCount && namedGridAreaColumnCount == o.namedGridAreaColumnCount && m_masonryRows == o.m_masonryRows && m_masonryColumns == o.m_masonryColumns && masonryAutoFlow == o.masonryAutoFlow;
     }
 
     bool operator!=(const StyleGridData& o) const
@@ -97,8 +107,8 @@ public:
     void setRows(const GridTrackList&);
     void setColumns(const GridTrackList&);
 
-    const Vector<GridTrackSize>& gridColumns() const { return m_gridColumns; }
-    const Vector<GridTrackSize>& gridRows() const { return m_gridRows; }
+    const Vector<GridTrackSize>& gridColumnTrackSizes() const { return m_gridColumnTrackSizes; }
+    const Vector<GridTrackSize>& gridRowTrackSizes() const { return m_gridRowTrackSizes; }
 
     const NamedGridLinesMap& namedGridColumnLines() const { return m_namedGridColumnLines; };
     const NamedGridLinesMap& namedGridRowLines() const { return m_namedGridRowLines; };
@@ -133,6 +143,7 @@ public:
     NamedGridLinesMap implicitNamedGridRowLines;
 
     unsigned gridAutoFlow : GridAutoFlowBits;
+    MasonryAutoFlow masonryAutoFlow;
 
     Vector<GridTrackSize> gridAutoRows;
     Vector<GridTrackSize> gridAutoColumns;
@@ -150,9 +161,9 @@ private:
     GridTrackList m_columns;
     GridTrackList m_rows;
 
-    // Cached data computed from m_columns/m_rows.
-    Vector<GridTrackSize> m_gridColumns;
-    Vector<GridTrackSize> m_gridRows;
+    // Grid track sizes are computed from m_columns/m_rows.
+    Vector<GridTrackSize> m_gridColumnTrackSizes;
+    Vector<GridTrackSize> m_gridRowTrackSizes;
 
     NamedGridLinesMap m_namedGridColumnLines;
     NamedGridLinesMap m_namedGridRowLines;

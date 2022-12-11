@@ -113,7 +113,6 @@ class MockPaymentCoordinator;
 class NodeList;
 class Page;
 class RTCPeerConnection;
-class ReadableStream;
 class Range;
 class RenderedDocumentMarker;
 class SVGSVGElement;
@@ -344,7 +343,6 @@ public:
     ExceptionOr<void> setViewBaseBackgroundColor(const String& colorValue);
 
     ExceptionOr<void> setPagination(const String& mode, int gap, int pageLength);
-    ExceptionOr<void> setPaginationLineGridEnabled(bool);
     ExceptionOr<uint64_t> lineIndexAfterPageBreak(Element&);
     ExceptionOr<String> configurationForViewport(float devicePixelRatio, int deviceWidth, int deviceHeight, int availableWidth, int availableHeight);
 
@@ -837,7 +835,7 @@ public:
     String resourceLoadStatisticsForURL(const DOMURL&);
     void setTrackingPreventionEnabled(bool);
 
-    bool isReadableStreamDisturbed(ReadableStream&);
+    bool isReadableStreamDisturbed(JSC::JSGlobalObject&, JSC::JSValue);
     JSC::JSValue cloneArrayBuffer(JSC::JSGlobalObject&, JSC::JSValue, JSC::JSValue, JSC::JSValue);
 
     String composedTreeAsText(Node&);
@@ -1083,7 +1081,6 @@ public:
         bool isMediaDocumentAndNotOwnerElement;
         bool pageExplicitlyAllowsElementToAutoplayInline;
         bool requiresFullscreenForVideoPlaybackAndFullscreenNotPermitted;
-        bool hasHadUserInteractionAndQuirksContainsShouldAutoplayForArbitraryUserGesture;
         bool isVideoAndRequiresUserGestureForVideoRateChange;
         bool isAudioAndRequiresUserGestureForAudioRateChange;
         bool isVideoAndRequiresUserGestureForVideoDueToLowPowerMode;

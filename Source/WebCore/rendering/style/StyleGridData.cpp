@@ -34,13 +34,14 @@ StyleGridData::StyleGridData()
     : implicitNamedGridColumnLines(RenderStyle::initialNamedGridColumnLines())
     , implicitNamedGridRowLines(RenderStyle::initialNamedGridRowLines())
     , gridAutoFlow(RenderStyle::initialGridAutoFlow())
+    , masonryAutoFlow(RenderStyle::initialMasonryAutoFlow())
     , gridAutoRows(RenderStyle::initialGridAutoRows())
     , gridAutoColumns(RenderStyle::initialGridAutoColumns())
     , namedGridArea(RenderStyle::initialNamedGridArea())
     , namedGridAreaRowCount(RenderStyle::initialNamedGridAreaCount())
     , namedGridAreaColumnCount(RenderStyle::initialNamedGridAreaCount())
-    , m_gridColumns(RenderStyle::initialGridColumns())
-    , m_gridRows(RenderStyle::initialGridRows())
+    , m_gridColumnTrackSizes(RenderStyle::initialGridColumnTrackSizes())
+    , m_gridRowTrackSizes(RenderStyle::initialGridRowTrackSizes())
     , m_namedGridColumnLines(RenderStyle::initialNamedGridColumnLines())
     , m_namedGridRowLines(RenderStyle::initialNamedGridRowLines())
     , m_orderedNamedGridColumnLines(RenderStyle::initialOrderedNamedGridColumnLines())
@@ -67,6 +68,7 @@ inline StyleGridData::StyleGridData(const StyleGridData& o)
     , implicitNamedGridColumnLines(o.implicitNamedGridColumnLines)
     , implicitNamedGridRowLines(o.implicitNamedGridRowLines)
     , gridAutoFlow(o.gridAutoFlow)
+    , masonryAutoFlow(o.masonryAutoFlow)
     , gridAutoRows(o.gridAutoRows)
     , gridAutoColumns(o.gridAutoColumns)
     , namedGridArea(o.namedGridArea)
@@ -74,8 +76,8 @@ inline StyleGridData::StyleGridData(const StyleGridData& o)
     , namedGridAreaColumnCount(o.namedGridAreaColumnCount)
     , m_columns(o.m_columns)
     , m_rows(o.m_rows)
-    , m_gridColumns(o.m_gridColumns)
-    , m_gridRows(o.m_gridRows)
+    , m_gridColumnTrackSizes(o.m_gridColumnTrackSizes)
+    , m_gridRowTrackSizes(o.m_gridRowTrackSizes)
     , m_namedGridColumnLines(o.m_namedGridColumnLines)
     , m_namedGridRowLines(o.m_namedGridRowLines)
     , m_orderedNamedGridColumnLines(o.m_orderedNamedGridColumnLines)
@@ -100,13 +102,13 @@ inline StyleGridData::StyleGridData(const StyleGridData& o)
 void StyleGridData::setRows(const GridTrackList& list)
 {
     m_rows = list;
-    computeCachedTrackData(m_rows, m_gridRows, m_namedGridRowLines, m_orderedNamedGridRowLines, m_gridAutoRepeatRows, m_autoRepeatNamedGridRowLines, m_autoRepeatOrderedNamedGridRowLines, m_autoRepeatRowsInsertionPoint, m_autoRepeatRowsType, m_subgridRows, m_masonryRows);
+    computeCachedTrackData(m_rows, m_gridRowTrackSizes, m_namedGridRowLines, m_orderedNamedGridRowLines, m_gridAutoRepeatRows, m_autoRepeatNamedGridRowLines, m_autoRepeatOrderedNamedGridRowLines, m_autoRepeatRowsInsertionPoint, m_autoRepeatRowsType, m_subgridRows, m_masonryRows);
 }
 
 void StyleGridData::setColumns(const GridTrackList& list)
 {
     m_columns = list;
-    computeCachedTrackData(m_columns, m_gridColumns, m_namedGridColumnLines, m_orderedNamedGridColumnLines, m_gridAutoRepeatColumns, m_autoRepeatNamedGridColumnLines, m_autoRepeatOrderedNamedGridColumnLines, m_autoRepeatColumnsInsertionPoint, m_autoRepeatColumnsType, m_subgridColumns, m_masonryColumns);
+    computeCachedTrackData(m_columns, m_gridColumnTrackSizes, m_namedGridColumnLines, m_orderedNamedGridColumnLines, m_gridAutoRepeatColumns, m_autoRepeatNamedGridColumnLines, m_autoRepeatOrderedNamedGridColumnLines, m_autoRepeatColumnsInsertionPoint, m_autoRepeatColumnsType, m_subgridColumns, m_masonryColumns);
 }
 
 static void createGridLineNamesList(const Vector<String>& names, unsigned currentNamedGridLine, NamedGridLinesMap& namedGridLines, OrderedNamedGridLinesMap& orderedNamedGridLines)

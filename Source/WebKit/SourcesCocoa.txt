@@ -152,7 +152,6 @@ Shared/Cocoa/AuxiliaryProcessCocoa.mm
 Shared/Cocoa/CodeSigning.mm
 Shared/Cocoa/CompletionHandlerCallChecker.mm
 Shared/Cocoa/CoreTextHelpers.mm
-Shared/Cocoa/DataDetectionResult.mm
 Shared/Cocoa/DefaultWebBrowserChecks.mm
 Shared/Cocoa/InsertTextOptions.cpp
 Shared/Cocoa/LoadParametersCocoa.mm
@@ -738,5 +737,6 @@ RemoteRenderingBackendProxyMessageReceiver.cpp
 RemoteSampleBufferDisplayLayerManagerMessageReceiver.cpp
 RemoteSampleBufferDisplayLayerMessageReceiver.cpp
 SampleBufferDisplayLayerMessageReceiver.cpp
+SerializedTypeInfo.mm
 ServiceWorkerFetchTaskMessageReceiver.cpp
 TextCheckingControllerProxyMessageReceiver.cpp

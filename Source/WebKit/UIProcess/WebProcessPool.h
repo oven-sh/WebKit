@@ -551,7 +551,7 @@ private:
 
 #if ENABLE(GAMEPAD)
     void startedUsingGamepads(IPC::Connection&);
-    void stoppedUsingGamepads(IPC::Connection&);
+    void stoppedUsingGamepads(IPC::Connection&, CompletionHandler<void()>&&);
 
     void processStoppedUsingGamepads(WebProcessProxy&);
 #endif
@@ -595,7 +595,7 @@ private:
 #endif
 
 #if PLATFORM(COCOA)
-    static void lockdownModeConfigUpdateCallback(CFNotificationCenterRef, void* observer, CFStringRef name, const void* postingObject, CFDictionaryRef userInfo);
+    static void lockdownModeConfigurationUpdateCallback(CFNotificationCenterRef, void* observer, CFStringRef name, const void* postingObject, CFDictionaryRef userInfo);
 #endif
     
 #if PLATFORM(COCOA)

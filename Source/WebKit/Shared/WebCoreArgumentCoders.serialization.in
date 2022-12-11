@@ -1571,3 +1571,350 @@ class WebCore::CertificateInfo {
     GTlsCertificateFlags tlsErrors()
 #endif
 }
+
+[Nested] struct WebCore::PasteboardCustomData::Entry {
+    String type;
+    String customData;
+    std::variant<String, Ref<WebCore::SharedBuffer>> platformData;
+};
+
+class WebCore::PasteboardCustomData {
+    String origin();
+    Vector<WebCore::PasteboardCustomData::Entry> data();
+};
+
+class WebCore::DatabaseDetails {
+    String name();
+    String displayName();
+    uint64_t expectedUsage();
+    uint64_t currentUsage();
+    std::optional<WallTime> creationTime();
+    std::optional<WallTime> modificationTime();
+};
+
+[Return=Ref] class WebCore::DecomposedGlyphs {
+    WebCore::PositionedGlyphs positionedGlyphs();
+    WebCore::RenderingResourceIdentifier renderingResourceIdentifier();
+}
+
+header: <WebCore/TextIndicator.h>
+[CustomHeader] struct WebCore::TextIndicatorData {
+    WebCore::FloatRect selectionRectInRootViewCoordinates;
+    WebCore::FloatRect textBoundingRectInRootViewCoordinates;
+    WebCore::FloatRect contentImageWithoutSelectionRectInRootViewCoordinates;
+    Vector<WebCore::FloatRect> textRectsInBoundingRectCoordinates;
+    float contentImageScaleFactor;
+    RefPtr<WebCore::Image> contentImageWithHighlight;
+    RefPtr<WebCore::Image> contentImageWithoutSelection;
+    RefPtr<WebCore::Image> contentImage;
+    WebCore::Color estimatedBackgroundColor;
+    WebCore::TextIndicatorPresentationTransition presentationTransition;
+    OptionSet<WebCore::TextIndicatorOption> options;
+}
+
+#if ENABLE(MEDIA_STREAM)
+struct WebCore::MediaConstraints {
+    WebCore::MediaTrackConstraintSetMap mandatoryConstraints;
+    Vector<WebCore::MediaTrackConstraintSetMap> advancedConstraints;
+    bool isValid;
+};
+#endif
+
+struct WebCore::PromisedAttachmentInfo {
+#if ENABLE(ATTACHMENT_ELEMENT)
+    String attachmentIdentifier;
+#endif
+    Vector<String> additionalTypes;
+    Vector<RefPtr<WebCore::SharedBuffer>> additionalData;
+}
+
+header: <WebCore/SearchPopupMenu.h>
+[CustomHeader] struct WebCore::RecentSearch {
+    String string;
+    WallTime time;
+};
+
+[Nested] enum class WebCore::EventTrackingRegions::EventType : uint8_t {
+    Mousedown,
+    Mousemove,
+    Mouseup,
+    Mousewheel,
+    Pointerdown,
+    Pointerenter,
+    Pointerleave,
+    Pointermove,
+    Pointerout,
+    Pointerover,
+    Pointerup,
+    Touchend,
+    Touchforcechange,
+    Touchmove,
+    Touchstart,
+    Wheel
+};
+
+struct WebCore::EventTrackingRegions {
+    WebCore::Region asynchronousDispatchRegion;
+    HashMap<WebCore::EventTrackingRegions::EventType, WebCore::Region, WTF::IntHash<WebCore::EventTrackingRegions::EventType>, WTF::StrongEnumHashTraits<WebCore::EventTrackingRegions::EventType>> eventSpecificSynchronousDispatchRegions;
+};
+
+enum class WebCore::HasInsecureContent : bool
+
+struct WebCore::TextManipulationItem {
+    WebCore::TextManipulationItemIdentifier identifier;
+    Vector<WebCore::TextManipulationToken> tokens;
+}
+
+header: <WebCore/TextManipulationToken.h>
+[CustomHeader] struct WebCore::TextManipulationToken {
+    WebCore::TextManipulationTokenIdentifier identifier;
+    String content;
+    std::optional<WebCore::TextManipulationTokenInfo> info;
+    bool isExcluded;
+};
+
+header: <WebCore/TextManipulationToken.h>
+[CustomHeader] struct WebCore::TextManipulationTokenInfo {
+    String tagName;
+    String roleAttribute;
+    URL documentURL;
+    bool isVisible;
+};
+
+struct WebCore::VelocityData {
+    float horizontalVelocity;
+    float verticalVelocity;
+    float scaleChangeRate;
+    MonotonicTime lastUpdateTime;
+};
+
+header: <WebCore/PluginData.h>
+[CustomHeader] struct WebCore::MimeClassInfo {
+    AtomString type;
+    String desc;
+    Vector<String> extensions;
+};
+
+class WebCore::AuthenticationChallenge {
+    WebCore::ProtectionSpace protectionSpace();
+    WebCore::Credential proposedCredential();
+    unsigned previousFailureCount();
+    WebCore::ResourceResponse failureResponse();
+    WebCore::ResourceError error();
+    
+#if USE(SOUP)
+    uint32_t tlsPasswordFlags();
+#endif
+};
+
+#if ENABLE(DRAG_SUPPORT)
+class WebCore::DragData {
+#if PLATFORM(COCOA)
+    String pasteboardName();
+#endif
+    WebCore::IntPoint clientPosition();
+    WebCore::IntPoint globalPosition();
+#if PLATFORM(COCOA)
+    Vector<String> fileNames();
+#endif
+    OptionSet<WebCore::DragOperation> draggingSourceOperationMask();
+    OptionSet<WebCore::DragApplicationFlags> flags();
+    OptionSet<WebCore::DragDestinationAction> dragDestinationActionMask();
+    std::optional<WebCore::PageIdentifier> pageID();
+};
+#endif
+
+struct WebCore::DictationAlternative {
+    WebCore::CharacterRange range;
+    WebCore::DictationContext context;
+};
+
+class WebCore::UserStyleSheet {
+    String source();
+    URL url();
+    Vector<String> allowlist();
+    Vector<String> blocklist();
+    WebCore::UserContentInjectedFrames injectedFrames();
+    WebCore::UserStyleLevel level();
+    std::optional<WebCore::PageIdentifier> pageID();
+};
+
+header: <WebCore/ScrollTypes.h>
+[CustomHeader] enum class WebCore::ScrollElasticity : uint8_t {
+    Automatic,
+    None,
+    Allowed
+};
+
+header: <WebCore/ScrollTypes.h>
+[CustomHeader] enum class WebCore::ScrollbarMode : uint8_t {
+    Auto,
+    AlwaysOff,
+    AlwaysOn
+};
+
+header: <WebCore/ScrollingCoordinatorTypes.h>
+[CustomHeader] struct WebCore::ScrollableAreaParameters {
+    WebCore::ScrollElasticity horizontalScrollElasticity;
+    WebCore::ScrollElasticity verticalScrollElasticity;
+    WebCore::ScrollbarMode horizontalScrollbarMode;
+    WebCore::ScrollbarMode verticalScrollbarMode;
+    WebCore::OverscrollBehavior horizontalOverscrollBehavior;
+    WebCore::OverscrollBehavior verticalOverscrollBehavior;
+    bool allowsHorizontalScrolling;
+    bool allowsVerticalScrolling;
+    bool horizontalScrollbarHiddenByStyle;
+    bool verticalScrollbarHiddenByStyle;
+    bool useDarkAppearanceForScrollbars;
+};
+
+header: <WebCore/ScrollingConstraints.h>
+[CustomHeader] class WebCore::AbsolutePositionConstraints {
+    WebCore::FloatSize alignmentOffset();
+    WebCore::FloatPoint layerPositionAtLastLayout();
+};
+
+[Return=Ref] class WebCore::NotificationResources {
+    RefPtr<WebCore::Image> icon();
+};
+
+[Return=Ref] class WebCore::IdentityTransformOperation {
+}
+
+[Return=Ref] class WebCore::TranslateTransformOperation {
+    WebCore::Length x();
+    WebCore::Length y();
+    WebCore::Length z();
+    WebCore::TransformOperation::Type type();
+}
+
+[Return=Ref] class WebCore::RotateTransformOperation {
+    double x();
+    double y();
+    double z();
+    double angle();
+    WebCore::TransformOperation::Type type();
+}
+
+[Return=Ref] class WebCore::ScaleTransformOperation {
+    double x();
+    double y();
+    double z();
+    WebCore::TransformOperation::Type type();
+}
+
+[Return=Ref] class WebCore::SkewTransformOperation {
+    double angleX();
+    double angleY();
+    WebCore::TransformOperation::Type type();
+}
+
+[Return=Ref] class WebCore::PerspectiveTransformOperation {
+    std::optional<WebCore::Length> perspective();
+}
+
+[Return=Ref] class WebCore::MatrixTransformOperation {
+    WebCore::TransformationMatrix matrix();
+}
+
+[Return=Ref] class WebCore::Matrix3DTransformOperation {
+    WebCore::TransformationMatrix matrix();
+}
+
+class WebCore::TransformOperations {
+    Vector<RefPtr<WebCore::TransformOperation>> operations();
+}
+
+[Nested, AdditionalEncoder=StreamConnectionEncoder] struct WebCore::Gradient::LinearData {
+    WebCore::FloatPoint point0;
+    WebCore::FloatPoint point1;
+};
+
+[Nested, AdditionalEncoder=StreamConnectionEncoder] struct WebCore::Gradient::RadialData {
+    WebCore::FloatPoint point0;
+    WebCore::FloatPoint point1;
+    float startRadius;
+    float endRadius;
+    float aspectRatio;
+};
+
+[Nested, AdditionalEncoder=StreamConnectionEncoder] struct WebCore::Gradient::ConicData {
+    WebCore::FloatPoint point0;
+    float angleRadians;
+};
+
+[Return=Ref, AdditionalEncoder=StreamConnectionEncoder] class WebCore::Gradient {
+    std::variant<WebCore::Gradient::LinearData, WebCore::Gradient::RadialData, WebCore::Gradient::ConicData> data();
+    WebCore::ColorInterpolationMethod colorInterpolationMethod();
+    WebCore::GradientSpreadMethod spreadMethod();
+    WebCore::GradientColorStops stops();
+}
+
+[Nested, AdditionalEncoder=StreamConnectionEncoder] class WebCore::SourceBrush::Brush::LogicalGradient {
+    Ref<WebCore::Gradient> gradient;
+    WebCore::AffineTransform spaceTransform;
+}
+
+[Nested, AdditionalEncoder=StreamConnectionEncoder] struct WebCore::Pattern::Parameters {
+    bool repeatX;
+    bool repeatY;
+    WebCore::AffineTransform patternSpaceTransform;
+}
+
+[Return=Ref, AdditionalEncoder=StreamConnectionEncoder] class WebCore::Pattern {
+    WebCore::SourceImage tileImage();
+    WebCore::Pattern::Parameters parameters();
+}
+
+[Nested, AdditionalEncoder=StreamConnectionEncoder] class WebCore::SourceBrush::Brush {
+    std::variant<WebCore::SourceBrush::Brush::LogicalGradient, Ref<WebCore::Pattern>> brush;
+}
+
+[AdditionalEncoder=StreamConnectionEncoder] class WebCore::SourceBrush {
+    WebCore::Color color();
+    std::optional<WebCore::SourceBrush::Brush> brush();
+}
+
+#if ENABLE(GPU_PROCESS)
+
+header: <WebCore/GraphicsContextGLAttributes.h>
+[CustomHeader] enum class WebCore::GraphicsContextGLPowerPreference : uint8_t {
+    Default,
+    LowPower,
+    HighPerformance
+};
+
+header: <WebCore/GraphicsContextGLAttributes.h>
+[CustomHeader] enum class WebCore::GraphicsContextGLWebGLVersion : uint8_t {
+    WebGL1,
+#if ENABLE(WEBGL2)
+    WebGL2
+#endif
+};
+
+struct WebCore::GraphicsContextGLAttributes {
+    bool alpha;
+    bool depth;
+    bool stencil;
+    bool antialias;
+    bool premultipliedAlpha;
+    bool preserveDrawingBuffer;
+    bool failIfMajorPerformanceCaveat;
+    WebCore::GraphicsContextGLPowerPreference powerPreference;
+    bool shareResources;
+    bool noExtensions;
+    float devicePixelRatio;
+    WebCore::GraphicsContextGLPowerPreference initialPowerPreference;
+    WebCore::GraphicsContextGLWebGLVersion webGLVersion;
+    bool forceRequestForHighPerformanceGPU;
+#if PLATFORM(MAC) || PLATFORM(MACCATALYST)
+    uint64_t windowGPUID;
+#endif
+#if PLATFORM(COCOA)
+    bool useMetal;
+#endif
+#if ENABLE(WEBXR)
+    bool xrCompatible;
+#endif
+};
+#endif

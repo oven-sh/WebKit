@@ -106,7 +106,10 @@ bool RemoteScrollingCoordinatorProxy::handleWheelEvent(const PlatformWheelEvent&
     if (m_scrollingTree->willWheelEventStartSwipeGesture(wheelEvent))
         return false;
 
-    auto result = m_scrollingTree->handleWheelEvent(wheelEvent);
+    m_scrollingTree->willProcessWheelEvent();
+
+    auto filteredEvent = filteredWheelEvent(wheelEvent);
+    auto result = m_scrollingTree->handleWheelEvent(filteredEvent);
     didReceiveWheelEvent(result.wasHandled);
     return result.wasHandled;
 }
@@ -276,6 +279,11 @@ void RemoteScrollingCoordinatorProxy::resetStateAfterProcessExited()
 void RemoteScrollingCoordinatorProxy::reportExposedUnfilledArea(MonotonicTime timestamp, unsigned unfilledArea)
 {
     m_webPageProxy.logScrollingEvent(static_cast<uint32_t>(PerformanceLoggingClient::ScrollingEvent::ExposedTilelessArea), timestamp, unfilledArea);
+}
+
+void RemoteScrollingCoordinatorProxy::reportSynchronousScrollingReasonsChanged(MonotonicTime timestamp, OptionSet<SynchronousScrollingReason> reasons)
+{
+    m_webPageProxy.logScrollingEvent(static_cast<uint32_t>(PerformanceLoggingClient::ScrollingEvent::SwitchedScrollingMode), timestamp, reasons.toRaw());
 }
 
 } // namespace WebKit

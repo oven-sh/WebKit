@@ -113,8 +113,8 @@ void RenderGrid::styleDidChange(StyleDifference diff, const RenderStyle* oldStyl
 
 bool RenderGrid::explicitGridDidResize(const RenderStyle& oldStyle) const
 {
-    return oldStyle.gridColumns().size() != style().gridColumns().size()
-        || oldStyle.gridRows().size() != style().gridRows().size()
+    return oldStyle.gridColumnTrackSizes().size() != style().gridColumnTrackSizes().size()
+        || oldStyle.gridRowTrackSizes().size() != style().gridRowTrackSizes().size()
         || oldStyle.namedGridAreaColumnCount() != style().namedGridAreaColumnCount()
         || oldStyle.namedGridAreaRowCount() != style().namedGridAreaRowCount()
         || oldStyle.gridAutoRepeatColumns().size() != style().gridAutoRepeatColumns().size()
@@ -600,7 +600,7 @@ unsigned RenderGrid::computeAutoRepeatTracksCount(GridTrackSizingDirection direc
 
     // There will be always at least 1 auto-repeat track, so take it already into account when computing the total track size.
     LayoutUnit tracksSize = autoRepeatTracksSize;
-    auto& trackSizes = isRowAxis ? style().gridColumns() : style().gridRows();
+    auto& trackSizes = isRowAxis ? style().gridColumnTrackSizes() : style().gridRowTrackSizes();
 
     for (const auto& track : trackSizes) {
         bool hasDefiniteMaxTrackBreadth = track.maxTrackBreadth().isLength() && !track.maxTrackBreadth().isContentSized();
@@ -635,8 +635,8 @@ unsigned RenderGrid::computeAutoRepeatTracksCount(GridTrackSizingDirection direc
 std::unique_ptr<OrderedTrackIndexSet> RenderGrid::computeEmptyTracksForAutoRepeat(GridTrackSizingDirection direction) const
 {
     bool isRowAxis = direction == ForColumns;
-    if ((isRowAxis && style().gridAutoRepeatColumnsType() != AutoRepeatType::Fit)
-        || (!isRowAxis && style().gridAutoRepeatRowsType() != AutoRepeatType::Fit))
+    if ((isRowAxis && autoRepeatColumnsType() != AutoRepeatType::Fit)
+        || (!isRowAxis && autoRepeatRowsType() != AutoRepeatType::Fit))
         return nullptr;
 
     std::unique_ptr<OrderedTrackIndexSet> emptyTrackIndexes;
@@ -698,15 +698,43 @@ static GridArea insertIntoGrid(Grid& grid, RenderBox& child, const GridArea& are
     return clamped;
 }
 
-static inline bool isMasonryRows(const RenderStyle& style)
+// TODO: Update name of functions to 'areMasonryRows'.
+bool RenderGrid::isMasonryRows() const
 {
-    return style.gridMasonryRows();
+    return style().gridMasonryRows();
 }
 
-static inline bool isMasonryColumns(const RenderStyle& style)
+// Masonry Spec Section 2
+// "If masonry is specified for both grid-template-columns and grid-template-rows, then the used value for grid-template-columns is none,
+// and thus the inline axis will be the grid axis."
+bool RenderGrid::isMasonryColumns() const
 {
-    return !isMasonryRows(style) && style.gridMasonryColumns();
+    return !isMasonryRows() && style().gridMasonryColumns();
 }
+
+// Masonry Spec Section 2.3.1 repeat(auto-fit)
+// "repeat(auto-fit) behaves as repeat(auto-fill) when the other axis is a masonry axis."
+// We need to lie here that we are really an auto-fill instead of an auto-fit.
+AutoRepeatType RenderGrid::autoRepeatColumnsType() const
+{
+    auto autoRepeatColumns = style().gridAutoRepeatColumnsType();
+
+    if (isMasonryRows() && autoRepeatColumns == AutoRepeatType::Fit)
+        return AutoRepeatType::Fill;
+
+    return autoRepeatColumns;
+}
+
+AutoRepeatType RenderGrid::autoRepeatRowsType() const
+{
+    auto autoRepeatRow = style().gridAutoRepeatRowsType();
+
+    if (isMasonryColumns() && autoRepeatRow == AutoRepeatType::Fit)
+        return AutoRepeatType::Fill;
+
+    return autoRepeatRow;
+}
+
 
 // FIXME: We shouldn't have to pass the available logical width as argument. The problem is that
 // availableLogicalWidth() does always return a value even if we cannot resolve it like when
@@ -738,9 +766,9 @@ void RenderGrid::placeItemsOnGrid(std::optional<LayoutUnit> availableLogicalWidt
 
         // Grid items should use the grid area sizes instead of the containing block (grid container)
         // sizes, we initialize the overrides here if needed to ensure it.
-        if (!child->hasOverridingContainingBlockContentLogicalWidth() && !isMasonryColumns(style()))
+        if (!child->hasOverridingContainingBlockContentLogicalWidth() && !isMasonryColumns())
             child->setOverridingContainingBlockContentLogicalWidth(LayoutUnit());
-        if (!child->hasOverridingContainingBlockContentLogicalHeight() && !isMasonryRows(style()))
+        if (!child->hasOverridingContainingBlockContentLogicalHeight() && !isMasonryRows())
             child->setOverridingContainingBlockContentLogicalHeight(std::nullopt);
 
         GridArea area = currentGrid().gridItemArea(*child);
@@ -787,20 +815,12 @@ void RenderGrid::placeItemsOnGrid(std::optional<LayoutUnit> availableLogicalWidt
 
         // FIXME: We should be able to short circuit the initial placement (https://bugs.webkit.org/show_bug.cgi?id=248291)
         performAutoPlacement();
-
-        HashMap<RenderBox*, GridArea> firstTrackItems;
-        Vector<RenderBox*> itemsWithDefiniteGridAxisPosition;
-        Vector<RenderBox*> itemsWithIndefinitePosition;
-
-        collectMasonryItems(currentGrid(), gridAxisTracksBeforeAutoPlacement, masonryAxisDirection, firstTrackItems, itemsWithDefiniteGridAxisPosition, itemsWithIndefinitePosition);
-        currentGrid().setupGridForMasonryLayout();
-        populateExplicitGridAndOrderIterator();
-        m_masonryLayout.performMasonryPlacement(firstTrackItems, itemsWithDefiniteGridAxisPosition, itemsWithIndefinitePosition, masonryAxisDirection);
+        m_masonryLayout.performMasonryPlacement(gridAxisTracksBeforeAutoPlacement, masonryAxisDirection);
     };
 
-    if (isMasonryRows(style())) 
+    if (isMasonryRows())
         performMasonryPlacement(ForRows);
-    else if (isMasonryColumns(style()))
+    else if (isMasonryColumns())
         performMasonryPlacement(ForColumns);
     else
         performAutoPlacement();
@@ -816,52 +836,9 @@ void RenderGrid::placeItemsOnGrid(std::optional<LayoutUnit> availableLogicalWidt
 #endif
 }
 
-void RenderGrid::allocateSpaceForMasonryVectors(Vector<RenderBox*>& itemsWithDefiniteGridAxisPosition, Vector<RenderBox*>& itemsWithIndefinitePosition)
-{
-    auto gridCapacity = numTracks(ForRows) * numTracks(ForColumns);
-    itemsWithDefiniteGridAxisPosition.reserveInitialCapacity(gridCapacity / m_masonryDefiniteItemsQuarterCapacity);
-    itemsWithIndefinitePosition.reserveInitialCapacity(gridCapacity / m_masonryIndefiniteItemsHalfCapacity);
-}
-
 LayoutUnit RenderGrid::masonryContentSize() const
 {
     return m_masonryLayout.gridContentSize();
-}
-
-static bool itemGridAreaStartsAtFirstLine(const GridArea& area, GridTrackSizingDirection masonryDirection)
-{
-    return !(masonryDirection == ForRows ? area.rows.startLine() : area.columns.startLine());
-}
-
-bool RenderGrid::hasDefiniteGridAxisPosition(const RenderBox* child, GridTrackSizingDirection gridAxisDirection) const 
-{
-    auto itemSpan = GridPositionsResolver::resolveGridPositionsFromStyle(*this, *child, gridAxisDirection);
-    return !itemSpan.isIndefinite();
-}
-
-static bool itemGridAreaIsWithinImplicitGrid(const GridArea& area, unsigned gridAxisLinesCount, GridTrackSizingDirection gridAxisDirection)
-{
-    auto itemSpan = gridAxisDirection == ForColumns ? area.columns : area.rows;
-    return itemSpan.startLine() <  gridAxisLinesCount && itemSpan.endLine() < gridAxisLinesCount;
-}
-
-void RenderGrid::collectMasonryItems(Grid& grid, unsigned availableGridAxisTracks, GridTrackSizingDirection masonryDirection, HashMap<RenderBox*, GridArea>& itemsOnFirstTrack, Vector<RenderBox*>& itemsWithDefiniteGridAxisPosition, Vector<RenderBox*>& itemsWithIndefinitePosition) const
-{
-    ASSERT(availableGridAxisTracks);
-
-    auto gridAxisDirection = masonryDirection == ForRows ? ForColumns : ForRows;
-    for (auto* child = grid.orderIterator().first(); child; child = grid.orderIterator().next()) {
-        if (grid.orderIterator().shouldSkipChild(*child))
-            continue;
-
-        auto gridArea = grid.gridItemArea(*child);
-        if (itemsOnFirstTrack.size() != availableGridAxisTracks && itemGridAreaStartsAtFirstLine(gridArea, masonryDirection) && itemGridAreaIsWithinImplicitGrid(gridArea, availableGridAxisTracks + 1, gridAxisDirection))
-            itemsOnFirstTrack.add(child, gridArea);
-        else if (hasDefiniteGridAxisPosition(child, gridAxisDirection))
-            itemsWithDefiniteGridAxisPosition.append(child);
-        else 
-            itemsWithIndefinitePosition.append(child);
-    }
 }
 
 void RenderGrid::performGridItemsPreLayout(const GridTrackSizingAlgorithm& algorithm) const
@@ -1226,9 +1203,9 @@ void RenderGrid::layoutPositionedObject(RenderBox& child, bool relayoutChildren,
 LayoutUnit RenderGrid::gridAreaBreadthForChildIncludingAlignmentOffsets(const RenderBox& child, GridTrackSizingDirection direction) const
 {
     if (direction == ForRows) {
-        if (isMasonryRows(style()))
+        if (isMasonryRows())
             return isHorizontalWritingMode() ? child.height() + child.verticalMarginExtent() : child.width() + child.horizontalMarginExtent();
-    } else if (isMasonryColumns(style()))
+    } else if (isMasonryColumns())
         return isHorizontalWritingMode() ? child.width() + child.horizontalMarginExtent() : child.height() + child.verticalMarginExtent();
 
     // We need the cached value when available because Content Distribution alignment properties
@@ -1516,7 +1493,7 @@ LayoutUnit RenderGrid::baselinePosition(FontBaseline, bool, LineDirectionMode di
     ASSERT_UNUSED(mode, mode == PositionOnContainingLine);
     auto baseline = firstLineBaseline();
     if (!baseline)
-        return synthesizedBaselineFromBorderBox(*this, direction) + marginLogicalHeight();
+        return synthesizedBaseline(*this, *parentStyle(), direction, BorderBox) + marginLogicalHeight();
 
     return baseline.value() + (direction == HorizontalLine ? marginTop() : marginRight()).toInt();
 }
@@ -1538,7 +1515,7 @@ std::optional<LayoutUnit> RenderGrid::firstLineBaseline() const
         // FIXME: We should pass |direction| into firstLineBaseline and stop bailing out if we're a writing
         // mode root. This would also fix some cases where the grid is orthogonal to its container.
         LineDirectionMode direction = isHorizontalWritingMode() ? HorizontalLine : VerticalLine;
-        return synthesizedBaselineFromBorderBox(*baselineChild, direction) + logicalTopForChild(*baselineChild);
+        return synthesizedBaseline(*baselineChild, style(), direction, BorderBox) + logicalTopForChild(*baselineChild);
     }
     return baseline.value() + baselineChild->logicalTop().toInt();
 }
@@ -1555,7 +1532,7 @@ std::optional<LayoutUnit> RenderGrid::lastLineBaseline() const
     auto baseline = GridLayoutFunctions::isOrthogonalChild(*this, *baselineChild) ? std::nullopt : baselineChild->lastLineBaseline();
     if (!baseline) {
         LineDirectionMode direction = isHorizontalWritingMode() ? HorizontalLine : VerticalLine;
-        return synthesizedBaselineFromBorderBox(*baselineChild, direction) + logicalTopForChild(*baselineChild);
+        return synthesizedBaseline(*baselineChild, style(), direction, BorderBox) + logicalTopForChild(*baselineChild);
 
     }
 
@@ -1758,7 +1735,7 @@ LayoutUnit RenderGrid::columnAxisOffsetForChild(const RenderBox& child) const
     gridAreaPositionForChild(child, ForRows, startOfRow, endOfRow);
     LayoutUnit startPosition = startOfRow + marginBeforeForChild(child);
     LayoutUnit columnAxisChildSize = GridLayoutFunctions::isOrthogonalChild(*this, child) ? child.logicalWidth() + child.marginLogicalWidth() : child.logicalHeight() + child.marginLogicalHeight();
-    LayoutUnit masonryOffset = isMasonryRows(style()) ? m_masonryLayout.offsetForChild(child) : 0_lu;
+    LayoutUnit masonryOffset = isMasonryRows() ? m_masonryLayout.offsetForChild(child) : 0_lu;
     auto overflow = alignSelfForChild(child).overflow();
         LayoutUnit offsetFromStartPosition = computeOverflowAlignmentOffset(overflow, endOfRow - startOfRow, columnAxisChildSize);
     if (hasAutoMarginsInColumnAxis(child))
@@ -1783,7 +1760,7 @@ LayoutUnit RenderGrid::rowAxisOffsetForChild(const RenderBox& child) const
     LayoutUnit endOfColumn;
     gridAreaPositionForChild(child, ForColumns, startOfColumn, endOfColumn);
     LayoutUnit startPosition = startOfColumn + marginStartForChild(child);
-    LayoutUnit masonryOffset = isMasonryColumns(style()) ? m_masonryLayout.offsetForChild(child) : 0_lu;
+    LayoutUnit masonryOffset = isMasonryColumns() ? m_masonryLayout.offsetForChild(child) : 0_lu;
     if (hasAutoMarginsInRowAxis(child))
         return startPosition;
     GridAxisPosition axisPosition = rowAxisPositionForChild(child);

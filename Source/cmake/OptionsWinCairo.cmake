@@ -79,12 +79,13 @@ cmake_pop_check_state()
 # CoreFoundation is required when building WebKitLegacy
 if (ENABLE_WEBKIT_LEGACY)
     SET_AND_EXPOSE_TO_BUILD(USE_CF ON)
-    set(COREFOUNDATION_LIBRARY CFlite)
+    find_package(Apple REQUIRED COMPONENTS CoreFoundation)
 endif ()
 
 add_definitions(-DWTF_PLATFORM_WIN_CAIRO=1)
 add_definitions(-DNOCRYPT)
 
 # Override library types
-set(WebCore_LIBRARY_TYPE OBJECT)
+set(PAL_LIBRARY_TYPE OBJECT)
+set(WebCore_LIBRARY_TYPE SHARED)
 set(WebCoreTestSupport_LIBRARY_TYPE OBJECT)

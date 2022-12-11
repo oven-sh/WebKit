@@ -146,10 +146,15 @@ $(PROJECT_DIR)/Scripts/webkit/model.py
 $(PROJECT_DIR)/Scripts/webkit/parser.py
 $(PROJECT_DIR)/Shared/API/APIGeometry.serialization.in
 $(PROJECT_DIR)/Shared/API/Cocoa/RemoteObjectRegistry.messages.in
+$(PROJECT_DIR)/Shared/ApplePay/ApplePayPaymentSetupFeatures.serialization.in
+$(PROJECT_DIR)/Shared/ApplePay/PaymentSetupConfiguration.serialization.in
 $(PROJECT_DIR)/Shared/ApplePay/WebPaymentCoordinatorProxy.messages.in
 $(PROJECT_DIR)/Shared/Authentication/AuthenticationManager.messages.in
 $(PROJECT_DIR)/Shared/AuxiliaryProcess.messages.in
+$(PROJECT_DIR)/Shared/Cocoa/DataDetectionResult.serialization.in
+$(PROJECT_DIR)/Shared/Cocoa/RevealItem.serialization.in
 $(PROJECT_DIR)/Shared/Cocoa/WebCoreArgumentCodersCocoa.serialization.in
+$(PROJECT_DIR)/Shared/Databases/IndexedDB/WebIDBResult.serialization.in
 $(PROJECT_DIR)/Shared/EditorState.serialization.in
 $(PROJECT_DIR)/Shared/FocusedElementInformation.serialization.in
 $(PROJECT_DIR)/Shared/FrameInfoData.serialization.in
@@ -176,7 +181,6 @@ $(PROJECT_DIR)/Shared/WebCoreArgumentCoders.serialization.in
 $(PROJECT_DIR)/Shared/WebEvent.serialization.in
 $(PROJECT_DIR)/Shared/WebExtensionContextParameters.serialization.in
 $(PROJECT_DIR)/Shared/WebExtensionControllerParameters.serialization.in
-$(PROJECT_DIR)/Shared/WebHitTestResultData.serialization.in
 $(PROJECT_DIR)/Shared/WebGPU/WebGPUBindGroupDescriptor.serialization.in
 $(PROJECT_DIR)/Shared/WebGPU/WebGPUBindGroupEntry.serialization.in
 $(PROJECT_DIR)/Shared/WebGPU/WebGPUBindGroupLayoutDescriptor.serialization.in
@@ -243,6 +247,8 @@ $(PROJECT_DIR)/Shared/WebGPU/WebGPUValidationError.serialization.in
 $(PROJECT_DIR)/Shared/WebGPU/WebGPUVertexAttribute.serialization.in
 $(PROJECT_DIR)/Shared/WebGPU/WebGPUVertexBufferLayout.serialization.in
 $(PROJECT_DIR)/Shared/WebGPU/WebGPUVertexState.serialization.in
+$(PROJECT_DIR)/Shared/WebHitTestResultData.serialization.in
+$(PROJECT_DIR)/Shared/WebPopupItem.serialization.in
 $(PROJECT_DIR)/Shared/WebPushDaemonConnectionConfiguration.serialization.in
 $(PROJECT_DIR)/Shared/WebPushMessage.serialization.in
 $(PROJECT_DIR)/Shared/WebsiteData/WebsiteDataFetchOption.serialization.in
@@ -302,10 +308,13 @@ $(PROJECT_DIR)/WebProcess/Cache/WebCacheStorageConnection.messages.in
 $(PROJECT_DIR)/WebProcess/Databases/IndexedDB/WebIDBConnectionToServer.messages.in
 $(PROJECT_DIR)/WebProcess/Extensions/Bindings/Scripts/CodeGeneratorExtensions.pm
 $(PROJECT_DIR)/WebProcess/Extensions/Bindings/Scripts/IDLAttributes.json
+$(PROJECT_DIR)/WebProcess/Extensions/Interfaces/WebExtensionAPIEvent.idl
 $(PROJECT_DIR)/WebProcess/Extensions/Interfaces/WebExtensionAPIExtension.idl
 $(PROJECT_DIR)/WebProcess/Extensions/Interfaces/WebExtensionAPINamespace.idl
 $(PROJECT_DIR)/WebProcess/Extensions/Interfaces/WebExtensionAPIRuntime.idl
 $(PROJECT_DIR)/WebProcess/Extensions/Interfaces/WebExtensionAPITest.idl
+$(PROJECT_DIR)/WebProcess/Extensions/Interfaces/WebExtensionAPIWebNavigation.idl
+$(PROJECT_DIR)/WebProcess/Extensions/Interfaces/WebExtensionAPIWebNavigationEvent.idl
 $(PROJECT_DIR)/WebProcess/Extensions/WebExtensionContextProxy.messages.in
 $(PROJECT_DIR)/WebProcess/Extensions/WebExtensionControllerProxy.messages.in
 $(PROJECT_DIR)/WebProcess/FullScreen/WebFullScreenManager.messages.in

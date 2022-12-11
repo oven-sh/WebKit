@@ -878,15 +878,13 @@ double WKPageGetGapBetweenPages(WKPageRef pageRef)
     return toImpl(pageRef)->gapBetweenPages();
 }
 
-void WKPageSetPaginationLineGridEnabled(WKPageRef pageRef, bool lineGridEnabled)
+void WKPageSetPaginationLineGridEnabled(WKPageRef, bool)
 {
-    CRASH_IF_SUSPENDED;
-    toImpl(pageRef)->setPaginationLineGridEnabled(lineGridEnabled);
 }
 
-bool WKPageGetPaginationLineGridEnabled(WKPageRef pageRef)
+bool WKPageGetPaginationLineGridEnabled(WKPageRef)
 {
-    return toImpl(pageRef)->paginationLineGridEnabled();
+    return false;
 }
 
 unsigned WKPageGetPageCount(WKPageRef pageRef)
@@ -2882,7 +2880,7 @@ WKArrayRef WKPageCopyRelatedPages(WKPageRef pageRef)
     Vector<RefPtr<API::Object>> relatedPages;
 
     for (auto& page : toImpl(pageRef)->process().pages()) {
-        if (page != toImpl(pageRef))
+        if (page.get() != toImpl(pageRef))
             relatedPages.append(page);
     }
 

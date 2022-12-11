@@ -545,8 +545,6 @@ public:
     // FrameView.
     const Pagination& pagination() const { return m_pagination; }
     WEBCORE_EXPORT void setPagination(const Pagination&);
-    bool paginationLineGridEnabled() const { return m_paginationLineGridEnabled; }
-    WEBCORE_EXPORT void setPaginationLineGridEnabled(bool flag);
 
     WEBCORE_EXPORT unsigned pageCount() const;
 
@@ -658,7 +656,9 @@ public:
     WEBCORE_EXPORT void resumeScriptedAnimations();
     bool scriptedAnimationsSuspended() const { return m_scriptedAnimationsSuspended; }
 
+#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
     WEBCORE_EXPORT void setImageAnimationEnabled(bool);
+#endif
     bool imageAnimationEnabled() const { return m_imageAnimationEnabled; }
 
     void userStyleSheetLocationChanged();
@@ -694,7 +694,10 @@ public:
     // This seems like a reasonable upper bound, and otherwise mutually
     // recursive frameset pages can quickly bring the program to its knees
     // with exponential growth in the number of frames.
-    static const int maxNumberOfFrames = 1000;
+    static constexpr int maxNumberOfFrames = 1000;
+
+    // Don't allow more than a certain frame depth to avoid stack exhaustion.
+    static constexpr int maxFrameDepth = 32;
 
     void setEditable(bool isEditable) { m_isEditable = isEditable; }
     bool isEditable() const { return m_isEditable; }
@@ -1139,7 +1142,6 @@ private:
     ScrollElasticity m_horizontalScrollElasticity { ScrollElasticity::Allowed };
 
     Pagination m_pagination;
-    bool m_paginationLineGridEnabled { false };
 
     String m_userStyleSheetPath;
     mutable String m_userStyleSheet;

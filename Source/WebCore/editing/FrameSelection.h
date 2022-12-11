@@ -68,6 +68,7 @@ protected:
     void clearCaretRect();
     bool updateCaretRect(Document&, const VisiblePosition& caretPosition);
     bool shouldRepaintCaret(const RenderView*, bool isContentEditable) const;
+    void fillCaretRect(const Node&, GraphicsContext&, const FloatRect&, const Color&) const;
     void paintCaret(const Node&, GraphicsContext&, const LayoutPoint&, const LayoutRect& clipRect) const;
 
     const LayoutRect& localCaretRectWithoutUpdate() const { return m_caretLocalRect; }
@@ -205,7 +206,7 @@ public:
     WEBCORE_EXPORT void setCaretBlinkingSuspended(bool);
     WEBCORE_EXPORT bool isCaretBlinkingSuspended() const;
 
-    void setFocused(bool);
+    WEBCORE_EXPORT void setFocused(bool);
     bool isFocused() const { return m_focused; }
     WEBCORE_EXPORT bool isFocusedAndActive() const;
     void pageActivationChanged();

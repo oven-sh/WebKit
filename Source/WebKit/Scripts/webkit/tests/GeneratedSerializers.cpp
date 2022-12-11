@@ -89,25 +89,22 @@ void ArgumentCoder<Namespace::Subnamespace::StructName>::encode(OtherEncoder& en
 
 std::optional<Namespace::Subnamespace::StructName> ArgumentCoder<Namespace::Subnamespace::StructName>::decode(Decoder& decoder)
 {
-    std::optional<FirstMemberType> firstMemberName;
-    decoder >> firstMemberName;
+    auto firstMemberName = decoder.decode<FirstMemberType>();
     if (!firstMemberName)
         return std::nullopt;
 
 #if ENABLE(SECOND_MEMBER)
-    std::optional<SecondMemberType> secondMemberName;
-    decoder >> secondMemberName;
+    auto secondMemberName = decoder.decode<SecondMemberType>();
     if (!secondMemberName)
         return std::nullopt;
 #endif
 
-    std::optional<RetainPtr<CFTypeRef>> nullableTestMember;
-    std::optional<bool> hasnullableTestMember;
-    decoder >> hasnullableTestMember;
+    auto hasnullableTestMember = decoder.decode<bool>();
     if (!hasnullableTestMember)
         return std::nullopt;
+    std::optional<RetainPtr<CFTypeRef>> nullableTestMember;
     if (*hasnullableTestMember) {
-        decoder >> nullableTestMember;
+        nullableTestMember = decoder.decode<RetainPtr<CFTypeRef>>();
         if (!nullableTestMember)
             return std::nullopt;
     } else
@@ -115,11 +112,11 @@ std::optional<Namespace::Subnamespace::StructName> ArgumentCoder<Namespace::Subn
 
     return {
         Namespace::Subnamespace::StructName {
-            WTFMove(*firstMemberName)
+            WTFMove(*firstMemberName),
 #if ENABLE(SECOND_MEMBER)
-            , WTFMove(*secondMemberName)
+            WTFMove(*secondMemberName),
 #endif
-            , WTFMove(*nullableTestMember)
+            WTFMove(*nullableTestMember)
         }
     };
 }
@@ -143,34 +140,30 @@ void ArgumentCoder<Namespace::OtherClass>::encode(Encoder& encoder, const Namesp
 
 std::optional<Namespace::OtherClass> ArgumentCoder<Namespace::OtherClass>::decode(Decoder& decoder)
 {
-    std::optional<bool> isNull;
-    decoder >> isNull;
+    auto isNull = decoder.decode<bool>();
     if (!isNull)
         return std::nullopt;
     if (*isNull)
         return { Namespace::OtherClass { } };
 
-    std::optional<int> a;
-    decoder >> a;
+    auto a = decoder.decode<int>();
     if (!a)
         return std::nullopt;
 
-    std::optional<bool> b;
-    decoder >> b;
+    auto b = decoder.decode<bool>();
     if (!b)
         return std::nullopt;
 
-    std::optional<RetainPtr<NSArray>> dataDetectorResults;
-    dataDetectorResults = IPC::decode<NSArray>(decoder, @[ NSArray.class, PAL::getDDScannerResultClass() ]);
+    auto dataDetectorResults = IPC::decode<NSArray>(decoder, @[ NSArray.class, PAL::getDDScannerResultClass() ]);
     if (!dataDetectorResults)
         return std::nullopt;
 
     return {
         Namespace::OtherClass {
-            WTFMove(*isNull)
-            , WTFMove(*a)
-            , WTFMove(*b)
-            , WTFMove(*dataDetectorResults)
+            WTFMove(*isNull),
+            WTFMove(*a),
+            WTFMove(*b),
+            WTFMove(*dataDetectorResults)
         }
     };
 }
@@ -183,42 +176,28 @@ void ArgumentCoder<Namespace::ReturnRefClass>::encode(Encoder& encoder, const Na
     static_assert(std::is_same_v<std::remove_cvref_t<decltype(instance.uniqueMember)>, std::unique_ptr<int>>);
     encoder << instance.functionCall().member1;
     encoder << instance.functionCall().member2;
-    encoder << !!instance.uniqueMember;
-    if (!!instance.uniqueMember)
-        encoder << *instance.uniqueMember;
+    encoder << instance.uniqueMember;
 }
 
 std::optional<Ref<Namespace::ReturnRefClass>> ArgumentCoder<Namespace::ReturnRefClass>::decode(Decoder& decoder)
 {
-    std::optional<double> functionCallmember1;
-    decoder >> functionCallmember1;
+    auto functionCallmember1 = decoder.decode<double>();
     if (!functionCallmember1)
         return std::nullopt;
 
-    std::optional<double> functionCallmember2;
-    decoder >> functionCallmember2;
+    auto functionCallmember2 = decoder.decode<double>();
     if (!functionCallmember2)
         return std::nullopt;
 
-    std::optional<std::unique_ptr<int>> uniqueMember;
-    std::optional<bool> hasuniqueMember;
-    decoder >> hasuniqueMember;
-    if (!hasuniqueMember)
+    auto uniqueMember = decoder.decode<std::unique_ptr<int>>();
+    if (!uniqueMember)
         return std::nullopt;
-    if (*hasuniqueMember) {
-        std::optional<int> contents;
-        decoder >> contents;
-        if (!contents)
-            return std::nullopt;
-        uniqueMember= makeUnique<int>(WTFMove(*contents));
-    } else
-        uniqueMember = std::optional<std::unique_ptr<int>> { std::unique_ptr<int> { } };
 
     return {
         Namespace::ReturnRefClass::create(
-            WTFMove(*functionCallmember1)
-            , WTFMove(*functionCallmember2)
-            , WTFMove(*uniqueMember)
+            WTFMove(*functionCallmember1),
+            WTFMove(*functionCallmember2),
+            WTFMove(*uniqueMember)
         )
     };
 }
@@ -234,13 +213,11 @@ void ArgumentCoder<Namespace::EmptyConstructorStruct>::encode(Encoder& encoder, 
 
 std::optional<Namespace::EmptyConstructorStruct> ArgumentCoder<Namespace::EmptyConstructorStruct>::decode(Decoder& decoder)
 {
-    std::optional<int> m_int;
-    decoder >> m_int;
+    auto m_int = decoder.decode<int>();
     if (!m_int)
         return std::nullopt;
 
-    std::optional<double> m_double;
-    decoder >> m_double;
+    auto m_double = decoder.decode<double>();
     if (!m_double)
         return std::nullopt;
 
@@ -273,23 +250,20 @@ void ArgumentCoder<Namespace::EmptyConstructorNullable>::encode(Encoder& encoder
 
 std::optional<Namespace::EmptyConstructorNullable> ArgumentCoder<Namespace::EmptyConstructorNullable>::decode(Decoder& decoder)
 {
-    std::optional<bool> m_isNull;
-    decoder >> m_isNull;
+    auto m_isNull = decoder.decode<bool>();
     if (!m_isNull)
         return std::nullopt;
     if (*m_isNull)
         return { Namespace::EmptyConstructorNullable { } };
 
 #if CONDITION_AROUND_M_TYPE_AND_M_VALUE
-    std::optional<MemberType> m_type;
-    decoder >> m_type;
+    auto m_type = decoder.decode<MemberType>();
     if (!m_type)
         return std::nullopt;
 #endif
 
 #if CONDITION_AROUND_M_TYPE_AND_M_VALUE
-    std::optional<OtherMemberType> m_value;
-    decoder >> m_value;
+    auto m_value = decoder.decode<OtherMemberType>();
     if (!m_value)
         return std::nullopt;
 #endif
@@ -314,8 +288,7 @@ void ArgumentCoder<WithoutNamespace>::encode(Encoder& encoder, const WithoutName
 
 std::optional<WithoutNamespace> ArgumentCoder<WithoutNamespace>::decode(Decoder& decoder)
 {
-    std::optional<int> a;
-    decoder >> a;
+    auto a = decoder.decode<int>();
     if (!a)
         return std::nullopt;
 
@@ -341,8 +314,7 @@ void ArgumentCoder<WithoutNamespaceWithAttributes>::encode(OtherEncoder& encoder
 
 std::optional<WithoutNamespaceWithAttributes> ArgumentCoder<WithoutNamespaceWithAttributes>::decode(Decoder& decoder)
 {
-    std::optional<int> a;
-    decoder >> a;
+    auto a = decoder.decode<int>();
     if (!a)
         return std::nullopt;
 
@@ -364,13 +336,11 @@ void ArgumentCoder<WebCore::InheritsFrom>::encode(Encoder& encoder, const WebCor
 
 std::optional<WebCore::InheritsFrom> ArgumentCoder<WebCore::InheritsFrom>::decode(Decoder& decoder)
 {
-    std::optional<int> a;
-    decoder >> a;
+    auto a = decoder.decode<int>();
     if (!a)
         return std::nullopt;
 
-    std::optional<float> b;
-    decoder >> b;
+    auto b = decoder.decode<float>();
     if (!b)
         return std::nullopt;
 
@@ -378,9 +348,8 @@ std::optional<WebCore::InheritsFrom> ArgumentCoder<WebCore::InheritsFrom>::decod
         WebCore::InheritsFrom {
             WithoutNamespace {
                 WTFMove(*a)
-            }
-            
-            , WTFMove(*b)
+            },
+            WTFMove(*b)
         }
     };
 }
@@ -398,18 +367,15 @@ void ArgumentCoder<WebCore::InheritanceGrandchild>::encode(Encoder& encoder, con
 
 std::optional<WebCore::InheritanceGrandchild> ArgumentCoder<WebCore::InheritanceGrandchild>::decode(Decoder& decoder)
 {
-    std::optional<int> a;
-    decoder >> a;
+    auto a = decoder.decode<int>();
     if (!a)
         return std::nullopt;
 
-    std::optional<float> b;
-    decoder >> b;
+    auto b = decoder.decode<float>();
     if (!b)
         return std::nullopt;
 
-    std::optional<double> c;
-    decoder >> c;
+    auto c = decoder.decode<double>();
     if (!c)
         return std::nullopt;
 
@@ -418,12 +384,10 @@ std::optional<WebCore::InheritanceGrandchild> ArgumentCoder<WebCore::Inheritance
             WebCore::InheritsFrom {
                 WithoutNamespace {
                     WTFMove(*a)
-                }
-                
-                , WTFMove(*b)
-            }
-            
-            , WTFMove(*c)
+                },
+                WTFMove(*b)
+            },
+            WTFMove(*c)
         }
     };
 }
@@ -437,8 +401,7 @@ void ArgumentCoder<WTF::Seconds>::encode(Encoder& encoder, const WTF::Seconds& i
 
 std::optional<WTF::Seconds> ArgumentCoder<WTF::Seconds>::decode(Decoder& decoder)
 {
-    std::optional<double> value;
-    decoder >> value;
+    auto value = decoder.decode<double>();
     if (!value)
         return std::nullopt;
 
@@ -458,8 +421,7 @@ void ArgumentCoder<WTF::CreateUsingClass>::encode(Encoder& encoder, const WTF::C
 
 std::optional<WTF::CreateUsingClass> ArgumentCoder<WTF::CreateUsingClass>::decode(Decoder& decoder)
 {
-    std::optional<double> value;
-    decoder >> value;
+    auto value = decoder.decode<double>();
     if (!value)
         return std::nullopt;
 
@@ -485,23 +447,19 @@ void ArgumentCoder<WebCore::FloatBoxExtent>::encode(Encoder& encoder, const WebC
 
 std::optional<WebCore::FloatBoxExtent> ArgumentCoder<WebCore::FloatBoxExtent>::decode(Decoder& decoder)
 {
-    std::optional<float> top;
-    decoder >> top;
+    auto top = decoder.decode<float>();
     if (!top)
         return std::nullopt;
 
-    std::optional<float> right;
-    decoder >> right;
+    auto right = decoder.decode<float>();
     if (!right)
         return std::nullopt;
 
-    std::optional<float> bottom;
-    decoder >> bottom;
+    auto bottom = decoder.decode<float>();
     if (!bottom)
         return std::nullopt;
 
-    std::optional<float> left;
-    decoder >> left;
+    auto left = decoder.decode<float>();
     if (!left)
         return std::nullopt;
 
@@ -511,6 +469,42 @@ std::optional<WebCore::FloatBoxExtent> ArgumentCoder<WebCore::FloatBoxExtent>::d
             WTFMove(*right),
             WTFMove(*bottom),
             WTFMove(*left)
+        }
+    };
+}
+
+
+void ArgumentCoder<NullableSoftLinkedMember>::encode(Encoder& encoder, const NullableSoftLinkedMember& instance)
+{
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(instance.firstMember)>, RetainPtr<DDActionContext>>);
+    static_assert(std::is_same_v<std::remove_cvref_t<decltype(instance.secondMember)>, RetainPtr<DDActionContext>>);
+    encoder << !!instance.firstMember;
+    if (!!instance.firstMember)
+        encoder << instance.firstMember;
+    encoder << instance.secondMember;
+}
+
+std::optional<NullableSoftLinkedMember> ArgumentCoder<NullableSoftLinkedMember>::decode(Decoder& decoder)
+{
+    auto hasfirstMember = decoder.decode<bool>();
+    if (!hasfirstMember)
+        return std::nullopt;
+    std::optional<RetainPtr<DDActionContext>> firstMember;
+    if (*hasfirstMember) {
+        firstMember = IPC::decode<DDActionContext>(decoder, PAL::getDDActionContextClass());
+        if (!firstMember)
+            return std::nullopt;
+    } else
+        firstMember = std::optional<RetainPtr<DDActionContext>> { RetainPtr<DDActionContext> { } };
+
+    auto secondMember = IPC::decode<DDActionContext>(decoder, PAL::getDDActionContextClass());
+    if (!secondMember)
+        return std::nullopt;
+
+    return {
+        NullableSoftLinkedMember {
+            WTFMove(*firstMember),
+            WTFMove(*secondMember)
         }
     };
 }

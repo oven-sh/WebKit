@@ -68,3 +68,6 @@ __cmake_systeminformation/
 LocalOverrides.xcconfig
 DerivedData
 /BenchmarkTemp
+
+# Ignore the external git repo of cog
+Tools/wpe/cog

@@ -50,6 +50,11 @@ public:
 
 private:
     void handleWheelEventPhase(WebCore::ScrollingNodeID, WebCore::PlatformWheelEventPhase) final;
+    RefPtr<WebCore::ScrollingTreeNode> scrollingNodeForPoint(WebCore::FloatPoint) final;
+#if ENABLE(WHEEL_EVENT_REGIONS)
+    OptionSet<WebCore::EventListenerRegionType> eventListenerRegionTypesForPoint(WebCore::FloatPoint) const final;
+#endif
+
     void hasNodeWithAnimatedScrollChanged(bool) final;
     void displayDidRefresh(WebCore::PlatformDisplayID) final;
 

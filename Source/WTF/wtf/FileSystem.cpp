@@ -130,21 +130,18 @@ static inline bool shouldEscapeUChar(UChar character, UChar previousCharacter, U
 
 #if HAVE(STD_FILESYSTEM) || HAVE(STD_EXPERIMENTAL_FILESYSTEM)
 
-template<typename ClockType, typename = void> struct has_to_time_t : std::false_type { };
-template<typename ClockType> struct has_to_time_t<ClockType, std::void_t<
+template<typename, typename = void> inline constexpr bool HasToTimeT = false;
+template<typename ClockType> inline constexpr bool HasToTimeT<ClockType, std::void_t<
     std::enable_if_t<std::is_same_v<std::time_t, decltype(ClockType::to_time_t(std::filesystem::file_time_type()))>>
->> : std::true_type { };
+>> = true;
 
 template <typename FileTimeType>
-typename std::enable_if_t<has_to_time_t<typename FileTimeType::clock>::value, std::time_t> toTimeT(FileTimeType fileTime)
+typename std::time_t toTimeT(FileTimeType fileTime)
 {
-    return decltype(fileTime)::clock::to_time_t(fileTime);
-}
-
-template <typename FileTimeType>
-typename std::enable_if_t<!has_to_time_t<typename FileTimeType::clock>::value, std::time_t> toTimeT(FileTimeType fileTime)
-{
-    return std::chrono::system_clock::to_time_t(std::chrono::time_point_cast<std::chrono::system_clock::duration>(fileTime - decltype(fileTime)::clock::now() + std::chrono::system_clock::now()));
+    if constexpr (HasToTimeT<typename FileTimeType::clock>)
+        return decltype(fileTime)::clock::to_time_t(fileTime);
+    else
+        return std::chrono::system_clock::to_time_t(std::chrono::time_point_cast<std::chrono::system_clock::duration>(fileTime - decltype(fileTime)::clock::now() + std::chrono::system_clock::now()));
 }
 
 static WallTime toWallTime(std::filesystem::file_time_type fileTime)
@@ -431,6 +428,11 @@ bool setExcludedFromBackup(const String&, bool)
     return false;
 }
 
+bool markPurgeable(const String&)
+{
+    return false;
+}
+
 #endif
 
 MappedFileData createMappedFileData(const String& path, size_t bytesSize, PlatformFileHandle* outputHandle)
@@ -660,6 +662,32 @@ std::optional<uint64_t> fileSize(const String& path)
     auto size = std::filesystem::file_size(toStdFileSystemPath(path), ec);
     if (ec)
         return std::nullopt;
+    return size;
+}
+
+std::optional<uint64_t> directorySize(const String& path)
+{
+    if (path.isEmpty())
+        return std::nullopt;
+
+    std::error_code ec;
+    auto stdPath = toStdFileSystemPath(path);
+    if (!std::filesystem::is_directory(stdPath, ec))
+        return std::nullopt;
+
+    CheckedUint64 size = 0;
+    for (auto& entry : std::filesystem::recursive_directory_iterator(stdPath, ec)) {
+        if (ec)
+            return std::nullopt;
+        auto filePath = fromStdFileSystemPath(entry.path());
+        if (entry.is_regular_file(ec) && !ec)
+            size += entry.file_size(ec);
+        if (ec)
+            return std::nullopt;
+        if (size.hasOverflowed())
+            return std::nullopt;
+    }
+
     return size;
 }
 

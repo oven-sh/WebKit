@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 Apple Inc.  All rights reserved.
+ * Copyright (C) 2022 Apple Inc. All rights reserved.
  * Copyright (C) 2012 Motorola Mobility Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -62,6 +62,9 @@ bool DOMCSSNamespace::supports(Document& document, const String& property, const
         return false;
 
     if (propertyID == CSSPropertyInvalid)
+        return false;
+
+    if (value.isEmpty())
         return false;
 
     auto dummyStyle = MutableStyleProperties::create();

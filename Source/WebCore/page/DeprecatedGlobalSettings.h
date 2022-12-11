@@ -34,7 +34,7 @@ namespace WebCore {
 class DeprecatedGlobalSettings {
 public:
 #if PLATFORM(WIN)
-    static void setShouldUseHighResolutionTimers(bool);
+    WEBCORE_EXPORT static void setShouldUseHighResolutionTimers(bool);
     static bool shouldUseHighResolutionTimers() { return shared().m_shouldUseHighResolutionTimers; }
 #endif
 
@@ -239,11 +239,6 @@ public:
     static bool webMParserEnabled() { return shared().m_webMParserEnabled; }
 #endif
 
-#if HAVE(CELESTIAL)
-    static void setDisableMediaExperiencePIDInheritance(bool isDisabled) { shared().m_disableMediaExperiencePIDInheritance = isDisabled; }
-    static bool disableMediaExperiencePIDInheritance() { return shared().m_disableMediaExperiencePIDInheritance; }
-#endif
-
 #if ENABLE(VORBIS)
     WEBCORE_EXPORT static void setVorbisDecoderEnabled(bool isEnabled);
     static bool vorbisDecoderEnabled() { return shared().m_vorbisDecoderEnabled; }
@@ -408,10 +403,6 @@ private:
 
 #if ENABLE(MEDIA_SOURCE)
     bool m_webMParserEnabled { false };
-#endif
-
-#if HAVE(CELESTIAL)
-    bool m_disableMediaExperiencePIDInheritance { false };
 #endif
 
 #if ENABLE(VORBIS)

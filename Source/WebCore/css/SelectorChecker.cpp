@@ -1040,14 +1040,14 @@ bool SelectorChecker::checkOne(CheckingContext& checkingContext, const LocalCont
             ASSERT(selector.argumentList() && !selector.argumentList()->isEmpty());
             return matchesLangPseudoClass(element, *selector.argumentList());
 #if ENABLE(FULLSCREEN_API)
-        case CSSSelector::PseudoClassFullScreen:
-            return matchesFullScreenPseudoClass(element);
+        case CSSSelector::PseudoClassFullscreen:
+            return matchesFullscreenPseudoClass(element);
+        case CSSSelector::PseudoClassWebkitFullScreen:
+            return matchesWebkitFullScreenPseudoClass(element);
         case CSSSelector::PseudoClassAnimatingFullScreenTransition:
             return matchesFullScreenAnimatingFullScreenTransitionPseudoClass(element);
         case CSSSelector::PseudoClassFullScreenAncestor:
             return matchesFullScreenAncestorPseudoClass(element);
-        case CSSSelector::PseudoClassFullScreenParent:
-            return matchesFullScreenParentPseudoClass(element);
         case CSSSelector::PseudoClassFullScreenDocument:
             return matchesFullScreenDocumentPseudoClass(element);
         case CSSSelector::PseudoClassFullScreenControlsHidden:

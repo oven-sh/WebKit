@@ -125,6 +125,8 @@ class TransformationMatrix;
 struct ScrollSnapAlign;
 struct ScrollSnapType;
 
+struct TextEdge;
+
 using PseudoStyleCache = Vector<std::unique_ptr<RenderStyle>, 4>;
 
 template<typename T, typename U> inline bool compareEqual(const T& t, const U& u) { return t == static_cast<const T&>(u); }
@@ -397,6 +399,7 @@ public:
     TextJustify textJustify() const { return static_cast<TextJustify>(m_rareInheritedData->textJustify); }
 
     LeadingTrim leadingTrim() const { return static_cast<LeadingTrim>(m_rareNonInheritedData->leadingTrim); }
+    TextEdge textEdge() const;
 
     const Length& wordSpacing() const;
     float letterSpacing() const;
@@ -524,6 +527,18 @@ public:
     AspectRatioType aspectRatioType() const { return static_cast<AspectRatioType>(m_rareNonInheritedData->aspectRatioType); }
     double aspectRatioWidth() const { return m_rareNonInheritedData->aspectRatioWidth; }
     double aspectRatioHeight() const { return m_rareNonInheritedData->aspectRatioHeight; }
+    double aspectRatioLogicalWidth() const
+    {
+        if (isHorizontalWritingMode())
+            return aspectRatioWidth();
+        return aspectRatioHeight();
+    }
+    double aspectRatioLogicalHeight() const
+    {
+        if (isHorizontalWritingMode())
+            return aspectRatioHeight();
+        return aspectRatioWidth();
+    }
     double logicalAspectRatio() const
     {
         ASSERT(aspectRatioType() != AspectRatioType::Auto);
@@ -583,8 +598,8 @@ public:
     const StyleSelfAlignmentData& justifyItems() const { return m_rareNonInheritedData->justifyItems; }
     const StyleSelfAlignmentData& justifySelf() const { return m_rareNonInheritedData->justifySelf; }
 
-    const Vector<GridTrackSize>& gridColumns() const { return m_rareNonInheritedData->grid->gridColumns(); }
-    const Vector<GridTrackSize>& gridRows() const { return m_rareNonInheritedData->grid->gridRows(); }
+    const Vector<GridTrackSize>& gridColumnTrackSizes() const { return m_rareNonInheritedData->grid->gridColumnTrackSizes(); }
+    const Vector<GridTrackSize>& gridRowTrackSizes() const { return m_rareNonInheritedData->grid->gridRowTrackSizes(); }
     const GridTrackList& gridColumnList() const { return m_rareNonInheritedData->grid->columns(); }
     const GridTrackList& gridRowList() const { return m_rareNonInheritedData->grid->rows(); }
     const Vector<GridTrackSize>& gridAutoRepeatColumns() const { return m_rareNonInheritedData->grid->gridAutoRepeatColumns(); }
@@ -607,6 +622,7 @@ public:
     size_t namedGridAreaRowCount() const { return m_rareNonInheritedData->grid->namedGridAreaRowCount; }
     size_t namedGridAreaColumnCount() const { return m_rareNonInheritedData->grid->namedGridAreaColumnCount; }
     GridAutoFlow gridAutoFlow() const { return static_cast<GridAutoFlow>(m_rareNonInheritedData->grid->gridAutoFlow); }
+    MasonryAutoFlow masonryAutoFlow() const { return m_rareNonInheritedData->grid->masonryAutoFlow; }
     bool gridSubgridRows() const { return m_rareNonInheritedData->grid->subgridRows(); }
     bool gridSubgridColumns() const { return m_rareNonInheritedData->grid->subgridColumns(); }
     bool gridMasonryRows() const { return m_rareNonInheritedData->grid->masonryRows(); }
@@ -1056,6 +1072,7 @@ public:
     void setTextJustify(TextJustify v) { SET_VAR(m_rareInheritedData, textJustify, static_cast<unsigned>(v)); }
 
     void setLeadingTrim(LeadingTrim value) { SET_VAR(m_rareNonInheritedData, leadingTrim, static_cast<unsigned>(value)); }
+    void setTextEdge(TextEdge);
 
 #if ENABLE(TEXT_AUTOSIZING)
     void setSpecifiedLineHeight(Length&&);
@@ -1258,6 +1275,7 @@ public:
     void setGridItemColumnEnd(const GridPosition& columnEndPosition) { SET_NESTED_VAR(m_rareNonInheritedData, gridItem, gridColumnEnd, columnEndPosition); }
     void setGridItemRowStart(const GridPosition& rowStartPosition) { SET_NESTED_VAR(m_rareNonInheritedData, gridItem, gridRowStart, rowStartPosition); }
     void setGridItemRowEnd(const GridPosition& rowEndPosition) { SET_NESTED_VAR(m_rareNonInheritedData, gridItem, gridRowEnd, rowEndPosition); }
+    void setMasonryAutoFlow(MasonryAutoFlow flow) { SET_NESTED_VAR(m_rareNonInheritedData, grid, masonryAutoFlow, flow); };
 
     void setMarqueeIncrement(Length&& length) { SET_NESTED_VAR(m_rareNonInheritedData, marquee, increment, WTFMove(length)); }
     void setMarqueeSpeed(int f) { SET_NESTED_VAR(m_rareNonInheritedData, marquee, speed, f); }
@@ -1671,6 +1689,7 @@ public:
     static Length initialPadding() { return Length(LengthType::Fixed); }
     static Length initialTextIndent() { return Length(LengthType::Fixed); }
     static LeadingTrim initialLeadingTrim() { return LeadingTrim::Normal; }
+    static TextEdge initialTextEdge();
     static Length initialZeroLength() { return Length(LengthType::Fixed); }
     static Length initialOneLength() { return Length(1, LengthType::Fixed); }
     static unsigned short initialWidows() { return 2; }
@@ -1820,14 +1839,15 @@ public:
 #endif
 
     // The initial value is 'none' for grid tracks.
-    static Vector<GridTrackSize> initialGridColumns() { return Vector<GridTrackSize>(); }
-    static Vector<GridTrackSize> initialGridRows() { return Vector<GridTrackSize>(); }
+    static Vector<GridTrackSize> initialGridColumnTrackSizes() { return Vector<GridTrackSize>(); }
+    static Vector<GridTrackSize> initialGridRowTrackSizes() { return Vector<GridTrackSize>(); }
 
     static Vector<GridTrackSize> initialGridAutoRepeatTracks() { return Vector<GridTrackSize>(); }
     static unsigned initialGridAutoRepeatInsertionPoint() { return 0; }
     static AutoRepeatType initialGridAutoRepeatType() { return AutoRepeatType::None; }
 
     static GridAutoFlow initialGridAutoFlow() { return AutoFlowRow; }
+    static MasonryAutoFlow initialMasonryAutoFlow() { return { MasonryAutoFlowPlacementAlgorithm::Pack, MasonryAutoFlowPlacementOrder::DefiniteFirst }; }
 
     static Vector<GridTrackSize> initialGridAutoColumns() { return { GridTrackSize(Length(LengthType::Auto)) }; }
     static Vector<GridTrackSize> initialGridAutoRows() { return { GridTrackSize(Length(LengthType::Auto)) }; }

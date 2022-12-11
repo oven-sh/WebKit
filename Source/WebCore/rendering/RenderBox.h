@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include "FontBaseline.h"
 #include "FrameView.h"
 #include "RenderBoxModelObject.h"
 #include "RenderOverflow.h"
@@ -569,6 +570,7 @@ override;
     virtual std::optional<LayoutUnit> firstLineBaseline() const { return std::optional<LayoutUnit>(); }
     virtual std::optional<LayoutUnit> lastLineBaseline() const { return std::optional<LayoutUnit> (); }
     virtual std::optional<LayoutUnit> inlineBlockBaseline(LineDirectionMode) const { return std::optional<LayoutUnit>(); } // Returns empty if we should skip this box when computing the baseline of an inline-block.
+    LayoutUnit synthesizeBaseline(FontBaseline baselineType, BaselineSynthesisEdge) const;
 
     bool shrinkToAvoidFloats() const;
     virtual bool avoidsFloats() const;
@@ -615,7 +617,7 @@ override;
     bool hasVisualOverflow() const { return m_overflow && !borderBoxRect().contains(m_overflow->visualOverflowRect()); }
 
     virtual bool needsPreferredWidthsRecalculation() const;
-    virtual void computeIntrinsicRatioInformation(FloatSize& /* intrinsicSize */, double& /* intrinsicRatio */) const { }
+    virtual void computeIntrinsicRatioInformation(FloatSize& /* intrinsicSize */, FloatSize& /* intrinsicRatio */) const { }
 
     ScrollPosition scrollPosition() const;
     LayoutSize cachedSizeForOverflowClip() const;
@@ -734,7 +736,9 @@ protected:
 
     void incrementVisuallyNonEmptyPixelCountIfNeeded(const IntSize&);
 
+    std::optional<double> resolveAspectRatio() const;
     bool shouldIgnoreAspectRatio() const;
+    bool isRenderReplacedWithIntrinsicRatio() const;
     bool shouldComputeLogicalWidthFromAspectRatio() const;
     LayoutUnit computeLogicalWidthFromAspectRatioInternal() const;
     LayoutUnit computeLogicalWidthFromAspectRatio(RenderFragmentContainer* = nullptr) const;
@@ -744,9 +748,9 @@ protected:
     enum class MinimumSizeIsAutomaticContentBased { Yes, No };
     void constrainLogicalMinMaxSizesByAspectRatio(LayoutUnit& minSize, LayoutUnit& maxSize, LayoutUnit computedSize, MinimumSizeIsAutomaticContentBased, ConstrainDimension) const;
 
-    static LayoutUnit blockSizeFromAspectRatio(LayoutUnit borderPaddingInlineSum, LayoutUnit borderPaddingBlockSum, double aspectRatio, BoxSizing boxSizing, LayoutUnit inlineSize)
+    static LayoutUnit blockSizeFromAspectRatio(LayoutUnit borderPaddingInlineSum, LayoutUnit borderPaddingBlockSum, double aspectRatio, BoxSizing boxSizing, LayoutUnit inlineSize, AspectRatioType aspectRatioType, bool isRenderReplaced)
     {
-        if (boxSizing == BoxSizing::BorderBox)
+        if (boxSizing == BoxSizing::BorderBox && aspectRatioType == AspectRatioType::Ratio && !isRenderReplaced)
             return std::max(borderPaddingBlockSum, LayoutUnit(inlineSize / aspectRatio));
         return LayoutUnit((inlineSize - borderPaddingInlineSum) / aspectRatio) + borderPaddingBlockSum;
     }
@@ -921,7 +925,7 @@ inline void RenderBox::setInlineBoxWrapper(LegacyInlineElementBox* boxWrapper)
     m_inlineBoxWrapper = boxWrapper;
 }
 
-LayoutUnit synthesizedBaselineFromBorderBox(const RenderBox&, LineDirectionMode);
+LayoutUnit synthesizedBaseline(const RenderBox&, const RenderStyle& parentStyle, LineDirectionMode, BaselineSynthesisEdge);
 
 } // namespace WebCore
 

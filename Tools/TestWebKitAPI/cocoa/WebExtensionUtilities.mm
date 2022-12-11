@@ -44,7 +44,7 @@
 
     _extension = extension;
     _context = [[_WKWebExtensionContext alloc] initWithExtension:extension];
-    _controller = [[_WKWebExtensionController alloc] init];
+    _controller = [[_WKWebExtensionController alloc] initWithConfiguration:_WKWebExtensionControllerConfiguration.nonPersistentConfiguration];
 
     _context._testingMode = YES;
 
@@ -157,7 +157,7 @@ RetainPtr<TestWebExtensionManager> loadAndRunExtension(NSDictionary *resources)
 
 RetainPtr<TestWebExtensionManager> loadAndRunExtension(NSURL *baseURL)
 {
-    return loadAndRunExtension([[_WKWebExtension alloc] initWithResourceBaseURL:baseURL]);
+    return loadAndRunExtension([[_WKWebExtension alloc] initWithResourceBaseURL:baseURL error:nullptr]);
 }
 
 } // namespace Util

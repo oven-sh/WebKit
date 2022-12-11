@@ -271,6 +271,7 @@ RefPtr<CSSValue> consumeContent(CSSParserTokenRange&, const CSSParserContext&);
 RefPtr<CSSValue> consumePerspective(CSSParserTokenRange&, CSSParserMode);
 RefPtr<CSSValue> consumeScrollSnapAlign(CSSParserTokenRange&);
 RefPtr<CSSValue> consumeScrollSnapType(CSSParserTokenRange&);
+RefPtr<CSSValue> consumeTextEdge(CSSParserTokenRange&);
 RefPtr<CSSValue> consumeBorderRadiusCorner(CSSParserTokenRange&, CSSParserMode);
 bool consumeRadii(RefPtr<CSSPrimitiveValue> horizontalRadii[4], RefPtr<CSSPrimitiveValue> verticalRadii[4], CSSParserTokenRange&, CSSParserMode, bool useLegacyParsing);
 enum class ConsumeRay { Include, Exclude };
@@ -287,6 +288,7 @@ RefPtr<CSSValue> consumeWebkitBorderImage(CSSPropertyID, CSSParserTokenRange&, c
 RefPtr<CSSValue> consumeReflect(CSSParserTokenRange&, const CSSParserContext&);
 RefPtr<CSSValue> consumeBackgroundSize(CSSPropertyID, CSSParserTokenRange&, CSSParserMode);
 RefPtr<CSSValue> consumeGridAutoFlow(CSSParserTokenRange&);
+RefPtr<CSSValueList> consumeMasonryAutoFlow(CSSParserTokenRange&);
 RefPtr<CSSValue> consumeBackgroundComponent(CSSPropertyID, CSSParserTokenRange&, const CSSParserContext&);
 RefPtr<CSSValue> consumeCommaSeparatedBackgroundComponent(CSSPropertyID, CSSParserTokenRange&, const CSSParserContext&);
 RefPtr<CSSValue> consumeSingleBackgroundSize(CSSParserTokenRange&, const CSSParserContext&);
