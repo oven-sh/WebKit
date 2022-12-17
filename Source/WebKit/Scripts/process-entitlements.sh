@@ -148,6 +148,9 @@ function mac_process_network_entitlements()
         if (( "${TARGET_MAC_OS_X_VERSION_MAJOR}" >= 130000 ))
         then
             plistbuddy Add :com.apple.runningboard.assertions.webkit bool YES
+            plistbuddy Add :com.apple.private.assets.bypass-asset-types-check bool YES
+            plistbuddy Add :com.apple.private.assets.accessible-asset-types array
+            plistbuddy Add :com.apple.private.assets.accessible-asset-types:0 string com.apple.MobileAsset.WebContentRestrictions
         fi
 
         plistbuddy Add :com.apple.private.launchservices.allowedtochangethesekeysinotherapplications array
@@ -427,9 +430,11 @@ function ios_family_process_adattributiond_entitlements()
 
 function ios_family_process_webpushd_entitlements()
 {
-    # FIXME: Add a sandbox profile for webpushd and add it to the seatbelt-profiles array.
-    echo "webpushd sandbox has not been implemented yet"
+    plistbuddy Add :com.apple.private.sandbox.profile string com.apple.WebKit.webpushd
     plistbuddy Add :aps-connection-initiate bool YES
+    plistbuddy Add :com.apple.private.launchservices.allowopenwithanyhandler bool YES
+    plistbuddy Add :com.apple.springboard.opensensitiveurl bool YES
+    plistbuddy Add :com.apple.private.launchservices.canspecifysourceapplication bool YES
 }
 
 function ios_family_process_network_entitlements()
@@ -454,6 +459,10 @@ function ios_family_process_network_entitlements()
 
     plistbuddy Add :com.apple.private.sandbox.profile string com.apple.WebKit.Networking
     plistbuddy Add :com.apple.symptom_analytics.configure bool YES
+
+    plistbuddy Add :com.apple.private.assets.bypass-asset-types-check bool YES
+    plistbuddy Add :com.apple.private.assets.accessible-asset-types array
+    plistbuddy Add :com.apple.private.assets.accessible-asset-types:0 string com.apple.MobileAsset.WebContentRestrictions
 }
 
 rm -f "${WK_PROCESSED_XCENT_FILE}"

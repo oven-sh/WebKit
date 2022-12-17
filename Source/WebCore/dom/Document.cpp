@@ -36,6 +36,7 @@
 #include "CSSAnimation.h"
 #include "CSSFontSelector.h"
 #include "CSSParser.h"
+#include "CSSRegisteredCustomProperty.h"
 #include "CSSStyleDeclaration.h"
 #include "CSSStyleSheet.h"
 #include "CachedCSSStyleSheet.h"
@@ -784,14 +785,14 @@ void Document::removedLastRef()
         
         commonTeardown();
 
-#ifndef NDEBUG
+#if ASSERT_ENABLED
         // We need to do this right now since selfOnlyDeref() can delete this.
         m_inRemovedLastRefFunction = false;
 #endif
         decrementReferencingNodeCount();
     } else {
         commonTeardown();
-#ifndef NDEBUG
+#if ASSERT_ENABLED
         m_inRemovedLastRefFunction = false;
         m_deletionHasBegun = true;
 #endif
@@ -7310,7 +7311,8 @@ void Document::didAddOrRemoveMouseEventHandler(Node& node)
         element->invalidateStyle();
     }
 
-    m_frame->invalidateContentEventRegionsIfNeeded(Frame::InvalidateContentEventRegionsReason::EventHandlerChange);
+    if (RefPtr frame = this->frame())
+        frame->invalidateContentEventRegionsIfNeeded(Frame::InvalidateContentEventRegionsReason::EventHandlerChange);
 #else
     UNUSED_PARAM(node);
 #endif
@@ -9005,9 +9007,9 @@ void Document::navigateFromServiceWorker(const URL& url, CompletionHandler<void(
 }
 #endif
 
-bool Document::registerCSSProperty(CSSRegisteredCustomProperty&& prop)
+bool Document::registerCSSCustomProperty(CSSRegisteredCustomProperty&& property)
 {
-    return m_CSSRegisteredPropertySet.add(prop.name, makeUnique<CSSRegisteredCustomProperty>(WTFMove(prop))).isNewEntry;
+    return m_registeredCSSCustomProperties.add(property.name, makeUnique<CSSRegisteredCustomProperty>(WTFMove(property))).isNewEntry;
 }
 
 const FixedVector<CSSPropertyID>& Document::exposedComputedCSSPropertyIDs()
@@ -9190,6 +9192,18 @@ HTMLVideoElement* Document::pictureInPictureElement() const
 
 void Document::setPictureInPictureElement(HTMLVideoElement* element)
 {
+    auto* oldElement = m_pictureInPictureElement.get();
+    if (oldElement == element)
+        return;
+
+    std::optional<Style::PseudoClassChangeInvalidation> oldInvalidation;
+    if (oldElement)
+        emplace(oldInvalidation, *oldElement, { { CSSSelector::PseudoClassPictureInPicture, false } });
+
+    std::optional<Style::PseudoClassChangeInvalidation> newInvalidation;
+    if (element)
+        emplace(newInvalidation, *element, { { CSSSelector::PseudoClassPictureInPicture, true } });
+
     m_pictureInPictureElement = element;
 }
 #endif

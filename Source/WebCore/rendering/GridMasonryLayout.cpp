@@ -27,6 +27,7 @@
 
 #include "GridLayoutFunctions.h"
 #include "GridPositionsResolver.h"
+#include "RenderGrid.h"
 #include "WritingMode.h"
 
 namespace WebCore {
@@ -45,13 +46,16 @@ void GridMasonryLayout::performMasonryPlacement(unsigned gridAxisTracks, GridTra
     resizeAndResetRunningPositions(); 
 
     // 2.4 Masonry Layout Algorithm
-    addItemsToFirstTrack(m_firstTrackItems);
+    addItemsToFirstTrack();
+    
+    // the insertIntoGridAndLayoutItem() will modify the m_autoFlowNextCursor, so m_autoFlowNextCursor needs to be reset.
     m_autoFlowNextCursor = 0;
+
     if (m_renderGrid.style().masonryAutoFlow().placementOrder == MasonryAutoFlowPlacementOrder::Ordered)
         placeItemsUsingOrderModifiedDocumentOrder();
     else {
-        placeItemsWithDefiniteGridAxisPosition(m_itemsWithDefiniteGridAxisPosition);
-        placeItemsWithIndefiniteGridAxisPosition(m_itemsWithIndefiniteGridAxisPosition);
+        placeItemsWithDefiniteGridAxisPosition();
+        placeItemsWithIndefiniteGridAxisPosition();
     }
 }
 
@@ -101,9 +105,9 @@ void GridMasonryLayout::resizeAndResetRunningPositions()
     m_runningPositions.fill(LayoutUnit());
 }
 
-void GridMasonryLayout::addItemsToFirstTrack(const HashMap<RenderBox*, GridArea>& firstTrackItems)
+void GridMasonryLayout::addItemsToFirstTrack()
 {
-    for (auto& [item, gridArea] : firstTrackItems) {
+    for (auto& [item, gridArea] : m_firstTrackItems) {
         ASSERT(item);
         if (!item)
             continue;
@@ -125,9 +129,9 @@ void GridMasonryLayout::placeItemsUsingOrderModifiedDocumentOrder()
     }   
 }
 
-void GridMasonryLayout::placeItemsWithDefiniteGridAxisPosition(const Vector<RenderBox*>& itemsWithDefiniteGridAxisPosition)
+void GridMasonryLayout::placeItemsWithDefiniteGridAxisPosition()
 {
-    for (auto* item : itemsWithDefiniteGridAxisPosition) {
+    for (auto* item : m_itemsWithDefiniteGridAxisPosition) {
         ASSERT(item);
         if (!item)
             continue;
@@ -137,8 +141,9 @@ void GridMasonryLayout::placeItemsWithDefiniteGridAxisPosition(const Vector<Rend
         ASSERT(!itemSpan.isIndefinite());
 
         itemSpan.translate(m_renderGrid.currentGrid().explicitGridStart(gridAxisDirection()));
-
-        insertIntoGridAndLayoutItem(*item, gridAreaForDefiniteGridAxisItem(*item));
+        auto gridArea = gridAreaForDefiniteGridAxisItem(*item);
+        m_renderGrid.currentGrid().clampAreaToSubgridIfNeeded(gridArea);
+        insertIntoGridAndLayoutItem(*item, gridArea);
     }
 }
 
@@ -150,9 +155,9 @@ GridArea GridMasonryLayout::gridAreaForDefiniteGridAxisItem(const RenderBox& chi
     return masonryGridAreaFromGridAxisSpan(itemSpan);
 }
 
-void GridMasonryLayout::placeItemsWithIndefiniteGridAxisPosition(const Vector<RenderBox*>& itemsWithIndefinitePosition)
+void GridMasonryLayout::placeItemsWithIndefiniteGridAxisPosition()
 {
-    for (auto* item : itemsWithIndefinitePosition) {
+    for (auto* item : m_itemsWithIndefiniteGridAxisPosition) {
         ASSERT(item);
         if (!item)
             continue;
@@ -166,6 +171,8 @@ void GridMasonryLayout::setItemGridAxisContainingBlockToGridArea(RenderBox& chil
         child.setOverridingContainingBlockContentLogicalWidth(m_renderGrid.m_trackSizingAlgorithm.estimatedGridAreaBreadthForChild(child, ForColumns));
     else
         child.setOverridingContainingBlockContentLogicalHeight(m_renderGrid.m_trackSizingAlgorithm.estimatedGridAreaBreadthForChild(child, ForRows));
+    // FIXME(249230): Try to cache masonry layout sizes
+    child.setChildNeedsLayout(MarkOnlyThis);
 }
 
 void GridMasonryLayout::insertIntoGridAndLayoutItem(RenderBox& child, const GridArea& area)

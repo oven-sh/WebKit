@@ -62,13 +62,10 @@ void splitStack(BlockSignature originalSignature, EnclosingStack& enclosingStack
     enclosingStack.shrink(offset);
 }
 
-template<typename Context>
-class FunctionParser : public Parser<void> {
-public:
-    struct ControlEntry;
-
-    using ControlType = typename Context::ControlType;
-    using ExpressionType = typename Context::ExpressionType;
+template<typename Control, typename Expression>
+struct FunctionParserTypes {
+    using ControlType = Control;
+    using ExpressionType = Expression;
 
     class TypedExpression {
     public:
@@ -99,9 +96,6 @@ public:
         Type m_type;
         ExpressionType m_value;
     };
-
-    using ControlStack = Vector<ControlEntry, 16>;
-    using ResultList = Vector<ExpressionType, 8>;
     using Stack = Vector<TypedExpression, 16, UnsafeVectorOverflow>;
 
     struct ControlEntry {
@@ -109,6 +103,21 @@ public:
         Stack elseBlockStack;
         ControlType controlData;
     };
+    using ControlStack = Vector<ControlEntry, 16>;
+
+    using ResultList = Vector<ExpressionType, 8>;
+};
+
+template<typename Context>
+class FunctionParser : public Parser<void>, public FunctionParserTypes<typename Context::ControlType, typename Context::ExpressionType> {
+public:
+    using ControlType = typename FunctionParser::ControlType;
+    using ControlEntry = typename FunctionParser::ControlEntry;
+    using ControlStack = typename FunctionParser::ControlStack;
+    using ExpressionType = typename FunctionParser::ExpressionType;
+    using TypedExpression = typename FunctionParser::TypedExpression;
+    using Stack = typename FunctionParser::Stack;
+    using ResultList = typename FunctionParser::ResultList;
 
     FunctionParser(Context&, const uint8_t* functionStart, size_t functionLength, const TypeDefinition&, const ModuleInformation&);
 
@@ -137,11 +146,10 @@ private:
         m_context.didPopValueFromStack();                                                   \
     } while (0)
 
-    template<OpType>
-    PartialResult WARN_UNUSED_RETURN unaryCase(Type returnType, Type operandType);
-
-    template<OpType>
-    PartialResult WARN_UNUSED_RETURN binaryCase(Type returnType, Type lhsType, Type rhsType);
+    using UnaryOperationHandler = PartialResult (Context::*)(ExpressionType, ExpressionType&);
+    PartialResult WARN_UNUSED_RETURN unaryCase(OpType, UnaryOperationHandler, Type returnType, Type operandType);
+    using BinaryOperationHandler = PartialResult (Context::*)(ExpressionType, ExpressionType, ExpressionType&);
+    PartialResult WARN_UNUSED_RETURN binaryCase(OpType, BinaryOperationHandler, Type returnType, Type lhsType, Type rhsType);
 
     PartialResult WARN_UNUSED_RETURN store(Type memoryType);
     PartialResult WARN_UNUSED_RETURN load(Type memoryType);
@@ -350,8 +358,7 @@ auto FunctionParser<Context>::parseBody() -> PartialResult
 }
 
 template<typename Context>
-template<OpType op>
-auto FunctionParser<Context>::binaryCase(Type returnType, Type lhsType, Type rhsType) -> PartialResult
+auto FunctionParser<Context>::binaryCase(OpType op, BinaryOperationHandler handler, Type returnType, Type lhsType, Type rhsType) -> PartialResult
 {
     TypedExpression right;
     TypedExpression left;
@@ -363,14 +370,13 @@ auto FunctionParser<Context>::binaryCase(Type returnType, Type lhsType, Type rhs
     WASM_VALIDATOR_FAIL_IF(right.type() != rhsType, op, " right value type mismatch");
 
     ExpressionType result;
-    WASM_TRY_ADD_TO_CONTEXT(template addOp<op>(left, right, result));
+    WASM_FAIL_IF_HELPER_FAILS((m_context.*handler)(left, right, result));
     m_expressionStack.constructAndAppend(returnType, result);
     return { };
 }
 
 template<typename Context>
-template<OpType op>
-auto FunctionParser<Context>::unaryCase(Type returnType, Type operandType) -> PartialResult
+auto FunctionParser<Context>::unaryCase(OpType op, UnaryOperationHandler handler, Type returnType, Type operandType) -> PartialResult
 {
     TypedExpression value;
     WASM_TRY_POP_EXPRESSION_STACK_INTO(value, "unary");
@@ -378,7 +384,7 @@ auto FunctionParser<Context>::unaryCase(Type returnType, Type operandType) -> Pa
     WASM_VALIDATOR_FAIL_IF(value.type() != operandType, op, " value type mismatch");
 
     ExpressionType result;
-    WASM_TRY_ADD_TO_CONTEXT(template addOp<op>(value, result));
+    WASM_FAIL_IF_HELPER_FAILS((m_context.*handler)(value, result));
     m_expressionStack.constructAndAppend(returnType, result);
     return { };
 }
@@ -605,10 +611,15 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
     m_context.notifyFunctionUsesSIMD();
 
     auto pushUnreachable = [&](auto type) -> PartialResult {
+        ASSERT(isReachable);
         // Appease generators without SIMD support.
         m_expressionStack.constructAndAppend(type, m_context.addConstant(Types::F64, 0));
         return { };
     };
+
+    // only used in some specializations
+    UNUSED_VARIABLE(pushUnreachable);
+    UNUSED_PARAM(optionalRelation);
 
     auto parseMemOp = [&] (uint32_t& offset, TypedExpression& pointer) -> PartialResult {
         uint32_t maxAlignment;
@@ -655,6 +666,10 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
         WASM_PARSER_FAIL_IF(!parseVarUInt32(offset), "can't get simd memory op offset");
 
         WASM_VALIDATOR_FAIL_IF(alignment > maxAlignment, "alignment: ", alignment, " can't be larger than max alignment for simd operation: ", maxAlignment);
+
+        if constexpr (!isReachable)
+            return { };
+
         WASM_TRY_POP_EXPRESSION_STACK_INTO(pointer, "simd memory op pointer");
         WASM_VALIDATOR_FAIL_IF(!pointer.type().isI32(), "pointer must be i32");
 
@@ -667,7 +682,11 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
         ASSERT(lane == SIMDLane::v128);
         ASSERT(signMode == SIMDSignMode::None);
         WASM_PARSER_FAIL_IF(!parseImmByteArray16(constant), "can't parse 128-bit vector constant");
-        if constexpr (isReachable) {
+
+        if constexpr (!isReachable)
+            return { };
+
+        if constexpr (Context::tierSupportsSIMD) {
             m_expressionStack.constructAndAppend(Types::V128, m_context.addConstant(constant));
             return { };
         } else
@@ -675,6 +694,9 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
     }
     case SIMDLaneOperation::Splat: {
         ASSERT(signMode == SIMDSignMode::None);
+
+        if constexpr (!isReachable)
+            return { };
 
         TypedExpression scalar;
         WASM_TRY_POP_EXPRESSION_STACK_INTO(scalar, "select condition");
@@ -699,7 +721,7 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
         }
         WASM_VALIDATOR_FAIL_IF(!okType, "Wrong type to SIMD splat");
 
-        if constexpr (isReachable) {
+        if constexpr (Context::tierSupportsSIMD) {
             ExpressionType result;
             WASM_TRY_ADD_TO_CONTEXT(addSIMDSplat(lane, scalar, result));
             m_expressionStack.constructAndAppend(Types::V128, result);
@@ -709,6 +731,9 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
     }
     case SIMDLaneOperation::Shr:
     case SIMDLaneOperation::Shl: {
+        if constexpr (!isReachable)
+            return { };
+
         TypedExpression vector;
         TypedExpression shift;
         WASM_TRY_POP_EXPRESSION_STACK_INTO(shift, "shift i32");
@@ -716,7 +741,7 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
         WASM_VALIDATOR_FAIL_IF(!vector.type().isV128(), "Shift vector must be v128");
         WASM_VALIDATOR_FAIL_IF(!shift.type().isI32(), "Shift amount must be i32");
 
-        if constexpr (isReachable) {
+        if constexpr (Context::tierSupportsSIMD) {
             ExpressionType result;
             WASM_TRY_ADD_TO_CONTEXT(addSIMDShift(op, SIMDInfo { lane, signMode }, vector, shift, result));
             m_expressionStack.constructAndAppend(Types::V128, result);
@@ -727,6 +752,9 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
     }
     case SIMDLaneOperation::ExtmulLow:
     case SIMDLaneOperation::ExtmulHigh: {
+        if constexpr (!isReachable)
+            return { };
+
         TypedExpression lhs;
         TypedExpression rhs;
         WASM_TRY_POP_EXPRESSION_STACK_INTO(rhs, "rhs");
@@ -734,7 +762,7 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
         WASM_VALIDATOR_FAIL_IF(!lhs.type().isV128(), "extmul lhs vector must be v128");
         WASM_VALIDATOR_FAIL_IF(!rhs.type().isV128(), "extmul rhs vector must be v128");
 
-        if constexpr (isReachable) {
+        if constexpr (Context::tierSupportsSIMD) {
             ExpressionType result;
             WASM_TRY_ADD_TO_CONTEXT(addSIMDExtmul(op, SIMDInfo { lane, signMode }, lhs, rhs, result));
             m_expressionStack.constructAndAppend(Types::V128, result);
@@ -751,7 +779,10 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
         TypedExpression pointer;
         WASM_FAIL_IF_HELPER_FAILS(parseMemOp(offset, pointer));
 
-        if constexpr (isReachable) {
+        if constexpr (!isReachable)
+            return { };
+
+        if constexpr (Context::tierSupportsSIMD) {
             ExpressionType result;
             if (op == SIMDLaneOperation::Load)
                 WASM_TRY_ADD_TO_CONTEXT(addSIMDLoad(pointer, offset, result));
@@ -764,14 +795,20 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
     }
     case SIMDLaneOperation::Store: {
         TypedExpression val;
-        WASM_TRY_POP_EXPRESSION_STACK_INTO(val, "val");
-        WASM_VALIDATOR_FAIL_IF(!val.type().isV128(), "store vector must be v128");
+
+        if (isReachable) {
+            WASM_TRY_POP_EXPRESSION_STACK_INTO(val, "val");
+            WASM_VALIDATOR_FAIL_IF(!val.type().isV128(), "store vector must be v128");
+        }
 
         uint32_t offset;
         TypedExpression pointer;
         WASM_FAIL_IF_HELPER_FAILS(parseMemOp(offset, pointer));
 
-        if constexpr (isReachable) {
+        if constexpr (!isReachable)
+            return { };
+
+        if constexpr (Context::tierSupportsSIMD) {
             WASM_TRY_ADD_TO_CONTEXT(addSIMDStore(val, pointer, offset));
             return { };
         } else
@@ -800,12 +837,18 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
             }
         })();
 
-        WASM_TRY_POP_EXPRESSION_STACK_INTO(vector, "vector");
-        WASM_VALIDATOR_FAIL_IF(!vector.type().isV128(), "load_lane input must be a vector");
+        if (isReachable) {
+            WASM_TRY_POP_EXPRESSION_STACK_INTO(vector, "vector");
+            WASM_VALIDATOR_FAIL_IF(!vector.type().isV128(), "load_lane input must be a vector");
+        }
+
         WASM_FAIL_IF_HELPER_FAILS(parseMemOp(offset, pointer));
         WASM_FAIL_IF_HELPER_FAILS(parseImmLaneIdx(laneCount, laneIndex));
 
-        if constexpr (isReachable) {
+        if constexpr (!isReachable)
+            return { };
+
+        if constexpr (Context::tierSupportsSIMD) {
             ExpressionType result;
             WASM_TRY_ADD_TO_CONTEXT(addSIMDLoadLane(op, pointer, vector, offset, laneIndex, result));
             m_expressionStack.constructAndAppend(Types::V128, result);
@@ -836,12 +879,18 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
             }
         })();
 
-        WASM_TRY_POP_EXPRESSION_STACK_INTO(vector, "vector");
-        WASM_VALIDATOR_FAIL_IF(!vector.type().isV128(), "store_lane input must be a vector");
+        if (isReachable) {
+            WASM_TRY_POP_EXPRESSION_STACK_INTO(vector, "vector");
+            WASM_VALIDATOR_FAIL_IF(!vector.type().isV128(), "store_lane input must be a vector");
+        }
+
         WASM_FAIL_IF_HELPER_FAILS(parseMemOp(offset, pointer));
         WASM_FAIL_IF_HELPER_FAILS(parseImmLaneIdx(laneCount, laneIndex));
 
-        if constexpr (isReachable) {
+        if constexpr (!isReachable)
+            return { };
+
+        if constexpr (Context::tierSupportsSIMD) {
             WASM_TRY_ADD_TO_CONTEXT(addSIMDStoreLane(op, pointer, vector, offset, laneIndex));
             return { };
         } else
@@ -858,7 +907,10 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
 
         WASM_FAIL_IF_HELPER_FAILS(parseMemOp(offset, pointer));
 
-        if constexpr (isReachable) {
+        if constexpr (!isReachable)
+            return { };
+
+        if constexpr (Context::tierSupportsSIMD) {
             ExpressionType result;
             WASM_TRY_ADD_TO_CONTEXT(addSIMDLoadExtend(op, pointer, offset, result));
             m_expressionStack.constructAndAppend(Types::V128, result);
@@ -873,7 +925,10 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
 
         WASM_FAIL_IF_HELPER_FAILS(parseMemOp(offset, pointer));
 
-        if constexpr (isReachable) {
+        if constexpr (!isReachable)
+            return { };
+
+        if constexpr (Context::tierSupportsSIMD) {
             ExpressionType result;
             WASM_TRY_ADD_TO_CONTEXT(addSIMDLoadPad(op, pointer, offset, result));
             m_expressionStack.constructAndAppend(Types::V128, result);
@@ -887,15 +942,18 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
         TypedExpression b;
 
         WASM_PARSER_FAIL_IF(!parseImmByteArray16(imm), "can't parse 128-bit shuffle immediate");
+        for (auto i = 0; i < 16; ++i)
+            WASM_PARSER_FAIL_IF(imm.u8x16[i] >= 2 * elementCount(lane));
+
+        if constexpr (!isReachable)
+            return { };
+
         WASM_TRY_POP_EXPRESSION_STACK_INTO(b, "vector argument");
         WASM_VALIDATOR_FAIL_IF(!b.type().isV128(), "shuffle input must be a vector");
         WASM_TRY_POP_EXPRESSION_STACK_INTO(a, "vector argument");
         WASM_VALIDATOR_FAIL_IF(!a.type().isV128(), "shuffle input must be a vector");
 
-        for (auto i = 0; i < 16; ++i)
-            WASM_PARSER_FAIL_IF(imm.u8x16[i] >= 2 * elementCount(lane));
-
-        if constexpr (isReachable) {
+        if constexpr (Context::tierSupportsSIMD) {
             ExpressionType result;
             WASM_TRY_ADD_TO_CONTEXT(addSIMDShuffle(imm, a, b, result));
             m_expressionStack.constructAndAppend(Types::V128, result);
@@ -907,10 +965,14 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
         uint8_t laneIdx;
         TypedExpression v;
         WASM_FAIL_IF_HELPER_FAILS(parseImmLaneIdx(elementCount(lane), laneIdx));
+
+        if constexpr (!isReachable)
+            return { };
+
         WASM_TRY_POP_EXPRESSION_STACK_INTO(v, "vector argument");
         WASM_VALIDATOR_FAIL_IF(v.type() != Types::V128, "type mismatch for argument 0");
 
-        if constexpr (isReachable) {
+        if constexpr (Context::tierSupportsSIMD) {
             ExpressionType result;
             WASM_TRY_ADD_TO_CONTEXT(addExtractLane(SIMDInfo { lane, signMode }, laneIdx, v, result));
             m_expressionStack.constructAndAppend(simdScalarType(lane), result);
@@ -923,12 +985,16 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
         TypedExpression v;
         TypedExpression s;
         WASM_FAIL_IF_HELPER_FAILS(parseImmLaneIdx(elementCount(lane), laneIdx));
+
+        if constexpr (!isReachable)
+            return { };
+
         WASM_TRY_POP_EXPRESSION_STACK_INTO(s, "scalar argument");
         WASM_TRY_POP_EXPRESSION_STACK_INTO(v, "vector argument");
         WASM_VALIDATOR_FAIL_IF(v.type() != Types::V128, "type mismatch for argument 1");
         WASM_VALIDATOR_FAIL_IF(s.type() != simdScalarType(lane), "type mismatch for argument 0");
 
-        if constexpr (isReachable) {
+        if constexpr (Context::tierSupportsSIMD) {
             ExpressionType result;
             WASM_TRY_ADD_TO_CONTEXT(addReplaceLane(SIMDInfo { lane, signMode }, laneIdx, v, s, result));
             m_expressionStack.constructAndAppend(Types::V128, result);
@@ -939,11 +1005,14 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
     case SIMDLaneOperation::Bitmask:
     case SIMDLaneOperation::AnyTrue:
     case SIMDLaneOperation::AllTrue: {
+        if constexpr (!isReachable)
+            return { };
+
         TypedExpression v;
         WASM_TRY_POP_EXPRESSION_STACK_INTO(v, "vector argument");
         WASM_VALIDATOR_FAIL_IF(v.type() != Types::V128, "type mismatch for argument 0");
 
-        if constexpr (isReachable) {
+        if constexpr (Context::tierSupportsSIMD) {
             ExpressionType result;
             WASM_TRY_ADD_TO_CONTEXT(addSIMDI_V(op, SIMDInfo { lane, signMode }, v, result));
             m_expressionStack.constructAndAppend(Types::I32, result);
@@ -968,11 +1037,14 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
     case SIMDLaneOperation::Trunc:
     case SIMDLaneOperation::Nearest:
     case SIMDLaneOperation::Sqrt: {
+        if constexpr (!isReachable)
+            return { };
+
         TypedExpression v;
         WASM_TRY_POP_EXPRESSION_STACK_INTO(v, "vector argument");
         WASM_VALIDATOR_FAIL_IF(v.type() != Types::V128, "type mismatch for argument 0");
 
-        if constexpr (isReachable) {
+        if constexpr (Context::tierSupportsSIMD) {
             ExpressionType result;
             WASM_TRY_ADD_TO_CONTEXT(addSIMDV_V(op, SIMDInfo { lane, signMode }, v, result));
             m_expressionStack.constructAndAppend(Types::V128, result);
@@ -981,6 +1053,9 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
             return pushUnreachable(Types::V128);
     }
     case SIMDLaneOperation::BitwiseSelect: {
+        if constexpr (!isReachable)
+            return { };
+
         TypedExpression v1;
         TypedExpression v2;
         TypedExpression c;
@@ -991,7 +1066,7 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
         WASM_VALIDATOR_FAIL_IF(v2.type() != Types::V128, "type mismatch for argument 1");
         WASM_VALIDATOR_FAIL_IF(c.type() != Types::V128, "type mismatch for argument 0");
 
-        if constexpr (isReachable) {
+        if constexpr (Context::tierSupportsSIMD) {
             ExpressionType result;
             WASM_TRY_ADD_TO_CONTEXT(addSIMDBitwiseSelect(v1, v2, c, result));
             m_expressionStack.constructAndAppend(Types::V128, result);
@@ -1003,6 +1078,9 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
     case SIMDLaneOperation::GreaterThanOrEqual:
     case SIMDLaneOperation::LessThan:
     case SIMDLaneOperation::LessThanOrEqual: {
+        if constexpr (!isReachable)
+            return { };
+
         TypedExpression rhs;
         TypedExpression lhs;
         WASM_TRY_POP_EXPRESSION_STACK_INTO(rhs, "vector argument");
@@ -1010,7 +1088,7 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
         WASM_VALIDATOR_FAIL_IF(lhs.type() != Types::V128, "type mismatch for argument 1");
         WASM_VALIDATOR_FAIL_IF(rhs.type() != Types::V128, "type mismatch for argument 0");
 
-        if constexpr (isReachable) {
+        if constexpr (Context::tierSupportsSIMD) {
             ExpressionType result;
             WASM_TRY_ADD_TO_CONTEXT(addSIMDRelOp(op, SIMDInfo { lane, signMode }, lhs, rhs, optionalRelation, result));
             m_expressionStack.constructAndAppend(Types::V128, result);
@@ -1020,6 +1098,9 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
     }
     case SIMDLaneOperation::Equal:
     case SIMDLaneOperation::NotEqual: {
+        if constexpr (!isReachable)
+            return { };
+
         TypedExpression rhs;
         TypedExpression lhs;
         WASM_TRY_POP_EXPRESSION_STACK_INTO(rhs, "vector argument");
@@ -1027,7 +1108,7 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
         WASM_VALIDATOR_FAIL_IF(lhs.type() != Types::V128, "type mismatch for argument 1");
         WASM_VALIDATOR_FAIL_IF(rhs.type() != Types::V128, "type mismatch for argument 0");
 
-        if constexpr (isReachable) {
+        if constexpr (Context::tierSupportsSIMD) {
             ExpressionType result;
             WASM_TRY_ADD_TO_CONTEXT(addSIMDRelOp(op, SIMDInfo { lane, signMode }, lhs, rhs, optionalRelation, result));
             m_expressionStack.constructAndAppend(Types::V128, result);
@@ -1038,7 +1119,7 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
     case SIMDLaneOperation::And:
     case SIMDLaneOperation::Andnot:
     case SIMDLaneOperation::AvgRound:
-    case SIMDLaneOperation::DotProductInt32:
+    case SIMDLaneOperation::DotProduct:
     case SIMDLaneOperation::Add:
     case SIMDLaneOperation::Mul:
     case SIMDLaneOperation::MulSat:
@@ -1054,6 +1135,9 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
     case SIMDLaneOperation::SubSat:
     case SIMDLaneOperation::Max:
     case SIMDLaneOperation::Min: {
+        if constexpr (!isReachable)
+            return { };
+
         TypedExpression a;
         TypedExpression b;
         WASM_TRY_POP_EXPRESSION_STACK_INTO(b, "vector argument");
@@ -1061,7 +1145,7 @@ auto FunctionParser<Context>::simd(SIMDLaneOperation op, SIMDLane lane, SIMDSign
         WASM_VALIDATOR_FAIL_IF(a.type() != Types::V128, "type mismatch for argument 1");
         WASM_VALIDATOR_FAIL_IF(b.type() != Types::V128, "type mismatch for argument 0");
 
-        if constexpr (isReachable) {
+        if constexpr (Context::tierSupportsSIMD) {
             ExpressionType result;
             WASM_TRY_ADD_TO_CONTEXT(addSIMDV_VV(op, SIMDInfo { lane, signMode }, a, b, result));
             m_expressionStack.constructAndAppend(Types::V128, result);
@@ -1351,12 +1435,12 @@ template<typename Context>
 auto FunctionParser<Context>::parseExpression() -> PartialResult
 {
     switch (m_currentOpcode) {
-#define CREATE_CASE(name, id, b3op, inc, lhsType, rhsType, returnType) case OpType::name: return binaryCase<OpType::name>(Types::returnType, Types::lhsType, Types::rhsType);
-    FOR_EACH_WASM_BINARY_OP(CREATE_CASE)
+#define CREATE_CASE(name, id, b3op, inc, lhsType, rhsType, returnType) case OpType::name: return binaryCase(OpType::name, &Context::add##name, Types::returnType, Types::lhsType, Types::rhsType);
+        FOR_EACH_WASM_BINARY_OP(CREATE_CASE)
 #undef CREATE_CASE
 
-#define CREATE_CASE(name, id, b3op, inc, operandType, returnType) case OpType::name: return unaryCase<OpType::name>(Types::returnType, Types::operandType);
-    FOR_EACH_WASM_UNARY_OP(CREATE_CASE)
+#define CREATE_CASE(name, id, b3op, inc, operandType, returnType) case OpType::name: return unaryCase(OpType::name, &Context::add##name, Types::returnType, Types::operandType);
+        FOR_EACH_WASM_UNARY_OP(CREATE_CASE)
 #undef CREATE_CASE
 
     case Select: {
@@ -1780,7 +1864,10 @@ FOR_EACH_WASM_MEMORY_STORE_OP(CREATE_CASE)
             m_expressionStack.constructAndAppend(Types::I32, result);
             return { };
         }
-        case GCOpType::StructNew: {
+        // The struct.new and struct.new_canon instructions are identical but with different opcodes for compatibility with both the spec & other implementations.
+        // FIXME: Remove this redundancy when the GC proposal's opcode numbering is finalized.
+        case GCOpType::StructNew:
+        case GCOpType::StructNewCanon: {
             uint32_t typeIndex;
             WASM_FAIL_IF_HELPER_FAILS(parseStructTypeIndex(typeIndex, "struct.new"));
 
@@ -1980,11 +2067,11 @@ FOR_EACH_WASM_MEMORY_STORE_OP(CREATE_CASE)
     case SetGlobal: {
         uint32_t index;
         WASM_FAIL_IF_HELPER_FAILS(parseIndexForGlobal(index));
+        WASM_VALIDATOR_FAIL_IF(index >= m_info.globals.size(), "set_global ", index, " of unknown global, limit is ", m_info.globals.size());
+        WASM_VALIDATOR_FAIL_IF(m_info.globals[index].mutability == Mutability::Immutable, "set_global ", index, " is immutable");
 
         TypedExpression value;
         WASM_TRY_POP_EXPRESSION_STACK_INTO(value, "set_global value");
-        WASM_VALIDATOR_FAIL_IF(index >= m_info.globals.size(), "set_global ", index, " of unknown global, limit is ", m_info.globals.size());
-        WASM_VALIDATOR_FAIL_IF(m_info.globals[index].mutability == Mutability::Immutable, "set_global ", index, " is immutable");
 
         Type globalType = m_info.globals[index].type;
         ASSERT(isValueType(globalType));
@@ -2449,12 +2536,14 @@ FOR_EACH_WASM_MEMORY_STORE_OP(CREATE_CASE)
         uint8_t simdOp;
         WASM_PARSER_FAIL_IF(!parseUInt8(simdOp), "can't parse wasm extended opcode");
 
+        constexpr bool isReachable = true;
+
         ExtSIMDOpType op = static_cast<ExtSIMDOpType>(simdOp);
         switch (op) {
-        #define CREATE_SIMD_CASE(name, _, laneOp, lane, signMode) case ExtSIMDOpType::name: return simd<Context::tierSupportsSIMD>(SIMDLaneOperation::laneOp, lane, signMode);
+        #define CREATE_SIMD_CASE(name, _, laneOp, lane, signMode) case ExtSIMDOpType::name: return simd<isReachable>(SIMDLaneOperation::laneOp, lane, signMode);
         FOR_EACH_WASM_EXT_SIMD_GENERAL_OP(CREATE_SIMD_CASE)
         #undef CREATE_SIMD_CASE
-        #define CREATE_SIMD_CASE(name, _, laneOp, lane, signMode, relArg) case ExtSIMDOpType::name: return simd<Context::tierSupportsSIMD>(SIMDLaneOperation::laneOp, lane, signMode, relArg);
+        #define CREATE_SIMD_CASE(name, _, laneOp, lane, signMode, relArg) case ExtSIMDOpType::name: return simd<isReachable>(SIMDLaneOperation::laneOp, lane, signMode, relArg);
         FOR_EACH_WASM_EXT_SIMD_REL_OP(CREATE_SIMD_CASE)
         #undef CREATE_SIMD_CASE
         default:
@@ -2797,7 +2886,8 @@ auto FunctionParser<Context>::parseUnreachableExpression() -> PartialResult
         }
         case GCOpType::ArrayLen:
             return { };
-        case GCOpType::StructNew: {
+        case GCOpType::StructNew:
+        case GCOpType::StructNewCanon: {
             uint32_t unused;
             WASM_FAIL_IF_HELPER_FAILS(parseStructTypeIndex(unused, "struct.new"));
             return { };
@@ -2878,12 +2968,14 @@ auto FunctionParser<Context>::parseUnreachableExpression() -> PartialResult
         uint8_t simdOp;
         WASM_PARSER_FAIL_IF(!parseUInt8(simdOp), "can't parse wasm extended opcode");
 
+        constexpr bool isReachable = false;
+
         ExtSIMDOpType op = static_cast<ExtSIMDOpType>(simdOp);
         switch (op) {
-        #define CREATE_SIMD_CASE(name, _, laneOp, lane, signMode) case ExtSIMDOpType::name: return simd<false>(SIMDLaneOperation::laneOp, lane, signMode);
+        #define CREATE_SIMD_CASE(name, _, laneOp, lane, signMode) case ExtSIMDOpType::name: return simd<isReachable>(SIMDLaneOperation::laneOp, lane, signMode);
         FOR_EACH_WASM_EXT_SIMD_GENERAL_OP(CREATE_SIMD_CASE)
         #undef CREATE_SIMD_CASE
-        #define CREATE_SIMD_CASE(name, _, laneOp, lane, signMode, relArg) case ExtSIMDOpType::name: return simd<false>(SIMDLaneOperation::laneOp, lane, signMode, relArg);
+        #define CREATE_SIMD_CASE(name, _, laneOp, lane, signMode, relArg) case ExtSIMDOpType::name: return simd<isReachable>(SIMDLaneOperation::laneOp, lane, signMode, relArg);
         FOR_EACH_WASM_EXT_SIMD_REL_OP(CREATE_SIMD_CASE)
         #undef CREATE_SIMD_CASE
         default:

@@ -80,7 +80,7 @@ bool ScrollingTreeScrollingNodeDelegateMac::handleWheelEvent(const PlatformWheel
         [m_horizontalScrollerImp setUsePresentationValue:m_inMomentumPhase];
     }
 
-    auto deferrer = WheelEventTestMonitorCompletionDeferrer { scrollingTree().wheelEventTestMonitor(), reinterpret_cast<WheelEventTestMonitor::ScrollableAreaIdentifier>(scrollingNode().scrollingNodeID()), WheelEventTestMonitor::HandlingWheelEvent };
+    auto deferrer = ScrollingTreeWheelEventTestMonitorCompletionDeferrer { scrollingTree(), scrollingNode().scrollingNodeID(), WheelEventTestMonitor::HandlingWheelEvent };
 
     updateUserScrollInProgressForEvent(wheelEvent);
 
@@ -263,22 +263,6 @@ void ScrollingTreeScrollingNodeDelegateMac::didStopRubberBandAnimation()
 void ScrollingTreeScrollingNodeDelegateMac::rubberBandingStateChanged(bool inRubberBand)
 {
     scrollingTree().setRubberBandingInProgressForNode(scrollingNode().scrollingNodeID(), inRubberBand);
-}
-
-void ScrollingTreeScrollingNodeDelegateMac::deferWheelEventTestCompletionForReason(WheelEventTestMonitor::ScrollableAreaIdentifier identifier, WheelEventTestMonitor::DeferReason reason) const
-{
-    if (!scrollingTree().isMonitoringWheelEvents())
-        return;
-
-    scrollingTree().deferWheelEventTestCompletionForReason(identifier, reason);
-}
-
-void ScrollingTreeScrollingNodeDelegateMac::removeWheelEventTestCompletionDeferralForReason(WheelEventTestMonitor::ScrollableAreaIdentifier identifier, WheelEventTestMonitor::DeferReason reason) const
-{
-    if (!scrollingTree().isMonitoringWheelEvents())
-        return;
-    
-    scrollingTree().removeWheelEventTestCompletionDeferralForReason(identifier, reason);
 }
 
 void ScrollingTreeScrollingNodeDelegateMac::updateScrollbarPainters()

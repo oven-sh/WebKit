@@ -77,6 +77,13 @@ void RealtimeOutgoingVideoSourceGStreamer::updateStats(GstBuffer*)
     uint64_t framesSent = 0;
     gst_structure_get_uint64(m_stats.get(), "frames-sent", &framesSent);
     framesSent++;
+
+    if (m_encoder) {
+        uint32_t bitrate;
+        g_object_get(m_encoder.get(), "bitrate", &bitrate, nullptr);
+        gst_structure_set(m_stats.get(), "bitrate", G_TYPE_DOUBLE, static_cast<double>(bitrate * 1024), nullptr);
+    }
+
     gst_structure_set(m_stats.get(), "frames-sent", G_TYPE_UINT64, framesSent, "frames-encoded", G_TYPE_UINT64, framesSent, nullptr);
 }
 
@@ -119,9 +126,8 @@ bool RealtimeOutgoingVideoSourceGStreamer::setPayloadType(const GRefPtr<GstCaps>
         return false;
     }
 
-    // FIXME: Re-enable auto-header-extension. Currently triggers caps negotiation error.
     // Align MTU with libwebrtc implementation, also helping to reduce packet fragmentation.
-    g_object_set(m_payloader.get(), "auto-header-extension", FALSE, "mtu", 1200, nullptr);
+    g_object_set(m_payloader.get(), "mtu", 1200, nullptr);
 
     if (!webrtcVideoEncoderSetFormat(WEBKIT_WEBRTC_VIDEO_ENCODER(m_encoder.get()), WTFMove(encoderCaps))) {
         GST_ERROR_OBJECT(m_bin.get(), "Unable to set encoder format");

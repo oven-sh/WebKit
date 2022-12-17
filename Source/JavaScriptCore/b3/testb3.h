@@ -91,7 +91,7 @@ inline void usage()
         exit(1);
 }
 
-#if ENABLE(B3_JIT)
+#if ENABLE(B3_JIT) && !CPU(ARM)
 
 using namespace JSC;
 using namespace JSC::B3;
@@ -555,6 +555,7 @@ void testTrappingLoadDCE();
 void testTrappingStoreElimination();
 void testMoveConstants();
 void testMoveConstantsWithLargeOffsets();
+void testMoveConstantsSIMD();
 void testPCOriginMapDoesntInsertNops();
 void testBitOrBitOrArgImmImm32(int, int, int c);
 void testBitOrImmBitOrArgImm32(int, int, int c);

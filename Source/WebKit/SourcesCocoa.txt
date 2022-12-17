@@ -25,6 +25,7 @@ NetworkProcess/cache/NetworkCacheDataCocoa.mm
 NetworkProcess/cache/NetworkCacheIOChannelCocoa.mm
 
 NetworkProcess/cocoa/NetworkActivityTrackerCocoa.mm
+NetworkProcess/cocoa/NetworkConnectionIntegrityHelpers.mm
 NetworkProcess/cocoa/NetworkDataTaskCocoa.mm
 NetworkProcess/cocoa/NetworkProcessCocoa.mm
 NetworkProcess/cocoa/NetworkSessionCocoa.mm
@@ -277,6 +278,7 @@ UIProcess/API/Cocoa/_WKInspectorWindow.mm
 UIProcess/API/Cocoa/_WKInternalDebugFeature.mm
 UIProcess/API/Cocoa/_WKLinkIconParameters.mm
 UIProcess/API/Cocoa/_WKModalContainerInfo.mm
+UIProcess/API/Cocoa/_WKNotificationData.mm
 UIProcess/API/Cocoa/_WKProcessPoolConfiguration.mm
 UIProcess/API/Cocoa/_WKRemoteWebInspectorViewController.mm
 UIProcess/API/Cocoa/_WKResourceLoadInfo.mm
@@ -468,6 +470,7 @@ UIProcess/ios/GestureRecognizerConsistencyEnforcer.mm
 UIProcess/ios/InputViewUpdateDeferrer.mm
 UIProcess/ios/PageClientImplIOS.mm
 UIProcess/ios/ProcessStateMonitor.mm
+UIProcess/ios/RevealFocusedElementDeferrer.mm
 UIProcess/ios/SmartMagnificationController.mm
 UIProcess/ios/TextCheckerIOS.mm
 UIProcess/ios/ViewGestureControllerIOS.mm

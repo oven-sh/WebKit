@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2006-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2013 Google Inc. All rights reserved.
  * Copyright (C) 2006 Alexey Proskuryakov (ap@webkit.org)
  * Copyright (C) 2012 Digia Plc. and/or its subsidiary(-ies)
  *
@@ -1746,6 +1747,9 @@ bool EventHandler::handleMousePressEvent(const PlatformMouseEvent& platformMouse
 #if !ENABLE(IOS_TOUCH_EVENTS)
     cancelFakeMouseMoveEvent();
 #endif
+    if (m_eventHandlerWillResetCapturingMouseEventsElement)
+        m_capturingMouseEventsElement = nullptr;
+
     m_mousePressed = true;
     m_capturesDragging = true;
     setLastKnownMousePosition(platformMouseEvent);
@@ -2347,7 +2351,7 @@ static std::pair<bool, RefPtr<Frame>> contentFrameForNode(Node* target)
     if (!is<HTMLFrameElementBase>(target))
         return { false, nullptr };
 
-    return { true, downcast<HTMLFrameElementBase>(*target).contentFrame() };
+    return { true, dynamicDowncast<LocalFrame>(downcast<HTMLFrameElementBase>(*target).contentFrame()) };
 }
 
 static std::optional<DragOperation> convertDropZoneOperationToDragOperation(const String& dragOperation)
@@ -3016,7 +3020,7 @@ bool EventHandler::handleWheelEventInternal(const PlatformWheelEvent& event, Opt
     LOG_WITH_STREAM(Scrolling, stream << "EventHandler::handleWheelEvent " << event << " processing steps " << processingSteps);
     auto monitor = m_frame.page()->wheelEventTestMonitor();
     if (monitor)
-        monitor->receivedWheelEvent(event);
+        monitor->receivedWheelEventWithPhases(event.phase(), event.momentumPhase());
 
     auto deferrer = WheelEventTestMonitorCompletionDeferrer { monitor.get(), this, WheelEventTestMonitor::DeferReason::HandlingWheelEventOnMainThread };
 #endif

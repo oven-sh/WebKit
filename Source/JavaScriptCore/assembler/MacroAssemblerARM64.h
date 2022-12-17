@@ -5190,10 +5190,10 @@ public:
         m_assembler.dupElement(dest, src, lane, 0);
     }
 
-    void vectorSplat8(RegisterID src, FPRegisterID dest) { vectorSplat(SIMDLane::i8x16, src, dest); }
-    void vectorSplat16(RegisterID src, FPRegisterID dest) { vectorSplat(SIMDLane::i16x8, src, dest); }
-    void vectorSplat32(RegisterID src, FPRegisterID dest) { vectorSplat(SIMDLane::i32x4, src, dest); }
-    void vectorSplat64(RegisterID src, FPRegisterID dest) { vectorSplat(SIMDLane::i64x2, src, dest); }
+    void vectorSplatInt8(RegisterID src, FPRegisterID dest) { vectorSplat(SIMDLane::i8x16, src, dest); }
+    void vectorSplatInt16(RegisterID src, FPRegisterID dest) { vectorSplat(SIMDLane::i16x8, src, dest); }
+    void vectorSplatInt32(RegisterID src, FPRegisterID dest) { vectorSplat(SIMDLane::i32x4, src, dest); }
+    void vectorSplatInt64(RegisterID src, FPRegisterID dest) { vectorSplat(SIMDLane::i64x2, src, dest); }
     void vectorSplatFloat32(FPRegisterID src, FPRegisterID dest) { vectorSplat(SIMDLane::f32x4, src, dest); }
     void vectorSplatFloat64(FPRegisterID src, FPRegisterID dest) { vectorSplat(SIMDLane::f64x2, src, dest); }
 
@@ -5311,7 +5311,6 @@ public:
     
     void vectorMulSat(FPRegisterID a, FPRegisterID b, FPRegisterID dest)
     {
-        ASSERT(dest != a && dest != b);
         // (i_1 * i_2 + 2^14) >> 15
         // <=>
         // (i_1 * i_2 * 2 + 2^15) >> 16
@@ -5320,7 +5319,7 @@ public:
         m_assembler.sqrdmulhv(dest, a, b, SIMDLane::i16x8);
     }
 
-    void vectorDotProductInt32(FPRegisterID a, FPRegisterID b, FPRegisterID dest, FPRegisterID scratch) 
+    void vectorDotProduct(FPRegisterID a, FPRegisterID b, FPRegisterID dest, FPRegisterID scratch) 
     {
         m_assembler.smullv(scratch, a, b, SIMDLane::i16x8);
         m_assembler.smull2v(dest, a, b, SIMDLane::i16x8);

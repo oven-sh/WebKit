@@ -29,6 +29,7 @@
 #include "WebKitMediaKeySystemPermissionRequestPrivate.h"
 #include "WebKitNavigationActionPrivate.h"
 #include "WebKitNotificationPermissionRequestPrivate.h"
+#include "WebKitPermissionStateQueryPrivate.h"
 #include "WebKitPointerLockPermissionRequestPrivate.h"
 #include "WebKitURIRequestPrivate.h"
 #include "WebKitUserMediaPermissionRequestPrivate.h"
@@ -222,7 +223,7 @@ private:
 
             // We need the move/resize to happen synchronously in automation mode, so we use a nested RunLoop
             // to wait, up top 200 milliseconds, for the configure events.
-            auto timer = makeUnique<RunLoop::Timer<UIClient>>(RunLoop::main(), this, &UIClient::setWindowFrameTimerFired);
+            auto timer = makeUnique<RunLoop::Timer>(RunLoop::main(), this, &UIClient::setWindowFrameTimerFired);
             timer->setPriority(RunLoopSourcePriority::RunLoopTimer);
             timer->startOneShot(200_ms);
             RunLoop::run();
@@ -377,6 +378,13 @@ private:
         webkitWebViewDidLosePointerLock(m_webView);
     }
 #endif
+
+    void queryPermission(const WTF::String& permissionName, API::SecurityOrigin& origin, CompletionHandler<void(std::optional<WebCore::PermissionState>)>&& completionHandler) final
+    {
+        auto* query = webkitPermissionStateQueryCreate(permissionName, origin, WTFMove(completionHandler));
+        webkitWebViewPermissionStateQuery(m_webView, query);
+        webkit_permission_state_query_unref(query);
+    }
 
     WebKitWebView* m_webView;
 #if ENABLE(POINTER_LOCK)

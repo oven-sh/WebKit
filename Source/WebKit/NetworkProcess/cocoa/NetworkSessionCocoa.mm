@@ -34,6 +34,7 @@
 #import "Download.h"
 #import "LegacyCustomProtocolManager.h"
 #import "Logging.h"
+#import "NetworkConnectionIntegrityHelpers.h"
 #import "NetworkDataTaskCocoa.h"
 #import "NetworkLoad.h"
 #import "NetworkProcess.h"
@@ -159,6 +160,10 @@ static WebCore::PrivacyStance toPrivacyStance(nw_connection_privacy_stance_t sta
         return WebCore::PrivacyStance::Failed;
     case nw_connection_privacy_stance_direct:
         return WebCore::PrivacyStance::Direct;
+#if defined(NW_CONNECTION_HAS_PRIVACY_STANCE_FAILED_UNREACHABLE)
+    case nw_connection_privacy_stance_failed_unreachable:
+        return WebCore::PrivacyStance::FailedUnreachable;
+#endif
     }
     ASSERT_NOT_REACHED();
     return WebCore::PrivacyStance::Unknown;
@@ -177,6 +182,8 @@ static NSString* privacyStanceToString(WebCore::PrivacyStance stance)
         return @"Failed";
     case WebCore::PrivacyStance::Direct:
         return @"Direct";
+    case WebCore::PrivacyStance::FailedUnreachable:
+        return @"FailedUnreachable";
     }
     ASSERT_NOT_REACHED();
     return @"Unknown";
@@ -462,14 +469,6 @@ static String stringForSSLCipher(SSLCipherSuite cipher)
 #undef STRINGIFY_CIPHER
 }
 #endif // HAVE(CFNETWORK_METRICS_APIS_V4)
-
-#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/NetworkSessionCocoaAdditions.mm>)
-#import <WebKitAdditions/NetworkSessionCocoaAdditions.mm>
-#else
-namespace WebKit {
-inline static void applyAdditionalSettings(NSURLSession *) { }
-}
-#endif
 
 @interface WKNetworkSessionDelegate : NSObject <NSURLSessionDataDelegate
 #if HAVE(NSURLSESSION_WEBSOCKET)
@@ -1108,7 +1107,9 @@ namespace WebKit {
 static RetainPtr<NSURLSession> createURLSession(NSURLSessionConfiguration *configuration, id<NSURLSessionDelegate> delegate)
 {
     RetainPtr session = [NSURLSession sessionWithConfiguration:configuration delegate:delegate delegateQueue:NSOperationQueue.mainQueue];
-    applyAdditionalSettings(session.get());
+#if ENABLE(NETWORK_CONNECTION_INTEGRITY)
+    configureForNetworkConnectionIntegrity(session.get());
+#endif
     return session;
 }
 

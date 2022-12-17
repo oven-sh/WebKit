@@ -287,7 +287,7 @@
                 "auto-functions": true,
                 "color-property": true,
                 "settings-flag": "accentColorEnabled",
-                "parser-grammar": ["auto", "<color>"]
+                "parser-grammar": "auto | <color>"
             },
             "status": {
                 "status": "experimental"
@@ -303,7 +303,7 @@
                 "visited-link-color-support": true,
                 "color-property": true,
                 "custom": "All",
-                "parser-grammar": ["auto", "<color>"]
+                "parser-grammar": "auto | <color>"
             },
             "specification": {
                 "category": "css-ui",
@@ -318,7 +318,7 @@
                 "custom": "Value",
                 "high-priority": true,
                 "fast-path-inherited": true,
-                "parser-grammar": ["<color accept-quirky-colors-in-quirks-mode>"]
+                "parser-grammar": "<color accept-quirky-colors-in-quirks-mode>"
             },
             "status": {
                 "comment": "All the values from CSS Color Level 3 are supported, as well as the 8- and 4-digit forms of hex color, and the color() function."
@@ -429,7 +429,7 @@
             "codegen-properties": {
                 "custom": "All",
                 "high-priority": true,
-                "parser-grammar": ["<absolute-size>", "<relative-size>", "<length-percentage [0,inf] unitless-allowed>", "<-webkit-absolute-size>", "<-webkit-relative-size>"],
+                "parser-grammar": "<absolute-size> | <relative-size> | <length-percentage [0,inf] unitless-allowed> | <-webkit-absolute-size> | <-webkit-relative-size>",
                 "parser-exported": true
             },
             "specification": {
@@ -443,7 +443,7 @@
                 "custom": "Value",
                 "font-property": true,
                 "high-priority": true,
-                "parser-grammar": ["none", "<number [0,inf]>"]
+                "parser-grammar": "none | <number [0,inf]>"
             },
             "specification": {
                 "category": "css-fonts",
@@ -597,7 +597,7 @@
                 "converter": "FontPalette",
                 "font-property": true,
                 "high-priority": true,
-                "parser-grammar": ["normal", "light", "dark", "<palette-identifier>"]
+                "parser-grammar": "normal | light | dark | <palette-identifier>"
             },
             "specification": {
                 "category": "css-fonts",
@@ -821,8 +821,7 @@
                     {
                         "value": "font-variation-settings",
                         "enable-if": "ENABLE_VARIATION_FONTS"
-                    },
-                    "font-palette"
+                    }
                 ],
                 "custom-parser": true
             },
@@ -856,7 +855,7 @@
                 "font-property": true,
                 "high-priority": true,
                 "name-for-methods": "SpecifiedLocale",
-                "parser-grammar": ["auto", "<string>"]
+                "parser-grammar": "auto | <string>"
             },
             "status": "non-standard"
         },
@@ -907,7 +906,7 @@
                 "high-priority": true,
                 "enable-if": "ENABLE_TEXT_AUTOSIZING",
                 "settings-flag": "textAutosizingEnabled",
-                "parser-grammar": ["auto", "none", "<percentage [0,inf]>"]
+                "parser-grammar": "auto | none | <percentage [0,inf]>"
             },
             "status": "experimental",
             "specification": {
@@ -993,7 +992,7 @@
             "codegen-properties": {
                 "custom": "All",
                 "high-priority": true,
-                "parser-grammar": ["normal", "reset", "document", "<percentage [0,inf]>", "<number [0,inf]>"]
+                "parser-grammar": "normal | reset | document | <percentage [0,inf]> | <number [0,inf]>"
             },
             "status": "non-standard",
             "specification": {
@@ -1369,7 +1368,7 @@
             "codegen-properties": {
                 "visited-link-color-support": true,
                 "color-property": true,
-                "parser-grammar": ["<color accept-quirky-colors-in-quirks-mode>"]
+                "parser-grammar": "<color accept-quirky-colors-in-quirks-mode>"
             },
             "specification": {
                 "category": "css-backgrounds",
@@ -1418,9 +1417,7 @@
             "codegen-properties": {
                 "name-for-methods": "XPosition",
                 "fill-layer-property": true,
-                "parser-function": "consumeCommaSeparatedBackgroundComponent",
-                "parser-requires-current-property": true,
-                "parser-requires-context": true
+                "parser-grammar": "<single-background-position-x>#"
             },
             "specification": {
                 "category": "css-backgrounds",
@@ -1431,9 +1428,7 @@
             "codegen-properties": {
                 "name-for-methods": "YPosition",
                 "fill-layer-property": true,
-                "parser-function": "consumeCommaSeparatedBackgroundComponent",
-                "parser-requires-current-property": true,
-                "parser-requires-context": true
+                "parser-grammar": "<single-background-position-y>#"
             },
             "specification": {
                 "category": "css-backgrounds",
@@ -1444,9 +1439,7 @@
             "codegen-properties": {
                 "name-for-methods": "Repeat",
                 "fill-layer-property": true,
-                "parser-function": "consumeCommaSeparatedBackgroundComponent",
-                "parser-requires-current-property": true,
-                "parser-requires-context": true
+                "parser-grammar": "<single-background-repeat>#"
             },
             "specification": {
                 "category": "css-backgrounds",
@@ -1458,9 +1451,7 @@
                 "name-for-methods": "Size",
                 "fill-layer-property": true,
                 "separator": " ",
-                "parser-function": "consumeCommaSeparatedBackgroundComponent",
-                "parser-requires-current-property": true,
-                "parser-requires-context": true
+                "parser-grammar": "<single-background-size>#"
             },
             "specification": {
                 "category": "css-backgrounds",
@@ -1471,7 +1462,7 @@
             "codegen-properties": {
                 "custom": "Value",
                 "svg": true,
-                "parser-grammar": ["baseline", "sub", "super", "<length-percentage svg>"]
+                "parser-grammar": "baseline | sub | super | <length-percentage>"
             },
             "specification": {
                 "category": "svg",
@@ -1488,7 +1479,7 @@
                     "name": "size",
                     "resolver": "block"
                 },
-                "parser-grammar": ["<width-or-height>"]
+                "parser-grammar": "<width-or-height>"
             },
             "specification": {
                 "category": "css-logical-props",
@@ -1576,7 +1567,7 @@
                     "name": "border-color",
                     "resolver": "block-end"
                 },
-                "parser-grammar": ["<color>"]
+                "parser-grammar": "<color>"
             },
             "specification": {
                 "category": "css-logical-props",
@@ -1621,7 +1612,7 @@
                     "name": "border-width",
                     "resolver": "block-end"
                 },
-                "parser-grammar": ["<line-width>"]
+                "parser-grammar": "<line-width>"
             },
             "specification": {
                 "category": "css-logical-props",
@@ -1656,7 +1647,7 @@
                     "name": "border-color",
                     "resolver": "block-start"
                 },
-                "parser-grammar": ["<color>"]
+                "parser-grammar": "<color>"
             },
             "specification": {
                 "category": "css-logical-props",
@@ -1701,7 +1692,7 @@
                     "name": "border-width",
                     "resolver": "block-start"
                 },
-                "parser-grammar": ["<line-width>"]
+                "parser-grammar": "<line-width>"
             },
             "specification": {
                 "category": "css-logical-props",
@@ -1950,7 +1941,7 @@
         "border-image-source": {
             "codegen-properties": {
                 "converter": "StyleImage<CSSPropertyBorderImageSource>",
-                "parser-grammar": ["none", "<image>"]
+                "parser-grammar": "none | <image>"
             },
             "specification": {
                 "category": "css-backgrounds",
@@ -2026,7 +2017,7 @@
                     "name": "border-color",
                     "resolver": "inline-end"
                 },
-                "parser-grammar": ["<color>"]
+                "parser-grammar": "<color>"
             },
             "specification": {
                 "category": "css-logical-props",
@@ -2071,7 +2062,7 @@
                     "name": "border-width",
                     "resolver": "inline-end"
                 },
-                "parser-grammar": ["<line-width>"]
+                "parser-grammar": "<line-width>"
             },
             "specification": {
                 "category": "css-logical-props",
@@ -2106,7 +2097,7 @@
                     "name": "border-color",
                     "resolver": "inline-start"
                 },
-                "parser-grammar": ["<color>"]
+                "parser-grammar": "<color>"
             },
             "specification": {
                 "category": "css-logical-props",
@@ -2151,7 +2142,7 @@
                     "name": "border-width",
                     "resolver": "inline-start"
                 },
-                "parser-grammar": ["<line-width>"]
+                "parser-grammar": "<line-width>"
             },
             "specification": {
                 "category": "css-logical-props",
@@ -2899,7 +2890,7 @@
             "codegen-properties": {
                 "initial": "initialZeroLength",
                 "converter": "Length",
-                "parser-grammar": ["<length-percentage svg>"]
+                "parser-grammar": "<length-percentage>"
             },
             "specification": {
                 "category": "svg",
@@ -2910,7 +2901,7 @@
             "codegen-properties": {
                 "initial": "initialZeroLength",
                 "converter": "Length",
-                "parser-grammar": ["<length-percentage svg>"]
+                "parser-grammar": "<length-percentage>"
             },
             "specification": {
                 "category": "svg",
@@ -3029,7 +3020,7 @@
             "codegen-properties": {
                 "svg": true,
                 "color-property": true,
-                "parser-grammar": ["<color>"]
+                "parser-grammar": "<color>"
             },
             "specification": {
                 "category": "svg",
@@ -3052,7 +3043,7 @@
             "codegen-properties": {
                 "converter": "GlyphOrientation",
                 "svg": true,
-                "parser-grammar": ["<angle unitless-allowed unitless-zero-allowed>"]
+                "parser-grammar": "<angle unitless-allowed unitless-zero-allowed>"
             },
             "specification": {
                 "category": "svg",
@@ -3064,7 +3055,7 @@
             "codegen-properties": {
                 "converter": "GlyphOrientationOrAuto",
                 "svg": true,
-                "parser-grammar": ["auto", "<angle unitless-allowed unitless-zero-allowed>"]
+                "parser-grammar": "auto | <angle unitless-allowed unitless-zero-allowed>"
             },
             "specification": {
                 "category": "svg",
@@ -3090,7 +3081,7 @@
                     "name": "size",
                     "resolver": "vertical"
                 },
-                "parser-grammar": ["<width-or-height-unitless-allowed>"]
+                "parser-grammar": "<width-or-height-unitless-allowed>"
             },
             "specification": {
                 "category": "css-22",
@@ -3174,7 +3165,7 @@
                     "name": "size",
                     "resolver": "inline"
                 },
-                "parser-grammar": ["<width-or-height>"]
+                "parser-grammar": "<width-or-height>"
             },
             "specification": {
                 "category": "css-logical-props",
@@ -3229,7 +3220,7 @@
                     "name": "inset",
                     "resolver": "block-end"
                 },
-                "parser-grammar": ["<inset-logical-start-end>"]
+                "parser-grammar": "<inset-logical-start-end>"
             },
             "specification": {
                 "category": "css-logical-props",
@@ -3243,7 +3234,7 @@
                     "name": "inset",
                     "resolver": "block-start"
                 },
-                "parser-grammar": ["<inset-logical-start-end>"]
+                "parser-grammar": "<inset-logical-start-end>"
             },
             "specification": {
                 "category": "css-logical-props",
@@ -3270,7 +3261,7 @@
                     "name": "inset",
                     "resolver": "inline-end"
                 },
-                "parser-grammar": ["<inset-logical-start-end>"]
+                "parser-grammar": "<inset-logical-start-end>"
             },
             "specification": {
                 "category": "css-logical-props",
@@ -3284,7 +3275,7 @@
                     "name": "inset",
                     "resolver": "inline-start"
                 },
-                "parser-grammar": ["<inset-logical-start-end>"]
+                "parser-grammar": "<inset-logical-start-end>"
             },
             "specification": {
                 "category": "css-logical-props",
@@ -3296,7 +3287,7 @@
             "codegen-properties": {
                 "converter": "SVGLengthValue",
                 "svg": true,
-                "parser-grammar": ["auto", "normal", "<length unitless-allowed>"]
+                "parser-grammar": "auto | normal | <length unitless-allowed>"
             },
             "specification": {
                 "category": "svg",
@@ -3343,7 +3334,7 @@
                 "high-priority": true,
                 "sink-priority": true,
                 "converter": "Spacing",
-                "parser-grammar": ["normal", "<length unitless-allowed>"]
+                "parser-grammar": "normal | <length unitless-allowed>"
             },
             "specification": {
                 "category": "css-text",
@@ -3354,7 +3345,7 @@
             "codegen-properties": {
                 "svg": true,
                 "color-property": true,
-                "parser-grammar": ["<color>"]
+                "parser-grammar": "<color>"
             }
         },
         "line-height": {
@@ -3363,14 +3354,14 @@
                 {
                     "custom": "All",
                     "enable-if": "ENABLE_TEXT_AUTOSIZING",
-                    "parser-grammar": ["normal", "<number [0,inf]>", "<length-percentage [0,inf]>"],
+                    "parser-grammar": "normal | <number [0,inf]> | <length-percentage [0,inf]>",
                     "parser-exported": true
                 },
                 {
                     "getter": "specifiedLineHeight",
                     "conditional-converter": "LineHeight",
                     "enable-if": "!ENABLE_TEXT_AUTOSIZING",
-                    "parser-grammar": ["normal", "<number [0,inf]>", "<length-percentage [0,inf]>"],
+                    "parser-grammar": "normal | <number [0,inf]> | <length-percentage [0,inf]>",
                     "parser-exported": true
                 }
             ],
@@ -3398,7 +3389,7 @@
             "inherited": true,
             "codegen-properties": {
                 "converter": "StyleImage<CSSPropertyListStyleImage>",
-                "parser-grammar": ["none", "<image>"]
+                "parser-grammar": "none | <image>"
             },
             "specification": {
                 "category": "css-lists",
@@ -3517,7 +3508,7 @@
             ],
             "codegen-properties": {
                 "custom": "All",
-                "parser-grammar": ["<<values>>", "<string>"]
+                "parser-grammar": "<<values>> | <string>"
             },
             "specification": {
                 "category": "css-lists",
@@ -3562,7 +3553,7 @@
                     "name": "margin",
                     "resolver": "block-end"
                 },
-                "parser-grammar": ["<margin-logical-start-end>"]
+                "parser-grammar": "<margin-logical-start-end>"
             },
             "specification": {
                 "category": "css-logical-props",
@@ -3579,7 +3570,7 @@
                     "name": "margin",
                     "resolver": "block-start"
                 },
-                "parser-grammar": ["<margin-logical-start-end>"]
+                "parser-grammar": "<margin-logical-start-end>"
             },
             "specification": {
                 "category": "css-logical-props",
@@ -3626,7 +3617,7 @@
                     "name": "margin",
                     "resolver": "inline-end"
                 },
-                "parser-grammar": ["<margin-logical-start-end>"]
+                "parser-grammar": "<margin-logical-start-end>"
             },
             "specification": {
                 "category": "css-logical-props",
@@ -3643,7 +3634,7 @@
                     "name": "margin",
                     "resolver": "inline-start"
                 },
-                "parser-grammar": ["<margin-logical-start-end>"]
+                "parser-grammar": "<margin-logical-start-end>"
             },
             "specification": {
                 "category": "css-logical-props",
@@ -3701,6 +3692,17 @@
                 "url": "https://www.w3.org/TR/CSS22/box.html#propdef-margin-top"
             }
         },
+        "margin-trim": {
+            "codegen-properties": {
+                "settings-flag": "cssMarginTrimEnabled",
+                "converter": "MarginTrim",
+                "custom-parser": true
+            },
+            "specification": {
+                "category": "css-box-4",
+                "url": "https://www.w3.org/TR/css-box-4/#margin-trim"
+            }
+        },
         "marker": {
             "inherited": true,
             "codegen-properties": {
@@ -3722,7 +3724,7 @@
                 "name-for-methods": "MarkerEndResource",
                 "converter": "SVGURIReference",
                 "svg": true,
-                "parser-grammar": ["none", "<marker-ref>"]
+                "parser-grammar": "none | <marker-ref>"
             },
             "specification": {
                 "category": "svg",
@@ -3735,7 +3737,7 @@
                 "name-for-methods": "MarkerMidResource",
                 "converter": "SVGURIReference",
                 "svg": true,
-                "parser-grammar": ["none", "<marker-ref>"]
+                "parser-grammar": "none | <marker-ref>"
             },
             "specification": {
                 "category": "svg",
@@ -3748,7 +3750,7 @@
                 "name-for-methods": "MarkerStartResource",
                 "converter": "SVGURIReference",
                 "svg": true,
-                "parser-grammar": ["none", "<marker-ref>"]
+                "parser-grammar": "none | <marker-ref>"
             },
             "specification": {
                 "category": "svg",
@@ -3872,9 +3874,7 @@
             "codegen-properties": {
                 "name-for-methods": "XPosition",
                 "fill-layer-property": true,
-                "parser-function": "consumeCommaSeparatedBackgroundComponent",
-                "parser-requires-current-property": true,
-                "parser-requires-context": true
+                "parser-grammar": "<single-webkit-mask-position-x>#"
             },
             "status": {
                 "status": "experimental",
@@ -3889,9 +3889,7 @@
             "codegen-properties": {
                 "name-for-methods": "YPosition",
                 "fill-layer-property": true,
-                "parser-function": "consumeCommaSeparatedBackgroundComponent",
-                "parser-requires-current-property": true,
-                "parser-requires-context": true
+                "parser-grammar": "<single-webkit-mask-position-y>#"
             },
             "status": {
                 "status": "experimental",
@@ -3909,9 +3907,7 @@
                 ],
                 "name-for-methods": "Repeat",
                 "fill-layer-property": true,
-                "parser-function": "consumeCommaSeparatedBackgroundComponent",
-                "parser-requires-current-property": true,
-                "parser-requires-context": true
+                "parser-grammar": "<single-mask-repeat>#"
             },
             "specification": {
                 "category": "css-masking",
@@ -3925,9 +3921,7 @@
                 ],
                 "name-for-methods": "Size",
                 "fill-layer-property": true,
-                "parser-function": "consumeCommaSeparatedBackgroundComponent",
-                "parser-requires-current-property": true,
-                "parser-requires-context": true
+                "parser-grammar": "<single-mask-size>#"
             },
             "specification": {
                 "category": "css-masking",
@@ -3978,7 +3972,7 @@
                     "name": "max-size",
                     "resolver": "block"
                 },
-                "parser-grammar": ["<max-width-or-height>"]
+                "parser-grammar": "<max-width-or-height>"
             },
             "specification": {
                 "category": "css-logical-props",
@@ -3993,7 +3987,7 @@
                     "name": "max-size",
                     "resolver": "vertical"
                 },
-                "parser-grammar": ["<max-width-or-height-unitless-allowed>"]
+                "parser-grammar": "<max-width-or-height-unitless-allowed>"
             },
             "specification": {
                 "category": "css-22",
@@ -4010,7 +4004,7 @@
                     "name": "max-size",
                     "resolver": "inline"
                 },
-                "parser-grammar": ["<max-width-or-height>"]
+                "parser-grammar": "<max-width-or-height>"
             },
             "specification": {
                 "category": "css-logical-props",
@@ -4025,7 +4019,7 @@
                     "name": "max-size",
                     "resolver": "horizontal"
                 },
-                "parser-grammar": ["<max-width-or-height-unitless-allowed>"]
+                "parser-grammar": "<max-width-or-height-unitless-allowed>"
             },
             "specification": {
                 "category": "css-22",
@@ -4042,7 +4036,7 @@
                     "name": "min-size",
                     "resolver": "block"
                 },
-                "parser-grammar": ["<width-or-height>"]
+                "parser-grammar": "<width-or-height>"
             },
             "specification": {
                 "category": "css-logical-props",
@@ -4057,7 +4051,7 @@
                     "name": "min-size",
                     "resolver": "vertical"
                 },
-                "parser-grammar": ["<width-or-height-unitless-allowed>"]
+                "parser-grammar": "<width-or-height-unitless-allowed>"
             },
             "specification": {
                 "category": "css-22",
@@ -4074,7 +4068,7 @@
                     "name": "min-size",
                     "resolver": "inline"
                 },
-                "parser-grammar": ["<width-or-height>"]
+                "parser-grammar": "<width-or-height>"
             },
             "specification": {
                 "category": "css-logical-props",
@@ -4089,7 +4083,7 @@
                     "name": "min-size",
                     "resolver": "horizontal"
                 },
-                "parser-grammar": ["<width-or-height-unitless-allowed>"]
+                "parser-grammar": "<width-or-height-unitless-allowed>"
             },
             "specification": {
                 "category": "css-22",
@@ -4112,7 +4106,7 @@
         "object-position": {
             "codegen-properties": {
                 "converter": "Position",
-                "parser-grammar": ["<position>"]
+                "parser-grammar": "<position>"
             },
             "specification": {
                 "category": "css-images",
@@ -4136,7 +4130,7 @@
             "codegen-properties": {
                 "converter": "Length",
                 "settings-flag": "cssMotionPathEnabled",
-                "parser-grammar": ["<length-percentage>"]
+                "parser-grammar": "<length-percentage>"
             },
             "specification": {
                 "category": "css-motion-path",
@@ -4147,7 +4141,7 @@
             "codegen-properties": {
                 "converter": "PositionOrAuto",
                 "settings-flag": "cssMotionPathEnabled",
-                "parser-grammar": ["auto", "<position>"]
+                "parser-grammar": "auto | <position>"
             },
             "specification": {
                 "category": "css-motion-path",
@@ -4158,7 +4152,7 @@
             "codegen-properties": {
                 "converter": "PositionOrAuto",
                 "settings-flag": "cssMotionPathEnabled",
-                "parser-grammar": ["auto", "<position>"]
+                "parser-grammar": "auto | <position>"
             },
             "specification": {
                 "category": "css-motion-path",
@@ -4200,7 +4194,7 @@
                 "aliases": [
                     "-webkit-opacity"
                 ],
-                "parser-grammar": ["<alpha-value>"]
+                "parser-grammar": "<alpha-value>"
             },
             "status": {
                 "comment": "Honor -webkit-opacity as a synonym for opacity. This was the only syntax that worked in Safari 1.1, and may be in use on some websites and widgets."
@@ -4214,7 +4208,7 @@
             "inherited": true,
             "codegen-properties": {
                 "auto-functions": true,
-                "parser-grammar": ["<integer [1,inf]>"]
+                "parser-grammar": "<integer [1,inf]>"
             },
             "specification": {
                 "category": "css-22",
@@ -4240,7 +4234,7 @@
                 "initial": "currentColor",
                 "visited-link-color-support": true,
                 "color-property": true,
-                "parser-grammar": ["-webkit-focus-ring-color", "<color>"]
+                "parser-grammar": "-webkit-focus-ring-color | <color>"
             },
             "specification": {
                 "category": "css-ui",
@@ -4250,7 +4244,7 @@
         "outline-offset": {
             "codegen-properties": {
                 "converter": "ComputedLength<float>",
-                "parser-grammar": ["<length>"]
+                "parser-grammar": "<length>"
             },
             "specification": {
                 "category": "css-ui",
@@ -4281,7 +4275,7 @@
         "outline-width": {
             "codegen-properties": {
                 "converter": "LineWidth<float>",
-                "parser-grammar": ["<line-width>"]
+                "parser-grammar": "<line-width>"
             },
             "specification": {
                 "category": "css-ui",
@@ -4529,7 +4523,7 @@
                     "name": "padding",
                     "resolver": "block-end"
                 },
-                "parser-grammar": ["<length-percentage [0,inf]>"]
+                "parser-grammar": "<length-percentage [0,inf]>"
             },
             "specification": {
                 "category": "css-logical-props",
@@ -4546,7 +4540,7 @@
                     "name": "padding",
                     "resolver": "block-start"
                 },
-                "parser-grammar": ["<length-percentage [0,inf]>"]
+                "parser-grammar": "<length-percentage [0,inf]>"
             },
             "specification": {
                 "category": "css-logical-props",
@@ -4561,7 +4555,7 @@
                     "name": "padding",
                     "resolver": "bottom"
                 },
-                "parser-grammar": ["<length-percentage [0,inf] unitless-allowed>"]
+                "parser-grammar": "<length-percentage [0,inf] unitless-allowed>"
             },
             "specification": {
                 "category": "css-22",
@@ -4591,7 +4585,7 @@
                     "name": "padding",
                     "resolver": "inline-end"
                 },
-                "parser-grammar": ["<length-percentage [0,inf]>"]
+                "parser-grammar": "<length-percentage [0,inf]>"
             },
             "specification": {
                 "category": "css-logical-props",
@@ -4608,7 +4602,7 @@
                     "name": "padding",
                     "resolver": "inline-start"
                 },
-                "parser-grammar": ["<length-percentage [0,inf]>"]
+                "parser-grammar": "<length-percentage [0,inf]>"
             },
             "specification": {
                 "category": "css-logical-props",
@@ -4623,7 +4617,7 @@
                     "name": "padding",
                     "resolver": "left"
                 },
-                "parser-grammar": ["<length-percentage [0,inf] unitless-allowed>"]
+                "parser-grammar": "<length-percentage [0,inf] unitless-allowed>"
             },
             "specification": {
                 "category": "css-22",
@@ -4638,7 +4632,7 @@
                     "name": "padding",
                     "resolver": "right"
                 },
-                "parser-grammar": ["<length-percentage [0,inf] unitless-allowed>"]
+                "parser-grammar": "<length-percentage [0,inf] unitless-allowed>"
             },
             "specification": {
                 "category": "css-22",
@@ -4653,7 +4647,7 @@
                     "name": "padding",
                     "resolver": "top"
                 },
-                "parser-grammar": ["<length-percentage [0,inf] unitless-allowed>"]
+                "parser-grammar": "<length-percentage [0,inf] unitless-allowed>"
             },
             "specification": {
                 "category": "css-22",
@@ -4663,7 +4657,7 @@
         "page": {
             "codegen-properties": {
                 "skip-builder": true,
-                "parser-grammar": ["auto", "<custom-ident>"]
+                "parser-grammar": "auto | <custom-ident>"
             },
             "specification": {
                 "category": "css-page",
@@ -4779,7 +4773,7 @@
             "codegen-properties": {
                 "initial": "initialZeroLength",
                 "converter": "Length",
-                "parser-grammar": ["<length-percentage [0,inf]>"]
+                "parser-grammar": "<length-percentage [0,inf]>"
             },
             "specification": {
                 "category": "svg",
@@ -4834,7 +4828,7 @@
             "codegen-properties": {
                 "initial": "initialRadius",
                 "converter": "LengthOrAuto",
-                "parser-grammar": ["auto", "<length-percentage [0,inf]>"]
+                "parser-grammar": "auto | <length-percentage [0,inf]>"
             },
             "specification": {
                 "category": "svg",
@@ -4845,7 +4839,7 @@
             "codegen-properties": {
                 "initial": "initialRadius",
                 "converter": "LengthOrAuto",
-                "parser-grammar": ["auto", "<length-percentage [0,inf]>"]
+                "parser-grammar": "auto | <length-percentage [0,inf]>"
             },
             "specification": {
                 "category": "svg",
@@ -4917,7 +4911,7 @@
             "codegen-properties": {
                 "svg": true,
                 "color-property": true,
-                "parser-grammar": ["<color>"]
+                "parser-grammar": "<color>"
             },
             "specification": {
                 "category": "svg",
@@ -4928,7 +4922,7 @@
             "codegen-properties": {
                 "converter": "Opacity",
                 "svg": true,
-                "parser-grammar": ["<alpha-value>"]
+                "parser-grammar": "<alpha-value>"
             },
             "specification": {
                 "category": "svg",
@@ -4968,7 +4962,7 @@
                 "initial": "initialZeroLength",
                 "name-for-methods": "StrokeDashOffset",
                 "converter": "Length",
-                "parser-grammar": ["<length-percentage svg>"]
+                "parser-grammar": "<length-percentage svg>"
             },
             "specification": {
                 "category": "svg",
@@ -5016,7 +5010,7 @@
             "codegen-properties": {
                 "name-for-methods": "StrokeMiterLimit",
                 "converter": "Number<float>",
-                "parser-grammar": ["<number [0,inf]>"]
+                "parser-grammar": "<number [0,inf]>"
             },
             "status": "supported",
             "specification": {
@@ -5031,7 +5025,7 @@
             "codegen-properties": {
                 "converter": "Opacity",
                 "svg": true,
-                "parser-grammar": ["<alpha-value>"]
+                "parser-grammar": "<alpha-value>"
             },
             "specification": {
                 "category": "svg",
@@ -5044,7 +5038,7 @@
                 "custom": "Value",
                 "visited-link-color-support": true,
                 "color-property": true,
-                "parser-grammar": ["<color>"]
+                "parser-grammar": "<color>"
             },
             "status": "supported",
             "specification": {
@@ -5058,7 +5052,7 @@
                 "custom": "Value",
                 "initial": "initialOneLength",
                 "converter": "Length",
-                "parser-grammar": ["<length-percentage svg>"]
+                "parser-grammar": "<length-percentage svg>"
             },
             "status": "supported",
             "specification": {
@@ -5105,7 +5099,7 @@
             "inherited": true,
             "codegen-properties": {
                 "converter": "TabSize",
-                "parser-grammar": ["<number [0,inf]>", "<length [0,inf]>"]
+                "parser-grammar": "<number [0,inf]> | <length [0,inf]>"
             },
             "specification": {
                 "category": "css-text",
@@ -5552,13 +5546,7 @@
                     "-webkit-transition-property"
                 ],
                 "name-for-methods": "Property",
-                "parser-grammar": [
-                    "none",
-                    {
-                        "value": "<single-transition-property>#",
-                        "single-value-optimization": true
-                    }
-                ]
+                "parser-grammar": "none  | <single-transition-property>#"
             },
             "specification": {
                 "category": "css-transitions",
@@ -5658,21 +5646,7 @@
         "vertical-align": {
             "codegen-properties": {
                 "custom": "Inherit|Value",
-                "parser-grammar": [
-                    "baseline",
-                    "sub",
-                    "super",
-                    "top",
-                    "text-top",
-                    "middle",
-                    "bottom",
-                    "text-bottom",
-                    {
-                        "value": "-webkit-baseline-middle",
-                        "status": "non-standard"
-                    },
-                    "<length-percentage unitless-allowed>"
-                 ]
+                "parser-grammar": "baseline | sub | super | top | text-top | middle | bottom | text-bottom | -webkit-baseline-middle | <length-percentage unitless-allowed>"
             },
             "specification": {
                 "category": "css-22",
@@ -5710,7 +5684,7 @@
             "inherited": true,
             "codegen-properties": {
                 "auto-functions": true,
-                "parser-grammar": ["<integer [1,inf]>"]
+                "parser-grammar": "<integer [1,inf]>"
             },
             "specification": {
                 "category": "css-22",
@@ -5725,7 +5699,7 @@
                     "name": "size",
                     "resolver": "horizontal"
                 },
-                "parser-grammar": ["<width-or-height-unitless-allowed>"]
+                "parser-grammar": "<width-or-height-unitless-allowed>"
             },
             "specification": {
                 "category": "css-22",
@@ -5765,7 +5739,7 @@
             "inherited": true,
             "codegen-properties": {
                 "conditional-converter": "WordSpacing",
-                "parser-grammar": ["normal", "<length-percentage unitless-allowed>"],
+                "parser-grammar": "normal | <length-percentage unitless-allowed>",
                 "parser-grammar-comment": "The current specification has a <length>, not a <length-percentage>"
             },
             "specification": {
@@ -5777,7 +5751,7 @@
             "codegen-properties": {
                 "initial": "initialZeroLength",
                 "converter": "Length",
-                "parser-grammar": ["<length-percentage svg>"]
+                "parser-grammar": "<length-percentage>"
             },
             "specification": {
                 "category": "svg",
@@ -5788,7 +5762,7 @@
             "codegen-properties": {
                 "initial": "initialZeroLength",
                 "converter": "Length",
-                "parser-grammar": ["<length-percentage svg>"]
+                "parser-grammar": "<length-percentage>"
             },
             "specification": {
                 "category": "svg",
@@ -5799,7 +5773,7 @@
             "codegen-properties": {
                 "auto-functions": true,
                 "name-for-methods": "SpecifiedZIndex",
-                "parser-grammar": ["auto", "<integer>"]
+                "parser-grammar": "auto | <integer>"
             },
             "specification": {
                 "category": "css-22",
@@ -6090,7 +6064,7 @@
                 "longhands": [
                     "background-size"
                 ],
-                "custom-parser": true
+                "parser-grammar": "<single-webkit-background-size>#"
             },
             "status": {
                 "comment": "Differs from background-size only in the interpretation of a single value: '-webkit-background-size: l;' is equivalent to 'background-size: l l;' whereas 'background-size: l;' is equivalent to 'background-size: l auto;'"
@@ -6101,7 +6075,7 @@
             "codegen-properties": {
                 "name-for-methods": "HorizontalBorderSpacing",
                 "converter": "ComputedLength<float>",
-                "parser-grammar": ["<length [0,inf]>"]
+                "parser-grammar": "<length [0,inf]>"
             },
             "status": "non-standard"
         },
@@ -6139,7 +6113,7 @@
             "codegen-properties": {
                 "name-for-methods": "VerticalBorderSpacing",
                 "converter": "ComputedLength<float>",
-                "parser-grammar": ["<length [0,inf]>"]
+                "parser-grammar": "<length [0,inf]>"
             },
             "status": "non-standard"
         },
@@ -6171,7 +6145,7 @@
         },
         "-webkit-box-flex": {
             "codegen-properties": {
-                "parser-grammar": ["<number>"]
+                "parser-grammar": "<number>"
             },
             "status": "obsolete",
             "specification":  {
@@ -6181,7 +6155,7 @@
         },
         "-webkit-box-flex-group": {
             "codegen-properties": {
-                "parser-grammar": ["<integer [0,inf]>"]
+                "parser-grammar": "<integer [0,inf]>"
             },
             "status": "obsolete",
             "specification":  {
@@ -6202,7 +6176,7 @@
         },
         "-webkit-box-ordinal-group": {
             "codegen-properties": {
-                "parser-grammar": ["<integer [1,inf]>"]
+                "parser-grammar": "<integer [1,inf]>"
             },
             "status": "obsolete",
             "specification":  {
@@ -6319,7 +6293,7 @@
                     "-webkit-column-count"
                 ],
                 "auto-functions": true,
-                "parser-grammar": ["auto", "<integer [1,inf]>"],
+                "parser-grammar": "auto | <integer [1,inf]>",
                 "parser-exported": true
             },
             "specification":  {
@@ -6349,7 +6323,7 @@
                     "-webkit-column-gap"
                 ],
                 "converter": "GapLength",
-                "parser-grammar": ["<gap-gutter>"],
+                "parser-grammar": "<gap-gutter>",
                 "parser-exported": true
             },
             "specification": {
@@ -6363,7 +6337,7 @@
                     "grid-row-gap"
                 ],
                 "converter": "GapLength",
-                "parser-grammar": ["<gap-gutter>"],
+                "parser-grammar": "<gap-gutter>",
                 "parser-exported": true
             },
             "specification": {
@@ -6422,7 +6396,7 @@
                 "initial": "currentColor",
                 "visited-link-color-support": true,
                 "color-property": true,
-                "parser-grammar": ["<color>"]
+                "parser-grammar": "<color>"
             },
             "specification":  {
                 "category": "css-multicol",
@@ -6459,7 +6433,7 @@
                     "-webkit-column-rule-width"
                 ],
                 "converter": "LineWidth<unsigned short>",
-                "parser-grammar": ["<line-width>"]
+                "parser-grammar": "<line-width>"
             },
             "specification":  {
                 "category": "css-multicol",
@@ -6488,7 +6462,7 @@
                 ],
                 "converter": "ComputedLength<float>",
                 "auto-functions": true,
-                "parser-grammar": ["auto", "<length [0,inf] strict>"],
+                "parser-grammar": "auto | <length [0,inf] strict>",
                 "parser-exported": true
             },
             "specification":  {
@@ -6690,7 +6664,7 @@
                     "-webkit-flex-basis"
                 ],
                 "converter": "LengthSizing",
-                "parser-grammar": ["auto", "content", "<width-or-height-keyword>", "<length-percentage [0,inf]>"]
+                "parser-grammar": "auto | content | <width-or-height-keyword> | <length-percentage [0,inf]>"
             },
             "specification": {
                 "category": "css-flexbox",
@@ -6735,7 +6709,7 @@
                 "aliases": [
                     "-webkit-flex-grow"
                 ],
-                "parser-grammar": ["<number [0,inf]>"]
+                "parser-grammar": "<number [0,inf]>"
             },
             "specification": {
                 "category": "css-flexbox",
@@ -6747,7 +6721,7 @@
                 "aliases": [
                     "-webkit-flex-shrink"
                 ],
-                "parser-grammar": ["<number [0,inf]>"]
+                "parser-grammar": "<number [0,inf]>"
             },
             "specification": {
                 "category": "css-flexbox",
@@ -6811,7 +6785,7 @@
             "codegen-properties": {
                 "skip-builder": true,
                 "internal-only": true,
-                "parser-grammar": ["<length unitless-allowed>"]
+                "parser-grammar": "<length unitless-allowed>"
             },
             "status": "non-standard"
         },
@@ -7068,7 +7042,7 @@
             "codegen-properties": {
                 "name-for-methods": "HyphenationString",
                 "converter": "StringOrAutoAtom",
-                "parser-grammar": ["auto", "<string>"]
+                "parser-grammar": "auto | <string>"
             },
             "status": {
                 "status": "experimental"
@@ -7083,7 +7057,7 @@
             "codegen-properties": {
                 "name-for-methods": "HyphenationLimitAfter",
                 "converter": "NumberOrAuto<short>",
-                "parser-grammar": ["auto", "<number [0,inf]>"]
+                "parser-grammar": "auto | <number [0,inf]>"
             },
             "status": "non-standard"
         },
@@ -7092,7 +7066,7 @@
             "codegen-properties": {
                 "name-for-methods": "HyphenationLimitBefore",
                 "converter": "NumberOrAuto<short>",
-                "parser-grammar": ["auto", "<number [0,inf]>"]
+                "parser-grammar": "auto | <number [0,inf]>"
             },
             "status": "non-standard"
         },
@@ -7101,7 +7075,7 @@
             "codegen-properties": {
                 "name-for-methods": "HyphenationLimitLines",
                 "converter": "WebkitHyphenateLimitLines",
-                "parser-grammar": ["no-limit", "<number [0,inf]>"]
+                "parser-grammar": "no-limit | <number [0,inf]>"
             },
             "status": {
                 "status": "experimental"
@@ -7205,7 +7179,7 @@
         },
         "-webkit-line-clamp": {
             "codegen-properties": {
-                "parser-grammar": ["<percentage [0,inf]>", "<integer [1,inf]>"]
+                "parser-grammar": "<percentage [0,inf]> | <integer [1,inf]>"
             },
             "status": "non-standard"
         },
@@ -7213,7 +7187,7 @@
             "inherited": true,
             "codegen-properties": {
                 "converter": "StringOrNoneAtom",
-                "parser-grammar": ["none", "<custom-ident>"]
+                "parser-grammar": "none | <custom-ident>"
             },
             "status": {
                 "status": "experimental"
@@ -7279,7 +7253,7 @@
             "codegen-properties": {
                 "conditional-converter": "MarqueeIncrement",
                 "internal-only": true,
-                "parser-grammar": ["<length-percentage unitless-allowed>"]
+                "parser-grammar": "<length-percentage unitless-allowed>"
             },
             "status": "non-standard"
         },
@@ -7288,7 +7262,7 @@
                 "name-for-methods": "MarqueeLoopCount",
                 "converter": "MarqueeRepetition",
                 "internal-only": true,
-                "parser-grammar": ["<number [0,inf]>"]
+                "parser-grammar": "<number [0,inf]>"
             },
             "status": "non-standard"
         },
@@ -7296,7 +7270,7 @@
             "codegen-properties": {
                 "converter": "MarqueeSpeed",
                 "internal-only": true,
-                "parser-grammar": ["<time [0,inf] unitless-allowed>"]
+                "parser-grammar": "<time [0,inf] unitless-allowed>"
             },
             "status": "non-standard"
         },
@@ -7335,11 +7309,14 @@
         },
         "-webkit-mask-box-image": {
             "codegen-properties": {
-                "initial": "initialNinePieceImage",
-                "converter": "BorderMask<CSSPropertyWebkitMaskBoxImage>",
-                "parser-function": "consumeWebkitBorderImage",
-                "parser-requires-current-property": true,
-                "parser-requires-context": true
+                "longhands": [
+                    "-webkit-mask-box-image-source",
+                    "-webkit-mask-box-image-slice",
+                    "-webkit-mask-box-image-width",
+                    "-webkit-mask-box-image-outset",
+                    "-webkit-mask-box-image-repeat"
+                ],
+                "custom-parser": true
             },
             "status": "non-standard",
             "specification": {
@@ -7380,7 +7357,7 @@
         "-webkit-mask-box-image-source": {
             "codegen-properties": {
                 "converter": "StyleImage<CSSPropertyWebkitMaskBoxImageSource>",
-                "parser-grammar": ["none", "<image>"]
+                "parser-grammar": "none | <image>"
             },
             "status": "non-standard",
             "specification": {
@@ -7497,7 +7474,7 @@
                 "aliases": [
                     "-webkit-order"
                 ],
-                "parser-grammar": ["<integer>"]
+                "parser-grammar": "<integer>"
             },
             "specification": {
                 "category": "css-flexbox",
@@ -7507,8 +7484,8 @@
         "perspective": {
             "codegen-properties": {
                 "conditional-converter": "Perspective",
-                "custom-parser": true,
-                "parser-requires-context-mode": true
+                "parser-grammar": "none | <length [0,inf]>",
+                "parser-exported": true
             },
             "specification": {
                 "category": "css-transforms",
@@ -7553,8 +7530,7 @@
                 ],
                 "computable": false,
                 "converter": "PositionComponentX",
-                "parser-function": "consumePositionX",
-                "parser-requires-context-mode": true
+                "parser-grammar": "<position-x>"
             },
             "specification": {
                 "category": "css-transforms",
@@ -7568,8 +7544,7 @@
                 ],
                 "computable": false,
                 "converter": "PositionComponentY",
-                "parser-function": "consumePositionY",
-                "parser-requires-context-mode": true
+                "parser-grammar": "<position-y>"
             },
             "specification": {
                 "category": "css-transforms",
@@ -7739,7 +7714,7 @@
                 "initial": "currentColor",
                 "visited-link-color-support": true,
                 "color-property": true,
-                "parser-grammar": ["<color>"]
+                "parser-grammar": "<color>"
             },
             "specification": {
                 "category": "css-text-decor",
@@ -7796,7 +7771,7 @@
             "inherited": true,
             "codegen-properties": {
                 "converter": "TextUnderlineOffset",
-                "parser-grammar": ["auto", "<length>"],
+                "parser-grammar": "auto | <length>",
                 "parser-grammar-comment": "The current specification has a <length> | <percentage>, not just <length>"
             },
             "specification": {
@@ -7807,7 +7782,7 @@
         "text-decoration-thickness": {
             "codegen-properties": {
                 "converter": "TextDecorationThickness",
-                "parser-grammar": ["auto", "from-font", "<length>"],
+                "parser-grammar": "auto | from-font | <length>",
                 "parser-grammar-comment": "The current specification has a <length> | <percentage>, not just <length>"
             },
             "specification": {
@@ -7865,7 +7840,7 @@
                 "initial": "currentColor",
                 "visited-link-color-support": true,
                 "color-property": true,
-                "parser-grammar": ["<color>"]
+                "parser-grammar": "<color>"
             },
             "status": {
                 "status": "experimental"
@@ -7916,7 +7891,7 @@
                 "initial": "currentColor",
                 "visited-link-color-support": true,
                 "color-property": true,
-                "parser-grammar": ["<color>"]
+                "parser-grammar": "<color>"
             },
             "status": {
                 "status": "non-standard",
@@ -7950,7 +7925,7 @@
                 "initial": "currentColor",
                 "visited-link-color-support": true,
                 "color-property": true,
-                "parser-grammar": ["<color>"]
+                "parser-grammar": "<color>"
             },
             "status": {
                 "status": "non-standard",
@@ -7961,7 +7936,7 @@
             "inherited": true,
             "codegen-properties": {
                 "converter": "TextStrokeWidth",
-                "parser-grammar": ["<line-width>"]
+                "parser-grammar": "<line-width>"
             },
             "status": {
                 "status": "non-standard",
@@ -8022,8 +7997,7 @@
                 ],
                 "computable": false,
                 "converter": "PositionComponentX",
-                "parser-function": "consumePositionX",
-                "parser-requires-context-mode": true
+                "parser-grammar": "<position-x>"
             },
             "specification": {
                 "category": "css-transforms",
@@ -8037,8 +8011,7 @@
                 ],
                 "computable": false,
                 "converter": "PositionComponentY",
-                "parser-function": "consumePositionY",
-                "parser-requires-context-mode": true
+                "parser-grammar": "<position-y>"
             },
             "specification": {
                 "category": "css-transforms",
@@ -8052,7 +8025,7 @@
                 ],
                 "computable": false,
                 "converter": "ComputedLength<float>",
-                "parser-grammar": ["<length>"]
+                "parser-grammar": "<length>"
             },
             "specification": {
                 "category": "css-transforms",
@@ -8201,7 +8174,7 @@
                     "name": "scroll-margin",
                     "resolver": "bottom"
                 },
-                "parser-grammar": ["<length>"]
+                "parser-grammar": "<length>"
             },
             "specification": {
                 "category": "css-scroll-snap",
@@ -8219,7 +8192,7 @@
                     "name": "scroll-margin",
                     "resolver": "left"
                 },
-                "parser-grammar": ["<length>"]
+                "parser-grammar": "<length>"
             },
             "specification": {
                 "category": "css-scroll-snap",
@@ -8237,7 +8210,7 @@
                     "name": "scroll-margin",
                     "resolver": "right"
                 },
-                "parser-grammar": ["<length>"]
+                "parser-grammar": "<length>"
             },
             "specification": {
                 "category": "css-scroll-snap",
@@ -8255,7 +8228,7 @@
                     "name": "scroll-margin",
                     "resolver": "top"
                 },
-                "parser-grammar": ["<length>"]
+                "parser-grammar": "<length>"
             },
             "specification": {
                 "category": "css-scroll-snap",
@@ -8269,7 +8242,7 @@
                     "name": "scroll-margin",
                     "resolver": "inline-start"
                 },
-                "parser-grammar": ["<length>"]
+                "parser-grammar": "<length>"
             },
             "specification": {
                 "category": "css-scroll-snap",
@@ -8283,7 +8256,7 @@
                     "name": "scroll-margin",
                     "resolver": "block-start"
                 },
-                "parser-grammar": ["<length>"]
+                "parser-grammar": "<length>"
             },
             "specification": {
                 "category": "css-scroll-snap",
@@ -8297,7 +8270,7 @@
                     "name": "scroll-margin",
                     "resolver": "inline-end"
                 },
-                "parser-grammar": ["<length>"]
+                "parser-grammar": "<length>"
             },
             "specification": {
                 "category": "css-scroll-snap",
@@ -8311,7 +8284,7 @@
                     "name": "scroll-margin",
                     "resolver": "block-end"
                 },
-                "parser-grammar": ["<length>"]
+                "parser-grammar": "<length>"
             },
             "specification": {
                 "category": "css-scroll-snap",
@@ -8367,7 +8340,7 @@
                     "name": "scroll-padding",
                     "resolver": "bottom"
                 },
-                "parser-grammar": ["auto", "<length-percentage [0,inf]>"]
+                "parser-grammar": "auto | <length-percentage [0,inf]>"
             },
             "specification": {
                 "category": "css-scroll-snap",
@@ -8382,7 +8355,7 @@
                     "name": "scroll-padding",
                     "resolver": "left"
                 },
-                "parser-grammar": ["auto", "<length-percentage [0,inf]>"]
+                "parser-grammar": "auto | <length-percentage [0,inf]>"
             },
             "specification": {
                 "category": "css-scroll-snap",
@@ -8397,7 +8370,7 @@
                     "name": "scroll-padding",
                     "resolver": "right"
                 },
-                "parser-grammar": ["auto", "<length-percentage [0,inf]>"]
+                "parser-grammar": "auto | <length-percentage [0,inf]>"
             },
             "specification": {
                 "category": "css-scroll-snap",
@@ -8412,7 +8385,7 @@
                     "name": "scroll-padding",
                     "resolver": "top"
                 },
-                "parser-grammar": ["auto", "<length-percentage [0,inf]>"]
+                "parser-grammar": "auto | <length-percentage [0,inf]>"
             },
             "specification": {
                 "category": "css-scroll-snap",
@@ -8426,7 +8399,7 @@
                     "name": "scroll-padding",
                     "resolver": "inline-start"
                 },
-                "parser-grammar": ["auto", "<length-percentage [0,inf]>"]
+                "parser-grammar": "auto | <length-percentage [0,inf]>"
             },
             "specification": {
                 "category": "css-scroll-snap",
@@ -8440,7 +8413,7 @@
                     "name": "scroll-padding",
                     "resolver": "block-start"
                 },
-                "parser-grammar": ["auto", "<length-percentage [0,inf]>"]
+                "parser-grammar": "auto | <length-percentage [0,inf]>"
             },
             "specification": {
                 "category": "css-scroll-snap",
@@ -8454,7 +8427,7 @@
                     "name": "scroll-padding",
                     "resolver": "inline-end"
                 },
-                "parser-grammar": ["auto", "<length-percentage [0,inf]>"]
+                "parser-grammar": "auto | <length-percentage [0,inf]>"
             },
             "specification": {
                 "category": "css-scroll-snap",
@@ -8468,7 +8441,7 @@
                     "name": "scroll-padding",
                     "resolver": "block-end"
                 },
-                "parser-grammar": ["auto", "<length-percentage [0,inf]>"]
+                "parser-grammar": "auto | <length-percentage [0,inf]>"
             },
             "specification": {
                 "category": "css-scroll-snap",
@@ -8554,7 +8527,7 @@
                     "-webkit-shape-margin"
                 ],
                 "converter": "Length",
-                "parser-grammar": ["<length-percentage [0,inf]>"]
+                "parser-grammar": "<length-percentage [0,inf]>"
             },
             "specification": {
                 "category": "css-shapes",
@@ -8567,7 +8540,7 @@
                     "-webkit-shape-image-threshold"
                 ],
                 "converter": "NumberOrAuto<float>",
-                "parser-grammar": ["<number>"]
+                "parser-grammar": "<number>"
             },
             "specification": {
                 "category": "css-shapes",
@@ -8591,7 +8564,7 @@
             "codegen-properties": {
                 "converter": "TapHighlightColor",
                 "enable-if": "ENABLE_TOUCH_EVENTS",
-                "parser-grammar": ["<color>"]
+                "parser-grammar": "<color>"
             },
             "status": "non-standard"
         },
@@ -8790,6 +8763,11 @@
             "shortname": "CSS Backgrounds and Borders",
             "longname": "CSS Backgrounds and Borders Module",
             "url": "https://www.w3.org/TR/css3-background/"
+        },
+        "css-box-4": {
+            "shortname": "CSS Box 4",
+            "longname": "CSS Box Model Module Level 4",
+            "url": "https://www.w3.org/TR/css-box-4/"
         },
         "css-break": {
             "shortname": "CSS Fragmentation",
@@ -9015,72 +8993,57 @@
     },
     "shared-grammar-rules": {
         "<alpha-value>": {
-            "grammar": ["<number>", "<percentage>"],
+            "grammar": "<number> | <percentage>",
             "specification": {
                 "category": "css-color",
                 "url": "https://www.w3.org/TR/css-color-4/#typedef-alpha-value"
             }
         },
         "<marker-ref>": {
-            "grammar": ["<url>"],
+            "grammar": "<url>",
             "specification": {
                 "category": "svg",
                 "url": "https://www.w3.org/TR/SVG/painting.html#DataTypeMarkerRef"
             }
         },
         "<absolute-size>": {
-            "grammar": ["xx-small", "x-small", "small", "medium", "large", "x-large", "xx-large", "xxx-large"],
+            "grammar": "xx-small | x-small | small | medium | large | x-large | xx-large | xxx-large",
             "specification": {
                 "category": "css-fonts-4",
                 "url": "https://drafts.csswg.org/css-fonts-4/#valdef-font-size-absolute-size"
             }
         },
         "<-webkit-absolute-size>": {
-            "grammar": [
-                {
-                    "value": "-webkit-xxx-large",
-                    "aliased-to": "xxx-large"
-                }
-            ],
+            "grammar": {
+                "kind": "keyword",
+                "value": "-webkit-xxx-large",
+                "aliased-to": "xxx-large"
+            },
             "status": "non-standard"
         },
         "<relative-size>": {
-            "grammar": ["larger", "smaller"],
+            "grammar": "larger | smaller",
             "specification": {
                 "category": "css-fonts-4",
                 "url": "https://drafts.csswg.org/css-fonts-4/#valdef-font-size-relative-size"
             }
         },
         "<-webkit-relative-size>": {
-            "grammar": ["-webkit-ruby-text"],
+            "grammar": "-webkit-ruby-text",
             "status": "non-standard"
         },
         "<gap-gutter>": {
-            "grammar": ["normal", "<length-percentage [0,inf]>"],
+            "grammar": "normal | <length-percentage [0,inf]>",
             "specification": {
                 "category": "css-align",
                 "url": "https://drafts.csswg.org/css-align/#column-row-gap"
             }
         },
         "<width-or-height-keyword>": {
-            "grammar": [
-                "intrinsic",
-                "min-intrinsic",
-                "min-content",
-                "-webkit-min-content",
-                "max-content",
-                "-webkit-max-content",
-                "-webkit-fill-available",
-                "fit-content",
-                "-webkit-fit-content"
-            ]
+            "grammar":  "intrinsic | min-intrinsic | min-content | -webkit-min-content | max-content | -webkit-max-content | -webkit-fill-available | fit-content | -webkit-fit-content"
         },
         "<width-or-height>": {
-            "grammar": [
-                "auto",
-                "<width-or-height-keyword>",
-                "<length-percentage [0,inf]>"
-            ],
+            "grammar":  "auto | <width-or-height-keyword> | <length-percentage [0,inf]>",
             "exported": true,
             "comment": "Doesn't match current specification",
             "specification": {
@@ -9089,11 +9052,7 @@
             }
         },
         "<width-or-height-unitless-allowed>": {
-            "grammar": [
-                "auto",
-                "<width-or-height-keyword>",
-                "<length-percentage [0,inf] unitless-allowed>"
-            ],
+            "grammar":  "auto | <width-or-height-keyword> | <length-percentage [0,inf] unitless-allowed>",
             "comment": "Doesn't match current specification",
             "specification": {
                 "category": "css-sizing",
@@ -9101,11 +9060,7 @@
             }
         },
         "<max-width-or-height>": {
-            "grammar": [
-                "none",
-                "<width-or-height-keyword>",
-                "<length-percentage [0,inf]>"
-            ],
+            "grammar": "none | <width-or-height-keyword> | <length-percentage [0,inf]>",
             "comment": "Doesn't match current specification",
             "specification": {
                 "category": "css-sizing",
@@ -9113,11 +9068,7 @@
             }
         },
         "<max-width-or-height-unitless-allowed>": {
-            "grammar": [
-                "none",
-                "<width-or-height-keyword>",
-                "<length-percentage [0,inf] unitless-allowed>"
-            ],
+            "grammar":  "none | <width-or-height-keyword> | <length-percentage [0,inf] unitless-allowed>",
             "comment": "Doesn't match current specification",
             "specification": {
                 "category": "css-sizing",
@@ -9125,7 +9076,7 @@
             }
         },
         "<line-width>": {
-            "grammar": ["thin", "medium", "thick", "<length [0,inf]>"],
+            "grammar": "thin | medium | thick | <length [0,inf]>",
             "exported": true,
             "specification": {
                 "category": "css-backgrounds",
@@ -9133,80 +9084,63 @@
             }
         },
         "<inset-logical-start-end>": {
-            "grammar": ["auto", "<length-percentage>"],
+            "grammar": "auto | <length-percentage>",
             "specification": {
                 "category": "css-logical-props",
                 "url": "https://www.w3.org/TR/css-logical/#inset-properties"
             }
         },
         "<margin-logical-start-end>": {
-            "grammar": ["auto", "<length-percentage>"],
+            "grammar": "auto | <length-percentage>",
             "specification": {
                 "category": "css-logical-props",
                 "url": "https://www.w3.org/TR/css-logical/#margin-properties"
             }
         },
         "<palette-identifier>": {
-            "grammar": ["<dashed-ident>"],
+            "grammar": "<dashed-ident>",
             "specification": {
                 "category": "css-fonts-4",
                 "url": "https://drafts.csswg.org/css-fonts-4/#typedef-font-palette-palette-identifier"
             }
         },
         "<shape-radius>": {
-            "grammar": ["<length-percentage [0,inf]>", "closest-side", "farthest-side"],
+            "grammar": "<length-percentage [0,inf]> | closest-side | farthest-side",
             "specification": {
                 "category": "css-shapes",
                 "url": "https://www.w3.org/TR/css-shapes-1/#typedef-shape-radius"
             }
         },
         "<attachment>": {
-            "grammar": ["scroll", "fixed", "local"],
+            "grammar": "scroll | fixed | local",
             "specification": {
                 "category": "css-backgrounds",
                 "url": "https://www.w3.org/TR/css-backgrounds-3/#background-attachment"
             }
         },
         "<blend-mode>": {
-            "grammar": [
-                "normal",
-                "multiply",
-                "screen",
-                "overlay",
-                "darken",
-                "lighten",
-                "color-dodge",
-                "color-burn",
-                "hard-light",
-                "soft-light",
-                "difference",
-                "exclusion",
-                "hue",
-                "saturation",
-                "color",
-                "luminosity"
-            ],
+            "grammar": "normal | multiply | screen | overlay | darken | lighten | color-dodge | color-burn | hard-light | soft-light | difference | exclusion | hue | saturation | color | luminosity",
             "specification": {
                 "category": "css-compositing",
                 "url": "https://www.w3.org/TR/compositing-1/#ltblendmodegt"
             }
         },
         "<box>": {
-            "grammar": ["border-box", "padding-box", "content-box"],
+            "grammar": "border-box | padding-box | content-box",
             "specification": {
                 "category": "css-backgrounds",
                 "url": "https://www.w3.org/TR/css-backgrounds-3/#typedef-box"
             }
         },
         "<shape-box>": {
-            "grammar": ["<box>", "margin-box"],
+            "grammar": "<box> | margin-box",
             "specification": {
                 "category": "css-shapes",
                 "url": "https://www.w3.org/TR/css-shapes-1/#typedef-shape-box"
             }
         },
         "<geometry-box>": {
-            "grammar": ["<shape-box>", "fill-box", "stroke-box", "view-box"],
+            "grammar": "<shape-box> | fill-box | stroke-box | view-box",
             "exported": true,
             "specification": {
                 "category": "css-masking",
@@ -9214,65 +9148,51 @@
             }
         },
         "<compositing-operator>": {
-            "grammar": ["add", "subtract", "intersect", "exclude"],
+            "grammar": "add | subtract | intersect | exclude",
             "specification": {
                 "category": "css-masking",
                 "url": "https://www.w3.org/TR/css-masking-1/#typedef-compositing-operator"
             }
         },
         "<masking-mode>": {
-            "grammar": ["alpha", "luminance", "match-source"],
+            "grammar": "alpha | luminance | match-source",
             "specification": {
                 "category": "css-masking",
                 "url": "https://www.w3.org/TR/css-masking-1/#typedef-masking-mode"
             }
         },
         "<bg-image>": {
-            "grammar": ["<image>", "none"],
+            "grammar": "<image> | none",
             "specification": {
                 "category": "css-backgrounds",
                 "url": "https://www.w3.org/TR/css-backgrounds-3/#typedef-bg-image"
             }
         },
         "<mask-reference>": {
-            "grammar": ["<image>", "none"],
+            "grammar": "<image> | none",
             "specification": {
                 "category": "css-backgrounds",
                 "url": "https://www.w3.org/TR/css-masking-1/#typedef-mask-reference"
             }
         },
         "<-webkit-origin-box>": {
-            "grammar": ["<box>", "border", "content", "padding", "-webkit-text"],
+            "grammar": "<box> | border | content | padding | -webkit-text",
             "status": "non-standard"
         },
         "<-webkit-clip-box>": {
-            "grammar": ["<-webkit-origin-box>", "text"],
+            "grammar": "<-webkit-origin-box> | text",
             "status": "non-standard"
         },
         "<-webkit-compositing-operator>": {
-            "grammar": [
-                "clear",
-                "copy",
-                "source-over",
-                "source-in",
-                "source-out",
-                "source-atop",
-                "destination-over",
-                "destination-in",
-                "destination-out",
-                "destination-atop",
-                "xor",
-                "plus-darker",
-                "plus-lighter"
-            ],
+            "grammar": "clear | copy | source-over | source-in | source-out | source-atop | destination-over | destination-in | destination-out | destination-atop | xor | plus-darker | plus-lighter",
             "status": "non-standard"
         },
         "<-webkit-masking-source-type>": {
-            "grammar": ["auto", "alpha", "luminance"],
+            "grammar": "auto | alpha | luminance",
             "status": "non-standard"
         },
         "<single-background-blend-mode>": {
-            "grammar": ["<blend-mode>"],
+            "grammar": "<blend-mode>",
             "exported": true,
             "specification": {
                 "category": "css-compositing",
@@ -9280,7 +9200,7 @@
             }
         },
         "<single-background-attachment>": {
-            "grammar": ["<attachment>"],
+            "grammar": "<attachment>",
             "exported": true,
             "specification": {
                 "category": "css-backgrounds",
@@ -9288,7 +9208,7 @@
             }
         },
         "<single-background-clip>": {
-            "grammar": ["<box>", "text", "-webkit-text"],
+            "grammar": "<box> | text | -webkit-text",
             "exported": true,
             "specification": {
                 "category": "css-backgrounds",
@@ -9297,7 +9217,7 @@
             "comment": "Out of spec. 'background-clip' is currently defined to '<box>#'."
         },
         "<single-background-origin>": {
-            "grammar": ["<box>"],
+            "grammar": "<box>",
             "exported": true,
             "specification": {
                 "category": "css-backgrounds",
@@ -9305,15 +9225,35 @@
             }
         },
         "<single-background-image>": {
-            "grammar": ["<bg-image>"],
+            "grammar": "<bg-image>",
             "exported": true,
             "specification": {
                 "category": "css-backgrounds",
                 "url": "https://www.w3.org/TR/css-backgrounds-3/#background-image"
             }
         },
+        "<single-background-repeat>": {
+            "grammar": "<repeat-style>",
+            "exported": true,
+            "specification": {
+                "category": "css-backgrounds",
+                "url": "https://www.w3.org/TR/css-backgrounds-3/#background-repeat"
+            }
+        },
+        "<single-background-position-x>": {
+            "grammar": "<position-x>",
+            "exported": true,
+            "status": "non-standard",
+            "comment": "Internally used to represent horizontal part of standard <bg-position>"
+        },
+        "<single-background-position-y>": {
+            "grammar": "<position-y>",
+            "exported": true,
+            "status": "non-standard",
+            "comment": "Internally used to represent vertical part of standard <bg-position>"
+        },
         "<single-mask-clip>": {
-            "grammar": ["<box>", "no-clip"],
+            "grammar": "<box> | no-clip",
             "exported": true,
             "specification": {
                 "category": "css-masking",
@@ -9322,7 +9262,7 @@
             "comment": "Out of spec. 'mask-clip' is currently defined to '[ <geometry-box> | no-clip ]#'."
         },
         "<single-mask-origin>": {
-            "grammar": ["<box>", "border", "content", "padding", "-webkit-text"],
+            "grammar": "<box> | border | content | padding | -webkit-text",
             "exported": true,
             "specification": {
                 "category": "css-masking",
@@ -9330,8 +9270,16 @@
             },
             "comment": "Out of spec. 'mask-origin' is currently defined to '<geometry-box>#'."
         },
+        "<single-mask-repeat>": {
+            "grammar": "<repeat-style>",
+            "exported": true,
+            "specification": {
+                "category": "css-masking",
+                "url": "https://www.w3.org/TR/css-masking-1/#the-mask-repeat"
+            }
+        },
         "<single-mask-image>": {
-            "grammar": ["<mask-reference>"],
+            "grammar": "<mask-reference>",
             "exported": true,
             "specification": {
                 "category": "css-masking",
@@ -9339,7 +9287,7 @@
             }
         },
         "<single-mask-composite>": {
-            "grammar": ["<compositing-operator>"],
+            "grammar": "<compositing-operator>",
             "exported": true,
             "specification": {
                 "category": "css-masking",
@@ -9347,7 +9295,7 @@
             }
         },
         "<single-mask-mode>": {
-            "grammar": ["<masking-mode>"],
+            "grammar": "<masking-mode>",
             "exported": true,
             "specification": {
                 "category": "css-masking",
@@ -9355,32 +9303,42 @@
             }
         },
         "<single-webkit-background-clip>": {
-            "grammar": ["<-webkit-clip-box>"],
+            "grammar": "<-webkit-clip-box>",
             "exported": true,
             "status": "non-standard"
         },
         "<single-webkit-background-origin>": {
-            "grammar": ["<-webkit-origin-box>"],
+            "grammar": "<-webkit-origin-box>",
             "exported": true,
             "status": "non-standard"
         },
         "<single-webkit-mask-composite>": {
-            "grammar": ["<-webkit-compositing-operator>"],
+            "grammar": "<-webkit-compositing-operator>",
             "exported": true,
             "status": "non-standard"
         },
         "<single-webkit-mask-clip>": {
-            "grammar": ["<-webkit-clip-box>"],
+            "grammar": "<-webkit-clip-box>",
+            "exported": true,
+            "status": "non-standard"
+        },
+        "<single-webkit-mask-position-x>": {
+            "grammar": "<position-x>",
+            "exported": true,
+            "status": "non-standard"
+        },
+        "<single-webkit-mask-position-y>": {
+            "grammar": "<position-y>",
             "exported": true,
             "status": "non-standard"
         },
         "<single-webkit-mask-source-type>": {
-            "grammar": ["<-webkit-masking-source-type>"],
+            "grammar": "<-webkit-masking-source-type>",
             "exported": true,
             "status": "non-standard"
         },
         "<single-animation-composition>": {
-            "grammar": ["replace", "add", "accumulate"],
+            "grammar": "replace | add | accumulate",
             "exported": true,
             "specification": {
                 "category": "css-animations",
@@ -9388,7 +9346,7 @@
             }
         },
         "<single-animation-direction>": {
-            "grammar": ["normal", "reverse", "alternate", "alternate-reverse"],
+            "grammar": "normal | reverse | alternate | alternate-reverse",
             "exported": true,
             "specification": {
                 "category": "css-animations",
@@ -9396,7 +9354,7 @@
             }
         },
         "<single-animation-fill-mode>": {
-            "grammar": ["none", "forwards", "backwards", "both"],
+            "grammar": "none | forwards | backwards | both",
             "exported": true,
             "specification": {
                 "category": "css-animations",
@@ -9404,7 +9362,7 @@
             }
         },
         "<single-animation-iteration-count>": {
-            "grammar": ["infinite", "<number [0,inf]>"],
+            "grammar": "infinite | <number [0,inf]>",
             "exported": true,
             "specification": {
                 "category": "css-animations",
@@ -9412,7 +9370,7 @@
             }
         },
         "<single-animation-name>": {
-            "grammar": ["none", "<keyframes-name>"],
+            "grammar": "none | <keyframes-name>",
             "exported": true,
             "specification": {
                 "category": "css-animations",
@@ -9420,7 +9378,7 @@
             }
         },
         "<single-animation-play-state>": {
-            "grammar": ["running", "paused"],
+            "grammar": "running | paused",
             "exported": true,
             "specification": {
                 "category": "css-animations",

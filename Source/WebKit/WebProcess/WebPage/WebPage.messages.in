@@ -383,7 +383,7 @@ GenerateSyntheticEditingCommand(enum:uint8_t WebKit::SyntheticEditingCommandType
 
     # Open panel.
 #if PLATFORM(IOS_FAMILY)
-    DidChooseFilesForOpenPanelWithDisplayStringAndIcon(Vector<String> fileURLs, String displayString, IPC::DataReference iconData, WebKit::SandboxExtension::Handle frontboardServicesSandboxExtension, WebKit::SandboxExtension::Handle iconServicesSandboxExtension)
+    DidChooseFilesForOpenPanelWithDisplayStringAndIcon(Vector<String> fileURLs, String displayString, IPC::DataReference iconData, WebKit::SandboxExtension::Handle machBootstrapHandle, WebKit::SandboxExtension::Handle frontboardServicesSandboxExtension, WebKit::SandboxExtension::Handle iconServicesSandboxExtension)
 #endif
     DidChooseFilesForOpenPanel(Vector<String> fileURLs, Vector<String> replacementURLs)
     DidCancelForOpenPanel()
@@ -412,11 +412,11 @@ GenerateSyntheticEditingCommand(enum:uint8_t WebKit::SyntheticEditingCommandType
 
 #if ENABLE(MEDIA_STREAM)
     # MediaSteam
-    UserMediaAccessWasGranted(WebCore::UserMediaRequestIdentifier userMediaID, WebCore::CaptureDevice audioDevice, WebCore::CaptureDevice videoDevice, struct WebCore::MediaDeviceHashSalts mediaDeviceIdentifierHashSalts, WebKit::SandboxExtension::Handle sandboxExtensionHandle) -> ()
+    UserMediaAccessWasGranted(WebCore::UserMediaRequestIdentifier userMediaID, WebCore::CaptureDevice audioDevice, WebCore::CaptureDevice videoDevice, struct WebCore::MediaDeviceHashSalts mediaDeviceIdentifierHashSalts, Vector<WebKit::SandboxExtension::Handle> sandboxExtensionHandles) -> ()
     UserMediaAccessWasDenied(WebCore::UserMediaRequestIdentifier userMediaID, uint64_t reason, String invalidConstraint)
     CaptureDevicesChanged()
 #if USE(GSTREAMER)
-    SetOrientationForMediaCapture(int rotation)
+    SetOrientationForMediaCapture(uint64_t rotation)
     SetMockCaptureDevicesInterrupted(bool isCameraInterrupted, bool isMicrophoneInterrupted)
 #endif
 #endif
@@ -551,6 +551,8 @@ GenerateSyntheticEditingCommand(enum:uint8_t WebKit::SyntheticEditingCommandType
     HandleAcceptedCandidate(struct WebCore::TextCheckingResult acceptedCandidate)
 
     SetUseSystemAppearance(bool useSystemAppearance)
+
+    SemanticContextDidChange(bool useFormSemanticContext)
 
     SetHeaderBannerHeightForTesting(int height)
     SetFooterBannerHeightForTesting(int height)

@@ -26,6 +26,9 @@
 #include "config.h"
 #include "InlineStylePropertyMap.h"
 
+#include "CSSCustomPropertyValue.h"
+#include "Document.h"
+#include "StyleProperties.h"
 #include "StyledElement.h"
 
 namespace WebCore {
@@ -78,7 +81,7 @@ auto InlineStylePropertyMap::entries(ScriptExecutionContext* context) const -> V
 
     auto& document = downcast<Document>(*context);
     return map(*inlineStyle, [&document] (auto property) {
-        return StylePropertyMapEntry(property.cssName(), reifyValueToVector(RefPtr<CSSValue> { property.value() }, document));
+        return StylePropertyMapEntry(property.cssName(), reifyValueToVector(RefPtr<CSSValue> { property.value() }, property.id(), document));
     });
 }
 
@@ -104,7 +107,11 @@ bool InlineStylePropertyMap::setProperty(CSSPropertyID propertyID, Ref<CSSValue>
         return false;
     bool didFailParsing = false;
     bool important = false;
+    // FIXME: We should be able to validate CSSValues without having to serialize to text and go through the
+    // parser. This is inefficient.
     m_element->setInlineStyleProperty(propertyID, value->cssText(), important, &didFailParsing);
+    if (!didFailParsing)
+        m_element->setInlineStyleProperty(propertyID, WTFMove(value));
     return !didFailParsing;
 }
 

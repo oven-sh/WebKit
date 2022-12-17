@@ -26,7 +26,7 @@
 #include "config.h"
 #include "testb3.h"
 
-#if ENABLE(B3_JIT)
+#if ENABLE(B3_JIT) && !CPU(ARM)
 
 static const char* const dmbIsh = "dmb      ish";
 static const char* const dmbIshst = "dmb      ishst";
@@ -2863,6 +2863,52 @@ void testMoveConstantsWithLargeOffsets()
     root->appendNewControlValue(proc, Return, Origin(), result);
 
     CHECK_EQ(compileAndRun<double>(proc), rhs);
+}
+
+void testMoveConstantsSIMD()
+{
+    auto check = [] (Procedure& proc) {
+        proc.resetReachability();
+
+        if (shouldBeVerbose(proc)) {
+            dataLog("IR before:\n");
+            dataLog(proc);
+        }
+
+        moveConstants(proc);
+
+        if (shouldBeVerbose(proc)) {
+            dataLog("IR after:\n");
+            dataLog(proc);
+        }
+
+        UseCounts useCounts(proc);
+        unsigned count = 0;
+        for (Value* value : proc.values()) {
+            if (useCounts.numUses(value) && value->hasV128())
+                count++;
+        }
+
+        if (count == 0)
+            return;
+
+        crashLock.lock();
+        dataLog("Fail in testMoveConstants: non memory Const128:\n");
+        dataLog(proc);
+        CRASH();
+    };
+
+    v128_t vector { };
+    vector.u64x2[0] = 0x123412341334;
+    vector.u64x2[1] = 0x123412341334;
+
+    Procedure proc(/* usesSIMD */ true);
+    BasicBlock* root = proc.addBlock();
+    Value* a = root->appendNew<Const128Value>(proc, Origin(), vector);
+    Value* b = root->appendNew<Const128Value>(proc, Origin(), vector);
+    root->appendNew<CCallValue>(proc, Void, Origin(), a, b);
+    root->appendNew<Value>(proc, Return, Origin());
+    check(proc);
 }
 
 void testPCOriginMapDoesntInsertNops()

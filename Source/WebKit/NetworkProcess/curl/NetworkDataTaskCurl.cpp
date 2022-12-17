@@ -95,9 +95,6 @@ NetworkDataTaskCurl::NetworkDataTaskCurl(NetworkSession& session, NetworkDataTas
 NetworkDataTaskCurl::~NetworkDataTaskCurl()
 {
     invalidateAndCancel();
-
-    if (m_session)
-        m_session->unregisterNetworkDataTask(*this);
 }
 
 void NetworkDataTaskCurl::resume()
@@ -166,7 +163,6 @@ void NetworkDataTaskCurl::curlDidReceiveResponse(CurlRequest& request, CurlRespo
         return;
 
     m_response = ResourceResponse(receivedResponse);
-    m_response.setCertificateInfo(WTFMove(receivedResponse.certificateInfo));
 
     updateNetworkLoadMetrics(receivedResponse.networkLoadMetrics);
     m_response.setDeprecatedNetworkLoadMetrics(Box<NetworkLoadMetrics>::create(WTFMove(receivedResponse.networkLoadMetrics)));

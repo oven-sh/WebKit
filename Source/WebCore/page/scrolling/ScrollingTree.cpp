@@ -147,7 +147,7 @@ WheelEventHandlingResult ScrollingTree::handleWheelEvent(const PlatformWheelEven
     Locker locker { m_treeLock };
 
     if (isMonitoringWheelEvents())
-        receivedWheelEvent(wheelEvent);
+        receivedWheelEventWithPhases(wheelEvent.phase(), wheelEvent.momentumPhase());
 
     m_latchingController.receivedWheelEvent(wheelEvent, processingSteps, m_allowLatching);
 
@@ -515,30 +515,6 @@ std::optional<ScrollingNodeID> ScrollingTree::latchedNodeID() const
 void ScrollingTree::clearLatchedNode()
 {
     m_latchingController.clearLatchedNode();
-}
-
-void ScrollingTree::receivedWheelEvent(const PlatformWheelEvent& event)
-{
-    if (m_wheelEventTestMonitor)
-        m_wheelEventTestMonitor->receivedWheelEvent(event);
-}
-
-void ScrollingTree::deferWheelEventTestCompletionForReason(WheelEventTestMonitor::ScrollableAreaIdentifier identifier, WheelEventTestMonitor::DeferReason reason)
-{
-    if (!m_wheelEventTestMonitor)
-        return;
-
-    LOG_WITH_STREAM(WheelEventTestMonitor, stream << "    (!) ScrollingTree::deferForReason: Deferring on " << identifier << " for reason " << reason);
-    m_wheelEventTestMonitor->deferForReason(identifier, reason);
-}
-
-void ScrollingTree::removeWheelEventTestCompletionDeferralForReason(WheelEventTestMonitor::ScrollableAreaIdentifier identifier, WheelEventTestMonitor::DeferReason reason)
-{
-    if (!m_wheelEventTestMonitor)
-        return;
-
-    LOG_WITH_STREAM(WheelEventTestMonitor, stream << "    (!) ScrollingTree::removeDeferralForReason: Removing deferral on " << identifier << " for reason " << reason);
-    m_wheelEventTestMonitor->removeDeferralForReason(identifier, reason);
 }
 
 FloatPoint ScrollingTree::mainFrameScrollPosition() const

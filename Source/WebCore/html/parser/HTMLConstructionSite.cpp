@@ -534,12 +534,12 @@ void HTMLConstructionSite::insertHTMLElement(AtomHTMLToken&& token)
 
 void HTMLConstructionSite::insertHTMLTemplateElement(AtomHTMLToken&& token)
 {
-    if (m_document.settings().streamingDeclarativeShadowDOMEnabled() && m_parserContentPolicy.contains(ParserContentPolicy::AllowDeclarativeShadowDOM)
-        && !currentElement().document().templateDocumentHost()) {
+    if (m_document.settings().declarativeShadowDOMEnabled() && m_document.settings().streamingDeclarativeShadowDOMEnabled()
+        && m_parserContentPolicy.contains(ParserContentPolicy::AllowDeclarativeShadowDOM)) {
         std::optional<ShadowRootMode> mode;
         bool delegatesFocus = false;
         for (auto& attribute : token.attributes()) {
-            if (attribute.name() == HTMLNames::shadowrootAttr) {
+            if (attribute.name() == HTMLNames::shadowrootmodeAttr) {
                 if (equalLettersIgnoringASCIICase(attribute.value(), "closed"_s))
                     mode = ShadowRootMode::Closed;
                 else if (equalLettersIgnoringASCIICase(attribute.value(), "open"_s))

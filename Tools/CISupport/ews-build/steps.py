@@ -28,11 +28,13 @@ from buildbot.steps.source import git
 from buildbot.steps.worker import CompositeStepMixin
 from datetime import date
 from requests.auth import HTTPBasicAuth
-from twisted.internet import defer
+
+from twisted.internet import defer, reactor, task
 
 from layout_test_failures import LayoutTestFailures
 from send_email import send_email_to_patch_author, send_email_to_bot_watchers, send_email_to_github_admin, FROM_EMAIL
 from results_db import ResultsDatabase
+from twisted_additions import TwistedAdditions
 
 import json
 import mock
@@ -56,6 +58,7 @@ CURRENT_HOSTNAME = socket.gethostname().strip()
 EWS_BUILD_HOSTNAME = 'ews-build.webkit.org'
 EWS_URL = 'https://ews.webkit.org/'
 RESULTS_DB_URL = 'https://results.webkit.org/'
+RESULTS_SERVER_API_KEY = 'RESULTS_SERVER_API_KEY'
 WithProperties = properties.WithProperties
 Interpolate = properties.Interpolate
 GITHUB_URL = 'https://github.com/'
@@ -2278,7 +2281,7 @@ class RunBindingsTests(shell.ShellCommand, AddToLogMixin):
         return {'step': message}
 
 
-class RunWebKitPerlTests(shell.ShellCommand):
+class RunWebKitPerlTests(shell.ShellCommandNewStyle):
     name = 'webkitperl-tests'
     description = ['webkitperl-tests running']
     descriptionDone = ['webkitperl-tests']
@@ -2312,7 +2315,7 @@ class ReRunWebKitPerlTests(RunWebKitPerlTests):
         return shell.ShellCommand.evaluateCommand(self, cmd)
 
 
-class RunBuildWebKitOrgUnitTests(shell.ShellCommand):
+class RunBuildWebKitOrgUnitTests(shell.ShellCommandNewStyle):
     name = 'build-webkit-org-unit-tests'
     description = ['build-webkit-unit-tests running']
     command = ['python3', 'runUnittests.py', 'build-webkit-org']
@@ -2320,16 +2323,13 @@ class RunBuildWebKitOrgUnitTests(shell.ShellCommand):
     def __init__(self, **kwargs):
         super(RunBuildWebKitOrgUnitTests, self).__init__(workdir='build/Tools/CISupport', timeout=2 * 60, logEnviron=False, **kwargs)
 
-    def start(self):
-        return shell.ShellCommand.start(self)
-
     def getResultSummary(self):
         if self.results == SUCCESS:
             return {'step': 'Passed build.webkit.org unit tests'}
         return {'step': 'Failed build.webkit.org unit tests'}
 
 
-class RunEWSUnitTests(shell.ShellCommand):
+class RunEWSUnitTests(shell.ShellCommandNewStyle):
     name = 'ews-unit-tests'
     description = ['ews-unit-tests running']
     command = ['python3', 'runUnittests.py', 'ews-build']
@@ -2373,7 +2373,7 @@ class RunBuildbotCheckConfigForBuildWebKit(RunBuildbotCheckConfig):
     directory = 'build/Tools/CISupport/build-webkit-org'
 
 
-class RunResultsdbpyTests(shell.ShellCommand):
+class RunResultsdbpyTests(shell.ShellCommandNewStyle):
     name = 'resultsdbpy-unit-tests'
     description = ['resultsdbpy-unit-tests running']
     command = [
@@ -2393,7 +2393,7 @@ class RunResultsdbpyTests(shell.ShellCommand):
         return {'step': 'Failed resultsdbpy unit tests'}
 
 
-class WebKitPyTest(shell.ShellCommand, AddToLogMixin):
+class WebKitPyTest(shell.ShellCommandNewStyle, AddToLogMixin):
     language = 'python'
     descriptionDone = ['webkitpy-tests']
     flunkOnFailure = True
@@ -2402,10 +2402,10 @@ class WebKitPyTest(shell.ShellCommand, AddToLogMixin):
     def __init__(self, **kwargs):
         super(WebKitPyTest, self).__init__(timeout=2 * 60, logEnviron=False, **kwargs)
 
-    def start(self):
+    def run(self):
         self.log_observer = logobserver.BufferLogObserver()
         self.addLogObserver('json', self.log_observer)
-        return shell.ShellCommand.start(self)
+        return super(WebKitPyTest, self).run()
 
     def setBuildSummary(self, build_summary):
         previous_build_summary = self.getProperty('build_summary', '')
@@ -3280,6 +3280,7 @@ class RunWebKitTests(shell.Test, AddToLogMixin):
         logTextJson = self.log_observer_json.getStdout()
 
         first_results = LayoutTestFailures.results_from_string(logTextJson)
+        is_main = self.getProperty('github.base.ref', DEFAULT_BRANCH) == DEFAULT_BRANCH
 
         if first_results:
             self.setProperty('first_results_exceed_failure_limit', first_results.did_exceed_test_failure_limit)
@@ -3288,7 +3289,7 @@ class RunWebKitTests(shell.Test, AddToLogMixin):
             if first_results.failing_tests:
                 self._addToLog(self.test_failures_log_name, '\n'.join(first_results.failing_tests))
 
-            if first_results.failing_tests and not first_results.did_exceed_test_failure_limit:
+            if is_main and first_results.failing_tests and not first_results.did_exceed_test_failure_limit:
                 yield self.filter_failures_using_results_db(first_results.failing_tests)
                 self.setProperty('first_run_failures_filtered', sorted(self.failing_tests_filtered))
                 self.setProperty('results-db_first_run_pre_existing', sorted(self.preexisting_failures_in_results_db))
@@ -3319,6 +3320,10 @@ class RunWebKitTests(shell.Test, AddToLogMixin):
             if data['is_existing_failure']:
                 self.preexisting_failures_in_results_db.append(test)
                 self.failing_tests_filtered.remove(test)
+            else:
+                # Optimization to skip consulting results-db for every failure if we encounter any new failure,
+                # since until there is atleast one failure which is not pre-existing, we will anayways have to continue with retry logic.
+                break
 
     def evaluateResult(self, cmd):
         result = SUCCESS
@@ -3469,7 +3474,8 @@ class ReRunWebKitTests(RunWebKitTests):
                                                 ExtractTestResults(identifier='rerun')])
             self.finished(WARNINGS)
         else:
-            if (second_results_failing_tests and len(tests_that_consistently_failed) == 0 and num_flaky_failures <= 10
+            if (first_results_failing_tests and second_results_failing_tests and len(tests_that_consistently_failed) == 0
+                    and num_flaky_failures <= 10
                     and not first_results_did_exceed_test_failure_limit and not second_results_did_exceed_test_failure_limit):
                 # This means that test failures in first and second run were different and limited.
                 pluralSuffix = 's' if len(flaky_failures) > 1 else ''
@@ -3478,8 +3484,11 @@ class ReRunWebKitTests(RunWebKitTests):
                     self.send_email_for_flaky_failure(flaky_failure)
                 self.descriptionDone = message
                 self.build.results = SUCCESS
+                self.setProperty('build_summary', message)
+                self.build.addStepsAfterCurrentStep([ArchiveTestResults(),
+                                                    UploadTestResults(identifier='rerun'),
+                                                    ExtractTestResults(identifier='rerun')])
                 self.finished(WARNINGS)
-                self.build.buildFinished([message], SUCCESS)
                 return rc
 
             self.build.addStepsAfterCurrentStep([ArchiveTestResults(),
@@ -3502,6 +3511,7 @@ class ReRunWebKitTests(RunWebKitTests):
         logTextJson = self.log_observer_json.getStdout()
 
         second_results = LayoutTestFailures.results_from_string(logTextJson)
+        is_main = self.getProperty('github.base.ref', DEFAULT_BRANCH) == DEFAULT_BRANCH
 
         if second_results:
             self.setProperty('second_results_exceed_failure_limit', second_results.did_exceed_test_failure_limit)
@@ -3510,7 +3520,7 @@ class ReRunWebKitTests(RunWebKitTests):
             if second_results.failing_tests:
                 self._addToLog(self.test_failures_log_name, '\n'.join(second_results.failing_tests))
 
-            if second_results.failing_tests and not second_results.did_exceed_test_failure_limit:
+            if is_main and second_results.failing_tests and not second_results.did_exceed_test_failure_limit:
                 yield self.filter_failures_using_results_db(second_results.failing_tests)
                 self.setProperty('second_run_failures_filtered', sorted(self.failing_tests_filtered))
                 self.setProperty('results-db_second_run_pre_existing', sorted(self.preexisting_failures_in_results_db))
@@ -3535,6 +3545,14 @@ class ReRunWebKitTests(RunWebKitTests):
 
 class RunWebKitTestsWithoutChange(RunWebKitTests):
     name = 'run-layout-tests-without-change'
+
+    def start(self):
+        api_key = os.getenv(RESULTS_SERVER_API_KEY)
+        if api_key:
+            self.workerEnvironment[RESULTS_SERVER_API_KEY] = api_key
+        else:
+            self._addToLog('stdio', 'No API key for {} found'.format(RESULTS_DB_URL))
+        return super(RunWebKitTestsWithoutChange, self).start()
 
     def evaluateCommand(self, cmd):
         rc = shell.Test.evaluateCommand(self, cmd)
@@ -3561,6 +3579,17 @@ class RunWebKitTestsWithoutChange(RunWebKitTests):
 
     def setLayoutTestCommand(self):
         super(RunWebKitTestsWithoutChange, self).setLayoutTestCommand()
+        if CURRENT_HOSTNAME == EWS_BUILD_HOSTNAME and self.getProperty('github.base.ref', DEFAULT_BRANCH) == DEFAULT_BRANCH:
+            self.setCommand(
+                self.command + [
+                    '--builder-name', self.getProperty('buildername', ''),
+                    '--build-number', self.getProperty('buildnumber', ''),
+                    '--buildbot-worker', self.getProperty('workername', ''),
+                    '--buildbot-master', CURRENT_HOSTNAME,
+                    '--report', RESULTS_DB_URL,
+                ]
+            )
+
         # In order to speed up testing, on the step that retries running the layout tests without change
         # only run the subset of tests that failed on the previous steps.
         # But only do that if the previous steps didn't exceed the test failure limit
@@ -4647,9 +4676,9 @@ class PrintConfiguration(steps.ShellSequence):
             return 'Unknown'
 
         build_to_name_mapping = {
+            '13': 'Ventura',
             '12': 'Monterey',
-            '11': 'Big Sur',
-            '10.15': 'Catalina',
+            '11': 'Big Sur'
         }
 
         for key, value in build_to_name_mapping.items():
@@ -4858,7 +4887,7 @@ class PushCommitToWebKitRepo(shell.ShellCommand):
         return None
 
 
-class DetermineLandedIdentifier(shell.ShellCommand):
+class DetermineLandedIdentifier(shell.ShellCommandNewStyle):
     name = 'determine-landed-identifier'
     descriptionDone = ['Determined landed identifier']
     command = ['git', 'log', '-1', '--no-decorate']
@@ -4869,11 +4898,6 @@ class DetermineLandedIdentifier(shell.ShellCommand):
         self.identifier = None
         super(DetermineLandedIdentifier, self).__init__(logEnviron=False, timeout=300, **kwargs)
 
-    def start(self, BufferLogObserverClass=logobserver.BufferLogObserver):
-        self.log_observer = BufferLogObserverClass(wantStderr=True)
-        self.addLogObserver('stdio', self.log_observer)
-        return super(DetermineLandedIdentifier, self).start()
-
     def getResultSummary(self):
         if self.results == SUCCESS:
             return {'step': f'Identifier: {self.identifier}'}
@@ -4881,8 +4905,12 @@ class DetermineLandedIdentifier(shell.ShellCommand):
             return {'step': 'Failed to determine identifier'}
         return super(DetermineLandedIdentifier, self).getResultSummary()
 
-    def evaluateCommand(self, cmd):
-        rc = super(DetermineLandedIdentifier, self).evaluateCommand(cmd)
+    @defer.inlineCallbacks
+    def run(self, BufferLogObserverClass=logobserver.BufferLogObserver):
+        self.log_observer = BufferLogObserverClass(wantStderr=True)
+        self.addLogObserver('stdio', self.log_observer)
+
+        rc = yield super(DetermineLandedIdentifier, self).run()
 
         loglines = self.log_observer.getStdout().splitlines()
 
@@ -4894,9 +4922,9 @@ class DetermineLandedIdentifier(shell.ShellCommand):
 
         landed_hash = self.getProperty('landed_hash')
         if not self.identifier:
-            time.sleep(60)  # It takes time for commits.webkit.org to digest commits
-            self.identifier = self.identifier_for_hash(landed_hash)
-            if '@' not in self.identifier:
+            yield task.deferLater(reactor, 60, lambda: None)  # It takes time for commits.webkit.org to digest commits
+            self.identifier = yield self.identifier_for_hash(landed_hash)
+            if not self.identifier or '@' not in self.identifier:
                 rc = FAILURE
 
         self.setProperty('comment_text', self.comment_text_for_bug(landed_hash, self.identifier))
@@ -4905,25 +4933,29 @@ class DetermineLandedIdentifier(shell.ShellCommand):
         self.setProperty('build_summary', commit_summary)
         self.addURL(self.identifier, self.url_for_identifier(self.identifier))
 
-        return rc
-
-    def url_for_hash_details(self, hash):
-        return '{}{}/json'.format(COMMITS_INFO_URL, hash)
+        defer.returnValue(rc)
 
     def url_for_identifier(self, identifier):
         return '{}{}'.format(COMMITS_INFO_URL, identifier)
 
+    @defer.inlineCallbacks
     def identifier_for_hash(self, hash):
         try:
-            response = requests.get(self.url_for_hash_details(hash), timeout=60)
+            response = yield TwistedAdditions.request(
+                url=f'{COMMITS_INFO_URL}{hash}/json', logger=print,
+            )
             if response and response.status_code == 200:
-                return response.json().get('identifier', '{}'.format(hash)).replace('@trunk', '@main')
-            else:
-                print('Non-200 status code received from {}: {}'.format(COMMITS_INFO_URL, response.status_code))
+                defer.returnValue(response.json().get('identifier', hash).replace('@trunk', '@main'))
+                return
+            elif response:
+                print(f'Non-200 status code received from {COMMITS_INFO_URL}: {response.status_code}')
                 print(response.text)
-        except Exception as e:
-            print(e)
-        return hash
+                defer.returnValue(hash)
+                return
+        except json.decoder.JSONDecodeError:
+            print(f'Response from {COMMITS_INFO_URL} was not JSON')
+            print(response.text)
+        defer.returnValue(hash)
 
     def comment_text_for_bug(self, hash=None, identifier=None):
         identifier_str = identifier if identifier and '@' in identifier else '?'

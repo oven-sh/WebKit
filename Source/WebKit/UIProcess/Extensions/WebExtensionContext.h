@@ -37,7 +37,10 @@
 #include "WebExtensionController.h"
 #include "WebExtensionEventListenerType.h"
 #include "WebExtensionMatchPattern.h"
+#include "WebPageProxy.h"
 #include "WebPageProxyIdentifier.h"
+#include "WebProcessProxy.h"
+#include <wtf/CompletionHandler.h>
 #include <wtf/Forward.h>
 #include <wtf/HashCountedSet.h>
 #include <wtf/HashMap.h>
@@ -47,8 +50,10 @@
 #include <wtf/RetainPtr.h>
 #include <wtf/URLHash.h>
 #include <wtf/UUID.h>
+#include <wtf/WeakHashCountedSet.h>
 #include <wtf/WeakPtr.h>
 
+OBJC_CLASS NSDate;
 OBJC_CLASS NSDictionary;
 OBJC_CLASS NSMapTable;
 OBJC_CLASS NSMutableDictionary;
@@ -66,7 +71,6 @@ OBJC_PROTOCOL(_WKWebExtensionTab);
 namespace WebKit {
 
 class WebExtension;
-class WebExtensionController;
 class WebUserContentControllerProxy;
 struct WebExtensionContextParameters;
 
@@ -95,7 +99,11 @@ public:
     using InjectedContentData = WebExtension::InjectedContentData;
     using InjectedContentVector = WebExtension::InjectedContentVector;
 
+    using WeakPageCountedSet = WeakHashCountedSet<WebPageProxy>;
     using EventListenterTypeCountedSet = HashCountedSet<WebExtensionEventListenerType, WTF::IntHash<WebKit::WebExtensionEventListenerType>, WTF::StrongEnumHashTraits<WebKit::WebExtensionEventListenerType>>;
+    using EventListenterTypePageMap = HashMap<WebExtensionEventListenerType, WeakPageCountedSet, WTF::IntHash<WebKit::WebExtensionEventListenerType>, WTF::StrongEnumHashTraits<WebKit::WebExtensionEventListenerType>>;
+    using EventListenerTypeSet = HashSet<WebExtensionEventListenerType, WTF::IntHash<WebKit::WebExtensionEventListenerType>, WTF::StrongEnumHashTraits<WebKit::WebExtensionEventListenerType>>;
+    using VoidCompletionHandlerVector = Vector<CompletionHandler<void()>>;
 
     enum class EqualityOnly : bool { No, Yes };
 
@@ -103,7 +111,7 @@ public:
         Unknown = 1,
         AlreadyLoaded,
         NotLoaded,
-        BaseURLTaken,
+        BaseURLAlreadyInUse,
     };
 
     enum class PermissionState : int8_t {
@@ -148,6 +156,9 @@ public:
 
     const String& uniqueIdentifier() const { return m_uniqueIdentifier; }
     void setUniqueIdentifier(String&&);
+
+    bool isInspectable() const { return m_inspectable; }
+    void setInspectable(bool);
 
     const InjectedContentVector& injectedContents();
     bool hasInjectedContentForURL(NSURL *);
@@ -214,6 +225,9 @@ public:
     void addInjectedContent(WebUserContentControllerProxy&);
     void removeInjectedContent(WebUserContentControllerProxy&);
 
+    template<typename T>
+    void sendToProcessesForEvent(WebExtensionEventListenerType, const T& message);
+
 #ifdef __OBJC__
     _WKWebExtensionContext *wrapper() const { return (_WKWebExtensionContext *)API::ObjectImpl<API::Object::Type::WebExtensionContext>::wrapper(); }
 #endif
@@ -242,10 +256,15 @@ private:
     void loadBackgroundWebViewDuringLoad();
     void loadBackgroundWebView();
     void unloadBackgroundWebView();
+    void wakeUpBackgroundContentIfNecessary(CompletionHandler<void()>&&);
+    void queueStartupAndInstallEventsForExtensionIfNecessary();
+    void scheduleBackgroundContentToUnload();
 
     uint64_t loadBackgroundPageListenersVersionNumberFromStorage();
     void loadBackgroundPageListenersFromStorage();
     void saveBackgroundPageListenersToStorage();
+    void fireEvents(EventListenerTypeSet, CompletionHandler<void()>&&);
+    void queueEventToFireAfterBackgroundContentLoads(CompletionHandler<void()>&&);
 
     void performTasksAfterBackgroundContentLoads();
 
@@ -287,6 +306,8 @@ private:
     String m_uniqueIdentifier = UUID::createVersion4().toString();
     bool m_customUniqueIdentifier { false };
 
+    bool m_inspectable { false };
+
     RefPtr<API::ContentWorld> m_contentScriptWorld;
 
     PermissionsMap m_grantedPermissions;
@@ -307,8 +328,12 @@ private:
     bool m_testingMode { true };
 #endif
 
-    EventListenterTypeCountedSet m_backgroundPageListeners;
+    VoidCompletionHandlerVector m_actionsToPerformAfterBackgroundContentLoads;
+    EventListenterTypeCountedSet m_backgroundContentEventListeners;
+    EventListenterTypePageMap m_eventListenerPages;
     bool m_shouldFireStartupEvent { false };
+
+    RetainPtr<NSDate> m_lastBackgroundContentLoadDate;
 
     RetainPtr<WKWebView> m_backgroundWebView;
     RetainPtr<_WKWebExtensionContextDelegate> m_delegate;
@@ -316,6 +341,24 @@ private:
     HashMap<Ref<WebExtensionMatchPattern>, UserScriptVector> m_injectedScriptsPerPatternMap;
     HashMap<Ref<WebExtensionMatchPattern>, UserStyleSheetVector> m_injectedStyleSheetsPerPatternMap;
 };
+
+template<typename T>
+void WebExtensionContext::sendToProcessesForEvent(WebExtensionEventListenerType type, const T& message)
+{
+    auto iterator = m_eventListenerPages.find(type);
+    if (iterator == m_eventListenerPages.end())
+        return;
+
+    HashSet<WebProcessProxy> processes;
+    for (auto entry : iterator->value) {
+        auto& process = entry.key.process();
+        if (process.canSendMessage())
+            processes.add(process);
+    }
+
+    for (auto& process : processes)
+        process.send(T(message), identifier());
+}
 
 } // namespace WebKit
 

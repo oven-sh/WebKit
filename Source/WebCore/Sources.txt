@@ -854,6 +854,7 @@ css/calc/CSSCalcPrimitiveValueNode.cpp
 css/calc/CSSCalcSymbolTable.cpp
 css/calc/CSSCalcValue.cpp
 css/parser/CSSAtRuleID.cpp
+css/parser/CSSCustomPropertySyntax.cpp
 css/parser/CSSParser.cpp
 css/parser/CSSParserContext.cpp
 css/parser/CSSParserFastPaths.cpp
@@ -868,7 +869,6 @@ css/parser/CSSPropertyParserHelpers.cpp
 css/parser/CSSPropertyParserWorkerSafe.cpp
 css/parser/CSSSelectorParser.cpp
 css/parser/CSSSupportsParser.cpp
-css/parser/CSSPropertySyntax.cpp
 css/parser/CSSTokenizer.cpp
 css/parser/CSSTokenizerInputStream.cpp
 css/parser/CSSVariableParser.cpp
@@ -1737,6 +1737,7 @@ loader/archive/ArchiveResource.cpp
 loader/archive/ArchiveResourceCollection.cpp
 loader/archive/mhtml/MHTMLArchive.cpp
 loader/archive/mhtml/MHTMLParser.cpp
+loader/cache/AllowedFonts.cpp
 loader/cache/CachedApplicationManifest.cpp
 loader/cache/CachedCSSStyleSheet.cpp
 loader/cache/CachedFont.cpp
@@ -1899,6 +1900,7 @@ page/scrolling/ScrollAnchoringController.cpp
 page/scrolling/ScrollSnapOffsetsInfo.cpp
 page/scrolling/ScrollLatchingController.cpp
 page/scrolling/ScrollingConstraints.cpp
+page/scrolling/ScrollingCoordinatorTypes.cpp
 page/scrolling/ScrollingCoordinator.cpp
 page/scrolling/ScrollingStateFixedNode.cpp
 page/scrolling/ScrollingStateFrameHostingNode.cpp
@@ -2195,6 +2197,10 @@ platform/graphics/VelocityData.cpp
 platform/graphics/WebMResourceClient.cpp
 platform/graphics/WOFFFileFormat.cpp
 platform/graphics/WidthIterator.cpp
+platform/graphics/controls/ControlFactory.cpp
+platform/graphics/controls/ControlPart.cpp
+platform/graphics/controls/ControlPartType.cpp
+platform/graphics/controls/MeterPart.cpp
 platform/graphics/cpu/arm/filters/FEBlendNeonApplier.cpp
 platform/graphics/displaylists/DisplayList.cpp
 platform/graphics/displaylists/DisplayListDrawingContext.cpp

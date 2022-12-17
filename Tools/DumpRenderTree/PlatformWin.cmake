@@ -31,8 +31,6 @@ list(APPEND DumpRenderTree_PRIVATE_INCLUDE_DIRECTORIES
 list(APPEND DumpRenderTree_LIBRARIES
     Comsuppw
     Oleacc
-    WebKitLegacy
-    WebKitLegacyGUID
 )
 
 if (${WTF_PLATFORM_WIN_CAIRO})
@@ -41,7 +39,6 @@ if (${WTF_PLATFORM_WIN_CAIRO})
         ${DumpRenderTree_DIR}/cairo
     )
     list(APPEND DumpRenderTree_LIBRARIES
-        $<TARGET_OBJECTS:WebCoreTestSupport>
         Cairo::Cairo
     )
     list(APPEND DumpRenderTree_SOURCES
@@ -49,8 +46,8 @@ if (${WTF_PLATFORM_WIN_CAIRO})
     )
 else ()
     list(APPEND DumpRenderTree_LIBRARIES
-        CFNetwork
-        CoreText
+        Apple::CFNetwork
+        Apple::CoreText
     )
     list(APPEND DumpRenderTree_PRIVATE_INCLUDE_DIRECTORIES
         ${DumpRenderTree_DIR}/cg
@@ -59,7 +56,7 @@ else ()
         cg/PixelDumpSupportCG.cpp
     )
     list(APPEND DumpRenderTree_LIBRARIES
-        CoreGraphics
+        Apple::CoreGraphics
     )
 endif ()
 

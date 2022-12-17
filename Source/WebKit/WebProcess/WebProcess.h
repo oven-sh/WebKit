@@ -126,6 +126,7 @@ class RemoteMediaEngineConfigurationFactory;
 class StorageAreaMap;
 class UserData;
 class WebAutomationSessionProxy;
+class WebBadgeClient;
 class WebBroadcastChannelRegistry;
 class WebCacheStorageProvider;
 class WebCookieJar;
@@ -314,6 +315,7 @@ public:
     WebAutomationSessionProxy* automationSessionProxy() { return m_automationSessionProxy.get(); }
 
     WebCacheStorageProvider& cacheStorageProvider() { return m_cacheStorageProvider.get(); }
+    WebBadgeClient& badgeClient() { return m_badgeClient.get(); }
     WebBroadcastChannelRegistry& broadcastChannelRegistry() { return m_broadcastChannelRegistry.get(); }
     WebCookieJar& cookieJar() { return m_cookieJar.get(); }
     WebSocketChannelManager& webSocketChannelManager() { return m_webSocketChannelManager; }
@@ -335,7 +337,7 @@ public:
 #endif
 
 #if PLATFORM(MAC)
-    void openDirectoryCacheInvalidated(SandboxExtension::Handle&&);
+    void openDirectoryCacheInvalidated(SandboxExtension::Handle&&, SandboxExtension::Handle&&);
 #endif
 
     bool areAllPagesThrottleable() const;
@@ -347,9 +349,9 @@ public:
     bool removeServiceWorkerRegistration(WebCore::ServiceWorkerRegistrationIdentifier);
 #endif
 
-    void grantAccessToAssetServices(WebKit::SandboxExtension::Handle&& mobileAssetV2Handle);
+    void grantAccessToAssetServices(Vector<WebKit::SandboxExtension::Handle>&& assetServicesHandles);
     void revokeAccessToAssetServices();
-    void switchFromStaticFontRegistryToUserFontRegistry(WebKit::SandboxExtension::Handle&& fontMachExtensionHandle);
+    void switchFromStaticFontRegistryToUserFontRegistry(Vector<SandboxExtension::Handle>&& fontMachExtensionHandles);
 
     void disableURLSchemeCheckInDataDetectors() const;
 
@@ -385,6 +387,9 @@ public:
     bool hadMainFrameMainResourcePrivateRelayed() const { return m_hadMainFrameMainResourcePrivateRelayed; }
 
     void deleteWebsiteDataForOrigins(OptionSet<WebsiteDataType>, const Vector<WebCore::SecurityOriginData>& origins, CompletionHandler<void()>&&);
+
+    void setAppBadge(std::optional<WebPageProxyIdentifier>, const WebCore::SecurityOriginData&, std::optional<uint64_t>);
+    void setClientBadge(WebPageProxyIdentifier, const WebCore::SecurityOriginData&, std::optional<uint64_t>);
 
 private:
     WebProcess();
@@ -645,6 +650,7 @@ private:
 #endif
 #endif
     Ref<WebCacheStorageProvider> m_cacheStorageProvider;
+    Ref<WebBadgeClient> m_badgeClient;
     Ref<WebBroadcastChannelRegistry> m_broadcastChannelRegistry;
     Ref<WebCookieJar> m_cookieJar;
     WebSocketChannelManager m_webSocketChannelManager;
@@ -705,6 +711,7 @@ private:
 
 #if ENABLE(MEDIA_STREAM) && ENABLE(SANDBOX_EXTENSIONS)
     HashMap<String, RefPtr<SandboxExtension>> m_mediaCaptureSandboxExtensions;
+    RefPtr<SandboxExtension> m_machBootstrapExtension;
 #endif
 
 #if PLATFORM(IOS_FAMILY) && !PLATFORM(MACCATALYST)
@@ -725,7 +732,7 @@ private:
     WebCore::ThirdPartyCookieBlockingMode m_thirdPartyCookieBlockingMode { WebCore::ThirdPartyCookieBlockingMode::All };
 #endif
 
-    RefPtr<SandboxExtension> m_assetServiceV2Extension;
+    Vector<RefPtr<SandboxExtension>> m_assetServicesExtensions;
 
 #if PLATFORM(COCOA)
     HashCountedSet<String> m_pendingPasteboardWriteCounts;

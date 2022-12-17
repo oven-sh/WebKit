@@ -144,7 +144,6 @@ class FragmentedSharedBuffer;
 class StickyPositionViewportConstraints;
 class SystemImage;
 class TextCheckingRequestData;
-class TimingFunction;
 class TransformOperation;
 class UserStyleSheet;
 
@@ -219,19 +218,9 @@ struct Record;
 
 namespace IPC {
 
-template<> struct ArgumentCoder<WebCore::AttributedString> {
-    static void encode(Encoder&, const WebCore::AttributedString&);
-    static std::optional<WebCore::AttributedString> decode(Decoder&);
-};
-
 template<> struct ArgumentCoder<WebCore::DOMCacheEngine::Record> {
     static void encode(Encoder&, const WebCore::DOMCacheEngine::Record&);
     static std::optional<WebCore::DOMCacheEngine::Record> decode(Decoder&);
-};
-
-template<> struct ArgumentCoder<WebCore::TouchActionData> {
-    static void encode(Encoder&, const WebCore::TouchActionData&);
-    static std::optional<WebCore::TouchActionData> decode(Decoder&);
 };
 
 template<> struct ArgumentCoder<WebCore::RectEdges<bool>> {
@@ -245,7 +234,6 @@ template<> struct ArgumentCoder<WebCore::ViewportArguments> {
     static WARN_UNUSED_RETURN bool decode(Decoder&, WebCore::ViewportArguments&);
     static std::optional<WebCore::ViewportArguments> decode(Decoder&);
 };
-
 #endif
 
 template<> struct ArgumentCoder<WebCore::Length> {
@@ -562,16 +550,6 @@ template<> struct ArgumentCoder<WebCore::PixelBuffer> {
 template<> struct ArgumentCoder<RefPtr<WebCore::ReportBody>> {
     static void encode(Encoder&, const RefPtr<WebCore::ReportBody>&);
     static std::optional<RefPtr<WebCore::ReportBody>> decode(Decoder&);
-};
-
-template<> struct ArgumentCoder<WebCore::TimingFunction> {
-    static void encode(Encoder&, const WebCore::TimingFunction&);
-    static std::optional<Ref<WebCore::TimingFunction>> decode(Decoder&);
-};
-
-template<> struct ArgumentCoder<WebCore::TransformOperation> {
-    static void encode(Encoder&, const WebCore::TransformOperation&);
-    static std::optional<Ref<WebCore::TransformOperation>> decode(Decoder&);
 };
 
 } // namespace IPC

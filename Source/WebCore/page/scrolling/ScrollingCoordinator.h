@@ -31,6 +31,7 @@
 #include "ScrollSnapOffsetsInfo.h"
 #include "ScrollTypes.h"
 #include "ScrollingCoordinatorTypes.h"
+#include "WheelEventTestMonitor.h"
 #include <variant>
 #include <wtf/Forward.h>
 #include <wtf/ThreadSafeRefCounted.h>
@@ -198,6 +199,10 @@ public:
     virtual void startMonitoringWheelEvents(bool /* clearLatchingState */) { }
     virtual void stopMonitoringWheelEvents() { }
 
+    void receivedWheelEventWithPhases(PlatformWheelEventPhase phase, PlatformWheelEventPhase momentumPhase);
+    void deferWheelEventTestCompletionForReason(ScrollingNodeID, WheelEventTestMonitor::DeferReason);
+    void removeWheelEventTestCompletionDeferralForReason(ScrollingNodeID, WheelEventTestMonitor::DeferReason);
+
 protected:
     explicit ScrollingCoordinator(Page*);
 
@@ -224,11 +229,6 @@ private:
 
     bool m_forceSynchronousScrollLayerPositionUpdates { false };
 };
-
-WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, ScrollableAreaParameters);
-WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, ScrollingNodeType);
-WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, ScrollingLayerPositionAction);
-WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, ViewportRectStability);
 
 } // namespace WebCore
 

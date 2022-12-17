@@ -560,6 +560,10 @@
 #define ENABLE_WEBXR_HANDS 0
 #endif
 
+#if !defined(ENABLE_BADGING)
+#define ENABLE_BADGING 1
+#endif
+
 /*
  * Enable this to put each IsoHeap and other allocation categories into their own malloc heaps, so that tools like vmmap can show how big each heap is.
  * Turn BENABLE_MALLOC_HEAP_BREAKDOWN on in bmalloc together when using this.
@@ -704,6 +708,13 @@
 /* This controls whether B3 is built. B3 is needed for FTL JIT and WebAssembly */
 #if ENABLE(FTL_JIT)
 #define ENABLE_B3_JIT 1
+#endif
+
+#if ENABLE(WEBASSEMBLY) && ENABLE(JIT) && CPU(ARM)
+#undef ENABLE_B3_JIT
+#define ENABLE_B3_JIT 1
+#undef ENABLE_WEBASSEMBLY_B3JIT
+#define ENABLE_WEBASSEMBLY_B3JIT 1
 #endif
 
 #if !defined(ENABLE_WEBASSEMBLY) && (ENABLE(B3_JIT) && PLATFORM(COCOA) && CPU(ADDRESS64))
@@ -973,7 +984,7 @@
 #endif
 
 #if ENABLE(SERVICE_WORKER) && ENABLE(NOTIFICATIONS) \
-    && ((PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 130000) || (PLATFORM(GTK) || PLATFORM(WPE)))
+    && ((PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 130000) || (PLATFORM(IOS) || PLATFORM(GTK) || PLATFORM(WPE)))
 #if !defined(ENABLE_NOTIFICATION_EVENT)
 #define ENABLE_NOTIFICATION_EVENT 1
 #endif

@@ -27,8 +27,8 @@
 
 #import <Foundation/Foundation.h>
 
-#import <WebKit/_WKWebExtensionPermission.h>
 #import <WebKit/_WKWebExtensionMatchPattern.h>
+#import <WebKit/_WKWebExtensionPermission.h>
 
 #if TARGET_OS_IPHONE
 @class UIImage;
@@ -39,7 +39,7 @@
 NS_ASSUME_NONNULL_BEGIN
 
 /*! @abstract Indicates a @link WKWebExtension @/link error. */
-WK_EXTERN NSErrorDomain const _WKWebExtensionErrorDomain WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA));
+WK_EXTERN NSErrorDomain const _WKWebExtensionErrorDomain NS_SWIFT_NAME(_WKWebExtension.ErrorDomain) WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA));
 
 /*!
  @abstract Constants used by NSError to indicate errors in the @link WKWebExtension @/link domain.
@@ -47,7 +47,7 @@ WK_EXTERN NSErrorDomain const _WKWebExtensionErrorDomain WK_API_AVAILABLE(macos(
  @constant WKWebExtensionErrorResourceNotFound  Indicates that a specified resource was not found on disk.
  @constant WKWebExtensionErrorInvalidResourceCodeSignature  Indicates that a resource failed the bundle's code signature checks.
  @constant WKWebExtensionErrorInvalidManifest  Indicates that an invalid `manifest.json` was encountered.
- @constant WKWebExtensionErrorUnsupportedManifestVersion  Indicates that a the manifest version is not supported.
+ @constant WKWebExtensionErrorUnsupportedManifestVersion  Indicates that the manifest version is not supported.
  @constant WKWebExtensionErrorInvalidManifestEntry  Indicates that an invalid manifest entry was encountered.
  @constant WKWebExtensionErrorInvalidDeclarativeNetRequestEntry  Indicates that an invalid declarative net request entry was encountered.
  @constant WKWebExtensionErrorInvalidBackgroundPersistence  Indicates that the extension specified background persistence that was not compatible with the platform or features requested.
@@ -115,15 +115,15 @@ WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA))
 
 /*!
  @abstract The active errors for the extension.
- @discussion This property returns an array of NSError objects if there are any errors, or `nil` if there are no errors.
+ @discussion This property returns an array of NSError objects if there are any errors, or an empty array if there are no errors.
  */
-@property (nonatomic, nullable, readonly, copy) NSArray<NSError *> *errors;
+@property (nonatomic, readonly, copy) NSArray<NSError *> *errors;
 
 /*! @abstract The parsed manifest as a dictionary. */
 @property (nonatomic, readonly, copy) NSDictionary<NSString *, id> *manifest;
 
 /*!
- @abstract The parsed manifest version, or `0` is if there is no version specified in the manifest.
+ @abstract The parsed manifest version, or `0` if there is no version specified in the manifest.
  @note An `WKWebExtensionErrorUnsupportedManifestVersion` error will be reported if the manifest version isn't specified.
  */
 @property (nonatomic, readonly) double manifestVersion;
@@ -131,12 +131,12 @@ WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA))
 /*!
  @abstract Checks if a manifest version is supported by the extension.
  @param manifestVersion The version number to check.
- @result Returns `YES` if the extension specified a manifest version that is is greater than or equal to `manifestVersion`.
+ @result Returns `YES` if the extension specified a manifest version that is greater than or equal to `manifestVersion`.
  */
-- (BOOL)usesManifestVersion:(double)manifestVersion;
+- (BOOL)supportsManifestVersion:(double)manifestVersion;
 
 /*! @abstract The default locale for the extension. Returns `nil` if there was no default locale specified. */
-@property (nonatomic, readonly, copy) NSLocale *defaultLocale;
+@property (nonatomic, nullable, readonly, copy) NSLocale *defaultLocale;
 
 /*! @abstract The localized extension name. Returns `nil` if there was no name specified. */
 @property (nonatomic, nullable, readonly, copy) NSString *displayName;
@@ -156,39 +156,19 @@ WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA))
 /*! @abstract The extension version. Returns `nil` if there was no version specified. */
 @property (nonatomic, nullable, readonly, copy) NSString *version;
 
+/*!
+ @abstract Returns the extension's icon image for the specified size.
+ @param size The size to use when looking up the icon.
+ @result The extension's icon image, or `nil` if the icon was unable to be loaded.
+ @discussion This icon should represent the extension in settings or other areas that show the extension. The returned image will be the best
+ match for the specified size that is available in the extension's icon set. If no matching icon can be found, the method will return `nil`.
+ @seealso actionIconForSize:
+ */
 #if TARGET_OS_IPHONE
-
-/*!
- @abstract Returns the extension's icon image for the specified size.
- @param size The size to use when looking up the icon.
- @result The extension's icon image, or `nil` if the icon was unable to be loaded.
- @discussion This icon should represent the extension in settings or other areas that show the extension. The returned image will be the best
- match for the specified size that is available in the extension's icon set. If no matching icon can be found, the method will return `nil`.
- @seealso actionIconForSize:
- */
 - (nullable UIImage *)iconForSize:(CGSize)size;
-
-/*!
- @abstract Returns the action icon for the specified size.
- @param size The size to use when looking up the action icon.
- @result The action icon, or `nil` if the icon was unable to be loaded.
- @discussion This icon should represent the extension in action sheets or toolbars. The returned image will be the best match for the specified
- size that is available in the extension's action icon set. If no matching icon is available, the method will fall back to the extension's icon.
- @seealso iconForSize:
- */
-- (nullable UIImage *)actionIconForSize:(CGSize)size;
-
 #else
-
-/*!
- @abstract Returns the extension's icon image for the specified size.
- @param size The size to use when looking up the icon.
- @result The extension's icon image, or `nil` if the icon was unable to be loaded.
- @discussion This icon should represent the extension in settings or other areas that show the extension. The returned image will be the best
- match for the specified size that is available in the extension's icon set. If no matching icon can be found, the method will return `nil`.
- @seealso actionIconForSize:
- */
 - (nullable NSImage *)iconForSize:(CGSize)size;
+#endif
 
 /*!
  @abstract Returns the action icon for the specified size.
@@ -198,8 +178,10 @@ WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA))
  size that is available in the extension's action icon set. If no matching icon is available, the method will fall back to the extension's icon.
  @seealso iconForSize:
  */
+#if TARGET_OS_IPHONE
+- (nullable UIImage *)actionIconForSize:(CGSize)size;
+#else
 - (nullable NSImage *)actionIconForSize:(CGSize)size;
-
 #endif
 
 /*! @abstract The set of permissions that the extension requires for its base functionality. */

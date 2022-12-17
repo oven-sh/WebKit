@@ -59,6 +59,24 @@ enum class MSOListQuirks : bool { CheckIfNeeded, Disabled };
 String sanitizeMarkup(const String&, MSOListQuirks = MSOListQuirks::Disabled, std::optional<Function<void(DocumentFragment&)>> fragmentSanitizer = std::nullopt);
 String sanitizedMarkupForFragmentInDocument(Ref<DocumentFragment>&&, Document&, MSOListQuirks, const String& originalMarkup);
 
+class UserSelectNoneStateCache {
+public:
+    explicit UserSelectNoneStateCache(TreeType);
+
+    bool nodeOnlyContainsUserSelectNone(Node& node) { return computeState(node) == State::OnlyUserSelectNone; }
+
+private:
+    ContainerNode* parentNode(Node&);
+    Node* firstChild(Node&);
+    Node* nextSibling(Node&);
+
+    enum class State : uint8_t { NotUserSelectNone, Mixed, OnlyUserSelectNone };
+    State computeState(Node&);
+
+    HashMap<Ref<Node>, State> m_cache;
+    bool m_useComposedTree;
+};
+
 WEBCORE_EXPORT Ref<DocumentFragment> createFragmentFromText(const SimpleRange& context, const String& text);
 WEBCORE_EXPORT Ref<DocumentFragment> createFragmentFromMarkup(Document&, const String& markup, const String& baseURL, OptionSet<ParserContentPolicy> = { ParserContentPolicy::AllowScriptingContent, ParserContentPolicy::AllowPluginContent });
 ExceptionOr<Ref<DocumentFragment>> createFragmentForInnerOuterHTML(Element&, const String& markup, OptionSet<ParserContentPolicy>);
@@ -73,8 +91,10 @@ ExceptionOr<void> replaceChildrenWithFragment(ContainerNode&, Ref<DocumentFragme
 
 enum class ConvertBlocksToInlines : uint8_t { No, Yes };
 enum class SerializeComposedTree : uint8_t { No, Yes };
+enum class IgnoreUserSelectNone: uint8_t { No, Yes };
 WEBCORE_EXPORT String serializePreservingVisualAppearance(const SimpleRange&, Vector<Node*>* = nullptr, AnnotateForInterchange = AnnotateForInterchange::No, ConvertBlocksToInlines = ConvertBlocksToInlines::No, ResolveURLs = ResolveURLs::No);
-String serializePreservingVisualAppearance(const VisibleSelection&, ResolveURLs = ResolveURLs::No, SerializeComposedTree = SerializeComposedTree::No, Vector<Node*>* = nullptr);
+String serializePreservingVisualAppearance(const VisibleSelection&, ResolveURLs = ResolveURLs::No, SerializeComposedTree = SerializeComposedTree::No,
+    IgnoreUserSelectNone = IgnoreUserSelectNone::Yes, Vector<Node*>* = nullptr);
 
 enum class SerializedNodes : uint8_t { SubtreeIncludingNode, SubtreesOfChildren };
 enum class SerializationSyntax : uint8_t { HTML, XML };

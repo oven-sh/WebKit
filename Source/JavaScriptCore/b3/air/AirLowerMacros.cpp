@@ -53,16 +53,25 @@ void lowerMacros(Code& code)
 
                 Vector<Arg> destinations = computeCCallingConvention(code, value);
 
-                unsigned offset = value->type() == Void ? 0 : 1;
+                unsigned resultCount = cCallResultCount(value);
+                ASSERT_IMPLIES(is64Bit(), resultCount <= 1);
+                
                 Vector<ShufflePair, 16> shufflePairs;
                 bool hasRegisterSource = false;
-                for (unsigned i = 1; i < destinations.size(); ++i) {
-                    Value* child = value->child(i);
-                    ShufflePair pair(inst.args[offset + i], destinations[i], widthForType(child->type()));
+                unsigned offset = 1;
+                auto addNextPair = [&](Width width) {
+                    ShufflePair pair(inst.args[offset + resultCount], destinations[offset], width);
                     shufflePairs.append(pair);
                     hasRegisterSource |= pair.src().isReg();
+                    ++offset;
+                };
+                for (unsigned i = 1; i < value->numChildren(); ++i) {
+                    Value* child = value->child(i);
+                    for (unsigned j = 0; j < cCallArgumentRegisterCount(child); j++)
+                        addNextPair(cCallArgumentRegisterWidth(child));
                 }
-
+                ASSERT(offset = inst.args.size());
+                
                 if (UNLIKELY(hasRegisterSource))
                     insertionSet.insertInst(instIndex, createShuffle(inst.origin, Vector<ShufflePair>(shufflePairs)));
                 else {
@@ -91,31 +100,37 @@ void lowerMacros(Code& code)
                 destinations[0] = inst.args[0];
 
                 // Save where the original instruction put its result.
-                Arg resultDst = value->type() == Void ? Arg() : inst.args[1];
+                Arg resultDst0 = resultCount >= 1 ? inst.args[1] : Arg();
+#if USE(JSVALUE32_64)
+                Arg resultDst1 = resultCount >= 2 ? inst.args[2] : Arg();
+#endif
 
                 inst = buildCCall(code, inst.origin, destinations);
                 if (oldKind.effects)
                     inst.kind.effects = true;
 
-                Tmp result = cCallResult(value->type());
                 switch (value->type().kind()) {
                 case Void:
                 case Tuple:
                     break;
                 case Float:
-                    insertionSet.insert(instIndex + 1, MoveFloat, value, result, resultDst);
+                    insertionSet.insert(instIndex + 1, MoveFloat, value, cCallResult(value, 0), resultDst0);
                     break;
                 case Double:
-                    insertionSet.insert(instIndex + 1, MoveDouble, value, result, resultDst);
+                    insertionSet.insert(instIndex + 1, MoveDouble, value, cCallResult(value, 0), resultDst0);
                     break;
                 case Int32:
-                    insertionSet.insert(instIndex + 1, Move32, value, result, resultDst);
+                    insertionSet.insert(instIndex + 1, Move32, value, cCallResult(value, 0), resultDst0);
                     break;
                 case Int64:
-                    insertionSet.insert(instIndex + 1, Move, value, result, resultDst);
+                    insertionSet.insert(instIndex + 1, Move, value, cCallResult(value, 0), resultDst0);
+#if USE(JSVALUE32_64)
+                    insertionSet.insert(instIndex + 1, Move, value, cCallResult(value, 1), resultDst1);
+#endif
                     break;
                 case V128:
-                    insertionSet.insert(instIndex + 1, MoveVector, value, result, resultDst);
+                    ASSERT(is64Bit());
+                    insertionSet.insert(instIndex + 1, MoveVector, value, cCallResult(value, 0), resultDst0);
                     break;
                 }
             };
@@ -202,6 +217,81 @@ void lowerMacros(Code& code)
                 inst = Inst();
             };
 
+            auto handleVectorMin = [&] {
+                if (!isX86() || !scalarTypeIsFloatingPoint(inst.args[0].simdInfo().lane))
+                    return;
+
+                // Intel's vectorized minimum instruction has slightly different semantics to the WebAssembly vectorized
+                // minimum instruction, namely in terms of signed zero values and propagating NaNs. VectorPmin implements
+                // a fast version of this instruction that compiles down to a single op, without conforming to the exact
+                // semantics. In order to precisely implement VectorMin, we need to do extra work on Intel to check for
+                // the necessary edge cases.
+
+                SIMDInfo simdInfo = inst.args[0].simdInfo();
+                Tmp lhs = inst.args[1].tmp();
+                Tmp rhs = inst.args[2].tmp();
+                Tmp dst = inst.args[3].tmp();
+                auto* origin = inst.origin;
+
+                Tmp tmp = code.newTmp(FP);
+
+                // Compute result in both directions.
+                insertionSet.insert(instIndex, VectorPmin, origin, Arg::simdInfo(simdInfo), rhs, lhs, tmp);
+                insertionSet.insert(instIndex, VectorPmin, origin, Arg::simdInfo(simdInfo), lhs, rhs, dst);
+
+                // OR results, propagating the sign bit for negative zeroes, and NaNs.
+                insertionSet.insert(instIndex, VectorOr, origin, Arg::simdInfo({ SIMDLane::v128, SIMDSignMode::None }), tmp, dst, tmp);
+
+                // Canonicalize NaNs by checking for unordered values and clearing payload if necessary.
+                insertionSet.insert(instIndex, CompareFloatingPointVectorUnordered, origin, Arg::simdInfo(simdInfo), dst, tmp, dst);
+                insertionSet.insert(instIndex, VectorOr, origin, Arg::simdInfo({ SIMDLane::v128, SIMDSignMode::None }), tmp, dst, tmp);
+                SIMDLane equivalentIntegerLane = simdInfo.lane == SIMDLane::f32x4 ? SIMDLane::i32x4 : SIMDLane::i64x2;
+                insertionSet.insert(instIndex, VectorUshr8, origin, Arg::simdInfo({ equivalentIntegerLane, SIMDSignMode::None }), dst, Arg::imm(simdInfo.lane == SIMDLane::f32x4 ? 10 : 13), dst);
+                insertionSet.insert(instIndex, VectorAndnot, origin, Arg::simdInfo({ SIMDLane::v128, SIMDSignMode::None }), dst, tmp, dst);
+
+                inst = Inst();
+            };
+
+            auto handleVectorMax = [&] {
+                if (!isX86() || !scalarTypeIsFloatingPoint(inst.args[0].simdInfo().lane))
+                    return;
+
+                // Intel's vectorized maximum instruction has slightly different semantics to the WebAssembly vectorized
+                // minimum instruction, namely in terms of signed zero values and propagating NaNs. VectorPmax implements
+                // a fast version of this instruction that compiles down to a single op, without conforming to the exact
+                // semantics. In order to precisely implement VectorMax, we need to do extra work on Intel to check for
+                // the necessary edge cases.
+
+                SIMDInfo simdInfo = inst.args[0].simdInfo();
+                Tmp lhs = inst.args[1].tmp();
+                Tmp rhs = inst.args[2].tmp();
+                Tmp dst = inst.args[3].tmp();
+                auto* origin = inst.origin;
+
+                Tmp tmp = code.newTmp(FP);
+
+                // Compute result in both directions.
+                insertionSet.insert(instIndex, VectorPmax, origin, Arg::simdInfo(simdInfo), rhs, lhs, tmp);
+                insertionSet.insert(instIndex, VectorPmax, origin, Arg::simdInfo(simdInfo), lhs, rhs, dst);
+
+                // Check for discrepancies by XORing the two results together.
+                insertionSet.insert(instIndex, VectorXor, origin, Arg::simdInfo({ SIMDLane::v128, SIMDSignMode::None }), tmp, dst, dst);
+
+                // OR results, propagating the sign bit for negative zeroes, and NaNs.
+                insertionSet.insert(instIndex, VectorOr, origin, Arg::simdInfo({ SIMDLane::v128, SIMDSignMode::None }), tmp, dst, tmp);
+
+                // Propagate discrepancies in the sign bit.
+                insertionSet.insert(instIndex, VectorSub, origin, Arg::simdInfo(simdInfo), tmp, dst, tmp);
+
+                // Canonicalize NaNs by checking for unordered values and clearing payload if necessary.
+                insertionSet.insert(instIndex, CompareFloatingPointVectorUnordered, origin, Arg::simdInfo(simdInfo), dst, tmp, dst);
+                SIMDLane equivalentIntegerLane = simdInfo.lane == SIMDLane::f32x4 ? SIMDLane::i32x4 : SIMDLane::i64x2;
+                insertionSet.insert(instIndex, VectorUshr8, origin, Arg::simdInfo({ equivalentIntegerLane, SIMDSignMode::None }), dst, Arg::imm(simdInfo.lane == SIMDLane::f32x4 ? 10 : 13), dst);
+                insertionSet.insert(instIndex, VectorAndnot, origin, Arg::simdInfo({ SIMDLane::v128, SIMDSignMode::None }), dst, tmp, dst);
+
+                inst = Inst();
+            };
+
             auto handleVectorAnyTrue = [&] {
                 if (!isARM64())
                     return;
@@ -252,6 +342,59 @@ void lowerMacros(Code& code)
                 insertionSet.insert(instIndex, VectorReplaceLaneInt64, origin, Arg::imm(1), gpTmp, control);
 
                 insertionSet.insert(instIndex, VectorSwizzle2, origin, n, n2, control, dst);
+                inst = Inst();
+            };
+
+            auto handleVectorSshr = [&] {
+                SIMDInfo simdInfo = inst.args[0].simdInfo();
+
+                if (!isX86() || simdInfo.lane != SIMDLane::i64x2)
+                    return;
+
+                Tmp vec = inst.args[1].tmp();
+                Arg shift = inst.args[2];
+                Tmp dst = inst.args[3].tmp();
+                auto* origin = inst.origin;
+
+                Tmp lower = code.newTmp(GP);
+                Tmp upper = code.newTmp(GP);
+
+                insertionSet.insert(instIndex, VectorExtractLaneInt64, origin, Arg::imm(0), vec, lower);
+                insertionSet.insert(instIndex, VectorExtractLaneInt64, origin, Arg::imm(1), vec, upper);
+                insertionSet.insert(instIndex, Rshift64, origin, shift, lower);
+                insertionSet.insert(instIndex, Rshift64, origin, shift, upper);
+                insertionSet.insert(instIndex, VectorReplaceLaneInt64, origin, Arg::imm(0), lower, dst);
+                insertionSet.insert(instIndex, VectorReplaceLaneInt64, origin, Arg::imm(1), upper, dst);
+                inst = Inst();
+            };
+
+            auto handleVectorAbs = [&] {
+                SIMDInfo simdInfo = inst.args[0].simdInfo();
+
+                if (!isX86() || !scalarTypeIsFloatingPoint(simdInfo.lane))
+                    return;
+
+                // Intel doesn't have a vector absolute-value instruction for floats, so we have to manually
+                // set the sign bit.
+
+                Tmp vec = inst.args[1].tmp();
+                Tmp dst = inst.args[2].tmp();
+                auto* origin = inst.origin;
+
+                Tmp fptmp = code.newTmp(FP);
+                Tmp gptmp = code.newTmp(GP);
+
+                if (simdInfo.lane == SIMDLane::f32x4) {
+                    insertionSet.insert(instIndex, Move, origin, Arg::imm(0x7fffffff), gptmp);
+                    insertionSet.insert(instIndex, Move32ToFloat, origin, gptmp, fptmp);
+                    insertionSet.insert(instIndex, VectorSplatFloat32, origin, fptmp, fptmp);
+                } else {
+                    insertionSet.insert(instIndex, Move, origin, Arg::bigImm(0x7fffffffffffffff), gptmp);
+                    insertionSet.insert(instIndex, Move64ToDouble, origin, gptmp, fptmp);
+                    insertionSet.insert(instIndex, VectorSplatFloat64, origin, fptmp, fptmp);
+                }
+                insertionSet.insert(instIndex, VectorAnd, origin, Arg::simdInfo({ SIMDLane::v128, SIMDSignMode::None }), vec, fptmp, dst);
+
                 inst = Inst();
             };
 
@@ -340,6 +483,9 @@ void lowerMacros(Code& code)
             case VectorAnyTrue:
                 handleVectorAnyTrue();
                 break;
+            case VectorAbs:
+                handleVectorAbs();
+                break;
             case VectorMul:
                 handleVectorMul();
                 break;
@@ -349,8 +495,17 @@ void lowerMacros(Code& code)
             case VectorShuffle:
                 handleVectorShuffle();
                 break;
+            case VectorSshr:
+                handleVectorSshr();
+                break;
             case VectorBitwiseSelect:
                 handleVectorBitwiseSelect();
+                break;
+            case VectorMin:
+                handleVectorMin();
+                break;
+            case VectorMax:
+                handleVectorMax();
                 break;
             default:
                 break;

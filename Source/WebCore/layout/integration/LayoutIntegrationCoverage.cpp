@@ -106,8 +106,8 @@ static void printReason(AvoidanceReason reason, TextStream& stream)
     case AvoidanceReason::FlowHasNonSupportedChild:
         stream << "unsupported child renderer";
         break;
-    case AvoidanceReason::FlowHasUnsupportedFloat:
-        stream << "complicated float";
+    case AvoidanceReason::FloatIsShapeOutside:
+        stream << "float has shape";
         break;
     case AvoidanceReason::FlowHasUnsupportedWritingMode:
         stream << "unsupported writing mode (vertical-rl/horizontal-bt";
@@ -147,9 +147,6 @@ static void printReason(AvoidanceReason reason, TextStream& stream)
         break;
     case AvoidanceReason::FlowHasInitialLetter:
         stream << "intial letter";
-        break;
-    case AvoidanceReason::FlowIsVTTCue:
-        stream << "media track";
         break;
     default:
         break;
@@ -324,8 +321,6 @@ static OptionSet<AvoidanceReason> canUseForStyle(const RenderElement& renderer, 
     };
     if (auto* ancestor = deprecatedFlexBoxAncestor(); ancestor && !ancestor->style().lineClamp().isNone()) {
         auto isSupportedLineClamp = [&] {
-            if (ancestor->style().lineClamp().isPercentage())
-                return false;
             for (auto* flexItem = ancestor->firstChild(); flexItem; flexItem = flexItem->nextInFlowSibling()) {
                 if (!is<RenderBlockFlow>(*flexItem))
                     return false;
@@ -340,22 +335,6 @@ static OptionSet<AvoidanceReason> canUseForStyle(const RenderElement& renderer, 
         if (!isSupportedLineClamp())
             SET_REASON_AND_RETURN_IF_NEEDED(FlowHasLineClamp, reasons, includeReasons);
     }
-    return reasons;
-}
-
-static OptionSet<AvoidanceReason> canUseForRenderInlineChild(const RenderInline& renderInline, IncludeReasons includeReasons)
-{
-    OptionSet<AvoidanceReason> reasons;
-
-    if (renderInline.isSVGInline())
-        SET_REASON_AND_RETURN_IF_NEEDED(ContentIsSVG, reasons, includeReasons);
-    if (renderInline.isRubyInline())
-        SET_REASON_AND_RETURN_IF_NEEDED(ContentIsRuby, reasons, includeReasons);
-
-    auto styleReasons = canUseForStyle(renderInline, includeReasons);
-    if (styleReasons)
-        ADD_REASONS_AND_RETURN_IF_NEEDED(styleReasons, reasons, includeReasons);
-
     return reasons;
 }
 
@@ -379,36 +358,6 @@ static OptionSet<AvoidanceReason> canUseForChild(const RenderObject& child, Incl
             ADD_REASONS_AND_RETURN_IF_NEEDED(styleReasons, reasons, includeReasons);
     }
 
-    auto isSupportedFloatingOrPositioned = [&] (auto& renderer) {
-#if !ALLOW_FLOATS
-        if (renderer.isFloating())
-            return false;
-#endif
-#if !ALLOW_RTL_FLOATS
-        if (renderer.isFloating() && !renderer.parent()->style().isLeftToRightDirection())
-            return false;
-#endif
-#if !ALLOW_VERTICAL_FLOATS
-        if (renderer.isFloating() && !renderer.parent()->style().isHorizontalWritingMode())
-            return false;
-#endif
-        if (style.shapeOutside())
-            return false;
-        if (renderer.isOutOfFlowPositioned()) {
-            // FIXME: We don't collect out-of-flow boxes from nested subtrees.
-            if (renderer.parent() != renderer.containingBlock())
-                return false;
-            if (!renderer.parent()->style().isLeftToRightDirection() || !renderer.parent()->style().isHorizontalWritingMode())
-                return false;
-            if (is<RenderLayerModelObject>(renderer.parent()) && downcast<RenderLayerModelObject>(*renderer.parent()).shouldPlaceVerticalScrollbarOnLeft())
-                return false;
-            // This simply checks the not-yet supported case when the out-of-flow positioned
-            // content has a relatively positioned inline containing block (has to call container to not skip RenderInlines).
-            return is<RenderBlockFlow>(child.container());
-        }
-        return true;
-    };
-
     auto& renderer = downcast<RenderElement>(child);
     if (renderer.isSVGRootOrLegacySVGRoot())
         SET_REASON_AND_RETURN_IF_NEEDED(ContentIsSVG, reasons, includeReasons);
@@ -417,6 +366,29 @@ static OptionSet<AvoidanceReason> canUseForChild(const RenderObject& child, Incl
         SET_REASON_AND_RETURN_IF_NEEDED(ContentIsRuby, reasons, includeReasons);
 
     if (is<RenderBlockFlow>(renderer) || is<RenderGrid>(renderer) || is<RenderFlexibleBox>(renderer) || is<RenderDeprecatedFlexibleBox>(renderer) || is<RenderReplaced>(renderer) || is<RenderListItem>(renderer) || is<RenderTable>(renderer)) {
+        auto isSupportedFloatingOrPositioned = [&] (auto& renderer) {
+#if !ALLOW_FLOATS
+            if (renderer.isFloating())
+                return false;
+#endif
+#if !ALLOW_RTL_FLOATS
+            if (renderer.isFloating() && !renderer.parent()->style().isLeftToRightDirection())
+                return false;
+#endif
+#if !ALLOW_VERTICAL_FLOATS
+            if (renderer.isFloating() && !renderer.parent()->style().isHorizontalWritingMode())
+                return false;
+#endif
+            if (renderer.isOutOfFlowPositioned()) {
+                if (!renderer.parent()->style().isLeftToRightDirection())
+                    return false;
+                if (is<RenderLayerModelObject>(renderer.parent()) && downcast<RenderLayerModelObject>(*renderer.parent()).shouldPlaceVerticalScrollbarOnLeft())
+                    return false;
+            }
+            return true;
+        };
+        if (style.shapeOutside())
+            SET_REASON_AND_RETURN_IF_NEEDED(FloatIsShapeOutside, reasons, includeReasons)
         if (!isSupportedFloatingOrPositioned(renderer))
             SET_REASON_AND_RETURN_IF_NEEDED(ChildBoxIsFloatingOrPositioned, reasons, includeReasons)
         return reasons;
@@ -435,9 +407,13 @@ static OptionSet<AvoidanceReason> canUseForChild(const RenderObject& child, Incl
     }
 
     if (is<RenderInline>(renderer)) {
-        auto renderInlineReasons = canUseForRenderInlineChild(downcast<RenderInline>(renderer), includeReasons);
-        if (renderInlineReasons)
-            ADD_REASONS_AND_RETURN_IF_NEEDED(renderInlineReasons, reasons, includeReasons);
+        if (renderer.isSVGInline())
+            SET_REASON_AND_RETURN_IF_NEEDED(ContentIsSVG, reasons, includeReasons);
+        if (renderer.isRubyInline())
+            SET_REASON_AND_RETURN_IF_NEEDED(ContentIsRuby, reasons, includeReasons);
+        auto styleReasons = canUseForStyle(renderer, includeReasons);
+        if (styleReasons)
+            ADD_REASONS_AND_RETURN_IF_NEEDED(styleReasons, reasons, includeReasons);
         return reasons;
     }
 
@@ -490,12 +466,6 @@ OptionSet<AvoidanceReason> canUseForLineLayoutWithReason(const RenderBlockFlow& 
     }
     if (flow.isRubyText() || flow.isRubyBase())
         SET_REASON_AND_RETURN_IF_NEEDED(ContentIsRuby, reasons, includeReasons);
-#if ENABLE(VIDEO)
-    if (is<RenderVTTCue>(flow) || is<RenderVTTCue>(flow.parent())) {
-        // First child of the RenderVTTCue is the backdropBox.
-        SET_REASON_AND_RETURN_IF_NEEDED(FlowIsVTTCue, reasons, includeReasons);
-    }
-#endif
 
     // Printing does pagination without a flow thread.
     if (flow.document().paginated())
@@ -516,7 +486,7 @@ OptionSet<AvoidanceReason> canUseForLineLayoutWithReason(const RenderBlockFlow& 
             // if a float has a shape, we cannot tell if content will need to be shifted until after we lay it out,
             // since the amount of space is not uniform for the height of the float.
             if (floatingObject->renderer().shapeOutsideInfo())
-                SET_REASON_AND_RETURN_IF_NEEDED(FlowHasUnsupportedFloat, reasons, includeReasons);
+                SET_REASON_AND_RETURN_IF_NEEDED(FloatIsShapeOutside, reasons, includeReasons);
         }
     }
     return reasons;
@@ -553,7 +523,7 @@ bool canUseForLineLayoutAfterStyleChange(const RenderBlockFlow& blockContainer, 
 
 bool canUseForLineLayoutAfterInlineBoxStyleChange(const RenderInline& renderer, StyleDifference)
 {
-    return canUseForRenderInlineChild(renderer, IncludeReasons::First).isEmpty();
+    return canUseForStyle(renderer, IncludeReasons::First).isEmpty();
 }
 
 bool canUseForFlexLayout(const RenderFlexibleBox& flexBox)

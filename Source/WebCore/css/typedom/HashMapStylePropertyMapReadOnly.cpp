@@ -26,6 +26,8 @@
 #include "config.h"
 #include "HashMapStylePropertyMapReadOnly.h"
 
+#include "CSSPropertyParser.h"
+
 namespace WebCore {
 
 Ref<HashMapStylePropertyMapReadOnly> HashMapStylePropertyMapReadOnly::create(HashMap<AtomString, RefPtr<CSSValue>>&& map)
@@ -70,7 +72,7 @@ auto HashMapStylePropertyMapReadOnly::entries(ScriptExecutionContext* context) c
     Vector<StylePropertyMapEntry> result;
     result.reserveInitialCapacity(m_map.size());
     for (auto& [propertyName, cssValue] : m_map)
-        result.uncheckedAppend(makeKeyValuePair(propertyName,  Vector<RefPtr<CSSStyleValue>> { reifyValue(cssValue.get(), *document) }));
+        result.uncheckedAppend(makeKeyValuePair(propertyName,  Vector<RefPtr<CSSStyleValue>> { reifyValue(cssValue.get(), cssPropertyID(propertyName), *document) }));
     return result;
 }
 

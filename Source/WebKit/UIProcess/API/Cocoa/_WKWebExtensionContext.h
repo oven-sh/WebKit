@@ -29,48 +29,48 @@
 
 #import <WebKit/_WKWebExtensionMatchPattern.h>
 #import <WebKit/_WKWebExtensionPermission.h>
+#import <WebKit/_WKWebExtensionTab.h>
 
 @class _WKWebExtension;
 @class _WKWebExtensionController;
-@protocol _WKWebExtensionTab;
 
 NS_ASSUME_NONNULL_BEGIN
 
 /*! @abstract Indicates a @link WKWebExtensionContext @/link error. */
-WK_EXTERN NSErrorDomain const _WKWebExtensionContextErrorDomain WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA));
+WK_EXTERN NSErrorDomain const _WKWebExtensionContextErrorDomain NS_SWIFT_NAME(_WKWebExtensionContext.ErrorDomain) WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA));
 
 /*!
  @abstract Constants used by NSError to indicate errors in the @link WKWebExtensionContext @/link domain.
  @constant WKWebExtensionContextErrorUnknown  Indicates that an unknown error occurred.
  @constant WKWebExtensionContextErrorAlreadyLoaded  Indicates that the context is already loaded by a @link WKWebExtensionController @/link.
  @constant WKWebExtensionContextErrorNotLoaded  Indicates that the context is not loaded by a @link WKWebExtensionController @/link.
- @constant WKWebExtensionContextErrorBaseURLTaken  Indicates that another context is already using the specified base URL.
+ @constant WKWebExtensionContextErrorBaseURLAlreadyInUse  Indicates that another context is already using the specified base URL.
  */
 typedef NS_ERROR_ENUM(_WKWebExtensionContextErrorDomain, _WKWebExtensionContextError) {
     _WKWebExtensionContextErrorUnknown = 1,
     _WKWebExtensionContextErrorAlreadyLoaded,
     _WKWebExtensionContextErrorNotLoaded,
-    _WKWebExtensionContextErrorBaseURLTaken,
+    _WKWebExtensionContextErrorBaseURLAlreadyInUse,
 } NS_SWIFT_NAME(_WKWebExtensionContext.Error) WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA));
 
 /*!
- @abstract Constants used to indicate permission state in @link WKWebExtensionContext @/link.
- @constant WKWebExtensionContextPermissionStateDeniedExplicitly  Indicates that the permission was explicitly denied.
- @constant WKWebExtensionContextPermissionStateDeniedImplicitly  Indicates that the permission was implicitly denied because of another explicitly denied permission.
- @constant WKWebExtensionContextPermissionStateRequestedImplicitly  Indicates that the permission was implicitly requested because of another explicitly requested permission.
- @constant WKWebExtensionContextPermissionStateUnknown  Indicates that an unknown permission state.
- @constant WKWebExtensionContextPermissionStateRequestedExplicitly  Indicates that the permission was explicitly requested.
- @constant WKWebExtensionContextPermissionStateGrantedImplicitly  Indicates that the permission was implicitly granted because of another explicitly granted permission.
- @constant WKWebExtensionContextPermissionStateGrantedExplicitly  Indicates that the permission was explicitly granted permission.
+ @abstract Constants used to indicate permission status in @link WKWebExtensionContext @/link.
+ @constant WKWebExtensionContextPermissionStatusDeniedExplicitly  Indicates that the permission was explicitly denied.
+ @constant WKWebExtensionContextPermissionStatusDeniedImplicitly  Indicates that the permission was implicitly denied because of another explicitly denied permission.
+ @constant WKWebExtensionContextPermissionStatusRequestedImplicitly  Indicates that the permission was implicitly requested because of another explicitly requested permission.
+ @constant WKWebExtensionContextPermissionStatusUnknown  Indicates that an unknown permission status.
+ @constant WKWebExtensionContextPermissionStatusRequestedExplicitly  Indicates that the permission was explicitly requested.
+ @constant WKWebExtensionContextPermissionStatusGrantedImplicitly  Indicates that the permission was implicitly granted because of another explicitly granted permission.
+ @constant WKWebExtensionContextPermissionStatusGrantedExplicitly  Indicates that the permission was explicitly granted permission.
  */
-typedef NS_ENUM(NSInteger, _WKWebExtensionContextPermissionState) {
-    _WKWebExtensionContextPermissionStateDeniedExplicitly    = -3,
-    _WKWebExtensionContextPermissionStateDeniedImplicitly    = -2,
-    _WKWebExtensionContextPermissionStateRequestedImplicitly = -1,
-    _WKWebExtensionContextPermissionStateUnknown             =  0,
-    _WKWebExtensionContextPermissionStateRequestedExplicitly =  1,
-    _WKWebExtensionContextPermissionStateGrantedImplicitly   =  2,
-    _WKWebExtensionContextPermissionStateGrantedExplicitly   =  3,
+typedef NS_ENUM(NSInteger, _WKWebExtensionContextPermissionStatus) {
+    _WKWebExtensionContextPermissionStatusDeniedExplicitly    = -3,
+    _WKWebExtensionContextPermissionStatusDeniedImplicitly    = -2,
+    _WKWebExtensionContextPermissionStatusRequestedImplicitly = -1,
+    _WKWebExtensionContextPermissionStatusUnknown             =  0,
+    _WKWebExtensionContextPermissionStatusRequestedExplicitly =  1,
+    _WKWebExtensionContextPermissionStatusGrantedImplicitly   =  2,
+    _WKWebExtensionContextPermissionStatusGrantedExplicitly   =  3,
 } NS_SWIFT_NAME(_WKWebExtensionContext.PermissionState) WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA));
 
 /*! @abstract This notification is sent whenever a @link WKWebExtensionContext @/link has newly granted permissions. */
@@ -133,7 +133,7 @@ WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA))
  @param extension The extension to use for the new web extension context.
  @result An initialized web extension context.
  */
-+ (instancetype)contextWithExtension:(_WKWebExtension *)extension;
++ (instancetype)contextForExtension:(_WKWebExtension *)extension;
 
 /*!
  @abstract Returns a web extension context initialized with a specified extension.
@@ -141,7 +141,7 @@ WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA))
  @result An initialized web extension context.
  @discussion This is a designated initializer.
  */
-- (instancetype)initWithExtension:(_WKWebExtension *)extension NS_DESIGNATED_INITIALIZER;
+- (instancetype)initForExtension:(_WKWebExtension *)extension NS_DESIGNATED_INITIALIZER;
 
 /*! @abstract The extension this context represents. */
 @property (nonatomic, readonly, strong) _WKWebExtension *webExtension;
@@ -171,50 +171,57 @@ WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA))
 @property (nonatomic, copy) NSString *uniqueIdentifier;
 
 /*!
+ @abstract Determines whether Web Inspector can inspect the @link WKWebView @/link instances for this context.
+ @discussion A context can control multiple `WKWebView` instances, from the background content, to the popover.
+ You should set this to `YES` when needed for debugging purposes. The default value is `NO`.
+*/
+@property (nonatomic, getter=isInspectable) BOOL inspectable;
+
+/*!
  @abstract The currently granted permissions and their expiration dates.
  @discussion Permissions that don't expire will have a distant future date. This will never include expired entries at time of access.
- Setting this property will replace all existing entries. Use this property for saving and restoring permission state in bulk.
+ Setting this property will replace all existing entries. Use this property for saving and restoring permission status in bulk.
 
  Permissions in this dictionary should be explicitly granted by the user before being added. Any permissions in this collection will not be
  presented for approval again until they expire.
- @seealso setPermissionState:forPermission:
- @seealso setPermissionState:forPermission:expirationDate:
+ @seealso setPermissionStatus:forPermission:
+ @seealso setPermissionStatus:forPermission:expirationDate:
  */
 @property (nonatomic, copy) NSDictionary<_WKWebExtensionPermission, NSDate *> *grantedPermissions;
 
 /*!
  @abstract The currently granted permission match patterns and their expiration dates.
  @discussion Match patterns that don't expire will have a distant future date. This will never include expired entries at time of access.
- Setting this property will replace all existing entries. Use this property for saving and restoring permission state in bulk.
+ Setting this property will replace all existing entries. Use this property for saving and restoring permission status in bulk.
 
  Match patterns in this dictionary should be explicitly granted by the user before being added. Any match pattern in this collection will not be
  presented for approval again until they expire.
- @seealso setPermissionState:forMatchPattern:
- @seealso setPermissionState:forMatchPattern:expirationDate:
+ @seealso setPermissionStatus:forMatchPattern:
+ @seealso setPermissionStatus:forMatchPattern:expirationDate:
  */
 @property (nonatomic, copy) NSDictionary<_WKWebExtensionMatchPattern *, NSDate *> *grantedPermissionMatchPatterns;
 
 /*!
  @abstract The currently denied permissions and their expiration dates.
  @discussion Permissions that don't expire will have a distant future date. This will never include expired entries at time of access.
- Setting this property will replace all existing entries. Use this property for saving and restoring permission state in bulk.
+ Setting this property will replace all existing entries. Use this property for saving and restoring permission status in bulk.
 
  Permissions in this dictionary should be explicitly denied by the user before being added. Any match pattern in this collection will not be
  presented for approval again until they expire.
- @seealso setPermissionState:forPermission:
- @seealso setPermissionState:forPermission:expirationDate:
+ @seealso setPermissionStatus:forPermission:
+ @seealso setPermissionStatus:forPermission:expirationDate:
  */
 @property (nonatomic, copy) NSDictionary<_WKWebExtensionPermission, NSDate *> *deniedPermissions;
 
 /*!
  @abstract The currently denied permission match patterns and their expiration dates.
  @discussion Match patterns that don't expire will have a distant future date. This will never include expired entries at time of access.
- Setting this property will replace all existing entries. Use this property for saving and restoring permission state in bulk.
+ Setting this property will replace all existing entries. Use this property for saving and restoring permission status in bulk.
 
  Match patterns in this dictionary should be explicitly denied by the user before being added. Any match pattern in this collection will not be
  presented for approval again until they expire.
- @seealso setPermissionState:forMatchPattern:
- @seealso setPermissionState:forMatchPattern:expirationDate:
+ @seealso setPermissionStatus:forMatchPattern:
+ @seealso setPermissionStatus:forMatchPattern:expirationDate:
  */
 @property (nonatomic, copy) NSDictionary<_WKWebExtensionMatchPattern *, NSDate *> *deniedPermissionMatchPatterns;
 
@@ -239,45 +246,51 @@ WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA))
 
 /*!
  @abstract Checks the specified permission against the currently granted permissions.
+ @param permission The permission for which to return the status.
  @seealso currentPermissions
  @seealso hasPermission:inTab:
- @seealso permissionStateForPermission:
- @seealso permissionStateForPermission:inTab:
+ @seealso permissionStatusForPermission:
+ @seealso permissionStatusForPermission:inTab:
 */
-- (BOOL)hasPermission:(_WKWebExtensionPermission)permission;
+- (BOOL)hasPermission:(_WKWebExtensionPermission)permission NS_SWIFT_UNAVAILABLE("Use tab version with nil");
 
 /*!
  @abstract Checks the specified permission against the currently granted permissions in a specific tab.
+ @param permission The permission for which to return the status.
+ @param tab The tab in which to return the permission status, or \c nil if the tab is not known or the global status is desired.
  @discussion Permissions can be granted on a per-tab basis. When the tab is known, permission checks should always use this method.
  @seealso currentPermissions
  @seealso hasPermission:
- @seealso permissionStateForPermission:
- @seealso permissionStateForPermission:inTab:
+ @seealso permissionStatusForPermission:
+ @seealso permissionStatusForPermission:inTab:
  */
-- (BOOL)hasPermission:(_WKWebExtensionPermission)permission inTab:(nullable id <_WKWebExtensionTab>)tab;
+- (BOOL)hasPermission:(_WKWebExtensionPermission)permission inTab:(nullable id <_WKWebExtensionTab>)tab NS_SWIFT_NAME(hasPermission(_:in:));
 
 /*!
  @abstract Checks the specified URL against the currently granted permission match patterns.
+ @param url The URL for which to return the status.
  @seealso currentPermissionMatchPatterns
  @seealso hasAccessToURL:inTab:
- @seealso permissionStateForURL:
- @seealso permissionStateForURL:inTab:
- @seealso permissionStateForMatchPattern:
- @seealso permissionStateForMatchPattern:inTab:
+ @seealso permissionStatusForURL:
+ @seealso permissionStatusForURL:inTab:
+ @seealso permissionStatusForMatchPattern:
+ @seealso permissionStatusForMatchPattern:inTab:
  */
-- (BOOL)hasAccessToURL:(NSURL *)url;
+- (BOOL)hasAccessToURL:(NSURL *)url NS_SWIFT_UNAVAILABLE("Use tab version with nil");
 
 /*!
  @abstract Checks the specified URL against the currently granted permission match patterns in a specific tab.
+ @param url The URL for which to return the status.
+ @param tab The tab in which to return the permission status, or \c nil if the tab is not known or the global status is desired.
  @discussion Some match patterns can be granted on a per-tab basis. When the tab is known, access checks should always use this method.
  @seealso currentPermissionMatchPatterns
  @seealso hasAccessToURL:
- @seealso permissionStateForURL:
- @seealso permissionStateForURL:inTab:
- @seealso permissionStateForMatchPattern:
- @seealso permissionStateForMatchPattern:inTab:
+ @seealso permissionStatusForURL:
+ @seealso permissionStatusForURL:inTab:
+ @seealso permissionStatusForMatchPattern:
+ @seealso permissionStatusForMatchPattern:inTab:
  */
-- (BOOL)hasAccessToURL:(NSURL *)url inTab:(nullable id <_WKWebExtensionTab>)tab;
+- (BOOL)hasAccessToURL:(NSURL *)url inTab:(nullable id <_WKWebExtensionTab>)tab NS_SWIFT_NAME(hasAccess(to:in:));
 
 /*!
  @abstract Checks if the currently granted permission match patterns set contains the `<all_urls>` pattern.
@@ -304,118 +317,141 @@ WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA))
 
 /*!
  @abstract Checks the specified permission against the currently denied, granted, and requested permissions.
+ @param permission The permission for which to return the status.
  @discussion Permissions can be granted on a per-tab basis. When the tab is known, access checks should always use the method that checks in a tab.
- @seealso permissionStateForPermission:inTab:
+ @seealso permissionStatusForPermission:inTab:
  @seealso hasPermission:
 */
-- (_WKWebExtensionContextPermissionState)permissionStateForPermission:(_WKWebExtensionPermission)permission;
+- (_WKWebExtensionContextPermissionStatus)permissionStatusForPermission:(_WKWebExtensionPermission)permission NS_SWIFT_UNAVAILABLE("Use tab version with nil");
 
 /*!
- @abstract Checks the specified permission against the currently denied, granted, and requested permissions in a specific tab.
- @discussion Permissions can be granted on a per-tab basis. When the tab is known, access checks should always use this method.
- @seealso permissionStateForPermission:
+ @abstract Checks the specified permission against the currently denied, granted, and requested permissions.
+ @param permission The permission for which to return the status.
+ @param tab The tab in which to return the permission status, or \c nil if the tab is not known or the global status is desired.
+ @discussion Permissions can be granted on a per-tab basis. When the tab is known, access checks should always specify the tab.
+ @seealso permissionStatusForPermission:
  @seealso hasPermission:inTab:
 */
-- (_WKWebExtensionContextPermissionState)permissionStateForPermission:(_WKWebExtensionPermission)permission inTab:(nullable id <_WKWebExtensionTab>)tab;
+- (_WKWebExtensionContextPermissionStatus)permissionStatusForPermission:(_WKWebExtensionPermission)permission inTab:(nullable id <_WKWebExtensionTab>)tab NS_SWIFT_NAME(permissionStatus(for:in:));
 
 /*!
- @abstract Sets the state of a permission in all tabs and global contexts with a distant future expiration date.
- @discussion This method will update `grantedPermissions` and `deniedPermissions`. Use this method for changing a single permission's state.
- Only `WKWebExtensionContextPermissionStateDeniedExplicitly`, `WKWebExtensionContextPermissionStateUnknown`, and `WKWebExtensionContextPermissionStateGrantedExplicitly`
+ @abstract Sets the status of a permission with a distant future expiration date.
+ @param status The new permission status to set for the given permission.
+ @param permission The permission for which to set the status.
+ @discussion This method will update `grantedPermissions` and `deniedPermissions`. Use this method for changing a single permission's status.
+ Only `WKWebExtensionContextPermissionStatusDeniedExplicitly`, `WKWebExtensionContextPermissionStatusUnknown`, and `WKWebExtensionContextPermissionStatusGrantedExplicitly`
  states are allowed to be set using this method.
- @seealso setPermissionState:forPermission:expirationDate:
- @seealso setPermissionState:forPermission:inTab:
+ @seealso setPermissionStatus:forPermission:expirationDate:
+ @seealso setPermissionStatus:forPermission:inTab:
 */
-- (void)setPermissionState:(_WKWebExtensionContextPermissionState)state forPermission:(_WKWebExtensionPermission)permission;
+- (void)setPermissionStatus:(_WKWebExtensionContextPermissionStatus)status forPermission:(_WKWebExtensionPermission)permission NS_SWIFT_UNAVAILABLE("Use expirationDate version with nil");
 
 /*!
- @abstract Sets the state of a permission in all tabs and global contexts with a specific expiration date.
- @discussion This method will update `grantedPermissions` and `deniedPermissions`. Use this method for changing a single permission's state.
- Passing a `nil` expiration date will be treated as a distant future date. Only `WKWebExtensionContextPermissionStateDeniedExplicitly`, `WKWebExtensionContextPermissionStateUnknown`,
- and `WKWebExtensionContextPermissionStateGrantedExplicitly` states are allowed to be set using this method.
- @seealso setPermissionState:forPermission:
- @seealso setPermissionState:forPermission:inTab:
+ @abstract Sets the status of a permission with a specific expiration date.
+ @param status The new permission status to set for the given permission.
+ @param permission The permission for which to set the status.
+ @param expirationDate The expiration date for the new permission status, or \c nil for distant future.
+ @discussion This method will update `grantedPermissions` and `deniedPermissions`. Use this method for changing a single permission's status.
+ Passing a `nil` expiration date will be treated as a distant future date. Only `WKWebExtensionContextPermissionStatusDeniedExplicitly`, `WKWebExtensionContextPermissionStatusUnknown`,
+ and `WKWebExtensionContextPermissionStatusGrantedExplicitly` states are allowed to be set using this method.
+ @seealso setPermissionStatus:forPermission:
+ @seealso setPermissionStatus:forPermission:inTab:
 */
-- (void)setPermissionState:(_WKWebExtensionContextPermissionState)state forPermission:(_WKWebExtensionPermission)permission expirationDate:(nullable NSDate *)expirationDate;
+- (void)setPermissionStatus:(_WKWebExtensionContextPermissionStatus)status forPermission:(_WKWebExtensionPermission)permission expirationDate:(nullable NSDate *)expirationDate NS_SWIFT_NAME(setPermissionStatus(_:for:expirationDate:));
 
 /*!
  @abstract Checks the specified URL against the currently denied, granted, and requested permission match patterns.
+ @param url The URL for which to return the status.
  @discussion URLs and match patterns can be granted on a per-tab basis. When the tab is known, access checks should always use the method that checks in a tab.
- @seealso permissionStateForURL:inTab:
+ @seealso permissionStatusForURL:inTab:
  @seealso hasAccessToURL:
 */
-- (_WKWebExtensionContextPermissionState)permissionStateForURL:(NSURL *)url NS_SWIFT_NAME(permissionState(forURL:));
+- (_WKWebExtensionContextPermissionStatus)permissionStatusForURL:(NSURL *)url NS_SWIFT_UNAVAILABLE("Use tab version with nil");
 
 /*!
- @abstract Checks the specified URL against the currently denied, granted, and requested permission match patterns in a specific tab.
+ @abstract Checks the specified URL against the currently denied, granted, and requested permission match patterns.
+ @param url The URL for which to return the status.
+ @param tab The tab in which to return the permission status, or \c nil if the tab is not known or the global status is desired.
  @discussion URLs and match patterns can be granted on a per-tab basis. When the tab is known, access checks should always use this method.
- @seealso permissionStateForURL:
+ @seealso permissionStatusForURL:
  @seealso hasAccessToURL:inTab:
 */
-- (_WKWebExtensionContextPermissionState)permissionStateForURL:(NSURL *)url inTab:(nullable id <_WKWebExtensionTab>)tab NS_SWIFT_NAME(permissionState(forURL:in:));
+- (_WKWebExtensionContextPermissionStatus)permissionStatusForURL:(NSURL *)url inTab:(nullable id <_WKWebExtensionTab>)tab NS_SWIFT_NAME(permissionStatus(for:in:));
 
 /*!
- @abstract Sets the state of a URL in all tabs and global contexts with a distant future expiration date.
- @discussion The URL is converted into a match pattern and will update `grantedPermissionMatchPatterns` and `deniedPermissionMatchPatterns`. Use this method for changing a single URL's state.
- Only `WKWebExtensionContextPermissionStateDeniedExplicitly`, `WKWebExtensionContextPermissionStateUnknown`, and `WKWebExtensionContextPermissionStateGrantedExplicitly`
+ @abstract Sets the permission status of a URL with a distant future expiration date.
+ @param status The new permission status to set for the given URL.
+ @param url The URL for which to set the status.
+ @discussion The URL is converted into a match pattern and will update `grantedPermissionMatchPatterns` and `deniedPermissionMatchPatterns`. Use this method for changing a single URL's status.
+ Only `WKWebExtensionContextPermissionStatusDeniedExplicitly`, `WKWebExtensionContextPermissionStatusUnknown`, and `WKWebExtensionContextPermissionStatusGrantedExplicitly`
  states are allowed to be set using this method.
- @seealso setPermissionState:forURL:expirationDate:
- @seealso setPermissionState:forURL:inTab:
+ @seealso setPermissionStatus:forURL:expirationDate:
+ @seealso setPermissionStatus:forURL:inTab:
 */
-- (void)setPermissionState:(_WKWebExtensionContextPermissionState)state forURL:(NSURL *)url NS_SWIFT_NAME(setPermissionState(_:forURL:));
+- (void)setPermissionStatus:(_WKWebExtensionContextPermissionStatus)status forURL:(NSURL *)url NS_SWIFT_UNAVAILABLE("Use expirationDate version with nil");
 
 /*!
- @abstract Sets the state of a URL in all tabs and global contexts with a specific expiration date.
- @discussion The URL is converted into a match pattern and will update `grantedPermissionMatchPatterns` and `deniedPermissionMatchPatterns`. Use this method for changing a single URL's state.
- Passing a `nil` expiration date will be treated as a distant future date. Only `WKWebExtensionContextPermissionStateDeniedExplicitly`, `WKWebExtensionContextPermissionStateUnknown`,
- and `WKWebExtensionContextPermissionStateGrantedExplicitly` states are allowed to be set using this method.
- @seealso setPermissionState:forURL:
- @seealso setPermissionState:forURL:inTab:
+ @abstract Sets the permission status of a URL with a distant future expiration date.
+ @param status The new permission status to set for the given URL.
+ @param url The URL for which to set the status.
+ @param expirationDate The expiration date for the new permission status, or \c nil for distant future.
+ @discussion The URL is converted into a match pattern and will update `grantedPermissionMatchPatterns` and `deniedPermissionMatchPatterns`. Use this method for changing a single URL's status.
+ Passing a `nil` expiration date will be treated as a distant future date. Only `WKWebExtensionContextPermissionStatusDeniedExplicitly`, `WKWebExtensionContextPermissionStatusUnknown`,
+ and `WKWebExtensionContextPermissionStatusGrantedExplicitly` states are allowed to be set using this method.
+ @seealso setPermissionStatus:forURL:
+ @seealso setPermissionStatus:forURL:inTab:
 */
-- (void)setPermissionState:(_WKWebExtensionContextPermissionState)state forURL:(NSURL *)url expirationDate:(nullable NSDate *)expirationDate NS_SWIFT_NAME(setPermissionState(_:forURL:expirationDate:));
+- (void)setPermissionStatus:(_WKWebExtensionContextPermissionStatus)status forURL:(NSURL *)url expirationDate:(nullable NSDate *)expirationDate NS_SWIFT_NAME(setPermissionStatus(_:for:expirationDate:));
 
 /*!
  @abstract Checks the specified match pattern against the currently denied, granted, and requested permission match patterns.
+ @param pattern The pattern for which to return the status.
  @discussion Match patterns can be granted on a per-tab basis. When the tab is known, access checks should always use the method that checks in a tab.
- @seealso permissionStateForMatchPattern:inTab:
+ @seealso permissionStatusForMatchPattern:inTab:
  @seealso hasAccessToURL:inTab:
 */
-- (_WKWebExtensionContextPermissionState)permissionStateForMatchPattern:(_WKWebExtensionMatchPattern *)pattern;
+- (_WKWebExtensionContextPermissionStatus)permissionStatusForMatchPattern:(_WKWebExtensionMatchPattern *)pattern NS_SWIFT_UNAVAILABLE("Use tab version with nil");
 
 /*!
- @abstract Checks the specified match pattern against the currently denied, granted, and requested permission match patterns in a specific tab.
+ @abstract Checks the specified match pattern against the currently denied, granted, and requested permission match patterns.
+ @param pattern The pattern for which to return the status.
+ @param tab The tab in which to return the permission status, or \c nil if the tab is not known or the global status is desired.
  @discussion Match patterns can be granted on a per-tab basis. When the tab is known, access checks should always use this method.
- @seealso permissionStateForMatchPattern:
+ @seealso permissionStatusForMatchPattern:
  @seealso hasAccessToURL:inTab:
 */
-- (_WKWebExtensionContextPermissionState)permissionStateForMatchPattern:(_WKWebExtensionMatchPattern *)pattern inTab:(nullable id <_WKWebExtensionTab>)tab;
+- (_WKWebExtensionContextPermissionStatus)permissionStatusForMatchPattern:(_WKWebExtensionMatchPattern *)pattern inTab:(nullable id <_WKWebExtensionTab>)tab NS_SWIFT_NAME(permissionStatus(for:in:));
 
 /*!
- @abstract Sets the state of a match pattern in all tabs and global contexts with a distant future expiration date.
- @discussion This method will update `grantedPermissionMatchPatterns` and `deniedPermissionMatchPatterns`. Use this method for changing a single match pattern's state.
- Only `WKWebExtensionContextPermissionStateDeniedExplicitly`, `WKWebExtensionContextPermissionStateUnknown`, and `WKWebExtensionContextPermissionStateGrantedExplicitly`
+ @abstract Sets the status of a match pattern with a distant future expiration date.
+ @param status The new permission status to set for the given match pattern.
+ @param pattern The match pattern for which to set the status.
+ @discussion This method will update `grantedPermissionMatchPatterns` and `deniedPermissionMatchPatterns`. Use this method for changing a single match pattern's status.
+ Only `WKWebExtensionContextPermissionStatusDeniedExplicitly`, `WKWebExtensionContextPermissionStatusUnknown`, and `WKWebExtensionContextPermissionStatusGrantedExplicitly`
  states are allowed to be set using this method.
- @seealso setPermissionState:forMatchPattern:expirationDate:
- @seealso setPermissionState:forMatchPattern:inTab:
+ @seealso setPermissionStatus:forMatchPattern:expirationDate:
+ @seealso setPermissionStatus:forMatchPattern:inTab:
 */
-- (void)setPermissionState:(_WKWebExtensionContextPermissionState)state forMatchPattern:(_WKWebExtensionMatchPattern *)pattern;
+- (void)setPermissionStatus:(_WKWebExtensionContextPermissionStatus)status forMatchPattern:(_WKWebExtensionMatchPattern *)pattern NS_SWIFT_UNAVAILABLE("Use expirationDate version with nil");
 
 /*!
- @abstract Sets the state of a match pattern in all tabs and global contexts with a specific expiration date.
- @discussion This method will update `grantedPermissionMatchPatterns` and `deniedPermissionMatchPatterns`. Use this method for changing a single match pattern's state.
- Passing a `nil` expiration date will be treated as a distant future date. Only `WKWebExtensionContextPermissionStateDeniedExplicitly`, `WKWebExtensionContextPermissionStateUnknown`,
- and `WKWebExtensionContextPermissionStateGrantedExplicitly` states are allowed to be set using this method.
- @seealso setPermissionState:forMatchPattern:
- @seealso setPermissionState:forMatchPattern:inTab:
+ @abstract Sets the status of a match pattern with a specific expiration date.
+ @param status The new permission status to set for the given match pattern.
+ @param pattern The match pattern for which to set the status.
+ @param expirationDate The expiration date for the new permission status, or \c nil for distant future.
+ @discussion This method will update `grantedPermissionMatchPatterns` and `deniedPermissionMatchPatterns`. Use this method for changing a single match pattern's status.
+ Passing a `nil` expiration date will be treated as a distant future date. Only `WKWebExtensionContextPermissionStatusDeniedExplicitly`, `WKWebExtensionContextPermissionStatusUnknown`,
+ and `WKWebExtensionContextPermissionStatusGrantedExplicitly` states are allowed to be set using this method.
+ @seealso setPermissionStatus:forMatchPattern:
+ @seealso setPermissionStatus:forMatchPattern:inTab:
 */
-- (void)setPermissionState:(_WKWebExtensionContextPermissionState)state forMatchPattern:(_WKWebExtensionMatchPattern *)pattern expirationDate:(nullable NSDate *)expirationDate;
+- (void)setPermissionStatus:(_WKWebExtensionContextPermissionStatus)status forMatchPattern:(_WKWebExtensionMatchPattern *)pattern expirationDate:(nullable NSDate *)expirationDate NS_SWIFT_NAME(setPermissionStatus(_:for:expirationDate:));
 
 /*!
  @abstract Returns a Boolean value indicating if a user gesture has been noted for the specified tab.
- @seealso userGesturePerformedInTab:
- @seealso cancelUserGestureForTab:
+ @param tab The tab in which to return the user gesture status.
 */
-- (BOOL)hasActiveUserGestureInTab:(id <_WKWebExtensionTab>)tab;
+- (BOOL)hasActiveUserGestureInTab:(id <_WKWebExtensionTab>)tab NS_SWIFT_NAME(hasActiveUserGesture(in:));
 
 @end
 

@@ -35,6 +35,7 @@
 #include "CSSComputedStyleDeclaration.h"
 #include "CSSCustomPropertyValue.h"
 #include "CSSFontPaletteValuesOverrideColorsValue.h"
+#include "CSSFontStyleRangeValue.h"
 #include "CSSFontVariantLigaturesParser.h"
 #include "CSSFontVariantNumericParser.h"
 #include "CSSGridLineNamesValue.h"
@@ -58,6 +59,7 @@
 #include "StylePropertyShorthand.h"
 #include "StylePropertyShorthandFunctions.h"
 #include "TimingFunction.h"
+#include "TransformFunctions.h"
 #include <memory>
 #include <wtf/text/StringBuilder.h>
 
@@ -224,7 +226,7 @@ bool CSSPropertyParser::parseValue(CSSPropertyID propertyID, bool important, con
     return parseSuccess;
 }
 
-static RefPtr<CSSValue> maybeConsumeCSSWideKeyword(CSSParserTokenRange& range)
+static RefPtr<CSSPrimitiveValue> maybeConsumeCSSWideKeyword(CSSParserTokenRange& range)
 {
     CSSParserTokenRange rangeCopy = range;
     CSSValueID valueID = rangeCopy.consumeIncludingWhitespace().id();
@@ -250,13 +252,13 @@ RefPtr<CSSValue> CSSPropertyParser::parseSingleValue(CSSPropertyID property, con
     return value;
 }
 
-bool CSSPropertyParser::canParseTypedCustomPropertyValue(const String& syntax, const CSSParserTokenRange& tokens, const CSSParserContext& context)
+bool CSSPropertyParser::canParseTypedCustomPropertyValue(const CSSCustomPropertySyntax& syntax, const CSSParserTokenRange& tokens, const CSSParserContext& context)
 {
     CSSPropertyParser parser(tokens, context, nullptr);
     return parser.canParseTypedCustomPropertyValue(syntax);
 }
 
-RefPtr<CSSCustomPropertyValue> CSSPropertyParser::parseTypedCustomPropertyValue(const AtomString& name, const String& syntax, const CSSParserTokenRange& tokens, Style::BuilderState& builderState, const CSSParserContext& context)
+RefPtr<CSSCustomPropertyValue> CSSPropertyParser::parseTypedCustomPropertyValue(const AtomString& name, const CSSCustomPropertySyntax& syntax, const CSSParserTokenRange& tokens, Style::BuilderState& builderState, const CSSParserContext& context)
 {
     CSSPropertyParser parser(tokens, context, nullptr, false);
     RefPtr<CSSCustomPropertyValue> value = parser.parseTypedCustomPropertyValue(name, syntax, builderState);
@@ -265,7 +267,7 @@ RefPtr<CSSCustomPropertyValue> CSSPropertyParser::parseTypedCustomPropertyValue(
     return value;
 }
 
-void CSSPropertyParser::collectParsedCustomPropertyValueDependencies(const String& syntax, bool isRoot, HashSet<CSSPropertyID>& dependencies, const CSSParserTokenRange& tokens, const CSSParserContext& context)
+void CSSPropertyParser::collectParsedCustomPropertyValueDependencies(const CSSCustomPropertySyntax& syntax, bool isRoot, HashSet<CSSPropertyID>& dependencies, const CSSParserTokenRange& tokens, const CSSParserContext& context)
 {
     CSSPropertyParser parser(tokens, context, nullptr);
     parser.collectParsedCustomPropertyValueDependencies(syntax, isRoot, dependencies);
@@ -326,155 +328,197 @@ RefPtr<CSSValue> CSSPropertyParser::parseSingleValue(CSSPropertyID property, CSS
     return CSSPropertyParsing::parse(m_range, property, currentShorthand, m_context);
 }
 
-std::pair<RefPtr<CSSValue>, CSSPropertySyntax::Type> CSSPropertyParser::parseCustomPropertyValueWithSyntaxDefinition(const CSSPropertySyntax::Definition& syntaxDefinition)
+std::pair<RefPtr<CSSValue>, CSSCustomPropertySyntax::Type> CSSPropertyParser::consumeCustomPropertyValueWithSyntax(const CSSCustomPropertySyntax& syntax)
 {
-    ASSERT(!CSSPropertySyntax::isUniversal(syntaxDefinition));
-
-    m_range.consumeWhitespace();
+    ASSERT(!syntax.isUniversal());
 
     auto rangeCopy = m_range;
 
-    auto tryConsumeComponent = [&](const auto& component) -> RefPtr<CSSValue> {
+    auto consumeSingleValue = [&](auto& range, auto& component) -> RefPtr<CSSValue> {
         switch (component.type) {
-        case CSSPropertySyntax::Type::Universal:
-            ASSERT_NOT_REACHED();
-            return nullptr;
-        case CSSPropertySyntax::Type::Length:
-            return consumeLength(m_range, m_context.mode, ValueRange::All);
-        case CSSPropertySyntax::Type::LengthPercentage:
-            return consumeLengthOrPercent(m_range, m_context.mode, ValueRange::All);
-        case CSSPropertySyntax::Type::CustomIdent:
-            if (auto value = consumeCustomIdent(m_range)) {
+        case CSSCustomPropertySyntax::Type::Length:
+            return consumeLength(range, m_context.mode, ValueRange::All);
+        case CSSCustomPropertySyntax::Type::LengthPercentage:
+            return consumeLengthOrPercent(range, m_context.mode, ValueRange::All);
+        case CSSCustomPropertySyntax::Type::CustomIdent:
+            if (auto value = consumeCustomIdent(range)) {
                 if (component.ident.isNull() || value->stringValue() == component.ident)
                     return value;
-                m_range = rangeCopy;
+                range = rangeCopy;
             }
             return nullptr;
-        case CSSPropertySyntax::Type::Percentage:
-            return consumePercent(m_range, ValueRange::All);
-        case CSSPropertySyntax::Type::Integer:
-            return consumeInteger(m_range);
-        case CSSPropertySyntax::Type::Number:
-            return consumeNumber(m_range, ValueRange::All);
-        case CSSPropertySyntax::Type::Angle:
-            return consumeAngle(m_range, m_context.mode);
-        case CSSPropertySyntax::Type::Color:
-            return consumeColor(m_range, m_context);
-        case CSSPropertySyntax::Type::Image:
-            return consumeImage(m_range, m_context, { AllowedImageType::URLFunction, AllowedImageType::GeneratedImage });
-        case CSSPropertySyntax::Type::URL:
-            return consumeURL(m_range);
-        case CSSPropertySyntax::Type::Unknown:
+        case CSSCustomPropertySyntax::Type::Percentage:
+            return consumePercent(range, ValueRange::All);
+        case CSSCustomPropertySyntax::Type::Integer:
+            return consumeInteger(range);
+        case CSSCustomPropertySyntax::Type::Number:
+            return consumeNumber(range, ValueRange::All);
+        case CSSCustomPropertySyntax::Type::Angle:
+            return consumeAngle(range, m_context.mode);
+        case CSSCustomPropertySyntax::Type::Time:
+            return consumeTime(range, m_context.mode, ValueRange::All);
+        case CSSCustomPropertySyntax::Type::Resolution:
+            return consumeResolution(range);
+        case CSSCustomPropertySyntax::Type::Color:
+            return consumeColor(range, m_context);
+        case CSSCustomPropertySyntax::Type::Image:
+            return consumeImage(range, m_context, { AllowedImageType::URLFunction, AllowedImageType::GeneratedImage });
+        case CSSCustomPropertySyntax::Type::URL:
+            return consumeURL(range);
+        case CSSCustomPropertySyntax::Type::TransformFunction:
+            return consumeTransformFunction(m_range, m_context);
+        case CSSCustomPropertySyntax::Type::TransformList:
+            return consumeTransform(m_range, m_context);
+        case CSSCustomPropertySyntax::Type::Unknown:
             return nullptr;
         }
         ASSERT_NOT_REACHED();
         return nullptr;
     };
 
-    for (auto& component : syntaxDefinition) {
-        if (auto value = tryConsumeComponent(component)) {
+    auto consumeComponent = [&](auto& range, const auto& component) -> RefPtr<CSSValue> {
+        switch (component.multiplier) {
+        case CSSCustomPropertySyntax::Multiplier::Single:
+            return consumeSingleValue(range, component);
+        case CSSCustomPropertySyntax::Multiplier::CommaList: {
+            return consumeCommaSeparatedListWithoutSingleValueOptimization(range, [&](auto& range) {
+                return consumeSingleValue(range, component);
+            });
+        }
+        case CSSCustomPropertySyntax::Multiplier::SpaceList: {
+            RefPtr<CSSValueList> valueList;
+            while (auto value = consumeSingleValue(range, component)) {
+                if (!valueList)
+                    valueList = CSSValueList::createSpaceSeparated();
+                valueList->append(value.releaseNonNull());
+            }
+            return valueList;
+        }
+        }
+        ASSERT_NOT_REACHED();
+        return nullptr;
+    };
+
+    for (auto& component : syntax.definition) {
+        if (auto value = consumeComponent(m_range, component)) {
             if (!m_range.atEnd())
                 break;
             return { value, component.type };
         }
     }
-    return { nullptr, CSSPropertySyntax::Type::Unknown };
+    return { nullptr, CSSCustomPropertySyntax::Type::Unknown };
 }
 
-bool CSSPropertyParser::canParseTypedCustomPropertyValue(const String& syntax)
+bool CSSPropertyParser::canParseTypedCustomPropertyValue(const CSSCustomPropertySyntax& syntax)
 {
-    auto syntaxDefinition = CSSPropertySyntax::parse(syntax);
-    if (syntaxDefinition.isEmpty())
-        return false;
-
-    if (CSSPropertySyntax::isUniversal(syntaxDefinition))
+    if (syntax.isUniversal())
         return true;
 
-    auto [value, syntaxType] = parseCustomPropertyValueWithSyntaxDefinition(syntaxDefinition);
-    return value && m_range.atEnd();
+    m_range.consumeWhitespace();
+
+    if (maybeConsumeCSSWideKeyword(m_range))
+        return true;
+
+    auto [value, syntaxType] = consumeCustomPropertyValueWithSyntax(syntax);
+    return value;
 }
 
-void CSSPropertyParser::collectParsedCustomPropertyValueDependencies(const String& syntax, bool isRoot, HashSet<CSSPropertyID>& dependencies)
+void CSSPropertyParser::collectParsedCustomPropertyValueDependencies(const CSSCustomPropertySyntax& syntax, bool isInitial, HashSet<CSSPropertyID>& dependencies)
 {
-    auto syntaxDefinition = CSSPropertySyntax::parse(syntax);
-    if (syntaxDefinition.isEmpty())
+    if (syntax.isUniversal())
         return;
 
-    if (CSSPropertySyntax::isUniversal(syntaxDefinition))
+    m_range.consumeWhitespace();
+
+    auto [value, syntaxType] = consumeCustomPropertyValueWithSyntax(syntax);
+    if (!value)
         return;
 
-    auto [value, syntaxType] = parseCustomPropertyValueWithSyntaxDefinition(syntaxDefinition);
-
-    if (auto* primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value.get())) {
-        primitiveValue->collectDirectComputationalDependencies(dependencies);
-        if (isRoot)
-            primitiveValue->collectDirectRootComputationalDependencies(dependencies);
-    }
+    value->collectDirectComputationalDependencies(dependencies);
+    if (isInitial)
+        value->collectDirectRootComputationalDependencies(dependencies);
 }
 
-RefPtr<CSSCustomPropertyValue> CSSPropertyParser::parseTypedCustomPropertyValue(const AtomString& name, const String& syntax, Style::BuilderState& builderState)
+RefPtr<CSSCustomPropertyValue> CSSPropertyParser::parseTypedCustomPropertyValue(const AtomString& name, const CSSCustomPropertySyntax& syntax, Style::BuilderState& builderState)
 {
-    auto syntaxDefinition = CSSPropertySyntax::parse(syntax);
-    if (syntaxDefinition.isEmpty())
-        return nullptr;
+    if (syntax.isUniversal())
+        return CSSCustomPropertyValue::createSyntaxAll(name, CSSVariableData::create(m_range.consumeAll()));
 
-    if (CSSPropertySyntax::isUniversal(syntaxDefinition)) {
-        auto propertyValue = CSSCustomPropertyValue::createSyntaxAll(name, CSSVariableData::create(m_range));
-        while (!m_range.atEnd())
-            m_range.consume();
-        return propertyValue;
-    }
+    m_range.consumeWhitespace();
 
-    auto [value, syntaxType] = parseCustomPropertyValueWithSyntaxDefinition(syntaxDefinition);
+    if (auto value = maybeConsumeCSSWideKeyword(m_range))
+        return CSSCustomPropertyValue::createWithID(name, value->valueID());
+
+    auto [value, syntaxType] = consumeCustomPropertyValueWithSyntax(syntax);
     if (!value)
         return nullptr;
 
-    auto* primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value.get());
+    auto resolveSyntaxValue = [&](const CSSValue& value, CSSCustomPropertySyntax::Type syntaxType) -> std::optional<CSSCustomPropertyValue::SyntaxValue> {
+        auto* primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value);
 
-    switch (syntaxType) {
-    case CSSPropertySyntax::Type::Universal:
+        switch (syntaxType) {
+        case CSSCustomPropertySyntax::Type::LengthPercentage:
+        case CSSCustomPropertySyntax::Type::Length: {
+            auto length = Style::BuilderConverter::convertLength(builderState, *primitiveValue);
+            return { WTFMove(length) };
+        }
+        case CSSCustomPropertySyntax::Type::Percentage:
+        case CSSCustomPropertySyntax::Type::Integer:
+        case CSSCustomPropertySyntax::Type::Number:
+        case CSSCustomPropertySyntax::Type::Angle:
+        case CSSCustomPropertySyntax::Type::Time:
+        case CSSCustomPropertySyntax::Type::Resolution: {
+            auto canonicalUnit = canonicalUnitTypeForUnitType(primitiveValue->primitiveType());
+            auto doubleValue = primitiveValue->doubleValue(canonicalUnit);
+            return { CSSCustomPropertyValue::NumericSyntaxValue { doubleValue, canonicalUnit } };
+        }
+        case CSSCustomPropertySyntax::Type::Color: {
+            auto color = builderState.colorFromPrimitiveValue(*primitiveValue, Style::ForVisitedLink::No);
+            return { color };
+        }
+        case CSSCustomPropertySyntax::Type::Image: {
+            auto styleImage = builderState.createStyleImage(value);
+            if (!styleImage)
+                return { };
+            return { WTFMove(styleImage) };
+        }
+        case CSSCustomPropertySyntax::Type::URL: {
+            auto url = m_context.completeURL(primitiveValue->stringValue());
+            return { url.resolvedURL };
+        }
+        case CSSCustomPropertySyntax::Type::CustomIdent:
+            return { primitiveValue->stringValue() };
+
+        case CSSCustomPropertySyntax::Type::TransformFunction:
+        case CSSCustomPropertySyntax::Type::TransformList:
+            if (auto transform = transformForValue(value, builderState.cssToLengthConversionData()))
+                return { transform };
+            return { };
+    
+        case CSSCustomPropertySyntax::Type::Unknown:
+            return { };
+        }
         ASSERT_NOT_REACHED();
-        return nullptr;
-    case CSSPropertySyntax::Type::LengthPercentage:
-    case CSSPropertySyntax::Type::Length: {
-        auto length = Style::BuilderConverter::convertLength(builderState, *primitiveValue);
-        return CSSCustomPropertyValue::createForLengthSyntax(name, WTFMove(length));
-    }
-    case CSSPropertySyntax::Type::Percentage:
-        return CSSCustomPropertyValue::createForNumericSyntax(name, primitiveValue->doubleValue(), CSSUnitType::CSS_PERCENTAGE);
-    case CSSPropertySyntax::Type::Integer:
-        return CSSCustomPropertyValue::createForNumericSyntax(name, primitiveValue->intValue(), CSSUnitType::CSS_INTEGER);
-    case CSSPropertySyntax::Type::Number:
-        return CSSCustomPropertyValue::createForNumericSyntax(name, primitiveValue->doubleValue(), CSSUnitType::CSS_NUMBER);
-    case CSSPropertySyntax::Type::Angle:
-        return CSSCustomPropertyValue::createForNumericSyntax(name, primitiveValue->computeDegrees(), CSSUnitType::CSS_DEG);
-    case CSSPropertySyntax::Type::Color: {
-        auto color = builderState.colorFromPrimitiveValue(*primitiveValue, Style::ForVisitedLink::No);
-        return CSSCustomPropertyValue::createForColorSyntax(name, color);
-    }
-    case CSSPropertySyntax::Type::Image: {
-        auto styleImage = builderState.createStyleImage(*value);
-        if (!styleImage)
-            return nullptr;
-        return CSSCustomPropertyValue::createForImageSyntax(name, WTFMove(styleImage));
-    }
-    case CSSPropertySyntax::Type::URL: {
-        auto url = m_context.completeURL(primitiveValue->stringValue());
-        return CSSCustomPropertyValue::createForURLSyntax(name, url.resolvedURL.string());
-    }
-    case CSSPropertySyntax::Type::CustomIdent: {
-        auto tokenizer = CSSTokenizer::tryCreate(value->cssText());
-        if (!tokenizer)
-            return nullptr;
-        // FIXME: Do this properly.
-        return CSSCustomPropertyValue::createSyntaxAll(name, CSSVariableData::create(tokenizer->tokenRange()));
-    }
-    case CSSPropertySyntax::Type::Unknown:
-        return nullptr;
-    }
+        return { };
+    };
 
-    ASSERT_NOT_REACHED();
-    return nullptr;
+    if (auto* valueList = dynamicDowncast<CSSValueList>(value.get())) {
+        auto syntaxValueList = CSSCustomPropertyValue::SyntaxValueList { { }, valueList->separator() };
+        for (auto& listValue : *valueList) {
+            auto syntaxValue = resolveSyntaxValue(listValue, syntaxType);
+            if (!syntaxValue)
+                return nullptr;
+            syntaxValueList.values.append(WTFMove(*syntaxValue));
+        }
+        return CSSCustomPropertyValue::createForSyntaxValueList(name, WTFMove(syntaxValueList));
+    };
+
+
+    auto syntaxValue = resolveSyntaxValue(*value, syntaxType);
+    if (!syntaxValue)
+        return nullptr;
+
+    return CSSCustomPropertyValue::createForSyntaxValue(name, WTFMove(*syntaxValue));
 }
 
 // https://www.w3.org/TR/css-counter-styles-3/#counter-style-system
@@ -1312,19 +1356,27 @@ bool CSSPropertyParser::consumeBorderImage(CSSPropertyID property, bool importan
         return false;
 
     auto& valuePool = CSSValuePool::singleton();
-    auto createQuad = [&](double value, CSSUnitType type) {
+    auto createQuad = [&](Ref<CSSPrimitiveValue>&& value) {
         auto quad = Quad::create();
-        quad->setTop(valuePool.createValue(value, type));
-        quad->setRight(valuePool.createValue(value, type));
-        quad->setBottom(valuePool.createValue(value, type));
-        quad->setLeft(valuePool.createValue(value, type));
+        quad->setTop(value.copyRef());
+        quad->setRight(value.copyRef());
+        quad->setBottom(value.copyRef());
+        quad->setLeft(WTFMove(value));
         return quad;
     };
-    addPropertyWithImplicitDefault(CSSPropertyBorderImageSource, property, WTFMove(source), valuePool.createIdentifierValue(CSSValueNone), important);
-    addPropertyWithImplicitDefault(CSSPropertyBorderImageSlice, property, WTFMove(slice), CSSBorderImageSliceValue::create(createQuad(100, CSSUnitType::CSS_PERCENTAGE), false), important);
-    addPropertyWithImplicitDefault(CSSPropertyBorderImageWidth, property, WTFMove(width), CSSBorderImageWidthValue::create(createQuad(1, CSSUnitType::CSS_NUMBER), false), important);
-    addPropertyWithImplicitDefault(CSSPropertyBorderImageOutset, property, WTFMove(outset), valuePool.singleton().createValue(createQuad(0, CSSUnitType::CSS_NUMBER)), important);
-    addPropertyWithImplicitDefault(CSSPropertyBorderImageRepeat, property, WTFMove(repeat), valuePool.createIdentifierValue(CSSValueStretch), important);
+    if (property == CSSPropertyWebkitMaskBoxImage) {
+        addPropertyWithImplicitDefault(CSSPropertyWebkitMaskBoxImageSource, property, WTFMove(source), valuePool.createIdentifierValue(CSSValueNone), important);
+        addPropertyWithImplicitDefault(CSSPropertyWebkitMaskBoxImageSlice, property, WTFMove(slice), CSSBorderImageSliceValue::create(createQuad(valuePool.createValue(0, CSSUnitType::CSS_NUMBER)), true), important);
+        addPropertyWithImplicitDefault(CSSPropertyWebkitMaskBoxImageWidth, property, WTFMove(width), valuePool.singleton().createValue(createQuad(valuePool.createIdentifierValue(CSSValueAuto))), important);
+        addPropertyWithImplicitDefault(CSSPropertyWebkitMaskBoxImageOutset, property, WTFMove(outset), valuePool.singleton().createValue(createQuad(valuePool.createValue(0, CSSUnitType::CSS_NUMBER))), important);
+        addPropertyWithImplicitDefault(CSSPropertyWebkitMaskBoxImageRepeat, property, WTFMove(repeat), valuePool.createIdentifierValue(CSSValueStretch), important);
+    } else {
+        addPropertyWithImplicitDefault(CSSPropertyBorderImageSource, property, WTFMove(source), valuePool.createIdentifierValue(CSSValueNone), important);
+        addPropertyWithImplicitDefault(CSSPropertyBorderImageSlice, property, WTFMove(slice), CSSBorderImageSliceValue::create(createQuad(valuePool.createValue(100, CSSUnitType::CSS_PERCENTAGE)), false), important);
+        addPropertyWithImplicitDefault(CSSPropertyBorderImageWidth, property, WTFMove(width), CSSBorderImageWidthValue::create(createQuad(valuePool.createValue(1, CSSUnitType::CSS_NUMBER)), false), important);
+        addPropertyWithImplicitDefault(CSSPropertyBorderImageOutset, property, WTFMove(outset), valuePool.singleton().createValue(createQuad(valuePool.createValue(0, CSSUnitType::CSS_NUMBER))), important);
+        addPropertyWithImplicitDefault(CSSPropertyBorderImageRepeat, property, WTFMove(repeat), valuePool.createIdentifierValue(CSSValueStretch), important);
+    }
     return true;
 }
 
@@ -1525,6 +1577,72 @@ static bool consumeBackgroundPosition(CSSParserTokenRange& range, const CSSParse
         addBackgroundValue(resultY, WTFMove(position->y));
     } while (consumeCommaIncludingWhitespace(range));
     return true;
+}
+
+static RefPtr<CSSValue> consumeBackgroundComponent(CSSPropertyID property, CSSParserTokenRange& range, const CSSParserContext& context)
+{
+    switch (property) {
+    // background-*
+    case CSSPropertyBackgroundClip:
+        return CSSPropertyParsing::consumeSingleBackgroundClip(range);
+    case CSSPropertyBackgroundBlendMode:
+        return CSSPropertyParsing::consumeSingleBackgroundBlendMode(range);
+    case CSSPropertyBackgroundAttachment:
+        return CSSPropertyParsing::consumeSingleBackgroundAttachment(range);
+    case CSSPropertyBackgroundOrigin:
+        return CSSPropertyParsing::consumeSingleBackgroundOrigin(range);
+    case CSSPropertyBackgroundImage:
+        return CSSPropertyParsing::consumeSingleBackgroundImage(range, context);
+    case CSSPropertyBackgroundRepeat:
+        return CSSPropertyParsing::consumeSingleBackgroundRepeat(range, context);
+    case CSSPropertyBackgroundPositionX:
+        return CSSPropertyParsing::consumeSingleBackgroundPositionX(range, context);
+    case CSSPropertyBackgroundPositionY:
+        return CSSPropertyParsing::consumeSingleBackgroundPositionY(range, context);
+    case CSSPropertyBackgroundSize:
+        return consumeSingleBackgroundSize(range, context);
+    case CSSPropertyBackgroundColor:
+        return consumeColor(range, context);
+
+    // mask-*
+    case CSSPropertyMaskComposite:
+        return CSSPropertyParsing::consumeSingleMaskComposite(range);
+    case CSSPropertyMaskOrigin:
+        return CSSPropertyParsing::consumeSingleMaskOrigin(range);
+    case CSSPropertyMaskClip:
+        return CSSPropertyParsing::consumeSingleMaskClip(range);
+    case CSSPropertyMaskImage:
+        return CSSPropertyParsing::consumeSingleMaskImage(range, context);
+    case CSSPropertyMaskMode:
+        return CSSPropertyParsing::consumeSingleMaskMode(range);
+    case CSSPropertyMaskRepeat:
+        return CSSPropertyParsing::consumeSingleMaskRepeat(range, context);
+    case CSSPropertyMaskSize:
+        return consumeSingleMaskSize(range, context);
+
+    // -webkit-background-*
+    case CSSPropertyWebkitBackgroundSize:
+        return consumeSingleWebkitBackgroundSize(range, context);
+    case CSSPropertyWebkitBackgroundClip:
+        return CSSPropertyParsing::consumeSingleWebkitBackgroundClip(range);
+    case CSSPropertyWebkitBackgroundOrigin:
+        return CSSPropertyParsing::consumeSingleWebkitBackgroundOrigin(range);
+
+    // -webkit-mask-*
+    case CSSPropertyWebkitMaskClip:
+        return CSSPropertyParsing::consumeSingleWebkitMaskClip(range);
+    case CSSPropertyWebkitMaskComposite:
+        return CSSPropertyParsing::consumeSingleWebkitMaskComposite(range);
+    case CSSPropertyWebkitMaskSourceType:
+        return CSSPropertyParsing::consumeSingleWebkitMaskSourceType(range);
+    case CSSPropertyWebkitMaskPositionX:
+        return CSSPropertyParsing::consumeSingleWebkitMaskPositionX(range, context);
+    case CSSPropertyWebkitMaskPositionY:
+        return CSSPropertyParsing::consumeSingleWebkitMaskPositionY(range, context);
+
+    default:
+        return nullptr;
+    };
 }
 
 // Note: consumeBackgroundShorthand assumes y properties (for example background-position-y) follow
@@ -2096,7 +2214,7 @@ bool CSSPropertyParser::consumePerspectiveOrigin(bool important)
 
 bool CSSPropertyParser::consumePrefixedPerspective(bool important)
 {
-    if (auto value = consumePerspective(m_range, m_context.mode)) {
+    if (auto value = CSSPropertyParsing::consumePerspective(m_range, m_context)) {
         addProperty(CSSPropertyPerspective, CSSPropertyWebkitPerspective, value.releaseNonNull(), important);
         return m_range.atEnd();
     }
@@ -2392,6 +2510,7 @@ bool CSSPropertyParser::parseShorthand(CSSPropertyID property, bool important)
     }
     case CSSPropertyBorderImage:
     case CSSPropertyWebkitBorderImage:
+    case CSSPropertyWebkitMaskBoxImage:
         return consumeBorderImage(property, important);
     case CSSPropertyPageBreakAfter:
     case CSSPropertyPageBreakBefore:
@@ -2416,7 +2535,9 @@ bool CSSPropertyParser::parseShorthand(CSSPropertyID property, bool important)
     case CSSPropertyBackground:
         return consumeBackgroundShorthand(backgroundShorthand(), important);
     case CSSPropertyWebkitBackgroundSize: {
-        auto backgroundSize = consumeCommaSeparatedBackgroundComponent(CSSPropertyWebkitBackgroundSize, m_range, m_context.mode);
+        auto backgroundSize = consumeCommaSeparatedListWithSingleValueOptimization(m_range, [] (auto& range, auto& context) {
+            return consumeSingleWebkitBackgroundSize(range, context);
+        }, m_context);
         if (!backgroundSize || !m_range.atEnd())
             return false;
         addProperty(CSSPropertyBackgroundSize, CSSPropertyWebkitBackgroundSize, backgroundSize.releaseNonNull(), important);

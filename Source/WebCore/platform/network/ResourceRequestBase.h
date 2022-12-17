@@ -322,7 +322,7 @@ WEBCORE_EXPORT void initializeHTTPConnectionSettingsOnStartup();
 
 namespace WTF {
 
-template<> struct EnumTraits<WebCore::ResourceRequestCachePolicy> {
+template<> struct EnumTraitsForPersistence<WebCore::ResourceRequestCachePolicy> {
     using values = EnumValues<
         WebCore::ResourceRequestCachePolicy,
         WebCore::ResourceRequestCachePolicy::UseProtocolCachePolicy,
@@ -334,7 +334,7 @@ template<> struct EnumTraits<WebCore::ResourceRequestCachePolicy> {
     >;
 };
 
-template<> struct EnumTraits<WebCore::ResourceRequestBase::SameSiteDisposition> {
+template<> struct EnumTraitsForPersistence<WebCore::ResourceRequestBase::SameSiteDisposition> {
     using values = EnumValues<
         WebCore::ResourceRequestBase::SameSiteDisposition,
         WebCore::ResourceRequestBase::SameSiteDisposition::Unspecified,
@@ -343,7 +343,7 @@ template<> struct EnumTraits<WebCore::ResourceRequestBase::SameSiteDisposition> 
     >;
 };
 
-template<> struct EnumTraits<WebCore::ResourceRequestRequester> {
+template<> struct EnumTraitsForPersistence<WebCore::ResourceRequestRequester> {
     using values = EnumValues<
         WebCore::ResourceRequestRequester,
         WebCore::ResourceRequestRequester::Unspecified,

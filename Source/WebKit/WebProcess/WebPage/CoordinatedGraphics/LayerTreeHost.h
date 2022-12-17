@@ -33,6 +33,7 @@
 #include "SimpleViewportController.h"
 #include "ThreadedCompositor.h"
 #include "ThreadedDisplayRefreshMonitor.h"
+#include <WebCore/FloatPoint.h>
 #include <WebCore/PlatformScreen.h>
 #include <wtf/Forward.h>
 #include <wtf/OptionSet.h>
@@ -162,7 +163,7 @@ private:
         CompletionHandler<void()> callback;
         bool needsFreshFlush { false };
     } m_forceRepaintAsync;
-    RunLoop::Timer<LayerTreeHost> m_layerFlushTimer;
+    RunLoop::Timer m_layerFlushTimer;
     CompositingCoordinator m_coordinator;
 #endif // USE(COORDINATED_GRAPHICS)
     WebCore::PlatformDisplayID m_displayID;

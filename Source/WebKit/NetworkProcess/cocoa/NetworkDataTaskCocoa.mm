@@ -291,7 +291,7 @@ void NetworkDataTaskCocoa::unblockCookies()
     }
 }
 
-// FIXME: Temporary fix for <rdar://problem/60089022> until content can be updated.
+// FIXME: Temporary fix for <rdar://60089022> and <rdar://100500464> until content can be updated.
 bool NetworkDataTaskCocoa::needsFirstPartyCookieBlockingLatchModeQuirk(const URL& firstPartyURL, const URL& requestURL, const URL& redirectingURL) const
 {
     using RegistrableDomain = WebCore::RegistrableDomain;
@@ -299,6 +299,7 @@ bool NetworkDataTaskCocoa::needsFirstPartyCookieBlockingLatchModeQuirk(const URL
         HashMap<RegistrableDomain, RegistrableDomain> map;
         map.add(RegistrableDomain::uncheckedCreateFromRegistrableDomainString("ymail.com"_s), RegistrableDomain::uncheckedCreateFromRegistrableDomainString("yahoo.com"_s));
         map.add(RegistrableDomain::uncheckedCreateFromRegistrableDomainString("aolmail.com"_s), RegistrableDomain::uncheckedCreateFromRegistrableDomainString("aol.com"_s));
+        map.add(RegistrableDomain::uncheckedCreateFromRegistrableDomainString("googleusercontent.com"_s), RegistrableDomain::uncheckedCreateFromRegistrableDomainString("google.com"_s));
         return map;
     }();
 
@@ -484,9 +485,6 @@ NetworkDataTaskCocoa::~NetworkDataTaskCocoa()
         auto dataTask = m_sessionWrapper->dataTaskMap.take([m_task taskIdentifier]);
         RELEASE_ASSERT(dataTask == this);
     }
-
-    if (m_session)
-        m_session->unregisterNetworkDataTask(*this);
 }
 
 void NetworkDataTaskCocoa::didSendData(uint64_t totalBytesSent, uint64_t totalBytesExpectedToSend)
@@ -627,7 +625,7 @@ void NetworkDataTaskCocoa::willPerformHTTPRedirection(WebCore::ResourceResponse&
     updateTaskWithFirstPartyForSameSiteCookies(m_task.get(), request);
 
     if (m_client)
-        m_client->willPerformHTTPRedirection(WTFMove(redirectResponse), WTFMove(request), [completionHandler = WTFMove(completionHandler), this, weakThis = WeakPtr { *this }] (auto&& request) mutable {
+        m_client->willPerformHTTPRedirection(WTFMove(redirectResponse), WTFMove(request), [completionHandler = WTFMove(completionHandler), this, weakThis = ThreadSafeWeakPtr { *this }] (auto&& request) mutable {
             auto strongThis = weakThis.get();
             if (!strongThis || !m_session)
                 return completionHandler({ });

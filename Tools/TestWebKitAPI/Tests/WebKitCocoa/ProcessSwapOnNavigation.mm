@@ -35,6 +35,7 @@
 #import <WebKit/WKBackForwardListItemPrivate.h>
 #import <WebKit/WKContentRuleListStore.h>
 #import <WebKit/WKHTTPCookieStorePrivate.h>
+#import <WebKit/WKNavigationActionPrivate.h>
 #import <WebKit/WKNavigationDelegatePrivate.h>
 #import <WebKit/WKNavigationPrivate.h>
 #import <WebKit/WKPreferencesPrivate.h>
@@ -757,6 +758,48 @@ TEST(ProcessSwap, KillWebContentProcessAfterServerRedirectPolicyDecision)
 
     TestWebKitAPI::Util::run(&done);
     done = false;
+}
+
+TEST(ProcessSwap, PSONRedirectionToExternal)
+{
+    TestWebKitAPI::HTTPServer server(std::initializer_list<std::pair<String, TestWebKitAPI::HTTPResponse>> { }, TestWebKitAPI::HTTPServer::Protocol::Https);
+
+    HashMap<String, String> redirectHeaders;
+    redirectHeaders.add("location"_s, "other://test"_s);
+    TestWebKitAPI::HTTPResponse redirectResponse(301, WTFMove(redirectHeaders));
+
+    server.addResponse("/popup.html"_s, WTFMove(redirectResponse));
+    auto popupURL = makeString("https://localhost:", server.port(), "/popup.html");
+
+    auto processPoolConfiguration = psonProcessPoolConfiguration();
+    auto processPool = adoptNS([[WKProcessPool alloc] _initWithConfiguration:processPoolConfiguration.get()]);
+
+    auto webViewConfiguration = adoptNS([[WKWebViewConfiguration alloc] init]);
+    [webViewConfiguration setProcessPool:processPool.get()];
+
+    auto webView = adoptNS([[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:webViewConfiguration.get()]);
+    auto navigationDelegate = adoptNS([[PSONNavigationDelegate alloc] init]);
+    [webView setNavigationDelegate:navigationDelegate.get()];
+
+    [webView configuration].preferences.fraudulentWebsiteWarningEnabled = NO;
+
+    NSURLRequest *request = [NSURLRequest requestWithURL:[NSURL URLWithString:popupURL]];
+    [webView loadRequest:request];
+    done = false;
+
+    __block BOOL isRedirection = NO;
+    navigationDelegate->decidePolicyForNavigationAction = ^(WKNavigationAction * action, void (^decisionHandler)(WKNavigationActionPolicy)) {
+        decisionHandler(WKNavigationActionPolicyAllow);
+        if (!isRedirection) {
+            isRedirection = YES;
+            return;
+        }
+
+        EXPECT_TRUE(!action._canHandleRequest);
+        done = true;
+    };
+
+    TestWebKitAPI::Util::run(&done);
 }
 
 TEST(ProcessSwap, KillProvisionalWebContentProcessThenStartNewLoad)
@@ -1975,7 +2018,7 @@ TEST(ProcessSwap, CrossSiteDownload)
 static const char* systemPreviewSameOriginTestBytes = R"PSONRESOURCE(
 <body>
     <a id="testLink" rel="ar" href="pson://www.webkit.org/whatever">
-        <img src="http://www.webkit.org/image">
+        <img src="pson://www.webkit.org/image">
     </a>
 </body>
 )PSONRESOURCE";
@@ -1983,7 +2026,7 @@ static const char* systemPreviewSameOriginTestBytes = R"PSONRESOURCE(
 static const char* systemPreviewCrossOriginTestBytes = R"PSONRESOURCE(
 <body>
     <a id="testLink" rel="ar" href="pson://www.apple.com/whatever">
-        <img src="http://www.webkit.org/image">
+        <img src="pson://www.webkit.org/image">
     </a>
 </body>
 )PSONRESOURCE";
@@ -1998,6 +2041,7 @@ TEST(ProcessSwap, SameOriginSystemPreview)
     auto handler = adoptNS([[PSONScheme alloc] init]);
     [handler addMappingFromURLString:@"pson://www.webkit.org/main.html" toData:systemPreviewSameOriginTestBytes];
     [handler addMappingFromURLString:@"pson://www.webkit.org/whatever" toData:"Fake USDZ data"];
+    [handler addMappingFromURLString:@"pson://www.webkit.org/image" toData:"Fake image data"];
     [webViewConfiguration setURLSchemeHandler:handler.get() forURLScheme:@"pson"];
 
     [webViewConfiguration _setSystemPreviewEnabled:YES];
@@ -2034,6 +2078,7 @@ TEST(ProcessSwap, CrossOriginSystemPreview)
     auto handler = adoptNS([[PSONScheme alloc] init]);
     [handler addMappingFromURLString:@"pson://www.webkit.org/main.html" toData:systemPreviewCrossOriginTestBytes];
     [handler addMappingFromURLString:@"pson://www.apple.com/whatever" toData:"Fake USDZ data"];
+    [handler addMappingFromURLString:@"pson://www.webkit.org/image" toData:"Fake image data"];
     [webViewConfiguration setURLSchemeHandler:handler.get() forURLScheme:@"pson"];
 
     [webViewConfiguration _setSystemPreviewEnabled:YES];
@@ -7832,13 +7877,21 @@ static void checkSettingsControlledByLockdownMode(WKWebView *webView, ShouldBeEn
     EXPECT_EQ(runJSCheck("!!window.HTMLModelElement"_s), shouldBeEnabled == ShouldBeEnabled::Yes); // AR (Model)
     EXPECT_EQ(runJSCheck("!!window.PictureInPictureEvent"_s), shouldBeEnabled == ShouldBeEnabled::Yes); // Picture in Picture API.
     EXPECT_EQ(runJSCheck("!!window.SpeechRecognitionEvent"_s), shouldBeEnabled == ShouldBeEnabled::Yes); // Speech recognition.
+#if ENABLE(SPEECH_SYNTHESIS)
+    EXPECT_EQ(runJSCheck("!!window.SpeechSynthesisEvent"_s), shouldBeEnabled == ShouldBeEnabled::Yes); // Speech synthesis.
+#endif
 #if ENABLE(NOTIFICATIONS)
     EXPECT_EQ(runJSCheck("!!window.Notification"_s), shouldBeEnabled == ShouldBeEnabled::Yes); // Notification API.
 #endif
     EXPECT_EQ(runJSCheck("!!window.WebXRSystem"_s), false); // WebXR (currently always disabled).
     EXPECT_EQ(runJSCheck("!!window.AudioContext"_s), shouldBeEnabled == ShouldBeEnabled::Yes); // WebAudio.
+    EXPECT_EQ(runJSCheck("!!window.Cache"_s), isShowingInitialEmptyDocument != IsShowingInitialEmptyDocument::Yes && shouldBeEnabled == ShouldBeEnabled::Yes); // Cache API.
+    EXPECT_EQ(runJSCheck("!!window.CacheStorage"_s), isShowingInitialEmptyDocument != IsShowingInitialEmptyDocument::Yes && shouldBeEnabled == ShouldBeEnabled::Yes); // Cache API.
+    EXPECT_EQ(runJSCheck("!!window.FileReader"_s), shouldBeEnabled == ShouldBeEnabled::Yes); // FileReader API.
+    EXPECT_EQ(runJSCheck("!!window.FileSystemFileHandle"_s), isShowingInitialEmptyDocument != IsShowingInitialEmptyDocument::Yes && shouldBeEnabled == ShouldBeEnabled::Yes); // File System Access API.
     EXPECT_EQ(runJSCheck("!!window.RTCPeerConnection"_s), shouldBeEnabled == ShouldBeEnabled::Yes); // WebRTC Peer Connection.
     EXPECT_EQ(runJSCheck("!!window.RTCRtpScriptTransform"_s), shouldBeEnabled == ShouldBeEnabled::Yes); // WebRTC Script Transform
+    EXPECT_EQ(runJSCheck("!!window.indexedDB"_s), shouldBeEnabled == ShouldBeEnabled::Yes); // IndexedDB API
     EXPECT_EQ(runJSCheck("!!navigator.mediaDevices"_s), shouldBeEnabled == ShouldBeEnabled::Yes); // GetUserMedia (Media Capture).
     EXPECT_EQ(runJSCheck("!!navigator.getUserMedia"_s), false); // Legacy GetUserMedia (currently always disabled).
     EXPECT_EQ(runJSCheck("!!window.MathMLElement"_s), shouldBeEnabled == ShouldBeEnabled::Yes); // MathML.
@@ -7846,8 +7899,22 @@ static void checkSettingsControlledByLockdownMode(WKWebView *webView, ShouldBeEn
     EXPECT_EQ(runJSCheck("!!window.PushManager"_s), isShowingInitialEmptyDocument != IsShowingInitialEmptyDocument::Yes && shouldBeEnabled == ShouldBeEnabled::Yes); // Push API.
     EXPECT_EQ(runJSCheck("!!window.PushSubscription"_s), isShowingInitialEmptyDocument != IsShowingInitialEmptyDocument::Yes && shouldBeEnabled == ShouldBeEnabled::Yes); // Push API.
     EXPECT_EQ(runJSCheck("!!window.PushSubscriptionOptions"_s), isShowingInitialEmptyDocument != IsShowingInitialEmptyDocument::Yes && shouldBeEnabled == ShouldBeEnabled::Yes); // Push API.
+    EXPECT_EQ(runJSCheck("!!window.LockManager"_s), isShowingInitialEmptyDocument != IsShowingInitialEmptyDocument::Yes && shouldBeEnabled == ShouldBeEnabled::Yes); // WebLockManager API.
     String mathMLCheck = makeString("document.createElementNS('http://www.w3.org/1998/Math/MathML','mspace').__proto__ == ", shouldBeEnabled == ShouldBeEnabled::Yes ? "MathMLElement" : "Element", ".prototype");
     EXPECT_EQ(runJSCheck(mathMLCheck), true); // MathML.
+    EXPECT_EQ(runJSCheck("!!window.ServiceWorker"_s), isShowingInitialEmptyDocument != IsShowingInitialEmptyDocument::Yes && shouldBeEnabled == ShouldBeEnabled::Yes); // Service Workers API.
+
+    // Confirm unstable Experimental settings are always off in Lockdown Mode.
+    EXPECT_EQ(runJSCheck("CSS.supports('contain-intrinsic-size: 10rem')"_s), shouldBeEnabled == ShouldBeEnabled::Yes);
+    EXPECT_EQ(runJSCheck("CSS.supports('content-visibility: visible')"_s), shouldBeEnabled == ShouldBeEnabled::Yes);
+    EXPECT_EQ(runJSCheck("CSS.supports('overflow-anchor:none')"_s), shouldBeEnabled == ShouldBeEnabled::Yes);
+    EXPECT_EQ(runJSCheck("CSS.supports('text-justify: auto')"_s), shouldBeEnabled == ShouldBeEnabled::Yes);
+    EXPECT_EQ(runJSCheck("!!navigator.contacts"_s), isShowingInitialEmptyDocument != IsShowingInitialEmptyDocument::Yes && shouldBeEnabled == ShouldBeEnabled::Yes);
+    EXPECT_EQ(runJSCheck("!!navigator.requestCookieConsent"_s), false);
+    EXPECT_EQ(runJSCheck("!!window.CSSCounterStyleRule"_s), shouldBeEnabled == ShouldBeEnabled::Yes);
+    EXPECT_EQ(runJSCheck("!!window.DeprecationReportBody"_s), shouldBeEnabled == ShouldBeEnabled::Yes);
+    EXPECT_EQ(runJSCheck("!!window.Highlight"_s), shouldBeEnabled == ShouldBeEnabled::Yes);
+    EXPECT_EQ(runJSCheck("!!window.requestIdleCallback"_s), shouldBeEnabled == ShouldBeEnabled::Yes);
 }
 
 @interface LockdownMessageHandler : NSObject <WKScriptMessageHandler, WKNavigationDelegate>
@@ -7869,13 +7936,9 @@ static void configureLockdownWKWebViewConfiguration(WKWebViewConfiguration *conf
     config.preferences._mediaCaptureRequiresSecureConnection = NO;
     [config.preferences _setNotificationsEnabled:YES];
 
-    for (_WKExperimentalFeature *feature in [WKPreferences _experimentalFeatures]) {
-        if ([feature.key isEqualToString:@"ModelElementEnabled"]
-            || [feature.key isEqualToString:@"PushAPIEnabled"]
-            || [feature.key isEqualToString:@"WebRTCEncodedTransformEnabled"]) {
-            [config.preferences _setEnabled:YES forFeature:feature];
-        }
-    }
+    // Turn on all experimental features to confirm they are properly turned off in Lockdown Mode.
+    for (_WKExperimentalFeature *feature in [WKPreferences _experimentalFeatures])
+        [config.preferences _setEnabled:YES forFeature:feature];
 }
 
 TEST(ProcessSwap, NavigatingToLockdownMode)

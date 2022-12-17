@@ -42,51 +42,55 @@ class GraphicsClient;
 #if HAVE(IOSURFACE)
 class IOSurfacePool;
 #endif
+class ScriptExecutionContext;
 
 enum class ImageBufferOptions : uint8_t {
     Accelerated     = 1 << 0,
     UseDisplayList  = 1 << 1
 };
 
+class SerializedImageBuffer;
+
+struct ImageBufferCreationContext {
+    // clang 13.1.6 throws errors if we use default initializers here.
+    GraphicsClient* graphicsClient;
+#if HAVE(IOSURFACE)
+    IOSurfacePool* surfacePool;
+#endif
+    bool avoidIOSurfaceSizeCheckInWebProcessForTesting = false;
+
+#if ENABLE(CG_DISPLAY_LIST_BACKED_IMAGE_BUFFER)
+    enum class UseCGDisplayListImageCache : bool { No, Yes };
+    UseCGDisplayListImageCache useCGDisplayListImageCache;
+#endif
+
+    ImageBufferCreationContext(GraphicsClient* client = nullptr
+#if HAVE(IOSURFACE)
+        , IOSurfacePool* pool = nullptr
+#endif
+        , bool avoidCheck = false
+#if ENABLE(CG_DISPLAY_LIST_BACKED_IMAGE_BUFFER)
+        , UseCGDisplayListImageCache useCGDisplayListImageCache = UseCGDisplayListImageCache::No
+#endif
+    )
+        : graphicsClient(client)
+#if HAVE(IOSURFACE)
+        , surfacePool(pool)
+#endif
+        , avoidIOSurfaceSizeCheckInWebProcessForTesting(avoidCheck)
+#if ENABLE(CG_DISPLAY_LIST_BACKED_IMAGE_BUFFER)
+        , useCGDisplayListImageCache(useCGDisplayListImageCache)
+#endif
+    { }
+};
+
 class ImageBuffer : public ThreadSafeRefCounted<ImageBuffer>, public CanMakeWeakPtr<ImageBuffer> {
 public:
-    struct CreationContext {
-        // clang 13.1.6 throws errors if we use default initializers here.
-        GraphicsClient* graphicsClient;
-#if HAVE(IOSURFACE)
-        IOSurfacePool* surfacePool;
-#endif
-        bool avoidIOSurfaceSizeCheckInWebProcessForTesting = false;
 
-#if ENABLE(CG_DISPLAY_LIST_BACKED_IMAGE_BUFFER)
-        enum class UseCGDisplayListImageCache : bool { No, Yes };
-        UseCGDisplayListImageCache useCGDisplayListImageCache;
-#endif
-
-        CreationContext(GraphicsClient* client = nullptr
-#if HAVE(IOSURFACE)
-            , IOSurfacePool* pool = nullptr
-#endif
-            , bool avoidCheck = false
-#if ENABLE(CG_DISPLAY_LIST_BACKED_IMAGE_BUFFER)
-            , UseCGDisplayListImageCache useCGDisplayListImageCache = UseCGDisplayListImageCache::No
-#endif
-        )
-            : graphicsClient(client)
-#if HAVE(IOSURFACE)
-            , surfacePool(pool)
-#endif
-            , avoidIOSurfaceSizeCheckInWebProcessForTesting(avoidCheck)
-#if ENABLE(CG_DISPLAY_LIST_BACKED_IMAGE_BUFFER)
-            , useCGDisplayListImageCache(useCGDisplayListImageCache)
-#endif
-        { }
-    };
-
-    WEBCORE_EXPORT static RefPtr<ImageBuffer> create(const FloatSize&, RenderingPurpose, float resolutionScale, const DestinationColorSpace&, PixelFormat, OptionSet<ImageBufferOptions> = { }, const CreationContext& = { });
+    WEBCORE_EXPORT static RefPtr<ImageBuffer> create(const FloatSize&, RenderingPurpose, float resolutionScale, const DestinationColorSpace&, PixelFormat, OptionSet<ImageBufferOptions> = { }, const ImageBufferCreationContext& = { });
 
     template<typename BackendType, typename ImageBufferType = ImageBuffer, typename... Arguments>
-    static RefPtr<ImageBufferType> create(const FloatSize& size, float resolutionScale, const DestinationColorSpace& colorSpace, PixelFormat pixelFormat, RenderingPurpose purpose, const CreationContext& creationContext, Arguments&&... arguments)
+    static RefPtr<ImageBufferType> create(const FloatSize& size, float resolutionScale, const DestinationColorSpace& colorSpace, PixelFormat pixelFormat, RenderingPurpose purpose, const ImageBufferCreationContext& creationContext, Arguments&&... arguments)
     {
         auto parameters = ImageBufferBackend::Parameters { size, resolutionScale, colorSpace, pixelFormat, purpose };
         auto backend = BackendType::create(parameters, creationContext);
@@ -144,6 +148,7 @@ public:
     virtual void flushDrawingContext() { }
     virtual bool flushDrawingContextAsync() { return false; }
 
+    WEBCORE_EXPORT std::unique_ptr<ImageBufferBackend> takeBackend();
     WEBCORE_EXPORT IntSize backendSize() const;
 
     ImageBufferBackend* backend() const { return m_backend.get(); }
@@ -165,6 +170,9 @@ public:
     AffineTransform baseTransform() const { return m_backendInfo.baseTransform; }
     size_t memoryCost() const { return m_backendInfo.memoryCost; }
     size_t externalMemoryCost() const { return m_backendInfo.externalMemoryCost; }
+    const ImageBufferBackend::Info& backendInfo() { return m_backendInfo; }
+
+    WEBCORE_EXPORT static std::unique_ptr<SerializedImageBuffer> sinkIntoSerializedImageBuffer(RefPtr<ImageBuffer>&&);
 
     WEBCORE_EXPORT virtual RefPtr<NativeImage> copyNativeImage(BackingStoreCopy = CopyBackingStore) const;
     WEBCORE_EXPORT virtual RefPtr<NativeImage> copyNativeImageForDrawing(BackingStoreCopy = CopyBackingStore) const;
@@ -221,10 +229,30 @@ protected:
     WEBCORE_EXPORT ImageBuffer(const ImageBufferBackend::Parameters&, const ImageBufferBackend::Info&, std::unique_ptr<ImageBufferBackend>&& = nullptr, RenderingResourceIdentifier = RenderingResourceIdentifier::generate());
 
     WEBCORE_EXPORT virtual RefPtr<ImageBuffer> sinkIntoBufferForDifferentThread();
+    WEBCORE_EXPORT virtual std::unique_ptr<SerializedImageBuffer> sinkIntoSerializedImageBuffer();
+
     ImageBufferBackend::Parameters m_parameters;
     ImageBufferBackend::Info m_backendInfo;
     std::unique_ptr<ImageBufferBackend> m_backend;
     RenderingResourceIdentifier m_renderingResourceIdentifier;
+};
+
+class SerializedImageBuffer {
+    WTF_MAKE_NONCOPYABLE(SerializedImageBuffer);
+    WTF_MAKE_FAST_ALLOCATED;
+public:
+
+    SerializedImageBuffer() = default;
+    virtual ~SerializedImageBuffer() = default;
+
+    virtual size_t memoryCost() = 0;
+
+    WEBCORE_EXPORT static RefPtr<ImageBuffer> sinkIntoImageBuffer(std::unique_ptr<SerializedImageBuffer>);
+
+    virtual bool isRemoteSerializedImageBufferProxy() const { return false; }
+
+protected:
+    virtual RefPtr<ImageBuffer> sinkIntoImageBuffer() = 0;
 };
 
 inline OptionSet<ImageBufferOptions> bufferOptionsForRendingMode(RenderingMode renderingMode)

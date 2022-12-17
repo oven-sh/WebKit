@@ -145,6 +145,10 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/applicationmanifest/ApplicationManifest.h
     Modules/applicationmanifest/ApplicationManifestParser.h
 
+    Modules/badge/BadgeClient.h
+    Modules/badge/EmptyBadgeClient.h
+    Modules/badge/WorkerBadgeProxy.h
+
     Modules/cache/CacheQueryOptions.h
     Modules/cache/CacheStorageConnection.h
     Modules/cache/DOMCacheEngine.h
@@ -1093,6 +1097,11 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     loader/EmptyFrameLoaderClient.h
     loader/EphemeralNonce.h
     loader/FetchOptions.h
+    loader/FetchOptionsCache.h
+    loader/FetchOptionsCredentials.h
+    loader/FetchOptionsDestination.h
+    loader/FetchOptionsMode.h
+    loader/FetchOptionsRedirect.h
     loader/FontLoadRequest.h
     loader/FormState.h
     loader/FormSubmission.h
@@ -1151,6 +1160,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     loader/archive/mhtml/MHTMLArchive.h
 
+    loader/cache/AllowedFonts.h
     loader/cache/CachedFontLoadRequest.h
     loader/cache/CachePolicy.h
     loader/cache/CachedImage.h
@@ -1250,6 +1260,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/ReducedResolutionSeconds.h
     page/RemoteDOMWindow.h
     page/RemoteFrame.h
+    page/RemoteFrameClient.h
     page/RenderingUpdateScheduler.h
     page/ScreenOrientationLockType.h
     page/ScreenOrientationType.h
@@ -1723,6 +1734,13 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/angle/ANGLEUtilities.h
     platform/graphics/angle/GraphicsContextGLANGLE.h
 
+    platform/graphics/controls/ControlFactory.h
+    platform/graphics/controls/ControlPart.h
+    platform/graphics/controls/ControlPartType.h
+    platform/graphics/controls/ControlStyle.h
+    platform/graphics/controls/MeterPart.h
+    platform/graphics/controls/PlatformControl.h
+
     platform/graphics/displaylists/DisplayList.h
     platform/graphics/displaylists/DisplayListDrawingContext.h
     platform/graphics/displaylists/DisplayListImageBuffer.h
@@ -2092,6 +2110,9 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     svg/SVGLengthValue.h
     svg/SVGParserUtilities.h
     svg/SVGParsingError.h
+    svg/SVGPathByteStream.h
+    svg/SVGPathConsumer.h
+    svg/SVGPathUtilities.h
     svg/SVGPreserveAspectRatioValue.h
     svg/SVGStringList.h
     svg/SVGTests.h

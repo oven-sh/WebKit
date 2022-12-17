@@ -40,6 +40,9 @@ messages -> RemoteRenderingBackend NotRefCounted Stream {
 
     MarkSurfacesVolatile(WebKit::MarkSurfacesAsVolatileRequestIdentifier requestIdentifier, Vector<WebCore::RenderingResourceIdentifier> renderingResourceIdentifiers)
     FinalizeRenderingUpdate(WebKit::RenderingUpdateID renderingUpdateID)
+
+    MoveToSerializedBuffer(WebCore::RenderingResourceIdentifier sourceImageBuffer, WebKit::RemoteSerializedImageBufferWriteReference destination)
+    MoveToImageBuffer(WebKit::RemoteSerializedImageBufferWriteReference source, WebCore::RenderingResourceIdentifier destinationImageBuffer)
 }
 
 #endif // ENABLE(GPU_PROCESS)

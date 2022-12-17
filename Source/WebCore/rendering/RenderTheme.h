@@ -69,10 +69,18 @@ public:
     // "border" are set, or if the appearance is not supported by the theme.
     void adjustStyle(RenderStyle&, const Element*, const RenderStyle* userAgentAppearanceStyle);
 
-    // This method is called to paint the widget as a background of the RenderObject.  A widget's foreground, e.g., the
-    // text of a button, is always rendered by the engine itself.  The boolean return value indicates
+    virtual bool canCreateControlPartForRenderer(const RenderObject&) const { return false; }
+    RefPtr<ControlPart> createControlPartForRenderer(const RenderObject&) const;
+
+    OptionSet<ControlStyle::State> extractControlStyleStatesForRenderer(const RenderObject&) const;
+    ControlStyle extractControlStyleForRenderer(const RenderObject&) const;
+
+    // These methods are called to paint the widget as a background of the RenderObject. A widget's foreground, e.g., the
+    // text of a button, is always rendered by the engine itself. The boolean return value indicates
     // whether the CSS border/background should also be painted.
+    bool paint(const RenderBox&, const ControlPart&, const PaintInfo&, const LayoutRect&);
     bool paint(const RenderBox&, ControlStates&, const PaintInfo&, const LayoutRect&);
+    
     bool paintBorderOnly(const RenderBox&, const PaintInfo&, const LayoutRect&);
     void paintDecorations(const RenderBox&, const PaintInfo&, const LayoutRect&);
 
@@ -112,7 +120,7 @@ public:
 
     // A method for asking if a control is a container or not.  Leaf controls have to have some special behavior (like
     // the baseline position API above).
-    bool isControlContainer(ControlPart) const;
+    bool isControlContainer(ControlPartType) const;
 
     // A method asking if the control changes its tint when the window has focus or not.
     virtual bool controlSupportsTints(const RenderObject&) const { return false; }
@@ -145,6 +153,9 @@ public:
     virtual bool supportsDataListUI(const AtomString&) const { return false; }
 
     virtual bool supportsBoxShadow(const RenderStyle&) const { return false; }
+
+    virtual bool useFormSemanticContext() const { return false; }
+    virtual bool supportsLargeFormControls() const { return false; }
 
     // Text selection colors.
     Color activeSelectionBackgroundColor(OptionSet<StyleColorOptions>) const;
@@ -195,7 +206,7 @@ public:
     virtual bool popupOptionSupportsTextIndent() const { return false; }
     virtual PopupMenuStyle::PopupMenuSize popupMenuSize(const RenderStyle&, IntRect&) const { return PopupMenuStyle::PopupMenuSizeNormal; }
 
-    virtual ScrollbarControlSize scrollbarControlSizeForPart(ControlPart) { return ScrollbarControlSize::Regular; }
+    virtual ScrollbarControlSize scrollbarControlSizeForPart(ControlPartType) { return ScrollbarControlSize::Regular; }
 
     // Returns the repeat interval of the animation for the progress bar.
     virtual Seconds animationRepeatIntervalForProgressBar(const RenderProgress&) const;
@@ -203,8 +214,8 @@ public:
     virtual Seconds animationDurationForProgressBar(const RenderProgress&) const;
     virtual IntRect progressBarRectForBounds(const RenderObject&, const IntRect&) const;
 
-    virtual IntSize meterSizeForBounds(const RenderMeter&, const IntRect&) const;
-    virtual bool supportsMeter(ControlPart, const HTMLMeterElement&) const;
+    virtual FloatSize meterSizeForBounds(const RenderMeter&, const FloatRect&) const;
+    virtual bool supportsMeter(ControlPartType, const HTMLMeterElement&) const;
 
 #if ENABLE(DATALIST_ELEMENT)
     // Returns the threshold distance for snapping to a slider tick mark.
@@ -249,7 +260,7 @@ public:
 #endif
 
 protected:
-    virtual bool canPaint(const PaintInfo&, const Settings&, ControlPart) const { return true; }
+    virtual bool canPaint(const PaintInfo&, const Settings&, ControlPartType) const { return true; }
 
     // The platform selection color.
     virtual Color platformActiveSelectionBackgroundColor(OptionSet<StyleColorOptions>) const;
@@ -415,8 +426,8 @@ protected:
     virtual ColorCache& colorCache(OptionSet<StyleColorOptions>) const;
 
 private:
-    ControlPart autoAppearanceForElement(RenderStyle&, const Element*) const;
-    ControlPart adjustAppearanceForElement(RenderStyle&, const Element*, ControlPart) const;
+    ControlPartType autoAppearanceForElement(RenderStyle&, const Element*) const;
+    ControlPartType adjustAppearanceForElement(RenderStyle&, const Element*, ControlPartType) const;
 
     mutable HashMap<uint8_t, ColorCache, DefaultHash<uint8_t>, WTF::UnsignedWithZeroKeyHashTraits<uint8_t>> m_colorCacheMap;
 };

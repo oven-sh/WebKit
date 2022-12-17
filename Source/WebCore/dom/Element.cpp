@@ -560,18 +560,37 @@ Ref<Node> Element::cloneNodeInternal(Document& targetDocument, CloningOperation 
 {
     switch (type) {
     case CloningOperation::OnlySelf:
-    case CloningOperation::SelfWithTemplateContent:
         return cloneElementWithoutChildren(targetDocument);
+    case CloningOperation::SelfWithTemplateContent: {
+        Ref clone = cloneElementWithoutChildren(targetDocument);
+        ScriptDisallowedScope::EventAllowedScope eventAllowedScope { clone };
+        cloneShadowTreeIfPossible(clone);
+        return clone;
+    }
     case CloningOperation::Everything:
         break;
     }
     return cloneElementWithChildren(targetDocument);
 }
 
+void Element::cloneShadowTreeIfPossible(Element& newHost)
+{
+    RefPtr oldShadowRoot = this->shadowRoot();
+    if (!oldShadowRoot || !oldShadowRoot->isCloneable())
+        return;
+
+    Ref clone = oldShadowRoot->cloneNodeInternal(newHost.document(), Node::CloningOperation::SelfWithTemplateContent);
+    RELEASE_ASSERT(is<ShadowRoot>(clone));
+    auto& clonedShadowRoot = downcast<ShadowRoot>(clone.get());
+    newHost.addShadowRoot(clonedShadowRoot);
+    oldShadowRoot->cloneChildNodes(clonedShadowRoot);
+}
+
 Ref<Element> Element::cloneElementWithChildren(Document& targetDocument)
 {
     Ref<Element> clone = cloneElementWithoutChildren(targetDocument);
     ScriptDisallowedScope::EventAllowedScope eventAllowedScope { clone };
+    cloneShadowTreeIfPossible(clone);
     cloneChildNodes(clone);
     return clone;
 }
@@ -742,6 +761,24 @@ Vector<String> Element::getAttributeNames() const
     return attributesVector;
 }
 
+bool Element::hasFocusableStyle() const
+{
+    if (renderer() && renderer()->isSkippedContent())
+        return false;
+
+    auto isFocusableStyle = [](const RenderStyle* style) {
+        return style && style->display() != DisplayType::None && style->display() != DisplayType::Contents
+            && style->visibility() == Visibility::Visible && !style->effectiveInert();
+    };
+
+    if (renderStyle())
+        return isFocusableStyle(renderStyle());
+
+    // Compute style in yet unstyled subtree without resolving full style.
+    auto* style = const_cast<Element&>(*this).resolveComputedStyle(ResolveComputedStyleMode::RenderedOnly);
+    return isFocusableStyle(style);
+}
+
 bool Element::isFocusable() const
 {
     if (!isConnected() || !supportsFocus())
@@ -750,12 +787,12 @@ bool Element::isFocusable() const
     if (!renderer()) {
         // Elements in canvas fallback content are not rendered, but they are allowed to be
         // focusable as long as their canvas is displayed and visible.
-        if (auto* canvas = ancestorsOfType<HTMLCanvasElement>(*this).first())
-            return canvas->isFocusableWithoutResolvingFullStyle();
-    } else if (renderer()->isSkippedContent())
-        return false;
+        RefPtr canvas = ancestorsOfType<HTMLCanvasElement>(*this).first();
+        if (canvas && !canvas->hasFocusableStyle())
+            return false;
+    }
 
-    return isFocusableWithoutResolvingFullStyle();
+    return hasFocusableStyle();
 }
 
 bool Element::isUserActionElementInActiveChain() const
@@ -2726,7 +2763,10 @@ ExceptionOr<ShadowRoot&> Element::attachShadow(const ShadowRootInit& init)
     }
     if (init.mode == ShadowRootMode::UserAgent)
         return Exception { TypeError };
-    auto shadow = ShadowRoot::create(document(), init.mode, init.slotAssignment, init.delegatesFocus ? ShadowRoot::DelegatesFocus::Yes : ShadowRoot::DelegatesFocus::No, isPrecustomizedOrDefinedCustomElement() ? ShadowRoot::AvailableToElementInternals::Yes : ShadowRoot::AvailableToElementInternals::No);
+    auto shadow = ShadowRoot::create(document(), init.mode, init.slotAssignment,
+        init.delegatesFocus ? ShadowRoot::DelegatesFocus::Yes : ShadowRoot::DelegatesFocus::No,
+        init.cloneable ? ShadowRoot::Cloneable::Yes : ShadowRoot::Cloneable::No,
+        isPrecustomizedOrDefinedCustomElement() ? ShadowRoot::AvailableToElementInternals::Yes : ShadowRoot::AvailableToElementInternals::No);
     auto& result = shadow.get();
     addShadowRoot(WTFMove(shadow));
     return result;
@@ -2734,7 +2774,7 @@ ExceptionOr<ShadowRoot&> Element::attachShadow(const ShadowRootInit& init)
 
 ExceptionOr<ShadowRoot&> Element::attachDeclarativeShadow(ShadowRootMode mode, bool delegatesFocus)
 {
-    auto exceptionOrShadowRoot = attachShadow({ mode, delegatesFocus });
+    auto exceptionOrShadowRoot = attachShadow({ mode, delegatesFocus, /* cloneable */ true });
     if (exceptionOrShadowRoot.hasException())
         return exceptionOrShadowRoot.releaseException();
     auto& shadowRoot = exceptionOrShadowRoot.releaseReturnValue();
@@ -3819,24 +3859,6 @@ const RenderStyle* Element::resolveComputedStyle(ResolveComputedStyleMode mode)
     }
 
     return computedStyle;
-}
-
-bool Element::isFocusableWithoutResolvingFullStyle() const
-{
-    auto isFocusableStyle = [](const RenderStyle* style) {
-        return style
-            && style->display() != DisplayType::None
-            && style->display() != DisplayType::Contents
-            && style->visibility() == Visibility::Visible
-            && !style->effectiveInert();
-    };
-
-    if (renderStyle())
-        return isFocusableStyle(renderStyle());
-
-    // Compute style in yet unstyled subtree.
-    auto* style = const_cast<Element&>(*this).resolveComputedStyle(ResolveComputedStyleMode::RenderedOnly);
-    return isFocusableStyle(style);
 }
 
 const RenderStyle& Element::resolvePseudoElementStyle(PseudoId pseudoElementSpecifier)

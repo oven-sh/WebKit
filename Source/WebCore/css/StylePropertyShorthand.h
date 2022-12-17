@@ -22,6 +22,7 @@
 #pragma once
 
 #include "CSSPropertyNames.h"
+#include "CSSValueKeywords.h"
 #include <wtf/Vector.h>
 
 namespace WebCore {
@@ -83,7 +84,6 @@ constexpr std::pair<CSSPropertyID, CSSValueID> fontShorthandSubpropertiesResetTo
     { CSSPropertyFontOpticalSizing, CSSValueAuto },
     { CSSPropertyFontVariationSettings, CSSValueNormal },
 #endif
-    { CSSPropertyFontPalette, CSSValueNormal },
 };
 
 } // namespace WebCore

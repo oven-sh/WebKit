@@ -39,7 +39,7 @@ namespace LayoutIntegration {
 enum class AvoidanceReason : uint64_t {
     FlowIsInsideANonMultiColumnThread            = 1LLU  << 0,
     FlowHasInitialLetter                         = 1LLU  << 1,
-    FlowIsVTTCue                                 = 1LLU  << 2,
+    // Unused                                    = 1LLU  << 2,
     ContentIsRuby                                = 1LLU  << 3,
     FlowIsPaginated                              = 1LLU  << 4,
     // Unused                                    = 1LLU  << 5,
@@ -47,7 +47,7 @@ enum class AvoidanceReason : uint64_t {
     // Unused                                    = 1LLU  << 7,
     // Unused                                    = 1LLU  << 8,
     FlowHasNonSupportedChild                     = 1LLU  << 9,
-    FlowHasUnsupportedFloat                      = 1LLU  << 10,
+    FloatIsShapeOutside                          = 1LLU  << 10,
     // Unused                                    = 1LLU  << 11,
     // Unused                                    = 1LLU  << 12,
     // Unused                                    = 1LLU  << 13,

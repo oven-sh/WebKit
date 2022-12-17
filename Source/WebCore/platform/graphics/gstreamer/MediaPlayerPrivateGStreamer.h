@@ -216,6 +216,7 @@ public:
     bool copyVideoTextureToPlatformTexture(GraphicsContextGL*, PlatformGLObject, GCGLenum, GCGLint, GCGLenum, GCGLenum, GCGLenum, bool, bool) override;
     RefPtr<NativeImage> nativeImageForCurrentTime() override;
 #endif
+    RefPtr<VideoFrame> videoFrameForCurrentTime() override;
 
     void updateEnabledVideoTrack();
     void updateEnabledAudioTrack();
@@ -435,7 +436,7 @@ private:
 
     bool isPlayerShuttingDown() const { return m_isPlayerShuttingDown.load(); }
     MediaTime maxTimeLoaded() const;
-    void setVideoSourceOrientation(ImageOrientation);
+    bool setVideoSourceOrientation(ImageOrientation);
     MediaTime platformDuration() const;
     bool isMuted() const;
     void commitLoad();
@@ -526,8 +527,8 @@ private:
     bool m_hasAudio { false };
     Condition m_drawCondition;
     Lock m_drawLock;
-    RunLoop::Timer<MediaPlayerPrivateGStreamer> m_drawTimer WTF_GUARDED_BY_LOCK(m_drawLock);
-    RunLoop::Timer<MediaPlayerPrivateGStreamer> m_readyTimerHandler;
+    RunLoop::Timer m_drawTimer WTF_GUARDED_BY_LOCK(m_drawLock);
+    RunLoop::Timer m_readyTimerHandler;
 #if USE(TEXTURE_MAPPER_GL)
 #if USE(NICOSIA)
     RefPtr<Nicosia::ContentLayer> m_nicosiaLayer;

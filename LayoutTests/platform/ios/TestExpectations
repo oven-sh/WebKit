@@ -15,6 +15,7 @@ editing/input/cocoa [ Pass ]
 editing/selection/ios [ Pass ]
 http/tests/quicklook [ Pass ]
 media/ios [ Pass ]
+media/audioSession/ios [ Pass ]
 model-element [ Pass ]
 quicklook [ Pass ]
 system-preview [ Pass ]
@@ -81,6 +82,7 @@ fast/images/animated-heics-draw.html [ Pass ]
 # No fullscreen API on iOS
 fullscreen
 http/tests/fullscreen
+imported/w3c/web-platform-tests/fullscreen
 compositing/no-compositing-when-full-screen-is-present.html
 webkit.org/b/200308 fast/events/touch/ios/content-observation/non-visible-content-change-in-fullscreen-mode.html [ Skip ]
 
@@ -488,6 +490,7 @@ fast/events/autoscroll-when-zoomed.html [ Skip ]
 fast/events/before-input-events-prevent-drag-and-drop.html [ Skip ]
 fast/events/capture-on-target.html [ Skip ]
 fast/events/check-defocus-event-order-when-triggered-by-mouse-click.html [ Skip ]
+fast/events/click-after-mousedown-cancel.html [ Skip ]
 fast/events/click-count.html [ Skip ]
 fast/events/click-focus-anchor.html [ Skip ]
 fast/events/click-focus-control.html [ Skip ]
@@ -3684,6 +3687,8 @@ http/tests/media/media-source/mediasource-rvfc.html [ Pass Failure ]
 # Crashing in a system framework rdar://102159271
 fast/forms/ios/file-upload-panel-capture.html [ Skip ]
 fast/forms/ios/file-upload-panel.html [ Skip ]
+fast/forms/ios/show-file-upload-context-menu-above-keyboard.html [ Skip ]
+fast/forms/ios/file-upload-panel-accept.html [ Skip ]
 
 webkit.org/b/242825 editing/selection/ios/hide-selection-in-tiny-contenteditable.html [ Pass Failure ]
 
@@ -3787,7 +3792,6 @@ imported/w3c/web-platform-tests/css/selectors/selection-image-002.html [ ImageOn
 
 # AVIF tests
 webkit.org/b/247831 fast/images/avif-image-decoding.html [ Failure ]
-webkit.org/b/247831 fast/images/avif-as-image.html [ ImageOnlyFailure ]
 webkit.org/b/247831 fast/images/animated-avif.html [ Timeout ]
 
 # Screen Orientation API doesn't support nested frames yet
@@ -3795,6 +3799,10 @@ imported/w3c/web-platform-tests/screen-orientation/onchange-event-subframe.html 
 
 webkit.org/b/248919 editing/selection/doubleclick-whitespace-live-range.html [ Failure ]
 
-webkit.org/b/248921 fast/forms/ios/focus-button.html [ Pass Crash ]
-
 webkit.org/b/248923 fast/rendering/render-style-null-optgroup-crash.html [ Pass Failure ]
+
+webkit.org/b/249367 imported/w3c/web-platform-tests/html/canvas/offscreen/manual/the-offscreen-canvas/offscreencanvas.transferrable.w.html [ Pass Failure ]
+
+webkit.org/b/249407 media/audioSession/getUserMedia.html [ Failure ]
+
+webkit.org/b/249486 media/audioSession/audioSessionType.html [ Failure ]

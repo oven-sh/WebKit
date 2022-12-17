@@ -349,7 +349,6 @@
 		0F5193F7266C432D00483A2C /* ExecutableMemoryHandle.h in Headers */ = {isa = PBXBuildFile; fileRef = 0F5193F6266C432D00483A2C /* ExecutableMemoryHandle.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		0F5513A61D5A682C00C32BD8 /* FreeList.h in Headers */ = {isa = PBXBuildFile; fileRef = 0F5513A51D5A682A00C32BD8 /* FreeList.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		0F55989817C86C5800A1E543 /* ToNativeFromValue.h in Headers */ = {isa = PBXBuildFile; fileRef = 0F55989717C86C5600A1E543 /* ToNativeFromValue.h */; settings = {ATTRIBUTES = (Private, ); }; };
-		0F55F0F514D1063C00AC7649 /* AbstractPC.h in Headers */ = {isa = PBXBuildFile; fileRef = 0F55F0F214D1063600AC7649 /* AbstractPC.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		0F56A1D315000F35002992B1 /* ExecutionCounter.h in Headers */ = {isa = PBXBuildFile; fileRef = 0F56A1D115000F31002992B1 /* ExecutionCounter.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		0F572D4F16879FDD00E57FBD /* ThunkGenerator.h in Headers */ = {isa = PBXBuildFile; fileRef = 0F572D4D16879FDB00E57FBD /* ThunkGenerator.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		0F5780A218FE1E98001E72D9 /* PureNaN.h in Headers */ = {isa = PBXBuildFile; fileRef = 0F5780A118FE1E98001E72D9 /* PureNaN.h */; settings = {ATTRIBUTES = (Private, ); }; };
@@ -872,10 +871,15 @@
 		43C392AB1C3BEB0500241F53 /* AssemblerCommon.h in Headers */ = {isa = PBXBuildFile; fileRef = 43C392AA1C3BEB0000241F53 /* AssemblerCommon.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		4443AE3316E188D90076F110 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 51F0EB6105C86C6B00E6DF1B /* Foundation.framework */; };
 		451539B912DC994500EF7AC4 /* Yarr.h in Headers */ = {isa = PBXBuildFile; fileRef = 451539B812DC994500EF7AC4 /* Yarr.h */; settings = {ATTRIBUTES = (Private, ); }; };
+		467DC2EF2906EE3600726988 /* WasmAirIRGenerator64.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 467DC2EC2906EE3600726988 /* WasmAirIRGenerator64.cpp */; };
+		467DC2F02906EE3600726988 /* WasmAirIRGeneratorBase.h in Headers */ = {isa = PBXBuildFile; fileRef = 467DC2ED2906EE3600726988 /* WasmAirIRGeneratorBase.h */; };
+		467DC2F12906EE3600726988 /* WasmAirIRGenerator32_64.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 467DC2EE2906EE3600726988 /* WasmAirIRGenerator32_64.cpp */; };
 		473DA4A4764C45FE871B0485 /* DefinePropertyAttributes.h in Headers */ = {isa = PBXBuildFile; fileRef = 169948EDE68D4054B01EF797 /* DefinePropertyAttributes.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		4B1F22F62900BFC700CB5E66 /* Width.h in Headers */ = {isa = PBXBuildFile; fileRef = 4BBA4CD428FF5FE5003EBFC4 /* Width.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		4B46940328984FA800512FDF /* MacroAssemblerARM64.cpp in Sources */ = {isa = PBXBuildFile; fileRef = FEB137561BB11EEE00CD5100 /* MacroAssemblerARM64.cpp */; };
 		4B46940428984FEE00512FDF /* MacroAssemblerX86Common.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A7A4AE0717973B26005612B1 /* MacroAssemblerX86Common.cpp */; };
+		4B78E09E294427FC003C6682 /* B3Const128Value.h in Headers */ = {isa = PBXBuildFile; fileRef = 4B78E099294427D2003C6682 /* B3Const128Value.h */; settings = {ATTRIBUTES = (Private, ); }; };
+		4B78E09F29442801003C6682 /* B3SIMDValue.h in Headers */ = {isa = PBXBuildFile; fileRef = 4B78E09A294427D2003C6682 /* B3SIMDValue.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		4BAA07CEB81F49A296E02203 /* WasmTypeDefinitionInlines.h in Headers */ = {isa = PBXBuildFile; fileRef = 30A5F403F11C4F599CD596D5 /* WasmTypeDefinitionInlines.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		4BC18E5628FDE6C800ECD68D /* SIMDInfo.h in Headers */ = {isa = PBXBuildFile; fileRef = 4BC18E5428FDE6C800ECD68D /* SIMDInfo.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		4BDF3004289324AC00AE1DE3 /* AssemblyComments.h in Headers */ = {isa = PBXBuildFile; fileRef = 4BDF3002289324AC00AE1DE3 /* AssemblyComments.h */; settings = {ATTRIBUTES = (Private, ); }; };
@@ -888,7 +892,6 @@
 		524E9D7322092B5200A6BEEE /* AirAllocateRegistersAndStackAndGenerateCode.h in Headers */ = {isa = PBXBuildFile; fileRef = 524E9D7222092B4600A6BEEE /* AirAllocateRegistersAndStackAndGenerateCode.h */; };
 		5250D2D21E8DA05A0029A932 /* WasmThunks.h in Headers */ = {isa = PBXBuildFile; fileRef = 5250D2D01E8DA05A0029A932 /* WasmThunks.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		525C0DDA1E935847002184CD /* WasmCallee.h in Headers */ = {isa = PBXBuildFile; fileRef = 525C0DD81E935847002184CD /* WasmCallee.h */; settings = {ATTRIBUTES = (Private, ); }; };
-		525C9CDF220285830082DBFD /* WasmAirIRGenerator.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 52847AD921FFB8630061A9DB /* WasmAirIRGenerator.cpp */; };
 		52678F8F1A031009006A306D /* BasicBlockLocation.h in Headers */ = {isa = PBXBuildFile; fileRef = 52678F8D1A031009006A306D /* BasicBlockLocation.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		52678F911A04177C006A306D /* ControlFlowProfiler.h in Headers */ = {isa = PBXBuildFile; fileRef = 52678F901A04177C006A306D /* ControlFlowProfiler.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		5267CF82249316B10022BF6D /* FastJITPermissions.h in Headers */ = {isa = PBXBuildFile; fileRef = 5267CF81249316AD0022BF6D /* FastJITPermissions.h */; settings = {ATTRIBUTES = (Private, ); }; };
@@ -1218,7 +1221,6 @@
 		7311FA32240DB1D3003D48DB /* DeleteByVariant.h in Headers */ = {isa = PBXBuildFile; fileRef = 7311FA31240DB1D3003D48DB /* DeleteByVariant.h */; };
 		734B655523F5C10400A069D1 /* DeletePropertySlot.h in Headers */ = {isa = PBXBuildFile; fileRef = 734B655423F4A33100A069D1 /* DeletePropertySlot.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		73AD062923FF662600F53593 /* DeleteByStatus.h in Headers */ = {isa = PBXBuildFile; fileRef = 73AD062823FF662600F53593 /* DeleteByStatus.h */; };
-		73E3799422E0EF6500933565 /* B3ReduceLoopStrength.h in Headers */ = {isa = PBXBuildFile; fileRef = 73E3799322E0EF4F00933565 /* B3ReduceLoopStrength.h */; };
 		7593C898BE714A64BE93A6E7 /* WasmContextInlines.h in Headers */ = {isa = PBXBuildFile; fileRef = A27958D7FA1142B0AC9E364D /* WasmContextInlines.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		790081391E95A8EC0052D7CD /* WasmModule.h in Headers */ = {isa = PBXBuildFile; fileRef = 790081371E95A8EC0052D7CD /* WasmModule.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		7905BB691D12050E0019FE57 /* InlineAccess.h in Headers */ = {isa = PBXBuildFile; fileRef = 7905BB671D12050E0019FE57 /* InlineAccess.h */; settings = {ATTRIBUTES = (Private, ); }; };
@@ -1866,6 +1868,7 @@
 		E307178D24C7829A00DF0644 /* IntlLocaleConstructor.h in Headers */ = {isa = PBXBuildFile; fileRef = A3AFF92C245A3CFA00C9BA3B /* IntlLocaleConstructor.h */; };
 		E307178E24C7829D00DF0644 /* IntlLocale.h in Headers */ = {isa = PBXBuildFile; fileRef = A3AFF92B245A3CF900C9BA3B /* IntlLocale.h */; };
 		E30873E7272559410053B601 /* IntlPluralRules.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7D5FB18F20744BF1005DDF64 /* IntlPluralRules.cpp */; };
+		E308A80E294D39340044A109 /* WasmLLIntBuiltin.h in Headers */ = {isa = PBXBuildFile; fileRef = E308A80D294D39330044A109 /* WasmLLIntBuiltin.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		E30D903A28B77F28008B2CDC /* ProxyObjectAccessCase.h in Headers */ = {isa = PBXBuildFile; fileRef = E30D903828B77F28008B2CDC /* ProxyObjectAccessCase.h */; };
 		E30E8A5426DE2E4800DA4915 /* TemporalTimeZonePrototype.h in Headers */ = {isa = PBXBuildFile; fileRef = E30E8A4E26DE2E4700DA4915 /* TemporalTimeZonePrototype.h */; };
 		E30E8A5626DE2E4800DA4915 /* TemporalTimeZone.h in Headers */ = {isa = PBXBuildFile; fileRef = E30E8A5026DE2E4800DA4915 /* TemporalTimeZone.h */; };
@@ -2899,8 +2902,6 @@
 		0F5513A71D5A68CB00C32BD8 /* FreeList.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = FreeList.cpp; sourceTree = "<group>"; };
 		0F55989717C86C5600A1E543 /* ToNativeFromValue.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ToNativeFromValue.h; sourceTree = "<group>"; };
 		0F55C19317276E4600CEABFD /* DFGAbstractValue.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = DFGAbstractValue.cpp; path = dfg/DFGAbstractValue.cpp; sourceTree = "<group>"; };
-		0F55F0F114D1063600AC7649 /* AbstractPC.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = AbstractPC.cpp; sourceTree = "<group>"; };
-		0F55F0F214D1063600AC7649 /* AbstractPC.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = AbstractPC.h; sourceTree = "<group>"; };
 		0F56A1D115000F31002992B1 /* ExecutionCounter.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ExecutionCounter.h; sourceTree = "<group>"; };
 		0F56A1D415001CF2002992B1 /* ExecutionCounter.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ExecutionCounter.cpp; sourceTree = "<group>"; };
 		0F572D4D16879FDB00E57FBD /* ThunkGenerator.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ThunkGenerator.h; sourceTree = "<group>"; };
@@ -3846,6 +3847,13 @@
 		442FBD852149D1E00073519C /* hasher.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; name = hasher.py; path = yarr/hasher.py; sourceTree = "<group>"; };
 		451539B812DC994500EF7AC4 /* Yarr.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = Yarr.h; path = yarr/Yarr.h; sourceTree = "<group>"; };
 		45E12D8806A49B0F00E9DF84 /* jsc.cpp */ = {isa = PBXFileReference; fileEncoding = 30; indentWidth = 4; lastKnownFileType = sourcecode.cpp.cpp; path = jsc.cpp; sourceTree = "<group>"; tabWidth = 4; };
+		467DC2EC2906EE3600726988 /* WasmAirIRGenerator64.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = WasmAirIRGenerator64.cpp; sourceTree = "<group>"; };
+		467DC2ED2906EE3600726988 /* WasmAirIRGeneratorBase.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = WasmAirIRGeneratorBase.h; sourceTree = "<group>"; };
+		467DC2EE2906EE3600726988 /* WasmAirIRGenerator32_64.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = WasmAirIRGenerator32_64.cpp; sourceTree = "<group>"; };
+		4B78E098294427D2003C6682 /* B3SIMDValue.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = B3SIMDValue.cpp; path = b3/B3SIMDValue.cpp; sourceTree = "<group>"; };
+		4B78E099294427D2003C6682 /* B3Const128Value.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = B3Const128Value.h; path = b3/B3Const128Value.h; sourceTree = "<group>"; };
+		4B78E09A294427D2003C6682 /* B3SIMDValue.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = B3SIMDValue.h; path = b3/B3SIMDValue.h; sourceTree = "<group>"; };
+		4B78E09B294427D2003C6682 /* B3Const128Value.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = B3Const128Value.cpp; path = b3/B3Const128Value.cpp; sourceTree = "<group>"; };
 		4BBA4CD428FF5FE5003EBFC4 /* Width.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = Width.h; sourceTree = "<group>"; };
 		4BC18E5428FDE6C800ECD68D /* SIMDInfo.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SIMDInfo.h; sourceTree = "<group>"; };
 		4BDF15B128FF912800D36BA1 /* Width.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = Width.cpp; sourceTree = "<group>"; };
@@ -3878,7 +3886,6 @@
 		527CE35322555FDD00C6F382 /* JSToWasmICCallee.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = JSToWasmICCallee.h; path = js/JSToWasmICCallee.h; sourceTree = "<group>"; };
 		527E6CEA2772B9C5005E0782 /* WasmOSREntryPlan.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = WasmOSREntryPlan.cpp; sourceTree = "<group>"; };
 		527E6CEB2772B9C5005E0782 /* WasmOSREntryPlan.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = WasmOSREntryPlan.h; sourceTree = "<group>"; };
-		52847AD921FFB8630061A9DB /* WasmAirIRGenerator.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = WasmAirIRGenerator.cpp; sourceTree = "<group>"; };
 		52847ADA21FFB8630061A9DB /* WasmAirIRGenerator.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = WasmAirIRGenerator.h; sourceTree = "<group>"; };
 		52B310FA1974AE610080857C /* FunctionHasExecutedCache.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = FunctionHasExecutedCache.h; sourceTree = "<group>"; };
 		52B310FC1974AE870080857C /* FunctionHasExecutedCache.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = FunctionHasExecutedCache.cpp; sourceTree = "<group>"; };
@@ -4351,8 +4358,6 @@
 		73190D962400934900F891C9 /* DeleteByStatus.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = DeleteByStatus.cpp; sourceTree = "<group>"; };
 		734B655423F4A33100A069D1 /* DeletePropertySlot.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = DeletePropertySlot.h; sourceTree = "<group>"; };
 		73AD062823FF662600F53593 /* DeleteByStatus.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = DeleteByStatus.h; sourceTree = "<group>"; };
-		73E3799322E0EF4F00933565 /* B3ReduceLoopStrength.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = B3ReduceLoopStrength.h; path = b3/B3ReduceLoopStrength.h; sourceTree = "<group>"; };
-		73E3799522E0EF9100933565 /* B3ReduceLoopStrength.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = B3ReduceLoopStrength.cpp; path = b3/B3ReduceLoopStrength.cpp; sourceTree = "<group>"; };
 		77B25CB2C3094A92A38E1DB3 /* JSModuleLoader.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = JSModuleLoader.h; sourceTree = "<group>"; };
 		790081361E95A8EC0052D7CD /* WasmModule.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = WasmModule.cpp; sourceTree = "<group>"; };
 		790081371E95A8EC0052D7CD /* WasmModule.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = WasmModule.h; sourceTree = "<group>"; };
@@ -5336,6 +5341,7 @@
 		E307178024C7824700DF0644 /* IntlSegmenter.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = IntlSegmenter.cpp; sourceTree = "<group>"; };
 		E307178124C7824700DF0644 /* IntlSegmenter.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = IntlSegmenter.h; sourceTree = "<group>"; };
 		E307178224C7824700DF0644 /* IntlSegmenterConstructor.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = IntlSegmenterConstructor.cpp; sourceTree = "<group>"; };
+		E308A80D294D39330044A109 /* WasmLLIntBuiltin.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = WasmLLIntBuiltin.h; sourceTree = "<group>"; };
 		E30D903728B77F27008B2CDC /* ProxyObjectAccessCase.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ProxyObjectAccessCase.cpp; sourceTree = "<group>"; };
 		E30D903828B77F28008B2CDC /* ProxyObjectAccessCase.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ProxyObjectAccessCase.h; sourceTree = "<group>"; };
 		E30E8A4C26DE2E4700DA4915 /* TemporalTimeZonePrototype.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = TemporalTimeZonePrototype.cpp; sourceTree = "<group>"; };
@@ -6257,6 +6263,8 @@
 				795F099C1E03600500BBE37F /* B3Compile.cpp */,
 				7919B77F1E03559C005BEED8 /* B3Compile.h */,
 				0F86AE1F1C5311C5006BE8EC /* B3ComputeDivisionMagic.h */,
+				4B78E09B294427D2003C6682 /* B3Const128Value.cpp */,
+				4B78E099294427D2003C6682 /* B3Const128Value.h */,
 				0FEC84C31BDACDAC0080FF74 /* B3Const32Value.cpp */,
 				0FEC84C41BDACDAC0080FF74 /* B3Const32Value.h */,
 				0FEC84C51BDACDAC0080FF74 /* B3Const64Value.cpp */,
@@ -6349,10 +6357,10 @@
 				0F725CA61C503DED00AD943A /* B3PureCSE.h */,
 				43422A641C16221E00E2EB98 /* B3ReduceDoubleToFloat.cpp */,
 				43422A651C16221E00E2EB98 /* B3ReduceDoubleToFloat.h */,
-				73E3799522E0EF9100933565 /* B3ReduceLoopStrength.cpp */,
-				73E3799322E0EF4F00933565 /* B3ReduceLoopStrength.h */,
 				0FEC85B71BE1462F0080FF74 /* B3ReduceStrength.cpp */,
 				0FEC85B81BE1462F0080FF74 /* B3ReduceStrength.h */,
+				4B78E098294427D2003C6682 /* B3SIMDValue.cpp */,
+				4B78E09A294427D2003C6682 /* B3SIMDValue.h */,
 				0FEC84EA1BDACDAC0080FF74 /* B3SlotBaseValue.cpp */,
 				0FEC84EB1BDACDAC0080FF74 /* B3SlotBaseValue.h */,
 				0F2BBD911C5FF3F50023EF23 /* B3SparseCollection.h */,
@@ -6588,8 +6596,6 @@
 		1429D77A0ED20D7300B89619 /* interpreter */ = {
 			isa = PBXGroup;
 			children = (
-				0F55F0F114D1063600AC7649 /* AbstractPC.cpp */,
-				0F55F0F214D1063600AC7649 /* AbstractPC.h */,
 				A7F8690E0F9584A100558697 /* CachedCall.h */,
 				796DAA2A1E89CCD6005DF24A /* CalleeBits.h */,
 				1429D8DB0ED2205B00B89619 /* CallFrame.cpp */,
@@ -7468,8 +7474,10 @@
 			isa = PBXGroup;
 			children = (
 				AD2FCB8A1DB5840000B3E736 /* js */,
-				52847AD921FFB8630061A9DB /* WasmAirIRGenerator.cpp */,
 				52847ADA21FFB8630061A9DB /* WasmAirIRGenerator.h */,
+				467DC2EE2906EE3600726988 /* WasmAirIRGenerator32_64.cpp */,
+				467DC2EC2906EE3600726988 /* WasmAirIRGenerator64.cpp */,
+				467DC2ED2906EE3600726988 /* WasmAirIRGeneratorBase.h */,
 				53F40E8E1D5902820099A1B6 /* WasmB3IRGenerator.cpp */,
 				53F40E921D5A4AB30099A1B6 /* WasmB3IRGenerator.h */,
 				53CA73071EA533D80076049D /* WasmBBQPlan.cpp */,
@@ -7516,6 +7524,7 @@
 				AD5C36DF1F699EB6000BCAAF /* WasmInstance.h */,
 				52FDABC22788076900C15B59 /* WasmIRGeneratorHelpers.h */,
 				AD00659D1ECAC7FE000CA926 /* WasmLimits.h */,
+				E308A80D294D39330044A109 /* WasmLLIntBuiltin.h */,
 				14C5AD6822F33FBF00F1FB83 /* WasmLLIntGenerator.cpp */,
 				14C5AD6922F33FBF00F1FB83 /* WasmLLIntGenerator.h */,
 				14C5AD6A22F33FBF00F1FB83 /* WasmLLIntPlan.cpp */,
@@ -9797,7 +9806,6 @@
 				0F1FE51C1922A3BC006987C5 /* AbortReason.h in Headers */,
 				860161E30F3A83C100F84710 /* AbstractMacroAssembler.h in Headers */,
 				AD4937C41DDBE6140077C807 /* AbstractModuleRecord.h in Headers */,
-				0F55F0F514D1063C00AC7649 /* AbstractPC.h in Headers */,
 				FE912B4F2531193300FABDDF /* AbstractSlotVisitor.h in Headers */,
 				FE912B5125311AD100FABDDF /* AbstractSlotVisitorInlines.h in Headers */,
 				534E034E1E4D4B1600213F64 /* AccessCase.h in Headers */,
@@ -9945,6 +9953,7 @@
 				0FEC850C1BDACDAC0080FF74 /* B3Commutativity.h in Headers */,
 				7919B7801E03559C005BEED8 /* B3Compile.h in Headers */,
 				0F86AE201C5311C5006BE8EC /* B3ComputeDivisionMagic.h in Headers */,
+				4B78E09E294427FC003C6682 /* B3Const128Value.h in Headers */,
 				0FEC850E1BDACDAC0080FF74 /* B3Const32Value.h in Headers */,
 				0FEC85101BDACDAC0080FF74 /* B3Const64Value.h in Headers */,
 				0FEC85121BDACDAC0080FF74 /* B3ConstDoubleValue.h in Headers */,
@@ -9996,8 +10005,8 @@
 				0FEC852D1BDACDAC0080FF74 /* B3ProcedureInlines.h in Headers */,
 				0F725CAA1C503DED00AD943A /* B3PureCSE.h in Headers */,
 				43422A671C16267800E2EB98 /* B3ReduceDoubleToFloat.h in Headers */,
-				73E3799422E0EF6500933565 /* B3ReduceLoopStrength.h in Headers */,
 				0FEC85BD1BE1462F0080FF74 /* B3ReduceStrength.h in Headers */,
+				4B78E09F29442801003C6682 /* B3SIMDValue.h in Headers */,
 				0FEC85351BDACDAC0080FF74 /* B3SlotBaseValue.h in Headers */,
 				0F2BBD961C5FF3F50023EF23 /* B3SparseCollection.h in Headers */,
 				0F6B8ADD1C4EFAC300969052 /* B3SSACalculator.h in Headers */,
@@ -11375,6 +11384,7 @@
 				FEF5B42C2628CBC80016E776 /* VMTrapsInlines.h in Headers */,
 				FF41590C28FF3C6B00F80B96 /* WaiterListManager.h in Headers */,
 				52847ADC21FFB8690061A9DB /* WasmAirIRGenerator.h in Headers */,
+				467DC2F02906EE3600726988 /* WasmAirIRGeneratorBase.h in Headers */,
 				53F40E931D5A4AB30099A1B6 /* WasmB3IRGenerator.h in Headers */,
 				53CA730A1EA533D80076049D /* WasmBBQPlan.h in Headers */,
 				AD4B1DFA1DF244E20071AE32 /* WasmBinding.h in Headers */,
@@ -11401,6 +11411,7 @@
 				AD5C36E21F699EC0000BCAAF /* WasmInstance.h in Headers */,
 				52FDABC32788076B00C15B59 /* WasmIRGeneratorHelpers.h in Headers */,
 				AD00659E1ECAC812000CA926 /* WasmLimits.h in Headers */,
+				E308A80E294D39340044A109 /* WasmLLIntBuiltin.h in Headers */,
 				1450FA1F2357BEC90093CD4D /* WasmLLIntTierUpCounter.h in Headers */,
 				53E9E0AC1EAE83DF00FEE251 /* WasmMachineThreads.h in Headers */,
 				535557141D9D9EA5006D583B /* WasmMemory.h in Headers */,
@@ -12597,7 +12608,8 @@
 				538F15ED268FBBB600D601C4 /* UnifiedSource153.cpp in Sources */,
 				538F15EA268FBBB600D601C4 /* UnifiedSource154.cpp in Sources */,
 				538F15EF268FBBB600D601C4 /* UnifiedSource155.cpp in Sources */,
-				525C9CDF220285830082DBFD /* WasmAirIRGenerator.cpp in Sources */,
+				467DC2F12906EE3600726988 /* WasmAirIRGenerator32_64.cpp in Sources */,
+				467DC2EF2906EE3600726988 /* WasmAirIRGenerator64.cpp in Sources */,
 				E31135C9281B5B0000C1A4A9 /* ZydisFormatterATT.c in Sources */,
 				E31135CA281B5B0300C1A4A9 /* ZydisFormatterBase.c in Sources */,
 				E31135CB281B5B0500C1A4A9 /* ZydisFormatterIntel.c in Sources */,

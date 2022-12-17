@@ -38,16 +38,17 @@ namespace WebCore {
 
 class ScriptExecutionContext;
 
+enum class FetchHeadersGuard : uint8_t {
+    None,
+    Immutable,
+    Request,
+    RequestNoCors,
+    Response
+};
+
 class FetchHeaders : public RefCounted<FetchHeaders> {
 public:
-    enum class Guard {
-        None,
-        Immutable,
-        Request,
-        RequestNoCors,
-        Response
-    };
-
+    using Guard = FetchHeadersGuard;
     using Init = std::variant<Vector<Vector<String>>, Vector<KeyValuePair<String, String>>>;
     static ExceptionOr<Ref<FetchHeaders>> create(std::optional<Init>&&);
 
@@ -119,7 +120,7 @@ inline void FetchHeaders::setGuard(Guard guard)
 
 namespace WTF {
 
-template<> struct EnumTraits<WebCore::FetchHeaders::Guard> {
+template<> struct EnumTraitsForPersistence<WebCore::FetchHeaders::Guard> {
     using values = EnumValues<
     WebCore::FetchHeaders::Guard,
     WebCore::FetchHeaders::Guard::None,

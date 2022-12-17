@@ -155,20 +155,10 @@ RefPtr<CSSUnitValue> CSSUnitValue::convertTo(CSSUnitType unit) const
 auto CSSUnitValue::toSumValue() const -> std::optional<SumValue>
 {
     // https://drafts.css-houdini.org/css-typed-om/#create-a-sum-value
-    auto canonicalUnit = [] (CSSUnitType unit) {
-        // FIXME: We probably want to change the definition of canonicalUnitTypeForCategory so this lambda isn't necessary.
-        auto category = unitCategory(unit);
-        switch (category) {
-        case CSSUnitCategory::Percent:
-            return CSSUnitType::CSS_PERCENTAGE;
-        case CSSUnitCategory::Flex:
-            return CSSUnitType::CSS_FR;
-        default:
-            break;
-        }
-        auto result = canonicalUnitTypeForCategory(category);
-        return result == CSSUnitType::CSS_UNKNOWN ? unit : result;
-    } (m_unit);
+    auto canonicalUnit = canonicalUnitTypeForUnitType(m_unit);
+    if (canonicalUnit == CSSUnitType::CSS_UNKNOWN)
+        canonicalUnit = m_unit;
+    
     auto convertedValue = m_value * conversionToCanonicalUnitsScaleFactor(unitEnum()) / conversionToCanonicalUnitsScaleFactor(canonicalUnit);
 
     if (m_unit == CSSUnitType::CSS_NUMBER)
@@ -190,6 +180,7 @@ RefPtr<CSSValue> CSSUnitValue::toCSSValue() const
     return CSSPrimitiveValue::create(m_value, m_unit);
 }
 
+// FIXME: This function could be mostly generated from CSSProperties.json.
 static bool isValueOutOfRangeForProperty(CSSPropertyID propertyID, double value, CSSUnitType unit)
 {
     bool acceptsNegativeNumbers = true;
@@ -206,25 +197,62 @@ static bool isValueOutOfRangeForProperty(CSSPropertyID propertyID, double value,
     case CSSPropertyWidows:
     case CSSPropertyColumnCount:
         return round(value) != value || value < 1;
+    case CSSPropertyAnimationDuration:
+    case CSSPropertyAnimationIterationCount:
+    case CSSPropertyBackgroundSize:
     case CSSPropertyBlockSize:
+    case CSSPropertyBorderBlockEndWidth:
+    case CSSPropertyBorderBlockStartWidth:
+    case CSSPropertyBorderBottomLeftRadius:
+    case CSSPropertyBorderBottomRightRadius:
+    case CSSPropertyBorderBottomWidth:
+    case CSSPropertyBorderImageOutset:
+    case CSSPropertyBorderImageSlice:
+    case CSSPropertyBorderImageWidth:
+    case CSSPropertyBorderInlineEndWidth:
+    case CSSPropertyBorderInlineStartWidth:
+    case CSSPropertyBorderLeftWidth:
+    case CSSPropertyBorderRightWidth:
+    case CSSPropertyBorderTopLeftRadius:
+    case CSSPropertyBorderTopRightRadius:
+    case CSSPropertyBorderTopWidth:
+    case CSSPropertyColumnGap:
     case CSSPropertyColumnRuleWidth:
+    case CSSPropertyColumnWidth:
+    case CSSPropertyFlexBasis:
     case CSSPropertyFlexGrow:
     case CSSPropertyFlexShrink:
     case CSSPropertyFontSize:
     case CSSPropertyFontSizeAdjust:
     case CSSPropertyFontStretch:
+    case CSSPropertyGridAutoColumns:
+    case CSSPropertyGridAutoRows:
     case CSSPropertyInlineSize:
+    case CSSPropertyLineHeight:
     case CSSPropertyMaxBlockSize:
     case CSSPropertyMaxInlineSize:
+    case CSSPropertyMaxHeight:
+    case CSSPropertyMaxWidth:
     case CSSPropertyMinBlockSize:
     case CSSPropertyMinInlineSize:
+    case CSSPropertyOutlineWidth:
     case CSSPropertyPerspective:
     case CSSPropertyR:
+    case CSSPropertyRowGap:
     case CSSPropertyRx:
     case CSSPropertyRy:
+    case CSSPropertyScrollPaddingBlockEnd:
+    case CSSPropertyScrollPaddingBlockStart:
+    case CSSPropertyScrollPaddingBottom:
+    case CSSPropertyScrollPaddingInlineEnd:
+    case CSSPropertyScrollPaddingInlineStart:
+    case CSSPropertyScrollPaddingLeft:
+    case CSSPropertyScrollPaddingRight:
+    case CSSPropertyScrollPaddingTop:
+    case CSSPropertyStrokeMiterlimit:
         return value < 0;
     case CSSPropertyFontWeight:
-        return value < 0 || value > 1000;
+        return value < 1 || value > 1000;
     default:
         return false;
     }
@@ -239,7 +267,7 @@ RefPtr<CSSValue> CSSUnitValue::toCSSValueWithProperty(CSSPropertyID propertyID) 
         auto sumNode = CSSCalcOperationNode::createSum(Vector { node.releaseNonNull() });
         if (!sumNode)
             return nullptr;
-        return CSSCalcValue::create(sumNode.releaseNonNull(), true /* allowsNegativePercentage */);
+        return CSSPrimitiveValue::create(CSSCalcValue::create(sumNode.releaseNonNull(), true /* allowsNegativePercentage */));
     }
     return toCSSValue();
 }

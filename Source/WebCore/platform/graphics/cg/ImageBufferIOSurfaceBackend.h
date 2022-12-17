@@ -44,7 +44,7 @@ public:
     static size_t calculateMemoryCost(const Parameters&);
     static size_t calculateExternalMemoryCost(const Parameters&);
     
-    static std::unique_ptr<ImageBufferIOSurfaceBackend> create(const Parameters&, const ImageBuffer::CreationContext&);
+    static std::unique_ptr<ImageBufferIOSurfaceBackend> create(const Parameters&, const ImageBufferCreationContext&);
     // FIXME: Rename to createUsingColorSpaceOfGraphicsContext() (or something like that).
     static std::unique_ptr<ImageBufferIOSurfaceBackend> create(const Parameters&, const GraphicsContext&);
 
@@ -76,6 +76,8 @@ protected:
     void setVolatilityState(VolatilityState) final;
 
     void ensureNativeImagesHaveCopiedBackingStore() final;
+
+    void transferToNewContext(const ImageBufferCreationContext&) final;
 
     static RetainPtr<CGColorSpaceRef> contextColorSpace(const GraphicsContext&);
     unsigned bytesPerRow() const override;

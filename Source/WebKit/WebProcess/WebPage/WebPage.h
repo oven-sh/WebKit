@@ -698,6 +698,9 @@ public:
 
     void setUseSystemAppearance(bool);
 
+    void setUseFormSemanticContext(bool);
+    void semanticContextDidChange(bool);
+
     void didEndMagnificationGesture();
 #endif
 
@@ -1593,6 +1596,9 @@ public:
     void updateImageAnimationEnabled();
 #endif
 
+    bool shouldSkipDecidePolicyForResponse(const WebCore::ResourceResponse&, const WebCore::ResourceRequest&) const;
+    void setSkipDecidePolicyForResponseIfPossible(bool value) { m_skipDecidePolicyForResponseIfPossible = value; }
+
 private:
     WebPage(WebCore::PageIdentifier, WebPageCreationParameters&&);
 
@@ -1646,6 +1652,10 @@ private:
     WebAutocorrectionContext autocorrectionContext();
     bool applyAutocorrectionInternal(const String& correction, const String& originalText);
     void clearSelectionAfterTapIfNeeded();
+#endif
+
+#if ENABLE(NETWORK_CONNECTION_INTEGRITY)
+    void updateLookalikeCharacterStringsIfNeeded();
 #endif
 
 #if ENABLE(META_VIEWPORT)
@@ -1702,7 +1712,7 @@ private:
     void tryClose(CompletionHandler<void(bool)>&&);
     void platformDidReceiveLoadParameters(const LoadParameters&);
     void loadRequest(LoadParameters&&);
-    NO_RETURN void loadRequestWaitingForProcessLaunch(LoadParameters&&, URL&&, WebPageProxyIdentifier, bool);
+    [[noreturn]] void loadRequestWaitingForProcessLaunch(LoadParameters&&, URL&&, WebPageProxyIdentifier, bool);
     void loadData(LoadParameters&&);
     void loadAlternateHTML(LoadParameters&&);
     void loadSimulatedRequestAndResponse(LoadParameters&&, WebCore::ResourceResponse&&);
@@ -1898,7 +1908,7 @@ private:
     void didCancelForOpenPanel();
 
 #if PLATFORM(IOS_FAMILY)
-    void didChooseFilesForOpenPanelWithDisplayStringAndIcon(const Vector<String>&, const String& displayString, const IPC::DataReference& iconData, WebKit::SandboxExtension::Handle&&, WebKit::SandboxExtension::Handle&&);
+    void didChooseFilesForOpenPanelWithDisplayStringAndIcon(const Vector<String>&, const String& displayString, const IPC::DataReference& iconData, WebKit::SandboxExtension::Handle&&, WebKit::SandboxExtension::Handle&&, WebKit::SandboxExtension::Handle&&);
     bool isTransparentOrFullyClipped(const WebCore::Element&) const;
 #endif
 
@@ -1909,7 +1919,7 @@ private:
     void didReceiveGeolocationPermissionDecision(GeolocationIdentifier, const String& authorizationToken);
 
 #if ENABLE(MEDIA_STREAM)
-    void userMediaAccessWasGranted(WebCore::UserMediaRequestIdentifier, WebCore::CaptureDevice&& audioDeviceUID, WebCore::CaptureDevice&& videoDeviceUID, WebCore::MediaDeviceHashSalts&& mediaDeviceIdentifierHashSalt, SandboxExtension::Handle&&, CompletionHandler<void()>&&);
+    void userMediaAccessWasGranted(WebCore::UserMediaRequestIdentifier, WebCore::CaptureDevice&& audioDeviceUID, WebCore::CaptureDevice&& videoDeviceUID, WebCore::MediaDeviceHashSalts&& mediaDeviceIdentifierHashSalt, Vector<SandboxExtension::Handle>&&, CompletionHandler<void()>&&);
     void userMediaAccessWasDenied(WebCore::UserMediaRequestIdentifier, uint64_t reason, String&& invalidConstraint);
 #endif
 
@@ -2171,7 +2181,7 @@ private:
     RefPtr<PageBanner> m_footerBanner;
 #endif
 
-    RunLoop::Timer<WebPage> m_setCanStartMediaTimer;
+    RunLoop::Timer m_setCanStartMediaTimer;
     bool m_mayStartMediaWhenInWindow { false };
 
     HashMap<WebUndoStepID, RefPtr<WebUndoStep>> m_undoStepMap;
@@ -2510,6 +2520,7 @@ private:
 
     bool m_didUpdateRenderingAfterCommittingLoad { false };
     bool m_isStoppingLoadingDueToProcessSwap { false };
+    bool m_skipDecidePolicyForResponseIfPossible { false };
 
 #if ENABLE(ARKIT_INLINE_PREVIEW)
     bool m_useARKitForModel { false };
@@ -2550,6 +2561,8 @@ private:
 
 #if ENABLE(NETWORK_CONNECTION_INTEGRITY)
     bool m_sanitizeLookalikeCharactersInLinksEnabled { false };
+    bool m_shouldUpdateLookalikeCharacterStrings { true };
+    HashSet<String> m_lookalikeCharacterStrings;
 #endif
 
 #if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)

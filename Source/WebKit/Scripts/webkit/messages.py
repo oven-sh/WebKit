@@ -146,21 +146,13 @@ def function_parameter_type(type, kind):
     return 'const %s&' % type
 
 
-def arguments_type(message):
-    return 'std::tuple<%s>' % ', '.join(function_parameter_type(parameter.type, parameter.kind) for parameter in message.parameters)
-
-
-def reply_arguments_type(message):
-    return 'std::tuple<%s>' % (', '.join(parameter.type for parameter in message.reply_parameters))
-
-
 def message_to_struct_declaration(receiver, message):
     result = []
     function_parameters = [(function_parameter_type(x.type, x.kind), x.name) for x in message.parameters]
 
     result.append('class %s {\n' % message.name)
     result.append('public:\n')
-    result.append('    using Arguments = %s;\n' % arguments_type(message))
+    result.append('    using Arguments = std::tuple<%s>;\n' % ', '.join([parameter.type for parameter in message.parameters]))
     result.append('\n')
     result.append('    static IPC::MessageName name() { return IPC::MessageName::%s_%s; }\n' % (receiver.name, message.name))
     result.append('    static constexpr bool isSync = %s;\n' % ('false', 'true')[message.reply_parameters is not None and message.has_attribute(SYNCHRONOUS_ATTRIBUTE)])
@@ -181,20 +173,20 @@ def message_to_struct_declaration(receiver, message):
             result.append('    static constexpr auto callbackThread = WTF::CompletionHandlerCallThread::MainThread;\n')
         else:
             result.append('    static constexpr auto callbackThread = WTF::CompletionHandlerCallThread::ConstructionThread;\n')
-        result.append('    using ReplyArguments = %s;\n' % reply_arguments_type(message))
+        result.append('    using ReplyArguments = std::tuple<%s>;\n' % ', '.join([parameter.type for parameter in message.reply_parameters]))
 
     if len(function_parameters):
         result.append('    %s%s(%s)' % (len(function_parameters) == 1 and 'explicit ' or '', message.name, ', '.join([' '.join(x) for x in function_parameters])))
         result.append('\n        : m_arguments(%s)\n' % ', '.join([x[1] for x in function_parameters]))
         result.append('    {\n')
         result.append('    }\n\n')
-    result.append('    const Arguments& arguments() const\n')
+    result.append('    const auto& arguments() const\n')
     result.append('    {\n')
     result.append('        return m_arguments;\n')
     result.append('    }\n')
     result.append('\n')
     result.append('private:\n')
-    result.append('    Arguments m_arguments;\n')
+    result.append('    std::tuple<%s> m_arguments;\n' % ', '.join([x[0] for x in function_parameters]))
     result.append('};\n')
     return surround_in_condition(''.join(result), message.condition)
 
@@ -260,6 +252,7 @@ def serialized_identifiers():
         'WebKit::GraphicsContextGLIdentifier',
         'WebKit::IPCConnectionTesterIdentifier',
         'WebKit::IPCStreamTesterIdentifier',
+        'WebKit::LegacyCustomProtocolID',
         'WebKit::LibWebRTCResolverIdentifier',
         'WebKit::MDNSRegisterIdentifier',
         'WebKit::MarkSurfacesAsVolatileRequestIdentifier',
@@ -278,9 +271,11 @@ def serialized_identifiers():
         'WebKit::RemoteLegacyCDMIdentifier',
         'WebKit::RemoteLegacyCDMSessionIdentifier',
         'WebKit::RemoteMediaResourceIdentifier',
+        'WebKit::RemoteSerializedImageBufferIdentifier',
         'WebKit::RemoteVideoFrameIdentifier',
         'WebKit::RemoteRemoteCommandListenerIdentifier',
         'WebKit::RenderingBackendIdentifier',
+        'WebKit::RenderingUpdateID',
         'WebKit::SampleBufferDisplayLayerIdentifier',
         'WebKit::StorageAreaIdentifier',
         'WebKit::StorageAreaImplIdentifier',
@@ -288,6 +283,7 @@ def serialized_identifiers():
         'WebKit::StorageNamespaceIdentifier',
         'WebKit::TapIdentifier',
         'WebKit::TrackPrivateRemoteIdentifier',
+        'WebKit::TransactionID',
         'WebKit::UserContentControllerIdentifier',
         'WebKit::VideoDecoderIdentifier',
         'WebKit::VideoEncoderIdentifier',
@@ -349,6 +345,8 @@ def types_that_cannot_be_forward_declared():
         'WebKit::RemoteSourceBufferIdentifier',
         'WebKit::RemoteVideoFrameWriteReference',
         'WebKit::RemoteVideoFrameReadReference',
+        'WebKit::RemoteSerializedImageBufferWriteReference',
+        'WebKit::RemoteSerializedImageBufferReadReference',
         'WebKit::RenderingUpdateID',
         'WebKit::TextCheckerRequestID',
         'WebKit::TransactionID',
@@ -769,6 +767,7 @@ def headers_for_type(type):
         'WebCore::UsedLegacyTLS': ['<WebCore/ResourceResponseBase.h>'],
         'WebCore::VideoPresetData': ['<WebCore/VideoPreset.h>'],
         'WebCore::ViewportAttributes': ['<WebCore/ViewportArguments.h>'],
+        'WebCore::WheelEventProcessingSteps': ['<WebCore/ScrollingCoordinatorTypes.h>'],
         'WebCore::WillContinueLoading': ['<WebCore/FrameLoaderTypes.h>'],
         'WebKit::ActivityStateChangeID': ['"DrawingAreaInfo.h"'],
         'WebKit::AllowOverwrite': ['"DownloadID.h"'],
@@ -796,6 +795,8 @@ def headers_for_type(type):
         'WebKit::RespectSelectionAnchor': ['"GestureTypes.h"'],
         'WebKit::RemoteVideoFrameReadReference': ['"RemoteVideoFrameIdentifier.h"'],
         'WebKit::RemoteVideoFrameWriteReference': ['"RemoteVideoFrameIdentifier.h"'],
+        'WebKit::RemoteSerializedImageBufferReadReference': ['"RemoteSerializedImageBufferIdentifier.h"'],
+        'WebKit::RemoteSerializedImageBufferWriteReference': ['"RemoteSerializedImageBufferIdentifier.h"'],
         'WebKit::SelectionFlags': ['"GestureTypes.h"'],
         'WebKit::SelectionTouch': ['"GestureTypes.h"'],
         'WebKit::TapIdentifier': ['"IdentifierTypes.h"'],

@@ -29,6 +29,8 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class _WKWebExtension;
+
 /*! @abstract Indicates a @link WKWebExtensionMatchPattern @/link error. */
 WK_EXTERN NSErrorDomain const _WKWebExtensionMatchPatternErrorDomain WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA));
 
@@ -66,10 +68,19 @@ typedef NS_OPTIONS(NSUInteger, _WKWebExtensionMatchPatternOptions) {
  consist of three parts: scheme, host, and path.
  */
 WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA))
+NS_SWIFT_NAME(_WKWebExtension.MatchPattern)
 @interface _WKWebExtensionMatchPattern : NSObject <NSSecureCoding, NSCopying>
 
 + (instancetype)new NS_UNAVAILABLE;
 - (instancetype)init NS_UNAVAILABLE;
+
+/*!
+ @abstract Registers a custom URL scheme that can be used in match patterns.
+ @discussion This method should be used to register any custom URL schemes used by the app for the extension base URLs,
+ other than `webkit-extension`, or if extensions should have access to other supported URL schemes when using `<all_urls>`.
+ @param urlScheme The custom URL scheme to register.
+*/
++ (void)registerCustomURLScheme:(NSString *)urlScheme;
 
 /*! @abstract Returns a pattern object for `<all_urls>`. */
 + (instancetype)allURLsMatchPattern;
@@ -131,7 +142,7 @@ WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA))
  @result A Boolean value indicating if pattern matches the specified URL.
  @seealso matchesURL:options:
  */
-- (BOOL)matchesURL:(NSURL *)url NS_SWIFT_NAME(matches(url:));
+- (BOOL)matchesURL:(NSURL *)url NS_SWIFT_UNAVAILABLE("Use options version with empty options set");
 
 /*!
  @abstract Matches the reciever pattern against the specified URL with options.
@@ -140,7 +151,7 @@ WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA))
  @result A Boolean value indicating if pattern matches the specified URL.
  @seealso matchesURL:
  */
-- (BOOL)matchesURL:(NSURL *)url options:(_WKWebExtensionMatchPatternOptions)options NS_SWIFT_NAME(matches(url:options:));
+- (BOOL)matchesURL:(NSURL *)url options:(_WKWebExtensionMatchPatternOptions)options NS_SWIFT_NAME(matches(_:options:));
 
 /*!
  @abstract Matches the receiver pattern against the specified pattern.
@@ -148,7 +159,7 @@ WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA))
  @result A Boolean value indicating if receiver pattern matches the specified pattern.
  @seealso matchesPattern:options:
  */
-- (BOOL)matchesPattern:(_WKWebExtensionMatchPattern *)pattern NS_SWIFT_NAME(matches(pattern:));
+- (BOOL)matchesPattern:(_WKWebExtensionMatchPattern *)pattern NS_SWIFT_UNAVAILABLE("Use options version with empty options set");
 
 /*!
  @abstract Matches the receiver pattern against the specified pattern with options.
@@ -157,7 +168,7 @@ WK_CLASS_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA))
  @result A Boolean value indicating if receiver pattern matches the specified pattern.
  @seealso matchesPattern:
  */
-- (BOOL)matchesPattern:(_WKWebExtensionMatchPattern *)pattern options:(_WKWebExtensionMatchPatternOptions)options NS_SWIFT_NAME(matches(pattern:options:));
+- (BOOL)matchesPattern:(_WKWebExtensionMatchPattern *)pattern options:(_WKWebExtensionMatchPatternOptions)options NS_SWIFT_NAME(matches(_:options:));
 
 @end
 

@@ -351,6 +351,7 @@ Page::Page(PageConfiguration&& pageConfiguration)
     , m_attachmentElementClient(WTFMove(pageConfiguration.attachmentElementClient))
 #endif
     , m_contentSecurityPolicyModeForExtension(WTFMove(pageConfiguration.contentSecurityPolicyModeForExtension))
+    , m_badgeClient(WTFMove(pageConfiguration.badgeClient))
 {
     updateTimerThrottlingState();
 
@@ -3444,7 +3445,7 @@ void Page::effectiveAppearanceDidChange(bool useDarkAppearance, bool useElevated
     m_useDarkAppearance = useDarkAppearance;
     m_useElevatedUserInterfaceLevel = useElevatedUserInterfaceLevel;
 
-    InspectorInstrumentation::defaultAppearanceDidChange(*this, useDarkAppearance);
+    InspectorInstrumentation::defaultAppearanceDidChange(*this);
 
     appearanceDidChange();
 #else

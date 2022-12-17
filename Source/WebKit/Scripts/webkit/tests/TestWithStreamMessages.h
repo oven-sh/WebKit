@@ -43,7 +43,7 @@ static inline IPC::ReceiverName messageReceiverName()
 
 class SendString {
 public:
-    using Arguments = std::tuple<const String&>;
+    using Arguments = std::tuple<String>;
 
     static IPC::MessageName name() { return IPC::MessageName::TestWithStream_SendString; }
     static constexpr bool isSync = false;
@@ -55,46 +55,72 @@ public:
     {
     }
 
-    const Arguments& arguments() const
+    const auto& arguments() const
     {
         return m_arguments;
     }
 
 private:
-    Arguments m_arguments;
+    std::tuple<const String&> m_arguments;
 };
 
-class SendStringSynchronized {
+class SendStringAsync {
 public:
-    using Arguments = std::tuple<const String&>;
+    using Arguments = std::tuple<String>;
 
-    static IPC::MessageName name() { return IPC::MessageName::TestWithStream_SendStringSynchronized; }
+    static IPC::MessageName name() { return IPC::MessageName::TestWithStream_SendStringAsync; }
     static constexpr bool isSync = false;
     static constexpr bool isStreamEncodable = true;
     static constexpr bool isReplyStreamEncodable = true;
     static constexpr bool isStreamBatched = false;
 
-    static IPC::MessageName asyncMessageReplyName() { return IPC::MessageName::TestWithStream_SendStringSynchronizedReply; }
+    static IPC::MessageName asyncMessageReplyName() { return IPC::MessageName::TestWithStream_SendStringAsyncReply; }
     static constexpr auto callbackThread = WTF::CompletionHandlerCallThread::ConstructionThread;
     using ReplyArguments = std::tuple<int64_t>;
-    explicit SendStringSynchronized(const String& url)
+    explicit SendStringAsync(const String& url)
         : m_arguments(url)
     {
     }
 
-    const Arguments& arguments() const
+    const auto& arguments() const
     {
         return m_arguments;
     }
 
 private:
-    Arguments m_arguments;
+    std::tuple<const String&> m_arguments;
+};
+
+class SendStringSync {
+public:
+    using Arguments = std::tuple<String>;
+
+    static IPC::MessageName name() { return IPC::MessageName::TestWithStream_SendStringSync; }
+    static constexpr bool isSync = true;
+    static constexpr bool isStreamEncodable = true;
+    static constexpr bool isReplyStreamEncodable = true;
+    static constexpr bool isStreamBatched = false;
+
+    static constexpr auto callbackThread = WTF::CompletionHandlerCallThread::ConstructionThread;
+    using ReplyArguments = std::tuple<int64_t>;
+    explicit SendStringSync(const String& url)
+        : m_arguments(url)
+    {
+    }
+
+    const auto& arguments() const
+    {
+        return m_arguments;
+    }
+
+private:
+    std::tuple<const String&> m_arguments;
 };
 
 #if PLATFORM(COCOA)
 class SendMachSendRight {
 public:
-    using Arguments = std::tuple<const MachSendRight&>;
+    using Arguments = std::tuple<MachSendRight>;
 
     static IPC::MessageName name() { return IPC::MessageName::TestWithStream_SendMachSendRight; }
     static constexpr bool isSync = false;
@@ -106,13 +132,13 @@ public:
     {
     }
 
-    const Arguments& arguments() const
+    const auto& arguments() const
     {
         return m_arguments;
     }
 
 private:
-    Arguments m_arguments;
+    std::tuple<const MachSendRight&> m_arguments;
 };
 #endif
 
@@ -122,36 +148,34 @@ public:
     using Arguments = std::tuple<>;
 
     static IPC::MessageName name() { return IPC::MessageName::TestWithStream_ReceiveMachSendRight; }
-    static constexpr bool isSync = false;
+    static constexpr bool isSync = true;
     static constexpr bool isStreamEncodable = true;
     static constexpr bool isReplyStreamEncodable = false;
     static constexpr bool isStreamBatched = false;
 
-    static IPC::MessageName asyncMessageReplyName() { return IPC::MessageName::TestWithStream_ReceiveMachSendRightReply; }
     static constexpr auto callbackThread = WTF::CompletionHandlerCallThread::ConstructionThread;
     using ReplyArguments = std::tuple<MachSendRight>;
-    const Arguments& arguments() const
+    const auto& arguments() const
     {
         return m_arguments;
     }
 
 private:
-    Arguments m_arguments;
+    std::tuple<> m_arguments;
 };
 #endif
 
 #if PLATFORM(COCOA)
 class SendAndReceiveMachSendRight {
 public:
-    using Arguments = std::tuple<const MachSendRight&>;
+    using Arguments = std::tuple<MachSendRight>;
 
     static IPC::MessageName name() { return IPC::MessageName::TestWithStream_SendAndReceiveMachSendRight; }
-    static constexpr bool isSync = false;
+    static constexpr bool isSync = true;
     static constexpr bool isStreamEncodable = false;
     static constexpr bool isReplyStreamEncodable = false;
     static constexpr bool isStreamBatched = false;
 
-    static IPC::MessageName asyncMessageReplyName() { return IPC::MessageName::TestWithStream_SendAndReceiveMachSendRightReply; }
     static constexpr auto callbackThread = WTF::CompletionHandlerCallThread::ConstructionThread;
     using ReplyArguments = std::tuple<MachSendRight>;
     explicit SendAndReceiveMachSendRight(const MachSendRight& a1)
@@ -159,13 +183,13 @@ public:
     {
     }
 
-    const Arguments& arguments() const
+    const auto& arguments() const
     {
         return m_arguments;
     }
 
 private:
-    Arguments m_arguments;
+    std::tuple<const MachSendRight&> m_arguments;
 };
 #endif
 

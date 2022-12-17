@@ -189,7 +189,7 @@ public:
     static bool hasReachedProcessCountLimit();
     static void setProcessCountLimit(unsigned);
 
-    static WebProcessProxy* processForIdentifier(WebCore::ProcessIdentifier);
+    static RefPtr<WebProcessProxy> processForIdentifier(WebCore::ProcessIdentifier);
     static RefPtr<WebPageProxy> webPage(WebPageProxyIdentifier);
     static RefPtr<WebPageProxy> audioCapturingWebPage();
     Ref<WebPageProxy> createWebPage(PageClient&, Ref<API::PageConfiguration>&&);
@@ -452,12 +452,15 @@ public:
 #endif
     void getNotifications(const URL&, const String&, CompletionHandler<void(Vector<WebCore::NotificationData>&&)>&&);
 
+    void setAppBadge(std::optional<WebPageProxyIdentifier>, const WebCore::SecurityOriginData&, std::optional<uint64_t> badge);
+    void setClientBadge(WebPageProxyIdentifier, const WebCore::SecurityOriginData&, std::optional<uint64_t> badge);
+
     WebCore::CrossOriginMode crossOriginMode() const { return m_crossOriginMode; }
     LockdownMode lockdownMode() const { return m_lockdownMode; }
 
 #if PLATFORM(COCOA)
     std::optional<audit_token_t> auditToken() const;
-    SandboxExtension::Handle fontdMachExtensionHandle(SandboxExtension::MachBootstrapOptions) const;
+    Vector<SandboxExtension::Handle> fontdMachExtensionHandles(SandboxExtension::MachBootstrapOptions) const;
 #endif
 
     bool isConnectedToHardwareConsole() const { return m_isConnectedToHardwareConsole; }
@@ -502,7 +505,9 @@ protected:
 #endif
 
 private:
-    static HashMap<WebCore::ProcessIdentifier, WebProcessProxy*>& allProcesses();
+    using WebProcessProxyMap = HashMap<WebCore::ProcessIdentifier, WeakPtr<WebProcessProxy>>;
+    static WebProcessProxyMap& allProcessMap();
+    static Vector<RefPtr<WebProcessProxy>> allProcesses();
 
     void platformInitialize();
     void platformDestroy();

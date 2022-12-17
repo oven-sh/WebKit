@@ -28,6 +28,11 @@
 
 #pragma once
 
+#include "FetchOptionsCache.h"
+#include "FetchOptionsCredentials.h"
+#include "FetchOptionsDestination.h"
+#include "FetchOptionsMode.h"
+#include "FetchOptionsRedirect.h"
 #include "ProcessQualified.h"
 #include "ReferrerPolicy.h"
 #include "ScriptExecutionContextIdentifier.h"
@@ -37,11 +42,11 @@
 namespace WebCore {
 
 struct FetchOptions {
-    enum class Destination : uint8_t { EmptyString, Audio, Audioworklet, Document, Embed, Font, Image, Iframe, Manifest, Model, Object, Paintworklet, Report, Script, Serviceworker, Sharedworker, Style, Track, Video, Worker, Xslt };
-    enum class Mode : uint8_t { Navigate, SameOrigin, NoCors, Cors };
-    enum class Credentials : uint8_t { Omit, SameOrigin, Include };
-    enum class Cache : uint8_t { Default, NoStore, Reload, NoCache, ForceCache, OnlyIfCached };
-    enum class Redirect : uint8_t { Follow, Error, Manual };
+    using Destination = FetchOptionsDestination;
+    using Mode = FetchOptionsMode;
+    using Credentials = FetchOptionsCredentials;
+    using Cache = FetchOptionsCache;
+    using Redirect = FetchOptionsRedirect;
 
     FetchOptions() = default;
     FetchOptions(Destination, Mode, Credentials, Cache, Redirect, ReferrerPolicy, String&&, bool, std::optional<ScriptExecutionContextIdentifier>);
@@ -50,8 +55,6 @@ struct FetchOptions {
 
     template<class Encoder> void encodePersistent(Encoder&) const;
     template<class Decoder> static WARN_UNUSED_RETURN bool decodePersistent(Decoder&, FetchOptions&);
-    template<class Encoder> void encode(Encoder&) const;
-    template<class Decoder> static std::optional<FetchOptions> decode(Decoder&);
 
     Destination destination { Destination::EmptyString };
     Mode mode { Mode::NoCors };
@@ -117,7 +120,7 @@ inline bool isScriptLikeDestination(FetchOptions::Destination destination)
 
 namespace WTF {
 
-template<> struct EnumTraits<WebCore::FetchOptions::Destination> {
+template<> struct EnumTraitsForPersistence<WebCore::FetchOptions::Destination> {
     using values = EnumValues<
         WebCore::FetchOptions::Destination,
         WebCore::FetchOptions::Destination::EmptyString,
@@ -144,7 +147,7 @@ template<> struct EnumTraits<WebCore::FetchOptions::Destination> {
     >;
 };
 
-template<> struct EnumTraits<WebCore::FetchOptions::Mode> {
+template<> struct EnumTraitsForPersistence<WebCore::FetchOptions::Mode> {
     using values = EnumValues<
         WebCore::FetchOptions::Mode,
         WebCore::FetchOptions::Mode::Navigate,
@@ -154,7 +157,8 @@ template<> struct EnumTraits<WebCore::FetchOptions::Mode> {
     >;
 };
 
-template<> struct EnumTraits<WebCore::FetchOptions::Credentials> {
+
+template<> struct EnumTraitsForPersistence<WebCore::FetchOptions::Credentials> {
     using values = EnumValues<
         WebCore::FetchOptions::Credentials,
         WebCore::FetchOptions::Credentials::Omit,
@@ -163,7 +167,7 @@ template<> struct EnumTraits<WebCore::FetchOptions::Credentials> {
     >;
 };
 
-template<> struct EnumTraits<WebCore::FetchOptions::Cache> {
+template<> struct EnumTraitsForPersistence<WebCore::FetchOptions::Cache> {
     using values = EnumValues<
         WebCore::FetchOptions::Cache,
         WebCore::FetchOptions::Cache::Default,
@@ -175,7 +179,7 @@ template<> struct EnumTraits<WebCore::FetchOptions::Cache> {
     >;
 };
 
-template<> struct EnumTraits<WebCore::FetchOptions::Redirect> {
+template<> struct EnumTraitsForPersistence<WebCore::FetchOptions::Redirect> {
     using values = EnumValues<
         WebCore::FetchOptions::Redirect,
         WebCore::FetchOptions::Redirect::Follow,
@@ -255,29 +259,6 @@ inline bool FetchOptions::decodePersistent(Decoder& decoder, FetchOptions& optio
     options.keepAlive = *keepAlive;
 
     return true;
-}
-
-template<class Encoder>
-inline void FetchOptions::encode(Encoder& encoder) const
-{
-    encodePersistent(encoder);
-    encoder << clientIdentifier;
-}
-
-template<class Decoder>
-inline std::optional<FetchOptions> FetchOptions::decode(Decoder& decoder)
-{
-    FetchOptions options;
-    if (!decodePersistent(decoder, options))
-        return std::nullopt;
-
-    std::optional<std::optional<ScriptExecutionContextIdentifier>> clientIdentifier;
-    decoder >> clientIdentifier;
-    if (!clientIdentifier)
-        return std::nullopt;
-    options.clientIdentifier = WTFMove(clientIdentifier.value());
-
-    return options;
 }
 
 } // namespace WebCore

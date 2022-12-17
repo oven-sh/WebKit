@@ -543,7 +543,7 @@ public:
     void resourceLoadDidReceiveResponse(ResourceLoadInfo&&, WebCore::ResourceResponse&&);
     void resourceLoadDidCompleteWithError(ResourceLoadInfo&&, WebCore::ResourceResponse&&, WebCore::ResourceError&&);
 
-    void didChangeInspectorFrontendCount(unsigned count) { m_inspectorFrontendCount = count; }
+    void didChangeInspectorFrontendCount(uint32_t count) { m_inspectorFrontendCount = count; }
     unsigned inspectorFrontendCount() const { return m_inspectorFrontendCount; }
     bool hasInspectorFrontend() const { return m_inspectorFrontendCount > 0; }
 
@@ -857,6 +857,8 @@ public:
     void scrollingNodeScrollWillStartScroll(WebCore::ScrollingNodeID);
     void scrollingNodeScrollDidEndScroll(WebCore::ScrollingNodeID);
 
+    WebCore::FloatSize overrideScreenSize();
+
     void dynamicViewportSizeUpdate(const WebCore::FloatSize& viewLayoutSize, const WebCore::FloatSize& minimumUnobscuredSize, const WebCore::FloatSize& maximumUnobscuredSize, const WebCore::FloatRect& targetExposedContentRect, const WebCore::FloatRect& targetUnobscuredRect, const WebCore::FloatRect& targetUnobscuredRectInScrollViewCoordinates, const WebCore::FloatBoxExtent& unobscuredSafeAreaInsets, double targetScale, int32_t deviceOrientation, double minimumEffectiveDeviceWidth, DynamicViewportSizeUpdateID);
 
     void setViewportConfigurationViewLayoutSize(const WebCore::FloatSize&, double scaleFactor, double minimumEffectiveDeviceWidth);
@@ -1053,6 +1055,7 @@ public:
 
     bool isProcessingWheelEvents() const;
     void handleWheelEvent(const NativeWebWheelEvent&);
+    void startMonitoringWheelEventsForTesting();
 
     bool isProcessingKeyboardEvents() const;
     bool handleKeyboardEvent(const NativeWebKeyboardEvent&);
@@ -1206,6 +1209,9 @@ public:
 #if PLATFORM(MAC)
     void setUseSystemAppearance(bool);
     bool useSystemAppearance() const { return m_useSystemAppearance; }
+
+    bool useFormSemanticContext() const;
+    void semanticContextDidChange();
 
     WebCore::DestinationColorSpace colorSpace();
 #endif
@@ -2525,7 +2531,6 @@ private:
 #if PLATFORM(IOS_FAMILY)
     WebCore::FloatSize screenSize();
     WebCore::FloatSize availableScreenSize();
-    WebCore::FloatSize overrideScreenSize();
     float textAutosizingWidth();
 
     void couldNotRestorePageState();
@@ -2899,7 +2904,7 @@ private:
     std::unique_ptr<ProcessThrottler::ForegroundActivity> m_isVisibleActivity;
     std::unique_ptr<ProcessThrottler::ForegroundActivity> m_isAudibleActivity;
     std::unique_ptr<ProcessThrottler::ForegroundActivity> m_isCapturingActivity;
-    RunLoop::Timer<WebPageProxy> m_audibleActivityTimer;
+    RunLoop::Timer m_audibleActivityTimer;
     std::unique_ptr<ProcessThrottler::BackgroundActivity> m_openingAppLinkActivity;
 #endif
     bool m_initialCapitalizationEnabled { false };
@@ -3167,7 +3172,7 @@ private:
 
     // To make sure capture indicators are visible long enough, m_reportedMediaCaptureState is the same as m_mediaState except that we might delay a bit transition from capturing to not-capturing.
     WebCore::MediaProducerMediaStateFlags m_reportedMediaCaptureState;
-    RunLoop::Timer<WebPageProxy> m_updateReportedMediaCaptureStateTimer;
+    RunLoop::Timer m_updateReportedMediaCaptureStateTimer;
     static constexpr Seconds DefaultMediaCaptureReportingDelay { 3_s };
     Seconds m_mediaCaptureReportingDelay { DefaultMediaCaptureReportingDelay };
 
@@ -3227,7 +3232,7 @@ private:
     std::optional<MonotonicTime> m_pageLoadStart;
     HashSet<String> m_previouslyVisitedPaths;
 
-    RunLoop::Timer<WebPageProxy> m_resetRecentCrashCountTimer;
+    RunLoop::Timer m_resetRecentCrashCountTimer;
     unsigned m_recentCrashCount { 0 };
 
     bool m_needsFontAttributes { false };
@@ -3238,7 +3243,7 @@ private:
     CompletionHandler<void(std::optional<WebCore::PageIdentifier>)> m_serviceWorkerOpenWindowCompletionCallback;
 #endif
 
-    RunLoop::Timer<WebPageProxy> m_tryCloseTimeoutTimer;
+    RunLoop::Timer m_tryCloseTimeoutTimer;
 
     std::unique_ptr<ProvisionalPageProxy> m_provisionalPage;
     std::unique_ptr<SuspendedPageProxy> m_suspendedPageKeptToPreventFlashing;
@@ -3342,7 +3347,7 @@ private:
 
 #if ENABLE(VIDEO_PRESENTATION_MODE)
     std::optional<PlaybackSessionContextIdentifier> m_currentFullscreenVideoSessionIdentifier;
-    RunLoop::Timer<WebPageProxy> m_fullscreenVideoTextRecognitionTimer;
+    RunLoop::Timer m_fullscreenVideoTextRecognitionTimer;
 #endif
     bool m_isPerformingTextRecognitionInElementFullScreen { false };
 };

@@ -218,7 +218,7 @@ wasmOp(i32_div_s, WasmI32DivS, macro (ctx)
     bieq a0, constexpr INT32_MIN, .throwIntegerOverflow
 
 .safe:
-    callDivRem(_slow_path_wasm_i32_div_s)
+    callDivRem(_i32_div_s)
     returni(ctx, r0)
 
 .throwDivisionByZero:
@@ -234,7 +234,7 @@ wasmOp(i32_div_u, WasmI32DivU, macro (ctx)
 
     btiz a1, .throwDivisionByZero
 
-    callDivRem(_slow_path_wasm_i32_div_u)
+    callDivRem(_i32_div_u)
     returni(ctx, r0)
 
 .throwDivisionByZero:
@@ -254,7 +254,7 @@ wasmOp(i32_rem_s, WasmI32RemS, macro (ctx)
     jmp .return
 
 .safe:
-    callDivRem(_slow_path_wasm_i32_rem_s)
+    callDivRem(_i32_rem_s)
 
 .return:
     returni(ctx, r0)
@@ -269,7 +269,7 @@ wasmOp(i32_rem_u, WasmI32RemU, macro (ctx)
 
     btiz a1, .throwDivisionByZero
 
-    callDivRem(_slow_path_wasm_i32_rem_u)
+    callDivRem(_i32_rem_u)
     returni(ctx, r0)
 
 .throwDivisionByZero:
@@ -319,7 +319,7 @@ wasmOp(i64_div_s, WasmI64DivS, macro (ctx)
     btiz a0, .throwIntegerOverflow
 
 .safe:
-    callDivRem(_slow_path_wasm_i64_div_s)
+    callDivRem(_i64_div_s)
     return2i(ctx, r1, r0)
 
 .throwDivisionByZero:
@@ -337,7 +337,7 @@ wasmOp(i64_div_u, WasmI64DivU, macro (ctx)
     btiz a2, .throwDivisionByZero
 
 .nonZeroDivisor:
-    callDivRem(_slow_path_wasm_i64_div_u)
+    callDivRem(_i64_div_u)
     return2i(ctx, r1, r0)
 
 .throwDivisionByZero:
@@ -362,7 +362,7 @@ wasmOp(i64_rem_s, WasmI64RemS, macro (ctx)
     jmp .return
 
 .safe:
-    callDivRem(_slow_path_wasm_i64_rem_s)
+    callDivRem(_i64_rem_s)
 
 .return:
     return2i(ctx, r1, r0)
@@ -379,7 +379,7 @@ wasmOp(i64_rem_u, WasmI64RemU, macro (ctx)
     btiz a2, .throwDivisionByZero
 
 .nonZeroDivisor:
-    callDivRem(_slow_path_wasm_i64_rem_u)
+    callDivRem(_i64_rem_u)
     return2i(ctx, r1, r0)
 
 .throwDivisionByZero:
@@ -1140,20 +1140,14 @@ wasmOp(i31_new, WasmI31New, macro(ctx)
     return2i(ctx, t1, t0)
 end)
 
-wasmOp(i31_get_s, WasmI31GetS, macro(ctx)
+wasmOp(i31_get, WasmI31Get, macro(ctx)
     mload2i(ctx, m_ref, t1, t0)
     bieq t1, NullTag, .throw
+    wgetu(ctx, m_isSigned, t1)
+    btiz t1, .unsigned
     lshifti 0x1, t0
     rshifti 0x1, t0
-    returni(ctx, t0)
-
-.throw:
-    throwException(NullI31Get)
-end)
-
-wasmOp(i31_get_u, WasmI31GetU, macro(ctx)
-    mload2i(ctx, m_ref, t1, t0)
-    bieq t1, NullTag, .throw
+.unsigned:
     returni(ctx, t0)
 
 .throw:

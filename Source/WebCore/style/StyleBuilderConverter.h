@@ -89,7 +89,6 @@ public:
     template<typename T> static T convertNumber(BuilderState&, const CSSValue&);
     template<typename T> static T convertNumberOrAuto(BuilderState&, const CSSValue&);
     static short convertWebkitHyphenateLimitLines(BuilderState&, const CSSValue&);
-    template<CSSPropertyID> static NinePieceImage convertBorderMask(BuilderState&, CSSValue&);
     template<CSSPropertyID> static RefPtr<StyleImage> convertStyleImage(BuilderState&, CSSValue&);
     static ImageOrientation convertImageOrientation(BuilderState&, const CSSValue&);
     static TransformOperations convertTransform(BuilderState&, const CSSValue&);
@@ -182,6 +181,8 @@ public:
 
     static OffsetRotation convertOffsetRotate(BuilderState&, const CSSValue&);
     static Vector<AtomString> convertContainerName(BuilderState&, const CSSValue&);
+
+    static OptionSet<MarginTrimType> convertMarginTrim(BuilderState&, const CSSValue&);
     
 private:
     friend class BuilderCustom;
@@ -471,14 +472,6 @@ inline short BuilderConverter::convertWebkitHyphenateLimitLines(BuilderState&, c
     return primitiveValue.value<short>(CSSUnitType::CSS_NUMBER);
 }
 
-template<CSSPropertyID property>
-inline NinePieceImage BuilderConverter::convertBorderMask(BuilderState& builderState, CSSValue& value)
-{
-    NinePieceImage image(NinePieceImage::Type::Mask);
-    builderState.styleMap().mapNinePieceImage(&value, image);
-    return image;
-}
-
 template<CSSPropertyID>
 inline RefPtr<StyleImage> BuilderConverter::convertStyleImage(BuilderState& builderState, CSSValue& value)
 {
@@ -495,9 +488,10 @@ inline ImageOrientation BuilderConverter::convertImageOrientation(BuilderState&,
 
 inline TransformOperations BuilderConverter::convertTransform(BuilderState& builderState, const CSSValue& value)
 {
-    TransformOperations operations;
-    transformsForValue(value, builderState.cssToLengthConversionData(), operations);
-    return operations;
+    auto operations = transformsForValue(value, builderState.cssToLengthConversionData());
+    if (!operations)
+        return TransformOperations { };
+    return *operations;
 }
 
 inline RefPtr<TranslateTransformOperation> BuilderConverter::convertTranslate(BuilderState& builderState, const CSSValue& value)
@@ -1208,21 +1202,30 @@ inline void BuilderConverter::createImplicitNamedGridLinesFromGridArea(const Nam
 
 inline Vector<GridTrackSize> BuilderConverter::convertGridTrackSizeList(BuilderState& builderState, const CSSValue& value)
 {
-    if (is<CSSPrimitiveValue>(value)) {
-        ASSERT(downcast<CSSPrimitiveValue>(value).isValueID() && downcast<CSSPrimitiveValue>(value).valueID() == CSSValueAuto);
-        return RenderStyle::initialGridAutoRows();
+    auto validateValueAndAppend = [&builderState](Vector<GridTrackSize>& trackSizes, const CSSValue& value) {
+        ASSERT(!value.isGridLineNamesValue());
+        ASSERT(!value.isGridAutoRepeatValue());
+        ASSERT(!value.isGridIntegerRepeatValue());
+        trackSizes.uncheckedAppend(convertGridTrackSize(builderState, value));
+    };
+
+    if (auto* primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value)) {
+        if (primitiveValue->isValueID()) {
+            ASSERT(primitiveValue->valueID() == CSSValueAuto);
+            return RenderStyle::initialGridAutoRows();
+        }
+        // Values coming from CSS Typed OM may not have been converted to a CSSValueList yet.
+        Vector<GridTrackSize> trackSizes;
+        trackSizes.reserveInitialCapacity(1);
+        validateValueAndAppend(trackSizes, *primitiveValue);
+        return trackSizes;
     }
 
-    ASSERT(value.isValueList());
     auto& valueList = downcast<CSSValueList>(value);
     Vector<GridTrackSize> trackSizes;
     trackSizes.reserveInitialCapacity(valueList.length());
-    for (auto& currValue : valueList) {
-        ASSERT(!currValue->isGridLineNamesValue());
-        ASSERT(!currValue->isGridAutoRepeatValue());
-        ASSERT(!currValue->isGridIntegerRepeatValue());
-        trackSizes.uncheckedAppend(convertGridTrackSize(builderState, currValue));
-    }
+    for (auto& currentValue : valueList)
+        validateValueAndAppend(trackSizes, currentValue);
     return trackSizes;
 }
 
@@ -1740,15 +1743,27 @@ inline GapLength BuilderConverter::convertGapLength(BuilderState& builderState, 
 
 inline OffsetRotation BuilderConverter::convertOffsetRotate(BuilderState&, const CSSValue& value)
 {
+    RefPtr<const CSSPrimitiveValue> modifierValue;
+    RefPtr<const CSSPrimitiveValue> angleValue;
+
+    if (auto* offsetRotateValue = dynamicDowncast<CSSOffsetRotateValue>(value)) {
+        modifierValue = offsetRotateValue->modifier();
+        angleValue = offsetRotateValue->angle();
+    } else if (auto* primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value)) {
+        // Values coming from CSSTypedOM didn't go through the parser and may not have been converted to a CSSOffsetRotateValue.
+        if (primitiveValue->valueID() == CSSValueAuto || primitiveValue->valueID() == CSSValueReverse)
+            modifierValue = primitiveValue;
+        else if (primitiveValue->isAngle())
+            angleValue = primitiveValue;
+    }
+
     bool hasAuto = false;
     float angleInDegrees = 0;
 
-    const auto& offsetRotateValue = downcast<CSSOffsetRotateValue>(value);
-
-    if (auto* angleValue = offsetRotateValue.angle())
+    if (angleValue)
         angleInDegrees = static_cast<float>(angleValue->computeDegrees());
 
-    if (auto* modifierValue = offsetRotateValue.modifier()) {
+    if (modifierValue) {
         switch (modifierValue->valueID()) {
         case CSSValueAuto:
             hasAuto = true;
@@ -1777,6 +1792,34 @@ inline Vector<AtomString> BuilderConverter::convertContainerName(BuilderState&, 
     return WTF::map(downcast<CSSValueList>(value), [](auto& item) {
         return AtomString { downcast<CSSPrimitiveValue>(item.get()).stringValue() };
     });
+}
+
+inline OptionSet<MarginTrimType> BuilderConverter::convertMarginTrim(BuilderState&, const CSSValue& value)
+{
+    // See if value is "block" or "inline" before trying to parse a list
+    if (auto* primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value)) {
+        if (primitiveValue->valueID() == CSSValueBlock)
+            return { MarginTrimType::BlockStart, MarginTrimType::BlockEnd };
+        if (primitiveValue->valueID() == CSSValueInline)
+            return { MarginTrimType::InlineStart, MarginTrimType::InlineEnd };
+    }
+    auto list = dynamicDowncast<CSSValueList>(value);
+    if (!list || !list->size())
+        return RenderStyle::initialMarginTrim();
+    OptionSet<MarginTrimType> marginTrim;
+    ASSERT(list->size() <= 4);
+    for (auto item : *list) {
+        auto& primitiveValue = downcast<CSSPrimitiveValue>(item.get());
+        if (primitiveValue.valueID() == CSSValueBlockStart)
+            marginTrim.add(MarginTrimType::BlockStart);
+        if (primitiveValue.valueID() == CSSValueBlockEnd)
+            marginTrim.add(MarginTrimType::BlockEnd);
+        if (primitiveValue.valueID() == CSSValueInlineStart)
+            marginTrim.add(MarginTrimType::InlineStart);
+        if (primitiveValue.valueID() == CSSValueInlineEnd)
+            marginTrim.add(MarginTrimType::InlineEnd);
+    }
+    return marginTrim;
 }
 
 } // namespace Style

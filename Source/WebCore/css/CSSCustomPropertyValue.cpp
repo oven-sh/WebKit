@@ -27,9 +27,13 @@
 #include "CSSCustomPropertyValue.h"
 
 #include "CSSCalcValue.h"
+#include "CSSFunctionValue.h"
+#include "CSSMarkup.h"
 #include "CSSParserIdioms.h"
 #include "CSSTokenizer.h"
 #include "ColorSerialization.h"
+#include "ComputedStyleExtractor.h"
+#include "RenderStyle.h"
 
 namespace WebCore {
 
@@ -58,6 +62,8 @@ bool CSSCustomPropertyValue::equals(const CSSCustomPropertyValue& other) const
         return value.get() == std::get<Ref<CSSVariableData>>(other.m_value).get();
     }, [&](const SyntaxValue& value) {
         return value == std::get<SyntaxValue>(other.m_value);
+    }, [&](const SyntaxValueList& value) {
+        return value == std::get<SyntaxValueList>(other.m_value);
     });
 }
 
@@ -73,8 +79,15 @@ String CSSCustomPropertyValue::customCSSText() const
         }, [&](const RefPtr<StyleImage>& value) {
             // FIXME: This is not right for gradients that use `currentcolor`. There should be a way preserve it.
             return value->computedStyleValue(RenderStyle::defaultStyle())->cssText();
+        }, [&](const URL& value) {
+            return serializeURL(value.string());
         }, [&](const String& value) {
-            return serializeURL(value);
+            return value;
+        }, [&](const RefPtr<TransformOperation>& value) {
+            auto cssValue = transformOperationAsCSSValue(*value, RenderStyle::defaultStyle());
+            if (!cssValue)
+                return emptyString();
+            return cssValue->cssText();
         });
     };
 
@@ -89,6 +102,15 @@ String CSSCustomPropertyValue::customCSSText() const
             m_stringValue = value->tokenRange().serialize();
         }, [&](const SyntaxValue& syntaxValue) {
             m_stringValue = serializeSyntaxValue(syntaxValue);
+        }, [&](const SyntaxValueList& syntaxValueList) {
+            StringBuilder builder;
+            auto separator = separatorCSSText(syntaxValueList.separator);
+            for (auto& syntaxValue : syntaxValueList.values) {
+                if (!builder.isEmpty())
+                    builder.append(separator);
+                builder.append(serializeSyntaxValue(syntaxValue));
+            }
+            m_stringValue = builder.toString();
         });
     }
     return m_stringValue;
@@ -112,6 +134,20 @@ Vector<CSSParserToken> CSSCustomPropertyValue::tokens() const
             result.append(tokenizerRange.consume());
     });
     return result;
+}
+
+bool CSSCustomPropertyValue::containsCSSWideKeyword() const
+{
+    return WTF::switchOn(m_value, [&](const CSSValueID& valueID) {
+        return WebCore::isCSSWideKeyword(valueID);
+    }, [&](const Ref<CSSVariableData>& value) {
+        auto range = CSSParserTokenRange { value->tokens() };
+        range.consumeWhitespace();
+        auto token = range.consumeIncludingWhitespace();
+        return range.atEnd() && token.type() == IdentToken && WebCore::isCSSWideKeyword(token.id());
+    }, [&](auto&) {
+        return false;
+    });
 }
 
 }

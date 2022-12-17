@@ -2120,6 +2120,9 @@ bool WebsiteDataStore::shouldMakeNextNetworkProcessLaunchFailForTesting()
 
 void WebsiteDataStore::showServiceWorkerNotification(IPC::Connection& connection, const WebCore::NotificationData& notificationData)
 {
+    if (m_client->showNotification(notificationData))
+        return;
+
     WebNotificationManagerProxy::sharedServiceWorkerManager().show(nullptr, connection, notificationData, nullptr);
 }
 
@@ -2159,6 +2162,11 @@ void WebsiteDataStore::openWindowFromServiceWorker(const String& urlString, cons
     };
 
     m_client->openWindowFromServiceWorker(urlString, serviceWorkerOrigin, WTFMove(innerCallback));
+}
+
+void WebsiteDataStore::workerUpdatedAppBadge(const WebCore::SecurityOriginData& origin, std::optional<uint64_t> badge)
+{
+    m_client->workerUpdatedAppBadge(origin, badge);
 }
 
 #if ENABLE(INSPECTOR_NETWORK_THROTTLING)

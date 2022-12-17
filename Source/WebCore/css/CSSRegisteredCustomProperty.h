@@ -25,7 +25,8 @@
 
 #pragma once
 
-#include <wtf/text/WTFString.h>
+#include "CSSCustomPropertySyntax.h"
+#include <wtf/text/AtomString.h>
 
 namespace WebCore {
 
@@ -34,11 +35,11 @@ class CSSCustomPropertyValue;
 struct CSSRegisteredCustomProperty {
     WTF_MAKE_STRUCT_FAST_ALLOCATED;
 
-    const String name;
-    const String syntax;
+    const AtomString name;
+    const CSSCustomPropertySyntax syntax;
     const bool inherits;
 
-    CSSRegisteredCustomProperty(const String& name, const String& syntax, bool inherits, RefPtr<CSSCustomPropertyValue>&& initialValue);
+    CSSRegisteredCustomProperty(const AtomString& name, const CSSCustomPropertySyntax&, bool inherits, RefPtr<CSSCustomPropertyValue>&& initialValue);
 
     const CSSCustomPropertyValue* initialValue() const { return m_initialValue.get(); }
     RefPtr<CSSCustomPropertyValue> initialValueCopy() const;
@@ -46,7 +47,5 @@ struct CSSRegisteredCustomProperty {
 private:
     const RefPtr<CSSCustomPropertyValue> m_initialValue;
 };
-
-using CSSRegisteredCustomPropertySet = HashMap<String, std::unique_ptr<CSSRegisteredCustomProperty>>;
 
 }
