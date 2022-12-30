@@ -31,6 +31,7 @@
 #include "CSSPropertyParser.h"
 #include "CSSRegisteredCustomProperty.h"
 #include "CSSTokenizer.h"
+#include "CustomPropertyRegistry.h"
 #include "DOMCSSNamespace.h"
 #include "Document.h"
 #include "StyleBuilder.h"
@@ -65,25 +66,25 @@ ExceptionOr<void> DOMCSSRegisterCustomProperty::registerProperty(Document& docum
         if (!dependencies.isEmpty())
             return Exception { SyntaxError, "The given initial value must be computationally independent."_s };
 
-        Style::MatchResult matchResult;
-
         auto parentStyle = RenderStyle::clone(*style);
-        Style::Builder dummyBuilder(*style, { document, parentStyle }, matchResult, { });
+        Style::Builder dummyBuilder(*style, { document, parentStyle }, { }, { });
 
-        initialValue = CSSPropertyParser::parseTypedCustomPropertyValue(descriptor.name, *syntax, tokenizer.tokenRange(), dummyBuilder.state(), { document });
+        initialValue = CSSPropertyParser::parseTypedCustomPropertyInitialValue(descriptor.name, *syntax, tokenizer.tokenRange(), dummyBuilder.state(), { document });
 
-        if (!initialValue || !initialValue->isResolved())
+        if (!initialValue)
             return Exception { SyntaxError, "The given initial value does not parse for the given syntax."_s };
-
-        if (initialValue->containsCSSWideKeyword())
-            return Exception { SyntaxError, "The intitial value cannot be a CSS-wide keyword."_s };
     }
 
-    CSSRegisteredCustomProperty property { AtomString { descriptor.name }, *syntax, descriptor.inherits, WTFMove(initialValue) };
-    if (!document.registerCSSCustomProperty(WTFMove(property)))
-        return Exception { InvalidModificationError, "This property has already been registered."_s };
+    auto property = CSSRegisteredCustomProperty {
+        descriptor.name,
+        *syntax,
+        descriptor.inherits,
+        WTFMove(initialValue)
+    };
 
-    document.styleScope().didChangeStyleSheetEnvironment();
+    auto& registry = document.styleScope().customPropertyRegistry();
+    if (!registry.registerFromAPI(WTFMove(property)))
+        return Exception { InvalidModificationError, "This property has already been registered."_s };
 
     return { };
 }

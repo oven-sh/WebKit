@@ -79,17 +79,17 @@ public:
     // see https://drafts.csswg.org/css-text-3/#line-break-details
     struct ContinuousContent {
         InlineLayoutUnit logicalWidth() const { return m_logicalWidth; }
-        std::optional<InlineLayoutUnit> leadingTrimmableWidth() const { return m_leadingTrimmableWidth; }
-        std::optional<InlineLayoutUnit> trailingTrimmableWidth() const { return m_trailingTrimmableWidth; }
-        std::optional<InlineLayoutUnit> hangingContentWidth() const { return m_trailingHangingContentWidth; }
+        InlineLayoutUnit leadingTrimmableWidth() const { return m_leadingTrimmableWidth; }
+        InlineLayoutUnit trailingTrimmableWidth() const { return m_trailingTrimmableWidth; }
+        InlineLayoutUnit hangingContentWidth() const { return m_hangingContentWidth; }
         bool hasTrimmableContent() const { return trailingTrimmableWidth() || leadingTrimmableWidth(); }
-        bool hasHangingContent() const { return hangingContentWidth().has_value(); }
+        bool hasHangingContent() const { return hangingContentWidth(); }
         bool isFullyTrimmable() const;
-        bool isHangingContent() const { return hasHangingContent() && hangingContentWidth() == logicalWidth(); }
+        bool isHangingContent() const { return hangingContentWidth() == logicalWidth(); }
 
         void append(const InlineItem&, const RenderStyle&, InlineLayoutUnit logicalWidth);
-        void append(const InlineTextItem&, const RenderStyle&, InlineLayoutUnit logicalWidth, std::optional<InlineLayoutUnit> trimmableWidth);
-        void append(const InlineTextItem&, const RenderStyle&, InlineLayoutUnit hangingWidth);
+        void appendTextContent(const InlineTextItem&, const RenderStyle&, InlineLayoutUnit logicalWidth, std::optional<InlineLayoutUnit> trimmableWidth);
+        void setHangingContentWidth(InlineLayoutUnit logicalWidth) { m_hangingContentWidth = logicalWidth; }
         void reset();
 
         struct Run {
@@ -109,10 +109,10 @@ public:
         void resetTrailingTrimmableContent();
 
         RunList m_runs;
-        InlineLayoutUnit m_logicalWidth { 0 };
-        std::optional<InlineLayoutUnit> m_leadingTrimmableWidth { };
-        std::optional<InlineLayoutUnit> m_trailingTrimmableWidth { };
-        std::optional<InlineLayoutUnit> m_trailingHangingContentWidth { };
+        InlineLayoutUnit m_logicalWidth { 0.f };
+        InlineLayoutUnit m_leadingTrimmableWidth { 0.f };
+        InlineLayoutUnit m_trailingTrimmableWidth { 0.f };
+        InlineLayoutUnit m_hangingContentWidth { 0.f };
     };
 
     struct LineStatus {
@@ -181,12 +181,7 @@ inline InlineContentBreaker::ContinuousContent::Run::Run(const Run& other)
 
 inline bool InlineContentBreaker::ContinuousContent::isFullyTrimmable() const
 {
-    auto trimmableWidth = std::optional<InlineLayoutUnit> { };
-    if (m_leadingTrimmableWidth)
-        trimmableWidth = *m_leadingTrimmableWidth;
-    if (m_trailingTrimmableWidth)
-        trimmableWidth = trimmableWidth.value_or(0.f) + *m_trailingTrimmableWidth;
-    return trimmableWidth && *trimmableWidth == logicalWidth();
+    return m_leadingTrimmableWidth + m_trailingTrimmableWidth == logicalWidth();
 }
 
 }

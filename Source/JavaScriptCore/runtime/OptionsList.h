@@ -541,6 +541,9 @@ bool canUseWebAssemblyFastMemory();
     v(Bool, libpasScavengeContinuously, false, Normal, nullptr) \
     v(Bool, useWasmFaultSignalHandler, true, Normal, nullptr) \
     v(Bool, dumpUnlinkedDFGValidation, false, Normal, nullptr) \
+    /* Bun Features */\
+    \
+    v(Bool, showPrivateScriptsInStackTraces, false, Normal, "Show private scripts in stack traces.") \
     \
     /* Feature Flags */\
     \
@@ -559,10 +562,8 @@ bool canUseWebAssemblyFastMemory();
     v(Bool, useWebAssemblyTypedFunctionReferences, false, Normal, "Allow function types from the wasm typed function references spec.") \
     v(Bool, useWebAssemblyGC, false, Normal, "Allow gc types from the wasm gc proposal.") \
     v(Bool, forceAllFunctionsToUseSIMD, false, Normal, "Force all functions to act conservatively w.r.t fp/vector registers for testing.") \
-    v(Bool, useWebAssemblySIMD, isARM64(), Normal, "Allow the new simd instructions and types from the wasm simd spec.") \
-    /* Bun Features */\
-    v(Bool, showPrivateScriptsInStackTraces, false, Normal, "Show private scripts in stack traces.") \
-
+    v(Bool, useWebAssemblySIMD, true, Normal, "Allow the new simd instructions and types from the wasm simd spec.") \
+    v(Bool, useWebAssemblyTailCalls, true, Normal, "Allow the new instructions from the wasm tail calls spec.") \
 
 
 enum OptionEquivalence {

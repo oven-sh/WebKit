@@ -45,8 +45,12 @@ const char* const tierName = "Air ";
 static void defaultPrologueGenerator(CCallHelpers& jit, Code& code)
 {
     jit.emitFunctionPrologue();
+
+    // NOTE: on ARM64, if the callee saves have bigger offsets due to a potential tail call,
+    // the macro assembler might assert scratch register usage on store operations emitted by emitSave.
+    AllowMacroScratchRegisterUsageIf allowScratch(jit, isARM64() || isARM64E() || isARM());
+
     if (code.frameSize()) {
-        AllowMacroScratchRegisterUsageIf allowScratch(jit, isARM64() || isARM());
         jit.subPtr(MacroAssembler::TrustedImm32(code.frameSize()), MacroAssembler::stackPointerRegister);
     }
     
@@ -84,11 +88,9 @@ Code::Code(Procedure& proc)
                     all.remove(reg);
             }
 #endif
-            // FIXME https://bugs.webkit.org/show_bug.cgi?id=243890
-            // Our use of DisallowMacroScratchRegisterUsage is not quite right, so for now...
-            all.exclude(RegisterSetBuilder::macroClobberedRegisters());
+            all.remove(MacroAssembler::fpTempRegister);
 #endif // CPU(ARM)
-            auto calleeSave = RegisterSetBuilder::vmCalleeSaveRegisters();
+            auto calleeSave = RegisterSetBuilder::calleeSaveRegisters();
             all.buildAndValidate().forEach(
                 [&] (Reg reg) {
                     if (!calleeSave.contains(reg, IgnoreVectors))
@@ -112,6 +114,10 @@ Code::Code(Procedure& proc)
             setRegsInPriorityOrder(bank, result);
         });
 
+#if CPU(ARM_THUMB2)
+    if (auto reg = extendedOffsetAddrRegister())
+        pinRegister(reg);
+#endif
     m_pinnedRegs.add(MacroAssembler::framePointerRegister, IgnoreVectors);
 }
 
@@ -127,6 +133,9 @@ void Code::emitDefaultPrologue(CCallHelpers& jit)
 void Code::emitEpilogue(CCallHelpers& jit)
 {
     if (frameSize()) {
+        // NOTE: on ARM64, if the callee saves have bigger offsets due to a potential tail call,
+        // the macro assembler might assert scratch register usage on load operations emitted by emitRestore.
+        AllowMacroScratchRegisterUsageIf allowScratch(jit, isARM64());
         jit.emitRestore(calleeSaveRegisterAtOffsetList());
         jit.emitFunctionEpilogue();
     } else

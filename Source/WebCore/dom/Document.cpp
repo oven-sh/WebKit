@@ -36,7 +36,6 @@
 #include "CSSAnimation.h"
 #include "CSSFontSelector.h"
 #include "CSSParser.h"
-#include "CSSRegisteredCustomProperty.h"
 #include "CSSStyleDeclaration.h"
 #include "CSSStyleSheet.h"
 #include "CachedCSSStyleSheet.h"
@@ -1628,6 +1627,10 @@ std::optional<BoundaryPoint> Document::caretPositionFromPoint(const LayoutPoint&
     auto* renderer = node->renderer();
     if (!renderer)
         return std::nullopt;
+
+    if (renderer->shouldSkipContent())
+        return { { *node, 0 } };
+
     auto rangeCompliantPosition = renderer->positionForPoint(localPoint).parentAnchoredEquivalent();
     if (rangeCompliantPosition.isNull())
         return std::nullopt;
@@ -2155,14 +2158,14 @@ void Document::resolveStyle(ResolveStyleType type)
             frameView.layoutContext().scheduleLayout();
 
         // Usually this is handled by post-layout.
-        if (!frameView.needsLayout())
-            frameView.frame().selection().scheduleAppearanceUpdateAfterStyleChange();
+        if (!frameView.needsLayout() && is<LocalFrame>(frameView.frame()))
+            downcast<LocalFrame>(frameView.frame()).selection().scheduleAppearanceUpdateAfterStyleChange();
 
         // As a result of the style recalculation, the currently hovered element might have been
         // detached (for example, by setting display:none in the :hover style), schedule another mouseMove event
         // to check if any other elements ended up under the mouse pointer due to re-layout.
-        if (m_hoveredElement && !m_hoveredElement->renderer())
-            frameView.frame().mainFrame().eventHandler().dispatchFakeMouseMoveEventSoon();
+        if (m_hoveredElement && !m_hoveredElement->renderer() && is<LocalFrame>(frameView.frame()))
+            downcast<LocalFrame>(frameView.frame()).mainFrame().eventHandler().dispatchFakeMouseMoveEventSoon();
 
         ++m_styleRecalcCount;
         // FIXME: Assert ASSERT(!needsStyleRecalc()) here. Do we still have some cases where it's not true?
@@ -2602,7 +2605,7 @@ void Document::attachToCachedFrame(CachedFrameBase& cachedFrame)
     RELEASE_ASSERT(cachedFrame.document() == this);
     ASSERT(cachedFrame.view());
     ASSERT(m_backForwardCacheState == Document::InBackForwardCache);
-    observeFrame(&cachedFrame.view()->frame());
+    observeFrame(dynamicDowncast<LocalFrame>(cachedFrame.view()->frame()));
 }
 
 void Document::detachFromCachedFrame(CachedFrameBase& cachedFrame)
@@ -4469,7 +4472,7 @@ void Document::setNeedsVisualViewportScrollEvent()
     m_needsVisualViewportScrollEvent = true;
 }
 
-static bool serviceScrollAnimationForScrollableArea(ScrollableArea* scrollableArea, MonotonicTime time)
+static bool serviceScrollAnimationForScrollableArea(const ScrollableArea* scrollableArea, MonotonicTime time)
 {
     if (!scrollableArea)
         return false;
@@ -4488,13 +4491,18 @@ void Document::runScrollSteps()
     if (frameView) {
         MonotonicTime now = MonotonicTime::now();
         bool scrollAnimationsInProgress = serviceScrollAnimationForScrollableArea(frameView.get(), now);
-        HashSet<ScrollableArea*> scrollableAreasToUpdate;
-        if (auto userScrollableAreas = frameView->scrollableAreas())
-            scrollableAreasToUpdate.add(userScrollableAreas->begin(), userScrollableAreas->end());
-        if (auto nonUserScrollableAreas = frameView->scrollableAreasForAnimatedScroll())
-            scrollableAreasToUpdate.add(nonUserScrollableAreas->begin(), nonUserScrollableAreas->end());
-        for (auto* scrollableArea : scrollableAreasToUpdate) {
-            if (serviceScrollAnimationForScrollableArea(scrollableArea, now))
+        HashSet<CheckedPtr<ScrollableArea>> scrollableAreasToUpdate;
+        if (auto userScrollableAreas = frameView->scrollableAreas()) {
+            for (auto& area : *userScrollableAreas)
+                scrollableAreasToUpdate.add(CheckedPtr<ScrollableArea>(area));
+        }
+            
+        if (auto nonUserScrollableAreas = frameView->scrollableAreasForAnimatedScroll()) {
+            for (auto& area : *nonUserScrollableAreas)
+                scrollableAreasToUpdate.add(CheckedPtr<ScrollableArea>(area));
+        }
+        for (auto& scrollableArea : scrollableAreasToUpdate) {
+            if (serviceScrollAnimationForScrollableArea(scrollableArea.get(), now))
                 scrollAnimationsInProgress = true;
         }
         if (scrollAnimationsInProgress)
@@ -8236,7 +8244,7 @@ static std::optional<IntersectionObservationState> computeIntersectionState(Fram
         else
             localRootBounds = { FloatPoint(), rootRenderer->size() };
     } else {
-        ASSERT(frameView.frame().isMainFrame());
+        ASSERT(is<LocalFrame>(frameView.frame()) && downcast<LocalFrame>(frameView.frame()).isMainFrame());
         // FIXME: Handle the case of an implicit-root observer that has a target in a different frame tree.
         if (&targetRenderer->frame().mainFrame() != &frameView.frame())
             return std::nullopt;
@@ -9007,9 +9015,9 @@ void Document::navigateFromServiceWorker(const URL& url, CompletionHandler<void(
 }
 #endif
 
-bool Document::registerCSSCustomProperty(CSSRegisteredCustomProperty&& property)
+const Style::CustomPropertyRegistry& Document::customPropertyRegistry() const
 {
-    return m_registeredCSSCustomProperties.add(property.name, makeUnique<CSSRegisteredCustomProperty>(WTFMove(property))).isNewEntry;
+    return styleScope().customPropertyRegistry();
 }
 
 const FixedVector<CSSPropertyID>& Document::exposedComputedCSSPropertyIDs()

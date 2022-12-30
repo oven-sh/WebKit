@@ -251,8 +251,6 @@ std::unique_ptr<InternalFunction> createJSToWasmWrapper(CCallHelpers& jit, const
     auto result = makeUnique<InternalFunction>();
     jit.emitFunctionPrologue();
 
-    // FIXME Stop using 0 as codeBlocks. https://bugs.webkit.org/show_bug.cgi?id=165321
-    jit.emitZeroToCallFrameHeader(CallFrameSlot::codeBlock);
     MacroAssembler::DataLabelPtr calleeMoveLocation = jit.moveWithPatch(MacroAssembler::TrustedImmPtr(nullptr), GPRInfo::nonPreservedNonReturnGPR);
     CCallHelpers::Address calleeSlot { GPRInfo::callFrameRegister, CallFrameSlot::callee * sizeof(Register) };
     jit.storePtr(GPRInfo::nonPreservedNonReturnGPR, calleeSlot.withOffset(PayloadOffset));
@@ -387,13 +385,13 @@ std::unique_ptr<InternalFunction> createJSToWasmWrapper(CCallHelpers& jit, const
         if (isARM64E()) {
             if (mode == MemoryMode::BoundsChecking)
                 size = pinnedRegs.boundsCheckingSizeRegister;
-            jit.loadPtr(CCallHelpers::Address(currentInstanceGPR, Wasm::Instance::offsetOfCachedBoundsCheckingSize()), size);
+            jit.loadPairPtr(currentInstanceGPR, CCallHelpers::TrustedImm32(Wasm::Instance::offsetOfCachedMemory()), baseMemory, size);
         } else {
             if (mode == MemoryMode::BoundsChecking)
-                jit.loadPtr(CCallHelpers::Address(currentInstanceGPR, Wasm::Instance::offsetOfCachedBoundsCheckingSize()), pinnedRegs.boundsCheckingSizeRegister);
+                jit.loadPairPtr(currentInstanceGPR, CCallHelpers::TrustedImm32(Wasm::Instance::offsetOfCachedMemory()), baseMemory, pinnedRegs.boundsCheckingSizeRegister);
+            else
+                jit.loadPtr(CCallHelpers::Address(currentInstanceGPR, Wasm::Instance::offsetOfCachedMemory()), baseMemory);
         }
-
-        jit.loadPtr(CCallHelpers::Address(currentInstanceGPR, Wasm::Instance::offsetOfCachedMemory()), baseMemory);
         jit.cageConditionallyAndUntag(Gigacage::Primitive, baseMemory, size, scratch);
     }
 #endif
@@ -404,6 +402,9 @@ std::unique_ptr<InternalFunction> createJSToWasmWrapper(CCallHelpers& jit, const
     jit.addLinkTask([unlinkedWasmToWasmCalls, call, functionIndexSpace] (LinkBuffer& linkBuffer) {
         unlinkedWasmToWasmCalls->append({ linkBuffer.locationOfNearCall<WasmEntryPtrTag>(call), functionIndexSpace });
     });
+
+    // Restore stack pointer after call
+    jit.addPtr(MacroAssembler::TrustedImm32(-static_cast<int32_t>(totalFrameSize)), MacroAssembler::framePointerRegister, MacroAssembler::stackPointerRegister);
 
     JIT_COMMENT(jit, "marshallJSResult");
     marshallJSResult(jit, typeDefinition, wasmFrameConvention, savedResultRegisters);

@@ -3188,6 +3188,17 @@
    },
    {
       "emails" : [
+         "iana@apple.com"
+      ],
+      "expertise" : "Clang modules",
+      "github" : "ian-twilightcoder",
+      "name" : "Ian Anderson",
+      "nicks" : [
+         "iana"
+      ]
+   },
+   {
+      "emails" : [
          "ian@ianhenderson.org",
          "ianh@apple.com"
       ],
@@ -4843,6 +4854,13 @@
    },
    {
       "emails" : [
+         "mark_gee@apple.com"
+      ],
+      "github" : "markcgee",
+      "name" : "Mark Gee"
+   },
+   {
+      "emails" : [
          "mhahnenb@gmail.com",
          "mhahnenberg@apple.com"
       ],
@@ -6288,8 +6306,8 @@
    },
    {
       "emails" : [
-         "sammy.gill@apple.com",
-         "sgill26@apple.com"
+         "sgill26@apple.com",
+         "sammy.gill@apple.com"
       ],
       "github" : "sgill26",
       "name" : "Sammy Gill",
@@ -7428,6 +7446,14 @@
          "ykimoto"
       ],
       "status" : "committer"
+   },
+   {
+      "emails" : [
+         "yuki.sekiguchi@access-company.com",
+         "yukiseki712@gmail.com"
+      ],
+      "github" : "aYukiSekiguchi",
+      "name" : "Yuki Sekiguchi"
    },
    {
       "emails" : [

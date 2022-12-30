@@ -99,7 +99,21 @@ struct ModuleInformation : public ThreadSafeRefCounted<ModuleInformation> {
     bool isDeclaredException(uint32_t index) const { return m_declaredExceptions.contains(index); }
     void addDeclaredException(uint32_t index) { m_declaredExceptions.set(index); }
 
-    bool isSIMDFunction(uint32_t index) const { ASSERT(index <= internalFunctionCount()); ASSERT(functions[index].finishedValidating); return functions[index].isSIMDFunction; }
+    bool isSIMDFunction(uint32_t index) const
+    {
+        ASSERT(index <= internalFunctionCount());
+        ASSERT(functions[index].finishedValidating);
+
+        // See also: B3Procedure::usesSIMD().
+        if (!Options::useWebAssemblySIMD())
+            return false;
+        if (Options::forceAllFunctionsToUseSIMD())
+            return true;
+        // The LLInt discovers this value.
+        ASSERT(Options::useWasmLLInt());
+
+        return functions[index].isSIMDFunction;
+    }
     void addSIMDFunction(uint32_t index) { ASSERT(index <= internalFunctionCount()); ASSERT(!functions[index].finishedValidating); functions[index].isSIMDFunction = true; }
     void doneSeeingFunction(uint32_t index) { ASSERT(!functions[index].finishedValidating); functions[index].finishedValidating = true; }
 
@@ -114,6 +128,10 @@ struct ModuleInformation : public ThreadSafeRefCounted<ModuleInformation> {
             ? BranchHint::Invalid
             : it->value.getBranchHint(branchOffset);
     }
+
+    const BitVector& clobberingTailCalls() const { return m_clobberingTailCalls; }
+    bool callCanClobberInstance(uint32_t index) const { return m_clobberingTailCalls.contains(index); }
+    void addClobberingTailCall(uint32_t index) { m_clobberingTailCalls.set(index); }
 
     Vector<Import> imports;
     Vector<TypeIndex> importFunctionTypeIndices;
@@ -142,6 +160,7 @@ struct ModuleInformation : public ThreadSafeRefCounted<ModuleInformation> {
     BitVector m_declaredFunctions;
     BitVector m_declaredExceptions;
     mutable BitVector m_referencedFunctions;
+    BitVector m_clobberingTailCalls;
 };
 
     

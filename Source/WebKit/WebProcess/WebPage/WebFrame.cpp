@@ -222,6 +222,11 @@ FrameInfoData WebFrame::info() const
     return info;
 }
 
+void WebFrame::getFrameInfo(CompletionHandler<void(FrameInfoData&&)>&& completionHandler)
+{
+    completionHandler(info());
+}
+
 WebCore::FrameIdentifier WebFrame::frameID() const
 {
     ASSERT(m_frameID);
@@ -277,6 +282,10 @@ void WebFrame::didCommitLoadInAnotherProcess()
     RefPtr parent = coreFrame->tree().parent();
     if (!parent)
         return;
+
+    auto* localFrame = dynamicDowncast<WebCore::LocalFrame>(coreFrame.get());
+    if (auto* document = localFrame ? localFrame->document() : nullptr)
+        document->willBeRemovedFromFrame();
 
     RefPtr ownerElement = coreFrame->ownerElement();
     parent->tree().removeChild(*coreFrame);

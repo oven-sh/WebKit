@@ -2779,6 +2779,7 @@ ExceptionOr<ShadowRoot&> Element::attachDeclarativeShadow(ShadowRootMode mode, b
         return exceptionOrShadowRoot.releaseException();
     auto& shadowRoot = exceptionOrShadowRoot.releaseReturnValue();
     shadowRoot.setIsDeclarativeShadowRoot(true);
+    shadowRoot.setIsAvailableToElementInternals(true);
     return shadowRoot;
 }
 
@@ -3618,6 +3619,9 @@ String Element::innerText()
     if (!renderer())
         return textContent(true);
 
+    if (renderer()->isSkippedContent())
+        return String();
+
     return plainText(makeRangeSelectingNodeContents(*this));
 }
 
@@ -4311,14 +4315,14 @@ const AnimationCollection* Element::animations(PseudoId pseudoId) const
     return nullptr;
 }
 
-bool Element::hasCompletedTransitionForProperty(PseudoId pseudoId, CSSPropertyID property) const
+bool Element::hasCompletedTransitionForProperty(PseudoId pseudoId, AnimatableProperty property) const
 {
     if (auto* animationData = animationRareData(pseudoId))
         return animationData->completedTransitionsByProperty().contains(property);
     return false;
 }
 
-bool Element::hasRunningTransitionForProperty(PseudoId pseudoId, CSSPropertyID property) const
+bool Element::hasRunningTransitionForProperty(PseudoId pseudoId, AnimatableProperty property) const
 {
     if (auto* animationData = animationRareData(pseudoId))
         return animationData->runningTransitionsByProperty().contains(property);
@@ -4349,12 +4353,12 @@ void Element::setAnimationsCreatedByMarkup(PseudoId pseudoId, CSSAnimationCollec
     ensureAnimationRareData(pseudoId).setAnimationsCreatedByMarkup(WTFMove(animations));
 }
 
-PropertyToTransitionMap& Element::ensureCompletedTransitionsByProperty(PseudoId pseudoId)
+AnimatablePropertyToTransitionMap& Element::ensureCompletedTransitionsByProperty(PseudoId pseudoId)
 {
     return ensureAnimationRareData(pseudoId).completedTransitionsByProperty();
 }
 
-PropertyToTransitionMap& Element::ensureRunningTransitionsByProperty(PseudoId pseudoId)
+AnimatablePropertyToTransitionMap& Element::ensureRunningTransitionsByProperty(PseudoId pseudoId)
 {
     return ensureAnimationRareData(pseudoId).runningTransitionsByProperty();
 }
@@ -4412,6 +4416,22 @@ ResizeObserverData& Element::ensureResizeObserverData()
 ResizeObserverData* Element::resizeObserverData()
 {
     return hasRareData() ? elementRareData()->resizeObserverData() : nullptr;
+}
+
+ResizeObserverSize* Element::lastRememberedSize() const
+{
+    return hasRareData() ? elementRareData()->lastRememberedSize() : nullptr;
+}
+
+void Element::setLastRememberedSize(Ref<ResizeObserverSize>&& size)
+{
+    ensureElementRareData().setLastRememberedSize(WTFMove(size));
+}
+
+void Element::clearLastRememberedSize()
+{
+    if (hasRareData())
+        elementRareData()->clearLastRememberedSize();
 }
 
 bool Element::isSpellCheckingEnabled() const

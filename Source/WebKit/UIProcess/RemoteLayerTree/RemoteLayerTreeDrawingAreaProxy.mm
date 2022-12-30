@@ -138,6 +138,7 @@ void RemoteLayerTreeDrawingAreaProxy::commitLayerTree(const RemoteLayerTreeTrans
 #endif
 
     m_webPageProxy.didCommitLayerTree(layerTreeTransaction);
+    didCommitLayerTree(layerTreeTransaction, scrollingTreeTransaction);
 
 #if ENABLE(ASYNC_SCROLLING)
     m_webPageProxy.scrollingCoordinatorProxy()->applyScrollingTreeLayerPositionsAfterCommit();
@@ -179,6 +180,11 @@ void RemoteLayerTreeDrawingAreaProxy::commitLayerTree(const RemoteLayerTreeTrans
         if (auto callback = m_callbacks.take<VoidCallback>(callbackID))
             callback->performCallback();
     }
+}
+
+void RemoteLayerTreeDrawingAreaProxy::asyncSetLayerContents(GraphicsLayer::PlatformLayerID layerID, ImageBufferBackendHandle&& handle)
+{
+    m_remoteLayerTreeHost->asyncSetLayerContents(layerID, WTFMove(handle));
 }
 
 void RemoteLayerTreeDrawingAreaProxy::acceleratedAnimationDidStart(uint64_t layerID, const String& key, MonotonicTime startTime)

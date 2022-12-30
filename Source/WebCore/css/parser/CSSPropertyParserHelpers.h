@@ -108,7 +108,7 @@ RefPtr<CSSPrimitiveValue> consumeNumber(CSSParserTokenRange&, ValueRange);
 RefPtr<CSSPrimitiveValue> consumeNumberOrPercent(CSSParserTokenRange&, ValueRange);
 
 RefPtr<CSSPrimitiveValue> consumeLength(CSSParserTokenRange&, CSSParserMode, ValueRange, UnitlessQuirk = UnitlessQuirk::Forbid);
-RefPtr<CSSPrimitiveValue> consumeLengthOrPercent(CSSParserTokenRange&, CSSParserMode, ValueRange, UnitlessQuirk = UnitlessQuirk::Forbid, NegativePercentagePolicy = NegativePercentagePolicy::Forbid);
+RefPtr<CSSPrimitiveValue> consumeLengthOrPercent(CSSParserTokenRange&, CSSParserMode, ValueRange, UnitlessQuirk = UnitlessQuirk::Forbid, UnitlessZeroQuirk = UnitlessZeroQuirk::Allow, NegativePercentagePolicy = NegativePercentagePolicy::Forbid);
 
 RefPtr<CSSPrimitiveValue> consumePercent(CSSParserTokenRange&, ValueRange);
 RefPtr<CSSPrimitiveValue> consumePercentWorkerSafe(CSSParserTokenRange&, ValueRange, CSSValuePool&);
@@ -234,7 +234,6 @@ RefPtr<CSSValue> consumeFontVariantNumeric(CSSParserTokenRange&);
 RefPtr<CSSValue> consumeFontWeight(CSSParserTokenRange&);
 RefPtr<CSSValue> consumeFamilyName(CSSParserTokenRange&);
 RefPtr<CSSValue> consumeFontFamily(CSSParserTokenRange&);
-RefPtr<CSSValue> consumeFontFamilyDescriptor(CSSParserTokenRange&);
 RefPtr<CSSValue> consumeCounterIncrement(CSSParserTokenRange&);
 RefPtr<CSSValue> consumeCounterReset(CSSParserTokenRange&);
 RefPtr<CSSValue> consumeSize(CSSParserTokenRange&, CSSParserMode);
@@ -318,6 +317,26 @@ RefPtr<CSSValue> consumeColorScheme(CSSParserTokenRange&);
 #endif
 RefPtr<CSSValue> consumeOffsetRotate(CSSParserTokenRange&, CSSParserMode);
 
+RefPtr<CSSValue> consumeDeclarationValue(CSSParserTokenRange&, const CSSParserContext&);
+
+// @font-face descriptor consumers:
+
+RefPtr<CSSValue> consumeFontFaceFontFamily(CSSParserTokenRange&);
+
+// @font-palette-values descriptor consumers:
+
+RefPtr<CSSValue> consumeFontPaletteValuesOverrideColors(CSSParserTokenRange&, const CSSParserContext&);
+
+// @counter-style descriptor consumers:
+
+RefPtr<CSSValue> consumeCounterStyleSystem(CSSParserTokenRange&);
+RefPtr<CSSValue> consumeCounterStyleSymbol(CSSParserTokenRange&, const CSSParserContext&);
+RefPtr<CSSValue> consumeCounterStyleNegative(CSSParserTokenRange&, const CSSParserContext&);
+RefPtr<CSSValue> consumeCounterStyleRange(CSSParserTokenRange&);
+RefPtr<CSSValue> consumeCounterStylePad(CSSParserTokenRange&, const CSSParserContext&);
+RefPtr<CSSValue> consumeCounterStyleSymbols(CSSParserTokenRange&, const CSSParserContext&);
+RefPtr<CSSValue> consumeCounterStyleAdditiveSymbols(CSSParserTokenRange&, const CSSParserContext&);
+RefPtr<CSSValue> consumeCounterStyleSpeakAs(CSSParserTokenRange&);
 
 // Template and inline implementations are at the bottom of the file for readability.
 

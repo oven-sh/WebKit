@@ -1064,13 +1064,7 @@ bool AccessibilityUIElement::isSelectedOptionActive() const
 
 bool AccessibilityUIElement::isIndeterminate() const
 {
-    BEGIN_AX_OBJC_EXCEPTIONS
-    auto value = attributeValue(NSAccessibilityValueAttribute);
-    if ([value isKindOfClass:[NSNumber class]])
-        return [value intValue] == 2;
-    END_AX_OBJC_EXCEPTIONS
-
-    return false;
+    return boolAttributeValue(@"AXIsIndeterminate");
 }
 
 bool AccessibilityUIElement::isExpanded() const
@@ -1773,6 +1767,36 @@ bool AccessibilityUIElement::hasDocumentRoleAncestor() const
 bool AccessibilityUIElement::hasWebApplicationAncestor() const
 {
     return boolAttributeValue(@"AXHasWebApplicationAncestor");
+}
+
+RefPtr<AccessibilityUIElement> AccessibilityUIElement::focusableAncestor()
+{
+    BEGIN_AX_OBJC_EXCEPTIONS
+    if (id ancestor = attributeValue(@"AXFocusableAncestor").get())
+        return AccessibilityUIElement::create(ancestor);
+    END_AX_OBJC_EXCEPTIONS
+
+    return nullptr;
+}
+
+RefPtr<AccessibilityUIElement> AccessibilityUIElement::editableAncestor()
+{
+    BEGIN_AX_OBJC_EXCEPTIONS
+    if (id ancestor = attributeValue(@"AXEditableAncestor").get())
+        return AccessibilityUIElement::create(ancestor);
+    END_AX_OBJC_EXCEPTIONS
+
+    return nullptr;
+}
+
+RefPtr<AccessibilityUIElement> AccessibilityUIElement::highestEditableAncestor()
+{
+    BEGIN_AX_OBJC_EXCEPTIONS
+    if (id ancestor = attributeValue(@"AXHighestEditableAncestor").get())
+        return AccessibilityUIElement::create(ancestor);
+    END_AX_OBJC_EXCEPTIONS
+
+    return nullptr;
 }
 
 bool AccessibilityUIElement::isInDescriptionListDetail() const

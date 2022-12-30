@@ -43,33 +43,41 @@ namespace WebCore {
 static AtomString serializeANPlusB(const std::pair<int, int>&);
 static bool consumeANPlusB(CSSParserTokenRange&, std::pair<int, int>&);
 
-std::optional<CSSSelectorList> parseCSSSelector(CSSParserTokenRange range, const CSSParserContext& context, StyleSheetContents* styleSheet)
+std::optional<CSSSelectorList> parseCSSSelector(CSSParserTokenRange range, const CSSParserContext& context, StyleSheetContents* styleSheet, CSSSelectorParser::IsNestedContext isNestedContext)
 {
-    CSSSelectorParser parser(context, styleSheet);
+    CSSSelectorParser parser(context, styleSheet, isNestedContext);
     range.consumeWhitespace();
-    CSSSelectorList result = parser.consumeComplexSelectorList(range);
+    auto consume = [&] () {
+        if (context.cssNestingEnabled && isNestedContext == CSSSelectorParser::IsNestedContext::Yes)
+            return parser.consumeNestedSelectorList(range);
+
+        return parser.consumeComplexSelectorList(range);
+    };
+    CSSSelectorList result = consume();
     if (result.isEmpty() || !range.atEnd())
         return { };
     return result;
 }
 
-CSSSelectorParser::CSSSelectorParser(const CSSParserContext& context, StyleSheetContents* styleSheet)
+CSSSelectorParser::CSSSelectorParser(const CSSParserContext& context, StyleSheetContents* styleSheet, CSSSelectorParser::IsNestedContext isNestedContext)
     : m_context(context)
     , m_styleSheet(styleSheet)
+    , m_isNestedContext(isNestedContext)
 {
 }
 
-CSSSelectorList CSSSelectorParser::consumeComplexSelectorList(CSSParserTokenRange& range)
+template <typename ConsumeSelector>
+CSSSelectorList CSSSelectorParser::consumeSelectorList(CSSParserTokenRange& range, ConsumeSelector&& consumeSelector)
 {
     Vector<std::unique_ptr<CSSParserSelector>> selectorList;
-    auto selector = consumeComplexSelector(range);
+    auto selector = consumeSelector(range);
     if (!selector)
         return { };
 
     selectorList.append(WTFMove(selector));
     while (!range.atEnd() && range.peek().type() == CommaToken) {
         range.consumeIncludingWhitespace();
-        selector = consumeComplexSelector(range);
+        selector = consumeSelector(range);
         if (!selector)
             return { };
         selectorList.append(WTFMove(selector));
@@ -79,6 +87,25 @@ CSSSelectorList CSSSelectorParser::consumeComplexSelectorList(CSSParserTokenRang
         return { };
 
     return CSSSelectorList { WTFMove(selectorList) };
+}
+
+CSSSelectorList CSSSelectorParser::consumeComplexSelectorList(CSSParserTokenRange& range)
+{
+    return consumeSelectorList(range, [&] (CSSParserTokenRange& range) {
+        return consumeComplexSelector(range);
+    });
+}
+
+CSSSelectorList CSSSelectorParser::consumeNestedSelectorList(CSSParserTokenRange& range)
+{
+    return consumeSelectorList(range, [&] (CSSParserTokenRange& range) {
+        auto selector = consumeComplexSelector(range);
+        if (selector)
+            return selector;
+
+        selector = consumeRelativeNestedSelector(range);
+        return selector;
+    });
 }
 
 template<typename ConsumeSelector>
@@ -131,7 +158,7 @@ CSSSelectorList CSSSelectorParser::consumeForgivingComplexSelectorList(CSSParser
 CSSSelectorList CSSSelectorParser::consumeForgivingRelativeSelectorList(CSSParserTokenRange& range)
 {
     return consumeForgivingSelectorList(range, [&](CSSParserTokenRange& range) {
-        return consumeRelativeSelector(range);
+        return consumeRelativeScopeSelector(range);
     });
 }
 
@@ -258,7 +285,7 @@ std::unique_ptr<CSSParserSelector> CSSSelectorParser::consumeComplexSelector(CSS
     return selector;
 }
 
-std::unique_ptr<CSSParserSelector> CSSSelectorParser::consumeRelativeSelector(CSSParserTokenRange& range)
+std::unique_ptr<CSSParserSelector> CSSSelectorParser::consumeRelativeScopeSelector(CSSParserTokenRange& range)
 {
     auto scopeCombinator = consumeCombinator(range);
 
@@ -291,6 +318,27 @@ std::unique_ptr<CSSParserSelector> CSSSelectorParser::consumeRelativeSelector(CS
         end->setRelation(scopeCombinator);
         end->setTagHistory(WTFMove(scopeSelector));
     }
+
+    return selector;
+}
+
+std::unique_ptr<CSSParserSelector> CSSSelectorParser::consumeRelativeNestedSelector(CSSParserTokenRange& range)
+{
+    auto scopeCombinator = consumeCombinator(range);
+
+    ASSERT(scopeCombinator != CSSSelector::Subselector);
+    ASSERT(scopeCombinator != CSSSelector::DescendantSpace);
+
+    auto selector = consumeComplexSelector(range);
+    if (!selector)
+        return nullptr;
+
+    auto last = selector->leftmostSimpleSelector();
+    auto parentSelector = makeUnique<CSSParserSelector>();
+    parentSelector->setMatch(CSSSelector::Match::PseudoClass);
+    parentSelector->setPseudoClassType(CSSSelector::PseudoClassType::PseudoClassParent);
+    last->setRelation(scopeCombinator);
+    last->setTagHistory(WTFMove(parentSelector));
 
     return selector;
 }
@@ -459,6 +507,8 @@ std::unique_ptr<CSSParserSelector> CSSSelectorParser::consumeSimpleSelector(CSSP
         selector = consumeId(range);
     else if (token.type() == DelimiterToken && token.delimiter() == '.')
         selector = consumeClass(range);
+    else if (token.type() == DelimiterToken && token.delimiter() == '&' && m_context.cssNestingEnabled)
+        selector = consumeNesting(range);
     else if (token.type() == LeftBracketToken)
         selector = consumeAttribute(range);
     else if (token.type() == ColonToken)
@@ -551,6 +601,19 @@ std::unique_ptr<CSSParserSelector> CSSSelectorParser::consumeClass(CSSParserToke
     CSSParserToken token = range.consume();
     selector->setValue(token.value().toAtomString(), m_context.mode == HTMLQuirksMode);
 
+    return selector;
+}
+
+std::unique_ptr<CSSParserSelector> CSSSelectorParser::consumeNesting(CSSParserTokenRange& range)
+{
+    ASSERT(range.peek().type() == DelimiterToken);
+    ASSERT(range.peek().delimiter() == '&');
+    range.consume();
+
+    auto selector = makeUnique<CSSParserSelector>();
+    selector->setMatch(CSSSelector::PseudoClass);
+    selector->setPseudoClassType(CSSSelector::PseudoClassParent);
+    
     return selector;
 }
 

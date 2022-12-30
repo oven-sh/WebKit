@@ -1201,6 +1201,10 @@ void WebPageProxy::initializeWebPage()
     send(Messages::WebProcess::CreateWebPage(m_webPageID, creationParameters(m_process, *m_drawingArea)), 0);
 
     m_process->addVisitedLinkStoreUser(visitedLinkStore(), m_identifier);
+
+#if ENABLE(NETWORK_CONNECTION_INTEGRITY)
+    m_shouldUpdateLookalikeCharacterStrings = cachedLookalikeStrings().isEmpty();
+#endif
 }
 
 void WebPageProxy::close()
@@ -3050,11 +3054,16 @@ void WebPageProxy::dispatchWheelEventWithoutScrolling(const WebWheelEvent& event
 
 void WebPageProxy::handleWheelEvent(const NativeWebWheelEvent& event)
 {
+    WheelEventHandlingResult handlingResult;
 #if ENABLE(ASYNC_SCROLLING) && PLATFORM(COCOA)
-    if (m_scrollingCoordinatorProxy && m_scrollingCoordinatorProxy->handleWheelEvent(platform(event)))
-        return;
+    if (m_scrollingCoordinatorProxy) {
+        handlingResult = m_scrollingCoordinatorProxy->handleWheelEvent(platform(event));
+        if (!handlingResult.needsMainThreadProcessing())
+            return;
+    }
+#else
+    handlingResult.steps = WheelEventProcessingSteps::MainThreadForScrolling;
 #endif
-
     if (!hasRunningProcess())
         return;
 
@@ -3066,9 +3075,9 @@ void WebPageProxy::handleWheelEvent(const NativeWebWheelEvent& event)
         m_scrollingAccelerationCurve = ScrollingAccelerationCurve::fromNativeWheelEvent(event);
 #endif
 
-    if (wheelEventCoalescer().shouldDispatchEvent(event)) {
-        auto event = wheelEventCoalescer().nextEventToDispatch();
-        sendWheelEvent(*event);
+    if (wheelEventCoalescer().shouldDispatchEvent(event, handlingResult.steps)) {
+        auto eventAndSteps = wheelEventCoalescer().nextEventToDispatch();
+        sendWheelEvent(eventAndSteps->event, eventAndSteps->processingSteps);
     }
 }
 
@@ -3106,7 +3115,7 @@ void WebPageProxy::updateWheelEventActivityAfterProcessSwap()
 #endif
 }
 
-void WebPageProxy::sendWheelEvent(const WebWheelEvent& event)
+void WebPageProxy::sendWheelEvent(const WebWheelEvent& event, OptionSet<WebCore::WheelEventProcessingSteps> processingSteps)
 {
 #if HAVE(CVDISPLAYLINK)
     m_wheelEventActivityHysteresis.impulse();
@@ -3129,7 +3138,10 @@ void WebPageProxy::sendWheelEvent(const WebWheelEvent& event)
     }
 #endif
 
-    connection->send(Messages::EventDispatcher::WheelEvent(m_webPageID, event, rubberBandableEdges), 0, { }, Thread::QOS::UserInteractive);
+    if (drawingArea()->shouldSendWheelEventsToEventDispatcher())
+        connection->send(Messages::EventDispatcher::WheelEvent(m_webPageID, event, rubberBandableEdges), 0, { }, Thread::QOS::UserInteractive);
+    else
+        send(Messages::WebPage::HandleWheelEvent(event, processingSteps));
 
     // Manually ping the web process to check for responsiveness since our wheel
     // event will dispatch to a non-main thread, which always responds.
@@ -4635,7 +4647,9 @@ void WebPageProxy::getContentsAsAttributedString(CompletionHandler<void(const We
 
 void WebPageProxy::getAllFrames(CompletionHandler<void(FrameTreeNodeData&&)>&& completionHandler)
 {
-    sendWithAsyncReply(Messages::WebPage::GetAllFrames(), WTFMove(completionHandler));
+    if (!m_mainFrame)
+        return completionHandler({ });
+    m_mainFrame->getFrameInfo(WTFMove(completionHandler));
 }
 
 void WebPageProxy::getBytecodeProfile(CompletionHandler<void(const String&)>&& callback)
@@ -4873,6 +4887,7 @@ void WebPageProxy::didStartProvisionalLoadForFrameShared(Ref<WebProcessProxy>&& 
     RefPtr frame = WebFrameProxy::webFrame(frameID);
     MESSAGE_CHECK(process, frame);
     MESSAGE_CHECK_URL(process, url);
+    MESSAGE_CHECK_URL(process, unreachableURL);
 
     // If the page starts a new main frame provisional load, then cancel any pending one in a provisional process.
     if (frame->isMainFrame() && m_provisionalPage && m_provisionalPage->mainFrame() != frame) {
@@ -5246,6 +5261,9 @@ void WebPageProxy::didCommitLoadForFrame(FrameIdentifier frameID, FrameInfoData&
 #endif
 #if USE(APPKIT)
         closeSharedPreviewPanelIfNecessary();
+#endif
+#if ENABLE(NETWORK_CONNECTION_INTEGRITY)
+        updateLookalikeCharacterStringsIfNeeded();
 #endif
     }
 
@@ -6212,6 +6230,9 @@ void WebPageProxy::createNewPage(FrameInfoData&& originatingFrameInfoData, WebPa
             newPage->m_privateClickMeasurement = {{ WTFMove(*privateClickMeasurement), { }, { }}};
 #if HAVE(APP_SSO)
         newPage->m_shouldSuppressSOAuthorizationInNextNavigationPolicyDecision = true;
+#endif
+#if ENABLE(NETWORK_CONNECTION_INTEGRITY)
+        newPage->m_shouldUpdateLookalikeCharacterStrings = cachedLookalikeStrings().isEmpty();
 #endif
     };
 
@@ -7510,15 +7531,14 @@ void WebPageProxy::didChooseFilesForOpenPanelWithDisplayStringAndIcon(const Vect
 
     SandboxExtension::Handle frontboardServicesSandboxExtension, iconServicesSandboxExtension;
     auto auditToken = m_process->auditToken();
-    auto machBootstrapHandle = SandboxExtension::createHandleForMachBootstrapExtension();
 #if HAVE(FRONTBOARD_SYSTEM_APP_SERVICES)
-    if (auto handle = SandboxExtension::createHandleForMachLookup("com.apple.frontboard.systemappservices"_s, auditToken))
+    if (auto handle = SandboxExtension::createHandleForMachLookup("com.apple.frontboard.systemappservices"_s, auditToken, SandboxExtension::MachBootstrapOptions::EnableMachBootstrap))
         frontboardServicesSandboxExtension = WTFMove(*handle);
 #endif
-    if (auto handle = SandboxExtension::createHandleForMachLookup("com.apple.iconservices"_s, auditToken))
+    if (auto handle = SandboxExtension::createHandleForMachLookup("com.apple.iconservices"_s, auditToken, SandboxExtension::MachBootstrapOptions::EnableMachBootstrap))
         iconServicesSandboxExtension = WTFMove(*handle);
 
-    send(Messages::WebPage::DidChooseFilesForOpenPanelWithDisplayStringAndIcon(fileURLs, displayString, iconData ? iconData->dataReference() : IPC::DataReference(), machBootstrapHandle, frontboardServicesSandboxExtension, iconServicesSandboxExtension));
+    send(Messages::WebPage::DidChooseFilesForOpenPanelWithDisplayStringAndIcon(fileURLs, displayString, iconData ? iconData->dataReference() : IPC::DataReference(), frontboardServicesSandboxExtension, iconServicesSandboxExtension));
 
     m_openPanelResultListener->invalidate();
     m_openPanelResultListener = nullptr;
@@ -7860,7 +7880,7 @@ void WebPageProxy::didReceiveEvent(uint32_t opaqueType, bool handled)
         }
 
         if (auto eventToSend = wheelEventCoalescer().nextEventToDispatch())
-            sendWheelEvent(*eventToSend);
+            sendWheelEvent(eventToSend->event, eventToSend->processingSteps);
         else if (auto* automationSession = process().processPool().automationSession())
             automationSession->wheelEventsFlushedForPage(*this);
         break;
@@ -8691,7 +8711,7 @@ WebPageCreationParameters WebPageProxy::creationParameters(WebProcessProxy& proc
 
 #if HAVE(STATIC_FONT_REGISTRY)
     if (preferences().shouldAllowUserInstalledFonts())
-        parameters.fontMachExtensionHandles = process.fontdMachExtensionHandles(SandboxExtension::MachBootstrapOptions::DoNotEnableMachBootstrap);
+        parameters.fontMachExtensionHandle = process.fontdMachExtensionHandle(SandboxExtension::MachBootstrapOptions::DoNotEnableMachBootstrap);
 #endif
 #if HAVE(APP_ACCENT_COLORS)
     parameters.accentColor = pageClient().accentColor();
@@ -8811,11 +8831,10 @@ WebPageCreationParameters WebPageProxy::creationParameters(WebProcessProxy& proc
     parameters.hasResizableWindows = pageClient().hasResizableWindows();
 #endif
 
-#if HAVE(MACH_BOOTSTRAP_EXTENSION)
-    if (!preferences().experimentalSandboxEnabled())
-        parameters.machBootstrapHandle = SandboxExtension::createHandleForMachBootstrapExtension();
+#if ENABLE(NETWORK_CONNECTION_INTEGRITY)
+    if (preferences().sanitizeLookalikeCharactersInLinksEnabled())
+        parameters.lookalikeCharacterStrings = cachedLookalikeStrings();
 #endif
-
     return parameters;
 }
 
@@ -8892,6 +8911,11 @@ void WebPageProxy::negotiatedLegacyTLS()
 void WebPageProxy::didNegotiateModernTLS(const URL& url)
 {
     m_navigationClient->didNegotiateModernTLS(url);
+}
+
+void WebPageProxy::didFailLoadDueToNetworkConnectionIntegrity(const URL& url) 
+{
+    m_navigationClient->didFailLoadDueToNetworkConnectionIntegrity(*this, url);
 }
 
 void WebPageProxy::exceededDatabaseQuota(FrameIdentifier frameID, const String& originIdentifier, const String& databaseName, const String& displayName, uint64_t currentQuota, uint64_t currentOriginUsage, uint64_t currentDatabaseUsage, uint64_t expectedUsage, CompletionHandler<void(uint64_t)>&& reply)
@@ -9721,6 +9745,11 @@ void WebPageProxy::handleAlternativeTextUIResult(const String& result)
 void WebPageProxy::setEditableElementIsFocused(bool editableElementIsFocused)
 {
     pageClient().setEditableElementIsFocused(editableElementIsFocused);
+}
+
+void WebPageProxy::setCaretDecorationVisibility(bool visibility)
+{
+    pageClient().setCaretDecorationVisibility(visibility);
 }
 
 #endif // PLATFORM(MAC)
@@ -11798,6 +11827,49 @@ void WebPageProxy::generateTestReport(const String& message, const String& group
 {
     send(Messages::WebPage::GenerateTestReport(message, group));
 }
+
+#if ENABLE(NETWORK_CONNECTION_INTEGRITY)
+
+Vector<String>& WebPageProxy::cachedLookalikeStrings()
+{
+    static NeverDestroyed cachedStrings = [] {
+        return Vector<String> { };
+    }();
+    return cachedStrings.get();
+}
+
+void WebPageProxy::updateLookalikeCharacterStringsIfNeeded()
+{
+    if (!m_shouldUpdateLookalikeCharacterStrings)
+        return;
+
+    m_shouldUpdateLookalikeCharacterStrings = false;
+
+    if (!preferences().sanitizeLookalikeCharactersInLinksEnabled())
+        return;
+
+    if (!cachedLookalikeStrings().isEmpty()) {
+        send(Messages::WebPage::SetLookalikeCharacterStrings(cachedLookalikeStrings()));
+        return;
+    }
+
+    RefPtr networkProcess = websiteDataStore().networkProcessIfExists();
+    if (!networkProcess) {
+        ASSERT_NOT_REACHED();
+        return;
+    }
+
+    networkProcess->requestLookalikeCharacterStrings([weakPage = WeakPtr { *this }](auto&& strings) {
+        if (cachedLookalikeStrings().isEmpty()) {
+            cachedLookalikeStrings() = WTFMove(strings);
+            cachedLookalikeStrings().shrinkToFit();
+        }
+        if (RefPtr page = weakPage.get(); page && page->hasRunningProcess())
+            page->send(Messages::WebPage::SetLookalikeCharacterStrings(cachedLookalikeStrings()));
+    });
+}
+
+#endif // ENABLE(NETWORK_CONNECTION_INTEGRITY)
 
 } // namespace WebKit
 

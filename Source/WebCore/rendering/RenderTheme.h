@@ -70,7 +70,8 @@ public:
     void adjustStyle(RenderStyle&, const Element*, const RenderStyle* userAgentAppearanceStyle);
 
     virtual bool canCreateControlPartForRenderer(const RenderObject&) const { return false; }
-    RefPtr<ControlPart> createControlPartForRenderer(const RenderObject&) const;
+    virtual bool canCreateControlPartForBorderOnly(const RenderObject&) const { return false; }
+    RefPtr<ControlPart> createControlPart(const RenderObject&) const;
 
     OptionSet<ControlStyle::State> extractControlStyleStatesForRenderer(const RenderObject&) const;
     ControlStyle extractControlStyleForRenderer(const RenderObject&) const;
@@ -78,7 +79,7 @@ public:
     // These methods are called to paint the widget as a background of the RenderObject. A widget's foreground, e.g., the
     // text of a button, is always rendered by the engine itself. The boolean return value indicates
     // whether the CSS border/background should also be painted.
-    bool paint(const RenderBox&, const ControlPart&, const PaintInfo&, const LayoutRect&);
+    bool paint(const RenderBox&, ControlPart&, const PaintInfo&, const LayoutRect&);
     bool paint(const RenderBox&, ControlStates&, const PaintInfo&, const LayoutRect&);
     
     bool paintBorderOnly(const RenderBox&, const PaintInfo&, const LayoutRect&);
@@ -396,6 +397,10 @@ public:
     bool isPresenting(const RenderObject&) const;
     bool isReadOnlyControl(const RenderObject&) const;
     bool isDefault(const RenderObject&) const;
+#if ENABLE(DATALIST_ELEMENT)
+    bool hasListButton(const RenderObject&) const;
+    bool hasListButtonPressed(const RenderObject&) const;
+#endif
 
 protected:
     struct ColorCache {

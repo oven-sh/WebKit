@@ -6,7 +6,7 @@ PASS Can set 'height' to CSS-wide keywords: revert
 PASS Can set 'height' to var() references:  var(--A)
 PASS Can set 'height' to the 'auto' keyword: auto
 PASS Can set 'height' to a percent: 0%
-FAIL Can set 'height' to a percent: -3.14% assert_approx_equals: expected -3.14 +/- 0.000001 but got 0
+PASS Can set 'height' to a percent: -3.14%
 PASS Can set 'height' to a percent: 3.14%
 PASS Can set 'height' to a percent: calc(0% + 0%)
 PASS Can set 'height' to a length: 0px
@@ -24,7 +24,7 @@ PASS Setting 'height' to an angle: calc(0rad + 0deg) throws TypeError
 PASS Setting 'height' to a flexible length: 0fr throws TypeError
 PASS Setting 'height' to a flexible length: 1fr throws TypeError
 PASS Setting 'height' to a flexible length: -3.14fr throws TypeError
-FAIL Setting 'height' to a number: 0 throws TypeError assert_throws_js: function "() => styleMap.set(propertyName, example.input)" did not throw
+PASS Setting 'height' to a number: 0 throws TypeError
 PASS Setting 'height' to a number: -3.14 throws TypeError
 PASS Setting 'height' to a number: 3.14 throws TypeError
 PASS Setting 'height' to a number: calc(2 + 3) throws TypeError
@@ -37,7 +37,7 @@ PASS Can set 'min-height' to CSS-wide keywords: unset
 PASS Can set 'min-height' to CSS-wide keywords: revert
 PASS Can set 'min-height' to var() references:  var(--A)
 PASS Can set 'min-height' to a percent: 0%
-FAIL Can set 'min-height' to a percent: -3.14% assert_approx_equals: expected -3.14 +/- 0.000001 but got 0
+PASS Can set 'min-height' to a percent: -3.14%
 PASS Can set 'min-height' to a percent: 3.14%
 PASS Can set 'min-height' to a percent: calc(0% + 0%)
 PASS Can set 'min-height' to a length: 0px
@@ -55,7 +55,7 @@ PASS Setting 'min-height' to an angle: calc(0rad + 0deg) throws TypeError
 PASS Setting 'min-height' to a flexible length: 0fr throws TypeError
 PASS Setting 'min-height' to a flexible length: 1fr throws TypeError
 PASS Setting 'min-height' to a flexible length: -3.14fr throws TypeError
-FAIL Setting 'min-height' to a number: 0 throws TypeError assert_throws_js: function "() => styleMap.set(propertyName, example.input)" did not throw
+PASS Setting 'min-height' to a number: 0 throws TypeError
 PASS Setting 'min-height' to a number: -3.14 throws TypeError
 PASS Setting 'min-height' to a number: 3.14 throws TypeError
 PASS Setting 'min-height' to a number: calc(2 + 3) throws TypeError
@@ -69,7 +69,7 @@ PASS Can set 'max-height' to CSS-wide keywords: revert
 PASS Can set 'max-height' to var() references:  var(--A)
 PASS Can set 'max-height' to the 'none' keyword: none
 PASS Can set 'max-height' to a percent: 0%
-FAIL Can set 'max-height' to a percent: -3.14% assert_approx_equals: expected -3.14 +/- 0.000001 but got 0
+PASS Can set 'max-height' to a percent: -3.14%
 PASS Can set 'max-height' to a percent: 3.14%
 PASS Can set 'max-height' to a percent: calc(0% + 0%)
 PASS Can set 'max-height' to a length: 0px
@@ -87,7 +87,7 @@ PASS Setting 'max-height' to an angle: calc(0rad + 0deg) throws TypeError
 PASS Setting 'max-height' to a flexible length: 0fr throws TypeError
 PASS Setting 'max-height' to a flexible length: 1fr throws TypeError
 PASS Setting 'max-height' to a flexible length: -3.14fr throws TypeError
-FAIL Setting 'max-height' to a number: 0 throws TypeError assert_throws_js: function "() => styleMap.set(propertyName, example.input)" did not throw
+PASS Setting 'max-height' to a number: 0 throws TypeError
 PASS Setting 'max-height' to a number: -3.14 throws TypeError
 PASS Setting 'max-height' to a number: 3.14 throws TypeError
 PASS Setting 'max-height' to a number: calc(2 + 3) throws TypeError

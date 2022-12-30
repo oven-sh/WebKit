@@ -43,6 +43,7 @@
 #include "CSSValuePool.h"
 #include "CSSVariableData.h"
 #include "CSSVariableReferenceValue.h"
+#include "CustomPropertyRegistry.h"
 #include "Document.h"
 #include "Element.h"
 #include "Page.h"
@@ -172,7 +173,7 @@ CSSParser::ParseResult CSSParser::parseValue(MutableStyleProperties& declaration
 
 std::optional<CSSSelectorList> CSSParser::parseSelector(const String& string, StyleSheetContents* styleSheet)
 {
-    return parseCSSSelector(CSSTokenizer(string).tokenRange(), m_context, styleSheet);
+    return parseCSSSelector(CSSTokenizer(string).tokenRange(), m_context, styleSheet, CSSSelectorParser::IsNestedContext::No);
 }
 
 Ref<ImmutableStyleProperties> CSSParser::parseInlineStyleDeclaration(const String& string, const Element* element)
@@ -192,8 +193,6 @@ void CSSParser::parseDeclarationForInspector(const CSSParserContext& context, co
 
 RefPtr<CSSValue> CSSParser::parseValueWithVariableReferences(CSSPropertyID propID, const CSSValue& value, Style::BuilderState& builderState)
 {
-    ASSERT((propID == CSSPropertyCustom && value.isCustomPropertyValue()) || (propID != CSSPropertyCustom && !value.isCustomPropertyValue()));
-
     if (is<CSSPendingSubstitutionValue>(value)) {
         // FIXME: Should have a resolvedShorthands cache to stop this from being done over and over for each longhand value.
         auto& substitution = downcast<CSSPendingSubstitutionValue>(value);
@@ -216,30 +215,37 @@ RefPtr<CSSValue> CSSParser::parseValueWithVariableReferences(CSSPropertyID propI
         return nullptr;
     }
 
-    if (value.isVariableReferenceValue()) {
-        const CSSVariableReferenceValue& valueWithReferences = downcast<CSSVariableReferenceValue>(value);
-        auto resolvedData = valueWithReferences.resolveVariableReferences(builderState);
-        if (!resolvedData)
-            return nullptr;
-        return CSSPropertyParser::parseSingleValue(propID, resolvedData->tokens(), valueWithReferences.context());
-    }
-
-    const auto& customPropValue = downcast<CSSCustomPropertyValue>(value);
-    const auto& valueWithReferences = std::get<Ref<CSSVariableReferenceValue>>(customPropValue.value()).get();
-
-    auto& name = downcast<CSSCustomPropertyValue>(value).name();
-    auto* registered = builderState.document().registeredCSSCustomProperties().get(name);
-    auto& syntax = registered ? registered->syntax : CSSCustomPropertySyntax::universal();
+    const CSSVariableReferenceValue& valueWithReferences = downcast<CSSVariableReferenceValue>(value);
     auto resolvedData = valueWithReferences.resolveVariableReferences(builderState);
     if (!resolvedData)
         return nullptr;
 
-    // FIXME handle REM cycles.
+    return CSSPropertyParser::parseSingleValue(propID, resolvedData->tokens(), valueWithReferences.context());
+}
+
+RefPtr<CSSCustomPropertyValue> CSSParser::parseCustomPropertyValueWithVariableReferences(const CSSCustomPropertyValue& value, Style::BuilderState& builderState)
+{
+    const auto& customPropValue = downcast<CSSCustomPropertyValue>(value);
+    const auto& valueWithReferences = std::get<Ref<CSSVariableReferenceValue>>(customPropValue.value()).get();
+
+    auto& name = downcast<CSSCustomPropertyValue>(value).name();
+    auto* registered = builderState.document().customPropertyRegistry().get(name);
+    auto& syntax = registered ? registered->syntax : CSSCustomPropertySyntax::universal();
+
+    auto resolvedData = valueWithReferences.resolveVariableReferences(builderState);
+    if (!resolvedData)
+        return nullptr;
+
     HashSet<CSSPropertyID> dependencies;
     CSSPropertyParser::collectParsedCustomPropertyValueDependencies(syntax, false, dependencies, resolvedData->tokens(), valueWithReferences.context());
 
-    for (auto id : dependencies)
-        builderState.builder().applyProperty(id);
+    // https://drafts.css-houdini.org/css-properties-values-api/#dependency-cycles
+    for (auto id : dependencies) {
+        if (builderState.inProgressProperties().get(id)) {
+            builderState.inUnitCycleProperties().set(id);
+            return nullptr;
+        }
+    }
 
     return CSSPropertyParser::parseTypedCustomPropertyValue(AtomString { name }, syntax, resolvedData->tokens(), builderState, valueWithReferences.context());
 }

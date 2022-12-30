@@ -2329,6 +2329,57 @@ template<> inline CSSPrimitiveValue::operator TextAlignLast() const
     return TextAlignLast::Auto;
 }
 
+template<> inline CSSPrimitiveValue::CSSPrimitiveValue(TextGroupAlign e)
+    : CSSValue(PrimitiveClass)
+{
+    setPrimitiveUnitType(CSSUnitType::CSS_VALUE_ID);
+    switch (e) {
+    case TextGroupAlign::None:
+        m_value.valueID = CSSValueNone;
+        break;
+    case TextGroupAlign::Start:
+        m_value.valueID = CSSValueStart;
+        break;
+    case TextGroupAlign::End:
+        m_value.valueID = CSSValueEnd;
+        break;
+    case TextGroupAlign::Left:
+        m_value.valueID = CSSValueLeft;
+        break;
+    case TextGroupAlign::Right:
+        m_value.valueID = CSSValueRight;
+        break;
+    case TextGroupAlign::Center:
+        m_value.valueID = CSSValueCenter;
+        break;
+    }
+}
+
+template<> inline CSSPrimitiveValue::operator TextGroupAlign() const
+{
+    ASSERT(isValueID());
+
+    switch (m_value.valueID) {
+    case CSSValueNone:
+        return TextGroupAlign::None;
+    case CSSValueStart:
+        return TextGroupAlign::Start;
+    case CSSValueEnd:
+        return TextGroupAlign::End;
+    case CSSValueLeft:
+        return TextGroupAlign::Left;
+    case CSSValueRight:
+        return TextGroupAlign::Right;
+    case CSSValueCenter:
+        return TextGroupAlign::Center;
+    default:
+        break;
+    }
+
+    ASSERT_NOT_REACHED();
+    return TextGroupAlign::None;
+}
+
 template<> inline CSSPrimitiveValue::CSSPrimitiveValue(TextJustify e)
     : CSSValue(PrimitiveClass)
 {
@@ -3147,6 +3198,52 @@ template<> inline CSSPrimitiveValue::operator TextOverflow() const
 
     ASSERT_NOT_REACHED();
     return TextOverflow::Clip;
+}
+
+template<> inline CSSPrimitiveValue::CSSPrimitiveValue(TextWrap wrap)
+    : CSSValue(PrimitiveClass)
+{
+    setPrimitiveUnitType(CSSUnitType::CSS_VALUE_ID);
+    switch (wrap) {
+    case TextWrap::Wrap:
+        m_value.valueID = CSSValueWrap;
+        break;
+    case TextWrap::NoWrap:
+        m_value.valueID = CSSValueNowrap;
+        break;
+    case TextWrap::Balance:
+        m_value.valueID = CSSValueBalance;
+        break;
+    case TextWrap::Stable:
+        m_value.valueID = CSSValueStable;
+        break;
+    case TextWrap::Pretty:
+        m_value.valueID = CSSValuePretty;
+        break;
+    }
+}
+
+template<> inline CSSPrimitiveValue::operator TextWrap() const
+{
+    ASSERT(isValueID());
+
+    switch (m_value.valueID) {
+    case CSSValueWrap:
+        return TextWrap::Wrap;
+    case CSSValueNowrap:
+        return TextWrap::NoWrap;
+    case CSSValueBalance:
+        return TextWrap::Balance;
+    case CSSValueStable:
+        return TextWrap::Stable;
+    case CSSValuePretty:
+        return TextWrap::Pretty;
+    default:
+        break;
+    }
+
+    ASSERT_NOT_REACHED();
+    return TextWrap::Wrap;
 }
 
 template<> inline CSSPrimitiveValue::CSSPrimitiveValue(TextEmphasisFill fill)

@@ -117,6 +117,21 @@ RefPtr<WebCore::DisplayRefreshMonitor> DrawingArea::createDisplayRefreshMonitor(
     return nullptr;
 }
 
+void DrawingArea::willStartRenderingUpdateDisplay()
+{
+    m_webPage.willStartRenderingUpdateDisplay();
+}
+
+void DrawingArea::didCompleteRenderingUpdateDisplay()
+{
+    m_webPage.didCompleteRenderingUpdateDisplay();
+}
+
+void DrawingArea::didCompleteRenderingFrame()
+{
+    m_webPage.didCompleteRenderingFrame();
+}
+
 bool DrawingArea::supportsGPUProcessRendering(DrawingAreaType type)
 {
     switch (type) {

@@ -145,6 +145,8 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/applicationmanifest/ApplicationManifest.h
     Modules/applicationmanifest/ApplicationManifestParser.h
 
+    Modules/audiosession/DOMAudioSession.h
+
     Modules/badge/BadgeClient.h
     Modules/badge/EmptyBadgeClient.h
     Modules/badge/WorkerBadgeProxy.h
@@ -1177,6 +1179,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     page/AbstractDOMWindow.h
     page/AbstractFrame.h
+    page/AbstractFrameView.h
     page/ActivityState.h
     page/ActivityStateChangeObserver.h
     page/AdjustViewSizeOrNot.h
@@ -1261,6 +1264,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/RemoteDOMWindow.h
     page/RemoteFrame.h
     page/RemoteFrameClient.h
+    page/RemoteFrameView.h
     page/RenderingUpdateScheduler.h
     page/ScreenOrientationLockType.h
     page/ScreenOrientationType.h
@@ -1740,6 +1744,9 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/controls/ControlStyle.h
     platform/graphics/controls/MeterPart.h
     platform/graphics/controls/PlatformControl.h
+    platform/graphics/controls/TextAreaPart.h
+    platform/graphics/controls/TextFieldPart.h
+    platform/graphics/controls/ToggleButtonPart.h
 
     platform/graphics/displaylists/DisplayList.h
     platform/graphics/displaylists/DisplayListDrawingContext.h

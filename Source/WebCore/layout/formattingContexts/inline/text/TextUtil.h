@@ -81,6 +81,16 @@ public:
     static size_t firstUserPerceivedCharacterLength(const InlineTextItem&);
     static size_t firstUserPerceivedCharacterLength(const InlineTextBox&, size_t startPosition, size_t length);
     static TextDirection directionForTextContent(StringView);
+
+    static bool hasHangablePunctuationStart(const InlineTextItem&, const RenderStyle&);
+    static float hangablePunctuationStartWidth(const InlineTextItem&, const RenderStyle&);
+
+    static bool hasHangablePunctuationEnd(const InlineTextItem&, const RenderStyle&);
+    static float hangablePunctuationEndWidth(const InlineTextItem&, const RenderStyle&);
+
+    static bool hasHangableStopOrCommaEnd(const InlineTextItem&, const RenderStyle&);
+    static float hangableStopOrCommaEndWidth(const InlineTextItem&, const RenderStyle&);
+
 };
 
 }

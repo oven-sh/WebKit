@@ -32,11 +32,13 @@
 #import "PlatformUtilities.h"
 #import "Test.h"
 #import "TestNotificationProvider.h"
+#import "TestURLSchemeHandler.h"
 #import "TestWKWebView.h"
 #import <WebCore/RegistrationDatabase.h>
 #import <WebKit/WKNotificationProvider.h>
 #import <WebKit/WKPreferencesPrivate.h>
 #import <WebKit/WKProcessPoolPrivate.h>
+#import <WebKit/WKSecurityOriginPrivate.h>
 #import <WebKit/WKUIDelegatePrivate.h>
 #import <WebKit/WKWebViewPrivate.h>
 #import <WebKit/WKWebsiteDataStorePrivate.h>
@@ -115,34 +117,51 @@ return "DONE";
 @property (readwrite) int clientBadgeIndex;
 @property (readwrite, copy) NSArray *expectedAppBadgeSequence;
 @property (readwrite, copy) NSArray *expectedClientBadgeSequence;
+@property (readwrite, copy) NSURL *serverURL;
+@property (readwrite) BOOL shouldAllowOriginViolations;
+@property (readonly) int originViolationCount;
 @end
 
 @implementation BadgeDelegate
 
-- (void)updatedAppBadge:(NSNumber *)badge
+- (void)updatedAppBadge:(NSNumber *)badge fromOrigin:(WKSecurityOrigin *)origin
 {
     id innerBadge = badge;
     if (!innerBadge)
         innerBadge = [NSNull null];
     EXPECT_TRUE([_expectedAppBadgeSequence[_appBadgeIndex++] isEqual:innerBadge]);
+
+    if (_serverURL) {
+        if (!_shouldAllowOriginViolations)
+            EXPECT_TRUE([origin isSameSiteAsURL:_serverURL]);
+        else
+            ++_originViolationCount;
+    }
 }
 
-- (void)_webView:(WKWebView *)webView updatedAppBadge:(NSNumber *)badge
+- (void)_webView:(WKWebView *)webView updatedAppBadge:(NSNumber *)badge fromSecurityOrigin:(WKSecurityOrigin *)origin
 {
-    [self updatedAppBadge:badge];
+    [self updatedAppBadge:badge fromOrigin:origin];
 }
 
-- (void)_webView:(WKWebView *)webView updatedClientBadge:(NSNumber *)badge
+- (void)_webView:(WKWebView *)webView updatedClientBadge:(NSNumber *)badge fromSecurityOrigin:(WKSecurityOrigin *)origin
 {
     id innerBadge = badge;
     if (!innerBadge)
         innerBadge = [NSNull null];
     EXPECT_TRUE([_expectedClientBadgeSequence[_clientBadgeIndex++] isEqual :innerBadge]);
+
+    if (_serverURL) {
+        if (!_shouldAllowOriginViolations)
+            EXPECT_TRUE([origin isSameSiteAsURL:_serverURL]);
+        else
+            ++_originViolationCount;
+    }
 }
 
 - (void)websiteDataStore:(WKWebsiteDataStore *)dataStore workerOrigin:(WKSecurityOrigin *)workerOrigin updatedAppBadge:(NSNumber *)badge
 {
-    [self updatedAppBadge:badge];
+    [self updatedAppBadge:badge fromOrigin:workerOrigin];
 }
 
 @end
@@ -174,6 +193,7 @@ TEST(Badging, APIWindow)
 
     auto webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 800, 600) configuration:configuration.get() addToWindow:YES]);
     auto badgeDelegate = adoptNS([BadgeDelegate new]);
+    badgeDelegate.get().serverURL = server.request("/"_s).URL;
     badgeDelegate.get().expectedAppBadgeSequence = @[@0, @1, @9007199254740991, [NSNull null], @0];
     badgeDelegate.get().expectedClientBadgeSequence = @[@0, @1, @9007199254740991, [NSNull null], @0];
 
@@ -290,6 +310,7 @@ TEST(Badging, DedicatedWorker)
     configuration.get().preferences._appBadgeEnabled = YES;
     auto webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 800, 600) configuration:configuration.get() addToWindow:YES]);
     auto badgeDelegate = adoptNS([BadgeDelegate new]);
+    badgeDelegate.get().serverURL = server.request("/"_s).URL;
     badgeDelegate.get().expectedAppBadgeSequence = @[@10, @0];
     configuration.get().websiteDataStore._delegate = badgeDelegate.get();
 
@@ -360,6 +381,7 @@ TEST(Badging, SharedWorker)
     configuration.get().preferences._appBadgeEnabled = YES;
     auto webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 800, 600) configuration:configuration.get() addToWindow:YES]);
     auto badgeDelegate = adoptNS([BadgeDelegate new]);
+    badgeDelegate.get().serverURL = server.request("/"_s).URL;
     badgeDelegate.get().expectedAppBadgeSequence = @[@10, @0];
     configuration.get().websiteDataStore._delegate = badgeDelegate.get();
 
@@ -445,6 +467,7 @@ TEST(Badging, ServiceWorker)
     configuration.get().preferences._appBadgeEnabled = YES;
     auto webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 800, 600) configuration:configuration.get() addToWindow:YES]);
     auto badgeDelegate = adoptNS([BadgeDelegate new]);
+    badgeDelegate.get().serverURL = server.request("/"_s).URL;
     badgeDelegate.get().expectedAppBadgeSequence = @[@10, @0];
     configuration.get().websiteDataStore._delegate = badgeDelegate.get();
 
@@ -452,6 +475,108 @@ TEST(Badging, ServiceWorker)
 
     TestWebKitAPI::Util::run(&workerRunning);
 
+    [webView callAsyncJavaScript:@"channel.port1.postMessage('updateBadge');" arguments:nil inFrame:nil inContentWorld:WKContentWorld.pageWorld completionHandler:^(id result, NSError *error) {
+        EXPECT_NULL(error);
+        javascriptDone = true;
+    }];
+    TestWebKitAPI::Util::run(&javascriptDone);
+    TestWebKitAPI::Util::run(&badgingDone);
+
+    EXPECT_EQ(badgeDelegate.get().appBadgeIndex, 2);
+    EXPECT_EQ(badgeDelegate.get().clientBadgeIndex, 0);
+}
+
+static constexpr auto originMainFrameBytes = R"SWRESOURCE(
+<iframe src="origintest2://main.com/"></iframe>
+)SWRESOURCE"_s;
+
+static constexpr auto originIFrameBytes = R"SWRESOURCE(
+<script>
+window.navigator.setAppBadge(10);
+</script>
+)SWRESOURCE"_s;
+
+TEST(Badging, Origin)
+{
+    auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+
+    auto handler = adoptNS([[TestURLSchemeHandler alloc] init]);
+    handler.get().startURLSchemeTaskHandler = ^(WKWebView *, id<WKURLSchemeTask> task) {
+        if ([task.request.URL.scheme isEqualToString:@"origintest1"])
+            return respond(task, originMainFrameBytes);
+        if ([task.request.URL.scheme isEqualToString:@"origintest2"])
+            return respond(task, originIFrameBytes);
+
+        ASSERT_NOT_REACHED();
+    };
+    [configuration setURLSchemeHandler:handler.get() forURLScheme:@"origintest1"];
+    [configuration setURLSchemeHandler:handler.get() forURLScheme:@"origintest2"];
+    configuration.get().preferences._appBadgeEnabled = YES;
+
+    auto webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 800, 600) configuration:configuration.get() addToWindow:YES]);
+    auto badgeDelegate = adoptNS([BadgeDelegate new]);
+
+    NSURL *url = [NSURL URLWithString:@"origintest1://webkit.org/index.html"];
+    badgeDelegate.get().serverURL = url;
+    badgeDelegate.get().shouldAllowOriginViolations = YES;
+    badgeDelegate.get().expectedAppBadgeSequence = @[@10];
+    webView.get().UIDelegate = badgeDelegate.get();
+
+    [webView synchronouslyLoadRequest:[NSURLRequest requestWithURL:url]];
+
+    // Having synchronously loaded, we should already have received the badging update
+    EXPECT_EQ(badgeDelegate.get().originViolationCount, 1);
+}
+
+TEST(Badging, ServiceWorkerOverride)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { serviceWorkerMainBytes } },
+        { "/sw.js"_s, { { { "Content-Type"_s, "text/javascript"_s } }, serviceWorkerScriptBytes } }
+    });
+
+    auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+
+    static bool workerRunning = false;
+    static bool badgingDone = false;
+    static bool javascriptDone = false;
+
+    auto testMessageHandler = adoptNS([[TestMessageHandler alloc] init]);
+    [[configuration userContentController] addScriptMessageHandler:testMessageHandler.get() name:@"testHandler"];
+    [testMessageHandler addMessage:@"RUNNING" withHandler:^{
+        workerRunning = true;
+    }];
+    [testMessageHandler addMessage:@"BADGINGDONE" withHandler:^{
+        badgingDone = true;
+    }];
+
+    // The WKWebView we're about to load and create will have app badge disabled.
+    // But the ServiceWorker should have it overidden to enabled.
+    configuration.get().preferences._appBadgeEnabled = NO;
+    WKPreferences *serviceWorkerOverride = [WKPreferences new];
+    serviceWorkerOverride._appBadgeEnabled = YES;
+    [configuration.get().websiteDataStore _setServiceWorkerOverridePreferences:serviceWorkerOverride];
+
+    auto webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 800, 600) configuration:configuration.get() addToWindow:YES]);
+    auto badgeDelegate = adoptNS([BadgeDelegate new]);
+    badgeDelegate.get().expectedAppBadgeSequence = @[@10, @0];
+    configuration.get().websiteDataStore._delegate = badgeDelegate.get();
+
+    [webView synchronouslyLoadRequest:server.request("/"_s)];
+
+    TestWebKitAPI::Util::run(&workerRunning);
+
+    // Confirm that the WKWebView's window object does NOT have the badging functions exposed
+    NSString *nsCheckForBadgeFunctions = [NSString stringWithUTF8String:checkForBadgeFunctions];
+    static bool done = false;
+    [webView callAsyncJavaScript:nsCheckForBadgeFunctions arguments:nil inFrame:nil inContentWorld:WKContentWorld.pageWorld completionHandler:^(id result, NSError *error) {
+        EXPECT_TRUE([result isEqualToString:@"0 0 0 0 "]);
+        EXPECT_NULL(error);
+        done = true;
+    }];
+    TestWebKitAPI::Util::run(&done);
+
+    // But then confirm that they DO work as expected in the service worker
     [webView callAsyncJavaScript:@"channel.port1.postMessage('updateBadge');" arguments:nil inFrame:nil inContentWorld:WKContentWorld.pageWorld completionHandler:^(id result, NSError *error) {
         EXPECT_NULL(error);
         javascriptDone = true;

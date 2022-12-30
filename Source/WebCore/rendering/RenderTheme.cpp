@@ -54,7 +54,10 @@
 #include "SliderThumbElement.h"
 #include "SpinButtonElement.h"
 #include "StringTruncator.h"
+#include "TextAreaPart.h"
 #include "TextControlInnerElements.h"
+#include "TextFieldPart.h"
+#include "ToggleButtonPart.h"
 #include <wtf/FileSystem.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/text/StringConcatenateNumbers.h>
@@ -480,7 +483,7 @@ static RefPtr<ControlPart> createMeterPartForRenderer(const RenderObject& render
     return MeterPart::create(gaugeRegion, element->value(), element->min(), element->max());
 }
 
-RefPtr<ControlPart> RenderTheme::createControlPartForRenderer(const RenderObject& renderer) const
+RefPtr<ControlPart> RenderTheme::createControlPart(const RenderObject& renderer) const
 {
     ControlPartType type = renderer.style().effectiveAppearance();
 
@@ -491,11 +494,12 @@ RefPtr<ControlPart> RenderTheme::createControlPartForRenderer(const RenderObject
 
     case ControlPartType::Checkbox:
     case ControlPartType::Radio:
+        return ToggleButtonPart::create(type);
+
     case ControlPartType::PushButton:
     case ControlPartType::SquareButton:
     case ControlPartType::Button:
     case ControlPartType::DefaultButton:
-    case ControlPartType::Listbox:
     case ControlPartType::Menulist:
     case ControlPartType::MenulistButton:
         break;
@@ -514,8 +518,15 @@ RefPtr<ControlPart> RenderTheme::createControlPartForRenderer(const RenderObject
     case ControlPartType::Attachment:
     case ControlPartType::BorderlessAttachment:
 #endif
+        break;
+
+    case ControlPartType::Listbox:
     case ControlPartType::TextArea:
+        return TextAreaPart::create(type);
+
     case ControlPartType::TextField:
+        return TextFieldPart::create();
+
     case ControlPartType::CapsLockIndicator:
 #if ENABLE(INPUT_TYPE_COLOR)
     case ControlPartType::ColorWell:
@@ -575,6 +586,15 @@ OptionSet<ControlStyle::State> RenderTheme::extractControlStyleStatesForRenderer
         states.add(ControlStyle::State::RightToLeft);
     if (supportsLargeFormControls())
         states.add(ControlStyle::State::LargeControls);
+    if (isReadOnlyControl(renderer))
+        states.add(ControlStyle::State::ReadOnly);
+#if ENABLE(DATALIST_ELEMENT)
+    if (hasListButton(renderer)) {
+        states.add(ControlStyle::State::ListButton);
+        if (hasListButtonPressed(renderer))
+            states.add(ControlStyle::State::ListButtonPressed);
+    }
+#endif
     return states;
 }
 
@@ -588,7 +608,7 @@ ControlStyle RenderTheme::extractControlStyleForRenderer(const RenderObject& ren
     };
 }
 
-bool RenderTheme::paint(const RenderBox& box, const ControlPart& part, const PaintInfo& paintInfo, const LayoutRect& rect)
+bool RenderTheme::paint(const RenderBox& box, ControlPart& part, const PaintInfo& paintInfo, const LayoutRect& rect)
 {
     // If painting is disabled, but we aren't updating control tints, then just bail.
     // If we are updating control tints, just schedule a repaint if the theme supports tinting
@@ -1164,6 +1184,29 @@ bool RenderTheme::isDefault(const RenderObject& o) const
 
     return o.style().effectiveAppearance() == ControlPartType::DefaultButton;
 }
+
+#if ENABLE(DATALIST_ELEMENT)
+bool RenderTheme::hasListButton(const RenderObject& renderer) const
+{
+    if (!is<HTMLInputElement>(renderer.generatingNode()))
+        return false;
+
+    const auto& input = downcast<HTMLInputElement>(*(renderer.generatingNode()));
+    return input.list();
+}
+
+bool RenderTheme::hasListButtonPressed(const RenderObject& renderer) const
+{
+    const auto* input = downcast<HTMLInputElement>(renderer.generatingNode());
+    if (!input)
+        return false;
+
+    if (auto* buttonElement = input->dataListButtonElement())
+        return buttonElement->active();
+
+    return false;
+}
+#endif
 
 #if !USE(NEW_THEME)
 

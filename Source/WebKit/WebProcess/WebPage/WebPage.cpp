@@ -718,8 +718,8 @@ WebPage::WebPage(PageIdentifier pageID, WebPageCreationParameters&& parameters)
 #endif
 
 #if HAVE(STATIC_FONT_REGISTRY)
-    if (parameters.fontMachExtensionHandles.size())
-        WebProcess::singleton().switchFromStaticFontRegistryToUserFontRegistry(WTFMove(parameters.fontMachExtensionHandles));
+    if (parameters.fontMachExtensionHandle)
+        WebProcess::singleton().switchFromStaticFontRegistryToUserFontRegistry(WTFMove(*parameters.fontMachExtensionHandle));
 #endif
 
     pageConfiguration.mainFrameIdentifier = parameters.mainFrameIdentifier;
@@ -953,10 +953,6 @@ WebPage::WebPage(PageIdentifier pageID, WebPageCreationParameters&& parameters)
 
     m_page->setCanUseCredentialStorage(parameters.canUseCredentialStorage);
 
-#if HAVE(MACH_BOOTSTRAP_EXTENSION)
-    SandboxExtension::consumePermanently(parameters.machBootstrapHandle);
-#endif
-
 #if HAVE(SANDBOX_STATE_FLAGS)
     if (!m_page->settings().offlineWebApplicationCacheEnabled()) {
         // This call is not meant to actually read a preference, but is only here to trigger a sandbox rule in the
@@ -964,7 +960,9 @@ WebPage::WebPage(PageIdentifier pageID, WebPageCreationParameters&& parameters)
         // This call should be replaced with proper API when available.
         CFPreferencesGetAppIntegerValue(CFSTR("key"), CFSTR("com.apple.WebKit.WebContent.AppCacheDisabled"), nullptr);
     }
+#endif
 
+#if HAVE(SANDBOX_STATE_FLAGS)
     auto auditToken = WebProcess::singleton().auditTokenForSelf();
     auto experimentalSandbox = parameters.store.getBoolValueForKey(WebPreferencesKey::experimentalSandboxEnabledKey());
     if (experimentalSandbox)
@@ -984,6 +982,9 @@ WebPage::WebPage(PageIdentifier pageID, WebPageCreationParameters&& parameters)
     updateThrottleState();
 #if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
     updateImageAnimationEnabled();
+#endif
+#if ENABLE(NETWORK_CONNECTION_INTEGRITY)
+    setLookalikeCharacterStrings(WTFMove(parameters.lookalikeCharacterStrings));
 #endif
 }
 
@@ -1978,28 +1979,6 @@ void WebPage::tryRestoreScrollPosition()
 WebPage& WebPage::fromCorePage(Page& page)
 {
     return static_cast<WebChromeClient&>(page.chrome().client()).page();
-}
-
-static std::optional<FrameTreeNodeData> frameTreeNodeData(AbstractFrame& frame)
-{
-    std::optional<FrameTreeNodeData> info;
-    if (auto* webFrame = WebFrame::fromCoreFrame(frame)) {
-        Vector<FrameTreeNodeData> children;
-        for (auto* childFrame = frame.tree().firstChild(); childFrame; childFrame = childFrame->tree().nextSibling()) {
-            if (auto childInfo = frameTreeNodeData(*childFrame))
-                children.append(WTFMove(*childInfo));
-        }
-        info = FrameTreeNodeData {
-            webFrame->info(),
-            WTFMove(children)
-        };
-    }
-    return info;
-}
-
-void WebPage::getAllFrames(CompletionHandler<void(FrameTreeNodeData&&)>&& completionHandler)
-{
-    completionHandler(*frameTreeNodeData(m_page->mainFrame()));
 }
 
 void WebPage::setSize(const WebCore::IntSize& viewSize)
@@ -3219,14 +3198,9 @@ void WebPage::mouseEvent(const WebMouseEvent& mouseEvent, std::optional<Vector<S
     revokeSandboxExtensions(mouseEventSandboxExtensions);
 }
 
-static bool handleWheelEvent(const WebWheelEvent& wheelEvent, Page* page, OptionSet<WheelEventProcessingSteps> processingSteps)
+void WebPage::handleWheelEvent(const WebWheelEvent& event, const OptionSet<WheelEventProcessingSteps>& processingSteps)
 {
-    Frame& frame = page->mainFrame();
-    if (!frame.view())
-        return false;
-
-    PlatformWheelEvent platformWheelEvent = platform(wheelEvent);
-    return page->userInputBridge().handleWheelEvent(platformWheelEvent, processingSteps);
+    wheelEvent(event, processingSteps, EventDispatcher::WheelEventOrigin::UIProcess);
 }
 
 bool WebPage::wheelEvent(const WebWheelEvent& wheelEvent, OptionSet<WheelEventProcessingSteps> processingSteps, EventDispatcher::WheelEventOrigin wheelEventOrigin)
@@ -3235,7 +3209,15 @@ bool WebPage::wheelEvent(const WebWheelEvent& wheelEvent, OptionSet<WheelEventPr
 
     CurrentEvent currentEvent(wheelEvent);
 
-    bool handled = handleWheelEvent(wheelEvent, m_page.get(), processingSteps);
+    auto dispatchWheelEvent = [&](const WebWheelEvent& wheelEvent, OptionSet<WheelEventProcessingSteps> processingSteps) {
+        auto& frame = m_page->mainFrame();
+        if (!frame.view())
+            return false;
+
+        auto platformWheelEvent = platform(wheelEvent);
+        return m_page->userInputBridge().handleWheelEvent(platformWheelEvent, processingSteps);
+    };
+    bool handled = dispatchWheelEvent(wheelEvent, processingSteps);
 
     if (processingSteps.contains(WheelEventProcessingSteps::MainThreadForScrolling) && wheelEventOrigin == EventDispatcher::WheelEventOrigin::UIProcess)
         send(Messages::WebPageProxy::DidReceiveEvent(static_cast<uint32_t>(wheelEvent.type()), handled));
@@ -4195,6 +4177,7 @@ static void adjustSettingsForLockdownMode(Settings& settings, const WebPreferenc
 #if USE(SYSTEM_PREVIEW)
     settings.setSystemPreviewEnabled(false);
 #endif
+    settings.setEmbedElementEnabled(false);
     settings.setFileReaderAPIEnabled(false);
     settings.setFileSystemAccessEnabled(false);
     settings.setIndexedDBAPIEnabled(false);
@@ -4349,10 +4332,6 @@ void WebPage::updatePreferences(const WebPreferencesStore& store)
 #endif
 #if HAVE(SCENEKIT)
     m_useSceneKitForModel = store.getBoolValueForKey(WebPreferencesKey::useSceneKitForModelKey());
-#endif
-
-#if ENABLE(NETWORK_CONNECTION_INTEGRITY)
-    m_sanitizeLookalikeCharactersInLinksEnabled = store.getBoolValueForKey(WebPreferencesKey::sanitizeLookalikeCharactersInLinksEnabledKey());
 #endif
 
     if (settings.showMediaStatsContextMenuItemEnabled())
@@ -4534,18 +4513,25 @@ void WebPage::finalizeRenderingUpdate(OptionSet<FinalizeRenderingUpdateFlags> fl
 #endif
 }
 
-void WebPage::willStartPlatformRenderingUpdate()
+void WebPage::willStartRenderingUpdateDisplay()
 {
     if (m_isClosed)
         return;
-    m_page->willStartPlatformRenderingUpdate();
+    m_page->willStartRenderingUpdateDisplay();
 }
 
-void WebPage::didCompletePlatformRenderingUpdate()
+void WebPage::didCompleteRenderingUpdateDisplay()
 {
     if (m_isClosed)
         return;
-    m_page->didCompletePlatformRenderingUpdate();
+    m_page->didCompleteRenderingUpdateDisplay();
+}
+
+void WebPage::didCompleteRenderingFrame()
+{
+    if (m_isClosed)
+        return;
+    m_page->didCompleteRenderingFrame();
 }
 
 void WebPage::releaseMemory(Critical)
@@ -5080,16 +5066,10 @@ void WebPage::changeSelectedIndex(int32_t index)
 }
 
 #if PLATFORM(IOS_FAMILY)
-void WebPage::didChooseFilesForOpenPanelWithDisplayStringAndIcon(const Vector<String>& files, const String& displayString, const IPC::DataReference& iconData, WebKit::SandboxExtension::Handle&& machBootstrapHandle, SandboxExtension::Handle&& frontboardServicesSandboxExtensionHandle, SandboxExtension::Handle&& iconServicesSandboxExtensionHandle)
+void WebPage::didChooseFilesForOpenPanelWithDisplayStringAndIcon(const Vector<String>& files, const String& displayString, const IPC::DataReference& iconData, SandboxExtension::Handle&& frontboardServicesSandboxExtensionHandle, SandboxExtension::Handle&& iconServicesSandboxExtensionHandle)
 {
     if (!m_activeOpenPanelResultListener)
         return;
-
-    auto machBootstrapSandboxExtension = SandboxExtension::create(WTFMove(machBootstrapHandle));
-    if (machBootstrapSandboxExtension) {
-        bool consumed = machBootstrapSandboxExtension->consume();
-        ASSERT_UNUSED(consumed, consumed);
-    }
 
 #if HAVE(FRONTBOARD_SYSTEM_APP_SERVICES)
     auto frontboardServicesSandboxExtension = SandboxExtension::create(WTFMove(frontboardServicesSandboxExtensionHandle));
@@ -5105,7 +5085,6 @@ void WebPage::didChooseFilesForOpenPanelWithDisplayStringAndIcon(const Vector<St
         bool consumed = iconServicesSandboxExtension->consume();
         ASSERT_UNUSED(consumed, consumed);
     }
-
     RELEASE_ASSERT(!sandbox_check(getpid(), "mach-lookup", static_cast<enum sandbox_filter_type>(SANDBOX_FILTER_GLOBAL_NAME | SANDBOX_CHECK_NO_REPORT), "com.apple.iconservices"));
 
     RefPtr<Icon> icon;
@@ -5131,10 +5110,6 @@ void WebPage::didChooseFilesForOpenPanelWithDisplayStringAndIcon(const Vector<St
         ASSERT_UNUSED(revoked, revoked);
     }
 
-    if (machBootstrapSandboxExtension) {
-        bool revoked = machBootstrapSandboxExtension->revoke();
-        ASSERT_UNUSED(revoked, revoked);
-    }
 }
 #endif
 
@@ -5176,9 +5151,9 @@ void WebPage::didReceiveGeolocationPermissionDecision(GeolocationIdentifier geol
 
 #if ENABLE(MEDIA_STREAM)
 
-void WebPage::userMediaAccessWasGranted(UserMediaRequestIdentifier userMediaID, WebCore::CaptureDevice&& audioDevice, WebCore::CaptureDevice&& videoDevice, WebCore::MediaDeviceHashSalts&& mediaDeviceIdentifierHashSalts, Vector<SandboxExtension::Handle>&& handles, CompletionHandler<void()>&& completionHandler)
+void WebPage::userMediaAccessWasGranted(UserMediaRequestIdentifier userMediaID, WebCore::CaptureDevice&& audioDevice, WebCore::CaptureDevice&& videoDevice, WebCore::MediaDeviceHashSalts&& mediaDeviceIdentifierHashSalts, SandboxExtension::Handle&& handle, CompletionHandler<void()>&& completionHandler)
 {
-    SandboxExtension::consumePermanently(handles);
+    SandboxExtension::consumePermanently(handle);
 
     m_userMediaPermissionRequestManager->userMediaAccessWasGranted(userMediaID, WTFMove(audioDevice), WTFMove(videoDevice), WTFMove(mediaDeviceIdentifierHashSalts), WTFMove(completionHandler));
 }
@@ -6122,15 +6097,16 @@ static bool pageContainsAnyHorizontalScrollbars(Frame* mainFrame)
         if (!frameView)
             continue;
 
-        const HashSet<ScrollableArea*>* scrollableAreas = frameView->scrollableAreas();
+        auto scrollableAreas = frameView->scrollableAreas();
         if (!scrollableAreas)
             continue;
 
-        for (auto* scrollableArea : *scrollableAreas) {
+        for (auto& area : *scrollableAreas) {
+            CheckedPtr<ScrollableArea> scrollableArea(area);
             if (!scrollableArea->scrollbarsCanBeActive())
                 continue;
 
-            if (hasEnabledHorizontalScrollbar(scrollableArea))
+            if (hasEnabledHorizontalScrollbar(scrollableArea.get()))
                 return true;
         }
     }
@@ -6904,10 +6880,6 @@ void WebPage::didCommitLoad(WebFrame* frame)
 
 #if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
     m_elementsToExcludeFromRemoveBackground.clear();
-#endif
-
-#if ENABLE(NETWORK_CONNECTION_INTEGRITY)
-    updateLookalikeCharacterStringsIfNeeded();
 #endif
 }
 
@@ -8394,22 +8366,12 @@ bool WebPage::isUsingUISideCompositing() const
 
 #if ENABLE(NETWORK_CONNECTION_INTEGRITY)
 
-void WebPage::updateLookalikeCharacterStringsIfNeeded()
+void WebPage::setLookalikeCharacterStrings(Vector<String>&& strings)
 {
-    if (!m_sanitizeLookalikeCharactersInLinksEnabled)
-        return;
-
-    RefPtr networkProcess = WebProcess::singleton().existingNetworkProcessConnection();
-    if (!networkProcess)
-        return;
-
-    if (!std::exchange(m_shouldUpdateLookalikeCharacterStrings, false))
-        return;
-
-    networkProcess->connection().sendWithAsyncReply(Messages::NetworkConnectionToWebProcess::RequestLookalikeCharacterStrings(), [weakPage = WeakPtr { *this }](auto&& strings) {
-        if (RefPtr page = weakPage.get())
-            page->m_lookalikeCharacterStrings = WTFMove(strings);
-    });
+    m_lookalikeCharacterStrings.clear();
+    m_lookalikeCharacterStrings.reserveInitialCapacity(strings.size());
+    for (auto& string : strings)
+        m_lookalikeCharacterStrings.add(string);
 }
 
 #endif // ENABLE(NETWORK_CONNECTION_INTEGRITY)

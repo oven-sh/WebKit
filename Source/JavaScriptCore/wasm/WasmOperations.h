@@ -49,7 +49,7 @@ class TypeDefinition;
 typedef int64_t EncodedWasmValue;
 
 #if ENABLE(WEBASSEMBLY_B3JIT)
-void loadValuesIntoBuffer(Probe::Context&, const StackMap&, uint64_t* buffer);
+void loadValuesIntoBuffer(Probe::Context&, const StackMap&, uint64_t* buffer, SavedFPWidth);
 JSC_DECLARE_JIT_OPERATION(operationWasmTriggerOSREntryNow, void, (Probe::Context&));
 JSC_DECLARE_JIT_OPERATION(operationWasmTriggerTierUpNow, void, (Instance*, uint32_t functionIndex));
 #endif
@@ -82,8 +82,8 @@ JSC_DECLARE_JIT_OPERATION(operationWasmTableFill, size_t, (Instance*, unsigned, 
 JSC_DECLARE_JIT_OPERATION(operationWasmTableCopy, size_t, (Instance*, unsigned dstTableIndex, unsigned srcTableIndex, int32_t dstOffset, int32_t srcOffset, int32_t length));
 JSC_DECLARE_JIT_OPERATION(operationGetWasmTableSize, int32_t, (Instance*, unsigned));
 
-JSC_DECLARE_JIT_OPERATION(operationMemoryAtomicWait32, int32_t, (Instance* instance, unsigned base, unsigned offset, uint32_t value, int64_t timeout));
-JSC_DECLARE_JIT_OPERATION(operationMemoryAtomicWait64, int32_t, (Instance* instance, unsigned base, unsigned offset, uint64_t value, int64_t timeout));
+JSC_DECLARE_JIT_OPERATION(operationMemoryAtomicWait32, int32_t, (Instance* instance, unsigned base, unsigned offset, int32_t value, int64_t timeout));
+JSC_DECLARE_JIT_OPERATION(operationMemoryAtomicWait64, int32_t, (Instance* instance, unsigned base, unsigned offset, int64_t value, int64_t timeout));
 JSC_DECLARE_JIT_OPERATION(operationMemoryAtomicNotify, int32_t, (Instance*, unsigned, unsigned, int32_t));
 JSC_DECLARE_JIT_OPERATION(operationWasmMemoryInit, size_t, (Instance*, unsigned dataSegmentIndex, uint32_t dstAddress, uint32_t srcAddress, uint32_t length));
 JSC_DECLARE_JIT_OPERATION(operationWasmDataDrop, void, (Instance*, unsigned dataSegmentIndex));

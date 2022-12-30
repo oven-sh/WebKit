@@ -1250,9 +1250,10 @@ http/tests/websocket/tests/hybi/imported/blink/permessage-deflate-split-frames.h
 http/tests/websocket/tests/hybi/imported/blink/permessage-deflate-unsolicited-negotiation-response.html [ Skip ]
 http/tests/websocket/tests/hybi/imported/blink/permessage-deflate-window-bits.html [ Skip ]
 
-http/wpt/offscreen-canvas/transferToImageBitmap-webgl.html [ Failure ]
+http/wpt/offscreen-canvas/transferToImageBitmap-webgl.html [ ImageOnlyFailure Failure ]
 imported/w3c/web-platform-tests/html/canvas/offscreen/manual/the-offscreen-canvas/offscreencanvas.commit.html [ Failure Pass ]
 imported/w3c/web-platform-tests/html/canvas/offscreen/manual/the-offscreen-canvas/offscreencanvas.resize.html [ Failure Pass ]
+imported/w3c/web-platform-tests/html/canvas/offscreen/the-offscreen-canvas/size.large.html [ Skip ]
 
 # Tests a setting behind the ENABLE_FULLSCREEN_API flag, which is WK2-only
 media/video-supports-fullscreen.html [ Skip ]
@@ -1536,36 +1537,51 @@ webkit.org/b/231021 imported/w3c/web-platform-tests/css/css-grid/grid-items/perc
 webkit.org/b/231021 imported/w3c/web-platform-tests/css/css-grid/grid-items/replaced-element-015.html [ ImageOnlyFailure ]
 
 imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/align-content/masonry-align-content-004.html [ ImageOnlyFailure ]
- imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/align-tracks/masonry-align-tracks-001.html [ ImageOnlyFailure ]
- imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/align-tracks/masonry-align-tracks-multi-001.html [ ImageOnlyFailure ]
- imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/align-tracks/masonry-align-tracks-stretch-001.html [ ImageOnlyFailure ]
- imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/align-tracks/masonry-align-tracks-stretch-002.html
- imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/fragmentation/masonry-fragmentation-001.html [ ImageOnlyFailure ]
- imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/fragmentation/masonry-fragmentation-002.html [ ImageOnlyFailure ]
- imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/fragmentation/masonry-fragmentation-003.html [ ImageOnlyFailure ]
- imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/fragmentation/masonry-fragmentation-004.html [ ImageOnlyFailure ]
- imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/fragmentation/masonry-fragmentation-005.html [ ImageOnlyFailure ]
- imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/fragmentation/masonry-fragmentation-006.html [ ImageOnlyFailure ]
- imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/gap/masonry-gap-001.html [ ImageOnlyFailure ]
- imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/baseline/masonry-grid-item-content-baseline-001.html [ ImageOnlyFailure ]
- imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/baseline/masonry-grid-item-self-baseline-001.html [ ImageOnlyFailure ]
- imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/baseline/masonry-grid-item-self-baseline-002a.html [ ImageOnlyFailure ]
- imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/baseline/masonry-grid-item-self-baseline-002b.html [ ImageOnlyFailure ]
- imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/intrinsic-sizing/masonry-intrinsic-sizing-001.html [ ImageOnlyFailure ]
- imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/intrinsic-sizing/masonry-intrinsic-sizing-002.html [ ImageOnlyFailure ]
- imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/intrinsic-sizing/masonry-intrinsic-sizing-003.html [ ImageOnlyFailure ]
- imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/intrinsic-sizing/masonry-intrinsic-sizing-004.html [ ImageOnlyFailure ]
- imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/intrinsic-sizing/masonry-intrinsic-sizing-005.html [ ImageOnlyFailure ]
- imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/item-placement/masonry-item-placement-005.html [ ImageOnlyFailure ]
- imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/justify-content/masonry-justify-content-003.html [ ImageOnlyFailure ]
- imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/justify-content/masonry-justify-content-004.html [ ImageOnlyFailure ]
- imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/justify-tracks/masonry-justify-tracks-001.html [ ImageOnlyFailure ]
- imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/justify-tracks/masonry-justify-tracks-multi-001.html [ ImageOnlyFailure ]
- imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/justify-tracks/masonry-justify-tracks-stretch-001.html [ ImageOnlyFailure ]
- imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/justify-tracks/masonry-justify-tracks-stretch-002.html [ ImageOnlyFailure ]
- imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/subgrid/masonry-subgrid-001.html [ ImageOnlyFailure ]
- imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/subgrid/masonry-subgrid-002.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/align-tracks/masonry-align-tracks-001.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/align-tracks/masonry-align-tracks-multi-001.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/align-tracks/masonry-align-tracks-stretch-001.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/align-tracks/masonry-align-tracks-stretch-002.html
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/fragmentation/masonry-fragmentation-001.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/fragmentation/masonry-fragmentation-002.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/fragmentation/masonry-fragmentation-003.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/fragmentation/masonry-fragmentation-004.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/fragmentation/masonry-fragmentation-005.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/fragmentation/masonry-fragmentation-006.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/gap/masonry-gap-001.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/baseline/masonry-grid-item-content-baseline-001.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/baseline/masonry-grid-item-self-baseline-001.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/baseline/masonry-grid-item-self-baseline-002a.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/baseline/masonry-grid-item-self-baseline-002b.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/intrinsic-sizing/masonry-intrinsic-sizing-001.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/intrinsic-sizing/masonry-intrinsic-sizing-002.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/intrinsic-sizing/masonry-intrinsic-sizing-003.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/intrinsic-sizing/masonry-intrinsic-sizing-004.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/intrinsic-sizing/masonry-intrinsic-sizing-005.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/item-placement/masonry-item-placement-005.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/justify-content/masonry-justify-content-003.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/justify-content/masonry-justify-content-004.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/justify-tracks/masonry-justify-tracks-001.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/justify-tracks/masonry-justify-tracks-multi-001.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/justify-tracks/masonry-justify-tracks-stretch-001.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/justify-tracks/masonry-justify-tracks-stretch-002.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/subgrid/masonry-subgrid-001.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/subgrid/masonry-subgrid-002.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/align-content/masonry-align-content-001.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/align-content/masonry-align-content-002.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/grid-placement/masonry-grid-placement-named-lines-001.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/intrinsic-sizing/masonry-intrinsic-sizing-006.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/item-placement/masonry-item-placement-002.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/item-placement/masonry-item-placement-004.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/item-placement/masonry-rows-item-placement-auto-flow-next-001.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/justify-content/masonry-justify-content-001.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/justify-content/masonry-justify-content-002.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/subgrid/masonry-columns-subgrid-named-lines-001.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/subgrid/masonry-columns-subgrid-named-lines-002.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/subgrid/masonry-columns-subgrid-named-lines-003.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/subgrid/masonry-rows-subgrid-named-lines-001.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/subgrid/masonry-rows-subgrid-named-lines-002.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/subgrid/masonry-rows-subgrid-named-lines-003.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/masonry/tentative/masonry-grid-template-columns-computed-withcontent.html [ Skip ]
 
 webkit.org/b/236958 imported/w3c/web-platform-tests/css/css-grid/subgrid/repeat-auto-fill-003.html [ ImageOnlyFailure ]
 
@@ -2738,7 +2754,6 @@ webkit.org/b/195275 imported/w3c/web-platform-tests/css/css-text/boundary-shapin
 webkit.org/b/195275 imported/w3c/web-platform-tests/css/css-text/boundary-shaping/boundary-shaping-005.html [ ImageOnlyFailure ]
 webkit.org/b/195275 imported/w3c/web-platform-tests/css/css-text/boundary-shaping/boundary-shaping-010.html [ ImageOnlyFailure ]
 webkit.org/b/183258 imported/w3c/web-platform-tests/css/css-text/hanging-punctuation/hanging-punctuation-first-001.xht [ ImageOnlyFailure ]
-webkit.org/b/183258 imported/w3c/web-platform-tests/css/css-text/hanging-punctuation/hanging-punctuation-force-end-001.xht [ ImageOnlyFailure ]
 webkit.org/b/183258 imported/w3c/web-platform-tests/css/css-text/hanging-punctuation/hanging-punctuation-last-001.xht [ ImageOnlyFailure ]
 webkit.org/b/195275 imported/w3c/web-platform-tests/css/css-text/hyphens/hyphens-auto-001.html [ ImageOnlyFailure ]
 webkit.org/b/214290 imported/w3c/web-platform-tests/css/css-text/hyphens/hyphens-auto-010.html [ ImageOnlyFailure ]
@@ -3112,13 +3127,7 @@ webkit.org/b/172609 fetch/closing-while-fetching-blob.html [ Skip ]
 
 webkit.org/b/175291 imported/w3c/web-platform-tests/css/css-ui/outline-018.html [ Skip ]
 
-webkit.org/b/175287 imported/w3c/web-platform-tests/css/css-ui/box-sizing-014.html [ ImageOnlyFailure ]
-webkit.org/b/175287 imported/w3c/web-platform-tests/css/css-ui/box-sizing-015.html [ ImageOnlyFailure ]
 webkit.org/b/175287 imported/w3c/web-platform-tests/css/css-ui/box-sizing-016.html [ ImageOnlyFailure ]
-webkit.org/b/175287 imported/w3c/web-platform-tests/css/css-ui/box-sizing-018.html [ ImageOnlyFailure ]
-webkit.org/b/175287 imported/w3c/web-platform-tests/css/css-ui/box-sizing-019.html [ ImageOnlyFailure ]
-webkit.org/b/175287 imported/w3c/web-platform-tests/css/css-ui/box-sizing-024.html [ ImageOnlyFailure ]
-webkit.org/b/175287 imported/w3c/web-platform-tests/css/css-ui/box-sizing-025.html [ ImageOnlyFailure ]
 
 webkit.org/b/175288 imported/w3c/web-platform-tests/css/css-ui/outline-013.html [ ImageOnlyFailure ]
 webkit.org/b/175288 imported/w3c/web-platform-tests/css/css-ui/outline-014.html [ ImageOnlyFailure ]
@@ -3372,6 +3381,7 @@ webkit.org/b/202849 imported/w3c/web-platform-tests/css/css-lists/list-style-typ
 webkit.org/b/202849 imported/w3c/web-platform-tests/css/css-lists/list-style-type-string-005b.html [ ImageOnlyFailure ]
 webkit.org/b/202849 imported/w3c/web-platform-tests/css/css-lists/list-style-type-string-006.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-lists/list-with-image-display-changed-001.html [ ImageOnlyFailure ]
+webkit.org/b/249918 imported/w3c/web-platform-tests/css/css-lists/list-marker-symbol-bidi.html [ ImageOnlyFailure ]
 
 webkit.org/b/196274 imported/w3c/web-platform-tests/xhr/send-redirect-post-upload.htm [ Pass Failure ]
 
@@ -5001,6 +5011,13 @@ imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.s
 imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.toDataURL.jpeg.p3.canvas.html [ Failure ]
 imported/w3c/web-platform-tests/html/canvas/element/wide-gamut-canvas/2d.color.space.p3.toDataURL.with.putImageData.html [ Failure ]
 storage/indexeddb/structured-clone-image-data-display-p3.html [ Failure ]
+imported/w3c/web-platform-tests/html/canvas/offscreen/manual/wide-gamut-canvas/2d.color.space.p3.convertToBlobp3.canvas.html [ Failure ]
+imported/w3c/web-platform-tests/html/canvas/offscreen/wide-gamut-canvas/2d.color.space.p3.to.p3.html [ Failure ]
+imported/w3c/web-platform-tests/html/canvas/offscreen/wide-gamut-canvas/2d.color.space.p3.to.p3.worker.html [ Failure ]
+imported/w3c/web-platform-tests/html/canvas/offscreen/wide-gamut-canvas/2d.color.space.p3.to.srgb.html [ Failure ]
+imported/w3c/web-platform-tests/html/canvas/offscreen/wide-gamut-canvas/2d.color.space.p3.to.srgb.worker.html [ Failure ]
+imported/w3c/web-platform-tests/webcodecs/videoFrame-createImageBitmap.any.worker.html [ Failure ]
+imported/w3c/web-platform-tests/webcodecs/videoFrame-drawImage.any.worker.html [ Failure ]
 
 webkit.org/b/226942 imported/w3c/web-platform-tests/webaudio/the-audio-api/the-audiobuffersourcenode-interface/active-processing.https.html [ Pass Failure ]
 
@@ -5914,18 +5931,9 @@ imported/w3c/web-platform-tests/streams/idlharness-shadowrealm.window.html [ Pas
 imported/w3c/web-platform-tests/url/idlharness-shadowrealm.window.html [ Pass Failure ]
 imported/w3c/web-platform-tests/user-timing/idlharness-shadowrealm.window.html [ Pass Failure ]
 
-# Failing since their import.
-imported/w3c/web-platform-tests/css/css-typed-om/rotate-by-added-angle.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-typed-om/width-by-clamp-px-em.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-typed-om/width-by-max-px-em.html [ ImageOnlyFailure ]
-imported/w3c/web-platform-tests/css/css-typed-om/width-by-min-px-em.html [ ImageOnlyFailure ]
-
 # modulepreload is not supported
 imported/w3c/web-platform-tests/import-maps/acquiring/modulepreload.html [ Skip ]
 imported/w3c/web-platform-tests/import-maps/acquiring/modulepreload-link-header.html [ Skip ]
-
-# Crashes since StylePropertyMap::set() was implemented and this test started running.
-webkit.org/b/247212 imported/w3c/web-platform-tests/css/css-properties-values-api/unit-cycles.html [ Skip ]
 
 # WPT meta name="variant" is not supported. And iframe 'load' event has a bug.
 imported/w3c/web-platform-tests/import-maps/data-driven/resolving.html [ Skip ]
@@ -6161,7 +6169,6 @@ imported/w3c/web-platform-tests/workers/modules/shared-worker-options-credential
 imported/w3c/web-platform-tests/xhr/send-after-setting-document-domain.htm [ Skip ]
 
 imported/w3c/web-platform-tests/webcodecs/videoFrame-canvasImageSource.html [ DumpJSConsoleLogInStdErr ]
-imported/w3c/web-platform-tests/webcodecs/videoFrame-canvasImageBitmap.any.html [ DumpJSConsoleLogInStdErr ]
 imported/w3c/web-platform-tests/webcodecs/video-encoder.https.any.worker.html [ DumpJSConsoleLogInStdErr ]
 imported/w3c/web-platform-tests/webcodecs/video-encoder.https.any.html [ DumpJSConsoleLogInStdErr ]
 

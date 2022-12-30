@@ -292,6 +292,18 @@ DateTimeInputsEditableComponentsEnabled:
     WebCore:
       default: false
 
+EmbedElementEnabled:
+  type: bool
+  humanReadableName: "Embed Element"
+  humanReadableDescription: "Embed Element"
+  defaultValue:
+    WebKitLegacy:
+      default: true
+    WebKit:
+      default: true
+    WebCore:
+      default: true
+
 EnterKeyHintEnabled:
   type: bool
   humanReadableName: "Enter Key Hint"
@@ -1186,11 +1198,11 @@ UseGPUProcessForWebGLEnabled:
     WebKitLegacy:
       default: false
     WebKit:
-      "ENABLE(GPU_PROCESS_BY_DEFAULT) && !HAVE(UIKIT_WEBKIT_INTERNALS)": true
+      "ENABLE(GPU_PROCESS_BY_DEFAULT) && ENABLE(GPU_PROCESS_WEBGL_BY_DEFAULT)": true
       "PLATFORM(WIN)": true
       default: false
     WebCore:
-      "ENABLE(GPU_PROCESS_BY_DEFAULT) && !HAVE(UIKIT_WEBKIT_INTERNALS)": true
+      "ENABLE(GPU_PROCESS_BY_DEFAULT) && ENABLE(GPU_PROCESS_WEBGL_BY_DEFAULT)": true
       "PLATFORM(WIN)": true
       default: false
 

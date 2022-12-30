@@ -587,7 +587,7 @@ $architecture = determineArchitecture unless $architecture
 $isFTLPlatform = !($architecture == "x86" || $architecture == "arm" || $architecture == "mips" || $architecture == "riscv64" || $hostOS == "windows" || $hostOS == "playstation")
 # Special case armv7, we want to run the wasm tests temporarily without B3/Air support
 $isWasmPlatform = $isFTLPlatform || $architecture == "arm"
-$isSIMDPlatform = $architecture == "arm64"
+$isSIMDPlatform = $architecture == "arm64" || $architecture == "x86_64"
 
 if $architecture == "x86"
     # The JIT is temporarily disabled on this platform since
@@ -1823,7 +1823,7 @@ end
 def runV8WebAssemblySuite(*optionalTestSpecificOptions)
     return if !$jitTests
     return if !$isWasmPlatform
-    prepareExtraAbsoluteFiles(Pathname.new(WASMTESTS_PATH).join("v8", "resources"), ["mjsunit.js", "wasm-module-builder.js"])
+    prepareExtraAbsoluteFiles(Pathname.new(WASMTESTS_PATH).join("v8", "resources"), ["async-compile.js", "mjsunit.js", "trap-location.js", "user-properties-common.js", "wasm-module-builder.js"])
     if optionalTestSpecificOptions[0] == :no_module
       optionalTestSpecificOptions.shift
     else
@@ -1953,6 +1953,10 @@ def runWebAssemblySIMDSpecTest(mode)
     return if !$isSIMDPlatform
     runWebAssemblySpecTestBase(mode, "simd-spec-harness", nil, "--useWebAssemblySIMD=true")
     runWebAssemblySpecTestBase(mode, "simd-spec-harness", "-eager", "--useWebAssemblySIMD=true", "--useBBQJIT=1", "--useWasmLLInt=1", "--wasmLLIntTiersUpToBBQ=1", "--thresholdForOMGOptimizeAfterWarmUp=0", "--thresholdForOMGOptimizeSoon=0")
+end
+
+def runWebAssemblyTailCallSpecTest(mode)
+    runWebAssemblySpecTestBase(mode, "tail-call-spec-harness", nil, "--useWebAssemblyTailCalls=true")
 end
 
 def runWebAssemblyLowExecutableMemory(*optionalTestSpecificOptions)

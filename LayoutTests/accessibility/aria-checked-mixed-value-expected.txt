@@ -1,30 +1,24 @@
-Tests whether mixed values are reported properly.
+This test ensures mixed values are reported correctly.
 
-On success, you will see a series of "PASS" messages, followed by "TEST COMPLETE".
-
-
+<div id="element1" role="radio" aria-checked="mixed"></div>
 Role: AXRole: AXRadioButton
 Mixed: false
 
-
-Role: AXRole: AXRadioMenuItem
+<div id="element2" role="menuitemradio" aria-checked="mixed"></div>
+Role: AXRole: AXMenuItem
 Mixed: false
 
-
-Role: AXRole: AXCheckBox
+<div id="element3" role="menuitemcheckbox" aria-checked="mixed"></div>
+Role: AXRole: AXMenuItem
 Mixed: true
 
-
-Role: AXRole: AXCheckMenuItem
-Mixed: true
-
-
-Role: AXRole: AXCheckBox
-Mixed: true
-
-
+<div id="element4" role="checkbox"></div>
 Role: AXRole: AXCheckBox
 Mixed: false
+
+<div id="element5" role="checkbox" aria-checked="mixed"></div>
+Role: AXRole: AXCheckBox
+Mixed: true
 
 
 PASS successfullyParsed is true

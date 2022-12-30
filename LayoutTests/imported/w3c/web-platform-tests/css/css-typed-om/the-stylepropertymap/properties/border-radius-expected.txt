@@ -5,11 +5,11 @@ PASS Can set 'border-top-left-radius' to CSS-wide keywords: unset
 PASS Can set 'border-top-left-radius' to CSS-wide keywords: revert
 PASS Can set 'border-top-left-radius' to var() references:  var(--A)
 PASS Can set 'border-top-left-radius' to a length: 0px
-FAIL Can set 'border-top-left-radius' to a length: -3.14em assert_equals: expected "CSSUnitValue" but got "CSSMathSum"
+PASS Can set 'border-top-left-radius' to a length: -3.14em
 PASS Can set 'border-top-left-radius' to a length: 3.14cm
 PASS Can set 'border-top-left-radius' to a length: calc(0px + 0em)
 PASS Can set 'border-top-left-radius' to a percent: 0%
-FAIL Can set 'border-top-left-radius' to a percent: -3.14% assert_equals: expected "CSSUnitValue" but got "CSSMathSum"
+PASS Can set 'border-top-left-radius' to a percent: -3.14%
 PASS Can set 'border-top-left-radius' to a percent: 3.14%
 PASS Can set 'border-top-left-radius' to a percent: calc(0% + 0%)
 PASS Setting 'border-top-left-radius' to a time: 0s throws TypeError
@@ -23,7 +23,7 @@ PASS Setting 'border-top-left-radius' to an angle: calc(0rad + 0deg) throws Type
 PASS Setting 'border-top-left-radius' to a flexible length: 0fr throws TypeError
 PASS Setting 'border-top-left-radius' to a flexible length: 1fr throws TypeError
 PASS Setting 'border-top-left-radius' to a flexible length: -3.14fr throws TypeError
-FAIL Setting 'border-top-left-radius' to a number: 0 throws TypeError assert_throws_js: function "() => styleMap.set(propertyName, example.input)" did not throw
+PASS Setting 'border-top-left-radius' to a number: 0 throws TypeError
 PASS Setting 'border-top-left-radius' to a number: -3.14 throws TypeError
 PASS Setting 'border-top-left-radius' to a number: 3.14 throws TypeError
 PASS Setting 'border-top-left-radius' to a number: calc(2 + 3) throws TypeError
@@ -36,11 +36,11 @@ PASS Can set 'border-top-right-radius' to CSS-wide keywords: unset
 PASS Can set 'border-top-right-radius' to CSS-wide keywords: revert
 PASS Can set 'border-top-right-radius' to var() references:  var(--A)
 PASS Can set 'border-top-right-radius' to a length: 0px
-FAIL Can set 'border-top-right-radius' to a length: -3.14em assert_equals: expected "CSSUnitValue" but got "CSSMathSum"
+PASS Can set 'border-top-right-radius' to a length: -3.14em
 PASS Can set 'border-top-right-radius' to a length: 3.14cm
 PASS Can set 'border-top-right-radius' to a length: calc(0px + 0em)
 PASS Can set 'border-top-right-radius' to a percent: 0%
-FAIL Can set 'border-top-right-radius' to a percent: -3.14% assert_equals: expected "CSSUnitValue" but got "CSSMathSum"
+PASS Can set 'border-top-right-radius' to a percent: -3.14%
 PASS Can set 'border-top-right-radius' to a percent: 3.14%
 PASS Can set 'border-top-right-radius' to a percent: calc(0% + 0%)
 PASS Setting 'border-top-right-radius' to a time: 0s throws TypeError
@@ -54,7 +54,7 @@ PASS Setting 'border-top-right-radius' to an angle: calc(0rad + 0deg) throws Typ
 PASS Setting 'border-top-right-radius' to a flexible length: 0fr throws TypeError
 PASS Setting 'border-top-right-radius' to a flexible length: 1fr throws TypeError
 PASS Setting 'border-top-right-radius' to a flexible length: -3.14fr throws TypeError
-FAIL Setting 'border-top-right-radius' to a number: 0 throws TypeError assert_throws_js: function "() => styleMap.set(propertyName, example.input)" did not throw
+PASS Setting 'border-top-right-radius' to a number: 0 throws TypeError
 PASS Setting 'border-top-right-radius' to a number: -3.14 throws TypeError
 PASS Setting 'border-top-right-radius' to a number: 3.14 throws TypeError
 PASS Setting 'border-top-right-radius' to a number: calc(2 + 3) throws TypeError
@@ -67,11 +67,11 @@ PASS Can set 'border-bottom-left-radius' to CSS-wide keywords: unset
 PASS Can set 'border-bottom-left-radius' to CSS-wide keywords: revert
 PASS Can set 'border-bottom-left-radius' to var() references:  var(--A)
 PASS Can set 'border-bottom-left-radius' to a length: 0px
-FAIL Can set 'border-bottom-left-radius' to a length: -3.14em assert_equals: expected "CSSUnitValue" but got "CSSMathSum"
+PASS Can set 'border-bottom-left-radius' to a length: -3.14em
 PASS Can set 'border-bottom-left-radius' to a length: 3.14cm
 PASS Can set 'border-bottom-left-radius' to a length: calc(0px + 0em)
 PASS Can set 'border-bottom-left-radius' to a percent: 0%
-FAIL Can set 'border-bottom-left-radius' to a percent: -3.14% assert_equals: expected "CSSUnitValue" but got "CSSMathSum"
+PASS Can set 'border-bottom-left-radius' to a percent: -3.14%
 PASS Can set 'border-bottom-left-radius' to a percent: 3.14%
 PASS Can set 'border-bottom-left-radius' to a percent: calc(0% + 0%)
 PASS Setting 'border-bottom-left-radius' to a time: 0s throws TypeError
@@ -85,7 +85,7 @@ PASS Setting 'border-bottom-left-radius' to an angle: calc(0rad + 0deg) throws T
 PASS Setting 'border-bottom-left-radius' to a flexible length: 0fr throws TypeError
 PASS Setting 'border-bottom-left-radius' to a flexible length: 1fr throws TypeError
 PASS Setting 'border-bottom-left-radius' to a flexible length: -3.14fr throws TypeError
-FAIL Setting 'border-bottom-left-radius' to a number: 0 throws TypeError assert_throws_js: function "() => styleMap.set(propertyName, example.input)" did not throw
+PASS Setting 'border-bottom-left-radius' to a number: 0 throws TypeError
 PASS Setting 'border-bottom-left-radius' to a number: -3.14 throws TypeError
 PASS Setting 'border-bottom-left-radius' to a number: 3.14 throws TypeError
 PASS Setting 'border-bottom-left-radius' to a number: calc(2 + 3) throws TypeError
@@ -98,11 +98,11 @@ PASS Can set 'border-bottom-right-radius' to CSS-wide keywords: unset
 PASS Can set 'border-bottom-right-radius' to CSS-wide keywords: revert
 PASS Can set 'border-bottom-right-radius' to var() references:  var(--A)
 PASS Can set 'border-bottom-right-radius' to a length: 0px
-FAIL Can set 'border-bottom-right-radius' to a length: -3.14em assert_equals: expected "CSSUnitValue" but got "CSSMathSum"
+PASS Can set 'border-bottom-right-radius' to a length: -3.14em
 PASS Can set 'border-bottom-right-radius' to a length: 3.14cm
 PASS Can set 'border-bottom-right-radius' to a length: calc(0px + 0em)
 PASS Can set 'border-bottom-right-radius' to a percent: 0%
-FAIL Can set 'border-bottom-right-radius' to a percent: -3.14% assert_equals: expected "CSSUnitValue" but got "CSSMathSum"
+PASS Can set 'border-bottom-right-radius' to a percent: -3.14%
 PASS Can set 'border-bottom-right-radius' to a percent: 3.14%
 PASS Can set 'border-bottom-right-radius' to a percent: calc(0% + 0%)
 PASS Setting 'border-bottom-right-radius' to a time: 0s throws TypeError
@@ -116,7 +116,7 @@ PASS Setting 'border-bottom-right-radius' to an angle: calc(0rad + 0deg) throws 
 PASS Setting 'border-bottom-right-radius' to a flexible length: 0fr throws TypeError
 PASS Setting 'border-bottom-right-radius' to a flexible length: 1fr throws TypeError
 PASS Setting 'border-bottom-right-radius' to a flexible length: -3.14fr throws TypeError
-FAIL Setting 'border-bottom-right-radius' to a number: 0 throws TypeError assert_throws_js: function "() => styleMap.set(propertyName, example.input)" did not throw
+PASS Setting 'border-bottom-right-radius' to a number: 0 throws TypeError
 PASS Setting 'border-bottom-right-radius' to a number: -3.14 throws TypeError
 PASS Setting 'border-bottom-right-radius' to a number: 3.14 throws TypeError
 PASS Setting 'border-bottom-right-radius' to a number: calc(2 + 3) throws TypeError

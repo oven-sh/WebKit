@@ -2940,7 +2940,7 @@ static void imagePositionInformation(WebPage& page, Element& element, const Inte
 
     auto& [renderImage, image] = *rendererAndImage;
     info.isImage = true;
-    info.imageURL = page.sanitizeForCopyOrShare(element.document().completeURL(renderImage.cachedImage()->url().string()));
+    info.imageURL = page.sanitizeLookalikeCharacters(element.document().completeURL(renderImage.cachedImage()->url().string()));
     info.imageMIMEType = image.mimeType();
     info.isAnimatedImage = image.isAnimated();
     info.elementContainsImageOverlay = is<HTMLElement>(element) && ImageOverlay::hasOverlay(downcast<HTMLElement>(element));
@@ -2984,7 +2984,7 @@ static void elementPositionInformation(WebPage& page, Element& element, const In
 
     if (linkElement && !info.isImageOverlayText) {
         info.isLink = true;
-        info.url = page.sanitizeForCopyOrShare(linkElement->document().completeURL(stripLeadingAndTrailingHTMLSpaces(linkElement->getAttribute(HTMLNames::hrefAttr))));
+        info.url = page.sanitizeLookalikeCharacters(linkElement->document().completeURL(stripLeadingAndTrailingHTMLSpaces(linkElement->getAttribute(HTMLNames::hrefAttr))));
 
         linkIndicatorPositionInformation(page, *linkElement, request, info);
 #if ENABLE(DATA_DETECTION)
@@ -3007,7 +3007,7 @@ static void elementPositionInformation(WebPage& page, Element& element, const In
             if (request.includeImageData) {
                 if (auto rendererAndImage = imageRendererAndImage(element)) {
                     auto& [renderImage, image] = *rendererAndImage;
-                    info.imageURL = page.sanitizeForCopyOrShare(element.document().completeURL(renderImage.cachedImage()->url().string()));
+                    info.imageURL = page.sanitizeLookalikeCharacters(element.document().completeURL(renderImage.cachedImage()->url().string()));
                     info.imageMIMEType = image.mimeType();
                     info.image = createShareableBitmap(renderImage, { screenSize() * page.corePage()->deviceScaleFactor(), AllowAnimatedImages::Yes, UseSnapshotForTransparentImages::Yes });
                 }
@@ -3659,7 +3659,8 @@ void WebPage::dynamicViewportSizeUpdate(const FloatSize& viewLayoutSize, const W
 
         HitTestResult hitTestResult = HitTestResult(unobscuredContentRectCenter);
 
-        if (auto* document = frameView.frame().document())
+        auto* localFrame = dynamicDowncast<WebCore::LocalFrame>(frameView.frame());
+        if (auto* document = localFrame ? localFrame->document() : nullptr)
             document->hitTest(HitTestRequest(), hitTestResult);
 
         if (Node* node = hitTestResult.innerNode()) {
@@ -3810,7 +3811,11 @@ void WebPage::dynamicViewportSizeUpdate(const FloatSize& viewLayoutSize, const W
 
     frameView.updateLayoutAndStyleIfNeededRecursive();
 
-    auto& settings = frameView.frame().settings();
+    // FIXME: Move settings from Frame to AbstractFrame and remove this check.
+    auto* localFrame = dynamicDowncast<LocalFrame>(frameView.frame());
+    if (!localFrame)
+        return;
+    auto& settings = localFrame->settings();
     LayoutRect documentRect = IntRect(frameView.scrollOrigin(), frameView.contentsSize());
     auto layoutViewportSize = FrameView::expandedLayoutViewportSize(frameView.baseLayoutViewportSize(), LayoutSize(documentRect.size()), settings.layoutViewportHeightExpansionFactor());
     LayoutRect layoutViewportRect = FrameView::computeUpdatedLayoutViewportRect(frameView.layoutViewportRect(), documentRect, LayoutSize(newUnobscuredContentRect.size()), LayoutRect(newUnobscuredContentRect), layoutViewportSize, frameView.minStableLayoutViewportOrigin(), frameView.maxStableLayoutViewportOrigin(), FrameView::LayoutViewportConstraint::ConstrainedToDocumentRect);
@@ -4297,7 +4302,8 @@ void WebPage::updateVisibleContentRects(const VisibleContentRectUpdateInfo& visi
         frameView.setLayoutViewportOverrideRect(LayoutRect(visibleContentRectUpdateInfo.layoutViewportRect()));
         if (selectionIsInsideFixedPositionContainer(frame)) {
             // Ensure that the next layer tree commit contains up-to-date caret/selection rects.
-            frameView.frame().selection().setCaretRectNeedsUpdate();
+            if (auto* localFrame = dynamicDowncast<LocalFrame>(frameView.frame()))
+                localFrame->selection().setCaretRectNeedsUpdate();
             scheduleFullEditorStateUpdate();
         }
 

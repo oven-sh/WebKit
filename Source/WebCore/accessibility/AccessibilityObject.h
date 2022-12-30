@@ -624,7 +624,7 @@ public:
     bool supportsAutoComplete() const;
     String autoCompleteValue() const override;
 
-    bool hasARIAValueNow() const override { return hasAttribute(HTMLNames::aria_valuenowAttr); }
+    bool hasARIAValueNow() const { return hasAttribute(HTMLNames::aria_valuenowAttr); }
     bool supportsARIAAttributes() const;
 
     // CSS3 Speech properties.
@@ -743,9 +743,9 @@ public:
     void setCaretBrowsingEnabled(bool) override;
 #endif
 
-    AccessibilityObject* focusableAncestor() override;
-    AccessibilityObject* editableAncestor() override;
-    AccessibilityObject* highestEditableAncestor() override;
+    AccessibilityObject* focusableAncestor() override { return Accessibility::focusableAncestor(*this); }
+    AccessibilityObject* editableAncestor() override { return Accessibility::editableAncestor(*this); };
+    AccessibilityObject* highestEditableAncestor() override { return Accessibility::highestEditableAncestor(*this); }
 
     const AccessibilityScrollView* ancestorAccessibilityScrollView(bool includeSelf) const;
     virtual AccessibilityObject* webAreaObject() const { return nullptr; }

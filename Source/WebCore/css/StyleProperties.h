@@ -155,6 +155,8 @@ public:
 
     bool propertyMatches(CSSPropertyID, const CSSValue*) const;
 
+    StyleProperties() = default;
+
 protected:
     StyleProperties(CSSParserMode cssParserMode, StylePropertiesType type)
         : m_cssParserMode(cssParserMode)
@@ -246,6 +248,7 @@ class MutableStyleProperties final : public StyleProperties {
 public:
     WEBCORE_EXPORT static Ref<MutableStyleProperties> create(CSSParserMode = HTMLQuirksMode);
     static Ref<MutableStyleProperties> create(Vector<CSSProperty>&&);
+    static Ref<MutableStyleProperties> createEmpty();
 
     WEBCORE_EXPORT ~MutableStyleProperties();
 
@@ -290,7 +293,7 @@ public:
     Vector<CSSProperty, 4> m_propertyVector;
 
     // Methods for querying and altering CSS custom properties.
-    bool setCustomProperty(const Document*, const String& propertyName, const String& value, bool important, CSSParserContext);
+    bool setCustomProperty(const String& propertyName, const String& value, bool important, CSSParserContext);
     bool removeCustomProperty(const String& propertyName, String* returnText = nullptr);
 
 private:

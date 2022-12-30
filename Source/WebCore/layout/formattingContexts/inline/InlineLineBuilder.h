@@ -87,7 +87,11 @@ public:
         InlineLayoutUnit lineLogicalWidth { 0.f };
         InlineLayoutUnit contentLogicalWidth { 0.f };
         InlineLayoutUnit contentLogicalRight { 0.f };
-        InlineLayoutUnit hangingContentWidth { 0.f };
+        struct HangingContent {
+            bool shouldContributeToScrollableOverflow { false };
+            InlineLayoutUnit width { 0.f };
+        };
+        HangingContent hangingContent;
         enum class FirstFormattedLine : uint8_t {
             No,
             WithinIFC,
@@ -113,6 +117,8 @@ public:
 
 private:
     void candidateContentForLine(LineCandidate&, size_t inlineItemIndex, const InlineItemRange& needsLayoutRange, InlineLayoutUnit currentLogicalRight);
+    InlineLayoutUnit leadingPunctuationWidthForLineCandiate(size_t firstInlineTextItemIndex, size_t candidateContentStartIndex) const;
+    InlineLayoutUnit trailingPunctuationOrStopOrCommaWidthForLineCandiate(size_t lastInlineTextItemIndex, size_t layoutRangeEnd) const;
     size_t nextWrapOpportunity(size_t startIndex, const LineBuilder::InlineItemRange& layoutRange) const;
 
     struct UsedConstraints {
@@ -157,7 +163,7 @@ private:
 
     TextDirection inlineBaseDirectionForLineContent();
 
-    bool isFirstLine() const { return !m_previousLine.has_value(); }
+    bool isFirstFormattedLine() const { return !m_previousLine.has_value(); }
 
     const InlineFormattingContext& formattingContext() const { return m_inlineFormattingContext; }
     InlineFormattingState* formattingState() { return m_inlineFormattingState; }

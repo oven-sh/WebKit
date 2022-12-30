@@ -50,7 +50,6 @@
 #import <WebCore/FrameView.h>
 #import <WebCore/GraphicsContext.h>
 #import <WebCore/GraphicsLayerCA.h>
-#import <WebCore/InspectorController.h>
 #import <WebCore/Page.h>
 #import <WebCore/PlatformCAAnimationCocoa.h>
 #import <WebCore/RenderView.h>
@@ -85,8 +84,12 @@ TiledCoreAnimationDrawingArea::TiledCoreAnimationDrawingArea(WebPage& webPage, c
     [m_hostingLayer setOpaque:YES];
     [m_hostingLayer setGeometryFlipped:YES];
 
-    m_renderUpdateRunLoopObserver = makeUnique<RunLoopObserver>(static_cast<CFIndex>(RunLoopObserver::WellKnownRunLoopOrders::LayerFlush), [this]() {
-        this->updateRenderingRunLoopCallback();
+    m_renderingUpdateRunLoopObserver = makeUnique<RunLoopObserver>(static_cast<CFIndex>(RunLoopObserver::WellKnownRunLoopOrders::RenderingUpdate), [this]() {
+        this->renderingUpdateRunLoopCallback();
+    });
+
+    m_postRenderingUpdateRunLoopObserver = makeUnique<RunLoopObserver>(static_cast<CFIndex>(RunLoopObserver::WellKnownRunLoopOrders::PostRenderingUpdate), [this]() {
+        this->postRenderingUpdateRunLoopCallback();
     });
 
     updateLayerHostingContext();
@@ -103,6 +106,7 @@ TiledCoreAnimationDrawingArea::TiledCoreAnimationDrawingArea(WebPage& webPage, c
 TiledCoreAnimationDrawingArea::~TiledCoreAnimationDrawingArea()
 {
     invalidateRenderingUpdateRunLoopObserver();
+    invalidatePostRenderingUpdateRunLoopObserver();
     for (auto& callback : m_nextActivityStateChangeCallbacks)
         callback();
 }
@@ -205,6 +209,7 @@ void TiledCoreAnimationDrawingArea::setLayerTreeStateIsFrozen(bool layerTreeStat
 
     if (m_layerTreeStateIsFrozen) {
         invalidateRenderingUpdateRunLoopObserver();
+        invalidatePostRenderingUpdateRunLoopObserver();
     } else {
         // Immediate flush as any delay in unfreezing can result in flashes.
         scheduleRenderingUpdateRunLoopObserver();
@@ -377,8 +382,10 @@ void TiledCoreAnimationDrawingArea::dispatchAfterEnsuringUpdatedScrollPosition(W
 
     m_webPage.corePage()->scrollingCoordinator()->commitTreeStateIfNeeded();
 
-    if (!m_layerTreeStateIsFrozen)
+    if (!m_layerTreeStateIsFrozen) {
         invalidateRenderingUpdateRunLoopObserver();
+        invalidatePostRenderingUpdateRunLoopObserver();
+    }
 
     ScrollingThread::dispatchBarrier([this, retainedPage = Ref { m_webPage }, function = WTFMove(function)] {
         // It is possible for the drawing area to be destroyed before the bound block is invoked.
@@ -400,8 +407,7 @@ void TiledCoreAnimationDrawingArea::sendPendingNewlyReachedPaintingMilestones()
     if (!m_pendingNewlyReachedPaintingMilestones)
         return;
 
-    m_webPage.send(Messages::WebPageProxy::DidReachLayoutMilestone(m_pendingNewlyReachedPaintingMilestones));
-    m_pendingNewlyReachedPaintingMilestones = { };
+    m_webPage.send(Messages::WebPageProxy::DidReachLayoutMilestone(std::exchange(m_pendingNewlyReachedPaintingMilestones, { })));
 }
 
 void TiledCoreAnimationDrawingArea::addTransactionCallbackID(CallbackID callbackID)
@@ -410,24 +416,32 @@ void TiledCoreAnimationDrawingArea::addTransactionCallbackID(CallbackID callback
     triggerRenderingUpdate();
 }
 
+void TiledCoreAnimationDrawingArea::didCompleteRenderingUpdateDisplay()
+{
+    m_haveRegisteredHandlersForNextCommit = false;
+
+    sendPendingNewlyReachedPaintingMilestones();
+    DrawingArea::didCompleteRenderingUpdateDisplay();
+    
+    schedulePostRenderingUpdateRunLoopObserver();
+}
+
 void TiledCoreAnimationDrawingArea::addCommitHandlers()
 {
-    if (m_webPage.firstFlushAfterCommit())
+    if (m_haveRegisteredHandlersForNextCommit)
         return;
 
     [CATransaction addCommitHandler:[retainedPage = Ref { m_webPage }] {
-        retainedPage->willStartPlatformRenderingUpdate();
+        if (auto* drawingArea = dynamicDowncast<TiledCoreAnimationDrawingArea>(retainedPage->drawingArea()))
+            drawingArea->willStartRenderingUpdateDisplay();
     } forPhase:kCATransactionPhasePreLayout];
 
     [CATransaction addCommitHandler:[retainedPage = Ref { m_webPage }] {
-        if (auto drawingArea = static_cast<TiledCoreAnimationDrawingArea*>(retainedPage->drawingArea()))
-            drawingArea->sendPendingNewlyReachedPaintingMilestones();
-
-        retainedPage->setFirstFlushAfterCommit(false);
-        retainedPage->didCompletePlatformRenderingUpdate();
+        if (auto* drawingArea = dynamicDowncast<TiledCoreAnimationDrawingArea>(retainedPage->drawingArea()))
+            drawingArea->didCompleteRenderingUpdateDisplay();
     } forPhase:kCATransactionPhasePostCommit];
     
-    m_webPage.setFirstFlushAfterCommit(true);
+    m_haveRegisteredHandlersForNextCommit = true;
 }
 
 void TiledCoreAnimationDrawingArea::updateRendering(UpdateRenderingType flushType)
@@ -733,7 +747,9 @@ void TiledCoreAnimationDrawingArea::updateDebugInfoLayer(bool showLayer)
 
 bool TiledCoreAnimationDrawingArea::shouldUseTiledBackingForFrameView(const FrameView& frameView) const
 {
-    return frameView.frame().isMainFrame() || m_webPage.corePage()->settings().asyncFrameScrollingEnabled();
+    auto* localFrame = dynamicDowncast<LocalFrame>(frameView.frame());
+    return (localFrame && localFrame->isMainFrame())
+        || m_webPage.corePage()->settings().asyncFrameScrollingEnabled();
 }
 
 PlatformCALayer* TiledCoreAnimationDrawingArea::layerForTransientZoom() const
@@ -930,34 +946,56 @@ void TiledCoreAnimationDrawingArea::addFence(const MachSendRight& fencePort)
     m_layerHostingContext->setFencePort(fencePort.sendRight());
 }
 
-void TiledCoreAnimationDrawingArea::updateRenderingRunLoopCallback()
+void TiledCoreAnimationDrawingArea::scheduleRenderingUpdateRunLoopObserver()
+{
+    if (m_renderingUpdateRunLoopObserver->isScheduled())
+        return;
+
+    tracePoint(RenderingUpdateRunLoopObserverStart);
+    
+    m_renderingUpdateRunLoopObserver->schedule();
+
+    // Avoid running any more tasks before the runloop observer fires.
+    WebCore::WindowEventLoop::breakToAllowRenderingUpdate();
+}
+
+void TiledCoreAnimationDrawingArea::invalidateRenderingUpdateRunLoopObserver()
+{
+    if (!m_renderingUpdateRunLoopObserver->isScheduled())
+        return;
+
+    tracePoint(RenderingUpdateRunLoopObserverEnd, 1);
+
+    m_renderingUpdateRunLoopObserver->invalidate();
+}
+
+void TiledCoreAnimationDrawingArea::renderingUpdateRunLoopCallback()
 {
     tracePoint(RenderingUpdateRunLoopObserverEnd, 0);
 
     updateRendering();
 }
 
-void TiledCoreAnimationDrawingArea::invalidateRenderingUpdateRunLoopObserver()
+void TiledCoreAnimationDrawingArea::schedulePostRenderingUpdateRunLoopObserver()
 {
-    if (!m_renderUpdateRunLoopObserver->isScheduled())
+    if (m_postRenderingUpdateRunLoopObserver->isScheduled())
         return;
 
-    tracePoint(RenderingUpdateRunLoopObserverEnd, 1);
-
-    m_renderUpdateRunLoopObserver->invalidate();
+    m_postRenderingUpdateRunLoopObserver->schedule();
 }
 
-void TiledCoreAnimationDrawingArea::scheduleRenderingUpdateRunLoopObserver()
+void TiledCoreAnimationDrawingArea::invalidatePostRenderingUpdateRunLoopObserver()
 {
-    if (m_renderUpdateRunLoopObserver->isScheduled())
+    if (!m_postRenderingUpdateRunLoopObserver->isScheduled())
         return;
 
-    tracePoint(RenderingUpdateRunLoopObserverStart);
-    
-    m_renderUpdateRunLoopObserver->schedule(CFRunLoopGetCurrent());
+    m_postRenderingUpdateRunLoopObserver->invalidate();
+}
 
-    // Avoid running any more tasks before the runloop observer fires.
-    WebCore::WindowEventLoop::breakToAllowRenderingUpdate();
+void TiledCoreAnimationDrawingArea::postRenderingUpdateRunLoopCallback()
+{
+    didCompleteRenderingFrame();
+    invalidatePostRenderingUpdateRunLoopObserver();
 }
 
 } // namespace WebKit

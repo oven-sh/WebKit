@@ -24,6 +24,7 @@
 
 #pragma once
 
+#include "AbstractFrameView.h"
 #include "AdjustViewSizeOrNot.h"
 #include "Color.h"
 #include "ContainerNode.h"
@@ -83,7 +84,7 @@ class View;
 
 Pagination::Mode paginationModeForRenderStyle(const RenderStyle&);
 
-class FrameView final : public ScrollView {
+class FrameView final : public AbstractFrameView {
     WTF_MAKE_ISO_ALLOCATED(FrameView);
 public:
     friend class RenderView;
@@ -99,8 +100,9 @@ public:
     
     WEBCORE_EXPORT void invalidateRect(const IntRect&) final;
     void setFrameRect(const IntRect&) final;
+    FrameViewType viewType() const final { return FrameViewType::Local; }
 
-    Frame& frame() const { return m_frame; }
+    AbstractFrame& frame() const { return m_frame; }
 
     WEBCORE_EXPORT RenderView* renderView() const;
 
@@ -587,7 +589,7 @@ public:
     const Vector<FloatRect>& trackedRepaintRects() const { return m_trackedRepaintRects; }
     String trackedRepaintRectsAsText() const;
 
-    typedef HashSet<ScrollableArea*> ScrollableAreaSet;
+    typedef WeakHashSet<ScrollableArea> ScrollableAreaSet;
     // Returns whether the scrollable area has just been newly added.
     WEBCORE_EXPORT bool addScrollableArea(ScrollableArea*);
     // Returns whether the scrollable area has just been removed.
@@ -1060,4 +1062,7 @@ WTF::TextStream& operator<<(WTF::TextStream&, const FrameView&);
 
 } // namespace WebCore
 
-SPECIALIZE_TYPE_TRAITS_WIDGET(FrameView, isFrameView())
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::FrameView)
+static bool isType(const WebCore::AbstractFrameView& view) { return view.viewType() == WebCore::AbstractFrameView::FrameViewType::Local; }
+static bool isType(const WebCore::Widget& widget) { return widget.isFrameView(); }
+SPECIALIZE_TYPE_TRAITS_END()

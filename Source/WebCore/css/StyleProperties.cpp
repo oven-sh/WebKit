@@ -34,7 +34,6 @@
 #include "CSSPendingSubstitutionValue.h"
 #include "CSSPrimitiveValue.h"
 #include "CSSPropertyParser.h"
-#include "CSSRegisteredCustomProperty.h"
 #include "CSSTokenizer.h"
 #include "CSSValueKeywords.h"
 #include "CSSValueList.h"
@@ -1278,7 +1277,7 @@ bool MutableStyleProperties::setProperty(CSSPropertyID propertyID, const String&
     return setProperty(propertyID, value, important, parserContext, didFailParsing);
 }
 
-bool MutableStyleProperties::setCustomProperty(const Document* document, const String& propertyName, const String& value, bool important, CSSParserContext parserContext)
+bool MutableStyleProperties::setCustomProperty(const String& propertyName, const String& value, bool important, CSSParserContext parserContext)
 {
     // Setting the value to an empty string just removes the property in both IE and Gecko.
     // Setting it to null seems to produce less consistent results, but we treat it just the same.
@@ -1288,13 +1287,6 @@ bool MutableStyleProperties::setCustomProperty(const Document* document, const S
     parserContext.mode = cssParserMode();
 
     auto propertyNameAtom = AtomString { propertyName };
-    auto* registered = document ? document->registeredCSSCustomProperties().get(propertyNameAtom) : nullptr;
-
-    auto& syntax = registered ? registered->syntax : CSSCustomPropertySyntax::universal();
-
-    CSSTokenizer tokenizer(value);
-    if (!CSSPropertyParser::canParseTypedCustomPropertyValue(syntax, tokenizer.tokenRange(), parserContext))
-        return false;
 
     // When replacing an existing property value, this moves the property to the end of the list.
     // Firefox preserves the position, and MSIE moves the property to the beginning.
@@ -1787,6 +1779,11 @@ Ref<MutableStyleProperties> MutableStyleProperties::create(CSSParserMode cssPars
 Ref<MutableStyleProperties> MutableStyleProperties::create(Vector<CSSProperty>&& properties)
 {
     return adoptRef(*new MutableStyleProperties(WTFMove(properties)));
+}
+
+Ref<MutableStyleProperties> MutableStyleProperties::createEmpty()
+{
+    return adoptRef(*new MutableStyleProperties({ }));
 }
 
 String StyleProperties::PropertyReference::cssName() const

@@ -52,7 +52,9 @@ namespace JSC { namespace B3 {
 #if ASSERT_ENABLED
 String Value::generateCompilerConstructionSite()
 {
-    if (!Options::dumpDisassembly())
+    if (!Options::dumpDisassembly() && !Options::dumpBBQDisassembly()
+        && !Options::dumpOMGDisassembly() && !Options::dumpFTLDisassembly()
+        && !Options::dumpDFGDisassembly())
         return emptyString();
 
     StringPrintStream s;
@@ -62,7 +64,9 @@ String Value::generateCompilerConstructionSite()
     int frames = framesToShow + framesToSkip;
 
     WTFGetBacktrace(samples, &frames);
-    StackTraceSymbolResolver stackTrace({ samples + framesToSkip, static_cast<size_t>(frames - framesToSkip) });
+    if (frames > framesToSkip)
+        frames -= framesToSkip;
+    StackTraceSymbolResolver stackTrace({ samples + framesToSkip, static_cast<size_t>(frames) });
 
     s.print("[");
     bool firstPrinted = false;

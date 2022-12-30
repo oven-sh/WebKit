@@ -39,16 +39,25 @@ class IntSize;
 
 class ControlMac : public PlatformControl {
 public:
-    ControlMac(const ControlPart&, ControlFactoryMac&);
+    ControlMac(ControlPart&, ControlFactoryMac&);
 
 protected:
-    using PlatformControl::draw;
+    static bool userPrefersContrast();
+
+    virtual IntSize cellSize(NSControlSize, const ControlStyle&) const { return { }; };
+    virtual IntOutsets cellOutsets(NSControlSize, const ControlStyle&) const { return { }; };
+
+    NSControlSize calculateControlSize(const FloatSize&, const ControlStyle&) const;
 
     void setFocusRingClipRect(const FloatRect& clipBounds) override;
 
     void updateCellStates(const FloatRect&, const ControlStyle&) override;
 
-    void draw(GraphicsContext&, const FloatRect&, float deviceScaleFactor, const ControlStyle&, NSCell *, NSView *, bool drawCell = true);
+    void drawCell(GraphicsContext&, const FloatRect&, float deviceScaleFactor, const ControlStyle&, NSCell *, NSView *, bool drawCell = true);
+
+#if ENABLE(DATALIST_ELEMENT)
+    void drawListButton(GraphicsContext&, const FloatRect&, float deviceScaleFactor, const ControlStyle&);
+#endif
 
     ControlFactoryMac& m_controlFactory;
 };

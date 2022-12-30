@@ -5,7 +5,7 @@ PASS Can set 'r' to CSS-wide keywords: unset
 PASS Can set 'r' to CSS-wide keywords: revert
 PASS Can set 'r' to var() references:  var(--A)
 PASS Can set 'r' to a percent: 0%
-FAIL Can set 'r' to a percent: -3.14% assert_approx_equals: expected -3.14 +/- 0.000001 but got 0
+PASS Can set 'r' to a percent: -3.14%
 PASS Can set 'r' to a percent: 3.14%
 PASS Can set 'r' to a percent: calc(0% + 0%)
 PASS Can set 'r' to a length: 0px
@@ -23,7 +23,7 @@ PASS Setting 'r' to an angle: calc(0rad + 0deg) throws TypeError
 PASS Setting 'r' to a flexible length: 0fr throws TypeError
 PASS Setting 'r' to a flexible length: 1fr throws TypeError
 PASS Setting 'r' to a flexible length: -3.14fr throws TypeError
-FAIL Setting 'r' to a number: 0 throws TypeError assert_throws_js: function "() => styleMap.set(propertyName, example.input)" did not throw
+PASS Setting 'r' to a number: 0 throws TypeError
 PASS Setting 'r' to a number: -3.14 throws TypeError
 PASS Setting 'r' to a number: 3.14 throws TypeError
 PASS Setting 'r' to a number: calc(2 + 3) throws TypeError
@@ -37,7 +37,7 @@ PASS Can set 'rx' to CSS-wide keywords: revert
 PASS Can set 'rx' to var() references:  var(--A)
 PASS Can set 'rx' to the 'auto' keyword: auto
 PASS Can set 'rx' to a percent: 0%
-FAIL Can set 'rx' to a percent: -3.14% assert_approx_equals: expected -3.14 +/- 0.000001 but got 0
+PASS Can set 'rx' to a percent: -3.14%
 PASS Can set 'rx' to a percent: 3.14%
 PASS Can set 'rx' to a percent: calc(0% + 0%)
 PASS Can set 'rx' to a length: 0px
@@ -55,7 +55,7 @@ PASS Setting 'rx' to an angle: calc(0rad + 0deg) throws TypeError
 PASS Setting 'rx' to a flexible length: 0fr throws TypeError
 PASS Setting 'rx' to a flexible length: 1fr throws TypeError
 PASS Setting 'rx' to a flexible length: -3.14fr throws TypeError
-FAIL Setting 'rx' to a number: 0 throws TypeError assert_throws_js: function "() => styleMap.set(propertyName, example.input)" did not throw
+PASS Setting 'rx' to a number: 0 throws TypeError
 PASS Setting 'rx' to a number: -3.14 throws TypeError
 PASS Setting 'rx' to a number: 3.14 throws TypeError
 PASS Setting 'rx' to a number: calc(2 + 3) throws TypeError
@@ -69,7 +69,7 @@ PASS Can set 'ry' to CSS-wide keywords: revert
 PASS Can set 'ry' to var() references:  var(--A)
 PASS Can set 'ry' to the 'auto' keyword: auto
 PASS Can set 'ry' to a percent: 0%
-FAIL Can set 'ry' to a percent: -3.14% assert_approx_equals: expected -3.14 +/- 0.000001 but got 0
+PASS Can set 'ry' to a percent: -3.14%
 PASS Can set 'ry' to a percent: 3.14%
 PASS Can set 'ry' to a percent: calc(0% + 0%)
 PASS Can set 'ry' to a length: 0px
@@ -87,7 +87,7 @@ PASS Setting 'ry' to an angle: calc(0rad + 0deg) throws TypeError
 PASS Setting 'ry' to a flexible length: 0fr throws TypeError
 PASS Setting 'ry' to a flexible length: 1fr throws TypeError
 PASS Setting 'ry' to a flexible length: -3.14fr throws TypeError
-FAIL Setting 'ry' to a number: 0 throws TypeError assert_throws_js: function "() => styleMap.set(propertyName, example.input)" did not throw
+PASS Setting 'ry' to a number: 0 throws TypeError
 PASS Setting 'ry' to a number: -3.14 throws TypeError
 PASS Setting 'ry' to a number: 3.14 throws TypeError
 PASS Setting 'ry' to a number: calc(2 + 3) throws TypeError

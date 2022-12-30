@@ -5,11 +5,11 @@ PASS Can set 'background-size' to CSS-wide keywords: unset
 PASS Can set 'background-size' to CSS-wide keywords: revert
 PASS Can set 'background-size' to var() references:  var(--A)
 PASS Can set 'background-size' to a length: 0px
-FAIL Can set 'background-size' to a length: -3.14em assert_equals: expected "CSSUnitValue" but got "CSSMathSum"
+PASS Can set 'background-size' to a length: -3.14em
 PASS Can set 'background-size' to a length: 3.14cm
 PASS Can set 'background-size' to a length: calc(0px + 0em)
 PASS Can set 'background-size' to a percent: 0%
-FAIL Can set 'background-size' to a percent: -3.14% assert_equals: expected "CSSUnitValue" but got "CSSMathSum"
+PASS Can set 'background-size' to a percent: -3.14%
 PASS Can set 'background-size' to a percent: 3.14%
 PASS Can set 'background-size' to a percent: calc(0% + 0%)
 PASS Can set 'background-size' to the 'auto' keyword: auto
@@ -26,7 +26,7 @@ PASS Setting 'background-size' to an angle: calc(0rad + 0deg) throws TypeError
 PASS Setting 'background-size' to a flexible length: 0fr throws TypeError
 PASS Setting 'background-size' to a flexible length: 1fr throws TypeError
 PASS Setting 'background-size' to a flexible length: -3.14fr throws TypeError
-FAIL Setting 'background-size' to a number: 0 throws TypeError assert_throws_js: function "() => styleMap.set(propertyName, example.input)" did not throw
+PASS Setting 'background-size' to a number: 0 throws TypeError
 PASS Setting 'background-size' to a number: -3.14 throws TypeError
 PASS Setting 'background-size' to a number: 3.14 throws TypeError
 PASS Setting 'background-size' to a number: calc(2 + 3) throws TypeError

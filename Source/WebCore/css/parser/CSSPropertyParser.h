@@ -45,13 +45,12 @@ class BuilderState;
 class CSSPropertyParser {
     WTF_MAKE_NONCOPYABLE(CSSPropertyParser);
 public:
-    static bool parseValue(CSSPropertyID, bool important,
-        const CSSParserTokenRange&, const CSSParserContext&,
-        Vector<CSSProperty, 256>&, StyleRuleType);
+    static bool parseValue(CSSPropertyID, bool important, const CSSParserTokenRange&, const CSSParserContext&, Vector<CSSProperty, 256>&, StyleRuleType);
 
     // Parses a non-shorthand CSS property
     static RefPtr<CSSValue> parseSingleValue(CSSPropertyID, const CSSParserTokenRange&, const CSSParserContext&);
-    static bool canParseTypedCustomPropertyValue(const CSSCustomPropertySyntax&, const CSSParserTokenRange&, const CSSParserContext&);
+
+    static RefPtr<CSSCustomPropertyValue> parseTypedCustomPropertyInitialValue(const AtomString&, const CSSCustomPropertySyntax&, CSSParserTokenRange, Style::BuilderState&, const CSSParserContext&);
     static RefPtr<CSSCustomPropertyValue> parseTypedCustomPropertyValue(const AtomString& name, const CSSCustomPropertySyntax&, const CSSParserTokenRange&, Style::BuilderState&, const CSSParserContext&);
     static void collectParsedCustomPropertyValueDependencies(const CSSCustomPropertySyntax&, bool isRoot, HashSet<CSSPropertyID>& dependencies, const CSSParserTokenRange&, const CSSParserContext&);
 
@@ -64,21 +63,31 @@ private:
     bool parseValueStart(CSSPropertyID, bool important);
     bool consumeCSSWideKeyword(CSSPropertyID, bool important);
     RefPtr<CSSValue> parseSingleValue(CSSPropertyID, CSSPropertyID = CSSPropertyInvalid);
+    
     std::pair<RefPtr<CSSValue>, CSSCustomPropertySyntax::Type> consumeCustomPropertyValueWithSyntax(const CSSCustomPropertySyntax&);
-    bool canParseTypedCustomPropertyValue(const CSSCustomPropertySyntax&);
     RefPtr<CSSCustomPropertyValue> parseTypedCustomPropertyValue(const AtomString& name, const CSSCustomPropertySyntax&, Style::BuilderState&);
     void collectParsedCustomPropertyValueDependencies(const CSSCustomPropertySyntax&, bool isInitial, HashSet<CSSPropertyID>& dependencies);
 
     bool inQuirksMode() const { return m_context.mode == HTMLQuirksMode; }
 
-    bool parseViewportDescriptor(CSSPropertyID propId, bool important);
+    // @font-face descriptors.
     bool parseFontFaceDescriptor(CSSPropertyID);
+    bool parseFontFaceDescriptorShorthand(CSSPropertyID);
+
+    // @font-palette-values descriptors.
     bool parseFontPaletteValuesDescriptor(CSSPropertyID);
-    bool parseCounterStyleDescriptor(CSSPropertyID, const CSSParserContext&);
+
+    // @counter-style descriptors.
+    bool parseCounterStyleDescriptor(CSSPropertyID);
+    
+    // @keyframe descriptors.
     bool parseKeyframeDescriptor(CSSPropertyID, bool important);
 
-    void addProperty(CSSPropertyID, CSSPropertyID, Ref<CSSValue>&&, bool important, bool implicit = false);
-    void addPropertyWithImplicitDefault(CSSPropertyID, CSSPropertyID, RefPtr<CSSValue>&&, Ref<CSSValue>&& implicitDefault, bool important);
+    // @property descriptors.
+    bool parsePropertyDescriptor(CSSPropertyID);
+
+    void addProperty(CSSPropertyID longhand, CSSPropertyID shorthand, Ref<CSSValue>&&, bool important, bool implicit = false);
+    void addPropertyWithImplicitDefault(CSSPropertyID longhand, CSSPropertyID shorthand, RefPtr<CSSValue>&&, Ref<CSSValue>&& implicitDefault, bool important);
     void addExpandedPropertyForValue(CSSPropertyID propId, Ref<CSSValue>&&, bool);
 
     // Shorthand Parsing.

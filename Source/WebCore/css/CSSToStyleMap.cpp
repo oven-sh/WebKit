@@ -36,6 +36,7 @@
 #include "CSSImageValue.h"
 #include "CSSPrimitiveValue.h"
 #include "CSSPrimitiveValueMappings.h"
+#include "CSSPropertyParser.h"
 #include "CSSTimingFunctionValue.h"
 #include "CSSValueKeywords.h"
 #include "CompositeOperation.h"
@@ -339,7 +340,8 @@ void CSSToStyleMap::mapAnimationDuration(Animation& animation, const CSSValue& v
     if (!is<CSSPrimitiveValue>(value))
         return;
 
-    animation.setDuration(downcast<CSSPrimitiveValue>(value).computeTime<double, CSSPrimitiveValue::Seconds>());
+    auto duration = std::max<double>(downcast<CSSPrimitiveValue>(value).computeTime<double, CSSPrimitiveValue::Seconds>(), 0);
+    animation.setDuration(duration);
 }
 
 void CSSToStyleMap::mapAnimationFillMode(Animation& layer, const CSSValue& value)
@@ -438,8 +440,12 @@ void CSSToStyleMap::mapAnimationProperty(Animation& animation, const CSSValue& v
         return;
     }
     if (primitiveValue.propertyID() == CSSPropertyInvalid) {
-        animation.setProperty({ Animation::TransitionMode::UnknownProperty, CSSPropertyInvalid });
-        animation.setUnknownProperty(primitiveValue.stringValue());
+        auto stringValue = primitiveValue.stringValue();
+        if (isCustomPropertyName(stringValue))
+            animation.setProperty({ Animation::TransitionMode::CustomProperty, CSSPropertyCustom });
+        else
+            animation.setProperty({ Animation::TransitionMode::UnknownProperty, CSSPropertyInvalid });
+        animation.setCustomOrUnknownProperty(stringValue);
         return;
     }
 

@@ -311,11 +311,28 @@ void RenderGrid::layoutBlock(bool relayoutChildren, LayoutUnit)
                 shouldRecomputeHeight = true;
         } else
             computeTrackSizesForDefiniteSize(ForRows, availableLogicalHeight(ExcludeMarginBorderPadding));
+
+        auto performMasonryPlacement = [&](GridTrackSizingDirection masonryAxisDirection) {
+            auto gridAxisDirection = masonryAxisDirection == ForRows ? ForColumns : ForRows;
+            unsigned gridAxisTracksBeforeAutoPlacement = currentGrid().numTracks(gridAxisDirection);
+
+            m_masonryLayout.performMasonryPlacement(gridAxisTracksBeforeAutoPlacement, masonryAxisDirection);
+        };
+
+        if (areMasonryRows())
+            performMasonryPlacement(ForRows);
+        else if (areMasonryColumns())
+            performMasonryPlacement(ForColumns);
+
         LayoutUnit trackBasedLogicalHeight = borderAndPaddingLogicalHeight() + scrollbarLogicalHeight();
         if (auto size = explicitIntrinsicInnerLogicalSize(ForRows))
             trackBasedLogicalHeight += size.value();
-        else
-            trackBasedLogicalHeight += m_trackSizingAlgorithm.computeTrackBasedSize();
+        else {
+            if (areMasonryRows())
+                trackBasedLogicalHeight += m_masonryLayout.gridContentSize() + m_masonryLayout.gridGap();
+            else 
+                trackBasedLogicalHeight += m_trackSizingAlgorithm.computeTrackBasedSize();
+        }
         if (shouldRecomputeHeight)
             computeTrackSizesForDefiniteSize(ForRows, trackBasedLogicalHeight);
 
@@ -325,7 +342,7 @@ void RenderGrid::layoutBlock(bool relayoutChildren, LayoutUnit)
 
         // Once grid's indefinite height is resolved, we can compute the
         // available free space for Content Alignment.
-        if (!hasDefiniteLogicalHeight)
+        if (!hasDefiniteLogicalHeight || areMasonryRows())
             m_trackSizingAlgorithm.setFreeSpace(ForRows, logicalHeight() - trackBasedLogicalHeight);
 
         // 2.5- Compute Content Distribution offsets for rows tracks
@@ -335,6 +352,7 @@ void RenderGrid::layoutBlock(bool relayoutChildren, LayoutUnit)
             updateGridAreaForAspectRatioItems(aspectRatioBlockSizeDependentGridItems);
             updateLogicalWidth();
         }
+
 
         // 3- If the min-content contribution of any grid items have changed based on the row
         // sizes calculated in step 2, steps 1 and 2 are repeated with the new min-content
@@ -701,6 +719,22 @@ static GridArea insertIntoGrid(Grid& grid, RenderBox& child, const GridArea& are
     return clamped;
 }
 
+bool RenderGrid::isMasonry() const
+{
+    return areMasonryRows() || areMasonryColumns();
+}
+
+bool RenderGrid::isMasonry(GridTrackSizingDirection direction) const
+{
+    if (areMasonryRows() && direction == ForRows)
+        return true;
+    
+    if (areMasonryColumns() && direction == ForColumns)
+        return true;
+    
+    return false;
+}
+
 bool RenderGrid::areMasonryRows() const
 {
     // isSubgridRows will return false if the masonry axis is rows. Need to check style if we are a subgrid
@@ -760,6 +794,9 @@ void RenderGrid::placeItemsOnGrid(std::optional<LayoutUnit> availableLogicalWidt
         currentGrid().setAutoRepeatTracks(autoRepeatRows, autoRepeatColumns);
     }
 
+    if (areMasonryRows() || areMasonryColumns())
+        currentGrid().setNeedsItemsPlacement(true);
+
     if (!currentGrid().needsItemsPlacement())
         return;
 
@@ -815,23 +852,8 @@ void RenderGrid::placeItemsOnGrid(std::optional<LayoutUnit> availableLogicalWidt
 
         currentGrid().setNeedsItemsPlacement(false);
     };
-    
-    auto performMasonryPlacement = [&](GridTrackSizingDirection masonryAxisDirection) {
-        auto gridAxisDirection = masonryAxisDirection == ForRows ? ForColumns : ForRows;
 
-        unsigned gridAxisTracksBeforeAutoPlacement = currentGrid().numTracks(gridAxisDirection);
-
-        // FIXME: We should be able to short circuit the initial placement (https://bugs.webkit.org/show_bug.cgi?id=248291)
-        performAutoPlacement();
-        m_masonryLayout.performMasonryPlacement(gridAxisTracksBeforeAutoPlacement, masonryAxisDirection);
-    };
-
-    if (areMasonryRows())
-        performMasonryPlacement(ForRows);
-    else if (areMasonryColumns())
-        performMasonryPlacement(ForColumns);
-    else
-        performAutoPlacement();
+    performAutoPlacement();
 
 #if ASSERT_ENABLED
     for (auto* child = currentGrid().orderIterator().first(); child; child = currentGrid().orderIterator().next()) {
@@ -1040,7 +1062,7 @@ GridTrackSizingDirection RenderGrid::autoPlacementMajorAxisDirection() const
 
 GridTrackSizingDirection RenderGrid::autoPlacementMinorAxisDirection() const
 {
-    return autoPlacementMajorAxisDirection() == ForColumns ? ForRows : ForColumns;
+    return (autoPlacementMajorAxisDirection() == ForColumns) ? ForRows : ForColumns;
 }
 
 void RenderGrid::dirtyGrid()

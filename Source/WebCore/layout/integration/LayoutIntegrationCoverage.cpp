@@ -94,9 +94,6 @@ static void printReason(AvoidanceReason reason, TextStream& stream)
     case AvoidanceReason::ContentIsRuby:
         stream << "ruby";
         break;
-    case AvoidanceReason::FlowHasHangingPunctuation:
-        stream << "hanging punctuation";
-        break;
     case AvoidanceReason::FlowIsPaginated:
         stream << "paginated";
         break;
@@ -300,8 +297,6 @@ static OptionSet<AvoidanceReason> canUseForStyle(const RenderElement& renderer, 
     OptionSet<AvoidanceReason> reasons;
     if (style.writingMode() == WritingMode::BottomToTop)
         SET_REASON_AND_RETURN_IF_NEEDED(FlowHasUnsupportedWritingMode, reasons, includeReasons);
-    if (!style.hangingPunctuation().isEmpty())
-        SET_REASON_AND_RETURN_IF_NEEDED(FlowHasHangingPunctuation, reasons, includeReasons)
     if (style.styleType() == PseudoId::FirstLetter && (!style.initialLetter().isEmpty() || style.initialLetterDrop() || style.initialLetterHeight()))
         SET_REASON_AND_RETURN_IF_NEEDED(FlowHasInitialLetter, reasons, includeReasons);
     // These are non-standard properties.
@@ -398,10 +393,10 @@ static OptionSet<AvoidanceReason> canUseForChild(const RenderObject& child, Incl
         auto& listMarker = downcast<RenderListMarker>(renderer);
         auto* associatedListItem = listMarker.listItem();
         for (auto* ancestor = listMarker.containingBlock(); ancestor; ancestor = ancestor->containingBlock()) {
-            if (ancestor->containsFloats())
-                SET_REASON_AND_RETURN_IF_NEEDED(ChildIsUnsupportedListItem, reasons, includeReasons);
             if (ancestor == associatedListItem)
                 break;
+            if (ancestor->containsFloats())
+                SET_REASON_AND_RETURN_IF_NEEDED(ChildIsUnsupportedListItem, reasons, includeReasons);
         }
         return reasons;
     }

@@ -163,18 +163,23 @@ static inline void emitThrowImpl(CCallHelpers& jit, unsigned exceptionIndex)
     });
 }
 
+template<SavedFPWidth savedFPWidth>
 static inline void buildEntryBufferForCatch(Probe::Context& context)
 {
+    unsigned valueSize = (savedFPWidth == SavedFPWidth::SaveVectors) ? 2 : 1;
     CallFrame* callFrame = context.fp<CallFrame*>();
     CallSiteIndex callSiteIndex = callFrame->callSiteIndex();
     OptimizingJITCallee* callee = bitwise_cast<OptimizingJITCallee*>(callFrame->callee().asWasmCallee());
     const StackMap& stackmap = callee->stackmap(callSiteIndex);
     VM* vm = context.gpr<VM*>(GPRInfo::regT0);
-    uint64_t* buffer = vm->wasmContext.scratchBufferForSize(stackmap.size() * 8);
-    loadValuesIntoBuffer(context, stackmap, buffer);
+    uint64_t* buffer = vm->wasmContext.scratchBufferForSize(stackmap.size() * valueSize * 8);
+    loadValuesIntoBuffer(context, stackmap, buffer, savedFPWidth);
 
     context.gpr(GPRInfo::argumentGPR0) = bitwise_cast<uintptr_t>(buffer);
 }
+
+static inline void buildEntryBufferForCatchSIMD(Probe::Context& context) { buildEntryBufferForCatch<SavedFPWidth::SaveVectors>(context); }
+static inline void buildEntryBufferForCatchNoSIMD(Probe::Context& context) { buildEntryBufferForCatch<SavedFPWidth::DontSaveVectors>(context); }
 
 static inline void emitCatchPrologueShared(B3::Air::Code& code, CCallHelpers& jit)
 {
@@ -215,9 +220,39 @@ static inline void emitCatchPrologueShared(B3::Air::Code& code, CCallHelpers& ji
     jit.loadPtr(CCallHelpers::Address(GPRInfo::regT3, JSWebAssemblyInstance::offsetOfInstance()), GPRInfo::regT3);
     jit.storeWasmContextInstance(GPRInfo::regT3);
 
-    jit.probe(tagCFunction<JITProbePtrTag>(buildEntryBufferForCatch), nullptr);
+    jit.probe(tagCFunction<JITProbePtrTag>(code.usesSIMD() ? buildEntryBufferForCatchSIMD : buildEntryBufferForCatchNoSIMD), nullptr,
+        code.usesSIMD() ? SavedFPWidth::SaveVectors : SavedFPWidth::DontSaveVectors);
 
     jit.addPtr(CCallHelpers::TrustedImm32(-code.frameSize()), GPRInfo::callFrameRegister, CCallHelpers::stackPointerRegister);
+}
+
+static inline void prepareForTailCall(CCallHelpers& jit, const B3::StackmapGenerationParams& params, const Checked<int32_t>& tailCallStackOffsetFromFP)
+{
+    Checked<int32_t> frameSize = params.code().frameSize();
+    Checked<int32_t> newStackOffset = frameSize + tailCallStackOffsetFromFP;
+
+    RegisterAtOffsetList calleeSaves = params.code().calleeSaveRegisterAtOffsetList();
+
+    // We will use sp-based offsets since the frame pointer is already pointing to the previous frame.
+    calleeSaves.adjustOffsets(frameSize);
+    jit.emitRestore(calleeSaves, MacroAssembler::stackPointerRegister);
+
+    // The return PC was saved on the stack in the tail call patchpoint.
+#if CPU(X86_64)
+    newStackOffset -= Checked<int32_t>(sizeof(Register));
+#elif CPU(ARM) || CPU(ARM64) || CPU(RISCV64)
+    jit.loadPtr(CCallHelpers::Address(MacroAssembler::stackPointerRegister, newStackOffset - Checked<int32_t>(sizeof(Register))), MacroAssembler::linkRegister);
+#if CPU(ARM64E)
+    GPRReg callerSP = jit.scratchRegister();
+    jit.addPtr(MacroAssembler::TrustedImm32(frameSize + Checked<int32_t>(sizeof(CallerFrameAndPC))), MacroAssembler::stackPointerRegister, callerSP);
+    jit.untagPtr(callerSP, MacroAssembler::linkRegister);
+    jit.validateUntaggedPtr(MacroAssembler::linkRegister);
+#endif
+#else
+    UNREACHABLE_FOR_PLATFORM();
+#endif
+
+    jit.addPtr(MacroAssembler::TrustedImm32(newStackOffset), MacroAssembler::stackPointerRegister);
 }
 
 } } // namespace JSC::Wasm

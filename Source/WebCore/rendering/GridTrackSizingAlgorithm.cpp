@@ -1335,7 +1335,41 @@ void GridTrackSizingAlgorithm::accumulateIntrinsicSizesForTrack(GridTrack& track
     Vector<GridTrack>& allTracks = tracks(m_direction);
 
     while (auto* gridItem = iterator.nextGridItem()) {
+
         bool isNewEntry = itemsSet.add(gridItem).isNewEntry;
+
+        // Masonry Track Sizing
+        // https://drafts.csswg.org/css-grid-3/#track-sizing
+        // We should only compute track sizes on a subset of items.
+        //
+        // - Items placed at the first implicit line in the masonry axis.
+        // - Items that have a specified definite placement in the grid axis.
+        // - Items that span all grid axis tracks.
+        if (m_renderGrid->isMasonry()) {
+            bool skipTrackSizing = true;
+
+            // m_direction shall always be the gridAxisDirection.
+            ASSERT(!isDirectionInMasonryDirection());
+            auto gridAxisDirection = m_direction;
+            auto masonryAxisDirection = m_renderGrid->areMasonryRows() ? ForRows : ForColumns;
+            auto span = GridPositionsResolver::resolveGridPositionsFromStyle(*m_renderGrid, *gridItem, gridAxisDirection);
+
+            // Items placed at the first implicit line in the masonry axis.
+            if (!m_renderGrid->gridSpanForChild(*gridItem, masonryAxisDirection).startLine())
+                skipTrackSizing = false;
+
+            // Items that have a specified definite placement in the grid axis.
+            if (!span.isIndefinite())
+                skipTrackSizing = false;
+
+            // Items that span all grid axis tracks.
+            if (m_renderGrid->gridSpanForChild(*gridItem, gridAxisDirection).integerSpan() == tracks(gridAxisDirection).size())
+                skipTrackSizing = false;
+
+            if (skipTrackSizing)
+                continue;
+        }
+
         if (is<RenderGrid>(gridItem) && downcast<RenderGrid>(gridItem)->isSubgridInParentDirection(iterator.direction())) {
             // Contribute the mbp of wrapper to the first and last tracks that we span.
             RenderGrid* inner = downcast<RenderGrid>(gridItem);
@@ -1603,6 +1637,12 @@ void GridTrackSizingAlgorithm::run()
     ASSERT(wasSetup());
     StateMachine stateMachine(*this);
 
+    if (m_renderGrid->isMasonry(m_direction))
+        return;
+    
+    if (m_renderGrid->isMasonry(m_direction))
+        return;
+
     if (m_renderGrid->isSubgrid(m_direction) && copyUsedTrackSizesForSubgrid())
         return;
 
@@ -1685,7 +1725,7 @@ GridTrackSizingAlgorithm::StateMachine::~StateMachine()
 
 bool GridTrackSizingAlgorithm::isDirectionInMasonryDirection() const
 {
-    return (m_renderGrid->areMasonryRows() && m_direction == ForRows) || (m_renderGrid->areMasonryColumns() && m_direction == ForColumns);
+    return m_renderGrid->isMasonry(m_direction);
 }
 
 } // namespace WebCore

@@ -50,6 +50,12 @@ AXIsolatedObject::AXIsolatedObject(const Ref<AXCoreObject>& axObject, AXIsolated
     m_parentID = axParent ? axParent->objectID() : AXID();
 
     auto isRoot = !axParent && axObject->isScrollView() ? IsRoot::Yes : IsRoot::No;
+
+    // Every object will have at least this many properties. We can shrink this number
+    // to some estimated average once we implement sparse property storage (i.e. only storing
+    // a property if it's not the default value for its type).
+    m_propertyMap.reserveInitialCapacity(126);
+
     initializeProperties(axObject, isRoot);
 }
 
@@ -76,7 +82,6 @@ void AXIsolatedObject::initializeProperties(const Ref<AXCoreObject>& coreObject,
     else
         setProperty(AXPropertyName::AncestorFlags, object.computeAncestorFlagsWithTraversal());
 
-    setProperty(AXPropertyName::HasARIAValueNow, object.hasARIAValueNow());
     setProperty(AXPropertyName::IsAttachment, object.isAttachment());
     setProperty(AXPropertyName::IsBusy, object.isBusy());
     setProperty(AXPropertyName::IsButton, object.isButton());
@@ -86,6 +91,7 @@ void AXIsolatedObject::initializeProperties(const Ref<AXCoreObject>& coreObject,
     setProperty(AXPropertyName::IsFocused, object.isFocused());
     setProperty(AXPropertyName::IsGroup, object.isGroup());
     setProperty(AXPropertyName::IsHeading, object.isHeading());
+    setProperty(AXPropertyName::IsIndeterminate, object.isIndeterminate());
     setProperty(AXPropertyName::IsInlineText, object.isInlineText());
     setProperty(AXPropertyName::IsInputImage, object.isInputImage());
     setProperty(AXPropertyName::IsLandmark, object.isLandmark());
@@ -175,13 +181,9 @@ void AXIsolatedObject::initializeProperties(const Ref<AXCoreObject>& coreObject,
     setProperty(AXPropertyName::ReadOnlyValue, object.readOnlyValue().isolatedCopy());
     setProperty(AXPropertyName::AutoCompleteValue, object.autoCompleteValue().isolatedCopy());
     setProperty(AXPropertyName::StringValue, object.stringValue().isolatedCopy());
-    setObjectProperty(AXPropertyName::FocusableAncestor, object.focusableAncestor());
-    setObjectProperty(AXPropertyName::EditableAncestor, object.editableAncestor());
-    setObjectProperty(AXPropertyName::HighestEditableAncestor, object.highestEditableAncestor());
     setProperty(AXPropertyName::Orientation, static_cast<int>(object.orientation()));
     setProperty(AXPropertyName::HierarchicalLevel, object.hierarchicalLevel());
     setProperty(AXPropertyName::Language, object.language().isolatedCopy());
-    setProperty(AXPropertyName::TagName, object.tagName().string().isolatedCopy());
     setProperty(AXPropertyName::SupportsLiveRegion, object.supportsLiveRegion());
     setProperty(AXPropertyName::IsInsideLiveRegion, object.isInsideLiveRegion());
     setProperty(AXPropertyName::LiveRegionStatus, object.liveRegionStatus().isolatedCopy());
@@ -580,7 +582,7 @@ AXCoreObject* AXIsolatedObject::focusedUIElement() const
     return tree()->focusedNode().get();
 }
     
-AXCoreObject* AXIsolatedObject::parentObjectUnignored() const
+AXIsolatedObject* AXIsolatedObject::parentObjectUnignored() const
 {
     return tree()->nodeForID(parent()).get();
 }
@@ -1174,6 +1176,12 @@ bool AXIsolatedObject::performDefaultAction()
     return false;
 }
 
+AtomString AXIsolatedObject::tagName() const
+{
+    ASSERT_NOT_REACHED();
+    return AtomString();
+}
+
 bool AXIsolatedObject::isAccessibilityNodeObject() const
 {
     ASSERT_NOT_REACHED();
@@ -1486,12 +1494,6 @@ bool AXIsolatedObject::isMockObject() const
 }
 
 bool AXIsolatedObject::isNonNativeTextControl() const
-{
-    ASSERT_NOT_REACHED();
-    return false;
-}
-
-bool AXIsolatedObject::isIndeterminate() const
 {
     ASSERT_NOT_REACHED();
     return false;

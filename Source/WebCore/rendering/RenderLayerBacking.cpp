@@ -668,6 +668,10 @@ void RenderLayerBacking::updateTransform(const RenderStyle& style)
 void RenderLayerBacking::updateChildrenTransformAndAnchorPoint(const LayoutRect& primaryGraphicsLayerRect, LayoutSize offsetFromParentGraphicsLayer)
 {
     auto defaultAnchorPoint = FloatPoint3D { 0.5, 0.5, 0 };
+
+    if (m_owningLayer.isRenderViewLayer())
+        defaultAnchorPoint = { };
+
     if (!renderer().hasTransformRelatedProperty()) {
         m_graphicsLayer->setAnchorPoint(defaultAnchorPoint);
         if (m_contentsContainmentLayer)
@@ -1684,9 +1688,6 @@ void RenderLayerBacking::updateInternalHierarchy()
     constexpr size_t maxOrderedLayers = 6;
     Vector<GraphicsLayer*, maxOrderedLayers> orderedLayers;
 
-    if (m_transformFlatteningLayer)
-        orderedLayers.append(m_transformFlatteningLayer.get());
-
     if (lastClippingLayer)
         orderedLayers.append(lastClippingLayer);
 
@@ -1704,6 +1705,15 @@ void RenderLayerBacking::updateInternalHierarchy()
     }
 
     orderedLayers.append(m_graphicsLayer.get());
+
+    // The transform flattening layer is outside the clipping stack, so we need
+    // to make sure we add the first layer in the clipping stack as its child.
+    if (m_transformFlatteningLayer) {
+        if (lastClippingLayer)
+            m_transformFlatteningLayer->addChild(*m_ancestorClippingStack->firstLayer());
+        else
+            m_transformFlatteningLayer->addChild(*orderedLayers[0]);
+    }
 
     if (m_childContainmentLayer)
         orderedLayers.append(m_childContainmentLayer.get());
@@ -3781,6 +3791,16 @@ bool RenderLayerBacking::shouldDumpPropertyForLayer(const GraphicsLayer* layer, 
         if (!strcmp(propertyName, "repaintRects"))
             return false;
     }
+
+    if (m_owningLayer.isRenderViewLayer() && (layer == m_graphicsLayer.get() || layer == m_contentsContainmentLayer.get())) {
+        if (!strcmp(propertyName, "anchorPoint"))
+            return layer->anchorPoint() != FloatPoint3D { };
+
+        return true;
+    }
+
+    if (!strcmp(propertyName, "anchorPoint"))
+        return layer->anchorPoint() != FloatPoint3D(0.5f, 0.5f, 0);
 
     return true;
 }

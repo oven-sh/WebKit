@@ -99,13 +99,17 @@ void BBQPlan::dumpDisassembly(CompilationContext& context, LinkBuffer& linkBuffe
     if (UNLIKELY(shouldDumpDisassemblyFor(CompilationMode::BBQMode))) {
         auto* disassembler = context.procedure->code().disassembler();
 
-        const char* airPrefix = "Air    ";
-        const char* asmPrefix = "asm          ";
+        const char* b3Prefix = "b3    ";
+        const char* airPrefix = "Air        ";
+        const char* asmPrefix = "asm              ";
 
         auto forEachInst = scopedLambda<void(B3::Air::Inst&)>([&] (B3::Air::Inst& inst) {
-            if (inst.origin) {
+            if (inst.origin && context.procedure->code().shouldPreserveB3Origins()) {
                 if (String string = inst.origin->compilerConstructionSite(); !string.isNull())
                     dataLogLn("\033[1;37m", string, "\033[0m");
+                dataLog(b3Prefix);
+                inst.origin->deepDump(context.procedure.get(), WTF::dataFile());
+                dataLogLn();
             }
         });
 
@@ -163,16 +167,19 @@ void BBQPlan::work(CompilationEffort effort)
     TypeIndex typeIndex = m_moduleInformation->internalFunctionTypeIndices[m_functionIndex];
     const TypeDefinition& signature = TypeInformation::get(typeIndex).expand();
 
-    dataLogLnIf(Options::dumpDisassembly(), "Generated BBQ code for WebAssembly BBQ function[", m_functionIndex, "] ", signature.toString().ascii().data(), " name ", makeString(IndexOrName(functionIndexSpace, m_moduleInformation->nameSection->get(functionIndexSpace))).ascii().data());
+    bool usesSIMD = m_moduleInformation->isSIMDFunction(m_functionIndex);
+    SavedFPWidth savedFPWidth = usesSIMD ? SavedFPWidth::SaveVectors : SavedFPWidth::DontSaveVectors;
+
+    dataLogLnIf(shouldDumpDisassemblyFor(CompilationMode::BBQMode), "Generated BBQ code for WebAssembly BBQ function[", m_functionIndex, "] ", signature.toString().ascii().data(), " name ", makeString(IndexOrName(functionIndexSpace, m_moduleInformation->nameSection->get(functionIndexSpace))).ascii().data());
     dumpDisassembly(context, linkBuffer);
     bool dumpDisassemblyAgain = false;
     function->entrypoint.compilation = makeUnique<Compilation>(
-        FINALIZE_CODE_IF(dumpDisassemblyAgain, linkBuffer, JITCompilationPtrTag, "WebAssembly BBQ function[%i] %s name %s", m_functionIndex, signature.toString().ascii().data(), makeString(IndexOrName(functionIndexSpace, m_moduleInformation->nameSection->get(functionIndexSpace))).ascii().data()),
+        FINALIZE_CODE_IF(context.procedure->shouldDumpIR() || dumpDisassemblyAgain, linkBuffer, JITCompilationPtrTag, "WebAssembly BBQ function[%i] %s name %s", m_functionIndex, signature.toString().ascii().data(), makeString(IndexOrName(functionIndexSpace, m_moduleInformation->nameSection->get(functionIndexSpace))).ascii().data()),
         WTFMove(context.wasmEntrypointByproducts));
 
     CodePtr<WasmEntryPtrTag> entrypoint;
     {
-        Ref<BBQCallee> callee = BBQCallee::create(WTFMove(function->entrypoint), functionIndexSpace, m_moduleInformation->nameSection->get(functionIndexSpace), WTFMove(tierUp), WTFMove(unlinkedWasmToWasmCalls), WTFMove(function->stackmaps), WTFMove(function->exceptionHandlers), WTFMove(exceptionHandlerLocations), WTFMove(loopEntrypointLocations), function->osrEntryScratchBufferSize);
+        Ref<BBQCallee> callee = BBQCallee::create(WTFMove(function->entrypoint), functionIndexSpace, m_moduleInformation->nameSection->get(functionIndexSpace), WTFMove(tierUp), WTFMove(unlinkedWasmToWasmCalls), WTFMove(function->stackmaps), WTFMove(function->exceptionHandlers), WTFMove(exceptionHandlerLocations), WTFMove(loopEntrypointLocations), function->osrEntryScratchBufferSize, savedFPWidth);
         for (auto& moveLocation : function->calleeMoveLocations)
             MacroAssembler::repatchPointer(moveLocation, CalleeBits::boxWasm(callee.ptr()));
         entrypoint = callee->entrypoint();
@@ -350,7 +357,9 @@ void BBQPlan::initializeCallees(const CalleeInitializer& callback)
 
         InternalFunction* function = m_wasmInternalFunctions[internalFunctionIndex].get();
         size_t functionIndexSpace = internalFunctionIndex + m_moduleInformation->importFunctionCount();
-        Ref<BBQCallee> wasmEntrypointCallee = BBQCallee::create(WTFMove(function->entrypoint), functionIndexSpace, m_moduleInformation->nameSection->get(functionIndexSpace), WTFMove(m_tierUpCounts[internalFunctionIndex]), WTFMove(m_unlinkedWasmToWasmCalls[internalFunctionIndex]), WTFMove(function->stackmaps), WTFMove(function->exceptionHandlers), WTFMove(m_exceptionHandlerLocations[internalFunctionIndex]), WTFMove(m_allLoopEntrypoints[internalFunctionIndex]), function->osrEntryScratchBufferSize);
+        bool usesSIMD = m_moduleInformation->isSIMDFunction(internalFunctionIndex);
+        SavedFPWidth savedFPWidth = usesSIMD ? SavedFPWidth::SaveVectors : SavedFPWidth::DontSaveVectors;
+        Ref<BBQCallee> wasmEntrypointCallee = BBQCallee::create(WTFMove(function->entrypoint), functionIndexSpace, m_moduleInformation->nameSection->get(functionIndexSpace), WTFMove(m_tierUpCounts[internalFunctionIndex]), WTFMove(m_unlinkedWasmToWasmCalls[internalFunctionIndex]), WTFMove(function->stackmaps), WTFMove(function->exceptionHandlers), WTFMove(m_exceptionHandlerLocations[internalFunctionIndex]), WTFMove(m_allLoopEntrypoints[internalFunctionIndex]), function->osrEntryScratchBufferSize, savedFPWidth);
 
         for (auto& moveLocation : function->calleeMoveLocations)
             MacroAssembler::repatchPointer(moveLocation, CalleeBits::boxWasm(wasmEntrypointCallee.ptr()));

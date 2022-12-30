@@ -786,6 +786,7 @@ css/CSSPageRule.cpp
 css/CSSPaintImageValue.cpp
 css/CSSPrimitiveValue.cpp
 css/CSSProperty.cpp
+css/CSSPropertyRule.cpp
 css/CSSPropertySourceData.cpp
 css/CSSRayValue.cpp
 css/CSSReflectValue.cpp
@@ -2200,6 +2201,7 @@ platform/graphics/WidthIterator.cpp
 platform/graphics/controls/ControlFactory.cpp
 platform/graphics/controls/ControlPart.cpp
 platform/graphics/controls/ControlPartType.cpp
+platform/graphics/controls/ControlStyle.cpp
 platform/graphics/controls/MeterPart.cpp
 platform/graphics/cpu/arm/filters/FEBlendNeonApplier.cpp
 platform/graphics/displaylists/DisplayList.cpp
@@ -2692,6 +2694,7 @@ style/ChildChangeInvalidation.cpp
 style/ClassChangeInvalidation.cpp
 style/ColorFromPrimitiveValue.cpp
 style/ContainerQueryEvaluator.cpp
+style/CustomPropertyRegistry.cpp
 style/ElementRuleCollector.cpp
 style/FilterOperationsBuilder.cpp
 style/HasSelectorFilter.cpp
@@ -3087,6 +3090,7 @@ JSCSSNamespaceRule.cpp
 JSCSSPageRule.cpp
 JSCSSPaintCallback.cpp
 JSCSSPaintSize.cpp
+JSCSSPropertyRule.cpp
 JSCSSRule.cpp
 JSCSSRuleList.cpp
 JSCSSStyleDeclaration.cpp

@@ -75,6 +75,7 @@
 #include "RenderTableCell.h"
 #include "RenderTheme.h"
 #include "RenderView.h"
+#include "ResizeObserverSize.h"
 #include "RuntimeApplicationChecks.h"
 #include "SVGClipPathElement.h"
 #include "SVGElementTypeHelpers.h"
@@ -1578,14 +1579,26 @@ BackgroundBleedAvoidance RenderBox::determineBackgroundBleedAvoidance(GraphicsCo
     return BackgroundBleedUseTransparencyLayer;
 }
 
-ControlPart* RenderBox::ensureControlPart()
+ControlPart* RenderBox::ensureControlPartForRenderer()
 {
     if (!theme().canCreateControlPartForRenderer(*this))
         return nullptr;
 
     auto& rareData = ensureRareData();
     if (!rareData.controlPart)
-        rareData.controlPart = theme().createControlPartForRenderer(*this);
+        rareData.controlPart = theme().createControlPart(*this);
+
+    return rareData.controlPart.get();
+}
+
+ControlPart* RenderBox::ensureControlPartForBorderOnly()
+{
+    if (!theme().canCreateControlPartForBorderOnly(*this))
+        return nullptr;
+
+    auto& rareData = ensureRareData();
+    if (!rareData.controlPart)
+        rareData.controlPart = theme().createControlPart(*this);
 
     return rareData.controlPart.get();
 }
@@ -1623,7 +1636,7 @@ void RenderBox::paintBoxDecorations(PaintInfo& paintInfo, const LayoutPoint& pai
     // The theme will tell us whether or not we should also paint the CSS background.
     bool borderOrBackgroundPaintingIsNeeded = true;
     if (style().hasEffectiveAppearance()) {
-        if (auto* control = ensureControlPart())
+        if (auto* control = ensureControlPartForRenderer())
             borderOrBackgroundPaintingIsNeeded = theme().paint(*this, *control, paintInfo, paintRect);
         else {
             ControlStates* controlStates = controlStatesForRenderer(*this);
@@ -1646,9 +1659,22 @@ void RenderBox::paintBoxDecorations(PaintInfo& paintInfo, const LayoutPoint& pai
     }
     backgroundPainter.paintBoxShadow(paintRect, style(), ShadowStyle::Inset);
 
-    // The theme will tell us whether or not we should also paint the CSS border.
-    if (bleedAvoidance != BackgroundBleedBackgroundOverBorder && (!style().hasEffectiveAppearance() || (borderOrBackgroundPaintingIsNeeded && theme().paintBorderOnly(*this, paintInfo, paintRect))) && style().hasVisibleBorderDecoration())
-        borderPainter.paintBorder(paintRect, style(), bleedAvoidance);
+    if (bleedAvoidance != BackgroundBleedBackgroundOverBorder) {
+        bool paintCSSBorder = false;
+
+        if (!style().hasEffectiveAppearance())
+            paintCSSBorder = true;
+        else if (borderOrBackgroundPaintingIsNeeded) {
+            // The theme will tell us whether or not we should also paint the CSS border.
+            if (auto* control = ensureControlPartForBorderOnly())
+                paintCSSBorder = theme().paint(*this, *control, paintInfo, paintRect);
+            else
+                paintCSSBorder = theme().paintBorderOnly(*this, paintInfo, paintRect);
+        }
+
+        if (paintCSSBorder && style().hasVisibleBorderDecoration())
+            borderPainter.paintBorder(paintRect, style(), bleedAvoidance);
+    }
 
     if (bleedAvoidance == BackgroundBleedUseTransparencyLayer)
         paintInfo.context().endTransparencyLayer();
@@ -5419,6 +5445,8 @@ std::pair<LayoutUnit, LayoutUnit> RenderBox::computeMinMaxLogicalWidthFromAspect
         if (LayoutUnit blockMaxSize = constrainLogicalHeightByMinMax(LayoutUnit::max(), std::nullopt); blockMaxSize != LayoutUnit::max())
             transferredMaxSize = inlineSizeFromAspectRatio(borderAndPaddingLogicalWidth(), borderAndPaddingLogicalHeight(), *aspectRatio, style().boxSizingForAspectRatio(), blockMaxSize, style().aspectRatioType(), isRenderReplaced());
     }
+    // Spec says the transferred max size should be floored by the transferred min size
+    transferredMaxSize = std::max(transferredMinSize, transferredMaxSize);
     return { transferredMinSize, transferredMaxSize };
 }
 
@@ -5439,6 +5467,8 @@ std::pair<LayoutUnit, LayoutUnit> RenderBox::computeMinMaxLogicalHeightFromAspec
         if (LayoutUnit inlineMaxSize = computeLogicalWidthInFragmentUsing(MaxSize, style().logicalMaxWidth(), containingBlockLogicalWidthForContent(), *containingBlock(), nullptr); inlineMaxSize != LayoutUnit::max())
             transferredMaxSize = blockSizeFromAspectRatio(borderAndPaddingLogicalWidth(), borderAndPaddingLogicalHeight(), *aspectRatio, style().boxSizingForAspectRatio(), inlineMaxSize, style().aspectRatioType(), isRenderReplaced());
     }
+    // Spec says the transferred max size should be floored by the transferred min size 
+    transferredMaxSize = std::max(transferredMinSize, transferredMaxSize);
     return { transferredMinSize, transferredMaxSize };
 }
 
@@ -5515,6 +5545,11 @@ std::optional<LayoutUnit> RenderBox::explicitIntrinsicInnerWidth() const
     if (style().containIntrinsicWidthType() == ContainIntrinsicSizeType::None)
         return std::nullopt;
 
+    if (element() && style().containIntrinsicWidthType() == ContainIntrinsicSizeType::AutoAndLength && shouldSkipContent()) {
+        if (auto lastRememberedSize = element()->lastRememberedSize())
+            return isHorizontalWritingMode() ? LayoutUnit(lastRememberedSize->inlineSize()) : LayoutUnit(lastRememberedSize->blockSize());
+    }
+
     auto width = style().containIntrinsicWidth();
     ASSERT(width.has_value());
     return std::optional<LayoutUnit> { width->value() };
@@ -5525,6 +5560,11 @@ std::optional<LayoutUnit> RenderBox::explicitIntrinsicInnerHeight() const
     ASSERT(shouldApplySizeContainment());
     if (style().containIntrinsicHeightType() == ContainIntrinsicSizeType::None)
         return std::nullopt;
+
+    if (element() && style().containIntrinsicHeightType() == ContainIntrinsicSizeType::AutoAndLength && shouldSkipContent()) {
+        if (auto lastRememberedSize = element()->lastRememberedSize())
+            return isHorizontalWritingMode() ? LayoutUnit(lastRememberedSize->blockSize()) : LayoutUnit(lastRememberedSize->inlineSize());
+    }
 
     auto height = style().containIntrinsicHeight();
     ASSERT(height.has_value());

@@ -561,10 +561,13 @@ static void appendAccessibilityObject(RefPtr<AXCoreObject> object, Accessibility
     // Find the next descendant of this attachment object so search can continue through frames.
     if (object->isAttachment()) {
         Widget* widget = object->widgetForAttachmentView();
-        if (!is<FrameView>(widget))
+        auto* frameView = dynamicDowncast<FrameView>(widget);
+        if (!frameView)
             return;
-        
-        Document* document = downcast<FrameView>(*widget).frame().document();
+        auto* localFrame = dynamicDowncast<LocalFrame>(frameView->frame());
+        if (!localFrame)
+            return;
+        auto* document = localFrame->document();
         if (!document || !document->hasLivingRenderTree())
             return;
         
@@ -1841,8 +1844,12 @@ Document* AccessibilityObject::document() const
     FrameView* frameView = documentFrameView();
     if (!frameView)
         return nullptr;
-    
-    return frameView->frame().document();
+
+    auto* localFrame = dynamicDowncast<LocalFrame>(frameView->frame());
+    if (!localFrame)
+        return nullptr;
+
+    return localFrame->document();
 }
     
 Page* AccessibilityObject::page() const
@@ -3127,7 +3134,7 @@ bool AccessibilityObject::supportsRowCountChange() const
 
 AccessibilityButtonState AccessibilityObject::checkboxOrRadioValue() const
 {
-    // If this is a real checkbox or radio button, AccessibilityRenderObject will handle.
+    // If this is a real checkbox or radio button, AccessibilityNodeObject will handle.
     // If it's an ARIA checkbox, radio, or switch the aria-checked attribute should be used.
     // If it's a toggle button, the aria-pressed attribute is consulted.
 
@@ -3150,9 +3157,6 @@ AccessibilityButtonState AccessibilityObject::checkboxOrRadioValue() const
             return AccessibilityButtonState::Off;
         return AccessibilityButtonState::Mixed;
     }
-    
-    if (isIndeterminate())
-        return AccessibilityButtonState::Mixed;
     
     return AccessibilityButtonState::Off;
 }
@@ -3759,38 +3763,6 @@ void AccessibilityObject::setPreventKeyboardDOMEventDispatch(bool on)
     frame->settings().setPreventKeyboardDOMEventDispatch(on);
 }
 #endif
-
-AccessibilityObject* AccessibilityObject::focusableAncestor()
-{
-    return Accessibility::findAncestor<AccessibilityObject>(*this, true, [] (const AccessibilityObject& object) {
-        return object.canSetFocusAttribute();
-    });
-}
-
-AccessibilityObject* AccessibilityObject::editableAncestor()
-{
-    return Accessibility::findAncestor<AccessibilityObject>(*this, true, [] (const AccessibilityObject& object) {
-        return object.isTextControl();
-    });
-}
-
-AccessibilityObject* AccessibilityObject::highestEditableAncestor()
-{
-    AccessibilityObject* editableAncestor = this->editableAncestor();
-    AccessibilityObject* previousEditableAncestor = nullptr;
-    while (editableAncestor) {
-        if (editableAncestor == previousEditableAncestor) {
-            if (AccessibilityObject* parent = editableAncestor->parentObject()) {
-                editableAncestor = parent->editableAncestor();
-                continue;
-            }
-            break;
-        }
-        previousEditableAncestor = editableAncestor;
-        editableAncestor = editableAncestor->editableAncestor();
-    }
-    return previousEditableAncestor;
-}
 
 AccessibilityObject* AccessibilityObject::radioGroupAncestor() const
 {

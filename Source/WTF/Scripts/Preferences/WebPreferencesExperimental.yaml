@@ -328,11 +328,11 @@ CSSCustomPropertiesAndValuesEnabled:
   humanReadableDescription: "Enable CSS Custom Properties and Values API"
   defaultValue:
     WebKitLegacy:
-      default: false
+      default: true
     WebKit:
-      default: false
+      default: true
     WebCore:
-      default: false
+      default: true
 
 CSSGradientInterpolationColorSpacesEnabled:
   type: bool
@@ -418,6 +418,18 @@ CSSMotionPathEnabled:
     WebCore:
       default: true
 
+CSSNestingEnabled:
+  type: bool
+  humanReadableName: "CSS Nesting"
+  humanReadableDescription: "Enable support for CSS nesting https://www.w3.org/TR/css-nesting-1/"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
 CSSOMViewSmoothScrollingEnabled:
   type: bool
   humanReadableName: "CSSOM View Smooth Scrolling"
@@ -479,10 +491,34 @@ CSSTextAlignLastEnabled:
     WebCore:
       default: true
 
+CSSTextGroupAlignEnabled:
+  type: bool
+  humanReadableName: "CSS text-group-align property"
+  humanReadableDescription: "Enable text-group-align CSS property"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
 CSSTextJustifyEnabled:
   type: bool
   humanReadableName: "CSS text-justify property"
   humanReadableDescription: "Enable the property text-justify, defined in CSS Text 3"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
+CSSTextWrapEnabled:
+  type: bool
+  humanReadableName: "CSS text-wrap property"
+  humanReadableDescription: "Enable text-wrap CSS property"
   defaultValue:
     WebKitLegacy:
       default: false
@@ -510,12 +546,11 @@ CSSTypedOMEnabled:
   humanReadableDescription: "Enable the CSS Typed OM"
   defaultValue:
     WebKitLegacy:
-      default: false
+      default: true
     WebKit:
-      "ENABLE(EXPERIMENTAL_FEATURES)": true
-      default: false
+      default: true
     WebCore:
-      default: false
+      default: true
 
 CanvasColorSpaceEnabled:
   type: bool

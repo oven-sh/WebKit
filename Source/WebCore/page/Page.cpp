@@ -1241,7 +1241,7 @@ void Page::setZoomedOutPageScaleFactor(float scale)
 
 void Page::setPageScaleFactor(float scale, const IntPoint& origin, bool inStableState)
 {
-    LOG(Viewports, "Page::setPageScaleFactor %.2f - inStableState %d", scale, inStableState);
+    LOG_WITH_STREAM(Viewports, stream << "Page " << this << " setPageScaleFactor " << scale << " at " << origin << " - stable " << inStableState);
 
     Document* document = mainFrame().document();
     RefPtr<FrameView> view = document->view();
@@ -1273,7 +1273,7 @@ void Page::setPageScaleFactor(float scale, const IntPoint& origin, bool inStable
     }
 
     if (view && view->scrollPosition() != origin) {
-        if (!view->delegatesScrolling())
+        if (view->delegatedScrollingMode() != DelegatedScrollingMode::DelegatedToNativeScrollView)
             view->setScrollPosition(origin);
 #if USE(COORDINATED_GRAPHICS)
         else
@@ -1508,12 +1508,14 @@ void Page::lockAllOverlayScrollbarsToHidden(bool lockOverlayScrollbars)
         if (!frameView)
             continue;
 
-        const HashSet<ScrollableArea*>* scrollableAreas = frameView->scrollableAreas();
+        auto scrollableAreas = frameView->scrollableAreas();
         if (!scrollableAreas)
             continue;
 
-        for (auto& scrollableArea : *scrollableAreas)
+        for (auto& area : *scrollableAreas) {
+            CheckedPtr<ScrollableArea> scrollableArea(area);
             scrollableArea->lockOverlayScrollbarStateToHidden(lockOverlayScrollbars);
+        }
     }
 }
     
@@ -1916,8 +1918,10 @@ void Page::renderingUpdateCompleted()
     }
 }
 
-void Page::willStartPlatformRenderingUpdate()
+void Page::willStartRenderingUpdateDisplay()
 {
+    LOG_WITH_STREAM(EventLoop, stream << "Page " << this << " willStartRenderingUpdateDisplay()");
+
     // Inspector's use of "composite" is rather innacurate. On Apple platforms, the "composite" step happens
     // in another process; these hooks wrap the non-WebKit CA commit time which is mostly painting-related.
     m_inspectorController->willComposite(mainFrame());
@@ -1926,12 +1930,23 @@ void Page::willStartPlatformRenderingUpdate()
         m_scrollingCoordinator->willStartPlatformRenderingUpdate();
 }
 
-void Page::didCompletePlatformRenderingUpdate()
+void Page::didCompleteRenderingUpdateDisplay()
 {
+    LOG_WITH_STREAM(EventLoop, stream << "Page " << this << " didCompleteRenderingUpdateDisplay()");
+
     if (m_scrollingCoordinator)
         m_scrollingCoordinator->didCompletePlatformRenderingUpdate();
 
     m_inspectorController->didComposite(mainFrame());
+}
+
+void Page::didCompleteRenderingFrame()
+{
+    LOG_WITH_STREAM(EventLoop, stream << "Page " << this << " didCompleteRenderingFrame()");
+
+    // FIXME: This is where we'd call requestPostAnimationFrame callbacks: webkit.org/b/249798.
+    // FIXME: Run WindowEventLoop tasks from here: webkit.org/b/249684.
+    // FIXME: Drive InspectorFrameEnd from here; webkit.org/b/249796.
 }
 
 void Page::prioritizeVisibleResources()
@@ -2562,7 +2577,8 @@ void Page::stopKeyboardScrollAnimation()
         if (!scrollableAreas)
             continue;
 
-        for (auto& scrollableArea : *scrollableAreas) {
+        for (auto& area : *scrollableAreas) {
+            CheckedPtr<ScrollableArea> scrollableArea(area);
             // First call stopAsyncAnimatedScroll() to prepare for the keyboard scroller running on the scrolling thread.
             scrollableArea->stopAsyncAnimatedScroll();
             scrollableArea->stopKeyboardScrollAnimation();
@@ -4114,16 +4130,30 @@ ScreenOrientationManager* Page::screenOrientationManager() const
     return m_screenOrientationManager.get();
 }
 
-URL Page::sanitizeForCopyOrShare(const URL& url) const
+URL Page::sanitizeLookalikeCharacters(const URL& url) const
 {
-    return chrome().client().sanitizeForCopyOrShare(url);
+    return chrome().client().sanitizeLookalikeCharacters(url);
 }
 
-String Page::sanitizeForCopyOrShare(const String& urlString) const
+String Page::sanitizeLookalikeCharacters(const String& urlString) const
 {
     if (auto url = URL { urlString }; url.isValid())
-        return sanitizeForCopyOrShare(WTFMove(url)).string();
+        return sanitizeLookalikeCharacters(WTFMove(url)).string();
     return urlString;
+}
+
+void Page::willBeginScrolling()
+{
+#if USE(APPKIT)
+    editorClient().setCaretDecorationVisibility(false);
+#endif
+}
+
+void Page::didFinishScrolling()
+{
+#if USE(APPKIT)
+    editorClient().setCaretDecorationVisibility(true);
+#endif
 }
 
 } // namespace WebCore

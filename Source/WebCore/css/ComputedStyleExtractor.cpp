@@ -52,6 +52,7 @@
 #include "ComposedTreeAncestorIterator.h"
 #include "ContentData.h"
 #include "CursorList.h"
+#include "CustomPropertyRegistry.h"
 #include "FontSelectionValueInlines.h"
 #include "GridPositionsResolver.h"
 #include "NodeRenderStyle.h"
@@ -1303,8 +1304,9 @@ static Ref<CSSValue> createTransitionPropertyValue(const Animation& animation)
         return CSSValuePool::singleton().createIdentifierValue(CSSValueAll);
     case Animation::TransitionMode::SingleProperty:
         return CSSValuePool::singleton().createCustomIdent(nameString(animation.property().id));
+    case Animation::TransitionMode::CustomProperty:
     case Animation::TransitionMode::UnknownProperty:
-        return CSSValuePool::singleton().createCustomIdent(animation.unknownProperty());
+        return CSSValuePool::singleton().createCustomIdent(animation.customOrUnknownProperty());
     }
     ASSERT_NOT_REACHED();
     return CSSValuePool::singleton().createIdentifierValue(CSSValueNone);
@@ -2780,7 +2782,7 @@ RefPtr<CSSValue> ComputedStyleExtractor::customPropertyValue(const AtomString& p
 
     auto* value = style->getCustomProperty(propertyName);
     if (!value) {
-        auto registered = styledElement->document().registeredCSSCustomProperties().get(propertyName);
+        auto registered = styledElement->document().customPropertyRegistry().get(propertyName);
         return registered ? registered->initialValueCopy() : nullptr;
     }
 
@@ -3608,6 +3610,8 @@ RefPtr<CSSValue> ComputedStyleExtractor::valueForPropertyInStyle(const RenderSty
         list->append(currentColorOrValidColor(style, style.textEmphasisColor()));
         return list;
     }
+    case CSSPropertyTextGroupAlign:
+        return cssValuePool.createValue(style.textGroupAlign());
     case CSSPropertyTextIndent: {
         auto textIndent = zoomAdjustedPixelValueForLength(style.textIndent(), style);
         if (style.textIndentLine() == TextIndentLine::EachLine || style.textIndentType() == TextIndentType::Hanging) {
@@ -3645,6 +3649,8 @@ RefPtr<CSSValue> ComputedStyleExtractor::valueForPropertyInStyle(const RenderSty
         return zoomAdjustedPixelValue(style.textStrokeWidth(), style);
     case CSSPropertyTextTransform:
         return cssValuePool.createValue(style.textTransform());
+    case CSSPropertyTextWrap:
+        return cssValuePool.createValue(style.textWrap());
     case CSSPropertyTop:
         return positionOffsetValue(style, CSSPropertyTop, renderer);
     case CSSPropertyUnicodeBidi:
@@ -4298,6 +4304,12 @@ RefPtr<CSSValue> ComputedStyleExtractor::valueForPropertyInStyle(const RenderSty
     case CSSPropertyFallback:
     case CSSPropertySymbols:
     case CSSPropertyAdditiveSymbols:
+        return nullptr;
+
+    // @property descriptors.
+    case CSSPropertyInherits:
+    case CSSPropertyInitialValue:
+    case CSSPropertySyntax:
         return nullptr;
 
     /* Unimplemented @font-face properties */

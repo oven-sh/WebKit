@@ -35,9 +35,10 @@
 
 namespace WebGPU {
 
-RenderPassEncoder::RenderPassEncoder(id<MTLRenderCommandEncoder> renderCommandEncoder, Device& device)
+RenderPassEncoder::RenderPassEncoder(id<MTLRenderCommandEncoder> renderCommandEncoder, NSUInteger visibilityResultBufferSize, Device& device)
     : m_renderCommandEncoder(renderCommandEncoder)
     , m_device(device)
+    , m_visibilityResultBufferSize(visibilityResultBufferSize)
 {
 }
 
@@ -54,7 +55,10 @@ RenderPassEncoder::~RenderPassEncoder()
 
 void RenderPassEncoder::beginOcclusionQuery(uint32_t queryIndex)
 {
-    UNUSED_PARAM(queryIndex);
+    if (queryIndex < m_visibilityResultBufferSize) {
+        m_visibilityResultBufferOffset = queryIndex;
+        [m_renderCommandEncoder setVisibilityResultMode:MTLVisibilityResultModeCounting offset:queryIndex];
+    }
 }
 
 void RenderPassEncoder::beginPipelineStatisticsQuery(const QuerySet& querySet, uint32_t queryIndex)
@@ -77,28 +81,23 @@ void RenderPassEncoder::draw(uint32_t vertexCount, uint32_t instanceCount, uint3
 
 void RenderPassEncoder::drawIndexed(uint32_t indexCount, uint32_t instanceCount, uint32_t firstIndex, int32_t baseVertex, uint32_t firstInstance)
 {
-    UNUSED_PARAM(indexCount);
-    UNUSED_PARAM(instanceCount);
     UNUSED_PARAM(firstIndex);
-    UNUSED_PARAM(baseVertex);
-    UNUSED_PARAM(firstInstance);
+    [m_renderCommandEncoder drawIndexedPrimitives:m_primitiveType indexCount:indexCount indexType:m_indexType indexBuffer:m_indexBuffer indexBufferOffset:m_indexBufferOffset instanceCount:instanceCount baseVertex:baseVertex baseInstance:firstInstance];
 }
 
 void RenderPassEncoder::drawIndexedIndirect(const Buffer& indirectBuffer, uint64_t indirectOffset)
 {
-    UNUSED_PARAM(indirectBuffer);
-    UNUSED_PARAM(indirectOffset);
+    [m_renderCommandEncoder drawIndexedPrimitives:m_primitiveType indexType:m_indexType indexBuffer:m_indexBuffer indexBufferOffset:m_indexBufferOffset indirectBuffer:indirectBuffer.buffer() indirectBufferOffset:indirectOffset];
 }
 
 void RenderPassEncoder::drawIndirect(const Buffer& indirectBuffer, uint64_t indirectOffset)
 {
-    UNUSED_PARAM(indirectBuffer);
-    UNUSED_PARAM(indirectOffset);
+    [m_renderCommandEncoder drawPrimitives:m_primitiveType indirectBuffer:indirectBuffer.buffer() indirectBufferOffset:indirectOffset];
 }
 
 void RenderPassEncoder::endOcclusionQuery()
 {
-
+    [m_renderCommandEncoder setVisibilityResultMode:MTLVisibilityResultModeDisabled offset:m_visibilityResultBufferOffset];
 }
 
 void RenderPassEncoder::endPass()
@@ -113,7 +112,14 @@ void RenderPassEncoder::endPipelineStatisticsQuery()
 
 void RenderPassEncoder::executeBundles(Vector<std::reference_wrapper<const RenderBundle>>&& bundles)
 {
-    UNUSED_PARAM(bundles);
+    for (auto& bundle : bundles) {
+        const auto& renderBundle = bundle.get();
+        for (const auto& resource : renderBundle.resources())
+            [m_renderCommandEncoder useResource:resource.mtlResource usage:resource.usage stages:resource.renderStages];
+
+        id<MTLIndirectCommandBuffer> icb = renderBundle.indirectCommandBuffer();
+        [m_renderCommandEncoder executeCommandsInBuffer:icb withRange:NSMakeRange(0, icb.size)];
+    }
 }
 
 void RenderPassEncoder::insertDebugMarker(String&& markerLabel)
@@ -169,7 +175,7 @@ void RenderPassEncoder::setBindGroup(uint32_t groupIndex, const BindGroup& group
     for (const auto& resource : group.resources())
         [m_renderCommandEncoder useResource:resource.mtlResource usage:resource.usage stages:resource.renderStages];
 
-    [m_renderCommandEncoder setVertexBuffer:group.vertexArgumentBuffer() offset:0 atIndex:groupIndex];
+    [m_renderCommandEncoder setVertexBuffer:group.vertexArgumentBuffer() offset:0 atIndex:groupIndex + m_vertexShaderInputBufferCount];
     [m_renderCommandEncoder setFragmentBuffer:group.fragmentArgumentBuffer() offset:0 atIndex:groupIndex];
 }
 
@@ -180,9 +186,9 @@ void RenderPassEncoder::setBlendConstant(const WGPUColor& color)
 
 void RenderPassEncoder::setIndexBuffer(const Buffer& buffer, WGPUIndexFormat format, uint64_t offset, uint64_t size)
 {
-    UNUSED_PARAM(buffer);
-    UNUSED_PARAM(format);
-    UNUSED_PARAM(offset);
+    m_indexBuffer = buffer.buffer();
+    m_indexType = format == WGPUIndexFormat_Uint32 ? MTLIndexTypeUInt32 : MTLIndexTypeUInt16;
+    m_indexBufferOffset = offset;
     UNUSED_PARAM(size);
 }
 
@@ -191,6 +197,7 @@ void RenderPassEncoder::setPipeline(const RenderPipeline& pipeline)
     // FIXME: validation according to
     // https://gpuweb.github.io/gpuweb/#dom-gpurendercommandsmixin-setpipeline.
     m_primitiveType = pipeline.primitiveType();
+    m_vertexShaderInputBufferCount = pipeline.vertexShaderInputBufferCount();
 
     [m_renderCommandEncoder setRenderPipelineState:pipeline.renderPipelineState()];
     if (pipeline.depthStencilState())
@@ -201,10 +208,8 @@ void RenderPassEncoder::setPipeline(const RenderPipeline& pipeline)
 
 void RenderPassEncoder::setScissorRect(uint32_t x, uint32_t y, uint32_t width, uint32_t height)
 {
-    UNUSED_PARAM(x);
-    UNUSED_PARAM(y);
-    UNUSED_PARAM(width);
-    UNUSED_PARAM(height);
+    // FIXME: Validate according to https://www.w3.org/TR/webgpu/#dom-gpurenderpassencoder-setscissorrect
+    [m_renderCommandEncoder setScissorRect: { x, y, width, height } ];
 }
 
 void RenderPassEncoder::setStencilReference(uint32_t reference)

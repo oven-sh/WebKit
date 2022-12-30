@@ -546,6 +546,12 @@ void NetworkProcessProxy::didNegotiateModernTLS(WebPageProxyIdentifier pageID, c
         page->didNegotiateModernTLS(url);
 }
 
+void NetworkProcessProxy::didFailLoadDueToNetworkConnectionIntegrity(WebPageProxyIdentifier pageID, const URL& url) 
+{
+    if (auto page = pageID ? WebProcessProxy::webPage(pageID) : nullptr)
+        page->didFailLoadDueToNetworkConnectionIntegrity(url);
+}
+
 void NetworkProcessProxy::triggerBrowsingContextGroupSwitchForNavigation(WebPageProxyIdentifier pageID, uint64_t navigationID, BrowsingContextGroupSwitchDecision browsingContextGroupSwitchDecision, const WebCore::RegistrableDomain& responseDomain, NetworkResourceLoadIdentifier existingNetworkResourceLoadIdentifierToResume, CompletionHandler<void(bool success)>&& completionHandler)
 {
     RELEASE_LOG(ProcessSwapping, "%p - NetworkProcessProxy::triggerBrowsingContextGroupSwitchForNavigation: pageID=%" PRIu64 ", navigationID=%" PRIu64 ", browsingContextGroupSwitchDecision=%u, existingNetworkResourceLoadIdentifierToResume=%" PRIu64, this, pageID.toUInt64(), navigationID, (unsigned)browsingContextGroupSwitchDecision, existingNetworkResourceLoadIdentifierToResume.toUInt64());
@@ -1764,13 +1770,41 @@ void NetworkProcessProxy::processPushMessage(PAL::SessionID sessionID, const Web
     if (auto it = permissions.find(origin); it != permissions.end())
         permission = it->value ? PushPermissionState::Granted : PushPermissionState::Denied;
 
-    sendWithAsyncReply(Messages::NetworkProcess::ProcessPushMessage { sessionID, pushMessage, permission }, WTFMove(callback));
+    RefPtr<ProcessAssertion> assertion = ProcessAssertion::create(getCurrentProcessID(), "WebKit Process Push Event"_s, WebKit::ProcessAssertionType::UnboundedNetworking);
+
+    auto assertionTimer = makeUnique<Timer>([assertion = WTFMove(assertion)] () mutable {
+        RELEASE_LOG_ERROR(ServiceWorker, "NetworkProcess is taking too much time to process a push message");
+        assertion = nullptr;
+    });
+
+    static constexpr Seconds pushEventTimeout = 20_s;
+    assertionTimer->startOneShot(pushEventTimeout);
+
+    auto innerCallback = [callback = WTFMove(callback), assertionTimer = WTFMove(assertionTimer)] (bool wasProcessed) mutable {
+        callback(wasProcessed);
+    };
+    sendWithAsyncReply(Messages::NetworkProcess::ProcessPushMessage { sessionID, pushMessage, permission }, WTFMove(innerCallback));
 }
 
 void NetworkProcessProxy::processNotificationEvent(const NotificationData& data, NotificationEventType eventType, CompletionHandler<void(bool wasProcessed)>&& callback)
 {
     RELEASE_ASSERT(!!callback);
-    sendWithAsyncReply(Messages::NetworkProcess::ProcessNotificationEvent { data, eventType }, WTFMove(callback));
+
+    RefPtr<ProcessAssertion> assertion = ProcessAssertion::create(getCurrentProcessID(), "WebKit Process Notification Event"_s, WebKit::ProcessAssertionType::UnboundedNetworking);
+
+    auto assertionTimer = makeUnique<Timer>([assertion = WTFMove(assertion)] () mutable {
+        RELEASE_LOG_ERROR(ServiceWorker, "NetworkProcess is taking too much time to process a notification event");
+        assertion = nullptr;
+    });
+
+    static constexpr Seconds notificationEventTimeout = 20_s;
+    assertionTimer->startOneShot(notificationEventTimeout);
+
+    auto innerCallback = [callback = WTFMove(callback), assertionTimer = WTFMove(assertionTimer)] (bool wasProcessed) mutable {
+        callback(wasProcessed);
+    };
+
+    sendWithAsyncReply(Messages::NetworkProcess::ProcessNotificationEvent { data, eventType }, WTFMove(innerCallback));
 }
 #endif // ENABLE(SERVICE_WORKER)
 
@@ -1846,6 +1880,15 @@ void NetworkProcessProxy::setEmulatedConditions(PAL::SessionID sessionID, std::o
 }
 
 #endif // ENABLE(INSPECTOR_NETWORK_THROTTLING)
+
+#if ENABLE(NETWORK_CONNECTION_INTEGRITY)
+
+void NetworkProcessProxy::requestLookalikeCharacterStrings(CompletionHandler<void(Vector<String>&&)>&& completion)
+{
+    sendWithAsyncReply(Messages::NetworkProcess::RequestLookalikeCharacterStrings(), WTFMove(completion), 0);
+}
+
+#endif // ENABLE(NETWORK_CONNECTION_INTEGRITY)
 
 } // namespace WebKit
 

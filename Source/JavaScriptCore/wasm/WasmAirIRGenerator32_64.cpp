@@ -201,8 +201,8 @@ private:
 
     B3::Type toB3ResultType(BlockSignature);
     static B3::Air::Opcode moveOpForValueType(Type);
-    void emitLoad(Tmp base, size_t offset, const TypedTmp& result);
-    void emitStore(const TypedTmp& value, Tmp base, size_t offset);
+    void emitLoad(Tmp base, intptr_t offset, const TypedTmp& result);
+    void emitStore(const TypedTmp& value, Tmp base, intptr_t offset);
     void emitMove(const TypedTmp& src, const TypedTmp& dst);
     void emitMove(const ValueLocation&, const TypedTmp& dst);
     void emitMove(const ArgumentLocation&, const TypedTmp& dst);
@@ -264,7 +264,8 @@ public:
     PartialResult WARN_UNUSED_RETURN addRethrow(unsigned, ControlType&);
 
     // Calls
-    std::pair<B3::PatchpointValue*, PatchpointExceptionHandle> WARN_UNUSED_RETURN emitCallPatchpoint(BasicBlock*, const TypeDefinition&, const ResultList& results, const Vector<ExpressionType>& args, Vector<ConstrainedTmp> extraArgs = { });
+    CallPatchpointData WARN_UNUSED_RETURN emitCallPatchpoint(BasicBlock*, B3::Type, const ResultList&, const Vector<TypedTmp>& tmpArgs, const CallInformation&, Vector<ConstrainedTmp> patchArgs = { });
+    CallPatchpointData WARN_UNUSED_RETURN emitTailCallPatchpoint(BasicBlock*, const Checked<int32_t>& tailCallStackOffsetFromFP, const Vector<ArgumentLocation>&, const Vector<TypedTmp>& tmpArgs, Vector<ConstrainedTmp> patchArgs = { });
 
     PartialResult addShift(Type, B3::Air::Opcode, ExpressionType value, ExpressionType shift, ExpressionType& result);
     PartialResult addShift64(B3::Air::Opcode, ExpressionType value, ExpressionType shift, ExpressionType& result);
@@ -359,9 +360,17 @@ void AirIRGenerator32::emitZeroInitialize(BasicBlock* block, ExpressionType valu
         append(block, Move32ToFloat, temp, value);
         break;
     }
-    case TypeKind::F64:
+    case TypeKind::F64: {
+#if CPU(ARM_THUMB2)
+        TypedTmp zeroPtr = gPtr();
+        static double zeroConstant = 0.;
+        append(block, Move, Arg::immPtr(&zeroConstant), zeroPtr);
+        append(block, MoveDouble, Arg::addr(zeroPtr), value);
+#else
         append(block, MoveZeroToDouble, value);
+#endif
         break;
+    }
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -424,10 +433,10 @@ B3::Type AirIRGenerator32::toB3ResultType(BlockSignature returnType)
     return result.iterator->value;
 }
 
-void AirIRGenerator32::emitLoad(Tmp base, size_t offset, const TypedTmp& result)
+void AirIRGenerator32::emitLoad(Tmp base, intptr_t offset, const TypedTmp& result)
 {
     auto const largestOffsetUsed = result.isGPPair() ? offset + 4 : offset;
-    if (!Arg::isValidAddrForm(largestOffsetUsed, B3::widthForType(toB3Type(result.type())))) {
+    if (!Arg::isValidAddrForm(moveForType(toB3Type(result.type())), largestOffsetUsed, B3::widthForType(toB3Type(result.type())))) {
         auto address = gPtr();
         append(Move, Arg::bigImm(offset), address);
         append(Add32, base, address, address);
@@ -442,10 +451,10 @@ void AirIRGenerator32::emitLoad(Tmp base, size_t offset, const TypedTmp& result)
         append(moveOpForValueType(result.type()), Arg::addr(base, offset), result);
 }
 
-void AirIRGenerator32::emitStore(const TypedTmp& value, Tmp base, size_t offset)
+void AirIRGenerator32::emitStore(const TypedTmp& value, Tmp base, intptr_t offset)
 {
     auto const largestOffsetUsed = value.isGPPair() ? offset + 4 : offset;
-    if (!Arg::isValidAddrForm(largestOffsetUsed, B3::widthForType(toB3Type(value.type())))) {
+    if (!Arg::isValidAddrForm(moveForType(toB3Type(value.type())), largestOffsetUsed, B3::widthForType(toB3Type(value.type())))) {
         auto address = gPtr();
         append(Move, Arg::bigImm(offset), address);
         append(Add32, base, address, address);
@@ -560,7 +569,16 @@ auto AirIRGenerator32::emitCheckAndPreparePointer(ExpressionType pointer, uint32
     append(AddPtr, memoryBase, result);
     return result;
 }
-
+inline bool isFPLoadOp(LoadOpType op)
+{
+    switch (op) {
+    case LoadOpType::F32Load:
+    case LoadOpType::F64Load:
+        return true;
+    default:
+        return false;
+    }
+}
 TypedTmp AirIRGenerator32::emitLoadOp(LoadOpType op, ExpressionType pointer, uint32_t uoffset)
 {
     uint32_t offset = fixupPointerPlusOffset(pointer, uoffset);
@@ -570,7 +588,12 @@ TypedTmp AirIRGenerator32::emitLoadOp(LoadOpType op, ExpressionType pointer, uin
     TypedTmp result;
 
     auto getAddr = [&](uint32_t offset) {
-        if (Arg::isValidAddrForm(offset, widthForBytes(sizeOfLoadOp(op))))
+        JSC::B3::Air::Opcode opcode = Move;
+#if CPU(ARM_THUMB2)
+        if (isFPLoadOp(op))
+            opcode = MoveDouble;
+#endif
+        if (Arg::isValidAddrForm(opcode, offset, widthForBytes(sizeOfLoadOp(op))))
             return Arg::addr(pointer, offset);
         immTmp = gPtr();
         newPtr = gPtr();
@@ -736,6 +759,17 @@ auto AirIRGenerator32::load(LoadOpType op, ExpressionType pointer, ExpressionTyp
     return { };
 }
 
+inline bool isFPStoreOp(StoreOpType op)
+{
+    switch (op) {
+    case StoreOpType::F32Store:
+    case StoreOpType::F64Store:
+        return true;
+    default:
+        return false;
+    }
+}
+
 inline void AirIRGenerator32::emitStoreOp(StoreOpType op, ExpressionType pointer, ExpressionType value, uint32_t uoffset)
 {
     uint32_t offset = fixupPointerPlusOffset(pointer, uoffset);
@@ -744,7 +778,12 @@ inline void AirIRGenerator32::emitStoreOp(StoreOpType op, ExpressionType pointer
     TypedTmp newPtr;
 
     auto const getAddr = [&](uint32_t offset) {
-        if (Arg::isValidAddrForm(offset, widthForBytes(sizeOfStoreOp(op))))
+        JSC::B3::Air::Opcode opcode = Move;
+#if CPU(ARM_THUMB2)
+        if (isFPStoreOp(op))
+            opcode = MoveDouble;
+#endif
+        if (Arg::isValidAddrForm(opcode, offset, widthForBytes(sizeOfStoreOp(op))))
             return Arg::addr(pointer, offset);
         immTmp = gPtr();
         newPtr = gPtr();
@@ -868,7 +907,7 @@ Tmp AirIRGenerator32::emitCatchImpl(CatchKind kind, ControlType& data, unsigned 
     HandlerType handlerType = kind == CatchKind::Catch ? HandlerType::Catch : HandlerType::CatchAll;
     m_exceptionHandlers.append({ handlerType, data.tryStart(), data.tryEnd(), 0, m_tryCatchDepth, exceptionIndex });
 
-    restoreWebAssemblyGlobalState(RestoreCachedStackLimit::Yes, m_info.memory, instanceValue(), m_currentBlock);
+    restoreWebAssemblyGlobalState(m_info.memory, instanceValue(), m_currentBlock);
 
     unsigned indexInBuffer = 0;
     auto loadFromScratchBuffer = [&] (TypedTmp result) {
@@ -1049,10 +1088,7 @@ auto AirIRGenerator32::addReturn(const ControlData& data, const Stack& returnVal
 
     B3::PatchpointValue* patch = addPatchpoint(B3::Void);
     patch->setGenerator([] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
-        auto calleeSaves = params.code().calleeSaveRegisterAtOffsetList();
-        jit.emitRestore(calleeSaves);
-        jit.emitFunctionEpilogue();
-        jit.ret();
+        params.code().emitEpilogue(jit);
     });
     patch->effects.terminal = true;
 
@@ -1136,34 +1172,31 @@ auto AirIRGenerator32::addRethrow(unsigned, ControlType& data) -> PartialResult
     return { };
 }
 
-std::pair<B3::PatchpointValue*, PatchpointExceptionHandle> AirIRGenerator32::emitCallPatchpoint(BasicBlock* block, const TypeDefinition& signature, const ResultList& results, const Vector<ExpressionType>& args, Vector<ConstrainedTmp> patchArgs)
+auto AirIRGenerator32::emitCallPatchpoint(BasicBlock*block, B3::Type returnType, const ResultList& results, const Vector<TypedTmp>& tmpArgs, const CallInformation& wasmCalleeInfo, Vector<ConstrainedTmp> patchArgs) -> CallPatchpointData
 {
-    auto* patchpoint = addPatchpoint(toB3ResultType(&signature));
+    auto* patchpoint = addPatchpoint(returnType);
     patchpoint->effects.writesPinned = true;
     patchpoint->effects.readsPinned = true;
     patchpoint->clobberEarly(RegisterSetBuilder::macroClobberedRegisters());
     patchpoint->clobberLate(RegisterSetBuilder::registersToSaveForJSCall(RegisterSetBuilder::allScalarRegisters()));
 
-    CallInformation locations = wasmCallingConvention().callInformationFor(signature);
-    m_code.requestCallArgAreaSizeInBytes(WTF::roundUpToMultipleOf(stackAlignmentBytes(), locations.headerAndArgumentStackSizeInBytes));
-
-    ASSERT(locations.params.size() == args.size());
-    ASSERT(locations.results.size() == results.size());
+    ASSERT(wasmCalleeInfo.params.size() == tmpArgs.size());
+    ASSERT(wasmCalleeInfo.results.size() == results.size());
 
     // On 32-bit platforms, 64-bit integer types are passed as two 32-bit values
     size_t offset = patchArgs.size();
-    size_t passedArgs = args.size();
-    for (unsigned i = 0; i < args.size(); ++i) {
-        if (args[i].isGPPair())
+    size_t passedArgs = tmpArgs.size();
+    for (unsigned i = 0; i < tmpArgs.size(); ++i) {
+        if (tmpArgs[i].isGPPair())
             ++passedArgs;
     }
     Checked<size_t> newSize = checkedSum<size_t>(patchArgs.size(), passedArgs);
     RELEASE_ASSERT(!newSize.hasOverflowed());
     patchArgs.grow(newSize);
     unsigned j = 0;
-    for (unsigned i = 0; i < args.size(); ++i) {
-        const TypedTmp& arg = args[i];
-        auto& loc = locations.params[i].location;
+    for (unsigned i = 0; i < tmpArgs.size(); ++i) {
+        const TypedTmp& arg = tmpArgs[i];
+        auto& loc = wasmCalleeInfo.params[i].location;
         if (arg.isGPPair()) {
             B3::ValueRep valueRepLo = loc.isGPR() ? B3::ValueRep(loc.jsr().payloadGPR()) : B3::ValueRep::stackArgument(loc.offsetFromSP());
             B3::ValueRep valueRepHi = loc.isGPR() ? B3::ValueRep(loc.jsr().tagGPR()) : B3::ValueRep::stackArgument(loc.offsetFromSP() + 4);
@@ -1181,7 +1214,7 @@ std::pair<B3::PatchpointValue*, PatchpointExceptionHandle> AirIRGenerator32::emi
         Vector<B3::ValueRep, 1> resultConstraints;
         for (unsigned i = 0; i < results.size(); ++i) {
             const TypedTmp& result = results[i];
-            auto& loc = locations.results[i].location;
+            auto& loc = wasmCalleeInfo.results[i].location;
             if (result.isGPPair()) {
                 patchResults.append(TypedTmp { result.lo(), Types::I32 });
                 patchResults.append(TypedTmp { result.hi(), Types::I32 });
@@ -1198,6 +1231,16 @@ std::pair<B3::PatchpointValue*, PatchpointExceptionHandle> AirIRGenerator32::emi
     PatchpointExceptionHandle exceptionHandle = preparePatchpointForExceptions(patchpoint, patchArgs);
     emitPatchpoint(block, patchpoint, patchResults, WTFMove(patchArgs));
     return { patchpoint, exceptionHandle };
+}
+
+auto AirIRGenerator32::emitTailCallPatchpoint(BasicBlock* block, const Checked<int32_t>& tailCallStackOffsetFromFP, const Vector<ArgumentLocation>& constrainedArgLocations, const Vector<TypedTmp>& tmpArgs, Vector<ConstrainedTmp> patchArgs) -> CallPatchpointData
+{
+    UNUSED_PARAM(block);
+    UNUSED_PARAM(tailCallStackOffsetFromFP);
+    UNUSED_PARAM(constrainedArgLocations);
+    UNUSED_PARAM(tmpArgs);
+    UNUSED_PARAM(patchArgs);
+    UNREACHABLE_FOR_PLATFORM();
 }
 
 void AirIRGenerator32::sanitizeAtomicResult(ExtAtomicOpType op, TypedTmp source, TypedTmp dest)

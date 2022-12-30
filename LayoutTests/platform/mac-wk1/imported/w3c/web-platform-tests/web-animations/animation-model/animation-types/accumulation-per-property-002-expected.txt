@@ -210,6 +210,9 @@ PASS text-emphasis-position: "over" onto "under left"
 PASS text-emphasis-style (type: discrete) has testAccumulation function
 PASS text-emphasis-style: "open dot" onto "circle"
 PASS text-emphasis-style: "circle" onto "open dot"
+PASS text-group-align (type: discrete) has testAccumulation function
+PASS text-group-align: "center" onto "none"
+PASS text-group-align: "none" onto "center"
 PASS text-overflow (type: discrete) has testAccumulation function
 PASS text-overflow: "ellipsis" onto "clip"
 PASS text-overflow: "clip" onto "ellipsis"
@@ -221,6 +224,9 @@ PASS text-shadow: shadow
 PASS text-transform (type: discrete) has testAccumulation function
 PASS text-transform: "uppercase" onto "capitalize"
 PASS text-transform: "capitalize" onto "uppercase"
+PASS text-wrap (type: discrete) has testAccumulation function
+PASS text-wrap: "nowrap" onto "wrap"
+PASS text-wrap: "wrap" onto "nowrap"
 PASS touch-action (type: discrete) has testAccumulation function
 PASS touch-action: "none" onto "auto"
 PASS touch-action: "auto" onto "none"

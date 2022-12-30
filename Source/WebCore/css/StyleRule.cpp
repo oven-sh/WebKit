@@ -36,6 +36,7 @@
 #include "CSSMediaRule.h"
 #include "CSSNamespaceRule.h"
 #include "CSSPageRule.h"
+#include "CSSPropertyRule.h"
 #include "CSSStyleRule.h"
 #include "CSSSupportsRule.h"
 #include "MediaList.h"
@@ -104,6 +105,8 @@ template<typename Visitor> constexpr decltype(auto) StyleRuleBase::visitDerived(
         return std::invoke(std::forward<Visitor>(visitor), downcast<StyleRuleLayer>(*this));
     case StyleRuleType::Container:
         return std::invoke(std::forward<Visitor>(visitor), downcast<StyleRuleContainer>(*this));
+    case StyleRuleType::Property:
+        return std::invoke(std::forward<Visitor>(visitor), downcast<StyleRuleProperty>(*this));
     case StyleRuleType::Margin:
         break;
     case StyleRuleType::Unknown:
@@ -185,6 +188,9 @@ Ref<CSSRule> StyleRuleBase::createCSSOMWrapper(CSSStyleSheet* parentSheet, CSSGr
         [&](StyleRuleContainer& rule) -> Ref<CSSRule> {
             return CSSContainerRule::create(rule, parentSheet);
         },
+        [&](StyleRuleProperty& rule) -> Ref<CSSRule> {
+            return CSSPropertyRule::create(rule, parentSheet);
+        },
         [](StyleRuleCharset&) -> Ref<CSSRule> {
             RELEASE_ASSERT_NOT_REACHED();
         },
@@ -199,12 +205,20 @@ Ref<CSSRule> StyleRuleBase::createCSSOMWrapper(CSSStyleSheet* parentSheet, CSSGr
 
 unsigned StyleRule::averageSizeInBytes()
 {
-    return sizeof(StyleRule) + sizeof(CSSSelector) + StyleProperties::averageSizeInBytes();
+    return sizeof(StyleRule) + sizeof(CSSSelector) + StyleProperties::averageSizeInBytes() + sizeof(Vector<Ref<StyleRuleBase>>);
 }
 
-StyleRule::StyleRule(Ref<StyleProperties>&& properties, bool hasDocumentSecurityOrigin, CSSSelectorList&& selectors)
+StyleRule::StyleRule(Ref<StyleProperties>&& properties, bool hasDocumentSecurityOrigin, CSSSelectorList&& selectors, Vector<Ref<StyleRule>>&& nestedRules)
     : StyleRuleBase(StyleRuleType::Style, hasDocumentSecurityOrigin)
     , m_properties(WTFMove(properties))
+    , m_selectorList(WTFMove(selectors))
+    , m_nestedRules(WTFMove(nestedRules))
+{
+}
+
+StyleRule::StyleRule(bool hasDocumentSecurityOrigin, CSSSelectorList&& selectors)
+    : StyleRuleBase(StyleRuleType::Style, hasDocumentSecurityOrigin)
+    , m_properties(MutableStyleProperties::createEmpty())
     , m_selectorList(WTFMove(selectors))
 {
 }
@@ -213,6 +227,7 @@ StyleRule::StyleRule(const StyleRule& o)
     : StyleRuleBase(o)
     , m_properties(o.properties().mutableCopy())
     , m_selectorList(o.m_selectorList)
+    , m_nestedRules(o.m_nestedRules)
     , m_isSplitRule(o.m_isSplitRule)
     , m_isLastRuleInSplitRule(o.m_isLastRuleInSplitRule)
 {
@@ -220,9 +235,14 @@ StyleRule::StyleRule(const StyleRule& o)
 
 StyleRule::~StyleRule() = default;
 
-Ref<StyleRule> StyleRule::create(Ref<StyleProperties>&& properties, bool hasDocumentSecurityOrigin, CSSSelectorList&& selectors)
+Ref<StyleRule> StyleRule::create(Ref<StyleProperties>&& properties, bool hasDocumentSecurityOrigin, CSSSelectorList&& selectors, Vector<Ref<StyleRule>>&& nestedRules)
 {
-    return adoptRef(*new StyleRule(WTFMove(properties), hasDocumentSecurityOrigin, WTFMove(selectors)));
+    return adoptRef(*new StyleRule(WTFMove(properties), hasDocumentSecurityOrigin, WTFMove(selectors), WTFMove(nestedRules)));
+}
+
+Ref<StyleRule> StyleRule::create(bool hasDocumentSecurityOrigin, CSSSelectorList&& selectors)
+{
+    return adoptRef(*new StyleRule(hasDocumentSecurityOrigin, WTFMove(selectors)));
 }
 
 Ref<StyleRule> StyleRule::copy() const
@@ -244,7 +264,7 @@ Ref<StyleRule> StyleRule::createForSplitting(const Vector<const CSSSelector*>& s
     for (unsigned i = 0; i < selectors.size(); ++i)
         new (NotNull, &selectorListArray[i]) CSSSelector(*selectors.at(i));
     selectorListArray[selectors.size() - 1].setLastInSelectorList();
-    auto styleRule = StyleRule::create(WTFMove(properties), hasDocumentSecurityOrigin, CSSSelectorList(WTFMove(selectorListArray)));
+    auto styleRule = StyleRule::create(WTFMove(properties), hasDocumentSecurityOrigin, CSSSelectorList(WTFMove(selectorListArray)), { });
     styleRule->markAsSplitRule();
     return styleRule;
 }
@@ -451,6 +471,17 @@ StyleRuleContainer::StyleRuleContainer(CQ::ContainerQuery&& query, Vector<RefPtr
 Ref<StyleRuleContainer> StyleRuleContainer::create(CQ::ContainerQuery&& query, Vector<RefPtr<StyleRuleBase>>&& rules)
 {
     return adoptRef(*new StyleRuleContainer(WTFMove(query), WTFMove(rules)));
+}
+
+StyleRuleProperty::StyleRuleProperty(Descriptor&& descriptor)
+    : StyleRuleBase(StyleRuleType::Property)
+    , m_descriptor(WTFMove(descriptor))
+{
+}
+
+Ref<StyleRuleProperty> StyleRuleProperty::create(Descriptor&& descriptor)
+{
+    return adoptRef(*new StyleRuleProperty(WTFMove(descriptor)));
 }
 
 StyleRuleCharset::StyleRuleCharset()

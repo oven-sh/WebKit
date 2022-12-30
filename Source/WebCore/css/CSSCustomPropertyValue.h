@@ -32,6 +32,7 @@
 #include "StyleColor.h"
 #include "StyleImage.h"
 #include "TransformOperation.h"
+#include <wtf/PointerComparison.h>
 #include <wtf/URL.h>
 
 namespace WebCore {
@@ -45,15 +46,23 @@ public:
         CSSUnitType unitType;
 
         bool operator==(const NumericSyntaxValue& other) const { return value == other.value && unitType == other.unitType; }
+        bool operator!=(const NumericSyntaxValue& other) const { return !(this == &other); }
     };
 
-    using SyntaxValue = std::variant<Length, NumericSyntaxValue, StyleColor, RefPtr<StyleImage>, URL, String, RefPtr<TransformOperation>>;
+    struct TransformSyntaxValue {
+        RefPtr<TransformOperation> transform;
+        bool operator==(const TransformSyntaxValue& other) const { return arePointingToEqualData(transform, other.transform); }
+        bool operator!=(const TransformSyntaxValue& other) const { return !(this == &other); }
+    };
+
+    using SyntaxValue = std::variant<Length, NumericSyntaxValue, StyleColor, RefPtr<StyleImage>, URL, String, TransformSyntaxValue>;
 
     struct SyntaxValueList {
         Vector<SyntaxValue> values;
         ValueSeparator separator;
 
         bool operator==(const SyntaxValueList& other) const { return values == other.values && separator == other.separator; }
+        bool operator!=(const SyntaxValueList& other) const { return !(this == &other); }
     };
 
     using VariantValue = std::variant<std::monostate, Ref<CSSVariableReferenceValue>, CSSValueID, Ref<CSSVariableData>, SyntaxValue, SyntaxValueList>;
@@ -104,6 +113,8 @@ public:
 
     Vector<CSSParserToken> tokens() const;
     bool equals(const CSSCustomPropertyValue&) const;
+
+    Ref<const CSSVariableData> asVariableData() const;
 
 private:
     CSSCustomPropertyValue(const AtomString& name, VariantValue&& value)

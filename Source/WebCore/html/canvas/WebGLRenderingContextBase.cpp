@@ -30,6 +30,7 @@
 
 #include "ANGLEInstancedArrays.h"
 #include "CachedImage.h"
+#include "Chrome.h"
 #include "DOMWindow.h"
 #include "DiagnosticLoggingClient.h"
 #include "DiagnosticLoggingKeys.h"
@@ -484,22 +485,6 @@ static void removeActiveContext(WebGLRenderingContextBase& context)
     ASSERT_UNUSED(didContain, didContain);
 }
 
-static GraphicsClient* getGraphicsClient(CanvasBase& canvas)
-{
-    if (auto* canvasElement = dynamicDowncast<HTMLCanvasElement>(canvas)) {
-        Document& document = canvasElement->document();
-        RefPtr<Frame> frame = document.frame();
-        if (!frame)
-            return nullptr;
-
-        return document.view()->root()->hostWindow();
-    }
-    if (is<WorkerGlobalScope>(canvas.scriptExecutionContext()))
-        return downcast<WorkerGlobalScope>(canvas.scriptExecutionContext())->workerClient();
-
-    return nullptr;
-}
-
 std::unique_ptr<WebGLRenderingContextBase> WebGLRenderingContextBase::create(CanvasBase& canvas, WebGLContextAttributes& attributes, WebGLVersion type)
 {
     auto scriptExecutionContext = canvas.scriptExecutionContext();
@@ -514,7 +499,7 @@ std::unique_ptr<WebGLRenderingContextBase> WebGLRenderingContextBase::create(Can
     UNUSED_PARAM(type);
 #endif
 
-    GraphicsClient* graphicsClient = getGraphicsClient(canvas);
+    GraphicsClient* graphicsClient = canvas.graphicsClient();
 
     auto* canvasElement = dynamicDowncast<HTMLCanvasElement>(canvas);
 
@@ -5530,7 +5515,7 @@ void WebGLRenderingContextBase::maybeRestoreContext()
     if (!scriptExecutionContext->settingsValues().webGLEnabled)
         return;
 
-    GraphicsClient* graphicsClient = getGraphicsClient(canvasBase());
+    GraphicsClient* graphicsClient = canvasBase().graphicsClient();
     if (!graphicsClient)
         return;
 

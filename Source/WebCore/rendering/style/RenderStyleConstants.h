@@ -774,6 +774,15 @@ enum class TextDecorationSkipInk : uint8_t {
     All
 };
 
+enum class TextGroupAlign : uint8_t {
+    None,
+    Start,
+    End,
+    Left,
+    Right,
+    Center
+};
+
 enum class TextUnderlinePosition : uint8_t {
     // FIXME: Implement support for 'under left' and 'under right' values.
     Auto,
@@ -1032,6 +1041,14 @@ enum class TextOrientation : uint8_t {
 enum class TextOverflow : uint8_t {
     Clip = 0,
     Ellipsis
+};
+
+enum class TextWrap : uint8_t {
+    Wrap,
+    NoWrap,
+    Balance,
+    Stable,
+    Pretty
 };
 
 enum class ImageRendering : uint8_t {
@@ -1345,12 +1362,14 @@ WTF::TextStream& operator<<(WTF::TextStream&, TextDecorationStyle);
 WTF::TextStream& operator<<(WTF::TextStream&, TextEmphasisFill);
 WTF::TextStream& operator<<(WTF::TextStream&, TextEmphasisMark);
 WTF::TextStream& operator<<(WTF::TextStream&, TextEmphasisPosition);
+WTF::TextStream& operator<<(WTF::TextStream&, TextGroupAlign);
 WTF::TextStream& operator<<(WTF::TextStream&, TextJustify);
 WTF::TextStream& operator<<(WTF::TextStream&, TextOrientation);
 WTF::TextStream& operator<<(WTF::TextStream&, TextOverflow);
 WTF::TextStream& operator<<(WTF::TextStream&, TextSecurity);
 WTF::TextStream& operator<<(WTF::TextStream&, TextTransform);
 WTF::TextStream& operator<<(WTF::TextStream&, TextUnderlinePosition);
+WTF::TextStream& operator<<(WTF::TextStream&, TextWrap);
 WTF::TextStream& operator<<(WTF::TextStream&, LeadingTrim);
 WTF::TextStream& operator<<(WTF::TextStream&, TextEdgeType);
 WTF::TextStream& operator<<(WTF::TextStream&, TextZoom);

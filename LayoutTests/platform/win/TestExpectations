@@ -517,6 +517,15 @@ accessibility/text-under-display-contents-element.html [ Skip ]
 # Missing AccessibilityUIElement::takeFocus().
 accessibility/basic-focusability.html [ Skip ]
 
+# Missing AccessibilityUIElement::focusableAncestor implementation.
+accessibility/focusable-ancestor.html [ Skip ]
+
+# Missing AccessibilityUIElement::{editableAncestor, highestEditableAncestor} implementations.
+accessibility/editable-ancestor.html [ Skip ]
+
+# Missing AccessibilityUIElement::isIndeterminate() implementation.
+accessibility/progress-indeterminate-value.html [ Skip ]
+
 # Failing since added in https://bugs.webkit.org/show_bug.cgi?id=241428.
 accessibility/aria-multiline.html [ Skip ]
 
@@ -2453,7 +2462,6 @@ fast/dom/adopt-node-crash-2.html [ Skip ] # Debug Assertion
 ################             Forms Issues                   ####################
 ################################################################################
 # Not putting 'focused' text
-fast/forms/legend-access-key.html [ Failure ]
 webkit.org/b/143739 fast/forms/listbox-visible-size.html [ Failure ]
 
 webkit.org/b/97026 fast/forms/state-restore-broken-state.html [ Failure ]
@@ -2937,7 +2945,6 @@ transforms/3d [ Skip ]
 [ Debug ] css2.1/t1605-c545-txttrans-00-b-ag.html [ Skip ] # Debug assertion
 [ Debug ] css2.1/t1606-c562-white-sp-00-b-ag.html [ Skip ] # Debug assertion
 [ Debug ] css2.1/t040303-c62-percent-00-b-ag.html [ Skip ] # Debug assertion
-[ Debug ] css2.1/20110323/replaced-intrinsic-003.htm [ Skip ] # Debug assertion
 [ Debug ] css2.1/20110323/replaced-min-max-001.htm [ Skip ] # Debug assertion
 [ Debug ] editing/pasteboard/drag-drop-dead-frame.html [ Skip ] # Timeout
 [ Debug ] editing/pasteboard/subframe-dragndrop-1.html [ Skip ] # Causes later tests to fail
@@ -3407,6 +3414,7 @@ fast/shadow-dom/imperative-named-slot-mixture.html [ Failure ]
 
 # Declarative shadow DOM isn't enabled on Windows yet.
 fast/shadow-dom/cloneable-shadow-root.html [ Failure ]
+fast/shadow-dom/element-internals-exposes-declarative-shadow-root.html [ Failure ]
 
 # The SVG -> OTF Font converter outputs 'kern' tables instead of 'GPOS' tables.
 webkit.org/b/137204 fast/text/svg-font-face-with-kerning.html [ Failure ]
@@ -3662,7 +3670,6 @@ svg/custom/svg-fonts-in-html.html [ Failure ]
 svg/custom/svg-fonts-in-text-controls.html [ Failure ]
 svg/custom/svg-fonts-segmented.xhtml [ Failure ]
 svg/custom/use-font-face-crash.svg [ Failure ]
-svg/hixie/intrinsic/003.html [ Failure ]
 svg/text/text-align-06-b.svg [ Failure ]
 svg/text/text-hkern-on-vertical-text.svg [ Failure ]
 svg/text/text-overflow-ellipsis-svgfont.html [ Failure ]

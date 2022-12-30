@@ -124,10 +124,6 @@ class Cache;
 enum class CacheOption : uint8_t;
 }
 
-namespace CacheStorage {
-class Engine;
-}
-
 class NetworkProcess : public AuxiliaryProcess, private DownloadManager::Client, public ThreadSafeRefCounted<NetworkProcess>
 {
     WTF_MAKE_NONCOPYABLE(NetworkProcess);
@@ -492,6 +488,10 @@ private:
     void registerURLSchemeAsLocal(const String&) const;
     void registerURLSchemeAsNoAccess(const String&) const;
     void registerURLSchemeAsCORSEnabled(const String&) const;
+
+#if ENABLE(NETWORK_CONNECTION_INTEGRITY)
+    void requestLookalikeCharacterStrings(CompletionHandler<void(const Vector<String>&)>&&);
+#endif
 
 #if PLATFORM(IOS_FAMILY)
     void setIsHoldingLockedFiles(bool);

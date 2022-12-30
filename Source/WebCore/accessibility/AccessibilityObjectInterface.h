@@ -1290,7 +1290,6 @@ public:
 
     virtual bool isValueAutofillAvailable() const = 0;
     virtual AutoFillButtonType valueAutofillButtonType() const = 0;
-    virtual bool hasARIAValueNow() const = 0;
 
     // Used by an ARIA tree to get all its rows.
     virtual void ariaTreeRows(AccessibilityChildrenVector&) = 0;
@@ -1535,6 +1534,41 @@ T* findAncestor(const T& object, bool includeSelf, const F& matches)
     }
 
     return nullptr;
+}
+
+template<typename T>
+T* focusableAncestor(T& startObject)
+{
+    return findAncestor<T>(startObject, false, [] (const auto& ancestor) {
+        return ancestor.canSetFocusAttribute();
+    });
+}
+
+template<typename T>
+T* editableAncestor(T& startObject)
+{
+    return findAncestor<T>(startObject, false, [] (const auto& ancestor) {
+        return ancestor.isTextControl();
+    });
+}
+
+template<typename T>
+T* highestEditableAncestor(T& startObject)
+{
+    T* editableAncestor = startObject.editableAncestor();
+    T* previousEditableAncestor = nullptr;
+    while (editableAncestor) {
+        if (editableAncestor == previousEditableAncestor) {
+            if (T* parent = editableAncestor->parentObject()) {
+                editableAncestor = parent->editableAncestor();
+                continue;
+            }
+            break;
+        }
+        previousEditableAncestor = editableAncestor;
+        editableAncestor = editableAncestor->editableAncestor();
+    }
+    return previousEditableAncestor;
 }
 
 template<typename T>

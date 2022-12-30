@@ -43,7 +43,9 @@ ShadowRoot* ElementInternals::shadowRoot() const
     if (!element)
         return nullptr;
     auto* shadowRoot = element->shadowRoot();
-    if (!shadowRoot || !shadowRoot->isAvailableToElementInternals())
+    if (!shadowRoot)
+        return nullptr;
+    if (!shadowRoot->isAvailableToElementInternals())
         return nullptr;
     return shadowRoot;
 }

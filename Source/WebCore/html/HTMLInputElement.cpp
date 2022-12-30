@@ -677,11 +677,15 @@ bool HTMLInputElement::hasPresentationalHintsForAttribute(const QualifiedName& n
 void HTMLInputElement::collectPresentationalHintsForAttribute(const QualifiedName& name, const AtomString& value, MutableStyleProperties& style)
 {
     if (name == vspaceAttr) {
-        addHTMLLengthToStyle(style, CSSPropertyMarginTop, value);
-        addHTMLLengthToStyle(style, CSSPropertyMarginBottom, value);
+        if (isImageButton()) {
+            addHTMLLengthToStyle(style, CSSPropertyMarginTop, value);
+            addHTMLLengthToStyle(style, CSSPropertyMarginBottom, value);
+        }
     } else if (name == hspaceAttr) {
+        if (isImageButton()) {
         addHTMLLengthToStyle(style, CSSPropertyMarginLeft, value);
         addHTMLLengthToStyle(style, CSSPropertyMarginRight, value);
+        }
     } else if (name == alignAttr) {
         if (m_inputType->shouldRespectAlignAttribute())
             applyAlignmentAttributeToStyle(value, style);
@@ -984,6 +988,9 @@ void HTMLInputElement::setIndeterminate(bool newValue)
 
     if (auto* renderer = this->renderer(); renderer && renderer->style().hasEffectiveAppearance())
         renderer->theme().stateChanged(*renderer, ControlStates::States::Checked);
+
+    if (auto* cache = document().existingAXObjectCache())
+        cache->valueChanged(this);
 }
 
 bool HTMLInputElement::sizeShouldIncludeDecoration(int& preferredSize) const
