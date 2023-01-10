@@ -32,6 +32,7 @@
 #import "Device.h"
 #import "Sampler.h"
 #import "TextureView.h"
+#import <wtf/EnumeratedArray.h>
 
 namespace WebGPU {
 
@@ -50,89 +51,41 @@ static bool textureViewIsPresent(const WGPUBindGroupEntry& entry)
     return entry.textureView;
 }
 
+static MTLRenderStages metalRenderStage(ShaderStage shaderStage)
+{
+    switch (shaderStage) {
+    case ShaderStage::Vertex:
+        return MTLRenderStageVertex;
+    case ShaderStage::Fragment:
+        return MTLRenderStageFragment;
+    case ShaderStage::Compute:
+        return (MTLRenderStages)0;
+    }
+}
+
+template <typename T>
+using ShaderStageArray = EnumeratedArray<ShaderStage, T, ShaderStage::Compute>;
+
 Ref<BindGroup> Device::createBindGroup(const WGPUBindGroupDescriptor& descriptor)
 {
     if (descriptor.nextInChain)
         return BindGroup::createInvalid(*this);
 
+    constexpr ShaderStage stages[] = { ShaderStage::Vertex, ShaderStage::Fragment, ShaderStage::Compute };
+    constexpr size_t stageCount = std::size(stages);
+    ShaderStageArray<NSUInteger> bindingIndexForStage = std::array<NSUInteger, stageCount>();
+    const auto& bindGroupLayout = WebGPU::fromAPI(descriptor.layout);
     Vector<BindableResource> resources;
-#if HAVE(TIER2_ARGUMENT_BUFFERS)
-    if ([m_device argumentBuffersSupport] != MTLArgumentBuffersTier1) {
-        const BindGroupLayout& bindGroupLayout = WebGPU::fromAPI(descriptor.layout);
 
-        auto vertexArgumentBuffer = bindGroupLayout.vertexArgumentBuffer();
-        auto fragmentArgumentBuffer = bindGroupLayout.fragmentArgumentBuffer();
-        auto computeArgumentBuffer = bindGroupLayout.computeArgumentBuffer();
-        char* argumentBufferContents[3] = { (char*)vertexArgumentBuffer.contents, (char*)fragmentArgumentBuffer.contents, (char*)vertexArgumentBuffer.contents };
-        size_t bindingForStage[] = { 0, 0, 0 };
-        for (uint32_t i = 0; i < descriptor.entryCount; ++i) {
-            const WGPUBindGroupEntry& entry = descriptor.entries[i];
-
-            if (entry.nextInChain)
-                return BindGroup::createInvalid(*this);
-
-            bool bufferIsPresent = WebGPU::bufferIsPresent(entry);
-            bool samplerIsPresent = WebGPU::samplerIsPresent(entry);
-            bool textureViewIsPresent = WebGPU::textureViewIsPresent(entry);
-            if (bufferIsPresent + samplerIsPresent + textureViewIsPresent != 1)
-                return BindGroup::createInvalid(*this);
-
-            auto stage = bindGroupLayout.stageForBinding(entry.binding) / 2;
-            auto renderStage = [] (uint32_t inputStage) {
-                return (MTLRenderStages)(inputStage * 2);
-            };
-            static_assert(!(WGPUShaderStage_Vertex / 2) && WGPUShaderStage_Fragment / 2 == 1 && WGPUShaderStage_Compute / 2 == 2, "Unexpected shader stage constants");
-            static_assert((int)WGPUShaderStage_Vertex == (int)MTLRenderStageVertex && (int)WGPUShaderStage_Fragment == (int)MTLRenderStageFragment, "Expect identical mapping of vertex and fragment stages");
-            const size_t offset = bindingForStage[stage] * sizeof(float*);
-            ++bindingForStage[stage];
-
-            if (bufferIsPresent) {
-                id<MTLBuffer> buffer = WebGPU::fromAPI(entry.buffer).buffer();
-                ASSERT(sizeof(float*) == sizeof(buffer.gpuAddress));
-                *(float**)(argumentBufferContents[stage] + offset) = (float*)buffer.gpuAddress;
-
-            } else if (samplerIsPresent) {
-                id<MTLSamplerState> sampler = WebGPU::fromAPI(entry.sampler).samplerState();
-                ASSERT(sizeof(float*) == sizeof(sampler.gpuResourceID));
-                *(MTLResourceID*)(argumentBufferContents[stage] + offset) = sampler.gpuResourceID;
-
-            } else if (textureViewIsPresent) {
-                id<MTLTexture> texture = WebGPU::fromAPI(entry.textureView).texture();
-                ASSERT(sizeof(float*) == sizeof(texture.gpuResourceID));
-                *(MTLResourceID*)(argumentBufferContents[stage] + offset) = texture.gpuResourceID;
-                resources.append({ texture, MTLResourceUsageRead, renderStage(stage) });
-            }
-        }
-
-        return BindGroup::create(vertexArgumentBuffer, fragmentArgumentBuffer, computeArgumentBuffer, WTFMove(resources), *this);
+    ShaderStageArray<id<MTLArgumentEncoder>> argumentEncoder = std::array<id<MTLArgumentEncoder>, stageCount>({ bindGroupLayout.vertexArgumentEncoder(), bindGroupLayout.fragmentArgumentEncoder(), bindGroupLayout.computeArgumentEncoder() });
+    ShaderStageArray<id<MTLBuffer>> argumentBuffer;
+    for (ShaderStage stage : stages) {
+        auto encodedLength = bindGroupLayout.encodedLength(stage);
+        argumentBuffer[stage] = encodedLength ? safeCreateBuffer(encodedLength, MTLStorageModeShared) : nil;
+        [argumentEncoder[stage] setArgumentBuffer:argumentBuffer[stage] offset:0];
     }
-#endif // HAVE(TIER2_ARGUMENT_BUFFERS)
 
-    // FIXME: Validate this according to the spec.
-
-    const BindGroupLayout& bindGroupLayout = WebGPU::fromAPI(descriptor.layout);
-
-    // FIXME(PERFORMANCE): Don't allocate 3 new buffers for every bind group.
-    // In fact, don't even allocate a single new buffer for every bind group.
-    id<MTLBuffer> vertexArgumentBuffer = safeCreateBuffer(bindGroupLayout.encodedLength(), MTLStorageModeShared);
-    id<MTLBuffer> fragmentArgumentBuffer = safeCreateBuffer(bindGroupLayout.encodedLength(), MTLStorageModeShared);
-    id<MTLBuffer> computeArgumentBuffer = safeCreateBuffer(bindGroupLayout.encodedLength(), MTLStorageModeShared);
-    if (!vertexArgumentBuffer || !fragmentArgumentBuffer || !computeArgumentBuffer)
-        return BindGroup::createInvalid(*this);
-
-    auto label = fromAPI(descriptor.label);
-    vertexArgumentBuffer.label = label;
-    fragmentArgumentBuffer.label = label;
-    computeArgumentBuffer.label = label;
-
-    id<MTLArgumentEncoder> vertexArgumentEncoder = bindGroupLayout.vertexArgumentEncoder();
-    id<MTLArgumentEncoder> fragmentArgumentEncoder = bindGroupLayout.fragmentArgumentEncoder();
-    id<MTLArgumentEncoder> computeArgumentEncoder = bindGroupLayout.computeArgumentEncoder();
-    [vertexArgumentEncoder setArgumentBuffer:vertexArgumentBuffer offset:0];
-    [fragmentArgumentEncoder setArgumentBuffer:fragmentArgumentBuffer offset:0];
-    [computeArgumentEncoder setArgumentBuffer:computeArgumentBuffer offset:0];
-
-    for (uint32_t i = 0; i < descriptor.entryCount; ++i) {
+    for (uint32_t i = 0, entryCount = descriptor.entryCount; i < entryCount; ++i) {
         const WGPUBindGroupEntry& entry = descriptor.entries[i];
 
         if (entry.nextInChain)
@@ -141,31 +94,32 @@ Ref<BindGroup> Device::createBindGroup(const WGPUBindGroupDescriptor& descriptor
         bool bufferIsPresent = WebGPU::bufferIsPresent(entry);
         bool samplerIsPresent = WebGPU::samplerIsPresent(entry);
         bool textureViewIsPresent = WebGPU::textureViewIsPresent(entry);
-        if (static_cast<int>(bufferIsPresent) + static_cast<int>(samplerIsPresent) + static_cast<int>(textureViewIsPresent) != 1)
+        if (bufferIsPresent + samplerIsPresent + textureViewIsPresent != 1)
             return BindGroup::createInvalid(*this);
 
-        if (bufferIsPresent) {
-            id<MTLBuffer> buffer = WebGPU::fromAPI(entry.buffer).buffer();
-            [vertexArgumentEncoder setBuffer:buffer offset:static_cast<NSUInteger>(entry.offset) atIndex:entry.binding];
-            [fragmentArgumentEncoder setBuffer:buffer offset:static_cast<NSUInteger>(entry.offset) atIndex:entry.binding];
-            [computeArgumentEncoder setBuffer:buffer offset:static_cast<NSUInteger>(entry.offset) atIndex:entry.binding];
-        } else if (samplerIsPresent) {
-            id<MTLSamplerState> sampler = WebGPU::fromAPI(entry.sampler).samplerState();
-            [vertexArgumentEncoder setSamplerState:sampler atIndex:entry.binding];
-            [fragmentArgumentEncoder setSamplerState:sampler atIndex:entry.binding];
-            [computeArgumentEncoder setSamplerState:sampler atIndex:entry.binding];
-        } else if (textureViewIsPresent) {
-            id<MTLTexture> texture = WebGPU::fromAPI(entry.textureView).texture();
-            [vertexArgumentEncoder setTexture:texture atIndex:entry.binding];
-            [fragmentArgumentEncoder setTexture:texture atIndex:entry.binding];
-            [computeArgumentEncoder setTexture:texture atIndex:entry.binding];
-        } else {
-            ASSERT_NOT_REACHED();
-            return BindGroup::createInvalid(*this);
+        for (ShaderStage stage : stages) {
+            if (!bindGroupLayout.bindingContainsStage(entry.binding, stage))
+                continue;
+
+            auto& index = bindingIndexForStage[stage];
+            if (bufferIsPresent) {
+                id<MTLBuffer> buffer = WebGPU::fromAPI(entry.buffer).buffer();
+                if (entry.offset > buffer.length)
+                    return BindGroup::createInvalid(*this);
+
+                [argumentEncoder[stage] setBuffer:buffer offset:entry.offset atIndex:index++];
+            } else if (samplerIsPresent) {
+                id<MTLSamplerState> sampler = WebGPU::fromAPI(entry.sampler).samplerState();
+                [argumentEncoder[stage] setSamplerState:sampler atIndex:index++];
+            } else if (textureViewIsPresent) {
+                id<MTLTexture> texture = WebGPU::fromAPI(entry.textureView).texture();
+                [argumentEncoder[stage] setTexture:texture atIndex:index++];
+                resources.append({ texture, MTLResourceUsageRead, metalRenderStage(stage) });
+            }
         }
     }
 
-    return BindGroup::create(vertexArgumentBuffer, fragmentArgumentBuffer, computeArgumentBuffer, WTFMove(resources), *this);
+    return BindGroup::create(argumentBuffer[ShaderStage::Vertex], argumentBuffer[ShaderStage::Fragment], argumentBuffer[ShaderStage::Compute], WTFMove(resources), *this);
 }
 
 BindGroup::BindGroup(id<MTLBuffer> vertexArgumentBuffer, id<MTLBuffer> fragmentArgumentBuffer, id<MTLBuffer> computeArgumentBuffer, Vector<BindableResource>&& resources, Device& device)

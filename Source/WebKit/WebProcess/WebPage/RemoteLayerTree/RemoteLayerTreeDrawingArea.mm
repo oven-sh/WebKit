@@ -258,12 +258,6 @@ void RemoteLayerTreeDrawingArea::setExposedContentRect(const FloatRect& exposedC
     triggerRenderingUpdate();
 }
 
-TiledBacking* RemoteLayerTreeDrawingArea::mainFrameTiledBacking() const
-{
-    FrameView* frameView = m_webPage.mainFrameView();
-    return frameView ? frameView->tiledBacking() : nullptr;
-}
-
 void RemoteLayerTreeDrawingArea::startRenderingUpdateTimer()
 {
     if (m_updateRenderingTimer.isActive())
@@ -296,6 +290,8 @@ void RemoteLayerTreeDrawingArea::updateRendering()
     // This function is not reentrant, e.g. a rAF callback may force repaint.
     if (m_inUpdateRendering)
         return;
+    
+    scaleViewToFitDocumentIfNeeded();
 
     SetForScope change(m_inUpdateRendering, true);
     m_webPage.updateRendering();

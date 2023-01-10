@@ -71,10 +71,11 @@ public:
 
     virtual bool canCreateControlPartForRenderer(const RenderObject&) const { return false; }
     virtual bool canCreateControlPartForBorderOnly(const RenderObject&) const { return false; }
+    virtual bool canCreateControlPartForDecorations(const RenderObject&) const { return false; }
     RefPtr<ControlPart> createControlPart(const RenderObject&) const;
 
     OptionSet<ControlStyle::State> extractControlStyleStatesForRenderer(const RenderObject&) const;
-    ControlStyle extractControlStyleForRenderer(const RenderObject&) const;
+    ControlStyle extractControlStyleForRenderer(const RenderBox&) const;
 
     // These methods are called to paint the widget as a background of the RenderObject. A widget's foreground, e.g., the
     // text of a button, is always rendered by the engine itself. The boolean return value indicates
@@ -121,7 +122,7 @@ public:
 
     // A method for asking if a control is a container or not.  Leaf controls have to have some special behavior (like
     // the baseline position API above).
-    bool isControlContainer(ControlPartType) const;
+    bool isControlContainer(StyleAppearance) const;
 
     // A method asking if the control changes its tint when the window has focus or not.
     virtual bool controlSupportsTints(const RenderObject&) const { return false; }
@@ -207,16 +208,16 @@ public:
     virtual bool popupOptionSupportsTextIndent() const { return false; }
     virtual PopupMenuStyle::PopupMenuSize popupMenuSize(const RenderStyle&, IntRect&) const { return PopupMenuStyle::PopupMenuSizeNormal; }
 
-    virtual ScrollbarControlSize scrollbarControlSizeForPart(ControlPartType) { return ScrollbarControlSize::Regular; }
+    virtual ScrollbarControlSize scrollbarControlSizeForPart(StyleAppearance) { return ScrollbarControlSize::Regular; }
 
     // Returns the repeat interval of the animation for the progress bar.
     virtual Seconds animationRepeatIntervalForProgressBar(const RenderProgress&) const;
     // Returns the duration of the animation for the progress bar.
     virtual Seconds animationDurationForProgressBar(const RenderProgress&) const;
-    virtual IntRect progressBarRectForBounds(const RenderObject&, const IntRect&) const;
+    virtual IntRect progressBarRectForBounds(const RenderProgress&, const IntRect&) const;
 
     virtual FloatSize meterSizeForBounds(const RenderMeter&, const FloatRect&) const;
-    virtual bool supportsMeter(ControlPartType, const HTMLMeterElement&) const;
+    virtual bool supportsMeter(StyleAppearance, const HTMLMeterElement&) const;
 
 #if ENABLE(DATALIST_ELEMENT)
     // Returns the threshold distance for snapping to a slider tick mark.
@@ -261,7 +262,7 @@ public:
 #endif
 
 protected:
-    virtual bool canPaint(const PaintInfo&, const Settings&, ControlPartType) const { return true; }
+    virtual bool canPaint(const PaintInfo&, const Settings&, StyleAppearance) const { return true; }
 
     // The platform selection color.
     virtual Color platformActiveSelectionBackgroundColor(OptionSet<StyleColorOptions>) const;
@@ -385,7 +386,7 @@ protected:
 public:
     void updateControlStatesForRenderer(const RenderBox&, ControlStates&) const;
     OptionSet<ControlStates::States> extractControlStatesForRenderer(const RenderObject&) const;
-    bool isActive(const RenderObject&) const;
+    bool isWindowActive(const RenderObject&) const;
     bool isChecked(const RenderObject&) const;
     bool isIndeterminate(const RenderObject&) const;
     bool isEnabled(const RenderObject&) const;
@@ -431,8 +432,8 @@ protected:
     virtual ColorCache& colorCache(OptionSet<StyleColorOptions>) const;
 
 private:
-    ControlPartType autoAppearanceForElement(RenderStyle&, const Element*) const;
-    ControlPartType adjustAppearanceForElement(RenderStyle&, const Element*, ControlPartType) const;
+    StyleAppearance autoAppearanceForElement(RenderStyle&, const Element*) const;
+    StyleAppearance adjustAppearanceForElement(RenderStyle&, const Element*, StyleAppearance) const;
 
     mutable HashMap<uint8_t, ColorCache, DefaultHash<uint8_t>, WTF::UnsignedWithZeroKeyHashTraits<uint8_t>> m_colorCacheMap;
 };

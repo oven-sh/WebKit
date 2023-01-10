@@ -83,8 +83,6 @@ public:
 
     bool rendererIsEverNeeded() final;
 
-    WEBCORE_EXPORT virtual HTMLFormElement* form() const;
-
     WEBCORE_EXPORT const AtomString& dir() const;
     WEBCORE_EXPORT void setDir(const AtomString&);
 
@@ -100,7 +98,6 @@ public:
 
     virtual bool isLabelable() const { return false; }
     virtual FormAssociatedElement* asFormAssociatedElement();
-    virtual FormListedElement* asFormListedElement();
 
     virtual bool isInteractiveContent() const { return false; }
 

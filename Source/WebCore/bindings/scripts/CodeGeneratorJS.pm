@@ -2012,9 +2012,8 @@ sub NeedsRuntimeCheck
 sub NeedsRuntimeReadWriteCheck
 {
     my ($interface, $context) = @_;
-    
-    return $context->extendedAttributes->{EnabledConditionallyReadWriteByDeprecatedGlobalSetting}
-        || $context->extendedAttributes->{EnabledConditionallyReadWriteBySetting}
+
+    return $context->extendedAttributes->{EnabledConditionallyReadWriteBySetting}
 }
 
 # https://webidl.spec.whatwg.org/#es-operations
@@ -2388,7 +2387,7 @@ sub GenerateEnumerationImplementationContent
         $result .= "    static_assert(static_cast<size_t>(${className}::$enumerationValueName) == $index, \"${className}::$enumerationValueName is not $index as expected\");\n";
         $index++;
     }
-    $result .= "    ASSERT(static_cast<size_t>(enumerationValue) < WTF_ARRAY_LENGTH(values));\n";
+    $result .= "    ASSERT(static_cast<size_t>(enumerationValue) < std::size(values));\n";
     $result .= "    return values[static_cast<size_t>(enumerationValue)];\n";
     $result .= "}\n\n";
 
@@ -4150,17 +4149,6 @@ sub GenerateRuntimeEnableConditionalString
         AddToImplIncludes("DeprecatedGlobalSettings.h");
 
         my @flags = split(/&/, $context->extendedAttributes->{EnabledByDeprecatedGlobalSetting});
-        foreach my $flag (@flags) {
-            push(@conjuncts, "DeprecatedGlobalSettings::" . ToMethodName($flag) . "()");
-        }
-    }
-
-    if ($context->extendedAttributes->{EnabledConditionallyReadWriteByDeprecatedGlobalSetting}) {
-        assert("Must specify value for EnabledConditionallyReadWriteByDeprecatedGlobalSetting.") if $context->extendedAttributes->{EnabledConditionallyReadWriteByDeprecatedGlobalSetting} eq "VALUE_IS_MISSING";
-
-        AddToImplIncludes("DeprecatedGlobalSettings.h");
-
-        my @flags = split(/&/, $context->extendedAttributes->{EnabledConditionallyReadWriteByDeprecatedGlobalSetting});
         foreach my $flag (@flags) {
             push(@conjuncts, "DeprecatedGlobalSettings::" . ToMethodName($flag) . "()");
         }

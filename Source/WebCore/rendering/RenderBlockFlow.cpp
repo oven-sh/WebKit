@@ -1356,6 +1356,15 @@ LayoutUnit RenderBlockFlow::collapseMarginsWithChildInfo(RenderBox* child, Rende
     return logicalTop;
 }
 
+bool RenderBlockFlow::shouldTrimChildMargin(MarginTrimType marginTrimType, const RenderBox& child) const
+{
+    if (!child.style().isDisplayBlockLevel() || !style().marginTrim().contains(marginTrimType))
+        return false;
+    if (marginTrimType == MarginTrimType::BlockStart)
+        return firstInFlowChildBox() == &child;
+    return lastInFlowChildBox() == &child;
+}
+
 LayoutUnit RenderBlockFlow::clearFloatsIfNeeded(RenderBox& child, MarginInfo& marginInfo, LayoutUnit oldTopPosMargin, LayoutUnit oldTopNegMargin, LayoutUnit yPos)
 {
     LayoutUnit heightIncrease = getClearDelta(child, yPos);
@@ -2513,10 +2522,12 @@ void RenderBlockFlow::computeLogicalLocationForFloat(FloatingObject& floatingObj
     bool isInitialLetter = childBox.style().styleType() == PseudoId::FirstLetter && childBox.style().initialLetterDrop() > 0;
     
     if (isInitialLetter) {
-        int letterClearance = lowestInitialLetterLogicalBottom() - logicalTopOffset;
-        if (letterClearance > 0) {
-            logicalTopOffset += letterClearance;
-            setLogicalHeight(logicalHeight() + letterClearance);
+        if (auto lowestInitialLetterLogicalBottom = this->lowestInitialLetterLogicalBottom()) {
+            auto letterClearance =  *lowestInitialLetterLogicalBottom - logicalTopOffset;
+            if (letterClearance > 0) {
+                logicalTopOffset += letterClearance;
+                setLogicalHeight(logicalHeight() + letterClearance);
+            }
         }
     }
 
@@ -2773,17 +2784,17 @@ LayoutUnit RenderBlockFlow::lowestFloatLogicalBottom(FloatingObject::Type floatT
     return lowestFloatBottom;
 }
 
-LayoutUnit RenderBlockFlow::lowestInitialLetterLogicalBottom() const
+std::optional<LayoutUnit> RenderBlockFlow::lowestInitialLetterLogicalBottom() const
 {
     if (!m_floatingObjects)
-        return 0;
-    LayoutUnit lowestFloatBottom;
-    const FloatingObjectSet& floatingObjectSet = m_floatingObjects->set();
+        return { };
+    auto lowestFloatBottom = std::optional<LayoutUnit> { };
+    auto& floatingObjectSet = m_floatingObjects->set();
     auto end = floatingObjectSet.end();
     for (auto it = floatingObjectSet.begin(); it != end; ++it) {
         const auto& floatingObject = *it->get();
         if (floatingObject.isPlaced() && floatingObject.renderer().style().styleType() == PseudoId::FirstLetter && floatingObject.renderer().style().initialLetterDrop() > 0)
-            lowestFloatBottom = std::max(lowestFloatBottom, logicalBottomForFloat(floatingObject));
+            lowestFloatBottom = std::max(lowestFloatBottom.value_or(0_lu), logicalBottomForFloat(floatingObject));
     }
     return lowestFloatBottom;
 }
@@ -3544,7 +3555,7 @@ VisiblePosition RenderBlockFlow::positionForPointWithInlineChildren(const Layout
             firstLineBoxWithChildren = lineBox;
 
         if (!linesAreFlipped && lineBox->isFirstAfterPageBreak()
-            && (pointInLogicalContents.y() < lineBox->top() || (blocksAreFlipped && pointInLogicalContents.y() == lineBox->top())))
+            && (pointInLogicalContents.y() < lineBox->logicalTop() || (blocksAreFlipped && pointInLogicalContents.y() == lineBox->logicalTop())))
             break;
 
         lastLineBoxWithChildren = lineBox;
@@ -3558,7 +3569,7 @@ VisiblePosition RenderBlockFlow::positionForPointWithInlineChildren(const Layout
                     nextLineBoxWithChildren.traverseNext();
 
                 if (nextLineBoxWithChildren && nextLineBoxWithChildren->isFirstAfterPageBreak()
-                    && (pointInLogicalContents.y() > nextLineBoxWithChildren->top() || (!blocksAreFlipped && pointInLogicalContents.y() == nextLineBoxWithChildren->top())))
+                    && (pointInLogicalContents.y() > nextLineBoxWithChildren->logicalTop() || (!blocksAreFlipped && pointInLogicalContents.y() == nextLineBoxWithChildren->logicalTop())))
                     continue;
             }
             closestBox = closestBoxForHorizontalPosition(*lineBox, pointInLogicalContents.x());

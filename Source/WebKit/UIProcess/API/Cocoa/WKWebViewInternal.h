@@ -24,7 +24,6 @@
  */
 
 #import "PDFPluginIdentifier.h"
-#import "SameDocumentNavigationType.h"
 #import <WebKit/WKShareSheet.h>
 #import <WebKit/WKWebViewConfiguration.h>
 #import <WebKit/WKWebViewPrivate.h>
@@ -163,6 +162,7 @@ struct PerWebProcessState {
 
     std::optional<WebCore::FloatSize> lastSentViewLayoutSize;
     std::optional<int32_t> lastSentDeviceOrientation;
+    std::optional<CGFloat> lastSentMinimumEffectiveDeviceWidth;
 
     std::optional<CGRect> frozenVisibleContentRect;
     std::optional<CGRect> frozenUnobscuredContentRect;

@@ -66,7 +66,6 @@
 #import <WebCore/ColorCocoa.h>
 #import <WebCore/ColorSerialization.h>
 #import <WebCore/Cursor.h>
-#import <WebCore/DeprecatedGlobalSettings.h>
 #import <WebCore/DictionaryLookup.h>
 #import <WebCore/DocumentLoader.h>
 #import <WebCore/EventNames.h>
@@ -241,18 +240,12 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
         return [[self parent] accessibilityAttributeValue:NSAccessibilityTopLevelUIElementAttribute];
     if ([attribute isEqualToString:NSAccessibilityWindowAttribute])
         return [[self parent] accessibilityAttributeValue:NSAccessibilityWindowAttribute];
-    if ([attribute isEqualToString:NSAccessibilitySizeAttribute]) {
-        return [NSValue valueWithSize:WebCore::Accessibility::retrieveValueFromMainThread<WebCore::IntSize>([protectedSelf = retainPtr(self)] {
-            return protectedSelf.get().pdfPlugin->boundsOnScreen().size();
-        })];
-    }
+    if ([attribute isEqualToString:NSAccessibilitySizeAttribute])
+        return [NSValue valueWithSize:_pdfPlugin->boundsOnScreen().size()];
     if ([attribute isEqualToString:NSAccessibilityEnabledAttribute])
         return [[self parent] accessibilityAttributeValue:NSAccessibilityEnabledAttribute];
-    if ([attribute isEqualToString:NSAccessibilityPositionAttribute]) {
-        return [NSValue valueWithPoint:WebCore::Accessibility::retrieveValueFromMainThread<WebCore::IntPoint>([protectedSelf = retainPtr(self)] {
-            return protectedSelf.get().pdfPlugin->boundsOnScreen().location();
-        })];
-    }
+    if ([attribute isEqualToString:NSAccessibilityPositionAttribute])
+        return [NSValue valueWithPoint:_pdfPlugin->boundsOnScreen().location()];
     if ([attribute isEqualToString:NSAccessibilityChildrenAttribute])
         return @[ _pdfLayerController ];
     if ([attribute isEqualToString:NSAccessibilityRoleAttribute])
@@ -261,8 +254,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
         return [[self parent] accessibilityAttributeValue:NSAccessibilityPrimaryScreenHeightAttribute];
     if ([attribute isEqualToString:NSAccessibilitySubroleAttribute])
         return @"AXPDFPluginSubrole";
-
-    return 0;
+    return nil;
 }
 
 ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
@@ -271,20 +263,15 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 {
     if ([attribute isEqualToString:NSAccessibilityBoundsForRangeParameterizedAttribute]) {
         NSRect boundsInPDFViewCoordinates = [[_pdfLayerController accessibilityBoundsForRangeAttributeForParameter:parameter] rectValue];
-        NSRect boundsInScreenCoordinates = WebCore::Accessibility::retrieveValueFromMainThread<NSRect>([protectedSelf = retainPtr(self), boundsInPDFViewCoordinates] {
-            return protectedSelf.get().pdfPlugin->convertFromPDFViewToScreen(boundsInPDFViewCoordinates);
-        });
-        return [NSValue valueWithRect:boundsInScreenCoordinates];
+        return [NSValue valueWithRect:_pdfPlugin->convertFromPDFViewToScreen(boundsInPDFViewCoordinates)];
     }
-
     if ([attribute isEqualToString:NSAccessibilityLineForIndexParameterizedAttribute])
         return [_pdfLayerController accessibilityLineForIndexAttributeForParameter:parameter];
     if ([attribute isEqualToString:NSAccessibilityRangeForLineParameterizedAttribute])
         return [_pdfLayerController accessibilityRangeForLineAttributeForParameter:parameter];
     if ([attribute isEqualToString:NSAccessibilityStringForRangeParameterizedAttribute])
         return [_pdfLayerController accessibilityStringForRangeAttributeForParameter:parameter];
-
-    return 0;
+    return nil;
 }
 
 ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
@@ -648,7 +635,7 @@ PDFPlugin::PDFPlugin(HTMLPlugInElement& element)
     , m_pdfLayerControllerDelegate(adoptNS([[WKPDFLayerControllerDelegate alloc] initWithPDFPlugin:this]))
 #if HAVE(INCREMENTAL_PDF_APIS)
     , m_streamLoaderClient(adoptRef(*new PDFPluginStreamLoaderClient(*this)))
-    , m_incrementalPDFLoadingEnabled(WebCore::DeprecatedGlobalSettings::incrementalPDFLoadingEnabled())
+    , m_incrementalPDFLoadingEnabled(element.document().settings().incrementalPDFLoadingEnabled())
 #endif
     , m_identifier(PDFPluginIdentifier::generate())
 {
@@ -2005,33 +1992,37 @@ IntPoint PDFPlugin::convertFromRootViewToPDFView(const IntPoint& point) const
 
 FloatRect PDFPlugin::convertFromPDFViewToScreen(const FloatRect& rect) const
 {
-    auto* coreFrame = m_frame ? m_frame->coreFrame() : nullptr;
-    if (!coreFrame)
-        return { };
-    auto* frameView = coreFrame->view();
-    if (!frameView)
-        return { };
+    return WebCore::Accessibility::retrieveValueFromMainThread<WebCore::FloatRect>([&] () -> WebCore::FloatRect {
+        auto* coreFrame = m_frame ? m_frame->coreFrame() : nullptr;
+        if (!coreFrame)
+            return { };
+        auto* frameView = coreFrame->view();
+        if (!frameView)
+            return { };
 
-    FloatRect updatedRect = rect;
-    updatedRect.setLocation(convertFromPDFViewToRootView(IntPoint(updatedRect.location())));
-    auto* page = coreFrame->page();
-    if (!page)
-        return { };
-    return page->chrome().rootViewToScreen(enclosingIntRect(updatedRect));
+        FloatRect updatedRect = rect;
+        updatedRect.setLocation(convertFromPDFViewToRootView(IntPoint(updatedRect.location())));
+        auto* page = coreFrame->page();
+        if (!page)
+            return { };
+        return page->chrome().rootViewToScreen(enclosingIntRect(updatedRect));
+    });
 }
 
 IntRect PDFPlugin::boundsOnScreen() const
 {
-    auto* frameView = m_frame ? m_frame->coreFrame()->view() : nullptr;
-    if (!frameView)
-        return { };
+    return WebCore::Accessibility::retrieveValueFromMainThread<WebCore::IntRect>([&] () -> WebCore::IntRect {
+        auto* frameView = m_frame ? m_frame->coreFrame()->view() : nullptr;
+        if (!frameView)
+            return { };
 
-    FloatRect bounds = FloatRect(FloatPoint(), size());
-    FloatRect rectInRootViewCoordinates = valueOrDefault(m_rootViewToPluginTransform.inverse()).mapRect(bounds);
-    auto* page = m_frame->coreFrame()->page();
-    if (!page)
-        return { };
-    return page->chrome().rootViewToScreen(enclosingIntRect(rectInRootViewCoordinates));
+        FloatRect bounds = FloatRect(FloatPoint(), size());
+        FloatRect rectInRootViewCoordinates = valueOrDefault(m_rootViewToPluginTransform.inverse()).mapRect(bounds);
+        auto* page = m_frame->coreFrame()->page();
+        if (!page)
+            return { };
+        return page->chrome().rootViewToScreen(enclosingIntRect(rectInRootViewCoordinates));
+    });
 }
 
 void PDFPlugin::visibilityDidChange(bool visible)

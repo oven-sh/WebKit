@@ -186,6 +186,9 @@ typedef enum {
 #if HAVE(PROHIBIT_PRIVACY_PROXY)
 @property (setter=_setProhibitPrivacyProxy:) BOOL _prohibitPrivacyProxy;
 #endif
+#if HAVE(PRIVACY_PROXY_FAIL_CLOSED_FOR_UNREACHABLE_HOSTS)
+@property (setter=_setPrivacyProxyFailClosedForUnreachableHosts:) BOOL _privacyProxyFailClosedForUnreachableHosts;
+#endif
 #if ENABLE(TRACKER_DISPOSITION)
 @property (setter=_setNeedsNetworkTrackingPrevention:) BOOL _needsNetworkTrackingPrevention;
 #endif
@@ -513,6 +516,10 @@ WTF_EXTERN_C_END
 
 @interface NSMutableURLRequest (Staging_88972294)
 @property (setter=_setPrivacyProxyFailClosedForUnreachableNonMainHosts:) BOOL _privacyProxyFailClosedForUnreachableNonMainHosts;
+@end
+
+@interface NSURLSessionConfiguration (Staging_102778152)
+@property (nonatomic) BOOL _skipsStackTraceCapture;
 @end
 
 #endif // defined(__OBJC__)

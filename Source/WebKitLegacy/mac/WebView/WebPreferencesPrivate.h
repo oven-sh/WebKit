@@ -223,7 +223,6 @@ extern NSString *WebPreferencesCacheModelChangedInternalNotification WEBKIT_DEPR
 @property (nonatomic) BOOL cacheAPIEnabled;
 @property (nonatomic) BOOL downloadAttributeEnabled;
 @property (nonatomic) BOOL directoryUploadEnabled;
-@property (nonatomic, getter=cssLogicalEnabled) BOOL CSSLogicalEnabled;
 @property (nonatomic) BOOL lineHeightUnitsEnabled;
 @property (nonatomic) BOOL layoutFormattingContextIntegrationEnabled;
 @property (nonatomic, getter=isInAppBrowserPrivacyEnabled) BOOL inAppBrowserPrivacyEnabled;
@@ -326,7 +325,6 @@ extern NSString *WebPreferencesCacheModelChangedInternalNotification WEBKIT_DEPR
 @property (nonatomic) BOOL webAnimationsMutableTimelinesEnabled;
 @property (nonatomic) BOOL webGL2Enabled;
 @property (nonatomic) BOOL maskWebGLStringsEnabled;
-@property (nonatomic) BOOL accessibilityObjectModelEnabled;
 @property (nonatomic) BOOL serverTimingEnabled;
 @property (nonatomic) BOOL CSSCustomPropertiesAndValuesEnabled;
 @property (nonatomic) BOOL resizeObserverEnabled;

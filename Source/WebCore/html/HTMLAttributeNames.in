@@ -83,7 +83,6 @@ axis
 background
 behavior
 bgcolor
-bgproperties
 border
 bordercolor
 capture
@@ -364,10 +363,8 @@ playsinline
 pluginspage
 pluginurl
 poster
-precision
 preload
 primary
-profile
 progress
 prompt
 pseudo

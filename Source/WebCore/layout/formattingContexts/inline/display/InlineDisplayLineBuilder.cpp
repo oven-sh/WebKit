@@ -101,23 +101,27 @@ InlineDisplay::Line InlineDisplayLineBuilder::build(const LineBuilder::LineConte
         ? lineContent.lineLogicalTopLeft.x()
         : InlineLayoutUnit { constraints.visualLeft() + constraints.horizontal().logicalWidth + constraints.horizontal().logicalLeft  } - (lineContent.lineLogicalTopLeft.x() + lineBoxLogicalWidth);
 
-    auto contentVisualLeft = isLeftToRightDirection
-        ? lineBox.rootInlineBoxAlignmentOffset()
-        : lineBoxLogicalWidth - lineBox.rootInlineBoxAlignmentOffset() - lineContent.contentLogicalRight;
-    auto lineBoxRect = InlineRect { lineContent.lineLogicalTopLeft.y(), lineBoxVisualLeft, lineBox.hasContent() ? lineContent.lineLogicalWidth : 0.f, lineBox.logicalRect().height() };
-    auto enclosingLineGeometry = collectEnclosingLineGeometry(lineContent, lineBox, lineBoxRect);
+    auto rootInlineBoxRect = lineBox.logicalRectForRootInlineBox();
+    auto contentVisualOffsetInInlineDirection = isLeftToRightDirection
+        ? rootInlineBoxRect.left()
+        : lineBoxLogicalWidth - lineContent.contentLogicalRightIncludingNegativeMargin; // Note that with hanging content lineContent.contentLogicalRight is not the same as rootLineBoxRect.right().
+
+    auto lineBoxLogicalRect = InlineRect { lineContent.lineLogicalTopLeft, lineBox.hasContent() ? lineContent.lineLogicalWidth : 0.f, lineBox.logicalRect().height() };
+    auto lineBoxVisualRectInInlineDirection = InlineRect { lineBoxLogicalRect.top(), lineBoxVisualLeft, lineBoxLogicalRect.width(), lineBoxLogicalRect.height() };
+    auto enclosingLineGeometry = collectEnclosingLineGeometry(lineContent, lineBox, lineBoxVisualRectInInlineDirection);
 
     // FIXME: Figure out if properties like enclosingLineGeometry top and bottom needs to be flipped as well.
     auto writingMode = root().style().writingMode();
-    return InlineDisplay::Line { flipLogicalLineRectToVisualForWritingMode(lineBoxRect, writingMode)
+    return InlineDisplay::Line { lineBoxLogicalRect
+        , flipLogicalLineRectToVisualForWritingMode(lineBoxVisualRectInInlineDirection, writingMode)
         , flipLogicalLineRectToVisualForWritingMode(enclosingLineGeometry.scrollableOverflowRect, writingMode)
         , enclosingLineGeometry.enclosingTopAndBottom
         , rootInlineBox.logicalTop() + rootInlineBox.ascent()
         , lineBox.baselineType()
-        , contentVisualLeft
+        , contentVisualOffsetInInlineDirection
         , rootInlineBox.logicalWidth()
         , lineBox.isHorizontal()
-        , trailingEllipsisRect(lineContent, lineBox, lineBoxRect)
+        , trailingEllipsisRect(lineContent, lineBox, lineBoxVisualRectInInlineDirection)
     };
 }
 
@@ -141,7 +145,7 @@ std::optional<FloatRect> InlineDisplayLineBuilder::trailingEllipsisRect(const Li
     }
     auto ellipsisWidth = !lineBox.lineIndex() ? root().firstLineStyle().fontCascade().width(TextUtil::ellipsisTextRun()) : root().style().fontCascade().width(TextUtil::ellipsisTextRun());
     auto rootInlineBoxRect = lineBox.logicalRectForRootInlineBox();
-    auto ellipsisRect = FloatRect { lineBoxVisualRect.x() + ellipsisStart, lineBoxVisualRect.y() + rootInlineBoxRect.top(), ellipsisWidth, rootInlineBoxRect.height() };
+    auto ellipsisRect = FloatRect { lineBoxVisualRect.x() + rootInlineBoxRect.left() + ellipsisStart, lineBoxVisualRect.y() + rootInlineBoxRect.top(), ellipsisWidth, rootInlineBoxRect.height() };
 
     if (root().style().isLeftToRightDirection())
         return ellipsisRect;

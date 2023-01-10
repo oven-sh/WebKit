@@ -253,7 +253,7 @@ bool WebChromeClient::canTakeFocus(FocusDirection)
 
 void WebChromeClient::takeFocus(FocusDirection direction)
 {
-    m_page.send(Messages::WebPageProxy::TakeFocus(static_cast<uint8_t>(direction)));
+    m_page.send(Messages::WebPageProxy::TakeFocus(direction));
 }
 
 void WebChromeClient::focusedElementChanged(Element* element)
@@ -932,7 +932,7 @@ RefPtr<GraphicsContextGL> WebChromeClient::createGraphicsContextGL(const Graphic
 {
 #if ENABLE(GPU_PROCESS)
     if (WebProcess::singleton().shouldUseRemoteRenderingForWebGL())
-        return RemoteGraphicsContextGLProxy::create(WebProcess::singleton().ensureGPUProcessConnection().connection(), attributes, m_page.ensureRemoteRenderingBackendProxy());
+        return RemoteGraphicsContextGLProxy::create(WebProcess::singleton().ensureGPUProcessConnection().connection(), attributes, m_page.ensureRemoteRenderingBackendProxy(), WebProcess::singleton().ensureGPUProcessConnection().videoFrameObjectHeapProxy());
 #endif
     return WebCore::createWebProcessGraphicsContextGL(attributes);
 }
@@ -1258,6 +1258,13 @@ bool WebChromeClient::shouldUseTiledBackingForFrameView(const FrameView& frameVi
     return m_page.drawingArea()->shouldUseTiledBackingForFrameView(frameView);
 }
 
+#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
+void WebChromeClient::isAnyAnimationAllowedToPlayDidChange(bool anyAnimationCanPlay)
+{
+    m_page.isAnyAnimationAllowedToPlayDidChange(anyAnimationCanPlay);
+}
+#endif
+
 void WebChromeClient::isPlayingMediaDidChange(MediaProducerMediaStateFlags state)
 {
     m_page.isPlayingMediaDidChange(state);
@@ -1423,15 +1430,6 @@ void WebChromeClient::imageOrMediaDocumentSizeChanged(const IntSize& newSize)
 {
     m_page.imageOrMediaDocumentSizeChanged(newSize);
 }
-
-#if ENABLE(VIDEO) && USE(GSTREAMER)
-
-void WebChromeClient::requestInstallMissingMediaPlugins(const String& details, const String& description, MediaPlayerRequestInstallMissingPluginsCallback& callback)
-{
-    m_page.requestInstallMissingMediaPlugins(details, description, callback);
-}
-
-#endif
 
 void WebChromeClient::didInvalidateDocumentMarkerRects()
 {

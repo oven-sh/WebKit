@@ -32,6 +32,7 @@
 
 namespace WebCore {
 struct ClientOrigin;
+struct StorageEstimate;
 }
 
 namespace WebKit {
@@ -45,6 +46,7 @@ class IDBStorageRegistry;
 class LocalStorageManager;
 class SessionStorageManager;
 class StorageAreaRegistry;
+enum class UnifiedOriginStorageLevel : uint8_t;
 enum class WebsiteDataType : uint32_t;
 
 class OriginStorageManager {
@@ -52,12 +54,13 @@ class OriginStorageManager {
 public:
     static String originFileIdentifier();
 
-    OriginStorageManager(uint64_t quota, QuotaManager::IncreaseQuotaFunction&&, String&& path, String&& cusotmLocalStoragePath, String&& customIDBStoragePath, String&& customCacheStoragePath, FileSystem::Salt cacheStorageSalt, bool shouldUseCustomPaths);
+    OriginStorageManager(uint64_t quota, QuotaManager::IncreaseQuotaFunction&&, String&& path, String&& cusotmLocalStoragePath, String&& customIDBStoragePath, String&& customCacheStoragePath, UnifiedOriginStorageLevel);
     ~OriginStorageManager();
 
     void connectionClosed(IPC::Connection::UniqueID);
     bool persisted() const { return m_persisted; }
     void setPersisted(bool value);
+    WebCore::StorageEstimate estimate();
     const String& path() const { return m_path; }
     QuotaManager& quotaManager();
     FileSystemStorageManager& fileSystemStorageManager(FileSystemStorageHandleRegistry&);
@@ -95,13 +98,12 @@ private:
     String m_path;
     String m_customLocalStoragePath;
     String m_customIDBStoragePath;
-    String m_cacheStoragePath;
-    FileSystem::Salt m_cacheStorageSalt;
+    String m_customCacheStoragePath;
     uint64_t m_quota;
     QuotaManager::IncreaseQuotaFunction m_increaseQuotaFunction;
     RefPtr<QuotaManager> m_quotaManager;
     bool m_persisted { false };
-    bool m_shouldUseCustomPaths;
+    UnifiedOriginStorageLevel m_level;
     std::optional<WallTime> m_originFileCreationTimestamp;
 #if PLATFORM(IOS_FAMILY)
     bool m_includedInBackup { false };

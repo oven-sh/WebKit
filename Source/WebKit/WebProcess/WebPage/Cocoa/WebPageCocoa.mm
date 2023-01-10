@@ -45,6 +45,7 @@
 #import <WebCore/EventNames.h>
 #import <WebCore/FocusController.h>
 #import <WebCore/FrameView.h>
+#import <WebCore/GeometryUtilities.h>
 #import <WebCore/GraphicsContextCG.h>
 #import <WebCore/HTMLBodyElement.h>
 #import <WebCore/HTMLConverter.h>
@@ -59,9 +60,14 @@
 #import <WebCore/PlatformMediaSessionManager.h>
 #import <WebCore/Range.h>
 #import <WebCore/RenderElement.h>
+#import <WebCore/RenderLayer.h>
 #import <WebCore/RenderedDocumentMarker.h>
 #import <WebCore/TextIterator.h>
 #import <pal/spi/cocoa/LaunchServicesSPI.h>
+
+#if ENABLE(GPU_PROCESS) && PLATFORM(COCOA)
+#include "LibWebRTCCodecs.h"
+#endif
 
 #if PLATFORM(IOS)
 #import <WebCore/ParentalControlsContentFilter.h>
@@ -80,6 +86,9 @@ void WebPage::platformInitialize(const WebPageCreationParameters& parameters)
 #if ENABLE(MEDIA_STREAM)
     if (auto* captureManager = WebProcess::singleton().supplement<UserMediaCaptureManager>())
         captureManager->setupCaptureProcesses(parameters.shouldCaptureAudioInUIProcess, parameters.shouldCaptureAudioInGPUProcess, parameters.shouldCaptureVideoInUIProcess, parameters.shouldCaptureVideoInGPUProcess, parameters.shouldCaptureDisplayInUIProcess, parameters.shouldCaptureDisplayInGPUProcess, m_page->settings().webRTCRemoteVideoFrameEnabled());
+#endif
+#if USE(LIBWEBRTC)
+    LibWebRTCCodecs::setCallbacks(m_page->settings().webRTCPlatformCodecsInGPUProcessEnabled(), m_page->settings().webRTCRemoteVideoFrameEnabled());
 #endif
 }
 
@@ -501,6 +510,11 @@ void WebPage::getPlatformEditorStateCommon(const Frame& frame, EditorState& resu
     }
 
     postLayoutData.baseWritingDirection = frame.editor().baseWritingDirectionForSelectionStart();
+
+#if PLATFORM(MAC)
+    const Vector<FloatPoint> offsetsForHitTesting { { -30, 50 }, { 30, 50 }, { -60, 35 }, { 60, 35 }, { 0, 20 } };
+    postLayoutData.evasionRectsAroundSelection = getEvasionRectsAroundSelection(offsetsForHitTesting, false);
+#endif
 }
 
 #if !ENABLE(CONTENT_FILTERING_IN_NETWORKING_PROCESS)
@@ -655,11 +669,140 @@ void WebPage::readSelectionFromPasteboard(const String& pasteboardName, Completi
 #if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebPageCocoaAdditions.mm>)
 #include <WebKitAdditions/WebPageCocoaAdditions.mm>
 #else
-URL WebPage::sanitizeLookalikeCharacters(const URL& url) const
+URL WebPage::sanitizeLookalikeCharacters(const URL& url)
 {
     return url;
 }
 #endif
+
+Node* WebPage::clickableNodeAtLocation(const FloatPoint& viewportLocation, FloatPoint& adjustedViewportLocation) const
+{
+#if PLATFORM(IOS_FAMILY)
+    return Ref(m_page->mainFrame())->nodeRespondingToClickEvents(viewportLocation, adjustedViewportLocation);
+#else
+    UNUSED_PARAM(adjustedViewportLocation);
+
+    Ref frame = CheckedRef(m_page->focusController())->focusedOrMainFrame();
+    RefPtr frameView = frame->view();
+    if (!frameView)
+        return nullptr;
+
+    auto pointInContentsCoordinates = frameView->windowToContents(roundedIntPoint(viewportLocation));
+
+    RefPtr document = frame->document();
+    if (!document)
+        return nullptr;
+
+    WebCore::HitTestResult result { pointInContentsCoordinates };
+    constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent, HitTestRequest::Type::AllowVisibleChildFrameContentOnly };
+
+    document->hitTest(WebCore::HitTestRequest { hitType }, result);
+    return result.innerNode();
+#endif
+}
+
+bool WebPage::isTransparentOrFullyClipped(const Element& element) const
+{
+    auto* renderer = element.renderer();
+    if (!renderer)
+        return false;
+
+    auto* enclosingLayer = renderer->enclosingLayer();
+    if (enclosingLayer && enclosingLayer->isTransparentRespectingParentFrames())
+        return true;
+
+    return renderer->hasNonEmptyVisibleRectRespectingParentFrames();
+}
+
+Vector<FloatRect> WebPage::getEvasionRectsAroundSelection(const Vector<WebCore::FloatPoint>& offsetsForHitTesting, bool evasionRectsAboveSelection) const
+{
+    Ref frame = CheckedRef(m_page->focusController())->focusedOrMainFrame();
+    RefPtr frameView = frame->view();
+    if (!frameView)
+        return { };
+
+    auto selection = frame->selection().selection();
+    if (selection.isNone())
+        return { };
+
+    auto selectedRange = selection.toNormalizedRange();
+    if (!selectedRange)
+        return { };
+
+    if (!m_focusedElement || !m_focusedElement->renderer() || isTransparentOrFullyClipped(*m_focusedElement))
+        return { };
+
+    float scaleFactor = pageScaleFactor();
+    const double factorOfContentArea = 0.5;
+    auto unobscuredContentArea = RefPtr(m_page->mainFrame().view())->unobscuredContentRect().area();
+    if (unobscuredContentArea.hasOverflowed())
+        return { };
+
+    double contextMenuAreaLimit = factorOfContentArea * scaleFactor * unobscuredContentArea.value();
+
+    FloatRect selectionBoundsInRootViewCoordinates;
+    if (selection.isRange())
+        selectionBoundsInRootViewCoordinates = frameView->contentsToRootView(unionRect(RenderObject::absoluteTextRects(*selectedRange)));
+    else
+        selectionBoundsInRootViewCoordinates = frameView->contentsToRootView(frame->selection().absoluteCaretBounds());
+
+    auto centerOfTargetBounds = selectionBoundsInRootViewCoordinates.center();
+    FloatPoint centerTopInRootViewCoordinates { centerOfTargetBounds.x(), evasionRectsAboveSelection ? selectionBoundsInRootViewCoordinates.y() : selectionBoundsInRootViewCoordinates.maxY() };
+
+    auto clickableNonEditableNode = [&] (const FloatPoint& locationInRootViewCoordinates) -> Node* {
+        FloatPoint adjustedPoint;
+        auto* hitNode = clickableNodeAtLocation(locationInRootViewCoordinates, adjustedPoint);
+        if (!hitNode || is<HTMLBodyElement>(hitNode) || is<Document>(hitNode) || hitNode->hasEditableStyle())
+            return nullptr;
+
+        return hitNode;
+    };
+
+    // This heuristic attempts to find a list of rects to avoid when showing the callout menu on iOS.
+    // First, hit-test several points above the bounds of the selection rect in search of clickable nodes that are not editable.
+    // Secondly, hit-test several points around the edges of the selection rect and exclude any nodes found in the first round of
+    // hit-testing if these nodes are also reachable by moving outwards from the left, right, or bottom edges of the selection.
+    // Additionally, exclude any hit-tested nodes that are either very large relative to the size of the root view, or completely
+    // encompass the selection bounds. The resulting rects are the bounds of these hit-tested nodes in root view coordinates.
+    HashSet<Ref<Node>> hitTestedNodes;
+    Vector<FloatRect> rectsToAvoidInRootViewCoordinates;
+    for (auto offset : offsetsForHitTesting) {
+        offset.scale(1 / scaleFactor);
+        if (auto* hitNode = clickableNonEditableNode(centerTopInRootViewCoordinates + offset))
+            hitTestedNodes.add(*hitNode);
+    }
+
+    const float marginForHitTestingSurroundingNodes = 80 / scaleFactor;
+    Vector<FloatPoint, 3> exclusionHitTestLocations {
+        { selectionBoundsInRootViewCoordinates.x() - marginForHitTestingSurroundingNodes, centerOfTargetBounds.y() },
+        { centerOfTargetBounds.x(), selectionBoundsInRootViewCoordinates.maxY() + marginForHitTestingSurroundingNodes },
+        { selectionBoundsInRootViewCoordinates.maxX() + marginForHitTestingSurroundingNodes, centerOfTargetBounds.y() }
+    };
+
+    for (auto& location : exclusionHitTestLocations) {
+        if (auto* nodeToExclude = clickableNonEditableNode(location))
+            hitTestedNodes.remove(*nodeToExclude);
+    }
+
+    for (auto& node : hitTestedNodes) {
+        RefPtr frameView = node->document().view();
+        auto* renderer = node->renderer();
+        if (!renderer || !frameView)
+            continue;
+
+        auto bounds = frameView->contentsToRootView(renderer->absoluteBoundingBoxRect());
+        auto area = bounds.area();
+        if (area.hasOverflowed() || area > contextMenuAreaLimit)
+            continue;
+
+        if (bounds.contains(enclosingIntRect(selectionBoundsInRootViewCoordinates)))
+            continue;
+
+        rectsToAvoidInRootViewCoordinates.append(WTFMove(bounds));
+    }
+
+    return rectsToAvoidInRootViewCoordinates;
+}
 
 } // namespace WebKit
 

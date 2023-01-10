@@ -2396,6 +2396,14 @@
    },
    {
       "emails" : [
+         "eddy_wong@apple.com",
+         "eddydas@gmail.com"
+      ],
+      "github" : "eddydas",
+      "name" : "Eddy Wong"
+   },
+   {
+      "emails" : [
          "efidler@rim.com",
          "efidler@blackberry.com"
       ],
@@ -3301,6 +3309,14 @@
          "j_pascoe"
       ],
       "status" : "reviewer"
+   },
+   {
+      "emails" : [
+         "joncarlo@apple.com",
+         "joncarloalvarado@gmail.com"
+      ],
+      "github" : "jace0x21",
+      "name" : "JC Alvarado"
    },
    {
       "emails" : [
@@ -4387,7 +4403,8 @@
       ],
       "expertise" : "Safari Extensions, Web Extensions",
       "github" : "kiaraarose",
-      "name" : "Kiara Rose"
+      "name" : "Kiara Rose",
+      "status" : "committer"
    },
    {
       "emails" : [

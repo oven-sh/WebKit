@@ -51,8 +51,8 @@ TextStream& operator<<(TextStream& ts, ControlStyle::State state)
     case ControlStyle::State::Default:
         ts << "default";
         break;
-    case ControlStyle::State::WindowInactive:
-        ts << "window-inactive";
+    case ControlStyle::State::WindowActive:
+        ts << "window-active";
         break;
     case ControlStyle::State::Indeterminate:
         ts << "indeterminate";
@@ -83,6 +83,9 @@ TextStream& operator<<(TextStream& ts, ControlStyle::State state)
         break;
     case ControlStyle::State::ListButtonPressed:
         ts << "list-button-pressed";
+        break;
+    case ControlStyle::State::VerticalWritingMode:
+        ts << "vertical-writing-mode";
         break;
     }
     return ts;

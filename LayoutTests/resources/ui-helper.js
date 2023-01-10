@@ -70,6 +70,12 @@ window.UIHelper = class UIHelper {
         await UIHelper.animationFrame();
     }
 
+    static async startMonitoringWheelEvents(...args)
+    {
+        eventSender.monitorWheelEvents(args);
+        await UIHelper.ensurePresentationUpdate();
+    }
+
     static async mouseWheelScrollAt(x, y, beginX, beginY, deltaX, deltaY)
     {
         if (beginX === undefined)
@@ -82,28 +88,20 @@ window.UIHelper = class UIHelper {
         if (deltaY === undefined)
             deltaY = -10;
 
-        eventSender.monitorWheelEvents();
+        await UIHelper.startMonitoringWheelEvents();
         eventSender.mouseMoveTo(x, y);
         eventSender.mouseScrollByWithWheelAndMomentumPhases(beginX, beginY, "began", "none");
         eventSender.mouseScrollByWithWheelAndMomentumPhases(deltaX, deltaY, "changed", "none");
         eventSender.mouseScrollByWithWheelAndMomentumPhases(0, 0, "ended", "none");
-        return new Promise(resolve => {
-            eventSender.callAfterScrollingCompletes(() => {
-                requestAnimationFrame(resolve);
-            });
-        });
+        await UIHelper.waitForScrollCompletion();
     }
 
     static async statelessMouseWheelScrollAt(x, y, deltaX, deltaY)
     {
-        eventSender.monitorWheelEvents();
+        await UIHelper.startMonitoringWheelEvents();
         eventSender.mouseMoveTo(x, y);
         eventSender.mouseScrollBy(deltaX, deltaY);
-        return new Promise(resolve => {
-            eventSender.callAfterScrollingCompletes(() => {
-                requestAnimationFrame(resolve);
-            });
-        });
+        await UIHelper.waitForScrollCompletion();
     }
 
     static async mouseWheelMayBeginAt(x, y)
@@ -123,7 +121,8 @@ window.UIHelper = class UIHelper {
     static async mouseWheelSequence(eventStream, { waitForCompletion = true } = {})
     {
         if (waitForCompletion)
-            eventSender.monitorWheelEvents();
+            await UIHelper.startMonitoringWheelEvents();
+
         const eventStreamAsString = JSON.stringify(eventStream);
         await new Promise(resolve => {
             testRunner.runUIScript(`
@@ -447,10 +446,8 @@ window.UIHelper = class UIHelper {
 
     static ensurePresentationUpdate()
     {
-        if (!this.isWebKit2()) {
-            testRunner.display();
-            return Promise.resolve();
-        }
+        if (!this.isWebKit2())
+            return UIHelper.renderingUpdate();
 
         return new Promise(resolve => {
             testRunner.runUIScript(`
@@ -462,10 +459,8 @@ window.UIHelper = class UIHelper {
 
     static ensureStablePresentationUpdate()
     {
-        if (!this.isWebKit2()) {
-            testRunner.display();
-            return Promise.resolve();
-        }
+        if (!this.isWebKit2())
+            return UIHelper.renderingUpdate();
 
         return new Promise(resolve => {
             testRunner.runUIScript(`

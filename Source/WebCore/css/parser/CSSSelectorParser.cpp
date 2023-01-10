@@ -96,6 +96,13 @@ CSSSelectorList CSSSelectorParser::consumeComplexSelectorList(CSSParserTokenRang
     });
 }
 
+CSSSelectorList CSSSelectorParser::consumeRelativeSelectorList(CSSParserTokenRange& range)
+{
+    return consumeSelectorList(range, [&](CSSParserTokenRange& range) {
+        return consumeRelativeScopeSelector(range);
+    });
+}
+
 CSSSelectorList CSSSelectorParser::consumeNestedSelectorList(CSSParserTokenRange& range)
 {
     return consumeSelectorList(range, [&] (CSSParserTokenRange& range) {
@@ -152,13 +159,6 @@ CSSSelectorList CSSSelectorParser::consumeForgivingComplexSelectorList(CSSParser
 {
     return consumeForgivingSelectorList(range, [&](CSSParserTokenRange& range) {
         return consumeComplexSelector(range);
-    });
-}
-
-CSSSelectorList CSSSelectorParser::consumeForgivingRelativeSelectorList(CSSParserTokenRange& range)
-{
-    return consumeForgivingSelectorList(range, [&](CSSParserTokenRange& range) {
-        return consumeRelativeScopeSelector(range);
     });
 }
 
@@ -326,9 +326,11 @@ std::unique_ptr<CSSParserSelector> CSSSelectorParser::consumeRelativeNestedSelec
 {
     auto scopeCombinator = consumeCombinator(range);
 
-    ASSERT(scopeCombinator != CSSSelector::Subselector);
-    ASSERT(scopeCombinator != CSSSelector::DescendantSpace);
-
+    // Nesting should only work with ~ > + combinators in this function. 
+    // The descendant combinator is handled in another code path.
+    if (scopeCombinator != CSSSelector::DirectAdjacent && scopeCombinator != CSSSelector::IndirectAdjacent && scopeCombinator != CSSSelector::Child)
+        return nullptr;
+    
     auto selector = consumeComplexSelector(range);
     if (!selector)
         return nullptr;
@@ -336,7 +338,7 @@ std::unique_ptr<CSSParserSelector> CSSSelectorParser::consumeRelativeNestedSelec
     auto last = selector->leftmostSimpleSelector();
     auto parentSelector = makeUnique<CSSParserSelector>();
     parentSelector->setMatch(CSSSelector::Match::PseudoClass);
-    parentSelector->setPseudoClassType(CSSSelector::PseudoClassType::PseudoClassParent);
+    parentSelector->setPseudoClassType(CSSSelector::PseudoClassType::PseudoClassNestingParent);
     last->setRelation(scopeCombinator);
     last->setTagHistory(WTFMove(parentSelector));
 
@@ -507,7 +509,7 @@ std::unique_ptr<CSSParserSelector> CSSSelectorParser::consumeSimpleSelector(CSSP
         selector = consumeId(range);
     else if (token.type() == DelimiterToken && token.delimiter() == '.')
         selector = consumeClass(range);
-    else if (token.type() == DelimiterToken && token.delimiter() == '&' && m_context.cssNestingEnabled)
+    else if (token.type() == DelimiterToken && token.delimiter() == '&' && m_context.cssNestingEnabled && m_isNestedContext == IsNestedContext::Yes) // FIXME: handle top-level nesting selector
         selector = consumeNesting(range);
     else if (token.type() == LeftBracketToken)
         selector = consumeAttribute(range);
@@ -612,7 +614,7 @@ std::unique_ptr<CSSParserSelector> CSSSelectorParser::consumeNesting(CSSParserTo
 
     auto selector = makeUnique<CSSParserSelector>();
     selector->setMatch(CSSSelector::PseudoClass);
-    selector->setPseudoClassType(CSSSelector::PseudoClassParent);
+    selector->setPseudoClassType(CSSSelector::PseudoClassNestingParent);
     
     return selector;
 }
@@ -777,12 +779,13 @@ std::unique_ptr<CSSParserSelector> CSSSelectorParser::consumePseudo(CSSParserTok
             // FIXME: We should be able to do this lazily. See: https://bugs.webkit.org/show_bug.cgi?id=217149
             selector->setArgument(serializeANPlusB(ab));
             if (!block.atEnd()) {
+                auto type = selector->pseudoClassType();
+                if (type == CSSSelector::PseudoClassNthOfType || type == CSSSelector::PseudoClassNthLastOfType)
+                    return nullptr;
                 if (block.peek().type() != IdentToken)
                     return nullptr;
                 const CSSParserToken& ident = block.consume();
                 if (!equalLettersIgnoringASCIICase(ident.value(), "of"_s))
-                    return nullptr;
-                if (block.peek().type() != WhitespaceToken)
                     return nullptr;
                 block.consumeWhitespace();
                 auto selectorList = makeUnique<CSSSelectorList>();
@@ -827,7 +830,7 @@ std::unique_ptr<CSSParserSelector> CSSSelectorParser::consumePseudo(CSSParserTok
             SetForScope resistDefaultNamespace(m_resistDefaultNamespace, true);
             SetForScope disallowNestedHas(m_disallowHasPseudoClass, true);
             auto selectorList = makeUnique<CSSSelectorList>();
-            *selectorList = consumeForgivingRelativeSelectorList(block);
+            *selectorList = consumeRelativeSelectorList(block);
             if (selectorList->isEmpty() || !block.atEnd())
                 return nullptr;
             selector->setSelectorList(WTFMove(selectorList));
@@ -1159,6 +1162,54 @@ bool CSSSelectorParser::containsUnknownWebKitPseudoElements(const CSSSelector& c
     }
 
     return false;
+}
+
+CSSSelectorList CSSSelectorParser::resolveNestingParent(const CSSSelectorList& nestedSelectorList, const CSSSelectorList* parentResolvedSelectorList)
+{
+    Vector<std::unique_ptr<CSSParserSelector>> result;
+    CSSSelectorList copiedSelectorList { nestedSelectorList };
+    auto selector = copiedSelectorList.first();
+    while (selector) {
+        if (selector->hasExplicitNestingParent()) {
+            if (parentResolvedSelectorList) {
+                // FIXME: We should build a new CSSParserSelector from this selector and resolve it
+                const_cast<CSSSelector*>(selector)->resolveNestingParentSelectors(*parentResolvedSelectorList);
+            } else {
+                // It's top-level, the nesting parent selector should be replace by not(*)
+                const_cast<CSSSelector*>(selector)->replaceNestingParentByNotAll();
+            }
+            auto parserSelector = makeUnique<CSSParserSelector>(*selector);
+            result.append(WTFMove(parserSelector));
+        } else {
+            auto parserSelector = makeUnique<CSSParserSelector>(*selector);
+            if (parentResolvedSelectorList) {
+                // We add the implicit parent selector at the beginning of the selector
+                auto lastSelector = parserSelector->leftmostSimpleSelector()->selector();
+                ASSERT(lastSelector);
+                bool isLastInSelectorList = lastSelector->isLastInSelectorList();
+                lastSelector->setNotLastInTagHistory();
+                lastSelector->setNotLastInSelectorList();
+                CSSSelector parentIsSelector;
+                parentIsSelector.setMatch(CSSSelector::Match::PseudoClass);
+                parentIsSelector.setPseudoClassType(CSSSelector::PseudoClassType::PseudoClassIs);
+                parentIsSelector.setSelectorList(makeUnique<CSSSelectorList>(*parentResolvedSelectorList));
+                parentIsSelector.setLastInTagHistory();
+                if (isLastInSelectorList)
+                    parentIsSelector.setLastInSelectorList();
+                else
+                    parentIsSelector.setNotLastInSelectorList();
+
+                auto uniqueParentIsSelector = makeUnique<CSSParserSelector>(parentIsSelector);
+                parserSelector->appendTagHistory(CSSSelector::RelationType::DescendantSpace, WTFMove(uniqueParentIsSelector));
+            }
+            // Otherwise, no nesting parent selector and top-level, do nothing to this selector
+            result.append(WTFMove(parserSelector));
+        }
+        selector = copiedSelectorList.next(selector);
+    }
+
+    auto final = CSSSelectorList { WTFMove(result) };
+    return final;
 }
 
 } // namespace WebCore

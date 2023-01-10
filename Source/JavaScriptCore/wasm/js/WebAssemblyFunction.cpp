@@ -88,7 +88,7 @@ JSC_DEFINE_HOST_FUNCTION(callWebAssemblyFunction, (JSGlobalObject* globalObject,
 
     // When we don't use fast TLS to store the context, the JS
     // entry wrapper expects a JSWebAssemblyInstance as the |this| value argument.
-    JSValue context = Wasm::Context::useFastTLS() ? JSValue() : instance;
+    JSValue context = instance;
     JSValue* args = boxedArgs.data();
     int argCount = boxedArgs.size() + 1;
 
@@ -147,30 +147,15 @@ RegisterAtOffsetList WebAssemblyFunction::usedCalleeSaveRegisters() const
     return RegisterAtOffsetList { calleeSaves(), RegisterAtOffsetList::OffsetBaseType::FramePointerBased };
 }
 
-ptrdiff_t WebAssemblyFunction::previousInstanceOffset() const
+static size_t trampolineReservedStackSize()
 {
-    ptrdiff_t result = calleeSaves().numberOfSetRegisters() * sizeof(CPURegister);
-    result = -result - sizeof(CPURegister);
-#if USE(JSVALUE32_64)
-    ASSERT(!calleeSaves().numberOfSetFPRs()); // Because FPRs are wider than sizeof(CPURegister)
-#endif
-#if ASSERT_ENABLED
-    ptrdiff_t minOffset = 1;
-    for (const RegisterAtOffset& regAtOffset : usedCalleeSaveRegisters()) {
-        ptrdiff_t offset = regAtOffset.offset();
-        ASSERT(offset < 0);
-        minOffset = std::min(offset, minOffset);
-    }
-    ASSERT(minOffset - static_cast<ptrdiff_t>(sizeof(CPURegister)) == result);
-#endif
-    return result;
-}
-
-Wasm::Instance* WebAssemblyFunction::previousInstance(CallFrame* callFrame)
-{
-    ASSERT(callFrame->callee().rawPtr() == m_jsToWasmICCallee.get());
-    auto* result = *bitwise_cast<Wasm::Instance**>(bitwise_cast<char*>(callFrame) + previousInstanceOffset());
-    return result;
+    // If we are jumping to the function which can have stack-overflow check,
+    // then, trampoline does not need to do the check again if it is smaller than a threshold.
+    // 1. Caller of this trampoline ensures that at least our stack is lower than softStackLimit.
+    // 2. Callee may omit stack check if the frame size is less than reservedZoneSize and it does not have a call.
+    // Based on that, trampoline between 1 and 2 can use (softReservedZoneSize - reservedZoneSize) / 2 size safely at least.
+    // Note that minimumReservedZoneSize is 16KB, and we ensure that softReservedZoneSize - reservedZoneSize is at least 16KB.
+    return (Options::softReservedZoneSize() - Options::reservedZoneSize()) / 2;
 }
 
 CodePtr<JSEntryPtrTag> WebAssemblyFunction::jsCallEntrypointSlow()
@@ -210,13 +195,7 @@ CodePtr<JSEntryPtrTag> WebAssemblyFunction::jsCallEntrypointSlow()
 
     jit.emitFunctionPrologue();
     jit.subPtr(MacroAssembler::TrustedImm32(totalFrameSize), MacroAssembler::stackPointerRegister);
-    jit.emitZeroToCallFrameHeader(CallFrameSlot::codeBlock);
-
-    for (const RegisterAtOffset& regAtOffset : registersToSpill) {
-        GPRReg reg = regAtOffset.reg().gpr();
-        ptrdiff_t offset = regAtOffset.offset();
-        jit.storePtr(reg, CCallHelpers::Address(GPRInfo::callFrameRegister, offset));
-    }
+    jit.emitSave(registersToSpill);
 
     JSValueRegs scratchJSR {
 #if USE(JSVALUE32_64)
@@ -225,19 +204,25 @@ CodePtr<JSEntryPtrTag> WebAssemblyFunction::jsCallEntrypointSlow()
         Wasm::wasmCallingConvention().prologueScratchGPRs[1]
     };
     GPRReg stackLimitGPR = Wasm::wasmCallingConvention().prologueScratchGPRs[0];
-    jit.loadPtr(vm.addressOfSoftStackLimit(), stackLimitGPR);
 
     CCallHelpers::JumpList slowPath;
-    slowPath.append(jit.branchPtr(CCallHelpers::Above, MacroAssembler::stackPointerRegister, GPRInfo::callFrameRegister));
-    slowPath.append(jit.branchPtr(CCallHelpers::Below, MacroAssembler::stackPointerRegister, stackLimitGPR));
+
+    if (totalFrameSize >= trampolineReservedStackSize()) {
+        jit.loadPtr(vm.addressOfSoftStackLimit(), stackLimitGPR);
+
+        slowPath.append(jit.branchPtr(CCallHelpers::Above, MacroAssembler::stackPointerRegister, GPRInfo::callFrameRegister));
+        slowPath.append(jit.branchPtr(CCallHelpers::Below, MacroAssembler::stackPointerRegister, stackLimitGPR));
+    }
 
     // Ensure:
     // argCountPlusThis - 1 >= signature.argumentCount()
     // argCountPlusThis >= signature.argumentCount() + 1
     // FIXME: We should handle mismatched arity
     // https://bugs.webkit.org/show_bug.cgi?id=196564
-    slowPath.append(jit.branch32(CCallHelpers::Below,
-        CCallHelpers::payloadFor(CallFrameSlot::argumentCountIncludingThis), CCallHelpers::TrustedImm32(signature.argumentCount() + 1)));
+    if (signature.argumentCount() > 0) {
+        slowPath.append(jit.branch32(CCallHelpers::Below,
+            CCallHelpers::payloadFor(CallFrameSlot::argumentCountIncludingThis), CCallHelpers::TrustedImm32(signature.argumentCount() + 1)));
+    }
 
     if (usesTagRegisters())
         jit.emitMaterializeTagCheckRegisters();
@@ -360,49 +345,51 @@ CodePtr<JSEntryPtrTag> WebAssemblyFunction::jsCallEntrypointSlow()
 
     // At this point, we're committed to doing a fast call.
 
-    if (Wasm::Context::useFastTLS()) 
-        jit.loadWasmContextInstance(scratchJSR.payloadGPR());
-    else
-        jit.loadPtr(vm.wasmContext.pointerToInstance(), scratchJSR.payloadGPR());
-    ptrdiff_t previousInstanceOffset = this->previousInstanceOffset();
+    jit.loadPtr(vm.wasmContext.pointerToInstance(), scratchJSR.payloadGPR());
+    ptrdiff_t previousInstanceOffset = Wasm::JSToWasmICCallee::previousInstanceOffset(registersToSpill);
     jit.storePtr(scratchJSR.payloadGPR(), CCallHelpers::Address(GPRInfo::callFrameRegister, previousInstanceOffset));
 
     jit.move(CCallHelpers::TrustedImmPtr(&instance()->instance()), scratchJSR.payloadGPR());
-    if (Wasm::Context::useFastTLS()) 
-        jit.storeWasmContextInstance(scratchJSR.payloadGPR());
-    else {
-        jit.move(scratchJSR.payloadGPR(), pinnedRegs.wasmContextInstancePointer);
-        jit.storePtr(scratchJSR.payloadGPR(), vm.wasmContext.pointerToInstance());
-    }
+    jit.move(scratchJSR.payloadGPR(), pinnedRegs.wasmContextInstancePointer);
+    jit.storePtr(scratchJSR.payloadGPR(), vm.wasmContext.pointerToInstance());
 
 #if !CPU(ARM) // ARM has no pinned registers for Wasm Memory, so no need to set them up
     if (!!instance()->instance().module().moduleInformation().memory) {
         GPRReg baseMemory = pinnedRegs.baseMemoryPointer;
-        GPRReg scratchOrBoundsCheckingSize = InvalidGPRReg;
         auto mode = instance()->memoryMode();
 
-        if (isARM64E()) {
+        if (mode == MemoryMode::Signaling || (mode == MemoryMode::BoundsChecking && instance()->instance().memory()->sharingMode() == MemorySharingMode::Shared)) {
+            // Capacity and basePointer will not be changed.
             if (mode == MemoryMode::BoundsChecking)
-                scratchOrBoundsCheckingSize = pinnedRegs.boundsCheckingSizeRegister;
-            else
-                scratchOrBoundsCheckingSize = stackLimitGPR;
-            jit.loadPairPtr(scratchJSR.payloadGPR(), CCallHelpers::TrustedImm32(Wasm::Instance::offsetOfCachedMemory()), baseMemory, scratchOrBoundsCheckingSize);
+                jit.move(CCallHelpers::TrustedImm64(instance()->instance().memory()->mappedCapacity()), pinnedRegs.boundsCheckingSizeRegister);
+            jit.move(CCallHelpers::TrustedImmPtr(instance()->instance().memory()->basePointer()), baseMemory);
         } else {
-            if (mode == MemoryMode::BoundsChecking)
-                jit.loadPairPtr(scratchJSR.payloadGPR(), CCallHelpers::TrustedImm32(Wasm::Instance::offsetOfCachedMemory()), baseMemory, pinnedRegs.boundsCheckingSizeRegister);
-            else
-                jit.loadPtr(CCallHelpers::Address(scratchJSR.payloadGPR(), Wasm::Instance::offsetOfCachedMemory()), baseMemory);
+            GPRReg scratchOrBoundsCheckingSize = InvalidGPRReg;
+            if (isARM64E()) {
+                if (mode == MemoryMode::BoundsChecking)
+                    scratchOrBoundsCheckingSize = pinnedRegs.boundsCheckingSizeRegister;
+                else
+                    scratchOrBoundsCheckingSize = stackLimitGPR;
+                jit.loadPairPtr(scratchJSR.payloadGPR(), CCallHelpers::TrustedImm32(Wasm::Instance::offsetOfCachedMemory()), baseMemory, scratchOrBoundsCheckingSize);
+            } else {
+                if (mode == MemoryMode::BoundsChecking)
+                    jit.loadPairPtr(scratchJSR.payloadGPR(), CCallHelpers::TrustedImm32(Wasm::Instance::offsetOfCachedMemory()), baseMemory, pinnedRegs.boundsCheckingSizeRegister);
+                else
+                    jit.loadPtr(CCallHelpers::Address(scratchJSR.payloadGPR(), Wasm::Instance::offsetOfCachedMemory()), baseMemory);
+            }
+            jit.cageConditionallyAndUntag(Gigacage::Primitive, baseMemory, scratchOrBoundsCheckingSize, scratchJSR.payloadGPR(), /* validateAuth */ true, /* mayBeNull */ false);
         }
-        jit.cageConditionallyAndUntag(Gigacage::Primitive, baseMemory, scratchOrBoundsCheckingSize, scratchJSR.payloadGPR());
     }
 #endif
-
     // We use this callee to indicate how to unwind past these types of frames:
     // 1. We need to know where to get callee saves.
     // 2. We need to know to restore the previous wasm context.
-    if (!m_jsToWasmICCallee)
-        m_jsToWasmICCallee.set(vm, this, JSToWasmICCallee::create(vm, globalObject(), this));
-    jit.storePtr(CCallHelpers::TrustedImmPtr(m_jsToWasmICCallee.get()), CCallHelpers::addressFor(CallFrameSlot::callee));
+    ASSERT(!m_jsToWasmICCallee);
+    m_jsToWasmICCallee = Wasm::JSToWasmICCallee::create();
+    jit.storePtr(CCallHelpers::TrustedImmPtr(CalleeBits::boxWasm(m_jsToWasmICCallee.get())), CCallHelpers::addressFor(CallFrameSlot::callee));
+#if USE(JSVALUE32_64)
+    jit.store32(CCallHelpers::TrustedImm32(JSValue::WasmTag), CCallHelpers::addressFor(CallFrameSlot::callee).withOffset(TagOffset));
+#endif
 
     // FIXME: Currently we just do an indirect jump. But we should teach the Module
     // how to repatch us:
@@ -417,27 +404,14 @@ CodePtr<JSEntryPtrTag> WebAssemblyFunction::jsCallEntrypointSlow()
 
     ASSERT(!RegisterSetBuilder::runtimeTagRegisters().contains(GPRInfo::nonPreservedNonReturnGPR, IgnoreVectors));
     jit.loadPtr(CCallHelpers::Address(GPRInfo::callFrameRegister, previousInstanceOffset), GPRInfo::nonPreservedNonReturnGPR);
-    if (Wasm::Context::useFastTLS())
-        jit.storeWasmContextInstance(GPRInfo::nonPreservedNonReturnGPR);
-    else
-        jit.storePtr(GPRInfo::nonPreservedNonReturnGPR, vm.wasmContext.pointerToInstance());
+    jit.storePtr(GPRInfo::nonPreservedNonReturnGPR, vm.wasmContext.pointerToInstance());
 
-    auto emitRestoreCalleeSaves = [&] {
-        for (const RegisterAtOffset& regAtOffset : registersToSpill) {
-            GPRReg reg = regAtOffset.reg().gpr();
-            ASSERT(reg != GPRInfo::returnValueGPR);
-            ptrdiff_t offset = regAtOffset.offset();
-            jit.loadPtr(CCallHelpers::Address(GPRInfo::callFrameRegister, offset), reg);
-        }
-    };
-
-    emitRestoreCalleeSaves();
-
+    jit.emitRestore(registersToSpill, GPRInfo::callFrameRegister);
     jit.emitFunctionEpilogue();
     jit.ret();
 
     slowPath.link(&jit);
-    emitRestoreCalleeSaves();
+    jit.emitRestore(registersToSpill, GPRInfo::callFrameRegister);
     jit.move(CCallHelpers::TrustedImmPtr(this), GPRInfo::regT0);
     jit.emitFunctionEpilogue();
 #if CPU(ARM64E)
@@ -450,8 +424,9 @@ CodePtr<JSEntryPtrTag> WebAssemblyFunction::jsCallEntrypointSlow()
         return nullptr;
 
     linkBuffer.link(jumpToHostCallThunk, CodeLocationLabel<JSEntryPtrTag>(executable()->entrypointFor(CodeForCall, MustCheckArity)));
-    m_jsCallEntrypoint = FINALIZE_WASM_CODE(linkBuffer, WasmEntryPtrTag, "JS->Wasm IC");
-    return m_jsCallEntrypoint.code();
+    auto compilation = makeUnique<Compilation>(FINALIZE_WASM_CODE(linkBuffer, JITCompilationPtrTag, "JS->Wasm IC"), nullptr);
+    m_jsToWasmICCallee->setEntrypoint({ WTFMove(compilation), WTFMove(registersToSpill) });
+    return m_jsToWasmICCallee->entrypoint().retagged<JSEntryPtrTag>();
 }
 
 WebAssemblyFunction* WebAssemblyFunction::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, unsigned length, const String& name, JSWebAssemblyInstance* instance, Wasm::Callee& jsEntrypoint, Wasm::WasmToWasmImportableFunction::LoadLocation wasmToWasmEntrypointLoadLocation, Wasm::TypeIndex typeIndex)
@@ -480,7 +455,6 @@ void WebAssemblyFunction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
 
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_jsToWasmICCallee);
 }
 
 DEFINE_VISIT_CHILDREN(WebAssemblyFunction);

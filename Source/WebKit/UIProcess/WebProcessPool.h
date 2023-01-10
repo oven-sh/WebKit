@@ -94,6 +94,8 @@ class PageConfiguration;
 namespace WebCore {
 class RegistrableDomain;
 enum class EventMakesGamepadsVisible : bool;
+enum class GamepadHapticEffectType : uint8_t;
+struct GamepadEffectParameters;
 struct MockMediaDevice;
 #if PLATFORM(COCOA)
 class PowerSourceNotifier;
@@ -163,9 +165,9 @@ public:
     }
 
     void addMessageReceiver(IPC::ReceiverName, IPC::MessageReceiver&);
-    void addMessageReceiver(IPC::ReceiverName, uint64_t destinationID, IPC::MessageReceiver&);
+    void addMessageReceiver(IPC::ReceiverName, UInt128 destinationID, IPC::MessageReceiver&);
     void removeMessageReceiver(IPC::ReceiverName);
-    void removeMessageReceiver(IPC::ReceiverName, uint64_t destinationID);
+    void removeMessageReceiver(IPC::ReceiverName, UInt128 destinationID);
 
     WebBackForwardCache& backForwardCache() { return m_backForwardCache.get(); }
     
@@ -552,6 +554,8 @@ private:
 #if ENABLE(GAMEPAD)
     void startedUsingGamepads(IPC::Connection&);
     void stoppedUsingGamepads(IPC::Connection&, CompletionHandler<void()>&&);
+    void playGamepadEffect(unsigned gamepadIndex, const String& gamepadID, WebCore::GamepadHapticEffectType, const WebCore::GamepadEffectParameters&, CompletionHandler<void(bool)>&&);
+    void stopGamepadEffects(unsigned gamepadIndex, const String& gamepadID, CompletionHandler<void()>&&);
 
     void processStoppedUsingGamepads(WebProcessProxy&);
 #endif

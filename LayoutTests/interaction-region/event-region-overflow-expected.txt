@@ -13,7 +13,7 @@ Hi
 
       (interaction regions [
         (region
-            (rect (30,22) width=48 height=49)
+            (rect (29,21) width=50 height=50)
 )
         (borderRadius 8.75)])
       )

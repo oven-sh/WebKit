@@ -59,6 +59,7 @@
 #include "EventNames.h"
 #include "FocusController.h"
 #include "FocusEvent.h"
+#include "FormAssociatedCustomElement.h"
 #include "Frame.h"
 #include "FrameSelection.h"
 #include "FrameView.h"
@@ -147,6 +148,13 @@
 namespace WebCore {
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(Element);
+
+struct SameSizeAsElement : public ContainerNode {
+    QualifiedName tagName;
+    void* elementData;
+};
+
+static_assert(sizeof(Element) == sizeof(SameSizeAsElement), "Element should stay small");
 
 using namespace HTMLNames;
 using namespace XMLNames;
@@ -829,6 +837,16 @@ bool Element::isUserActionElementHasFocusVisible() const
 {
     ASSERT(isUserActionElement());
     return document().userActionElements().hasFocusVisible(*this);
+}
+
+FormListedElement* Element::asFormListedElement()
+{
+    return nullptr;
+}
+
+ValidatedFormListedElement* Element::asValidatedFormListedElement()
+{
+    return nullptr;
 }
 
 bool Element::isUserActionElementHasFocusWithin() const
@@ -2298,7 +2316,7 @@ Style::Resolver& Element::styleResolver()
     return document().styleScope().resolver();
 }
 
-Style::ElementStyle Element::resolveStyle(const Style::ResolutionContext& resolutionContext)
+Style::ResolvedStyle Element::resolveStyle(const Style::ResolutionContext& resolutionContext)
 {
     return styleResolver().styleForElement(*this, resolutionContext);
 }
@@ -2882,7 +2900,6 @@ CustomElementReactionQueue* Element::reactionQueue() const
     if (isFailedOrPrecustomizedCustomElement()) {
         auto* queue = elementRareData()->customElementReactionQueue();
         ASSERT(queue);
-        ASSERT(queue->isEmpty() || queue->hasJustUpgradeReaction());
     }
 #endif
     if (!hasRareData())
@@ -4054,6 +4071,16 @@ bool Element::matchesInvalidPseudoClass() const
     return false;
 }
 
+bool Element::matchesUserValidPseudoClass() const
+{
+    return false;
+}
+
+bool Element::matchesUserInvalidPseudoClass() const
+{
+    return false;
+}
+
 bool Element::matchesReadWritePseudoClass() const
 {
     return false;
@@ -4783,7 +4810,7 @@ void Element::didDetachRenderers()
     ASSERT(hasCustomStyleResolveCallbacks());
 }
 
-std::optional<Style::ElementStyle> Element::resolveCustomStyle(const Style::ResolutionContext&, const RenderStyle*)
+std::optional<Style::ResolvedStyle> Element::resolveCustomStyle(const Style::ResolutionContext&, const RenderStyle*)
 {
     ASSERT(hasCustomStyleResolveCallbacks());
     return std::nullopt;
@@ -5130,6 +5157,23 @@ void Element::setAttributeStyleMap(Ref<StylePropertyMap>&& map)
     ensureElementRareData().setAttributeStyleMap(WTFMove(map));
 }
 
+void Element::ensureFormAssociatedCustomElement()
+{
+    RELEASE_ASSERT(is<HTMLMaybeFormAssociatedCustomElement>(*this));
+    auto& data = ensureElementRareData();
+    if (!data.formAssociatedCustomElement())
+        data.setFormAssociatedCustomElement(makeUnique<FormAssociatedCustomElement>(downcast<HTMLMaybeFormAssociatedCustomElement>(*this)));
+}
+
+FormAssociatedCustomElement& Element::formAssociatedCustomElementUnsafe() const
+{
+    RELEASE_ASSERT(is<HTMLMaybeFormAssociatedCustomElement>(*this));
+    ASSERT(hasRareData());
+    auto* customElement = elementRareData()->formAssociatedCustomElement();
+    ASSERT(customElement);
+    return *customElement;
+}
+
 StylePropertyMapReadOnly* Element::computedStyleMap()
 {
     auto& rareData = ensureElementRareData();
@@ -5139,6 +5183,26 @@ StylePropertyMapReadOnly* Element::computedStyleMap()
     auto map = ComputedStylePropertyMapReadOnly::create(*this);
     rareData.setComputedStyleMap(WTFMove(map));
     return rareData.computedStyleMap();
+}
+
+bool Element::hasDuplicateAttribute() const
+{
+    return hasEventTargetFlag(EventTargetFlag::HasDuplicateAttribute);
+}
+
+void Element::setHasDuplicateAttribute(bool hasDuplicateAttribute)
+{
+    setEventTargetFlag(EventTargetFlag::HasDuplicateAttribute, hasDuplicateAttribute);
+}
+
+bool Element::displayContentsChanged() const
+{
+    return hasEventTargetFlag(EventTargetFlag::DisplayContentsChanged);
+}
+
+void Element::setDisplayContentsChanged(bool changed)
+{
+    setEventTargetFlag(EventTargetFlag::DisplayContentsChanged, changed);
 }
 
 } // namespace WebCore

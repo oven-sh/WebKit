@@ -67,7 +67,7 @@ public:
     Color platformAnnotationHighlightColor(OptionSet<StyleColorOptions>) const final;
     Color platformDefaultButtonTextColor(OptionSet<StyleColorOptions>) const final;
 
-    ScrollbarControlSize scrollbarControlSizeForPart(ControlPartType) final { return ScrollbarControlSize::Small; }
+    ScrollbarControlSize scrollbarControlSizeForPart(StyleAppearance) final { return ScrollbarControlSize::Small; }
 
     int minimumMenuListSize(const RenderStyle&) const final;
 
@@ -84,11 +84,11 @@ public:
     bool popsMenuByArrowKeys() const final { return true; }
 
     FloatSize meterSizeForBounds(const RenderMeter&, const FloatRect&) const final;
-    bool supportsMeter(ControlPartType, const HTMLMeterElement&) const final;
+    bool supportsMeter(StyleAppearance, const HTMLMeterElement&) const final;
 
     // Returns the repeat interval of the animation for the progress bar.
     Seconds animationRepeatIntervalForProgressBar(const RenderProgress&) const final;
-    IntRect progressBarRectForBounds(const RenderObject&, const IntRect&) const final;
+    IntRect progressBarRectForBounds(const RenderProgress&, const IntRect&) const final;
 
     // Controls color values returned from platformFocusRingColor(). systemColor() will be used when false.
     bool usesTestModeFocusRingColor() const;
@@ -100,9 +100,10 @@ public:
 private:
     RenderThemeMac();
 
-    bool canPaint(const PaintInfo&, const Settings&, ControlPartType) const final;
+    bool canPaint(const PaintInfo&, const Settings&, StyleAppearance) const final;
     bool canCreateControlPartForRenderer(const RenderObject&) const final;
     bool canCreateControlPartForBorderOnly(const RenderObject&) const final;
+    bool canCreateControlPartForDecorations(const RenderObject&) const final;
 
     bool useFormSemanticContext() const final;
     bool supportsLargeFormControls() const final;
@@ -111,26 +112,19 @@ private:
 
     void adjustTextAreaStyle(RenderStyle&, const Element*) const final;
 
-    bool paintMenuList(const RenderObject&, const PaintInfo&, const FloatRect&) final;
     void adjustMenuListStyle(RenderStyle&, const Element*) const final;
 
-    void paintMenuListButtonDecorations(const RenderBox&, const PaintInfo&, const FloatRect&) final;
     void adjustMenuListButtonStyle(RenderStyle&, const Element*) const final;
 
     void adjustProgressBarStyle(RenderStyle&, const Element*) const final;
-    bool paintProgressBar(const RenderObject&, const PaintInfo&, const IntRect&) final;
 
-    bool paintSliderTrack(const RenderObject&, const PaintInfo&, const IntRect&) final;
     void adjustSliderTrackStyle(RenderStyle&, const Element*) const final;
 
-    bool paintSliderThumb(const RenderObject&, const PaintInfo&, const IntRect&) final;
     void adjustSliderThumbStyle(RenderStyle&, const Element*) const final;
 
-    bool paintSearchField(const RenderObject&, const PaintInfo&, const IntRect&) final;
     void adjustSearchFieldStyle(RenderStyle&, const Element*) const final;
 
     void adjustSearchFieldCancelButtonStyle(RenderStyle&, const Element*) const final;
-    bool paintSearchFieldCancelButton(const RenderBox&, const PaintInfo&, const IntRect&) final;
 
     void adjustSearchFieldDecorationPartStyle(RenderStyle&, const Element*) const final;
     bool paintSearchFieldDecorationPart(const RenderObject&, const PaintInfo&, const IntRect&) final;
@@ -182,7 +176,6 @@ private:
     const IntSize* popupButtonSizes() const;
     const int* popupButtonMargins() const;
     const int* popupButtonPadding(NSControlSize, bool isRTL) const;
-    void paintMenuListButtonGradients(const RenderObject&, const PaintInfo&, const IntRect&);
     const IntSize* menuListSizes() const;
 
     const IntSize* searchFieldSizes() const;
@@ -200,10 +193,6 @@ private:
     NSCell *listButton() const;
 #endif
 
-    int minimumProgressBarHeight(const RenderStyle&) const;
-    const IntSize* progressBarSizes() const;
-    const int* progressBarMargins(NSControlSize) const;
-    
 #if ENABLE(SERVICE_CONTROLS)
     bool paintImageControlsButton(const RenderObject&, const PaintInfo&, const IntRect&) final;
     IntSize imageControlsButtonSize() const final;

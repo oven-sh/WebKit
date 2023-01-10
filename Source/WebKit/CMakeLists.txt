@@ -515,6 +515,7 @@ GENERATE_MESSAGE_SOURCES(WebKit_DERIVED_SOURCES "${WebKit_MESSAGES_IN_FILES}")
 set(WebKit_SERIALIZATION_IN_FILES
     GPUProcess/GPUProcessSessionParameters.serialization.in
 
+    GPUProcess/graphics/InlinePathData.serialization.in
     GPUProcess/graphics/RemoteRenderingBackendCreationParameters.serialization.in
 
     GPUProcess/media/InitializationSegmentInfo.serialization.in
@@ -530,9 +531,11 @@ set(WebKit_SERIALIZATION_IN_FILES
     Shared/LayerTreeContext.serialization.in
     Shared/Model.serialization.in
     Shared/Pasteboard.serialization.in
+    Shared/SameDocumentNavigationType.serialization.in
     Shared/SessionState.serialization.in
     Shared/ShareableBitmap.serialization.in
     Shared/TextFlags.serialization.in
+    Shared/TextRecognitionResult.serialization.in
     Shared/WTFArgumentCoders.serialization.in
     Shared/WebCoreArgumentCoders.serialization.in
     Shared/WebEvent.serialization.in
@@ -542,7 +545,13 @@ set(WebKit_SERIALIZATION_IN_FILES
     Shared/WebPushMessage.serialization.in
     Shared/WebsiteDataStoreParameters.serialization.in
 
+    Shared/API/APIError.serialization.in
+    Shared/API/APIFrameHandle.serialization.in
     Shared/API/APIGeometry.serialization.in
+    Shared/API/APIPageHandle.serialization.in
+    Shared/API/APIURL.serialization.in
+    Shared/API/APIURLRequest.serialization.in
+    Shared/API/APIURLResponse.serialization.in
 
     Shared/Databases/IndexedDB/WebIDBResult.serialization.in
 
@@ -702,10 +711,7 @@ set(WebKit_WEB_PREFERENCES_TEMPLATES
 )
 
 set(WebKit_WEB_PREFERENCES
-    ${WTF_SCRIPTS_DIR}/Preferences/WebPreferences.yaml
-    ${WTF_SCRIPTS_DIR}/Preferences/WebPreferencesDebug.yaml
-    ${WTF_SCRIPTS_DIR}/Preferences/WebPreferencesExperimental.yaml
-    ${WTF_SCRIPTS_DIR}/Preferences/WebPreferencesInternal.yaml
+    ${WTF_SCRIPTS_DIR}/Preferences/UnifiedWebPreferences.yaml
 )
 
 set_source_files_properties(${WebKit_WEB_PREFERENCES} PROPERTIES GENERATED TRUE)
@@ -713,7 +719,8 @@ set_source_files_properties(${WebKit_WEB_PREFERENCES} PROPERTIES GENERATED TRUE)
 add_custom_command(
     OUTPUT ${WebKit_DERIVED_SOURCES_DIR}/WebPageUpdatePreferences.cpp ${WebKit_DERIVED_SOURCES_DIR}/WebPreferencesDefinitions.h ${WebKit_DERIVED_SOURCES_DIR}/WebPreferencesExperimentalFeatures.cpp ${WebKit_DERIVED_SOURCES_DIR}/WebPreferencesGetterSetters.cpp ${WebKit_DERIVED_SOURCES_DIR}/WebPreferencesInternalDebugFeatures.cpp ${WebKit_DERIVED_SOURCES_DIR}/WebPreferencesKeys.cpp ${WebKit_DERIVED_SOURCES_DIR}/WebPreferencesKeys.h ${WebKit_DERIVED_SOURCES_DIR}/WebPreferencesStoreDefaultsMap.cpp
     DEPENDS ${WebKit_WEB_PREFERENCES_TEMPLATES} ${WebKit_WEB_PREFERENCES} WTF_CopyPreferences
-    COMMAND ${RUBY_EXECUTABLE} ${WTF_SCRIPTS_DIR}/GeneratePreferences.rb --frontend WebKit --base ${WTF_SCRIPTS_DIR}/Preferences/WebPreferences.yaml --debug ${WTF_SCRIPTS_DIR}/Preferences/WebPreferencesDebug.yaml --experimental ${WTF_SCRIPTS_DIR}/Preferences/WebPreferencesExperimental.yaml --internal ${WTF_SCRIPTS_DIR}/Preferences/WebPreferencesInternal.yaml --outputDir "${WebKit_DERIVED_SOURCES_DIR}" --template ${WEBKIT_DIR}/Scripts/PreferencesTemplates/WebPageUpdatePreferences.cpp.erb --template ${WEBKIT_DIR}/Scripts/PreferencesTemplates/WebPreferencesDefinitions.h.erb --template ${WEBKIT_DIR}/Scripts/PreferencesTemplates/WebPreferencesExperimentalFeatures.cpp.erb --template ${WEBKIT_DIR}/Scripts/PreferencesTemplates/WebPreferencesGetterSetters.cpp.erb --template ${WEBKIT_DIR}/Scripts/PreferencesTemplates/WebPreferencesInternalDebugFeatures.cpp.erb --template ${WEBKIT_DIR}/Scripts/PreferencesTemplates/WebPreferencesKeys.cpp.erb --template ${WEBKIT_DIR}/Scripts/PreferencesTemplates/WebPreferencesKeys.h.erb --template ${WEBKIT_DIR}/Scripts/PreferencesTemplates/WebPreferencesStoreDefaultsMap.cpp.erb
+    COMMAND ${RUBY_EXECUTABLE} ${WTF_SCRIPTS_DIR}/GeneratePreferences.rb --frontend WebKit --outputDir "${WebKit_DERIVED_SOURCES_DIR}" --template "$<JOIN:${WebKit_WEB_PREFERENCES_TEMPLATES},;--template;>" ${WebKit_WEB_PREFERENCES}
+    COMMAND_EXPAND_LISTS
     VERBATIM)
 
 list(APPEND WebKit_HEADERS

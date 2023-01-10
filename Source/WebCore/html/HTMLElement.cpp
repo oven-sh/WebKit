@@ -56,6 +56,7 @@
 #include "HTMLFieldSetElement.h"
 #include "HTMLFormElement.h"
 #include "HTMLInputElement.h"
+#include "HTMLMaybeFormAssociatedCustomElement.h"
 #include "HTMLMediaElement.h"
 #include "HTMLNames.h"
 #include "HTMLOptGroupElement.h"
@@ -757,17 +758,7 @@ bool HTMLElement::rendererIsEverNeeded()
     return StyledElement::rendererIsEverNeeded();
 }
 
-HTMLFormElement* HTMLElement::form() const
-{
-    return HTMLFormElement::findClosestFormAncestor(*this);
-}
-
 FormAssociatedElement* HTMLElement::asFormAssociatedElement()
-{
-    return nullptr;
-}
-
-FormListedElement* HTMLElement::asFormListedElement()
 {
     return nullptr;
 }
@@ -1101,7 +1092,8 @@ bool HTMLElement::canBeActuallyDisabled() const
         || is<HTMLTextAreaElement>(*this)
         || is<HTMLOptGroupElement>(*this)
         || is<HTMLOptionElement>(*this)
-        || is<HTMLFieldSetElement>(*this);
+        || is<HTMLFieldSetElement>(*this)
+        || (is<HTMLMaybeFormAssociatedCustomElement>(*this) && downcast<HTMLMaybeFormAssociatedCustomElement>(*this).isFormAssociatedCustomElement());
 }
 
 bool HTMLElement::isActuallyDisabled() const

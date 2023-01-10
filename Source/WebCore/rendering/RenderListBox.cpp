@@ -32,7 +32,6 @@
 
 #include "AXObjectCache.h"
 #include "CSSFontSelector.h"
-#include "DeprecatedGlobalSettings.h"
 #include "DocumentInlines.h"
 #include "EventHandler.h"
 #include "FocusController.h"
@@ -981,7 +980,7 @@ Ref<Scrollbar> RenderListBox::createScrollbar()
     if (hasCustomScrollbarStyle)
         widget = RenderScrollbar::createCustomScrollbar(*this, ScrollbarOrientation::Vertical, &selectElement());
     else {
-        widget = Scrollbar::createNativeScrollbar(*this, ScrollbarOrientation::Vertical, theme().scrollbarControlSizeForPart(ControlPartType::Listbox));
+        widget = Scrollbar::createNativeScrollbar(*this, ScrollbarOrientation::Vertical, theme().scrollbarControlSizeForPart(StyleAppearance::Listbox));
         didAddScrollbar(widget.get(), ScrollbarOrientation::Vertical);
         if (page().isMonitoringWheelEvents())
             scrollAnimator().setWheelEventTestMonitor(page().wheelEventTestMonitor());

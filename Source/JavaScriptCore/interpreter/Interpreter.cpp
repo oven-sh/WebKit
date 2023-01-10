@@ -602,11 +602,6 @@ public:
 
 #if ENABLE(WEBASSEMBLY)
         CalleeBits callee = visitor->callee();
-        if (callee.isCell()) {
-            if (auto* jsToWasmICCallee = jsDynamicCast<JSToWasmICCallee*>(callee.asCell()))
-                m_vm.wasmContext.store(jsToWasmICCallee->function()->previousInstance(m_callFrame));
-        }
-
         if (m_catchableFromWasm && callee.isWasm()) {
             Wasm::Callee* wasmCallee = callee.asWasmCallee();
             if (wasmCallee->hasExceptionHandlers()) {
@@ -626,6 +621,14 @@ public:
         }
 
         notifyDebuggerOfUnwinding(m_vm, m_callFrame);
+
+#if ENABLE(WEBASSEMBLY)
+        if (callee.isWasm()) {
+            Wasm::Callee* wasmCallee = callee.asWasmCallee();
+            if (wasmCallee->compilationMode() == Wasm::CompilationMode::JSToWasmICMode)
+                m_vm.wasmContext.store(static_cast<Wasm::JSToWasmICCallee*>(wasmCallee)->previousInstance(m_callFrame));
+        }
+#endif
 
         copyCalleeSavesToEntryFrameCalleeSavesBuffer(visitor);
 
@@ -658,7 +661,7 @@ private:
             RegisterAtOffset* calleeSavesEntry = allCalleeSaves->find(currentEntry.reg());
 
             if (!calleeSavesEntry) {
-                if constexpr (!isARM())
+                if constexpr (!isARM_THUMB2())
                     RELEASE_ASSERT_NOT_REACHED();
                 // This can happen on ARMv7, because there are more callee save
                 // registers in the system convention than in the VM convention,

@@ -36,7 +36,6 @@
 #include "Chrome.h"
 #include "ChromeClient.h"
 #include "DOMFormData.h"
-#include "DeprecatedGlobalSettings.h"
 #include "Editor.h"
 #include "ElementInlines.h"
 #include "ElementRareData.h"
@@ -642,7 +641,7 @@ void TextFieldInputType::handleBeforeTextInsertedEvent(BeforeTextInsertedEvent& 
 bool TextFieldInputType::shouldRespectListAttribute()
 {
 #if ENABLE(DATALIST_ELEMENT)
-    return DeprecatedGlobalSettings::dataListElementEnabled();
+    return element() && element()->document().settings().dataListElementEnabled();
 #else
     return InputType::themeSupportsDataListUI(this);
 #endif
@@ -849,7 +848,7 @@ void TextFieldInputType::createContainer(PreserveSelectionRange preserveSelectio
             if (selection.start().deprecatedNode() != element->userAgentShadowRoot())
                 return;
 
-            auto [selectionStart, selectionEnd, selectionDirection] = selectionState;
+            auto& [selectionStart, selectionEnd, selectionDirection] = selectionState;
             element->setSelectionRange(selectionStart, selectionEnd, selectionDirection);
         });
     }

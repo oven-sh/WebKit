@@ -100,7 +100,8 @@ WheelEventHandlingResult RemoteScrollingCoordinatorProxy::handleWheelEvent(const
         return WheelEventHandlingResult::unhandled();
 
     auto processingSteps = m_scrollingTree->determineWheelEventProcessing(wheelEvent);
-    if (processingSteps.containsAny({ WheelEventProcessingSteps::MainThreadForScrolling, WheelEventProcessingSteps::MainThreadForNonBlockingDOMEventDispatch, WheelEventProcessingSteps::MainThreadForBlockingDOMEventDispatch }))
+    LOG_WITH_STREAM(Scrolling, stream << "RemoteScrollingCoordinatorProxy::handleWheelEvent " << wheelEvent << " - steps " << processingSteps);
+    if (!processingSteps.contains(WheelEventProcessingSteps::ScrollingThread))
         return WheelEventHandlingResult::unhandled(processingSteps);
 
     if (m_scrollingTree->willWheelEventStartSwipeGesture(wheelEvent))
@@ -109,7 +110,7 @@ WheelEventHandlingResult RemoteScrollingCoordinatorProxy::handleWheelEvent(const
     m_scrollingTree->willProcessWheelEvent();
 
     auto filteredEvent = filteredWheelEvent(wheelEvent);
-    auto result = m_scrollingTree->handleWheelEvent(filteredEvent);
+    auto result = m_scrollingTree->handleWheelEvent(filteredEvent, processingSteps);
     didReceiveWheelEvent(result.wasHandled);
     return result;
 }
@@ -286,9 +287,19 @@ void RemoteScrollingCoordinatorProxy::reportSynchronousScrollingReasonsChanged(M
     m_webPageProxy.logScrollingEvent(static_cast<uint32_t>(PerformanceLoggingClient::ScrollingEvent::SwitchedScrollingMode), timestamp, reasons.toRaw());
 }
 
-void RemoteScrollingCoordinatorProxy::startMonitoringWheelEventsForTesting()
+void RemoteScrollingCoordinatorProxy::receivedWheelEventWithPhases(PlatformWheelEventPhase phase, PlatformWheelEventPhase momentumPhase)
 {
-    m_scrollingTree->setIsMonitoringWheelEvents(true);
+    m_webPageProxy.send(Messages::RemoteScrollingCoordinator::ReceivedWheelEventWithPhases(phase, momentumPhase));
+}
+
+void RemoteScrollingCoordinatorProxy::deferWheelEventTestCompletionForReason(ScrollingNodeID nodeID, WheelEventTestMonitor::DeferReason reason)
+{
+    m_webPageProxy.send(Messages::RemoteScrollingCoordinator::StartDeferringScrollingTestCompletionForNode(nodeID, reason));
+}
+
+void RemoteScrollingCoordinatorProxy::removeWheelEventTestCompletionDeferralForReason(ScrollingNodeID nodeID, WheelEventTestMonitor::DeferReason reason)
+{
+    m_webPageProxy.send(Messages::RemoteScrollingCoordinator::StopDeferringScrollingTestCompletionForNode(nodeID, reason));
 }
 
 } // namespace WebKit

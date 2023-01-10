@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2022-2023 Apple Inc. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,6 +26,7 @@
 #pragma once
 
 #include "Color.h"
+#include "LengthBox.h"
 
 namespace WTF {
 class TextStream;
@@ -41,7 +42,7 @@ struct ControlStyle {
         Enabled             = 1 << 3,
         Checked             = 1 << 4,
         Default             = 1 << 5,
-        WindowInactive      = 1 << 6,
+        WindowActive        = 1 << 6,
         Indeterminate       = 1 << 7,
         SpinUp              = 1 << 8, // Sub-state for HoverState and PressedState.
         Presenting          = 1 << 9,
@@ -52,11 +53,14 @@ struct ControlStyle {
         ReadOnly            = 1 << 14,
         ListButton          = 1 << 15,
         ListButtonPressed   = 1 << 16,
+        VerticalWritingMode = 1 << 17,
     };
     OptionSet<State> states;
     unsigned fontSize { 12 };
     float zoomFactor { 1 };
     Color accentColor;
+    Color textColor;
+    FloatBoxExtent borderWidth;
 };
 
 WEBCORE_EXPORT TextStream& operator<<(TextStream&, ControlStyle::State);

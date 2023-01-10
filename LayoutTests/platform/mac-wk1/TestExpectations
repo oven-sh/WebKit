@@ -1595,8 +1595,6 @@ imported/w3c/web-platform-tests/credential-management/ [ Skip ]
 
 webkit.org/b/182554 transitions/transition-display-property.html [ Pass ImageOnlyFailure ]
 
-imported/w3c/web-platform-tests/css/selectors/selector-placeholder-shown-type-change-002.html [ ImageOnlyFailure ]
-
 webkit.org/b/184456 imported/w3c/web-platform-tests/html/semantics/embedded-content/the-embed-element/embed-in-object-fallback.html [ Pass Failure ]
 
 webkit.org/b/231918 imported/w3c/web-platform-tests/html/semantics/selectors/pseudo-classes/focus-autofocus.html [ Pass Failure ]
@@ -2033,9 +2031,6 @@ webkit.org/b/223944 [ BigSur Debug ] imported/w3c/web-platform-tests/xhr/event-u
 [ BigSur ] webanimations/accelerated-translate-animation-additional-animation-added-in-flight.html [ Pass ImageOnlyFailure ]
 [ BigSur ] webanimations/accelerated-translate-animation-underlying-transform-changed-in-flight.html [ Pass ImageOnlyFailure ]
 [ BigSur ] webanimations/accelerated-translate-animation.html [ Pass ImageOnlyFailure ]
-
-# rdar://80340735 ([ Monterey wk1 arm64 ] webanimations/accelerated-css-transition-with-easing-y-axis-above-1.html is a flaky image only failure)
-webkit.org/b/244891 webanimations/accelerated-css-transition-with-easing-y-axis-above-1.html [ Pass ImageOnlyFailure Timeout ]
 
 # webkit.org/b/223904 Updating test expectations for 9 tests
 [ BigSur ] transforms/2d/scale-change-composited.html [ Pass ImageOnlyFailure ]
@@ -2535,10 +2530,6 @@ imported/w3c/web-platform-tests/html/browsers/browsing-the-web/navigating-across
 imported/w3c/web-platform-tests/html/browsers/browsing-the-web/navigating-across-documents/initial-empty-document/iframe-src-aboutblank-navigate-immediately.html [ Failure Pass ]
 imported/w3c/web-platform-tests/html/browsers/browsing-the-web/navigating-across-documents/initial-empty-document/iframe-src-aboutblank-wait-for-load.html [ Failure Pass ]
 
-webkit.org/b/245008 fast/attachment/mac/attachment-numbers.html [ Skip ]
-webkit.org/b/245008 fast/attachment/mac/attachment-pages.html [ Skip ]
-webkit.org/b/245008 fast/attachment/mac/attachment-keynote.html [ Skip ]
-
 webkit.org/b/245816 imported/w3c/web-platform-tests/html/browsers/browsing-the-web/navigating-across-documents/navigate-cross-origin-iframe-to-same-url.html [ Failure Pass ]
 webkit.org/b/245816 imported/w3c/web-platform-tests/html/browsers/browsing-the-web/navigating-across-documents/navigate-cross-origin-iframe-to-same-url-with-fragment.html [ Failure Pass ]
 
@@ -2596,3 +2587,6 @@ webkit.org/b/248493 http/tests/security/contentSecurityPolicy/script-src-parsing
 # https://bugs.webkit.org/show_bug.cgi?id=249544
 # Generic Permissions API is not supported in WK1
 imported/w3c/web-platform-tests/geolocation-API/permission.https.html [ WontFix ]
+
+# Per-process limit is only for WK2
+http/tests/websocket/tests/hybi/multiple-connections-limit.html [ Skip ]

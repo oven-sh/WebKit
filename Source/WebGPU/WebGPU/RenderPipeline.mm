@@ -429,11 +429,16 @@ Ref<RenderPipeline> Device::createRenderPipeline(const WGPURenderPipelineDescrip
 
     // FIXME: GPUPrimitiveState.unclippedDepth
 
-    id<MTLRenderPipelineState> renderPipelineState = [m_device newRenderPipelineStateWithDescriptor:mtlRenderPipelineDescriptor error:nil];
+    MTLRenderPipelineReflection *reflection;
+    id<MTLRenderPipelineState> renderPipelineState = [m_device newRenderPipelineStateWithDescriptor:mtlRenderPipelineDescriptor options:MTLPipelineOptionArgumentInfo reflection:&reflection error:nil];
     if (!renderPipelineState)
         return RenderPipeline::createInvalid(*this);
 
-    return RenderPipeline::create(renderPipelineState, mtlPrimitiveType, mtlIndexType, mtlFrontFace, mtlCullMode, mtlDepthStencilState, descriptor.vertex.bufferCount, *this);
+    const auto& pipelineLayout = WebGPU::fromAPI(descriptor.layout);
+    if (pipelineLayout.numberOfBindGroupLayouts())
+        return RenderPipeline::create(renderPipelineState, mtlPrimitiveType, mtlIndexType, mtlFrontFace, mtlCullMode, mtlDepthStencilState, pipelineLayout, descriptor.vertex.bufferCount, *this);
+
+    return RenderPipeline::create(renderPipelineState, mtlPrimitiveType, mtlIndexType, mtlFrontFace, mtlCullMode, mtlDepthStencilState, reflection, descriptor.vertex.bufferCount, *this);
 }
 
 void Device::createRenderPipelineAsync(const WGPURenderPipelineDescriptor& descriptor, CompletionHandler<void(WGPUCreatePipelineAsyncStatus, Ref<RenderPipeline>&&, String&& message)>&& callback)
@@ -445,7 +450,7 @@ void Device::createRenderPipelineAsync(const WGPURenderPipelineDescriptor& descr
     });
 }
 
-RenderPipeline::RenderPipeline(id<MTLRenderPipelineState> renderPipelineState, MTLPrimitiveType primitiveType, std::optional<MTLIndexType> indexType, MTLWinding frontFace, MTLCullMode cullMode, id<MTLDepthStencilState> depthStencilState, uint32_t vertexShaderInputBufferCount, Device& device)
+RenderPipeline::RenderPipeline(id<MTLRenderPipelineState> renderPipelineState, MTLPrimitiveType primitiveType, std::optional<MTLIndexType> indexType, MTLWinding frontFace, MTLCullMode cullMode, id<MTLDepthStencilState> depthStencilState, MTLRenderPipelineReflection *reflection, uint32_t vertexShaderInputBufferCount, Device& device)
     : m_renderPipelineState(renderPipelineState)
     , m_device(device)
     , m_primitiveType(primitiveType)
@@ -453,6 +458,25 @@ RenderPipeline::RenderPipeline(id<MTLRenderPipelineState> renderPipelineState, M
     , m_frontFace(frontFace)
     , m_cullMode(cullMode)
     , m_depthStencilState(depthStencilState)
+#if HAVE(METAL_BUFFER_BINDING_REFLECTION)
+    , m_reflection(reflection)
+#endif
+    , m_vertexShaderInputBufferCount(vertexShaderInputBufferCount)
+{
+#if !HAVE(METAL_BUFFER_BINDING_REFLECTION)
+    UNUSED_PARAM(reflection);
+#endif
+}
+
+RenderPipeline::RenderPipeline(id<MTLRenderPipelineState> renderPipelineState, MTLPrimitiveType primitiveType, std::optional<MTLIndexType> indexType, MTLWinding frontFace, MTLCullMode cullMode, id<MTLDepthStencilState> depthStencilState, const PipelineLayout &pipelineLayout, uint32_t vertexShaderInputBufferCount, Device& device)
+    : m_renderPipelineState(renderPipelineState)
+    , m_device(device)
+    , m_primitiveType(primitiveType)
+    , m_indexType(indexType)
+    , m_frontFace(frontFace)
+    , m_cullMode(cullMode)
+    , m_depthStencilState(depthStencilState)
+    , m_pipelineLayout(&pipelineLayout)
     , m_vertexShaderInputBufferCount(vertexShaderInputBufferCount)
 {
 }
@@ -464,10 +488,74 @@ RenderPipeline::RenderPipeline(Device& device)
 
 RenderPipeline::~RenderPipeline() = default;
 
+#if HAVE(METAL_BUFFER_BINDING_REFLECTION)
+static WGPUBindGroupLayoutEntry createEntryFromStructMember(MTLStructMember *structMember, uint32_t& currentBindingIndex, WGPUShaderStage shaderStage)
+{
+    WGPUBindGroupLayoutEntry entry = { };
+    entry.binding = currentBindingIndex++;
+    entry.visibility = shaderStage;
+    switch (structMember.dataType) {
+    case MTLDataTypeTexture:
+        entry.texture.sampleType = WGPUTextureSampleType_Float;
+        entry.texture.viewDimension = WGPUTextureViewDimension_2D;
+        break;
+    case MTLDataTypeSampler:
+        entry.sampler.type = WGPUSamplerBindingType_Filtering;
+        break;
+    case MTLDataTypePointer:
+        entry.buffer.type = WGPUBufferBindingType_Uniform;
+        break;
+    default:
+        ASSERT_NOT_REACHED();
+        break;
+    }
+
+    return entry;
+}
+#endif // HAVE(METAL_BUFFER_BINDING_REFLECTION)
+
 BindGroupLayout* RenderPipeline::getBindGroupLayout(uint32_t groupIndex)
 {
+    if (m_pipelineLayout)
+        return const_cast<BindGroupLayout*>(&m_pipelineLayout->bindGroupLayout(groupIndex));
+
+    auto it = m_cachedBindGroupLayouts.find(groupIndex + 1);
+    if (it != m_cachedBindGroupLayouts.end())
+        return it->value.ptr();
+
+#if HAVE(METAL_BUFFER_BINDING_REFLECTION)
+    uint32_t bindingIndex = 0;
+    Vector<WGPUBindGroupLayoutEntry> entries;
+    for (id<MTLBufferBinding> binding in m_reflection.vertexBindings) {
+        if (binding.index != groupIndex + m_vertexShaderInputBufferCount)
+            continue;
+
+        ASSERT(binding.type == MTLBindingTypeBuffer);
+        for (MTLStructMember *structMember in binding.bufferStructType.members)
+            entries.append(createEntryFromStructMember(structMember, bindingIndex, WGPUShaderStage_Vertex));
+    }
+
+    for (id<MTLBufferBinding> binding in m_reflection.fragmentBindings) {
+        if (binding.index != groupIndex)
+            continue;
+
+        ASSERT(binding.type == MTLBindingTypeBuffer);
+        for (MTLStructMember *structMember in binding.bufferStructType.members)
+            entries.append(createEntryFromStructMember(structMember, bindingIndex, WGPUShaderStage_Fragment));
+    }
+
+    WGPUBindGroupLayoutDescriptor bindGroupLayoutDescriptor = { };
+    bindGroupLayoutDescriptor.label = "getBindGroup() generated layout";
+    bindGroupLayoutDescriptor.entryCount = entries.size();
+    bindGroupLayoutDescriptor.entries = &entries[0];
+    auto bindGroupLayout = m_device->createBindGroupLayout(bindGroupLayoutDescriptor);
+    m_cachedBindGroupLayouts.add(groupIndex + 1, bindGroupLayout);
+
+    return bindGroupLayout.ptr();
+#else
     UNUSED_PARAM(groupIndex);
     return nullptr;
+#endif
 }
 
 void RenderPipeline::setLabel(String&&)

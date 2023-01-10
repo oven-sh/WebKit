@@ -200,8 +200,8 @@ static JSValueRef evaluateJavaScriptCallback(JSContextRef context, JSObjectRef f
         return JSValueMakeUndefined(context);
 
     WebCore::FrameIdentifier frameID {
-        makeObjectIdentifier<WebCore::FrameIdentifierType>(JSValueToNumber(context, arguments[0], exception)),
-        makeObjectIdentifier<WebCore::ProcessIdentifierType>(JSValueToNumber(context, arguments[1], exception))
+        makeObjectIdentifier<WebCore::FrameIdentifierType>(static_cast<UInt128>(JSValueToNumber(context, arguments[0], exception))),
+        makeObjectIdentifier<WebCore::ProcessIdentifierType>(static_cast<UInt128>(JSValueToNumber(context, arguments[1], exception)))
     };
     uint64_t callbackID = JSValueToNumber(context, arguments[2], exception);
     if (JSValueIsString(context, arguments[3])) {
@@ -276,7 +276,7 @@ JSObjectRef WebAutomationSessionProxy::scriptObjectForFrame(WebFrame& frame)
     JSObjectRef createUUIDFunction = JSObjectMakeFunctionWithCallback(context, nullptr, createUUID);
     JSObjectRef isValidNodeIdentifierFunction = JSObjectMakeFunctionWithCallback(context, nullptr, isValidNodeIdentifier);
     JSValueRef arguments[] = { sessionIdentifier, evaluateFunction, createUUIDFunction, isValidNodeIdentifierFunction };
-    JSObjectRef scriptObject = const_cast<JSObjectRef>(JSObjectCallAsFunction(context, scriptObjectFunction, nullptr, WTF_ARRAY_LENGTH(arguments), arguments, &exception));
+    JSObjectRef scriptObject = const_cast<JSObjectRef>(JSObjectCallAsFunction(context, scriptObjectFunction, nullptr, std::size(arguments), arguments, &exception));
     ASSERT(JSValueIsObject(context, scriptObject));
 
     setScriptObject(context, scriptObject);
@@ -297,7 +297,7 @@ WebCore::Element* WebAutomationSessionProxy::elementForNodeHandle(WebFrame& fram
         toJSValue(context, nodeHandle)
     };
 
-    JSValueRef result = callPropertyFunction(context, scriptObject, "nodeForIdentifier"_s, WTF_ARRAY_LENGTH(functionArguments), functionArguments, nullptr);
+    JSValueRef result = callPropertyFunction(context, scriptObject, "nodeForIdentifier"_s, std::size(functionArguments), functionArguments, nullptr);
     JSObjectRef element = JSValueToObject(context, result, nullptr);
     if (!element)
         return nullptr;
@@ -425,7 +425,7 @@ void WebAutomationSessionProxy::evaluateJavaScriptFunction(WebCore::PageIdentifi
 
     {
         WebCore::UserGestureIndicator gestureIndicator(WebCore::ProcessingUserGesture, frame->coreFrame()->document());
-        callPropertyFunction(context, scriptObject, "evaluateJavaScriptFunction"_s, WTF_ARRAY_LENGTH(functionArguments), functionArguments, &exception);
+        callPropertyFunction(context, scriptObject, "evaluateJavaScriptFunction"_s, std::size(functionArguments), functionArguments, &exception);
     }
 
     if (!exception)

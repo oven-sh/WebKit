@@ -314,10 +314,11 @@ public:
     PartialResult WARN_UNUSED_RETURN addI31GetU(ExpressionType ref, ExpressionType& result);
     PartialResult WARN_UNUSED_RETURN addArrayNew(uint32_t index, ExpressionType size, ExpressionType value, ExpressionType& result);
     PartialResult WARN_UNUSED_RETURN addArrayNewDefault(uint32_t index, ExpressionType size, ExpressionType& result);
-    PartialResult WARN_UNUSED_RETURN addArrayGet(uint32_t typeIndex, ExpressionType arrayref, ExpressionType index, ExpressionType& result);
+    PartialResult WARN_UNUSED_RETURN addArrayGet(ExtGCOpType arrayGetKind, uint32_t typeIndex, ExpressionType arrayref, ExpressionType index, ExpressionType& result);
     PartialResult WARN_UNUSED_RETURN addArraySet(uint32_t typeIndex, ExpressionType arrayref, ExpressionType index, ExpressionType value);
     PartialResult WARN_UNUSED_RETURN addArrayLen(ExpressionType arrayref, ExpressionType& result);
     PartialResult WARN_UNUSED_RETURN addStructNew(uint32_t index, Vector<ExpressionType>& args, ExpressionType& result);
+    PartialResult WARN_UNUSED_RETURN addStructNewDefault(uint32_t index, ExpressionType& result);
     PartialResult WARN_UNUSED_RETURN addStructGet(ExpressionType structReference, const StructType&, uint32_t fieldIndex, ExpressionType& result);
     PartialResult WARN_UNUSED_RETURN addStructSet(ExpressionType structReference, const StructType&, uint32_t fieldIndex, ExpressionType value);
 
@@ -1129,10 +1130,7 @@ auto LLIntGenerator::addCatchToUnreachable(unsigned exceptionIndex, const TypeDe
     for (unsigned i = 0; i < exceptionSignature.as<FunctionSignature>()->argumentCount(); ++i)
         results.append(push());
 
-    if (Context::useFastTLS())
-        WasmCatch::emit(this, exceptionIndex, exception, exceptionSignature.as<FunctionSignature>()->argumentCount(), results.isEmpty() ? 0 : -results[0].offset());
-    else
-        WasmCatchNoTls::emit(this, exceptionIndex, exception, exceptionSignature.as<FunctionSignature>()->argumentCount(), results.isEmpty() ? 0 : -results[0].offset());
+    WasmCatch::emit(this, exceptionIndex, exception, exceptionSignature.as<FunctionSignature>()->argumentCount(), results.isEmpty() ? 0 : -results[0].offset());
 
     for (unsigned i = 0; i < exceptionSignature.as<FunctionSignature>()->argumentCount(); ++i) {
         VirtualRegister dst = results[i];
@@ -1181,10 +1179,7 @@ auto LLIntGenerator::addCatchAllToUnreachable(ControlType& data) -> PartialResul
     ControlCatch& catchData = std::get<ControlCatch>(data);
     catchData.m_kind = CatchKind::CatchAll;
 
-    if (Context::useFastTLS())
-        WasmCatchAll::emit(this, exception);
-    else
-        WasmCatchAllNoTls::emit(this, exception);
+    WasmCatchAll::emit(this, exception);
 
     m_codeBlock->addExceptionHandler({ HandlerType::CatchAll, catchData.m_tryStart->location(), catchData.m_tryEnd->location(), catchLabel->location(), m_tryDepth, 0 });
     return { };
@@ -1387,15 +1382,9 @@ auto LLIntGenerator::addCall(uint32_t functionIndex, const TypeDefinition& signa
         const TypeDefinition& callerTypeDefinition = TypeInformation::get(callerTypeIndex);
         uint32_t callerStackArgs = WTF::roundUpToMultipleOf(stackAlignmentRegisters(), callingConvention.numberOfStackValues(*callerTypeDefinition.as<FunctionSignature>()));
 
-        if (Context::useFastTLS())
-            WasmTailCall::emit(this, functionIndex, wasmCalleeInfo.stackOffset, wasmCalleeInfo.numberOfStackArguments, callerStackArgs);
-        else
-            WasmTailCallNoTls::emit(this, functionIndex, wasmCalleeInfo.stackOffset, wasmCalleeInfo.numberOfStackArguments, callerStackArgs);
-
-    } else if (Context::useFastTLS())
+        WasmTailCall::emit(this, functionIndex, wasmCalleeInfo.stackOffset, wasmCalleeInfo.numberOfStackArguments, callerStackArgs);
+    } else
         WasmCall::emit(this, functionIndex, wasmCalleeInfo.stackOffset, wasmCalleeInfo.numberOfStackArguments);
-    else
-        WasmCallNoTls::emit(this, functionIndex, wasmCalleeInfo.stackOffset, wasmCalleeInfo.numberOfStackArguments);
 
     wasmCalleeInfo.commitResults(results);
 
@@ -1425,15 +1414,9 @@ auto LLIntGenerator::addCallIndirect(unsigned tableIndex, const TypeDefinition& 
         const TypeDefinition& callerTypeDefinition = TypeInformation::get(callerTypeIndex);
         uint32_t callerStackArgs = WTF::roundUpToMultipleOf(stackAlignmentRegisters(), callingConvention.numberOfStackValues(*callerTypeDefinition.as<FunctionSignature>()));
 
-        if (Context::useFastTLS())
-            WasmTailCallIndirect::emit(this, calleeIndex, m_codeBlock->addSignature(signature), calleeInfo.stackOffset, calleeInfo.numberOfStackArguments, callerStackArgs, tableIndex);
-        else
-            WasmTailCallIndirectNoTls::emit(this, calleeIndex, m_codeBlock->addSignature(signature), calleeInfo.stackOffset, calleeInfo.numberOfStackArguments, callerStackArgs, tableIndex);
-
-    } else if (Context::useFastTLS())
+        WasmTailCallIndirect::emit(this, calleeIndex, m_codeBlock->addSignature(signature), calleeInfo.stackOffset, calleeInfo.numberOfStackArguments, callerStackArgs, tableIndex);
+    } else
         WasmCallIndirect::emit(this, calleeIndex, m_codeBlock->addSignature(signature), calleeInfo.stackOffset, calleeInfo.numberOfStackArguments, tableIndex);
-    else
-        WasmCallIndirectNoTls::emit(this, calleeIndex, m_codeBlock->addSignature(signature), calleeInfo.stackOffset, calleeInfo.numberOfStackArguments, tableIndex);
 
     calleeInfo.commitResults(results);
 
@@ -1447,10 +1430,7 @@ auto LLIntGenerator::addCallRef(const TypeDefinition& signature, Vector<Expressi
     const auto& functionSignature = *signature.expand().as<FunctionSignature>();
     LLIntCallInformation info = callInformationForCaller(functionSignature);
     unifyValuesWithBlock(info.arguments, args);
-    if (Context::useFastTLS())
-        WasmCallRef::emit(this, callee, m_codeBlock->addSignature(signature), info.stackOffset, info.numberOfStackArguments);
-    else
-        WasmCallRefNoTls::emit(this, callee, m_codeBlock->addSignature(signature), info.stackOffset, info.numberOfStackArguments);
+    WasmCallRef::emit(this, callee, m_codeBlock->addSignature(signature), info.stackOffset, info.numberOfStackArguments);
     info.commitResults(results);
 
     return { };
@@ -1960,7 +1940,7 @@ auto LLIntGenerator::addI31GetU(ExpressionType ref, ExpressionType& result) -> P
 auto LLIntGenerator::addArrayNew(uint32_t index, ExpressionType size, ExpressionType value, ExpressionType& result) -> PartialResult
 {
     result = push();
-    WasmArrayNew::emit(this, result, size, value, index, false /* useDefault */);
+    WasmArrayNew::emit(this, result, size, value, index, static_cast<bool>(UseDefaultValue::No));
 
     return { };
 }
@@ -1968,15 +1948,15 @@ auto LLIntGenerator::addArrayNew(uint32_t index, ExpressionType size, Expression
 auto LLIntGenerator::addArrayNewDefault(uint32_t index, ExpressionType size, ExpressionType& result) -> PartialResult
 {
     result = push();
-    WasmArrayNew::emit(this, result, size, ExpressionType(), index, true /* useDefault */);
+    WasmArrayNew::emit(this, result, size, ExpressionType(), index, static_cast<bool>(UseDefaultValue::Yes));
 
     return { };
 }
 
-auto LLIntGenerator::addArrayGet(uint32_t typeIndex, ExpressionType arrayref, ExpressionType index, ExpressionType& result) -> PartialResult
+auto LLIntGenerator::addArrayGet(ExtGCOpType arrayGetKind, uint32_t typeIndex, ExpressionType arrayref, ExpressionType index, ExpressionType& result) -> PartialResult
 {
     result = push();
-    WasmArrayGet::emit(this, result, arrayref, index, typeIndex);
+    WasmArrayGet::emit(this, result, arrayref, index, typeIndex, static_cast<unsigned>(arrayGetKind));
 
     return { };
 }
@@ -2010,9 +1990,17 @@ auto LLIntGenerator::addStructNew(uint32_t index, Vector<ExpressionType>& args, 
         arg = argLoc;
     }
 
-    WasmStructNew::emit(this, result, index, args.isEmpty() ? VirtualRegister() : args[0]);
+    WasmStructNew::emit(this, result, index, static_cast<bool>(UseDefaultValue::No), args.isEmpty() ? VirtualRegister() : args[0]);
 
     m_stackSize -= args.size();
+    return { };
+}
+
+auto LLIntGenerator::addStructNewDefault(uint32_t index, ExpressionType& result) -> PartialResult
+{
+    result = push();
+    WasmStructNew::emit(this, result, index, static_cast<bool>(UseDefaultValue::Yes), { });
+
     return { };
 }
 

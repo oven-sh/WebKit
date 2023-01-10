@@ -1665,7 +1665,7 @@ std::unique_ptr<WebKit::DrawingAreaProxy> WebViewImpl::createDrawingAreaProxy(We
 {
     switch (m_drawingAreaType) {
     case DrawingAreaType::TiledCoreAnimation:
-        return makeUnique<TiledCoreAnimationDrawingAreaProxy>(m_page, process);
+        return makeUnique<TiledCoreAnimationDrawingAreaProxy>(m_page);
     case DrawingAreaType::RemoteLayerTree:
         return makeUnique<RemoteLayerTreeDrawingAreaProxyMac>(m_page, process);
     }
@@ -2696,6 +2696,9 @@ void WebViewImpl::selectionDidChange()
     if (m_page->editorState().hasPostLayoutData())
         requestCandidatesForSelectionIfNeeded();
 #endif
+
+    if (m_page->editorState().hasPostLayoutData())
+        updateCaretDecorationPlacement();
 
     NSWindow *window = [m_view window];
     if (window.firstResponder == m_view.get().get()) {
@@ -5798,6 +5801,10 @@ void WebViewImpl::setEditableElementIsFocused(bool editableElementIsFocused)
 
 #if !USE(APPLE_INTERNAL_SDK)
 void WebViewImpl::setCaretDecorationVisibility(bool)
+{
+}
+
+void WebViewImpl::updateCaretDecorationPlacement()
 {
 }
 #endif

@@ -177,6 +177,22 @@ bool Quirks::hasBrokenEncryptedMediaAPISupportQuirk() const
     return m_hasBrokenEncryptedMediaAPISupportQuirk.value();
 }
 
+bool Quirks::shouldDisableContentChangeObserver() const
+{
+    if (!needsQuirks())
+        return false;
+    
+    auto& topDocument = m_document->topDocument();
+    
+    auto host = topDocument.url().host();
+    auto isYouTube = host.endsWith(".youtube.com"_s) || host == "youtube.com"_s;
+    
+    if (isYouTube && (topDocument.url().path().startsWithIgnoringASCIICase("/results"_s) || topDocument.url().path().startsWithIgnoringASCIICase("/watch"_s)))
+        return true;
+
+    return false;
+}
+
 bool Quirks::shouldDisableContentChangeObserverTouchEventAdjustment() const
 {
     if (!needsQuirks())
@@ -342,7 +358,7 @@ bool Quirks::isGoogleMaps() const
 
 bool Quirks::shouldDispatchSimulatedMouseEvents(const EventTarget* target) const
 {
-    if (DeprecatedGlobalSettings::mouseEventsSimulationEnabled())
+    if (m_document->settings().mouseEventsSimulationEnabled())
         return true;
 
     if (!needsQuirks())
@@ -1264,18 +1280,6 @@ bool Quirks::needsHDRPixelDepthQuirk() const
         m_needsHDRPixelDepthQuirk = equalLettersIgnoringASCIICase(m_document->url().host(), "www.youtube.com"_s);
 
     return *m_needsHDRPixelDepthQuirk;
-}
-
-// FIXME: remove this once rdar://92531240 has been fixed.
-bool Quirks::needsFlightAwareSerializationQuirk() const
-{
-    if (!needsQuirks())
-        return false;
-
-    if (!m_needsFlightAwareSerializationQuirk)
-        m_needsFlightAwareSerializationQuirk = equalLettersIgnoringASCIICase(m_document->url().host(), "flightaware.com"_s);
-
-    return *m_needsFlightAwareSerializationQuirk;
 }
 
 bool Quirks::requiresUserGestureToPauseInPictureInPicture() const

@@ -1579,28 +1579,32 @@ BackgroundBleedAvoidance RenderBox::determineBackgroundBleedAvoidance(GraphicsCo
     return BackgroundBleedUseTransparencyLayer;
 }
 
-ControlPart* RenderBox::ensureControlPartForRenderer()
+ControlPart* RenderBox::ensureControlPart()
 {
-    if (!theme().canCreateControlPartForRenderer(*this))
-        return nullptr;
-
     auto& rareData = ensureRareData();
-    if (!rareData.controlPart)
+    auto type = style().effectiveAppearance();
+
+    // Some form-controls may change because of zooming without recreating
+    // a new renderer (e.g Menulist <-> MenulistButton).
+    if (!rareData.controlPart || type != rareData.controlPart->type())
         rareData.controlPart = theme().createControlPart(*this);
 
     return rareData.controlPart.get();
 }
 
+ControlPart* RenderBox::ensureControlPartForRenderer()
+{
+    return theme().canCreateControlPartForRenderer(*this) ? ensureControlPart() : nullptr;
+}
+
 ControlPart* RenderBox::ensureControlPartForBorderOnly()
 {
-    if (!theme().canCreateControlPartForBorderOnly(*this))
-        return nullptr;
+    return theme().canCreateControlPartForBorderOnly(*this) ? ensureControlPart() : nullptr;
+}
 
-    auto& rareData = ensureRareData();
-    if (!rareData.controlPart)
-        rareData.controlPart = theme().createControlPart(*this);
-
-    return rareData.controlPart.get();
+ControlPart* RenderBox::ensureControlPartForDecorations()
+{
+    return theme().canCreateControlPartForDecorations(*this) ? ensureControlPart() : nullptr;
 }
 
 void RenderBox::paintBoxDecorations(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
@@ -1654,9 +1658,14 @@ void RenderBox::paintBoxDecorations(PaintInfo& paintInfo, const LayoutPoint& pai
 
         backgroundPainter.paintBackground(paintRect, bleedAvoidance);
 
-        if (style().hasEffectiveAppearance())
-            theme().paintDecorations(*this, paintInfo, paintRect);
+        if (style().hasEffectiveAppearance()) {
+            if (auto* control = ensureControlPartForDecorations())
+                theme().paint(*this, *control, paintInfo, paintRect);
+            else
+                theme().paintDecorations(*this, paintInfo, paintRect);
+        }
     }
+
     backgroundPainter.paintBoxShadow(paintRect, style(), ShadowStyle::Inset);
 
     if (bleedAvoidance != BackgroundBleedBackgroundOverBorder) {
@@ -2678,8 +2687,14 @@ void RenderBox::computeLogicalWidthInFragment(LogicalExtentComputedValues& compu
 
     // Margin calculations.
     if (hasPerpendicularContainingBlock || isFloating() || isInline()) {
-        computedValues.m_margins.m_start = minimumValueForLength(styleToUse.marginStart(), containerLogicalWidth);
-        computedValues.m_margins.m_end = minimumValueForLength(styleToUse.marginEnd(), containerLogicalWidth);
+        auto marginStartLength = styleToUse.marginStart();
+        auto marginEndLength = styleToUse.marginEnd();
+        computedValues.m_margins.m_start = computeOrTrimInlineMargin(cb, MarginTrimType::BlockStart, [containerLogicalWidth, marginStartLength]() {
+            return minimumValueForLength(marginStartLength, containerLogicalWidth);
+        });
+        computedValues.m_margins.m_end = computeOrTrimInlineMargin(cb, MarginTrimType::BlockEnd, [containerLogicalWidth, marginEndLength]() {
+            return minimumValueForLength(marginEndLength, containerLogicalWidth);
+        });
     } else {
         LayoutUnit containerLogicalWidthForAutoMargins = containerLogicalWidth;
         if (avoidsFloats() && cb.containsFloats())
@@ -2716,10 +2731,17 @@ LayoutUnit RenderBox::fillAvailableMeasure(LayoutUnit availableLogicalWidth) con
 
 LayoutUnit RenderBox::fillAvailableMeasure(LayoutUnit availableLogicalWidth, LayoutUnit& marginStart, LayoutUnit& marginEnd) const
 {
-    bool isOrthogonalElement = isHorizontalWritingMode() != containingBlock()->isHorizontalWritingMode();
+    auto* container = containingBlock();
+    bool isOrthogonalElement = isHorizontalWritingMode() != container->isHorizontalWritingMode();
+    auto marginStartLength = style().marginStart();
+    auto marginEndLength = style().marginEnd();
     LayoutUnit availableSizeForResolvingMargin = isOrthogonalElement ? containingBlockLogicalWidthForContent() : availableLogicalWidth;
-    marginStart = minimumValueForLength(style().marginStart(), availableSizeForResolvingMargin);
-    marginEnd = minimumValueForLength(style().marginEnd(), availableSizeForResolvingMargin);
+    marginStart = computeOrTrimInlineMargin(*container, MarginTrimType::InlineStart, [availableSizeForResolvingMargin, marginStartLength]() {
+        return minimumValueForLength(marginStartLength, availableSizeForResolvingMargin);
+    });
+    marginEnd = computeOrTrimInlineMargin(*container, MarginTrimType::InlineEnd, [availableSizeForResolvingMargin, marginEndLength]() {
+        return minimumValueForLength(marginEndLength, availableSizeForResolvingMargin);
+    });
     return availableLogicalWidth - marginStart - marginEnd;
 }
 
@@ -2916,6 +2938,14 @@ bool RenderBox::sizesLogicalWidthToFitContent(SizeType widthType) const
     return false;
 }
 
+LayoutUnit RenderBox::computeOrTrimInlineMargin(const RenderBlock& containingBlock, MarginTrimType marginSide, std::function<LayoutUnit()> computeInlineMargin) const
+{
+    ASSERT(computeInlineMargin);
+    if (containingBlock.shouldTrimChildMargin(marginSide, *this) || !computeInlineMargin)
+        return 0_lu;
+    return computeInlineMargin();
+}
+
 void RenderBox::computeInlineDirectionMargins(const RenderBlock& containingBlock, LayoutUnit containerWidth, LayoutUnit childWidth, LayoutUnit& marginStart, LayoutUnit& marginEnd) const
 {
     
@@ -2925,8 +2955,12 @@ void RenderBox::computeInlineDirectionMargins(const RenderBlock& containingBlock
 
     if (isFloating() || isInline()) {
         // Inline blocks/tables and floats don't have their margins increased.
-        marginStart = minimumValueForLength(marginStartLength, containerWidth);
-        marginEnd = minimumValueForLength(marginEndLength, containerWidth);
+        marginStart = computeOrTrimInlineMargin(containingBlock, MarginTrimType::InlineStart, [marginStartLength, containerWidth]() {
+            return minimumValueForLength(marginStartLength, containerWidth);
+        });
+        marginEnd = computeOrTrimInlineMargin(containingBlock, MarginTrimType::InlineStart, [marginEndLength, containerWidth] {
+            return minimumValueForLength(marginEndLength, containerWidth);
+        });
         return;
     }
 
@@ -2944,11 +2978,16 @@ void RenderBox::computeInlineDirectionMargins(const RenderBlock& containingBlock
     if ((marginStartLength.isAuto() && marginEndLength.isAuto() && childWidth < containerWidth)
         || (!marginStartLength.isAuto() && !marginEndLength.isAuto() && containingBlock.style().textAlign() == TextAlignMode::WebKitCenter)) {
         // Other browsers center the margin box for align=center elements so we match them here.
-        LayoutUnit marginStartWidth = minimumValueForLength(marginStartLength, containerWidth);
-        LayoutUnit marginEndWidth = minimumValueForLength(marginEndLength, containerWidth);
-        LayoutUnit centeredMarginBoxStart = std::max<LayoutUnit>(0, (containerWidth - childWidth - marginStartWidth - marginEndWidth) / 2);
-        marginStart = centeredMarginBoxStart + marginStartWidth;
-        marginEnd = containerWidth - childWidth - marginStart + marginEndWidth;
+        marginStart = computeOrTrimInlineMargin(containingBlock, MarginTrimType::InlineStart, [containerWidth, childWidth, marginStartLength, marginEndLength]() {
+            LayoutUnit marginStartWidth = minimumValueForLength(marginStartLength, containerWidth);
+            LayoutUnit marginEndWidth = minimumValueForLength(marginEndLength, containerWidth);
+            LayoutUnit centeredMarginBoxStart = std::max<LayoutUnit>(0, (containerWidth - childWidth - marginStartWidth - marginEndWidth) / 2);
+            return centeredMarginBoxStart + marginStartWidth;
+        });
+        marginEnd = computeOrTrimInlineMargin(containingBlock, MarginTrimType::InlineEnd, [containerWidth, childWidth, marginEndLength, marginStart]() {
+            LayoutUnit marginEndWidth = minimumValueForLength(marginEndLength, containerWidth);
+            return containerWidth - childWidth - marginStart + marginEndWidth;
+        });
         return;
     } 
     
@@ -2963,15 +3002,23 @@ void RenderBox::computeInlineDirectionMargins(const RenderBlock& containingBlock
     bool pushToEndFromTextAlign = !marginEndLength.isAuto() && ((!containingBlockStyle.isLeftToRightDirection() && containingBlockStyle.textAlign() == TextAlignMode::WebKitLeft)
         || (containingBlockStyle.isLeftToRightDirection() && containingBlockStyle.textAlign() == TextAlignMode::WebKitRight));
     if ((marginStartLength.isAuto() || pushToEndFromTextAlign) && childWidth < containerWidth) {
-        marginEnd = valueForLength(marginEndLength, containerWidth);
-        marginStart = containerWidth - childWidth - marginEnd;
+        marginEnd = computeOrTrimInlineMargin(containingBlock, MarginTrimType::InlineEnd, [containerWidth, marginEndLength]() {
+            return valueForLength(marginEndLength, containerWidth);
+        });
+        marginStart = computeOrTrimInlineMargin(containingBlock, MarginTrimType::InlineStart, [containerWidth, childWidth, marginEnd]() {
+            return containerWidth - childWidth - marginEnd;
+        });
         return;
     } 
     
     // Case Four: Either no auto margins, or our width is >= the container width (css2.1, 10.3.3).  In that case
     // auto margins will just turn into 0.
-    marginStart = minimumValueForLength(marginStartLength, containerWidth);
-    marginEnd = minimumValueForLength(marginEndLength, containerWidth);
+    marginStart = computeOrTrimInlineMargin(containingBlock, MarginTrimType::InlineStart, [containerWidth, marginStartLength] {
+        return minimumValueForLength(marginStartLength, containerWidth);
+    });
+    marginEnd = computeOrTrimInlineMargin(containingBlock, MarginTrimType::InlineEnd, [containerWidth, marginEndLength] {
+        return minimumValueForLength(marginEndLength, containerWidth);
+    });
 }
 
 RenderBoxFragmentInfo* RenderBox::renderBoxFragmentInfo(RenderFragmentContainer* fragment, RenderBoxFragmentInfoFlags cacheFlag) const
@@ -3646,9 +3693,8 @@ void RenderBox::computeBlockDirectionMargins(const RenderBlock& containingBlock,
     // Margins are calculated with respect to the logical width of
     // the containing block (8.3)
     LayoutUnit cw = containingBlockLogicalWidthForContent();
-    const RenderStyle& containingBlockStyle = containingBlock.style();
-    marginBefore = minimumValueForLength(style().marginBeforeUsing(&containingBlockStyle), cw);
-    marginAfter = minimumValueForLength(style().marginAfterUsing(&containingBlockStyle), cw);
+    marginBefore = constrainBlockMarginInAvailableSpaceOrTrim(containingBlock, cw, MarginTrimType::BlockStart);
+    marginAfter = constrainBlockMarginInAvailableSpaceOrTrim(containingBlock, cw, MarginTrimType::BlockEnd); 
 }
 
 void RenderBox::computeAndSetBlockDirectionMargins(const RenderBlock& containingBlock)
@@ -3658,6 +3704,15 @@ void RenderBox::computeAndSetBlockDirectionMargins(const RenderBlock& containing
     computeBlockDirectionMargins(containingBlock, marginBefore, marginAfter);
     containingBlock.setMarginBeforeForChild(*this, marginBefore);
     containingBlock.setMarginAfterForChild(*this, marginAfter);
+}
+
+LayoutUnit RenderBox::constrainBlockMarginInAvailableSpaceOrTrim(const RenderBox& containingBlock, LayoutUnit availableSpace, MarginTrimType marginSide) const
+{
+    ASSERT(marginSide == MarginTrimType::BlockStart || marginSide == MarginTrimType::BlockEnd);
+    if (containingBlock.shouldTrimChildMargin(marginSide, *this))
+        return 0_lu;
+    
+    return marginSide == MarginTrimType::BlockStart ? minimumValueForLength(style().marginBeforeUsing(&containingBlock.style()), availableSpace) : minimumValueForLength(style().marginAfterUsing(&containingBlock.style()), availableSpace);
 }
 
 LayoutUnit RenderBox::containingBlockLogicalWidthForPositioned(const RenderBoxModelObject& containingBlock, RenderFragmentContainer* fragment, bool checkForPerpendicularWritingMode) const

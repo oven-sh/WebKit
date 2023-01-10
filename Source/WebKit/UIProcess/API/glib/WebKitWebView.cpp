@@ -47,7 +47,6 @@
 #include "WebKitHitTestResultPrivate.h"
 #include "WebKitIconLoadingClient.h"
 #include "WebKitInputMethodContextPrivate.h"
-#include "WebKitInstallMissingMediaPluginsPermissionRequestPrivate.h"
 #include "WebKitJavascriptResultPrivate.h"
 #include "WebKitNavigationClient.h"
 #include "WebKitNotificationPrivate.h"
@@ -156,7 +155,7 @@ enum {
 
     INSECURE_CONTENT_DETECTED,
 
-#if PLATFORM(GTK)
+#if PLATFORM(GTK) && !USE(GTK4)
     WEB_PROCESS_CRASHED,
 #endif
     WEB_PROCESS_TERMINATED,
@@ -2774,16 +2773,6 @@ void webkitWebViewSelectionDidChange(WebKitWebView* webView)
     webkitEditorStateChanged(webView->priv->editorState.get(), getPage(webView).editorState());
 }
 
-void webkitWebViewRequestInstallMissingMediaPlugins(WebKitWebView* webView, InstallMissingMediaPluginsPermissionRequest& request)
-{
-#if ENABLE(VIDEO) && !USE(GSTREAMER_FULL)
-    GRefPtr<WebKitInstallMissingMediaPluginsPermissionRequest> installMediaPluginsPermissionRequest = adoptGRef(webkitInstallMissingMediaPluginsPermissionRequestCreate(request));
-    webkitWebViewMakePermissionRequest(webView, WEBKIT_PERMISSION_REQUEST(installMediaPluginsPermissionRequest.get()));
-#else
-    ASSERT_NOT_REACHED();
-#endif
-}
-
 WebKitWebsiteDataManager* webkitWebViewGetWebsiteDataManager(WebKitWebView* webView)
 {
     return webView->priv->websiteDataManager.get();
@@ -4576,7 +4565,7 @@ cairo_surface_t* webkit_web_view_get_snapshot_finish(WebKitWebView* webView, GAs
 
 void webkitWebViewWebProcessTerminated(WebKitWebView* webView, WebKitWebProcessTerminationReason reason)
 {
-#if PLATFORM(GTK)
+#if PLATFORM(GTK) && !USE(GTK4)
     if (reason == WEBKIT_WEB_PROCESS_CRASHED) {
         gboolean returnValue;
         g_signal_emit(webView, signals[WEB_PROCESS_CRASHED], 0, &returnValue);

@@ -117,8 +117,6 @@ const TestFeatures& TestOptions::defaults()
             { "NeedsSiteSpecificQuirks", false },
             { "NeedsStorageAccessFromFileURLsQuirk", false },
             { "OfflineWebApplicationCacheEnabled", true },
-            { "OffscreenCanvasEnabled", true },
-            { "OffscreenCanvasInWorkersEnabled", true },
             { "PageVisibilityBasedProcessSuppressionEnabled", false },
             { "PdfJSViewerEnabled", false },
             { "PluginsEnabled", true },
@@ -134,7 +132,6 @@ const TestFeatures& TestOptions::defaults()
             { "UsesBackForwardCache", false },
             { "WebAuthenticationEnabled", true },
             { "WebRTCRemoteVideoFrameEnabled", true },
-            { "WebRTCMDNSICECandidatesEnabled", false },
             { "XSSAuditorEnabled", false },
 #if PLATFORM(IOS_FAMILY_SIMULATOR)
             { "VP9DecoderEnabled", false },

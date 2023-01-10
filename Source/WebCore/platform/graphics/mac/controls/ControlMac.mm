@@ -52,12 +52,95 @@ bool ControlMac::userPrefersContrast()
     return [[NSWorkspace sharedWorkspace] accessibilityDisplayShouldIncreaseContrast];
 }
 
-void ControlMac::setFocusRingClipRect(const FloatRect& clipBounds)
+FloatRect ControlMac::inflatedRect(const FloatRect& bounds, const FloatSize& size, const IntOutsets& outsets, const ControlStyle& style)
 {
-    [WebControlView setClipBounds:clipBounds];
+    auto scaledOutsets = FloatBoxExtent {
+        outsets.top() * style.zoomFactor,
+        outsets.right() * style.zoomFactor,
+        outsets.bottom() * style.zoomFactor,
+        outsets.left() * style.zoomFactor
+    };
+
+    auto inflatedRect = FloatRect { bounds.location(), size };
+    inflatedRect.expand(scaledOutsets);
+    return unionRect(bounds, inflatedRect);
 }
 
-NSControlSize ControlMac::calculateControlSize(const FloatSize& size, const ControlStyle& style) const
+void ControlMac::updateCheckedState(NSCell *cell, const ControlStyle& style)
+{
+    bool oldIndeterminate = [cell state] == NSControlStateValueMixed;
+    bool indeterminate = style.states.contains(ControlStyle::State::Indeterminate);
+
+    bool oldChecked = [cell state] == NSControlStateValueOn;
+    bool checked = style.states.contains(ControlStyle::State::Checked);
+
+    if (oldIndeterminate == indeterminate && oldChecked == checked)
+        return;
+
+    auto newState = indeterminate ? NSControlStateValueMixed : (checked ? NSControlStateValueOn : NSControlStateValueOff);
+
+    if ([cell isKindOfClass:[NSButtonCell class]])
+        [(NSButtonCell *)cell _setState:newState animated:false];
+    else
+        [cell setState:newState];
+}
+
+void ControlMac::updateEnabledState(NSCell *cell, const ControlStyle& style)
+{
+    bool oldEnabled = [cell isEnabled];
+    bool enabled = style.states.contains(ControlStyle::State::Enabled);
+    if (enabled == oldEnabled)
+        return;
+    [cell setEnabled:enabled];
+}
+
+void ControlMac::updateFocusedState(NSCell *cell, const ControlStyle& style)
+{
+    bool oldFocused = [cell showsFirstResponder];
+    bool focused = style.states.contains(ControlStyle::State::Focused);
+    if (focused == oldFocused)
+        return;
+    [cell setShowsFirstResponder:focused];
+}
+
+void ControlMac::updatePressedState(NSCell *cell, const ControlStyle& style)
+{
+    bool oldPressed = [cell isHighlighted];
+    bool pressed = style.states.contains(ControlStyle::State::Pressed);
+    if (pressed == oldPressed)
+        return;
+
+    if ([cell isKindOfClass:[NSButtonCell class]])
+        [(NSButtonCell *)cell _setHighlighted:pressed animated:false];
+    else
+        [cell setHighlighted:pressed];
+}
+
+NSControlSize ControlMac::controlSizeForFont(const ControlStyle& style) const
+{
+    bool supportsLargeFormControls = style.states.contains(ControlStyle::State::LargeControls);
+    if (style.fontSize >= 21 && supportsLargeFormControls)
+        return NSControlSizeLarge;
+    if (style.fontSize >= 16)
+        return NSControlSizeRegular;
+    if (style.fontSize >= 11)
+        return NSControlSizeSmall;
+    return NSControlSizeMini;
+}
+
+NSControlSize ControlMac::controlSizeForSystemFont(const ControlStyle& style) const
+{
+    bool supportsLargeFormControls = style.states.contains(ControlStyle::State::LargeControls);
+    if (style.fontSize >= [NSFont systemFontSizeForControlSize:NSControlSizeLarge] && supportsLargeFormControls)
+        return NSControlSizeLarge;
+    if (style.fontSize >= [NSFont systemFontSizeForControlSize:NSControlSizeRegular])
+        return NSControlSizeRegular;
+    if (style.fontSize >= [NSFont systemFontSizeForControlSize:NSControlSizeSmall])
+        return NSControlSizeSmall;
+    return NSControlSizeMini;
+}
+
+NSControlSize ControlMac::controlSizeForSize(const FloatSize& size, const ControlStyle& style) const
 {
     if (style.states.contains(ControlStyle::State::LargeControls)
         && size.width() >= static_cast<int>(cellSize(NSControlSizeLarge, style).width() * style.zoomFactor)
@@ -75,9 +158,22 @@ NSControlSize ControlMac::calculateControlSize(const FloatSize& size, const Cont
     return NSControlSizeMini;
 }
 
+IntSize ControlMac::sizeForSystemFont(const ControlStyle& style) const
+{
+    auto controlSize = controlSizeForSystemFont(style);
+    auto size = cellSize(controlSize, style);
+    size.scale(style.zoomFactor);
+    return size;
+}
+
+void ControlMac::setFocusRingClipRect(const FloatRect& clipBounds)
+{
+    [WebControlView setClipBounds:clipBounds];
+}
+
 void ControlMac::updateCellStates(const FloatRect&, const ControlStyle& style)
 {
-    [WebControlWindow setHasKeyAppearance:!style.states.contains(ControlStyle::State::WindowInactive)];
+    [WebControlWindow setHasKeyAppearance:style.states.contains(ControlStyle::State::WindowActive)];
 }
 
 static void drawFocusRing(NSRect cellFrame, NSCell *cell, NSView *view)
@@ -135,19 +231,26 @@ void ControlMac::drawCell(GraphicsContext& context, const FloatRect& rect, float
         return;
     }
 
-    auto imageBufferRect = FloatRect { { 0, 0 }, rect.size() };
+    static constexpr float focusRingOutlineWidth = 3;
+    auto focusRingPadding = FloatSize { focusRingOutlineWidth, focusRingOutlineWidth };
 
-    auto imageBuffer = context.createImageBuffer(rect.size(), deviceScaleFactor);
+    auto cellDrawingRect = FloatRect { toFloatPoint(focusRingPadding), rect.size() };
+    auto imageBufferSize = cellDrawingRect.size() + 2 * focusRingPadding;
+
+    auto imageBuffer = context.createImageBuffer(imageBufferSize, deviceScaleFactor);
     if (!imageBuffer)
         return;
 
-    drawCellOrFocusRing(imageBuffer->context(), imageBufferRect, style, cell, view, drawCell);
-    context.drawConsumingImageBuffer(WTFMove(imageBuffer), rect.location());
+    drawCellOrFocusRing(imageBuffer->context(), cellDrawingRect, style, cell, view, drawCell);
+    context.drawConsumingImageBuffer(WTFMove(imageBuffer), rect.location() - focusRingPadding);
 }
 
 #if ENABLE(DATALIST_ELEMENT)
 void ControlMac::drawListButton(GraphicsContext& context, const FloatRect& rect, float deviceScaleFactor, const ControlStyle& style)
 {
+    if (!style.states.contains(ControlStyle::State::ListButton))
+        return;
+
     // We can't paint an NSComboBoxCell since they are not height-resizable.
     LocalDefaultSystemAppearance localAppearance(style.states.contains(ControlStyle::State::DarkAppearance), style.accentColor);
 

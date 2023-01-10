@@ -1,4 +1,4 @@
-# Copyright (C) 2022 Apple Inc. All rights reserved.
+# Copyright (C) 2022-2023 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -961,6 +961,14 @@ struct WebCore::PublicKeyCredentialDescriptor {
 };
 #endif // ENABLE(WEB_AUTHN)
 
+#if ENABLE(WEB_AUTHN)
+enum class WebCore::AttestationConveyancePreference : uint8_t {
+    None,
+    Indirect,
+    Direct
+};
+#endif
+
 struct WebCore::PublicKeyCredentialCreationOptions {
 #if ENABLE(WEB_AUTHN)
     WebCore::PublicKeyCredentialCreationOptions::RpEntity rp;
@@ -1156,7 +1164,7 @@ struct WebCore::ExceptionDetails {
 };
 
 header: <WebCore/RectEdges.h>
-[Alias=RectEdges<float>, CustomHeader] alias WebCore::FloatBoxExtent {
+[Alias=RectEdges<float>, AdditionalEncoder=StreamConnectionEncoder, CustomHeader] alias WebCore::FloatBoxExtent {
     float top()
     float right()
     float bottom()
@@ -1574,6 +1582,7 @@ enum class WebCore::AlphaPremultiplication : uint8_t {
 
 enum class WebCore::PixelFormat : uint8_t {
     RGBA8,
+    BGRX8,
     BGRA8,
     RGB10,
     RGB10A8,
@@ -2338,7 +2347,7 @@ enum class WebCore::FetchHeadersGuard : uint8_t {
     Enabled,
     Checked,
     Default,
-    WindowInactive,
+    WindowActive,
     Indeterminate,
     SpinUp,
     Presenting,
@@ -2348,7 +2357,8 @@ enum class WebCore::FetchHeadersGuard : uint8_t {
     LargeControls,
     ReadOnly,
     ListButton,
-    ListButtonPressed
+    ListButtonPressed,
+    VerticalWritingMode
 };
 
 [AdditionalEncoder=StreamConnectionEncoder] struct WebCore::ControlStyle {
@@ -2356,10 +2366,12 @@ enum class WebCore::FetchHeadersGuard : uint8_t {
     unsigned fontSize;
     float zoomFactor;
     WebCore::Color accentColor;
+    WebCore::Color textColor;
+    WebCore::FloatBoxExtent borderWidth;
 };
 
-enum class WebCore::ControlPartType : uint8_t {
-    NoControl,
+enum class WebCore::StyleAppearance : uint8_t {
+    None,
     Auto,
     Checkbox,
     Radio,
@@ -2414,4 +2426,64 @@ enum class WebCore::ControlPartType : uint8_t {
     double value();
     double minimum();
     double maximum();
+};
+
+[Return=Ref, AdditionalEncoder=StreamConnectionEncoder] class WebCore::ProgressBarPart {
+    double position();
+    Seconds animationStartTime();
+};
+
+[Return=Ref, AdditionalEncoder=StreamConnectionEncoder] class WebCore::SliderTrackPart {
+    WebCore::StyleAppearance type();
+    WebCore::IntSize thumbSize();
+    WebCore::IntRect trackBounds();
+    Vector<double> tickRatios();
+}
+
+enum class WebCore::HasInsecureContent : bool
+
+header: <WebCore/ModalContainerTypes.h>
+[CustomHeader] enum class WebCore::ModalContainerDecision : uint8_t {
+    Show,
+    HideAndIgnore,
+    HideAndAllow,
+    HideAndDisallow,
+};
+
+[OptionSet] enum class WebCore::AutoplayEventFlags : uint8_t {
+    HasAudio,
+    PlaybackWasPrevented,
+    MediaIsMainContent,
+};
+
+header: <WebCore/FocusDirection.h>
+enum class WebCore::FocusDirection : uint8_t {
+    None,
+    Forward,
+    Backward,
+    Up,
+    Down,
+    Left,
+    Right
+};
+
+#if ENABLE(GAMEPAD)
+struct WebCore::GamepadEffectParameters {
+    double duration;
+    double startDelay;
+    double strongMagnitude;
+    double weakMagnitude;
+};
+
+header: <WebCore/GamepadHapticEffectType.h>
+enum class WebCore::GamepadHapticEffectType : uint8_t {
+    DualRumble,
+    TriggerRumble
+};
+#endif
+
+header: <WebCore/StorageEstimate.h>
+struct WebCore::StorageEstimate {
+    uint64_t usage
+    uint64_t quota
 };

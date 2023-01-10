@@ -216,18 +216,37 @@ void LineLayout::updateListMarkerDimensions(const RenderListMarker& listMarker)
 
     auto& layoutBox = m_boxTree.layoutBoxForRenderer(listMarker);
     if (layoutBox.isListMarkerOutside()) {
-        auto* associatedListItem = listMarker.listItem();
-        auto markerLogicalOffset = LayoutUnit { };
-        for (auto* ancestor = listMarker.containingBlock(); ancestor; ancestor = ancestor->containingBlock()) {
-            markerLogicalOffset -= (ancestor->borderStart() + ancestor->paddingStart());
-            if (ancestor == associatedListItem)
-                break;
-        }
-        if (markerLogicalOffset) {
+        auto* ancestor = listMarker.containingBlock();
+        auto offsetFromParentListItem = [&] {
+            auto offset = LayoutUnit { };
+            for (; ancestor; ancestor = ancestor->containingBlock()) {
+                offset -= (ancestor->borderStart() + ancestor->paddingStart());
+                if (is<RenderListItem>(*ancestor))
+                    break;
+            }
+            return offset;
+        }();
+        auto offsetFromAssociatedListItem = [&] {
+            auto* associatedListItem = listMarker.listItem();
+            if (ancestor == associatedListItem || !ancestor) {
+                // FIXME: Handle column spanner case when ancestor is null_ptr here.
+                return offsetFromParentListItem;
+            }
+            auto offset = offsetFromParentListItem;
+            for (ancestor = ancestor->containingBlock(); ancestor; ancestor = ancestor->containingBlock()) {
+                offset -= (ancestor->borderStart() + ancestor->paddingStart());
+                if (ancestor == associatedListItem)
+                    break;
+            }
+            return offset;
+        }();
+        if (offsetFromAssociatedListItem) {
             auto& listMarkerGeometry = m_inlineFormattingState.boxGeometry(layoutBox);
             // Make sure that the line content does not get pulled in to logical left direction due to
             // the large negative margin (i.e. this ensures that logical left of the list content stays at the line start)
-            listMarkerGeometry.setHorizontalMargin({ listMarkerGeometry.marginStart() + markerLogicalOffset, listMarkerGeometry.marginEnd() - markerLogicalOffset });
+            listMarkerGeometry.setHorizontalMargin({ listMarkerGeometry.marginStart() + offsetFromParentListItem, listMarkerGeometry.marginEnd() - offsetFromParentListItem });
+            if (auto nestedOffset = offsetFromAssociatedListItem - offsetFromParentListItem)
+                m_inlineFormattingState.addNestedListMarkerOffset(layoutBox, nestedOffset);
         }
     }
 }
@@ -506,7 +525,12 @@ void LineLayout::layout()
     // FIXME: Do not clear the lines and boxes here unconditionally, but consult with the damage object instead.
     clearInlineContent();
     ASSERT(m_inlineContentConstraints);
-    auto blockLayoutState = Layout::BlockLayoutState { m_blockFormattingState.floatingState(), lineClamp(flow()), leadingTrim(flow()) };
+    auto intrusiveInitialLetterBottom = [&]() -> std::optional<LayoutUnit> {
+        if (auto lowestInitialLetterLogicalBottom = flow().lowestInitialLetterLogicalBottom())
+            return { *lowestInitialLetterLogicalBottom - m_inlineContentConstraints->logicalTop() };
+        return { };
+    };
+    auto blockLayoutState = Layout::BlockLayoutState { m_blockFormattingState.floatingState(), lineClamp(flow()), leadingTrim(flow()), intrusiveInitialLetterBottom() };
     Layout::InlineFormattingContext { rootLayoutBox, m_inlineFormattingState, m_lineDamage.get() }.layoutInFlowContentForIntegration(*m_inlineContentConstraints, blockLayoutState);
 
     constructContent();
@@ -519,6 +543,7 @@ void LineLayout::constructContent()
     if (!m_inlineFormattingState.lines().isEmpty()) {
         InlineContentBuilder { flow(), m_boxTree }.build(m_inlineFormattingState, ensureInlineContent());
         ASSERT(m_inlineContent);
+        m_inlineContent->clearGapBeforeFirstLine = m_inlineFormattingState.clearGapBeforeFirstLine();
         m_inlineContent->clearGapAfterLastLine = m_inlineFormattingState.clearGapAfterLastLine();
         m_inlineContent->shrinkToFit();
     }
@@ -575,6 +600,7 @@ void LineLayout::constructContent()
     }
 
     m_inlineFormattingState.shrinkToFit();
+    m_inlineFormattingState.resetNestedListMarkerOffsets();
 }
 
 void LineLayout::updateInlineContentConstraints()
@@ -685,7 +711,7 @@ LayoutUnit LineLayout::contentLogicalHeight() const
     auto flippedContentHeightForWritingMode = rootLayoutBox().style().isHorizontalWritingMode()
         ? lines.last().lineBoxBottom() - lines.first().lineBoxTop()
         : lines.last().lineBoxRight() - lines.first().lineBoxLeft();
-    return LayoutUnit { flippedContentHeightForWritingMode + m_inlineContent->clearGapAfterLastLine };
+    return LayoutUnit { m_inlineContent->clearGapBeforeFirstLine + flippedContentHeightForWritingMode + m_inlineContent->clearGapAfterLastLine };
 }
 
 size_t LineLayout::lineCount() const

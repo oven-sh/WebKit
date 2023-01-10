@@ -742,6 +742,9 @@ css/CSSComputedStyleDeclaration.cpp
 css/CSSConditionRule.cpp
 css/CSSContainerRule.cpp
 css/CSSContentDistributionValue.cpp
+css/CSSCounterStyle.cpp
+css/CSSCounterStyleDescriptors.cpp
+css/CSSCounterStyleRegistry.cpp
 css/CSSCounterStyleRule.cpp
 css/CSSCrossfadeValue.cpp
 css/CSSCursorImageValue.cpp
@@ -1245,6 +1248,7 @@ html/EnterKeyHint.cpp
 html/FTPDirectoryDocument.cpp
 html/FeaturePolicy.cpp
 html/FileInputType.cpp
+html/FormAssociatedCustomElement.cpp
 html/FormController.cpp
 html/FormListedElement.cpp
 html/GenericCachedHTMLCollection.cpp
@@ -1274,7 +1278,7 @@ html/HTMLEmbedElement.cpp
 html/HTMLFieldSetElement.cpp
 html/HTMLFontElement.cpp
 html/HTMLFormControlElement.cpp
-html/HTMLFormControlElementWithState.cpp
+html/HTMLMaybeFormAssociatedCustomElement.cpp
 html/HTMLFormControlsCollection.cpp
 html/HTMLFormElement.cpp
 html/HTMLFrameElement.cpp
@@ -1391,6 +1395,7 @@ html/URLInputType.cpp
 html/URLRegistry.cpp
 html/URLSearchParams.cpp
 html/UserActivation.cpp
+html/ValidatedFormListedElement.cpp
 html/ValidationMessage.cpp
 html/WeekInputType.cpp
 html/canvas/ANGLEInstancedArrays.cpp
@@ -2200,9 +2205,10 @@ platform/graphics/WOFFFileFormat.cpp
 platform/graphics/WidthIterator.cpp
 platform/graphics/controls/ControlFactory.cpp
 platform/graphics/controls/ControlPart.cpp
-platform/graphics/controls/ControlPartType.cpp
 platform/graphics/controls/ControlStyle.cpp
 platform/graphics/controls/MeterPart.cpp
+platform/graphics/controls/ProgressBarPart.cpp
+platform/graphics/controls/SliderTrackPart.cpp
 platform/graphics/cpu/arm/filters/FEBlendNeonApplier.cpp
 platform/graphics/displaylists/DisplayList.cpp
 platform/graphics/displaylists/DisplayListDrawingContext.cpp
@@ -2711,6 +2717,7 @@ style/RuleFeature.cpp
 style/RuleSet.cpp
 style/RuleSetBuilder.cpp
 style/StyleAdjuster.cpp
+style/StyleAppearance.cpp
 style/StyleBuilder.cpp
 style/StyleBuilderState.cpp
 style/StyleChange.cpp
@@ -3450,6 +3457,9 @@ JSGPUVertexStepMode.cpp
 JSGainNode.cpp
 JSGainOptions.cpp
 JSGamepad.cpp
+JSGamepadEffectParameters.cpp
+JSGamepadHapticActuator.cpp
+JSGamepadHapticEffectType.cpp
 JSGamepadButton.cpp
 JSGamepadEvent.cpp
 JSGeolocation.cpp
@@ -4141,6 +4151,7 @@ JSVTTCue.cpp
 JSVTTRegion.cpp
 JSVTTRegionList.cpp
 JSValidityState.cpp
+JSValidityStateFlags.cpp
 JSVideoColorPrimaries.cpp
 JSVideoColorSpace.cpp
 JSVideoColorSpaceInit.cpp

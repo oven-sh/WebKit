@@ -1,5 +1,5 @@
 // Copyright 2016 The Chromium Authors. All rights reserved.
-// Copyright (C) 2016-2021 Apple Inc. All rights reserved.
+// Copyright (C) 2016-2023 Apple Inc. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -49,9 +49,6 @@
 #include "CSSFontVariantAlternatesValue.h"
 #include "CSSFontVariantLigaturesParser.h"
 #include "CSSFontVariantNumericParser.h"
-#if ENABLE(VARIATION_FONTS)
-#include "CSSFontVariationValue.h"
-#endif
 #include "CSSFunctionValue.h"
 #include "CSSGradientValue.h"
 #include "CSSGridAutoRepeatValue.h"
@@ -81,7 +78,6 @@
 #include "ColorLuminance.h"
 #include "ColorNormalization.h"
 #include "Counter.h"
-#include "DeprecatedGlobalSettings.h"
 #include "FontFace.h"
 #include "Logging.h"
 #include "Pair.h"
@@ -4298,9 +4294,9 @@ static RefPtr<CSSValue> consumeFilterImage(CSSParserTokenRange& args, const CSSP
 }
 
 #if ENABLE(CSS_PAINTING_API)
-static RefPtr<CSSValue> consumeCustomPaint(CSSParserTokenRange& args)
+static RefPtr<CSSValue> consumeCustomPaint(CSSParserTokenRange& args, const CSSParserContext& context)
 {
-    if (!DeprecatedGlobalSettings::cssPaintingAPIEnabled())
+    if (!context.cssPaintingAPIEnabled)
         return nullptr;
     if (args.peek().type() != IdentToken)
         return nullptr;
@@ -4354,7 +4350,7 @@ static RefPtr<CSSValue> consumeGeneratedImage(CSSParserTokenRange& range, const 
         result = consumeFilterImage(args, context);
 #if ENABLE(CSS_PAINTING_API)
     else if (id == CSSValuePaint)
-        result = consumeCustomPaint(args);
+        result = consumeCustomPaint(args, context);
 #endif
     if (!result || !args.atEnd())
         return nullptr;
@@ -5101,50 +5097,6 @@ RefPtr<CSSValue> consumeWillChange(CSSParserTokenRange& range, const CSSParserCo
 
     return values;
 }
-
-#if ENABLE(VARIATION_FONTS)
-
-static RefPtr<CSSValue> consumeFontVariationTag(CSSParserTokenRange& range)
-{
-    if (range.peek().type() != StringToken)
-        return nullptr;
-    
-    auto string = range.consumeIncludingWhitespace().value();
-    
-    FontTag tag;
-    if (string.length() != tag.size())
-        return nullptr;
-    for (unsigned i = 0; i < tag.size(); ++i) {
-        // Limits the range of characters to 0x20-0x7E, following the tag name rules defiend in the OpenType specification.
-        UChar character = string[i];
-        if (character < 0x20 || character > 0x7E)
-            return nullptr;
-        tag[i] = character;
-    }
-    
-    if (range.atEnd())
-        return nullptr;
-
-    auto tagValue = consumeNumberRaw(range);
-    if (!tagValue)
-        return nullptr;
-    
-    return CSSFontVariationValue::create(tag, tagValue->value);
-}
-
-RefPtr<CSSValue> consumeFontVariationSettings(CSSParserTokenRange& range)
-{
-    if (range.peek().id() == CSSValueNormal)
-        return consumeIdent(range);
-    
-    auto settings = consumeCommaSeparatedListWithoutSingleValueOptimization(range, consumeFontVariationTag);
-    if (!settings || !settings->length())
-        return nullptr;
-
-    return settings;
-}
-
-#endif // ENABLE(VARIATION_FONTS)
 
 RefPtr<CSSValue> consumeQuotes(CSSParserTokenRange& range)
 {
@@ -7265,6 +7217,46 @@ template<CSSPropertyID property> RefPtr<CSSValue> consumeBackgroundSize(CSSParse
     return createPrimitiveValuePair(horizontal.releaseNonNull(), vertical.releaseNonNull(), identicalValueEncoding);
 }
 
+RefPtr<CSSValueList> consumeAlignTracks(CSSParserTokenRange& range)
+{    
+    RefPtr<CSSValueList> parsedValues = CSSValueList::createCommaSeparated();
+
+    do {
+        if (range.atEnd())
+            break;
+
+        auto value = consumeContentDistributionOverflowPosition(range, isContentPositionKeyword);
+        if (value)
+            parsedValues->append(value.releaseNonNull());
+        else
+            return nullptr;
+    } while (consumeCommaIncludingWhitespace(range));
+
+    return parsedValues;
+}
+
+RefPtr<CSSValueList> consumeJustifyTracks(CSSParserTokenRange& range)
+{    
+    RefPtr<CSSValueList> parsedValues = CSSValueList::createCommaSeparated();
+
+    do {
+        if (range.atEnd())
+            break;
+
+        // justify-tracks property does not allow the <baseline-position> values.
+        if (isBaselineKeyword(range.peek().id()))
+            return nullptr;
+
+        auto value = consumeContentDistributionOverflowPosition(range, isContentPositionOrLeftOrRightKeyword);
+        if (value)
+            parsedValues->append(value.releaseNonNull());
+        else
+            return nullptr;
+    } while (consumeCommaIncludingWhitespace(range));
+
+    return parsedValues;
+}
+
 RefPtr<CSSValue> consumeGridAutoFlow(CSSParserTokenRange& range)
 {
     RefPtr<CSSPrimitiveValue> rowOrColumnValue = consumeIdent<CSSValueRow, CSSValueColumn>(range);
@@ -8271,6 +8263,8 @@ RefPtr<CSSValue> consumeCounterStyleSystem(CSSParserTokenRange& range)
     }
 
     if (auto ident = consumeIdent<CSSValueExtends>(range)) {
+        // FIXME: (rdar://103020193) "If a @counter-style uses the extends system, it must not contain a symbols or additive-symbols descriptor, or else the @counter-style rule is invalid." (https://www.w3.org/TR/css-counter-styles-3/#extends-system)
+
         // There must be a `<counter-style-name>` following the `extends` keyword. If there isn't, this value is invalid.
         auto parsedCounterStyleName = consumeCounterStyleName(range);
         if (!parsedCounterStyleName)

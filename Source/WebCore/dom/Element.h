@@ -60,6 +60,8 @@ class Document;
 class ElementAnimationRareData;
 class ElementData;
 class ElementRareData;
+class FormAssociatedCustomElement;
+class FormListedElement;
 class Frame;
 class HTMLDocument;
 class IntSize;
@@ -79,9 +81,10 @@ class StylePropertyMap;
 class StylePropertyMapReadOnly;
 class Text;
 class UniqueElementData;
+class ValidatedFormListedElement;
 class WebAnimation;
 
-enum class AnimationImpact;
+enum class AnimationImpact : uint8_t;
 enum class EventHandling : uint8_t;
 enum class EventProcessing : uint8_t;
 enum class FullscreenNavigationUI : uint8_t;
@@ -104,8 +107,8 @@ using ExplicitlySetAttrElementsMap = HashMap<QualifiedName, Vector<WeakPtr<Eleme
 namespace Style {
 class Resolver;
 enum class Change : uint8_t;
-struct ElementStyle;
 struct ResolutionContext;
+struct ResolvedStyle;
 }
 
 class Element : public ContainerNode {
@@ -309,6 +312,8 @@ public:
     void parserSetAttributes(const Vector<Attribute>&);
 
     bool isEventHandlerAttribute(const Attribute&) const;
+    virtual FormListedElement* asFormListedElement();
+    virtual ValidatedFormListedElement* asValidatedFormListedElement();
     virtual bool attributeContainsJavaScriptURL(const Attribute&) const;
 
     // Remove attributes that might introduce scripting from the vector leaving the element unchanged.
@@ -498,6 +503,8 @@ public:
 
     virtual bool matchesValidPseudoClass() const;
     virtual bool matchesInvalidPseudoClass() const;
+    virtual bool matchesUserValidPseudoClass() const;
+    virtual bool matchesUserInvalidPseudoClass() const;
     virtual bool matchesReadWritePseudoClass() const;
     virtual bool matchesIndeterminatePseudoClass() const;
     virtual bool matchesDefaultPseudoClass() const;
@@ -516,8 +523,10 @@ public:
     virtual bool isMediaElement() const { return false; }
 #endif
 
+    virtual bool isFormListedElement() const { return false; }
+    virtual bool isValidatedFormListedElement() const { return false; }
     virtual bool isFormControlElement() const { return false; }
-    virtual bool isFormControlElementWithState() const { return false; }
+    virtual bool isMaybeFormAssociatedCustomElement() const { return false; }
     virtual bool isSpinButtonElement() const { return false; }
     virtual bool isTextFormControlElement() const { return false; }
     virtual bool isTextField() const { return false; }
@@ -560,6 +569,7 @@ public:
     void cssAnimationsDidUpdate(PseudoId);
     void keyframesRuleDidChange(PseudoId);
     bool hasPendingKeyframesUpdate(PseudoId) const;
+    // FIXME: do we need a counter style didChange here? (rdar://103018993).
 
     bool isInTopLayer() const { return hasNodeFlag(NodeFlag::IsInTopLayer); }
     void addToTopLayer();
@@ -615,7 +625,7 @@ public:
     virtual void didAttachRenderers();
     virtual void willDetachRenderers();
     virtual void didDetachRenderers();
-    virtual std::optional<Style::ElementStyle> resolveCustomStyle(const Style::ResolutionContext&, const RenderStyle* shadowHostStyle);
+    virtual std::optional<Style::ResolvedStyle> resolveCustomStyle(const Style::ResolutionContext&, const RenderStyle* shadowHostStyle);
 
     LayoutRect absoluteEventHandlerBounds(bool& includesFixedPositionElements) override;
 
@@ -637,7 +647,7 @@ public:
 #endif
 
     Style::Resolver& styleResolver();
-    Style::ElementStyle resolveStyle(const Style::ResolutionContext&);
+    Style::ResolvedStyle resolveStyle(const Style::ResolutionContext&);
 
     // Invalidates the style of a single element. Style is resolved lazily.
     // Descendant elements are resolved as needed, for example if an inherited property changes.
@@ -696,8 +706,8 @@ public:
     String description() const override;
     String debugDescription() const override;
 
-    bool hasDuplicateAttribute() const { return m_hasDuplicateAttribute; };
-    void setHasDuplicateAttribute(bool hasDuplicateAttribute) { m_hasDuplicateAttribute = hasDuplicateAttribute; };
+    bool hasDuplicateAttribute() const;
+    void setHasDuplicateAttribute(bool);
 
     virtual void updateUserAgentShadowTree() { }
 
@@ -706,8 +716,8 @@ public:
     ExplicitlySetAttrElementsMap& explicitlySetAttrElementsMap();
     ExplicitlySetAttrElementsMap* explicitlySetAttrElementsMapIfExists() const;
 
-    bool displayContentsChanged() const { return m_displayContentsChanged; }
-    void setDisplayContentsChanged(bool changed = true) { m_displayContentsChanged = changed; }
+    bool displayContentsChanged() const;
+    void setDisplayContentsChanged(bool = true);
 
 protected:
     Element(const QualifiedName&, Document&, ConstructionType);
@@ -729,6 +739,9 @@ protected:
 
     StylePropertyMap* attributeStyleMap();
     void setAttributeStyleMap(Ref<StylePropertyMap>&&);
+
+    FormAssociatedCustomElement& formAssociatedCustomElementUnsafe() const;
+    void ensureFormAssociatedCustomElement();
 
     void updateLabel(TreeScope&, const AtomString& oldForAttributeValue, const AtomString& newForAttributeValue);
 
@@ -831,11 +844,6 @@ private:
 
     QualifiedName m_tagName;
     RefPtr<ElementData> m_elementData;
-
-    // FIXME: these flags should move somewhere else and then we should have a static assert on
-    // Element size and ideally stick to that size.
-    bool m_hasDuplicateAttribute { false };
-    bool m_displayContentsChanged { false };
 };
 
 inline void Element::setSavedLayerScrollPosition(const IntPoint& position)

@@ -69,6 +69,7 @@ enum class StorageType : uint8_t;
 
 namespace WebKit {
 
+enum class UnifiedOriginStorageLevel : uint8_t;
 class FileSystemStorageHandleRegistry;
 class IDBStorageRegistry;
 class StorageAreaBase;
@@ -76,7 +77,7 @@ class StorageAreaRegistry;
 
 class NetworkStorageManager final : public IPC::WorkQueueMessageReceiver {
 public:
-    static Ref<NetworkStorageManager> create(PAL::SessionID, IPC::Connection::UniqueID, const String& path, const String& customLocalStoragePath, const String& customIDBStoragePath, const String& customCacheStoragePath, uint64_t defaultOriginQuota, uint64_t defaultThirdPartyOriginQuota, bool shouldUseCustomPaths);
+    static Ref<NetworkStorageManager> create(PAL::SessionID, IPC::Connection::UniqueID, const String& path, const String& customLocalStoragePath, const String& customIDBStoragePath, const String& customCacheStoragePath, uint64_t defaultOriginQuota, uint64_t defaultThirdPartyOriginQuota, UnifiedOriginStorageLevel);
     static bool canHandleTypes(OptionSet<WebsiteDataType>);
 
     void startReceivingMessageFromConnection(IPC::Connection&);
@@ -86,6 +87,7 @@ public:
     void close(CompletionHandler<void()>&&);
     void clearStorageForTesting(CompletionHandler<void()>&&);
     void clearStorageForWebPage(WebPageProxyIdentifier);
+    void cloneSessionStorageForWebPage(WebPageProxyIdentifier, WebPageProxyIdentifier);
     void didIncreaseQuota(WebCore::ClientOrigin&&, QuotaIncreaseRequestIdentifier, std::optional<uint64_t> newQuota);
     enum class ShouldComputeSize : bool { No, Yes };
     void fetchData(OptionSet<WebsiteDataType>, ShouldComputeSize, CompletionHandler<void(Vector<WebsiteData::Entry>&&)>&&);
@@ -107,7 +109,7 @@ public:
 #endif
 
 private:
-    NetworkStorageManager(PAL::SessionID, IPC::Connection::UniqueID, const String& path, const String& customLocalStoragePath, const String& customIDBStoragePath, const String& customCacheStoragePath, uint64_t defaultOriginQuota, uint64_t defaultThirdPartyOriginQuota, bool shouldUseCustomPaths);
+    NetworkStorageManager(PAL::SessionID, IPC::Connection::UniqueID, const String& path, const String& customLocalStoragePath, const String& customIDBStoragePath, const String& customCacheStoragePath, uint64_t defaultOriginQuota, uint64_t defaultThirdPartyOriginQuota, UnifiedOriginStorageLevel);
     ~NetworkStorageManager();
     void writeOriginToFileIfNecessary(const WebCore::ClientOrigin&, StorageAreaBase* = nullptr);
     enum class ShouldWriteOriginFile : bool { No, Yes };
@@ -129,6 +131,7 @@ private:
     // Message handlers for FileSystem.
     void persisted(const WebCore::ClientOrigin&, CompletionHandler<void(bool)>&&);
     void persist(const WebCore::ClientOrigin&, CompletionHandler<void(bool)>&&);
+    void estimate(const WebCore::ClientOrigin&, CompletionHandler<void(std::optional<WebCore::StorageEstimate>)>&&);
     void fileSystemGetDirectory(IPC::Connection&, WebCore::ClientOrigin&&, CompletionHandler<void(Expected<WebCore::FileSystemHandleIdentifier, FileSystemStorageError>)>&&);
     void closeHandle(WebCore::FileSystemHandleIdentifier);
     void isSameEntry(WebCore::FileSystemHandleIdentifier, WebCore::FileSystemHandleIdentifier, CompletionHandler<void(bool)>&&);
@@ -140,7 +143,7 @@ private:
     void getFile(WebCore::FileSystemHandleIdentifier, CompletionHandler<void(Expected<String, FileSystemStorageError>)>&&);
     using AccessHandleInfo = std::pair<WebCore::FileSystemSyncAccessHandleIdentifier, IPC::SharedFileHandle>;
     void createSyncAccessHandle(WebCore::FileSystemHandleIdentifier, CompletionHandler<void(Expected<AccessHandleInfo, FileSystemStorageError>)>&&);
-    void closeSyncAccessHandle(WebCore::FileSystemHandleIdentifier, WebCore::FileSystemSyncAccessHandleIdentifier, CompletionHandler<void(std::optional<FileSystemStorageError>)>&&);
+    void closeSyncAccessHandle(WebCore::FileSystemHandleIdentifier, WebCore::FileSystemSyncAccessHandleIdentifier);
     void getHandleNames(WebCore::FileSystemHandleIdentifier, CompletionHandler<void(Expected<Vector<String>, FileSystemStorageError>)>&&);
     void getHandle(IPC::Connection&, WebCore::FileSystemHandleIdentifier, String&& name, CompletionHandler<void(Expected<std::pair<WebCore::FileSystemHandleIdentifier, bool>, FileSystemStorageError>)>&&);
     
@@ -149,7 +152,7 @@ private:
     void connectToStorageAreaSync(IPC::Connection&, WebCore::StorageType, StorageAreaMapIdentifier, StorageNamespaceIdentifier, const WebCore::ClientOrigin&, CompletionHandler<void(StorageAreaIdentifier, HashMap<String, String>, uint64_t)>&&);
     void cancelConnectToStorageArea(IPC::Connection&, WebCore::StorageType, StorageNamespaceIdentifier, const WebCore::ClientOrigin&);
     void disconnectFromStorageArea(IPC::Connection&, StorageAreaIdentifier);
-    void cloneSessionStorageNamespace(IPC::Connection&, StorageNamespaceIdentifier, StorageNamespaceIdentifier);
+    void cloneSessionStorageNamespace(StorageNamespaceIdentifier, StorageNamespaceIdentifier);
     void setItem(IPC::Connection&, StorageAreaIdentifier, StorageAreaImplIdentifier, String&& key, String&& value, String&& urlString, CompletionHandler<void(bool, HashMap<String, String>&&)>&&);
     void removeItem(IPC::Connection&, StorageAreaIdentifier, StorageAreaImplIdentifier, String&& key, String&& urlString, CompletionHandler<void()>&&);
     void clear(IPC::Connection&, StorageAreaIdentifier, StorageAreaImplIdentifier, String&& urlString, CompletionHandler<void()>&&);
@@ -212,7 +215,7 @@ private:
     String m_customCacheStoragePath;
     uint64_t m_defaultOriginQuota;
     uint64_t m_defaultThirdPartyOriginQuota;
-    bool m_shouldUseCustomPaths;
+    UnifiedOriginStorageLevel m_unifiedOriginStorageLevel;
     IPC::Connection::UniqueID m_parentConnection;
     HashMap<IPC::Connection::UniqueID, HashSet<String>> m_temporaryBlobPathsByConnection WTF_GUARDED_BY_CAPABILITY(workQueue());
 #if PLATFORM(IOS_FAMILY)

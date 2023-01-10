@@ -70,9 +70,9 @@ PageClientImpl::PageClientImpl(GtkWidget* viewWidget)
 }
 
 // PageClient's pure virtual functions
-std::unique_ptr<DrawingAreaProxy> PageClientImpl::createDrawingAreaProxy(WebProcessProxy& process)
+std::unique_ptr<DrawingAreaProxy> PageClientImpl::createDrawingAreaProxy(WebProcessProxy&)
 {
-    return makeUnique<DrawingAreaProxyCoordinatedGraphics>(*webkitWebViewBaseGetPage(WEBKIT_WEB_VIEW_BASE(m_viewWidget)), process);
+    return makeUnique<DrawingAreaProxyCoordinatedGraphics>(*webkitWebViewBaseGetPage(WEBKIT_WEB_VIEW_BASE(m_viewWidget)));
 }
 
 void PageClientImpl::setViewNeedsDisplay(const WebCore::Region& region)
@@ -562,17 +562,6 @@ void PageClientImpl::derefView()
 {
     g_object_unref(m_viewWidget);
 }
-
-#if ENABLE(VIDEO) && USE(GSTREAMER)
-bool PageClientImpl::decidePolicyForInstallMissingMediaPluginsPermissionRequest(InstallMissingMediaPluginsPermissionRequest& request)
-{
-    if (!WEBKIT_IS_WEB_VIEW(m_viewWidget))
-        return false;
-
-    webkitWebViewRequestInstallMissingMediaPlugins(WEBKIT_WEB_VIEW(m_viewWidget), request);
-    return true;
-}
-#endif
 
 void PageClientImpl::requestDOMPasteAccess(WebCore::DOMPasteAccessCategory, const IntRect&, const String&, CompletionHandler<void(WebCore::DOMPasteAccessResponse)>&& completionHandler)
 {

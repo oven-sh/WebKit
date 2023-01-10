@@ -30,6 +30,7 @@
 #import "DefaultWebBrowserChecks.h"
 #import "NetworkProcessProxy.h"
 #import "SandboxUtilities.h"
+#import "UnifiedOriginStorageLevel.h"
 #import "WebFramePolicyListenerProxy.h"
 #import "WebPreferencesDefaultValues.h"
 #import "WebPreferencesKeys.h"
@@ -87,16 +88,6 @@ static std::atomic<bool> hasInitializedManagedDomains = false;
 static std::atomic<bool> managedKeyExists = false;
 #endif
 
-// FIXME: we should not read the values from NSUserDefaults; we should let clients who set the values to pass them via configuration.
-static bool internalFeatureEnabled(const String& key, bool defaultValue = false)
-{
-    auto defaultsKey = adoptNS([[NSString alloc] initWithFormat:@"InternalDebug%@", static_cast<NSString *>(key)]);
-    if ([[NSUserDefaults standardUserDefaults] objectForKey:defaultsKey.get()] != nil)
-        return [[NSUserDefaults standardUserDefaults] boolForKey:defaultsKey.get()];
-
-    return defaultValue;
-}
-
 static bool experimentalFeatureEnabled(const String& key, bool defaultValue = false)
 {
     auto defaultsKey = adoptNS([[NSString alloc] initWithFormat:@"WebKitExperimental%@", static_cast<NSString *>(key)]);
@@ -104,6 +95,19 @@ static bool experimentalFeatureEnabled(const String& key, bool defaultValue = fa
         return [[NSUserDefaults standardUserDefaults] boolForKey:defaultsKey.get()];
 
     return defaultValue;
+}
+
+static NSString* applicationOrProcessIdentifier()
+{
+    NSString *identifier = [NSBundle mainBundle].bundleIdentifier;
+    NSString *processName = [NSProcessInfo processInfo].processName;
+    // SafariForWebKitDevelopment has the same bundle identifier as Safari, but it does not have the privilege to
+    // access Safari's paths.
+    if ([identifier isEqualToString:@"com.apple.Safari"] && [processName isEqualToString:@"SafariForWebKitDevelopment"])
+        identifier = processName;
+    if (!identifier)
+        identifier = processName;
+    return identifier;
 }
 
 #if ENABLE(TRACKING_PREVENTION)
@@ -252,12 +256,8 @@ static String defaultWebsiteDataStoreRootDirectory()
         NSURL *libraryDirectory = [[NSFileManager defaultManager] URLForDirectory:NSLibraryDirectory inDomain:NSUserDomainMask appropriateForURL:nullptr create:NO error:nullptr];
         RELEASE_ASSERT(libraryDirectory);
         NSURL *webkitDirectory = [libraryDirectory URLByAppendingPathComponent:@"WebKit" isDirectory:YES];
-        if (!WebKit::processHasContainer()) {
-            NSString *applicationIdentifier = [NSBundle mainBundle].bundleIdentifier;
-            if (!applicationIdentifier)
-                applicationIdentifier = [NSProcessInfo processInfo].processName;
-            webkitDirectory = [webkitDirectory URLByAppendingPathComponent:applicationIdentifier isDirectory:YES];
-        }
+        if (!WebKit::processHasContainer())
+            webkitDirectory = [webkitDirectory URLByAppendingPathComponent:applicationOrProcessIdentifier() isDirectory:YES];
 
         websiteDataStoreDirectory.get() = [webkitDirectory URLByAppendingPathComponent:@"WebsiteDataStore" isDirectory:YES];
     });
@@ -472,12 +472,8 @@ String WebsiteDataStore::tempDirectoryFileSystemRepresentation(const String& dir
         if (!url)
             RELEASE_ASSERT_NOT_REACHED();
         
-        if (!WebKit::processHasContainer()) {
-            NSString *bundleIdentifier = [NSBundle mainBundle].bundleIdentifier;
-            if (!bundleIdentifier)
-                bundleIdentifier = [NSProcessInfo processInfo].processName;
-            url = [url URLByAppendingPathComponent:bundleIdentifier isDirectory:YES];
-        }
+        if (!WebKit::processHasContainer())
+            url = [url URLByAppendingPathComponent:applicationOrProcessIdentifier() isDirectory:YES];
         
         tempURL.get() = [url URLByAppendingPathComponent:@"WebKit" isDirectory:YES];
     });
@@ -501,12 +497,8 @@ String WebsiteDataStore::cacheDirectoryFileSystemRepresentation(const String& di
         if (!url)
             RELEASE_ASSERT_NOT_REACHED();
 
-        if (!WebKit::processHasContainer()) {
-            NSString *bundleIdentifier = [NSBundle mainBundle].bundleIdentifier;
-            if (!bundleIdentifier)
-                bundleIdentifier = [NSProcessInfo processInfo].processName;
-            url = [url URLByAppendingPathComponent:bundleIdentifier isDirectory:YES];
-        }
+        if (!WebKit::processHasContainer())
+            url = [url URLByAppendingPathComponent:applicationOrProcessIdentifier() isDirectory:YES];
 
         cacheURL.get() = [url URLByAppendingPathComponent:@"WebKit" isDirectory:YES];
     });
@@ -530,13 +522,8 @@ String WebsiteDataStore::websiteDataDirectoryFileSystemRepresentation(const Stri
             RELEASE_ASSERT_NOT_REACHED();
 
         url = [url URLByAppendingPathComponent:@"WebKit" isDirectory:YES];
-
-        if (!WebKit::processHasContainer()) {
-            NSString *bundleIdentifier = [NSBundle mainBundle].bundleIdentifier;
-            if (!bundleIdentifier)
-                bundleIdentifier = [NSProcessInfo processInfo].processName;
-            url = [url URLByAppendingPathComponent:bundleIdentifier isDirectory:YES];
-        }
+        if (!WebKit::processHasContainer())
+            url = [url URLByAppendingPathComponent:applicationOrProcessIdentifier() isDirectory:YES];
 
         websiteDataURL.get() = [url URLByAppendingPathComponent:@"WebsiteData" isDirectory:YES];
     });
@@ -830,9 +817,18 @@ bool WebsiteDataStore::networkProcessHasEntitlementForTesting(const String& enti
     return WTF::hasEntitlement(networkProcess().connection()->xpcConnection(), entitlement);
 }
 
-bool WebsiteDataStore::defaultShouldUseCustomStoragePaths()
+UnifiedOriginStorageLevel WebsiteDataStore::defaultUnifiedOriginStorageLevel()
 {
-    return !internalFeatureEnabled(WebPreferencesKey::useGeneralDirectoryForStorageKey(), true);
+    auto defaultUnifiedOriginStorageLevelValue = UnifiedOriginStorageLevel::Basic;
+    NSString* unifiedOriginStorageLevelKey = @"WebKitDebugUnifiedOriginStorageLevel";
+    if ([[NSUserDefaults standardUserDefaults] objectForKey:unifiedOriginStorageLevelKey] == nil)
+        return defaultUnifiedOriginStorageLevelValue;
+
+    auto level = convertToUnifiedOriginStorageLevel([[NSUserDefaults standardUserDefaults] integerForKey:unifiedOriginStorageLevelKey]);
+    if (!level)
+        return defaultUnifiedOriginStorageLevelValue;
+
+    return *level;
 }
 
 #if PLATFORM(IOS_FAMILY)

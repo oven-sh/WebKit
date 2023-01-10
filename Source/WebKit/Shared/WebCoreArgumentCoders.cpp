@@ -37,12 +37,14 @@
 #include <WebCore/AuthenticationChallenge.h>
 #include <WebCore/AuthenticationChallenge.h>
 #include <WebCore/BlobPart.h>
+#include <WebCore/ButtonPart.h>
 #include <WebCore/ByteArrayPixelBuffer.h>
 #include <WebCore/COEPInheritenceViolationReportBody.h>
 #include <WebCore/CORPViolationReportBody.h>
 #include <WebCore/CSPViolationReportBody.h>
 #include <WebCore/CacheQueryOptions.h>
 #include <WebCore/CacheStorageConnection.h>
+#include <WebCore/ColorWellPart.h>
 #include <WebCore/CompositionUnderline.h>
 #include <WebCore/ControlPart.h>
 #include <WebCore/Credential.h>
@@ -69,17 +71,21 @@
 #include <WebCore/IDBGetResult.h>
 #include <WebCore/IdentityTransformOperation.h>
 #include <WebCore/Image.h>
+#include <WebCore/InnerSpinButtonPart.h>
 #include <WebCore/JSDOMExceptionHandling.h>
 #include <WebCore/Length.h>
 #include <WebCore/LengthBox.h>
 #include <WebCore/Matrix3DTransformOperation.h>
 #include <WebCore/MatrixTransformOperation.h>
 #include <WebCore/MediaSelectionOption.h>
+#include <WebCore/MenuListButtonPart.h>
+#include <WebCore/MenuListPart.h>
 #include <WebCore/MeterPart.h>
 #include <WebCore/NotificationResources.h>
 #include <WebCore/Pasteboard.h>
 #include <WebCore/PerspectiveTransformOperation.h>
 #include <WebCore/PluginData.h>
+#include <WebCore/ProgressBarPart.h>
 #include <WebCore/PromisedAttachmentInfo.h>
 #include <WebCore/ProtectionSpace.h>
 #include <WebCore/RectEdges.h>
@@ -96,6 +102,8 @@
 #include <WebCore/ScriptExecutionContextIdentifier.h>
 #include <WebCore/ScrollingConstraints.h>
 #include <WebCore/ScrollingCoordinator.h>
+#include <WebCore/SearchFieldCancelButtonPart.h>
+#include <WebCore/SearchFieldPart.h>
 #include <WebCore/SearchPopupMenu.h>
 #include <WebCore/SecurityOrigin.h>
 #include <WebCore/SerializedAttachmentData.h>
@@ -106,6 +114,8 @@
 #include <WebCore/ShareData.h>
 #include <WebCore/SharedBuffer.h>
 #include <WebCore/SkewTransformOperation.h>
+#include <WebCore/SliderThumbPart.h>
+#include <WebCore/SliderTrackPart.h>
 #include <WebCore/SystemImage.h>
 #include <WebCore/TestReportBody.h>
 #include <WebCore/TextAreaPart.h>
@@ -1527,55 +1537,61 @@ void ArgumentCoder<ControlPart>::encode(Encoder& encoder, const ControlPart& par
     encoder << part.type();
 
     switch (part.type()) {
-    case WebCore::ControlPartType::NoControl:
-    case WebCore::ControlPartType::Auto:
+    case WebCore::StyleAppearance::None:
+    case WebCore::StyleAppearance::Auto:
         break;
 
-    case WebCore::ControlPartType::Checkbox:
-    case WebCore::ControlPartType::Radio:
-    case WebCore::ControlPartType::PushButton:
-    case WebCore::ControlPartType::SquareButton:
-    case WebCore::ControlPartType::Button:
-    case WebCore::ControlPartType::DefaultButton:
-    case WebCore::ControlPartType::Listbox:
-    case WebCore::ControlPartType::Menulist:
-    case WebCore::ControlPartType::MenulistButton:
+    case WebCore::StyleAppearance::Checkbox:
+    case WebCore::StyleAppearance::Radio:
+    case WebCore::StyleAppearance::PushButton:
+    case WebCore::StyleAppearance::SquareButton:
+    case WebCore::StyleAppearance::Button:
+    case WebCore::StyleAppearance::DefaultButton:
+    case WebCore::StyleAppearance::Listbox:
+    case WebCore::StyleAppearance::Menulist:
+    case WebCore::StyleAppearance::MenulistButton:
         break;
 
-    case WebCore::ControlPartType::Meter:
+    case WebCore::StyleAppearance::Meter:
         encoder << downcast<WebCore::MeterPart>(part);
         break;
 
-    case WebCore::ControlPartType::ProgressBar:
-    case WebCore::ControlPartType::SliderHorizontal:
-    case WebCore::ControlPartType::SliderVertical:
-    case WebCore::ControlPartType::SearchField:
+    case WebCore::StyleAppearance::ProgressBar:
+        encoder << downcast<WebCore::ProgressBarPart>(part);
+        break;
+
+    case WebCore::StyleAppearance::SliderHorizontal:
+    case WebCore::StyleAppearance::SliderVertical:
+        encoder << downcast<WebCore::SliderTrackPart>(part);
+        break;
+
+    case WebCore::StyleAppearance::SearchField:
 #if ENABLE(APPLE_PAY)
-    case WebCore::ControlPartType::ApplePayButton:
+    case WebCore::StyleAppearance::ApplePayButton:
 #endif
 #if ENABLE(ATTACHMENT_ELEMENT)
-    case WebCore::ControlPartType::Attachment:
-    case WebCore::ControlPartType::BorderlessAttachment:
+    case WebCore::StyleAppearance::Attachment:
+    case WebCore::StyleAppearance::BorderlessAttachment:
 #endif
-    case WebCore::ControlPartType::TextArea:
-    case WebCore::ControlPartType::TextField:
-    case WebCore::ControlPartType::CapsLockIndicator:
+    case WebCore::StyleAppearance::TextArea:
+    case WebCore::StyleAppearance::TextField:
+    case WebCore::StyleAppearance::CapsLockIndicator:
 #if ENABLE(INPUT_TYPE_COLOR)
-    case WebCore::ControlPartType::ColorWell:
+    case WebCore::StyleAppearance::ColorWell:
 #endif
 #if ENABLE(SERVICE_CONTROLS)
-    case WebCore::ControlPartType::ImageControlsButton:
+    case WebCore::StyleAppearance::ImageControlsButton:
 #endif
-    case WebCore::ControlPartType::InnerSpinButton:
+    case WebCore::StyleAppearance::InnerSpinButton:
 #if ENABLE(DATALIST_ELEMENT)
-    case WebCore::ControlPartType::ListButton:
+    case WebCore::StyleAppearance::ListButton:
 #endif
-    case WebCore::ControlPartType::SearchFieldDecoration:
-    case WebCore::ControlPartType::SearchFieldResultsDecoration:
-    case WebCore::ControlPartType::SearchFieldResultsButton:
-    case WebCore::ControlPartType::SearchFieldCancelButton:
-    case WebCore::ControlPartType::SliderThumbHorizontal:
-    case WebCore::ControlPartType::SliderThumbVertical:
+    case WebCore::StyleAppearance::SearchFieldDecoration:
+    case WebCore::StyleAppearance::SearchFieldResultsDecoration:
+    case WebCore::StyleAppearance::SearchFieldResultsButton:
+    case WebCore::StyleAppearance::SearchFieldCancelButton:
+    case WebCore::StyleAppearance::SliderThumbHorizontal:
+    case WebCore::StyleAppearance::SliderThumbVertical:
         break;
     }
 }
@@ -1587,29 +1603,33 @@ void ArgumentCoder<ControlPart>::encode<StreamConnectionEncoder>(StreamConnectio
 
 std::optional<Ref<ControlPart>> ArgumentCoder<ControlPart>::decode(Decoder& decoder)
 {
-    std::optional<WebCore::ControlPartType> type;
+    std::optional<WebCore::StyleAppearance> type;
     decoder >> type;
     if (!type)
         return std::nullopt;
 
     switch (*type) {
-    case WebCore::ControlPartType::NoControl:
-    case WebCore::ControlPartType::Auto:
+    case WebCore::StyleAppearance::None:
+    case WebCore::StyleAppearance::Auto:
         break;
 
-    case WebCore::ControlPartType::Checkbox:
-    case WebCore::ControlPartType::Radio:
+    case WebCore::StyleAppearance::Checkbox:
+    case WebCore::StyleAppearance::Radio:
         return WebCore::ToggleButtonPart::create(*type);
 
-    case WebCore::ControlPartType::PushButton:
-    case WebCore::ControlPartType::SquareButton:
-    case WebCore::ControlPartType::Button:
-    case WebCore::ControlPartType::DefaultButton:
-    case WebCore::ControlPartType::Menulist:
-    case WebCore::ControlPartType::MenulistButton:
-        break;
+    case WebCore::StyleAppearance::PushButton:
+    case WebCore::StyleAppearance::SquareButton:
+    case WebCore::StyleAppearance::Button:
+    case WebCore::StyleAppearance::DefaultButton:
+        return WebCore::ButtonPart::create(*type);
 
-    case WebCore::ControlPartType::Meter: {
+    case WebCore::StyleAppearance::Menulist:
+        return WebCore::MenuListPart::create();
+
+    case WebCore::StyleAppearance::MenulistButton:
+        return WebCore::MenuListButtonPart::create();
+
+    case WebCore::StyleAppearance::Meter: {
         std::optional<Ref<WebCore::MeterPart>> meterPart;
         decoder >> meterPart;
         if (meterPart)
@@ -1617,44 +1637,69 @@ std::optional<Ref<ControlPart>> ArgumentCoder<ControlPart>::decode(Decoder& deco
         break;
     }
 
-    case WebCore::ControlPartType::ProgressBar:
-    case WebCore::ControlPartType::SliderHorizontal:
-    case WebCore::ControlPartType::SliderVertical:
-    case WebCore::ControlPartType::SearchField:
+    case WebCore::StyleAppearance::ProgressBar: {
+        std::optional<Ref<WebCore::ProgressBarPart>> progressBarPart;
+        decoder >> progressBarPart;
+        if (progressBarPart)
+            return WTFMove(*progressBarPart);
+        break;
+    }
+
+    case WebCore::StyleAppearance::SliderHorizontal:
+    case WebCore::StyleAppearance::SliderVertical: {
+        std::optional<Ref<WebCore::SliderTrackPart>> sliderTrackPart;
+        decoder >> sliderTrackPart;
+        if (sliderTrackPart)
+            return WTFMove(*sliderTrackPart);
+        break;
+    }
+
+    case WebCore::StyleAppearance::SearchField:
+        return WebCore::SearchFieldPart::create();
+
 #if ENABLE(APPLE_PAY)
-    case WebCore::ControlPartType::ApplePayButton:
+    case WebCore::StyleAppearance::ApplePayButton:
 #endif
 #if ENABLE(ATTACHMENT_ELEMENT)
-    case WebCore::ControlPartType::Attachment:
-    case WebCore::ControlPartType::BorderlessAttachment:
+    case WebCore::StyleAppearance::Attachment:
+    case WebCore::StyleAppearance::BorderlessAttachment:
 #endif
         break;
 
-    case WebCore::ControlPartType::Listbox:
-    case WebCore::ControlPartType::TextArea:
+    case WebCore::StyleAppearance::Listbox:
+    case WebCore::StyleAppearance::TextArea:
         return WebCore::TextAreaPart::create(*type);
 
-    case WebCore::ControlPartType::TextField:
+    case WebCore::StyleAppearance::TextField:
         return WebCore::TextFieldPart::create();
 
-    case WebCore::ControlPartType::CapsLockIndicator:
+    case WebCore::StyleAppearance::CapsLockIndicator:
 #if ENABLE(INPUT_TYPE_COLOR)
-    case WebCore::ControlPartType::ColorWell:
+    case WebCore::StyleAppearance::ColorWell:
+        return WebCore::ColorWellPart::create();
 #endif
 #if ENABLE(SERVICE_CONTROLS)
-    case WebCore::ControlPartType::ImageControlsButton:
+    case WebCore::StyleAppearance::ImageControlsButton:
 #endif
-    case WebCore::ControlPartType::InnerSpinButton:
-#if ENABLE(DATALIST_ELEMENT)
-    case WebCore::ControlPartType::ListButton:
-#endif
-    case WebCore::ControlPartType::SearchFieldDecoration:
-    case WebCore::ControlPartType::SearchFieldResultsDecoration:
-    case WebCore::ControlPartType::SearchFieldResultsButton:
-    case WebCore::ControlPartType::SearchFieldCancelButton:
-    case WebCore::ControlPartType::SliderThumbHorizontal:
-    case WebCore::ControlPartType::SliderThumbVertical:
         break;
+
+    case WebCore::StyleAppearance::InnerSpinButton:
+        return WebCore::InnerSpinButtonPart::create();
+
+#if ENABLE(DATALIST_ELEMENT)
+    case WebCore::StyleAppearance::ListButton:
+#endif
+    case WebCore::StyleAppearance::SearchFieldDecoration:
+    case WebCore::StyleAppearance::SearchFieldResultsDecoration:
+    case WebCore::StyleAppearance::SearchFieldResultsButton:
+        break;
+
+    case WebCore::StyleAppearance::SearchFieldCancelButton:
+        return WebCore::SearchFieldCancelButtonPart::create();
+
+    case WebCore::StyleAppearance::SliderThumbHorizontal:
+    case WebCore::StyleAppearance::SliderThumbVertical:
+        return WebCore::SliderThumbPart::create(*type);
     }
 
     ASSERT_NOT_REACHED();

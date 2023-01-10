@@ -264,7 +264,6 @@ namespace WebKit {
 using namespace JSC;
 using namespace WebCore;
 
-#if !PLATFORM(GTK) && !PLATFORM(WPE)
 NO_RETURN static void callExit(IPC::Connection*)
 {
 #if OS(WINDOWS)
@@ -273,6 +272,16 @@ NO_RETURN static void callExit(IPC::Connection*)
 #else
     _exit(EXIT_SUCCESS);
 #endif
+}
+
+#if PLATFORM(GTK) || PLATFORM(WPE)
+static void callExitSoon(IPC::Connection*)
+{
+    // If the connection has been closed and we haven't responded in the main thread for 10 seconds the process will exit forcibly.
+    static const auto watchdogDelay = 10_s;
+    WorkQueue::create("WebKit.WebProcess.WatchDogQueue")->dispatchAfter(watchdogDelay, [] {
+        callExit(nullptr);
+    });
 }
 #endif
 
@@ -375,11 +384,15 @@ void WebProcess::initializeConnection(IPC::Connection* connection)
 
 // Do not call exit in background queue for GTK and WPE because we need to ensure
 // atexit handlers are called in the main thread to cleanup resources like EGL displays.
-#if !PLATFORM(GTK) && !PLATFORM(WPE)
+// Unless the main thread doesn't exit after 10 senconds to avoid leaking the process.
+#if PLATFORM(GTK) || PLATFORM(WPE)
+    IPC::Connection::DidCloseOnConnectionWorkQueueCallback callExitCallback = callExitSoon;
+#else
     // We call _exit() directly from the background queue in case the main thread is unresponsive
     // and AuxiliaryProcess::didClose() does not get called.
-    connection->setDidCloseOnConnectionWorkQueueCallback(callExit);
+    IPC::Connection::DidCloseOnConnectionWorkQueueCallback callExitCallback = callExit;
 #endif
+    connection->setDidCloseOnConnectionWorkQueueCallback(callExitCallback);
 
 #if !PLATFORM(GTK) && !PLATFORM(WPE) && !ENABLE(IPC_TESTING_API)
     connection->setShouldExitOnSyncMessageSendFailure(true);
@@ -943,7 +956,7 @@ void WebProcess::didReceiveMessage(IPC::Connection& connection, IPC::Decoder& de
         return;
     }
 
-    LOG_ERROR("Unhandled web process message '%s' (destination: %" PRIu64 " pid: %d)", description(decoder.messageName()), decoder.destinationID(), static_cast<int>(getCurrentProcessID()));
+    LOG_ERROR("Unhandled web process message '%s' (destination: %" PRIu64 " pid: %d)", description(decoder.messageName()), static_cast<uint64_t>(decoder.destinationID()), static_cast<int>(getCurrentProcessID()));
 }
 
 void WebProcess::didClose(IPC::Connection& connection)
@@ -1952,6 +1965,9 @@ void WebProcess::grantUserMediaDeviceSandboxExtensions(MediaDeviceSandboxExtensi
         WEBPROCESS_RELEASE_LOG(WebRTC, "grantUserMediaDeviceSandboxExtensions: granted extension %s", extension.first.utf8().data());
         m_mediaCaptureSandboxExtensions.add(extension.first, extension.second.copyRef());
     }
+    m_machBootstrapExtension = extensions.machBootstrapExtension();
+    if (m_machBootstrapExtension)
+        m_machBootstrapExtension->consume();
 }
 
 static inline void checkDocumentsCaptureStateConsistency(const Vector<String>& extensionIDs)
@@ -1974,7 +1990,7 @@ static inline void checkDocumentsCaptureStateConsistency(const Vector<String>& e
 void WebProcess::revokeUserMediaDeviceSandboxExtensions(const Vector<String>& extensionIDs)
 {
     checkDocumentsCaptureStateConsistency(extensionIDs);
-
+    
     for (const auto& extensionID : extensionIDs) {
         auto extension = m_mediaCaptureSandboxExtensions.take(extensionID);
         ASSERT(extension || MockRealtimeMediaSourceCenter::mockRealtimeMediaSourceCenterEnabled());
@@ -1983,6 +1999,9 @@ void WebProcess::revokeUserMediaDeviceSandboxExtensions(const Vector<String>& ex
             WEBPROCESS_RELEASE_LOG(WebRTC, "revokeUserMediaDeviceSandboxExtensions: revoked extension %s", extensionID.utf8().data());
         }
     }
+    
+    if (m_machBootstrapExtension)
+        m_machBootstrapExtension->revoke();
 }
 #endif
 #endif

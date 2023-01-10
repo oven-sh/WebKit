@@ -449,6 +449,8 @@ static void hardwareKeyboardAvailabilityChangedCallback(CFNotificationCenterRef,
     pageConfiguration->setPreferences([_configuration preferences]->_preferences.get());
     if (WKWebView *relatedWebView = [_configuration _relatedWebView])
         pageConfiguration->setRelatedPage(relatedWebView->_page.get());
+    if (WKWebView *webViewToCloneSessionStorageFrom = [_configuration _webViewToCloneSessionStorageFrom])
+        pageConfiguration->setPageToCloneSessionStorageFrom(webViewToCloneSessionStorageFrom->_page.get());
 
     pageConfiguration->setUserContentController([_configuration userContentController]->_userContentControllerProxy.get());
     pageConfiguration->setVisitedLinkStore([_configuration _visitedLinkStore]->_visitedLinkStore.get());
@@ -2458,6 +2460,53 @@ static RetainPtr<NSArray> wkTextManipulationErrors(NSArray<_WKTextManipulationIt
 #endif
 }
 
+#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
+- (void)_pauseAllAnimationsWithCompletionHandler:(void(^)(void))completionHandler
+{
+    THROW_IF_SUSPENDED;
+    if (!completionHandler) {
+        _page->pauseAllAnimations([] { });
+        return;
+    }
+
+    _page->pauseAllAnimations(makeBlockPtr(completionHandler));
+}
+
+- (void)_playAllAnimationsWithCompletionHandler:(void(^)(void))completionHandler
+{
+    THROW_IF_SUSPENDED;
+    if (!completionHandler) {
+        _page->playAllAnimations([] { });
+        return;
+    }
+
+    _page->playAllAnimations(makeBlockPtr(completionHandler));
+}
+
+- (BOOL)_allowsAnyAnimationToPlay
+{
+    THROW_IF_SUSPENDED;
+    return _page->allowsAnyAnimationToPlay();
+}
+#else // !ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
+- (void)_pauseAllAnimationsWithCompletionHandler:(void(^)(void))completionHandler
+{
+    if (completionHandler)
+        completionHandler();
+}
+
+- (void)_playAllAnimationsWithCompletionHandler:(void(^)(void))completionHandler
+{
+    if (completionHandler)
+        completionHandler();
+}
+
+- (BOOL)_allowsAnyAnimationToPlay
+{
+    return YES;
+}
+#endif // ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
+
 - (_WKMediaMutedState)_mediaMutedState
 {
     return WebKit::toWKMediaMutedState(_page->mutedStateFlags());
@@ -3713,7 +3762,7 @@ static inline OptionSet<WebKit::FindOptions> toFindOptions(_WKFindOptions wkFind
     if (_page->minimumEffectiveDeviceWidth() == minimumEffectiveDeviceWidth)
         return;
 
-    if (_perProcessState.dynamicViewportUpdateMode == WebKit::DynamicViewportUpdateMode::NotResizing)
+    if (!self._shouldDeferGeometryUpdates)
         _page->setViewportConfigurationViewLayoutSize(_page->viewLayoutSize(), _page->layoutSizeScaleFactor(), minimumEffectiveDeviceWidth);
     else
         _page->setMinimumEffectiveDeviceWidthWithoutViewportConfigurationUpdate(minimumEffectiveDeviceWidth);

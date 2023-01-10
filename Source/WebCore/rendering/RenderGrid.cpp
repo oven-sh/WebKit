@@ -789,13 +789,12 @@ void RenderGrid::placeItemsOnGrid(std::optional<LayoutUnit> availableLogicalWidt
     autoRepeatRows = clampAutoRepeatTracks(ForRows, autoRepeatRows);
     autoRepeatColumns = clampAutoRepeatTracks(ForColumns, autoRepeatColumns);
 
-    if (autoRepeatColumns != currentGrid().autoRepeatTracks(ForColumns) || autoRepeatRows != currentGrid().autoRepeatTracks(ForRows)) {
+    if (autoRepeatColumns != currentGrid().autoRepeatTracks(ForColumns) 
+        || autoRepeatRows != currentGrid().autoRepeatTracks(ForRows)
+        || isMasonry()) {
         currentGrid().setNeedsItemsPlacement(true);
         currentGrid().setAutoRepeatTracks(autoRepeatRows, autoRepeatColumns);
     }
-
-    if (areMasonryRows() || areMasonryColumns())
-        currentGrid().setNeedsItemsPlacement(true);
 
     if (!currentGrid().needsItemsPlacement())
         return;
@@ -1505,6 +1504,25 @@ void RenderGrid::updateAutoMarginsInColumnAxisIfNeeded(RenderBox& child)
     } else if (marginAfter.isAuto()) {
         child.setMarginAfter(availableAlignmentSpace, &parentStyle);
     }
+}
+
+bool RenderGrid::shouldTrimChildMargin(MarginTrimType marginTrimType, const RenderBox& child) const
+{
+    if (!style().marginTrim().contains(marginTrimType))
+        return false;
+    auto isTrimmingBlockDirection = marginTrimType == MarginTrimType::BlockStart || marginTrimType == MarginTrimType::BlockEnd;
+    auto itemGridSpan = isTrimmingBlockDirection ? currentGrid().gridItemSpanIgnoringCollapsedTracks(child, ForRows) : currentGrid().gridItemSpanIgnoringCollapsedTracks(child, ForColumns);
+    switch (marginTrimType) {
+    case MarginTrimType::BlockStart:
+    case MarginTrimType::InlineStart:
+        return !itemGridSpan.startLine();
+    case MarginTrimType::BlockEnd:
+        return itemGridSpan.endLine() == currentGrid().numTracks(ForRows);
+    case MarginTrimType::InlineEnd:
+        return itemGridSpan.endLine() == currentGrid().numTracks(ForColumns);
+    }
+    ASSERT_NOT_REACHED();
+    return false;
 }
 
 bool RenderGrid::isBaselineAlignmentForChild(const RenderBox& child) const

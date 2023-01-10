@@ -1,4 +1,4 @@
-# Copyright (C) 2010-2018 Apple Inc. All rights reserved.
+# Copyright (C) 2010-2023 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -433,16 +433,9 @@ all : WebAutomationSessionProxyScriptSource.h
 
 # WebPreferences generation
 
-WEB_PREFERENCES_INPUT_FILES = \
-    ${WTF_BUILD_SCRIPTS_DIR}/Preferences/WebPreferences.yaml \
+WEB_PREFERENCES = \
+    $(WTF_BUILD_SCRIPTS_DIR)/Preferences/UnifiedWebPreferences.yaml \
     $(ADDITIONAL_WEB_PREFERENCES_INPUT_FILES) \
-#
-WEB_PREFERENCES_COMBINED_INPUT_FILE = WebPreferencesCombined.yaml
-
-WEB_PREFERENCES_CATEGORY_INPUT_FILES = \
-    ${WTF_BUILD_SCRIPTS_DIR}/Preferences/WebPreferencesDebug.yaml \
-    ${WTF_BUILD_SCRIPTS_DIR}/Preferences/WebPreferencesExperimental.yaml \
-    ${WTF_BUILD_SCRIPTS_DIR}/Preferences/WebPreferencesInternal.yaml \
 #
 
 WEB_PREFERENCES_TEMPLATES = \
@@ -458,22 +451,27 @@ WEB_PREFERENCES_TEMPLATES = \
 WEB_PREFERENCES_FILES = $(basename $(notdir $(WEB_PREFERENCES_TEMPLATES)))
 WEB_PREFERENCES_PATTERNS = $(subst .,%,$(WEB_PREFERENCES_FILES))
 
-all : $(WEB_PREFERENCES_FILES) $(WEB_PREFERENCES_COMBINED_INPUT_FILE)
+all : $(WEB_PREFERENCES_FILES)
 
-$(WEB_PREFERENCES_COMBINED_INPUT_FILE) : $(WEB_PREFERENCES_INPUT_FILES)
-	cat $^ > $(WEB_PREFERENCES_COMBINED_INPUT_FILE)
-
-$(WEB_PREFERENCES_PATTERNS) : $(WTF_BUILD_SCRIPTS_DIR)/GeneratePreferences.rb $(WEB_PREFERENCES_TEMPLATES) $(WEB_PREFERENCES_COMBINED_INPUT_FILE) $(WEB_PREFERENCES_CATEGORY_INPUT_FILES)
-	$(RUBY) $< --frontend WebKit --base $(WEB_PREFERENCES_COMBINED_INPUT_FILE) --debug ${WTF_BUILD_SCRIPTS_DIR}/Preferences/WebPreferencesDebug.yaml --experimental ${WTF_BUILD_SCRIPTS_DIR}/Preferences/WebPreferencesExperimental.yaml	--internal ${WTF_BUILD_SCRIPTS_DIR}/Preferences/WebPreferencesInternal.yaml $(addprefix --template , $(WEB_PREFERENCES_TEMPLATES))
+$(WEB_PREFERENCES_PATTERNS) : $(WTF_BUILD_SCRIPTS_DIR)/GeneratePreferences.rb $(WEB_PREFERENCES_TEMPLATES) $(WEB_PREFERENCES)
+	$(RUBY) $< --frontend WebKit $(addprefix --template , $(WEB_PREFERENCES_TEMPLATES)) $(WEB_PREFERENCES)
 
 SERIALIZATION_DESCRIPTION_FILES = \
 	GPUProcess/GPUProcessSessionParameters.serialization.in \
+	GPUProcess/graphics/InlinePathData.serialization.in \
 	GPUProcess/graphics/RemoteRenderingBackendCreationParameters.serialization.in \
 	GPUProcess/media/InitializationSegmentInfo.serialization.in \
 	GPUProcess/media/MediaDescriptionInfo.serialization.in \
 	GPUProcess/media/TextTrackPrivateRemoteConfiguration.serialization.in \
 	NetworkProcess/NetworkProcessCreationParameters.serialization.in \
+	Shared/API/APIError.serialization.in \
+	Shared/API/APIFrameHandle.serialization.in \
 	Shared/API/APIGeometry.serialization.in \
+	Shared/API/APIPageHandle.serialization.in \
+	Shared/API/APIURL.serialization.in \
+	Shared/API/APIURLRequest.serialization.in \
+	Shared/API/APIURLResponse.serialization.in \
+	Shared/Cocoa/CacheStoragePolicy.serialization.in \
 	Shared/Cocoa/DataDetectionResult.serialization.in \
 	Shared/Cocoa/RevealItem.serialization.in \
 	Shared/Cocoa/WebCoreArgumentCodersCocoa.serialization.in \
@@ -485,9 +483,11 @@ SERIALIZATION_DESCRIPTION_FILES = \
 	Shared/LayerTreeContext.serialization.in \
 	Shared/Model.serialization.in \
 	Shared/Pasteboard.serialization.in \
+	Shared/SameDocumentNavigationType.serialization.in \
 	Shared/SessionState.serialization.in \
 	Shared/ShareableBitmap.serialization.in \
 	Shared/TextFlags.serialization.in \
+	Shared/TextRecognitionResult.serialization.in \
 	Shared/WTFArgumentCoders.serialization.in \
 	Shared/WebCoreArgumentCoders.serialization.in \
 	Shared/WebExtensionContextParameters.serialization.in \
@@ -596,6 +596,7 @@ EXTENSION_INTERFACES = \
     WebExtensionAPIEvent \
     WebExtensionAPIExtension \
     WebExtensionAPINamespace \
+    WebExtensionAPIPermissions \
     WebExtensionAPIRuntime \
     WebExtensionAPITest \
     WebExtensionAPIWebNavigation \

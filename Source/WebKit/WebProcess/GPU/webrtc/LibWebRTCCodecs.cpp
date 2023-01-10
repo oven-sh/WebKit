@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2020-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,13 +31,13 @@
 #include "GPUProcessConnection.h"
 #include "LibWebRTCCodecsMessages.h"
 #include "LibWebRTCCodecsProxyMessages.h"
+#include "LibWebRTCProvider.h"
 #include "Logging.h"
 #include "RemoteVideoFrameObjectHeapProxy.h"
 #include "RemoteVideoFrameProxy.h"
 #include "WebCoreArgumentCoders.h"
 #include "WebProcess.h"
 #include <WebCore/CVUtilities.h>
-#include <WebCore/DeprecatedGlobalSettings.h>
 #include <WebCore/LibWebRTCDav1dDecoder.h>
 #include <WebCore/LibWebRTCMacros.h>
 #include <WebCore/PlatformMediaSessionManager.h>
@@ -184,6 +184,17 @@ LibWebRTCCodecs::LibWebRTCCodecs()
 {
 }
 
+void LibWebRTCCodecs::initializeIfNeeded()
+{
+    // Let's create the GPUProcess connection once to know whether we should do VP9 in GPUProcess.
+    static std::once_flag doInitializationOnce;
+    std::call_once(doInitializationOnce, [] {
+        callOnMainRunLoopAndWait([] {
+            WebProcess::singleton().ensureGPUProcessConnection();
+        });
+    });
+}
+
 void LibWebRTCCodecs::ensureGPUProcessConnectionOnMainThreadWithLock()
 {
     ASSERT(isMainRunLoop());
@@ -243,19 +254,19 @@ void LibWebRTCCodecs::setCallbacks(bool useGPUProcess, bool useRemoteFrames)
 {
     ASSERT(isMainRunLoop());
 
-    if (!useGPUProcess) {
-        webrtc::setVideoDecoderCallbacks(nullptr, nullptr, nullptr, nullptr);
-        webrtc::setVideoEncoderCallbacks(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr);
+    if (!LibWebRTCProvider::webRTCAvailable())
         return;
-    }
 
-    // Let's create WebProcess libWebRTCCodecs since it may be called from various threads.
-    WebProcess::singleton().libWebRTCCodecs().m_useRemoteFrames = useRemoteFrames;
+    // We can enable GPUProcess but disable it is difficult once enabled since callbacks may be used in background threads.
+    if (!useGPUProcess)
+        return;
 
-#if ENABLE(VP9)
-    WebProcess::singleton().libWebRTCCodecs().setVP9VTBSupport(WebProcess::singleton().ensureGPUProcessConnection().hasVP9HardwareDecoder());
-    WebProcess::singleton().libWebRTCCodecs().setHasVP9ExtensionSupport(WebProcess::singleton().ensureGPUProcessConnection().hasVP9ExtensionSupport());
-#endif
+    auto& libWebRTCCodecs = WebProcess::singleton().libWebRTCCodecs();
+    libWebRTCCodecs.m_useRemoteFrames = useRemoteFrames;
+    if (libWebRTCCodecs.m_useGPUProcess)
+        return;
+
+    libWebRTCCodecs.m_useGPUProcess = useGPUProcess;
 
     webrtc::setVideoDecoderCallbacks(createVideoDecoder, releaseVideoDecoder, decodeVideoFrame, registerDecodeCompleteCallback);
     webrtc::setVideoEncoderCallbacks(createVideoEncoder, releaseVideoEncoder, initializeVideoEncoder, encodeVideoFrame, registerEncodeCompleteCallback, setEncodeRatesCallback);

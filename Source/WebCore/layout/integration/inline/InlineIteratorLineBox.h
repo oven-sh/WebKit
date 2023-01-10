@@ -52,9 +52,10 @@ public:
 
     LineBox(PathVariant&&);
 
-    float top() const;
-    float bottom() const;
-    float height() const { return bottom() - top(); }
+    float logicalTop() const;
+    float logicalBottom() const;
+    float logicalHeight() const { return logicalBottom() - logicalTop(); }
+    float logicalWidth() const;
 
     float contentLogicalTop() const;
     float contentLogicalBottom() const;
@@ -176,17 +177,24 @@ inline float LineBox::contentLogicalBottomAdjustedForFollowingLineBox() const
     });
 }
 
-inline float LineBox::top() const
+inline float LineBox::logicalTop() const
 {
     return WTF::switchOn(m_pathVariant, [](const auto& path) {
-        return path.top();
+        return path.logicalTop();
     });
 }
 
-inline float LineBox::bottom() const
+inline float LineBox::logicalBottom() const
 {
     return WTF::switchOn(m_pathVariant, [](const auto& path) {
-        return path.bottom();
+        return path.logicalBottom();
+    });
+}
+
+inline float LineBox::logicalWidth() const
+{
+    return WTF::switchOn(m_pathVariant, [](const auto& path) {
+        return path.logicalWidth();
     });
 }
 

@@ -273,6 +273,20 @@ macro restoreCalleeSavesUsedByWasm()
     end
 end
 
+macro restoreWasmInstanceCalleeSavesForTailCallWhenUsingTLS()
+    # NOTE: We intentionally don't restore memoryBase and boundsCheckingSize here. These are saved
+    # and restored when entering Wasm by the JSToWasm wrapper and changes to them are meant
+    # to be observable within the same Wasm module.
+    # We also don't need to restore PB because usePreviousFrame() will take care of it.
+    if ARM64 or ARM64E or X86_64 or RISCV64
+        loadp -0x10[cfr], wasmInstance
+    elsif ARMv7
+        loadp -8[cfr], wasmInstance
+    else
+        error
+    end
+end
+
 macro preserveGPRsUsedByTailCall(gpr0, gpr1)
     if ARM64 or ARM64E
         storepairq gpr0, gpr1, CodeBlock[sp]
@@ -313,31 +327,6 @@ macro usePreviousFrame()
     else
         error
     end
-end
-
-
-macro loadWasmInstanceFromTLSTo(reg)
-if  HAVE_FAST_TLS
-    tls_loadp WTF_WASM_CONTEXT_KEY, reg
-else
-    crash()
-end
-end
-
-macro loadWasmInstanceFromTLS()
-if  HAVE_FAST_TLS
-    loadWasmInstanceFromTLSTo(wasmInstance)
-else
-    crash()
-end
-end
-
-macro storeWasmInstanceToTLS(instance)
-if  HAVE_FAST_TLS
-    tls_storep instance, WTF_WASM_CONTEXT_KEY
-else
-    crash()
-end
 end
 
 macro reloadMemoryRegistersFromInstance(instance, scratch1, scratch2)
@@ -386,11 +375,10 @@ else
 end
 end
 
-macro wasmPrologue(loadWasmInstance)
+macro wasmPrologue()
     # Set up the call frame and check if we should OSR.
     preserveCallerPCAndCFR()
     preserveCalleeSavesUsedByWasm()
-    loadWasmInstance()
     reloadMemoryRegistersFromInstance(wasmInstance, ws0, ws1)
 
     loadp Wasm::Instance::m_owner[wasmInstance], ws0
@@ -400,7 +388,12 @@ if not JSVALUE64
 end
 
     loadp Callee[cfr], ws0
-    andp ~3, ws0
+if JSVALUE64
+    andp ~(constexpr JSValue::WasmTag), ws0
+end
+    leap WTFConfig + constexpr WTF::offsetOfWTFConfigLowestAccessibleAddress, ws1
+    loadp [ws1], ws1
+    addp ws1, ws0
     storep ws0, CodeBlock[cfr]
 
     # Get new sp in ws1 and check stack height.
@@ -482,11 +475,10 @@ macro forEachVectorArgument(fn)
 end
 
 # Tier up immediately, while saving full vectors in argument FPRs
-macro wasmPrologueSIMD(loadWasmInstance)
+macro wasmPrologueSIMD()
 if WEBASSEMBLY_B3JIT and not ARMv7
     preserveCallerPCAndCFR()
     preserveCalleeSavesUsedByWasm()
-    loadWasmInstance()
     reloadMemoryRegistersFromInstance(wasmInstance, ws0, ws1)
 
     loadp Wasm::Instance::m_owner[wasmInstance], ws0
@@ -496,7 +488,12 @@ if not JSVALUE64
 end
 
     loadp Callee[cfr], ws0
-    andp ~3, ws0
+if JSVALUE64
+    andp ~(constexpr JSValue::WasmTag), ws0
+end
+    leap WTFConfig + constexpr WTF::offsetOfWTFConfigLowestAccessibleAddress, ws1
+    loadp [ws1], ws1
+    addp ws1, ws0
     storep ws0, CodeBlock[cfr]
 
     # Get new sp in ws1 and check stack height.
@@ -774,26 +771,12 @@ end
 
 # Entry point
 
-macro wasmCodeBlockGetter(targetRegister)
-    loadp Callee[cfr], targetRegister
-    andp ~3, targetRegister
-end
-
 op(wasm_function_prologue, macro ()
     if not WEBASSEMBLY or C_LOOP or C_LOOP_WIN
         error
     end
 
-    wasmPrologue(loadWasmInstanceFromTLS)
-    wasmNextInstruction()
-end)
-
-op(wasm_function_prologue_no_tls, macro ()
-    if not WEBASSEMBLY or C_LOOP or C_LOOP_WIN
-        error
-    end
-
-    wasmPrologue(macro () end)
+    wasmPrologue()
     wasmNextInstruction()
 end)
 
@@ -802,16 +785,7 @@ op(wasm_function_prologue_simd, macro ()
         error
     end
 
-    wasmPrologueSIMD(loadWasmInstanceFromTLS)
-    break
-end)
-
-op(wasm_function_prologue_no_tls_simd, macro ()
-    if not WEBASSEMBLY or C_LOOP or C_LOOP_WIN
-        error
-    end
-
-    wasmPrologueSIMD(macro () end)
+    wasmPrologueSIMD()
     break
 end)
 
@@ -853,11 +827,6 @@ macro wasm_throw_from_fault_handler(instance)
     cCall4(_slow_path_wasm_throw_exception)
     jumpToException()
 end
-
-op(wasm_throw_from_fault_handler_trampoline_fastTLS, macro ()
-    loadWasmInstanceFromTLSTo(a2)
-    wasm_throw_from_fault_handler(a2)
-end)
 
 op(wasm_throw_from_fault_handler_trampoline_reg_instance, macro ()
     move wasmInstance, a2
@@ -1028,8 +997,8 @@ macro slowPathForWasmCall(ctx, slowPath, storeWasmInstance)
     callWasmCallSlowPath(
         slowPath,
         # callee is r0 and targetWasmInstance is r1
-        macro (callee, targetWasmInstance)
-            move callee, ws0
+        macro (calleeEntryPoint, targetWasmInstance)
+            move calleeEntryPoint, ws0
 
             loadi ArgumentCountIncludingThis + TagOffset[cfr], PC
 
@@ -1179,12 +1148,12 @@ end
         end)
 end
 
-macro slowPathForWasmTailCall(ctx, slowPath, storeWasmInstance)
+macro slowPathForWasmTailCall(ctx, slowPath, storeWasmInstance, restoreCalleeSavesPreservedByCaller)
     callWasmCallSlowPath(
         slowPath,
         # callee is r0 and targetWasmInstance is r1
-        macro (callee, targetWasmInstance)
-            move callee, ws0
+        macro (calleeEntryPoint, targetWasmInstance)
+            move calleeEntryPoint, ws0
 
             loadi ArgumentCountIncludingThis + TagOffset[cfr], PC
 
@@ -1256,13 +1225,14 @@ end
 
             # Compute new stack pointer
             addp cfr, wa0
-            subp wa1 , wa0
+            subp wa1, wa0
 
             # Restore PC
             move ws1, PC
 
+            restoreCalleeSavesPreservedByCaller()
 if ARM64E
-            addp 16, cfr, ws2
+            addp CallerFrameAndPCSize, cfr, ws2
 end
             preserveReturnAddress(ws1)
             usePreviousFrame()
@@ -1337,43 +1307,48 @@ end
 end
 
 unprefixedWasmOp(wasm_call, WasmCall, macro(ctx)
-    slowPathForWasmCall(ctx, _slow_path_wasm_call, storeWasmInstanceToTLS)
-end)
-
-unprefixedWasmOp(wasm_call_no_tls, WasmCallNoTls, macro(ctx)
-    slowPathForWasmCall(ctx, _slow_path_wasm_call_no_tls, macro(targetInstance) move targetInstance, wasmInstance end)
+    slowPathForWasmCall(ctx, _slow_path_wasm_call, macro(targetInstance) move targetInstance, wasmInstance end)
 end)
 
 wasmOp(call_indirect, WasmCallIndirect, macro(ctx)
-    slowPathForWasmCall(ctx, _slow_path_wasm_call_indirect, storeWasmInstanceToTLS)
-end)
-
-wasmOp(call_indirect_no_tls, WasmCallIndirectNoTls, macro(ctx)
-    slowPathForWasmCall(ctx, _slow_path_wasm_call_indirect_no_tls, macro(targetInstance) move targetInstance, wasmInstance end)
+    slowPathForWasmCall(ctx, _slow_path_wasm_call_indirect, macro(targetInstance) move targetInstance, wasmInstance end)
 end)
 
 wasmOp(call_ref, WasmCallRef, macro(ctx)
-    slowPathForWasmCall(ctx, _slow_path_wasm_call_ref, storeWasmInstanceToTLS)
+    slowPathForWasmCall(ctx, _slow_path_wasm_call_ref, macro(targetInstance) move targetInstance, wasmInstance end)
 end)
 
-wasmOp(call_ref_no_tls, WasmCallRefNoTls, macro(ctx)
-    slowPathForWasmCall(ctx, _slow_path_wasm_call_ref_no_tls, macro(targetInstance) move targetInstance, wasmInstance end)
-end)
+# In the prologue of every Wasm function, we call preserveCalleeSavesUsedByWasm() which saves
+# the wasmInstance and PB callee save registers. In epilogues, we call restoreCalleeSavesUsedByWasm()
+# to restore them (e.g. see doReturn()). Hence, it follows that when we do a tail_call, that we
+# do the equivalent of restoreCalleeSavesUsedByWasm() and restore the wasmInstance and PB.
+#
+# However, for no_tls mode, the wasmInstance register is pinned and used to point to the Wasm
+# instance currently executing. The callee expects the caller to have set up wasmInstance accordingly
+# before calling it. As such, we should not restore the caller's caller's wasmInstance before tail
+# calling to the callee. Hence, we'll only restore the wasmInstance register for useFastTLS mode.
+#
+# As for PB, slowPathForWasmTailCall already restores it in usePreviousFrame(). Hence, there's
+# nothing more to do for that.
 
 wasmOp(tail_call, WasmTailCall, macro(ctx)
-    slowPathForWasmTailCall(ctx, _slow_path_wasm_tail_call, storeWasmInstanceToTLS)
-end)
-
-wasmOp(tail_call_no_tls, WasmTailCallNoTls, macro(ctx)
-    slowPathForWasmTailCall(ctx, _slow_path_wasm_tail_call_no_tls, macro(targetInstance) move targetInstance, wasmInstance end)
+    slowPathForWasmTailCall(ctx, _slow_path_wasm_tail_call,
+    macro(targetInstance)
+        move targetInstance, wasmInstance
+    end,
+    macro()
+        # Nothing to do. See comment on restoring callee saves for tail calls above.
+    end)
 end)
 
 wasmOp(tail_call_indirect, WasmTailCallIndirect, macro(ctx)
-    slowPathForWasmTailCall(ctx, _slow_path_wasm_tail_call_indirect, storeWasmInstanceToTLS)
-end)
-
-wasmOp(tail_call_indirect_no_tls, WasmTailCallIndirectNoTls, macro(ctx)
-    slowPathForWasmTailCall(ctx, _slow_path_wasm_tail_call_indirect_no_tls, macro(targetInstance) move targetInstance, wasmInstance end)
+    slowPathForWasmTailCall(ctx, _slow_path_wasm_tail_call_indirect,
+    macro(targetInstance)
+        move targetInstance, wasmInstance
+    end,
+    macro()
+        # Nothing to do. See comment on restoring callee saves for tail calls above.
+    end)
 end)
 
 slowWasmOp(call_builtin)
@@ -2227,18 +2202,10 @@ end
 end
 
 commonWasmOp(wasm_catch, WasmCatch, macro() end, macro(ctx)
-    catchImpl(ctx, storeWasmInstanceToTLS)
-end)
-
-commonWasmOp(wasm_catch_no_tls, WasmCatch, macro() end, macro(ctx)
     catchImpl(ctx, macro(instance) end)
 end)
 
 commonWasmOp(wasm_catch_all, WasmCatchAll, macro() end, macro(ctx)
-    catchAllImpl(ctx, storeWasmInstanceToTLS)
-end)
-
-commonWasmOp(wasm_catch_all_no_tls, WasmCatchAll, macro() end, macro(ctx)
     catchAllImpl(ctx, macro(instance) end)
 end)
 

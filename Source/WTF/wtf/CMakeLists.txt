@@ -1,5 +1,6 @@
 set(WTF_PUBLIC_HEADERS
     ASCIICType.h
+    AccessibleAddress.h
     AggregateLogger.h
     Algorithms.h
     AnsiColors.h
@@ -648,11 +649,7 @@ file(COPY
 
 set(WTF_PREFERENCES
     ../Scripts/GeneratePreferences.rb
-
-    ../Scripts/Preferences/WebPreferences.yaml
-    ../Scripts/Preferences/WebPreferencesDebug.yaml
-    ../Scripts/Preferences/WebPreferencesExperimental.yaml
-    ../Scripts/Preferences/WebPreferencesInternal.yaml
+    ../Scripts/Preferences/UnifiedWebPreferences.yaml
 )
 
 WEBKIT_COPY_FILES(WTF_CopyPreferences

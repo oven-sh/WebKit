@@ -57,14 +57,15 @@ public:
     CSSSelectorList consumeNestedSelectorList(CSSParserTokenRange&);
 
     static bool supportsComplexSelector(CSSParserTokenRange, const CSSParserContext&);
+    static CSSSelectorList resolveNestingParent(const CSSSelectorList& nestedSelectorList, const CSSSelectorList* parentResolvedSelectorList);
 
 private:
     template<typename ConsumeSelector> CSSSelectorList consumeSelectorList(CSSParserTokenRange&, ConsumeSelector&&);
     template<typename ConsumeSelector> CSSSelectorList consumeForgivingSelectorList(CSSParserTokenRange&, ConsumeSelector&&);
 
     CSSSelectorList consumeForgivingComplexSelectorList(CSSParserTokenRange&);
-    CSSSelectorList consumeForgivingRelativeSelectorList(CSSParserTokenRange&);
     CSSSelectorList consumeCompoundSelectorList(CSSParserTokenRange&);
+    CSSSelectorList consumeRelativeSelectorList(CSSParserTokenRange&);
 
     std::unique_ptr<CSSParserSelector> consumeComplexSelector(CSSParserTokenRange&);
     std::unique_ptr<CSSParserSelector> consumeCompoundSelector(CSSParserTokenRange&);

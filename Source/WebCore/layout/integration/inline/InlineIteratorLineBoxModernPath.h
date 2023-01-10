@@ -49,8 +49,9 @@ public:
 
     float contentLogicalTop() const { return line().enclosingContentTop(); }
     float contentLogicalBottom() const { return line().enclosingContentBottom(); }
-    float top() const { return line().lineBoxTop(); }
-    float bottom() const { return line().lineBoxBottom(); }
+    float logicalTop() const { return line().lineBoxLogicalRect().y(); }
+    float logicalBottom() const { return line().lineBoxLogicalRect().maxY(); }
+    float logicalWidth() const { return line().lineBoxLogicalRect().width(); }
     float inkOverflowTop() const { return line().inkOverflow().y(); }
     float inkOverflowBottom() const { return line().inkOverflow().maxY(); }
 
@@ -62,7 +63,7 @@ public:
     // FIXME: Implement.
     float contentLogicalBottomAdjustedForFollowingLineBox() const { return contentLogicalBottom(); }
 
-    float contentLogicalLeft() const { return line().lineBoxLeft() + line().contentLogicalOffset(); }
+    float contentLogicalLeft() const { return line().lineBoxLeft() + line().contentVisualOffsetInInlineDirection(); }
     float contentLogicalRight() const { return contentLogicalLeft() + line().contentLogicalWidth(); }
     bool isHorizontal() const { return line().isHorizontal(); }
     FontBaseline baselineType() const { return line().baselineType(); }

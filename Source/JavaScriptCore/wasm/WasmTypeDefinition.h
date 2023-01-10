@@ -54,10 +54,167 @@ namespace Wasm {
 
 #if ENABLE(B3_JIT)
 #define CREATE_ENUM_VALUE(name, id, ...) name = id,
-enum class ExtSIMDOpType : uint8_t {
+enum class ExtSIMDOpType : uint32_t {
     FOR_EACH_WASM_EXT_SIMD_OP(CREATE_ENUM_VALUE)
 };
 #undef CREATE_ENUM_VALUE
+
+constexpr std::pair<size_t, size_t> countNumberOfWasmExtendedSIMDOpcodes()
+{
+    uint8_t numberOfOpcodes = 0;
+    uint8_t mapSize = 0;
+#define COUNT_EXT_SIMD_OPERATION(name, id, ...) \
+    numberOfOpcodes++; \
+    mapSize = std::max<size_t>(mapSize, (size_t)id);
+    FOR_EACH_WASM_EXT_SIMD_OP(COUNT_EXT_SIMD_OPERATION)
+#undef COUNT_EXT_SIMD_OPERATION
+    return { numberOfOpcodes, mapSize + 1 };
+}
+
+constexpr bool isRegisteredWasmExtendedSIMDOpcode(ExtSIMDOpType op)
+{
+    switch (op) {
+#define CREATE_CASE(name, id, ...) case ExtSIMDOpType::name:
+    FOR_EACH_WASM_EXT_SIMD_OP(CREATE_CASE)
+#undef CREATE_CASE
+        return true;
+    default:
+        return false;
+    }
+}
+
+constexpr void dumpExtSIMDOpType(PrintStream& out, ExtSIMDOpType op)
+{
+    switch (op) {
+#define CREATE_CASE(name, id, ...) case ExtSIMDOpType::name: out.print(#name); break;
+    FOR_EACH_WASM_EXT_SIMD_OP(CREATE_CASE)
+#undef CREATE_CASE
+    default:
+        return;
+    }
+}
+
+MAKE_PRINT_ADAPTOR(ExtSIMDOpTypeDump, ExtSIMDOpType, dumpExtSIMDOpType);
+
+constexpr std::pair<size_t, size_t> countNumberOfWasmExtendedAtomicOpcodes()
+{
+    uint8_t numberOfOpcodes = 0;
+    uint8_t mapSize = 0;
+#define COUNT_WASM_EXT_ATOMIC_OP(name, id, ...) \
+    numberOfOpcodes++;                      \
+    mapSize = std::max<size_t>(mapSize, (size_t)id);
+    FOR_EACH_WASM_EXT_ATOMIC_LOAD_OP(COUNT_WASM_EXT_ATOMIC_OP);
+    FOR_EACH_WASM_EXT_ATOMIC_STORE_OP(COUNT_WASM_EXT_ATOMIC_OP);
+    FOR_EACH_WASM_EXT_ATOMIC_BINARY_RMW_OP(COUNT_WASM_EXT_ATOMIC_OP);
+    FOR_EACH_WASM_EXT_ATOMIC_OTHER_OP(COUNT_WASM_EXT_ATOMIC_OP);
+#undef COUNT_WASM_EXT_ATOMIC_OP
+    return { numberOfOpcodes, mapSize + 1 };
+}
+
+constexpr bool isRegisteredExtenedAtomicOpcode(ExtAtomicOpType op)
+{
+    switch (op) {
+#define CREATE_CASE(name, id, ...) case ExtAtomicOpType::name:
+    FOR_EACH_WASM_EXT_ATOMIC_LOAD_OP(CREATE_CASE)
+    FOR_EACH_WASM_EXT_ATOMIC_STORE_OP(CREATE_CASE)
+    FOR_EACH_WASM_EXT_ATOMIC_BINARY_RMW_OP(CREATE_CASE)
+    FOR_EACH_WASM_EXT_ATOMIC_OTHER_OP(CREATE_CASE)
+#undef CREATE_CASE
+        return true;
+    default:
+        return false;
+    }
+}
+
+constexpr void dumpExtAtomicOpType(PrintStream& out, ExtAtomicOpType op)
+{
+    switch (op) {
+#define CREATE_CASE(name, id, ...) case ExtAtomicOpType::name: out.print(#name); break;
+    FOR_EACH_WASM_EXT_ATOMIC_LOAD_OP(CREATE_CASE)
+    FOR_EACH_WASM_EXT_ATOMIC_STORE_OP(CREATE_CASE)
+    FOR_EACH_WASM_EXT_ATOMIC_BINARY_RMW_OP(CREATE_CASE)
+    FOR_EACH_WASM_EXT_ATOMIC_OTHER_OP(CREATE_CASE)
+#undef CREATE_CASE
+    default:
+        return;
+    }
+}
+
+MAKE_PRINT_ADAPTOR(ExtAtomicOpTypeDump, ExtAtomicOpType, dumpExtAtomicOpType);
+
+constexpr std::pair<size_t, size_t> countNumberOfWasmGCOpcodes()
+{
+    uint8_t numberOfOpcodes = 0;
+    uint8_t mapSize = 0;
+#define COUNT_WASM_GC_OP(name, id, ...) \
+    numberOfOpcodes++;                  \
+    mapSize = std::max<size_t>(mapSize, (size_t)id);
+    FOR_EACH_WASM_GC_OP(COUNT_WASM_GC_OP);
+#undef COUNT_WASM_GC_OP
+    return { numberOfOpcodes, mapSize + 1 };
+}
+
+constexpr bool isRegisteredGCOpcode(ExtGCOpType op)
+{
+    switch (op) {
+#define CREATE_CASE(name, id, ...) case ExtGCOpType::name:
+    FOR_EACH_WASM_GC_OP(CREATE_CASE)
+#undef CREATE_CASE
+        return true;
+    default:
+        return false;
+    }
+}
+
+constexpr void dumpExtGCOpType(PrintStream& out, ExtGCOpType op)
+{
+    switch (op) {
+#define CREATE_CASE(name, id, ...) case ExtGCOpType::name: out.print(#name); break;
+    FOR_EACH_WASM_GC_OP(CREATE_CASE)
+#undef CREATE_CASE
+    default:
+        return;
+    }
+}
+
+MAKE_PRINT_ADAPTOR(ExtGCOpTypeDump, ExtGCOpType, dumpExtGCOpType);
+
+constexpr std::pair<size_t, size_t> countNumberOfWasmBaseOpcodes()
+{
+    uint8_t numberOfOpcodes = 0;
+    uint8_t mapSize = 0;
+#define COUNT_WASM_OP(name, id, ...) \
+    numberOfOpcodes++;               \
+    mapSize = std::max<size_t>(mapSize, (size_t)id);
+    FOR_EACH_WASM_OP(COUNT_WASM_OP);
+#undef COUNT_WASM_OP
+    return { numberOfOpcodes, mapSize + 1 };
+}
+
+constexpr bool isRegisteredBaseOpcode(OpType op)
+{
+    switch (op) {
+#define CREATE_CASE(name, id, ...) case OpType::name:
+    FOR_EACH_WASM_OP(CREATE_CASE)
+#undef CREATE_CASE
+        return true;
+    default:
+        return false;
+    }
+}
+
+constexpr void dumpOpType(PrintStream& out, OpType op)
+{
+    switch (op) {
+#define CREATE_CASE(name, id, ...) case OpType::name: out.print(#name); break;
+    FOR_EACH_WASM_OP(CREATE_CASE)
+#undef CREATE_CASE
+    default:
+        return;
+    }
+}
+
+MAKE_PRINT_ADAPTOR(OpTypeDump, OpType, dumpOpType);
 
 constexpr Type simdScalarType(SIMDLane lane)
 {
@@ -217,8 +374,108 @@ enum Mutability : uint8_t {
     Immutable = 0
 };
 
-struct FieldType {
-    Type type;
+struct StorageType {
+public:
+    template <typename T>
+    bool is() const { return std::holds_alternative<T>(m_storageType); }
+
+    template <typename T>
+    const T as() const { ASSERT(is<T>()); return *std::get_if<T>(&m_storageType); }
+
+    StorageType() = default;
+
+    explicit StorageType(Type t)
+    {
+        m_storageType = std::variant<Type, PackedType>(t);
+    }
+
+    explicit StorageType(PackedType t)
+    {
+        m_storageType = std::variant<Type, PackedType>(t);
+    }
+
+    // Return a value type suitable for validating instruction arguments. Packed types cannot show up as value types and need to be unpacked to I32.
+    Type unpacked() const
+    {
+        if (is<Type>())
+            return as<Type>();
+        return Types::I32;
+    }
+
+    size_t elementSize() const
+    {
+        if (is<Type>()) {
+            switch (as<Type>().kind) {
+            case Wasm::TypeKind::I32:
+            case Wasm::TypeKind::F32:
+                return sizeof(uint32_t);
+            default:
+                return sizeof(uint64_t);
+            }
+        }
+        switch (as<PackedType>()) {
+        case PackedType::I8:
+            return sizeof(uint8_t);
+        case PackedType::I16:
+            return sizeof(uint16_t);
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    bool operator==(const StorageType& rhs) const
+    {
+        if (rhs.is<PackedType>())
+            return (is<PackedType>() && as<PackedType>() == rhs.as<PackedType>());
+        if (!is<Type>())
+            return false;
+        return(as<Type>() == rhs.as<Type>());
+    }
+    bool operator!=(const StorageType& rhs) const { return !(*this == rhs); };
+
+    int8_t typeCode() const
+    {
+        if (is<Type>())
+            return static_cast<int8_t>(as<Type>().kind);
+        return static_cast<int8_t>(as<PackedType>());
+    }
+
+    TypeIndex index() const
+    {
+        if (is<Type>())
+            return as<Type>().index;
+        return 0;
+    }
+    void dump(WTF::PrintStream& out) const;
+
+private:
+    std::variant<Type, PackedType> m_storageType;
+
+};
+
+inline const char* makeString(const StorageType& storageType)
+{
+    return(storageType.is<Type>() ? makeString(storageType.as<Type>().kind) :
+        makeString(storageType.as<PackedType>()));
+}
+
+inline size_t typeSizeInBytes(const StorageType& storageType)
+{
+    if (storageType.is<PackedType>()) {
+        switch (storageType.as<PackedType>()) {
+        case PackedType::I8: {
+            return 1;
+        }
+        case PackedType::I16: {
+            return 2;
+        }
+        }
+    }
+    return typeKindSizeInBytes(storageType.as<Type>().kind);
+}
+
+class FieldType {
+public:
+    StorageType type;
     Mutability mutability;
 
     bool operator==(const FieldType& rhs) const { return type == rhs.type && mutability == rhs.mutability; }

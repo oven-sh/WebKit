@@ -235,7 +235,6 @@
 #define WebKitPictureInPictureAPIEnabledKey @"WebKitPictureInPictureAPIEnabled"
 #define WebKitAllowMediaContentTypesRequiringHardwareSupportAsFallbackKey @"WebKitAllowMediaContentTypesRequiringHardwareSupportAsFallback"
 #define WebKitMediaCapabilitiesEnabledPreferenceKey @"WebKitMediaCapabilitiesEnabled"
-#define WebKitCSSLogicalEnabledPreferenceKey @"WebKitCSSLogicalEnabled"
 #define WebKitLineHeightUnitsEnabledPreferenceKey @"WebKitLineHeightUnitsEnabled"
 #define WebKitDebugInAppBrowserPrivacyEnabledPreferenceKey @"WebKitDebugInAppBrowserPrivacyEnabled"
 
@@ -254,7 +253,6 @@
 #define WebKitWebAnimationsMutableTimelinesEnabledPreferenceKey @"WebKitWebAnimationsMutableTimelinesEnabled"
 #define WebKitWebGL2EnabledPreferenceKey @"WebKitWebGL2Enabled"
 #define WebKitMaskWebGLStringsEnabledPreferenceKey @"WebKitMaskWebGLStringsEnabled"
-#define WebKitAccessibilityObjectModelEnabledPreferenceKey @"WebKitAccessibilityObjectModelEnabled"
 #define WebKitServerTimingEnabledPreferenceKey @"WebKitServerTimingEnabled"
 #define WebKitCSSCustomPropertiesAndValuesEnabledPreferenceKey @"WebKitCSSCustomPropertiesAndValuesEnabled"
 #define WebKitResizeObserverEnabledPreferenceKey @"WebKitResizeObserverEnabled"

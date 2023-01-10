@@ -719,10 +719,8 @@ TEST(WebKit2, CrashGPUProcessWhileCapturingAndCalling)
             [preferences _setEnabled:NO forInternalDebugFeature:feature];
         if ([feature.key isEqualToString:@"CaptureVideoInGPUProcessEnabled"])
             [preferences _setEnabled:YES forInternalDebugFeature:feature];
-    }
-    for (_WKExperimentalFeature *feature in [WKPreferences _experimentalFeatures]) {
         if ([feature.key isEqualToString:@"WebRTCPlatformCodecsInGPUProcessEnabled"])
-            [preferences _setEnabled:YES forFeature:feature];
+            [preferences _setEnabled:YES forInternalDebugFeature:feature];
     }
 
     initializeMediaCaptureConfiguration(configuration.get());
@@ -875,14 +873,18 @@ TEST(WebKit, AutoplayOnVisibilityChange)
     auto delegate = adoptNS([[UserMediaCaptureUIDelegate alloc] init]);
     webView.get().UIDelegate = delegate.get();
 
+    NSLog(@"AutoplayOnVisibilityChange 1\n");
+
     [webView loadRequest:server.request()];
     TestWebKitAPI::Util::run(&done);
 
+    NSLog(@"AutoplayOnVisibilityChange 2\n");
     done = false;
     auto *hostWindow = [webView hostWindow];
     [hostWindow miniaturize:hostWindow];
     TestWebKitAPI::Util::run(&done);
 
+    NSLog(@"AutoplayOnVisibilityChange 3\n");
     done = false;
     [webView stringByEvaluatingJavaScript:@"capture()"];
     TestWebKitAPI::Util::run(&done);
@@ -890,18 +892,22 @@ TEST(WebKit, AutoplayOnVisibilityChange)
     bool hasSleepDisabler = [webView stringByEvaluatingJavaScript:@"hasSleepDisabler()"].boolValue;
     EXPECT_TRUE(hasSleepDisabler);
 
+    NSLog(@"AutoplayOnVisibilityChange 4\n");
     done = false;
     [hostWindow deminiaturize:hostWindow];
     TestWebKitAPI::Util::run(&done);
 
+    NSLog(@"AutoplayOnVisibilityChange 5\n");
     done = false;
     [webView stringByEvaluatingJavaScript:@"doTest()"];
     TestWebKitAPI::Util::run(&done);
 
+    NSLog(@"AutoplayOnVisibilityChange 6\n");
     done = false;
     [webView stringByEvaluatingJavaScript:@"stop()"];
     TestWebKitAPI::Util::run(&done);
 
+    NSLog(@"AutoplayOnVisibilityChange 7\n");
     hasSleepDisabler = [webView stringByEvaluatingJavaScript:@"hasSleepDisabler()"].boolValue;
     EXPECT_FALSE(hasSleepDisabler);
 }

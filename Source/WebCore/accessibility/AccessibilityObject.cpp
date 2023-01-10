@@ -2491,7 +2491,7 @@ static void initializeRoleMap()
 
     gAriaRoleMap = new ARIARoleMap;
     gAriaReverseRoleMap = new ARIAReverseRoleMap;
-    size_t roleLength = WTF_ARRAY_LENGTH(roles);
+    size_t roleLength = std::size(roles);
     for (size_t i = 0; i < roleLength; ++i) {
         gAriaRoleMap->set(roles[i].ariaRole, roles[i].webcoreRole);
         gAriaReverseRoleMap->set(static_cast<int>(roles[i].webcoreRole), roles[i].ariaRole);
@@ -3623,15 +3623,19 @@ bool AccessibilityObject::isDOMHidden() const
 
 bool AccessibilityObject::isShowingValidationMessage() const
 {
-    if (is<HTMLFormControlElement>(node()))
-        return downcast<HTMLFormControlElement>(*node()).isShowingValidationMessage();
+    if (RefPtr element = this->element()) {
+        if (auto* listedElement = element->asValidatedFormListedElement())
+            return listedElement->isShowingValidationMessage();
+    }
     return false;
 }
 
 String AccessibilityObject::validationMessage() const
 {
-    if (is<HTMLFormControlElement>(node()))
-        return downcast<HTMLFormControlElement>(*node()).validationMessage();
+    if (RefPtr element = this->element()) {
+        if (auto* listedElement = element->asValidatedFormListedElement())
+            return listedElement->validationMessage();
+    }
     return String();
 }
 

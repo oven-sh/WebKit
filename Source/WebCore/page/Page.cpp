@@ -47,7 +47,6 @@
 #include "DatabaseProvider.h"
 #include "DebugOverlayRegions.h"
 #include "DebugPageOverlays.h"
-#include "DeprecatedGlobalSettings.h"
 #include "DiagnosticLoggingClient.h"
 #include "DiagnosticLoggingKeys.h"
 #include "DisplayRefreshMonitorManager.h"
@@ -1777,7 +1776,7 @@ void Page::doAfterUpdateRendering()
     // Code here should do once-per-frame work that needs to be done before painting, and requires
     // layout to be up-to-date. It should not run script, trigger layout, or dirty layout.
 
-    if (DeprecatedGlobalSettings::layoutFormattingContextEnabled()) {
+    if (settings().layoutFormattingContextEnabled()) {
         forEachDocument([] (Document& document) {
             if (auto* frameView = document.view())
                 frameView->displayView().prepareForDisplay();
@@ -2008,6 +2007,11 @@ void Page::setImageAnimationEnabled(bool enabled)
         return;
     m_imageAnimationEnabled = enabled;
     updatePlayStateForAllAnimations();
+
+    // If the state of isAnyAnimationAllowedToPlay is not affected by the presence of individually playing
+    // animations (because there are none), then we should update it with the new animation enabled state.
+    if (!m_individuallyPlayingAnimationElements.computeSize())
+        chrome().client().isAnyAnimationAllowedToPlayDidChange(enabled);
 }
 #endif
 
@@ -4124,6 +4128,29 @@ void Page::updatePlayStateForAllAnimations()
     if (auto* view = mainFrame().view())
         view->updatePlayStateForAllAnimationsIncludingSubframes();
 }
+
+#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
+void Page::addIndividuallyPlayingAnimationElement(HTMLImageElement& element)
+{
+    ASSERT(element.allowsAnimation());
+    bool wasEmpty = !m_individuallyPlayingAnimationElements.computeSize();
+    m_individuallyPlayingAnimationElements.add(element);
+
+    // If there were no individually playing animations prior to this addition, then the effective state of isAnyAnimationAllowedToPlay has changed.
+    if (wasEmpty && !m_imageAnimationEnabled)
+        chrome().client().isAnyAnimationAllowedToPlayDidChange(true);
+}
+
+void Page::removeIndividuallyPlayingAnimationElement(HTMLImageElement& element)
+{
+    m_individuallyPlayingAnimationElements.remove(element);
+
+    // If removing this animation caused there to be no remaining individually playing animations,
+    // then the effective state of isAnyAnimationAllowedToPlay has changed.
+    if (!m_individuallyPlayingAnimationElements.computeSize() && !m_imageAnimationEnabled)
+        chrome().client().isAnyAnimationAllowedToPlayDidChange(false);
+}
+#endif // ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
 
 ScreenOrientationManager* Page::screenOrientationManager() const
 {

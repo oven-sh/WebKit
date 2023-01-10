@@ -527,18 +527,18 @@
 /* End PBXBuildRule section */
 
 /* Begin PBXContainerItemProxy section */
-		1C4FAEA028FC83DC00FFE212 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 1C4FAE9628FC83DC00FFE212 /* libavif.xcodeproj */;
-			proxyType = 2;
-			remoteGlobalIDString = 1C4FAE8F28FC83DC00FFE212;
-			remoteInfo = libavif;
-		};
-		1C9CD59828FC8D37005A2EAF /* PBXContainerItemProxy */ = {
+		1C122B19296A4B6900814381 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 1C4FAE9628FC83DC00FFE212 /* libavif.xcodeproj */;
 			proxyType = 1;
 			remoteGlobalIDString = 1C4FAE8E28FC83DC00FFE212;
+			remoteInfo = libavif;
+		};
+		1C2D0DF7296A44CC00BE33A3 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 1C4FAE9628FC83DC00FFE212 /* libavif.xcodeproj */;
+			proxyType = 2;
+			remoteGlobalIDString = 1C4FAE8F28FC83DC00FFE212;
 			remoteInfo = libavif;
 		};
 /* End PBXContainerItemProxy section */
@@ -936,6 +936,7 @@
 		63E369F921AFA83F001C14BC /* NSProgressSPI.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = NSProgressSPI.h; sourceTree = "<group>"; };
 		71B1141F26823ACD004D6701 /* SystemPreviewSPI.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = SystemPreviewSPI.h; sourceTree = "<group>"; };
 		72BA2A872951462500678507 /* NSTextFieldCellSPI.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = NSTextFieldCellSPI.h; sourceTree = "<group>"; };
+		72C9483A2959517C006ECB96 /* NSSearchFieldCellSPI.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = NSSearchFieldCellSPI.h; sourceTree = "<group>"; };
 		7A36D0F8223AD9AB00B0522E /* CommonCryptoSPI.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = CommonCryptoSPI.h; sourceTree = "<group>"; };
 		7A3A6A7F20CADB4600317AAE /* NSImageSPI.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = NSImageSPI.h; sourceTree = "<group>"; };
 		7B47F2A128587B9700E793C8 /* CoreGraphicsSoftLink.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = CoreGraphicsSoftLink.h; sourceTree = "<group>"; };
@@ -1207,6 +1208,7 @@
 				0C77857D1F45130F00F4EBB6 /* NSScrollingInputFilterSPI.h */,
 				0C77857E1F45130F00F4EBB6 /* NSScrollingMomentumCalculatorSPI.h */,
 				A1175B591F6B4A8400C4B9F0 /* NSScrollViewSPI.h */,
+				72C9483A2959517C006ECB96 /* NSSearchFieldCellSPI.h */,
 				44EEA0FE2747438900594A83 /* NSServicesRolloverButtonCellSPI.h */,
 				0C77857F1F45130F00F4EBB6 /* NSSharingServicePickerSPI.h */,
 				0C7785801F45130F00F4EBB6 /* NSSharingServiceSPI.h */,
@@ -1248,7 +1250,7 @@
 		1C09D0341E31C32800725F18 = {
 			isa = PBXGroup;
 			children = (
-				1C4FAE9628FC83DC00FFE212 /* libavif.xcodeproj */,
+				1C2D0DF2296A448200BE33A3 /* ThirdParty */,
 				1C09D05C1E31C73300725F18 /* Configurations */,
 				DDE99321278D103900F60D26 /* Frameworks */,
 				1C09D03F1E31C32800725F18 /* pal */,
@@ -1384,6 +1386,22 @@
 			path = Impl;
 			sourceTree = "<group>";
 		};
+		1C2D0DF2296A448200BE33A3 /* ThirdParty */ = {
+			isa = PBXGroup;
+			children = (
+				1C4FAE9628FC83DC00FFE212 /* libavif.xcodeproj */,
+			);
+			path = ThirdParty;
+			sourceTree = "<group>";
+		};
+		1C2D0DF4296A44CC00BE33A3 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				1C2D0DF8296A44CC00BE33A3 /* libavif.a */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
 		1C4876DE1F8D831300CCEEBD /* cocoa */ = {
 			isa = PBXGroup;
 			children = (
@@ -1421,14 +1439,6 @@
 				F46B8C4C26740918007A6554 /* VisionKitCoreSoftLink.mm */,
 			);
 			path = cocoa;
-			sourceTree = "<group>";
-		};
-		1C4FAE9728FC83DC00FFE212 /* Products */ = {
-			isa = PBXGroup;
-			children = (
-				1C4FAEA128FC83DC00FFE212 /* libavif.a */,
-			);
-			name = Products;
 			sourceTree = "<group>";
 		};
 		1C5C57E527573105003B540D /* ios */ = {
@@ -2127,7 +2137,7 @@
 				DD20DD0627BC7F290093D175 /* PBXBuildRule */,
 			);
 			dependencies = (
-				1C9CD59928FC8D37005A2EAF /* PBXTargetDependency */,
+				1C122B1A296A4B6900814381 /* PBXTargetDependency */,
 			);
 			name = PAL;
 			productName = PAL;
@@ -2167,7 +2177,7 @@
 			projectDirPath = "";
 			projectReferences = (
 				{
-					ProductGroup = 1C4FAE9728FC83DC00FFE212 /* Products */;
+					ProductGroup = 1C2D0DF4296A44CC00BE33A3 /* Products */;
 					ProjectRef = 1C4FAE9628FC83DC00FFE212 /* libavif.xcodeproj */;
 				},
 			);
@@ -2179,11 +2189,11 @@
 /* End PBXProject section */
 
 /* Begin PBXReferenceProxy section */
-		1C4FAEA128FC83DC00FFE212 /* libavif.a */ = {
+		1C2D0DF8296A44CC00BE33A3 /* libavif.a */ = {
 			isa = PBXReferenceProxy;
 			fileType = archive.ar;
 			path = libavif.a;
-			remoteRef = 1C4FAEA028FC83DC00FFE212 /* PBXContainerItemProxy */;
+			remoteRef = 1C2D0DF7296A44CC00BE33A3 /* PBXContainerItemProxy */;
 			sourceTree = BUILT_PRODUCTS_DIR;
 		};
 /* End PBXReferenceProxy section */
@@ -2317,10 +2327,10 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
-		1C9CD59928FC8D37005A2EAF /* PBXTargetDependency */ = {
+		1C122B1A296A4B6900814381 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			name = libavif;
-			targetProxy = 1C9CD59828FC8D37005A2EAF /* PBXContainerItemProxy */;
+			targetProxy = 1C122B19296A4B6900814381 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 

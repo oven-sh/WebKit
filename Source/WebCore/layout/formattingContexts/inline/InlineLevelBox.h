@@ -42,6 +42,7 @@ class InlineLevelBox {
 public:
     enum class LineSpanningInlineBox { Yes, No };
     static InlineLevelBox createInlineBox(const Box&, const RenderStyle&, InlineLayoutUnit logicalLeft, InlineLayoutUnit logicalWidth, LineSpanningInlineBox = LineSpanningInlineBox::No);
+    static InlineLevelBox createRootInlineBox(const Box&, const RenderStyle&, InlineLayoutUnit logicalLeft, InlineLayoutUnit logicalWidth);
     static InlineLevelBox createAtomicInlineLevelBox(const Box&, const RenderStyle&, InlineLayoutUnit logicalLeft, InlineLayoutUnit logicalWidth);
     static InlineLevelBox createLineBreakBox(const Box&, const RenderStyle&, InlineLayoutUnit logicalLeft);
     static InlineLevelBox createGenericInlineLevelBox(const Box&, const RenderStyle&, InlineLayoutUnit logicalLeft);
@@ -125,6 +126,7 @@ private:
     InlineLayoutUnit logicalTop() const { return m_logicalRect.top(); }
     InlineLayoutUnit logicalBottom() const { return m_logicalRect.bottom(); }
     InlineLayoutUnit logicalLeft() const { return m_logicalRect.left(); }
+    InlineLayoutUnit logicalRight() const { return m_logicalRect.right(); }
     InlineLayoutUnit logicalWidth() const { return m_logicalRect.width(); }
     InlineLayoutUnit logicalHeight() const { return m_logicalRect.height(); }
 
@@ -132,6 +134,7 @@ private:
     void setLogicalWidth(InlineLayoutUnit logicalWidth) { m_logicalRect.setWidth(logicalWidth); }
     void setLogicalHeight(InlineLayoutUnit logicalHeight) { m_logicalRect.setHeight(roundToInt(logicalHeight)); }
     void setLogicalTop(InlineLayoutUnit logicalTop) { m_logicalRect.setTop(logicalTop >= 0 ? roundToInt(logicalTop) : -roundToInt(-logicalTop)); }
+    void setLogicalLeft(InlineLayoutUnit logicalLeft) { m_logicalRect.setLeft(logicalLeft); }
     void setAscent(InlineLayoutUnit ascent) { m_ascent = roundToInt(ascent); }
     void setDescent(InlineLayoutUnit descent) { m_descent = roundToInt(descent); }
     void setLayoutBounds(const LayoutBounds& layoutBounds) { m_layoutBounds = { InlineLayoutUnit(roundToInt(layoutBounds.ascent)), InlineLayoutUnit(roundToInt(layoutBounds.descent)) }; }
@@ -242,6 +245,11 @@ inline InlineLevelBox InlineLevelBox::createAtomicInlineLevelBox(const Box& layo
     return InlineLevelBox { layoutBox, style, logicalLeft, { logicalWidth, { } }, Type::AtomicInlineLevelBox };
 }
 
+inline InlineLevelBox InlineLevelBox::createRootInlineBox(const Box& layoutBox, const RenderStyle& style, InlineLayoutUnit logicalLeft, InlineLayoutUnit logicalWidth)
+{
+    return InlineLevelBox { layoutBox, style, logicalLeft, { logicalWidth, { } }, Type::RootInlineBox, { } };
+}
+
 inline InlineLevelBox InlineLevelBox::createInlineBox(const Box& layoutBox, const RenderStyle& style, InlineLayoutUnit logicalLeft, InlineLayoutUnit logicalWidth, LineSpanningInlineBox isLineSpanning)
 {
     return InlineLevelBox { layoutBox, style, logicalLeft, { logicalWidth, { } }, isLineSpanning == LineSpanningInlineBox::Yes ? Type::LineSpanningInlineBox : Type::InlineBox, { } };
@@ -260,7 +268,7 @@ inline InlineLevelBox InlineLevelBox::createGenericInlineLevelBox(const Box& lay
 inline bool InlineLevelBox::lineBoxContain() const
 {
     if (isRootInlineBox())
-        return m_style.lineBoxContain.containsAny({ LineBoxContain::Block, LineBoxContain::Inline }) || (hasContent() && m_style.lineBoxContain.containsAny({ LineBoxContain::Font, LineBoxContain::Glyphs }));
+        return m_style.lineBoxContain.containsAny({ LineBoxContain::Block, LineBoxContain::Inline }) || (hasContent() && m_style.lineBoxContain.containsAny({ LineBoxContain::InitialLetter, LineBoxContain::Font, LineBoxContain::Glyphs }));
 
     if (isAtomicInlineLevelBox())
         return m_style.lineBoxContain.contains(LineBoxContain::Replaced);

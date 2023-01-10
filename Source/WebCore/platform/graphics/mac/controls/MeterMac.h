@@ -28,6 +28,7 @@
 #if PLATFORM(MAC)
 
 #import "ControlMac.h"
+#import "MeterPart.h"
 
 namespace WebCore {
 
