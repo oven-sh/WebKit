@@ -139,9 +139,10 @@ public:
     static void applyValueDisplay(BuilderState&, CSSValue&);
     static void applyInheritVerticalAlign(BuilderState&);
     static void applyValueVerticalAlign(BuilderState&, CSSValue&);
+    static void applyInheritBaselineShift(BuilderState&);
+    static void applyValueBaselineShift(BuilderState&, CSSValue&);
 
     // Custom handling of value setting only.
-    static void applyValueBaselineShift(BuilderState&, CSSValue&);
     static void applyValueDirection(BuilderState&, CSSValue&);
     static void applyValueWebkitLocale(BuilderState&, CSSValue&);
     static void applyValueTextOrientation(BuilderState&, CSSValue&);
@@ -1199,6 +1200,14 @@ inline void BuilderCustom::applyValueDisplay(BuilderState& builderState, CSSValu
         builderState.style().setDisplay(display);
 }
 
+inline void BuilderCustom::applyInheritBaselineShift(BuilderState& builderState)
+{
+    auto& svgStyle = builderState.style().accessSVGStyle();
+    auto& svgParentStyle = builderState.parentStyle().svgStyle();
+    svgStyle.setBaselineShift(forwardInheritedValue(svgParentStyle.baselineShift()));
+    svgStyle.setBaselineShiftValue(forwardInheritedValue(svgParentStyle.baselineShiftValue()));
+}
+
 inline void BuilderCustom::applyValueBaselineShift(BuilderState& builderState, CSSValue& value)
 {
     SVGRenderStyle& svgStyle = builderState.style().accessSVGStyle();
@@ -1600,14 +1609,10 @@ inline void BuilderCustom::applyValueContent(BuilderState& builderState, CSSValu
             didSet = true;
             // Register the fact that the attribute value affects the style.
             builderState.registerContentAttribute(attr.localName());
-        } else if (contentValue.isCounter()) {
+        } else if (auto* value = contentValue.counterValue()) {
             // FIXME: counter-style: we probably want to review this for custom counter-style.
-            auto* counterValue = contentValue.counterValue();
-            ListStyleType listStyleType = ListStyleType::None;
-            CSSValueID listStyleIdent = counterValue->listStyleIdent();
-            if (listStyleIdent != CSSValueNone)
-                listStyleType = static_cast<ListStyleType>(listStyleIdent - CSSValueDisc);
-            auto counter = makeUnique<CounterContent>(AtomString { counterValue->identifier() }, listStyleType, AtomString { counterValue->separator() });
+            auto listStyle = fromCSSValueID<ListStyleType>(value->listStyle);
+            auto counter = makeUnique<CounterContent>(value->identifier, listStyle, value->separator);
             builderState.style().setContent(WTFMove(counter), didSet);
             didSet = true;
         } else {

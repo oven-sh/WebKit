@@ -128,15 +128,18 @@ private:
     explicit GPUCanvasContextCocoa(CanvasBase&, GPU&);
 
     void markContextChangedAndNotifyCanvasObservers();
-    void createPresentationContextIfNeeded();
+    void configurePresentationContextIfNeeded();
+    void unconfigurePresentationContextIfNeeded();
 
     std::optional<GPUCanvasConfiguration> m_configuration;
     Ref<DisplayBufferDisplayDelegate> m_layerContentsDisplayDelegate;
-    RefPtr<GPUPresentationContext> m_presentationContext;
-    Ref<GPU> m_gpu; // FIXME: https://bugs.webkit.org/show_bug.cgi?id=251067 We shouldn't need to retain this.
+    Ref<GPUCompositorIntegration> m_compositorIntegration;
+    Ref<GPUPresentationContext> m_presentationContext;
+    RefPtr<GPUTexture> m_currentTexture;
 
     int m_width { 0 };
     int m_height { 0 };
+    bool m_presentationContextIsConfigured { false };
     bool m_compositingResultsNeedsUpdating { false };
 };
 

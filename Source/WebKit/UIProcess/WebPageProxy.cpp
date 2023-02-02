@@ -221,7 +221,6 @@
 
 #if PLATFORM(COCOA)
 #include "InsertTextOptions.h"
-#include "NetworkConnectionIntegrityHelpers.h"
 #include "NetworkIssueReporter.h"
 #include "RemoteLayerTreeDrawingAreaProxy.h"
 #include "RemoteLayerTreeScrollingPerformanceData.h"
@@ -343,13 +342,12 @@
 #define WEBPAGEPROXY_RELEASE_LOG(channel, fmt, ...) RELEASE_LOG(channel, "%p - [pageProxyID=%" PRIu64 ", webPageID=%" PRIu64 ", PID=%i] WebPageProxy::" fmt, this, m_identifier.toUInt64(), m_webPageID.toUInt64(), m_process->processIdentifier(), ##__VA_ARGS__)
 #define WEBPAGEPROXY_RELEASE_LOG_ERROR(channel, fmt, ...) RELEASE_LOG_ERROR(channel, "%p - [pageProxyID=%" PRIu64 ", webPageID=%" PRIu64 ", PID=%i] WebPageProxy::" fmt, this, m_identifier.toUInt64(), m_webPageID.toUInt64(), m_process->processIdentifier(), ##__VA_ARGS__)
 
-// Represents the number of wheel events we can hold in the queue before we start pushing them preemptively.
-static const unsigned wheelEventQueueSizeThreshold = 10;
-
 static const Seconds resetRecentCrashCountDelay = 30_s;
 static unsigned maximumWebProcessRelaunchAttempts = 1;
-static const Seconds audibleActivityClearDelay = 10_s;
 static const Seconds tryCloseTimeoutDelay = 50_ms;
+#if USE(RUNNINGBOARD)
+static const Seconds audibleActivityClearDelay = 10_s;
+#endif
 
 using namespace WebCore;
 
@@ -572,6 +570,13 @@ WebPageProxy::WebPageProxy(PageClient& pageClient, WebProcessProxy& process, Ref
 #endif
 
     m_pageToCloneSessionStorageFrom = m_configuration->pageToCloneSessionStorageFrom();
+
+#if ENABLE(NETWORK_CONNECTION_INTEGRITY)
+    m_lookalikeCharacterUpdateObserver = LookalikeCharacters::shared().observeUpdates([weakThis = WeakPtr { *this }] {
+        if (RefPtr protectedThis = weakThis.get())
+            protectedThis->sendCachedLookalikeCharacterStrings();
+    });
+#endif
 }
 
 WebPageProxy::~WebPageProxy()
@@ -1176,7 +1181,8 @@ void WebPageProxy::initializeWebPage()
     m_process->addVisitedLinkStoreUser(visitedLinkStore(), m_identifier);
 
 #if ENABLE(NETWORK_CONNECTION_INTEGRITY)
-    m_needsInitialLookalikeCharacterStrings = cachedLookalikeStrings().isEmpty();
+    m_needsInitialLookalikeCharacterStrings = LookalikeCharacters::shared().cachedStrings().isEmpty();
+    m_shouldUpdateAllowedLookalikeCharacterStrings = cachedAllowedLookalikeStrings().isEmpty();
 #endif
 }
 
@@ -5238,6 +5244,9 @@ void WebPageProxy::didCommitLoadForFrame(FrameIdentifier frameID, FrameInfoData&
 #if USE(APPKIT)
         closeSharedPreviewPanelIfNecessary();
 #endif
+#if ENABLE(NETWORK_CONNECTION_INTEGRITY)
+        updateAllowedLookalikeCharacterStringsIfNeeded();
+#endif
     }
 
 #if ENABLE(MEDIA_SESSION_COORDINATOR) && HAVE(GROUP_ACTIVITIES)
@@ -5753,7 +5762,7 @@ void WebPageProxy::decidePolicyForNavigationAction(Ref<WebProcessProxy>&& proces
     auto shouldWaitForInitialLookalikeCharacterStrings = ShouldWaitForInitialLookalikeCharacterStrings::No;
 #if ENABLE(NETWORK_CONNECTION_INTEGRITY)
     if (preferences().sanitizeLookalikeCharactersInLinksEnabled()) {
-        if (cachedLookalikeStrings().isEmpty())
+        if (LookalikeCharacters::shared().cachedStrings().isEmpty())
             shouldWaitForInitialLookalikeCharacterStrings = ShouldWaitForInitialLookalikeCharacterStrings::Yes;
         else if (m_needsInitialLookalikeCharacterStrings)
             sendCachedLookalikeCharacterStrings();
@@ -6224,7 +6233,8 @@ void WebPageProxy::createNewPage(FrameInfoData&& originatingFrameInfoData, WebPa
         newPage->m_shouldSuppressSOAuthorizationInNextNavigationPolicyDecision = true;
 #endif
 #if ENABLE(NETWORK_CONNECTION_INTEGRITY)
-        newPage->m_needsInitialLookalikeCharacterStrings = cachedLookalikeStrings().isEmpty();
+        newPage->m_needsInitialLookalikeCharacterStrings = LookalikeCharacters::shared().cachedStrings().isEmpty();
+        newPage->m_shouldUpdateAllowedLookalikeCharacterStrings = cachedAllowedLookalikeStrings().isEmpty();
 #endif
     };
 
@@ -8556,6 +8566,7 @@ static Span<const ASCIILiteral> gpuIOKitClasses()
     static constexpr std::array services {
 #if PLATFORM(IOS_FAMILY)
         "AGXDeviceUserClient"_s,
+        "AppleParavirtDeviceUserClient"_s,
         "IOGPU"_s,
         "IOSurfaceRootUserClient"_s,
 #endif
@@ -8826,7 +8837,9 @@ WebPageCreationParameters WebPageProxy::creationParameters(WebProcessProxy& proc
 
 #if ENABLE(NETWORK_CONNECTION_INTEGRITY)
     if (preferences().sanitizeLookalikeCharactersInLinksEnabled())
-        parameters.lookalikeCharacterStrings = cachedLookalikeStrings();
+        parameters.lookalikeCharacterStrings = LookalikeCharacters::shared().cachedStrings();
+
+    parameters.allowedLookalikeCharacterStrings = cachedAllowedLookalikeStrings();
 #endif
 
 #if HAVE(MACH_BOOTSTRAP_EXTENSION)
@@ -11851,12 +11864,33 @@ void WebPageProxy::generateTestReport(const String& message, const String& group
 
 #if ENABLE(NETWORK_CONNECTION_INTEGRITY)
 
-Vector<String>& WebPageProxy::cachedLookalikeStrings()
+Vector<WebCore::LookalikeCharactersSanitizationData>& WebPageProxy::cachedAllowedLookalikeStrings()
 {
-    static NeverDestroyed cachedStrings = [] {
-        return Vector<String> { };
+    static NeverDestroyed cachedAllowedStrings = [] {
+        return Vector<WebCore::LookalikeCharactersSanitizationData> { };
     }();
-    return cachedStrings.get();
+    return cachedAllowedStrings.get();
+}
+
+void WebPageProxy::updateAllowedLookalikeCharacterStringsIfNeeded()
+{
+    if (!m_shouldUpdateAllowedLookalikeCharacterStrings)
+        return;
+
+    m_shouldUpdateAllowedLookalikeCharacterStrings = false;
+
+    if (!cachedAllowedLookalikeStrings().isEmpty())
+        return;
+
+    requestAllowedLookalikeCharacterStrings([weakPage = WeakPtr { *this }](auto&& data) {
+        if (cachedAllowedLookalikeStrings().isEmpty()) {
+            cachedAllowedLookalikeStrings() = WTFMove(data);
+            cachedAllowedLookalikeStrings().shrinkToFit();
+        }
+        
+        if (RefPtr page = weakPage.get(); page && page->hasRunningProcess())
+            page->send(Messages::WebPage::SetAllowedLookalikeCharacterStrings(cachedAllowedLookalikeStrings()));
+    });
 }
 
 #endif // ENABLE(NETWORK_CONNECTION_INTEGRITY)
@@ -11867,22 +11901,18 @@ void WebPageProxy::sendCachedLookalikeCharacterStrings()
     if (!hasRunningProcess())
         return;
 
-    if (cachedLookalikeStrings().isEmpty())
+    if (LookalikeCharacters::shared().cachedStrings().isEmpty())
         return;
 
     m_needsInitialLookalikeCharacterStrings = false;
-    send(Messages::WebPage::SetLookalikeCharacterStrings(cachedLookalikeStrings()));
+    send(Messages::WebPage::SetLookalikeCharacterStrings(LookalikeCharacters::shared().cachedStrings()));
 #endif // ENABLE(NETWORK_CONNECTION_INTEGRITY)
 }
 
 void WebPageProxy::waitForInitialLookalikeCharacterStrings(WebFramePolicyListenerProxy& listener)
 {
 #if ENABLE(NETWORK_CONNECTION_INTEGRITY)
-    requestLookalikeCharacterStrings([listener = Ref { listener }](auto& strings) {
-        if (cachedLookalikeStrings().isEmpty()) {
-            cachedLookalikeStrings() = strings;
-            cachedLookalikeStrings().shrinkToFit();
-        }
+    LookalikeCharacters::shared().updateStrings([listener = Ref { listener }] {
         listener->didReceiveInitialLookalikeCharacterStrings();
     });
 #else

@@ -90,6 +90,12 @@ void GridTrack::setGrowthLimitCap(std::optional<LayoutUnit> growthLimitCap)
     m_growthLimitCap = growthLimitCap;
 }
 
+const GridTrackSize& GridTrack::cachedTrackSize() const
+{
+    RELEASE_ASSERT(m_cachedTrackSize);
+    return *m_cachedTrackSize;
+}
+
 void GridTrack::setCachedTrackSize(const GridTrackSize& cachedTrackSize)
 {
     m_cachedTrackSize = cachedTrackSize;
@@ -1639,9 +1645,6 @@ void GridTrackSizingAlgorithm::run()
 
     if (m_renderGrid->isMasonry(m_direction))
         return;
-    
-    if (m_renderGrid->isMasonry(m_direction))
-        return;
 
     if (m_renderGrid->isSubgrid(m_direction) && copyUsedTrackSizesForSubgrid())
         return;
@@ -1698,6 +1701,9 @@ bool GridTrackSizingAlgorithm::tracksAreWiderThanMinTrackBreadth() const
     // Subgrids inherit their sizing directly from the parent, so may be unrelated
     // to their initial base size.
     if (m_renderGrid->isSubgrid(m_direction))
+        return true;
+
+    if (m_renderGrid->isMasonry(m_direction))
         return true;
 
     const Vector<GridTrack>& allTracks = tracks(m_direction);

@@ -85,7 +85,7 @@ public:
     void setGrowthLimitCap(std::optional<LayoutUnit>);
     std::optional<LayoutUnit> growthLimitCap() const { return m_growthLimitCap; }
 
-    const GridTrackSize& cachedTrackSize() const { return *m_cachedTrackSize; }
+    const GridTrackSize& cachedTrackSize() const;
     void setCachedTrackSize(const GridTrackSize&);
 
 private:

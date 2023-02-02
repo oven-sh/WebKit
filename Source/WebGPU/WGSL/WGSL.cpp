@@ -29,6 +29,7 @@
 #include "CallGraph.h"
 #include "EntryPointRewriter.h"
 #include "GlobalVariableRewriter.h"
+#include "MangleNames.h"
 #include "Metal/MetalCodeGenerator.h"
 #include "Parser.h"
 #include "PhaseTimer.h"
@@ -63,9 +64,9 @@ namespace WGSL {
         return pass(__VA_ARGS__); \
     }();
 
-std::variant<SuccessfulCheck, FailedCheck> staticCheck(const String& wgsl, const std::optional<SourceMap>&)
+std::variant<SuccessfulCheck, FailedCheck> staticCheck(const String& wgsl, const std::optional<SourceMap>&, const Configuration& configuration)
 {
-    Expected<AST::ShaderModule, Error> parserResult = wgsl.is8Bit() ? parseLChar(wgsl) : parseUChar(wgsl);
+    Expected<AST::ShaderModule, Error> parserResult = wgsl.is8Bit() ? parseLChar(wgsl, configuration) : parseUChar(wgsl, configuration);
     if (!parserResult.has_value()) {
         // FIXME: Add support for returning multiple errors from the parser.
         return FailedCheck { { parserResult.error() }, { /* warnings */ } };
@@ -90,7 +91,7 @@ SuccessfulCheck::~SuccessfulCheck() = default;
 PrepareResult prepare(AST::ShaderModule& ast, const HashMap<String, PipelineLayout>& pipelineLayouts)
 {
     PhaseTimes phaseTimes;
-    Metal::RenderMetalCode generatedCode;
+    PrepareResult result;
 
     {
         PhaseTimer phaseTimer("prepare total", phaseTimes);
@@ -99,17 +100,26 @@ PrepareResult prepare(AST::ShaderModule& ast, const HashMap<String, PipelineLayo
         RUN_PASS(resolveTypeReferences, ast);
         RUN_PASS(rewriteEntryPoints, callGraph);
         RUN_PASS(rewriteGlobalVariables, callGraph, pipelineLayouts);
+        RUN_PASS_WITH_RESULT(entryPointMap, mangleNames, callGraph);
+
+        for (const auto& it : entryPointMap) {
+            Reflection::EntryPointInformation information;
+            information.mangledName = it.value;
+            auto addResult = result.entryPoints.add(it.key, WTFMove(information));
+            ASSERT_UNUSED(addResult, addResult.isNewEntry);
+        }
 
         dumpASTAtEndIfNeeded(ast);
 
         {
             PhaseTimer phaseTimer("generateMetalCode", phaseTimes);
-            generatedCode = Metal::generateMetalCode(ast);
+            result.msl = Metal::generateMetalCode(ast).metalSource.toString();
         }
     }
 
     logPhaseTimes(phaseTimes);
-    return { generatedCode.metalSource.toString(), { } };
+
+    return result;
 }
 
 PrepareResult prepare(AST::ShaderModule& ast, const String& entryPointName, const std::optional<PipelineLayout>& pipelineLayouts)

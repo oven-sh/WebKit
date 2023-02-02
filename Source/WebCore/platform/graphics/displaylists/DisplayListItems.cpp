@@ -42,9 +42,6 @@
 namespace WebCore {
 namespace DisplayList {
 
-// Should match RenderTheme::platformFocusRingWidth()
-static const float platformFocusRingWidth = 3;
-
 void Save::apply(GraphicsContext& context) const
 {
     context.save();
@@ -259,7 +256,7 @@ void DrawLinesForText::apply(GraphicsContext& context) const
 void DrawDotsForDocumentMarker::apply(GraphicsContext& context) const
 {
     context.drawDotsForDocumentMarker(m_rect, {
-        static_cast<DocumentMarkerLineStyle::Mode>(m_styleMode),
+        static_cast<DocumentMarkerLineStyleMode>(m_styleMode),
         m_styleShouldUseDarkAppearance,
     });
 }

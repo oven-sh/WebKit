@@ -163,6 +163,12 @@ OptionSet<AnimationImpact> KeyframeEffectStack::applyKeyframeEffects(RenderStyle
         auto* animation = effect->animation();
 
         auto inheritedPropertyChanged = [&]() {
+            // In the rare case where a non-inherted property was set to "inherit" on a keyframe,
+            // we consider that a property set to "inherit" changed without trying to work out whether
+            // the computed value changed.
+            if (effect->hasExplicitlyInheritedKeyframeProperty())
+                return true;
+
             if (previousLastStyleChangeEventStyle) {
                 for (auto property : effect->inheritedProperties()) {
                     ASSERT(effect->target());
@@ -181,8 +187,23 @@ OptionSet<AnimationImpact> KeyframeEffectStack::applyKeyframeEffects(RenderStyle
             return false;
         };
 
+        auto currentColorPropertyChanged = [&]() {
+            // If the "color" property itself is set to "currentcolor" on a keyframe, we always recompute keyframes.
+            if (effect->hasColorSetToCurrentColor())
+                return true;
+            // For all other color-related properties set to "currentcolor" on a keyframe, it's sufficient to check
+            // whether the value "color" resolves to has changed since the last style resolution.
+            return effect->hasPropertySetToCurrentColor() && previousLastStyleChangeEventStyle
+                && previousLastStyleChangeEventStyle->color() != targetStyle.color();
+        };
+
+        auto fontWeightChanged = [&]() {
+            return effect->hasRelativeFontWeight() && previousLastStyleChangeEventStyle
+                && previousLastStyleChangeEventStyle->fontWeight() != targetStyle.fontWeight();
+        };
+
         auto logicalPropertyDidChange = propertyAffectingLogicalPropertiesChanged && effect->animatesDirectionAwareProperty();
-        if (logicalPropertyDidChange || fontSizeChanged || inheritedPropertyChanged() || cssVariableChanged())
+        if (logicalPropertyDidChange || fontSizeChanged || inheritedPropertyChanged() || cssVariableChanged() || currentColorPropertyChanged() || fontWeightChanged())
             effect->propertyAffectingKeyframeResolutionDidChange(unanimatedStyle, resolutionContext);
 
         animation->resolve(targetStyle, resolutionContext);

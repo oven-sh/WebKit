@@ -352,8 +352,6 @@
 
 #if ENABLE(WEBGL)
 #include "WebGLRenderingContext.h"
-#endif
-#if ENABLE(WEBGL2)
 #include "WebGL2RenderingContext.h"
 #endif
 
@@ -3576,14 +3574,10 @@ const URL& Document::urlForBindings() const
     return m_url.url().isEmpty() ? aboutBlankURL() : m_url.url();
 }
 
-#if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/DocumentAdditions.cpp>)
-#include <WebKitAdditions/DocumentAdditions.cpp>
-#else
 URL Document::adjustedURL() const
 {
-    return m_url.url();
+    return page() ? page()->chrome().client().allowedLookalikeCharacters(m_url.url()) : m_url.url();
 }
-#endif
 
 // https://html.spec.whatwg.org/#fallback-base-url
 URL Document::fallbackBaseURL() const
@@ -6724,8 +6718,7 @@ std::optional<RenderingContext> Document::getCSSCanvasContext(const String& type
 #if ENABLE(WEBGL)
     if (is<WebGLRenderingContext>(*context))
         return RenderingContext { RefPtr<WebGLRenderingContext> { &downcast<WebGLRenderingContext>(*context) } };
-#endif
-#if ENABLE(WEBGL2)
+
     if (is<WebGL2RenderingContext>(*context))
         return RenderingContext { RefPtr<WebGL2RenderingContext> { &downcast<WebGL2RenderingContext>(*context) } };
 #endif
@@ -7430,6 +7423,9 @@ void Document::updateLastHandledUserGestureTimestamp(MonotonicTime time)
 bool Document::processingUserGestureForMedia() const
 {
     if (UserGestureIndicator::processingUserGestureForMedia())
+        return true;
+
+    if (m_domWindow && m_domWindow->hasTransientActivation())
         return true;
 
     if (m_userActivatedMediaFinishedPlayingTimestamp + maxIntervalForUserGestureForwardingAfterMediaFinishesPlaying >= MonotonicTime::now())

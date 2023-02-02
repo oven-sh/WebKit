@@ -236,6 +236,8 @@ page/scrolling/cocoa/ScrollingTreeFixedNodeCocoa.mm
 page/scrolling/cocoa/ScrollingTreeOverflowScrollProxyNodeCocoa.mm
 page/scrolling/cocoa/ScrollingTreePositionedNodeCocoa.mm
 page/scrolling/cocoa/ScrollingTreeStickyNodeCocoa.mm
+page/scrolling/mac/ScrollerMac.mm
+page/scrolling/mac/ScrollerPairMac.mm
 page/scrolling/mac/ScrollingCoordinatorMac.mm
 page/scrolling/mac/ScrollingStateScrollingNodeMac.mm
 page/scrolling/mac/ScrollingTreeFrameScrollingNodeMac.mm
@@ -431,6 +433,8 @@ platform/graphics/cocoa/WebCoreCALayerExtras.mm
 platform/graphics/cocoa/WebCoreDecompressionSession.mm
 platform/graphics/cocoa/WebProcessGraphicsContextGLCocoa.mm
 platform/graphics/cocoa/VideoTrackPrivateWebM.cpp
+platform/graphics/cocoa/controls/ApplePayButtonCocoa.mm
+platform/graphics/cocoa/controls/ControlFactoryCocoa.mm
 platform/graphics/coretext/DrawGlyphsRecorderCoreText.cpp
 platform/graphics/coretext/FontCascadeCoreText.cpp
 platform/graphics/coretext/FontCoreText.cpp

@@ -168,6 +168,7 @@ public:
     bool hasImplicitKeyframes() const;
 
     void keyframesRuleDidChange();
+    void customPropertyRegistrationDidChange(const AtomString&);
 
     bool canBeAccelerated() const;
     bool preventsAcceleration() const;
@@ -179,6 +180,10 @@ public:
     static String CSSPropertyIDToIDLAttributeName(CSSPropertyID);
 
     bool containsCSSVariableReferences() const { return m_containsCSSVariableReferences; }
+    bool hasExplicitlyInheritedKeyframeProperty() const { return m_hasExplicitlyInheritedKeyframeProperty; }
+    bool hasPropertySetToCurrentColor() const;
+    bool hasColorSetToCurrentColor() const;
+    bool hasRelativeFontWeight() const { return m_hasRelativeFontWeight; }
 
 private:
     KeyframeEffect(Element*, PseudoId);
@@ -223,6 +228,7 @@ private:
     void checkForMatchingTransformFunctionLists();
     void computeHasImplicitKeyframeForAcceleratedProperty();
     void computeHasKeyframeComposingAcceleratedProperty();
+    void computeHasExplicitlyInheritedKeyframeProperty();
     void abilityToBeAcceleratedDidChange();
 
     // AnimationEffect
@@ -241,6 +247,7 @@ private:
     KeyframeList m_blendingKeyframes { emptyAtom() };
     HashSet<AnimatableProperty> m_animatedProperties;
     HashSet<CSSPropertyID> m_inheritedProperties;
+    HashSet<CSSPropertyID> m_currentColorProperties;
     Vector<ParsedKeyframe> m_parsedKeyframes;
     Vector<AcceleratedAction> m_pendingAcceleratedActions;
     RefPtr<Element> m_target;
@@ -261,6 +268,8 @@ private:
     bool m_hasImplicitKeyframeForAcceleratedProperty { false };
     bool m_hasKeyframeComposingAcceleratedProperty { false };
     bool m_containsCSSVariableReferences { false };
+    bool m_hasExplicitlyInheritedKeyframeProperty { false };
+    bool m_hasRelativeFontWeight { false };
 };
 
 } // namespace WebCore

@@ -430,8 +430,11 @@ Vector<Ref<StyleRuleKeyframe>> Resolver::keyframeRulesForName(const AtomString& 
     return deduplicatedKeyframes;
 }
 
-void Resolver::keyframeStylesForAnimation(const Element& element, const RenderStyle& elementStyle, const ResolutionContext& context, KeyframeList& list, bool& containsCSSVariableReferences)
+void Resolver::keyframeStylesForAnimation(const Element& element, const RenderStyle& elementStyle, const ResolutionContext& context, KeyframeList& list, bool& containsCSSVariableReferences, bool& hasRelativeFontWeight, HashSet<CSSPropertyID>& inheritedProperties, HashSet<CSSPropertyID>& currentColorProperties)
 {
+    inheritedProperties.clear();
+    currentColorProperties.clear();
+
     list.clear();
 
     auto keyframeRules = keyframeRulesForName(list.animationName());
@@ -439,6 +442,7 @@ void Resolver::keyframeStylesForAnimation(const Element& element, const RenderSt
         return;
 
     containsCSSVariableReferences = false;
+    hasRelativeFontWeight = false;
     // Construct and populate the style for each keyframe.
     for (auto& keyframeRule : keyframeRules) {
         // Add this keyframe style to all the indicated key times
@@ -453,6 +457,19 @@ void Resolver::keyframeStylesForAnimation(const Element& element, const RenderSt
             if (auto compositeOperationCSSValue = keyframeRule->properties().getPropertyCSSValue(CSSPropertyAnimationComposition)) {
                 if (auto compositeOperation = toCompositeOperation(*compositeOperationCSSValue))
                     keyframeValue.setCompositeOperation(*compositeOperation);
+            }
+            for (auto property : keyframeRule->properties()) {
+                if (auto* cssValue = property.value()) {
+                    if (cssValue->isPrimitiveValue()) {
+                        auto valueId = downcast<CSSPrimitiveValue>(*cssValue).valueID();
+                        if (valueId == CSSValueInherit)
+                            inheritedProperties.add(property.id());
+                        else if (valueId == CSSValueCurrentcolor)
+                            currentColorProperties.add(property.id());
+                        else if (property.id() == CSSPropertyFontWeight && (valueId == CSSValueBolder || valueId == CSSValueLighter))
+                            hasRelativeFontWeight = true;
+                    }
+                }
             }
             list.insert(WTFMove(keyframeValue));
         }

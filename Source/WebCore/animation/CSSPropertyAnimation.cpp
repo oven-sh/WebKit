@@ -340,12 +340,6 @@ static inline RefPtr<ShapeValue> blendFunc(ShapeValue* from, ShapeValue* to, con
     return from->blend(*to, context);
 }
 
-static inline RefPtr<FilterOperation> blendFunc(FilterOperation* from, FilterOperation* to, const CSSPropertyBlendingContext& context, bool blendToPassthrough = false)
-{
-    ASSERT(to);
-    return to->blend(from, context, blendToPassthrough);
-}
-
 static inline FilterOperations blendFunc(const FilterOperations& from, const FilterOperations& to, const CSSPropertyBlendingContext& context)
 {
     return from.blend(to, context);
@@ -3874,6 +3868,11 @@ static std::optional<CSSCustomPropertyValue::SyntaxValue> firstValueInSyntaxValu
 
 static std::optional<CSSCustomPropertyValue::SyntaxValueList> blendSyntaxValueLists(const RenderStyle& fromStyle, const RenderStyle& toStyle, const CSSCustomPropertyValue::SyntaxValueList& from, const CSSCustomPropertyValue::SyntaxValueList& to, const CSSPropertyBlendingContext& blendingContext)
 {
+    // We should only attempt to blend lists containing the same types. Since we know all items in a
+    // list are of the same type, it is sufficient to check the first value from each list.
+    if (from.values.size() && to.values.size() && from.values.first().index() != to.values.first().index())
+        return std::nullopt;
+
     // https://drafts.css-houdini.org/css-properties-values-api-1/#animation-behavior-of-custom-properties
     auto firstValue = firstValueInSyntaxValueLists(from, to);
 
