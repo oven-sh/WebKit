@@ -29,10 +29,15 @@
 namespace WebCore {
 
 #if PLATFORM(COCOA)
-Vector<MachSendRight> GPUCompositorIntegration::getRenderBuffers() const
+Vector<MachSendRight> GPUCompositorIntegration::recreateRenderBuffers(int width, int height) const
 {
-    return m_backing->getRenderBuffers();
+    return m_backing->recreateRenderBuffers(width, height);
 }
 #endif
 
+void GPUCompositorIntegration::prepareForDisplay(CompletionHandler<void()>&& completionHandler)
+{
+    m_backing->prepareForDisplay(WTFMove(completionHandler));
 }
+
+} // namespace WebCore
