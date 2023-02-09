@@ -80,6 +80,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     cp -r $WEBKIT_OUT_DIR/WTF/Headers/wtf/ /output/include && \
     cp -r $WEBKIT_OUT_DIR/bmalloc/Headers/bmalloc/ /output/include && \
     mkdir -p /output/Source/JavaScriptCore && \
+    chmod a+x /webkit/Source/JavaScriptCore/Scripts/*.py && \
     cp -r /webkit/Source/JavaScriptCore/Scripts /output/Source/JavaScriptCore && \
     cp /webkit/Source/JavaScriptCore/create_hash_table /output/Source/JavaScriptCore && \
     echo "";
