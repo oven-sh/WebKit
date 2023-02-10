@@ -353,22 +353,10 @@ JSC_DEFINE_HOST_FUNCTION(makeBoundFunction, (JSGlobalObject* globalObject, CallF
     JSObject* target = asObject(callFrame->uncheckedArgument(0));
     JSValue boundThis = callFrame->uncheckedArgument(1);
     JSValue boundArgs = callFrame->uncheckedArgument(2);
-    JSImmutableButterfly* butterfly = boundArgs.isCell() ? jsCast<JSImmutableButterfly*>(boundArgs) : nullptr;
     double length = callFrame->uncheckedArgument(3).asNumber();
     JSString* nameString = asString(callFrame->uncheckedArgument(4));
 
-    // Unwrap JSBoundFunction by configuring butterfly and target. The larger Butterfly is already allocated for that purpose.
-    if (target->inherits<JSBoundFunction>()) {
-        JSBoundFunction* boundFunction = jsCast<JSBoundFunction*>(target);
-        if (boundFunction->canCloneBoundArgs()) {
-            boundThis = boundFunction->boundThis();
-            target = boundFunction->targetFunction();
-            if (!butterfly && boundFunction->boundArgs())
-                butterfly = boundFunction->boundArgs();
-        }
-    }
-
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSBoundFunction::create(vm, globalObject, target, boundThis, butterfly, length, nameString)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSBoundFunction::create(vm, globalObject, target, boundThis, boundArgs.isCell() ? jsCast<JSImmutableButterfly*>(boundArgs) : nullptr, length, nameString)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(hasOwnLengthProperty, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -1666,17 +1654,9 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
             init.set(JSFunction::create(init.vm, jsCast<JSGlobalObject*>(init.owner), 1, "hasOwnLengthProperty"_s, hasOwnLengthProperty, ImplementationVisibility::Private));
         });
 
-    // Proxy helpers.
+    // Proxy prototype helpers.
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::handleProxyGetTrapResult)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, jsCast<JSGlobalObject*>(init.owner), 3, "handleProxyGetTrapResult"_s, globalFuncHandleProxyGetTrapResult, ImplementationVisibility::Private));
-        });
-
-    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::handleProxySetTrapResultSloppy)].initLater([] (const Initializer<JSCell>& init) {
-            init.set(JSFunction::create(init.vm, jsCast<JSGlobalObject*>(init.owner), 4, "handleProxySetTrapResultSloppy"_s, globalFuncHandleProxySetTrapResultSloppy, ImplementationVisibility::Private));
-        });
-
-    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::handleProxySetTrapResultStrict)].initLater([] (const Initializer<JSCell>& init) {
-            init.set(JSFunction::create(init.vm, jsCast<JSGlobalObject*>(init.owner), 4, "handleProxySetTrapResultStrict"_s, globalFuncHandleProxySetTrapResultStrict, ImplementationVisibility::Private));
         });
 
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::dateTimeFormat)].initLater([] (const Initializer<JSCell>& init) {

@@ -501,7 +501,7 @@ angle::Result BufferVk::allocStagingBuffer(ContextVk *contextVk,
     {
         if (size <= mStagingBuffer.getSize() &&
             (coherency == vk::MemoryCoherency::Coherent) == mStagingBuffer.isCoherent() &&
-            contextVk->getRenderer()->hasResourceUseFinished(mStagingBuffer.getResourceUse()))
+            !contextVk->getRenderer()->hasUnfinishedUse(mStagingBuffer.getResourceUse()))
         {
             // If size is big enough and it is idle, then just reuse the existing staging buffer
             *mapPtr                = mStagingBuffer.getMappedMemory();
@@ -669,7 +669,7 @@ angle::Result BufferVk::mapRangeImpl(ContextVk *contextVk,
     {
         // If app is not going to write, all we need is to ensure GPU write is finished.
         // Concurrent reads from CPU and GPU is allowed.
-        if (!renderer->hasResourceUseFinished(mBuffer.getWriteResourceUse()))
+        if (renderer->hasUnfinishedUse(mBuffer.getWriteResourceUse()))
         {
             // If there are unflushed write commands for the resource, flush them.
             if (contextVk->hasUnsubmittedUse(mBuffer.getWriteResourceUse()))
@@ -725,7 +725,7 @@ angle::Result BufferVk::mapRangeImpl(ContextVk *contextVk,
         return angle::Result::Continue;
     }
 
-    if (renderer->hasResourceUseFinished(mBuffer.getWriteResourceUse()))
+    if (!renderer->hasUnfinishedUse(mBuffer.getWriteResourceUse()))
     {
         // This will keep the new buffer mapped and update mapPtr, so return immediately.
         return ghostMappedBuffer(contextVk, offset, length, access, mapPtr);
@@ -912,7 +912,7 @@ angle::Result BufferVk::acquireAndUpdate(ContextVk *contextVk,
         // If the buffer is host visible and the GPU is not writing to it, we use the CPU to do the
         // copy. We need to save the source buffer pointer before we acquire a new buffer.
         if (src.isHostVisible() &&
-            contextVk->getRenderer()->hasResourceUseFinished(src.getWriteResourceUse()) &&
+            !contextVk->getRenderer()->hasUnfinishedUse(src.getWriteResourceUse()) &&
             ShouldUseCPUToCopyData(contextVk, copySize, bufferSize))
         {
             uint8_t *mapPointer = nullptr;
@@ -1090,6 +1090,6 @@ angle::Result BufferVk::acquireBufferHelper(ContextVk *contextVk, size_t sizeInB
 
 bool BufferVk::isCurrentlyInUse(RendererVk *renderer) const
 {
-    return !renderer->hasResourceUseFinished(mBuffer.getResourceUse());
+    return renderer->hasUnfinishedUse(mBuffer.getResourceUse());
 }
 }  // namespace rx

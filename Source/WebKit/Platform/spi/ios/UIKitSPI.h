@@ -63,7 +63,6 @@
 #import <UIKit/UIPickerView_Private.h>
 #import <UIKit/UIPopoverPresentationController_Private.h>
 #import <UIKit/UIPresentationController_Private.h>
-#import <UIKit/UIPrintPageRenderer_Private.h>
 #import <UIKit/UIResponder_Private.h>
 #import <UIKit/UIScene_Private.h>
 #import <UIKit/UIScrollEvent_Private.h>
@@ -513,10 +512,6 @@ typedef struct CGSVGDocument *CGSVGDocumentRef;
 + (CGSize)defaultSizeForCurrentOrientation;
 - (void)_setUsesCheckedSelection:(BOOL)usesCheckedSelection;
 @property (nonatomic, setter=_setMagnifierEnabled:) BOOL _magnifierEnabled;
-@end
-
-@interface UIPrintPageRenderer ()
-@property (readonly) UIPrintRenderingQuality requestedRenderingQuality;
 @end
 
 @interface UIResponder ()
@@ -1561,15 +1556,6 @@ typedef NS_ENUM(NSUInteger, _UIScrollDeviceCategory) {
 @interface _UIRemoteView : _UILayerHostView
 - (instancetype)initWithFrame:(CGRect)frame pid:(pid_t)pid contextID:(uint32_t)contextID;
 @end
-
-@interface _UIVisibilityPropagationView : UIView
-@end
-
-#if HAVE(NON_HOSTING_VISIBILITY_PROPAGATION_VIEW)
-@interface _UINonHostingVisibilityPropagationView : _UIVisibilityPropagationView
-- (instancetype)initWithFrame:(CGRect)frame pid:(pid_t)pid environmentIdentifier:(NSString *)environmentIdentifier;
-@end
-#endif
 
 #if __has_include(<UIKit/UITextInputMultiDocument.h>)
 #import <UIKit/UITextInputMultiDocument.h>

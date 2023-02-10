@@ -5,7 +5,6 @@
         <title>Testing basic video exchange from offerer to receiver</title>
         <script src="../resources/testharness.js"></script>
         <script src="../resources/testharnessreport.js"></script>
-        <script src="../media/utilities.js"></script>
         <script src="routines.js"></script>
     </head>
     <body>
@@ -30,7 +29,6 @@ async function testFrontCameraImage(counter)
     if (!counter)
         counter = 0;
 
-    await waitForVideoFrame(video);
     if (isVideoBlack(canvas, video, 20, 20, 2 ,2))
         return;
 
@@ -51,7 +49,6 @@ async function testBackCameraImage(counter)
     if (!counter)
         counter = 0;
 
-    await waitForVideoFrame(video);
     data = grabImagePixels();
 
     var pixel = getImageDataPixel(data, [0, 0]);
@@ -59,7 +56,7 @@ async function testBackCameraImage(counter)
     if(isBetween100And200(pixel[0]) && isBetween100And200(pixel[1]) && isBetween100And200(pixel[2]))
         return;
 
-    if (counter >= 30)
+    if (counter >= 20)
         return Promise.reject("testBackCameraImage timed out");
 
     await waitFor(50);
@@ -142,8 +139,6 @@ promise_test((test) => {
         didReplaceTrack = true;
         return sender.replaceTrack(backStream.getVideoTracks()[0]);
     }).then(() => {
-        return waitForVideoSize(video, 320, 240);
-    }).then(() => {
         return testBackCameraImage();
     });
 }, "Switching from front to back camera, with lower resolution");
@@ -181,8 +176,6 @@ promise_test((test) => {
         backStream = stream;
         assert_true(backStream.getVideoTracks()[0].getSettings().height === 480, "back stream should be big");
         return sender.replaceTrack(backStream.getVideoTracks()[0]);
-    }).then(() => {
-        return waitForVideoSize(video, 640, 480);
     }).then(() => {
         return testBackCameraImage();
     });

@@ -73,6 +73,12 @@ void RenderAttachment::layout()
         layoutShadowContent(newIntrinsicSize);
 }
 
+void RenderAttachment::invalidate()
+{
+    setNeedsLayout();
+    repaint();
+}
+
 LayoutUnit RenderAttachment::baselinePosition(FontBaseline, bool, LineDirectionMode, LinePositionMode) const
 {
     return theme().attachmentBaseline(*this);

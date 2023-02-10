@@ -27,7 +27,7 @@
 #import "WebKitAgnosticTest.h"
 
 #import <WebKit/WKURLCF.h>
-#import <WebKit/WKWebViewPrivate.h>
+#import <WebKit/WKViewPrivate.h>
 #import <WebKit/WebViewPrivate.h>
 #import <wtf/RetainPtr.h>
 
@@ -104,8 +104,10 @@ void WebKitAgnosticTest::runWebKit1Test()
 
 void WebKitAgnosticTest::runWebKit2Test()
 {
-    RetainPtr<WKWebView> view = adoptNS([[WKWebView alloc] initWithFrame:viewFrame]);
-    setPageLoaderClient([view.get() _pageRefForTransitionToWKWebView], &didFinishLoad);
+    WKRetainPtr<WKContextRef> context = adoptWK(WKContextCreateWithConfiguration(nullptr));
+    WKRetainPtr<WKPageGroupRef> pageGroup = adoptWK(WKPageGroupCreateWithIdentifier(Util::toWK("WebKitAgnosticTest").get()));
+    RetainPtr<WKView> view = adoptNS([[WKView alloc] initWithFrame:viewFrame contextRef:context.get() pageGroupRef:pageGroup.get()]);
+    setPageLoaderClient([view.get() pageRef], &didFinishLoad);
     initializeView(view.get());
 
     loadURL(view.get(), url());
@@ -120,10 +122,10 @@ void WebKitAgnosticTest::loadURL(WebView *webView, NSURL *url)
     [[webView mainFrame] loadRequest:[NSURLRequest requestWithURL:url]];
 }
 
-void WebKitAgnosticTest::loadURL(WKWebView *view, NSURL *url)
+void WebKitAgnosticTest::loadURL(WKView *view, NSURL *url)
 {
     EXPECT_FALSE(didFinishLoad);
-    WKPageLoadURL([view _pageRefForTransitionToWKWebView], adoptWK(WKURLCreateWithCFURL((__bridge CFURLRef)url)).get());
+    WKPageLoadURL([view pageRef], adoptWK(WKURLCreateWithCFURL((__bridge CFURLRef)url)).get());
 }
 
 void WebKitAgnosticTest::goBack(WebView *webView)
@@ -132,10 +134,10 @@ void WebKitAgnosticTest::goBack(WebView *webView)
     [webView goBack];
 }
 
-void WebKitAgnosticTest::goBack(WKWebView *view)
+void WebKitAgnosticTest::goBack(WKView *view)
 {
     EXPECT_FALSE(didFinishLoad);
-    WKPageGoBack([view _pageRefForTransitionToWKWebView]);
+    WKPageGoBack([view pageRef]);
 }
 
 void WebKitAgnosticTest::waitForLoadToFinish()
@@ -154,7 +156,7 @@ void WebKitAgnosticTest::waitForNextPresentationUpdate(WebView *)
     Util::run(&done);
 }
 
-void WebKitAgnosticTest::waitForNextPresentationUpdate(WKWebView *view)
+void WebKitAgnosticTest::waitForNextPresentationUpdate(WKView *view)
 {
     __block bool done = false;
     [view _doAfterNextPresentationUpdate:^() {

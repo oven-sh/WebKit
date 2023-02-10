@@ -33,7 +33,7 @@
 #include <wtf/Function.h>
 
 namespace WebCore {
-class SecurityOriginData;
+struct SecurityOriginData;
 }
 
 namespace WebKit {

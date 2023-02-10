@@ -193,7 +193,7 @@ void DrawImageBuffer::apply(GraphicsContext& context, WebCore::ImageBuffer& imag
 
 void DrawNativeImage::apply(GraphicsContext& context, NativeImage& image) const
 {
-    context.drawNativeImageInternal(image, m_imageSize, m_destinationRect, m_srcRect, m_options);
+    context.drawNativeImage(image, m_imageSize, m_destinationRect, m_srcRect, m_options);
 }
 
 void DrawSystemImage::apply(GraphicsContext& context) const
@@ -255,7 +255,10 @@ void DrawLinesForText::apply(GraphicsContext& context) const
 
 void DrawDotsForDocumentMarker::apply(GraphicsContext& context) const
 {
-    context.drawDotsForDocumentMarker(m_rect, m_style);
+    context.drawDotsForDocumentMarker(m_rect, {
+        static_cast<DocumentMarkerLineStyleMode>(m_styleMode),
+        m_styleShouldUseDarkAppearance,
+    });
 }
 
 void DrawEllipse::apply(GraphicsContext& context) const

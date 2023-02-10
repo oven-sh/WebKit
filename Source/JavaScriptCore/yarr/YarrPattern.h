@@ -241,12 +241,10 @@ struct PatternTerm {
         quantityType = QuantifierType::FixedCount;
         quantityMinCount = quantityMaxCount = 1;
     }
-
+    
     static PatternTerm ForwardReference()
     {
-        auto term = PatternTerm(Type::ForwardReference);
-        term.backReferenceSubpatternId = 0;
-        return term;
+        return PatternTerm(Type::ForwardReference);
     }
 
     static PatternTerm BOL()
@@ -458,9 +456,7 @@ struct YarrPattern {
     void resetForReparsing()
     {
         m_numSubpatterns = 0;
-        m_numNamedSubpatterns = 0;
         m_initialStartValueFrameLocation = 0;
-        m_numDuplicateNamedCaptureGroups = 0;
 
         m_containsBackreferences = false;
         m_containsBOL = false;
@@ -484,8 +480,6 @@ struct YarrPattern {
         m_disjunctions.clear();
         m_userCharacterClasses.clear();
         m_captureGroupNames.clear();
-        m_namedGroupToParenIndeces.clear();
-        m_duplicateNamedGroupForSubpatternId.clear();
     }
 
     bool containsUnsignedLengthPattern()
@@ -589,22 +583,6 @@ struct YarrPattern {
         return unicodePropertiesCached.get(classID);
     }
 
-    unsigned offsetVectorBaseForNamedCaptures() const
-    {
-        return (m_numSubpatterns + 1) * 2;
-    }
-
-    unsigned offsetsSize() const
-    {
-        return offsetVectorBaseForNamedCaptures() + m_numDuplicateNamedCaptureGroups;
-    }
-
-    unsigned offsetForDuplicateNamedGroupId(unsigned duplicateNamedGroupId)
-    {
-        ASSERT(duplicateNamedGroupId);
-        return offsetVectorBaseForNamedCaptures() + duplicateNamedGroupId - 1;
-    }
-
     void dumpPatternString(PrintStream& out, StringView patternString);
     void dumpPattern(StringView pattern);
     void dumpPattern(PrintStream& out, StringView pattern);
@@ -617,8 +595,6 @@ struct YarrPattern {
     bool unicode() const { return m_flags.contains(Flags::Unicode); }
     bool dotAll() const { return m_flags.contains(Flags::DotAll); }
 
-    bool hasDuplicateNamedCaptureGroups() const { return !!m_numDuplicateNamedCaptureGroups; }
-
     bool m_containsBackreferences : 1;
     bool m_containsBOL : 1;
     bool m_containsLookbehinds : 1;
@@ -627,17 +603,12 @@ struct YarrPattern {
     bool m_saveInitialStartValue : 1;
     OptionSet<Flags> m_flags;
     unsigned m_numSubpatterns { 0 };
-    unsigned m_numNamedSubpatterns { 0 };
     unsigned m_initialStartValueFrameLocation { 0 };
-    unsigned m_numDuplicateNamedCaptureGroups { 0 };
     PatternDisjunction* m_body;
     Vector<std::unique_ptr<PatternDisjunction>, 4> m_disjunctions;
     Vector<std::unique_ptr<CharacterClass>> m_userCharacterClasses;
     Vector<String> m_captureGroupNames;
-    // The first vector entry of m_namedGroupToParenIndeces is the namedSubpatternId.
-    // Subsequent vector entries are the subpatternId(s) when the name is used.
-    HashMap<String, Vector<unsigned>> m_namedGroupToParenIndeces;
-    Vector<unsigned> m_duplicateNamedGroupForSubpatternId;
+    HashMap<String, unsigned> m_namedGroupToParenIndex;
 
 private:
     ErrorCode compile(StringView patternString);
@@ -678,11 +649,9 @@ private:
     struct BackTrackInfoBackReference {
         uintptr_t begin; // Not really needed for greedy quantifiers.
         uintptr_t matchAmount; // Not really needed for fixed quantifiers.
-        uintptr_t backReferenceSize; // Used by greedy quantifiers to backtrack.
 
         static unsigned beginIndex() { return offsetof(BackTrackInfoBackReference, begin) / sizeof(uintptr_t); }
         static unsigned matchAmountIndex() { return offsetof(BackTrackInfoBackReference, matchAmount) / sizeof(uintptr_t); }
-        static unsigned backReferenceSizeIndex() { return offsetof(BackTrackInfoBackReference, backReferenceSize) / sizeof(uintptr_t); }
     };
 
     struct BackTrackInfoAlternative {

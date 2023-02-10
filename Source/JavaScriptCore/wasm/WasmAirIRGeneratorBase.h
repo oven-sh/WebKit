@@ -43,7 +43,6 @@
 #include "B3ProcedureInlines.h"
 #include "B3StackmapGenerationParams.h"
 #include "BinarySwitch.h"
-#include "CompilerTimingScope.h"
 #include "JSCJSValueInlines.h"
 #include "JSWebAssemblyArray.h"
 #include "JSWebAssemblyInstance.h"
@@ -354,8 +353,6 @@ struct AirIRGeneratorBase {
 
     void finalizeEntrypoints();
 
-    PartialResult WARN_UNUSED_RETURN addDrop(ExpressionType);
-
     PartialResult WARN_UNUSED_RETURN addArguments(const TypeDefinition&);
     PartialResult WARN_UNUSED_RETURN addLocal(Type, uint32_t);
     //             addConstant (in derived classes)
@@ -497,8 +494,8 @@ struct AirIRGeneratorBase {
         // are more convenient to specify as a open range.
         //
         // The top endpoint of the range is always excluded, i.e. this value chooses between:
-        // closedLowerEndpoint = true    =>   range === [min, max)
-        // closedLowerEndpoint = false   =>   range === (min, max)
+        // closedLowerEndopint = true    =>   range === [min, max)
+        // closedLowerEndopint = false   =>   range === (min, max)
         bool closedLowerEndpoint;
     };
 
@@ -1161,7 +1158,7 @@ void AirIRGeneratorBase<Derived, ExpressionType>::restoreWebAssemblyGlobalState(
         RegisterSetBuilder clobbers;
         clobbers.add(GPRInfo::wasmBaseMemoryPointer, IgnoreVectors);
         clobbers.add(GPRInfo::wasmBoundsCheckingSizeRegister, IgnoreVectors);
-        clobbers.merge(RegisterSetBuilder::macroClobberedGPRs());
+        clobbers.merge(RegisterSetBuilder::macroClobberedRegisters());
 
         auto* patchpoint = addPatchpoint(B3::Void);
         B3::Effects effects = B3::Effects::none();
@@ -1207,12 +1204,6 @@ void AirIRGeneratorBase<Derived, ExpressionType>::forEachLiveValue(Function&& fu
         if (ControlType::isAnyCatch(data))
             function(data.exception());
     }
-}
-
-template<typename Derived, typename ExpressionType>
-auto AirIRGeneratorBase<Derived, ExpressionType>::addDrop(ExpressionType) -> PartialResult
-{
-    return { };
 }
 
 template <typename Derived, typename ExpressionType>
@@ -1591,7 +1582,7 @@ auto AirIRGeneratorBase<Derived, ExpressionType>::getGlobal(uint32_t index, Expr
 
     result = tmpForType(type);
 
-    int32_t offset = Instance::offsetOfGlobalPtr(m_info.importFunctionCount(), m_info.tableCount(), index);
+    int32_t offset = Instance::offsetOfGlobalPtr(m_numImportFunctions, m_info.tableCount(), index);
 
     switch (global.bindingMode) {
     case Wasm::GlobalInformation::BindingMode::EmbeddedInInstance:
@@ -2733,7 +2724,7 @@ void AirIRGeneratorBase<Derived, ExpressionType>::emitEntryTierUpCheck()
     effects.reads = B3::HeapRange::top();
     effects.writes = B3::HeapRange::top();
     patch->effects = effects;
-    patch->clobber(RegisterSetBuilder::macroClobberedGPRs());
+    patch->clobber(RegisterSetBuilder::macroClobberedRegisters());
 
     patch->setGenerator([=, this] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
@@ -2789,7 +2780,7 @@ void AirIRGeneratorBase<Derived, ExpressionType>::emitLoopTierUpCheck(uint32_t l
     effects.exitsSideways = true;
     patch->effects = effects;
 
-    patch->clobber(RegisterSetBuilder::macroClobberedGPRs());
+    patch->clobber(RegisterSetBuilder::macroClobberedRegisters());
     RegisterSetBuilder clobberLate;
     clobberLate.add(GPRInfo::argumentGPR0, IgnoreVectors);
     patch->clobberLate(clobberLate);
@@ -3064,7 +3055,7 @@ auto AirIRGeneratorBase<Derived, ExpressionType>::addSwitch(ExpressionType condi
     auto* patchpoint = addPatchpoint(B3::Void);
     patchpoint->effects = B3::Effects::none();
     patchpoint->effects.terminal = true;
-    patchpoint->clobber(RegisterSetBuilder::macroClobberedGPRs());
+    patchpoint->clobber(RegisterSetBuilder::macroClobberedRegisters());
 
     patchpoint->setGenerator([=] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
@@ -3193,7 +3184,7 @@ auto AirIRGeneratorBase<Derived, ExpressionType>::addCall(uint32_t functionIndex
             // We need to clobber all potential pinned registers since we might be leaving the instance.
             // We pessimistically assume we could be calling to something that is bounds checking.
             // FIXME: We shouldn't have to do this: https://bugs.webkit.org/show_bug.cgi?id=172181
-            patchpoint->clobberLate(RegisterSetBuilder::wasmPinnedRegisters());
+            patchpoint->clobberLate(RegisterSetBuilder::wasmPinnedRegisters(MemoryMode::BoundsChecking));
             patchpoint->setGenerator([this, handle, isTailCall, tailCallStackOffsetFromFP](CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
                 AllowMacroScratchRegisterUsage allowScratch(jit);
                 if (isTailCall)
@@ -3416,8 +3407,8 @@ auto AirIRGeneratorBase<Derived, ExpressionType>::emitIndirectCall(ExpressionTyp
         patchpoint->effects.writesPinned = true;
         // We pessimistically assume we're calling something with BoundsChecking memory.
         // FIXME: We shouldn't have to do this: https://bugs.webkit.org/show_bug.cgi?id=172181
-        patchpoint->clobber(RegisterSetBuilder::wasmPinnedRegisters());
-        patchpoint->clobber(RegisterSetBuilder::macroClobberedGPRs());
+        patchpoint->clobber(RegisterSetBuilder::wasmPinnedRegisters(MemoryMode::BoundsChecking));
+        patchpoint->clobber(RegisterSetBuilder::macroClobberedRegisters());
         patchpoint->numGPScratchRegisters = 1;
 
         patchpoint->setGenerator([=] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
@@ -3492,7 +3483,7 @@ auto AirIRGeneratorBase<Derived, ExpressionType>::emitIndirectCall(ExpressionTyp
     // FIXME: We should not have to do this, but the wasm->wasm stub assumes it can
     // use all the pinned registers as scratch: https://bugs.webkit.org/show_bug.cgi?id=172181
 
-    patchpoint->clobberLate(RegisterSetBuilder::wasmPinnedRegisters());
+    patchpoint->clobberLate(RegisterSetBuilder::wasmPinnedRegisters(MemoryMode::BoundsChecking));
 
     patchpoint->setGenerator([=, this] (CCallHelpers& jit, const B3::StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
@@ -3552,8 +3543,6 @@ B3::Origin AirIRGeneratorBase<Derived, ExpressionType>::origin()
 template<typename Generator>
 Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileAirImpl(CompilationContext& compilationContext, Callee& callee, const FunctionData& function, const TypeDefinition& signature, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, const ModuleInformation& info, MemoryMode mode, uint32_t functionIndex, std::optional<bool> hasExceptionHandlers, TierUpCount* tierUp)
 {
-    CompilerTimingScope totalScope("Air", "Total WASM compilation");
-
     auto result = makeUnique<InternalFunction>();
 
     compilationContext.wasmEntrypointJIT = makeUnique<CCallHelpers>();

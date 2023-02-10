@@ -94,16 +94,17 @@ static ExceptionOr<Ref<CSSTransformComponent>> createTransformComponent(CSSFunct
     }
 }
 
-ExceptionOr<Ref<CSSTransformValue>> CSSTransformValue::create(const CSSTransformListValue& list)
+ExceptionOr<Ref<CSSTransformValue>> CSSTransformValue::create(CSSTransformListValue& transformList)
 {
     Vector<RefPtr<CSSTransformComponent>> components;
-    for (auto& value : list) {
-        if (!is<CSSFunctionValue>(value))
+    for (auto transformFunction : transformList) {
+        if (!is<CSSFunctionValue>(transformFunction))
             return Exception { TypeError, "Expected only function values in a transform list."_s };
-        auto component = createTransformComponent(downcast<CSSFunctionValue>(const_cast<CSSValue&>(value)));
-        if (component.hasException())
-            return component.releaseException();
-        components.append(component.releaseReturnValue());
+        auto& functionValue = downcast<CSSFunctionValue>(transformFunction.get());
+        auto transformComponentOrException = createTransformComponent(functionValue);
+        if (transformComponentOrException.hasException())
+            return transformComponentOrException.releaseException();
+        components.append(transformComponentOrException.releaseReturnValue());
     }
     return adoptRef(*new CSSTransformValue(WTFMove(components)));
 }
@@ -180,12 +181,12 @@ void CSSTransformValue::serialize(StringBuilder& builder, OptionSet<Serializatio
 
 RefPtr<CSSValue> CSSTransformValue::toCSSValue() const
 {
-    CSSValueListBuilder builder;
+    auto cssValueList = CSSTransformListValue::create();
     for (auto& component : m_components) {
         if (auto cssComponent = component->toCSSValue())
-            builder.append(cssComponent.releaseNonNull());
+            cssValueList->append(cssComponent.releaseNonNull());
     }
-    return CSSTransformListValue::create(WTFMove(builder));
+    return cssValueList;
 }
 
 } // namespace WebCore

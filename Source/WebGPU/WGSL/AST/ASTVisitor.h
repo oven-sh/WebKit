@@ -78,7 +78,6 @@ public:
     virtual void visit(AST::Unsigned32Literal&);
 
     virtual void visit(AST::Function&);
-    virtual void visit(AST::Parameter&);
 
     virtual void visit(AST::Identifier&);
 
@@ -112,11 +111,18 @@ public:
     virtual void visit(AST::ReferenceTypeName&);
     virtual void visit(AST::StructTypeName&);
 
+    // Values
+    virtual void visit(AST::Value&);
+    virtual void visit(AST::ConstantValue&);
+    virtual void visit(AST::OverrideValue&);
+    virtual void visit(AST::LetValue&);
+    virtual void visit(AST::ParameterValue&);
+
     virtual void visit(AST::Variable&);
     virtual void visit(AST::VariableQualifier&);
 
     bool hasError() const;
-    Result<void> result();
+    Expected<void, Error> result();
 
     template<typename T> void checkErrorAndVisit(T& x)
     {
@@ -138,7 +144,7 @@ protected:
     }
 
 private:
-    Result<void> m_expectedError;
+    Expected<void, Error> m_expectedError;
 };
 
 } // namespace AST

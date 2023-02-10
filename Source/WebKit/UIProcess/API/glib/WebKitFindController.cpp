@@ -21,7 +21,6 @@
 #include "WebKitFindController.h"
 
 #include "APIFindClient.h"
-#include "WebFindOptions.h"
 #include "WebKitEnumTypes.h"
 #include "WebKitWebViewPrivate.h"
 #include <glib/gi18n-lib.h>
@@ -81,7 +80,7 @@ struct _WebKitFindControllerPrivate {
 
 static guint signals[LAST_SIGNAL] = { 0, };
 
-WEBKIT_DEFINE_FINAL_TYPE(WebKitFindController, webkit_find_controller, G_TYPE_OBJECT, GObject)
+WEBKIT_DEFINE_FINAL_TYPE_IN_2022_API(WebKitFindController, webkit_find_controller, G_TYPE_OBJECT)
 
 static inline OptionSet<WebKit::FindOptions> toWebFindOptions(uint32_t findOptions)
 {

@@ -43,14 +43,16 @@ class HTMLMenuItemElement;
 namespace WebKit {
     
 // Based on NSTouchBarItem types.
-enum class ItemType : uint8_t {
+enum ItemType {
     Button
 };
 
 struct TouchBarMenuItemData {
     explicit TouchBarMenuItemData() = default;
     explicit TouchBarMenuItemData(const WebCore::HTMLMenuItemElement&);
-    explicit TouchBarMenuItemData(ItemType, String&& identifier, float priority);
+    
+    void encode(IPC::Encoder&) const;
+    static std::optional<TouchBarMenuItemData> decode(IPC::Decoder&);
     
     ItemType type { ItemType::Button };
     String identifier;
@@ -92,5 +94,16 @@ inline bool operator!=(const TouchBarMenuItemData& lhs, const TouchBarMenuItemDa
 }
 
 } // namespace WebKit
+
+namespace WTF {
+
+template<> struct EnumTraits<WebKit::ItemType> {
+    using values = EnumValues<
+        WebKit::ItemType,
+        WebKit::ItemType::Button
+    >;
+};
+
+} // namespace WTF
 
 #endif // HAVE(TOUCH_BAR)

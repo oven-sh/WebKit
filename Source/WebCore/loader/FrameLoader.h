@@ -302,9 +302,6 @@ public:
 
     const URL& previousURL() const { return m_previousURL; }
 
-    bool isHTTPFallbackInProgress() const { return m_isHTTPFallbackInProgress; }
-    void setHTTPFallbackInProgress(bool value) { m_isHTTPFallbackInProgress = value; }
-
     WEBCORE_EXPORT void completePageTransitionIfNeeded();
 
     void setOverrideCachePolicyForTesting(ResourceRequestCachePolicy policy) { m_overrideCachePolicyForTesting = policy; }
@@ -372,9 +369,8 @@ private:
     bool shouldPerformFragmentNavigation(bool isFormSubmission, const String& httpMethod, FrameLoadType, const URL&);
     void scrollToFragmentWithParentBoundary(const URL&, bool isNewNavigation = true);
 
-    void dispatchDidFailProvisionalLoad(DocumentLoader& provisionalDocumentLoader, const ResourceError&, WillInternallyHandleFailure);
+    void dispatchDidFailProvisionalLoad(DocumentLoader& provisionalDocumentLoader, const ResourceError&);
     void checkLoadCompleteForThisFrame();
-    void handleLoadFailureRecovery(DocumentLoader&, const ResourceError&, bool);
 
     void setDocumentLoader(DocumentLoader*);
     void setPolicyDocumentLoader(DocumentLoader*);
@@ -514,7 +510,6 @@ private:
     bool m_alwaysAllowLocalWebarchive { false };
 
     bool m_inStopForBackForwardCache { false };
-    bool m_isHTTPFallbackInProgress { false };
 };
 
 // This function is called by createWindow() in JSDOMWindowBase.cpp, for example, for

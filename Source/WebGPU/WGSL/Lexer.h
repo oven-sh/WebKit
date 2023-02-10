@@ -47,7 +47,6 @@ public:
         }
 
         m_current = (m_code != m_codeEnd) ? *m_code : 0;
-        m_currentPosition = { 1, 0, 0 };
     }
 
     Token lex();
@@ -71,12 +70,9 @@ private:
         return { WGSL::TokenType::Identifier, m_tokenStartingPosition, currentTokenLength(), WTFMove(identifier) };
     }
 
-    T shift(unsigned = 1);
-    T peek(unsigned = 0);
-    void newLine();
-    void skipBlockComments();
-    void skipLineComment();
-    void skipWhitespaceAndComments();
+    void shift();
+    T peek(unsigned);
+    void skipWhitespace();
 
     // Reads [0-9]+
     std::optional<uint64_t> parseDecimalInteger();

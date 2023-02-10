@@ -185,12 +185,4 @@ bool CSSSelectorList::hasInvalidSelector() const
     return forEachSelector(functor, this);
 }
 
-bool CSSSelectorList::hasExplicitNestingParent() const
-{
-    auto functor = [](auto* selector) {
-        return selector->hasExplicitNestingParent();
-    };
-
-    return forEachSelector(functor, this);
-}
 } // namespace WebCore

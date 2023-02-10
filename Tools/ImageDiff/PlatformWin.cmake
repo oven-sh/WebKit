@@ -1,4 +1,4 @@
-set(wrapper_DEFINITIONS USE_CONSOLE_ENTRY_POINT)
+set(wrapper_DEFINITIONS USE_CONSOLE_ENTRY_POINT WIN_CAIRO)
 
 include(Cairo.cmake)
 

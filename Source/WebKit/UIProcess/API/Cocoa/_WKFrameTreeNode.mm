@@ -56,7 +56,7 @@
 - (WKSecurityOrigin *)securityOrigin
 {
     auto& data = _node->securityOrigin();
-    auto apiOrigin = API::SecurityOrigin::create(data);
+    auto apiOrigin = API::SecurityOrigin::create(data.protocol, data.host, data.port);
     return retainPtr(wrapper(apiOrigin.get())).autorelease();
 }
 

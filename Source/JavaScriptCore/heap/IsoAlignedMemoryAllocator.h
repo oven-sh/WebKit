@@ -27,12 +27,10 @@
 
 #include "IsoMemoryAllocatorBase.h"
 #include <wtf/BitVector.h>
+#include <wtf/DebugHeap.h>
 #include <wtf/HashMap.h>
 #include <wtf/Vector.h>
 
-#if ENABLE(MALLOC_HEAP_BREAKDOWN)
-#include <wtf/DebugHeap.h>
-#endif
 
 namespace JSC {
 
@@ -54,10 +52,6 @@ protected:
     void freeBlock(void* block) final;
     void commitBlock(void* block) final;
     void decommitBlock(void* block) final;
-
-#if ENABLE(MALLOC_HEAP_BREAKDOWN)
-    WTF::DebugHeap m_heap;
-#endif
 };
 
 } // namespace JSC

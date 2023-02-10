@@ -26,13 +26,41 @@
 #include "config.h"
 #include "ASTBinaryExpression.h"
 
+#include <wtf/EnumTraits.h>
 #include <wtf/PrintStream.h>
+#include <wtf/text/ASCIILiteral.h>
 
 namespace WGSL::AST {
 
+ASCIILiteral toString(BinaryOperation op)
+{
+    constexpr ASCIILiteral binaryOperationNames[] = {
+        "+"_s,
+        "-"_s,
+        "*"_s,
+        "/"_s,
+        "%"_s,
+        "&"_s,
+        "|"_s,
+        "^"_s,
+        "<<"_s,
+        ">>"_s,
+        "=="_s,
+        "!="_s,
+        ">"_s,
+        ">="_s,
+        "<"_s,
+        "<="_s,
+        "&&"_s,
+        "||"_s
+    };
+
+    return binaryOperationNames[WTF::enumToUnderlyingType(op)];
+}
+
 void printInternal(PrintStream& out, BinaryOperation op)
 {
-    out.print(toASCIILiteral(op));
+    out.print(toString(op));
 }
 
 } // namespace WGSL::AST

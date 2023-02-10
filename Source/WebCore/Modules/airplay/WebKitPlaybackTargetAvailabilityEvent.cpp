@@ -29,7 +29,7 @@
 #include <wtf/IsoMallocInlines.h>
 #include <wtf/NeverDestroyed.h>
 
-#if ENABLE(WIRELESS_PLAYBACK_TARGET_AVAILABILITY_API)
+#if ENABLE(WIRELESS_PLAYBACK_TARGET)
 
 namespace WebCore {
 
@@ -57,4 +57,4 @@ WebKitPlaybackTargetAvailabilityEvent::WebKitPlaybackTargetAvailabilityEvent(con
 
 } // namespace WebCore
 
-#endif // ENABLE(WIRELESS_PLAYBACK_TARGET_AVAILABILITY_API)
+#endif // ENABLE(WIRELESS_PLAYBACK_TARGET)

@@ -35,8 +35,9 @@
 #import "WebActionDisablingCALayerDelegate.h"
 #import "WebTextIndicatorLayer.h"
 #import <pal/spi/cg/CoreGraphicsSPI.h>
+#import <pal/spi/cocoa/NSColorSPI.h>
 #import <pal/spi/cocoa/QuartzCoreSPI.h>
-#import <pal/spi/mac/NSColorSPI.h>
+
 
 @interface WebTextIndicatorView : NSView
 

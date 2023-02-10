@@ -93,12 +93,6 @@ LineBoxIterator lastLineBoxFor(const RenderBlockFlow& flow)
     return { LineBoxIteratorLegacyPath { flow.lastRootBox() } };
 }
 
-LineBoxIterator lineBoxFor(const LayoutIntegration::InlineContent& inlineContent, size_t lineIndex)
-{
-    return { LineBoxIteratorModernPath { inlineContent, lineIndex } };
-}
-
-
 LineBoxIterator LineBox::next() const
 {
     return LineBoxIterator(*this).traverseNext();

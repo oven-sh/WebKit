@@ -50,7 +50,7 @@ static const Seconds autoscrollInterval { 50_ms };
 static Frame* getMainFrame(Frame* frame)
 {
     Page* page = frame->page();
-    return page && dynamicDowncast<LocalFrame>(page->mainFrame()) ? dynamicDowncast<LocalFrame>(page->mainFrame()) : 0;
+    return page ? &page->mainFrame() : 0;
 }
 #endif
 
@@ -114,8 +114,8 @@ void AutoscrollController::stopAutoscrollTimer(bool rendererIsBeingDestroyed)
 
 #if ENABLE(PAN_SCROLLING)
     // If we're not in the top frame we notify it that we are not doing a panScroll any more.
-    if (auto* localFrame = (frame && !frame->isMainFrame()) ? dynamicDowncast<LocalFrame>(frame->mainFrame()) : nullptr)
-        localFrame->eventHandler().didPanScrollStop();
+    if (frame && !frame->isMainFrame())
+        frame->mainFrame().eventHandler().didPanScrollStop();
 #endif
 }
 

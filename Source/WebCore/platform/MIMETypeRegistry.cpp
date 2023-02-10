@@ -40,10 +40,14 @@
 
 #if USE(CG)
 #include "ImageBufferUtilitiesCG.h"
+#include "ImageSourceCG.h"
 #include "UTIRegistry.h"
-#include "UTIUtilities.h"
 #include <ImageIO/ImageIO.h>
 #include <wtf/RetainPtr.h>
+#endif
+
+#if USE(CG) && PLATFORM(COCOA)
+#include "UTIUtilities.h"
 #endif
 
 #if ENABLE(WEB_ARCHIVE) || ENABLE(MHTML)

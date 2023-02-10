@@ -26,15 +26,13 @@
 
 #pragma once
 
-#if ENABLE(MATHML)
-
 #include "Glyph.h"
 #include <wtf/Forward.h>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
 #include <wtf/RefPtr.h>
 
-#if USE(HARFBUZZ)
+#if !ENABLE(OPENTYPE_MATH) && USE(HARFBUZZ)
 #include "HbUniquePtr.h"
 #include <hb-ot.h>
 #endif
@@ -142,5 +140,3 @@ private:
 };
 
 } // namespace WebCore
-
-#endif // ENABLE(MATHML)

@@ -34,12 +34,6 @@
 
 namespace WebGPU {
 
-static constexpr uint32_t maxUInt32Limit()
-{
-    // FIXME: https://bugs.webkit.org/show_bug.cgi?id=252873
-    return std::numeric_limits<uint32_t>::max() - 1;
-}
-
 // https://developer.apple.com/metal/Metal-Feature-Set-Tables.pdf
 
 // FIXME: https://github.com/gpuweb/gpuweb/issues/2749 we need more limits.
@@ -80,7 +74,7 @@ static Vector<WGPUFeatureName> baseFeatures(id<MTLDevice> device, const Hardware
 {
     Vector<WGPUFeatureName> features;
 
-    features.append(WGPUFeatureName_DepthClipControl);
+    // FIXME: Determine if WGPUFeatureName_DepthClipControl is supported.
     features.append(WGPUFeatureName_Depth32FloatStencil8);
 
     if (baseCapabilities.timestampCounterSet)
@@ -99,9 +93,6 @@ static Vector<WGPUFeatureName> baseFeatures(id<MTLDevice> device, const Hardware
     // WGPUFeatureName_TextureCompressionETC2 and WGPUFeatureName_TextureCompressionASTC are to be filled in by the caller.
 
     features.append(WGPUFeatureName_IndirectFirstInstance);
-    features.append(WGPUFeatureName_RG11B10UfloatRenderable);
-    features.append(WGPUFeatureName_ShaderF16);
-    features.append(static_cast<WGPUFeatureName>(WGPUFeatureName_BGRA8UnormStorage));
 
     return features;
 }
@@ -129,9 +120,9 @@ static HardwareCapabilities apple3(id<MTLDevice> device)
             .maxTextureDimension3D =    2048,
             .maxTextureArrayLayers =    2048,
             .maxBindGroups =    maxBindGroups,
-            .maxBindingsPerBindGroup =  640,
-            .maxDynamicUniformBuffersPerPipelineLayout =    maxUInt32Limit(),
-            .maxDynamicStorageBuffersPerPipelineLayout =    maxUInt32Limit(),
+            .maxBindingsPerBindGroup = 31,
+            .maxDynamicUniformBuffersPerPipelineLayout =    std::numeric_limits<uint32_t>::max(),
+            .maxDynamicStorageBuffersPerPipelineLayout =    std::numeric_limits<uint32_t>::max(),
             .maxSampledTexturesPerShaderStage =    maxBindGroups * 31,
             .maxSamplersPerShaderStage =    maxBindGroups * 16,
             .maxStorageBuffersPerShaderStage =    maxBindGroups * 31,
@@ -139,22 +130,21 @@ static HardwareCapabilities apple3(id<MTLDevice> device)
             .maxUniformBuffersPerShaderStage =    maxBindGroups * 31,
             .maxUniformBufferBindingSize =    0, // To be filled in by the caller.
             .maxStorageBufferBindingSize =    0, // To be filled in by the caller.
-            .minUniformBufferOffsetAlignment =    32,
-            .minStorageBufferOffsetAlignment =    32,
+            .minUniformBufferOffsetAlignment =    4,
+            .minStorageBufferOffsetAlignment =    4,
             .maxVertexBuffers =    30,
             .maxBufferSize = device.maxBufferLength,
             .maxVertexAttributes =    31,
-            .maxVertexBufferArrayStride =    maxUInt32Limit(),
+            .maxVertexBufferArrayStride =    std::numeric_limits<uint32_t>::max(),
             .maxInterStageShaderComponents =    60,
             .maxInterStageShaderVariables =    124,
             .maxColorAttachments =    8,
-            .maxColorAttachmentBytesPerSample = 32,
             .maxComputeWorkgroupStorageSize =    16 * KB,
             .maxComputeInvocationsPerWorkgroup =    512,
             .maxComputeWorkgroupSizeX =    512,
             .maxComputeWorkgroupSizeY =    512,
             .maxComputeWorkgroupSizeZ =    512,
-            .maxComputeWorkgroupsPerDimension =    maxUInt32Limit(),
+            .maxComputeWorkgroupsPerDimension =    std::numeric_limits<uint32_t>::max(),
         },
         WTFMove(features),
         baseCapabilities,
@@ -184,9 +174,9 @@ static HardwareCapabilities apple4(id<MTLDevice> device)
             .maxTextureDimension3D =    2048,
             .maxTextureArrayLayers =    2048,
             .maxBindGroups =    maxBindGroups,
-            .maxBindingsPerBindGroup =  640,
-            .maxDynamicUniformBuffersPerPipelineLayout =    maxUInt32Limit(),
-            .maxDynamicStorageBuffersPerPipelineLayout =    maxUInt32Limit(),
+            .maxBindingsPerBindGroup =    96,
+            .maxDynamicUniformBuffersPerPipelineLayout =    std::numeric_limits<uint32_t>::max(),
+            .maxDynamicStorageBuffersPerPipelineLayout =    std::numeric_limits<uint32_t>::max(),
             .maxSampledTexturesPerShaderStage =    maxBindGroups * 96,
             .maxSamplersPerShaderStage =    maxBindGroups * 16,
             .maxStorageBuffersPerShaderStage =    maxBindGroups * 96,
@@ -194,22 +184,21 @@ static HardwareCapabilities apple4(id<MTLDevice> device)
             .maxUniformBuffersPerShaderStage =    maxBindGroups * 96,
             .maxUniformBufferBindingSize =    0, // To be filled in by the caller.
             .maxStorageBufferBindingSize =    0, // To be filled in by the caller.
-            .minUniformBufferOffsetAlignment =    32,
-            .minStorageBufferOffsetAlignment =    32,
+            .minUniformBufferOffsetAlignment =    4,
+            .minStorageBufferOffsetAlignment =    4,
             .maxVertexBuffers =    30,
             .maxBufferSize =    device.maxBufferLength,
             .maxVertexAttributes =    31,
-            .maxVertexBufferArrayStride =    maxUInt32Limit(),
+            .maxVertexBufferArrayStride =    std::numeric_limits<uint32_t>::max(),
             .maxInterStageShaderComponents =    124,
             .maxInterStageShaderVariables =    124,
             .maxColorAttachments =    8,
-            .maxColorAttachmentBytesPerSample = 32,
             .maxComputeWorkgroupStorageSize =    32 * KB,
             .maxComputeInvocationsPerWorkgroup =    1024,
             .maxComputeWorkgroupSizeX =    1024,
             .maxComputeWorkgroupSizeY =    1024,
             .maxComputeWorkgroupSizeZ =    1024,
-            .maxComputeWorkgroupsPerDimension =    maxUInt32Limit(),
+            .maxComputeWorkgroupsPerDimension =    std::numeric_limits<uint32_t>::max(),
         },
         WTFMove(features),
         baseCapabilities,
@@ -239,9 +228,9 @@ static HardwareCapabilities apple5(id<MTLDevice> device)
             .maxTextureDimension3D =    2048,
             .maxTextureArrayLayers =    2048,
             .maxBindGroups =    maxBindGroups,
-            .maxBindingsPerBindGroup =  640,
-            .maxDynamicUniformBuffersPerPipelineLayout =    maxUInt32Limit(),
-            .maxDynamicStorageBuffersPerPipelineLayout =    maxUInt32Limit(),
+            .maxBindingsPerBindGroup =    96,
+            .maxDynamicUniformBuffersPerPipelineLayout =    std::numeric_limits<uint32_t>::max(),
+            .maxDynamicStorageBuffersPerPipelineLayout =    std::numeric_limits<uint32_t>::max(),
             .maxSampledTexturesPerShaderStage =    maxBindGroups * 96,
             .maxSamplersPerShaderStage =    maxBindGroups * 16,
             .maxStorageBuffersPerShaderStage =    maxBindGroups * 96,
@@ -249,22 +238,21 @@ static HardwareCapabilities apple5(id<MTLDevice> device)
             .maxUniformBuffersPerShaderStage =    maxBindGroups * 96,
             .maxUniformBufferBindingSize =    0, // To be filled in by the caller.
             .maxStorageBufferBindingSize =    0, // To be filled in by the caller.
-            .minUniformBufferOffsetAlignment =    32,
-            .minStorageBufferOffsetAlignment =    32,
+            .minUniformBufferOffsetAlignment =    4,
+            .minStorageBufferOffsetAlignment =    4,
             .maxVertexBuffers =    30,
             .maxBufferSize =    device.maxBufferLength,
             .maxVertexAttributes =    31,
-            .maxVertexBufferArrayStride =    maxUInt32Limit(),
+            .maxVertexBufferArrayStride =    std::numeric_limits<uint32_t>::max(),
             .maxInterStageShaderComponents =    124,
             .maxInterStageShaderVariables = 124,
             .maxColorAttachments = 8,
-            .maxColorAttachmentBytesPerSample = 32,
             .maxComputeWorkgroupStorageSize =    32 * KB,
             .maxComputeInvocationsPerWorkgroup =    1024,
             .maxComputeWorkgroupSizeX =    1024,
             .maxComputeWorkgroupSizeY =    1024,
             .maxComputeWorkgroupSizeZ =    1024,
-            .maxComputeWorkgroupsPerDimension =    maxUInt32Limit(),
+            .maxComputeWorkgroupsPerDimension =    std::numeric_limits<uint32_t>::max(),
         },
         WTFMove(features),
         baseCapabilities,
@@ -296,8 +284,8 @@ static HardwareCapabilities apple6(id<MTLDevice> device)
             .maxTextureArrayLayers =    2048,
             .maxBindGroups =    maxBindGroups,
             .maxBindingsPerBindGroup =    500000,
-            .maxDynamicUniformBuffersPerPipelineLayout =    maxUInt32Limit(),
-            .maxDynamicStorageBuffersPerPipelineLayout =    maxUInt32Limit(),
+            .maxDynamicUniformBuffersPerPipelineLayout =    std::numeric_limits<uint32_t>::max(),
+            .maxDynamicStorageBuffersPerPipelineLayout =    std::numeric_limits<uint32_t>::max(),
             .maxSampledTexturesPerShaderStage =    maxBindGroups * 500000 / 2,
             .maxSamplersPerShaderStage =    maxBindGroups * 1024,
             .maxStorageBuffersPerShaderStage =    maxBindGroups * 500000 / 2,
@@ -305,22 +293,21 @@ static HardwareCapabilities apple6(id<MTLDevice> device)
             .maxUniformBuffersPerShaderStage =    maxBindGroups * 500000 / 2,
             .maxUniformBufferBindingSize =    0, // To be filled in by the caller.
             .maxStorageBufferBindingSize =    0, // To be filled in by the caller.
-            .minUniformBufferOffsetAlignment =    32,
-            .minStorageBufferOffsetAlignment =    32,
+            .minUniformBufferOffsetAlignment =    4,
+            .minStorageBufferOffsetAlignment =    4,
             .maxVertexBuffers =    30,
             .maxBufferSize = device.maxBufferLength,
             .maxVertexAttributes =    31,
-            .maxVertexBufferArrayStride =    maxUInt32Limit(),
+            .maxVertexBufferArrayStride =    std::numeric_limits<uint32_t>::max(),
             .maxInterStageShaderComponents =    124,
             .maxInterStageShaderVariables = 124,
             .maxColorAttachments = 8,
-            .maxColorAttachmentBytesPerSample = 32,
             .maxComputeWorkgroupStorageSize =    32 * KB,
             .maxComputeInvocationsPerWorkgroup =    1024,
             .maxComputeWorkgroupSizeX =    1024,
             .maxComputeWorkgroupSizeY =    1024,
             .maxComputeWorkgroupSizeZ =    1024,
-            .maxComputeWorkgroupsPerDimension =    maxUInt32Limit(),
+            .maxComputeWorkgroupsPerDimension =    std::numeric_limits<uint32_t>::max(),
         },
         WTFMove(features),
         baseCapabilities,
@@ -351,8 +338,8 @@ static HardwareCapabilities apple7(id<MTLDevice> device)
             .maxTextureArrayLayers =    2048,
             .maxBindGroups =    maxBindGroups,
             .maxBindingsPerBindGroup =    500000,
-            .maxDynamicUniformBuffersPerPipelineLayout =    maxUInt32Limit(),
-            .maxDynamicStorageBuffersPerPipelineLayout =    maxUInt32Limit(),
+            .maxDynamicUniformBuffersPerPipelineLayout =    std::numeric_limits<uint32_t>::max(),
+            .maxDynamicStorageBuffersPerPipelineLayout =    std::numeric_limits<uint32_t>::max(),
             .maxSampledTexturesPerShaderStage =    maxBindGroups * 500000 / 2,
             .maxSamplersPerShaderStage =    maxBindGroups * 1024,
             .maxStorageBuffersPerShaderStage =    maxBindGroups * 500000 / 2,
@@ -360,22 +347,21 @@ static HardwareCapabilities apple7(id<MTLDevice> device)
             .maxUniformBuffersPerShaderStage =    maxBindGroups * 500000 / 2,
             .maxUniformBufferBindingSize =    0, // To be filled in by the caller.
             .maxStorageBufferBindingSize =    0, // To be filled in by the caller.
-            .minUniformBufferOffsetAlignment =    32,
-            .minStorageBufferOffsetAlignment =    32,
+            .minUniformBufferOffsetAlignment =    4,
+            .minStorageBufferOffsetAlignment =    4,
             .maxVertexBuffers =    30,
             .maxBufferSize = device.maxBufferLength,
             .maxVertexAttributes =    31,
-            .maxVertexBufferArrayStride =    maxUInt32Limit(),
+            .maxVertexBufferArrayStride =    std::numeric_limits<uint32_t>::max(),
             .maxInterStageShaderComponents =    124,
             .maxInterStageShaderVariables =    124,
             .maxColorAttachments = 8,
-            .maxColorAttachmentBytesPerSample = 32,
             .maxComputeWorkgroupStorageSize =    32 * KB,
             .maxComputeInvocationsPerWorkgroup =    1024,
             .maxComputeWorkgroupSizeX =    1024,
             .maxComputeWorkgroupSizeY =    1024,
             .maxComputeWorkgroupSizeZ =    1024,
-            .maxComputeWorkgroupsPerDimension =    maxUInt32Limit(),
+            .maxComputeWorkgroupsPerDimension =    std::numeric_limits<uint32_t>::max(),
         },
         WTFMove(features),
         baseCapabilities,
@@ -419,9 +405,9 @@ static HardwareCapabilities mac2(id<MTLDevice> device)
             .maxTextureDimension3D =    2048,
             .maxTextureArrayLayers =    2048,
             .maxBindGroups =    maxBindGroups,
-            .maxBindingsPerBindGroup =  640,
-            .maxDynamicUniformBuffersPerPipelineLayout =    maxUInt32Limit(),
-            .maxDynamicStorageBuffersPerPipelineLayout =    maxUInt32Limit(),
+            .maxBindingsPerBindGroup =    512,
+            .maxDynamicUniformBuffersPerPipelineLayout =    std::numeric_limits<uint32_t>::max(),
+            .maxDynamicStorageBuffersPerPipelineLayout =    std::numeric_limits<uint32_t>::max(),
             .maxSampledTexturesPerShaderStage =    maxBindGroups * texturesPerBindGroup,
             .maxSamplersPerShaderStage =    maxBindGroups * samplersPerBindGroup,
             .maxStorageBuffersPerShaderStage =    maxBindGroups * buffersPerBindGroup,
@@ -434,17 +420,16 @@ static HardwareCapabilities mac2(id<MTLDevice> device)
             .maxVertexBuffers =    30,
             .maxBufferSize =    device.maxBufferLength,
             .maxVertexAttributes =    31,
-            .maxVertexBufferArrayStride =    maxUInt32Limit(),
-            .maxInterStageShaderComponents =    60,
+            .maxVertexBufferArrayStride =    std::numeric_limits<uint32_t>::max(),
+            .maxInterStageShaderComponents =    32,
             .maxInterStageShaderVariables =    32,
             .maxColorAttachments =    8,
-            .maxColorAttachmentBytesPerSample = 32,
             .maxComputeWorkgroupStorageSize =    32 * KB,
             .maxComputeInvocationsPerWorkgroup =    1024,
             .maxComputeWorkgroupSizeX =    1024,
             .maxComputeWorkgroupSizeY =    1024,
             .maxComputeWorkgroupSizeZ =    1024,
-            .maxComputeWorkgroupsPerDimension =    maxUInt32Limit(),
+            .maxComputeWorkgroupsPerDimension =    std::numeric_limits<uint32_t>::max(),
         },
         WTFMove(features),
         baseCapabilities,
@@ -468,37 +453,36 @@ static T mergeAlignment(T previous, T next)
 static WGPULimits mergeLimits(const WGPULimits& previous, const WGPULimits& next)
 {
     return {
-        .maxTextureDimension1D = mergeMaximum(previous.maxTextureDimension1D, next.maxTextureDimension1D),
-        .maxTextureDimension2D = mergeMaximum(previous.maxTextureDimension2D, next.maxTextureDimension2D),
-        .maxTextureDimension3D = mergeMaximum(previous.maxTextureDimension3D, next.maxTextureDimension3D),
-        .maxTextureArrayLayers = mergeMaximum(previous.maxTextureArrayLayers, next.maxTextureArrayLayers),
-        .maxBindGroups = mergeMaximum(previous.maxBindGroups, next.maxBindGroups),
-        .maxBindingsPerBindGroup = mergeMaximum(previous.maxBindingsPerBindGroup, next.maxBindingsPerBindGroup),
-        .maxDynamicUniformBuffersPerPipelineLayout = mergeMaximum(previous.maxDynamicUniformBuffersPerPipelineLayout, next.maxDynamicUniformBuffersPerPipelineLayout),
-        .maxDynamicStorageBuffersPerPipelineLayout = mergeMaximum(previous.maxDynamicStorageBuffersPerPipelineLayout, next.maxDynamicStorageBuffersPerPipelineLayout),
-        .maxSampledTexturesPerShaderStage = mergeMaximum(previous.maxSampledTexturesPerShaderStage, next.maxSampledTexturesPerShaderStage),
-        .maxSamplersPerShaderStage = mergeMaximum(previous.maxSamplersPerShaderStage, next.maxSamplersPerShaderStage),
-        .maxStorageBuffersPerShaderStage = mergeMaximum(previous.maxStorageBuffersPerShaderStage, next.maxStorageBuffersPerShaderStage),
-        .maxStorageTexturesPerShaderStage = mergeMaximum(previous.maxStorageTexturesPerShaderStage, next.maxStorageTexturesPerShaderStage),
-        .maxUniformBuffersPerShaderStage = mergeMaximum(previous.maxUniformBuffersPerShaderStage, next.maxUniformBuffersPerShaderStage),
-        .maxUniformBufferBindingSize = mergeMaximum(previous.maxUniformBufferBindingSize, next.maxUniformBufferBindingSize),
-        .maxStorageBufferBindingSize = mergeMaximum(previous.maxStorageBufferBindingSize, next.maxStorageBufferBindingSize),
-        .minUniformBufferOffsetAlignment = mergeAlignment(previous.minUniformBufferOffsetAlignment, next.minUniformBufferOffsetAlignment),
-        .minStorageBufferOffsetAlignment = mergeAlignment(previous.minStorageBufferOffsetAlignment, next.minStorageBufferOffsetAlignment),
-        .maxVertexBuffers = mergeMaximum(previous.maxVertexBuffers, next.maxVertexBuffers),
-        .maxBufferSize = mergeMaximum(previous.maxBufferSize, next.maxBufferSize),
-        .maxVertexAttributes = mergeMaximum(previous.maxVertexAttributes, next.maxVertexAttributes),
-        .maxVertexBufferArrayStride = mergeMaximum(previous.maxVertexBufferArrayStride, next.maxVertexBufferArrayStride),
-        .maxInterStageShaderComponents = mergeMaximum(previous.maxInterStageShaderComponents, next.maxInterStageShaderComponents),
-        .maxInterStageShaderVariables = mergeMaximum(previous.maxInterStageShaderVariables, next.maxInterStageShaderVariables),
-        .maxColorAttachments = mergeMaximum(previous.maxColorAttachments, next.maxColorAttachments),
-        .maxColorAttachmentBytesPerSample = mergeMaximum(previous.maxColorAttachmentBytesPerSample, next.maxColorAttachmentBytesPerSample),
-        .maxComputeWorkgroupStorageSize = mergeMaximum(previous.maxComputeWorkgroupStorageSize, next.maxComputeWorkgroupStorageSize),
-        .maxComputeInvocationsPerWorkgroup = mergeMaximum(previous.maxComputeInvocationsPerWorkgroup, next.maxComputeInvocationsPerWorkgroup),
-        .maxComputeWorkgroupSizeX = mergeMaximum(previous.maxComputeWorkgroupSizeX, next.maxComputeWorkgroupSizeX),
-        .maxComputeWorkgroupSizeY = mergeMaximum(previous.maxComputeWorkgroupSizeY, next.maxComputeWorkgroupSizeY),
-        .maxComputeWorkgroupSizeZ = mergeMaximum(previous.maxComputeWorkgroupSizeZ, next.maxComputeWorkgroupSizeZ),
-        .maxComputeWorkgroupsPerDimension = mergeMaximum(previous.maxComputeWorkgroupsPerDimension, next.maxComputeWorkgroupsPerDimension),
+        mergeMaximum(previous.maxTextureDimension1D, next.maxTextureDimension1D),
+        mergeMaximum(previous.maxTextureDimension2D, next.maxTextureDimension2D),
+        mergeMaximum(previous.maxTextureDimension3D, next.maxTextureDimension3D),
+        mergeMaximum(previous.maxTextureArrayLayers, next.maxTextureArrayLayers),
+        mergeMaximum(previous.maxBindGroups, next.maxBindGroups),
+        mergeMaximum(previous.maxBindingsPerBindGroup, next.maxBindingsPerBindGroup),
+        mergeMaximum(previous.maxDynamicUniformBuffersPerPipelineLayout, next.maxDynamicUniformBuffersPerPipelineLayout),
+        mergeMaximum(previous.maxDynamicStorageBuffersPerPipelineLayout, next.maxDynamicStorageBuffersPerPipelineLayout),
+        mergeMaximum(previous.maxSampledTexturesPerShaderStage, next.maxSampledTexturesPerShaderStage),
+        mergeMaximum(previous.maxSamplersPerShaderStage, next.maxSamplersPerShaderStage),
+        mergeMaximum(previous.maxStorageBuffersPerShaderStage, next.maxStorageBuffersPerShaderStage),
+        mergeMaximum(previous.maxStorageTexturesPerShaderStage, next.maxStorageTexturesPerShaderStage),
+        mergeMaximum(previous.maxUniformBuffersPerShaderStage, next.maxUniformBuffersPerShaderStage),
+        mergeMaximum(previous.maxUniformBufferBindingSize, next.maxUniformBufferBindingSize),
+        mergeMaximum(previous.maxStorageBufferBindingSize, next.maxStorageBufferBindingSize),
+        mergeAlignment(previous.minUniformBufferOffsetAlignment, next.minUniformBufferOffsetAlignment),
+        mergeAlignment(previous.minStorageBufferOffsetAlignment, next.minStorageBufferOffsetAlignment),
+        mergeMaximum(previous.maxVertexBuffers, next.maxVertexBuffers),
+        mergeMaximum(previous.maxBufferSize, next.maxBufferSize),
+        mergeMaximum(previous.maxVertexAttributes, next.maxVertexAttributes),
+        mergeMaximum(previous.maxVertexBufferArrayStride, next.maxVertexBufferArrayStride),
+        mergeMaximum(previous.maxInterStageShaderComponents, next.maxInterStageShaderComponents),
+        mergeMaximum(previous.maxInterStageShaderVariables, next.maxInterStageShaderVariables),
+        mergeMaximum(previous.maxColorAttachments, next.maxColorAttachments),
+        mergeMaximum(previous.maxComputeWorkgroupStorageSize, next.maxComputeWorkgroupStorageSize),
+        mergeMaximum(previous.maxComputeInvocationsPerWorkgroup, next.maxComputeInvocationsPerWorkgroup),
+        mergeMaximum(previous.maxComputeWorkgroupSizeX, next.maxComputeWorkgroupSizeX),
+        mergeMaximum(previous.maxComputeWorkgroupSizeY, next.maxComputeWorkgroupSizeY),
+        mergeMaximum(previous.maxComputeWorkgroupSizeZ, next.maxComputeWorkgroupSizeZ),
+        mergeMaximum(previous.maxComputeWorkgroupsPerDimension, next.maxComputeWorkgroupsPerDimension),
     };
 };
 
@@ -583,8 +567,6 @@ bool anyLimitIsBetterThan(const WGPULimits& target, const WGPULimits& reference)
         return true;
     if (target.maxBindGroups > reference.maxBindGroups)
         return true;
-    if (target.maxBindingsPerBindGroup > reference.maxBindingsPerBindGroup)
-        return true;
     if (target.maxDynamicUniformBuffersPerPipelineLayout > reference.maxDynamicUniformBuffersPerPipelineLayout)
         return true;
     if (target.maxDynamicStorageBuffersPerPipelineLayout > reference.maxDynamicStorageBuffersPerPipelineLayout)
@@ -609,19 +591,11 @@ bool anyLimitIsBetterThan(const WGPULimits& target, const WGPULimits& reference)
         return true;
     if (target.maxVertexBuffers > reference.maxVertexBuffers)
         return true;
-    if (target.maxBufferSize > reference.maxBufferSize)
-        return true;
     if (target.maxVertexAttributes > reference.maxVertexAttributes)
         return true;
     if (target.maxVertexBufferArrayStride > reference.maxVertexBufferArrayStride)
         return true;
     if (target.maxInterStageShaderComponents > reference.maxInterStageShaderComponents)
-        return true;
-    if (target.maxInterStageShaderVariables > reference.maxInterStageShaderVariables)
-        return true;
-    if (target.maxColorAttachments > reference.maxColorAttachments)
-        return true;
-    if (target.maxColorAttachmentBytesPerSample > reference.maxColorAttachmentBytesPerSample)
         return true;
     if (target.maxComputeWorkgroupStorageSize > reference.maxComputeWorkgroupStorageSize)
         return true;
@@ -675,10 +649,9 @@ WGPULimits defaultLimits()
         .maxBufferSize = 134217728,
         .maxVertexAttributes =    16,
         .maxVertexBufferArrayStride =    2048,
-        .maxInterStageShaderComponents =    60,
+        .maxInterStageShaderComponents =    32,
         .maxInterStageShaderVariables = 32,
         .maxColorAttachments = 8,
-        .maxColorAttachmentBytesPerSample = 32,
         .maxComputeWorkgroupStorageSize =    16352,
         .maxComputeInvocationsPerWorkgroup =    256,
         .maxComputeWorkgroupSizeX =    256,

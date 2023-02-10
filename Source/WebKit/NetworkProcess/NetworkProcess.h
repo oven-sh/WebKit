@@ -95,7 +95,7 @@ enum class StorageAccessPromptWasShown : bool;
 enum class StorageAccessWasGranted : bool;
 struct ClientOrigin;
 struct MessageWithMessagePorts;
-class SecurityOriginData;
+struct SecurityOriginData;
 struct SoupNetworkProxySettings;
 }
 
@@ -301,8 +301,8 @@ public:
     void resetStoragePersistedState(PAL::SessionID, CompletionHandler<void()>&&);
     void cloneSessionStorageForWebPage(PAL::SessionID, WebPageProxyIdentifier fromIdentifier, WebPageProxyIdentifier toIdentifier);
     void didIncreaseQuota(PAL::SessionID, WebCore::ClientOrigin&&, QuotaIncreaseRequestIdentifier, std::optional<uint64_t> newQuota);
-    void renameOriginInWebsiteData(PAL::SessionID, WebCore::SecurityOriginData&&, WebCore::SecurityOriginData&&, OptionSet<WebsiteDataType>, CompletionHandler<void()>&&);
-    void websiteDataOriginDirectoryForTesting(PAL::SessionID, WebCore::ClientOrigin&&, OptionSet<WebsiteDataType>, CompletionHandler<void(const String&)>&&);
+    void renameOriginInWebsiteData(PAL::SessionID, const URL&, const URL&, OptionSet<WebsiteDataType>, CompletionHandler<void()>&&);
+    void websiteDataOriginDirectoryForTesting(PAL::SessionID, const URL&, const URL&, WebsiteDataType, CompletionHandler<void(const String&)>&&);
 
 #if PLATFORM(IOS_FAMILY)
     bool parentProcessHasServiceWorkerEntitlement() const;
@@ -402,10 +402,6 @@ public:
     void addAllowedFirstPartyForCookies(WebCore::ProcessIdentifier, WebCore::RegistrableDomain&&, LoadedWebArchive, CompletionHandler<void()>&&);
     void webProcessWillLoadWebArchive(WebCore::ProcessIdentifier);
 
-#if ENABLE(SERVICE_WORKER)
-    void requestBackgroundFetchPermission(PAL::SessionID, const WebCore::ClientOrigin&, CompletionHandler<void(bool)>&&);
-#endif
-
 private:
     void platformInitializeNetworkProcess(const NetworkProcessCreationParameters&);
 
@@ -442,6 +438,7 @@ private:
 
     void fetchWebsiteData(PAL::SessionID, OptionSet<WebsiteDataType>, OptionSet<WebsiteDataFetchOption>, CompletionHandler<void(WebsiteData&&)>&&);
     void deleteWebsiteData(PAL::SessionID, OptionSet<WebsiteDataType>, WallTime modifiedSince, CompletionHandler<void()>&&);
+    void clearCachedCredentials(PAL::SessionID);
 
     // FIXME: This should take a session ID so we can identify which disk cache to delete.
     void clearDiskCache(WallTime modifiedSince, CompletionHandler<void()>&&);

@@ -26,16 +26,29 @@ namespace WebCore {
 
 enum CSSValueID : uint16_t;
 
-struct Counter {
-    AtomString identifier;
-    AtomString separator;
-    CSSValueID listStyle;
+struct Counter : RefCounted<Counter> {
+    static Ref<Counter> create(AtomString identifier, AtomString separator, CSSValueID listStyle)
+    {
+        return adoptRef(*new Counter(WTFMove(identifier), WTFMove(separator), listStyle));
+    }
+
+    const AtomString identifier;
+    const AtomString separator;
+    const CSSValueID listStyle;
 
     bool equals(const Counter& other) const
     {
         return identifier == other.identifier
             && separator == other.separator
             && listStyle == other.listStyle;
+    }
+
+private:
+    Counter(AtomString identifier, AtomString separator, CSSValueID listStyle)
+        : identifier(WTFMove(identifier))
+        , separator(WTFMove(separator))
+        , listStyle(listStyle)
+    {
     }
 };
 

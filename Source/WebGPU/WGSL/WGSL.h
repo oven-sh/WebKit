@@ -64,7 +64,7 @@ struct SourceMap {
 };
 
 struct Configuration {
-    uint32_t maxBuffersPlusVertexBuffersForVertexStage = 8;
+    uint32_t maxBuffersPlusVertexBuffersForVertexStage;
 };
 
 std::variant<SuccessfulCheck, FailedCheck> staticCheck(const String& wgsl, const std::optional<SourceMap>&, const Configuration&);

@@ -171,7 +171,9 @@ RefPtr<CSSValue> CSSPerspective::toCSSValue() const
     if (!length)
         return nullptr;
 
-    return CSSFunctionValue::create(CSSValuePerspective, length.releaseNonNull());
+    auto result = CSSFunctionValue::create(CSSValuePerspective);
+    result->append(length.releaseNonNull());
+    return result;
 }
 
 } // namespace WebCore

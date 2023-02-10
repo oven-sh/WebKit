@@ -35,7 +35,6 @@
 #include "WebPage.h"
 #include "WebPageCreationParameters.h"
 #include "WebPreferencesKeys.h"
-#include "WebProcess.h"
 #include <WebCore/Frame.h>
 #include <WebCore/FrameView.h>
 #include <WebCore/GraphicsContext.h>
@@ -301,22 +300,6 @@ void DrawingAreaCoordinatedGraphics::didChangeViewportAttributes(ViewportAttribu
 bool DrawingAreaCoordinatedGraphics::supportsAsyncScrolling() const
 {
     return m_supportsAsyncScrolling;
-}
-
-void DrawingAreaCoordinatedGraphics::registerScrollingTree()
-{
-#if ENABLE(SCROLLING_THREAD)
-    if (m_supportsAsyncScrolling)
-        WebProcess::singleton().eventDispatcher().addScrollingTreeForPage(m_webPage);
-#endif
-}
-
-void DrawingAreaCoordinatedGraphics::unregisterScrollingTree()
-{
-#if ENABLE(SCROLLING_THREAD)
-    if (m_supportsAsyncScrolling)
-        WebProcess::singleton().eventDispatcher().removeScrollingTreeForPage(m_webPage);
-#endif
 }
 
 GraphicsLayerFactory* DrawingAreaCoordinatedGraphics::graphicsLayerFactory()
@@ -650,7 +633,7 @@ void DrawingAreaCoordinatedGraphics::enterAcceleratedCompositingMode(GraphicsLay
 
     auto changeWindowScreen = [&] {
         // In order to ensure that we get a unique DisplayRefreshMonitor per-DrawingArea (necessary because ThreadedDisplayRefreshMonitor
-        // is driven by the ThreadedCompositor of the drawing area), give each page a unique DisplayID derived from DrawingArea's unique ID.
+        // is driven by the ThreadedCompositor of the drawing area), give each page a unique DisplayID derived from WebPage's unique ID.
         m_webPage.windowScreenDidChange(m_layerTreeHost->displayID(), std::nullopt);
     };
 

@@ -50,7 +50,6 @@ class LLIntOffsetsExtractor;
 namespace WTF {
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(Vector);
-DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(VectorBuffer);
 
 template <bool needsDestruction, typename T>
 struct VectorDestructor;
@@ -394,7 +393,7 @@ protected:
     unsigned m_size; // Only used by the Vector subclass, but placed here to avoid padding the struct.
 };
 
-template<typename T, size_t inlineCapacity, typename Malloc = VectorBufferMalloc> class VectorBuffer;
+template<typename T, size_t inlineCapacity, typename Malloc = VectorMalloc> class VectorBuffer;
 
 template<typename T, typename Malloc>
 class VectorBuffer<T, 0, Malloc> : private VectorBufferBase<T, Malloc> {
@@ -663,7 +662,7 @@ struct UnsafeVectorOverflow {
 // Template default values are in Forward.h.
 template<typename T, size_t inlineCapacity, typename OverflowHandler, size_t minCapacity, typename Malloc>
 class Vector : private VectorBuffer<T, inlineCapacity, Malloc> {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(Vector);
+    WTF_MAKE_FAST_ALLOCATED;
 private:
     typedef VectorBuffer<T, inlineCapacity, Malloc> Base;
     typedef VectorTypeOperations<T> TypeOperations;

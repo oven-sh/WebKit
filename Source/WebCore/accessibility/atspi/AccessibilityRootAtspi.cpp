@@ -205,11 +205,7 @@ AccessibilityObjectAtspi* AccessibilityRootAtspi::child() const
     if (!m_page)
         return nullptr;
 
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page->mainFrame());
-    if (!localMainFrame)
-        return nullptr;
-
-    Frame& frame = *localMainFrame;
+    Frame& frame = m_page->mainFrame();
     if (!frame.document())
         return nullptr;
 
@@ -304,11 +300,7 @@ IntRect AccessibilityRootAtspi::frameRect(Atspi::CoordinateType coordinateType) 
     if (!m_page)
         return { };
 
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page->mainFrame());
-    if (!localMainFrame)
-        return { };
-
-    auto* frameView = localMainFrame->view();
+    auto* frameView = m_page->mainFrame().view();
     if (!frameView)
         return { };
 

@@ -175,7 +175,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/fetch/FetchBodyConsumer.h
     Modules/fetch/FetchBodySource.h
     Modules/fetch/FetchHeaders.h
-    Modules/fetch/FetchHeadersGuard.h
     Modules/fetch/FetchIdentifier.h
     Modules/fetch/FetchLoader.h
     Modules/fetch/FetchLoaderClient.h
@@ -604,7 +603,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     css/CSSCounterStyleDescriptors.h
     css/CSSCounterStyleRegistry.h
     css/CSSCounterStyleRule.h
-    css/CSSCounterValue.h
     css/CSSCustomPropertyValue.h
     css/CSSFontFaceRule.h
     css/CSSFontPaletteValuesRule.h
@@ -617,8 +615,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     css/CSSPrimitiveValue.h
     css/CSSPrimitiveValueMappings.h
     css/CSSProperty.h
-    css/CSSQuadValue.h
-    css/CSSRectValue.h
     css/CSSRegisteredCustomProperty.h
     css/CSSRule.h
     css/CSSRuleList.h
@@ -649,9 +645,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     css/MediaList.h
     css/MediaQueryParserContext.h
     css/MutableStyleProperties.h
-    css/Quad.h
     css/Rect.h
-    css/RectBase.h
     css/ShorthandSerializer.h
     css/StyleColor.h
     css/StyleProperties.h
@@ -791,7 +785,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     dom/OverflowEvent.h
     dom/PointerEvent.h
     dom/PointerEventTypeNames.h
-    dom/PopoverData.h
     dom/PortIdentifier.h
     dom/Position.h
     dom/ProcessingInstruction.h
@@ -824,7 +817,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     dom/Text.h
     dom/TextEvent.h
     dom/TextEventInputType.h
-    dom/ToggleEvent.h
     dom/Touch.h
     dom/Traversal.h
     dom/TreeScope.h
@@ -978,7 +970,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     html/HTMLMarqueeElement.h
     html/HTMLMediaElement.h
     html/HTMLMediaElementEnums.h
-    html/HTMLMediaElementIdentifier.h
     html/HTMLMenuElement.h
     html/HTMLMenuItemElement.h
     html/HTMLMetaElement.h
@@ -1910,7 +1901,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/mediastream/RTCDataChannelHandler.h
     platform/mediastream/RTCDataChannelHandlerClient.h
     platform/mediastream/RTCDataChannelIdentifier.h
-    platform/mediastream/RTCDataChannelLocalIdentifier.h
     platform/mediastream/RTCDataChannelRemoteHandlerConnection.h
     platform/mediastream/RTCDataChannelRemoteSourceConnection.h
     platform/mediastream/RTCDataChannelState.h
@@ -2016,7 +2006,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/text/TextCheckingRequestIdentifier.h
     platform/text/TextDirection.h
     platform/text/TextFlags.h
-    platform/text/TextSpacing.h
     platform/text/UnicodeBidi.h
     platform/text/WritingMode.h
 
@@ -2029,7 +2018,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     rendering/BreakLines.h
     rendering/CaretRectComputation.h
     rendering/CSSFilter.h
-    rendering/CSSValueKey.h
     rendering/ClipRect.h
     rendering/EventRegion.h
     rendering/FloatingObjects.h
@@ -2135,9 +2123,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     rendering/style/StyleImage.h
     rendering/style/StyleInheritedData.h
     rendering/style/StyleMarqueeData.h
-    rendering/style/StyleMiscNonInheritedData.h
     rendering/style/StyleMultiColData.h
-    rendering/style/StyleNonInheritedData.h
     rendering/style/StyleRareInheritedData.h
     rendering/style/StyleRareNonInheritedData.h
     rendering/style/StyleReflection.h
@@ -2146,7 +2132,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     rendering/style/StyleSurroundData.h
     rendering/style/StyleTextEdge.h
     rendering/style/StyleTransformData.h
-    rendering/style/StyleVisitedLinkColorData.h
+    rendering/style/StyleVisualData.h
     rendering/style/TextDecorationThickness.h
     rendering/style/TextSizeAdjustment.h
     rendering/style/TextUnderlineOffset.h
@@ -2235,7 +2221,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     workers/service/ServiceWorkerContextData.h
     workers/service/ServiceWorkerData.h
     workers/service/ServiceWorkerIdentifier.h
-    workers/service/ServiceWorkerImportedScript.h
     workers/service/ServiceWorkerJob.h
     workers/service/ServiceWorkerJobClient.h
     workers/service/ServiceWorkerJobData.h
@@ -2247,16 +2232,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     workers/service/ServiceWorkerRegistrationOptions.h
     workers/service/ServiceWorkerTypes.h
     workers/service/ServiceWorkerUpdateViaCache.h
-
-    workers/service/background-fetch/BackgroundFetchFailureReason.h
-    workers/service/background-fetch/BackgroundFetchInformation.h
-    workers/service/background-fetch/BackgroundFetchOptions.h
-    workers/service/background-fetch/BackgroundFetchRecordIdentifier.h
-    workers/service/background-fetch/BackgroundFetchRecordInformation.h
-    workers/service/background-fetch/BackgroundFetchRequest.h
-    workers/service/background-fetch/BackgroundFetchResult.h
-    workers/service/background-fetch/BackgroundFetchUIOptions.h
-    workers/service/background-fetch/ImageResource.h
 
     workers/service/context/SWContextManager.h
     workers/service/context/ServiceWorkerDebuggable.h

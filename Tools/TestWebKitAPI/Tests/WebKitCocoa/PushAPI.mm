@@ -138,14 +138,6 @@ static bool waitUntilEvaluatesToTrue(const Function<bool()>& f)
     return false;
 }
 
-static RetainPtr<WKWebViewConfiguration> createConfigurationWithNotificationsEnabled()
-{
-    auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
-    [[configuration preferences] _setNotificationsEnabled:YES];
-    [[configuration preferences] _setNotificationEventEnabled:YES];
-    return configuration;
-}
-
 TEST(PushAPI, firePushEvent)
 {
     TestWebKitAPI::HTTPServer server({
@@ -155,7 +147,7 @@ TEST(PushAPI, firePushEvent)
 
     [WKWebsiteDataStore _allowWebsiteDataRecordsForAllOrigins];
 
-    auto configuration = createConfigurationWithNotificationsEnabled();
+    auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
 
     auto provider = TestWebKitAPI::TestNotificationProvider({ [[configuration processPool] _notificationManagerForTesting], WKNotificationManagerGetSharedServiceWorkerNotificationManager() });
     provider.setPermission(server.origin(), true);
@@ -236,7 +228,7 @@ TEST(PushAPI, firePushEventDataStoreDelegate)
     [WKWebsiteDataStore _allowWebsiteDataRecordsForAllOrigins];
 
     auto messageHandler = adoptNS([[PushAPIMessageHandlerWithExpectedMessage alloc] init]);
-    auto configuration = createConfigurationWithNotificationsEnabled();
+    auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
     [[configuration userContentController] addScriptMessageHandler:messageHandler.get() name:@"sw"];
 
     clearWebsiteDataStore([configuration websiteDataStore]);
@@ -331,7 +323,7 @@ TEST(PushAPI, firePushEventWithNoPagesSuccessful)
 
     [WKWebsiteDataStore _allowWebsiteDataRecordsForAllOrigins];
 
-    auto configuration = createConfigurationWithNotificationsEnabled();
+    auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
     clearWebsiteDataStore([configuration websiteDataStore]);
 
     auto provider = TestWebKitAPI::TestNotificationProvider({ [[configuration processPool] _notificationManagerForTesting], WKNotificationManagerGetSharedServiceWorkerNotificationManager() });
@@ -379,7 +371,7 @@ TEST(PushAPI, firePushEventWithNoPagesFail)
 
     [WKWebsiteDataStore _allowWebsiteDataRecordsForAllOrigins];
 
-    auto configuration = createConfigurationWithNotificationsEnabled();
+    auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
     clearWebsiteDataStore([configuration websiteDataStore]);
 
     auto provider = TestWebKitAPI::TestNotificationProvider({ [[configuration processPool] _notificationManagerForTesting], WKNotificationManagerGetSharedServiceWorkerNotificationManager() });
@@ -431,7 +423,7 @@ TEST(PushAPI, firePushEventWithNoPagesTimeout)
     [dataStoreConfiguration setServiceWorkerProcessTerminationDelayEnabled:NO];
     auto dataStore = adoptNS([[WKWebsiteDataStore alloc] _initWithConfiguration:dataStoreConfiguration.get()]);
 
-    auto configuration = createConfigurationWithNotificationsEnabled();
+    auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
     configuration.get().websiteDataStore = dataStore.get();
     clearWebsiteDataStore([configuration websiteDataStore]);
 
@@ -514,7 +506,7 @@ TEST(PushAPI, pushEventsAndInspectedServiceWorker)
 
     [WKWebsiteDataStore _allowWebsiteDataRecordsForAllOrigins];
 
-    auto configuration = createConfigurationWithNotificationsEnabled();
+    auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
     clearWebsiteDataStore([configuration websiteDataStore]);
 
     auto context = adoptWK(TestWebKitAPI::Util::createContextForInjectedBundleTest("InternalsInjectedBundleTest"));
@@ -633,7 +625,7 @@ static void testInspectedServiceWorkerWithoutPage(bool enableServiceWorkerInspec
     [dataStoreConfiguration setServiceWorkerProcessTerminationDelayEnabled:NO];
     auto dataStore = adoptNS([[WKWebsiteDataStore alloc] _initWithConfiguration:dataStoreConfiguration.get()]);
 
-    auto configuration = createConfigurationWithNotificationsEnabled();
+    auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
     configuration.get().websiteDataStore = dataStore.get();
     clearWebsiteDataStore([configuration websiteDataStore]);
 
@@ -781,7 +773,7 @@ TEST(PushAPI, fireNotificationClickEvent)
 
     [WKWebsiteDataStore _allowWebsiteDataRecordsForAllOrigins];
 
-    auto configuration = createConfigurationWithNotificationsEnabled();
+    auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
 
     auto provider = TestWebKitAPI::TestNotificationProvider({ [[configuration processPool] _notificationManagerForTesting], WKNotificationManagerGetSharedServiceWorkerNotificationManager() });
     provider.setPermission(server.origin(), true);
@@ -836,7 +828,7 @@ TEST(PushAPI, fireNotificationCloseEvent)
 
     [WKWebsiteDataStore _allowWebsiteDataRecordsForAllOrigins];
 
-    auto configuration = createConfigurationWithNotificationsEnabled();
+    auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
 
     auto provider = TestWebKitAPI::TestNotificationProvider({ [[configuration processPool] _notificationManagerForTesting], WKNotificationManagerGetSharedServiceWorkerNotificationManager() });
     provider.setPermission(server.origin(), true);
@@ -951,7 +943,7 @@ TEST(PushAPI, callNotificationClose)
 
     [WKWebsiteDataStore _allowWebsiteDataRecordsForAllOrigins];
 
-    auto configuration = createConfigurationWithNotificationsEnabled();
+    auto configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
 
     auto provider = TestWebKitAPI::TestNotificationProvider({ [[configuration processPool] _notificationManagerForTesting], WKNotificationManagerGetSharedServiceWorkerNotificationManager() });
     provider.setPermission(server.origin(), true);

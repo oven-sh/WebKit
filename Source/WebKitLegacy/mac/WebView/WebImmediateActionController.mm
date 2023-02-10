@@ -165,13 +165,9 @@
     if (!coreFrame)
         return;
 
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(coreFrame->mainFrame());
-    if (!localMainFrame)
-        return;
-
     constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent, HitTestRequest::Type::AllowChildFrameContent };
     _hitTestResult = coreFrame->eventHandler().hitTestResultAtPoint(WebCore::IntPoint(viewPoint), hitType);
-    localMainFrame->eventHandler().setImmediateActionStage(WebCore::ImmediateActionStage::PerformedHitTest);
+    coreFrame->mainFrame().eventHandler().setImmediateActionStage(WebCore::ImmediateActionStage::PerformedHitTest);
 
     if (auto* element = _hitTestResult.targetElement())
         _contentPreventsDefault = element->dispatchMouseForceWillBegin();

@@ -55,7 +55,7 @@ struct _WebKitScriptWorldPrivate {
 
 static guint signals[LAST_SIGNAL] = { 0, };
 
-WEBKIT_DEFINE_FINAL_TYPE(WebKitScriptWorld, webkit_script_world, G_TYPE_OBJECT, GObject)
+WEBKIT_DEFINE_TYPE(WebKitScriptWorld, webkit_script_world, G_TYPE_OBJECT)
 
 static void webkit_script_world_class_init(WebKitScriptWorldClass* klass)
 {

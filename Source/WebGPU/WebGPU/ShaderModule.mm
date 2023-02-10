@@ -185,16 +185,13 @@ static CompilationMessageData convertMessages(const Messages& messages1, const s
         for (size_t i = 0; i < compilationMessages.messages.size(); ++i) {
             const auto& compilationMessage = compilationMessages.messages[i];
             flattenedCompilationMessages.append({
-                .nextInChain = nullptr,
-                .message = flattenedMessages[i + base].data(),
-                .type = compilationMessages.type,
-                .lineNum = compilationMessage.lineNumber(),
-                .linePos = compilationMessage.lineOffset(),
-                .offset = compilationMessage.offset(),
-                .length = compilationMessage.length(),
-                .utf16LinePos = compilationMessage.lineOffset(),
-                .utf16Offset = compilationMessage.offset(),
-                .utf16Length = compilationMessage.length(),
+                nullptr,
+                flattenedMessages[i + base].data(),
+                compilationMessages.type,
+                compilationMessage.lineNumber(),
+                compilationMessage.lineOffset(),
+                compilationMessage.offset(),
+                compilationMessage.length(),
             });
         }
     };

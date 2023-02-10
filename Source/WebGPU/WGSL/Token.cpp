@@ -51,18 +51,12 @@ String toString(TokenType type)
         return "ReservedWord"_s;
     case TokenType::KeywordArray:
         return "array"_s;
-    case TokenType::KeywordConst:
-        return "const"_s;
     case TokenType::KeywordStruct:
         return "struct"_s;
     case TokenType::KeywordFn:
         return "fn"_s;
     case TokenType::KeywordFunction:
         return "function"_s;
-    case TokenType::KeywordLet:
-        return "let"_s;
-    case TokenType::KeywordOverride:
-        return "override"_s;
     case TokenType::KeywordPrivate:
         return "private"_s;
     case TokenType::KeywordRead:
@@ -93,18 +87,10 @@ String toString(TokenType type)
         return "true"_s;
     case TokenType::LiteralFalse:
         return "false"_s;
-    case TokenType::And:
-        return "&"_s;
-    case TokenType::AndAnd:
-        return "&&"_s;
     case TokenType::Arrow:
         return "->"_s;
     case TokenType::Attribute:
         return "@"_s;
-    case TokenType::Bang:
-        return "!"_s;
-    case TokenType::BangEq:
-        return "!="_s;
     case TokenType::BracketLeft:
         return "["_s;
     case TokenType::BracketRight:
@@ -119,30 +105,14 @@ String toString(TokenType type)
         return ","_s;
     case TokenType::Equal:
         return "="_s;
-    case TokenType::EqEq:
-        return "=="_s;
-    case TokenType::Gt:
+    case TokenType::GT:
         return ">"_s;
-    case TokenType::GtEq:
-        return ">="_s;
-    case TokenType::GtGt:
-        return ">>"_s;
-    case TokenType::Lt:
+    case TokenType::LT:
         return "<"_s;
-    case TokenType::LtEq:
-        return "<="_s;
-    case TokenType::LtLt:
-        return "<<"_s;
     case TokenType::Minus:
         return "-"_s;
     case TokenType::MinusMinus:
         return "--"_s;
-    case TokenType::Modulo:
-        return "%"_s;
-    case TokenType::Or:
-        return "|"_s;
-    case TokenType::OrOr:
-        return "||"_s;
     case TokenType::Plus:
         return "+"_s;
     case TokenType::PlusPlus:
@@ -155,14 +125,8 @@ String toString(TokenType type)
         return ")"_s;
     case TokenType::Semicolon:
         return ";"_s;
-    case TokenType::Slash:
-        return "/"_s;
     case TokenType::Star:
         return "*"_s;
-    case TokenType::Tilde:
-        return "~"_s;
-    case TokenType::Xor:
-        return "^"_s;
     }
 }
 

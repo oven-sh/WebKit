@@ -36,3 +36,16 @@ enum class WebsiteSimulatedMouseEventsDispatchPolicy : uint8_t {
 };
 
 }
+
+namespace WTF {
+
+template<> struct EnumTraits<WebKit::WebsiteSimulatedMouseEventsDispatchPolicy> {
+    using values = EnumValues<
+    WebKit::WebsiteSimulatedMouseEventsDispatchPolicy,
+    WebKit::WebsiteSimulatedMouseEventsDispatchPolicy::Default,
+    WebKit::WebsiteSimulatedMouseEventsDispatchPolicy::Allow,
+    WebKit::WebsiteSimulatedMouseEventsDispatchPolicy::Deny
+    >;
+};
+
+} // namespace WTF

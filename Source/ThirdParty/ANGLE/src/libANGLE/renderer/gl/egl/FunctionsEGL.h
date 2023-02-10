@@ -30,8 +30,6 @@ class FunctionsEGL
 
     int majorVersion;
     int minorVersion;
-    std::string vendorString;
-    std::string versionString;
 
     egl::Error initialize(EGLAttrib platformType, EGLNativeDisplayType nativeDisplay);
     egl::Error terminate();
@@ -40,7 +38,6 @@ class FunctionsEGL
 
     FunctionsGL *makeFunctionsGL() const;
     bool hasExtension(const char *extension) const;
-    bool hasDmaBufImportModifierFunctions() const;
     EGLDisplay getDisplay() const;
     EGLint getError() const;
 

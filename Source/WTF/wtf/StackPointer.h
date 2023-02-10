@@ -49,7 +49,7 @@ ALWAYS_INLINE void* currentStackPointer()
     return stackPointer;
 }
 
-#elif !ENABLE(C_LOOP)
+#elif !ENABLE(CLOOP)
 
 #define USE_ASM_CURRENT_STACK_POINTER 1
 extern "C" WTF_EXPORT_PRIVATE void* currentStackPointer(void);

@@ -3401,7 +3401,7 @@ class GenerateStyleBuilderGenerated:
     def _generate_fill_layer_property_value_setter(self, to, property):
         to.write(f"auto* child = &builderState.style().{property.method_name_for_ensure_layers}();")
         to.write(f"FillLayer* previousChild = nullptr;")
-        to.write(f"if (is<CSSValueList>(value)) {{")
+        to.write(f"if (is<CSSValueList>(value) && !is<CSSImageSetValue>(value)) {{")
         to.write(f"    // Walk each value and put it into a layer, creating new layers as needed.")
         to.write(f"    for (auto& item : downcast<CSSValueList>(value)) {{")
         to.write(f"        if (!child) {{")
@@ -3521,14 +3521,14 @@ class GenerateStyleBuilderGenerated:
                     return "fromCSSValueDeducingType(value)"
 
             if property in self.style_properties.all_by_name["font"].codegen_properties.longhands and "Initial" not in property.codegen_properties.custom and not property.codegen_properties.converter:
-                to.write(f"if (CSSPropertyParserHelpers::isSystemFontShorthand(value.valueID())) {{")
+                to.write(f"if (is<CSSPrimitiveValue>(value) && CSSPropertyParserHelpers::isSystemFontShorthand(downcast<CSSPrimitiveValue>(value).valueID())) {{")
                 with to.indent():
                     to.write(f"applyInitial{property.id_without_prefix}(builderState);")
                     to.write(f"return;")
                 to.write(f"}}")
 
             if property.codegen_properties.auto_functions:
-                to.write(f"if (value.valueID() == CSSValueAuto) {{")
+                to.write(f"if (downcast<CSSPrimitiveValue>(value).valueID() == CSSValueAuto) {{")
                 with to.indent():
                     to.write(f"builderState.style().setHasAuto{property.name_for_methods}();")
                     to.write(f"return;")

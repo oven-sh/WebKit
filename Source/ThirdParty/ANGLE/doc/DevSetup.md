@@ -118,7 +118,7 @@ use_goma = true
 To generate the Visual Studio solution in `out/Debug/angle-debug.sln`:
 
 ```
-gn gen out/Debug --sln=angle-debug --ide=vs2022 --ninja-executable="C:\src\angle\third_party\ninja\ninja.exe"
+gn gen out/Debug --sln=angle-debug --ide=vs2022
 ```
 
 In Visual Studio:

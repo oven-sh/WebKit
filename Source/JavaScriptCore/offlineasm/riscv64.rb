@@ -1539,7 +1539,6 @@ class Sequence
     def getModifiedListRISCV64
         result = @list
 
-        result = riscDropTags(result)
         result = riscLowerMalformedAddresses(result) {
             | node, address |
             if address.is_a? Address

@@ -1,6 +1,6 @@
 function main() {
     const v24 = new Intl.Locale("trimEnd", { 'numberingSystem': "foobar" });
-    let empty = v24.getHourCycles();
+    let empty = v24.hourCycles;
     print(empty);
 }
 

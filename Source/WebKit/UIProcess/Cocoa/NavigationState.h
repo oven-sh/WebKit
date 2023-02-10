@@ -47,7 +47,7 @@ class Navigation;
 }
 
 namespace WebCore {
-class SecurityOriginData;
+struct SecurityOriginData;
 }
 
 namespace WebKit {

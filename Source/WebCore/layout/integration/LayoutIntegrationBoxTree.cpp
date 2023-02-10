@@ -195,9 +195,7 @@ UniqueRef<Layout::Box> BoxTree::createLayoutBox(RenderObject& renderer)
         auto text = style.textSecurity() == TextSecurity::None
             ? (isCombinedText ? textRenderer.originalText() : textRenderer.text())
             : RenderBlock::updateSecurityDiscCharacters(style, isCombinedText ? textRenderer.originalText() : textRenderer.text());
-        auto canUseSimpleFontCodePath = textRenderer.canUseSimpleFontCodePath();
-        auto canUseSimplifiedTextMeasuring = canUseSimpleFontCodePath && Layout::TextUtil::canUseSimplifiedTextMeasuring(text, style, firstLineStyle.get());
-        return makeUniqueRef<Layout::InlineTextBox>(text, isCombinedText, canUseSimplifiedTextMeasuring, canUseSimpleFontCodePath, WTFMove(style), WTFMove(firstLineStyle));
+        return makeUniqueRef<Layout::InlineTextBox>(text, isCombinedText, textRenderer.canUseSimplifiedTextMeasuring(), textRenderer.canUseSimpleFontCodePath(), WTFMove(style), WTFMove(firstLineStyle));
     }
 
     auto& renderElement = downcast<RenderElement>(renderer);
@@ -266,16 +264,6 @@ void BoxTree::updateStyle(const RenderBoxModelObject& renderer)
         if (child->isInlineTextBox())
             child->updateStyle(RenderStyle::createAnonymousStyleWithDisplay(rendererStyle, DisplayType::Inline), firstLineStyleFor(renderer));
     }
-}
-
-const Layout::Box& BoxTree::insert(const RenderElement& parent, RenderObject& child)
-{
-    UNUSED_PARAM(parent);
-
-    appendChild(createLayoutBox(child), child);
-    if (!m_boxToRendererMap.isEmpty())
-        m_boxToRendererMap.add(*child.layoutBox(), child);
-    return layoutBoxForRenderer(child);
 }
 
 const Layout::ElementBox& BoxTree::rootLayoutBox() const
@@ -397,7 +385,7 @@ void showInlineContent(TextStream& stream, const InlineContent& inlineContent, s
                     runStream << "Generic inline level box";
                 runStream << " at (" << box.left() << "," << box.top() << ") size " << box.width() << "x" << box.height();
                 if (box.isText())
-                    runStream << " run(" << box.text().start() << ", " << box.text().end() << ")";
+                    runStream << " run(" << box.text()->start() << ", " << box.text()->end() << ")";
                 runStream << " renderer->(" << &inlineContent.rendererForLayoutBox(box.layoutBox()) << ")";
                 runStream.nextLine();
             }

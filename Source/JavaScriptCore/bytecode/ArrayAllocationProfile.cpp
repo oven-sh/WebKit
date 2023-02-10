@@ -53,21 +53,19 @@ void ArrayAllocationProfile::updateProfile()
     // So for now, we update the allocation profile only from the main thread.
     
     ASSERT(!isCompilationThread());
-    Storage storage = std::exchange(m_storage, Storage(nullptr, m_storage.type()));
-    JSArray* lastArray = storage.pointer();
-    IndexingTypeAndVectorLength current = storage.type();
+    JSArray* lastArray = std::exchange(m_lastArray, nullptr);
     if (!lastArray)
         return;
     if (LIKELY(Options::useArrayAllocationProfiling())) {
         // The basic model here is that we will upgrade ourselves to whatever the CoW version of lastArray is except ArrayStorage since we don't have CoW ArrayStorage.
-        IndexingType indexingType = leastUpperBoundOfIndexingTypes(current.indexingType() & IndexingTypeMask, lastArray->indexingType());
-        if (isCopyOnWrite(current.indexingType())) {
+        IndexingType indexingType = leastUpperBoundOfIndexingTypes(m_currentIndexingType & IndexingTypeMask, lastArray->indexingType());
+        if (isCopyOnWrite(m_currentIndexingType)) {
             if (indexingType > ArrayWithContiguous)
                 indexingType = ArrayWithContiguous;
             indexingType |= CopyOnWrite;
         }
-        unsigned largestSeenVectorLength = std::min(std::max(current.vectorLength(), lastArray->getVectorLength()), BASE_CONTIGUOUS_VECTOR_LEN_MAX);
-        m_storage.setType(IndexingTypeAndVectorLength(indexingType, largestSeenVectorLength));
+        m_currentIndexingType = indexingType;
+        m_largestSeenVectorLength = std::min(std::max(m_largestSeenVectorLength, lastArray->getVectorLength()), BASE_CONTIGUOUS_VECTOR_LEN_MAX);
     }
 }
 

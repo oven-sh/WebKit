@@ -29,6 +29,7 @@
 #include "APIObject.h"
 #include "APIProcessPoolConfiguration.h"
 #include "GPUProcessProxy.h"
+#include "GenericCallback.h"
 #include "HiddenPageThrottlingAutoIncreasesCounter.h"
 #include "MessageReceiver.h"
 #include "MessageReceiverMap.h"
@@ -253,6 +254,14 @@ public:
 
 #if HAVE(CVDISPLAYLINK)
     DisplayLinkCollection& displayLinks() { return m_displayLinks; }
+
+    std::optional<WebCore::FramesPerSecond> nominalFramesPerSecondForDisplay(WebCore::PlatformDisplayID);
+
+    void startDisplayLink(WebProcessProxy&, DisplayLinkObserverID, WebCore::PlatformDisplayID, WebCore::FramesPerSecond);
+    void stopDisplayLink(WebProcessProxy&, DisplayLinkObserverID, WebCore::PlatformDisplayID);
+    void setDisplayLinkPreferredFramesPerSecond(WebProcessProxy&, DisplayLinkObserverID, WebCore::PlatformDisplayID, WebCore::FramesPerSecond);
+    void stopDisplayLinks(WebProcessProxy&);
+    void setDisplayLinkForDisplayWantsFullSpeedUpdates(WebProcessProxy&, WebCore::PlatformDisplayID, bool wantsFullSpeedUpdates);
 #endif
 
     void addSupportedPlugin(String&& matchingDomain, String&& name, HashSet<String>&& mimeTypes, HashSet<String> extensions);
@@ -307,6 +316,7 @@ public:
     };
     static Statistics& statistics();    
 
+    void clearCachedCredentials(PAL::SessionID);
     void terminateAllWebContentProcesses();
     void sendNetworkProcessPrepareToSuspendForTesting(CompletionHandler<void()>&&);
     void sendNetworkProcessWillSuspendImminentlyForTesting();
@@ -452,7 +462,7 @@ public:
 #endif
 
 #if ENABLE(WEBCONTENT_CRASH_TESTING)
-    static bool shouldCrashWhenCreatingWebProcess() { return s_shouldCrashWhenCreatingWebProcess; }
+    bool shouldCrashWhenCreatingWebProcess() const { return m_shouldCrashWhenCreatingWebProcess; }
 #endif
 
     ForegroundWebProcessToken foregroundWebProcessToken() const { return ForegroundWebProcessToken(m_foregroundWebProcessCounter.count()); }
@@ -759,7 +769,7 @@ private:
 #endif
 
 #if ENABLE(WEBCONTENT_CRASH_TESTING)
-    static bool s_shouldCrashWhenCreatingWebProcess;
+    bool m_shouldCrashWhenCreatingWebProcess { false };
 #endif
 
     struct Paths {
@@ -822,7 +832,6 @@ private:
     bool m_isDelayedWebProcessLaunchDisabled { false };
 #endif
     static bool s_useSeparateServiceWorkerProcess;
-    static bool s_didGlobalStaticInitialization;
 
 #if ENABLE(TRACKING_PREVENTION)
     HashSet<WebCore::RegistrableDomain> m_domainsWithUserInteraction;

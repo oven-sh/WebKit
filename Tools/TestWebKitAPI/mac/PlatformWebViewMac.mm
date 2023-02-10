@@ -28,32 +28,16 @@
 
 #import "OffscreenWindow.h"
 #import <Carbon/Carbon.h>
-#import <WebKit/WKPagePrivateMac.h>
 #import <WebKit/WKRetainPtr.h>
-#import <WebKit/WKWebViewConfigurationPrivate.h>
-#import <WebKit/WKWebViewPrivate.h>
-#import <wtf/RetainPtr.h>
+#import <WebKit/WKViewPrivate.h>
 
 namespace TestWebKitAPI {
 
-void PlatformWebView::initialize(WKPageConfigurationRef pageConfiguration, Class wkViewSubclass)
+void PlatformWebView::initialize(WKPageConfigurationRef configuration, Class wkViewSubclass)
 {
     NSRect rect = NSMakeRect(0, 0, 800, 600);
-
-    auto configuration = adoptNS([WKWebViewConfiguration new]);
-    if (auto* context = WKPageConfigurationGetContext(pageConfiguration))
-        configuration.get().processPool = (WKProcessPool *)context;
-    if (auto* controller = WKPageConfigurationGetUserContentController(pageConfiguration))
-        configuration.get().userContentController = (WKUserContentController *)controller;
-    if (auto* dataStore = WKPageConfigurationGetWebsiteDataStore(pageConfiguration))
-        configuration.get().websiteDataStore = (WKWebsiteDataStore *)dataStore;
-    if (auto* relatedPage = WKPageConfigurationGetRelatedPage(pageConfiguration))
-        configuration.get()._relatedWebView = WKPageGetWebView(relatedPage);
-    if (auto* preferences = WKPageConfigurationGetPreferences(pageConfiguration))
-        configuration.get().preferences = (WKPreferences *)preferences;
-
-    m_view = [[wkViewSubclass alloc] initWithFrame:rect configuration:configuration.get()];
-    [m_view _setWindowOcclusionDetectionEnabled:NO];
+    m_view = [[wkViewSubclass alloc] initWithFrame:rect configurationRef:configuration];
+    [m_view setWindowOcclusionDetectionEnabled:NO];
 
     m_window = [[OffscreenWindow alloc] initWithSize:NSSizeToCGSize(rect.size)];
     [[m_window contentView] addSubview:m_view];
@@ -61,7 +45,7 @@ void PlatformWebView::initialize(WKPageConfigurationRef pageConfiguration, Class
 
 PlatformWebView::PlatformWebView(WKPageConfigurationRef configuration)
 {
-    initialize(configuration, [WKWebView class]);
+    initialize(configuration, [WKView class]);
 }
 
 PlatformWebView::PlatformWebView(WKContextRef contextRef, WKPageGroupRef pageGroupRef)
@@ -71,7 +55,7 @@ PlatformWebView::PlatformWebView(WKContextRef contextRef, WKPageGroupRef pageGro
     WKPageConfigurationSetContext(configuration.get(), contextRef);
     WKPageConfigurationSetPageGroup(configuration.get(), pageGroupRef);
     
-    initialize(configuration.get(), [WKWebView class]);
+    initialize(configuration.get(), [WKView class]);
 }
 
 PlatformWebView::PlatformWebView(WKPageRef relatedPage)
@@ -82,11 +66,7 @@ PlatformWebView::PlatformWebView(WKPageRef relatedPage)
     WKPageConfigurationSetPageGroup(configuration.get(), WKPageGetPageGroup(relatedPage));
     WKPageConfigurationSetRelatedPage(configuration.get(), relatedPage);
 
-    auto relatedConfiguration = adoptWK(WKPageCopyPageConfiguration(relatedPage));
-    if (auto* preferences = WKPageConfigurationGetPreferences(relatedConfiguration.get()))
-        WKPageConfigurationSetPreferences(configuration.get(), preferences);
-
-    initialize(configuration.get(), [WKWebView class]);
+    initialize(configuration.get(), [WKView class]);
 }
 
 PlatformWebView::PlatformWebView(WKContextRef contextRef, WKPageGroupRef pageGroupRef, Class wkViewSubclass)
@@ -113,7 +93,7 @@ void PlatformWebView::resizeTo(unsigned width, unsigned height)
 
 WKPageRef PlatformWebView::page() const
 {
-    return [m_view _pageRefForTransitionToWKWebView];
+    return [m_view pageRef];
 }
 
 void PlatformWebView::focus()

@@ -78,7 +78,7 @@ enum class Synchronous : bool;
 
 namespace WebCore {
 class SecurityOrigin;
-class SecurityOriginData;
+struct SecurityOriginData;
 }
 
 namespace WebKit {

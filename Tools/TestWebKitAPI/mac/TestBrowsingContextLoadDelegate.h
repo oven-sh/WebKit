@@ -28,9 +28,9 @@
 
 #if PLATFORM(MAC)
 
-typedef void (^OnLoadBlock)(WKWebView *);
+typedef void (^OnLoadBlock)(WKBrowsingContextController *);
 
-@interface TestBrowsingContextLoadDelegate : NSObject <WKNavigationDelegate> {
+@interface TestBrowsingContextLoadDelegate : NSObject <WKBrowsingContextLoadDelegate> {
 @private
     OnLoadBlock _onLoadBlock;
 }

@@ -205,8 +205,7 @@ static void openNewWindow(const URL& urlToLoad, Frame& frame, Event* event, Shou
     if (!newPage)
         return;
     newPage->chrome().show();
-    if (auto* localMainFrame = dynamicDowncast<LocalFrame>(newPage->mainFrame()))
-        localMainFrame->loader().loadFrameRequest(WTFMove(frameLoadRequest), event, { });
+    newPage->mainFrame().loader().loadFrameRequest(WTFMove(frameLoadRequest), event, { });
 }
 
 #if PLATFORM(GTK)

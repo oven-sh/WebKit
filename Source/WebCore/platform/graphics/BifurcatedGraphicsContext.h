@@ -43,8 +43,6 @@ public:
     bool hasPlatformContext() const;
     PlatformGraphicsContext* platformContext() const final;
 
-    const DestinationColorSpace& colorSpace() const final;
-
     void save() final;
     void restore() final;
 
@@ -99,7 +97,7 @@ public:
     void setLineJoin(LineJoin) final;
     void setMiterLimit(float) final;
 
-    void drawNativeImageInternal(NativeImage&, const FloatSize& selfSize, const FloatRect& destRect, const FloatRect& srcRect, const ImagePaintingOptions& = { }) final;
+    void drawNativeImage(NativeImage&, const FloatSize& selfSize, const FloatRect& destRect, const FloatRect& srcRect, const ImagePaintingOptions& = { }) final;
     bool needsCachedNativeImageInvalidationWorkaround(RenderingMode) final;
     void drawSystemImage(SystemImage&, const FloatRect&) final;
     void drawPattern(NativeImage&, const FloatRect& destRect, const FloatRect& tileRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, const ImagePaintingOptions& = { }) final;

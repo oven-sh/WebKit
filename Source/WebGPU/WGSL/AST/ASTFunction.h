@@ -28,7 +28,7 @@
 #include "ASTAttribute.h"
 #include "ASTCompoundStatement.h"
 #include "ASTDeclaration.h"
-#include "ASTParameter.h"
+#include "ASTParameterValue.h"
 #include "ASTTypeName.h"
 #include "CompilationMessage.h"
 
@@ -41,7 +41,7 @@ class Function final : public Declaration {
 public:
     using List = UniqueRefVector<Function>;
 
-    Function(SourceSpan span, Identifier&& name, Parameter::List&& parameters, TypeName::Ptr&& returnType, CompoundStatement&& body, Attribute::List&& attributes, Attribute::List&& returnAttributes)
+    Function(SourceSpan span, Identifier&& name, ParameterValue::List&& parameters, TypeName::Ptr&& returnType, CompoundStatement&& body, Attribute::List&& attributes, Attribute::List&& returnAttributes)
         : Declaration(span)
         , m_name(WTFMove(name))
         , m_parameters(WTFMove(parameters))
@@ -53,7 +53,7 @@ public:
 
     NodeKind kind() const override;
     Identifier& name() { return m_name; }
-    Parameter::List& parameters() { return m_parameters; }
+    ParameterValue::List& parameters() { return m_parameters; }
     Attribute::List& attributes() { return m_attributes; }
     Attribute::List& returnAttributes() { return m_returnAttributes; }
     TypeName* maybeReturnType() { return m_returnType.get(); }
@@ -61,7 +61,7 @@ public:
 
 private:
     Identifier m_name;
-    Parameter::List m_parameters;
+    ParameterValue::List m_parameters;
     Attribute::List m_attributes;
     Attribute::List m_returnAttributes;
     TypeName::Ptr m_returnType;

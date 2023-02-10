@@ -139,7 +139,7 @@ public:
 
     WEBCORE_EXPORT void willDetachPage();
 
-    AbstractFrame& mainFrame() const;
+    Frame& mainFrame() const;
     bool isMainFrame() const { return this == static_cast<void*>(&m_mainFrame); }
 
     Document* document() const;
@@ -312,7 +312,7 @@ private:
 
     Vector<std::pair<Ref<DOMWrapperWorld>, UniqueRef<UserScript>>> m_userScriptsAwaitingNotification;
 
-    AbstractFrame& m_mainFrame;
+    Frame& m_mainFrame;
     const RefPtr<Settings> m_settings;
     UniqueRef<FrameLoader> m_loader;
     mutable UniqueRef<NavigationScheduler> m_navigationScheduler;
@@ -375,7 +375,7 @@ inline Document* Frame::document() const
     return m_doc.get();
 }
 
-inline AbstractFrame& Frame::mainFrame() const
+inline Frame& Frame::mainFrame() const
 {
     return m_mainFrame;
 }

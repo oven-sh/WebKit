@@ -34,35 +34,35 @@
 #import "TestProtocol.h"
 #import <WebKit/WKContextPrivate.h>
 #import <WebKit/WKProcessGroupPrivate.h>
-#import <WebKit/WKWebViewPrivate.h>
+#import <WebKit/WKViewPrivate.h>
 #import <WebKit/WKWebsiteDataStoreRef.h>
 #import <wtf/RetainPtr.h>
 
 static bool testFinished;
 
-@interface CustomProtocolsLoadDelegate : NSObject <WKNavigationDelegate>
+@interface CustomProtocolsLoadDelegate : NSObject <WKBrowsingContextLoadDelegate>
 @end
 
 @implementation CustomProtocolsLoadDelegate
 
-- (void)webView:(WKWebView *)webView didStartProvisionalNavigation:(WKNavigation *)navigation
+- (void)browsingContextControllerDidStartProvisionalLoad:(WKBrowsingContextController *)sender
 {
-    EXPECT_WK_STREQ(TestWebKitAPI::Util::toSTD(adoptWK(WKURLCopyString(adoptWK(WKPageCopyProvisionalURL(webView._pageRefForTransitionToWKWebView)).get()))).c_str(), "http://redirect/?test");
+    EXPECT_TRUE([sender.provisionalURL.absoluteString isEqualToString:@"http://redirect/?test"]);
 }
 
-- (void)webView:(WKWebView *)webView didReceiveServerRedirectForProvisionalNavigation:(WKNavigation *)navigation
+- (void)browsingContextControllerDidReceiveServerRedirectForProvisionalLoad:(WKBrowsingContextController *)sender
 {
-    EXPECT_WK_STREQ(TestWebKitAPI::Util::toSTD(adoptWK(WKURLCopyString(adoptWK(WKPageCopyProvisionalURL(webView._pageRefForTransitionToWKWebView)).get()))).c_str(), "http://test/");
+    EXPECT_TRUE([sender.provisionalURL.absoluteString isEqualToString:@"http://test/"]);
 }
 
-- (void)webView:(WKWebView *)webView didCommitNavigation:(WKNavigation *)navigation
+- (void)browsingContextControllerDidCommitLoad:(WKBrowsingContextController *)sender
 {
-    EXPECT_TRUE([webView._committedURL.absoluteString isEqualToString:@"http://test/"]);
+    EXPECT_TRUE([sender.committedURL.absoluteString isEqualToString:@"http://test/"]);
 }
 
-- (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation
+- (void)browsingContextControllerDidFinishLoad:(WKBrowsingContextController *)sender
 {
-    EXPECT_FALSE(webView.isLoading);
+    EXPECT_FALSE(sender.isLoading);
     testFinished = true;
 }
 
@@ -74,7 +74,7 @@ static WKProcessGroup *processGroup()
     return processGroup;
 }
 
-static RetainPtr<WKWebView> wkView;
+static RetainPtr<WKView> wkView;
 
 @interface CloseWhileStartingProtocol : TestProtocol
 @end
@@ -93,7 +93,7 @@ static RetainPtr<WKWebView> wkView;
         };
         WKContextSetClient([processGroup() _contextRef], &client.base);
 
-        kill(WKWebsiteDataStoreGetNetworkProcessIdentifier(WKPageGetWebsiteDataStore([wkView _pageRefForTransitionToWKWebView])), SIGKILL);
+        kill(WKWebsiteDataStoreGetNetworkProcessIdentifier(WKPageGetWebsiteDataStore([wkView pageRef])), SIGKILL);
         [self.client URLProtocol:self didFailWithError:[NSError errorWithDomain:NSCocoaErrorDomain code:0 userInfo:nil]];
     });
 }
@@ -144,10 +144,11 @@ namespace TestWebKitAPI {
 
 static void runTest()
 {
-    wkView = adoptNS([[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600)]);
+    RetainPtr<WKBrowsingContextGroup> browsingContextGroup = adoptNS([[WKBrowsingContextGroup alloc] initWithIdentifier:@"TestIdentifier"]);
+    wkView = adoptNS([[WKView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) processGroup:processGroup() browsingContextGroup:browsingContextGroup.get()]);
     RetainPtr<CustomProtocolsLoadDelegate> loadDelegate = adoptNS([[CustomProtocolsLoadDelegate alloc] init]);
-    wkView.get().navigationDelegate = loadDelegate.get();
-    [wkView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:[NSString stringWithFormat:@"%@://redirect?test", [TestProtocol scheme]]]]];
+    [wkView browsingContextController].loadDelegate = loadDelegate.get();
+    [[wkView browsingContextController] loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:[NSString stringWithFormat:@"%@://redirect?test", [TestProtocol scheme]]]]];
 
     Util::run(&testFinished);
 }
@@ -171,15 +172,19 @@ TEST(WebKit2CustomProtocolsTest, ProcessPoolDestroyedDuringLoading)
     [ProcessPoolDestroyedDuringLoadingProtocol registerWithScheme:@"custom"];
 
     @autoreleasepool {
-        auto wkView = adoptNS([[WKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600)]);
-
-        [wkView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"custom:///test"]]];
+        auto browsingContextGroup = adoptNS([[WKBrowsingContextGroup alloc] initWithIdentifier:@"TestIdentifier"]);
+        auto processGroup = adoptNS([[WKProcessGroup alloc] init]);
+        auto wkView = adoptNS([[WKView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) processGroup:processGroup.get() browsingContextGroup:browsingContextGroup.get()]);
+    
+        [[wkView browsingContextController] loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"custom:///test"]]];
 
         Util::run(&isDone);
         isDone = false;
 
         // Instead of relying on the block going out of scope, manually release these objects in this order
+        processGroup = nil;
         wkView = nil;
+        browsingContextGroup = nil;
     }
 
     ASSERT(processPoolProtocolInstance);

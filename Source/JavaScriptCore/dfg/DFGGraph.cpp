@@ -1447,22 +1447,6 @@ JSArrayBufferView* Graph::tryGetFoldableView(JSValue value, ArrayMode arrayMode)
     return tryGetFoldableView(value);
 }
 
-JSValue Graph::tryGetConstantGetter(Node* getterSetter)
-{
-    auto* cell = getterSetter->dynamicCastConstant<GetterSetter*>();
-    if (!cell)
-        return JSValue();
-    return cell->getterConcurrently();
-}
-
-JSValue Graph::tryGetConstantSetter(Node* getterSetter)
-{
-    auto* cell = getterSetter->dynamicCastConstant<GetterSetter*>();
-    if (!cell)
-        return JSValue();
-    return cell->setterConcurrently();
-}
-
 void Graph::registerFrozenValues()
 {
     ConcurrentJSLocker locker(m_codeBlock->m_lock);

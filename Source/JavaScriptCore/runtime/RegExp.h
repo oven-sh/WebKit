@@ -91,43 +91,27 @@ public:
     
     unsigned numSubpatterns() const { return m_numSubpatterns; }
 
-    unsigned offsetVectorBaseForNamedCaptures() const
-    {
-        return (numSubpatterns() + 1) * 2;
-    }
-
-    int offsetVectorSize() const
-    {
-        if (!hasNamedCaptures())
-            return offsetVectorBaseForNamedCaptures();
-        return offsetVectorBaseForNamedCaptures() + m_rareData->m_numDuplicateNamedCaptureGroups;
-    }
-
-    bool hasNamedCaptures() const
+    bool hasNamedCaptures()
     {
         return m_rareData && !m_rareData->m_captureGroupNames.isEmpty();
     }
 
-    String getCaptureGroupNameForSubpatternId(unsigned i) const
+    String getCaptureGroupName(unsigned i)
     {
-        if (!i || !m_rareData || m_rareData->m_captureGroupNames.isEmpty())
+        if (!i || !m_rareData || m_rareData->m_captureGroupNames.size() <= i)
             return String();
         ASSERT(m_rareData);
         return m_rareData->m_captureGroupNames[i];
     }
 
-    template <typename Offsets>
-    unsigned subpatternIdForGroupName(StringView groupName, const Offsets ovector) const
+    unsigned subpatternForName(StringView groupName)
     {
         if (!m_rareData)
             return 0;
-        auto it = m_rareData->m_namedGroupToParenIndeces.find<StringViewHashTranslator>(groupName);
-        if (it == m_rareData->m_namedGroupToParenIndeces.end())
+        auto it = m_rareData->m_namedGroupToParenIndex.find<StringViewHashTranslator>(groupName);
+        if (it == m_rareData->m_namedGroupToParenIndex.end())
             return 0;
-        if (it->value.size() == 1)
-            return it->value[0];
-
-        return ovector[offsetVectorBaseForNamedCaptures() + it->value[0] - 1];
+        return it->value;
     }
 
     bool hasCode()
@@ -180,11 +164,11 @@ private:
 
     void byteCodeCompileIfNecessary(VM*);
 
-    void compile(VM*, Yarr::CharSize, std::optional<StringView> sampleString);
-    void compileIfNecessary(VM&, Yarr::CharSize, std::optional<StringView> sampleString);
+    void compile(VM*, Yarr::CharSize);
+    void compileIfNecessary(VM&, Yarr::CharSize);
 
-    void compileMatchOnly(VM*, Yarr::CharSize, std::optional<StringView> sampleString);
-    void compileIfNecessaryMatchOnly(VM&, Yarr::CharSize, std::optional<StringView> sampleString);
+    void compileMatchOnly(VM*, Yarr::CharSize);
+    void compileIfNecessaryMatchOnly(VM&, Yarr::CharSize);
 
 #if ENABLE(YARR_JIT_DEBUG)
     void matchCompareWithInterpreter(const String&, int startOffset, int* offsetVector, int jitResult);
@@ -201,13 +185,8 @@ private:
 
     struct RareData {
         WTF_MAKE_STRUCT_FAST_ALLOCATED;
-        unsigned m_numDuplicateNamedCaptureGroups;
         Vector<String> m_captureGroupNames;
-
-        // This first element of the RHS vector is the subpatternId in the non-duplicate case.
-        // For the duplicate case, the first element is the namedCaptureGroupId.
-        // The remaining elements are the subpatternIds for each of the duplicate groups.
-        HashMap<String, Vector<unsigned>> m_namedGroupToParenIndeces;
+        HashMap<String, unsigned> m_namedGroupToParenIndex;
     };
 
     String m_patternString;

@@ -1,6 +1,6 @@
 /*
  *  Copyright (C) 1999-2000 Harri Porten (porten@kde.org)
- *  Copyright (C) 2008-2023 Apple Inc. All rights reserved.
+ *  Copyright (C) 2008-2021 Apple Inc. All rights reserved.
  *
  *  This library is free software; you can redistribute it and/or
  *  modify it under the terms of the GNU Lesser General Public
@@ -20,32 +20,36 @@
 
 #pragma once
 
-#include "JSFunction.h"
+#include "InternalFunction.h"
 
 namespace JSC {
 
 class BooleanPrototype;
 class GetterSetter;
 
-class BooleanConstructor final : public JSFunction {
+class BooleanConstructor final : public InternalFunction {
 public:
-    using Base = JSFunction;
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
+    typedef InternalFunction Base;
 
-    static BooleanConstructor* create(VM&, Structure*, BooleanPrototype*, GetterSetter*);
+    static BooleanConstructor* create(VM& vm, Structure* structure, BooleanPrototype* booleanPrototype, GetterSetter*)
+    {
+        BooleanConstructor* constructor = new (NotNull, allocateCell<BooleanConstructor>(vm)) BooleanConstructor(vm, structure);
+        constructor->finishCreation(vm, booleanPrototype);
+        return constructor;
+    }
 
     DECLARE_INFO;
 
-    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
-    {
-        return Structure::create(vm, globalObject, prototype, TypeInfo(JSFunctionType, StructureFlags), info());
+    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype) 
+    { 
+        return Structure::create(vm, globalObject, prototype, TypeInfo(InternalFunctionType, StructureFlags), info()); 
     }
 
 private:
-    BooleanConstructor(VM&, NativeExecutable*, JSGlobalObject*, Structure*);
+    BooleanConstructor(VM&, Structure*);
     void finishCreation(VM&, BooleanPrototype*);
 };
-static_assert(sizeof(BooleanConstructor) == sizeof(JSFunction), "Allocate BooleanConstructor in JSFunction IsoSubspace");
+STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(BooleanConstructor, InternalFunction);
 
 JSObject* constructBooleanFromImmediateBoolean(JSGlobalObject*, JSValue);
 

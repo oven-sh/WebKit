@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "VideoFrame.h"
 #include "WebCodecsVideoFrame.h"
 
 #if ENABLE(WEB_CODECS)

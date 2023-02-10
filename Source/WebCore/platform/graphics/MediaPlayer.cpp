@@ -44,8 +44,6 @@
 #include "PlatformTextTrack.h"
 #include "PlatformTimeRanges.h"
 #include "SecurityOrigin.h"
-#include "VideoFrame.h"
-#include "VideoFrameMetadata.h"
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
@@ -119,6 +117,7 @@ public:
     String engineDescription() const final { return "NullMediaPlayer"_s; }
 
     PlatformLayer* platformLayer() const final { return nullptr; }
+
     FloatSize naturalSize() const final { return FloatSize(); }
 
     bool hasVideo() const final { return false; }
@@ -904,16 +903,6 @@ bool MediaPlayer::isVideoFullscreenStandby() const
 
 #endif
 
-FloatSize MediaPlayer::videoInlineSize() const
-{
-    return m_private->videoInlineSize();
-}
-
-void MediaPlayer::setVideoInlineSizeFenced(const FloatSize& size, const WTF::MachSendRight& fence)
-{
-    m_private->setVideoInlineSizeFenced(size, fence);
-}
-
 #if PLATFORM(IOS_FAMILY)
 
 NSArray* MediaPlayer::timedMetadata() const
@@ -1262,11 +1251,6 @@ void MediaPlayer::setShouldMaintainAspectRatio(bool maintainAspectRatio)
     m_private->setShouldMaintainAspectRatio(maintainAspectRatio);
 }
 
-LayerHostingContextID MediaPlayer::hostingContextID() const
-{
-    return m_private->hostingContextID();
-}
-
 bool MediaPlayer::didPassCORSAccessCheck() const
 {
     return m_private->didPassCORSAccessCheck();
@@ -1373,11 +1357,10 @@ void MediaPlayer::setPrivateBrowsingMode(bool privateBrowsingMode)
 // Client callbacks.
 void MediaPlayer::networkStateChanged()
 {
-    if (m_private->networkState() >= MediaPlayer::NetworkState::FormatError)
-        m_lastErrorMessage = m_private->errorMessage();
     // If more than one media engine is installed and this one failed before finding metadata,
     // let the next engine try.
     if (m_private->networkState() >= MediaPlayer::NetworkState::FormatError && m_private->readyState() < MediaPlayer::ReadyState::HaveMetadata) {
+        m_lastErrorMessage = m_private->errorMessage();
         client().mediaPlayerEngineFailedToLoad();
         if (!m_activeEngineIdentifier
             && installedMediaEngines().size() > 1

@@ -65,11 +65,6 @@ Ref<HTMLLabelElement> HTMLLabelElement::create(const QualifiedName& tagName, Doc
     return adoptRef(*new HTMLLabelElement(tagName, document));
 }
 
-Ref<HTMLLabelElement> HTMLLabelElement::create(Document& document)
-{
-    return adoptRef(*new HTMLLabelElement(labelTag, document));
-}
-
 RefPtr<HTMLElement> HTMLLabelElement::control() const
 {
     auto& controlId = attributeWithoutSynchronization(forAttr);

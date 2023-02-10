@@ -33,13 +33,11 @@ namespace WebCore {
 class RenderBlockFlow;
 class RenderFlexibleBox;
 class RenderInline;
-class RenderObject;
 
 namespace LayoutIntegration {
-class LineLayout;
 
 enum class AvoidanceReason : uint64_t {
-    // Unused                                    = 1LLU  << 0,
+    FlowIsInsideANonMultiColumnThread            = 1LLU  << 0,
     // Unused                                    = 1LLU  << 1,
     // Unused                                    = 1LLU  << 2,
     ContentIsRuby                                = 1LLU  << 3,
@@ -86,9 +84,9 @@ enum class AvoidanceReason : uint64_t {
     // Unused                                    = 1LLU  << 44,
     // Unused                                    = 1LLU  << 45,
     // Unused                                    = 1LLU  << 46,
-    MultiColumnFlowHasVerticalWritingMode        = 1LLU  << 47,
-    // Unused                                    = 1LLU  << 48,
-    // Unused                                    = 1LLU  << 49,
+    MultiColumnFlowIsNotTopLevel                 = 1LLU  << 47,
+    MultiColumnFlowHasColumnSpanner              = 1LLU  << 48,
+    MultiColumnFlowVerticalAlign                 = 1LLU  << 49,
     MultiColumnFlowIsFloating                    = 1LLU  << 50,
     // Unused                                    = 1LLU  << 51,
     // Unused                                    = 1LLU  << 52,
@@ -107,7 +105,6 @@ enum class AvoidanceReason : uint64_t {
 bool canUseForLineLayout(const RenderBlockFlow&);
 bool canUseForLineLayoutAfterStyleChange(const RenderBlockFlow&, StyleDifference);
 bool canUseForLineLayoutAfterInlineBoxStyleChange(const RenderInline&, StyleDifference);
-bool shouldInvalidateLineLayoutPathAfterContentChangeFor(const RenderBlockFlow&, const RenderObject& newChild, const LineLayout&);
 
 bool canUseForFlexLayout(const RenderFlexibleBox&);
 

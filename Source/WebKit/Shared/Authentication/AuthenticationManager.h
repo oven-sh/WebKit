@@ -50,7 +50,7 @@ class SessionID;
 namespace WebCore {
 class AuthenticationChallenge;
 class Credential;
-class SecurityOriginData;
+struct SecurityOriginData;
 }
 
 namespace WebKit {

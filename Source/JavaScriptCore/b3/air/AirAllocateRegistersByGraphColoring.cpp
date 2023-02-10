@@ -61,7 +61,6 @@ public:
     AbstractColoringAllocator(Code& code, const Vector<Reg>& regsInPriorityOrder, IndexType lastPrecoloredRegisterIndex, unsigned tmpArraySize, const BitVector& unspillableTmps, const UseCounts& useCounts)
         : m_regsInPriorityOrder(regsInPriorityOrder)
         , m_lastPrecoloredRegisterIndex(lastPrecoloredRegisterIndex)
-        , m_coalescedTmps(tmpArraySize, 0)
         , m_unspillableTmps(unspillableTmps)
         , m_useCounts(useCounts)
         , m_code(code)
@@ -77,6 +76,7 @@ public:
         
         m_adjacencyList.resize(tmpArraySize);
         m_moveList.resize(tmpArraySize);
+        m_coalescedTmps.fill(0, tmpArraySize);
         m_isOnSelectStack.ensureSize(tmpArraySize);
         m_spillWorklist.ensureSize(tmpArraySize);
     }
@@ -1896,7 +1896,8 @@ private:
         unsigned numTmps = m_code.numTmps(bank);
         unsigned arraySize = AbsoluteTmpMapper<bank>::absoluteIndex(numTmps);
 
-        Vector<Range, 0, UnsafeVectorOverflow> ranges(arraySize, Range());
+        Vector<Range, 0, UnsafeVectorOverflow> ranges;
+        ranges.fill(Range(), arraySize);
 
         unsigned globalIndex = 0;
         for (BasicBlock* block : m_code) {
@@ -1942,17 +1943,13 @@ private:
         unspillableTmps.ensureSize(arraySize);
         for (unsigned i = AbsoluteTmpMapper<bank>::lastMachineRegisterIndex() + 1; i < ranges.size(); ++i) {
             Range& range = ranges[i];
-            if (range.last - range.first <= 1 && range.count > range.admitStackCount) {
-                dataLogLnIf(traceDebug, "Add unspillable tmp due to range: ", AbsoluteTmpMapper<bank>::tmpFromAbsoluteIndex(i));
+            if (range.last - range.first <= 1 && range.count > range.admitStackCount)
                 unspillableTmps.quickSet(i);
-            }
         }
 
         m_code.forEachFastTmp([&](Tmp tmp) {
-            if (tmp.bank() == bank) {
-                dataLogLnIf(traceDebug, "Add unspillable tmp since it is FastTmp: ", tmp);
+            if (tmp.bank() == bank)
                 unspillableTmps.quickSet(AbsoluteTmpMapper<bank>::absoluteIndex(tmp));
-            }
         });
 
         return unspillableTmps;
@@ -2026,7 +2023,6 @@ private:
         HashMap<Tmp, StackSlot*> stackSlots;
         for (Tmp tmp : allocator.spilledTmps()) {
             // All the spilled values become unspillable.
-            dataLogLnIf(traceDebug, "Add unspillable tmp due to spill: ", tmp);
             unspillableTmps.set(AbsoluteTmpMapper<bank>::absoluteIndex(tmp));
 
             // Allocate stack slot for each spilled value.
@@ -2154,7 +2150,6 @@ private:
                     RELEASE_ASSERT(instBank == bank);
                     
                     Tmp tmp = m_code.newTmp(bank);
-                    dataLogLnIf(traceDebug, "Add unspillable tmp (scratch) since we introduce it during spill: ", tmp);
                     unspillableTmps.set(AbsoluteTmpMapper<bank>::absoluteIndex(tmp));
                     inst.args.append(tmp);
                     RELEASE_ASSERT(inst.args.size() == 3);
@@ -2203,9 +2198,7 @@ private:
                         break;
                     }
 
-                    auto newTmp = m_code.newTmp(bank);
-                    dataLogLnIf(traceDebug, "Add unspillable tmp since we introduce it during spill (2): ", tmp, " -> ", newTmp);
-                    tmp = newTmp;
+                    tmp = m_code.newTmp(bank);
                     unspillableTmps.set(AbsoluteTmpMapper<bank>::absoluteIndex(tmp));
                     
                     if (role == Arg::Scratch)

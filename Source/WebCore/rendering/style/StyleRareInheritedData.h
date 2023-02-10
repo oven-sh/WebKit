@@ -30,7 +30,6 @@
 #include "StyleCustomPropertyData.h"
 #include "StyleTextEdge.h"
 #include "TabSize.h"
-#include "TextSpacing.h"
 #include "TextUnderlineOffset.h"
 #include "TouchAction.h"
 #include <wtf/DataRef.h>
@@ -209,8 +208,6 @@ public:
 #if ENABLE(TOUCH_EVENTS)
     StyleColor tapHighlightColor;
 #endif
-    TextSpacingTrim textSpacingTrim;
-    TextAutospace textAutospace;
 
 private:
     StyleRareInheritedData();

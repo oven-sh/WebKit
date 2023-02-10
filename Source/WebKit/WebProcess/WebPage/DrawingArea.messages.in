@@ -29,7 +29,8 @@ messages -> DrawingArea NotRefCounted {
     DisplayDidRefresh()
 
 #if PLATFORM(COCOA)
-    UpdateGeometry(WebCore::IntSize viewSize, bool flushSynchronously, MachSendRight fencePort) -> ()
+    // Used by TiledCoreAnimationDrawingArea.
+    UpdateGeometry(WebCore::IntSize viewSize, bool flushSynchronously, MachSendRight fencePort)
     SetDeviceScaleFactor(float deviceScaleFactor)
     SetColorSpace(struct std::optional<WebCore::DestinationColorSpace> colorSpace)
     SetViewExposedRect(std::optional<WebCore::FloatRect> viewExposedRect)
@@ -37,7 +38,7 @@ messages -> DrawingArea NotRefCounted {
     AcceleratedAnimationDidStart(WebCore::GraphicsLayer::PlatformLayerID layerID, String key, MonotonicTime startTime)
     AcceleratedAnimationDidEnd(WebCore::GraphicsLayer::PlatformLayerID layerID, String key)
     
-    DispatchAfterEnsuringDrawing() -> () CallWithReplyID
+    AddTransactionCallbackID(WebKit::CallbackID callbackID)
 #endif
 
 #if USE(GRAPHICS_LAYER_WC)

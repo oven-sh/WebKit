@@ -38,6 +38,7 @@ void initializeGtkSettings()
     g_object_set(settings,
         "gtk-xft-dpi", 98304,
         "gtk-xft-antialias", 1,
+        "gtk-xft-hinting", 0,
         "gtk-font-name", "Liberation Sans 12",
         "gtk-xft-rgba", "none", nullptr);
 }

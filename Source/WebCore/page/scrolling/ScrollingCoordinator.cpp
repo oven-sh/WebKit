@@ -195,10 +195,7 @@ EventTrackingRegions ScrollingCoordinator::absoluteEventTrackingRegionsForFrame(
 
 EventTrackingRegions ScrollingCoordinator::absoluteEventTrackingRegions() const
 {
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page->mainFrame());
-    if (!localMainFrame)
-        return EventTrackingRegions();
-    return absoluteEventTrackingRegionsForFrame(*localMainFrame);
+    return absoluteEventTrackingRegionsForFrame(m_page->mainFrame());
 }
 
 void ScrollingCoordinator::frameViewFixedObjectsDidChange(FrameView& frameView)
@@ -338,10 +335,8 @@ void ScrollingCoordinator::updateSynchronousScrollingReasons(FrameView& frameVie
         newSynchronousScrollingReasons.add(SynchronousScrollingReason::HasNonLayerViewportConstrainedObjects);
 
     auto* localFrame = dynamicDowncast<LocalFrame>(frameView.frame());
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(localFrame->mainFrame()); 
     if (localFrame
-        && localMainFrame
-        && localMainFrame->document()
+        && localFrame->mainFrame().document()
         && localFrame->document()->isImageDocument())
         newSynchronousScrollingReasons.add(SynchronousScrollingReason::IsImageDocument);
 
@@ -372,11 +367,7 @@ void ScrollingCoordinator::setForceSynchronousScrollLayerPositionUpdates(bool fo
 
 bool ScrollingCoordinator::shouldUpdateScrollLayerPositionSynchronously(const FrameView& frameView) const
 {
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page->mainFrame());
-    if (!localMainFrame)
-        return false;
-
-    if (&frameView == localMainFrame->view())
+    if (&frameView == m_page->mainFrame().view())
         return !synchronousScrollingReasons(frameView.scrollingNodeID()).isEmpty();
     
     return true;
@@ -441,11 +432,8 @@ String ScrollingCoordinator::synchronousScrollingReasonsAsText(OptionSet<Synchro
 
 String ScrollingCoordinator::synchronousScrollingReasonsAsText() const
 {
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page->mainFrame());
-    if (localMainFrame) {
-        if (auto* frameView = localMainFrame->view())
-            return synchronousScrollingReasonsAsText(synchronousScrollingReasons(frameView->scrollingNodeID()));
-    }
+    if (auto* frameView = m_page->mainFrame().view())
+        return synchronousScrollingReasonsAsText(synchronousScrollingReasons(frameView->scrollingNodeID()));
 
     return String();
 }

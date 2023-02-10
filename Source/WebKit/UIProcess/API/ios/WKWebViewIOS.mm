@@ -3082,8 +3082,7 @@ static WebCore::UserInterfaceLayoutDirection toUserInterfaceLayoutDirection(UISe
 
 #if ENABLE(LOCKDOWN_MODE_API)
 
-// Note: Use the legacy 'CaptivePortal' string to avoid losing users choice from earlier releases.
-constexpr auto WebKitLockdownModeAlertShownKey = @"WebKitCaptivePortalModeAlertShown";
+constexpr auto WebKitLockdownModeAlertShownKey = @"WebKitLockdownModeAlertShown";
 
 static bool lockdownModeWarningNeeded = true;
 

@@ -66,7 +66,7 @@ egl::Error DeviceVk::getAttribute(const egl::Display *display, EGLint attribute,
     {
         case EGL_VULKAN_VERSION_ANGLE:
         {
-            auto version = static_cast<intptr_t>(mRenderer->getDeviceVersion());
+            auto version = static_cast<intptr_t>(mRenderer->getApiVersion());
             *outValue    = reinterpret_cast<void *>(version);
             return egl::NoError();
         }

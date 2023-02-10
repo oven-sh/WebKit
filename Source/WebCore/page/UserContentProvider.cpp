@@ -98,10 +98,7 @@ static DocumentLoader* mainDocumentLoader(DocumentLoader& loader)
     if (auto frame = loader.frame()) {
         if (frame->isMainFrame())
             return &loader;
-
-        auto* localFrame = dynamicDowncast<LocalFrame>(frame->mainFrame());
-        if (localFrame)
-            return localFrame->loader().documentLoader();
+        return frame->mainFrame().loader().documentLoader();
     }
     return nullptr;
 }

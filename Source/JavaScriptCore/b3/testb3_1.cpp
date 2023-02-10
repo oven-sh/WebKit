@@ -877,10 +877,6 @@ void run(const char* filter)
         RUN_BINARY(testVectorAndConstants, v128Operands(), v128Operands());
         RUN_BINARY(testVectorXorConstants, v128Operands(), v128Operands());
         RUN_BINARY(testVectorAndConstantConstant, v128Operands(), v128Operands());
-        if (isARM64()) {
-            RUN(testVectorFmulByElementFloat());
-            RUN(testVectorFmulByElementDouble());
-        }
     }
 
     if (tasks.isEmpty())

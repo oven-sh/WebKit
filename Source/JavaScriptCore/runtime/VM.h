@@ -289,7 +289,6 @@ enum VMIdentifierType { };
 using VMIdentifier = ObjectIdentifier<VMIdentifierType>;
 
 class VM : public ThreadSafeRefCounted<VM>, public DoublyLinkedListNode<VM> {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(VM);
 public:
     // WebCore has a one-to-one mapping of threads to VMs;
     // create() should only be called once
@@ -833,7 +832,7 @@ public:
     bool enableControlFlowProfiler();
     bool disableControlFlowProfiler();
 
-    void queueMicrotask(QueuedTask&&);
+    void queueMicrotask(QueuedTask&& task) { m_microtaskQueue.enqueue(WTFMove(task)); }
     JS_EXPORT_PRIVATE void drainMicrotasks();
     void setOnEachMicrotaskTick(WTF::Function<void(VM&)>&& func) { m_onEachMicrotaskTick = WTFMove(func); }
     void finalizeSynchronousJSExecution() { ASSERT(currentThreadIsHoldingAPILock()); m_currentWeakRefVersion++; }

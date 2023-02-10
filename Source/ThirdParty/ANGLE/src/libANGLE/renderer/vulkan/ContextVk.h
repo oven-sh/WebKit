@@ -37,7 +37,6 @@ class SyncHelper;
 class ProgramExecutableVk;
 class RendererVk;
 class WindowSurfaceVk;
-class OffscreenSurfaceVk;
 class ShareGroupVk;
 
 static constexpr uint32_t kMaxGpuEventNameLen = 32;
@@ -287,8 +286,6 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     // Context switching
     angle::Result onMakeCurrent(const gl::Context *context) override;
     angle::Result onUnMakeCurrent(const gl::Context *context) override;
-    angle::Result onSurfaceUnMakeCurrent(WindowSurfaceVk *surface);
-    angle::Result onSurfaceUnMakeCurrent(OffscreenSurfaceVk *surface);
 
     // Native capabilities, unmodified by gl::Context.
     gl::Caps getNativeCaps() const override;
@@ -368,7 +365,7 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
 
     VkDevice getDevice() const;
     egl::ContextPriority getPriority() const { return mContextPriority; }
-    vk::ProtectionType getProtectionType() const { return mProtectionType; }
+    bool hasProtectedContent() const { return mState.hasProtectedContent(); }
 
     ANGLE_INLINE const angle::FeaturesVk &getFeatures() const { return mRenderer->getFeatures(); }
 
@@ -1538,12 +1535,9 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     // buffer for the outside render pass.
     VkDeviceSize mTotalBufferToImageCopySize;
 
-    // Semaphores that must be flushed before the current commands. Flushed semaphores will be
-    // waited on in the next submission.
+    // Semaphores that must be waited on in the next submission.
     std::vector<VkSemaphore> mWaitSemaphores;
     std::vector<VkPipelineStageFlags> mWaitSemaphoreStageMasks;
-    // Whether this context has wait semaphores (flushed and unflushed) that must be submitted.
-    bool mHasWaitSemaphoresPendingSubmission;
 
     // Hold information from the last gpu clock sync for future gpu-to-cpu timestamp conversions.
     GpuClockSyncInfo mGpuClockSync;
@@ -1559,7 +1553,6 @@ class ContextVk : public ContextImpl, public vk::Context, public MultisampleText
     gl::State::DirtyBits mPipelineDirtyBitsMask;
 
     egl::ContextPriority mContextPriority;
-    vk::ProtectionType mProtectionType;
 
     ShareGroupVk *mShareGroupVk;
 

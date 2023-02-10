@@ -302,7 +302,7 @@ public:
     GCGLboolean isQuery(PlatformGLObject query) final;
     void beginQuery(GCGLenum target, PlatformGLObject query) final;
     void endQuery(GCGLenum target) final;
-    GCGLint getQuery(GCGLenum target, GCGLenum pname) final;
+    PlatformGLObject getQuery(GCGLenum target, GCGLenum pname) final;
     GCGLuint getQueryObjectui(PlatformGLObject query, GCGLenum pname) final;
     PlatformGLObject createSampler() final;
     void deleteSampler(PlatformGLObject sampler) final;
@@ -338,16 +338,6 @@ public:
     void getActiveUniformBlockiv(GCGLuint program, GCGLuint uniformBlockIndex, GCGLenum pname, GCGLSpan<GCGLint> params) final;
     String getTranslatedShaderSourceANGLE(PlatformGLObject arg0) final;
     void drawBuffersEXT(GCGLSpan<const GCGLenum> bufs) final;
-    PlatformGLObject createQueryEXT() final;
-    void deleteQueryEXT(PlatformGLObject query) final;
-    GCGLboolean isQueryEXT(PlatformGLObject query) final;
-    void beginQueryEXT(GCGLenum target, PlatformGLObject query) final;
-    void endQueryEXT(GCGLenum target) final;
-    void queryCounterEXT(PlatformGLObject query, GCGLenum target) final;
-    GCGLint getQueryiEXT(GCGLenum target, GCGLenum pname) final;
-    GCGLint getQueryObjectiEXT(PlatformGLObject query, GCGLenum pname) final;
-    GCGLuint64 getQueryObjectui64EXT(PlatformGLObject query, GCGLenum pname) final;
-    GCGLint64 getInteger64EXT(GCGLenum pname) final;
     void enableiOES(GCGLenum target, GCGLuint index) final;
     void disableiOES(GCGLenum target, GCGLuint index) final;
     void blendEquationiOES(GCGLuint buf, GCGLenum mode) final;
@@ -364,12 +354,11 @@ public:
     // End of list used by generate-gpup-webgl script.
 
     static bool handleMessageToRemovedDestination(IPC::Connection&, IPC::Decoder&);
-
 protected:
 #if ENABLE(VIDEO)
-    RemoteGraphicsContextGLProxy(IPC::Connection&, RefPtr<IPC::StreamClientConnection>, const WebCore::GraphicsContextGLAttributes&, Ref<RemoteVideoFrameObjectHeapProxy>&&);
+    RemoteGraphicsContextGLProxy(IPC::Connection&, SerialFunctionDispatcher&, const WebCore::GraphicsContextGLAttributes&, RenderingBackendIdentifier, Ref<RemoteVideoFrameObjectHeapProxy>&&);
 #else
-    RemoteGraphicsContextGLProxy(IPC::Connection&, RefPtr<IPC::StreamClientConnection>, const WebCore::GraphicsContextGLAttributes&);
+    RemoteGraphicsContextGLProxy(IPC::Connection&, SerialFunctionDispatcher&, const WebCore::GraphicsContextGLAttributes&, RenderingBackendIdentifier);
 #endif
 
     bool isContextLost() const { return !m_connection; }
@@ -389,12 +378,6 @@ protected:
 
     GraphicsContextGLIdentifier m_graphicsContextGLIdentifier { GraphicsContextGLIdentifier::generate() };
 private:
-#if ENABLE(VIDEO)
-    static Ref<RemoteGraphicsContextGLProxy> platformCreate(IPC::Connection&, Ref<IPC::StreamClientConnection>, const WebCore::GraphicsContextGLAttributes&, Ref<RemoteVideoFrameObjectHeapProxy>&&);
-#else 
-    static Ref<RemoteGraphicsContextGLProxy> platformCreate(IPC::Connection&, Ref<IPC::StreamClientConnection>, const WebCore::GraphicsContextGLAttributes&);
-#endif
-    void initializeIPC(IPC::StreamServerConnection::Handle&&, RemoteRenderingBackendProxy&);
     // Messages to be received.
     void wasCreated(bool didSucceed, IPC::Semaphore&&, IPC::Semaphore&&, String&& availableExtensions, String&& requestedExtensions);
     void wasLost();

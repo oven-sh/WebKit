@@ -57,15 +57,9 @@ InlineContentBuilder::InlineContentBuilder(const RenderBlockFlow& blockFlow, Box
 
 void InlineContentBuilder::build(Layout::InlineFormattingState& inlineFormattingState, InlineContent& inlineContent) const
 {
-    if (inlineContent.boxes.isEmpty()) {
-        inlineContent.boxes = WTFMove(inlineFormattingState.boxes());
-        inlineContent.lines = WTFMove(inlineFormattingState.lines());
-    } else {
-        inlineContent.boxes.appendVector(WTFMove(inlineFormattingState.boxes()));
-        inlineContent.lines.appendVector(WTFMove(inlineFormattingState.lines()));
-        inlineFormattingState.boxes().clear();
-        inlineFormattingState.lines().clear();
-    }
+    // FIXME: This might need a different approach with partial layout where the layout code needs to know about the boxes.
+    inlineContent.boxes = WTFMove(inlineFormattingState.boxes());
+    inlineContent.lines = WTFMove(inlineFormattingState.lines());
 
     auto updateIfTextRenderersNeedVisualReordering = [&] {
         // FIXME: We may want to have a global, "is this a bidi paragraph" flag to avoid this loop for non-rtl, non-bidi content. 

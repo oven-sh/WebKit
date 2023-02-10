@@ -47,7 +47,7 @@ class DatabaseContext;
 class DatabaseManagerClient;
 class OriginLock;
 class SecurityOrigin;
-class SecurityOriginData;
+struct SecurityOriginData;
 
 enum class CurrentQueryBehavior { Interrupt, RunToCompletion };
 

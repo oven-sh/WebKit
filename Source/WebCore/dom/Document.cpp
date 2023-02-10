@@ -202,7 +202,6 @@
 #include "ReportingScope.h"
 #include "RequestAnimationFrameCallback.h"
 #include "ResizeObserver.h"
-#include "ResizeObserverEntry.h"
 #include "ResourceLoadObserver.h"
 #include "RuntimeApplicationChecks.h"
 #include "SVGDocumentExtensions.h"
@@ -383,30 +382,6 @@ public:
 };
 
 static const Seconds intersectionObserversInitialUpdateDelay { 2000_ms };
-
-static void CallbackForContainIntrinsicSize(const Vector<Ref<ResizeObserverEntry>>& entries, ResizeObserver& observer)
-{
-    for (auto& entry : entries) {
-        if (auto* target = entry->target()) {
-            if (!target->isConnected()) {
-                observer.unobserve(*target);
-                target->clearLastRememberedSize();
-                continue;
-            }
-
-            auto* box = target->renderBox();
-            if (!box) {
-                observer.unobserve(*target);
-                continue;
-            }
-            ASSERT(!box->shouldSkipContent());
-            ASSERT(box->style().hasAutoLengthContainIntrinsicSize());
-
-            auto contentBoxSize = entry->contentBoxSize().at(0);
-            target->setLastRememberedSize(ResizeObserverSize::create(contentBoxSize->inlineSize(), contentBoxSize->blockSize()));
-        }
-    }
-}
 
 // https://www.w3.org/TR/xml/#NT-NameStartChar
 // NameStartChar       ::=       ":" | [A-Z] | "_" | [a-z] | [#xC0-#xD6] | [#xD8-#xF6] | [#xF8-#x2FF] | [#x370-#x37D] | [#x37F-#x1FFF] | [#x200C-#x200D] | [#x2070-#x218F] | [#x2C00-#x2FEF] | [#x3001-#xD7FF] | [#xF900-#xFDCF] | [#xFDF0-#xFFFD] | [#x10000-#xEFFFF]
@@ -2201,8 +2176,7 @@ void Document::resolveStyle(ResolveStyleType type)
         // detached (for example, by setting display:none in the :hover style), schedule another mouseMove event
         // to check if any other elements ended up under the mouse pointer due to re-layout.
         if (m_hoveredElement && !m_hoveredElement->renderer() && is<LocalFrame>(frameView.frame()))
-            if (auto* localMainFrame = dynamicDowncast<LocalFrame>(downcast<LocalFrame>(frameView.frame()).mainFrame()))
-                localMainFrame->eventHandler().dispatchFakeMouseMoveEventSoon();
+            downcast<LocalFrame>(frameView.frame()).mainFrame().eventHandler().dispatchFakeMouseMoveEventSoon();
 
         ++m_styleRecalcCount;
         // FIXME: Assert ASSERT(!needsStyleRecalc()) here. Do we still have some cases where it's not true?
@@ -3572,9 +3546,7 @@ void Document::setURL(const URL& url)
 
     if (SecurityOrigin::shouldIgnoreHost(newURL))
         newURL.setHostAndPort({ });
-    // SecurityContext::securityOrigin may not be initialized at this time if setURL() is called in the constructor, therefore calling topOrigin() is not always safe.
-    auto topOrigin = isTopDocument() && !SecurityContext::securityOrigin() ? SecurityOrigin::create(url)->data() : this->topOrigin().data();
-    m_url = { WTFMove(newURL), topOrigin };
+    m_url = WTFMove(newURL);
 
     m_documentURI = m_url.url().string();
     m_adjustedURL = adjustedURL();
@@ -6264,9 +6236,7 @@ Document& Document::topDocument() const
         if (!m_frame)
             return const_cast<Document&>(*this);
         // This should always be non-null.
-        Document* mainFrameDocument = nullptr;
-        if (auto* localFrame = dynamicDowncast<LocalFrame>(m_frame->mainFrame()))
-            mainFrameDocument = localFrame->document();
+        Document* mainFrameDocument = m_frame->mainFrame().document();
         return mainFrameDocument ? *mainFrameDocument : const_cast<Document&>(*this);
     }
 
@@ -8308,7 +8278,7 @@ static std::optional<IntersectionObservationState> computeIntersectionState(Fram
     } else {
         ASSERT(is<LocalFrame>(frameView.frame()) && downcast<LocalFrame>(frameView.frame()).isMainFrame());
         // FIXME: Handle the case of an implicit-root observer that has a target in a different frame tree.
-        if (dynamicDowncast<LocalFrame>(targetRenderer->frame().mainFrame()) != &frameView.frame())
+        if (&targetRenderer->frame().mainFrame() != &frameView.frame())
             return std::nullopt;
         rootRenderer = frameView.renderView();
         localRootBounds = frameView.layoutViewportRect();
@@ -8492,21 +8462,9 @@ size_t Document::gatherResizeObservations(size_t deeperThan)
     return minDepth;
 }
 
-size_t Document::gatherResizeObservationsForContainIntrinsicSize()
-{
-    if (!m_resizeObserverForContainIntrinsicSize)
-        return ResizeObserver::maxElementDepth();
-
-    LOG_WITH_STREAM(ResizeObserver, stream << "Document " << *this << " gatherResizeObservationsForContainIntrinsicSize");
-    return m_resizeObserverForContainIntrinsicSize->gatherObservations(0);
-}
-
 void Document::deliverResizeObservations()
 {
     LOG_WITH_STREAM(ResizeObserver, stream << "Document " << *this << " deliverResizeObservations");
-    if (m_resizeObserverForContainIntrinsicSize)
-        m_resizeObserverForContainIntrinsicSize->deliverObservations();
-
     auto observersToNotify = m_resizeObservers;
     for (const auto& observer : observersToNotify) {
         if (!observer || !observer->hasActiveObservations())
@@ -8532,17 +8490,14 @@ void Document::setHasSkippedResizeObservations(bool skipped)
 
 void Document::updateResizeObservations(Page& page)
 {
-    if (!hasResizeObservers() && !m_resizeObserverForContainIntrinsicSize)
+    if (!hasResizeObservers())
         return;
 
     // We need layout the whole frame tree here. Because ResizeObserver could observe element in other frame,
     // and it could change other frame in deliverResizeObservations().
     page.layoutIfNeeded();
 
-    // Start check resize observers;
-    if (gatherResizeObservationsForContainIntrinsicSize() != ResizeObserver::maxElementDepth())
-        deliverResizeObservations();
-
+    // Start check resize obervers;
     for (size_t depth = gatherResizeObservations(0); depth != ResizeObserver::maxElementDepth(); depth = gatherResizeObservations(depth)) {
         deliverResizeObservations();
         page.layoutIfNeeded();
@@ -9507,33 +9462,6 @@ void Document::addElementWithLangAttrMatchingDocumentElement(Element& element)
 void Document::removeElementWithLangAttrMatchingDocumentElement(Element& element)
 {
     m_elementsWithLangAttrMatchingDocumentElement.remove(element);
-}
-
-RefPtr<ResizeObserver> Document::ensureResizeObserverForContainIntrinsicSize()
-{
-    if (!m_resizeObserverForContainIntrinsicSize)
-        m_resizeObserverForContainIntrinsicSize = ResizeObserver::createNativeObserver(*this, CallbackForContainIntrinsicSize);
-    return m_resizeObserverForContainIntrinsicSize;
-}
-
-void Document::observeForContainIntrinsicSize(Element& element)
-{
-    auto ro = ensureResizeObserverForContainIntrinsicSize();
-    ro->observe(element);
-}
-
-void Document::unobserveForContainIntrinsicSize(Element& element)
-{
-    if (!m_resizeObserverForContainIntrinsicSize)
-        return;
-    m_resizeObserverForContainIntrinsicSize->unobserve(element);
-}
-
-void Document::resetObservationSizeForContainIntrinsicSize(Element& target)
-{
-    if (!m_resizeObserverForContainIntrinsicSize)
-        return;
-    m_resizeObserverForContainIntrinsicSize->resetObservationSize(target);
 }
 
 } // namespace WebCore

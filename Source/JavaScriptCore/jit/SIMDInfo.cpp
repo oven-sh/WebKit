@@ -26,8 +26,6 @@
 #include "config.h"
 #include "SIMDInfo.h"
 
-#include <wtf/HexNumber.h>
-
 namespace WTF {
 
 void printInternal(PrintStream& out, JSC::SIMDLane lane)
@@ -78,7 +76,7 @@ void printInternal(PrintStream& out, JSC::SIMDSignMode mode)
 
 void printInternal(PrintStream& out, JSC::v128_t v)
 {
-    out.print("{ ", hex(v.u32x4[0], 8), ", ", hex(v.u32x4[1], 8), ", ", hex(v.u32x4[2], 8), ", ", hex(v.u32x4[3], 8), " }");
+    out.print("{ ", v.u32x4[0], ", ", v.u32x4[1], ", ", v.u32x4[2], ", ", v.u32x4[3], " }");
 }
 
 } // namespace WTF

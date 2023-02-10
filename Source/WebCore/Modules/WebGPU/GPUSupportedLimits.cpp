@@ -53,11 +53,6 @@ uint32_t GPUSupportedLimits::maxBindGroups() const
     return m_backing->maxBindGroups();
 }
 
-uint32_t GPUSupportedLimits::maxBindingsPerBindGroup() const
-{
-    return m_backing->maxBindingsPerBindGroup();
-}
-
 uint32_t GPUSupportedLimits::maxDynamicUniformBuffersPerPipelineLayout() const
 {
     return m_backing->maxDynamicUniformBuffersPerPipelineLayout();
@@ -118,11 +113,6 @@ uint32_t GPUSupportedLimits::maxVertexBuffers() const
     return m_backing->maxVertexBuffers();
 }
 
-uint64_t GPUSupportedLimits::maxBufferSize() const
-{
-    return m_backing->maxBufferSize();
-}
-
 uint32_t GPUSupportedLimits::maxVertexAttributes() const
 {
     return m_backing->maxVertexAttributes();
@@ -136,21 +126,6 @@ uint32_t GPUSupportedLimits::maxVertexBufferArrayStride() const
 uint32_t GPUSupportedLimits::maxInterStageShaderComponents() const
 {
     return m_backing->maxInterStageShaderComponents();
-}
-
-uint32_t GPUSupportedLimits::maxInterStageShaderVariables() const
-{
-    return m_backing->maxInterStageShaderVariables();
-}
-
-uint32_t GPUSupportedLimits::maxColorAttachments() const
-{
-    return m_backing->maxColorAttachments();
-}
-
-uint32_t GPUSupportedLimits::maxColorAttachmentBytesPerSample() const
-{
-    return m_backing->maxColorAttachmentBytesPerSample();
 }
 
 uint32_t GPUSupportedLimits::maxComputeWorkgroupStorageSize() const

@@ -84,9 +84,12 @@ bool IsCompilerFlagSet(UINT mask, UINT flag)
 }
 #endif  // ANGLE_APPEND_ASSEMBLY_TO_SHADER_DEBUG_INFO == ANGLE_ENABLED
 
+constexpr char kOldCompilerLibrary[] = "d3dcompiler_old.dll";
+
 enum D3DCompilerLoadLibraryResult
 {
     D3DCompilerDefaultLibrarySuccess,
+    D3DCompilerOldLibrarySuccess,
     D3DCompilerFailure,
     D3DCompilerEnumBoundary,
 };
@@ -144,6 +147,16 @@ angle::Result HLSLCompiler::ensureInitialized(d3d::Context *context)
         {
             ANGLE_HISTOGRAM_ENUMERATION("GPU.ANGLE.D3DCompilerLoadLibraryResult",
                                         D3DCompilerDefaultLibrarySuccess, D3DCompilerEnumBoundary);
+        }
+        else
+        {
+            WARN() << "Failed to load HLSL compiler library. Using 'old' DLL.";
+            mD3DCompilerModule = LoadLibraryA(kOldCompilerLibrary);
+            if (mD3DCompilerModule)
+            {
+                ANGLE_HISTOGRAM_ENUMERATION("GPU.ANGLE.D3DCompilerLoadLibraryResult",
+                                            D3DCompilerOldLibrarySuccess, D3DCompilerEnumBoundary);
+            }
         }
     }
 

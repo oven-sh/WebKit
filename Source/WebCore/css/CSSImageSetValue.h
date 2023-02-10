@@ -35,17 +35,17 @@ namespace Style {
 class BuilderState;
 }
 
-class CSSImageSetValue final : public CSSValueContainingVector {
+class CSSImageSetValue final : public CSSValueList {
 public:
-    static Ref<CSSImageSetValue> create(CSSValueListBuilder);
+    static Ref<CSSImageSetValue> create();
+    ~CSSImageSetValue();
 
     String customCSSText() const;
-    bool equals(const CSSImageSetValue& other) const { return itemsEqual(other); }
 
     RefPtr<StyleImage> createStyleImage(Style::BuilderState&) const;
 
 private:
-    explicit CSSImageSetValue(CSSValueListBuilder);
+    CSSImageSetValue();
 };
 
 } // namespace WebCore

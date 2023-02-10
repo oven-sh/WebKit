@@ -56,7 +56,7 @@ struct _WebKitWebsitePoliciesPrivate {
     RefPtr<API::WebsitePolicies> websitePolicies;
 };
 
-WEBKIT_DEFINE_FINAL_TYPE(WebKitWebsitePolicies, webkit_website_policies, G_TYPE_OBJECT, GObject)
+WEBKIT_DEFINE_TYPE(WebKitWebsitePolicies, webkit_website_policies, G_TYPE_OBJECT)
 
 API::WebsitePolicies& webkitWebsitePoliciesGetWebsitePolicies(WebKitWebsitePolicies* policies)
 {

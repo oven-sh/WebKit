@@ -42,7 +42,6 @@
 #include "EventNames.h"
 #include "HTMLMediaElement.h"
 #include "Logging.h"
-#include "ManagedSourceBuffer.h"
 #include "MediaSourcePrivate.h"
 #include "MediaSourceRegistry.h"
 #include "Quirks.h"
@@ -698,13 +697,7 @@ ExceptionOr<Ref<SourceBuffer>> MediaSource::addSourceBuffer(const String& type)
         return sourceBufferPrivate.releaseException();
     }
 
-    Ref<SourceBuffer> buffer =
-#if ENABLE(MANAGED_MEDIA_SOURCE)
-        isManaged() ? ManagedSourceBuffer::create(sourceBufferPrivate.releaseReturnValue(), downcast<ManagedMediaSource>(*this)).get() : SourceBuffer::create(sourceBufferPrivate.releaseReturnValue(), *this).get();
-#else
-        SourceBuffer::create(sourceBufferPrivate.releaseReturnValue(), *this);
-#endif
-
+    auto buffer = SourceBuffer::create(sourceBufferPrivate.releaseReturnValue(), this);
     DEBUG_LOG(LOGIDENTIFIER, "created SourceBuffer");
 
     // 6. Set the generate timestamps flag on the new object to the value in the "Generate Timestamps Flag"
@@ -1205,14 +1198,6 @@ void MediaSource::failedToCreateRenderer(RendererType type)
 {
     if (auto context = scriptExecutionContext())
         context->addConsoleMessage(MessageSource::JS, MessageLevel::Error, makeString("MediaSource ", type == RendererType::Video ? "video" : "audio", " renderer creation failed."));
-}
-
-void MediaSource::memoryPressure()
-{
-    if (!isManaged())
-        return;
-    for (auto& sourceBuffer : *m_sourceBuffers)
-        sourceBuffer->memoryPressure();
 }
 
 }

@@ -80,7 +80,6 @@ class ResourceRequest;
 class SecurityOrigin;
 class LocalWebLockRegistry;
 class PrivateClickMeasurement;
-struct RecentSearch;
 
 struct MockWebAuthenticationConfiguration;
 struct NotificationData;
@@ -277,7 +276,6 @@ public:
     const String& resolvedResourceLoadStatisticsDirectory() const { return m_resolvedConfiguration->resourceLoadStatisticsDirectory(); }
     const String& resolvedHSTSStorageDirectory() const { return m_resolvedConfiguration->hstsStorageDirectory(); }
     const String& resolvedGeneralStorageDirectory() const { return m_resolvedConfiguration->generalStorageDirectory(); }
-    const String& resolvedSearchFieldHistoryDirectory() const { return m_resolvedConfiguration->searchFieldHistoryDirectory(); }
 #if ENABLE(ARKIT_INLINE_PREVIEW)
     const String& resolvedModelElementCacheDirectory() const { return m_resolvedConfiguration->modelElementCacheDirectory(); }
 #endif
@@ -293,6 +291,7 @@ public:
     static Vector<WebsiteDataStoreParameters> parametersFromEachWebsiteDataStore();
 
     void flushCookies(CompletionHandler<void()>&&);
+    void clearCachedCredentials();
 
     void setAllowsAnySSLCertificateForWebSocket(bool);
 
@@ -330,7 +329,7 @@ public:
     VirtualAuthenticatorManager& virtualAuthenticatorManager();
 #endif
 
-    const WebsiteDataStoreConfiguration& configuration() const { return m_configuration.get(); }
+    const WebsiteDataStoreConfiguration& configuration() { return m_configuration.get(); }
 
     WebsiteDataStoreClient& client() { return m_client.get(); }
     void setClient(UniqueRef<WebsiteDataStoreClient>&& client) { m_client = WTFMove(client); }
@@ -338,8 +337,8 @@ public:
     API::HTTPCookieStore& cookieStore();
     WebCore::LocalWebLockRegistry& webLockRegistry() { return m_webLockRegistry.get(); }
 
-    void renameOriginInWebsiteData(WebCore::SecurityOriginData&&, WebCore::SecurityOriginData&&, OptionSet<WebsiteDataType>, CompletionHandler<void()>&&);
-    void originDirectoryForTesting(WebCore::ClientOrigin&&, OptionSet<WebsiteDataType>, CompletionHandler<void(const String&)>&&);
+    void renameOriginInWebsiteData(URL&&, URL&&, OptionSet<WebsiteDataType>, CompletionHandler<void()>&&);
+    void originDirectoryForTesting(URL&&, URL&&, WebsiteDataType, CompletionHandler<void(const String&)>&&);
 
     bool networkProcessHasEntitlementForTesting(const String&);
 
@@ -356,16 +355,17 @@ public:
     static void removeDataStoreWithIdentifier(const UUID& identifier, CompletionHandler<void(const String&)>&&);
     static String defaultWebsiteDataStoreDirectory(const UUID& identifier);
     static String defaultCookieStorageFile(const String& baseDataDirectory = nullString());
-    static String defaultSearchFieldHistoryDirectory(const String& baseDataDirectory = nullString());
 #endif
     static String defaultServiceWorkerRegistrationDirectory(const String& baseDataDirectory = nullString());
     static String defaultLocalStorageDirectory(const String& baseDataDirectory = nullString());
     static String defaultResourceLoadStatisticsDirectory(const String& baseDataDirectory = nullString());
     static String defaultNetworkCacheDirectory(const String& baseCacheDirectory = nullString());
-    static String defaultAlternativeServicesDirectory(const String& baseCacheDirectory = nullString());
+    static String defaultAlternativeServicesDirectory(const String& baseDataDirectory = nullString());
     static String defaultApplicationCacheDirectory(const String& baseCacheDirectory = nullString());
     static String defaultWebSQLDatabaseDirectory(const String& baseDataDirectory = nullString());
+#if USE(GLIB) || PLATFORM(COCOA)
     static String defaultHSTSStorageDirectory(const String& baseCacheDirectory = nullString());
+#endif
 #if ENABLE(ARKIT_INLINE_PREVIEW)
     static String defaultModelElementCacheDirectory(const String& baseCacheDirectory = nullString());
 #endif
@@ -435,9 +435,6 @@ public:
     void download(const DownloadProxy&, const String& suggestedFilename);
     void resumeDownload(const DownloadProxy&, const API::Data&, const String& path, CallDownloadDidStart);
 
-    void saveRecentSearches(const String& name, const Vector<WebCore::RecentSearch>&);
-    void loadRecentSearches(const String& name, CompletionHandler<void(Vector<WebCore::RecentSearch>&&)>&&);
-
 private:
     enum class ForceReinitialization : bool { No, Yes };
 #if ENABLE(APP_BOUND_DOMAINS)
@@ -450,8 +447,9 @@ private:
 
     void platformInitialize();
     void platformDestroy();
+    static void platformRemoveRecentSearches(WallTime);
+
     void platformSetNetworkParameters(WebsiteDataStoreParameters&);
-    void removeRecentSearches(WallTime, CompletionHandler<void()>&&);
 
     WebsiteDataStore();
 

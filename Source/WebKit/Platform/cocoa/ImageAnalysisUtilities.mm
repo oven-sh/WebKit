@@ -333,7 +333,7 @@ void requestBackgroundRemoval(CGImageRef image, CompletionHandler<void(CGImageRe
     });
 }
 
-void prepareImageAnalysisForOverlayView(PlatformImageAnalysisObject *interactionOrView)
+void setUpAdditionalImageAnalysisBehaviors(PlatformImageAnalysisObject *interactionOrView)
 {
     interactionOrView.activeInteractionTypes = VKImageAnalysisInteractionTypeTextSelection | VKImageAnalysisInteractionTypeDataDetectors;
     interactionOrView.wantsAutomaticContentsRectCalculation = NO;

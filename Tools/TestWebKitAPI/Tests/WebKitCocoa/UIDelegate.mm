@@ -405,8 +405,7 @@ static UIViewController *overrideViewControllerForFullscreenPresentation()
     return nil;
 }
 
-// Note: Use the legacy 'CaptivePortal' string to avoid losing users choice from earlier releases.
-constexpr auto WebKitLockdownModeAlertShownKey = @"WebKitCaptivePortalModeAlertShown";
+constexpr auto WebKitLockdownModeAlertShownKey = @"WebKitLockdownModeAlertShown";
 
 TEST(WebKit, LockdownModeDefaultFirstUseMessage)
 {

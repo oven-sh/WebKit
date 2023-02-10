@@ -25,10 +25,6 @@
 #include "WebKitPermissionRequest.h"
 #include <wtf/glib/WTFGType.h>
 
-#if !ENABLE(2022_GLIB_API)
-typedef WebKitPermissionRequestIface WebKitPermissionRequestInterface;
-#endif
-
 using namespace WebKit;
 
 /**
@@ -48,7 +44,7 @@ using namespace WebKit;
  * requested CDM, unless it is already present on the host system.
  */
 
-static void webkit_permission_request_interface_init(WebKitPermissionRequestInterface*);
+static void webkit_permission_request_interface_init(WebKitPermissionRequestIface*);
 
 struct _WebKitMediaKeySystemPermissionRequestPrivate {
     RefPtr<MediaKeySystemPermissionRequest> request;
@@ -56,8 +52,8 @@ struct _WebKitMediaKeySystemPermissionRequestPrivate {
     CString keySystem;
 };
 
-WEBKIT_DEFINE_FINAL_TYPE_WITH_CODE(
-    WebKitMediaKeySystemPermissionRequest, webkit_media_key_system_permission_request, G_TYPE_OBJECT, GObject,
+WEBKIT_DEFINE_FINAL_TYPE_WITH_CODE_IN_2022_API(
+    WebKitMediaKeySystemPermissionRequest, webkit_media_key_system_permission_request, G_TYPE_OBJECT,
     G_IMPLEMENT_INTERFACE(WEBKIT_TYPE_PERMISSION_REQUEST, webkit_permission_request_interface_init))
 
 static void webkitMediaKeySystemPermissionRequestAllow(WebKitPermissionRequest* request)
@@ -88,7 +84,7 @@ static void webkitMediaKeySystemPermissionRequestDeny(WebKitPermissionRequest* r
     priv->madeDecision = true;
 }
 
-static void webkit_permission_request_interface_init(WebKitPermissionRequestInterface* iface)
+static void webkit_permission_request_interface_init(WebKitPermissionRequestIface* iface)
 {
     iface->allow = webkitMediaKeySystemPermissionRequestAllow;
     iface->deny = webkitMediaKeySystemPermissionRequestDeny;

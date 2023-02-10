@@ -29,20 +29,25 @@
 
 #pragma once
 
-#include <wtf/Forward.h>
+#include <wtf/Ref.h>
 
 namespace WebCore {
 
 class BasicShape;
 class BasicShapeCenterCoordinate;
+class CSSBasicShape;
 class CSSToLengthConversionData;
-class CSSValue;
+class CSSPrimitiveValue;
 class RenderStyle;
 
-enum class SVGPathConversion : bool { None, ForceAbsolute };
+// Specifies a conversion done to an SVG path.
+enum class SVGPathConversion : uint8_t {
+    None,
+    ForceAbsolute
+};
 
-Ref<CSSValue> valueForBasicShape(const RenderStyle&, const BasicShape&, SVGPathConversion = SVGPathConversion::None);
-Ref<BasicShape> basicShapeForValue(const CSSToLengthConversionData&, const CSSValue&, float zoom = 1);
+Ref<CSSPrimitiveValue> valueForBasicShape(const RenderStyle&, const BasicShape&, SVGPathConversion = SVGPathConversion::None);
+Ref<BasicShape> basicShapeForValue(const CSSToLengthConversionData&, const CSSBasicShape&, float zoom = 1);
 float floatValueForCenterCoordinate(const BasicShapeCenterCoordinate&, float);
 
 }

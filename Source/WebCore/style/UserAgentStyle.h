@@ -47,8 +47,6 @@ public:
     static StyleSheetContents* mediaQueryStyleSheet;
     static StyleSheetContents* horizontalFormControlsStyleSheet;
     static StyleSheetContents* plugInsStyleSheet;
-    static StyleSheetContents* popoverStyleSheet;
-    static StyleSheetContents* counterStylesStyleSheet;
 #if ENABLE(FULLSCREEN_API)
     static StyleSheetContents* fullscreenStyleSheet;
 #endif

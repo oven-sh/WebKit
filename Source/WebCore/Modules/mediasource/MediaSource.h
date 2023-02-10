@@ -50,7 +50,7 @@ class SourceBufferList;
 class SourceBufferPrivate;
 class TimeRanges;
 
-class MediaSource
+class MediaSource final
     : public RefCounted<MediaSource>
     , public MediaSourcePrivateClient
     , public ActiveDOMObject
@@ -129,13 +129,9 @@ public:
 
     void failedToCreateRenderer(RendererType) final;
 
-    virtual bool isManaged() const { return false; }
-    void memoryPressure();
-
-protected:
+private:
     explicit MediaSource(ScriptExecutionContext&);
 
-private:
     // ActiveDOMObject.
     void stop() final;
     const char* activeDOMObjectName() const final;

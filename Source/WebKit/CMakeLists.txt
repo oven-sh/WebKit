@@ -524,19 +524,14 @@ set(WebKit_SERIALIZATION_IN_FILES
     NetworkProcess/NetworkProcessCreationParameters.serialization.in
     NetworkProcess/NetworkResourceLoadParameters.serialization.in
 
-    Shared/CallbackID.serialization.in
     Shared/EditorState.serialization.in
-    Shared/FileSystemSyncAccessHandleInfo.serialization.in
     Shared/FocusedElementInformation.serialization.in
     Shared/FrameInfoData.serialization.in
     Shared/FrameTreeNodeData.serialization.in
     Shared/LayerTreeContext.serialization.in
     Shared/Model.serialization.in
-    Shared/NavigationActionData.serialization.in
     Shared/PALArgumentCoders.serialization.in
     Shared/Pasteboard.serialization.in
-    Shared/PlatformPopupMenuData.serialization.in
-    Shared/PolicyDecision.serialization.in
     Shared/SameDocumentNavigationType.serialization.in
     Shared/SessionState.serialization.in
     Shared/ShareableBitmap.serialization.in
@@ -547,11 +542,9 @@ set(WebKit_SERIALIZATION_IN_FILES
     Shared/WebEvent.serialization.in
     Shared/WebHitTestResultData.serialization.in
     Shared/WebPopupItem.serialization.in
-    Shared/WebProcessDataStoreParameters.serialization.in
     Shared/WebPushDaemonConnectionConfiguration.serialization.in
     Shared/WebPushMessage.serialization.in
     Shared/WebsiteDataStoreParameters.serialization.in
-    Shared/WebsitePoliciesData.serialization.in
 
     Shared/API/APIError.serialization.in
     Shared/API/APIFrameHandle.serialization.in
@@ -564,8 +557,6 @@ set(WebKit_SERIALIZATION_IN_FILES
     Shared/Databases/IndexedDB/WebIDBResult.serialization.in
 
     Shared/Extensions/WebExtensionEventListenerType.serialization.in
-
-    Shared/Gamepad/GamepadData.serialization.in
 
     Shared/RemoteLayerTree/RemoteLayerTree.serialization.in
 
@@ -635,18 +626,10 @@ set(WebKit_SERIALIZATION_IN_FILES
     Shared/WebGPU/WebGPUVertexBufferLayout.serialization.in
     Shared/WebGPU/WebGPUVertexState.serialization.in
 
-    Shared/WebsiteData/WebsiteData.serialization.in
     Shared/WebsiteData/WebsiteDataFetchOption.serialization.in
-    Shared/WebsiteData/WebsiteDataType.serialization.in
-
 
     Shared/XR/XRSystem.serialization.in
 
-    WebProcess/GPU/graphics/BufferIdentifierSet.serialization.in
-    WebProcess/GPU/graphics/PrepareBackingStoreBuffersData.serialization.in
-
-    WebProcess/GPU/media/RemoteAudioSessionConfiguration.serialization.in
-    WebProcess/GPU/media/RemoteCDMConfiguration.serialization.in
     WebProcess/GPU/media/RemoteMediaPlayerConfiguration.serialization.in
     WebProcess/GPU/media/RemoteMediaPlayerState.serialization.in
 )

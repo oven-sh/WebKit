@@ -54,7 +54,7 @@ namespace WebCore {
 
 template<typename TargetType> TargetType fromCSSValue(const CSSValue& value)
 {
-    return fromCSSValueID<TargetType>(value.valueID());
+    return fromCSSValueID<TargetType>(downcast<CSSPrimitiveValue>(value).valueID());
 }
 
 class TypeDeducingCSSValueMapper {
@@ -134,6 +134,11 @@ template<> constexpr TYPE fromCSSValueID(CSSValueID value) { \
     } \
     ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT(); \
     return { }; \
+}
+
+template<> inline Ref<CSSPrimitiveValue> CSSPrimitiveValue::create(const LineClampValue& value)
+{
+    return create(value.value(), value.isPercentage() ? CSSUnitType::CSS_PERCENTAGE : CSSUnitType::CSS_INTEGER);
 }
 
 template<> inline LineClampValue fromCSSValue(const CSSValue& value)
@@ -1182,7 +1187,7 @@ DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 #undef FOR_EACH
 
 #define TYPE TextTransform
-#define FOR_EACH(CASE) CASE(Capitalize) CASE(Uppercase) CASE(Lowercase) CASE(FullSizeKana) CASE(None)
+#define FOR_EACH(CASE) CASE(Capitalize) CASE(Uppercase) CASE(Lowercase) CASE(None)
 DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 #undef TYPE
 #undef FOR_EACH

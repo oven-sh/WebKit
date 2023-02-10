@@ -106,11 +106,6 @@ void RuleSetBuilder::addChildRules(const Vector<RefPtr<StyleRuleBase>>& rules)
 void RuleSetBuilder::addChildRule(RefPtr<StyleRuleBase> rule)
 {
     switch (rule->type()) {
-    case StyleRuleType::StyleWithNesting:
-        if (m_ruleSet)
-            addStyleRule(downcast<StyleRuleWithNesting>(*rule));
-        return;
-
     case StyleRuleType::Style:
         if (m_ruleSet)
             addStyleRule(downcast<StyleRule>(*rule));
@@ -215,19 +210,21 @@ void RuleSetBuilder::addRulesFromSheetContents(const StyleSheetContents& sheet)
     addChildRules(sheet.childRules());
 }
 
-void RuleSetBuilder::populateStyleRuleResolvedSelectorList(const StyleRuleWithNesting& rule)
+void RuleSetBuilder::populateStyleRuleResolvedSelectorList(const StyleRule& rule)
 {
-    auto resolvedSelectorList = rule.selectorList();
-
     // FIXME: handle top-level nesting selector
-    if (m_styleRuleStack.size()) 
-        resolvedSelectorList = CSSSelectorParser::resolveNestingParent(rule.selectorList(), m_styleRuleStack.last());
+    if (!m_styleRuleStack.size()) 
+        return;
 
+    auto resolvedSelectorList = CSSSelectorParser::resolveNestingParent(rule.selectorList(), m_styleRuleStack.last());
     rule.setResolvedSelectorList(WTFMove(resolvedSelectorList));    
 }
 
-void RuleSetBuilder::addStyleRuleWithSelectorList(const CSSSelectorList& selectorList, const StyleRule& rule)
+void RuleSetBuilder::addStyleRule(const StyleRule& rule)
 {
+    populateStyleRuleResolvedSelectorList(rule);
+    
+    auto& selectorList = rule.resolvedSelectorList();
     if (!selectorList.isEmpty()) {
         unsigned selectorListIndex = 0;
         for (size_t selectorIndex = 0; selectorIndex != notFound; selectorIndex = selectorList.indexOfNextSelectorAfter(selectorIndex)) {
@@ -237,25 +234,12 @@ void RuleSetBuilder::addStyleRuleWithSelectorList(const CSSSelectorList& selecto
             ++selectorListIndex;
         }
     }
-}
 
-void RuleSetBuilder::addStyleRule(const StyleRuleWithNesting& rule)
-{
-    populateStyleRuleResolvedSelectorList(rule);
-
-    auto& selectorList = rule.resolvedSelectorList();
-    addStyleRuleWithSelectorList(selectorList, rule);
-    
     // Process nested rules
     m_styleRuleStack.append(&selectorList);
     for (auto& nestedRule : rule.nestedRules())
         addChildRule(nestedRule.ptr());
     m_styleRuleStack.removeLast();
-}
-
-void RuleSetBuilder::addStyleRule(const StyleRule& rule)
-{
-    addStyleRuleWithSelectorList(rule.selectorList(), rule);
 }
 
 void RuleSetBuilder::disallowDynamicMediaQueryEvaluationIfNeeded()

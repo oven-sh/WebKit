@@ -43,16 +43,6 @@ static const UChar windowsLatin1ExtensionArray[32] = {
     0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x009D, 0x017E, 0x0178, // 98-9F
 };
 
-template<> void appendCharacterTo(Vector<UChar>& output, UChar32 c)
-{
-    if (U_IS_BMP(c)) {
-        output.append(static_cast<UChar>(c));
-        return;
-    }
-    output.append(U16_LEAD(c));
-    output.append(U16_TRAIL(c));
-}
-
 class HTMLEntityParser {
 public:
     static UChar32 legalEntityFor(UChar32 value)
@@ -66,8 +56,7 @@ public:
 
     static bool acceptMalformed() { return true; }
 
-    template<typename DecodedIdentityType>
-    static bool consumeNamedEntity(SegmentedString& source, DecodedIdentityType& decodedEntity, bool& notEnoughCharacters, UChar additionalAllowedCharacter, UChar& cc)
+    static bool consumeNamedEntity(SegmentedString& source, StringBuilder& decodedEntity, bool& notEnoughCharacters, UChar additionalAllowedCharacter, UChar& cc)
     {
         StringBuilder consumedCharacters;
         HTMLEntitySearch entitySearch;
@@ -110,9 +99,9 @@ public:
         if (entitySearch.mostRecentMatch()->lastCharacter() == ';'
             || !additionalAllowedCharacter
             || !(isASCIIAlphanumeric(cc) || cc == '=')) {
-            appendCharacterTo(decodedEntity, entitySearch.mostRecentMatch()->firstValue);
+            decodedEntity.appendCharacter(entitySearch.mostRecentMatch()->firstValue);
             if (entitySearch.mostRecentMatch()->secondValue)
-                appendCharacterTo(decodedEntity, entitySearch.mostRecentMatch()->secondValue);
+                decodedEntity.appendCharacter(entitySearch.mostRecentMatch()->secondValue);
             return true;
         }
         unconsumeCharacters(source, consumedCharacters);
@@ -121,11 +110,6 @@ public:
 };
 
 bool consumeHTMLEntity(SegmentedString& source, StringBuilder& decodedEntity, bool& notEnoughCharacters, UChar additionalAllowedCharacter)
-{
-    return consumeCharacterReference<HTMLEntityParser>(source, decodedEntity, notEnoughCharacters, additionalAllowedCharacter);
-}
-
-bool consumeHTMLEntity(SegmentedString& source, Vector<UChar>& decodedEntity, bool& notEnoughCharacters, UChar additionalAllowedCharacter)
 {
     return consumeCharacterReference<HTMLEntityParser>(source, decodedEntity, notEnoughCharacters, additionalAllowedCharacter);
 }
@@ -160,11 +144,6 @@ size_t decodeNamedEntityToUCharArray(const char* name, UChar result[4])
     if (!search.mostRecentMatch()->secondValue)
         return numberOfCodePoints;
     return numberOfCodePoints + appendUChar32ToUCharArray(search.mostRecentMatch()->secondValue, result + numberOfCodePoints);
-}
-
-void appendLegalEntityFor(UChar32 character, Vector<UChar>& outputBuffer)
-{
-    appendCharacterTo(outputBuffer, HTMLEntityParser::legalEntityFor(character));
 }
 
 } // namespace WebCore

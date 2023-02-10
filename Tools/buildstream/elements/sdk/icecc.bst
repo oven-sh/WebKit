@@ -9,7 +9,6 @@ depends:
 - freedesktop-sdk.bst:components/libcap-ng.bst
 - freedesktop-sdk.bst:components/libarchive.bst
 - freedesktop-sdk.bst:components/lzo.bst
-- freedesktop-sdk.bst:components/openssl.bst
 
 variables:
   conf-local: >-

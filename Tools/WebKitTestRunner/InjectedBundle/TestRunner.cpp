@@ -451,11 +451,6 @@ void TestRunner::setAllowsAnySSLCertificate(bool enabled)
     postSynchronousPageMessage("SetAllowsAnySSLCertificate", enabled);
 }
 
-void TestRunner::setBackgroundFetchPermission(bool enabled)
-{
-    postSynchronousPageMessage("SetBackgroundFetchPermission", enabled);
-}
-
 void TestRunner::setShouldSwapToEphemeralSessionOnNextNavigation(bool shouldSwap)
 {
     postSynchronousPageMessage("SetShouldSwapToEphemeralSessionOnNextNavigation", shouldSwap);

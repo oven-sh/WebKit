@@ -32,7 +32,6 @@ namespace WebCore {
 
 String DeprecatedCSSOMValueList::cssText() const
 {
-    // FIXME: Clearly wrong for cases like CSSSubgridValue. Change to call cssText on m_value instead.
     auto prefix = ""_s;
     auto separator = CSSValueList::separatorCSSText(static_cast<CSSValueList::ValueSeparator>(m_valueSeparator));
     StringBuilder result;

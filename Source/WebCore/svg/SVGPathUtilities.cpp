@@ -211,19 +211,20 @@ FloatPoint getPointAtLengthOfSVGPathByteStream(const SVGPathByteStream& stream, 
     return builder.currentPoint();
 }
 
-std::optional<SVGPathByteStream> convertSVGPathByteStreamToAbsoluteCoordinates(const SVGPathByteStream& stream)
+std::unique_ptr<SVGPathByteStream> convertSVGPathByteStreamToAbsoluteCoordinates(const SVGPathByteStream& stream)
 {
-    SVGPathByteStream result;
+    auto result = makeUnique<SVGPathByteStream>();
+
     if (stream.isEmpty())
         return result;
 
-    SVGPathByteStreamBuilder builder(result);
+    SVGPathByteStreamBuilder builder(*result);
     SVGPathAbsoluteConverter converter(builder);
 
     SVGPathByteStreamSource source(stream);
 
     if (!SVGPathParser::parse(source, converter, UnalteredParsing, false))
-        return std::nullopt;
+        return nullptr;
 
     return result;
 }

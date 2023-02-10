@@ -206,19 +206,13 @@ bool isValidCSSSelector(const String& selector)
 {
     ASSERT(isMainThread());
     ProcessWarming::initializeNames();
-
-    // This explicitly does not use the CSSParserContext created in contentExtensionCSSParserContext because
-    // we want to use quirks mode in parsing, but automatic mode when actually applying the content blocker styles.
-    // FIXME: rdar://105733691 (Parse/apply content blocker style sheets in both standards and quirks mode lazily).
-    WebCore::CSSParserContext context(HTMLQuirksMode);
-    context.hasPseudoClassEnabled = true;
-    CSSParser parser(context);
+    CSSParser parser(contentExtensionCSSParserContext());
     return !!parser.parseSelector(selector);
 }
 
 WebCore::CSSParserContext contentExtensionCSSParserContext()
 {
-    WebCore::CSSParserContext context(HTMLStandardMode);
+    WebCore::CSSParserContext context(HTMLQuirksMode);
     context.hasPseudoClassEnabled = true;
     return context;
 }

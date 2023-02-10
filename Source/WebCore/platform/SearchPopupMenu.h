@@ -32,8 +32,6 @@ class PopupMenu;
 struct RecentSearch {
     String string;
     WallTime time;
-
-    RecentSearch isolatedCopy() const { return { string.isolatedCopy(), time.isolatedCopy() }; }
 };
 
 class SearchPopupMenu : public RefCounted<SearchPopupMenu> {

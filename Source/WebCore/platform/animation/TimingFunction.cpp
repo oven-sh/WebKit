@@ -160,7 +160,7 @@ ExceptionOr<RefPtr<TimingFunction>> TimingFunction::createFromCSSText(const Stri
 RefPtr<TimingFunction> TimingFunction::createFromCSSValue(const CSSValue& value)
 {
     if (is<CSSPrimitiveValue>(value)) {
-        switch (value.valueID()) {
+        switch (downcast<CSSPrimitiveValue>(value).valueID()) {
         case CSSValueLinear:
             return LinearTimingFunction::create();
         case CSSValueEase:

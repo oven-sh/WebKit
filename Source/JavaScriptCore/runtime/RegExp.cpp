@@ -163,11 +163,10 @@ void RegExp::finishCreation(VM& vm)
     }
 
     m_numSubpatterns = pattern.m_numSubpatterns;
-    if (!pattern.m_captureGroupNames.isEmpty() || !pattern.m_namedGroupToParenIndeces.isEmpty()) {
+    if (!pattern.m_captureGroupNames.isEmpty() || !pattern.m_namedGroupToParenIndex.isEmpty()) {
         m_rareData = makeUnique<RareData>();
-        m_rareData->m_numDuplicateNamedCaptureGroups = pattern.m_numDuplicateNamedCaptureGroups;
         m_rareData->m_captureGroupNames.swap(pattern.m_captureGroupNames);
-        m_rareData->m_namedGroupToParenIndeces.swap(pattern.m_namedGroupToParenIndeces);
+        m_rareData->m_namedGroupToParenIndex.swap(pattern.m_namedGroupToParenIndex);
     }
 }
 
@@ -228,7 +227,7 @@ void RegExp::byteCodeCompileIfNecessary(VM* vm)
     }
 }
 
-void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> sampleString)
+void RegExp::compile(VM* vm, Yarr::CharSize charSize)
 {
     Locker locker { cellLock() };
     
@@ -253,7 +252,7 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
         && !pattern.m_containsLookbehinds
         ) {
         auto& jitCode = ensureRegExpJITCode();
-        Yarr::jitCompile(pattern, m_patternString, charSize, sampleString, vm, jitCode, Yarr::JITCompileMode::IncludeSubpatterns);
+        Yarr::jitCompile(pattern, m_patternString, charSize, vm, jitCode, Yarr::JITCompileMode::IncludeSubpatterns);
         if (!jitCode.failureReason()) {
             m_state = JITCode;
             return;
@@ -261,7 +260,6 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
     }
 #else
     UNUSED_PARAM(charSize);
-    UNUSED_PARAM(sampleString);
 #endif
 
     dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Can't JIT this regular expression: \"/", m_patternString, "/\"");
@@ -293,7 +291,7 @@ bool RegExp::matchConcurrently(
     return true;
 }
 
-void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<StringView> sampleString)
+void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize)
 {
     Locker locker { cellLock() };
     
@@ -318,7 +316,7 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
         && !pattern.m_containsLookbehinds
         ) {
         auto& jitCode = ensureRegExpJITCode();
-        Yarr::jitCompile(pattern, m_patternString, charSize, sampleString, vm, jitCode, Yarr::JITCompileMode::MatchOnly);
+        Yarr::jitCompile(pattern, m_patternString, charSize, vm, jitCode, Yarr::JITCompileMode::MatchOnly);
         if (!jitCode.failureReason()) {
             m_state = JITCode;
             return;
@@ -326,7 +324,6 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
     }
 #else
     UNUSED_PARAM(charSize);
-    UNUSED_PARAM(sampleString);
 #endif
 
     dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Can't JIT this regular expression: \"/", m_patternString, "/\"");

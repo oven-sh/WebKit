@@ -113,7 +113,6 @@ public:
     void setCacheModel(int);
     void setAsynchronousSpellCheckingEnabled(bool);
     void setAllowsAnySSLCertificate(bool);
-    void setBackgroundFetchPermission(bool);
     void setShouldSwapToEphemeralSessionOnNextNavigation(bool);
     void setShouldSwapToDefaultSessionOnNextNavigation(bool);
     void setCustomUserAgent(JSStringRef);

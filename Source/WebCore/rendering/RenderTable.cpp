@@ -4,8 +4,8 @@
  *           (C) 1998 Waldo Bastian (bastian@kde.org)
  *           (C) 1999 Lars Knoll (knoll@kde.org)
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)
- * Copyright (C) 2003-2023 Apple Inc. All rights reserved.
- * Copyright (C) 2014-2015 Google Inc. All rights reserved.
+ * Copyright (C) 2003-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2015 Google Inc. All rights reserved.
  * Copyright (C) 2006 Alexey Proskuryakov (ap@nypop.com)
  *
  * This library is free software; you can redistribute it and/or
@@ -64,7 +64,6 @@ WTF_MAKE_ISO_ALLOCATED_IMPL(RenderTable);
 
 RenderTable::RenderTable(Element& element, RenderStyle&& style)
     : RenderBlock(element, WTFMove(style), 0)
-    , m_columnPos(1, 0)
     , m_currentBorder(nullptr)
     , m_collapsedBordersValid(false)
     , m_collapsedEmptyBorderIsPresent(false)
@@ -79,11 +78,11 @@ RenderTable::RenderTable(Element& element, RenderStyle&& style)
     , m_columnOffsetHeight(-1)
 {
     setChildrenInline(false);
+    m_columnPos.fill(0, 1);
 }
 
 RenderTable::RenderTable(Document& document, RenderStyle&& style)
     : RenderBlock(document, WTFMove(style), 0)
-    , m_columnPos(1, 0)
     , m_currentBorder(nullptr)
     , m_collapsedBordersValid(false)
     , m_collapsedEmptyBorderIsPresent(false)
@@ -96,6 +95,7 @@ RenderTable::RenderTable(Document& document, RenderStyle&& style)
     , m_borderEnd(0)
 {
     setChildrenInline(false);
+    m_columnPos.fill(0, 1);
 }
 
 RenderTable::~RenderTable() = default;
@@ -130,17 +130,17 @@ void RenderTable::styleDidChange(StyleDifference diff, const RenderStyle* oldSty
     RenderBlock::styleDidChange(diff, oldStyle);
     propagateStyleToAnonymousChildren(PropagateToAllChildren);
 
-    bool oldFixedTableLayout = oldStyle ? oldStyle->isFixedTableLayout() : false;
+    auto oldTableLayout = oldStyle ? oldStyle->tableLayout() : TableLayoutType::Auto;
 
     // In the collapsed border model, there is no cell spacing.
     m_hSpacing = collapseBorders() ? 0 : style().horizontalBorderSpacing();
     m_vSpacing = collapseBorders() ? 0 : style().verticalBorderSpacing();
     m_columnPos[0] = m_hSpacing;
 
-    if (!m_tableLayout || style().isFixedTableLayout() != oldFixedTableLayout) {
+    if (!m_tableLayout || style().tableLayout() != oldTableLayout) {
         // According to the CSS2 spec, you only use fixed table layout if an
         // explicit width is specified on the table.  Auto width implies auto table layout.
-        if (style().isFixedTableLayout())
+        if (style().tableLayout() == TableLayoutType::Fixed && !style().logicalWidth().isAuto())
             m_tableLayout = makeUnique<FixedTableLayout>(this);
         else
             m_tableLayout = makeUnique<AutoTableLayout>(this);

@@ -30,6 +30,7 @@
 
 #pragma once
 
+#include "CSSValueKeywords.h"
 #include "CSSValueList.h"
 
 namespace WebCore {
@@ -42,19 +43,27 @@ namespace WebCore {
 //                          [ <line-names>? <track-size> ]+ <line-names>? )
 // <fixed-repeat> = repeat( [ <positive-integer> ],
 //                          [ <line-names>? <fixed-size> ]+ <line-names>? )
-class CSSGridIntegerRepeatValue final : public CSSValueContainingVector {
+class CSSGridIntegerRepeatValue final : public CSSValueList {
 public:
-    static Ref<CSSGridIntegerRepeatValue> create(size_t repetitions, CSSValueListBuilder);
-
-    size_t repetitions() const { return m_repetitions; }
+    static Ref<CSSGridIntegerRepeatValue> create(size_t repetitions)
+    {
+        return adoptRef(*new CSSGridIntegerRepeatValue(repetitions));
+    }
 
     String customCSSText() const;
     bool equals(const CSSGridIntegerRepeatValue&) const;
 
-private:
-    CSSGridIntegerRepeatValue(size_t repetitions, CSSValueListBuilder);
+    size_t repetitions() const { return m_repetitions; }
 
-    size_t m_repetitions;
+private:
+    CSSGridIntegerRepeatValue(size_t repetitions)
+        : CSSValueList(GridIntegerRepeatClass, SpaceSeparator)
+        , m_repetitions(repetitions)
+    {
+        ASSERT(repetitions > 0);
+    }
+
+    const size_t m_repetitions;
 };
 
 } // namespace WebCore

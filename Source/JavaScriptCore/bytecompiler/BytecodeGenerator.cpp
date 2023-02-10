@@ -356,7 +356,9 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ProgramNode* programNode, UnlinkedP
 
     emitEnter();
 
-    allocateScope();
+    allocateAndEmitScope();
+
+    emitCheckTraps();
 
     const FunctionStack& functionStack = programNode->functionStack();
 
@@ -482,7 +484,9 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, FunctionNode* functionNode, Unlinke
     if (isGeneratorOrAsyncFunctionBodyParseMode(parseMode))
         m_generatorRegister = &m_parameters[static_cast<unsigned>(JSGenerator::Argument::Generator)];
 
-    allocateScope();
+    allocateAndEmitScope();
+
+    emitCheckTraps();
 
     switch (constructorKind()) {
     case ConstructorKind::None:
@@ -906,7 +910,9 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, EvalNode* evalNode, UnlinkedEvalCod
 
     emitEnter();
 
-    allocateScope();
+    allocateAndEmitScope();
+
+    emitCheckTraps();
     
     for (FunctionMetadataNode* function : evalNode->functionStack()) {
         m_codeBlock->addFunctionDecl(makeFunction(function));
@@ -998,9 +1004,9 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNod
 
     emitEnter();
 
-    allocateScope();
-    RegisterID* moduleScope = addVar();
-    move(moduleScope, scopeRegister());
+    allocateAndEmitScope();
+
+    emitCheckTraps();
     
     m_calleeRegister.setIndex(CallFrameSlot::callee);
 
@@ -1042,8 +1048,7 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNod
 
     pushTDZVariables(lexicalVariables, TDZCheckOptimization::Optimize, TDZRequirement::UnderTDZ);
     bool isWithScope = false;
-
-    m_lexicalScopeStack.append({ moduleEnvironmentSymbolTable, moduleScope, isWithScope, constantSymbolTable->index() });
+    m_lexicalScopeStack.append({ moduleEnvironmentSymbolTable, m_topMostScope, isWithScope, constantSymbolTable->index() });
     emitPrefillStackTDZVariables(lexicalVariables, moduleEnvironmentSymbolTable);
 
     // makeFunction assumes that there's correct TDZ stack entries.
@@ -1305,7 +1310,7 @@ void BytecodeGenerator::initializeVarLexicalEnvironment(int symbolTableConstantI
         RELEASE_ASSERT(m_lexicalEnvironmentRegister);
         OpCreateLexicalEnvironment::emit(this, m_lexicalEnvironmentRegister, scopeRegister(), VirtualRegister { symbolTableConstantIndex }, addConstantValue(jsUndefined()));
 
-        move(scopeRegister(), m_lexicalEnvironmentRegister);
+        OpMov::emit(this, scopeRegister(), m_lexicalEnvironmentRegister);
 
         pushLocalControlFlowScope();
     }
@@ -1596,24 +1601,25 @@ RegisterID* BytecodeGenerator::moveLinkTimeConstant(RegisterID* dst, LinkTimeCon
     if (!dst)
         return constant;
 
-    return move(dst, constant);
+    OpMov::emit(this, dst, constant);
+
+    return dst;
 }
 
 RegisterID* BytecodeGenerator::moveEmptyValue(RegisterID* dst)
 {
     RefPtr<RegisterID> emptyValue = addConstantEmptyValue();
 
-    return move(dst, emptyValue.get());
+    OpMov::emit(this, dst, emptyValue.get());
+
+    return dst;
 }
 
 RegisterID* BytecodeGenerator::emitMove(RegisterID* dst, RegisterID* src)
 {
+    ASSERT(src != m_emptyValueRegister);
+
     m_staticPropertyAnalyzer.mov(dst, src);
-    if (canDoPeepholeOptimization() && m_lastInstruction->is<OpMov>()) {
-        auto op = m_lastInstruction->as<OpMov>();
-        if (op.m_dst == dst->virtualRegister())
-            rewind();
-    }
     OpMov::emit(this, dst, src);
 
     return dst;
@@ -2231,11 +2237,9 @@ RegisterID* BytecodeGenerator::emitResolveScopeForHoistingFuncDeclInEval(Registe
 {
     ASSERT(m_codeType == EvalCode);
 
-    RefPtr<RegisterID> result = finalDestination(dst);
-    RefPtr<RegisterID> scope = newTemporary();
-    OpGetScope::emit(this, scope.get());
-    OpResolveScopeForHoistingFuncDeclInEval::emit(this, kill(result.get()), scope.get(), addConstant(property));
-    return result.get();
+    dst = finalDestination(dst);
+    OpResolveScopeForHoistingFuncDeclInEval::emit(this, kill(dst), m_topMostScope, addConstant(property));
+    return dst;
 }
 
 void BytecodeGenerator::popLexicalScope(VariableEnvironmentNode* node)
@@ -2794,12 +2798,6 @@ RegisterID* BytecodeGenerator::emitPutByVal(RegisterID* base, RegisterID* thisVa
     return value;
 }
 
-RegisterID* BytecodeGenerator::emitPutByValWithECMAMode(RegisterID* base, RegisterID* thisValue, RegisterID* property, RegisterID* value, ECMAMode ecmaMode)
-{
-    OpPutByValWithThis::emit(this, base, thisValue, property, value, ecmaMode);
-    return value;
-}
-
 RegisterID* BytecodeGenerator::emitGetPrivateName(RegisterID* dst, RegisterID* base, RegisterID* property)
 {
     OpGetPrivateName::emit(this, dst, base, property);
@@ -2980,9 +2978,9 @@ RegisterID* BytecodeGenerator::emitCreateAsyncGenerator(RegisterID* dst, Registe
     return dst;
 }
 
-RegisterID* BytecodeGenerator::emitCreateArgumentsButterflyExcludingThis(RegisterID* dst, RegisterID* targetFunction)
+RegisterID* BytecodeGenerator::emitCreateArgumentsButterfly(RegisterID* dst)
 {
-    OpCreateArgumentsButterflyExcludingThis::emit(this, dst, targetFunction);
+    OpCreateArgumentsButterfly::emit(this, dst);
     return dst;
 }
 
@@ -3929,11 +3927,14 @@ LabelScope* BytecodeGenerator::continueTarget(const Identifier& name)
     return nullptr;
 }
 
-void BytecodeGenerator::allocateScope()
+void BytecodeGenerator::allocateAndEmitScope()
 {
     m_scopeRegister = addVar();
     m_scopeRegister->ref();
     m_codeBlock->setScopeRegister(scopeRegister()->virtualRegister());
+    emitGetScope();
+    m_topMostScope = addVar();
+    move(m_topMostScope, scopeRegister());
 }
 
 TryData* BytecodeGenerator::pushTry(Label& start, Label& handlerLabel, HandlerType handlerType)
@@ -3999,7 +4000,7 @@ void BytecodeGenerator::restoreScopeRegister(int lexicalScopeIndex)
     }
     // Note that if we don't find a local scope in the current function/program,
     // we must grab the outer-most scope of this bytecode generation.
-    emitGetScope();
+    move(scopeRegister(), m_topMostScope);
 }
 
 void BytecodeGenerator::restoreScopeRegister()
@@ -4742,7 +4743,6 @@ void BytecodeGenerator::pushForInScope(RegisterID* localRegister, RegisterID* pr
         return;
     unsigned bodyBytecodeStartOffset = instructions().size();
     m_forInContextStack.append(adoptRef(*new ForInContext(localRegister, propertyNameRegister, propertyOffsetRegister, enumeratorRegister, modeRegister, baseVariable, bodyBytecodeStartOffset)));
-    disablePeepholeOptimization();
 }
 
 void BytecodeGenerator::popForInScope(RegisterID* localRegister)

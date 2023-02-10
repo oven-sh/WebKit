@@ -25,12 +25,16 @@
 
 #include "config.h"
 
-#include "CookieStorage.h"
 #include "NotImplemented.h"
+#if !USE(CFURLCONNECTION)
+#include "CookieStorage.h"
+#endif
 
 namespace WebCore {
 
+#if !USE(CFURLCONNECTION)
 void startObservingCookieChanges(CookieChangeCallbackPtr) { notImplemented(); }
 void stopObservingCookieChanges() { notImplemented(); }
+#endif
 
 } // namespace WebCore

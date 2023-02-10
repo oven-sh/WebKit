@@ -365,7 +365,6 @@ private:
 #if PLATFORM(IOS_FAMILY)
 extern NSString *WebArchivePboardType;
 extern NSString *UIColorPboardType;
-extern NSString *UIImagePboardType;
 #endif
 
 #if PLATFORM(MAC)

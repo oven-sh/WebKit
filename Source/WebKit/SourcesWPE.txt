@@ -110,7 +110,6 @@ UIProcess/WebViewportAttributes.cpp
 UIProcess/API/C/WKGrammarDetail.cpp
 UIProcess/API/C/WKViewportAttributes.cpp
 
-UIProcess/API/C/glib/WKContextConfigurationGlib.cpp
 UIProcess/API/C/glib/WKTextCheckerGLib.cpp
 
 UIProcess/API/C/wpe/WKView.cpp
@@ -215,6 +214,7 @@ UIProcess/geoclue/GeoclueGeolocationProvider.cpp
 UIProcess/glib/WebPageProxyGLib.cpp
 UIProcess/glib/WebProcessPoolGLib.cpp
 UIProcess/glib/WebProcessProxyGLib.cpp
+UIProcess/glib/WebsiteDataStoreGLib.cpp @no-unify
 
 UIProcess/gstreamer/WebPageProxyGStreamer.cpp
 
@@ -231,7 +231,6 @@ UIProcess/Launcher/libwpe/ProcessProviderLibWPE.cpp
 
 UIProcess/Notifications/glib/NotificationService.cpp
 
-UIProcess/WebsiteData/glib/WebsiteDataStoreGLib.cpp
 UIProcess/WebsiteData/soup/WebsiteDataStoreSoup.cpp
 UIProcess/WebsiteData/unix/WebsiteDataStoreUnix.cpp
 

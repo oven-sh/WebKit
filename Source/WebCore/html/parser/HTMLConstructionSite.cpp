@@ -68,7 +68,7 @@ static inline void setAttributes(Element& element, Vector<Attribute>& attributes
 {
     if (!scriptingContentIsAllowed(parserContentPolicy))
         element.stripScriptingAttributes(attributes);
-    element.parserSetAttributes(attributes.span());
+    element.parserSetAttributes(attributes);
     element.setHasDuplicateAttribute(hasDuplicateAttribute == HasDuplicateAttribute::Yes);
 }
 
@@ -123,6 +123,11 @@ static inline bool causesFosterParenting(const HTMLStackItem& item)
     default:
         return false;
     }
+}
+
+static inline bool isAllWhitespace(const String& string)
+{
+    return string.isAllSpecialCharacters<isHTMLSpace>();
 }
 
 static inline void insert(HTMLConstructionSiteTask& task)

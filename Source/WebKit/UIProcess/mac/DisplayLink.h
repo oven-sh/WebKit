@@ -71,7 +71,7 @@ public:
 
 private:
     static CVReturn displayLinkCallback(CVDisplayLinkRef, const CVTimeStamp*, const CVTimeStamp*, CVOptionFlags, CVOptionFlags*, void* data);
-    void notifyObserversDisplayDidRefresh();
+    void notifyObserversDisplayWasRefreshed();
 
     bool removeInfoForClientIfUnused(Client&) WTF_REQUIRES_LOCK(m_clientsLock);
 
@@ -98,19 +98,13 @@ private:
 
 class DisplayLinkCollection {
 public:
-    DisplayLink& displayLinkForDisplay(WebCore::PlatformDisplayID);
-    DisplayLink* existingDisplayLinkForDisplay(WebCore::PlatformDisplayID) const;
-
-    std::optional<unsigned> nominalFramesPerSecondForDisplay(WebCore::PlatformDisplayID);
-    void startDisplayLink(DisplayLink::Client&, DisplayLinkObserverID, WebCore::PlatformDisplayID, WebCore::FramesPerSecond preferredFramesPerSecond);
-    void stopDisplayLink(DisplayLink::Client&, DisplayLinkObserverID, WebCore::PlatformDisplayID);
-    void stopDisplayLinks(DisplayLink::Client&);
-    void setDisplayLinkPreferredFramesPerSecond(DisplayLink::Client&, DisplayLinkObserverID, WebCore::PlatformDisplayID, WebCore::FramesPerSecond preferredFramesPerSecond);
-    void setDisplayLinkForDisplayWantsFullSpeedUpdates(DisplayLink::Client&, WebCore::PlatformDisplayID, bool wantsFullSpeedUpdates);
-
-private:
     void add(std::unique_ptr<DisplayLink>&&);
 
+    DisplayLink* displayLinkForDisplay(WebCore::PlatformDisplayID) const;
+
+    const Vector<std::unique_ptr<DisplayLink>>& displayLinks() const { return m_displayLinks; }
+
+private:
     Vector<std::unique_ptr<DisplayLink>> m_displayLinks;
 };
 

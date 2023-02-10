@@ -32,20 +32,24 @@
 #include "FontCache.h"
 #include "FontCascade.h"
 #include "FontDescription.h"
-#include "LocaleCocoa.h"
 #include "Logging.h"
 #include "OpenTypeCG.h"
 #include "SharedBuffer.h"
 #include <CoreText/CoreText.h>
 #include <float.h>
-#include <pal/spi/cf/CoreTextSPI.h>
 #include <pal/spi/cg/CoreGraphicsSPI.h>
 #include <unicode/uchar.h>
 #include <wtf/Assertions.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/StdLibExtras.h>
 
+#if PLATFORM(COCOA)
+#include "LocaleCocoa.h"
 #include <pal/cf/CoreTextSoftLink.h>
+#include <pal/spi/cf/CoreTextSPI.h>
+#else
+#include <pal/spi/win/CoreTextSPIWin.h>
+#endif
 
 namespace WebCore {
 
@@ -790,14 +794,16 @@ bool Font::platformSupportsCodePoint(UChar32 character, std::optional<UChar32> v
 static bool hasGlyphsForCharacterRange(CTFontRef font, UniChar firstCharacter, UniChar lastCharacter, bool expectValidGlyphsForAllCharacters)
 {
     const unsigned numberOfCharacters = lastCharacter - firstCharacter + 1;
-    Vector<CGGlyph> glyphs(numberOfCharacters, 0);
+    Vector<CGGlyph> glyphs;
+    glyphs.fill(0, numberOfCharacters);
     CTFontGetGlyphsForCharacterRange(font, glyphs.begin(), CFRangeMake(firstCharacter, numberOfCharacters));
     glyphs.removeAll(0);
 
     if (glyphs.isEmpty())
         return false;
 
-    Vector<CGRect> boundingRects(glyphs.size(), CGRectZero);
+    Vector<CGRect> boundingRects;
+    boundingRects.fill(CGRectZero, glyphs.size());
     CTFontGetBoundingRectsForGlyphs(font, kCTFontOrientationDefault, glyphs.begin(), boundingRects.begin(), glyphs.size());
 
     unsigned validGlyphsCount = 0;

@@ -26,6 +26,7 @@
 
 #include <wtf/text/IntegerToStringConversion.h>
 #include <wtf/text/StringImpl.h>
+#include <wtf/text/ExternalStringImpl.h>
 
 #ifdef __OBJC__
 #include <objc/objc.h>
@@ -72,6 +73,11 @@ public:
     String(Ref<StringImpl>&&);
     String(RefPtr<StringImpl>&&);
 
+    String(ExternalStringImpl&);
+    String(ExternalStringImpl*);
+    String(Ref<ExternalStringImpl>&&);
+    String(RefPtr<ExternalStringImpl>&&);
+
     String(Ref<AtomStringImpl>&&);
     String(RefPtr<AtomStringImpl>&&);
 
@@ -104,8 +110,6 @@ public:
     unsigned length() const { return m_impl ? m_impl->length() : 0; }
     const LChar* characters8() const { return m_impl ? m_impl->characters8() : nullptr; }
     const UChar* characters16() const { return m_impl ? m_impl->characters16() : nullptr; }
-    Span<const LChar> span8() const { return { characters8(), length() }; }
-    Span<const UChar> span16() const { return { characters16(), length() }; }
 
     // Return characters8() or characters16() depending on CharacterType.
     template<typename CharacterType> const CharacterType* characters() const;
@@ -145,8 +149,6 @@ public:
 
     // Find a single character or string, also with match function & latin1 forms.
     size_t find(UChar character, unsigned start = 0) const { return m_impl ? m_impl->find(character, start) : notFound; }
-    size_t find(LChar character, unsigned start = 0) const { return m_impl ? m_impl->find(character, start) : notFound; }
-    size_t find(char character, unsigned start = 0) const { return m_impl ? m_impl->find(character, start) : notFound; }
 
     size_t find(StringView) const;
     size_t find(StringView, unsigned start) const;
@@ -442,6 +444,26 @@ inline String::String(StaticStringImpl* string)
 
 inline String::String(ASCIILiteral characters)
     : m_impl(characters.isNull() ? nullptr : RefPtr<StringImpl> { StringImpl::create(characters) })
+{
+}
+
+inline String::String(ExternalStringImpl& string)
+    : m_impl(&string)
+{
+}
+
+inline String::String(ExternalStringImpl* string)
+    : m_impl(string)
+{
+}
+
+inline String::String(Ref<ExternalStringImpl>&& string)
+    : m_impl(WTFMove(string))
+{
+}
+
+inline String::String(RefPtr<ExternalStringImpl>&& string)
+    : m_impl(WTFMove(string))
 {
 }
 

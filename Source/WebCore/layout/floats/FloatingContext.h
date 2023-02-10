@@ -73,13 +73,11 @@ public:
 
     FloatingState::FloatItem toFloatItem(const Box& floatBox) const;
 
-    bool isLogicalLeftPositioned(const Box& floatBox) const;
-
 private:
     std::optional<LayoutUnit> bottom(Clear) const;
 
-    bool isFloatingCandidateLeftPositionedInFloatingState(const Box&) const;
-    Clear clearInFloatingState(const Box&) const;
+    bool isFloaingCandidateLogicallyLeftPositioned(const Box&) const;
+    Clear logicalClear(const Box&) const;
 
     const LayoutState& layoutState() const { return m_floatingState.layoutState(); }
     const FormattingContext& formattingContext() const { return m_formattingContext; }

@@ -1068,11 +1068,7 @@ bool DocumentLoader::disallowWebArchive() const
         return false;
 
     // On purpose of maintaining existing tests.
-    auto* localFrame = dynamicDowncast<LocalFrame>(frame()->mainFrame());
-    if (!localFrame)
-        return false;
-
-    if (localFrame->loader().alwaysAllowLocalWebarchive())
+    if (frame()->mainFrame().loader().alwaysAllowLocalWebarchive())
         return false;
     return true;
 }

@@ -347,7 +347,7 @@ static NSString *runningBoardDomainForAssertionType(ProcessAssertionType asserti
     }
 }
 
-ProcessAssertion::ProcessAssertion(pid_t pid, const String& reason, ProcessAssertionType assertionType, const String& environmentIdentifier)
+ProcessAssertion::ProcessAssertion(pid_t pid, const String& reason, ProcessAssertionType assertionType)
     : m_assertionType(assertionType)
     , m_pid(pid)
     , m_reason(reason)
@@ -360,12 +360,7 @@ ProcessAssertion::ProcessAssertion(pid_t pid, const String& reason, ProcessAsser
         return;
     }
 
-    RBSTarget *target = nil;
-    if (environmentIdentifier.isEmpty())
-        target = [RBSTarget targetWithPid:pid];
-    else
-        target = [RBSTarget targetWithPid:pid environmentIdentifier:environmentIdentifier];
-        
+    RBSTarget *target = [RBSTarget targetWithPid:pid];
     RBSDomainAttribute *domainAttribute = [RBSDomainAttribute attributeWithDomain:runningBoardDomainForAssertionType(assertionType) name:runningBoardAssertionName];
     m_rbsAssertion = adoptNS([[RBSAssertion alloc] initWithExplanation:reason target:target attributes:@[domainAttribute]]);
 
@@ -462,8 +457,8 @@ bool ProcessAssertion::isValid() const
     return !m_wasInvalidated;
 }
 
-ProcessAndUIAssertion::ProcessAndUIAssertion(pid_t pid, const String& reason, ProcessAssertionType assertionType, const String& environmentIdentifier)
-    : ProcessAssertion(pid, reason, assertionType, environmentIdentifier)
+ProcessAndUIAssertion::ProcessAndUIAssertion(pid_t pid, const String& reason, ProcessAssertionType assertionType)
+    : ProcessAssertion(pid, reason, assertionType)
 {
 #if PLATFORM(IOS_FAMILY)
     updateRunInBackgroundCount();

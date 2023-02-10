@@ -276,14 +276,14 @@ void WorkerFileSystemStorageConnection::closeSyncAccessHandle(FileSystemHandleId
 
     BinarySemaphore semaphore;
     callOnMainThread([mainThreadConnection = m_mainThreadConnection, identifier, accessHandleIdentifier, &semaphore]() mutable {
-        mainThreadConnection->closeSyncAccessHandle(identifier, accessHandleIdentifier, [&semaphore]() {
+        mainThreadConnection->closeSyncAccessHandle(identifier, accessHandleIdentifier, [&semaphore](auto) {
             semaphore.signal();
         });
     });
     semaphore.wait();
 }
 
-void WorkerFileSystemStorageConnection::closeSyncAccessHandle(FileSystemHandleIdentifier, FileSystemSyncAccessHandleIdentifier, EmptyCallback&&)
+void WorkerFileSystemStorageConnection::closeSyncAccessHandle(FileSystemHandleIdentifier, FileSystemSyncAccessHandleIdentifier, VoidCallback&&)
 {
     ASSERT_NOT_REACHED();
 }

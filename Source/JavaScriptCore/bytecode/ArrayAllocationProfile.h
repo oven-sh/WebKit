@@ -32,10 +32,7 @@ namespace JSC {
 
 class ArrayAllocationProfile {
 public:
-    ArrayAllocationProfile()
-    {
-        initializeIndexingMode(ArrayWithUndecided);
-    }
+    ArrayAllocationProfile() = default;
 
     ArrayAllocationProfile(IndexingType recommendedIndexingMode)
     {
@@ -44,41 +41,39 @@ public:
 
     IndexingType selectIndexingTypeConcurrently()
     {
-        return current().indexingType();
+        return m_currentIndexingType;
     }
 
     IndexingType selectIndexingType()
     {
         ASSERT(!isCompilationThread());
-        JSArray* lastArray = m_storage.pointer();
-        if (lastArray && UNLIKELY(lastArray->indexingType() != current().indexingType()))
+        JSArray* lastArray = m_lastArray;
+        if (lastArray && UNLIKELY(lastArray->indexingType() != m_currentIndexingType))
             updateProfile();
-        return current().indexingType();
+        return m_currentIndexingType;
     }
 
     // vector length hint becomes [0, BASE_CONTIGUOUS_VECTOR_LEN_MAX].
     unsigned vectorLengthHintConcurrently()
     {
-        return current().vectorLength();
+        return m_largestSeenVectorLength;
     }
 
     unsigned vectorLengthHint()
     {
         ASSERT(!isCompilationThread());
-        JSArray* lastArray = m_storage.pointer();
-        unsigned largestSeenVectorLength = current().vectorLength();
-        if (lastArray && (largestSeenVectorLength != BASE_CONTIGUOUS_VECTOR_LEN_MAX) && UNLIKELY(lastArray->getVectorLength() > largestSeenVectorLength))
+        JSArray* lastArray = m_lastArray;
+        if (lastArray && (m_largestSeenVectorLength != BASE_CONTIGUOUS_VECTOR_LEN_MAX) && UNLIKELY(lastArray->getVectorLength() > m_largestSeenVectorLength))
             updateProfile();
-        return current().vectorLength();
+        return m_largestSeenVectorLength;
     }
     
     JSArray* updateLastAllocation(JSArray* lastArray)
     {
-        ASSERT(!isCompilationThread());
-        m_storage.setPointer(lastArray);
+        m_lastArray = lastArray;
         return lastArray;
     }
-
+    
     JS_EXPORT_PRIVATE void updateProfile();
 
     static IndexingType selectIndexingTypeFor(ArrayAllocationProfile* profile)
@@ -90,61 +85,18 @@ public:
     
     static JSArray* updateLastAllocationFor(ArrayAllocationProfile* profile, JSArray* lastArray)
     {
-        ASSERT(!isCompilationThread());
         if (profile)
             profile->updateLastAllocation(lastArray);
         return lastArray;
     }
 
-    void initializeIndexingMode(IndexingType recommendedIndexingMode)
-    {
-        m_storage.setType(current().withIndexingType(recommendedIndexingMode));
-    }
+    void initializeIndexingMode(IndexingType recommendedIndexingMode) { m_currentIndexingType = recommendedIndexingMode; }
 
 private:
-    struct IndexingTypeAndVectorLength {
-        static_assert(sizeof(IndexingType) <= sizeof(uint8_t));
-        static_assert(BASE_CONTIGUOUS_VECTOR_LEN_MAX <= UINT8_MAX);
-
-        // The format is: (IndexingType << 8) | VectorLength
-        static constexpr uint16_t vectorLengthMask = static_cast<uint8_t>(-1);
-        static constexpr uint16_t indexingTypeShift = 8;
-
-    public:
-        IndexingTypeAndVectorLength()
-            : m_bits(0)
-        {
-        }
-
-        IndexingTypeAndVectorLength(uint16_t bits)
-            : m_bits(bits)
-        {
-        }
-
-        IndexingTypeAndVectorLength(IndexingType indexingType, unsigned vectorLength)
-            : m_bits((indexingType << indexingTypeShift) | vectorLength)
-        {
-            ASSERT(vectorLength <= BASE_CONTIGUOUS_VECTOR_LEN_MAX);
-        }
-
-        operator uint16_t() const { return m_bits; }
-
-        IndexingType indexingType() const { return m_bits >> indexingTypeShift; }
-        unsigned vectorLength() const { return m_bits & vectorLengthMask; }
-
-        IndexingTypeAndVectorLength withIndexingType(IndexingType indexingType) WARN_UNUSED_RETURN
-        {
-            return IndexingTypeAndVectorLength(indexingType, vectorLength());
-        }
-
-    private:
-        uint16_t m_bits;
-    };
     
-    IndexingTypeAndVectorLength current() const { return m_storage.type(); }
-
-    using Storage = CompactPointerTuple<JSArray*, uint16_t>;
-    Storage m_storage;
+    IndexingType m_currentIndexingType { ArrayWithUndecided };
+    unsigned m_largestSeenVectorLength { 0 };
+    JSArray* m_lastArray { nullptr };
 };
 
 } // namespace JSC

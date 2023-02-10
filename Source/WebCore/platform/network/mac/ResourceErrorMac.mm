@@ -120,8 +120,8 @@ static RetainPtr<NSError> createNSErrorFromResourceErrorBase(const ResourceError
 
 ResourceError::ResourceError(NSError *nsError)
     : ResourceErrorBase(Type::Null)
-    , m_platformError(nsError)
     , m_dataIsUpToDate(false)
+    , m_platformError(nsError)
 {
     mapPlatformError();
 }
@@ -141,38 +141,6 @@ const String& ResourceError::getCFErrorDomainCFNetwork() const
 {
     static const NeverDestroyed<String> errorDomain(kCFErrorDomainCFNetwork);
     return errorDomain.get();
-}
-
-ResourceError::ErrorRecoveryMethod ResourceError::errorRecoveryMethod() const
-{
-    lazyInit();
-
-    if ([m_domain isEqualToString:NSURLErrorDomain]) {
-        switch (m_errorCode) {
-        case NSURLErrorTimedOut:
-        case NSURLErrorCannotFindHost:
-        case NSURLErrorCannotConnectToHost:
-        case NSURLErrorNetworkConnectionLost:
-        case NSURLErrorHTTPTooManyRedirects:
-        case NSURLErrorResourceUnavailable:
-        case NSURLErrorRedirectToNonExistentLocation:
-        case NSURLErrorBadServerResponse:
-        case NSURLErrorZeroByteResource:
-        case NSURLErrorCannotDecodeRawData:
-        case NSURLErrorCannotDecodeContentData:
-        case NSURLErrorCannotParseResponse:
-        case NSURLErrorSecureConnectionFailed:
-        case NSURLErrorServerCertificateHasBadDate:
-        case NSURLErrorServerCertificateUntrusted:
-        case NSURLErrorServerCertificateHasUnknownRoot:
-        case NSURLErrorServerCertificateNotYetValid:
-        case NSURLErrorClientCertificateRejected:
-        case NSURLErrorClientCertificateRequired:
-            if (m_failingURL.protocolIs("https"_s) && (!m_failingURL.port() || WTF::isDefaultPortForProtocol(m_failingURL.port().value(), m_failingURL.protocol())))
-                return ResourceError::ErrorRecoveryMethod::HTTPFallback;
-        }
-    }
-    return ResourceError::ErrorRecoveryMethod::NoRecovery;
 }
 
 void ResourceError::mapPlatformError()

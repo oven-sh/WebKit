@@ -8,7 +8,6 @@ class Test extends LabeledObject {
         this._parentId = object.parentId;
         this._childTests = [];
         this._metrics = [];
-        this._hidden = object.hidden;
         this._computePathLazily = new LazilyEvaluatedFunction(this._computePath.bind(this));
 
         if (!this._parentId)
@@ -88,7 +87,6 @@ class Test extends LabeledObject {
 
     addChildTest(test) { this._childTests.push(test); }
     addMetric(metric) { this._metrics.push(metric); }
-    isHidden() { return this._hidden; }
 }
 
 if (typeof module != 'undefined')

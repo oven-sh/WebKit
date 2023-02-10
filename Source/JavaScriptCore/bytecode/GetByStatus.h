@@ -42,13 +42,10 @@ class CodeBlock;
 class JSModuleEnvironment;
 class JSModuleNamespaceObject;
 class ModuleNamespaceAccessCase;
-class ProxyObjectAccessCase;
 class StructureStubInfo;
 
-DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(GetByStatus);
-
 class GetByStatus final {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(GetByStatus);
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     enum State : uint8_t {
         // It's uncached so we have no information.
@@ -60,8 +57,6 @@ public:
         Custom,
         // It's cached for an access to a module namespace object's binding.
         ModuleNamespace,
-        // It's cached for an access to a proxy object's binding.
-        ProxyObject,
         // It will likely take the slow path.
         LikelyTakesSlowPath,
         // It's known to take slow path. We also observed that the slow path was taken on StructureStubInfo.
@@ -102,7 +97,6 @@ public:
     bool isSimple() const { return m_state == Simple; }
     bool isCustom() const { return m_state == Custom; }
     bool isModuleNamespace() const { return m_state == ModuleNamespace; }
-    bool isProxyObject() const { return m_state == ProxyObject; }
 
     size_t numVariants() const { return m_variants.size(); }
     const Vector<GetByVariant, 1>& variants() const { return m_variants; }
@@ -140,7 +134,6 @@ private:
     
 #if ENABLE(JIT)
     GetByStatus(const ModuleNamespaceAccessCase&);
-    GetByStatus(const ProxyObjectAccessCase&);
     static GetByStatus computeForStubInfoWithoutExitSiteFeedback(
         const ConcurrentJSLocker&, CodeBlock* profiledBlock, StructureStubInfo*, CallLinkStatus::ExitSiteData);
 #endif

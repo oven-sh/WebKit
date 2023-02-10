@@ -406,15 +406,6 @@ macro dispatchOp(size, opcodeName)
     genericDispatchOpJS(dispatch, size, opcodeName)
 end
 
-macro superSamplerBegin(scratch)
-    leap _g_superSamplerCount, scratch
-    addi 1, [scratch]
-end
-
-macro superSamplerEnd(scratch)
-    leap _g_superSamplerCount, scratch
-    subi 1, [scratch]
-end
 
 macro getu(size, opcodeStruct, fieldName, dst)
     size(getuOperandNarrow, getuOperandWide16JS, getuOperandWide32JS, macro (getu)
@@ -2125,7 +2116,7 @@ macro slowPathOp(opcodeName)
 end
 
 slowPathOp(create_cloned_arguments)
-slowPathOp(create_arguments_butterfly_excluding_this)
+slowPathOp(create_arguments_butterfly)
 slowPathOp(create_direct_arguments)
 slowPathOp(create_lexical_environment)
 slowPathOp(create_rest)
@@ -2194,6 +2185,8 @@ llintSlowPathOp(put_getter_setter_by_id)
 llintSlowPathOp(put_setter_by_id)
 llintSlowPathOp(put_setter_by_val)
 llintSlowPathOp(set_function_name)
+llintSlowPathOp(super_sampler_begin)
+llintSlowPathOp(super_sampler_end)
 llintSlowPathOp(throw)
 llintSlowPathOp(get_by_id_with_this)
 
@@ -2334,7 +2327,7 @@ llintOp(op_loop_hint, OpLoopHint, macro (unused, unused, dispatch)
 end)
 
 
-macro checkTraps(dispatch)
+llintOp(op_check_traps, OpCheckTraps, macro (unused, unused, dispatch)
     loadp CodeBlock[cfr], t1
     loadp CodeBlock::m_vm[t1], t1
     loadi VM::m_traps+VMTraps::m_trapBits[t1], t0
@@ -2347,10 +2340,6 @@ macro checkTraps(dispatch)
     jmp .afterHandlingTraps
 .throwHandler:
     jmp _llint_throw_from_slow_path_trampoline
-end
-
-llintOp(op_check_traps, OpCheckTraps, macro (unused, unused, dispatch)
-    checkTraps(dispatch)
 end)
 
 
@@ -2519,16 +2508,6 @@ llintOp(op_debug, OpDebug, macro (unused, unused, dispatch)
     dispatch()
 end)
 
-
-llintOp(op_super_sampler_begin, OpSuperSamplerBegin, macro (unused, unused, dispatch)
-    superSamplerBegin(t1)
-    dispatch()
-end)
-
-llintOp(op_super_sampler_end, OpSuperSamplerEnd, macro (unused, unused, dispatch)
-    superSamplerEnd(t1)
-    dispatch()
-end)
 
 op(llint_native_call_trampoline, macro ()
     nativeCallTrampoline(NativeExecutable::m_function)

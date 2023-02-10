@@ -70,7 +70,7 @@ public:
 
     void forceRepaint();
 
-    WebCore::DisplayRefreshMonitor& displayRefreshMonitor() const;
+    RefPtr<WebCore::DisplayRefreshMonitor> displayRefreshMonitor(WebCore::PlatformDisplayID);
 
     void frameComplete();
     void targetRefreshRateDidChange(unsigned);

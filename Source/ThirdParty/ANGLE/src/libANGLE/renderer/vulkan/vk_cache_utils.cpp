@@ -2705,7 +2705,11 @@ angle::Result InitializePipelineFromLibraries(Context *context,
     // Nothing in the create info, everything comes from the libraries.
     VkGraphicsPipelineCreateInfo createInfo = {};
     createInfo.sType                        = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    createInfo.layout                       = pipelineLayout.getHandle();
+
+    // Note: the pipeline layout is not necessary when linking libraries as ANGLE does not use
+    // VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT.  However, some drivers have come to
+    // expect a non-null value for the layout, so the layout is provided here as a workaround.
+    createInfo.layout = pipelineLayout.getHandle();
 
     const std::array<VkPipeline, 3> pipelines = {
         vertexInputPipeline.getPipeline().getHandle(),

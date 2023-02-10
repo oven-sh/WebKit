@@ -43,7 +43,7 @@ class DatabaseDetails;
 class DatabaseTaskSynchronizer;
 class DatabaseThread;
 class SecurityOrigin;
-class SecurityOriginData;
+struct SecurityOriginData;
 
 class DatabaseContext final : public ThreadSafeRefCounted<DatabaseContext>, private ActiveDOMObject {
 public:

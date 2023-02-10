@@ -80,6 +80,10 @@
 #import <wtf/URL.h>
 #import <wtf/cocoa/VectorCocoa.h>
 
+#if PLATFORM(MAC)
+#import <WebCore/RuntimeApplicationChecks.h>
+#endif
+
 #if PLATFORM(IOS_FAMILY) && !PLATFORM(MACCATALYST)
 #import <pal/ios/ManagedConfigurationSoftLink.h>
 #import <pal/spi/ios/ManagedConfigurationSPI.h>
@@ -518,8 +522,20 @@ void NavigationState::NavigationClient::decidePolicyForNavigationAction(WebPageP
     if (delegateHasWebpagePreferences) {
         if (m_navigationState->m_navigationDelegateMethods.webViewDecidePolicyForNavigationActionWithPreferencesDecisionHandler)
             [navigationDelegate webView:m_navigationState->m_webView decidePolicyForNavigationAction:wrapper(navigationAction) preferences:wrapper(defaultWebsitePolicies) decisionHandler:makeBlockPtr(WTFMove(decisionHandlerWithPreferencesOrPolicies)).get()];
-        else
-            [(id<WKNavigationDelegatePrivate>)navigationDelegate _webView:m_navigationState->m_webView decidePolicyForNavigationAction:wrapper(navigationAction) preferences:wrapper(defaultWebsitePolicies) userInfo:nil decisionHandler:makeBlockPtr(WTFMove(decisionHandlerWithPreferencesOrPolicies)).get()];
+        else {
+            id<NSSecureCoding> userInfo = nil;
+#if PLATFORM(MAC)
+            // This is only here for binary compatibility with old Safari builds.
+            // FIXME: Remove this after the next public Safari release after 11/16/22.
+            if (MacApplication::isSafari()) {
+                userInfo = @{
+                    @"CanHandleRequest":@(navigationAction->canHandleRequest()),
+                    @"isProcessingUserGesture":@(navigationAction->isProcessingUserGesture())
+                };
+            }
+#endif
+            [(id<WKNavigationDelegatePrivate>)navigationDelegate _webView:m_navigationState->m_webView decidePolicyForNavigationAction:wrapper(navigationAction) preferences:wrapper(defaultWebsitePolicies) userInfo:userInfo decisionHandler:makeBlockPtr(WTFMove(decisionHandlerWithPreferencesOrPolicies)).get()];
+        }
     } else {
         auto decisionHandler = [decisionHandlerWithPreferencesOrPolicies = WTFMove(decisionHandlerWithPreferencesOrPolicies)] (WKNavigationActionPolicy actionPolicy) mutable {
             decisionHandlerWithPreferencesOrPolicies(actionPolicy, nil);
@@ -711,7 +727,7 @@ void NavigationState::NavigationClient::didCancelClientRedirect(WebPageProxy& pa
     [static_cast<id <WKNavigationDelegatePrivate>>(navigationDelegate) _webViewDidCancelClientRedirect:m_navigationState->m_webView];
 }
 
-static RetainPtr<NSError> createErrorWithRecoveryAttempter(WKWebView *webView, const FrameInfoData& frameInfo, NSError *originalError, bool isHTTPSOnlyError = false)
+static RetainPtr<NSError> createErrorWithRecoveryAttempter(WKWebView *webView, const FrameInfoData& frameInfo, NSError *originalError)
 {
     auto frameHandle = API::FrameHandle::create(frameInfo.frameID ? *frameInfo.frameID : FrameIdentifier { });
 
@@ -721,11 +737,6 @@ static RetainPtr<NSError> createErrorWithRecoveryAttempter(WKWebView *webView, c
 
     if (NSDictionary *originalUserInfo = originalError.userInfo)
         [userInfo addEntriesFromDictionary:originalUserInfo];
-
-    if (isHTTPSOnlyError) {
-        RELEASE_LOG(Loading, "NavigationState: Including HTTPS Only HTTP fallback signal.");
-        [userInfo setValue:@"HTTPSOnlyHTTPFallback" forKey:@"errorRecoveryMethod"];
-    }
 
     return adoptNS([[NSError alloc] initWithDomain:originalError.domain code:originalError.code userInfo:userInfo.get()]);
 }
@@ -739,9 +750,7 @@ void NavigationState::NavigationClient::didFailProvisionalNavigationWithError(We
     if (!navigationDelegate)
         return;
 
-    bool isHTTPSOnlyEnabled = navigation && navigation->websitePolicies() && navigation->websitePolicies()->networkConnectionIntegrityPolicy().contains(WebCore::NetworkConnectionIntegrity::HTTPSOnly) && !navigation->websitePolicies()->networkConnectionIntegrityPolicy().contains(WebCore::NetworkConnectionIntegrity::HTTPSOnlyExplicitlyBypassedForDomain);
-    bool isHTTPSOnlyError = isHTTPSOnlyEnabled && error.errorRecoveryMethod() == ResourceError::ErrorRecoveryMethod::HTTPFallback && frameInfo.isMainFrame;
-    auto errorWithRecoveryAttempter = createErrorWithRecoveryAttempter(m_navigationState->m_webView, frameInfo, error, isHTTPSOnlyError);
+    auto errorWithRecoveryAttempter = createErrorWithRecoveryAttempter(m_navigationState->m_webView, frameInfo, error);
 
     if (frameInfo.isMainFrame) {
         // FIXME: We should assert that navigation is not null here, but it's currently null for some navigations through the back/forward cache.

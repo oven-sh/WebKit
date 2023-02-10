@@ -320,10 +320,7 @@ void DOMWindow::dispatchAllPendingUnloadEvents()
 // 5) Translate the window rect coordinates to be within the coordinate space of the screen.
 FloatRect DOMWindow::adjustWindowRect(Page& page, const FloatRect& pendingChanges)
 {
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(page.mainFrame());
-    if (!localMainFrame)
-        return FloatRect();
-    FloatRect screen = screenAvailableRect(localMainFrame->view());
+    FloatRect screen = screenAvailableRect(page.mainFrame().view());
     FloatRect window = page.chrome().windowRect();
 
     // Make sure we're in a valid state before adjusting dimensions.
@@ -1264,11 +1261,7 @@ int DOMWindow::outerHeight() const
         return innerHeight();
 
 #if PLATFORM(IOS_FAMILY)
-    auto* localFrame = dynamicDowncast<LocalFrame>(frame->mainFrame());
-    if (!localFrame)
-        return 0;
-
-    RefPtr view = frame->isMainFrame() ? frame->view() : localFrame->view();
+    RefPtr view = frame->isMainFrame() ? frame->view() : frame->mainFrame().view();
     if (!view)
         return 0;
 
@@ -1292,11 +1285,7 @@ int DOMWindow::outerWidth() const
         return innerWidth();
 
 #if PLATFORM(IOS_FAMILY)
-    auto* localFrame = dynamicDowncast<LocalFrame>(frame->mainFrame());
-    if (!localFrame)
-        return 0;
-
-    RefPtr view = frame->isMainFrame() ? frame->view() : localFrame->view();
+    RefPtr view = frame->isMainFrame() ? frame->view() : frame->mainFrame().view();
     if (!view)
         return 0;
 
@@ -1823,11 +1812,7 @@ void DOMWindow::moveTo(float x, float y) const
 
     auto* page = frame()->page();
     FloatRect fr = page->chrome().windowRect();
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(page->mainFrame());
-    if (!localMainFrame)
-        return;
-
-    FloatRect sr = screenAvailableRect(localMainFrame->view());
+    FloatRect sr = screenAvailableRect(page->mainFrame().view());
     fr.setLocation(sr.location());
     FloatRect update = fr;
     update.move(x, y);
@@ -2003,11 +1988,7 @@ bool DOMWindow::isSameSecurityOriginAsMainFrame() const
     if (frame->isMainFrame())
         return true;
 
-    auto* localFrame = dynamicDowncast<LocalFrame>(frame->mainFrame());
-    if (!localFrame)
-        return false;
-
-    Document* mainFrameDocument = localFrame->document();
+    Document* mainFrameDocument = frame->mainFrame().document();
 
     if (mainFrameDocument && document()->securityOrigin().isSameOriginDomain(mainFrameDocument->securityOrigin()))
         return true;
@@ -2667,12 +2648,7 @@ ExceptionOr<RefPtr<WindowProxy>> DOMWindow::open(DOMWindow& activeWindow, DOMWin
 #if ENABLE(CONTENT_EXTENSIONS)
     auto* page = firstFrame->page();
     RefPtr firstFrameDocument = firstFrame->document();
-
-    auto* localFrame = dynamicDowncast<LocalFrame>(firstFrame->mainFrame());
-    if (!localFrame)
-        return RefPtr<WindowProxy> { nullptr };
-
-    RefPtr mainFrameDocument = localFrame->document();
+    RefPtr mainFrameDocument = firstFrame->mainFrame().document();
     RefPtr mainFrameDocumentLoader = mainFrameDocument ? mainFrameDocument->loader() : nullptr;
     if (firstFrameDocument && page && mainFrameDocumentLoader) {
         auto results = page->userContentProvider().processContentRuleListsForLoad(*page, firstFrameDocument->completeURL(urlString), ContentExtensions::ResourceType::Popup, *mainFrameDocumentLoader);

@@ -39,7 +39,6 @@
 - (void)_web_setLayerTopLeftPosition:(CGPoint)position;
 - (BOOL)_web_maskContainsPoint:(CGPoint)point;
 - (BOOL)_web_maskMayIntersectRect:(CGRect)rect;
-- (void)_web_clearContents;
 
 @end
 

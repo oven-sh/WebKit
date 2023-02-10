@@ -41,7 +41,7 @@ class DatabaseTaskSynchronizer;
 class Document;
 class Exception;
 class SecurityOrigin;
-class SecurityOriginData;
+struct SecurityOriginData;
 
 class DatabaseManager {
     WTF_MAKE_NONCOPYABLE(DatabaseManager);

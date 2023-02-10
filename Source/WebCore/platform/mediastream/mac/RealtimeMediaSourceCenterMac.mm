@@ -36,7 +36,7 @@ bool RealtimeMediaSourceCenter::shouldInterruptAudioOnPageVisibilityChange()
 {
 #if PLATFORM(IOS)
     NSArray *modes = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"UIBackgroundModes"];
-    if (!modes || ![modes isKindOfClass:NSArray.class])
+    if (!modes)
         return true;
     
     int modesCount = [modes count];

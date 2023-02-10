@@ -51,7 +51,7 @@ std::unique_ptr<IOSurface> IOSurface::create(IOSurfacePool* pool, IntSize size, 
 
     if (pool) {
         if (auto cachedSurface = pool->takeSurface(size, colorSpace, pixelFormat)) {
-            cachedSurface->releasePlatformContext();
+            cachedSurface->releaseGraphicsContext();
             LOG_WITH_STREAM(IOSurface, stream << "IOSurface::create took from pool: " << *cachedSurface);
             return cachedSurface;
         }
@@ -417,6 +417,17 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     return m_cgContext.get();
 }
 
+GraphicsContext& IOSurface::ensureGraphicsContext()
+{
+    if (m_graphicsContext)
+        return *m_graphicsContext;
+
+    m_graphicsContext = makeUnique<GraphicsContextCG>(ensurePlatformContext());
+    m_graphicsContext->setIsAcceleratedContext(true);
+
+    return *m_graphicsContext;
+}
+
 SetNonVolatileResult IOSurface::state() const
 {
     uint32_t previousState = 0;
@@ -477,8 +488,9 @@ bool IOSurface::isInUse() const
     return IOSurfaceIsInUse(m_surface.get());
 }
 
-void IOSurface::releasePlatformContext()
+void IOSurface::releaseGraphicsContext()
 {
+    m_graphicsContext = nullptr;
     m_cgContext = nullptr;
 }
 

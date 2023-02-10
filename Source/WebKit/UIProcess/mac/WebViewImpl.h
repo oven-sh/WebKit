@@ -28,7 +28,6 @@
 #if PLATFORM(MAC)
 
 #include "DrawingAreaInfo.h"
-#include "EditorState.h"
 #include "ImageAnalysisUtilities.h"
 #include "PDFPluginIdentifier.h"
 #include "ShareableBitmap.h"
@@ -570,7 +569,6 @@ public:
     void keyUp(NSEvent *);
     void keyDown(NSEvent *);
     void flagsChanged(NSEvent *);
-    bool markedTextInputEnabled() const;
 
     // Override this so that AppKit will send us arrow keys as key down events so we can
     // support them via the key bindings mechanism.
@@ -761,10 +759,6 @@ private:
     bool mightBeginScrollWhileInactive();
 
     void handleRequestedCandidates(NSInteger sequenceNumber, NSArray<NSTextCheckingResult *> *candidates);
-    void showMarkedTextForCandidates(NSArray<NSTextCheckingResult *> *);
-    void showMarkedTextForCandidate(NSTextCheckingResult *, NSRange, NSRange);
-    NSTextCheckingTypes getTextCheckingTypes() const;
-
     void flushPendingMouseEventCallbacks();
 
     void viewWillMoveToWindowImpl(NSWindow *);
@@ -779,8 +773,6 @@ private:
     CocoaImageAnalyzer *ensureImageAnalyzer();
     int32_t processImageAnalyzerRequest(CocoaImageAnalyzerRequest *, CompletionHandler<void(CocoaImageAnalysis *, NSError *)>&&);
 #endif
-
-    std::optional<EditorState::PostLayoutData> postLayoutDataForContentEditable();
 
     WeakObjCPtr<NSView<WebViewImplDelegate>> m_view;
     std::unique_ptr<PageClient> m_pageClient;

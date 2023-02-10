@@ -4,9 +4,9 @@
   "include/platform/FeaturesGL_autogen.h":
     "38325ab28fca006d06f46d1ad4ad2d63",
   "include/platform/FeaturesMtl_autogen.h":
-    "d023eb4ecde2e8e720e523dac17d941a",
+    "6fe5588c37d4e177fe6009efac2425b8",
   "include/platform/FeaturesVk_autogen.h":
-    "599efeb87ac2716630c5223ce7a99a33",
+    "da481ae62f74e9e46ae5d8c79d058006",
   "include/platform/FrontendFeatures_autogen.h":
     "be41034e621326dd51e86b139705ea39",
   "include/platform/d3d_features.json":
@@ -18,11 +18,11 @@
   "include/platform/gl_features.json":
     "83005189979f62258c7799ec6a6a7572",
   "include/platform/mtl_features.json":
-    "7fc2b5d6ad1fb4c092a72c8852a35036",
+    "0734ff4029e1db1a0c242666bd88653a",
   "include/platform/vk_features.json":
-    "732667e521aab086848b7b969a159931",
+    "08d68ffafdb43e2e44f0d0d012683a3d",
   "util/angle_features_autogen.cpp":
-    "ec80516cbe535ebe282876805ff35b33",
+    "f6b64b287ab8fc5684da509c65121e28",
   "util/angle_features_autogen.h":
-    "7d2636650b6fdc89ac0b115bfdfa116f"
+    "576663d918a9ce1cdb29756768bcd5e5"
 }

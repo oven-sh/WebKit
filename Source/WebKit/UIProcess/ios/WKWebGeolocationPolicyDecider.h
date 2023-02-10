@@ -28,7 +28,7 @@
 OBJC_CLASS WKWebView;
 
 namespace WebCore {
-class SecurityOriginData;
+struct SecurityOriginData;
 }
 
 @protocol WKWebAllowDenyPolicyListener <NSObject>

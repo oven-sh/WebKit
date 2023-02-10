@@ -79,8 +79,6 @@ bool Pipeline::uses(const TVariable &var) const
                 case TQualifier::EvqFragColor:
                 case TQualifier::EvqFragData:
                 case TQualifier::EvqFragDepth:
-                case TQualifier::EvqSecondaryFragColorEXT:
-                case TQualifier::EvqSecondaryFragDataEXT:
                 case TQualifier::EvqSampleMask:
                     return true;
                 default:

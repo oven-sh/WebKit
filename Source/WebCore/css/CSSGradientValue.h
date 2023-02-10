@@ -77,7 +77,7 @@ inline bool operator==(const CSSGradientColorInterpolationMethod& a, const CSSGr
 
 // MARK: Gradient Definitions.
 
-using CSSGradientPosition = std::pair<Ref<CSSValue>, Ref<CSSValue>>;
+using CSSGradientPosition = std::pair<Ref<CSSPrimitiveValue>, Ref<CSSPrimitiveValue>>;
 
 // MARK: - Linear.
 
@@ -182,10 +182,10 @@ bool operator==(const CSSPrefixedLinearGradientValue::Data&, const CSSPrefixedLi
 class CSSDeprecatedLinearGradientValue final : public CSSValue {
 public:
     struct Data {
-        Ref<CSSValue> firstX;
-        Ref<CSSValue> firstY;
-        Ref<CSSValue> secondX;
-        Ref<CSSValue> secondY;
+        Ref<CSSPrimitiveValue> firstX;
+        Ref<CSSPrimitiveValue> firstY;
+        Ref<CSSPrimitiveValue> secondX;
+        Ref<CSSPrimitiveValue> secondY;
     };
 
     static Ref<CSSDeprecatedLinearGradientValue> create(Data data, CSSGradientColorInterpolationMethod colorInterpolationMethod, CSSGradientColorStopList stops)
@@ -364,10 +364,10 @@ bool operator==(const CSSPrefixedRadialGradientValue::Data&, const CSSPrefixedRa
 class CSSDeprecatedRadialGradientValue final : public CSSValue {
 public:
     struct Data {
-        Ref<CSSValue> firstX;
-        Ref<CSSValue> firstY;
-        Ref<CSSValue> secondX;
-        Ref<CSSValue> secondY;
+        Ref<CSSPrimitiveValue> firstX;
+        Ref<CSSPrimitiveValue> firstY;
+        Ref<CSSPrimitiveValue> secondX;
+        Ref<CSSPrimitiveValue> secondY;
         Ref<CSSPrimitiveValue> firstRadius;
         Ref<CSSPrimitiveValue> secondRadius;
     };

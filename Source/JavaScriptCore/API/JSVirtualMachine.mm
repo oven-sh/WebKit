@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -36,6 +36,7 @@
 #import "JSVirtualMachineInternal.h"
 #import "JSVirtualMachinePrivate.h"
 #import "JSWrapperMap.h"
+#import "SigillCrashAnalyzer.h"
 #import "SlotVisitorInlines.h"
 #import <mutex>
 #import <wtf/Lock.h>
@@ -173,7 +174,7 @@ static id getInternalObjcObject(id object)
         if (!object || !owner)
             return;
 
-        JSC::JSLockHolder locker(toJS(m_group));
+
         if ([self isOldExternalObject:owner] && ![self isOldExternalObject:object])
             [self addExternalRememberedObject:owner];
 
@@ -204,7 +205,7 @@ static id getInternalObjcObject(id object)
         if (!object || !owner)
             return;
 
-        JSC::JSLockHolder locker(toJS(m_group));
+
 
         Locker externalDataMutexLocker { m_externalDataMutex };
         NSMapTable *ownedObjects = [m_externalObjectGraph objectForKey:owner];
@@ -272,7 +273,7 @@ JSContextGroupRef getGroupFromVirtualMachine(JSVirtualMachine *virtualMachine)
 - (void)shrinkFootprintWhenIdle
 {
     JSC::VM* vm = toJS(m_group);
-    JSC::JSLockHolder locker(vm);
+
     vm->shrinkFootprintWhenIdle();
 }
 

@@ -699,11 +699,7 @@ void WebAutomationSessionProxy::computeElementLayout(WebCore::PageIdentifier pag
     }
 
     WebCore::FrameView* frameView = frame->coreFrame()->view();
-
-    auto* localFrame = dynamicDowncast<LocalFrame>(frame->coreFrame()->mainFrame());
-    if (!localFrame)
-        return;
-    WebCore::FrameView* mainView = localFrame->view();
+    WebCore::FrameView* mainView = frame->coreFrame()->mainFrame().view();
 
     WebCore::FloatRect resultElementBounds;
     std::optional<WebCore::IntPoint> resultInViewCenterPoint;
@@ -931,10 +927,7 @@ void WebAutomationSessionProxy::takeScreenshot(WebCore::PageIdentifier pageID, s
         ASSERT(page);
         auto* frame = frameID ? WebProcess::singleton().webFrame(*frameID) : &page->mainWebFrame();
         ASSERT(frame && frame->coreFrame());
-        auto* localMainFrame = dynamicDowncast<LocalFrame>(frame->coreFrame()->mainFrame());
-        if (!localMainFrame)
-            return;
-        auto snapshotRect = WebCore::IntRect(localMainFrame->view()->clientToDocumentRect(rect));
+        auto snapshotRect = WebCore::IntRect(frame->coreFrame()->mainFrame().view()->clientToDocumentRect(rect));
         RefPtr<WebImage> image = page->scaledSnapshotWithOptions(snapshotRect, 1, SnapshotOptionsShareable);
         if (!image) {
             String screenshotErrorType = Inspector::Protocol::AutomationHelpers::getEnumConstantValue(Inspector::Protocol::Automation::ErrorMessage::ScreenshotError);
@@ -989,14 +982,7 @@ void WebAutomationSessionProxy::snapshotRectForScreenshot(WebCore::PageIdentifie
         return;
     }
 
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(frame->coreFrame()->mainFrame());
-    if (!localMainFrame) {
-        String internalErrorType = Inspector::Protocol::AutomationHelpers::getEnumConstantValue(Inspector::Protocol::Automation::ErrorMessage::InternalError);
-        completionHandler(internalErrorType, { });
-        return;
-    }
-
-    completionHandler(std::nullopt, WebCore::IntRect(localMainFrame->view()->documentToClientRect(snapshotRect)));
+    completionHandler(std::nullopt, WebCore::IntRect(frame->coreFrame()->mainFrame().view()->documentToClientRect(snapshotRect)));
 }
 
 void WebAutomationSessionProxy::getCookiesForFrame(WebCore::PageIdentifier pageID, std::optional<WebCore::FrameIdentifier> frameID, CompletionHandler<void(std::optional<String>, Vector<WebCore::Cookie>)>&& completionHandler)

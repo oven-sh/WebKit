@@ -58,7 +58,7 @@ struct _WebKitFramePrivate {
     CString uri;
 };
 
-WEBKIT_DEFINE_FINAL_TYPE(WebKitFrame, webkit_frame, G_TYPE_OBJECT, GObject)
+WEBKIT_DEFINE_TYPE(WebKitFrame, webkit_frame, G_TYPE_OBJECT)
 
 static void webkit_frame_class_init(WebKitFrameClass*)
 {

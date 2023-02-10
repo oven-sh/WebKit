@@ -1,4 +1,4 @@
-# Copyright (C) 2021-2023 Apple Inc. All rights reserved.
+# Copyright (C) 2021-2022 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -122,12 +122,6 @@ class PullRequest(Command):
             help='Disable automatic bug creation and updates',
             action=arguments.NoAction,
         )
-        parser.add_argument(
-            '--security', '--redacted',
-            dest='redact', action='store_true',
-            default=False,
-            help='Force the a PR onto a secure remote, regardless of the current branch and issue state.',
-        )
 
     @classmethod
     def create_commit(cls, args, repository, **kwargs):
@@ -197,14 +191,6 @@ class PullRequest(Command):
 
     @classmethod
     def pull_request_branch_point(cls, repository, args, **kwargs):
-        if args.redact and len(repository.source_remotes()) <= 1:
-            sys.stderr.write('No secure remotes found in the current checkout\n')
-            return None
-        if args.redact and repository.source_remotes()[0] == args.remote:
-            sys.stderr.write("'{}' is not a secure remote\n".format(args.remote))
-            sys.stderr.write("'--remote={}' is incompatible with '--redacted'\n".format(args.remote))
-            return None
-
         branch_point = Branch.branch_point(repository)
         source_remote = args.remote
         if not source_remote:
@@ -236,9 +222,6 @@ class PullRequest(Command):
                 args.remote = source_remote
         if not source_remote:
             source_remote = repository.default_remote
-        if args.redact and source_remote == repository.default_remote:
-            source_remote = repository.source_remotes()[-1]
-            args.remote = source_remote
 
         if repository.branch is None or repository.branch in repository.DEFAULT_BRANCHES or \
                 repository.PROD_BRANCHES.match(repository.branch) or \
@@ -375,27 +358,18 @@ class PullRequest(Command):
             return 1
 
         commits = list(repository.commits(begin=dict(hash=branch_point.hash), end=dict(branch=repository.branch)))
-        issues = [
-            issue
-            for commit in commits
-            for issue in commit.issues
-        ]
+        issues = commits[0].issues
 
         radar_issue = next(iter(filter(lambda issue: isinstance(issue.tracker, radar.Tracker), issues)), None)
         not_radar = next(iter(filter(lambda issue: not isinstance(issue.tracker, radar.Tracker), issues)), None)
-        radar_cc_default = repository.config().get('webkitscmpy.cc-radar', 'true') == 'true'
-        if radar_issue and not_radar and radar_issue.tracker.radarclient() and (args.cc_radar or (radar_cc_default and args.cc_radar is not False)):
+        if radar_issue and not_radar and radar_issue.tracker.radarclient():
             not_radar.cc_radar(radar=radar_issue)
-        redacted_issue = None
-        for candidate in issues:
-            if candidate.redacted:
-                redacted_issue = candidate
         issue = issues[0] if issues else None
 
         remote_repo = repository.remote(name=source_remote)
-        if isinstance(remote_repo, remote.GitHub) and redacted_issue and args.remote is None:
-            print('A commit you are uploading references {}'.format(redacted_issue.link))
-            print("{} {}".format(redacted_issue.link, redacted_issue.redacted))
+        if isinstance(remote_repo, remote.GitHub) and issue and issue.redacted and args.remote is None:
+            print('{} is considered the primary issue for your pull request'.format(issue.link))
+            print("{} {}".format(issue.link, issue.redacted))
             print("Pull request needs to be sent to a secure remote for review")
             original_remote = source_remote
             if len(repository.source_remotes()) < 2:

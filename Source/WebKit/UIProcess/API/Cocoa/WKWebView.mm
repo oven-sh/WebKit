@@ -536,7 +536,6 @@ static void hardwareKeyboardAvailabilityChangedCallback(CFNotificationCenterRef,
     pageConfiguration->preferences()->setInvisibleAutoplayNotPermitted(!![_configuration _invisibleAutoplayNotPermitted]);
     pageConfiguration->preferences()->setMediaDataLoadsAutomatically(!![_configuration _mediaDataLoadsAutomatically]);
     pageConfiguration->preferences()->setAttachmentElementEnabled(!![_configuration _attachmentElementEnabled]);
-    pageConfiguration->preferences()->setAttachmentWideLayoutEnabled(!![_configuration _attachmentWideLayoutEnabled]);
 
 #if ENABLE(DATA_DETECTION) && PLATFORM(IOS_FAMILY)
     pageConfiguration->preferences()->setDataDetectorTypes(fromWKDataDetectorTypes([_configuration dataDetectorTypes]).toRaw());
@@ -584,8 +583,6 @@ static void hardwareKeyboardAvailabilityChangedCallback(CFNotificationCenterRef,
     pageConfiguration->preferences()->setAlternateFormControlDesignEnabled(WebKit::defaultAlternateFormControlDesignEnabled());
     pageConfiguration->preferences()->setVideoFullscreenRequiresElementFullscreen(WebKit::defaultVideoFullscreenRequiresElementFullscreen());
 #endif
-
-    pageConfiguration->preferences()->setMarkedTextInputEnabled(!![_configuration _markedTextInputEnabled]);
 }
 
 - (instancetype)initWithFrame:(CGRect)frame configuration:(WKWebViewConfiguration *)configuration
@@ -1269,15 +1266,8 @@ static WKMediaPlaybackState toWKMediaPlaybackState(WebKit::MediaPlaybackState me
         return;
     }
 
-    if (!_page->hasRunningProcess() || !_page->drawingArea()) {
-        tracePoint(TakeSnapshotEnd, snapshotFailedTraceValue);
-        handler(nil, createNSError(WKErrorUnknown).get());
-        return;
-    }
-
-    _page->callAfterNextPresentationUpdate([callSnapshotRect = WTFMove(callSnapshotRect), handler, page = Ref { *_page }] () mutable {
-
-        if (!page->hasRunningProcess()) {
+    _page->callAfterNextPresentationUpdate([callSnapshotRect = WTFMove(callSnapshotRect), handler](WebKit::CallbackBase::Error error) mutable {
+        if (error != WebKit::CallbackBase::Error::None) {
             tracePoint(TakeSnapshotEnd, snapshotFailedTraceValue);
             handler(nil, createNSError(WKErrorUnknown).get());
             return;
@@ -1613,7 +1603,7 @@ inline OptionSet<WebKit::FindOptions> toFindOptions(WKFindConfiguration *configu
     auto updateBlockCopy = makeBlockPtr(updateBlock);
 
     RetainPtr<WKWebView> strongSelf = self;
-    _page->callAfterNextPresentationUpdate([updateBlockCopy, withoutWaitingForAnimatedResize, strongSelf] {
+    _page->callAfterNextPresentationUpdate([updateBlockCopy, withoutWaitingForAnimatedResize, strongSelf](WebKit::CallbackBase::Error error) {
         if (!updateBlockCopy)
             return;
 
@@ -1775,9 +1765,7 @@ inline OptionSet<WebKit::FindOptions> toFindOptions(WKFindConfiguration *configu
     if (pdfConfiguration && !CGRectIsNull(pdfConfiguration.rect))
         floatRect = WebCore::FloatRect(pdfConfiguration.rect);
 
-    bool allowTransparentBackground = pdfConfiguration && pdfConfiguration.allowTransparentBackground;
-
-    _page->drawToPDF(frameID, floatRect, allowTransparentBackground, [handler = makeBlockPtr(completionHandler)](RefPtr<WebCore::SharedBuffer>&& pdfData) {
+    _page->drawToPDF(frameID, floatRect, [handler = makeBlockPtr(completionHandler)](RefPtr<WebCore::SharedBuffer>&& pdfData) {
         if (!pdfData || pdfData->isEmpty()) {
             handler(nil, createNSError(WKErrorUnknown).get());
             return;

@@ -88,6 +88,9 @@ namespace LayoutIntegration {
 static void printReason(AvoidanceReason reason, TextStream& stream)
 {
     switch (reason) {
+    case AvoidanceReason::FlowIsInsideANonMultiColumnThread:
+        stream << "flow is inside a non-multicolumn container";
+        break;
     case AvoidanceReason::ContentIsRuby:
         stream << "ruby";
         break;
@@ -112,8 +115,14 @@ static void printReason(AvoidanceReason reason, TextStream& stream)
     case AvoidanceReason::FlowTextIsSVGInlineText:
         stream << "SVGInlineText";
         break;
-    case AvoidanceReason::MultiColumnFlowHasVerticalWritingMode:
-        stream << "column has vertical writing mode";
+    case AvoidanceReason::MultiColumnFlowIsNotTopLevel:
+        stream << "non top level column";
+        break;
+    case AvoidanceReason::MultiColumnFlowHasColumnSpanner:
+        stream << "column has spanner";
+        break;
+    case AvoidanceReason::MultiColumnFlowVerticalAlign:
+        stream << "column with vertical-align != baseline";
         break;
     case AvoidanceReason::MultiColumnFlowIsFloating:
         stream << "column with floating objects";
@@ -324,11 +333,6 @@ static OptionSet<AvoidanceReason> canUseForChild(const RenderBlockFlow& flow, co
         return reasons;
     }
 
-    if (flow.fragmentedFlowState() != RenderObject::NotInsideFragmentedFlow) {
-        if (child.isFloating() || child.isOutOfFlowPositioned())
-            SET_REASON_AND_RETURN_IF_NEEDED(FlowHasNonSupportedChild, reasons, includeReasons);
-    }
-
     if (is<RenderLineBreak>(child))
         return reasons;
 
@@ -359,6 +363,10 @@ static OptionSet<AvoidanceReason> canUseForChild(const RenderBlockFlow& flow, co
             if (renderer.isFloating() && !renderer.parent()->style().isHorizontalWritingMode())
                 return false;
 #endif
+            if (renderer.isFloating() && flow.fragmentedFlowState() != RenderObject::NotInsideFragmentedFlow) {
+                // Floats inside fragmentation need integration support.
+                return false;
+            }
             if (renderer.isOutOfFlowPositioned()) {
                 if (!renderer.parent()->style().isLeftToRightDirection())
                     return false;
@@ -421,9 +429,17 @@ OptionSet<AvoidanceReason> canUseForLineLayoutWithReason(const RenderBlockFlow& 
     if (!establishesInlineFormattingContext())
         SET_REASON_AND_RETURN_IF_NEEDED(FlowDoesNotEstablishInlineFormattingContext, reasons, includeReasons);
     if (flow.fragmentedFlowState() != RenderObject::NotInsideFragmentedFlow) {
+        auto* fragmentedFlow = flow.enclosingFragmentedFlow();
+        if (!is<RenderMultiColumnFlow>(fragmentedFlow))
+            SET_REASON_AND_RETURN_IF_NEEDED(FlowIsInsideANonMultiColumnThread, reasons, includeReasons);
+        auto& columnThread = downcast<RenderMultiColumnFlow>(*fragmentedFlow);
+        if (columnThread.parent() != &flow.view() || !flow.style().isHorizontalWritingMode())
+            SET_REASON_AND_RETURN_IF_NEEDED(MultiColumnFlowIsNotTopLevel, reasons, includeReasons);
+        if (columnThread.hasColumnSpanner())
+            SET_REASON_AND_RETURN_IF_NEEDED(MultiColumnFlowHasColumnSpanner, reasons, includeReasons);
         auto& style = flow.style();
-        if (!style.isHorizontalWritingMode())
-            SET_REASON_AND_RETURN_IF_NEEDED(MultiColumnFlowHasVerticalWritingMode, reasons, includeReasons);
+        if (style.verticalAlign() != VerticalAlign::Baseline)
+            SET_REASON_AND_RETURN_IF_NEEDED(MultiColumnFlowVerticalAlign, reasons, includeReasons);
         if (style.isFloating())
             SET_REASON_AND_RETURN_IF_NEEDED(MultiColumnFlowIsFloating, reasons, includeReasons);
     }
@@ -478,19 +494,6 @@ bool canUseForLineLayoutAfterStyleChange(const RenderBlockFlow& blockContainer, 
     }
     ASSERT_NOT_REACHED();
     return canUseForLineLayout(blockContainer);
-}
-
-bool shouldInvalidateLineLayoutPathAfterContentChangeFor(const RenderBlockFlow& rootBlockContainer, const RenderObject& newChild, const LineLayout&)
-{
-    UNUSED_PARAM(rootBlockContainer);
-    if (!is<RenderText>(newChild) || !is<RenderBlockFlow>(newChild.parent()))
-        return true;
-    if (!newChild.style().isLeftToRightDirection() || !newChild.style().isHorizontalWritingMode())
-        return true;
-    if (newChild.nextSibling())
-        return true;
-    // Simple text content append only.
-    return false;
 }
 
 bool canUseForLineLayoutAfterInlineBoxStyleChange(const RenderInline& renderer, StyleDifference)

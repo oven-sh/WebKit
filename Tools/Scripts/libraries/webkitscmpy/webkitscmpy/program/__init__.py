@@ -34,7 +34,6 @@ from .command import Command
 from .commit import Commit
 from .squash import Squash
 from .checkout import Checkout
-from .classify import Classify
 from .credentials import Credentials
 from .find import Find, Info
 from .pickable import Pickable
@@ -59,7 +58,7 @@ from webkitscmpy import local, log, remote
 def main(
     args=None, path=None, loggers=None, contributors=None,
     identifier_template=None, subversion=None, additional_setup=None, hooks=None,
-    canonical_svn=None, programs=None, classifier=None, **kwargs
+    canonical_svn=None, programs=None,
 ):
     logging.basicConfig(level=logging.WARNING)
 
@@ -94,18 +93,12 @@ def main(
         PullRequest, Revert, Setup, InstallGitLFS,
         Credentials, Commit, DeletePRBranches, Squash,
         Pickable, CherryPick, Trace, Track, Show, Publish,
-        Classify,
     ] + (programs or [])
     if subversion:
         programs.append(SetupGitSvn)
 
-    provisional_classifier = classifier(None) if callable(classifier) else classifier
     for program in programs:
-        if callable(program.help):
-            help = filtered_call(program.help, classifier=provisional_classifier)
-        else:
-            help = program.help
-        kwargs = dict(help=help)
+        kwargs = dict(help=program.help)
         if sys.version_info > (3, 0):
             kwargs['aliases'] = program.aliases
         subparser = subparsers.add_parser(program.name, **kwargs)
@@ -117,11 +110,7 @@ def main(
             loggers=loggers,
             help='{} amount of logging and commit information displayed',
         )
-        filtered_call(
-            program.parser, subparser,
-            classifier=provisional_classifier,
-            loggers=loggers,
-        )
+        program.parser(subparser, loggers=loggers)
 
     args = args or sys.argv[1:]
     parsed, unknown = parser.parse_known_args(args=args)
@@ -140,26 +129,16 @@ def main(
             parsed = parser.parse_args(args=args)
 
     if parsed.repository.startswith(('https://', 'http://')):
-        repository = remote.Scm.from_url(
-            parsed.repository,
-            contributors=None if callable(contributors) else contributors,
-            classifier=None if callable(classifier) else classifier,
-        )
+        repository = remote.Scm.from_url(parsed.repository, contributors=None if callable(contributors) else contributors)
     else:
         try:
-            repository = local.Scm.from_path(
-                path=parsed.repository,
-                contributors=None if callable(contributors) else contributors,
-                classifier=None if callable(classifier) else classifier,
-            )
+            repository = local.Scm.from_path(path=parsed.repository, contributors=None if callable(contributors) else contributors)
         except OSError:
             log.warning("No repository found at '{}'".format(parsed.repository))
             repository = None
 
     if repository and callable(contributors):
         repository.contributors = contributors(repository) or repository.contributors
-    if repository and callable(classifier):
-        repository.classifier = classifier(repository) or repository.classifier
     if callable(identifier_template):
         identifier_template = identifier_template(repository) if repository else None
     if callable(subversion):

@@ -47,7 +47,6 @@
 #include "InterpreterInlines.h"
 #include "JITCode.h"
 #include "JSArrayInlines.h"
-#include "JSBoundFunction.h"
 #include "JSCInlines.h"
 #include "JSImmutableButterfly.h"
 #include "JSLexicalEnvironment.h"
@@ -1024,71 +1023,41 @@ failedJSONP:
     return JSValue::decode(vmEntryToJavaScript(jitCode->addressForCall(), &vm, &protoCallFrame));
 }
 
-JSValue Interpreter::executeBoundCall(VM& vm, JSBoundFunction* function, const ArgList& args)
+JSValue Interpreter::executeCall(JSGlobalObject* lexicalGlobalObject, JSObject* function, const CallData& callData, JSValue thisValue, const ArgList& args)
 {
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    VM& vm = lexicalGlobalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    ASSERT(function->boundArgs());
-
-    auto* boundArgs = function->boundArgs();
-    MarkedArgumentBuffer combinedArgs;
-    combinedArgs.ensureCapacity(boundArgs->length() + args.size());
-
-    for (unsigned i = 0; i < boundArgs->length(); ++i)
-        combinedArgs.append(boundArgs->get(i));
-    for (unsigned i = 0; i < args.size(); ++i)
-        combinedArgs.append(args.at(i));
-
-    if (UNLIKELY(combinedArgs.hasOverflowed()))
-        return throwStackOverflowError(function->globalObject(), scope);
-
-    JSObject* targetFunction = function->targetFunction();
-    JSValue boundThis = function->boundThis();
-    auto callData = JSC::getCallData(targetFunction);
-    ASSERT(callData.type != CallData::Type::None);
-
-    return executeCallImpl(vm, targetFunction, callData, boundThis, combinedArgs);
-}
-
-ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, const CallData& callData, JSValue thisValue, const ArgList& args)
-{
     auto clobberizeValidator = makeScopeExit([&] {
         vm.didEnterVM = true;
     });
 
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    scope.assertNoException();
-
+    throwScope.assertNoException();
     ASSERT(!vm.isCollectorBusyOnCurrentThread());
     if (vm.isCollectorBusyOnCurrentThread())
         return jsNull();
 
-    bool isJSCall = callData.type == CallData::Type::JS;
-    JSScope* functionScope = nullptr;
-    FunctionExecutable* functionExecutable = nullptr;
-    TaggedNativeFunction nativeFunction;
-    JSGlobalObject* globalObject = nullptr;
+    bool isJSCall = (callData.type == CallData::Type::JS);
+    JSScope* scope = nullptr;
+    size_t argsCount = 1 + args.size(); // implicit "this" parameter
+
+    JSGlobalObject* globalObject;
 
     if (isJSCall) {
-        functionScope = callData.js.scope;
-        functionExecutable = callData.js.functionExecutable;
-        globalObject = functionScope->globalObject();
+        scope = callData.js.scope;
+        globalObject = scope->globalObject();
     } else {
         ASSERT(callData.type == CallData::Type::Native);
-        nativeFunction = callData.native.function;
         globalObject = function->globalObject();
     }
 
-    size_t argsCount = 1 + args.size(); // implicit "this" parameter
-
     VMEntryScope entryScope(vm, globalObject);
     if (UNLIKELY(!vm.isSafeToRecurseSoft() || args.size() > maxArguments))
-        return throwStackOverflowError(globalObject, scope);
+        return throwStackOverflowError(globalObject, throwScope);
 
     if (UNLIKELY(vm.traps().needHandling(VMTraps::NonDebuggerAsyncEvents))) {
         if (vm.hasExceptionsAfterHandlingTraps())
-            return scope.exception();
+            return throwScope.exception();
     }
 
     RefPtr<JITCode> jitCode;
@@ -1099,8 +1068,8 @@ ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, c
         CodeBlock* newCodeBlock = nullptr;
         if (isJSCall) {
             // Compile the callee:
-            functionExecutable->prepareForExecution<FunctionExecutable>(vm, jsCast<JSFunction*>(function), functionScope, CodeForCall, newCodeBlock);
-            RETURN_IF_EXCEPTION(scope, scope.exception());
+            callData.js.functionExecutable->prepareForExecution<FunctionExecutable>(vm, jsCast<JSFunction*>(function), scope, CodeForCall, newCodeBlock);
+            RETURN_IF_EXCEPTION(throwScope, throwScope.exception());
 
             ASSERT(newCodeBlock);
             newCodeBlock->m_shouldAlwaysBeInlined = false;
@@ -1109,38 +1078,18 @@ ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, c
         {
             DisallowGC disallowGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
             if (isJSCall)
-                jitCode = functionExecutable->generatedJITCodeForCall();
+                jitCode = callData.js.functionExecutable->generatedJITCodeForCall();
             protoCallFrame.init(newCodeBlock, globalObject, function, thisValue, argsCount, args.data());
         }
     }
 
     // Execute the code:
-    scope.release();
+    throwScope.release();
     if (isJSCall) {
-        ASSERT(jitCode == functionExecutable->generatedJITCodeForCall().ptr());
+        ASSERT(jitCode == callData.js.functionExecutable->generatedJITCodeForCall().ptr());
         return JSValue::decode(vmEntryToJavaScript(jitCode->addressForCall(), &vm, &protoCallFrame));
     }
-    return JSValue::decode(vmEntryToNative(nativeFunction.taggedPtr(), &vm, &protoCallFrame));
-}
-
-JSValue Interpreter::executeCall(JSGlobalObject* lexicalGlobalObject, JSObject* function, const CallData& callData, JSValue thisValue, const ArgList& args)
-{
-    VM& vm = lexicalGlobalObject->vm();
-    if (callData.type == CallData::Type::JS || !callData.native.isBoundFunction)
-        return executeCallImpl(vm, function, callData, thisValue, args);
-
-    // Only one-level unwrap is enough! We already made JSBoundFunction's nest smaller.
-    auto* boundFunction = jsCast<JSBoundFunction*>(function);
-    if (!boundFunction->boundArgs()) {
-        // This is the simplest path, just replacing |this|. We do not need to go to executeBoundCall.
-        // Let's just replace and get unwrapped functions again.
-        JSObject* targetFunction = boundFunction->targetFunction();
-        JSValue boundThis = boundFunction->boundThis();
-        auto targetFunctionCallData = JSC::getCallData(targetFunction);
-        ASSERT(targetFunctionCallData.type != CallData::Type::None);
-        return executeCallImpl(vm, targetFunction, targetFunctionCallData, boundThis, args);
-    }
-    return executeBoundCall(vm, boundFunction, args);
+    return JSValue::decode(vmEntryToNative(callData.native.function.taggedPtr(), &vm, &protoCallFrame));
 }
 
 JSObject* Interpreter::executeConstruct(JSGlobalObject* lexicalGlobalObject, JSObject* constructor, const CallData& constructData, const ArgList& args, JSValue newTarget)

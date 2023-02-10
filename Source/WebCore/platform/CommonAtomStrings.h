@@ -42,7 +42,6 @@ namespace WebCore {
     macro(false, "false") \
     macro(lazy, "lazy") \
     macro(main, "main") \
-    macro(manual, "manual") \
     macro(none, "none") \
     macro(off, "off") \
     macro(on, "on") \

@@ -66,7 +66,6 @@
 #include "StylePropertyShorthand.h"
 #include "StyleResolver.h"
 #include "TabSize.h"
-#include "TextSpacing.h"
 #include <algorithm>
 #include <memory>
 #include <wtf/MathExtras.h>
@@ -1247,8 +1246,8 @@ private:
 class PropertyWrapperFontVariationSettings final : public PropertyWrapper<FontVariationSettings> {
     WTF_MAKE_FAST_ALLOCATED;
 public:
-    PropertyWrapperFontVariationSettings()
-        : PropertyWrapper(CSSPropertyFontVariationSettings, &RenderStyle::fontVariationSettings, &RenderStyle::setFontVariationSettings)
+    PropertyWrapperFontVariationSettings(CSSPropertyID property, FontVariationSettings (RenderStyle::*getter)() const, void (RenderStyle::*setter)(FontVariationSettings))
+        : PropertyWrapper(property, getter, setter)
     {
     }
 
@@ -2050,8 +2049,6 @@ private:
 
     bool canInterpolate(const FillLayer* from, const FillLayer* to) const final
     {
-        if (property() == CSSPropertyMaskImage)
-            return false;
         return value(from) && value(to);
     }
 
@@ -2190,34 +2187,12 @@ private:
         auto* toLayer = &(to.*m_layersGetter)();
         auto* dstLayer = &(destination.*m_layersAccessor)();
 
-        if (context.isDiscrete) {
-            ASSERT(!context.progress || context.progress == 1.0);
-            auto* layer = context.progress ? toLayer : fromLayer;
-            fromLayer = layer;
-            toLayer = layer;
-        }
-
-        size_t layerCount = 0;
-        Vector<FillLayer*> previousDstLayers;
-        FillLayer* previousDstLayer = nullptr;
-        while (fromLayer && toLayer) {
-            if (dstLayer)
-                previousDstLayers.append(dstLayer);
-            else {
-                ASSERT(!previousDstLayers.isEmpty());
-                auto* layerToCopy = previousDstLayers[layerCount % previousDstLayers.size()];
-                previousDstLayer->setNext(layerToCopy->copy());
-                dstLayer = previousDstLayer->next();
-            }
-
+        while (fromLayer && toLayer && dstLayer) {
             dstLayer->setSizeType((context.progress ? toLayer : fromLayer)->sizeType());
             m_fillLayerPropertyWrapper->blend(dstLayer, fromLayer, toLayer, context);
             fromLayer = fromLayer->next();
             toLayer = toLayer->next();
-
-            previousDstLayer = dstLayer;
             dstLayer = dstLayer->next();
-            layerCount++;
         }
     }
 
@@ -3410,7 +3385,7 @@ CSSPropertyAnimationWrapperMap::CSSPropertyAnimationWrapperMap()
         new PropertyWrapperBaselineShift,
         new PropertyWrapper<SVGLengthValue>(CSSPropertyKerning, &RenderStyle::kerning, &RenderStyle::setKerning),
 #if ENABLE(VARIATION_FONTS)
-        new PropertyWrapperFontVariationSettings,
+        new PropertyWrapperFontVariationSettings(CSSPropertyFontVariationSettings, &RenderStyle::fontVariationSettings, &RenderStyle::setFontVariationSettings),
 #endif
         new PropertyWrapperFontSizeAdjust,
         new PropertyWrapperFontWeight,
@@ -3517,8 +3492,6 @@ CSSPropertyAnimationWrapperMap::CSSPropertyAnimationWrapperMap()
         new DiscretePropertyWrapper<WhiteSpace>(CSSPropertyWhiteSpace, &RenderStyle::whiteSpace, &RenderStyle::setWhiteSpace),
         new DiscretePropertyWrapper<WordBreak>(CSSPropertyWordBreak, &RenderStyle::wordBreak, &RenderStyle::setWordBreak),
         new DiscretePropertyWrapper<OverflowAnchor>(CSSPropertyOverflowAnchor, &RenderStyle::overflowAnchor, &RenderStyle::setOverflowAnchor),
-        new DiscretePropertyWrapper<TextSpacingTrim>(CSSPropertyTextSpacingTrim, &RenderStyle::textSpacingTrim, &RenderStyle::setTextSpacingTrim),
-        new DiscretePropertyWrapper<TextAutospace>(CSSPropertyTextAutospace, &RenderStyle::textAutospace, &RenderStyle::setTextAutospace),
 
 #if ENABLE(CSS_BOX_DECORATION_BREAK)
         new DiscretePropertyWrapper<BoxDecorationBreak>(CSSPropertyWebkitBoxDecorationBreak, &RenderStyle::boxDecorationBreak, &RenderStyle::setBoxDecorationBreak),
@@ -3686,7 +3659,6 @@ CSSPropertyAnimationWrapperMap::CSSPropertyAnimationWrapperMap()
         case CSSPropertyAnimationPlayState:
         case CSSPropertyAnimationTimingFunction:
         case CSSPropertyAppearance:
-        case CSSPropertyBlockStepSize:
         case CSSPropertyBorderBlock: // logical shorthand
         case CSSPropertyBorderBlockColor: // logical shorthand
         case CSSPropertyBorderBlockStyle: // logical shorthand

@@ -609,11 +609,8 @@ ElementUpdate TreeResolver::createAnimatedElementUpdate(ResolvedStyle&& resolved
             return { WTFMove(resolvedStyle.style), animationImpact };
 
         if (resolvedStyle.matchResult) {
-            auto animatedStyleBeforeCascadeApplication = RenderStyle::clonePtr(*animatedStyle);
             // The cascade may override animated properties and have dependencies to them.
             applyCascadeAfterAnimation(*animatedStyle, animatedProperties, *resolvedStyle.matchResult, element, resolutionContext);
-            ASSERT(styleable.keyframeEffectStack());
-            styleable.keyframeEffectStack()->didApplyCascade(*animatedStyleBeforeCascadeApplication, *animatedStyle, animatedProperties, document);
         }
 
         Adjuster adjuster(document, *resolutionContext.parentStyle, resolutionContext.parentBoxStyle, styleable.pseudoId == PseudoId::None ? &element : nullptr);
@@ -861,7 +858,8 @@ void TreeResolver::resolveComposedTree()
 
         auto resolutionType = determineResolutionType(element, style, parent.descendantsToResolve, parent.change);
         if (resolutionType) {
-            element.resetComputedStyle();
+            if (!element.hasDisplayContents())
+                element.resetComputedStyle();
             element.resetStyleRelations();
 
             if (element.hasCustomStyleResolveCallbacks())
@@ -1031,8 +1029,7 @@ static void suspendMemoryCacheClientCalls(Document& document)
 
     page->setMemoryCacheClientCallsEnabled(false);
 
-    if (auto* localMainFrame = dynamicDowncast<LocalFrame>(page->mainFrame()))
-        memoryCacheClientCallsResumeQueue().append(localMainFrame);
+    memoryCacheClientCallsResumeQueue().append(&page->mainFrame());
 }
 
 static unsigned resolutionNestingDepth;

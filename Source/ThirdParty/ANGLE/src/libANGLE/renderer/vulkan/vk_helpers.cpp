@@ -112,8 +112,8 @@ constexpr angle::PackedEnumMap<ImageLayout, ImageMemoryBarrierData> kImageMemory
         ImageMemoryBarrierData{
             "Undefined",
             VK_IMAGE_LAYOUT_UNDEFINED,
-            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
             VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
             // Transition to: we don't expect to transition into Undefined.
             0,
             // Transition from: there's no data in the image to care about.
@@ -371,8 +371,8 @@ constexpr angle::PackedEnumMap<ImageLayout, ImageMemoryBarrierData> kImageMemory
         ImageMemoryBarrierData{
             "Present",
             VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
             VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
             // transition to: vkQueuePresentKHR automatically performs the appropriate memory barriers:
             //
             // > Any writes to memory backing the images referenced by the pImageIndices and
@@ -391,9 +391,8 @@ constexpr angle::PackedEnumMap<ImageLayout, ImageMemoryBarrierData> kImageMemory
         ImageMemoryBarrierData{
             "SharedPresent",
             VK_IMAGE_LAYOUT_SHARED_PRESENT_KHR,
-            // All currently possible stages for SharedPresent
-            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
             // Transition to: all reads and writes must happen after barrier.
             VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT,
             // Transition from: all writes must finish before barrier.
@@ -416,7 +415,7 @@ constexpr angle::PackedEnumMap<ImageLayout, ImageMemoryBarrierData> kImageMemory
             // layout.  If the content is not already defined, the first operation may not be a
             // glWaitSemaphore, but in this case undefined layout is appropriate.
             VK_IMAGE_LAYOUT_UNDEFINED,
-            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
             VK_PIPELINE_STAGE_HOST_BIT | VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
             // Transition to: we don't expect to transition into PreInitialized.
             0,
@@ -2835,7 +2834,7 @@ angle::Result DynamicBuffer::allocate(Context *context,
     // The front of the free list should be the oldest. Thus if it is in use the rest of the
     // free list should be in use as well.
     if (mBufferFreeList.empty() ||
-        !renderer->hasResourceUseFinished(mBufferFreeList.front()->getResourceUse()))
+        renderer->hasUnfinishedUse(mBufferFreeList.front()->getResourceUse()))
     {
         ANGLE_TRY(allocateNewBuffer(context));
     }
@@ -3329,7 +3328,7 @@ angle::Result DescriptorPoolHelper::init(Context *context,
 
     if (mDescriptorPool.valid())
     {
-        ASSERT(renderer->hasResourceUseFinished(getResourceUse()));
+        ASSERT(!renderer->hasUnfinishedUse(getResourceUse()));
         mDescriptorPool.destroy(renderer->getDevice());
     }
 
@@ -3383,7 +3382,7 @@ bool DescriptorPoolHelper::allocateDescriptorSet(Context *context,
         RendererVk *rendererVk = context->getRenderer();
 
         DescriptorSetHelper &garbage = mDescriptorSetGarbageList.front();
-        if (rendererVk->hasResourceUseFinished(garbage.getResourceUse()))
+        if (!rendererVk->hasUnfinishedUse(garbage.getResourceUse()))
         {
             *descriptorSetsOut = garbage.getDescriptorSet();
             mDescriptorSetGarbageList.pop_front();
@@ -3573,7 +3572,7 @@ angle::Result DynamicDescriptorPool::allocateNewPool(Context *context)
             continue;
         }
         if (!mDescriptorPools[poolIndex]->isReferenced() &&
-            renderer->hasResourceUseFinished(mDescriptorPools[poolIndex]->get().getResourceUse()))
+            !renderer->hasUnfinishedUse(mDescriptorPools[poolIndex]->get().getResourceUse()))
         {
             mDescriptorPools[poolIndex]->get().destroy(renderer);
             mDescriptorPools.erase(mDescriptorPools.begin() + poolIndex);
@@ -3719,7 +3718,7 @@ bool DynamicallyGrowingPool<Pool>::findFreeEntryPool(ContextVk *contextVk)
     for (size_t poolIndex = 0; poolIndex < mPools.size(); ++poolIndex)
     {
         PoolResource &pool = mPools[poolIndex];
-        if (pool.freedCount == mPoolSize && renderer->hasResourceUseFinished(pool.getResourceUse()))
+        if (pool.freedCount == mPoolSize && !renderer->hasUnfinishedUse(pool.getResourceUse()))
         {
             mCurrentPool      = poolIndex;
             mCurrentFreeEntry = 0;
@@ -3750,7 +3749,7 @@ void DynamicallyGrowingPool<Pool>::onEntryFreed(ContextVk *contextVk,
                                                 const ResourceUse &use)
 {
     ASSERT(poolIndex < mPools.size() && mPools[poolIndex].freedCount < mPoolSize);
-    if (!contextVk->getRenderer()->hasResourceUseFinished(use))
+    if (contextVk->getRenderer()->hasUnfinishedUse(use))
     {
         mPools[poolIndex].mergeResourceUse(use);
     }
@@ -4627,7 +4626,7 @@ angle::Result BufferHelper::allocateForVertexConversion(ContextVk *contextVk,
         if (size <= getSize() &&
             (hostVisibility == MemoryHostVisibility::Visible) == isHostVisible())
         {
-            if (renderer->hasResourceUseFinished(getResourceUse()))
+            if (!renderer->hasUnfinishedUse(getResourceUse()))
             {
                 initializeBarrierTracker(contextVk);
                 return angle::Result::Continue;
@@ -4710,8 +4709,7 @@ angle::Result BufferHelper::initializeNonZeroMemory(Context *context,
         ANGLE_TRY(stagingBuffer.init(context, size, StagingUsage::Both));
 
         PrimaryCommandBuffer commandBuffer;
-        ANGLE_TRY(
-            renderer->getCommandBufferOneOff(context, ProtectionType::Unprotected, &commandBuffer));
+        ANGLE_TRY(renderer->getCommandBufferOneOff(context, false, &commandBuffer));
 
         // Queue a DMA copy.
         VkBufferCopy copyRegion = {};
@@ -4724,8 +4722,7 @@ angle::Result BufferHelper::initializeNonZeroMemory(Context *context,
         ANGLE_VK_TRY(context, commandBuffer.end());
 
         QueueSerial queueSerial;
-        ANGLE_TRY(renderer->queueSubmitOneOff(context, std::move(commandBuffer),
-                                              ProtectionType::Unprotected,
+        ANGLE_TRY(renderer->queueSubmitOneOff(context, std::move(commandBuffer), false,
                                               egl::ContextPriority::Medium, nullptr, 0, nullptr,
                                               vk::SubmitPolicy::AllowDeferred, &queueSerial));
 
@@ -4819,13 +4816,13 @@ void BufferHelper::releaseBufferAndDescriptorSetCache(ContextVk *contextVk)
 {
     RendererVk *renderer = contextVk->getRenderer();
 
-    if (renderer->hasResourceUseFinished(getResourceUse()))
+    if (renderer->hasUnfinishedUse(getResourceUse()))
     {
-        mDescriptorSetCacheManager.destroyKeys(renderer);
+        mDescriptorSetCacheManager.releaseKeys(contextVk);
     }
     else
     {
-        mDescriptorSetCacheManager.releaseKeys(contextVk);
+        mDescriptorSetCacheManager.destroyKeys(renderer);
     }
 
     release(renderer);
@@ -5548,8 +5545,7 @@ angle::Result ImageHelper::initializeNonZeroMemory(Context *context,
     RendererVk *renderer = context->getRenderer();
 
     PrimaryCommandBuffer commandBuffer;
-    auto protectionType = ConvertProtectionBoolToType(hasProtectedContent);
-    ANGLE_TRY(renderer->getCommandBufferOneOff(context, protectionType, &commandBuffer));
+    ANGLE_TRY(renderer->getCommandBufferOneOff(context, hasProtectedContent, &commandBuffer));
 
     // Queue a DMA copy.
     barrierImpl(context, getAspectFlags(), ImageLayout::TransferDst, mCurrentQueueFamilyIndex,
@@ -5632,7 +5628,7 @@ angle::Result ImageHelper::initializeNonZeroMemory(Context *context,
     ANGLE_VK_TRY(context, commandBuffer.end());
 
     QueueSerial queueSerial;
-    ANGLE_TRY(renderer->queueSubmitOneOff(context, std::move(commandBuffer), protectionType,
+    ANGLE_TRY(renderer->queueSubmitOneOff(context, std::move(commandBuffer), hasProtectedContent,
                                           egl::ContextPriority::Medium, nullptr, 0, nullptr,
                                           vk::SubmitPolicy::AllowDeferred, &queueSerial));
 
@@ -8735,8 +8731,7 @@ angle::Result ImageHelper::copySurfaceImageToBuffer(DisplayVk *displayVk,
     region.imageSubresource.mipLevel       = toVkLevel(sourceLevelGL).get();
 
     PrimaryCommandBuffer primaryCommandBuffer;
-    ANGLE_TRY(rendererVk->getCommandBufferOneOff(displayVk, ProtectionType::Unprotected,
-                                                 &primaryCommandBuffer));
+    ANGLE_TRY(rendererVk->getCommandBufferOneOff(displayVk, false, &primaryCommandBuffer));
 
     barrierImpl(displayVk, getAspectFlags(), ImageLayout::TransferSrc, mCurrentQueueFamilyIndex,
                 &primaryCommandBuffer);
@@ -8746,8 +8741,7 @@ angle::Result ImageHelper::copySurfaceImageToBuffer(DisplayVk *displayVk,
     ANGLE_VK_TRY(displayVk, primaryCommandBuffer.end());
 
     QueueSerial submitQueueSerial;
-    ANGLE_TRY(rendererVk->queueSubmitOneOff(displayVk, std::move(primaryCommandBuffer),
-                                            ProtectionType::Unprotected,
+    ANGLE_TRY(rendererVk->queueSubmitOneOff(displayVk, std::move(primaryCommandBuffer), false,
                                             egl::ContextPriority::Medium, nullptr, 0, nullptr,
                                             vk::SubmitPolicy::AllowDeferred, &submitQueueSerial));
 
@@ -8781,8 +8775,7 @@ angle::Result ImageHelper::copyBufferToSurfaceImage(DisplayVk *displayVk,
     region.imageSubresource.mipLevel       = toVkLevel(sourceLevelGL).get();
 
     PrimaryCommandBuffer commandBuffer;
-    ANGLE_TRY(
-        rendererVk->getCommandBufferOneOff(displayVk, ProtectionType::Unprotected, &commandBuffer));
+    ANGLE_TRY(rendererVk->getCommandBufferOneOff(displayVk, false, &commandBuffer));
 
     barrierImpl(displayVk, getAspectFlags(), ImageLayout::TransferDst, mCurrentQueueFamilyIndex,
                 &commandBuffer);
@@ -8792,8 +8785,7 @@ angle::Result ImageHelper::copyBufferToSurfaceImage(DisplayVk *displayVk,
     ANGLE_VK_TRY(displayVk, commandBuffer.end());
 
     QueueSerial submitQueueSerial;
-    ANGLE_TRY(rendererVk->queueSubmitOneOff(displayVk, std::move(commandBuffer),
-                                            ProtectionType::Unprotected,
+    ANGLE_TRY(rendererVk->queueSubmitOneOff(displayVk, std::move(commandBuffer), false,
                                             egl::ContextPriority::Medium, nullptr, 0, nullptr,
                                             vk::SubmitPolicy::AllowDeferred, &submitQueueSerial));
 
@@ -9099,7 +9091,7 @@ angle::Result ImageHelper::readPixelsImpl(ContextVk *contextVk,
     if (isMultisampled)
     {
         ANGLE_TRY(resolvedImage.get().init2DStaging(
-            contextVk, contextVk->getState().hasProtectedContent(), renderer->getMemoryProperties(),
+            contextVk, contextVk->hasProtectedContent(), renderer->getMemoryProperties(),
             gl::Extents(area.width, area.height, 1), mIntendedFormatID, mActualFormatID,
             VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, 1));
     }

@@ -45,7 +45,6 @@ struct LinkRelAttribute {
     bool isStyleSheet : 1 { false };
     bool isAlternate : 1 { false };
     bool isDNSPrefetch : 1 { false };
-    bool isLinkModulePreload : 1 { false };
     bool isLinkPreload : 1 { false };
     bool isLinkPreconnect : 1 { false };
     bool isLinkPrefetch : 1 { false };
@@ -65,7 +64,6 @@ inline bool operator==(const LinkRelAttribute& left, const LinkRelAttribute& rig
         && left.isStyleSheet == right.isStyleSheet
         && left.isAlternate == right.isAlternate
         && left.isDNSPrefetch == right.isDNSPrefetch
-        && left.isLinkModulePreload == right.isLinkModulePreload
         && left.isLinkPreload == right.isLinkPreload
         && left.isLinkPreconnect == right.isLinkPreconnect
         && left.isLinkPrefetch == right.isLinkPrefetch

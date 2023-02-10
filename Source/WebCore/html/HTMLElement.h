@@ -42,15 +42,8 @@ class VisibleSelection;
 struct SimpleRange;
 struct TextRecognitionResult;
 
-enum class EnterKeyHint : uint8_t;
 enum class PageIsEditable : bool;
-enum class PopoverVisibilityState : bool;
-
-enum class PopoverState : uint8_t {
-    None,
-    Auto,
-    Manual,
-};
+enum class EnterKeyHint : uint8_t;
 
 #if PLATFORM(IOS_FAMILY)
 enum class SelectionRenderingBehavior : bool;
@@ -145,16 +138,6 @@ public:
 
     WEBCORE_EXPORT ExceptionOr<Ref<ElementInternals>> attachInternals();
 
-    void queuePopoverToggleEventTask(PopoverVisibilityState oldState, PopoverVisibilityState newState);
-    ExceptionOr<void> showPopover();
-    ExceptionOr<void> hidePopover();
-    ExceptionOr<void> togglePopover(std::optional<bool> force);
-
-    PopoverState popoverState() const;
-    const AtomString& popover() const;
-    void setPopover(const AtomString& value) { setAttributeWithoutSynchronization(HTMLNames::popoverAttr, value); };
-    void popoverAttributeChanged(const AtomString& value);
-
 #if PLATFORM(IOS_FAMILY)
     static SelectionRenderingBehavior selectionRenderingBehavior(const Node*);
 #endif
@@ -194,10 +177,6 @@ protected:
 
 private:
     String nodeName() const final;
-
-    enum class FocusPreviousElement : bool { No, Yes };
-    enum class FireEvents : bool { No, Yes };
-    ExceptionOr<void> hidePopoverInternal(FocusPreviousElement, FireEvents);
 
     void mapLanguageAttributeToLocale(const AtomString&, MutableStyleProperties&);
 

@@ -51,23 +51,18 @@ ResourceUsageOverlay::ResourceUsageOverlay(Page& page)
 ResourceUsageOverlay::~ResourceUsageOverlay()
 {
     platformDestroy();
-    if (auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame())) {
-        // FIXME: This is a hack so we don't try to uninstall the PageOverlay during Page destruction.
-        if (localMainFrame->page())
-            m_page.pageOverlayController().uninstallPageOverlay(*m_overlay, PageOverlay::FadeMode::DoNotFade);
-    }
+
+    // FIXME: This is a hack so we don't try to uninstall the PageOverlay during Page destruction.
+    if (m_page.mainFrame().page())
+        m_page.pageOverlayController().uninstallPageOverlay(*m_overlay, PageOverlay::FadeMode::DoNotFade);
 }
 
 void ResourceUsageOverlay::initialize()
 {
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
-    if (!localMainFrame)
+    if (!m_page.mainFrame().view())
         return;
 
-    if (!localMainFrame->view())
-        return;
-
-    FrameView& frameView = *localMainFrame->view();
+    FrameView& frameView = *m_page.mainFrame().view();
 
     IntRect initialRect(frameView.width() / 2 - normalWidth / 2, frameView.height() - normalHeight - 20, normalWidth, normalHeight);
 
@@ -114,10 +109,7 @@ bool ResourceUsageOverlay::mouseEvent(PageOverlay&, const PlatformMouseEvent& ev
                 newFrame.setX(0);
             if (newFrame.y() < m_page.topContentInset())
                 newFrame.setY(m_page.topContentInset());
-            auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
-            if (!localMainFrame)
-                break;
-            FrameView& frameView = *localMainFrame->view();
+            FrameView& frameView = *m_page.mainFrame().view();
             if (newFrame.maxX() > frameView.width())
                 newFrame.setX(frameView.width() - newFrame.width());
             if (newFrame.maxY() > frameView.height())

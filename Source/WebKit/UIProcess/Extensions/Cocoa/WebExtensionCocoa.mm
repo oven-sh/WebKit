@@ -511,11 +511,9 @@ NSError *WebExtension::createError(Error error, NSString *customLocalizedDescrip
     if (customLocalizedDescription.length)
         localizedDescription = customLocalizedDescription;
 
-    NSDictionary *userInfo;
+    NSDictionary *userInfo = @{ NSLocalizedDescriptionKey: localizedDescription };
     if (underlyingError)
         userInfo = @{ NSLocalizedDescriptionKey: localizedDescription, NSUnderlyingErrorKey: underlyingError };
-    else
-        userInfo = @{ NSLocalizedDescriptionKey: localizedDescription };
 
     return [[NSError alloc] initWithDomain:_WKWebExtensionErrorDomain code:errorCode userInfo:userInfo];
 }

@@ -76,7 +76,6 @@ class AudioTrackPrivate;
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
 class MediaPlaybackTargetContext;
 #endif
-class SecurityOriginData;
 class VideoTrackPrivate;
 
 struct FourCC;
@@ -212,7 +211,7 @@ public:
 
     using PerformTaskAtMediaTimeCompletionHandler = CompletionHandler<void(std::optional<MediaTime>, std::optional<MonotonicTime>)>;
     void performTaskAtMediaTime(const MediaTime&, MonotonicTime, PerformTaskAtMediaTimeCompletionHandler&&);
-    void isCrossOrigin(WebCore::SecurityOriginData, CompletionHandler<void(std::optional<bool>)>&&);
+    void isCrossOrigin(struct WebCore::SecurityOriginData, CompletionHandler<void(std::optional<bool>)>&&);
 
     void setVideoPlaybackMetricsUpdateInterval(double);
 

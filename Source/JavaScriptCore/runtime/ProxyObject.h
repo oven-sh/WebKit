@@ -30,24 +30,11 @@
 
 namespace JSC {
 
-class ProxyObject final : public JSInternalFieldObjectImpl<2> {
+class ProxyObject final : public JSNonFinalObject {
 public:
-    using Base = JSInternalFieldObjectImpl<2>;
+    typedef JSNonFinalObject Base;
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | OverridesGetOwnPropertyNames | OverridesGetPrototype | OverridesGetCallData | OverridesPut | InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero | ProhibitsPropertyCaching;
-
-    enum class Field : uint32_t {
-        Target = 0,
-        Handler,
-    };
-    static_assert(numberOfInternalFields == 2);
-    static std::array<JSValue, numberOfInternalFields> initialValues()
-    {
-        return { {
-            jsNull(),
-            jsUndefined(),
-        } };
-    }
 
     template<typename CellType, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
@@ -77,10 +64,8 @@ public:
 
     DECLARE_EXPORT_INFO;
 
-    JSObject* target() const { return jsCast<JSObject*>(internalField(Field::Target).get()); }
-    JSValue handler() const { return internalField(Field::Handler).get(); }
-
-    static bool validateSetTrapResult(JSGlobalObject*, JSValue trapResult, JSObject*, PropertyName, JSValue putValue, bool shouldThrow);
+    JSObject* target() const { return m_target.get(); }
+    JSValue handler() const { return m_handler.get(); }
 
     static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
     static bool putByIndex(JSCell*, JSGlobalObject*, unsigned propertyName, JSValue, bool shouldThrow);
@@ -89,8 +74,8 @@ public:
     void revoke(VM&);
     bool isRevoked() const;
 
-    const WriteBarrier<Unknown>& internalField(Field field) const { return Base::internalField(static_cast<uint32_t>(field)); }
-    WriteBarrier<Unknown>& internalField(Field field) { return Base::internalField(static_cast<uint32_t>(field)); }
+    static ptrdiff_t offsetOfTarget() { return OBJECT_OFFSETOF(ProxyObject, m_target); }
+    static ptrdiff_t offsetOfHandler() { return OBJECT_OFFSETOF(ProxyObject, m_handler); }
 
 private:
     JS_EXPORT_PRIVATE ProxyObject(VM&, Structure*);
@@ -126,8 +111,10 @@ private:
     void performGetOwnEnumerablePropertyNames(JSGlobalObject*, PropertyNameArray&);
     bool performSetPrototype(JSGlobalObject*, JSValue prototype, bool shouldThrowIfCantSet);
 
-    bool m_isCallable : 1 { false };
-    bool m_isConstructible : 1 { false };
+    WriteBarrier<JSObject> m_target;
+    WriteBarrier<Unknown> m_handler;
+    bool m_isCallable : 1;
+    bool m_isConstructible : 1;
 };
 
 } // namespace JSC

@@ -41,7 +41,6 @@ constexpr char pathSeparator = '/';
 constexpr uint64_t defaultInitialCapacity = 1 * MB;
 constexpr uint64_t defaultMaxCapacityForExponentialGrowth = 256 * MB;
 constexpr uint64_t defaultCapacityStep = 128 * MB;
-constexpr uint64_t defaultMaxCapacity = 16 * GB;
 
 std::unique_ptr<FileSystemStorageHandle> FileSystemStorageHandle::create(FileSystemStorageManager& manager, Type type, String&& path, String&& name)
 {
@@ -260,6 +259,9 @@ std::optional<FileSystemStorageError> FileSystemStorageHandle::move(WebCore::Fil
         return FileSystemStorageError::InvalidName;
 
     auto destinationPath = FileSystem::pathByAppendingComponent(path, newName);
+    if (FileSystem::fileExists(destinationPath))
+        return FileSystemStorageError::Unknown;
+
     if (!FileSystem::moveFile(m_path, destinationPath))
         return FileSystemStorageError::Unknown;
 
@@ -301,9 +303,6 @@ void FileSystemStorageHandle::requestNewCapacityForSyncAccessHandle(WebCore::Fil
         return completionHandler(currentCapacity);
 
     if (!m_manager)
-        return completionHandler(std::nullopt);
-
-    if (newCapacity > defaultMaxCapacity)
         return completionHandler(std::nullopt);
 
     if (newCapacity < defaultInitialCapacity)

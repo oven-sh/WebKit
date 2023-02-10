@@ -50,7 +50,6 @@ private:
     ExceptionOr<void> setCodecPreferences(const Vector<RTCRtpCodecCapability>&) final;
 
     GRefPtr<GstWebRTCRTPTransceiver> m_rtcTransceiver;
-    bool m_isStopped { false };
 };
 
 } // namespace WebCore

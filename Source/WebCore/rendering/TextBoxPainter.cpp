@@ -39,7 +39,6 @@
 #include "RenderBlock.h"
 #include "RenderCombineText.h"
 #include "RenderText.h"
-#include "RenderTheme.h"
 #include "RenderView.h"
 #include "ShadowData.h"
 #include "StyledMarkedText.h"
@@ -189,55 +188,6 @@ void TextBoxPainter<TextBoxPath>::paintBackground()
 }
 
 template<typename TextBoxPath>
-void TextBoxPainter<TextBoxPath>::paintCompositionForeground()
-{
-    auto& editor = m_renderer.frame().editor();
-    auto& lineStyle = m_isFirstLine ? m_renderer.firstLineStyle() : m_renderer.style();
-
-    auto highlights = editor.customCompositionHighlights();
-    Vector<CompositionHighlight> highlightsWithForeground;
-
-    // The highlight ranges must be "packed" so that there is no non-empty interval between
-    // any two adjacent highlight ranges. This is needed since otherwise, `paintForeground`
-    // will not be called in those would-be non-empty intervals.
-    if (editor.compositionUsesCustomHighlights() && m_containsComposition) {
-        highlightsWithForeground.append({ textBox().start(), highlights[0].startOffset, { }, { } });
-
-        for (size_t i = 0; i < highlights.size(); ++i) {
-            highlightsWithForeground.append(highlights[i]);
-            if (i != highlights.size() - 1)
-                highlightsWithForeground.append({ highlights[i].endOffset, highlights[i + 1].startOffset, { }, { } });
-        }
-
-        highlightsWithForeground.append({ highlights.last().endOffset, textBox().end(), { }, { } });
-    } else {
-        paintForeground({ MarkedText { m_selectableRange.clamp(textBox().start()), m_selectableRange.clamp(textBox().end()), MarkedText::Unmarked },
-            StyledMarkedText::computeStyleForUnmarkedMarkedText(m_renderer, lineStyle, m_isFirstLine, m_paintInfo) });
-        return;
-    }
-
-    for (auto& highlight : highlightsWithForeground) {
-        auto style = StyledMarkedText::computeStyleForUnmarkedMarkedText(m_renderer, lineStyle, m_isFirstLine, m_paintInfo);
-
-        if (highlight.endOffset <= textBox().start())
-            continue;
-
-        if (highlight.startOffset >= textBox().end())
-            break;
-
-        auto [clampedStart, clampedEnd] = m_selectableRange.clamp(highlight.startOffset, highlight.endOffset);
-
-        if (highlight.foregroundColor)
-            style.textStyles.fillColor = *highlight.foregroundColor;
-
-        paintForeground({ MarkedText { clampedStart, clampedEnd, MarkedText::Unmarked }, style });
-
-        if (highlight.endOffset > textBox().end())
-            break;
-    }
-}
-
-template<typename TextBoxPath>
 void TextBoxPainter<TextBoxPath>::paintForegroundAndDecorations()
 {
     auto shouldPaintSelectionForeground = m_haveSelection && !m_useCustomUnderlines;
@@ -257,7 +207,9 @@ void TextBoxPainter<TextBoxPath>::paintForegroundAndDecorations()
         return false;
     };
     if (!contentMayNeedStyledMarkedText()) {
-        paintCompositionForeground();
+        auto& lineStyle = m_isFirstLine ? m_renderer.firstLineStyle() : m_renderer.style();
+        paintForeground({ MarkedText { m_selectableRange.clamp(textBox().start()), m_selectableRange.clamp(textBox().end()), MarkedText::Unmarked },
+            StyledMarkedText::computeStyleForUnmarkedMarkedText(m_renderer, lineStyle, m_isFirstLine, m_paintInfo) });
         return;
     }
 
@@ -365,9 +317,6 @@ void TextBoxPainter<TextBoxPath>::paintCompositionBackground()
     }
 
     for (auto& highlight : editor.customCompositionHighlights()) {
-        if (!highlight.backgroundColor)
-            continue;
-
         if (highlight.endOffset <= textBox().start())
             continue;
 
@@ -376,7 +325,7 @@ void TextBoxPainter<TextBoxPath>::paintCompositionBackground()
 
         auto [clampedStart, clampedEnd] = m_selectableRange.clamp(highlight.startOffset, highlight.endOffset);
 
-        paintBackground(clampedStart, clampedEnd, *highlight.backgroundColor, BackgroundStyle::Rounded);
+        paintBackground(clampedStart, clampedEnd, highlight.color, BackgroundStyle::Rounded);
 
         if (highlight.endOffset > textBox().end())
             break;
@@ -805,30 +754,30 @@ void TextBoxPainter<TextBoxPath>::paintPlatformDocumentMarker(const MarkedText& 
 
     auto bounds = calculateDocumentMarkerBounds(makeIterator(), markedText);
 
-    auto lineStyleMode = [&] {
+    auto lineStyleForMarkedTextType = [&]() -> DocumentMarkerLineStyle {
+        bool shouldUseDarkAppearance = m_renderer.useDarkAppearance();
         switch (markedText.type) {
         case MarkedText::SpellingError:
-            return DocumentMarkerLineStyleMode::Spelling;
+            return { DocumentMarkerLineStyleMode::Spelling, shouldUseDarkAppearance };
         case MarkedText::GrammarError:
-            return DocumentMarkerLineStyleMode::Grammar;
+            return { DocumentMarkerLineStyleMode::Grammar, shouldUseDarkAppearance };
         case MarkedText::Correction:
-            return DocumentMarkerLineStyleMode::AutocorrectionReplacement;
+            return { DocumentMarkerLineStyleMode::AutocorrectionReplacement, shouldUseDarkAppearance };
         case MarkedText::DictationAlternatives:
-            return DocumentMarkerLineStyleMode::DictationAlternatives;
+            return { DocumentMarkerLineStyleMode::DictationAlternatives, shouldUseDarkAppearance };
 #if PLATFORM(IOS_FAMILY)
         case MarkedText::DictationPhraseWithAlternatives:
             // FIXME: Rename DocumentMarkerLineStyle::TextCheckingDictationPhraseWithAlternatives and remove the PLATFORM(IOS_FAMILY)-guard.
-            return DocumentMarkerLineStyleMode::TextCheckingDictationPhraseWithAlternatives;
+            return { DocumentMarkerLineStyleMode::TextCheckingDictationPhraseWithAlternatives, shouldUseDarkAppearance };
 #endif
         default:
             ASSERT_NOT_REACHED();
-            return DocumentMarkerLineStyleMode::Spelling;
+            return { DocumentMarkerLineStyleMode::Spelling, shouldUseDarkAppearance };
         }
-    }();
-    auto lineStyleColor = RenderTheme::singleton().documentMarkerLineColor(lineStyleMode, m_renderer.styleColorOptions());
+    };
 
     bounds.moveBy(m_paintRect.location());
-    m_paintInfo.context().drawDotsForDocumentMarker(bounds, { lineStyleMode, lineStyleColor });
+    m_paintInfo.context().drawDotsForDocumentMarker(bounds, lineStyleForMarkedTextType());
 }
 
 template<typename TextBoxPath>

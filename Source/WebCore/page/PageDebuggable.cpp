@@ -49,26 +49,18 @@ String PageDebuggable::name() const
     if (!m_nameOverride.isNull())
         return m_nameOverride;
 
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
-    if (!localMainFrame)
+    if (!m_page.mainFrame().document())
         return String();
 
-    if (!localMainFrame->document())
-        return String();
-
-    return localMainFrame->document()->title();
+    return m_page.mainFrame().document()->title();
 }
 
 String PageDebuggable::url() const
 {
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
-    if (!localMainFrame)
+    if (!m_page.mainFrame().document())
         return String();
 
-    if (!localMainFrame->document())
-        return String();
-
-    String url = localMainFrame->document()->url().string();
+    String url = m_page.mainFrame().document()->url().string();
     return url.isEmpty() ? "about:blank"_s : url;
 }
 

@@ -130,12 +130,7 @@ ExceptionOr<RefPtr<Range>> Internals::rangeForDictionaryLookupAtLocation(int x, 
     document->updateLayoutIgnorePendingStylesheets();
 
     constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent, HitTestRequest::Type::AllowChildFrameContent };
-    
-    auto* localFrame = dynamicDowncast<LocalFrame>(document->frame()->mainFrame());
-    if (!localFrame)
-        return nullptr; 
-
-    auto result = localFrame->eventHandler().hitTestResultAtPoint(IntPoint(x, y), hitType);
+    auto result = document->frame()->mainFrame().eventHandler().hitTestResultAtPoint(IntPoint(x, y), hitType);
     auto range = DictionaryLookup::rangeAtHitTestResult(result);
     if (!range)
         return nullptr;

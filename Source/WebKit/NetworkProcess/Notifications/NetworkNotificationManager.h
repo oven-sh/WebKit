@@ -38,7 +38,7 @@
 
 namespace WebCore {
 class NotificationResources;
-class SecurityOriginData;
+struct SecurityOriginData;
 }
 
 namespace WebKit {

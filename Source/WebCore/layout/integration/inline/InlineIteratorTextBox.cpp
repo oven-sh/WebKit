@@ -162,7 +162,7 @@ TextBoxIterator textBoxFor(const LayoutIntegration::InlineContent& content, cons
 
 TextBoxIterator textBoxFor(const LayoutIntegration::InlineContent& content, size_t boxIndex)
 {
-    ASSERT(content.boxes[boxIndex].isTextOrSoftLineBreak());
+    ASSERT(content.boxes[boxIndex].text());
     return { BoxModernPath { content, boxIndex } };
 }
 

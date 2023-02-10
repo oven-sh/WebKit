@@ -31,7 +31,7 @@
 namespace TestWebKitAPI {
 
 // This test fixture can be used to write test that work with both WebKit1 and WebKit2. Calling
-// runWebKit1Test or runWebKit2Test will create a WebView or WKWebView (respectively), load the URL
+// runWebKit1Test or runWebKit2Test will create a WebView or WKView (respectively), load the URL
 // specified by url(), and then call didLoadURL. Your test's logic should go in didLoadURL.
 class WebKitAgnosticTest : public ::testing::Test {
 public:
@@ -41,13 +41,13 @@ public:
     void runWebKit2Test();
 
     void loadURL(WebView *, NSURL *);
-    void loadURL(WKWebView *, NSURL *);
+    void loadURL(WKView *, NSURL *);
 
     void goBack(WebView *);
-    void goBack(WKWebView *);
+    void goBack(WKView *);
 
     void waitForNextPresentationUpdate(WebView *);
-    void waitForNextPresentationUpdate(WKWebView *);
+    void waitForNextPresentationUpdate(WKView *);
 
     void waitForLoadToFinish();
 
@@ -56,13 +56,13 @@ public:
 private:
     virtual NSURL *url() const = 0;
     virtual void didLoadURL(WebView *) = 0;
-    virtual void didLoadURL(WKWebView *) = 0;
+    virtual void didLoadURL(WKView *) = 0;
 
     virtual void initializeView(WebView *) { }
-    virtual void initializeView(WKWebView *) { }
+    virtual void initializeView(WKView *) { }
 
     virtual void teardownView(WebView *) { }
-    virtual void teardownView(WKWebView *) { }
+    virtual void teardownView(WKView *) { }
 
     bool didFinishLoad;
 };

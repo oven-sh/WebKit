@@ -2043,7 +2043,7 @@ ScrollPosition FrameView::minimumScrollPosition() const
 {
     ScrollPosition minimumPosition = ScrollView::minimumScrollPosition();
 
-    if (m_frame->isMainFrame() && m_scrollPinningBehavior == ScrollPinningBehavior::PinToBottom)
+    if (m_frame->isMainFrame() && m_scrollPinningBehavior == PinToBottom)
         minimumPosition.setY(maximumScrollPosition().y());
     
     return minimumPosition;
@@ -2053,7 +2053,7 @@ ScrollPosition FrameView::maximumScrollPosition() const
 {
     ScrollPosition maximumPosition = ScrollView::maximumScrollPosition();
 
-    if (m_frame->isMainFrame() && m_scrollPinningBehavior == ScrollPinningBehavior::PinToTop)
+    if (m_frame->isMainFrame() && m_scrollPinningBehavior == PinToTop)
         maximumPosition.setY(minimumScrollPosition().y());
     
     return maximumPosition;
@@ -2065,7 +2065,7 @@ ScrollPosition FrameView::unscaledMinimumScrollPosition() const
         IntRect unscaledDocumentRect = renderView->unscaledDocumentRect();
         ScrollPosition minimumPosition = unscaledDocumentRect.location();
 
-        if (m_frame->isMainFrame() && m_scrollPinningBehavior == ScrollPinningBehavior::PinToBottom)
+        if (m_frame->isMainFrame() && m_scrollPinningBehavior == PinToBottom)
             minimumPosition.setY(unscaledMaximumScrollPosition().y());
 
         return minimumPosition;
@@ -2080,7 +2080,7 @@ ScrollPosition FrameView::unscaledMaximumScrollPosition() const
         IntRect unscaledDocumentRect = renderView->unscaledDocumentRect();
         unscaledDocumentRect.expand(0, headerHeight() + footerHeight());
         ScrollPosition maximumPosition = ScrollPosition(unscaledDocumentRect.maxXMaxYCorner() - visibleSize()).expandedTo({ 0, 0 });
-        if (m_frame->isMainFrame() && m_scrollPinningBehavior == ScrollPinningBehavior::PinToTop)
+        if (m_frame->isMainFrame() && m_scrollPinningBehavior == PinToTop)
             maximumPosition.setY(unscaledMinimumScrollPosition().y());
 
         return maximumPosition;
@@ -2582,24 +2582,21 @@ void FrameView::textFragmentIndicatorTimerFired()
         auto textRects = RenderFlexibleBox::absoluteTextRects(range);
         
         HitTestResult result;
-        auto* localMainFrame = dynamicDowncast<LocalFrame>(page->mainFrame());
-        if (!localMainFrame)
-            return;
-        result = localMainFrame->eventHandler().hitTestResultAtPoint(LayoutPoint(textRects.first().center()), hitType);
+        result = page->mainFrame().eventHandler().hitTestResultAtPoint(LayoutPoint(textRects.first().center()), hitType);
         if (!intersects(range, *result.targetNode()))
             return;
         
         if (textRects.size() >= 2) {
-            result = localMainFrame->eventHandler().hitTestResultAtPoint(LayoutPoint(textRects[1].center()), hitType);
+            result = page->mainFrame().eventHandler().hitTestResultAtPoint(LayoutPoint(textRects[1].center()), hitType);
             if (!intersects(range, *result.targetNode()))
                 return;
         }
         
         if (textRects.size() >= 4) {
-            result = localMainFrame->eventHandler().hitTestResultAtPoint(LayoutPoint(textRects.last().center()), hitType);
+            result = page->mainFrame().eventHandler().hitTestResultAtPoint(LayoutPoint(textRects.last().center()), hitType);
             if (!intersects(range, *result.targetNode()))
                 return;
-            result = localMainFrame->eventHandler().hitTestResultAtPoint(LayoutPoint(textRects[textRects.size() - 2].center()), hitType);
+            result = page->mainFrame().eventHandler().hitTestResultAtPoint(LayoutPoint(textRects[textRects.size() - 2].center()), hitType);
             if (!intersects(range, *result.targetNode()))
                 return;
         }
@@ -2982,11 +2979,7 @@ bool FrameView::shouldUpdateCompositingLayersAfterScrolling() const
     if (!page)
         return true;
 
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(page->mainFrame());
-    if (!localMainFrame)
-        return true;
-
-    if (localMainFrame != m_frame.ptr())
+    if (&page->mainFrame() != m_frame.ptr())
         return true;
 
     auto scrollingCoordinator = this->scrollingCoordinator();
@@ -5726,11 +5719,8 @@ AXObjectCache* FrameView::axObjectCache() const
     // FIXME: We should generally always be using the main-frame cache rather than
     // using it as a fallback as we do here.
     if (!cache && !m_frame->isMainFrame()) {
-        auto localMainFrame = dynamicDowncast<LocalFrame>(m_frame->mainFrame());
-        if (localMainFrame) {
-            if (auto* mainFrameDocument = localMainFrame->document())
-                cache = mainFrameDocument->existingAXObjectCache();
-        }
+        if (auto* mainFrameDocument = m_frame->mainFrame().document())
+            cache = mainFrameDocument->existingAXObjectCache();
     }
     return cache;
 }
@@ -5884,9 +5874,8 @@ void FrameView::firePaintRelatedMilestonesIfNeeded()
 
     m_milestonesPendingPaint = { };
 
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(page->mainFrame());
-    if (milestonesAchieved && localMainFrame)
-        localMainFrame->loader().didReachLayoutMilestone(milestonesAchieved);
+    if (milestonesAchieved)
+        page->mainFrame().loader().didReachLayoutMilestone(milestonesAchieved);
 }
 
 void FrameView::setVisualUpdatesAllowedByClient(bool visualUpdatesAllowed)

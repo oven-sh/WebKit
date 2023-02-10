@@ -152,12 +152,11 @@ class ShaderState final : angle::NonCopyable
 
     std::string mLabel;
     std::string mSource;
-    size_t mSourceHash = 0;
 
     gl::CompiledShaderState mCompiledShaderState;
 
     // Indicates if this shader has been successfully compiled
-    CompileStatus mCompileStatus = CompileStatus::NOT_COMPILED;
+    CompileStatus mCompileStatus;
 };
 
 class Shader final : angle::NonCopyable, public LabeledObject
@@ -201,8 +200,6 @@ class Shader final : angle::NonCopyable, public LabeledObject
                                           GLsizei *length,
                                           char *buffer);
     const sh::BinaryBlob &getCompiledBinary(const Context *context);
-
-    size_t getSourceHash() const;
 
     void compile(const Context *context);
     bool isCompiled(const Context *context);
@@ -328,9 +325,6 @@ class Shader final : angle::NonCopyable, public LabeledObject
 };
 
 const char *GetShaderTypeString(ShaderType type);
-std::string GetShaderDumpFileDirectory();
-std::string GetShaderDumpFileName(size_t shaderHash);
-
 }  // namespace gl
 
 #endif  // LIBANGLE_SHADER_H_

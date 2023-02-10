@@ -53,17 +53,8 @@ static constexpr bool expectedBits[size] = {
     false, false, true,  false,  true,  true,  true,  true,
 };
 
-static constexpr bool expectedSmallBits[65] = {
+static constexpr bool expectedSmallBits[smallSize] = {
     false, true, true,  false,  true,  false, false, true, true,
-
-    // Additional unused booleans to make testFixedBitVectorFindBit not read out of bounds.
-    false, false, false, false, false, false, false, false,
-    false, false, false, false, false, false, false, false,
-    false, false, false, false, false, false, false, false,
-    false, false, false, false, false, false, false, false,
-    false, false, false, false, false, false, false, false,
-    false, false, false, false, false, false, false, false,
-    false, false, false, false, false, false, false, false,
 };
 
 constexpr size_t countBits(const bool boolArray[], size_t size)

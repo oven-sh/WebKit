@@ -56,7 +56,7 @@ namespace DFG {
 struct OSRExit;
 }
 
-#define JIT_COMMENT(jit, ...) do { if (UNLIKELY(Options::needDisassemblySupport())) { (jit).comment(__VA_ARGS__); } else { (void) jit; } } while (0);
+#define JIT_COMMENT(jit, ...) do { if (UNLIKELY(Options::dumpDisassembly())) { (jit).comment(__VA_ARGS__); } else { (void) jit; } } while (0);
 
 class AbstractMacroAssemblerBase {
     WTF_MAKE_FAST_ALLOCATED;
@@ -426,7 +426,9 @@ public:
         friend class Watchpoint;
 
     public:
-        Label() = default;
+        Label()
+        {
+        }
 
         Label(AbstractMacroAssemblerType* masm)
             : m_label(masm->m_assembler.label())
@@ -1023,7 +1025,7 @@ public:
     template<typename... Types>
     void comment(const Types&... values)
     {
-        if (LIKELY(!Options::needDisassemblySupport()))
+        if (LIKELY(!Options::dumpDisassembly()))
             return;
         StringPrintStream s;
         s.print(values...);

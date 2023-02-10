@@ -6458,10 +6458,8 @@ void HTMLMediaElement::enqueuePlaybackTargetAvailabilityChangedEvent(EnqueueBeha
 
     ALWAYS_LOG(LOGIDENTIFIER, "hasTargets = ", hasTargets);
     m_lastTargetAvailabilityEventState = hasTargets;
-#if ENABLE(WIRELESS_PLAYBACK_TARGET_AVAILABILITY_API)
     auto event = WebKitPlaybackTargetAvailabilityEvent::create(eventNames().webkitplaybacktargetavailabilitychangedEvent, hasTargets);
     scheduleEvent(WTFMove(event));
-#endif
     scheduleUpdateMediaState();
 }
 
@@ -6670,8 +6668,11 @@ void HTMLMediaElement::enterFullscreen(VideoFullscreenMode mode)
     }
 #endif
 
-    if (mediaSession().hasBehaviorRestriction(MediaElementSession::RequireUserGestureForFullscreen))
-        window->consumeTransientActivation();
+    ALWAYS_LOG(LOGIDENTIFIER, ", transient activation = ", window->hasTransientActivation());
+    if (mediaSession().hasBehaviorRestriction(MediaElementSession::RequireUserGestureForFullscreen) && !window->consumeTransientActivation()) {
+        ERROR_LOG(LOGIDENTIFIER, "User activation required to enter fullscreen");
+        return;
+    }
 
     queueTaskKeepingObjectAlive(*this, TaskSource::MediaElement, [this, mode, logIdentifier = LOGIDENTIFIER] {
         if (isContextStopped())
@@ -8428,33 +8429,6 @@ bool HTMLMediaElement::shouldOverridePauseDuringRouteChange() const
 #endif
 }
 
-LayerHostingContextID HTMLMediaElement::layerHostingContextID()
-{
-    if (m_player)
-        return m_player->hostingContextID();
-    return { };
-}
-
-FloatSize HTMLMediaElement::naturalSize()
-{
-    if (m_player)
-        return m_player->naturalSize();
-    return { };
-}
-
-FloatSize HTMLMediaElement::videoInlineSize() const
-{
-    if (m_player)
-        return m_player->videoInlineSize();
-    return { };
-}
-
-void HTMLMediaElement::setVideoInlineSizeFenced(const FloatSize& size, const WTF::MachSendRight& fence)
-{
-    if (m_player)
-        m_player->setVideoInlineSizeFenced(size, fence);
-}
-
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
 
 void HTMLMediaElement::scheduleUpdateMediaState()
@@ -8633,10 +8607,6 @@ void HTMLMediaElement::setBufferingPolicy(BufferingPolicy policy)
     m_bufferingPolicy = policy;
     if (m_player)
         m_player->setBufferingPolicy(policy);
-#if ENABLE(MEDIA_SOURCE)
-    if (m_mediaSource && policy == BufferingPolicy::PurgeResources)
-        m_mediaSource->memoryPressure();
-#endif
 }
 
 void HTMLMediaElement::purgeBufferedDataIfPossible()

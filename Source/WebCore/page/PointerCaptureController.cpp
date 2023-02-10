@@ -484,10 +484,7 @@ void PointerCaptureController::cancelPointer(PointerID pointerId, const IntPoint
         if (capturingData->targetOverride)
             return capturingData->targetOverride;
         constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent, HitTestRequest::Type::AllowChildFrameContent };
-        auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
-        if (!localMainFrame)
-            return nullptr;
-        return Ref(*localMainFrame)->eventHandler().hitTestResultAtPoint(documentPoint, hitType).innerNonSharedElement();
+        return Ref(m_page.mainFrame())->eventHandler().hitTestResultAtPoint(documentPoint, hitType).innerNonSharedElement();
     }();
 
     if (!target)

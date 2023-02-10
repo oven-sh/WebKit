@@ -1347,12 +1347,11 @@ void WebAnimation::tick()
     updateFinishedState(DidSeek::No, SynchronouslyNotify::Yes);
     m_shouldSkipUpdatingFinishedStateWhenResolving = true;
 
-    if (!m_effect || !m_effect->preventsAnimationReadiness()) {
-        if (hasPendingPauseTask())
-            runPendingPauseTask();
-        if (hasPendingPlayTask())
-            runPendingPlayTask();
-    }
+    // Run pending tasks, if any.
+    if (hasPendingPauseTask())
+        runPendingPauseTask();
+    if (hasPendingPlayTask())
+        runPendingPlayTask();
 
     if (!isEffectInvalidationSuspended() && m_effect)
         m_effect->animationDidTick();

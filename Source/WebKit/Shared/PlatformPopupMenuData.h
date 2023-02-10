@@ -30,11 +30,22 @@
 #include <WebCore/PopupMenuStyle.h>
 #include <wtf/text/WTFString.h>
 
+namespace IPC {
+class Decoder;
+class Encoder;
+}
+
 namespace WebKit {
 
 struct PlatformPopupMenuData {
+    PlatformPopupMenuData() = default;
+
+    void encode(IPC::Encoder&) const;
+    static WARN_UNUSED_RETURN bool decode(IPC::Decoder&, PlatformPopupMenuData&);
+    static std::optional<PlatformPopupMenuData> decode(IPC::Decoder&);
+
 #if PLATFORM(COCOA)
-    WebKit::FontInfo fontInfo;
+    FontInfo fontInfo;
     bool shouldPopOver { false };
     bool hideArrows { false };
     WebCore::PopupMenuStyle::PopupMenuSize menuSize { WebCore::PopupMenuStyle::PopupMenuSize::PopupMenuSizeNormal };

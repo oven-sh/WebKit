@@ -28,7 +28,6 @@
 
 #include "APIArray.h"
 #include "APINotificationProvider.h"
-#include "APINumber.h"
 #include "APISecurityOrigin.h"
 #include "Logging.h"
 #include "WebNotification.h"
@@ -108,20 +107,7 @@ void WebNotificationManagerProxy::show(WebPageProxy* webPage, IPC::Connection& c
 {
     LOG(Notifications, "WebPageProxy (%p) asking to show notification (%s)", webPage, notificationData.notificationID.toString().utf8().data());
 
-    auto notification = WebNotification::createNonPersistent(notificationData, identifierForPagePointer(webPage), connection);
-    showImpl(webPage, WTFMove(notification), WTFMove(notificationResources));
-}
-
-void WebNotificationManagerProxy::show(const WebsiteDataStore& dataStore, IPC::Connection& connection, const WebCore::NotificationData& notificationData, RefPtr<WebCore::NotificationResources>&& notificationResources)
-{
-    LOG(Notifications, "WebsiteDataStore (%p) asking to show notification (%s)", &dataStore, notificationData.notificationID.toString().utf8().data());
-
-    auto notification = WebNotification::createPersistent(notificationData, dataStore.configuration().identifier(), connection);
-    showImpl(nullptr, WTFMove(notification), WTFMove(notificationResources));
-}
-
-void WebNotificationManagerProxy::showImpl(WebPageProxy* webPage, Ref<WebNotification>&& notification, RefPtr<WebCore::NotificationResources>&& notificationResources)
-{
+    auto notification = WebNotification::create(notificationData, identifierForPagePointer(webPage), connection);
     m_globalNotificationMap.set(notification->notificationID(), notification->coreNotificationID());
     m_notifications.set(notification->coreNotificationID(), notification);
     m_provider->show(webPage, notification.get(), WTFMove(notificationResources));

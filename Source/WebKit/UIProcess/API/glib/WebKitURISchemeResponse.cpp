@@ -65,7 +65,7 @@ struct _WebKitURISchemeResponsePrivate {
     GUniquePtr<SoupMessageHeaders> headers;
 };
 
-WEBKIT_DEFINE_FINAL_TYPE(WebKitURISchemeResponse, webkit_uri_scheme_response, G_TYPE_OBJECT, GObject)
+WEBKIT_DEFINE_TYPE(WebKitURISchemeResponse, webkit_uri_scheme_response, G_TYPE_OBJECT)
 
 static void webkitURISchemeResponseSetProperty(GObject* object, guint propId, const GValue* value, GParamSpec* paramSpec)
 {

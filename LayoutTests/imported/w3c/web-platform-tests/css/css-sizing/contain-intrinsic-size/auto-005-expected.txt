@@ -1,4 +1,4 @@
-50
+1
 
-PASS contain-intrinsic-size: auto
+FAIL contain-intrinsic-size: auto assert_equals: expected 50 but got 1
 

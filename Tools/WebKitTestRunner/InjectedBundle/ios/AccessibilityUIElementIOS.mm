@@ -61,6 +61,7 @@ typedef void (*AXPostedNotificationCallback)(id element, NSString* notification,
 - (NSString *)stringForRange:(NSRange)range;
 - (NSAttributedString *)attributedStringForRange:(NSRange)range;
 - (NSAttributedString *)attributedStringForElement;
+- (NSArray *)elementsForRange:(NSRange)range;
 - (NSString *)selectionRangeString;
 - (NSArray *)lineRectsAndText;
 - (CGPoint)accessibilityClickPoint;
@@ -258,6 +259,12 @@ RefPtr<AccessibilityUIElement> AccessibilityUIElement::elementAtPoint(int x, int
         return nil;
     
     return AccessibilityUIElement::create(element);
+}
+
+JSValueRef AccessibilityUIElement::elementsForRange(unsigned location, unsigned length)
+{
+    NSArray *elementsForRange = [m_element elementsForRange:NSMakeRange(location, length)];
+    return makeJSArray(makeVector<RefPtr<AccessibilityUIElement>>(elementsForRange));
 }
 
 unsigned AccessibilityUIElement::indexOfChild(AccessibilityUIElement* element)

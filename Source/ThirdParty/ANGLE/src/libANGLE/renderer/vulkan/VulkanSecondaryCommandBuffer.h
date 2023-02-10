@@ -43,7 +43,7 @@ class VulkanSecondaryCommandBuffer : public priv::CommandBuffer
     static angle::Result InitializeCommandPool(Context *context,
                                                CommandPool *pool,
                                                uint32_t queueFamilyIndex,
-                                               ProtectionType protectionType);
+                                               bool hasProtectedContent);
     static angle::Result InitializeRenderPassInheritanceInfo(
         ContextVk *contextVk,
         const Framebuffer &framebuffer,

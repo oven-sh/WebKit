@@ -276,10 +276,7 @@ void WebResourceLoadObserver::logSubresourceLoading(const Frame* frame, const Re
     bool isRedirect = is3xxRedirect(redirectResponse);
     const URL& redirectedFromURL = redirectResponse.url();
     const URL& targetURL = newRequest.url();
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(frame->mainFrame());
-    if (!localMainFrame)
-        return;
-    const URL& topFrameURL = frame ? localMainFrame->document()->url() : URL();
+    const URL& topFrameURL = frame ? frame->mainFrame().document()->url() : URL();
     
     auto targetHost = targetURL.host();
     auto topFrameHost = topFrameURL.host();

@@ -39,6 +39,7 @@
 #include "FontCache.h"
 #include "FontCascade.h"
 #include "FontCustomPlatformData.h"
+#include "OpenTypeMathData.h"
 #include "SharedBuffer.h"
 #include <wtf/MathExtras.h>
 #include <wtf/NeverDestroyed.h>
@@ -529,7 +530,6 @@ String Font::description() const
 }
 #endif
 
-#if ENABLE(MATHML)
 const OpenTypeMathData* Font::mathData() const
 {
     if (isInterstitial())
@@ -541,7 +541,6 @@ const OpenTypeMathData* Font::mathData() const
     }
     return m_mathData.get();
 }
-#endif
 
 RefPtr<Font> Font::createScaledFont(const FontDescription& fontDescription, float scaleFactor) const
 {

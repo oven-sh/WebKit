@@ -1,4 +1,6 @@
 set(PORT Win)
+# FIXME: https://bugs.webkit.org/show_bug.cgi?id=251927
+set(WTF_PLATFORM_WIN_CAIRO 1)
 
 # Use Release DLL CRT even for Debug build
 set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreadedDLL)
@@ -15,6 +17,8 @@ add_definitions(-D_WINDOWS -DWINVER=0x601 -D_WIN32_WINNT=0x601)
 
 add_definitions(-DNOMINMAX)
 add_definitions(-DUNICODE -D_UNICODE)
+
+add_definitions(-DWTF_PLATFORM_WIN_CAIRO=1)
 add_definitions(-DNOCRYPT)
 
 # If <winsock2.h> is not included before <windows.h> redefinition errors occur
@@ -22,7 +26,8 @@ add_definitions(-DNOCRYPT)
 add_definitions(-D_WINSOCKAPI_=)
 
 set(ENABLE_WEBKIT ON)
-set(ENABLE_WEBKIT_LEGACY OFF)
+# FIXME: https://bugs.webkit.org/show_bug.cgi?id=251929
+set(ENABLE_WEBKIT_LEGACY ON)
 
 if (NOT WEBKIT_LIBRARIES_DIR)
     if (DEFINED ENV{WEBKIT_LIBRARIES})
@@ -70,7 +75,6 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
 
 set(CMAKE_DISABLE_PRECOMPILE_HEADERS OFF)
 
-find_package(Apple REQUIRED COMPONENTS CoreFoundation)
 find_package(Cairo 1.15.12 REQUIRED)
 find_package(CURL 7.77.0 REQUIRED)
 find_package(ICU 61.2 REQUIRED COMPONENTS data i18n uc)
@@ -193,7 +197,6 @@ set(USE_ANGLE_EGL ON)
 
 SET_AND_EXPOSE_TO_BUILD(USE_ANGLE ON)
 SET_AND_EXPOSE_TO_BUILD(USE_CAIRO ON)
-SET_AND_EXPOSE_TO_BUILD(USE_CF ON)
 SET_AND_EXPOSE_TO_BUILD(USE_CURL ON)
 SET_AND_EXPOSE_TO_BUILD(USE_GRAPHICS_LAYER_TEXTURE_MAPPER ON)
 SET_AND_EXPOSE_TO_BUILD(USE_GRAPHICS_LAYER_WC ON)
@@ -220,6 +223,12 @@ cmake_pop_check_state()
 
 if (ENABLE_XSLT)
     find_package(LibXslt 1.1.32 REQUIRED)
+endif ()
+
+# CoreFoundation is required when building WebKitLegacy
+if (ENABLE_WEBKIT_LEGACY)
+    SET_AND_EXPOSE_TO_BUILD(USE_CF ON)
+    find_package(Apple REQUIRED COMPONENTS CoreFoundation)
 endif ()
 
 set(WTF_LIBRARY_TYPE SHARED)

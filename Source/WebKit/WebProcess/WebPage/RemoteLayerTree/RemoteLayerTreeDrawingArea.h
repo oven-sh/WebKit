@@ -65,7 +65,7 @@ private:
     void setNeedsDisplay() override;
     void setNeedsDisplayInRect(const WebCore::IntRect&) override;
     void scroll(const WebCore::IntRect& scrollRect, const WebCore::IntSize& scrollDelta) override;
-    void updateGeometry(const WebCore::IntSize& viewSize, bool flushSynchronously, const WTF::MachSendRight& fencePort, CompletionHandler<void()>&&) override;
+    void updateGeometry(const WebCore::IntSize& viewSize, bool flushSynchronously, const WTF::MachSendRight& fencePort) override;
     void adoptDisplayRefreshMonitorsFromDrawingArea(DrawingArea&) override;
 
     WebCore::GraphicsLayerFactory* graphicsLayerFactory() override;
@@ -73,7 +73,7 @@ private:
     void triggerRenderingUpdate() override;
     void attachViewOverlayGraphicsLayer(WebCore::GraphicsLayer*) override;
 
-    void dispatchAfterEnsuringDrawing(IPC::AsyncReplyID) final;
+    void addTransactionCallbackID(CallbackID) override;
     virtual void willCommitLayerTree(RemoteLayerTreeTransaction&) { };
 
     RefPtr<WebCore::DisplayRefreshMonitor> createDisplayRefreshMonitor(WebCore::PlatformDisplayID) final;
@@ -163,7 +163,7 @@ private:
     HashSet<RemoteLayerTreeDisplayRefreshMonitor*>* m_displayRefreshMonitorsToNotify { nullptr };
 
     TransactionID m_currentTransactionID;
-    Vector<IPC::AsyncReplyID> m_pendingCallbackIDs;
+    Vector<RemoteLayerTreeTransaction::TransactionCallbackID> m_pendingCallbackIDs;
     ActivityStateChangeID m_activityStateChangeID { ActivityStateChangeAsynchronous };
 
     OptionSet<WebCore::LayoutMilestone> m_pendingNewlyReachedPaintingMilestones;

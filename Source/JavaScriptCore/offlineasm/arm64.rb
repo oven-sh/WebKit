@@ -446,10 +446,6 @@ end
 
 class Sequence
     def getModifiedListARM64(result = @list)
-        result = riscDropTags(result)
-        getModifiedListARM64Common(result)
-    end
-    def getModifiedListARM64Common(result = @list)
         result = riscLowerNot(result)
         result = riscLowerSimpleBranchOps(result)
 

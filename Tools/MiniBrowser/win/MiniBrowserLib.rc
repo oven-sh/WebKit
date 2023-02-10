@@ -44,7 +44,8 @@ BEGIN
     BEGIN
         MENUITEM "&Print\tCtrl-P",              IDM_PRINT
         MENUITEM "E&xit",                       IDM_EXIT
-        MENUITEM "New Window",                  IDM_NEW_WEBKIT_WINDOW
+        MENUITEM "New WebKit Window",           IDM_NEW_WEBKIT_WINDOW
+        MENUITEM "New WebKitLegacy Window",     IDM_NEW_WEBKITLEGACY_WINDOW
         MENUITEM "Close\tCtrl-W",               IDM_CLOSE_WINDOW
     END
     POPUP "&View"

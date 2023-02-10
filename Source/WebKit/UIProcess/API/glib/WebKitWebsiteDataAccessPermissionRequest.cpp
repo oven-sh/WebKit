@@ -24,10 +24,6 @@
 #include <wtf/CompletionHandler.h>
 #include <wtf/glib/WTFGType.h>
 
-#if !ENABLE(2022_GLIB_API)
-typedef WebKitPermissionRequestIface WebKitPermissionRequestInterface;
-#endif
-
 /**
  * WebKitWebsiteDataAccessPermissionRequest:
  * @See_also: #WebKitPermissionRequest, #WebKitWebView
@@ -43,7 +39,7 @@ typedef WebKitPermissionRequestIface WebKitPermissionRequestInterface;
  * Since: 2.30
  */
 
-static void webkit_permission_request_interface_init(WebKitPermissionRequestInterface*);
+static void webkit_permission_request_interface_init(WebKitPermissionRequestIface*);
 
 struct _WebKitWebsiteDataAccessPermissionRequestPrivate {
     CString requestingDomain;
@@ -51,8 +47,8 @@ struct _WebKitWebsiteDataAccessPermissionRequestPrivate {
     CompletionHandler<void(bool)> completionHandler;
 };
 
-WEBKIT_DEFINE_FINAL_TYPE_WITH_CODE(
-    WebKitWebsiteDataAccessPermissionRequest, webkit_website_data_access_permission_request, G_TYPE_OBJECT, GObject,
+WEBKIT_DEFINE_FINAL_TYPE_WITH_CODE_IN_2022_API(
+    WebKitWebsiteDataAccessPermissionRequest, webkit_website_data_access_permission_request, G_TYPE_OBJECT,
     G_IMPLEMENT_INTERFACE(WEBKIT_TYPE_PERMISSION_REQUEST, webkit_permission_request_interface_init))
 
 static void webkitWebsiteDataAccessPermissionRequestAllow(WebKitPermissionRequest* request)
@@ -73,7 +69,7 @@ static void webkitWebsiteDataAccessPermissionRequestDeny(WebKitPermissionRequest
         priv->completionHandler(false);
 }
 
-static void webkit_permission_request_interface_init(WebKitPermissionRequestInterface* iface)
+static void webkit_permission_request_interface_init(WebKitPermissionRequestIface* iface)
 {
     iface->allow = webkitWebsiteDataAccessPermissionRequestAllow;
     iface->deny = webkitWebsiteDataAccessPermissionRequestDeny;

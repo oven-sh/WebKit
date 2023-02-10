@@ -98,12 +98,7 @@ void CSSCounterStyleRegistry::addCounterStyle(const CSSCounterStyleDescriptors& 
     m_authorCounterStyles.set(descriptors.m_name, CSSCounterStyle::create(descriptors, false));
 }
 
-void CSSCounterStyleRegistry::addUserAgentCounterStyle(const CSSCounterStyleDescriptors& descriptors)
-{
-    userAgentCounterStyles().set(descriptors.m_name, CSSCounterStyle::create(descriptors, true));
-}
-
-RefPtr<CSSCounterStyle> CSSCounterStyleRegistry::decimalCounter()
+RefPtr<CSSCounterStyle> CSSCounterStyleRegistry::decimalCounter() const
 {
     auto& userAgentCounters = userAgentCounterStyles();
     auto iterator = userAgentCounters.find("decimal"_s);
@@ -142,7 +137,14 @@ RefPtr<CSSCounterStyle> CSSCounterStyleRegistry::resolvedCounterStyle(const Atom
 
 CounterStyleMap& CSSCounterStyleRegistry::userAgentCounterStyles()
 {
-    static NeverDestroyed<CounterStyleMap> counters;
+    // FIXME: counter-style should get pre-defined counters from UA stylesheet rdar://103021161.
+    auto initialStyles = []() {
+        CounterStyleMap map;
+        map.add("decimal"_s, CSSCounterStyle::createCounterStyleDecimal());
+        return map;
+    };
+
+    static NeverDestroyed<CounterStyleMap> counters = initialStyles();
     return counters;
 }
 

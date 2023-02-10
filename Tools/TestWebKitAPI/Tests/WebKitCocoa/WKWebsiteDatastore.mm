@@ -399,7 +399,7 @@ TEST(WKWebsiteDataStore, ClearCustomDataStoreNoWebViews)
                     "Hello"_s);
                 break;
             case 2:
-                EXPECT_FALSE(strnstr(request.data(), "Cookie: a=b\r\n", request.size()));
+                EXPECT_FALSE(strstr(request.data(), "Cookie: a=b\r\n"));
                 connection.send(
                     "HTTP/1.1 200 OK\r\n"
                     "Content-Length: 5\r\n"
@@ -455,16 +455,11 @@ TEST(WKWebsiteDataStore, DefaultHSTSStorageDirectory)
     EXPECT_NOT_NULL(configuration.get().hstsStorageDirectory);
 }
 
-static RetainPtr<WKWebsiteDataStore> createWebsiteDataStoreAndPrepare(NSUUID *uuid, NSString *pushPartition)
+static RetainPtr<WKWebsiteDataStore> createWebsiteDataStoreAndPrepare(NSUUID *uuid)
 {
     auto websiteDataStoreConfiguration = adoptNS([[_WKWebsiteDataStoreConfiguration alloc] initWithIdentifier:uuid]);
-    websiteDataStoreConfiguration.get().webPushPartitionString = pushPartition;
     auto websiteDataStore = adoptNS([[WKWebsiteDataStore alloc] _initWithConfiguration:websiteDataStoreConfiguration.get()]);
     EXPECT_TRUE([websiteDataStoreConfiguration.get().identifier isEqual:uuid]);
-    EXPECT_TRUE([websiteDataStore.get()._identifier isEqual:uuid]);
-    EXPECT_TRUE([websiteDataStoreConfiguration.get().webPushPartitionString isEqual:pushPartition]);
-    EXPECT_TRUE([websiteDataStore.get()._webPushPartition isEqual:pushPartition]);
-
     pid_t webprocessIdentifier;
     @autoreleasepool {
         auto handler = adoptNS([[TestMessageHandler alloc] init]);
@@ -494,15 +489,6 @@ static RetainPtr<WKWebsiteDataStore> createWebsiteDataStoreAndPrepare(NSUUID *uu
     return websiteDataStore;
 }
 
-TEST(WKWebsiteDataStore, DataStoreWithIdentifierAndPushPartition)
-{
-    __block auto uuid = [NSUUID UUID];
-    @autoreleasepool {
-        // Make sure WKWebsiteDataStore with identifier does not exist so it can be deleted.
-        createWebsiteDataStoreAndPrepare(uuid, @"partition");
-    }
-}
-
 TEST(WKWebsiteDataStore, RemoveDataStoreWithIdentifier)
 {
     NSString *uuidString = @"68753a44-4d6f-1226-9c60-0050e4c00067";
@@ -510,7 +496,7 @@ TEST(WKWebsiteDataStore, RemoveDataStoreWithIdentifier)
     RetainPtr<NSURL> generalStorageDirectory;
     @autoreleasepool {
         // Make sure WKWebsiteDataStore with identifier does not exist.
-        auto websiteDataStore = createWebsiteDataStoreAndPrepare(uuid.get(), @"");
+        auto websiteDataStore = createWebsiteDataStoreAndPrepare(uuid.get());
         generalStorageDirectory = websiteDataStore.get()._configuration.generalStorageDirectory;
     }
 
@@ -532,7 +518,7 @@ TEST(WKWebsiteDataStore, ListIdentifiers)
     __block auto uuid = [NSUUID UUID];
     @autoreleasepool {
         // Make sure WKWebsiteDataStore with identifier does not exist so it can be deleted.
-        createWebsiteDataStoreAndPrepare(uuid, @"");
+        createWebsiteDataStoreAndPrepare(uuid);
     }
 
     __block bool done = false;

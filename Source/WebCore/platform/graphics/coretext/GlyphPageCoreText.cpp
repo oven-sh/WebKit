@@ -31,8 +31,13 @@
 
 #include "Font.h"
 #include "FontCascade.h"
-#include <pal/spi/cf/CoreTextSPI.h>
 #include <pal/spi/cg/CoreGraphicsSPI.h>
+
+#if PLATFORM(COCOA)
+#include <pal/spi/cf/CoreTextSPI.h>
+#else
+#include <pal/spi/win/CoreTextSPIWin.h>
+#endif
 
 namespace WebCore {
 

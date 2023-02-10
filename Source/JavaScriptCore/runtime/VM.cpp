@@ -612,8 +612,6 @@ static ThunkGenerator thunkGeneratorForIntrinsic(Intrinsic intrinsic)
         return remoteFunctionCallGenerator;
     case NumberConstructorIntrinsic:
         return numberConstructorCallThunkGenerator;
-    case StringConstructorIntrinsic:
-        return stringConstructorCallThunkGenerator;
     default:
         return nullptr;
     }
@@ -675,7 +673,7 @@ NativeExecutable* VM::getBoundFunction(bool isJSFunction, bool canConstruct)
             return cached;
         NativeExecutable* result = getHostFunction(
             slowCase ? boundFunctionCall : boundThisNoArgsFunctionCall,
-            ImplementationVisibility::Private, // Bound function's visibility is private on the stack.
+            ImplementationVisibility::Public,
             slowCase ? NoIntrinsic : BoundFunctionCallIntrinsic,
             canConstruct ? (slowCase ? boundFunctionConstruct : boundThisNoArgsFunctionConstruct) : callHostFunctionAsConstructor, nullptr, String());
         slot = Weak<NativeExecutable>(result);
@@ -1207,11 +1205,6 @@ void VM::dumpTypeProfilerData()
     typeProfiler()->dumpTypeProfilerData(*this);
 }
 
-void VM::queueMicrotask(QueuedTask&& task)
-{
-    m_microtaskQueue.enqueue(WTFMove(task));
-}
-
 void VM::callPromiseRejectionCallback(Strong<JSPromise>& promise)
 {
     JSObject* callback = promise->globalObject()->unhandledRejectionCallback();
@@ -1233,7 +1226,7 @@ void VM::callPromiseRejectionCallback(Strong<JSPromise>& promise)
 
 void VM::didExhaustMicrotaskQueue()
 {
-    do {
+    while (!m_aboutToBeNotifiedRejectedPromises.isEmpty()) {
         auto unhandledRejections = WTFMove(m_aboutToBeNotifiedRejectedPromises);
         for (auto& promise : unhandledRejections) {
             if (promise->isHandled(*this))
@@ -1241,7 +1234,7 @@ void VM::didExhaustMicrotaskQueue()
 
             callPromiseRejectionCallback(promise);
         }
-    } while (!m_aboutToBeNotifiedRejectedPromises.isEmpty());
+    }
 }
 
 void VM::promiseRejected(JSPromise* promise)
@@ -1254,26 +1247,33 @@ void VM::drainMicrotasks()
     if (UNLIKELY(executionForbidden()))
         m_microtaskQueue.clear();
     else {
-        do {
+        VMEntryScope entryScope(*this, nullptr);
+        // Only JSC shell on cocoa platform uses setOnEachMicrotaskTick
+        if (LIKELY(!m_onEachMicrotaskTick)) {
             while (!m_microtaskQueue.isEmpty()) {
                 auto task = m_microtaskQueue.dequeue();
                 task.run();
-                if (m_onEachMicrotaskTick)
-                    m_onEachMicrotaskTick(*this);
             }
             didExhaustMicrotaskQueue();
-        } while (!m_microtaskQueue.isEmpty());
+        } else {
+            while (!m_microtaskQueue.isEmpty()) {
+                auto task = m_microtaskQueue.dequeue();
+                task.run();
+                m_onEachMicrotaskTick(*this);
+            }
+            didExhaustMicrotaskQueue();
+        }
     }
     finalizeSynchronousJSExecution();
 }
 
 void sanitizeStackForVM(VM& vm)
 {
-    auto& thread = Thread::current();
-    auto& stack = thread.stack();
     if (!vm.currentThreadIsHoldingAPILock())
         return; // vm.lastStackTop() may not be set up correctly if JSLock is not held.
 
+    auto& thread = Thread::current();
+    auto& stack = thread.stack();
     logSanitizeStack(vm);
 
     RELEASE_ASSERT(stack.contains(vm.lastStackTop()), 0xaa10, vm.lastStackTop(), stack.origin(), stack.end());

@@ -55,8 +55,6 @@ LinkRelAttribute::LinkRelAttribute(Document& document, StringView rel)
         isDNSPrefetch = true;
     else if (document.settings().linkPreconnectEnabled() && equalLettersIgnoringASCIICase(rel, "preconnect"_s))
         isLinkPreconnect = true;
-    else if (document.settings().linkModulePreloadEnabled() && equalLettersIgnoringASCIICase(rel, "modulepreload"_s))
-        isLinkModulePreload = true;
     else if (document.settings().linkPreloadEnabled() && equalLettersIgnoringASCIICase(rel, "preload"_s))
         isLinkPreload = true;
     else if (document.settings().linkPrefetchEnabled() && equalLettersIgnoringASCIICase(rel, "prefetch"_s))
@@ -103,9 +101,6 @@ bool LinkRelAttribute::isSupported(Document& document, StringView attribute)
     }
 
     if (document.settings().linkPreconnectEnabled() && equalLettersIgnoringASCIICase(attribute, "preconnect"_s))
-        return true;
-
-    if (document.settings().linkModulePreloadEnabled() && equalLettersIgnoringASCIICase(attribute, "modulepreload"_s))
         return true;
 
     if (document.settings().linkPreloadEnabled() && equalLettersIgnoringASCIICase(attribute, "preload"_s))

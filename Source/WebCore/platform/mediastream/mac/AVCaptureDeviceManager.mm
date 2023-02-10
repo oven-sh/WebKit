@@ -159,7 +159,7 @@ static inline CaptureDevice toCaptureDevice(AVCaptureDevice *device, bool isDefa
     captureDevice.setEnabled(deviceIsAvailable(device));
     captureDevice.setIsDefault(isDefault);
 
-#if HAVE(CONTINUITY_CAMERA)
+#if HAVE(CONTINUITY_CAMEARA)
     if ([PAL::getAVCaptureDeviceClass() respondsToSelector:@selector(systemPreferredCamera)] && [device respondsToSelector:@selector(isContinuityCamera)])
         captureDevice.setIsEphemeral(device.isContinuityCamera && [PAL::getAVCaptureDeviceClass() systemPreferredCamera] != device);
 #endif
@@ -188,24 +188,9 @@ Vector<CaptureDevice> AVCaptureDeviceManager::retrieveCaptureDevices()
     auto currentDevices = currentCameras();
     Vector<CaptureDevice> deviceList;
 
-    AVCaptureDevice* defaultVideoDevice = nil;
-#if HAVE(CONTINUITY_CAMERA)
-    auto haveSystemPreferredCamera = !![PAL::getAVCaptureDeviceClass() respondsToSelector:@selector(systemPreferredCamera)];
-    if (haveSystemPreferredCamera)
-        defaultVideoDevice = [PAL::getAVCaptureDeviceClass() systemPreferredCamera];
-    else
-#endif
-        defaultVideoDevice = [PAL::getAVCaptureDeviceClass() defaultDeviceWithMediaType: AVMediaTypeVideo];
-
+    auto* defaultVideoDevice = [PAL::getAVCaptureDeviceClass() defaultDeviceWithMediaType: AVMediaTypeVideo];
 #if PLATFORM(IOS)
-    ([&] {
-#if HAVE(CONTINUITY_CAMERA)
-        if (haveSystemPreferredCamera && defaultVideoDevice)
-            return;
-#endif
-        if ([defaultVideoDevice position] == AVCaptureDevicePositionFront)
-            return;
-
+    if ([defaultVideoDevice position] != AVCaptureDevicePositionFront) {
         defaultVideoDevice = nullptr;
         for (AVCaptureDevice *platformDevice in currentDevices.get()) {
             if (!isVideoDevice(platformDevice))
@@ -216,7 +201,7 @@ Vector<CaptureDevice> AVCaptureDeviceManager::retrieveCaptureDevices()
                 break;
             }
         }
-    })();
+    }
 #endif
 
     if (defaultVideoDevice)

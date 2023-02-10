@@ -32,7 +32,7 @@
 namespace WebCore {
 
 class SWClientConnection;
-class SecurityOriginData;
+struct SecurityOriginData;
 class ServiceWorkerJob;
 
 class WEBCORE_EXPORT ServiceWorkerProvider {

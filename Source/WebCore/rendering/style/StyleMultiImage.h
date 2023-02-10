@@ -33,7 +33,6 @@ class Document;
 struct ImageWithScale {
     RefPtr<StyleImage> image;
     float scaleFactor { 1 };
-    String mimeType { String() };
 };
 
 inline bool operator==(const ImageWithScale& a, const ImageWithScale& b)

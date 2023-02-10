@@ -40,7 +40,7 @@ class HTMLVideoElement;
 class LayoutUnit;
 class PlatformMouseEvent;
 class WeakPtrImplWithEventTargetData;
-class SecurityOriginData;
+struct SecurityOriginData;
 
 #if ENABLE(TRACKING_PREVENTION)
 class RegistrableDomain;

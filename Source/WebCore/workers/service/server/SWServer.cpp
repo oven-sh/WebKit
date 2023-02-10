@@ -28,10 +28,6 @@
 
 #if ENABLE(SERVICE_WORKER)
 
-#include "BackgroundFetchInformation.h"
-#include "BackgroundFetchOptions.h"
-#include "BackgroundFetchRecordInformation.h"
-#include "BackgroundFetchRequest.h"
 #include "ExceptionCode.h"
 #include "ExceptionData.h"
 #include "Logging.h"
@@ -226,7 +222,7 @@ void SWServer::addRegistration(std::unique_ptr<SWServerRegistration>&& registrat
 {
     LOG(ServiceWorker, "Adding registration live for %s", registration->key().loggingString().utf8().data());
 
-    if (!m_scopeToRegistrationMap.contains(registration->key()) && !allowLoopbackIPAddress(registration->key().topOrigin().host()))
+    if (!m_scopeToRegistrationMap.contains(registration->key()) && !allowLoopbackIPAddress(registration->key().topOrigin().host))
         m_uniqueRegistrationCount++;
 
     if (registration->serviceWorkerPageIdentifier())
@@ -251,7 +247,7 @@ void SWServer::removeRegistration(ServiceWorkerRegistrationIdentifier registrati
     auto it = m_scopeToRegistrationMap.find(registration->key());
     if (it != m_scopeToRegistrationMap.end() && it->value == registration.get()) {
         m_scopeToRegistrationMap.remove(it);
-        if (!SecurityOrigin::isLocalHostOrLoopbackIPAddress(registration->key().topOrigin().host()))
+        if (!SecurityOrigin::isLocalHostOrLoopbackIPAddress(registration->key().topOrigin().host))
             m_uniqueRegistrationCount--;
     }
 
@@ -855,6 +851,7 @@ void SWServer::contextConnectionCreated(SWServerToContextConnection& contextConn
 
     auto pendingContextDatas = m_pendingContextDatas.take(contextConnection.registrableDomain());
     for (auto& data : pendingContextDatas) {
+        // FIXME: Add a check that the process this firstPartyForCookies came from was allowed to use it as a firstPartyForCookies.
         m_delegate->addAllowedFirstPartyForCookies(contextConnection.webProcessIdentifier(), requestingProcessIdentifier, data.registration.key.firstPartyForCookies());
         installContextData(data);
     }
@@ -1269,7 +1266,7 @@ void SWServer::handleLowMemoryWarning()
 
 void SWServer::removeFromScopeToRegistrationMap(const ServiceWorkerRegistrationKey& key)
 {
-    if (m_scopeToRegistrationMap.contains(key) && !allowLoopbackIPAddress(key.topOrigin().host()))
+    if (m_scopeToRegistrationMap.contains(key) && !allowLoopbackIPAddress(key.topOrigin().host))
         m_uniqueRegistrationCount--;
 
     m_scopeToRegistrationMap.remove(key);
@@ -1580,68 +1577,6 @@ void SWServer::fireFunctionalEvent(SWServerRegistration& registration, Completio
             callback(contextConnection);
         });
     });
-}
-
-void SWServer::Connection::startBackgroundFetch(ServiceWorkerRegistrationIdentifier registrationIdentifier, const String& backgroundFetchIdentifier, Vector<BackgroundFetchRequest>&& requests, BackgroundFetchOptions&& options, ExceptionOrBackgroundFetchInformationCallback&& callback)
-{
-    auto* registration = server().getRegistration(registrationIdentifier);
-    if (!registration) {
-        callback(makeUnexpected(ExceptionData { InvalidStateError, "No registration found"_s }));
-        return;
-    }
-
-    server().requestBackgroundFetchPermission({ registration->key().topOrigin(), SecurityOriginData::fromURL(registration->key().scope()) }, [server = WeakPtr { server() }, registrationIdentifier, backgroundFetchIdentifier, requests = WTFMove(requests), options = WTFMove(options), callback = WTFMove(callback)](bool result) mutable {
-        if (!server || !result) {
-            callback(makeUnexpected(ExceptionData { NotAllowedError, "Background fetch permission is denied"_s }));
-            return;
-        }
-
-        auto* registration = server->getRegistration(registrationIdentifier);
-        if (!registration) {
-            callback(makeUnexpected(ExceptionData { InvalidStateError, "No registration found"_s }));
-            return;
-        }
-
-        // FIXME: To implement.
-        callback(makeUnexpected(ExceptionData { NotSupportedError, emptyString() }));
-    });
-
-}
-
-void SWServer::Connection::backgroundFetchInformation(ServiceWorkerRegistrationIdentifier, const String&, ExceptionOrBackgroundFetchInformationCallback&& callback)
-{
-    // FIXME: To implement.
-    callback({ });
-}
-
-void SWServer::Connection::backgroundFetchIdentifiers(ServiceWorkerRegistrationIdentifier, BackgroundFetchIdentifiersCallback&& callback)
-{
-    // FIXME: To implement.
-    callback({ });
-}
-
-void SWServer::Connection::abortBackgroundFetch(ServiceWorkerRegistrationIdentifier, const String&, AbortBackgroundFetchCallback&& callback)
-{
-    // FIXME: To implement.
-    callback(false);
-}
-
-void SWServer::Connection::matchBackgroundFetch(ServiceWorkerRegistrationIdentifier, const String&, RetrieveRecordsOptions&&, MatchBackgroundFetchCallback&& callback)
-{
-    // FIXME: To implement.
-    callback({ });
-}
-
-void SWServer::Connection::retrieveRecordResponse(BackgroundFetchRecordIdentifier, RetrieveRecordResponseCallback&& callback)
-{
-    // FIXME: To implement.
-    callback({ });
-}
-
-void SWServer::Connection::retrieveRecordResponseBody(BackgroundFetchRecordIdentifier, RetrieveRecordResponseBodyCallback&& callback)
-{
-    // FIXME: To implement.
-    callback({ });
 }
 
 } // namespace WebCore

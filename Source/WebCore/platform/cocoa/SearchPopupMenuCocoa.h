@@ -23,14 +23,17 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#pragma once
+#ifndef SearchPopupMenuCocoa_h
+#define SearchPopupMenuCocoa_h
 
 #import "SearchPopupMenu.h"
 
 namespace WebCore {
 
-WEBCORE_EXPORT void saveRecentSearchesToFile(const String& name, const Vector<RecentSearch>&, const String& directory);
-WEBCORE_EXPORT Vector<RecentSearch> loadRecentSearchesFromFile(const String& name, const String& directory);
-WEBCORE_EXPORT void removeRecentlyModifiedRecentSearchesFromFile(WallTime, const String& directory);
+WEBCORE_EXPORT void saveRecentSearches(const String& name, const Vector<RecentSearch>&);
+WEBCORE_EXPORT Vector<RecentSearch> loadRecentSearches(const String& name);
+WEBCORE_EXPORT void removeRecentlyModifiedRecentSearches(WallTime);
 
 }
+
+#endif // SearchPopupMenuCocoa_h

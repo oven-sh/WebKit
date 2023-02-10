@@ -76,7 +76,7 @@ public:
 
 class BasicShapeCenterCoordinate {
 public:
-    enum class Direction : bool {
+    enum class Direction : uint8_t {
         TopLeft,
         BottomRight
     };

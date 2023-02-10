@@ -48,7 +48,6 @@ public:
     void closeWebNotification(WKNotificationRef);
     bool simulateNotificationClick();
     bool simulateNotificationClose();
-    WKStringRef lastNotificationDataStoreIdentifier() const { return m_lastNotificationDataStoreIdentifier.get(); };
 
     bool hasReceivedShowNotification() const { return m_hasReceivedShowNotification; }
     bool hasReceivedCloseNotification() const { return m_hasReceivedCloseNotification; }
@@ -62,7 +61,6 @@ private:
     bool m_hasReceivedShowNotification { false };
     bool m_hasReceivedCloseNotification { false };
     std::pair<WKNotificationManagerRef, uint64_t> m_pendingNotification;
-    WKRetainPtr<WKStringRef> m_lastNotificationDataStoreIdentifier;
 };
 
 }

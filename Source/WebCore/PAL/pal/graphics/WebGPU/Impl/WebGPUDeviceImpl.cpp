@@ -462,13 +462,6 @@ static auto convertToBacking(const RenderPipelineDescriptor& descriptor, Convert
         colorTargets.data(),
     };
 
-    WGPUPrimitiveDepthClipControl depthClipControl = {
-        .chain = {
-            nullptr,
-            WGPUSType_PrimitiveDepthClipControl
-        },
-        .unclippedDepth = true
-    };
     WGPURenderPipelineDescriptor backingDescriptor {
         nullptr,
         label.data(),
@@ -481,7 +474,7 @@ static auto convertToBacking(const RenderPipelineDescriptor& descriptor, Convert
             static_cast<uint32_t>(backingBuffers.size()),
             backingBuffers.data(),
         }, {
-            descriptor.primitive && descriptor.primitive->unclippedDepth ? &depthClipControl.chain : nullptr,
+            nullptr,
             descriptor.primitive ? convertToBackingContext.convertToBacking(descriptor.primitive->topology) : WGPUPrimitiveTopology_PointList,
             descriptor.primitive && descriptor.primitive->stripIndexFormat ? convertToBackingContext.convertToBacking(*descriptor.primitive->stripIndexFormat) : WGPUIndexFormat_Undefined,
             descriptor.primitive ? convertToBackingContext.convertToBacking(descriptor.primitive->frontFace) : WGPUFrontFace_CCW,

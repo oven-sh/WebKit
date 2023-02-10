@@ -28,7 +28,6 @@
 #if ENABLE(WEBGL)
 
 #include <JavaScriptCore/Forward.h>
-#include <JavaScriptCore/TypedArrayInlines.h>
 
 namespace JSC {
 class CallFrame;
@@ -41,11 +40,9 @@ class JSDOMGlobalObject;
 class WebGLBuffer;
 class WebGLFramebuffer;
 class WebGLProgram;
-class WebGLQuery;
 class WebGLRenderbuffer;
 class WebGLSampler;
 class WebGLTexture;
-class WebGLTimerQueryEXT;
 class WebGLTransformFeedback;
 class WebGLVertexArrayObject;
 class WebGLVertexArrayObjectOES;
@@ -56,7 +53,6 @@ using WebGLAny = std::variant<
     int,
     unsigned,
     long long,
-    unsigned long long,
     float,
     String,
     Vector<bool>,
@@ -69,11 +65,9 @@ using WebGLAny = std::variant<
     RefPtr<WebGLBuffer>,
     RefPtr<WebGLFramebuffer>,
     RefPtr<WebGLProgram>,
-    RefPtr<WebGLQuery>,
     RefPtr<WebGLRenderbuffer>,
     RefPtr<WebGLSampler>,
     RefPtr<WebGLTexture>,
-    RefPtr<WebGLTimerQueryEXT>,
     RefPtr<WebGLTransformFeedback>,
     RefPtr<WebGLVertexArrayObject>,
     RefPtr<WebGLVertexArrayObjectOES>

@@ -65,7 +65,7 @@ private:
     bool m_replacementShouldBeGenerated { false };
 #endif
     unsigned long long m_size { 0 };
-    Markable<WallTime> m_expectedModificationTime;
+    Markable<WallTime, WallTime::MarkableTraits> m_expectedModificationTime;
 };
 
 }

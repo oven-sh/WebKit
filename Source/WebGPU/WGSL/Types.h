@@ -31,9 +31,23 @@
 
 namespace WGSL {
 
-struct Type;
+struct Primitive;
+struct Vector;
+struct Matrix;
+struct Array;
+struct Struct;
+struct Function;
+struct Bottom;
 
-namespace Types {
+using Type = std::variant<
+    Primitive,
+    Vector,
+    Matrix,
+    Array,
+    Struct,
+    Function,
+    Bottom
+>;
 
 #define FOR_EACH_PRIMITIVE_TYPE(f) \
     f(AbstractInt, "<AbstractInt>") \
@@ -45,7 +59,7 @@ namespace Types {
     f(Bool, "bool") \
 
 struct Primitive {
-    enum Kind : uint8_t {
+    enum Kind {
 #define PRIMITIVE_KIND(kind, name) kind,
     FOR_EACH_PRIMITIVE_TYPE(PRIMITIVE_KIND)
 #undef PRIMITIVE_KIND
@@ -81,29 +95,12 @@ struct Function {
 struct Bottom {
 };
 
-} // namespace Types
-
-struct Type : public std::variant<
-    Types::Primitive,
-    Types::Vector,
-    Types::Matrix,
-    Types::Array,
-    Types::Struct,
-    Types::Function,
-    Types::Bottom
-> {
-    using std::variant<
-        Types::Primitive,
-        Types::Vector,
-        Types::Matrix,
-        Types::Array,
-        Types::Struct,
-        Types::Function,
-        Types::Bottom
-        >::variant;
-    void dump(PrintStream&) const;
-    String toString() const;
+struct TypeConstructor {
+    std::function<Type*(Type*)> construct;
 };
+
+void printInternal(PrintStream&, const Type&);
+String toString(const Type&);
 
 } // namespace WGSL
 
@@ -112,7 +109,7 @@ namespace WTF {
 template<> class StringTypeAdapter<WGSL::Type, void> : public StringTypeAdapter<String, void> {
 public:
     StringTypeAdapter(const WGSL::Type& type)
-        : StringTypeAdapter<String, void> { type.toString() }
+        : StringTypeAdapter<String, void> { toString(type) }
     { }
 };
 

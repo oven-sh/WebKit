@@ -326,11 +326,7 @@ void SettingsBase::mediaTypeOverrideChanged()
     if (!m_page)
         return;
 
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page->mainFrame());
-    if (!localMainFrame)
-        return;
-
-    FrameView* view = localMainFrame->view();
+    FrameView* view = m_page->mainFrame().view();
     if (view)
         view->setMediaType(AtomString(m_page->settings().mediaTypeOverride()));
 
@@ -473,16 +469,14 @@ void SettingsBase::storageBlockingPolicyChanged()
 
 void SettingsBase::backgroundShouldExtendBeyondPageChanged()
 {
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page->mainFrame());
-    if (m_page && localMainFrame)
-        localMainFrame->view()->updateExtendBackgroundIfNecessary();
+    if (m_page)
+        m_page->mainFrame().view()->updateExtendBackgroundIfNecessary();
 }
 
 void SettingsBase::scrollingPerformanceTestingEnabledChanged()
 {
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page->mainFrame());
-    if (m_page && localMainFrame && localMainFrame->view())
-        localMainFrame->view()->setScrollingPerformanceTestingEnabled(m_page->settings().scrollingPerformanceTestingEnabled());
+    if (m_page && m_page->mainFrame().view())
+        m_page->mainFrame().view()->setScrollingPerformanceTestingEnabled(m_page->settings().scrollingPerformanceTestingEnabled());
 }
 
 void SettingsBase::hiddenPageDOMTimerThrottlingStateChanged()

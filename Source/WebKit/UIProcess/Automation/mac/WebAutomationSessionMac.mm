@@ -661,8 +661,8 @@ void WebAutomationSession::platformSimulateKeyboardInteraction(WebPageProxy& pag
     NSEventModifierFlags changedModifiers = 0;
     unsigned short keyCode = unknownKeyCode;
 
-    NSString *characters = nil;
-    NSString *unmodifiedCharacters = nil;
+    NSString *characters;
+    NSString *unmodifiedCharacters;
 
     // FIXME: consider using AppKit SPI to normalize 'characters', i.e., changing * to Shift-8,
     // and passing that in to charactersIgnoringModifiers. We could hardcode this for ASCII if needed.

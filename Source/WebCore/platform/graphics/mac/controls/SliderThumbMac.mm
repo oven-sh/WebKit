@@ -31,6 +31,7 @@
 #import "ControlFactoryMac.h"
 #import "FloatRoundedRect.h"
 #import "GraphicsContext.h"
+#import "LocalCurrentGraphicsContext.h"
 #import "LocalDefaultSystemAppearance.h"
 #import "SliderThumbPart.h"
 
@@ -49,6 +50,13 @@ void SliderThumbMac::updateCellStates(const FloatRect& rect, const ControlStyle&
 
     updateEnabledState(m_sliderCell.get(), style);
     updateFocusedState(m_sliderCell.get(), style);
+
+    auto *view = m_controlFactory.drawingView(rect, style);
+
+    if (style.states.contains(ControlStyle::State::Pressed))
+        [m_sliderCell startTrackingAt:NSPoint() inView:view];
+    else
+        [m_sliderCell stopTracking:NSPoint() at:NSPoint() inView:view mouseIsUp:YES];
 }
 
 FloatRect SliderThumbMac::rectForBounds(const FloatRect& bounds, const ControlStyle& style) const
@@ -64,10 +72,11 @@ FloatRect SliderThumbMac::rectForBounds(const FloatRect& bounds, const ControlSt
 void SliderThumbMac::draw(GraphicsContext& context, const FloatRoundedRect& borderRect, float deviceScaleFactor, const ControlStyle& style)
 {
     LocalDefaultSystemAppearance localAppearance(style.states.contains(ControlStyle::State::DarkAppearance), style.accentColor);
+    LocalCurrentGraphicsContext localContext(context);
+    
+    auto logicalRect = rectForBounds(borderRect.rect(), style);
 
     GraphicsContextStateSaver stateSaver(context);
-
-    auto logicalRect = rectForBounds(borderRect.rect(), style);
 
     if (style.zoomFactor != 1) {
         logicalRect.scale(1 / style.zoomFactor);
@@ -78,7 +87,9 @@ void SliderThumbMac::draw(GraphicsContext& context, const FloatRoundedRect& bord
     auto styleForDrawing = style;
     styleForDrawing.states.remove(ControlStyle::State::Focused);
 
-    drawCell(context, logicalRect, deviceScaleFactor, styleForDrawing, m_sliderCell.get(), true);
+    auto *view = m_controlFactory.drawingView(borderRect.rect(), style);
+
+    drawCell(context, logicalRect, deviceScaleFactor, styleForDrawing, m_sliderCell.get(), view, true);
 }
 
 } // namespace WebCore

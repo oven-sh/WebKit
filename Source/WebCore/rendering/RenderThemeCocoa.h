@@ -45,11 +45,6 @@ protected:
     void paintAttachmentText(GraphicsContext&, AttachmentLayout*) final;
 #endif
 
-    Color platformSpellingMarkerColor(OptionSet<StyleColorOptions>) const override;
-    Color platformDictationAlternativesMarkerColor(OptionSet<StyleColorOptions>) const override;
-    Color platformAutocorrectionReplacementMarkerColor(OptionSet<StyleColorOptions>) const override;
-    Color platformGrammarMarkerColor(OptionSet<StyleColorOptions>) const override;
-
 private:
     void purgeCaches() override;
 

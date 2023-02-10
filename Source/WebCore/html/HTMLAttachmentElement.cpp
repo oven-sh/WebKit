@@ -28,27 +28,19 @@
 
 #if ENABLE(ATTACHMENT_ELEMENT)
 
-#include "AddEventListenerOptions.h"
 #include "AttachmentElementClient.h"
-#include "CustomEvent.h"
 #include "DOMURL.h"
 #include "Document.h"
 #include "Editor.h"
 #include "ElementInlines.h"
-#include "EventNames.h"
 #include "File.h"
 #include "Frame.h"
-#include "HTMLButtonElement.h"
-#include "HTMLDivElement.h"
-#include "HTMLElementTypeHelpers.h"
 #include "HTMLImageElement.h"
 #include "HTMLNames.h"
-#include "HTMLStyleElement.h"
 #include "MIMETypeRegistry.h"
 #include "RenderAttachment.h"
 #include "ShadowRoot.h"
 #include "SharedBuffer.h"
-#include "UserAgentStyleSheets.h"
 #include <pal/FileSizeFormatter.h>
 #include <wtf/IsoMallocInlines.h>
 #include <wtf/UUID.h>
@@ -79,185 +71,12 @@ HTMLAttachmentElement::~HTMLAttachmentElement() = default;
 
 Ref<HTMLAttachmentElement> HTMLAttachmentElement::create(const QualifiedName& tagName, Document& document)
 {
-    Ref attachment = adoptRef(*new HTMLAttachmentElement(tagName, document));
-    if (document.settings().attachmentWideLayoutEnabled()) {
-        ASSERT(attachment->m_implementation == Implementation::Legacy);
-        ASSERT(!attachment->renderer()); // Switch to modern style *must* be done before renderer is created!
-        attachment->m_implementation = Implementation::Modern;
-        attachment->ensureUserAgentShadowRoot();
-    }
-    return attachment;
+    return adoptRef(*new HTMLAttachmentElement(tagName, document));
 }
 
-void HTMLAttachmentElement::didAddUserAgentShadowRoot(ShadowRoot& root)
+RenderPtr<RenderElement> HTMLAttachmentElement::createElementRenderer(RenderStyle&& style, const RenderTreePosition&)
 {
-    if (m_implementation == Implementation::Modern)
-        ensureModernShadowTree(root);
-}
-
-static const AtomString& attachmentContainerIdentifier()
-{
-    static MainThreadNeverDestroyed<const AtomString> identifier("attachment-container"_s);
-    return identifier;
-}
-
-static const AtomString& attachmentPreviewIdentifier()
-{
-    static MainThreadNeverDestroyed<const AtomString> identifier("attachment-preview"_s);
-    return identifier;
-}
-
-static const AtomString& attachmentActionIdentifier()
-{
-    static MainThreadNeverDestroyed<const AtomString> identifier("attachment-action"_s);
-    return identifier;
-}
-
-static const AtomString& attachmentTitleIdentifier()
-{
-    static MainThreadNeverDestroyed<const AtomString> identifier("attachment-title"_s);
-    return identifier;
-}
-
-static const AtomString& attachmentSubtitleIdentifier()
-{
-    static MainThreadNeverDestroyed<const AtomString> identifier("attachment-subtitle"_s);
-    return identifier;
-}
-
-static const AtomString& attachmentSaveButtonIdentifier()
-{
-    static MainThreadNeverDestroyed<const AtomString> identifier("attachment-save-button"_s);
-    return identifier;
-}
-
-static QualifiedName subtitleAttr()
-{
-    return QualifiedName { nullAtom(), "subtitle"_s, nullAtom() };
-}
-
-static QualifiedName saveAttr()
-{
-    return QualifiedName { nullAtom(), "save"_s, nullAtom() };
-}
-
-template <typename ElementType>
-static Ref<ElementType> createContainedElement(HTMLElement& container, const AtomString& id, String textContent)
-{
-    Ref<ElementType> element = ElementType::create(container.document());
-    element->setIdAttribute(id);
-    if (!textContent.isEmpty())
-        element->setTextContent(WTFMove(textContent));
-    container.appendChild(element);
-    return element;
-}
-
-void HTMLAttachmentElement::ensureModernShadowTree(ShadowRoot& root)
-{
-    ASSERT(m_implementation == Implementation::Modern);
-    if (m_titleElement)
-        return;
-
-    static MainThreadNeverDestroyed<const String> shadowStyle(StringImpl::createWithoutCopying(attachmentElementShadowUserAgentStyleSheet, sizeof(attachmentElementShadowUserAgentStyleSheet)));
-    auto style = HTMLStyleElement::create(HTMLNames::styleTag, document(), false);
-    style->setTextContent(String { shadowStyle });
-    root.appendChild(WTFMove(style));
-
-    m_containerElement = HTMLDivElement::create(document());
-    m_containerElement->setIdAttribute(attachmentContainerIdentifier());
-    root.appendChild(*m_containerElement);
-
-    // FIXME: This is using the same HTMLAttachmentElement type, but with different behavior (thanks to m_implementation), to fetch and show
-    // the appropriate image (thumbnail, icon, etc.). In the longer term, this functionality should be folded into the Implementation::Modern
-    // code, and the old Legacy/ImageOnly code should be removed; this element could be an image (with a different data member name). See rdar://105252742.
-    m_innerLegacyAttachment = adoptRef(*new HTMLAttachmentElement(HTMLNames::attachmentTag, document()));
-    m_innerLegacyAttachment->m_implementation = Implementation::ImageOnly;
-    m_innerLegacyAttachment->cloneAttributesFromElement(*this);
-    m_innerLegacyAttachment->m_file = m_file;
-    m_innerLegacyAttachment->m_thumbnail = WTFMove(m_thumbnail);
-    m_innerLegacyAttachment->m_icon = WTFMove(m_icon);
-    m_innerLegacyAttachment->m_iconSize = m_iconSize;
-    m_innerLegacyAttachment->setIdAttribute(attachmentPreviewIdentifier());
-    m_containerElement->appendChild(*m_innerLegacyAttachment);
-
-    m_actionTextElement = createContainedElement<HTMLDivElement>(*m_containerElement, attachmentActionIdentifier(), attachmentActionForDisplay());
-
-    m_titleElement = createContainedElement<HTMLDivElement>(*m_containerElement, attachmentTitleIdentifier(), attachmentTitleForDisplay());
-
-    m_subtitleElement = createContainedElement<HTMLDivElement>(*m_containerElement, attachmentSubtitleIdentifier(), attachmentSubtitleForDisplay());
-
-    updateSaveButton(attributeWithoutSynchronization(saveAttr()));
-}
-
-class AttachmentSaveEventListener final : public EventListener {
-public:
-    static Ref<AttachmentSaveEventListener> create(HTMLAttachmentElement& attachment) { return adoptRef(*new AttachmentSaveEventListener(attachment)); }
-
-    bool operator==(const EventListener& other) const final
-    {
-        return this == &other;
-    }
-
-    void handleEvent(ScriptExecutionContext&, Event& event) final
-    {
-        if (event.type() == eventNames().clickEvent) {
-            event.preventDefault();
-            event.stopPropagation();
-            event.stopImmediatePropagation();
-
-            CustomEvent::Init init;
-            init.bubbles = true;
-            init.cancelable = true;
-            init.composed = true;
-            m_attachment->dispatchEvent(CustomEvent::create(m_attachment->attributeWithoutSynchronization(saveAttr()), init, event.isTrusted() ? Event::IsTrusted::Yes : Event::IsTrusted::No));
-        } else
-            ASSERT_NOT_REACHED();
-    }
-
-private:
-    explicit AttachmentSaveEventListener(HTMLAttachmentElement& attachment)
-        : EventListener(CPPEventListenerType)
-        , m_attachment(attachment)
-    {
-    }
-
-    WeakPtr<HTMLAttachmentElement, WeakPtrImplWithEventTargetData> m_attachment;
-};
-
-void HTMLAttachmentElement::updateSaveButton(const AtomString& eventTypeName)
-{
-    if (!m_containerElement)
-        return;
-
-    if (eventTypeName.isNull()) {
-        if (m_saveButton) {
-            m_containerElement->removeChild(*m_saveButton);
-            m_saveButton = nullptr;
-        }
-        return;
-    }
-
-    if (!m_saveButton) {
-        m_saveButton = createContainedElement<HTMLButtonElement>(*m_containerElement, attachmentSaveButtonIdentifier(), String { });
-        m_saveButton->addEventListener(eventNames().clickEvent, AttachmentSaveEventListener::create(*this), { });
-    }
-}
-
-
-RenderPtr<RenderElement> HTMLAttachmentElement::createElementRenderer(RenderStyle&& style, const RenderTreePosition& position)
-{
-    if (m_implementation == Implementation::Modern)
-        return HTMLElement::createElementRenderer(WTFMove(style), position);
-
     return createRenderer<RenderAttachment>(*this, WTFMove(style));
-}
-
-void HTMLAttachmentElement::invalidateRendering()
-{
-    if (auto* renderer = this->renderer()) {
-        renderer->setNeedsLayout();
-        renderer->repaint();
-    }
 }
 
 const String& HTMLAttachmentElement::getAttachmentIdentifier(HTMLImageElement& image)
@@ -305,16 +124,17 @@ void HTMLAttachmentElement::setFile(RefPtr<File>&& file, UpdateDisplayAttributes
     if (updateAttributes == UpdateDisplayAttributes::Yes) {
         if (m_file) {
             setAttributeWithoutSynchronization(HTMLNames::titleAttr, AtomString { m_file->name() });
-            setAttributeWithoutSynchronization(subtitleAttr(), PAL::fileSizeDescription(m_file->size()));
+            setAttributeWithoutSynchronization(HTMLNames::subtitleAttr, PAL::fileSizeDescription(m_file->size()));
             setAttributeWithoutSynchronization(HTMLNames::typeAttr, AtomString { m_file->type() });
         } else {
             removeAttribute(HTMLNames::titleAttr);
-            removeAttribute(subtitleAttr());
+            removeAttribute(HTMLNames::subtitleAttr);
             removeAttribute(HTMLNames::typeAttr);
         }
     }
 
-    invalidateRendering();
+    if (auto* renderer = this->renderer())
+        renderer->invalidate();
 }
 
 Node::InsertedIntoAncestorResult HTMLAttachmentElement::insertedIntoAncestor(InsertionType type, ContainerNode& ancestor)
@@ -360,25 +180,12 @@ RefPtr<HTMLImageElement> HTMLAttachmentElement::enclosingImageElement() const
 
 void HTMLAttachmentElement::parseAttribute(const QualifiedName& name, const AtomString& value)
 {
-    if (name == actionAttr || name == progressAttr || name == subtitleAttr() || name == titleAttr || name == typeAttr)
-        invalidateRendering();
+    if (name == progressAttr || name == subtitleAttr || name == titleAttr || name == typeAttr) {
+        if (auto* renderer = this->renderer())
+            renderer->invalidate();
+    }
 
     HTMLElement::parseAttribute(name, value);
-
-    if (name == actionAttr) {
-        if (m_actionTextElement)
-            m_actionTextElement->setTextContent(String(value.string()));
-    } else if (name == titleAttr) {
-        if (m_titleElement)
-            m_titleElement->setTextContent(String(value.string()));
-    } else if (name == subtitleAttr()) {
-        if (m_subtitleElement)
-            m_subtitleElement->setTextContent(String(value.string()));
-    } else if (name == saveAttr())
-        updateSaveButton(value);
-
-    if (m_innerLegacyAttachment)
-        m_innerLegacyAttachment->setAttributeWithoutSynchronization(name, value);
 
 #if ENABLE(SERVICE_CONTROLS)
     if (name == typeAttr && attachmentType() == "application/pdf"_s) {
@@ -396,24 +203,8 @@ String HTMLAttachmentElement::attachmentTitle() const
     return m_file ? m_file->name() : String();
 }
 
-const AtomString& HTMLAttachmentElement::attachmentSubtitle() const
-{
-    return attributeWithoutSynchronization(subtitleAttr());
-}
-
-const AtomString& HTMLAttachmentElement::attachmentActionForDisplay() const
-{
-    if (m_implementation == Implementation::ImageOnly)
-        return nullAtom();
-
-    return attributeWithoutSynchronization(actionAttr);
-}
-
 String HTMLAttachmentElement::attachmentTitleForDisplay() const
 {
-    if (m_implementation == Implementation::ImageOnly)
-        return { };
-
     auto title = attachmentTitle();
     auto indexOfLastDot = title.reverseFind('.');
     if (indexOfLastDot == notFound)
@@ -426,14 +217,6 @@ String HTMLAttachmentElement::attachmentTitleForDisplay() const
         popDirectionalIsolate,
         StringView(title).substring(indexOfLastDot)
     );
-}
-
-const AtomString& HTMLAttachmentElement::attachmentSubtitleForDisplay() const
-{
-    if (m_implementation == Implementation::ImageOnly)
-        return nullAtom();
-
-    return attachmentSubtitle();
 }
 
 String HTMLAttachmentElement::attachmentType() const
@@ -464,11 +247,12 @@ void HTMLAttachmentElement::updateAttributes(std::optional<uint64_t>&& newFileSi
         removeAttribute(HTMLNames::typeAttr);
 
     if (newFileSize)
-        setAttributeWithoutSynchronization(subtitleAttr(), PAL::fileSizeDescription(*newFileSize));
+        setAttributeWithoutSynchronization(HTMLNames::subtitleAttr, PAL::fileSizeDescription(*newFileSize));
     else
-        removeAttribute(subtitleAttr());
+        removeAttribute(HTMLNames::subtitleAttr);
 
-    invalidateRendering();
+    if (auto* renderer = this->renderer())
+        renderer->invalidate();
 }
 
 static bool mimeTypeIsSuitableForInlineImageAttachment(const String& mimeType)
@@ -501,14 +285,17 @@ void HTMLAttachmentElement::updateThumbnail(const RefPtr<Image>& thumbnail)
 {
     m_thumbnail = thumbnail;
     removeAttribute(HTMLNames::progressAttr);
-    invalidateRendering();
+    if (auto* renderer = this->renderer())
+        renderer->invalidate();
 }
 
 void HTMLAttachmentElement::updateIcon(const RefPtr<Image>& icon, const WebCore::FloatSize& iconSize)
 {
     m_icon = icon;
     m_iconSize = iconSize;
-    invalidateRendering();
+
+    if (auto* renderer = this->renderer())
+        renderer->invalidate();
 }
 
 void HTMLAttachmentElement::requestIconWithSize(const FloatSize& size) const

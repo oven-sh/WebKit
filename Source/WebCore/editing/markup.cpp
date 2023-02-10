@@ -79,7 +79,6 @@
 #include "TextManipulationController.h"
 #include "VisibleSelection.h"
 #include "VisibleUnits.h"
-#include <JavaScriptCore/JSCJSValueInlines.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/URL.h>
 #include <wtf/URLParser.h>
@@ -193,11 +192,7 @@ std::unique_ptr<Page> createPageForSanitizingWebContent()
     page->settings().setPluginsEnabled(false);
     page->settings().setAcceleratedCompositingEnabled(false);
 
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(page->mainFrame());
-    if (!localMainFrame)
-        return page; 
-
-    Frame& frame = *localMainFrame;
+    Frame& frame = page->mainFrame();
     frame.setView(FrameView::create(frame, IntSize { 800, 600 }));
     frame.init();
 
@@ -209,7 +204,7 @@ std::unique_ptr<Page> createPageForSanitizingWebContent()
     writer.begin();
     writer.insertDataSynchronously(markup);
     writer.end();
-    RELEASE_ASSERT(frame.document()->body());
+    RELEASE_ASSERT(page->mainFrame().document()->body());
 
     return page;
 }
@@ -217,11 +212,7 @@ std::unique_ptr<Page> createPageForSanitizingWebContent()
 String sanitizeMarkup(const String& rawHTML, MSOListQuirks msoListQuirks, std::optional<Function<void(DocumentFragment&)>> fragmentSanitizer)
 {
     auto page = createPageForSanitizingWebContent();
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(page->mainFrame());
-    if (!localMainFrame)
-        return String();
-
-    Document* stagingDocument = localMainFrame->document();
+    Document* stagingDocument = page->mainFrame().document();
     ASSERT(stagingDocument);
 
     auto fragment = createFragmentFromMarkup(*stagingDocument, rawHTML, emptyString(), { });
@@ -901,7 +892,8 @@ static bool propertyMissingOrEqualToNone(const StyleProperties* style, CSSProper
 {
     if (!style)
         return false;
-    return style->propertyAsValueID(propertyID).value_or(CSSValueNone) == CSSValueNone;
+    auto value = style->getPropertyCSSValue(propertyID);
+    return !value || (is<CSSPrimitiveValue>(*value) && downcast<CSSPrimitiveValue>(*value).valueID() == CSSValueNone);
 }
 
 static bool needInterchangeNewlineAfter(const VisiblePosition& v)

@@ -2,15 +2,6 @@
 
 let nextBackgroundFetchId = 0;
 
-function loadScript(path) {
-  let script = document.createElement('script');
-  let promise = new Promise(resolve => script.onload = resolve);
-  script.src = path;
-  script.async = false;
-  document.head.appendChild(script);
-  return promise;
-}
-
 // Waits for a single message received from a registered Service Worker.
 async function getMessageFromServiceWorker() {
   return new Promise(resolve => {
@@ -48,13 +39,6 @@ async function registerAndActivateServiceWorker(test, name) {
 // directory to register.
 function backgroundFetchTest(func, description, workerName = 'sw.js') {
   promise_test(async t => {
-    if (typeof test_driver === 'undefined') {
-      await loadScript('/resources/testdriver.js');
-      await loadScript('/resources/testdriver-vendor.js');
-    }
-
-    await test_driver.set_permission({name: 'background-fetch'}, 'granted');
-
     const serviceWorkerRegistration =
         await registerAndActivateServiceWorker(t, workerName);
     serviceWorkerRegistration.active.postMessage(null);

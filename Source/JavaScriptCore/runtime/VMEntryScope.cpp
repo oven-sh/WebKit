@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2021 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -20,7 +20,7 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #include "config.h"
@@ -33,7 +33,6 @@
 #include "WasmMachineThreads.h"
 #include "Watchdog.h"
 #include <wtf/SystemTracing.h>
-#include <wtf/WTFConfig.h>
 
 namespace JSC {
 
@@ -48,11 +47,13 @@ VMEntryScope::VMEntryScope(VM& vm, JSGlobalObject* globalObject)
         if (UNLIKELY(!thread.isJSThread())) {
             Thread::registerJSThread(thread);
 
+#if ENABLE(WEBASSEMBLY)
             if (Wasm::isSupported())
                 Wasm::startTrackingCurrentThread();
+#endif
+
 #if HAVE(MACH_EXCEPTIONS)
-            if (g_wtfConfig.signalHandlers.initState == WTF::SignalHandlers::InitState::AddedHandlers)
-                registerThreadForMachExceptionHandling(thread);
+            registerThreadForMachExceptionHandling(thread);
 #endif
         }
 
@@ -79,7 +80,7 @@ VMEntryScope::VMEntryScope(VM& vm, JSGlobalObject* globalObject)
     vm.clearLastException();
 }
 
-void VMEntryScope::addDidPopListener(Function<void ()>&& listener)
+void VMEntryScope::addDidPopListener(Function<void()>&& listener)
 {
     m_didPopListeners.append(WTFMove(listener));
 }
@@ -93,7 +94,7 @@ VMEntryScope::~VMEntryScope()
 
     if (UNLIKELY(Options::useTracePoints()))
         tracePoint(VMEntryScopeEnd);
-    
+
     if (UNLIKELY(m_vm.watchdog()))
         m_vm.watchdog()->exitedVM();
 

@@ -49,8 +49,6 @@ public:
 
     static constexpr RegisterID InvalidGPRReg = ARM64Registers::InvalidGPRReg;
 
-    static constexpr ARM64Registers::FPRegisterID fpTempRegister = ARM64Registers::q31;
-
     RegisterID scratchRegister()
     {
         RELEASE_ASSERT(m_allowScratchRegister);
@@ -58,6 +56,7 @@ public:
     }
 
 protected:
+    static constexpr ARM64Registers::FPRegisterID fpTempRegister = ARM64Registers::q31;
     static constexpr Assembler::SetFlags S = Assembler::S;
     static constexpr int64_t maskHalfWord0 = 0xffffl;
     static constexpr int64_t maskHalfWord1 = 0xffff0000l;
@@ -5075,16 +5074,6 @@ public:
             m_assembler.vectorFmul(dest, left, right, simdInfo.lane);
         else
             m_assembler.vectorMul(dest, left, right, simdInfo.lane);
-    }
-
-    void vectorMulByElementFloat32(FPRegisterID left, FPRegisterID right, TrustedImm32 lane, FPRegisterID dest)
-    {
-        m_assembler.vectorFmulByElement(dest, left, right, SIMDLane::f32x4, lane.m_value);
-    }
-
-    void vectorMulByElementFloat64(FPRegisterID left, FPRegisterID right, TrustedImm32 lane, FPRegisterID dest)
-    {
-        m_assembler.vectorFmulByElement(dest, left, right, SIMDLane::f64x2, lane.m_value);
     }
 
     void vectorDiv(SIMDInfo simdInfo, FPRegisterID left, FPRegisterID right, FPRegisterID dest)

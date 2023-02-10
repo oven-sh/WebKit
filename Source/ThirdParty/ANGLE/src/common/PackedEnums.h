@@ -825,8 +825,7 @@ class Sync;
 
 #define ANGLE_EGL_ID_TYPES_OP(X) \
     X(Image)                     \
-    X(Surface)                   \
-    X(Sync)
+    X(Surface)
 
 template <typename T>
 struct ResourceTypeToID;
@@ -892,15 +891,10 @@ using IsEGLImage = std::is_same<EnumT, egl::ImageID>;
 template <typename EnumT>
 using IsGLSync = std::is_same<EnumT, gl::SyncID>;
 
-template <typename EnumT>
-using IsEGLSync = std::is_same<EnumT, egl::SyncID>;
-
-// Third case: handling EGLImage, GLSync and EGLSync pointer resource ids.
+// Third case: handling EGLImage and GLSync pointer resource ids.
 template <typename EnumT, typename FromT>
-typename std::enable_if<IsEGLImage<EnumT>::value || IsGLSync<EnumT>::value ||
-                            IsEGLSync<EnumT>::value,
-                        EnumT>::type
-PackParam(FromT from)
+typename std::enable_if<IsEGLImage<EnumT>::value || IsGLSync<EnumT>::value, EnumT>::type PackParam(
+    FromT from)
 {
     return {static_cast<GLuint>(reinterpret_cast<uintptr_t>(from))};
 }

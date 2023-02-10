@@ -30,6 +30,7 @@
 
 #import "ColorSpaceCG.h"
 #import "FloatRoundedRect.h"
+#import "LocalCurrentGraphicsContext.h"
 
 namespace WebCore {
 
@@ -73,7 +74,8 @@ void SliderTrackMac::draw(GraphicsContext& context, const FloatRoundedRect& bord
     static constexpr int sliderTrackRadius = 2;
     static constexpr IntSize sliderRadius(sliderTrackRadius, sliderTrackRadius);
 
-    CGContextRef cgContext = context.platformContext();
+    LocalCurrentGraphicsContext localContext(context);
+    CGContextRef cgContext = localContext.cgContext();
     CGColorSpaceRef cspace = sRGBColorSpaceRef();
 
     auto& sliderTrackPart = owningSliderTrackPart();
@@ -96,6 +98,7 @@ void SliderTrackMac::draw(GraphicsContext& context, const FloatRoundedRect& bord
         mainShading = adoptCF(CGShadingCreateAxial(cspace, CGPointMake(logicalRect.x(),  logicalRect.y()), CGPointMake(logicalRect.x(), logicalRect.maxY()), mainFunction.get(), false, false));
 
     context.clipRoundedRect(FloatRoundedRect(logicalRect, sliderRadius, sliderRadius, sliderRadius, sliderRadius));
+    cgContext = localContext.cgContext();
     CGContextDrawShading(cgContext, mainShading.get());
 }
 

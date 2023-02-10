@@ -45,8 +45,6 @@ public:
     RemoteLayerTreeDrawingAreaProxy(WebPageProxy&, WebProcessProxy&);
     virtual ~RemoteLayerTreeDrawingAreaProxy();
 
-    virtual bool isRemoteLayerTreeDrawingAreaProxyMac() const { return false; }
-
     const RemoteLayerTreeHost& remoteLayerTreeHost() const { return *m_remoteLayerTreeHost; }
     std::unique_ptr<RemoteLayerTreeHost> detachRemoteLayerTreeHost();
     
@@ -78,13 +76,13 @@ private:
     void sizeDidChange() final;
     void deviceScaleFactorDidChange() final;
     void windowKindDidChange() final;
-    void didUpdateGeometry();
+    void didUpdateGeometry() final;
     void attachToProvisionalFrameProcess(WebProcessProxy&) final;
     void startReceivingRemoteLayerTreeDrawingAreaProxyMessages(WebProcessProxy&);
 
     // For now, all callbacks are called before committing changes, because that's what the only client requires.
     // Once we have other callbacks, it may make sense to have a before-commit/after-commit option.
-    void dispatchAfterEnsuringDrawing(CompletionHandler<void()>&&) final;
+    void dispatchAfterEnsuringDrawing(WTF::Function<void (CallbackBase::Error)>&&) final;
     
     virtual void scheduleDisplayRefreshCallbacks() { }
     virtual void pauseDisplayRefreshCallbacks() { }
@@ -109,8 +107,8 @@ private:
     // Message handlers
     virtual void setPreferredFramesPerSecond(WebCore::FramesPerSecond) { }
     void willCommitLayerTree(TransactionID);
-    void commitLayerTree(IPC::Connection&, const RemoteLayerTreeTransaction&, const RemoteScrollingCoordinatorTransaction&);
-    virtual void didCommitLayerTree(IPC::Connection&, const RemoteLayerTreeTransaction&, const RemoteScrollingCoordinatorTransaction&) { }
+    void commitLayerTree(const RemoteLayerTreeTransaction&, const RemoteScrollingCoordinatorTransaction&);
+    virtual void didCommitLayerTree(const RemoteLayerTreeTransaction&, const RemoteScrollingCoordinatorTransaction&) { }
 
     void asyncSetLayerContents(WebCore::GraphicsLayer::PlatformLayerID, ImageBufferBackendHandle&&);
 
@@ -128,13 +126,12 @@ private:
     RetainPtr<CALayer> m_exposedRectIndicatorLayer;
 
     TransactionID m_pendingLayerTreeTransactionID;
-#if ASSERT_ENABLED
     TransactionID m_lastVisibleTransactionID;
-#endif
     TransactionID m_transactionIDForPendingCACommit;
     TransactionID m_transactionIDForUnhidingContent;
     ActivityStateChangeID m_activityStateChangeID { ActivityStateChangeAsynchronous };
 
+    CallbackMap m_callbacks;
     Vector<Ref<WebProcessProxy>> m_processesWithRegisteredRemoteLayerTreeDrawingAreaProxyMessageReceiver;
 };
 

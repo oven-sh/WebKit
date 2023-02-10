@@ -182,11 +182,7 @@ ReplacementFragment::ReplacementFragment(DocumentFragment* fragment, const Visib
     }
 
     auto page = createPageForSanitizingWebContent();
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(page->mainFrame());
-    if (!localMainFrame)
-        return;
-
-    RefPtr stagingDocument { localMainFrame->document() };
+    RefPtr stagingDocument { page->mainFrame().document() };
     ASSERT(stagingDocument->body());
 
     ComputedStyleExtractor computedStyleOfEditableRoot(editableRoot.get());

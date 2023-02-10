@@ -30,7 +30,6 @@
 #include <variant>
 #include <vector>
 #include <wtf/Hasher.h>
-#include <wtf/Markable.h>
 
 namespace WTF {
 class TextStream;
@@ -167,6 +166,17 @@ enum class FontVariantNumericFraction : uint8_t {
 enum class FontVariantNumericOrdinal : bool { Normal, Yes };
 enum class FontVariantNumericSlashedZero : bool { Normal, Yes };
 
+struct FontVariantAlternatesNormal {
+    bool operator==(const FontVariantAlternatesNormal&) const
+    {
+        return true;
+    }
+    bool operator!=(const FontVariantAlternatesNormal& other) const
+    {
+        return !(*this == other);
+    }
+};
+
 struct FontVariantAlternatesValues {
     bool operator==(const FontVariantAlternatesValues& other) const
     {
@@ -184,33 +194,15 @@ struct FontVariantAlternatesValues {
         return !(*this == other);
     }
 
-    String stylistic;
+    std::optional<String> stylistic;
     Vector<String> styleset;
     Vector<String> characterVariant;
-    String swash;
-    String ornaments;
-    String annotation;
+    std::optional<String> swash;
+    std::optional<String> ornaments;
+    std::optional<String> annotation;
     bool historicalForms = false;
 
     friend void add(Hasher&, const FontVariantAlternatesValues&);
-
-    struct MarkableTraits {
-        static bool isEmptyValue(const FontVariantAlternatesValues& value)
-        {
-            return value.m_isEmpty;
-        }
-
-        static FontVariantAlternatesValues emptyValue()
-        {
-            FontVariantAlternatesValues emptyValue;
-            emptyValue.m_isEmpty = true;
-            return emptyValue;
-        }
-    };
-
-private:
-    friend MarkableTraits;
-    bool m_isEmpty { false };
 };
 
 class FontVariantAlternates {
@@ -219,18 +211,18 @@ class FontVariantAlternates {
 public:
     bool operator==(const FontVariantAlternates& other) const
     {
-        return m_values == other.m_values;
+        return m_val == other.m_val;
     }
 
     bool isNormal() const
     {
-        return !m_values;
+        return std::holds_alternative<FontVariantAlternatesNormal>(m_val);
     }
 
-    const Values& values() const
+    Values values() const
     {
         ASSERT(!isNormal());
-        return *m_values;
+        return *std::get_if<Values>(&m_val);
     }
 
     Values& valuesRef()
@@ -238,23 +230,25 @@ public:
         if (isNormal())
             setValues();
 
-        return *m_values;
+        return *std::get_if<Values>(&m_val);
     }
 
     void setValues()
     {
-        m_values = Values { };
+        m_val = Values { };
     }
 
     static FontVariantAlternates Normal()
     {
-        return { };
+        FontVariantAlternates result;
+        result.m_val = FontVariantAlternatesNormal { };
+        return result;
     }
 
     friend void add(Hasher&, const FontVariantAlternates&);
 
 private:
-    Markable<Values> m_values;
+    std::variant<FontVariantAlternatesNormal, Values> m_val;
     FontVariantAlternates() = default;
 };
 

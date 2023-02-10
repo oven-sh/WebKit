@@ -30,10 +30,7 @@ console = {
 
 const isD8 = typeof Realm !== "undefined";
 if (isD8)
-    globalThis.readFile = read;
-const isSpiderMonkey = typeof newGlobal !== "undefined";
-if (isSpiderMonkey)
-    globalThis.readFile = readRelativeToScript;
+    readFile = read;
 
 if (typeof testList === "undefined")
     testList = undefined;

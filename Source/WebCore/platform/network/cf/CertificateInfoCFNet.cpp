@@ -32,6 +32,7 @@
 
 namespace WebCore {
 
+#if PLATFORM(COCOA)
 bool certificatesMatch(SecTrustRef trust1, SecTrustRef trust2)
 {
     if (!trust1 || !trust2)
@@ -87,9 +88,11 @@ RetainPtr<CFArrayRef> CertificateInfo::certificateChainFromSecTrust(SecTrustRef 
     return certificateChain;
 #endif
 }
+#endif
 
 bool CertificateInfo::containsNonRootSHA1SignedCertificate() const
 {
+#if PLATFORM(COCOA)
     if (m_trust) {
 #if HAVE(SEC_TRUST_COPY_CERTIFICATE_CHAIN)
         auto chain = adoptCF(SecTrustCopyCertificateChain(trust().get()));
@@ -107,13 +110,14 @@ bool CertificateInfo::containsNonRootSHA1SignedCertificate() const
 
         return false;
     }
-
+#endif
     return false;
 }
 
 std::optional<CertificateSummary> CertificateInfo::summary() const
 {
     CertificateSummary summaryInfo;
+#if PLATFORM(COCOA)
     auto chain = certificateChainFromSecTrust(m_trust.get());
     if (!chain || !CFArrayGetCount(chain.get()))
         return std::nullopt;
@@ -164,6 +168,7 @@ std::optional<CertificateSummary> CertificateInfo::summary() const
         }
     }
 #endif // PLATFORM(MAC)
+#endif // PLATFORM(COCOA)
     return summaryInfo;
 }
 

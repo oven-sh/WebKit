@@ -590,9 +590,8 @@ check_tasm_directive(char *line)
                 while (isspace(*p) && *p)
                     p++;
                 len = strlen(p);
-                size_t line_length = 1 + 7 + 1 + 1 + len + 1 + 1;
-                line = nasm_malloc(line_length);
-                snprintf(line, line_length, "%%include \"%s\"", p);
+                line = nasm_malloc(1 + 7 + 1 + 1 + len + 1 + 1);
+                sprintf(line, "%%include \"%s\"", p);
             }
             else
             {
@@ -630,20 +629,15 @@ check_tasm_directive(char *line)
             for (parameter = end->data; *parameter; parameter++)
                 len += 6 + 1 + strlen(*parameter) + 1;
             len += 5 + 1;
-            size_t line_length = len;
-            line = nasm_malloc(line_length);
+            line = nasm_malloc(len);
             p = line;
             for (parameter = end->data; *parameter; parameter++) {
-                int count = snprintf(p, line_length, "%%undef %s\n", *parameter);
-                p += count;
-                assert(count < line_length);
-                line_length = line_length > count ? line_length - count : 0;
+                p += sprintf(p, "%%undef %s\n", *parameter);
                 nasm_free(*parameter);
             }
             nasm_free(end->data);
             nasm_free(end);
-            assert(line_length >= 6);
-            snprintf(p, line_length, "%%endm");
+            sprintf(p, "%%endm");
             return line;
         case TM_REPT:
             nasm_free(end);
@@ -658,9 +652,9 @@ check_tasm_directive(char *line)
                 "irp %s\n"
                 "%%undef irp";
             data = end->data;
-            size_t line_length = strlen(irp_format) - 4 + strlen(data[0]) + strlen(data[1]) + 1;
-            line = nasm_malloc(line_length);
-            snprintf(line, line_length, irp_format, data[0], data[1]);
+            line = nasm_malloc(strlen(irp_format) - 4 + strlen(data[0])
+                   + strlen(data[1]));
+            sprintf(line, irp_format, data[0], data[1]);
             nasm_free(data[0]);
             nasm_free(data[1]);
             nasm_free(data);
@@ -713,9 +707,8 @@ check_tasm_directive(char *line)
 
         data = malloc(2*sizeof(char*));
         oldline = line;
-        size_t line_length = strlen(irp_format) - 2 + len2 + 1;
-        line = nasm_malloc(line_length);
-        snprintf(line, line_length, irp_format, q);
+        line = nasm_malloc(strlen(irp_format) - 2 + len2 + 1);
+        sprintf(line,irp_format,q);
         data[0] = nasm_strdup(q);
 
         if (!oldchar2)
@@ -782,18 +775,11 @@ check_tasm_directive(char *line)
         len += 1 + 6 + 1 + strlen(name) + 1 + 3; /* macro definition */
         len += i * (1 + 9 + 1 + 1 + 1 + 3 + 2); /* macro parameter definition */
         oldline = line;
-        size_t line_length = len + 1;
-        p = line = nasm_malloc(line_length);
-        int count = snprintf(p, line_length, "%%imacro %s 0-*", name);
-        p += count;
-        assert(count < line_length);
-        line_length = line_length > count ? line_length - count : 0;
+        p = line = nasm_malloc(len + 1);
+        p += sprintf(p, "%%imacro %s 0-*", name);
         nasm_free(oldline);
         for (j = 0; TMParameters[j]; j++) {
-            count = snprintf(p, line_length, "\n%%idefine %s %%{%-u}", TMParameters[j], j + 1);
-            p += count;
-            assert(count < line_length);
-            line_length = line_length > count ? line_length - count : 0;
+            p += sprintf(p, "\n%%idefine %s %%{%-u}", TMParameters[j], j + 1);
         }
         end = nasm_malloc(sizeof(*end));
         end->type = TM_MACRO;
@@ -804,9 +790,8 @@ check_tasm_directive(char *line)
     } else if (!nasm_stricmp(q, "proc")) {
         /* handle PROC */
         oldline = line;
-        size_t line_length = 2 + len + 1;
-        line = nasm_malloc(line_length);
-        snprintf(line, line_length, "..%s",p);
+        line = nasm_malloc(2 + len + 1);
+        sprintf(line, "..%s",p);
         nasm_free(oldline);
         return line;
     } else if (!nasm_stricmp(q, "struc")) {
@@ -817,9 +802,8 @@ check_tasm_directive(char *line)
             return line;
         }
         oldline = line;
-        size_t line_length = 5 + 1 + len + 1;
-        line = nasm_malloc(line_length);
-        snprintf(line, line_length, "struc %s", p);
+        line = nasm_malloc(5 + 1 + len + 1);
+        sprintf(line, "struc %s", p);
         struc = malloc(sizeof(*struc));
         struc->name = nasm_strdup(p);
         struc->fields = NULL;
@@ -942,9 +926,8 @@ check_tasm_directive(char *line)
             return line;
         }
         oldline = line;
-        size_t line_length = 1 + len + 1 + len2 + 1 + strlen(q+len2+1) + 1;
-        line = nasm_malloc(line_length);
-        snprintf(line, line_length, ".%s %s %s", p, q, q+len2+1);
+        line = nasm_malloc(1 + len + 1 + len2 + 1 + strlen(q+len2+1) + 1);
+        sprintf(line, ".%s %s %s", p, q, q+len2+1);
         nasm_free(oldline);
         return line;
     }
@@ -976,11 +959,11 @@ check_tasm_directive(char *line)
                 if (defining)
                     for (n=0;TMParameters[n];n++)
                         if (!strcmp(TMParameters[n],p)) {
-                            snprintf(tasm_param, size, "%%{%d}", n+1);
+                            sprintf(tasm_param,"%%{%d}",n+1);
                             p = tasm_param;
                             break;
                         }
-                n = snprintf(line, size, "%s: istruc %s\n", p, q);
+                n = sprintf(line, "%s: istruc %s\n", p, q);
                 /* use initialisers */
                 while ((s = strchr(r + 1, ','))) {
                     if (!field) {
@@ -992,8 +975,7 @@ check_tasm_directive(char *line)
                         strlen(field->type) + 1 + strlen(r+1) + 2;
                     size += m;
                     line = nasm_realloc(line, size);
-                    assert(n < size);
-                    snprintf(line + n, size > n ? size - n : 0, "%s.%s: at .%s, %s %s\n",
+                    sprintf(line + n, "%s.%s: at .%s, %s %s\n",
                             p, field->name, field->name, field->type, r + 1);
                     n += m-1;
                     r = s;
@@ -1005,16 +987,14 @@ check_tasm_directive(char *line)
                         strlen(field->type) + 1 + (r ? strlen(r+1) : 1) + 2;
                     size += m;
                     line = nasm_realloc(line, size);
-                    assert(n < size);
-                    snprintf(line + n, size > n ? size - n : 0, "%s.%s: at .%s, %s %s\n", p, field->name,
+                    sprintf(line + n, "%s.%s: at .%s, %s %s\n", p, field->name,
                             field->name, field->type, r ? r + 1: "?");
                     n += m-1;
                     r = NULL;
                     field = field->next;
                 }
                 line = nasm_realloc(line, n + 5);
-                assert(n < size);
-                snprintf(line + n, size > n ? size - n : 0, "iend");
+                sprintf(line + n, "iend");
                 nasm_free(oldline);
                 return line;
             }
@@ -1080,9 +1060,8 @@ prepreproc(char *line)
         if (*fname == '"')
             fname++;
         fnlen = strcspn(fname, "\"");
-        size_t line_length = 20 + fnlen;
-        line = nasm_malloc(line_length);
-        snprintf(line, line_length, "%%line %d %.*s", lineno, (int)fnlen, fname);
+        line = nasm_malloc(20 + fnlen);
+        sprintf(line, "%%line %d %.*s", lineno, (int)fnlen, fname);
         nasm_free(oldline);
     }
     if (tasm_compatible_mode)
@@ -1583,7 +1562,7 @@ detoken(Token * tlist, int expand_locals)
                 char *p2, *q = t->text + 2;
 
                 q += strspn(q, "$");
-                snprintf(buffer, 40, "..@%lu.", ctx->number);
+                sprintf(buffer, "..@%lu.", ctx->number);
                 p2 = nasm_strcat(buffer, q);
                 nasm_free(t->text);
                 t->text = p2;
@@ -2584,7 +2563,7 @@ do_directive(Token * tline)
                 free_tlist(tt);
 
                 /* Now define the macro for the argument */
-                snprintf(directive, 256, "%%define %s (%s+%d)", arg, StackPointer,
+                sprintf(directive, "%%define %s (%s+%d)", arg, StackPointer,
                         offset);
                 do_directive(tokenise(directive));
                 offset += size;
@@ -2681,13 +2660,13 @@ do_directive(Token * tline)
                 free_tlist(tt);
 
                 /* Now define the macro for the argument */
-                snprintf(directive, 256, "%%define %s (%s-%d)", local, StackPointer,
+                sprintf(directive, "%%define %s (%s-%d)", local, StackPointer,
                         offset);
                 do_directive(tokenise(directive));
                 offset += size;
 
                 /* Now define the assign to setup the enter_c macro correctly */
-                snprintf(directive, 256, "%%assign %%$localsize %%$localsize+%d",
+                sprintf(directive, "%%assign %%$localsize %%$localsize+%d",
                         size);
                 do_directive(tokenise(directive));
 
@@ -3945,12 +3924,12 @@ expand_mmac_params(Token * tline)
                              */
                         case '0':
                             type = TOK_NUMBER;
-                            snprintf(tmpbuf, 30, "%ld", mac->nparam);
+                            sprintf(tmpbuf, "%ld", mac->nparam);
                             text = nasm_strdup(tmpbuf);
                             break;
                         case '%':
                             type = TOK_ID;
-                            snprintf(tmpbuf, 30, "..@%lu.", mac->unique);
+                            sprintf(tmpbuf, "..@%lu.", mac->unique);
                             text = nasm_strcat(tmpbuf, t->text + 2);
                             break;
                         case '-':

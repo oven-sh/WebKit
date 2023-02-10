@@ -1009,7 +1009,7 @@
 7419 SWIFTSHADER : MultithreadingTestES3.Thread* = SKIP
 
 // Flaky timeout on Windows SwANGLE
-7900 WIN SWIFTSHADER : InstancingTestES3.LargeDivisor/* = SKIP
+7900 WIN SWIFTSHADER : InstancingTestES3.LargeDivisor/ES3_Vulkan_SwiftShader/* = SKIP
 7419 WIN SWIFTSHADER : MultithreadingTestES3.CreateFramebufferFetchMidRenderPass/* = SKIP
 7992 WIN SWIFTSHADER : MultithreadingTestES3.ProgramUseAndDestroyInTwoContexts/* = SKIP
 
@@ -1022,6 +1022,9 @@
 7495 WIN GLES : EGLMultiContextTest.ReuseUnterminatedDisplay/* = SKIP
 7495 OpenGL : EGLContextSharingTestNoFixture.InactiveThreadDoesntPreventCleanup/* = SKIP
 7495 WIN GLES : EGLContextSharingTestNoFixture.InactiveThreadDoesntPreventCleanup/* = SKIP
+// Also causes crashes/failures in other tests on Pixel 4 and Win Intel
+7602 PIXEL4ORXL GLES : EGLMultiContextTest.ReuseUnterminatedDisplay/* = SKIP
+7602 WIN INTEL VULKAN : EGLMultiContextTest.ReuseUnterminatedDisplay/* = SKIP
 
 7546 LINUX VULKAN : FramebufferTest_ES3.SurfaceDimensionsChangeAndFragCoord/* = SKIP
 

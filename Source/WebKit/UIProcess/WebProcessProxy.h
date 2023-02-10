@@ -79,7 +79,7 @@ class ResourceRequest;
 struct NotificationData;
 struct PluginInfo;
 struct PrewarmInformation;
-class SecurityOriginData;
+struct SecurityOriginData;
 enum class PermissionName : uint8_t;
 enum class ThirdPartyCookieBlockingMode : uint8_t;
 using FramesPerSecond = unsigned;
@@ -335,12 +335,10 @@ public:
 
 #if HAVE(CVDISPLAYLINK)
     DisplayLink::Client& displayLinkClient() { return m_displayLinkClient; }
-    std::optional<unsigned> nominalFramesPerSecondForDisplay(WebCore::PlatformDisplayID);
 
     void startDisplayLink(DisplayLinkObserverID, WebCore::PlatformDisplayID, WebCore::FramesPerSecond);
     void stopDisplayLink(DisplayLinkObserverID, WebCore::PlatformDisplayID);
     void setDisplayLinkPreferredFramesPerSecond(DisplayLinkObserverID, WebCore::PlatformDisplayID, WebCore::FramesPerSecond);
-    void setDisplayLinkForDisplayWantsFullSpeedUpdates(WebCore::PlatformDisplayID, bool wantsFullSpeedUpdates);
 #endif
 
     // Called when the web process has crashed or we know that it will terminate soon.
@@ -358,7 +356,6 @@ public:
     void sendProcessDidResume(ResumeReason) final;
     void didChangeThrottleState(ProcessThrottleState) final;
     ASCIILiteral clientName() const final { return "WebProcess"_s; }
-    String environmentIdentifier() const final;
 
 #if PLATFORM(COCOA)
     enum SandboxExtensionType : uint32_t {
@@ -741,7 +738,6 @@ private:
     std::unique_ptr<WebLockRegistryProxy> m_webLockRegistry;
     std::unique_ptr<WebPermissionControllerProxy> m_webPermissionController;
     bool m_isConnectedToHardwareConsole { true };
-    mutable String m_environmentIdentifier;
 };
 
 WTF::TextStream& operator<<(WTF::TextStream&, const WebProcessProxy&);

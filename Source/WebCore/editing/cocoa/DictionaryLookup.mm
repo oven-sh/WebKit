@@ -425,6 +425,10 @@ static WKRevealController showPopupOrCreateAnimationController(bool createAnimat
     if (!PAL::isRevealFrameworkAvailable() || !canCreateRevealItems() || !PAL::getRVPresenterClass())
         return nil;
 
+    auto mutableOptions = adoptNS([[NSMutableDictionary alloc] init]);
+    if (NSDictionary *options = dictionaryPopupInfo.platformData.options.get())
+        [mutableOptions addEntriesFromDictionary:options];
+
     auto textIndicator = TextIndicator::create(dictionaryPopupInfo.textIndicator);
 
     auto presenter = adoptNS([PAL::allocRVPresenterInstance() init]);

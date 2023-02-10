@@ -130,7 +130,7 @@ bool WebAssemblyFunction::usesTagRegisters() const
 RegisterSet WebAssemblyFunction::calleeSaves() const
 {
     // Pessimistically save callee saves in BoundsChecking mode since the LLInt always bounds checks
-    RegisterSetBuilder result = RegisterSetBuilder::wasmPinnedRegisters();
+    RegisterSetBuilder result = RegisterSetBuilder::wasmPinnedRegisters(MemoryMode::BoundsChecking);
     if (usesTagRegisters()) {
         RegisterSetBuilder tagCalleeSaves = RegisterSetBuilder::vmCalleeSaveRegisters();
         tagCalleeSaves.filter(RegisterSetBuilder::runtimeTagRegisters());

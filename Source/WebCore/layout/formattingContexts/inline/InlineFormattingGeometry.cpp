@@ -46,7 +46,7 @@ InlineFormattingGeometry::InlineFormattingGeometry(const InlineFormattingContext
 
 InlineLayoutUnit InlineFormattingGeometry::logicalTopForNextLine(const LineBuilder::LineContent& lineContent, const InlineRect& lineLogicalRect, const FloatingContext& floatingContext) const
 {
-    if (!lineContent.committedRange.isEmpty()) {
+    if (!lineContent.inlineItemRange.isEmpty()) {
         // Normally the next line's logical top is the previous line's logical bottom, but when the line ends
         // with the clear property set, the next line needs to clear the existing floats.
         if (lineContent.runs.isEmpty())
@@ -273,17 +273,11 @@ LayoutPoint InlineFormattingGeometry::staticPositionForOutOfFlowInlineLevelBox(c
     }
 
     auto isHorizontalWritingMode = formattingContext().root().style().isHorizontalWritingMode();
-    auto leftSideToLogicalTopLeft = [&] (auto& displayBox, auto& line, bool mayNeedMarginAdjustment = true) {
-        auto marginStart = LayoutUnit { };
-        if (mayNeedMarginAdjustment && displayBox.isNonRootInlineLevelBox())
-            marginStart = formattingContext().geometryForBox(displayBox.layoutBox()).marginStart();
-        return isHorizontalWritingMode ? LayoutPoint(displayBox.left() - marginStart, line.top()) : LayoutPoint(displayBox.top() - marginStart, line.left());
+    auto leftSideToLogicalTopLeft = [&] (auto& displayBox, auto& line) {
+        return isHorizontalWritingMode ? LayoutPoint(displayBox.left(), line.top()) : LayoutPoint(displayBox.top(), line.left());
     };
     auto rightSideToLogicalTopLeft = [&] (auto& displayBox, auto& line) {
-        auto marginEnd = LayoutUnit { };
-        if (displayBox.isNonRootInlineLevelBox())
-            marginEnd = formattingContext().geometryForBox(displayBox.layoutBox()).marginEnd();
-        return isHorizontalWritingMode ? LayoutPoint(displayBox.right() + marginEnd, line.top()) : LayoutPoint(displayBox.bottom() + marginEnd, line.left());
+        return isHorizontalWritingMode ? LayoutPoint(displayBox.right(), line.top()) : LayoutPoint(displayBox.bottom(), line.left());
     };
 
     auto previousDisplayBoxIndexBeforeOutOfFlowBox = previousDisplayBoxIndex(outOfFlowBox, boxes);
@@ -302,7 +296,7 @@ LayoutPoint InlineFormattingGeometry::staticPositionForOutOfFlowInlineLevelBox(c
             inlineBoxDisplayBox.moveHorizontally(inlineContentBoxOffset);
         else
             inlineBoxDisplayBox.moveVertically(inlineContentBoxOffset);
-        return leftSideToLogicalTopLeft(inlineBoxDisplayBox, lines[inlineBoxDisplayBox.lineIndex()], false);
+        return leftSideToLogicalTopLeft(inlineBoxDisplayBox, lines[inlineBoxDisplayBox.lineIndex()]);
     }
 
     auto previousBoxOverflows = (isHorizontalWritingMode ? previousDisplayBox.right() > currentLine.right() : previousDisplayBox.bottom() > currentLine.bottom()) || previousDisplayBox.isLineBreakBox();

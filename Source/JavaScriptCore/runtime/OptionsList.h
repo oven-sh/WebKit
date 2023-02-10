@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2019-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -91,6 +91,8 @@ bool canUseWebAssemblyFastMemory();
     v(Bool, useDOMJIT, is64Bit(), Normal, "allows the DOMJIT to be used if true") \
     \
     v(Bool, reportMustSucceedExecutableAllocations, false, Normal, nullptr) \
+    /* Bun Features */\
+    v(Bool, showPrivateScriptsInStackTraces, false, Normal, "Show private scripts in stack traces.") \
     \
     v(Unsigned, maxPerThreadStackUsage, 5 * MB, Normal, "Max allowed stack usage by the VM") \
     v(Unsigned, softReservedZoneSize, 128 * KB, Normal, "A buffer greater than reservedZoneSize that reserves space for stringifying exceptions.") \
@@ -107,7 +109,7 @@ bool canUseWebAssemblyFastMemory();
     v(Unsigned, repatchCountForCoolDown, 8, Normal, nullptr) \
     v(Unsigned, initialCoolDownCount, 20, Normal, nullptr) \
     v(Unsigned, repatchBufferingCountdown, 6, Normal, nullptr) \
-    v(Unsigned, initialRepatchBufferingCountdown, 6, Normal, nullptr) \
+    v(Unsigned, initialRepatchBufferingCountdown, 4, Normal, nullptr) \
     \
     v(Bool, dumpGeneratedBytecodes, false, Normal, nullptr) \
     v(Bool, dumpGeneratedWasmBytecodes, false, Normal, nullptr) \
@@ -443,10 +445,11 @@ bool canUseWebAssemblyFastMemory();
     v(Unsigned, maxB3TailDupBlockSize, 3, Normal, nullptr) \
     v(Unsigned, maxB3TailDupBlockSuccessors, 3, Normal, nullptr) \
     v(Bool, useB3HoistLoopInvariantValues, false, Normal, nullptr) \
-    v(Bool, useB3CanonicalizePrePostIncrements, false, Normal, nullptr) \
+    v(Bool, useB3CanonicalizePrePostIncrements, true, Normal, nullptr) \
     \
     v(Bool, useDollarVM, false, Restricted, "installs the $vm debugging tool in global objects") \
     v(OptionString, functionOverrides, nullptr, Restricted, "file with debugging overrides for function bodies") \
+    v(Bool, useSigillCrashAnalyzer, false, Configurable, "logs data about SIGILL crashes") \
     \
     v(Unsigned, watchdog, 0, Normal, "watchdog timeout (0 = Disabled, N = a timeout period of N milliseconds)") \
     v(Bool, usePollingTraps, false, Normal, "use polling (instead of signalling) VM traps") \
@@ -463,8 +466,6 @@ bool canUseWebAssemblyFastMemory();
     v(Bool, dumpModuleRecord, false, Normal, nullptr) \
     v(Bool, dumpModuleLoadingState, false, Normal, nullptr) \
     v(Bool, exposeInternalModuleLoader, false, Normal, "expose the internal module loader object to the global space for debugging") \
-    \
-    v(Bool, exposePrivateIdentifiers, false, Normal, "Allow non-builtin scripts to use private identifiers. Mostly useful to expose @superSamplerBegin/End intrinsics for profiling") \
     \
     v(Bool, useSuperSampler, false, Normal, nullptr) \
     \
@@ -494,10 +495,7 @@ bool canUseWebAssemblyFastMemory();
     v(Bool, crashIfWebAssemblyCantFastMemory, false, Normal, "If true, we will crash if we can't obtain fast memory for wasm.") \
     v(Bool, crashOnFailedWebAssemblyValidate, false, Normal, "If true, we will crash if we can't validate a wasm module instead of throwing an exception.") \
     v(Unsigned, maxNumWebAssemblyFastMemories, 4, Normal, nullptr) \
-    v(Bool, useSinglePassBBQJIT, false, Normal, "If true, BBQ will use the new single-pass WebAssembly baseline JIT as its compilation backend.") \
-    v(Bool, wasmBBQUsesAir, true, Normal, "If true, BBQ will use Air as its compilation backend.") \
-    v(Bool, verboseBBQJITAllocation, false, Normal, "Logs extra information about register allocation during BBQ JIT") \
-    v(Bool, verboseBBQJITInstructions, false, Normal, "Logs instruction information during BBQ JIT") \
+    v(Bool, wasmBBQUsesAir, true, Normal, nullptr) \
     v(Bool, useWasmLLInt, true, Normal, nullptr) \
     v(Bool, useBBQJIT, true, Normal, "allows the BBQ JIT to be used if true") \
     v(Bool, useOMGJIT, true, Normal, "allows the OMG JIT to be used if true") \

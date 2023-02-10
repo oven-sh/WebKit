@@ -43,7 +43,7 @@ struct ClientOrigin;
 struct Cookie;
 struct MessagePortIdentifier;
 struct MessageWithMessagePorts;
-class SecurityOriginData;
+struct SecurityOriginData;
 enum class HTTPCookieAcceptPolicy : uint8_t;
 }
 

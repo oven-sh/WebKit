@@ -992,11 +992,7 @@ static bool isElementMainContentForPurposesOfAutoplay(const HTMLMediaElement& el
     if (!document.frame() || !document.frame()->isMainFrame())
         return false;
 
-    auto* localFrame = dynamicDowncast<LocalFrame>(document.frame()->mainFrame());
-    if (!localFrame)
-        return false;
-
-    auto& mainFrame = *localFrame;
+    auto& mainFrame = document.frame()->mainFrame();
     if (!mainFrame.view() || !mainFrame.view()->renderView())
         return false;
 
@@ -1032,11 +1028,7 @@ static bool isElementRectMostlyInMainFrame(const HTMLMediaElement& element)
     if (!documentFrame)
         return false;
 
-    auto* localFrame = dynamicDowncast<LocalFrame>(documentFrame->mainFrame());
-    if (!localFrame)
-        return false;
-
-    auto mainFrameView = localFrame->view();
+    auto mainFrameView = documentFrame->mainFrame().view();
     if (!mainFrameView)
         return false;
 
@@ -1062,14 +1054,10 @@ static bool isElementLargeRelativeToMainFrame(const HTMLMediaElement& element)
     if (!documentFrame)
         return false;
 
-    auto* localFrame = dynamicDowncast<LocalFrame>(documentFrame->mainFrame());
-    if (!localFrame)
+    if (!documentFrame->mainFrame().view())
         return false;
 
-    if (!localFrame->view())
-        return false;
-
-    auto& mainFrameView = *localFrame->view();
+    auto& mainFrameView = *documentFrame->mainFrame().view();
     auto maxVisibleClientWidth = std::min(renderer->clientWidth().toInt(), mainFrameView.visibleWidth());
     auto maxVisibleClientHeight = std::min(renderer->clientHeight().toInt(), mainFrameView.visibleHeight());
 

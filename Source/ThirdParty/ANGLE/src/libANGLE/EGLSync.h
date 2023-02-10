@@ -32,13 +32,11 @@ namespace egl
 class Sync final : public angle::RefCountObject<Display, angle::Result>, public LabeledObject
 {
   public:
-    Sync(rx::EGLImplFactory *factory, const SyncID &id, EGLenum type, const AttributeMap &attribs);
+    Sync(rx::EGLImplFactory *factory, EGLenum type, const AttributeMap &attribs);
     ~Sync() override;
 
     void setLabel(EGLLabelKHR label) override;
     EGLLabelKHR getLabel() const override;
-
-    const SyncID &id() const { return mId; }
 
     void onDestroy(const Display *display) override;
 
@@ -64,7 +62,6 @@ class Sync final : public angle::RefCountObject<Display, angle::Result>, public 
 
     EGLLabelKHR mLabel;
 
-    SyncID mId;
     EGLenum mType;
     EGLint mCondition;
     EGLint mNativeFenceFD;

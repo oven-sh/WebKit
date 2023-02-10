@@ -31,7 +31,7 @@
 namespace WebCore {
 
 class ContentSecurityPolicy;
-class SecurityOriginData;
+struct SecurityOriginData;
 
 enum class IsSelfSource : bool { No, Yes };
 

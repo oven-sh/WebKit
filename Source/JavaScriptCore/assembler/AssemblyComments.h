@@ -48,7 +48,7 @@ public:
 
     void registerCodeRange(void* start, void* end, CommentMap&& map)
     {
-        if (LIKELY(!Options::needDisassemblySupport()) || !map.size())
+        if (LIKELY(!Options::dumpDisassembly()) || !map.size())
             return;
         Locker locker { m_lock };
 
@@ -73,7 +73,7 @@ public:
 
     void unregisterCodeRange(void* start, void* end)
     {
-        if (LIKELY(!Options::needDisassemblySupport()))
+        if (LIKELY(!Options::dumpDisassembly()))
             return;
         Locker locker { m_lock };
 
@@ -88,7 +88,7 @@ public:
 
     inline std::optional<String> comment(void* in)
     {
-        if (LIKELY(!Options::needDisassemblySupport()))
+        if (LIKELY(!Options::dumpDisassembly()))
             return { };
         Locker locker { m_lock };
         auto it = m_comments.lower_bound(orderedKey(in));

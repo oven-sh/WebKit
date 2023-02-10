@@ -43,17 +43,20 @@ NSString * const WKWebsiteDataTypeWebSQLDatabases = @"WKWebsiteDataTypeWebSQLDat
 NSString * const WKWebsiteDataTypeIndexedDBDatabases = @"WKWebsiteDataTypeIndexedDBDatabases";
 NSString * const WKWebsiteDataTypeServiceWorkerRegistrations = @"WKWebsiteDataTypeServiceWorkerRegistrations";
 NSString * const WKWebsiteDataTypeFileSystem = @"WKWebsiteDataTypeFileSystem";
-NSString * const WKWebsiteDataTypeSearchFieldRecentSearches = @"WKWebsiteDataTypeSearchFieldRecentSearches";
-NSString * const WKWebsiteDataTypeMediaKeys = @"WKWebsiteDataTypeMediaKeys";
 
-NSString * const _WKWebsiteDataTypeMediaKeys = WKWebsiteDataTypeMediaKeys;
+NSString * const _WKWebsiteDataTypeMediaKeys = @"_WKWebsiteDataTypeMediaKeys";
 NSString * const _WKWebsiteDataTypeHSTSCache = @"_WKWebsiteDataTypeHSTSCache";
-NSString * const _WKWebsiteDataTypeSearchFieldRecentSearches = WKWebsiteDataTypeSearchFieldRecentSearches;
+NSString * const _WKWebsiteDataTypeSearchFieldRecentSearches = @"_WKWebsiteDataTypeSearchFieldRecentSearches";
 NSString * const _WKWebsiteDataTypeResourceLoadStatistics = @"_WKWebsiteDataTypeResourceLoadStatistics";
 NSString * const _WKWebsiteDataTypeCredentials = @"_WKWebsiteDataTypeCredentials";
 NSString * const _WKWebsiteDataTypeAdClickAttributions = @"_WKWebsiteDataTypeAdClickAttributions";
 NSString * const _WKWebsiteDataTypePrivateClickMeasurements = @"_WKWebsiteDataTypePrivateClickMeasurements";
 NSString * const _WKWebsiteDataTypeAlternativeServices = @"_WKWebsiteDataTypeAlternativeServices";
+NSString * const _WKWebsiteDataTypeFileSystem = WKWebsiteDataTypeFileSystem;
+
+#if PLATFORM(MAC)
+NSString * const _WKWebsiteDataTypePlugInData = @"_WKWebsiteDataTypePlugInData";
+#endif
 
 @implementation WKWebsiteDataRecord
 
@@ -93,12 +96,16 @@ static NSString *dataTypesToString(NSSet *dataTypes)
         [array addObject:@"Service Worker Registrations"];
     if ([dataTypes containsObject:_WKWebsiteDataTypeHSTSCache])
         [array addObject:@"HSTS Cache"];
-    if ([dataTypes containsObject:WKWebsiteDataTypeMediaKeys])
+    if ([dataTypes containsObject:_WKWebsiteDataTypeMediaKeys])
         [array addObject:@"Media Keys"];
-    if ([dataTypes containsObject:WKWebsiteDataTypeSearchFieldRecentSearches])
+    if ([dataTypes containsObject:_WKWebsiteDataTypeSearchFieldRecentSearches])
         [array addObject:@"Search Field Recent Searches"];
     if ([dataTypes containsObject:WKWebsiteDataTypeFileSystem])
         [array addObject:@"File System"];
+#if PLATFORM(MAC)
+    if ([dataTypes containsObject:_WKWebsiteDataTypePlugInData])
+        [array addObject:@"Plug-in Data"];
+#endif
     if ([dataTypes containsObject:_WKWebsiteDataTypeResourceLoadStatistics])
         [array addObject:@"Resource Load Statistics"];
     if ([dataTypes containsObject:_WKWebsiteDataTypeCredentials])
@@ -107,6 +114,8 @@ static NSString *dataTypesToString(NSSet *dataTypes)
         [array addObject:@"Private Click Measurements"];
     if ([dataTypes containsObject:_WKWebsiteDataTypeAlternativeServices])
         [array addObject:@"Alternative Services"];
+    if ([dataTypes containsObject:_WKWebsiteDataTypeFileSystem])
+        [array addObject:@"File System"];
 
     return [array componentsJoinedByString:@", "];
 }

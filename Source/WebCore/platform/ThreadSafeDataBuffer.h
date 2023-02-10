@@ -72,9 +72,9 @@ public:
         return ThreadSafeDataBuffer(data, length);
     }
 
-    ThreadSafeDataBuffer() = default;
-
-    ThreadSafeDataBuffer isolatedCopy() const { return *this; }
+    ThreadSafeDataBuffer()
+    {
+    }
     
     const Vector<uint8_t>* data() const
     {

@@ -1072,9 +1072,6 @@ public:
     JSArrayBufferView* tryGetFoldableView(JSValue);
     JSArrayBufferView* tryGetFoldableView(JSValue, ArrayMode arrayMode);
 
-    JSValue tryGetConstantGetter(Node* getterSetter);
-    JSValue tryGetConstantSetter(Node* getterSetter);
-
     bool canDoFastSpread(Node*, const AbstractValue&);
     
     void registerFrozenValues();

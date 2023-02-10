@@ -66,13 +66,12 @@
 #import <CoreServices/CoreServices.h>
 #import <math.h>
 #import <pal/spi/cg/CoreGraphicsSPI.h>
+#import <pal/spi/cocoa/NSColorSPI.h>
 #import <pal/spi/mac/CoreUISPI.h>
 #import <pal/spi/mac/NSAppearanceSPI.h>
 #import <pal/spi/mac/NSCellSPI.h>
-#import <pal/spi/mac/NSColorSPI.h>
 #import <pal/spi/mac/NSImageSPI.h>
 #import <pal/spi/mac/NSSharingServicePickerSPI.h>
-#import <pal/spi/mac/NSSpellCheckerSPI.h>
 #import <wtf/MathExtras.h>
 #import <wtf/ObjCRuntimeExtras.h>
 #import <wtf/RetainPtr.h>
@@ -370,28 +369,6 @@ Color RenderThemeMac::platformDefaultButtonTextColor(OptionSet<StyleColorOptions
 {
     LocalDefaultSystemAppearance localAppearance(options.contains(StyleColorOptions::UseDarkAppearance));
     return colorFromCocoaColor([NSColor alternateSelectedControlTextColor]);
-}
-
-#if USE(APPLE_INTERNAL_SDK)
-#include <WebKitAdditions/RenderThemeMacAdditions.mm>
-#else
-#if HAVE(NSSPELLCHECKER_CORRECTION_INDICATOR_UNDERLINE_COLOR)
-static inline bool usePlatformColorForAutocorrectionReplacementMarker()
-{
-    return false;
-}
-#endif
-#endif
-
-Color RenderThemeMac::platformAutocorrectionReplacementMarkerColor(OptionSet<StyleColorOptions> options) const
-{
-#if HAVE(NSSPELLCHECKER_CORRECTION_INDICATOR_UNDERLINE_COLOR)
-    if (usePlatformColorForAutocorrectionReplacementMarker() && [NSSpellChecker respondsToSelector:@selector(correctionIndicatorUnderlineColor)]) {
-        LocalDefaultSystemAppearance localAppearance(options.contains(StyleColorOptions::UseDarkAppearance));
-        return colorFromCocoaColor([NSSpellChecker correctionIndicatorUnderlineColor]);
-    }
-#endif
-    return RenderThemeCocoa::platformAutocorrectionReplacementMarkerColor(options);
 }
 
 static Color activeButtonTextColor()
@@ -1582,7 +1559,6 @@ bool RenderThemeMac::paintAttachment(const RenderObject& renderer, const PaintIn
         return false;
 
     const RenderAttachment& attachment = downcast<RenderAttachment>(renderer);
-    HTMLAttachmentElement& element = attachment.attachmentElement();
 
     auto layoutStyle = AttachmentLayoutStyle::NonSelected;
     if (attachment.selectionState() != RenderObject::HighlightState::None && paintInfo.phase != PaintPhase::Selection)
@@ -1590,7 +1566,7 @@ bool RenderThemeMac::paintAttachment(const RenderObject& renderer, const PaintIn
 
     AttachmentLayout layout(attachment, layoutStyle);
 
-    auto& progressString = element.attributeWithoutSynchronization(progressAttr);
+    auto& progressString = attachment.attachmentElement().attributeWithoutSynchronization(progressAttr);
     bool validProgress = false;
     float progress = 0;
     if (!progressString.isEmpty())
@@ -1605,18 +1581,14 @@ bool RenderThemeMac::paintAttachment(const RenderObject& renderer, const PaintIn
 
     bool usePlaceholder = validProgress && !progress;
 
-    if (!element.isImageOnly())
-        paintAttachmentIconBackground(attachment, context, layout);
-
+    paintAttachmentIconBackground(attachment, context, layout);
     if (usePlaceholder)
         paintAttachmentIconPlaceholder(attachment, context, layout);
     else
         paintAttachmentIcon(attachment, context, layout);
 
-    if (!element.isImageOnly()) {
-        paintAttachmentTitleBackground(attachment, context, layout);
-        paintAttachmentText(context, &layout);
-    }
+    paintAttachmentTitleBackground(attachment, context, layout);
+    paintAttachmentText(context, &layout);
 
     if (validProgress && progress)
         paintAttachmentProgress(attachment, context, layout, progress);

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022-2023 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2022 Apple Inc. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,6 +31,7 @@
 #import "ControlFactoryMac.h"
 #import "FloatRoundedRect.h"
 #import "GraphicsContext.h"
+#import "LocalCurrentGraphicsContext.h"
 #import "LocalDefaultSystemAppearance.h"
 #import "SearchFieldPart.h"
 
@@ -46,6 +47,8 @@ void SearchFieldMac::draw(GraphicsContext& context, const FloatRoundedRect& bord
 {
     LocalDefaultSystemAppearance localAppearance(style.states.contains(ControlStyle::State::DarkAppearance), style.accentColor);
 
+    LocalCurrentGraphicsContext localContext(context);
+
     GraphicsContextStateSaver stateSaver(context);
 
     auto logicalRect = borderRect.rect();
@@ -54,9 +57,11 @@ void SearchFieldMac::draw(GraphicsContext& context, const FloatRoundedRect& bord
         context.scale(style.zoomFactor);
     }
 
+    auto *view = m_controlFactory.drawingView(borderRect.rect(), style);
+
     [m_searchFieldCell setSearchButtonCell:nil];
 
-    drawCell(context, logicalRect, deviceScaleFactor, style, m_searchFieldCell.get(), true);
+    drawCell(context, logicalRect, deviceScaleFactor, style, m_searchFieldCell.get(), view, true);
 
     [m_searchFieldCell resetSearchButtonCell];
     

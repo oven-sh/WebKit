@@ -317,11 +317,7 @@ std::optional<std::pair<RenderLayer&, GraphicsLayer&>> InteractionRegionOverlay:
         HitTestRequest::Type::AllowChildFrameContent
     };
     HitTestResult result(m_mouseLocationInContentCoordinates);
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
-    if (!localMainFrame)
-        return std::nullopt;
-
-    localMainFrame->document()->hitTest(hitType, result);
+    m_page.mainFrame().document()->hitTest(hitType, result);
 
     auto* hitNode = result.innerNode();
     if (!hitNode || !hitNode->renderer())
@@ -358,10 +354,6 @@ std::optional<InteractionRegion> InteractionRegionOverlay::activeRegion() const
     Region hitRegionInOverlayCoordinates;
     float hitRegionArea = 0;
 
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
-    if (!localMainFrame)
-        return std::nullopt;
-
     auto regions = graphicsLayer.eventRegion().interactionRegions();
     for (const auto& region : regions) {
         float area = 0;
@@ -394,7 +386,7 @@ std::optional<InteractionRegion> InteractionRegionOverlay::activeRegion() const
         if (!didHitRegion)
             continue;
 
-        if (area > localMainFrame->view()->layoutSize().area() / 2)
+        if (area > m_page.mainFrame().view()->layoutSize().area() / 2)
             continue;
 
         if (didHitRegion && (!hitRegion || area < hitRegionArea)) {
@@ -440,10 +432,7 @@ static void drawCheckbox(const String& text, GraphicsContext& context, const Fon
 
 FloatRect InteractionRegionOverlay::rectForSettingAtIndex(unsigned index) const
 {
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
-    if (!localMainFrame)
-        return FloatRect();
-    auto viewSize = localMainFrame->view()->layoutSize();
+    auto viewSize = m_page.mainFrame().view()->layoutSize();
     static constexpr float settingsWidth = 150;
     static constexpr float rowHeight = 16;
     return {
@@ -578,10 +567,7 @@ void InteractionRegionOverlay::drawRect(PageOverlay&, GraphicsContext& context, 
 
 bool InteractionRegionOverlay::mouseEvent(PageOverlay& overlay, const PlatformMouseEvent& event)
 {
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
-    if (!localMainFrame)
-        return false;
-    auto mainFrameView = localMainFrame->view();
+    auto mainFrameView = m_page.mainFrame().view();
 
     std::optional<Cursor> cursorToSet;
 

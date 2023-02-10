@@ -89,7 +89,7 @@ public:
     void visit(ReferenceTypeName&) override;
 
     // Values
-    void visit(Parameter&) override;
+    void visit(ParameterValue&) override;
 
     void visit(StructureMember&) override;
 

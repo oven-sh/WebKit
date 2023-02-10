@@ -29,6 +29,7 @@
 #include "CSSCounterStyleRule.h"
 #include "CSSPrimitiveValue.h"
 #include "CSSValueList.h"
+#include "Pair.h"
 
 #include <utility>
 
@@ -38,22 +39,33 @@ static CSSCounterStyleDescriptors::Ranges translateRangeFromStyleProperties(cons
 {
     auto ranges = properties.getPropertyCSSValue(CSSPropertySystem).get();
     // auto range will return an empty Ranges
-    if (!is<CSSValueList>(ranges))
+    if (!ranges || !is<CSSValueList>(ranges))
         return { };
     auto& list = downcast<CSSValueList>(*ranges);
     CSSCounterStyleDescriptors::Ranges result;
     for (auto& rangeValue : list) {
-        if (!rangeValue.isPair())
+        ASSERT(rangeValue->isPrimitiveValue());
+        if (!rangeValue->isPrimitiveValue())
             return { };
-        auto& low = downcast<CSSPrimitiveValue>(rangeValue.first());
-        auto& high = downcast<CSSPrimitiveValue>(rangeValue.second());
+        auto& bounds = downcast<CSSPrimitiveValue>(rangeValue.get());
+        ASSERT(bounds.isPair());
+        if (!bounds.isPair())
+            return { };
+        auto boundsPair = bounds.pairValue();
+        if (!boundsPair)
+            return { };
+        auto low = boundsPair->first();
+        auto high = boundsPair->second();
+        if (!low || !high)
+            return { };
         int convertedLow { std::numeric_limits<int>::min() };
         int convertedHigh { std::numeric_limits<int>::max() };
-        if (low.isInteger())
-            convertedLow = low.intValue();
-        if (high.isInteger())
-            convertedHigh = high.intValue();
-        result.append({ convertedLow, convertedHigh });
+        if (low->isInteger())
+            convertedLow = low->intValue();
+        if (high->isInteger())
+            convertedHigh = high->intValue();
+        std::pair<int, int> newRange { convertedLow, convertedHigh };
+        result.append(newRange);
     }
     return result;
 }
@@ -112,7 +124,7 @@ static Vector<CSSCounterStyleDescriptors::Symbol> translateSymbolsFromStylePrope
     Vector<CSSCounterStyleDescriptors::Symbol> result;
     auto& list = downcast<CSSValueList>(*symbolsValues);
     for (auto& symbolValue : list) {
-        auto symbolString = symbolToString(&symbolValue);
+        auto symbolString = symbolToString(&symbolValue.get());
         if (!symbolString.isNull())
             result.append((symbolString));
     }
@@ -154,16 +166,17 @@ static std::pair<CSSCounterStyleDescriptors::Name, int> extractDataFromSystemDes
 
     std::pair<CSSCounterStyleDescriptors::Name, int> result;
 
-    ASSERT(systemValue->isValueID() || systemValue->isPair());
-    if (systemValue->isPair()) {
+    auto& primitiveSystemValue = downcast<CSSPrimitiveValue>(*systemValue);
+    ASSERT(primitiveSystemValue.isValueID() || primitiveSystemValue.isPair());
+    if (auto* pair = primitiveSystemValue.pairValue()) {
         // This value must be `fixed` or `extends`, both of which can or must have an additional component.
-        auto& secondValue = systemValue->second();
+        auto secondValue = pair->second();
         if (system == CSSCounterStyleDescriptors::System::Extends) {
-            ASSERT(secondValue.isCustomIdent());
-            result.first = AtomString { secondValue.isCustomIdent() ? secondValue.customIdent() : "decimal"_s };
+            ASSERT(secondValue && secondValue->isCustomIdent());
+            result.first = secondValue && secondValue->isCustomIdent() ? makeAtomString(secondValue->stringValue()) : makeAtomString("decimal"_s);
         } else if (system == CSSCounterStyleDescriptors::System::Fixed) {
-            ASSERT(secondValue.isInteger());
-            result.second = secondValue.isInteger() ? secondValue.integer() : 1;
+            ASSERT(secondValue && secondValue->isInteger());
+            result.second = secondValue && secondValue->isInteger() ? secondValue->intValue() : 1;
         }
     }
     return result;

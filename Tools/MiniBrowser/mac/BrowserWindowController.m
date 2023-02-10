@@ -28,9 +28,7 @@
 #import "AppDelegate.h"
 #import "SettingsController.h"
 
-@interface BrowserWindowController () <NSSharingServicePickerDelegate, NSSharingServiceDelegate> {
-    NSTimer *_mainThreadStallTimer;
-}
+@interface BrowserWindowController () <NSSharingServicePickerDelegate, NSSharingServiceDelegate>
 @end
 
 @implementation BrowserWindowController
@@ -264,26 +262,6 @@
 - (IBAction)toggleEditable:(id)sender
 {
     self.editable = !self.isEditable;
-}
-
-- (IBAction)toggleMainThreadStalls:(id)sender
-{
-    if (_mainThreadStallTimer) {
-        [_mainThreadStallTimer invalidate];
-        _mainThreadStallTimer = nil;
-        return;
-    }
-
-    const NSTimeInterval stallTimerRepeatInterval = 0.2;
-    _mainThreadStallTimer = [NSTimer scheduledTimerWithTimeInterval:stallTimerRepeatInterval repeats:YES block:^(NSTimer * _Nonnull timer) {
-        const NSTimeInterval stallDuration = 0.2;
-        usleep(stallDuration * USEC_PER_SEC);
-    }];
-}
-
-- (BOOL)mainThreadStallsEnabled
-{
-    return !!_mainThreadStallTimer;
 }
 
 #pragma mark -

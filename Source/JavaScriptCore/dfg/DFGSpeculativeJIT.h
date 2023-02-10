@@ -1459,7 +1459,7 @@ public:
     void compileGetArgument(Node*);
     void compileCreateScopedArguments(Node*);
     void compileCreateClonedArguments(Node*);
-    void compileCreateArgumentsButterflyExcludingThis(Node*);
+    void compileCreateArgumentsButterfly(Node*);
     void compileCreateRest(Node*);
     void compileSpread(Node*);
     void compileNewArray(Node*);

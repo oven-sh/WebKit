@@ -3,7 +3,6 @@
  * Copyright (C) 2007 Rob Buis <buis@kde.org>
  * Copyright (C) 2008 Dirk Schulze <krit@webkit.org>
  * Copyright (C) Research In Motion Limited 2010. All rights reserved.
- * Copyright (C) 2023 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -55,24 +54,28 @@ static inline bool inheritColorFromParentStyleIfNeeded(RenderElement& object, bo
 
 static inline RenderSVGResource* requestPaintingResource(RenderSVGResourceMode mode, RenderElement& renderer, const RenderStyle& style, Color& fallbackColor)
 {
-    bool applyToFill = mode == RenderSVGResourceMode::ApplyToFill;
+    const SVGRenderStyle& svgStyle = style.svgStyle();
 
-    // When rendering the mask for a RenderSVGResourceClipper, always use the initial fill paint server.
-    if (renderer.view().frameView().paintBehavior().contains(PaintBehavior::RenderingSVGMask)) {
-        // Ignore stroke.
-        if (!applyToFill)
-            return nullptr;
-        
-        // But always use the initial fill paint server.
-        RenderSVGResourceSolidColor* colorResource = RenderSVGResource::sharedSolidPaintingResource();
-        colorResource->setColor(SVGRenderStyle::initialFillPaintColor().absoluteColor());
-        return colorResource;
-    }
-
-    const auto& svgStyle = style.svgStyle();
-    auto paintType = applyToFill ? svgStyle.fillPaintType() : svgStyle.strokePaintType();
+    bool isRenderingMask = renderer.view().frameView().paintBehavior().contains(PaintBehavior::RenderingSVGMask);
 
     // If we have no fill/stroke, return nullptr.
+    if (mode == RenderSVGResourceMode::ApplyToFill) {
+        // When rendering the mask for a RenderSVGResourceClipper, always use the initial fill paint server, and ignore stroke.
+        if (isRenderingMask) {
+            RenderSVGResourceSolidColor* colorResource = RenderSVGResource::sharedSolidPaintingResource();
+            colorResource->setColor(SVGRenderStyle::initialFillPaintColor().absoluteColor());
+            return colorResource;
+        }
+
+        if (!svgStyle.hasFill())
+            return nullptr;
+    } else {
+        if (!svgStyle.hasStroke() || isRenderingMask)
+            return nullptr;
+    }
+
+    bool applyToFill = mode == RenderSVGResourceMode::ApplyToFill;
+    SVGPaintType paintType = applyToFill ? svgStyle.fillPaintType() : svgStyle.strokePaintType();
     if (paintType == SVGPaintType::None)
         return nullptr;
 

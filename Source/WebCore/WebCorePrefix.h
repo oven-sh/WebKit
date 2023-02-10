@@ -114,11 +114,28 @@
 #endif
 #endif
 
-#if PLATFORM(WIN)
+#if PLATFORM(WIN_CAIRO)
 #include <windows.h>
 #else
 
 #if OS(WINDOWS)
+
+#if USE(CG)
+// FIXME <rdar://problem/8208868> Remove support for obsolete ColorSync API, CoreServices header in CoreGraphics
+// We can remove this once the new ColorSync APIs are available in an internal Safari SDK.
+#include <ColorSync/ColorSync.h>
+#ifdef __COLORSYNCDEPRECATED__
+#define COREGRAPHICS_INCLUDES_CORESERVICES_HEADER
+#define OBSOLETE_COLORSYNC_API
+#endif
+#endif
+
+#if USE(CFURLCONNECTION)
+#include <CFNetwork/CFNetwork.h>
+// On Windows, dispatch.h needs to be included before certain CFNetwork headers.
+#include <dispatch/dispatch.h>
+#endif
+
 #include <windows.h>
 #endif // OS(WINDOWS)
 

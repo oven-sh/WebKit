@@ -95,7 +95,7 @@ ImageWithScale StyleCursorImage::selectBestFitImage(const Document& document)
         }
     }
 
-    return { m_image.ptr(), 1, String() };
+    return { m_image.ptr(), 1 };
 }
 
 SVGCursorElement* StyleCursorImage::updateCursorElement(const Document& document)

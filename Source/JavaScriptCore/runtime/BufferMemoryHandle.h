@@ -84,8 +84,10 @@ class BufferMemoryManager {
 public:
     friend class LazyNeverDestroyed<BufferMemoryManager>;
 
+#if ENABLE(WEBASSEMBLY_SIGNALING_MEMORY)
     BufferMemoryResult tryAllocateFastMemory();
     void freeFastMemory(void* basePtr);
+#endif
 
     BufferMemoryResult tryAllocateGrowableBoundsCheckingMemory(size_t mappedCapacity);
 
@@ -117,8 +119,10 @@ private:
     BufferMemoryManager() = default;
 
     Lock m_lock;
+#if ENABLE(WEBASSEMBLY_SIGNALING_MEMORY)
     unsigned m_maxFastMemoryCount { Options::maxNumWebAssemblyFastMemories() };
     Vector<void*> m_fastMemories;
+#endif
     StdSet<std::pair<uintptr_t, size_t>> m_growableBoundsCheckingMemories;
     size_t m_physicalBytes { 0 };
 };
@@ -152,8 +156,10 @@ public:
         m_size.store(size, order);
     }
 
+#if ENABLE(WEBASSEMBLY_SIGNALING_MEMORY)
     static size_t fastMappedRedzoneBytes();
     static size_t fastMappedBytes();
+#endif
 
     static void* nullBasePointer();
 

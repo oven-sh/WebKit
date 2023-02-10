@@ -1481,11 +1481,12 @@ void LegacyLineLayout::layoutRunsAndFloatsInRange(LineLayoutState& layoutState, 
                     layoutState.updateRepaintRangeFromBox(lineBox);
                 
                 LayoutUnit adjustment;
-
+                bool overflowsFragment = false;
+                
                 layoutState.marginInfo().setAtBeforeSideOfBlock(false);
 
                 if (paginated)
-                    m_flow.adjustLinePositionForPagination(lineBox, adjustment);
+                    m_flow.adjustLinePositionForPagination(lineBox, adjustment, overflowsFragment, layoutState.fragmentedFlow());
                 if (adjustment) {
                     IndentTextOrNot shouldIndentText = layoutState.lineInfo().isFirstLine() ? IndentText : DoNotIndentText;
                     LayoutUnit oldLineWidth = m_flow.availableLogicalWidthForLine(oldLogicalHeight, shouldIndentText);
@@ -1649,7 +1650,8 @@ void LegacyLineLayout::linkToEndLineIfNeeded(LineLayoutState& layoutState)
                 line->attachLine();
                 if (paginated) {
                     delta -= line->paginationStrut();
-                    m_flow.adjustLinePositionForPagination(line, delta);
+                    bool overflowsFragment;
+                    m_flow.adjustLinePositionForPagination(line, delta, overflowsFragment, layoutState.fragmentedFlow());
                 }
                 if (delta) {
                     layoutState.updateRepaintRangeFromBox(line, delta);
@@ -1885,7 +1887,8 @@ LegacyRootInlineBox* LegacyLineLayout::determineStartPosition(LineLayoutState& l
                     break;
                 }
                 paginationDelta -= currentLine->paginationStrut();
-                m_flow.adjustLinePositionForPagination(currentLine, paginationDelta);
+                bool overflowsFragment;
+                m_flow.adjustLinePositionForPagination(currentLine, paginationDelta, overflowsFragment, layoutState.fragmentedFlow());
                 if (paginationDelta) {
                     if (m_flow.containsFloats() || !floats.isEmpty()) {
                         // FIXME: Do better eventually. For now if we ever shift because of pagination and floats are present just go to a full layout.
@@ -2066,8 +2069,9 @@ bool LegacyLineLayout::checkPaginationAndFloatsAtEndLine(LineLayoutState& layout
                 // This isn't the real move we're going to do, so don't update the line box's pagination
                 // strut yet.
                 LayoutUnit oldPaginationStrut = lineBox->paginationStrut();
+                bool overflowsFragment;
                 lineDelta -= oldPaginationStrut;
-                m_flow.adjustLinePositionForPagination(lineBox, lineDelta);
+                m_flow.adjustLinePositionForPagination(lineBox, lineDelta, overflowsFragment, layoutState.fragmentedFlow());
                 lineBox->setPaginationStrut(oldPaginationStrut);
             }
             if (lineWidthForPaginatedLineChanged(lineBox, lineDelta, layoutState.fragmentedFlow()))

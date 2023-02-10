@@ -70,11 +70,6 @@ namespace WebCore {
 // and it always contains nullptr and nullptr is always written to it.
 static GraphicsContextGLANGLE* currentContext;
 
-static const char* const disabledANGLEMetalFeatures[] = {
-    "enableInMemoryMtlLibraryCache", // This would leak all program binary objects.
-    nullptr
-};
-
 static bool isCurrentContextPredictable()
 {
     static bool value = isInWebProcess() || isInGPUProcess();
@@ -139,7 +134,7 @@ static EGLDisplay initializeEGLDisplay(const GraphicsContextGLAttributes& attrs)
     ASSERT(clientExtensions);
 #endif
 
-    Vector<EGLAttrib> displayAttributes;
+    Vector<EGLint> displayAttributes;
 
     // FIXME: This should come in from the GraphicsContextGLAttributes.
     bool shouldInitializeWithVolatileContextSupport = !isCurrentContextPredictable();
@@ -182,14 +177,11 @@ static EGLDisplay initializeEGLDisplay(const GraphicsContextGLAttributes& attrs)
                 displayAttributes.append(static_cast<EGLAttrib>(attrs.windowGPUID));
             }
 #endif
-            ASSERT(strstr(clientExtensions, "EGL_ANGLE_feature_control"));
-            displayAttributes.append(EGL_FEATURE_OVERRIDES_DISABLED_ANGLE);
-            displayAttributes.append(reinterpret_cast<EGLAttrib>(disabledANGLEMetalFeatures));
         }
     }
     displayAttributes.append(EGL_NONE);
 
-    EGLDisplay display = EGL_GetPlatformDisplay(EGL_PLATFORM_ANGLE_ANGLE, reinterpret_cast<void*>(EGL_DEFAULT_DISPLAY), displayAttributes.data());
+    EGLDisplay display = EGL_GetPlatformDisplayEXT(EGL_PLATFORM_ANGLE_ANGLE, reinterpret_cast<void*>(EGL_DEFAULT_DISPLAY), displayAttributes.data());
     EGLint majorVersion = 0;
     EGLint minorVersion = 0;
     if (EGL_Initialize(display, &majorVersion, &minorVersion) == EGL_FALSE) {

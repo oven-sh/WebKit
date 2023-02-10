@@ -24,19 +24,26 @@
 
 #if !LOG_DISABLED || !RELEASE_LOG_DISABLED
 
-#include <wtf/LogInitialization.h>
+#include <string.h>
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
 String logLevelString()
 {
-    auto logLevel = WTF::logLevelString();
-    if (logLevel == "-all"_s)
-        return logLevel;
+    char* logEnv = getenv("WEBKIT_DEBUG");
+
+    // Disable all log channels if WEBKIT_DEBUG is unset.
+    if (!logEnv)
+        return makeString("-all"_s);
+
+    // We set up the logs anyway because some of our logging, such as Soup's is available in release builds.
+#if defined(NDEBUG) && RELEASE_LOG_DISABLED
+    WTFLogAlways("WEBKIT_DEBUG is not empty, but this is a release build. Notice that many log messages will only appear in a debug build.");
+#endif
 
     // To disable logging notImplemented set the DISABLE_NI_WARNING environment variable to 1.
-    return makeString("NotYetImplemented,"_s, logLevel);
+    return makeString("NotYetImplemented,"_s, logEnv);
 }
 
 } // namespace WebCore

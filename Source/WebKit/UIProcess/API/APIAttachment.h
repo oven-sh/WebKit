@@ -28,6 +28,7 @@
 #if ENABLE(ATTACHMENT_ELEMENT)
 
 #include "APIObject.h"
+#include "GenericCallback.h"
 #include "WKBase.h"
 #include <wtf/Function.h>
 #include <wtf/Lock.h>

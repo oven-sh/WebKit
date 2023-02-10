@@ -38,6 +38,8 @@
 #include "PlatformTextTrack.h"
 #include "SecurityOriginData.h"
 #include "Timer.h"
+#include "VideoFrame.h"
+#include "VideoFrameMetadata.h"
 #include "VideoPlaybackQualityMetrics.h"
 #include <JavaScriptCore/Forward.h>
 #include <wtf/CompletionHandler.h>
@@ -58,13 +60,7 @@ OBJC_CLASS NSArray;
 typedef struct __CVBuffer* CVPixelBufferRef;
 #endif
 
-namespace WTF {
-class MachSendRight;
-}
-
 namespace WebCore {
-
-using LayerHostingContextID = uint32_t;
 
 enum class AudioSessionCategory : uint8_t;
 enum class DynamicRangeMode : uint8_t;
@@ -91,12 +87,10 @@ class PlatformMediaResourceLoader;
 class PlatformTimeRanges;
 class SharedBuffer;
 class TextTrackRepresentation;
-class VideoFrame;
 class VideoTrackPrivate;
 
 struct GraphicsDeviceAdapter;
-class SecurityOriginData;
-struct VideoFrameMetadata;
+struct SecurityOriginData;
 
 struct MediaEngineSupportParameters {
     ContentType type;
@@ -344,10 +338,6 @@ public:
     void videoFullscreenStandbyChanged();
     bool isVideoFullscreenStandby() const;
 #endif
-
-    LayerHostingContextID hostingContextID() const;
-    FloatSize videoInlineSize() const;
-    void setVideoInlineSizeFenced(const FloatSize&, const WTF::MachSendRight&);
 
 #if PLATFORM(IOS_FAMILY)
     NSArray *timedMetadata() const;

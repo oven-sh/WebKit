@@ -219,8 +219,13 @@ NS_DIRECT_MEMBERS
 namespace WebKit {
 using namespace WebCore;
 
-static void registerUserDefaults()
+static void registerUserDefaultsIfNeeded()
 {
+    static bool didRegister;
+    if (didRegister)
+        return;
+
+    didRegister = true;
     NSMutableDictionary *registrationDictionary = [NSMutableDictionary dictionary];
     
     [registrationDictionary setObject:@YES forKey:WebKitJSCJITEnabledDefaultsKey];
@@ -299,30 +304,36 @@ static void logProcessPoolState(const WebProcessPool& pool)
 #if ENABLE(WEBCONTENT_CRASH_TESTING)
 static bool determineIfWeShouldCrashWhenCreatingWebProcess()
 {
-    if (!isInternalBuild())
-        return false;
+    static bool shouldCrashResult { false };
+    static std::once_flag onceFlag;
+    std::call_once(
+        onceFlag,
+        [&] {
+            if (isInternalBuild()) {
+                auto resultAutomatedDeviceGroup = [getOSASystemConfigurationClass() automatedDeviceGroup];
 
-    auto resultAutomatedDeviceGroup = [getOSASystemConfigurationClass() automatedDeviceGroup];
+                RELEASE_LOG(Process, "shouldCrashWhenCreatingWebProcess: automatedDeviceGroup default: %s , canaryInBaseState: %s", resultAutomatedDeviceGroup ? [resultAutomatedDeviceGroup UTF8String] : "[nil]", canaryInBaseState() ? "true" : "false");
 
-    RELEASE_LOG(Process, "shouldCrashWhenCreatingWebProcess: automatedDeviceGroup default: %s , canaryInBaseState: %s", resultAutomatedDeviceGroup ? [resultAutomatedDeviceGroup UTF8String] : "[nil]", canaryInBaseState() ? "true" : "false");
+                if (![resultAutomatedDeviceGroup isEqualToString:@"CanaryExperimentOptOut"]
+                    && !canaryInBaseState())
+                    shouldCrashResult = true;
+            }
+        });
 
-    return ![resultAutomatedDeviceGroup isEqualToString:@"CanaryExperimentOptOut"] && !canaryInBaseState();
+    return shouldCrashResult;
 }
 #endif
 
 void WebProcessPool::platformInitialize()
 {
+    registerUserDefaultsIfNeeded();
     registerNotificationObservers();
     initializeClassesForParameterCoding();
-
-    if (s_didGlobalStaticInitialization)
-        return;
-
-    registerUserDefaults();
 
     // FIXME: This should be able to share code with WebCore's MemoryPressureHandler (and be platform independent).
     // Right now it cannot because WebKit1 and WebKit2 need to be able to coexist in the UI process,
     // and you can only have one WebCore::MemoryPressureHandler.
+
     if (![[NSUserDefaults standardUserDefaults] boolForKey:@"WebKitSuppressMemoryPressureHandler"])
         installMemoryPressureHandler();
 
@@ -338,9 +349,12 @@ void WebProcessPool::platformInitialize()
     [WKWebInspectorPreferenceObserver sharedInstance];
 #endif
 
-    PAL::registerNotifyCallback("com.apple.WebKit.logProcessState"_s, ^{
-        for (const auto& pool : WebProcessPool::allProcessPools())
-            logProcessPoolState(pool.get());
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        PAL::registerNotifyCallback("com.apple.WebKit.logProcessState"_s, ^{
+            for (const auto& pool : WebProcessPool::allProcessPools())
+                logProcessPoolState(pool.get());
+        });
     });
 
 #if ENABLE(WEBCONTENT_CRASH_TESTING)
@@ -349,8 +363,9 @@ void WebProcessPool::platformInitialize()
 #elif PLATFORM(MAC)
     bool isSafari = WebCore::MacApplication::isSafari();
 #endif
+
     if (isSafari)
-        s_shouldCrashWhenCreatingWebProcess = determineIfWeShouldCrashWhenCreatingWebProcess();
+        m_shouldCrashWhenCreatingWebProcess = determineIfWeShouldCrashWhenCreatingWebProcess();
 #endif
 }
 
@@ -892,6 +907,64 @@ bool WebProcessPool::isURLKnownHSTSHost(const String& urlString) const
     return _CFNetworkIsKnownHSTSHostWithSession(url.get(), nullptr);
 }
 
+#if HAVE(CVDISPLAYLINK)
+
+std::optional<unsigned> WebProcessPool::nominalFramesPerSecondForDisplay(WebCore::PlatformDisplayID displayID)
+{
+    if (auto* displayLink = m_displayLinks.displayLinkForDisplay(displayID))
+        return displayLink->nominalFramesPerSecond();
+
+    // Note that this creates a DisplayLink with no observers, but it's highly likely that we'll soon call startDisplayLink() for it.
+    auto displayLink = makeUnique<DisplayLink>(displayID);
+    auto frameRate = displayLink->nominalFramesPerSecond();
+    m_displayLinks.add(WTFMove(displayLink));
+    return frameRate;
+}
+
+void WebProcessPool::startDisplayLink(WebProcessProxy& processProxy, DisplayLinkObserverID observerID, PlatformDisplayID displayID, WebCore::FramesPerSecond preferredFramesPerSecond)
+{
+    if (auto* displayLink = m_displayLinks.displayLinkForDisplay(displayID)) {
+        displayLink->addObserver(processProxy.displayLinkClient(), observerID, preferredFramesPerSecond);
+        return;
+    }
+
+    auto displayLink = makeUnique<DisplayLink>(displayID);
+    displayLink->addObserver(processProxy.displayLinkClient(), observerID, preferredFramesPerSecond);
+    m_displayLinks.add(WTFMove(displayLink));
+}
+
+void WebProcessPool::stopDisplayLink(WebProcessProxy& processProxy, DisplayLinkObserverID observerID, PlatformDisplayID displayID)
+{
+    if (auto* displayLink = m_displayLinks.displayLinkForDisplay(displayID))
+        displayLink->removeObserver(processProxy.displayLinkClient(), observerID);
+}
+
+void WebProcessPool::stopDisplayLinks(WebProcessProxy& processProxy)
+{
+    for (auto& displayLink : m_displayLinks.displayLinks())
+        displayLink->removeClient(processProxy.displayLinkClient());
+}
+
+void WebProcessPool::setDisplayLinkPreferredFramesPerSecond(WebProcessProxy& processProxy, DisplayLinkObserverID observerID, PlatformDisplayID displayID, WebCore::FramesPerSecond preferredFramesPerSecond)
+{
+    LOG_WITH_STREAM(DisplayLink, stream << "[UI ] WebProcessPool::setDisplayLinkPreferredFramesPerSecond - display " << displayID << " observer " << observerID << " fps " << preferredFramesPerSecond);
+
+    if (auto* displayLink = m_displayLinks.displayLinkForDisplay(displayID))
+        displayLink->setObserverPreferredFramesPerSecond(processProxy.displayLinkClient(), observerID, preferredFramesPerSecond);
+}
+
+void WebProcessPool::setDisplayLinkForDisplayWantsFullSpeedUpdates(WebProcessProxy& processProxy, WebCore::PlatformDisplayID displayID, bool wantsFullSpeedUpdates)
+{
+    if (auto* displayLink = m_displayLinks.displayLinkForDisplay(displayID)) {
+        if (wantsFullSpeedUpdates)
+            displayLink->incrementFullSpeedRequestClientCount(processProxy.displayLinkClient());
+        else
+            displayLink->decrementFullSpeedRequestClientCount(processProxy.displayLinkClient());
+    }
+}
+
+#endif // HAVE(CVDISPLAYLINK)
+
 // FIXME: Deprecated. Left here until a final decision is made.
 void WebProcessPool::setCookieStoragePartitioningEnabled(bool enabled)
 {
@@ -1127,7 +1200,7 @@ void WebProcessPool::displayPropertiesChanged(const WebCore::ScreenProperties& s
     sendToAllProcesses(Messages::WebProcess::SetScreenProperties(screenProperties));
     sendToAllProcesses(Messages::WebProcess::DisplayConfigurationChanged(displayID, flags));
 
-    if (auto* displayLink = displayLinks().existingDisplayLinkForDisplay(displayID))
+    if (auto* displayLink = displayLinks().displayLinkForDisplay(displayID))
         displayLink->displayPropertiesChanged();
 
 #if ENABLE(GPU_PROCESS)

@@ -602,21 +602,13 @@ static _WKWebsiteDeviceOrientationAndMotionAccessPolicy toWKWebsiteDeviceOrienta
 
 - (BOOL)_networkConnectionIntegrityEnabled
 {
-    return _websitePolicies->networkConnectionIntegrityPolicy().containsAll({
-        WebCore::NetworkConnectionIntegrity::Enabled,
-        WebCore::NetworkConnectionIntegrity::EnhancedTelemetry,
-        WebCore::NetworkConnectionIntegrity::RequestValidation,
-        WebCore::NetworkConnectionIntegrity::SanitizeLookalikeCharacters,
-    });
+    return _websitePolicies->networkConnectionIntegrityPolicy().contains(WebCore::NetworkConnectionIntegrity::Enabled);
 }
 
 - (void)_setNetworkConnectionIntegrityEnabled:(BOOL)enabled
 {
     auto webCorePolicy = _websitePolicies->networkConnectionIntegrityPolicy();
     webCorePolicy.set(WebCore::NetworkConnectionIntegrity::Enabled, enabled);
-    webCorePolicy.set(WebCore::NetworkConnectionIntegrity::EnhancedTelemetry, enabled);
-    webCorePolicy.set(WebCore::NetworkConnectionIntegrity::RequestValidation, enabled);
-    webCorePolicy.set(WebCore::NetworkConnectionIntegrity::SanitizeLookalikeCharacters, enabled);
     _websitePolicies->setNetworkConnectionIntegrityPolicy(webCorePolicy);
 }
 
@@ -646,12 +638,6 @@ static _WKWebsiteDeviceOrientationAndMotionAccessPolicy toWKWebsiteDeviceOrienta
     if (webCorePolicy.contains(WebCore::NetworkConnectionIntegrity::EnhancedTelemetry))
         policy |= _WKWebsiteNetworkConnectionIntegrityPolicyEnhancedTelemetry;
 
-    if (webCorePolicy.contains(WebCore::NetworkConnectionIntegrity::RequestValidation))
-        policy |= _WKWebsiteNetworkConnectionIntegrityPolicyRequestValidation;
-
-    if (webCorePolicy.contains(WebCore::NetworkConnectionIntegrity::SanitizeLookalikeCharacters))
-        policy |= _WKWebsiteNetworkConnectionIntegrityPolicySanitizeLookalikeCharacters;
-
     return policy;
 }
 
@@ -679,12 +665,6 @@ static _WKWebsiteDeviceOrientationAndMotionAccessPolicy toWKWebsiteDeviceOrienta
 
     if (networkConnectionIntegrityPolicy & _WKWebsiteNetworkConnectionIntegrityPolicyEnhancedTelemetry)
         webCorePolicy.add(WebCore::NetworkConnectionIntegrity::EnhancedTelemetry);
-
-    if (networkConnectionIntegrityPolicy & _WKWebsiteNetworkConnectionIntegrityPolicyRequestValidation)
-        webCorePolicy.add(WebCore::NetworkConnectionIntegrity::RequestValidation);
-
-    if (networkConnectionIntegrityPolicy & _WKWebsiteNetworkConnectionIntegrityPolicySanitizeLookalikeCharacters)
-        webCorePolicy.add(WebCore::NetworkConnectionIntegrity::SanitizeLookalikeCharacters);
 
     _websitePolicies->setNetworkConnectionIntegrityPolicy(webCorePolicy);
 }

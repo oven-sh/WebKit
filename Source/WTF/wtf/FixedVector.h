@@ -84,12 +84,6 @@ public:
         : m_storage(size ? Storage::create(size).moveToUniquePtr() : nullptr)
     { }
 
-    FixedVector(size_t size, const T& value)
-        : m_storage(size ? Storage::create(size).moveToUniquePtr() : nullptr)
-    {
-        fill(value);
-    }
-
     template<size_t inlineCapacity, typename OverflowHandler>
     explicit FixedVector(const Vector<T, inlineCapacity, OverflowHandler>& other)
         : m_storage(other.isEmpty() ? nullptr : Storage::createFromVector(other).moveToUniquePtr())

@@ -323,17 +323,6 @@
                 "url": "https://drafts.csswg.org/css-grid-3/#tracks-alignment"
             }
         },
-        "block-step-size": {
-            "codegen-properties": {
-                "settings-flag": "cssRhythmicSizingEnabled",
-                "converter": "BlockStepSize",
-                "parser-grammar": "none | <length [0,inf]>"
-            },
-            "specification": {
-                "category": "css-rhythm",
-                "url": "https://drafts.csswg.org/css-rhythm/#block-step-size"
-            }
-        },
         "caret-color": {
             "inherited": true,
             "values": [
@@ -1157,44 +1146,6 @@
                 "non-canonical-url": "https://drafts.csswg.org/css-size-adjust/#adjustment-control"
             }
         },
-        "text-spacing-trim": {
-            "inherited": true,
-            "values": [
-                "auto",
-                "space-all"
-            ],
-            "codegen-properties": {
-                "settings-flag": "cssTextSpacingEnabled",
-                "converter": "TextSpacingTrim",
-                "parser-function": "consumeTextSpacingTrim",
-                "parser-grammar-unused": "auto | space-all | trim-all | [ allow-end || space-first ]",
-                "parser-grammar-unused-reason": "Needs support for '||' groups."
-            },
-            "status": "experimental",
-            "specification": {
-                "category": "css-text",
-                "non-canonical-url": "https://www.w3.org/TR/css-text-4/#text-spacing-property"
-            }
-        },
-        "text-autospace": {
-            "inherited": true,
-            "values": [
-                "auto",
-                "no-autospace"
-            ],
-            "codegen-properties": {
-                "settings-flag": "cssTextSpacingEnabled",
-                "converter": "TextAutospace",
-                "parser-function": "consumeTextAutospace",
-                "parser-grammar-unused": "normal | auto | no-autospace | [ [ ideograph-alpha || ideograph-numeric || punctuation ] || [ insert | replace ] ]",
-                "parser-grammar-unused-reason": "Needs support for '||' groups."
-            },
-            "status": "experimental",
-            "specification": {
-                "category": "css-text",
-                "non-canonical-url": "https://www.w3.org/TR/css-text-4/#text-spacing-property"
-            }
-        },
         "writing-mode": {
             "inherited": true,
             "values": [
@@ -1538,7 +1489,6 @@
         "background": {
             "codegen-properties": {
                 "longhands": [
-                    "background-color",
                     "background-image",
                     "background-position-x",
                     "background-position-y",
@@ -1546,7 +1496,8 @@
                     "background-repeat",
                     "background-attachment",
                     "background-origin",
-                    "background-clip"
+                    "background-clip",
+                    "background-color"
                 ]
             },
             "specification": {
@@ -5983,7 +5934,6 @@
                 "capitalize",
                 "uppercase",
                 "lowercase",
-                "full-size-kana",
                 "none"
             ],
             "codegen-properties": {
@@ -10127,11 +10077,6 @@
             "shortname": "CSS Properties and Values API",
             "longname": "CSS Properties and Values API",
             "url": "https://drafts.css-houdini.org/css-properties-values-api"
-        },
-        "css-rhythm": {
-            "shortname": "CSS Rhythmic Sizing",
-            "longname": "CSS Rhythmic Sizing",
-            "url": "https://www.w3.org/TR/css-rhythm-1/"
         },
         "css-round-display": {
             "shortname": "CSS Round Display",

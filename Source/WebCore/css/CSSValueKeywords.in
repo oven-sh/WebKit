@@ -576,7 +576,6 @@ rtl
 capitalize
 uppercase
 lowercase
-full-size-kana
 //none
 //
 // CSS_PROP_VISIBILITY:
@@ -1268,9 +1267,6 @@ filter
 -webkit-filter
 paint enable-if=ENABLE_CSS_PAINTING_API
 
-// image-set's MIME type
-type
-
 // deprecated gradients
 from
 to
@@ -1659,8 +1655,3 @@ only
 // inherits
 true
 false
-
-// text-spacing-trim
-space-all
-// text-autospace
-no-autospace

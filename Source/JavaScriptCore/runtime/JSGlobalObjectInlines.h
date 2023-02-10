@@ -192,10 +192,6 @@ inline JSFunction* JSGlobalObject::promiseProtoThenFunction() const { return jsC
 inline JSFunction* JSGlobalObject::performPromiseThenFunction() const { return jsCast<JSFunction*>(linkTimeConstant(LinkTimeConstant::performPromiseThen)); }
 inline JSFunction* JSGlobalObject::regExpProtoExecFunction() const { return jsCast<JSFunction*>(linkTimeConstant(LinkTimeConstant::regExpBuiltinExec)); }
 inline JSFunction* JSGlobalObject::stringProtoSubstringFunction() const { return jsCast<JSFunction*>(linkTimeConstant(LinkTimeConstant::stringSubstring)); }
-inline JSFunction* JSGlobalObject::performProxyObjectGetFunction() const { return jsCast<JSFunction*>(linkTimeConstant(LinkTimeConstant::performProxyObjectGet)); }
-inline JSFunction* JSGlobalObject::performProxyObjectGetFunctionConcurrently() const { return linkTimeConstantConcurrently<JSFunction*>(LinkTimeConstant::performProxyObjectGet); }
-inline JSFunction* JSGlobalObject::performProxyObjectSetSloppyFunction() const { return jsCast<JSFunction*>(linkTimeConstant(LinkTimeConstant::performProxyObjectSetSloppy)); }
-inline JSFunction* JSGlobalObject::performProxyObjectSetStrictFunction() const { return jsCast<JSFunction*>(linkTimeConstant(LinkTimeConstant::performProxyObjectSetStrict)); }
 inline GetterSetter* JSGlobalObject::regExpProtoGlobalGetter() const { return bitwise_cast<GetterSetter*>(linkTimeConstant(LinkTimeConstant::regExpProtoGlobalGetter)); }
 inline GetterSetter* JSGlobalObject::regExpProtoUnicodeGetter() const { return bitwise_cast<GetterSetter*>(linkTimeConstant(LinkTimeConstant::regExpProtoUnicodeGetter)); }
 

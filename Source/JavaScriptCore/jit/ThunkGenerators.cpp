@@ -1163,16 +1163,6 @@ MacroAssemblerCodeRef<JITThunkPtrTag> numberConstructorCallThunkGenerator(VM& vm
     return jit.finalize(vm.jitStubs->ctiNativeTailCall(vm), "Number");
 }
 
-MacroAssemblerCodeRef<JITThunkPtrTag> stringConstructorCallThunkGenerator(VM& vm)
-{
-    SpecializedThunkJIT jit(vm, 1);
-    jit.loadJSArgument(0, JSRInfo::jsRegT10);
-    jit.appendFailure(jit.branchIfNotCell(JSRInfo::jsRegT10));
-    jit.appendFailure(jit.branchIfNotString(JSRInfo::jsRegT10.payloadGPR()));
-    jit.returnJSValue(JSRInfo::jsRegT10);
-    return jit.finalize(vm.jitStubs->ctiNativeTailCall(vm), "String");
-}
-
 MacroAssemblerCodeRef<JITThunkPtrTag> roundThunkGenerator(VM& vm)
 {
     SpecializedThunkJIT jit(vm, 1);
@@ -1377,6 +1367,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> boundFunctionCallGenerator(VM& vm)
     auto noArgs = jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::regT2);
     jit.load32(CCallHelpers::Address(GPRInfo::regT2, JSImmutableButterfly::offsetOfPublicLength()), GPRInfo::regT2);
     jit.add32(GPRInfo::regT2, GPRInfo::regT1);
+    jit.sub32(CCallHelpers::TrustedImm32(1), GPRInfo::regT1);
     noArgs.link(&jit);
     jit.add32(CCallHelpers::TrustedImm32(CallFrame::headerSizeInRegisters - CallerFrameAndPC::sizeInRegisters), GPRInfo::regT1, GPRInfo::regT2);
     jit.lshift32(CCallHelpers::TrustedImm32(3), GPRInfo::regT2);
@@ -1435,7 +1426,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> boundFunctionCallGenerator(VM& vm)
 
     CCallHelpers::Label loopBound = jit.label();
     jit.sub32(CCallHelpers::TrustedImm32(1), GPRInfo::regT1);
-    jit.loadValue(CCallHelpers::BaseIndex(GPRInfo::regT3, GPRInfo::regT1, CCallHelpers::TimesEight, JSImmutableButterfly::offsetOfData()), valueRegs);
+    jit.loadValue(CCallHelpers::BaseIndex(GPRInfo::regT3, GPRInfo::regT1, CCallHelpers::TimesEight, JSImmutableButterfly::offsetOfData() + sizeof(WriteBarrier<Unknown>)), valueRegs);
     jit.storeValue(valueRegs, CCallHelpers::calleeArgumentSlot(1).indexedBy(GPRInfo::regT1, CCallHelpers::TimesEight));
     jit.branchTest32(CCallHelpers::NonZero, GPRInfo::regT1).linkTo(loopBound, &jit);
 

@@ -572,8 +572,9 @@ RefPtr<StyleRuleBase> CSSParserImpl::createNestingParentRule()
     auto parserSelector = makeUnique<CSSParserSelector>(nestingParentSelector);
     Vector<std::unique_ptr<CSSParserSelector>> selectorList;
     selectorList.append(WTFMove(parserSelector));
-    auto properties = createStyleProperties(topContext().m_parsedProperties, m_context.mode);
-    return StyleRuleWithNesting::create(WTFMove(properties), m_context.hasDocumentSecurityOrigin, CSSSelectorList { WTFMove(selectorList) }, { });
+    auto styleRule = StyleRule::create(m_context.hasDocumentSecurityOrigin, CSSSelectorList { WTFMove(selectorList) });
+    styleRule->setProperties(createStyleProperties(topContext().m_parsedProperties, m_context.mode));
+    return styleRule;
 }
 
 Vector<RefPtr<StyleRuleBase>> CSSParserImpl::consumeRegularRuleList(CSSParserTokenRange block)
@@ -816,11 +817,11 @@ RefPtr<StyleRuleFontPaletteValues> CSSParserImpl::consumeFontPaletteValuesRule(C
     if (auto overrideColorsValue = properties->getPropertyCSSValue(CSSPropertyOverrideColors)) {
         const auto& list = downcast<CSSValueList>(*overrideColorsValue);
         for (const auto& item : list) {
-            const auto& pair = downcast<CSSFontPaletteValuesOverrideColorsValue>(item);
+            const auto& pair = downcast<CSSFontPaletteValuesOverrideColorsValue>(item.get());
             if (!pair.key().isInteger())
                 continue;
             unsigned key = pair.key().value<unsigned>();
-            Color color = pair.color().isColor() ? pair.color().color() : StyleColor::colorFromKeyword(pair.color().valueID(), { });
+            Color color = pair.color().isRGBColor() ? pair.color().color() : StyleColor::colorFromKeyword(pair.color().valueID(), { });
             overrideColors.append(std::make_pair(key, color));
         }
     }
@@ -1015,7 +1016,7 @@ RefPtr<StyleRuleProperty> CSSParserImpl::consumePropertyRule(CSSParserTokenRange
             propertyDescriptor.syntax = downcast<CSSPrimitiveValue>(*property.value()).stringValue();
             continue;
         case CSSPropertyInherits:
-            propertyDescriptor.inherits = property.value()->valueID() == CSSValueTrue;
+            propertyDescriptor.inherits = downcast<CSSPrimitiveValue>(*property.value()).valueID() == CSSValueTrue;
             break;
         case CSSPropertyInitialValue:
             propertyDescriptor.initialValue = downcast<CSSCustomPropertyValue>(*property.value()).asVariableData();
@@ -1064,7 +1065,7 @@ static void observeSelectors(CSSParserObserverWrapper& wrapper, CSSParserTokenRa
     wrapper.observer().endRuleHeader(wrapper.endOffset(originalRange));
 }
 
-RefPtr<StyleRuleBase> CSSParserImpl::consumeStyleRule(CSSParserTokenRange prelude, CSSParserTokenRange block)
+RefPtr<StyleRule> CSSParserImpl::consumeStyleRule(CSSParserTokenRange prelude, CSSParserTokenRange block)
 {
     auto selectorList = parseCSSSelector(prelude, m_context, m_styleSheet.get(), isNestedContext() ? CSSSelectorParser::IsNestedContext::Yes : CSSSelectorParser::IsNestedContext::No);
     if (!selectorList)
@@ -1073,21 +1074,14 @@ RefPtr<StyleRuleBase> CSSParserImpl::consumeStyleRule(CSSParserTokenRange prelud
     if (m_observerWrapper)
         observeSelectors(*m_observerWrapper, prelude);
     
-    RefPtr<StyleRuleBase> styleRule;
+    auto styleRule = StyleRule::create(m_context.hasDocumentSecurityOrigin, WTFMove(*selectorList));
 
     runInNewNestingContext([&]() {
         m_styleRuleNestingDepth += 1;
         consumeStyleBlock(block, StyleRuleType::Style);  
+        styleRule->setNestedRules(WTFMove(topContext().m_parsedRules));
+        styleRule->setProperties(createStyleProperties(topContext().m_parsedProperties, m_context.mode));
         m_styleRuleNestingDepth -= 1;
-
-        auto nestedRules = WTFMove(topContext().m_parsedRules);
-        auto properties = createStyleProperties(topContext().m_parsedProperties, m_context.mode);
-
-        // We save memory by creating a simple StyleRule instead of a heavier StyleWithNestingSupportRule when we don't need the CSS Nesting features.
-        if (nestedRules.isEmpty() && !selectorList->hasExplicitNestingParent() && !isNestedContext())
-            styleRule = StyleRule::create(WTFMove(properties), m_context.hasDocumentSecurityOrigin, WTFMove(*selectorList));
-        else
-            styleRule = StyleRuleWithNesting::create(WTFMove(properties), m_context.hasDocumentSecurityOrigin, WTFMove(*selectorList), WTFMove(nestedRules));
     });
     
     return styleRule;

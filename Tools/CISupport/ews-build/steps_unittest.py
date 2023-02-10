@@ -3903,7 +3903,7 @@ class TestCheckChangeRelevance(BuildStepMixinAdditions, unittest.TestCase):
         queues = ['Commit-Queue', 'Style-EWS', 'Apply-WatchList-EWS', 'GTK-Build-EWS', 'GTK-WK2-Tests-EWS',
                   'iOS-13-Build-EWS', 'iOS-13-Simulator-Build-EWS', 'iOS-13-Simulator-WK2-Tests-EWS',
                   'macOS-Catalina-Release-Build-EWS', 'macOS-Catalina-Release-WK2-Tests-EWS', 'macOS-Catalina-Debug-Build-EWS',
-                  'WinCairo-EWS', 'WPE-Build-EWS', 'WebKitPerl-Tests-EWS']
+                  'WinCairo-EWS', 'WPE-EWS', 'WebKitPerl-Tests-EWS']
         for queue in queues:
             self.setupStep(CheckChangeRelevance())
             self.setProperty('buildername', queue)
@@ -5744,8 +5744,24 @@ class TestDetermineLandedIdentifier(BuildStepMixinAdditions, unittest.TestCase):
             ExpectShell(workdir='wkdir',
                         timeout=300,
                         logEnviron=False,
-                        command=['/bin/sh', '-c', "git log -1 --no-decorate | grep 'Canonical link: https://commits\\.webkit\\.org/'"]) +
-                ExpectShell.log('stdio', stdout='    Canonical link: https://commits.webkit.org/220797@main\n') +
+                        command=['git', 'log', '-1', '--no-decorate']) +
+                ExpectShell.log('stdio', stdout=''''commit 220797@main (14dbf1155cf56a1dd4d86a847e61af3c3e5d2ca5, r256729)
+Author: Aakash Jain <aakash_jain@apple.com>
+Date:   Mon Feb 17 15:09:42 2020 +0000
+
+    [ews] add SetBuildSummary step
+    https://bugs.webkit.org/show_bug.cgi?id=207556
+    
+    Reviewed by Jonathan Bedard.
+    
+    * BuildSlaveSupport/ews-build/factories.py:
+    (GTKBuildAndTestFactory.__init__):
+    * BuildSlaveSupport/ews-build/factories_unittest.py:
+    (TestBuildAndTestsFactory): Added unit-test.
+    
+    
+    Canonical link: https://commits.webkit.org/220797@main
+    git-svn-id: https://svn.webkit.org/repository/webkit/trunk@256729 268f45cc-cd09-0410-ab3c-d52691b4dbfc''') +
                 0,
             )
             self.expectOutcome(result=SUCCESS, state_string='Identifier: 220797@main')
@@ -5766,8 +5782,22 @@ class TestDetermineLandedIdentifier(BuildStepMixinAdditions, unittest.TestCase):
             ExpectShell(workdir='wkdir',
                         timeout=300,
                         logEnviron=False,
-                        command=['/bin/sh', '-c', "git log -1 --no-decorate | grep 'Canonical link: https://commits\\.webkit\\.org/'"]) +
-                ExpectShell.log('stdio', stdout='    Canonical link: https://commits.webkit.org/249903@main\n') +
+                        command=['git', 'log', '-1', '--no-decorate']) +
+                ExpectShell.log('stdio', stdout=''''commit 5dc27962b4c5bdfd17d17faa785f70abbb0550ed
+Author: Matteo Flores <matteo_flores@apple.com>
+Date:   Fri Apr 22 21:24:12 2022 +0000
+
+    REBASLINE: [ Monterey ] fast/text/khmer-lao-font.html is a constant text failure
+    
+    https://bugs.webkit.org/show_bug.cgi?id=238917
+    
+    Unreviewed test gardening.
+    
+    * platform/mac-bigsur/fast/text/khmer-lao-font-expected.txt: Copied from LayoutTests/platform/mac/fast/text/khmer-lao-font-expected.txt.
+    * platform/mac/fast/text/khmer-lao-font-expected.txt:
+    
+    Canonical link: https://commits.webkit.org/249903@main
+    git-svn-id: https://svn.webkit.org/repository/webkit/trunk@293254 268f45cc-cd09-0410-ab3c-d52691b4dbfc''') +
                 0,
             )
             self.expectOutcome(result=SUCCESS, state_string='Identifier: 249903@main')
@@ -5787,9 +5817,9 @@ class TestDetermineLandedIdentifier(BuildStepMixinAdditions, unittest.TestCase):
             ExpectShell(workdir='wkdir',
                         timeout=300,
                         logEnviron=False,
-                        command=['/bin/sh', '-c', "git log -1 --no-decorate | grep 'Canonical link: https://commits\\.webkit\\.org/'"]) +
+                        command=['git', 'log', '-1', '--no-decorate']) +
                 ExpectShell.log('stdio', stdout='') +
-                1,
+                0,
             )
             self.expectOutcome(result=SUCCESS, state_string='Identifier: 220797@main')
             with current_hostname(EWS_BUILD_HOSTNAME):
@@ -5808,9 +5838,9 @@ class TestDetermineLandedIdentifier(BuildStepMixinAdditions, unittest.TestCase):
             ExpectShell(workdir='wkdir',
                         timeout=300,
                         logEnviron=False,
-                        command=['/bin/sh', '-c', "git log -1 --no-decorate | grep 'Canonical link: https://commits\\.webkit\\.org/'"]) +
+                        command=['git', 'log', '-1', '--no-decorate']) +
                 ExpectShell.log('stdio', stdout='') +
-                1,
+                0,
             )
             self.expectOutcome(result=FAILURE, state_string='Failed to determine identifier')
             with current_hostname(EWS_BUILD_HOSTNAME):
@@ -5829,9 +5859,9 @@ class TestDetermineLandedIdentifier(BuildStepMixinAdditions, unittest.TestCase):
             ExpectShell(workdir='wkdir',
                         timeout=300,
                         logEnviron=False,
-                        command=['/bin/sh', '-c', "git log -1 --no-decorate | grep 'Canonical link: https://commits\\.webkit\\.org/'"]) +
+                        command=['git', 'log', '-1', '--no-decorate']) +
                 ExpectShell.log('stdio', stdout='') +
-                1,
+                0,
             )
             self.expectOutcome(result=SUCCESS, state_string='Identifier: 220797@main')
             with current_hostname(EWS_BUILD_HOSTNAME):
@@ -5850,9 +5880,9 @@ class TestDetermineLandedIdentifier(BuildStepMixinAdditions, unittest.TestCase):
             ExpectShell(workdir='wkdir',
                         timeout=300,
                         logEnviron=False,
-                        command=['/bin/sh', '-c', "git log -1 --no-decorate | grep 'Canonical link: https://commits\\.webkit\\.org/'"]) +
+                        command=['git', 'log', '-1', '--no-decorate']) +
                 ExpectShell.log('stdio', stdout='') +
-                1,
+                0,
             )
             self.expectOutcome(result=FAILURE, state_string='Failed to determine identifier')
             with current_hostname(EWS_BUILD_HOSTNAME):
@@ -6956,7 +6986,7 @@ Canonical link: <a href="https://commits.webkit.org/249006@main">https://commits
 ''',
             )
 
-            return defer.succeed(True)
+            return True
 
         UpdatePullRequest.update_pr = update_pr
         self.setupStep(UpdatePullRequest())
@@ -6995,7 +7025,6 @@ Date:   Tue Mar 29 16:04:35 2022 -0700
             self.assertEqual(self.getProperty('is_test_gardening'), False)
             return rc
 
-    @defer.inlineCallbacks
     def test_success_gardening(self):
         def update_pr(x, pr_number, title, description, base=None, head=None, repository_url=None):
             self.assertEqual(pr_number, '1234')
@@ -7019,7 +7048,7 @@ Canonical link: <a href="https://commits.webkit.org/249833@main">https://commits
 ''',
             )
 
-            return defer.succeed(True)
+            return True
 
         UpdatePullRequest.update_pr = update_pr
         self.setupStep(UpdatePullRequest())
@@ -7049,15 +7078,14 @@ Date:   Thu Apr 21 00:25:03 2022 +0000
         )
         self.expectOutcome(result=SUCCESS, state_string='Updated pull request')
         with current_hostname(EWS_BUILD_HOSTNAME):
-            rc = yield self.runStep()
+            rc = self.runStep()
             self.assertEqual(self.getProperty('bug_id'), '239577')
             self.assertEqual(self.getProperty('is_test_gardening'), True)
             return rc
 
-    @defer.inlineCallbacks
     def test_failure(self):
         def update_pr(x, pr_number, title, description, base=None, head=None, repository_url=None):
-            return defer.succeed(False)
+            return False
 
         UpdatePullRequest.update_pr = update_pr
         self.setupStep(UpdatePullRequest())
@@ -7091,7 +7119,7 @@ Date:   Tue Mar 29 16:04:35 2022 -0700
         )
         self.expectOutcome(result=FAILURE, state_string='Failed to update pull request')
         with current_hostname(EWS_BUILD_HOSTNAME):
-            rc = yield self.runStep()
+            rc = self.runStep()
             self.assertEqual(self.getProperty('bug_id'), '238553')
             self.assertEqual(self.getProperty('is_test_gardening'), False)
             return rc

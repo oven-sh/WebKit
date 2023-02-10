@@ -29,122 +29,219 @@
 
 #pragma once
 
-#include "CSSValueList.h"
-#include "SVGPathByteStream.h"
-#include <wtf/UniqueRef.h>
+#include "WindRule.h"
+#include <wtf/RefPtr.h>
+#include <wtf/TypeCasts.h>
+#include <wtf/Vector.h>
+#include <wtf/text/WTFString.h>
 
 namespace WebCore {
 
-enum class WindRule : bool;
+class CSSPrimitiveValue;
+class SVGPathByteStream;
 
-class CSSInsetShapeValue : public CSSValue {
+class CSSBasicShape : public RefCounted<CSSBasicShape> {
 public:
-    static Ref<CSSInsetShapeValue> create(Ref<CSSValue> top, Ref<CSSValue> right, Ref<CSSValue> bottom, Ref<CSSValue> left,
-        RefPtr<CSSValue> topLeftRadius, RefPtr<CSSValue> topRightRadius, RefPtr<CSSValue> bottomRightRadius, RefPtr<CSSValue> bottomLeftRadius);
+    enum Type {
+        CSSBasicShapePolygonType,
+        CSSBasicShapeCircleType,
+        CSSBasicShapeEllipseType,
+        CSSBasicShapeInsetType,
+        CSSBasicShapePathType
+    };
 
-    const CSSValue& top() const { return m_top; }
-    const CSSValue& right() const { return m_right; }
-    const CSSValue& bottom() const { return m_bottom; }
-    const CSSValue& left() const { return m_left; }
+    virtual Type type() const = 0;
+    virtual String cssText() const = 0;
+    virtual bool equals(const CSSBasicShape&) const = 0;
 
-    const CSSValue* topLeftRadius() const { return m_topLeftRadius.get(); }
-    const CSSValue* topRightRadius() const { return m_topRightRadius.get(); }
-    const CSSValue* bottomRightRadius() const { return m_bottomRightRadius.get(); }
-    const CSSValue* bottomLeftRadius() const { return m_bottomLeftRadius.get(); }
+public:
+    virtual ~CSSBasicShape() = default;
 
-    String customCSSText() const;
-    bool equals(const CSSInsetShapeValue&) const;
-
-private:
-    CSSInsetShapeValue(Ref<CSSValue> top, Ref<CSSValue> right, Ref<CSSValue> bottom, Ref<CSSValue> left, RefPtr<CSSValue> topLeftRadius, RefPtr<CSSValue> topRightRadius, RefPtr<CSSValue> bottomRightRadius, RefPtr<CSSValue> bottomLeftRadius);
-
-    Ref<CSSValue> m_top;
-    Ref<CSSValue> m_right;
-    Ref<CSSValue> m_bottom;
-    Ref<CSSValue> m_left;
-
-    RefPtr<CSSValue> m_topLeftRadius;
-    RefPtr<CSSValue> m_topRightRadius;
-    RefPtr<CSSValue> m_bottomRightRadius;
-    RefPtr<CSSValue> m_bottomLeftRadius;
+protected:
+    CSSBasicShape() = default;
+    RefPtr<CSSPrimitiveValue> m_referenceBox;
 };
 
-class CSSCircleValue : public CSSValue {
+class CSSBasicShapeInset final : public CSSBasicShape {
 public:
-    static Ref<CSSCircleValue> create(RefPtr<CSSValue> radius, RefPtr<CSSValue> centerX, RefPtr<CSSValue> centerY);
+    static Ref<CSSBasicShapeInset> create() { return adoptRef(*new CSSBasicShapeInset); }
 
-    const CSSValue* radius() const { return m_radius.get(); }
-    const CSSValue* centerX() const { return m_centerX.get(); }
-    const CSSValue* centerY() const { return m_centerY.get(); }
+    CSSPrimitiveValue* top() const { return m_top.get(); }
+    CSSPrimitiveValue* right() const { return m_right.get(); }
+    CSSPrimitiveValue* bottom() const { return m_bottom.get(); }
+    CSSPrimitiveValue* left() const { return m_left.get(); }
 
-    String customCSSText() const;
-    bool equals(const CSSCircleValue&) const;
+    CSSPrimitiveValue* topLeftRadius() const { return m_topLeftRadius.get(); }
+    CSSPrimitiveValue* topRightRadius() const { return m_topRightRadius.get(); }
+    CSSPrimitiveValue* bottomRightRadius() const { return m_bottomRightRadius.get(); }
+    CSSPrimitiveValue* bottomLeftRadius() const { return m_bottomLeftRadius.get(); }
+
+    void setTop(Ref<CSSPrimitiveValue>&& top) { m_top = WTFMove(top); }
+    void setRight(Ref<CSSPrimitiveValue>&& right) { m_right = WTFMove(right); }
+    void setBottom(Ref<CSSPrimitiveValue>&& bottom) { m_bottom = WTFMove(bottom); }
+    void setLeft(Ref<CSSPrimitiveValue>&& left) { m_left = WTFMove(left); }
+
+    void updateShapeSize4Values(Ref<CSSPrimitiveValue>&& top, Ref<CSSPrimitiveValue>&& right, Ref<CSSPrimitiveValue>&& bottom, Ref<CSSPrimitiveValue>&& left)
+    {
+        setTop(WTFMove(top));
+        setRight(WTFMove(right));
+        setBottom(WTFMove(bottom));
+        setLeft(WTFMove(left));
+    }
+
+    void updateShapeSize1Value(Ref<CSSPrimitiveValue>&& value1)
+    {
+        updateShapeSize4Values(value1.copyRef(), value1.copyRef(), value1.copyRef(), value1.copyRef());
+    }
+
+    void updateShapeSize2Values(Ref<CSSPrimitiveValue>&& value1, Ref<CSSPrimitiveValue>&& value2)
+    {
+        updateShapeSize4Values(value1.copyRef(), value2.copyRef(), value1.copyRef(), value2.copyRef());
+    }
+
+    void updateShapeSize3Values(Ref<CSSPrimitiveValue>&& value1, Ref<CSSPrimitiveValue>&& value2,  Ref<CSSPrimitiveValue>&& value3)
+    {
+        updateShapeSize4Values(WTFMove(value1), value2.copyRef(), WTFMove(value3), value2.copyRef());
+    }
+
+    void setTopLeftRadius(RefPtr<CSSPrimitiveValue>&& radius) { m_topLeftRadius = WTFMove(radius); }
+    void setTopRightRadius(RefPtr<CSSPrimitiveValue>&& radius) { m_topRightRadius = WTFMove(radius); }
+    void setBottomRightRadius(RefPtr<CSSPrimitiveValue>&& radius) { m_bottomRightRadius = WTFMove(radius); }
+    void setBottomLeftRadius(RefPtr<CSSPrimitiveValue>&& radius) { m_bottomLeftRadius = WTFMove(radius); }
 
 private:
-    CSSCircleValue(RefPtr<CSSValue> radius, RefPtr<CSSValue> centerX, RefPtr<CSSValue> centerY);
+    CSSBasicShapeInset() = default;
 
-    RefPtr<CSSValue> m_radius;
-    RefPtr<CSSValue> m_centerX;
-    RefPtr<CSSValue> m_centerY;
+    Type type() const final { return CSSBasicShapeInsetType; }
+    String cssText() const final;
+    bool equals(const CSSBasicShape&) const final;
+
+    RefPtr<CSSPrimitiveValue> m_top;
+    RefPtr<CSSPrimitiveValue> m_right;
+    RefPtr<CSSPrimitiveValue> m_bottom;
+    RefPtr<CSSPrimitiveValue> m_left;
+
+    RefPtr<CSSPrimitiveValue> m_topLeftRadius;
+    RefPtr<CSSPrimitiveValue> m_topRightRadius;
+    RefPtr<CSSPrimitiveValue> m_bottomRightRadius;
+    RefPtr<CSSPrimitiveValue> m_bottomLeftRadius;
 };
 
-class CSSEllipseValue : public CSSValue {
+class CSSBasicShapeCircle final : public CSSBasicShape {
 public:
-    static Ref<CSSEllipseValue> create(RefPtr<CSSValue> radiusX, RefPtr<CSSValue> radiusY, RefPtr<CSSValue> centerX, RefPtr<CSSValue> centerY);
+    static Ref<CSSBasicShapeCircle> create() { return adoptRef(*new CSSBasicShapeCircle); }
 
-    const CSSValue* radiusX() const { return m_radiusX.get(); }
-    const CSSValue* radiusY() const { return m_radiusY.get(); }
-    const CSSValue* centerX() const { return m_centerX.get(); }
-    const CSSValue* centerY() const { return m_centerY.get(); }
+    CSSPrimitiveValue* centerX() const { return m_centerX.get(); }
+    CSSPrimitiveValue* centerY() const { return m_centerY.get(); }
+    CSSPrimitiveValue* radius() const { return m_radius.get(); }
 
-    String customCSSText() const;
-    bool equals(const CSSEllipseValue&) const;
+    void setCenterX(Ref<CSSPrimitiveValue>&& centerX) { m_centerX = WTFMove(centerX); }
+    void setCenterY(Ref<CSSPrimitiveValue>&& centerY) { m_centerY = WTFMove(centerY); }
+    void setRadius(Ref<CSSPrimitiveValue>&& radius) { m_radius = WTFMove(radius); }
 
 private:
-    CSSEllipseValue(RefPtr<CSSValue> radiusX, RefPtr<CSSValue> radiusY, RefPtr<CSSValue> centerX, RefPtr<CSSValue> centerY);
+    CSSBasicShapeCircle() = default;
 
-    RefPtr<CSSValue> m_radiusX;
-    RefPtr<CSSValue> m_radiusY;
-    RefPtr<CSSValue> m_centerX;
-    RefPtr<CSSValue> m_centerY;
+    Type type() const final { return CSSBasicShapeCircleType; }
+    String cssText() const final;
+    bool equals(const CSSBasicShape&) const final;
+
+    RefPtr<CSSPrimitiveValue> m_centerX;
+    RefPtr<CSSPrimitiveValue> m_centerY;
+    RefPtr<CSSPrimitiveValue> m_radius;
 };
 
-class CSSPolygonValue : public CSSValueContainingVector {
+class CSSBasicShapeEllipse final : public CSSBasicShape {
 public:
-    static Ref<CSSPolygonValue> create(CSSValueListBuilder values, WindRule);
+    static Ref<CSSBasicShapeEllipse> create() { return adoptRef(*new CSSBasicShapeEllipse); }
 
+    CSSPrimitiveValue* centerX() const { return m_centerX.get(); }
+    CSSPrimitiveValue* centerY() const { return m_centerY.get(); }
+    CSSPrimitiveValue* radiusX() const { return m_radiusX.get(); }
+    CSSPrimitiveValue* radiusY() const { return m_radiusY.get(); }
+
+    void setCenterX(Ref<CSSPrimitiveValue>&& centerX) { m_centerX = WTFMove(centerX); }
+    void setCenterY(Ref<CSSPrimitiveValue>&& centerY) { m_centerY = WTFMove(centerY); }
+    void setRadiusX(Ref<CSSPrimitiveValue>&& radiusX) { m_radiusX = WTFMove(radiusX); }
+    void setRadiusY(Ref<CSSPrimitiveValue>&& radiusY) { m_radiusY = WTFMove(radiusY); }
+
+private:
+    CSSBasicShapeEllipse() = default;
+
+    Type type() const final { return CSSBasicShapeEllipseType; }
+    String cssText() const final;
+    bool equals(const CSSBasicShape&) const final;
+
+    RefPtr<CSSPrimitiveValue> m_centerX;
+    RefPtr<CSSPrimitiveValue> m_centerY;
+    RefPtr<CSSPrimitiveValue> m_radiusX;
+    RefPtr<CSSPrimitiveValue> m_radiusY;
+};
+
+class CSSBasicShapePolygon final : public CSSBasicShape {
+public:
+    static Ref<CSSBasicShapePolygon> create() { return adoptRef(*new CSSBasicShapePolygon); }
+
+    void appendPoint(Ref<CSSPrimitiveValue>&& x, Ref<CSSPrimitiveValue>&& y)
+    {
+        m_values.append(WTFMove(x));
+        m_values.append(WTFMove(y));
+    }
+
+    const Vector<Ref<CSSPrimitiveValue>>& values() const { return m_values; }
+
+    void setWindRule(WindRule rule) { m_windRule = rule; }
     WindRule windRule() const { return m_windRule; }
 
-    String customCSSText() const;
-    bool equals(const CSSPolygonValue&) const;
-
 private:
-    explicit CSSPolygonValue(CSSValueListBuilder, WindRule);
+    CSSBasicShapePolygon()
+        : m_windRule(WindRule::NonZero)
+    {
+    }
 
-    WindRule m_windRule { };
+    Type type() const final { return CSSBasicShapePolygonType; }
+    String cssText() const final;
+    bool equals(const CSSBasicShape&) const final;
+
+    Vector<Ref<CSSPrimitiveValue>> m_values;
+    WindRule m_windRule;
 };
 
-class CSSPathValue : public CSSValue {
+class CSSBasicShapePath final : public CSSBasicShape {
 public:
-    static Ref<CSSPathValue> create(SVGPathByteStream, WindRule);
+    static Ref<CSSBasicShapePath> create(std::unique_ptr<SVGPathByteStream>&& pathData)
+    {
+        return adoptRef(*new CSSBasicShapePath(WTFMove(pathData)));
+    }
 
-    const SVGPathByteStream& pathData() const { return m_pathData; }
+    const SVGPathByteStream& pathData() const
+    {
+        return *m_byteStream;
+    }
+
+    void setWindRule(WindRule rule) { m_windRule = rule; }
     WindRule windRule() const { return m_windRule; }
 
-    String customCSSText() const;
-    bool equals(const CSSPathValue&) const;
-
 private:
-    CSSPathValue(SVGPathByteStream, WindRule);
+    CSSBasicShapePath(std::unique_ptr<SVGPathByteStream>&&);
 
-    SVGPathByteStream m_pathData;
-    WindRule m_windRule { };
+    Type type() const final { return CSSBasicShapePathType; }
+    String cssText() const final;
+    bool equals(const CSSBasicShape&) const final;
+
+    std::unique_ptr<SVGPathByteStream> m_byteStream;
+    WindRule m_windRule { WindRule::NonZero };
 };
 
 } // namespace WebCore
 
-SPECIALIZE_TYPE_TRAITS_CSS_VALUE(CSSCircleValue, isCircle())
-SPECIALIZE_TYPE_TRAITS_CSS_VALUE(CSSEllipseValue, isEllipse())
-SPECIALIZE_TYPE_TRAITS_CSS_VALUE(CSSInsetShapeValue, isInsetShape())
-SPECIALIZE_TYPE_TRAITS_CSS_VALUE(CSSPolygonValue, isPolygon())
-SPECIALIZE_TYPE_TRAITS_CSS_VALUE(CSSPathValue, isPath())
+#define SPECIALIZE_TYPE_TRAITS_CSS_BASIC_SHAPES(ToValueTypeName) \
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::ToValueTypeName) \
+    static bool isType(const WebCore::CSSBasicShape& basicShape) { return basicShape.type() == WebCore::CSSBasicShape::ToValueTypeName##Type; } \
+SPECIALIZE_TYPE_TRAITS_END()
+
+SPECIALIZE_TYPE_TRAITS_CSS_BASIC_SHAPES(CSSBasicShapeInset)
+SPECIALIZE_TYPE_TRAITS_CSS_BASIC_SHAPES(CSSBasicShapeCircle)
+SPECIALIZE_TYPE_TRAITS_CSS_BASIC_SHAPES(CSSBasicShapeEllipse)
+SPECIALIZE_TYPE_TRAITS_CSS_BASIC_SHAPES(CSSBasicShapePolygon)
+SPECIALIZE_TYPE_TRAITS_CSS_BASIC_SHAPES(CSSBasicShapePath)

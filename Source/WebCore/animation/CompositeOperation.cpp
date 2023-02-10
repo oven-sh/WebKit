@@ -37,7 +37,7 @@ std::optional<CompositeOperation> toCompositeOperation(const CSSValue& value)
     if (!is<CSSPrimitiveValue>(value))
         return std::nullopt;
 
-    switch (value.valueID()) {
+    switch (downcast<CSSPrimitiveValue>(value).valueID()) {
     case CSSValueAdd:
         return CompositeOperation::Add;
     case CSSValueAccumulate:

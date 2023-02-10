@@ -42,10 +42,9 @@
 
 namespace WebCore {
 
-RealtimeAnalyser::RealtimeAnalyser(NoiseInjectionPolicy policy)
+RealtimeAnalyser::RealtimeAnalyser()
     : m_inputBuffer(InputBufferSize)
     , m_downmixBus(AudioBus::create(1, AudioUtilities::renderQuantumSize))
-    , m_noiseInjectionPolicy(policy)
 {
     m_analysisFrame = makeUnique<FFTFrame>(DefaultFFTSize);
 }
@@ -177,9 +176,6 @@ void RealtimeAnalyser::doFFTAnalysisIfNecessary()
         double scalarMagnitude = abs(c) * magnitudeScale;        
         destination[i] = static_cast<float>(k * destination[i] + (1 - k) * scalarMagnitude);
     }
-
-    if (m_noiseInjectionPolicy == NoiseInjectionPolicy::Minimal)
-        AudioUtilities::applyNoise(destination, n, 0.25);
 }
 
 void RealtimeAnalyser::getFloatFrequencyData(Float32Array& destinationArray)

@@ -1,4 +1,4 @@
-set(wrapper_DEFINITIONS USE_CONSOLE_ENTRY_POINT)
+set(wrapper_DEFINITIONS USE_CONSOLE_ENTRY_POINT WIN_CAIRO)
 
 set(WebDriver_Process_OUTPUT_NAME WebViewDriver)
 

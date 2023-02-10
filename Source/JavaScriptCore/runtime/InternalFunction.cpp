@@ -108,7 +108,6 @@ CallData InternalFunction::getCallData(JSCell* cell)
     CallData callData;
     callData.type = CallData::Type::Native;
     callData.native.function = function->m_functionForCall;
-    callData.native.isBoundFunction = false;
     return callData;
 }
 
@@ -120,7 +119,6 @@ CallData InternalFunction::getConstructData(JSCell* cell)
     if (function->m_functionForConstruct != callHostFunctionAsConstructor) {
         constructData.type = CallData::Type::Native;
         constructData.native.function = function->m_functionForConstruct;
-        constructData.native.isBoundFunction = false;
     }
     return constructData;
 }

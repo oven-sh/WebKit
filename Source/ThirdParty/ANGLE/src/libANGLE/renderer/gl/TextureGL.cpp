@@ -1582,22 +1582,7 @@ angle::Result TextureGL::syncState(const gl::Context *context,
                 break;
             case gl::Texture::DIRTY_BIT_BORDER_COLOR:
             {
-                const LevelInfoGL &levelInfo    = getBaseLevelInfo();
-                angle::ColorGeneric borderColor = mState.getSamplerState().getBorderColor();
-                if (levelInfo.lumaWorkaround.enabled)
-                {
-                    if (levelInfo.sourceFormat == GL_ALPHA)
-                    {
-                        ASSERT(levelInfo.lumaWorkaround.workaroundFormat == GL_RED);
-                        borderColor.colorF.red = borderColor.colorF.alpha;
-                    }
-                    else if (levelInfo.sourceFormat == GL_LUMINANCE_ALPHA)
-                    {
-                        ASSERT(levelInfo.lumaWorkaround.workaroundFormat == GL_RG);
-                        borderColor.colorF.green = borderColor.colorF.alpha;
-                    }
-                }
-
+                const angle::ColorGeneric &borderColor(mState.getSamplerState().getBorderColor());
                 mAppliedSampler.setBorderColor(borderColor);
                 switch (borderColor.type)
                 {

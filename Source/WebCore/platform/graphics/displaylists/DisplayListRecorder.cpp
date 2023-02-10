@@ -46,10 +46,9 @@
 namespace WebCore {
 namespace DisplayList {
 
-Recorder::Recorder(const GraphicsContextState& state, const FloatRect& initialClip, const AffineTransform& initialCTM, const DestinationColorSpace& colorSpace, DrawGlyphsMode drawGlyphsMode)
+Recorder::Recorder(const GraphicsContextState& state, const FloatRect& initialClip, const AffineTransform& initialCTM, DrawGlyphsMode drawGlyphsMode)
     : GraphicsContext(state)
     , m_initialScale(initialCTM.xScale())
-    , m_colorSpace(colorSpace)
     , m_drawGlyphsMode(drawGlyphsMode)
 {
     ASSERT(!state.changes());
@@ -222,7 +221,7 @@ void Recorder::drawImageBuffer(ImageBuffer& imageBuffer, const FloatRect& destRe
     recordDrawImageBuffer(imageBuffer, destRect, srcRect, options);
 }
 
-void Recorder::drawNativeImageInternal(NativeImage& image, const FloatSize& imageSize, const FloatRect& destRect, const FloatRect& srcRect, const ImagePaintingOptions& options)
+void Recorder::drawNativeImage(NativeImage& image, const FloatSize& imageSize, const FloatRect& destRect, const FloatRect& srcRect, const ImagePaintingOptions& options)
 {
     appendStateChangeItemIfNecessary();
     recordResourceUse(image);

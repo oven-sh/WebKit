@@ -91,9 +91,6 @@ public:
     String referrerPolicyForBindings() const;
     ReferrerPolicy referrerPolicy() const;
 
-    void setFetchPriorityForBindings(const AtomString&);
-    String fetchPriorityForBindings() const;
-
 private:
     void parseAttribute(const QualifiedName&, const AtomString&) final;
 

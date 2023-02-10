@@ -167,6 +167,8 @@ void lowerMacros(Code& code)
                 Tmp rhsLower = code.newTmp(GP);
                 Tmp rhsUpper = code.newTmp(GP);
 
+                Tmp tmp = code.newTmp(FP);
+
                 insertionSet.insert(instIndex, VectorExtractLaneInt64, origin, Arg::imm(0), lhs, lhsLower);
                 insertionSet.insert(instIndex, VectorExtractLaneInt64, origin, Arg::imm(1), lhs, lhsUpper);
                 insertionSet.insert(instIndex, VectorExtractLaneInt64, origin, Arg::imm(0), rhs, rhsLower);
@@ -174,9 +176,10 @@ void lowerMacros(Code& code)
 
                 insertionSet.insert(instIndex, Mul64, origin, lhsLower, rhsLower);
                 insertionSet.insert(instIndex, Mul64, origin, lhsUpper, rhsUpper);
-                insertionSet.insert(instIndex, MoveZeroToVector, origin, dst);
-                insertionSet.insert(instIndex, VectorReplaceLaneInt64, origin, Arg::imm(0), rhsLower, dst);
-                insertionSet.insert(instIndex, VectorReplaceLaneInt64, origin, Arg::imm(1), rhsUpper, dst);
+                insertionSet.insert(instIndex, MoveZeroToVector, origin, tmp);
+                insertionSet.insert(instIndex, VectorReplaceLaneInt64, origin, Arg::imm(0), rhsLower, tmp);
+                insertionSet.insert(instIndex, VectorReplaceLaneInt64, origin, Arg::imm(1), rhsUpper, tmp);
+                insertionSet.insert(instIndex, MoveVector, origin, tmp, dst);
 
                 inst = Inst();
             };

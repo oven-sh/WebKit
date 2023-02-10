@@ -1190,19 +1190,6 @@ void JIT::emit_op_neq_null(const JSInstruction* currentInstruction)
     emitPutVirtualRegister(dst, jsRegT10);
 }
 
-void JIT::emitGetScope(VirtualRegister destination)
-{
-    emitGetFromCallFrameHeaderPtr(CallFrameSlot::callee, regT0);
-    loadPtr(Address(regT0, JSFunction::offsetOfScopeChain()), regT0);
-    boxCell(regT0, jsRegT10);
-    emitPutVirtualRegister(destination, jsRegT10);
-}
-
-void JIT::emitCheckTraps()
-{
-    addSlowCase(branchTest32(NonZero, AbsoluteAddress(m_vm->traps().trapBitsAddress()), TrustedImm32(VMTraps::AsyncEvents)));
-}
-
 void JIT::emit_op_enter(const JSInstruction*)
 {
     // Even though CTI doesn't use them, we initialize our constant
@@ -1220,9 +1207,6 @@ void JIT::emit_op_enter(const JSInstruction*)
     move(TrustedImm32(canBeOptimized()), canBeOptimizedGPR);
     move(TrustedImm32(localsToInit), localsToInitGPR);
     emitNakedNearCall(vm().getCTIStub(op_enter_handlerGenerator).retaggedCode<NoPtrTag>());
-
-    emitGetScope(m_profiledCodeBlock->scopeRegister());
-    emitCheckTraps();
 }
 
 MacroAssemblerCodeRef<JITThunkPtrTag> JIT::op_enter_handlerGenerator(VM& vm)
@@ -1351,7 +1335,11 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::op_enter_handlerGenerator(VM& vm)
 void JIT::emit_op_get_scope(const JSInstruction* currentInstruction)
 {
     auto bytecode = currentInstruction->as<OpGetScope>();
-    emitGetScope(bytecode.m_dst);
+    VirtualRegister dst = bytecode.m_dst;
+    emitGetFromCallFrameHeaderPtr(CallFrameSlot::callee, regT0);
+    loadPtr(Address(regT0, JSFunction::offsetOfScopeChain()), regT0);
+    boxCell(regT0, jsRegT10);
+    emitPutVirtualRegister(dst, jsRegT10);
 }
 
 void JIT::emit_op_to_this(const JSInstruction* currentInstruction)
@@ -1533,7 +1521,7 @@ void JIT::emitSlow_op_loop_hint(const JSInstruction* currentInstruction, Vector<
 
 void JIT::emit_op_check_traps(const JSInstruction*)
 {
-    emitCheckTraps();
+    addSlowCase(branchTest32(NonZero, AbsoluteAddress(m_vm->traps().trapBitsAddress()), TrustedImm32(VMTraps::AsyncEvents)));
 }
 
 void JIT::emit_op_nop(const JSInstruction*)
@@ -1548,11 +1536,6 @@ void JIT::emit_op_super_sampler_begin(const JSInstruction*)
 void JIT::emit_op_super_sampler_end(const JSInstruction*)
 {
     sub32(TrustedImm32(1), AbsoluteAddress(bitwise_cast<void*>(&g_superSamplerCount)));
-}
-
-void JIT::emitSlow_op_enter(const JSInstruction*, Vector<SlowCaseEntry>::iterator& iter)
-{
-    emitSlow_op_check_traps(nullptr, iter);
 }
 
 void JIT::emitSlow_op_check_traps(const JSInstruction*, Vector<SlowCaseEntry>::iterator& iter)

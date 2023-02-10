@@ -25,13 +25,39 @@
 #pragma once
 
 #include "ProcessIdentifier.h"
-#include "RTCDataChannelLocalIdentifier.h"
+#include <wtf/ObjectIdentifier.h>
 
 namespace WebCore {
 
+enum RTCDataChannelLocalIdentifierType { };
+using RTCDataChannelLocalIdentifier = ObjectIdentifier<RTCDataChannelLocalIdentifierType>;
 struct RTCDataChannelIdentifier {
     ProcessIdentifier processIdentifier;
     RTCDataChannelLocalIdentifier channelIdentifier;
+
+    template<class Encoder> void encode(Encoder&) const;
+    template<class Decoder> static std::optional<RTCDataChannelIdentifier> decode(Decoder&);
 };
+
+template<class Encoder>
+inline void RTCDataChannelIdentifier::encode(Encoder& encoder) const
+{
+    encoder << processIdentifier << channelIdentifier;
+}
+
+template<class Decoder>
+inline std::optional<RTCDataChannelIdentifier> RTCDataChannelIdentifier::decode(Decoder& decoder)
+{
+    std::optional<ProcessIdentifier> processIdentifier;
+    decoder >> processIdentifier;
+    if (!processIdentifier)
+        return std::nullopt;
+
+    std::optional<RTCDataChannelLocalIdentifier> channelIdentifier;
+    decoder >> channelIdentifier;
+    if (!channelIdentifier)
+        return std::nullopt;
+    return RTCDataChannelIdentifier { *processIdentifier, *channelIdentifier };
+}
 
 } // namespace WebCore

@@ -149,8 +149,7 @@ static void buildRendererHighlight(RenderObject* renderer, const InspectorOverla
 
     highlight.setDataFromConfig(highlightConfig);
     FrameView* containingView = containingFrame->view();
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(containingFrame->page()->mainFrame());
-    FrameView* mainView = localMainFrame ? localMainFrame->view() : nullptr;
+    FrameView* mainView = containingFrame->page()->mainFrame().view();
 
     // (Legacy)RenderSVGRoot should be highlighted through the isBox() code path, all other SVG elements should just dump their absoluteQuads().
     bool isSVGRenderer = renderer->node() && renderer->node()->isSVGElement() && !renderer->isSVGRootOrLegacySVGRoot();
@@ -323,8 +322,7 @@ static void drawShapeHighlight(GraphicsContext& context, Node& node, InspectorOv
         return;
 
     FrameView* containingView = containingFrame->view();
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(containingFrame->page()->mainFrame());
-    FrameView* mainView = localMainFrame ? localMainFrame->view() : nullptr;
+    FrameView* mainView = containingFrame->page()->mainFrame().view();
 
     static constexpr auto shapeHighlightColor = SRGBA<uint8_t> { 96, 82, 127, 204 };
 
@@ -406,11 +404,7 @@ void InspectorOverlay::paint(GraphicsContext& context)
     if (!shouldShowOverlay())
         return;
 
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
-    if (!localMainFrame)
-        return;
-
-    FloatSize viewportSize = localMainFrame->view()->sizeForVisibleContent();
+    FloatSize viewportSize = m_page.mainFrame().view()->sizeForVisibleContent();
 
     context.clearRect({ FloatPoint::zero(), viewportSize });
 
@@ -493,7 +487,7 @@ void InspectorOverlay::paint(GraphicsContext& context)
     if (!m_paintRects.isEmpty())
         drawPaintRects(context, m_paintRects);
 
-    if (m_showRulers || m_showRulersForNodeHighlight)
+    if (m_showRulers || m_showRulersDuringElementSelection)
         drawRulers(context, rulerExclusion);
 }
 
@@ -575,7 +569,6 @@ void InspectorOverlay::hideHighlight()
     m_nodeHighlightConfig = { };
     m_nodeGridOverlayConfig = std::nullopt;
     m_nodeFlexOverlayConfig = std::nullopt;
-    m_showRulersForNodeHighlight = false;
 
     m_highlightQuad = nullptr;
     m_quadHighlightConfig = { };
@@ -583,36 +576,30 @@ void InspectorOverlay::hideHighlight()
     update();
 }
 
-void InspectorOverlay::highlightNodeList(RefPtr<NodeList>&& nodes, const InspectorOverlay::Highlight::Config& highlightConfig, const std::optional<Grid::Config>& gridOverlayConfig, const std::optional<Flex::Config>& flexOverlayConfig, bool showRulers)
+void InspectorOverlay::highlightNodeList(RefPtr<NodeList>&& nodes, const InspectorOverlay::Highlight::Config& highlightConfig, const std::optional<Grid::Config>& gridOverlayConfig, const std::optional<Flex::Config>& flexOverlayConfig)
 {
     m_highlightNode = nullptr;
     m_highlightNodeList = WTFMove(nodes);
     m_nodeHighlightConfig = highlightConfig;
     m_nodeGridOverlayConfig = gridOverlayConfig;
     m_nodeFlexOverlayConfig = flexOverlayConfig;
-    m_showRulersForNodeHighlight = showRulers;
     update();
 }
 
-void InspectorOverlay::highlightNode(Node* node, const InspectorOverlay::Highlight::Config& highlightConfig, const std::optional<Grid::Config>& gridOverlayConfig, const std::optional<Flex::Config>& flexOverlayConfig, bool showRulers)
+void InspectorOverlay::highlightNode(Node* node, const InspectorOverlay::Highlight::Config& highlightConfig, const std::optional<Grid::Config>& gridOverlayConfig, const std::optional<Flex::Config>& flexOverlayConfig)
 {
     m_highlightNode = node;
     m_highlightNodeList = nullptr;
     m_nodeHighlightConfig = highlightConfig;
     m_nodeGridOverlayConfig = gridOverlayConfig;
     m_nodeFlexOverlayConfig = flexOverlayConfig;
-    m_showRulersForNodeHighlight = showRulers;
     update();
 }
 
 void InspectorOverlay::highlightQuad(std::unique_ptr<FloatQuad> quad, const InspectorOverlay::Highlight::Config& highlightConfig)
 {
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
-    if (!localMainFrame)
-        return;
-
     if (highlightConfig.usePageCoordinates)
-        *quad -= toIntSize(localMainFrame->view()->scrollPosition());
+        *quad -= toIntSize(m_page.mainFrame().view()->scrollPosition());
 
     m_quadHighlightConfig = highlightConfig;
     m_highlightQuad = WTFMove(quad);
@@ -641,6 +628,8 @@ void InspectorOverlay::setIndicating(bool indicating)
 
 bool InspectorOverlay::shouldShowOverlay() const
 {
+    // Don't show the overlay when m_showRulersDuringElementSelection is true, as it's only supposed
+    // to have an effect when element selection is active (e.g. a node is hovered).
     return m_highlightNode
         || m_highlightNodeList
         || m_highlightQuad
@@ -658,11 +647,7 @@ void InspectorOverlay::update()
         return;
     }
 
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
-    if (!localMainFrame)
-        return;
-
-    FrameView* view = localMainFrame->view();
+    FrameView* view = m_page.mainFrame().view();
     if (!view)
         return;
 
@@ -687,11 +672,7 @@ void InspectorOverlay::showPaintRect(const FloatRect& rect)
     if (!m_showPaintRects)
         return;
 
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
-    if (!localMainFrame)
-        return;
-
-    IntRect rootRect = localMainFrame->view()->contentsToRootView(enclosingIntRect(rect));
+    IntRect rootRect = m_page.mainFrame().view()->contentsToRootView(enclosingIntRect(rect));
 
     const auto removeDelay = 250_ms;
 
@@ -820,7 +801,7 @@ InspectorOverlay::RulerExclusion InspectorOverlay::drawNodeHighlight(GraphicsCon
     if (m_nodeHighlightConfig.showInfo)
         drawShapeHighlight(context, node, rulerExclusion.bounds);
 
-    if (m_showRulers || m_showRulersForNodeHighlight)
+    if (m_showRulers || m_showRulersDuringElementSelection)
         drawBounds(context, rulerExclusion.bounds);
 
     // Ensure that the title information is drawn after the bounds.
@@ -843,7 +824,7 @@ InspectorOverlay::RulerExclusion InspectorOverlay::drawQuadHighlight(GraphicsCon
     if (highlight.quads.size() >= 1) {
         drawOutlinedQuad(context, highlight.quads[0], highlight.contentColor, highlight.contentOutlineColor, rulerExclusion.bounds);
 
-        if (m_showRulers || m_showRulersForNodeHighlight)
+        if (m_showRulers || m_showRulersDuringElementSelection)
             drawBounds(context, rulerExclusion.bounds);
     }
 
@@ -863,11 +844,7 @@ void InspectorOverlay::drawPaintRects(GraphicsContext& context, const Deque<Time
 
 void InspectorOverlay::drawBounds(GraphicsContext& context, const InspectorOverlay::Highlight::Bounds& bounds)
 {
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
-    if (!localMainFrame)
-        return;
-
-    FrameView* pageView = localMainFrame->view();
+    FrameView* pageView = m_page.mainFrame().view();
     FloatSize viewportSize = pageView->sizeForVisibleContent();
     FloatSize contentInset(0, pageView->topContentInset(ScrollView::TopContentInsetType::WebCoreOrPlatformContentInset));
 
@@ -922,18 +899,15 @@ void InspectorOverlay::drawRulers(GraphicsContext& context, const InspectorOverl
     constexpr auto darkRulerColor = Color::black.colorWithAlphaByte(128);
 
     IntPoint scrollOffset;
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
-    if (!localMainFrame)
-        return;
 
-    FrameView* pageView = localMainFrame->view();
+    FrameView* pageView = m_page.mainFrame().view();
     if (!pageView->delegatesScrollingToNativeView())
         scrollOffset = pageView->visibleContentRect().location();
 
     FloatSize viewportSize = pageView->sizeForVisibleContent();
     FloatSize contentInset(0, pageView->topContentInset(ScrollView::TopContentInsetType::WebCoreOrPlatformContentInset));
     float pageScaleFactor = m_page.pageScaleFactor();
-    float pageZoomFactor = localMainFrame->pageZoomFactor();
+    float pageZoomFactor = m_page.mainFrame().pageZoomFactor();
 
     float pageFactor = pageZoomFactor * pageScaleFactor;
     float scrollX = scrollOffset.x() * pageScaleFactor;
@@ -1265,15 +1239,11 @@ Path InspectorOverlay::drawElementTitle(GraphicsContext& context, Node& node, co
         }
     }
 
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
-    if (!localMainFrame)
-        return { };
-
-    FrameView* pageView = localMainFrame->view();
+    FrameView* pageView = m_page.mainFrame().view();
 
     FloatSize viewportSize = pageView->sizeForVisibleContent();
     FloatSize contentInset(0, pageView->topContentInset(ScrollView::TopContentInsetType::WebCoreOrPlatformContentInset));
-    if (m_showRulers || m_showRulersForNodeHighlight)
+    if (m_showRulers || m_showRulersDuringElementSelection)
         contentInset.expand(rulerSize, rulerSize);
 
     auto expectedLabelSize = InspectorOverlayLabel::expectedSize(labelContents, InspectorOverlayLabel::Arrow::Direction::Up);
@@ -1455,7 +1425,7 @@ static Vector<String> authoredGridTrackSizes(Node* node, GridTrackSizingDirectio
         if (is<CSSGridAutoRepeatValue>(currentValue)) {
             // Auto-repeated values will be looped through until no more values were used in layout based on the expected track count.
             while (trackSizes.size() < expectedTrackCount) {
-                for (auto& autoRepeatValue : downcast<CSSValueList>(currentValue)) {
+                for (auto& autoRepeatValue : downcast<CSSValueList>(currentValue.get())) {
                     handleValueIgnoringLineNames(autoRepeatValue);
                     if (trackSizes.size() >= expectedTrackCount)
                         break;
@@ -1465,9 +1435,9 @@ static Vector<String> authoredGridTrackSizes(Node* node, GridTrackSizingDirectio
         }
 
         if (is<CSSGridIntegerRepeatValue>(currentValue)) {
-            size_t repetitions = downcast<CSSGridIntegerRepeatValue>(currentValue).repetitions();
+            size_t repetitions = downcast<CSSGridIntegerRepeatValue>(currentValue.get()).repetitions();
             for (size_t i = 0; i < repetitions; ++i) {
-                for (auto& integerRepeatValue : downcast<CSSValueList>(currentValue))
+                for (auto& integerRepeatValue : downcast<CSSValueList>(currentValue.get()))
                     handleValueIgnoringLineNames(integerRepeatValue);
             }
             continue;
@@ -1537,11 +1507,8 @@ std::optional<InspectorOverlay::Highlight::GridHighlightOverlay> InspectorOverla
     }
 
     constexpr auto translucentLabelBackgroundColor = Color::white.colorWithAlphaByte(230);
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
-    if (!localMainFrame)
-        return { };
-
-    FrameView* pageView = localMainFrame->view();
+    
+    FrameView* pageView = m_page.mainFrame().view();
     if (!pageView)
         return { };
     FloatRect viewportBounds = { { 0, 0 }, pageView->sizeForVisibleContent() };

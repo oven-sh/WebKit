@@ -216,7 +216,7 @@ void NetworkProcessProxy::sendCreationParametersToNewProcess()
     });
 #endif
 
-#if !PLATFORM(COCOA)
+#if PLATFORM(GTK) || PLATFORM(WPE)
     parameters.enablePrivateClickMeasurement = false;
 #endif
 
@@ -411,14 +411,14 @@ void NetworkProcessProxy::deleteWebsiteDataForOrigins(PAL::SessionID sessionID, 
     sendWithAsyncReply(Messages::NetworkProcess::DeleteWebsiteDataForOrigins(sessionID, dataTypes, origins, cookieHostNames, HSTSCacheHostNames, registrableDomains), WTFMove(completionHandler));
 }
 
-void NetworkProcessProxy::renameOriginInWebsiteData(PAL::SessionID sessionID, const SecurityOriginData& oldOrigin, const SecurityOriginData& newOrigin, OptionSet<WebsiteDataType> dataTypes, CompletionHandler<void()>&& completionHandler)
+void NetworkProcessProxy::renameOriginInWebsiteData(PAL::SessionID sessionID, const URL& oldName, const URL& newName, OptionSet<WebsiteDataType> dataTypes, CompletionHandler<void()>&& completionHandler)
 {
-    sendWithAsyncReply(Messages::NetworkProcess::RenameOriginInWebsiteData(sessionID, oldOrigin, newOrigin, dataTypes), WTFMove(completionHandler));
+    sendWithAsyncReply(Messages::NetworkProcess::RenameOriginInWebsiteData(sessionID, oldName, newName, dataTypes), WTFMove(completionHandler));
 }
 
-void NetworkProcessProxy::websiteDataOriginDirectoryForTesting(PAL::SessionID sessionID, ClientOrigin&& origin, OptionSet<WebsiteDataType> type, CompletionHandler<void(const String&)>&& completionHandler)
+void NetworkProcessProxy::websiteDataOriginDirectoryForTesting(PAL::SessionID sessionID, URL&& origin, URL&& topOrigin, WebsiteDataType type, CompletionHandler<void(const String&)>&& completionHandler)
 {
-    sendWithAsyncReply(Messages::NetworkProcess::WebsiteDataOriginDirectoryForTesting(sessionID, WTFMove(origin), type), WTFMove(completionHandler));
+    sendWithAsyncReply(Messages::NetworkProcess::WebsiteDataOriginDirectoryForTesting(sessionID, WTFMove(origin), WTFMove(topOrigin), type), WTFMove(completionHandler));
 }
 
 void NetworkProcessProxy::networkProcessDidTerminate(ProcessTerminationReason reason)
@@ -1516,20 +1516,7 @@ void NetworkProcessProxy::endServiceWorkerBackgroundProcessing(WebCore::ProcessI
     if (auto serviceWorkerProcess = WebProcessProxy::processForIdentifier(serviceWorkerProcessIdentifier))
         serviceWorkerProcess->endServiceWorkerBackgroundProcessing();
 }
-
-void NetworkProcessProxy::requestBackgroundFetchPermission(PAL::SessionID sessionID, const WebCore::ClientOrigin& origin, CompletionHandler<void(bool)>&& callback)
-{
-    RELEASE_LOG(Storage, "%p - NetworkProcessProxy::requestStorageSpace", this);
-    auto* store = websiteDataStoreFromSessionID(sessionID);
-
-    if (!store) {
-        callback(false);
-        return;
-    }
-
-    store->client().requestBackgroundFetchPermission(origin.topOrigin, origin.clientOrigin, WTFMove(callback));
-}
-#endif // ENABLE(SERVICE_WORKER)
+#endif
 
 void NetworkProcessProxy::requestStorageSpace(PAL::SessionID sessionID, const WebCore::ClientOrigin& origin, uint64_t currentQuota, uint64_t currentSize, uint64_t spaceRequired, CompletionHandler<void(std::optional<uint64_t> quota)>&& completionHandler)
 {
@@ -1558,7 +1545,7 @@ void NetworkProcessProxy::requestStorageSpace(PAL::SessionID sessionID, const We
                 completionHandler({ });
                 return;
             }
-            auto name = makeString(FileSystem::encodeForFileName(origin.topOrigin.host()), " content");
+            auto name = makeString(FileSystem::encodeForFileName(origin.topOrigin.host), " content");
             page->requestStorageSpace(page->mainFrame()->frameID(), origin.topOrigin.databaseIdentifier(), name, name, currentQuota, currentSize, currentSize, spaceRequired, [completionHandler = WTFMove(completionHandler)](auto quota) mutable {
                 completionHandler(quota);
             });

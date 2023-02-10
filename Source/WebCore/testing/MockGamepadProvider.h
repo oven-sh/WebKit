@@ -61,7 +61,9 @@ private:
     void gamepadInputActivity();
 
     Vector<PlatformGamepad*> m_connectedGamepadVector;
-    WeakHashMap<GamepadProviderClient, WeakHashSet<PlatformGamepad>>  m_invisibleGamepadsForClient;
+    // FIXME: Use HashMap<WeakPtr<GamepadProviderClient>, HashSet<WeakPtr<PlatformGamepad>>>
+    // after deriving GamepadProviderClient and PlatformGamepad from CanMakeWeakPtr
+    HashMap<GamepadProviderClient*, HashSet<PlatformGamepad*>>  m_invisibleGamepadsForClient;
     Vector<std::unique_ptr<MockGamepad>> m_mockGamepadVector;
 
     bool m_shouldScheduleActivityCallback { true };

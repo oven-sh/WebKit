@@ -45,7 +45,6 @@
 
 namespace WebCore {
 class ImageTransferSessionVT;
-enum class VideoFrameRotation : uint16_t;
 }
 
 namespace WebKit {
@@ -74,7 +73,7 @@ private:
     void audioSamplesAvailable(WebCore::RealtimeMediaSourceIdentifier, MediaTime, uint64_t numberOfFrames);
     void videoFrameAvailable(WebCore::RealtimeMediaSourceIdentifier, RemoteVideoFrameProxy::Properties&&, WebCore::VideoFrameTimeMetadata);
     // FIXME: Will be removed once RemoteVideoFrameProxy providers are the only ones sending data.
-    void videoFrameAvailableCV(WebCore::RealtimeMediaSourceIdentifier, RetainPtr<CVPixelBufferRef>&&, WebCore::VideoFrameRotation, bool mirrored, MediaTime, WebCore::VideoFrameTimeMetadata);
+    void videoFrameAvailableCV(WebCore::RealtimeMediaSourceIdentifier, RetainPtr<CVPixelBufferRef>&&, WebCore::VideoFrame::Rotation, bool mirrored, MediaTime, WebCore::VideoFrameTimeMetadata);
 
     void setConnection(IPC::Connection*);
 

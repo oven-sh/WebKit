@@ -30,7 +30,6 @@
 #include "EventTrackingRegions.h"
 #include "FilterRenderingMode.h"
 #include "FindOptions.h"
-#include "Frame.h"
 #include "FrameLoaderTypes.h"
 #include "IntRectHash.h"
 #include "KeyboardScrollingAnimator.h"
@@ -125,6 +124,7 @@ class EditorClient;
 class Element;
 class FocusController;
 class FormData;
+class Frame;
 class HTMLElement;
 class HTMLMediaElement;
 class HistoryItem;
@@ -239,11 +239,10 @@ enum class RenderingUpdateStep : uint32_t {
     FocusFixup                      = 1 << 18,
 };
 
-enum class LookalikeCharacterSanitizationTrigger : uint8_t {
+enum LookalikeCharacterSanitizationTrigger : uint8_t {
     Unspecified,
     Navigation,
     Copy,
-    Paste,
 };
 
 constexpr OptionSet<RenderingUpdateStep> updateRenderingSteps = {
@@ -309,8 +308,8 @@ public:
 
     EditorClient& editorClient() { return m_editorClient.get(); }
 
-    AbstractFrame& mainFrame() { return m_mainFrame.get(); }
-    const AbstractFrame& mainFrame() const { return m_mainFrame.get(); }
+    Frame& mainFrame() { return m_mainFrame.get(); }
+    const Frame& mainFrame() const { return m_mainFrame.get(); }
 
     bool openedByDOM() const;
     WEBCORE_EXPORT void setOpenedByDOM();
@@ -1092,7 +1091,7 @@ private:
     const std::unique_ptr<ProgressTracker> m_progress;
 
     const std::unique_ptr<BackForwardController> m_backForwardController;
-    Ref<AbstractFrame> m_mainFrame;
+    Ref<Frame> m_mainFrame;
 
     RefPtr<PluginData> m_pluginData;
 
@@ -1170,7 +1169,7 @@ private:
     String m_userStyleSheetPath;
     mutable String m_userStyleSheet;
     mutable bool m_didLoadUserStyleSheet { false };
-    mutable Markable<WallTime> m_userStyleSheetModificationTime;
+    mutable std::optional<WallTime> m_userStyleSheetModificationTime;
 
     String m_captionUserPreferencesStyleSheet;
 

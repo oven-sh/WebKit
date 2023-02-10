@@ -290,9 +290,10 @@ void DeclareRightBeforeMain(TIntermBlock &root, const TVariable &var)
     root.insertChildNodes(FindMainIndex(&root), {new TIntermDeclaration{&var}});
 }
 
-void AddFragColorDeclaration(TIntermBlock &root, TSymbolTable &symbolTable, const TVariable &var)
+void AddFragColorDeclaration(TIntermBlock &root, TSymbolTable &symbolTable)
 {
-    root.insertChildNodes(FindMainIndex(&root), TIntermSequence{new TIntermDeclaration{&var}});
+    root.insertChildNodes(FindMainIndex(&root),
+                          TIntermSequence{new TIntermDeclaration{BuiltInVariable::gl_FragColor()}});
 }
 
 void AddFragDepthDeclaration(TIntermBlock &root, TSymbolTable &symbolTable)
@@ -323,27 +324,19 @@ void AddSampleMaskDeclaration(TIntermBlock &root, TSymbolTable &symbolTable)
                           TIntermSequence{new TIntermDeclaration{gl_SampleMask}});
 }
 
-[[nodiscard]] bool AddFragDataDeclaration(TCompiler &compiler,
-                                          TIntermBlock &root,
-                                          bool usesSecondary,
-                                          bool secondary)
+[[nodiscard]] bool AddFragDataDeclaration(TCompiler &compiler, TIntermBlock &root)
 {
     TSymbolTable &symbolTable = compiler.getSymbolTable();
-    const int maxDrawBuffers  = usesSecondary ? compiler.getResources().MaxDualSourceDrawBuffers
-                                              : compiler.getResources().MaxDrawBuffers;
-    TType *gl_FragDataType =
-        new TType(EbtFloat, EbpMedium, secondary ? EvqSecondaryFragDataEXT : EvqFragData, 4, 1);
+    const int maxDrawBuffers  = compiler.getResources().MaxDrawBuffers;
+    TType *gl_FragDataType    = new TType(EbtFloat, EbpMedium, EvqFragData, 4, 1);
     std::vector<const TVariable *> glFragDataSlots;
     TIntermSequence declareGLFragdataSequence;
 
-    // Create gl_FragData_i or gl_SecondaryFragDataEXT_i
-    static constexpr const char fragData[]             = "gl_FragData";
-    static constexpr const char secondaryFragDataEXT[] = "gl_SecondaryFragDataEXT";
-    const char *name                                   = secondary ? secondaryFragDataEXT : fragData;
+    // Create gl_FragData_0,1,2,3
     for (int i = 0; i < maxDrawBuffers; i++)
     {
-        ImmutableStringBuilder builder(strlen(name) + 3);
-        builder << name << "_";
+        ImmutableStringBuilder builder(strlen("gl_FragData_") + 2);
+        builder << "gl_FragData_";
         builder.appendDecimal(i);
         const TVariable *glFragData =
             new TVariable(&symbolTable, builder, gl_FragDataType, SymbolType::AngleInternal,
@@ -356,14 +349,14 @@ void AddSampleMaskDeclaration(TIntermBlock &root, TSymbolTable &symbolTable)
     // Create an internal gl_FragData array type, compatible with indexing syntax.
     TType *gl_FragDataTypeArray = new TType(EbtFloat, EbpMedium, EvqGlobal, 4, 1);
     gl_FragDataTypeArray->makeArray(maxDrawBuffers);
-    const TVariable *glFragDataGlobal = new TVariable(&symbolTable, ImmutableString(name),
+    const TVariable *glFragDataGlobal = new TVariable(&symbolTable, ImmutableString("gl_FragData"),
                                                       gl_FragDataTypeArray, SymbolType::BuiltIn);
 
     DeclareGlobalVariable(&root, glFragDataGlobal);
-    const TIntermSymbol *originalGLFragData = FindSymbolNode(&root, ImmutableString(name));
+    const TIntermSymbol *originalGLFragData = FindSymbolNode(&root, ImmutableString("gl_FragData"));
     ASSERT(originalGLFragData);
 
-    // Replace gl_FragData[] or gl_SecondaryFragDataEXT[] with our globally defined variable
+    // Replace gl_FragData() with our globally defined fragdata
     if (!ReplaceVariable(&compiler, &root, &(originalGLFragData->variable()), glFragDataGlobal))
     {
         return false;
@@ -872,12 +865,10 @@ bool TranslatorMetalDirect::translateImpl(TInfoSinkBase &sink,
             }
         }
 
-        bool usesFragColor             = false;
-        bool usesFragData              = false;
-        bool usesFragDepth             = false;
-        bool usesFragDepthEXT          = false;
-        bool usesSecondaryFragColorEXT = false;
-        bool usesSecondaryFragDataEXT  = false;
+        bool usesFragColor    = false;
+        bool usesFragData     = false;
+        bool usesFragDepth    = false;
+        bool usesFragDepthEXT = false;
         for (const ShaderVariable &outputVarying : mOutputVariables)
         {
             if (outputVarying.isBuiltIn())
@@ -898,34 +889,26 @@ bool TranslatorMetalDirect::translateImpl(TInfoSinkBase &sink,
                 {
                     usesFragDepthEXT = true;
                 }
-                else if (outputVarying.name == "gl_SecondaryFragColorEXT")
-                {
-                    usesSecondaryFragColorEXT = true;
-                }
-                else if (outputVarying.name == "gl_SecondaryFragDataEXT")
-                {
-                    usesSecondaryFragDataEXT = true;
-                }
             }
         }
 
-        // A shader may assign values to either the set of gl_FragColor and gl_SecondaryFragColorEXT
-        // or the set of gl_FragData and gl_SecondaryFragDataEXT, but not both.
-        ASSERT((!usesFragColor && !usesSecondaryFragColorEXT) ||
-               (!usesFragData && !usesSecondaryFragDataEXT));
+        if (usesFragColor && usesFragData)
+        {
+            return false;
+        }
 
         if (usesFragColor)
         {
-            AddFragColorDeclaration(*root, symbolTable, *BuiltInVariable::gl_FragColor());
+            AddFragColorDeclaration(*root, symbolTable);
         }
-        else if (usesFragData)
+
+        if (usesFragData)
         {
-            if (!AddFragDataDeclaration(*this, *root, usesSecondaryFragDataEXT, false))
+            if (!AddFragDataDeclaration(*this, *root))
             {
                 return false;
             }
         }
-
         if (usesFragDepth)
         {
             AddFragDepthDeclaration(*root, symbolTable);
@@ -933,19 +916,6 @@ bool TranslatorMetalDirect::translateImpl(TInfoSinkBase &sink,
         else if (usesFragDepthEXT)
         {
             AddFragDepthEXTDeclaration(*this, *root, symbolTable);
-        }
-
-        if (usesSecondaryFragColorEXT)
-        {
-            AddFragColorDeclaration(*root, symbolTable,
-                                    *BuiltInVariable::gl_SecondaryFragColorEXT());
-        }
-        else if (usesSecondaryFragDataEXT)
-        {
-            if (!AddFragDataDeclaration(*this, *root, usesSecondaryFragDataEXT, true))
-            {
-                return false;
-            }
         }
 
         if (usesSampleMask())

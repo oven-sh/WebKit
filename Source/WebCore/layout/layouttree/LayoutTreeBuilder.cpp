@@ -409,13 +409,13 @@ void showInlineTreeAndRuns(TextStream& stream, const LayoutState& layoutState, c
                 continue;
             addSpacing();
             stream << "    ";
-            if (box.isTextOrSoftLineBreak())
+            if (box.text())
                 stream << "text box";
             else
                 stream << "box box";
             stream << " at (" << box.left() << "," << box.top() << ") size " << box.width() << "x" << box.height();
-            if (box.isTextOrSoftLineBreak())
-                stream << " box(" << box.text().start() << ", " << box.text().end() << ")";
+            if (box.text())
+                stream << " box(" << box.text()->start() << ", " << box.text()->end() << ")";
             stream.nextLine();
         }
 

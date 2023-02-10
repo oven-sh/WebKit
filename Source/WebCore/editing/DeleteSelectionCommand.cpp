@@ -258,7 +258,7 @@ void DeleteSelectionCommand::smartDeleteParagraphSpacers()
 {
     VisiblePosition visibleStart { m_upstreamStart };
     VisiblePosition visibleEnd { m_downstreamEnd };
-    bool selectionEndsInParagraphSeparator = isEndOfParagraph(visibleEnd);
+    bool selectionEndsInParagraphSeperator = isEndOfParagraph(visibleEnd);
     bool selectionEndIsEndOfContent = endOfEditableContent(visibleEnd) == visibleEnd;
     bool startAndEndInSameUnsplittableElement = unsplittableElementForPosition(visibleStart.deepEquivalent()) == unsplittableElementForPosition(visibleEnd.deepEquivalent());
     visibleStart = visibleStart.previous(CannotCrossEditingBoundary);
@@ -266,7 +266,7 @@ void DeleteSelectionCommand::smartDeleteParagraphSpacers()
     bool previousPositionIsStartOfContent = startOfEditableContent(visibleStart) == visibleStart;
     bool previousPositionIsBlankParagraph = isBlankParagraph(visibleStart);
     bool endPositionIsBlankParagraph = isBlankParagraph(visibleEnd);
-    bool hasBlankParagraphAfterEndOrIsEndOfContent = !selectionEndIsEndOfContent && (endPositionIsBlankParagraph || selectionEndsInParagraphSeparator);
+    bool hasBlankParagraphAfterEndOrIsEndOfContent = !selectionEndIsEndOfContent && (endPositionIsBlankParagraph || selectionEndsInParagraphSeperator);
     if (startAndEndInSameUnsplittableElement && previousPositionIsBlankParagraph && hasBlankParagraphAfterEndOrIsEndOfContent) {
         m_needPlaceholder = false;
         Position position;
@@ -279,7 +279,7 @@ void DeleteSelectionCommand::smartDeleteParagraphSpacers()
         m_trailingWhitespace = m_downstreamEnd.trailingWhitespacePosition(VisiblePosition::defaultAffinity);
         setStartingSelectionOnSmartDelete(m_upstreamStart, m_downstreamEnd);
     }
-    if (startAndEndInSameUnsplittableElement && selectionEndIsEndOfContent && previousPositionIsBlankParagraph && selectionEndsInParagraphSeparator) {
+    if (startAndEndInSameUnsplittableElement && selectionEndIsEndOfContent && previousPositionIsBlankParagraph && selectionEndsInParagraphSeperator) {
         m_needPlaceholder = false;
         VisiblePosition endOfParagraphBeforeStart;
         if (previousPositionIsStartOfContent)

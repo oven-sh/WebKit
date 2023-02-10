@@ -145,6 +145,8 @@ public:
 
     virtual std::unique_ptr<ThreadSafeImageBufferFlusher> createFlusher() { return nullptr; }
 
+    void applyBaseTransformToContext() const;
+
     static constexpr bool isOriginAtBottomLeftCorner = false;
     virtual bool originAtBottomLeftCorner() const { return isOriginAtBottomLeftCorner; }
 

@@ -110,18 +110,18 @@ RenderObject::SetLayoutNeededForbiddenScope::~SetLayoutNeededForbiddenScope()
 
 #endif
 
-struct SameSizeAsRenderObject : CanMakeWeakPtr<SameSizeAsRenderObject> {
+struct SameSizeAsRenderObject {
     virtual ~SameSizeAsRenderObject() = default; // Allocate vtable pointer.
 #if ASSERT_ENABLED
-    WeakHashSet<void*> cachedResourceClientAssociatedResources;
+    bool weakPtrFactorWasConstructedOnMainThread;
+    HashSet<void*> cachedResourceClientAssociatedResources;
 #endif
-    WeakPtr<Node, WeakPtrImplWithEventTargetData> node;
-    void* pointers[3];
-    CheckedPtr<Layout::Box> layoutBox;
+    void* pointers[5];
 #if ASSERT_ENABLED
     unsigned m_debugBitfields : 2;
 #endif
     unsigned m_bitfields;
+    WeakPtr<Node> m_node;
 };
 
 #if CPU(ADDRESS64)
@@ -1721,16 +1721,8 @@ void RenderObject::willBeDestroyed()
 
 void RenderObject::insertedIntoTree(IsInternalMove)
 {
-    if (auto* container = LayoutIntegration::LineLayout::blockContainer(*this)) {
-        auto shouldInvalidateLineLayoutPath = true;
-        if (auto* modernLineLayout = container->modernLineLayout()) {
-            shouldInvalidateLineLayoutPath = LayoutIntegration::LineLayout::shouldInvalidateLineLayoutPathAfterContentChange(*container, *this, *modernLineLayout);
-            if (!shouldInvalidateLineLayoutPath && LayoutIntegration::LineLayout::canUseFor(*container))
-                modernLineLayout->insertedIntoTree(*parent(), *this);
-        }
-        if (shouldInvalidateLineLayoutPath)
-            container->invalidateLineLayoutPath();
-    }
+    if (auto* container = LayoutIntegration::LineLayout::blockContainer(*this))
+        container->invalidateLineLayoutPath();
 
     // FIXME: We should ASSERT(isRooted()) here but generated content makes some out-of-order insertion.
     if (!isFloating() && parent()->childrenInline())

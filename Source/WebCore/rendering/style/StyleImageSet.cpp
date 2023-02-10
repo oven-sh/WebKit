@@ -25,7 +25,6 @@
 #include "config.h"
 #include "StyleImageSet.h"
 
-#include "CSSImageSetOptionValue.h"
 #include "CSSImageSetValue.h"
 #include "CSSPrimitiveValue.h"
 #include "Document.h"
@@ -58,13 +57,14 @@ bool StyleImageSet::equals(const StyleImageSet& other) const
 
 Ref<CSSValue> StyleImageSet::computedStyleValue(const RenderStyle& style) const
 {
-    CSSValueListBuilder builder;
-    builder.reserveInitialCapacity(m_images.size());
+    auto result = CSSImageSetValue::create();
 
-    for (auto& image : m_images)
-        builder.uncheckedAppend(CSSImageSetOptionValue::create(image.image->computedStyleValue(style), CSSPrimitiveValue::create(image.scaleFactor, CSSUnitType::CSS_DPPX), image.mimeType));
+    for (auto& image : m_images) {
+        result->append(image.image->computedStyleValue(style));
+        result->append(CSSPrimitiveValue::create(image.scaleFactor, CSSUnitType::CSS_DPPX));
+    }
 
-    return CSSImageSetValue::create(WTFMove(builder));
+    return result;
 }
 
 ImageWithScale StyleImageSet::selectBestFitImage(const Document& document)

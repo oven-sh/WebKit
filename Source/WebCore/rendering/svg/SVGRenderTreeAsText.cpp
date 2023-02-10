@@ -256,18 +256,9 @@ void writeSVGPaintingFeatures(TextStream& ts, const RenderElement& renderer, Opt
     }
 #endif
 
-    auto writeMarker = [&](const char* name, const String& value) {
-        auto* element = renderer.element();
-        if (!element)
-            return;
-
-        auto fragment = SVGURIReference::fragmentIdentifierFromIRIString(value, element->document());
-        writeIfNotEmpty(ts, name, fragment);
-    };
-
-    writeMarker("start marker", svgStyle.markerStartResource());
-    writeMarker("middle marker", svgStyle.markerMidResource());
-    writeMarker("end marker", svgStyle.markerEndResource());
+    writeIfNotEmpty(ts, "start marker", svgStyle.markerStartResource());
+    writeIfNotEmpty(ts, "middle marker", svgStyle.markerMidResource());
+    writeIfNotEmpty(ts, "end marker", svgStyle.markerEndResource());
 }
 
 static TextStream& writePositionAndStyle(TextStream& ts, const RenderElement& renderer, OptionSet<RenderAsTextFlag> behavior = { })

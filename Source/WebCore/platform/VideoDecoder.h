@@ -27,6 +27,7 @@
 
 #if ENABLE(WEB_CODECS)
 
+#include "VideoFrame.h"
 #include <wtf/CompletionHandler.h>
 #include <wtf/Expected.h>
 #include <wtf/Span.h>
@@ -37,8 +38,7 @@ class VideoFrame;
 
 class VideoDecoder {
 public:
-    WEBCORE_EXPORT VideoDecoder();
-    WEBCORE_EXPORT virtual ~VideoDecoder();
+    virtual ~VideoDecoder() = default;
 
     struct Config {
         Span<const uint8_t> description;

@@ -203,7 +203,7 @@ public:
     GCGLboolean isQuery(WebGLQuery*);
     void beginQuery(GCGLenum target, WebGLQuery&);
     void endQuery(GCGLenum target);
-    WebGLAny getQuery(GCGLenum target, GCGLenum pname);
+    RefPtr<WebGLQuery> getQuery(GCGLenum target, GCGLenum pname);
     WebGLAny getQueryParameter(WebGLQuery&, GCGLenum pname);
     
     // Sampler objects
@@ -288,7 +288,7 @@ private:
     RefPtr<ArrayBufferView> arrayBufferViewSliceFactory(const char* const functionName, const ArrayBufferView& data, unsigned startByte, unsigned bytelength);
     RefPtr<ArrayBufferView> sliceArrayBufferView(const char* const functionName, const ArrayBufferView& data, GCGLuint srcOffset, GCGLuint length);
 
-    long long getInt64Parameter(GCGLenum) final;
+    long long getInt64Parameter(GCGLenum);
     Vector<bool> getIndexedBooleanArrayParameter(GCGLenum pname, GCGLuint index);
 
     void initializeVertexArrayObjects() final;
@@ -308,7 +308,7 @@ private:
     WebGLFramebuffer* getReadFramebufferBinding() final;
     void restoreCurrentFramebuffer() final;
     bool validateNonDefaultFramebufferAttachment(const char* functionName, GCGLenum attachment);
-    enum ActiveQueryKey { SamplesPassed = 0, PrimitivesWritten = 1, TimeElapsed = 2, NumKeys = 3 };
+    enum ActiveQueryKey { SamplesPassed = 0, PrimitivesWritten = 1, NumKeys = 2 };
     std::optional<ActiveQueryKey> validateQueryTarget(const char* functionName, GCGLenum target);
     void renderbufferStorageImpl(GCGLenum target, GCGLsizei samples, GCGLenum internalformat, GCGLsizei width, GCGLsizei height, const char* functionName) final;
     void renderbufferStorageHelper(GCGLenum target, GCGLsizei samples, GCGLenum internalformat, GCGLsizei width, GCGLsizei height);

@@ -665,8 +665,7 @@ ExceptionOr<void> ContainerNode::removeChild(Node& oldChild)
     // If it is, it can be deleted as a side effect of sending mutation events.
     ASSERT(refCount() || parentOrShadowHostNode());
 
-    Ref protectedThis { *this };
-    Ref protectedOldChild { oldChild };
+    Ref<ContainerNode> protectedThis(*this);
 
     // NotFoundError: Raised if oldChild is not a child of this node.
     if (oldChild.parentNode() != this)
@@ -677,14 +676,6 @@ ExceptionOr<void> ContainerNode::removeChild(Node& oldChild)
 
     rebuildSVGExtensionsElementsIfNecessary();
     dispatchSubtreeModifiedEvent();
-
-    auto* element = dynamicDowncast<Element>(oldChild);
-    if (element && element->lastRememberedSize()) {
-        // The disconnected element could be unobserved because of other properties, here we need to make sure it is observed,
-        // so that deliver could be triggered and it would clear lastRememberedSize.
-        document().observeForContainIntrinsicSize(*element);
-        document().resetObservationSizeForContainIntrinsicSize(*element);
-    }
 
     return { };
 }

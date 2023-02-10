@@ -41,10 +41,10 @@
     return self;
 }
 
-- (void)webView:(WKWebView *)webView didFinishNavigation:(null_unspecified WKNavigation *)navigation
+- (void)browsingContextControllerDidFinishLoad:(WKBrowsingContextController *)sender
 {
     if (_onLoadBlock)
-        _onLoadBlock(webView);
+        _onLoadBlock(sender);
 }
 
 @end

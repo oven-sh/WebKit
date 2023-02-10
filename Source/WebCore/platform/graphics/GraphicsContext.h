@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2003-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2003-2022 Apple Inc. All rights reserved.
  * Copyright (C) 2008-2009 Torch Mobile, Inc.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -60,15 +60,8 @@ class SystemImage;
 class TextRun;
 class VideoFrame;
 
-namespace DisplayList {
-class DrawNativeImage;
-}
-
 class GraphicsContext {
     WTF_MAKE_NONCOPYABLE(GraphicsContext); WTF_MAKE_FAST_ALLOCATED;
-    friend class BifurcatedGraphicsContext;
-    friend class DisplayList::DrawNativeImage;
-    friend class NativeImage;
 public:
     WEBCORE_EXPORT GraphicsContext(const GraphicsContextState::ChangeFlags& = { }, InterpolationQuality = InterpolationQuality::Default);
     WEBCORE_EXPORT GraphicsContext(const GraphicsContextState&);
@@ -76,8 +69,6 @@ public:
 
     virtual bool hasPlatformContext() const { return false; }
     virtual PlatformGraphicsContext* platformContext() const { return nullptr; }
-
-    virtual const DestinationColorSpace& colorSpace() const { return DestinationColorSpace::SRGB(); }
 
     virtual bool paintingDisabled() const { return false; }
     virtual bool performingPaintInvalidation() const { return false; }
@@ -255,7 +246,7 @@ public:
     WEBCORE_EXPORT virtual RefPtr<ImageBuffer> createAlignedImageBuffer(const FloatSize&, const DestinationColorSpace& = DestinationColorSpace::SRGB(), std::optional<RenderingMethod> = std::nullopt) const;
     WEBCORE_EXPORT virtual RefPtr<ImageBuffer> createAlignedImageBuffer(const FloatRect&, const DestinationColorSpace& = DestinationColorSpace::SRGB(), std::optional<RenderingMethod> = std::nullopt) const;
 
-    WEBCORE_EXPORT void drawNativeImage(NativeImage&, const FloatSize& selfSize, const FloatRect& destRect, const FloatRect& srcRect, const ImagePaintingOptions& = { });
+    virtual void drawNativeImage(NativeImage&, const FloatSize& selfSize, const FloatRect& destRect, const FloatRect& srcRect, const ImagePaintingOptions& = { }) = 0;
 
     virtual bool needsCachedNativeImageInvalidationWorkaround(RenderingMode) { return true; }
 
@@ -323,7 +314,7 @@ public:
 
     WEBCORE_EXPORT virtual void beginTransparencyLayer(float opacity);
     WEBCORE_EXPORT virtual void endTransparencyLayer();
-    bool isInTransparencyLayer() const { return (m_transparencyLayerCount > 0); }
+    bool isInTransparencyLayer() const { return (m_transparencyLayerCount > 0) && supportsTransparencyLayers(); }
 
     // Focus Rings
 
@@ -378,7 +369,7 @@ public:
 #endif
 
 private:
-    virtual void drawNativeImageInternal(NativeImage&, const FloatSize& selfSize, const FloatRect& destRect, const FloatRect& srcRect, const ImagePaintingOptions& = { }) = 0;
+    virtual bool supportsTransparencyLayers() const { return true; }
 
 protected:
     WEBCORE_EXPORT void fillEllipseAsPath(const FloatRect&);

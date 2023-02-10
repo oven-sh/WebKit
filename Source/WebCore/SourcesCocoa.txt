@@ -126,12 +126,12 @@ Modules/speech/cocoa/WebSpeechRecognizerTaskMock.mm
 Modules/system-preview/ARKitBadgeSystemImage.mm
 Modules/webdatabase/cocoa/DatabaseManagerCocoa.mm
 accessibility/cocoa/AXTextMarkerCocoa.mm
-accessibility/cocoa/AccessibilityObjectCocoa.mm
 accessibility/ios/AXObjectCacheIOS.mm
 accessibility/ios/AccessibilityObjectIOS.mm
 accessibility/ios/WebAccessibilityObjectWrapperIOS.mm
 accessibility/isolatedtree/mac/AXIsolatedObjectMac.mm
 accessibility/mac/AXObjectCacheMac.mm
+accessibility/mac/AccessibilityObjectBase.mm
 accessibility/mac/AccessibilityObjectMac.mm
 accessibility/mac/WebAccessibilityObjectWrapperBase.mm @no-unify
 accessibility/mac/WebAccessibilityObjectWrapperMac.mm @no-unify
@@ -387,6 +387,7 @@ platform/graphics/cg/ImageBufferCGBitmapBackend.cpp
 platform/graphics/cg/ImageBufferIOSurfaceBackend.cpp
 platform/graphics/cg/ImageBufferUtilitiesCG.cpp
 platform/graphics/cg/ImageDecoderCG.cpp
+platform/graphics/cg/ImageSourceCGMac.mm
 platform/graphics/cg/ImageUtilitiesCG.cpp
 platform/graphics/cg/IntPointCG.cpp
 platform/graphics/cg/IntRectCG.cpp
@@ -425,7 +426,6 @@ platform/graphics/cocoa/SourceBufferParserWebM.cpp
 platform/graphics/cocoa/SystemFontDatabaseCocoa.mm
 platform/graphics/cocoa/SystemFontDatabaseCoreText.cpp
 platform/graphics/cocoa/TextTrackRepresentationCocoa.mm
-platform/graphics/cocoa/UnrealizedCoreTextFont.cpp
 platform/graphics/cocoa/VP9UtilitiesCocoa.mm @no-unify
 platform/graphics/cocoa/WebActionDisablingCALayerDelegate.mm
 platform/graphics/cocoa/WebCoreCALayerExtras.mm
@@ -667,8 +667,6 @@ platform/text/cocoa/LocalizedDateCache.mm
 platform/text/mac/TextBoundaries.mm
 platform/text/mac/TextCheckingMac.mm
 platform/xr/cocoa/PlatformXRCocoa.mm
-platform/text/mac/CoreTextChineseCompositionEngine.cpp
-platform/text/mac/CoreTextCompositionEngine.cpp
 rendering/AttachmentLayout.mm
 rendering/RenderThemeCocoa.mm
 rendering/RenderThemeIOS.mm

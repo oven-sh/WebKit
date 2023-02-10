@@ -56,9 +56,10 @@ async function test()
         debug("Test move to a destination with existing file:");
         testError = null;
         await fileHandle.move(dirHandle1, "secondFile").then(() => {
-            shouldBeEqualToString("fileHandle.name", "secondFile");
+            testError =  "Moved file to dirHandle1 unexpectedly";
         }, (error) => {
-            testError = error;
+            moveFileError = error;
+            shouldBeEqualToString("moveFileError.toString()", "UnknownError: The operation failed for an unknown transient reason (e.g. out of memory).");
         });
 
         if (testError) {
@@ -89,12 +90,13 @@ async function test()
             return finishTest(testError);
         }
 
+
         if (typeof WorkerGlobalScope !== 'undefined' && self instanceof WorkerGlobalScope) {
             debug("Test move with open access handle:");
             testError = null;
             accessHandle = await fileHandle.createSyncAccessHandle();
             await fileHandle.move(dirHandle1, "file").then(() => {
-                testError =  "Moved file with active SyncAccessHandle unexpectedly";
+                testError =  "Moved file back to dirHandle1 unexpectedly";
             }, (error) => {
                 moveFileError = error;
                 shouldBeEqualToString("moveFileError.toString()", "InvalidStateError: Some AccessHandle is active");

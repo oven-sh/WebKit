@@ -167,9 +167,6 @@ public:
     WEBCORE_EXPORT void setAllowsAnimation(std::optional<bool>);
 #endif
 
-    void setFetchPriorityForBindings(const AtomString&);
-    String fetchPriorityForBindings() const;
-
 protected:
     HTMLImageElement(const QualifiedName&, Document&, HTMLFormElement* = nullptr);
 

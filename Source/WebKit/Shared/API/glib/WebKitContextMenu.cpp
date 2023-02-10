@@ -27,11 +27,6 @@
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/WTFGType.h>
 
-#if PLATFORM(GTK)
-#include <WebCore/GRefPtrGtk.h>
-#include <WebCore/GUniquePtrGtk.h>
-#endif
-
 using namespace WebKit;
 using namespace WebCore;
 
@@ -66,7 +61,7 @@ struct _WebKitContextMenuPrivate {
 #endif
 };
 
-WEBKIT_DEFINE_FINAL_TYPE(WebKitContextMenu, webkit_context_menu, G_TYPE_OBJECT, GObject)
+WEBKIT_DEFINE_FINAL_TYPE_IN_2022_API(WebKitContextMenu, webkit_context_menu, G_TYPE_OBJECT)
 
 static void webkitContextMenuDispose(GObject* object)
 {

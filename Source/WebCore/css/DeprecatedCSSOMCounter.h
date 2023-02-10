@@ -25,34 +25,33 @@
 
 #pragma once
 
-#include <wtf/text/WTFString.h>
+#include "CSSValueKeywords.h"
+#include "Counter.h"
 
 namespace WebCore {
 
-enum CSSValueID : uint16_t;
-
 class DeprecatedCSSOMCounter final : public RefCounted<DeprecatedCSSOMCounter> {
 public:
-    static Ref<DeprecatedCSSOMCounter> create(String identifier, String separator, CSSValueID listStyle)
+    static Ref<DeprecatedCSSOMCounter> create(const Counter& counter)
     {
-        return adoptRef(*new DeprecatedCSSOMCounter(WTFMove(identifier), WTFMove(separator), listStyle));
+        return adoptRef(*new DeprecatedCSSOMCounter(counter));
     }
 
     String identifier() const { return m_identifier; }
-    String separator() const { return m_separator; }
     String listStyle() const { return nameString(m_listStyle); }
+    String separator() const { return m_separator; }
 
 private:
-    DeprecatedCSSOMCounter(String identifier, String separator, CSSValueID listStyle)
-        : m_identifier(WTFMove(identifier))
-        , m_separator(WTFMove(separator))
-        , m_listStyle(listStyle)
+    DeprecatedCSSOMCounter(const Counter& counter)
+        : m_identifier(counter.identifier.string())
+        , m_listStyle(counter.listStyle)
+        , m_separator(counter.separator.string())
     {
     }
 
     String m_identifier;
-    String m_separator;
     CSSValueID m_listStyle;
+    String m_separator;
 };
 
 } // namespace WebCore

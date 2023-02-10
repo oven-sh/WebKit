@@ -106,12 +106,8 @@ JSDOMGlobalObject* InspectorFrontendAPIDispatcher::frontendGlobalObject()
 {
     if (!m_frontendPage)
         return nullptr;
-
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_frontendPage->mainFrame());
-    if (!localMainFrame)
-        return nullptr;
     
-    return localMainFrame->script().globalObject(mainThreadNormalWorld());
+    return m_frontendPage->mainFrame().script().globalObject(mainThreadNormalWorld());
 }
 
 static String expressionForEvaluatingCommand(const String& command, Vector<Ref<JSON::Value>>&& arguments)
@@ -263,9 +259,7 @@ ValueOrException InspectorFrontendAPIDispatcher::evaluateExpression(const String
     ASSERT(m_queuedEvaluations.isEmpty());
 
     JSC::SuspendExceptionScope scope(m_frontendPage->inspectorController().vm());
-
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_frontendPage->mainFrame());
-    return localMainFrame->script().evaluateInWorld(ScriptSourceCode(expression), mainThreadNormalWorld());
+    return m_frontendPage->mainFrame().script().evaluateInWorld(ScriptSourceCode(expression), mainThreadNormalWorld());
 }
 
 void InspectorFrontendAPIDispatcher::evaluateExpressionForTesting(const String& expression)

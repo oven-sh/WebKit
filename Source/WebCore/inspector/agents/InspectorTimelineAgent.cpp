@@ -669,14 +669,11 @@ void InspectorTimelineAgent::captureScreenshot()
     SetForScope isTakingScreenshot(m_isCapturingScreenshot, true);
 
     auto snapshotStartTime = timestamp();
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_inspectedPage.mainFrame());
-    if (!localMainFrame)
-        return;
-
-    auto viewportRect = localMainFrame->view()->unobscuredContentRect();
-    if (auto snapshot = snapshotFrameRect(*localMainFrame, viewportRect, { { }, PixelFormat::BGRA8, DestinationColorSpace::SRGB() })) {
+    auto& frame = m_inspectedPage.mainFrame();
+    auto viewportRect = m_inspectedPage.mainFrame().view()->unobscuredContentRect();
+    if (auto snapshot = snapshotFrameRect(frame, viewportRect, { { }, PixelFormat::BGRA8, DestinationColorSpace::SRGB() })) {
         auto snapshotRecord = TimelineRecordFactory::createScreenshotData(snapshot->toDataURL("image/png"_s));
-        pushCurrentRecord(WTFMove(snapshotRecord), TimelineRecordType::Screenshot, false, localMainFrame, snapshotStartTime);
+        pushCurrentRecord(WTFMove(snapshotRecord), TimelineRecordType::Screenshot, false, &frame, snapshotStartTime);
         didCompleteCurrentRecord(TimelineRecordType::Screenshot);
     }
 }

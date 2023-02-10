@@ -7,9 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		0F0C03D8299820EB0064230A /* WeakPtr.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 0F0C03D7299820EB0064230A /* WeakPtr.cpp */; };
-		0F0C03E7299828E60064230A /* BloomFilter.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 0F0C03E6299828E50064230A /* BloomFilter.cpp */; };
-		0F0C03D029981BEB0064230A /* EmbeddedFixedVector.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 0F0C03CF29981BEB0064230A /* EmbeddedFixedVector.cpp */; };
 		0F30BA901E78708E002CA847 /* GlobalVersion.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 0F30BA8A1E78708E002CA847 /* GlobalVersion.cpp */; };
 		0F30CB5A1FCDF134004B5323 /* ConcurrentPtrHashSet.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 0F30CB581FCDF133004B5323 /* ConcurrentPtrHashSet.cpp */; };
 		0F3492D722AF431C004F85FC /* TextStreamCocoa.mm in Sources */ = {isa = PBXBuildFile; fileRef = 0F3492D622AF42F1004F85FC /* TextStreamCocoa.mm */; };
@@ -107,6 +104,7 @@
 		7AF023B52061E17000A8EFD6 /* ProcessPrivilege.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7AF023B42061E16F00A8EFD6 /* ProcessPrivilege.cpp */; };
 		7AFEC6B11EB22B5900DADE36 /* UUID.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7AFEC6B01EB22B5900DADE36 /* UUID.cpp */; };
 		8134013815B092FD001FF0B8 /* Base64.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 8134013615B092FD001FF0B8 /* Base64.cpp */; };
+		833C394827F14C8F004491D1 /* ForkExtras.h in Headers */ = {isa = PBXBuildFile; fileRef = 833C394727F14C8E004491D1 /* ForkExtras.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		8348BA0E21FBC0D500FD3054 /* ObjectIdentifier.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 8348BA0D21FBC0D400FD3054 /* ObjectIdentifier.cpp */; };
 		93853DD328755A6C00FF4E2B /* EscapedFormsForJSON.h in Headers */ = {isa = PBXBuildFile; fileRef = 93853DD228755A6600FF4E2B /* EscapedFormsForJSON.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		93934BD318A1E8C300D0D6A1 /* StringViewCocoa.mm in Sources */ = {isa = PBXBuildFile; fileRef = 93934BD218A1E8C300D0D6A1 /* StringViewCocoa.mm */; };
@@ -248,6 +246,7 @@
 		DD3DC89B27A4BF8E007E5B61 /* PageAllocation.h in Headers */ = {isa = PBXBuildFile; fileRef = A8A472E0151A825B004123FF /* PageAllocation.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		DD3DC89C27A4BF8E007E5B61 /* ParallelJobs.h in Headers */ = {isa = PBXBuildFile; fileRef = A8A472E6151A825B004123FF /* ParallelJobs.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		DD3DC89D27A4BF8E007E5B61 /* ReadWriteLock.h in Headers */ = {isa = PBXBuildFile; fileRef = 0FEC3C5D1F368A9700F59B6C /* ReadWriteLock.h */; settings = {ATTRIBUTES = (Private, ); }; };
+		DD3DC89E27A4BF8E007E5B61 /* PlatformEnableWinApple.h in Headers */ = {isa = PBXBuildFile; fileRef = 7C98CDC823E7AFC80012F232 /* PlatformEnableWinApple.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		DD3DC89F27A4BF8E007E5B61 /* Platform.h in Headers */ = {isa = PBXBuildFile; fileRef = A876DBD7151816E500DADB95 /* Platform.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		DD3DC8A027A4BF8E007E5B61 /* OSLogPrintStream.h in Headers */ = {isa = PBXBuildFile; fileRef = 53FC70CE23FB950C005B1990 /* OSLogPrintStream.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		DD3DC8A127A4BF8E007E5B61 /* StackShotProfiler.h in Headers */ = {isa = PBXBuildFile; fileRef = 0F9DAA051FD1C37B0079C5B2 /* StackShotProfiler.h */; settings = {ATTRIBUTES = (Private, ); }; };
@@ -931,11 +930,8 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		0F0C03D7299820EB0064230A /* WeakPtr.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = WeakPtr.cpp; sourceTree = "<group>"; };
-		0F0C03E6299828E50064230A /* BloomFilter.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = BloomFilter.cpp; sourceTree = "<group>"; };
 		077CD86A1FD9CFD200828587 /* Logger.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = Logger.h; sourceTree = "<group>"; };
 		077CD86B1FD9CFD300828587 /* LoggerHelper.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = LoggerHelper.h; sourceTree = "<group>"; };
-		0F0C03CF29981BEB0064230A /* EmbeddedFixedVector.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = EmbeddedFixedVector.cpp; sourceTree = "<group>"; };
 		0F0D85B317234CB100338210 /* NoLock.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = NoLock.h; sourceTree = "<group>"; };
 		0F0FCDDD1DD167F900CCAB53 /* LockAlgorithm.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = LockAlgorithm.h; sourceTree = "<group>"; };
 		0F2AC5601E89F70C0001EE3F /* Range.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = Range.h; sourceTree = "<group>"; };
@@ -1223,6 +1219,7 @@
 		7C595FFC252A96E000E42168 /* StdFilesystem.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = StdFilesystem.h; sourceTree = "<group>"; };
 		7C9692941F66306E00267A9E /* KeyValuePair.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = KeyValuePair.h; sourceTree = "<group>"; };
 		7C98CDC723E7A9B80012F232 /* PlatformEnableCocoa.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PlatformEnableCocoa.h; sourceTree = "<group>"; };
+		7C98CDC823E7AFC80012F232 /* PlatformEnableWinApple.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PlatformEnableWinApple.h; sourceTree = "<group>"; };
 		7C98CDC923E7AFC80012F232 /* PlatformEnableWinCairo.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PlatformEnableWinCairo.h; sourceTree = "<group>"; };
 		7CBBA07319BB7FDC00BBF025 /* OSObjectPtr.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = OSObjectPtr.h; sourceTree = "<group>"; };
 		7CD4C26F1E2C82B900929470 /* StringConcatenateNumbers.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = StringConcatenateNumbers.h; sourceTree = "<group>"; };
@@ -1234,6 +1231,7 @@
 		7E29C33D15FFD79B00516D61 /* ObjCRuntimeExtras.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ObjCRuntimeExtras.h; sourceTree = "<group>"; };
 		8134013615B092FD001FF0B8 /* Base64.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = Base64.cpp; sourceTree = "<group>"; };
 		8134013715B092FD001FF0B8 /* Base64.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = Base64.h; sourceTree = "<group>"; };
+		833C394727F14C8E004491D1 /* ForkExtras.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = ForkExtras.h; path = wtf/ForkExtras.h; sourceTree = "<group>"; };
 		8348BA0D21FBC0D400FD3054 /* ObjectIdentifier.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ObjectIdentifier.cpp; sourceTree = "<group>"; };
 		83A8AC3D1FABBE94002064AC /* ObjectIdentifier.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ObjectIdentifier.h; sourceTree = "<group>"; };
 		83ABB3C020B3823200BA3306 /* WeakObjCPtr.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = WeakObjCPtr.h; sourceTree = "<group>"; };
@@ -1854,6 +1852,7 @@
 		5D247B5714689B8600E78B76 = {
 			isa = PBXGroup;
 			children = (
+				833C394727F14C8E004491D1 /* ForkExtras.h */,
 				5D247B6D14689C4700E78B76 /* Configurations */,
 				DDE9931F278D0FAA00F60D26 /* Frameworks */,
 				5D247B6314689B8600E78B76 /* Products */,
@@ -1974,7 +1973,6 @@
 				DCEE21FC1CEA7551000C2396 /* BlockObjCExceptions.h */,
 				DCEE21FD1CEA7551000C2396 /* BlockObjCExceptions.mm */,
 				1A944F461C3D8814005BD28C /* BlockPtr.h */,
-				0F0C03E6299828E50064230A /* BloomFilter.cpp */,
 				A8A47265151A825A004123FF /* BloomFilter.h */,
 				0FB399B820AF5A580017E213 /* BooleanLattice.h */,
 				0F93274A1C17F4B700CF6564 /* Box.h */,
@@ -2042,7 +2040,6 @@
 				A8A47280151A825A004123FF /* DoublyLinkedList.h */,
 				A8A47297151A825A004123FF /* dtoa.cpp */,
 				A8A47298151A825A004123FF /* dtoa.h */,
-				0F0C03CF29981BEB0064230A /* EmbeddedFixedVector.cpp */,
 				E3538D4C276220880075DA50 /* EmbeddedFixedVector.h */,
 				5338EBA423AB04D100382662 /* EnumClassOperatorOverloads.h */,
 				1CFD5D3B2851AB3E00A0E30B /* EnumeratedArray.h */,
@@ -2213,6 +2210,7 @@
 				7C42307123CE2D8A006E54D0 /* PlatformEnable.h */,
 				7C98CDC723E7A9B80012F232 /* PlatformEnableCocoa.h */,
 				DD4901E127B4748A00D7E50D /* PlatformEnablePlayStation.h */,
+				7C98CDC823E7AFC80012F232 /* PlatformEnableWinApple.h */,
 				7C98CDC923E7AFC80012F232 /* PlatformEnableWinCairo.h */,
 				7C3A45D023CFA883007DE3A6 /* PlatformHave.h */,
 				7C42307423CEB187006E54D0 /* PlatformLegacy.h */,
@@ -2380,7 +2378,6 @@
 				9B67F3F12228D5310030DE9C /* WeakHashSet.h */,
 				9BD8464B2980B6C100FAE3BD /* WeakListHashSet.h */,
 				83ABB3C020B3823200BA3306 /* WeakObjCPtr.h */,
-				0F0C03D7299820EB0064230A /* WeakPtr.cpp */,
 				974CFC8D16A4F327006D5404 /* WeakPtr.h */,
 				0F3501631BB258C800F0A2A3 /* WeakRandom.h */,
 				A8A472FB151A825B004123FF /* WeakRandomNumber.cpp */,
@@ -2915,6 +2912,7 @@
 				DDF307E927C086DF006A526F /* ASCIIFastPath.h in Headers */,
 				DDF307EB27C086DF006A526F /* ASCIILiteral.h in Headers */,
 				DD3DC8DB27A4BF8E007E5B61 /* Assertions.h in Headers */,
+				833C394827F14C8F004491D1 /* ForkExtras.h in Headers */,
 				DD3DC90C27A4BF8E007E5B61 /* Atomics.h in Headers */,
 				DDF307CE27C086DF006A526F /* AtomString.h in Headers */,
 				DDF307E327C086DF006A526F /* AtomStringHash.h in Headers */,
@@ -2981,6 +2979,7 @@
 				DD3DC8D127A4BF8E007E5B61 /* CountingLock.h in Headers */,
 				DD3DC92627A4BF8E007E5B61 /* CPUTime.h in Headers */,
 				DDF3071127C086CC006A526F /* CrashReporter.h in Headers */,
+				93853DD328755A6C00FF4E2B /* EscapedFormsForJSON.h in Headers */,
 				DDF306DC27C08654006A526F /* CrashReporterClientSPI.h in Headers */,
 				DD3DC96D27A4BF8E007E5B61 /* CrossThreadCopier.h in Headers */,
 				DD3DC8F127A4BF8E007E5B61 /* CrossThreadQueue.h in Headers */,
@@ -3178,6 +3177,7 @@
 				DD3DC93327A4BF8E007E5B61 /* PlatformEnable.h in Headers */,
 				DD3DC91127A4BF8E007E5B61 /* PlatformEnableCocoa.h in Headers */,
 				DD4901E827B4748A00D7E50D /* PlatformEnablePlayStation.h in Headers */,
+				DD3DC89E27A4BF8E007E5B61 /* PlatformEnableWinApple.h in Headers */,
 				DD3DC96327A4BF8E007E5B61 /* PlatformEnableWinCairo.h in Headers */,
 				DD3DC8B927A4BF8E007E5B61 /* PlatformHave.h in Headers */,
 				DD3DC93827A4BF8E007E5B61 /* PlatformLegacy.h in Headers */,
@@ -3685,7 +3685,6 @@
 				A8A47451151A825B004123FF /* BinarySemaphore.cpp in Sources */,
 				A8A4738B151A825B004123FF /* BitVector.cpp in Sources */,
 				DCEE22011CEA7551000C2396 /* BlockObjCExceptions.mm in Sources */,
-				0F0C03E7299828E60064230A /* BloomFilter.cpp in Sources */,
 				A8A473AC151A825B004123FF /* cached-powers.cc in Sources */,
 				5C1F05932164356B0039302C /* CFURLExtras.cpp in Sources */,
 				0F66B28A1DC97BAB004A1D3F /* ClockType.cpp in Sources */,
@@ -3711,7 +3710,6 @@
 				A8A473AE151A825B004123FF /* diy-fp.cc in Sources */,
 				A8A473B0151A825B004123FF /* double-conversion.cc in Sources */,
 				A8A473BA151A825B004123FF /* dtoa.cpp in Sources */,
-				0F0C03D029981BEB0064230A /* EmbeddedFixedVector.cpp in Sources */,
 				143DDE9620C8BC37007F76FA /* Entitlements.mm in Sources */,
 				50DE35F5215BB01500B979C7 /* ExternalStringImpl.cpp in Sources */,
 				A8A473B3151A825B004123FF /* fast-dtoa.cc in Sources */,
@@ -3842,7 +3840,6 @@
 				93E4A13728F6B75A006AD994 /* UUIDCocoa.mm in Sources */,
 				E3149A39228BB43500BFA6C7 /* Vector.cpp in Sources */,
 				0F66B2921DC97BAB004A1D3F /* WallTime.cpp in Sources */,
-				0F0C03D8299820EB0064230A /* WeakPtr.cpp in Sources */,
 				A8A47414151A825B004123FF /* WeakRandomNumber.cpp in Sources */,
 				1FA47C8A152502DA00568D1B /* WebCoreThread.cpp in Sources */,
 				0FE4479C1B7AAA03009498EB /* WordLock.cpp in Sources */,
@@ -3877,7 +3874,6 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 5D247B7014689C4700E78B76 /* DebugRelease.xcconfig */;
 			buildSettings = {
-				OTHER_MIGFLAGS = "-DMACH_EXC_SERVER_TASKIDTOKEN";
 			};
 			name = Debug;
 		};
@@ -3885,7 +3881,6 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 5D247B7014689C4700E78B76 /* DebugRelease.xcconfig */;
 			buildSettings = {
-				OTHER_MIGFLAGS = "-DMACH_EXC_SERVER_TASKIDTOKEN";
 			};
 			name = Release;
 		};
@@ -3907,7 +3902,6 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 5D247B6E14689C4700E78B76 /* Base.xcconfig */;
 			buildSettings = {
-				OTHER_MIGFLAGS = "-DMACH_EXC_SERVER_TASKIDTOKEN";
 			};
 			name = Production;
 		};

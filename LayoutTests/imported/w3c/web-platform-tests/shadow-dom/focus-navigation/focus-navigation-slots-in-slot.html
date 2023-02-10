@@ -8,38 +8,38 @@
 <script src="resources/focus-utils.js"></script>
 <p>Tests for moving focus by pressing tab key across nodes in slot scope.<br>
 
-<div id="b1" tabindex="0">outside</div>
+<button id="b1">outside</button>
 <div id='host'>
   <template data-mode='open'>
     <slot></slot>
   </template>
   <slot>
-    <div id="1A" tabindex="0">single nested slot</div>
-    <div id="1B" tabindex="0">single nested slot</div>
+    <button id="1A">single nested slot</button>
+    <button id="1B">single nested slot</button>
   </slot>
   <slot>
-    <div id="1C" tabindex="0">single nested slot</div>
+    <button id="1C">single nested slot</button>
   </slot>
   <slot>
     <slot>
-      <div id="2A" tabindex="0">double nested slot</div>
-      <div id="2B" tabindex="0">double nested slot</div>
+      <button id="2A">double nested slot</button>
+      <button id="2B">double nested slot</button>
     </slot>
   </slot>
   <slot>
-    <div id="3A" tabindex="0">single nested slot</div>
+    <button id="3A">single nested slot</button>
     <slot>
-      <div id="3B" tabindex="0">double nested slot</div>
+      <button id="3B">double nested slot</button>
       <slot>
-        <div id="3C" tabindex="0">Triple nested slot</div>
-        <div id="3D" tabindex="0">Triple nested slot</div>
+        <button id="3C">Triple nested slot</button>
+        <button id="3D">Triple nested slot</button>
       </slot>
-      <div id="3E" tabindex="0">double nested slot</div>
+      <button id="3E">double nested slot</button>
     </slot>
-    <div id="3F" tabindex="0">single nested slot</div>
+    <button id="3F">single nested slot</button>
   </slot>
 </div>
-<div id="b2" tabindex="0">outside</div>
+<button id="b2">outside</button>
 
 <script>
 'use strict';

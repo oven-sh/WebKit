@@ -29,7 +29,7 @@ end
 class Sequence
     def getModifiedListARM64E
         result = riscLowerMisplacedAddresses(@list)
-        getModifiedListARM64Common(result)
+        getModifiedListARM64(result)
     end
 end
 

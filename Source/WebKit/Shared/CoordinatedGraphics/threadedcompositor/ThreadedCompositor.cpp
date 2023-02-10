@@ -292,9 +292,9 @@ void ThreadedCompositor::updateSceneWithoutRendering()
     m_scene->updateSceneState();
 }
 
-WebCore::DisplayRefreshMonitor& ThreadedCompositor::displayRefreshMonitor() const
+RefPtr<WebCore::DisplayRefreshMonitor> ThreadedCompositor::displayRefreshMonitor(PlatformDisplayID)
 {
-    return m_displayRefreshMonitor.get();
+    return m_displayRefreshMonitor.copyRef();
 }
 
 void ThreadedCompositor::frameComplete()

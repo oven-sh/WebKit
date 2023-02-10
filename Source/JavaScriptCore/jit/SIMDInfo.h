@@ -75,43 +75,24 @@ constexpr v128_t vectorXor(v128_t lhs, v128_t rhs)
 }
 
 enum class SIMDLane : uint8_t {
-    v128 = 0,
+    v128,
     i8x16,
     i16x8,
     i32x4,
     i64x2,
     f32x4,
-    f64x2,
+    f64x2
 };
-static constexpr unsigned bitsOfSIMDLane = 6;
 
 enum class SIMDSignMode : uint8_t {
-    None = 0,
+    None, 
     Signed,
-    Unsigned,
+    Unsigned
 };
-static constexpr unsigned bitsOfSIMDSignMode = 2;
 
 struct SIMDInfo {
-    SIMDLane lane : bitsOfSIMDLane { SIMDLane::v128 };
-    SIMDSignMode signMode : bitsOfSIMDSignMode { SIMDSignMode::None };
-
-    constexpr SIMDInfo(SIMDLane passedLane, SIMDSignMode passedSignMode)
-        : lane(passedLane)
-        , signMode(passedSignMode)
-    { }
-
-    constexpr SIMDInfo() = default;
-
-    friend bool operator==(const SIMDInfo& lhs, const SIMDInfo& rhs)
-    {
-        return lhs.lane == rhs.lane && lhs.signMode == rhs.signMode;
-    }
-
-    friend bool operator!=(const SIMDInfo& lhs, const SIMDInfo& rhs)
-    {
-        return !(lhs == rhs);
-    }
+    SIMDLane lane { SIMDLane::v128 };
+    SIMDSignMode signMode { SIMDSignMode::None };
 };
 
 constexpr uint8_t elementCount(SIMDLane lane)
@@ -220,10 +201,10 @@ constexpr unsigned elementByteSize(SIMDLane simdLane)
 
 namespace WTF {
 
-JS_EXPORT_PRIVATE void printInternal(PrintStream& out, JSC::SIMDLane);
+void printInternal(PrintStream& out, JSC::SIMDLane lane);
 
-JS_EXPORT_PRIVATE void printInternal(PrintStream& out, JSC::SIMDSignMode);
+void printInternal(PrintStream& out, JSC::SIMDSignMode mode);
 
-JS_EXPORT_PRIVATE void printInternal(PrintStream& out, JSC::v128_t);
+void printInternal(PrintStream& out, JSC::v128_t v);
 
 } // namespace WTF

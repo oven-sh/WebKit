@@ -102,10 +102,6 @@
 #include <WebKit/WKPagePrivateMac.h>
 #endif
 
-#if PLATFORM(GTK) || PLATFORM(WPE)
-#include <WebKit/WKContextConfigurationGlib.h>
-#endif
-
 #if PLATFORM(WIN)
 #include <direct.h>
 #define getcwd _getcwd
@@ -327,6 +323,16 @@ static bool shouldAllowDeviceOrientationAndMotionAccess(WKPageRef, WKSecurityOri
 // A placeholder to tell WebKit the client is WebKitTestRunner.
 static void runWebAuthenticationPanel()
 {
+}
+
+static void decidePolicyForSpeechRecognitionPermissionRequest(WKPageRef, WKSecurityOriginRef, WKSpeechRecognitionPermissionCallbackRef callback)
+{
+    TestController::singleton().completeSpeechRecognitionPermissionCheck(callback);
+}
+
+void TestController::completeSpeechRecognitionPermissionCheck(WKSpeechRecognitionPermissionCallbackRef callback)
+{
+    WKSpeechRecognitionPermissionCallbackComplete(callback, m_isSpeechRecognitionPermissionGranted);
 }
 
 void TestController::setIsSpeechRecognitionPermissionGranted(bool granted)
@@ -654,10 +660,6 @@ WKRetainPtr<WKContextConfigurationRef> TestController::generateContextConfigurat
 
     WKContextConfigurationSetShouldConfigureJSCForTesting(configuration.get(), true);
 
-#if PLATFORM(GTK) || PLATFORM(WPE)
-    WKContextConfigurationSetDisableFontHintingForTesting(configuration.get(), true);
-#endif
-
     return configuration;
 }
 
@@ -939,7 +941,7 @@ void TestController::createWebViewWithOptions(const TestOptions& options)
         0, // requestStorageAccessConfirm
         shouldAllowDeviceOrientationAndMotionAccess,
         runWebAuthenticationPanel,
-        0,
+        decidePolicyForSpeechRecognitionPermissionRequest,
         decidePolicyForMediaKeySystemPermissionRequest,
         nullptr, // requestWebAuthenticationNoGesture
         queryPermission,
@@ -1100,6 +1102,7 @@ bool TestController::resetStateToConsistentValues(const TestOptions& options, Re
 
     WKContextSetCacheModel(TestController::singleton().context(), kWKCacheModelDocumentBrowser);
 
+    WKWebsiteDataStoreClearCachedCredentials(websiteDataStore());
     WKWebsiteDataStoreResetServiceWorkerFetchTimeoutForTesting(websiteDataStore());
 
     WKWebsiteDataStoreSetResourceLoadStatisticsEnabled(websiteDataStore(), true);
@@ -1212,7 +1215,6 @@ bool TestController::resetStateToConsistentValues(const TestOptions& options, Re
 #endif
 
     setAllowsAnySSLCertificate(true);
-    setBackgroundFetchPermission(true);
 
     statisticsResetToConsistentState();
     clearLoadedSubresourceDomains();
@@ -1409,11 +1411,6 @@ void TestController::setAllowsAnySSLCertificate(bool allows)
 {
     m_allowsAnySSLCertificate = allows;
     WKWebsiteDataStoreSetAllowsAnySSLCertificateForWebSocketTesting(websiteDataStore(), allows);
-}
-
-void TestController::setBackgroundFetchPermission(bool)
-{
-    // FIXME: Add support.
 }
 #endif
 
@@ -3085,7 +3082,6 @@ UniqueRef<PlatformWebView> TestController::platformCreateOtherPage(PlatformWebVi
 
 WKContextRef TestController::platformAdjustContext(WKContextRef context, WKContextConfigurationRef)
 {
-    WKPageGroupSetPreferences(m_pageGroup.get(), adoptWK(WKPreferencesCreate()).get());
     return context;
 }
 

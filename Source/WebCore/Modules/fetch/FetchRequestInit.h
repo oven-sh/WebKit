@@ -29,7 +29,6 @@
 #include "FetchBody.h"
 #include "FetchHeaders.h"
 #include "FetchOptions.h"
-#include "RequestPriority.h"
 #include <JavaScriptCore/JSCJSValue.h>
 #include <wtf/text/WTFString.h>
 
@@ -48,7 +47,6 @@ struct FetchRequestInit {
     String integrity;
     std::optional<bool> keepalive;
     JSC::JSValue signal;
-    std::optional<RequestPriority> priority;
     JSC::JSValue window;
 
     bool hasMembers() const { return !method.isEmpty() || headers || body || !referrer.isEmpty() || referrerPolicy || mode || credentials || cache || redirect || !integrity.isEmpty() || keepalive || !window.isUndefined() || !signal.isUndefined(); }

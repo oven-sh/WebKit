@@ -207,7 +207,6 @@ void WebProcessCreationParameters::encode(IPC::Encoder& encoder) const
 
 #if PLATFORM(GTK) || PLATFORM(WPE)
     encoder << memoryPressureHandlerConfiguration;
-    encoder << disableFontHintingForTesting;
 #endif
 
 #if USE(GLIB)
@@ -564,9 +563,6 @@ bool WebProcessCreationParameters::decode(IPC::Decoder& decoder, WebProcessCreat
     if (!memoryPressureHandlerConfiguration)
         return false;
     parameters.memoryPressureHandlerConfiguration = WTFMove(*memoryPressureHandlerConfiguration);
-
-    if (!decoder.decode(parameters.disableFontHintingForTesting))
-        return false;
 #endif
 
 #if USE(GLIB)

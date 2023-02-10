@@ -182,7 +182,7 @@ void OffscreenCanvas::setSize(const IntSize& newSize)
 #if ENABLE(WEBGL)
 static bool requiresAcceleratedCompositingForWebGL()
 {
-#if PLATFORM(GTK) || PLATFORM(WIN)
+#if PLATFORM(GTK) || PLATFORM(WIN_CAIRO)
     return false;
 #else
     return true;

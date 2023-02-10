@@ -49,7 +49,6 @@
 #include "JSAsyncFunction.h"
 #include "JSAsyncGenerator.h"
 #include "JSAsyncGeneratorFunction.h"
-#include "JSBoundFunction.h"
 #include "JSCInlines.h"
 #include "JSCPtrTag.h"
 #include "JSGeneratorFunction.h"

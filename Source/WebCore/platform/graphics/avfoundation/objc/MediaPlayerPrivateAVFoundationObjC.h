@@ -28,7 +28,6 @@
 #if ENABLE(VIDEO) && USE(AVFOUNDATION)
 
 #include "MediaPlayerPrivateAVFoundation.h"
-#include "VideoFrameMetadata.h"
 #include <CoreMedia/CMTime.h>
 #include <wtf/Function.h>
 #include <wtf/Observer.h>
@@ -439,7 +438,7 @@ private:
     mutable MediaPlayer::CurrentTimeDidChangeCallback m_currentTimeDidChangeCallback;
     mutable MediaTime m_cachedCurrentMediaTime { -1, 1, 0 };
     mutable MediaTime m_lastPeriodicObserverMediaTime;
-    mutable Markable<WallTime> m_wallClockAtCachedCurrentTime;
+    mutable std::optional<WallTime> m_wallClockAtCachedCurrentTime;
     mutable int m_timeControlStatusAtCachedCurrentTime { 0 };
     mutable double m_requestedRateAtCachedCurrentTime { 0 };
     RefPtr<SharedBuffer> m_keyID;

@@ -39,9 +39,14 @@
 #include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
 
+#if PLATFORM(COCOA) || USE(CFURLCONNECTION)
+#include <wtf/RetainPtr.h>
+#endif
+
 #if PLATFORM(COCOA)
 #include <pal/spi/cf/CFNetworkSPI.h>
-#include <wtf/RetainPtr.h>
+#elif USE(CFURLCONNECTION)
+#include <pal/spi/win/CFNetworkSPIWin.h>
 #endif
 
 #if USE(SOUP)
@@ -116,7 +121,7 @@ public:
     WEBCORE_EXPORT ~NetworkStorageSession();
 #endif
 
-#if PLATFORM(COCOA)
+#if PLATFORM(COCOA) || USE(CFURLCONNECTION)
     enum class ShouldDisableCFURLCache : bool { No, Yes };
     WEBCORE_EXPORT static RetainPtr<CFURLStorageSessionRef> createCFStorageSessionForIdentifier(CFStringRef identifier, ShouldDisableCFURLCache = ShouldDisableCFURLCache::No);
     enum class IsInMemoryCookieStore : bool { No, Yes };
@@ -250,7 +255,7 @@ private:
 
     PAL::SessionID m_sessionID;
 
-#if PLATFORM(COCOA)
+#if PLATFORM(COCOA) || USE(CFURLCONNECTION)
     RetainPtr<CFURLStorageSessionRef> m_platformSession;
     RetainPtr<CFHTTPCookieStorageRef> m_platformCookieStorage;
     const bool m_isInMemoryCookieStore { false };
@@ -308,7 +313,7 @@ private:
     static bool m_processMayUseCookieAPI;
 };
 
-#if PLATFORM(COCOA)
+#if PLATFORM(COCOA) || USE(CFURLCONNECTION)
 WEBCORE_EXPORT RetainPtr<CFURLStorageSessionRef> createPrivateStorageSession(CFStringRef identifier, std::optional<HTTPCookieAcceptPolicy> = std::nullopt, NetworkStorageSession::ShouldDisableCFURLCache = NetworkStorageSession::ShouldDisableCFURLCache::No);
 #endif
 

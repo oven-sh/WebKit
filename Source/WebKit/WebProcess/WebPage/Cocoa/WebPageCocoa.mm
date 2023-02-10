@@ -140,12 +140,9 @@ void WebPage::performDictionaryLookupAtLocation(const FloatPoint& floatPoint)
     }
 #endif
     
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page->mainFrame());
-    if (!localMainFrame)
-        return;
     // Find the frame the point is over.
     constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent, HitTestRequest::Type::AllowChildFrameContent };
-    auto result = localMainFrame->eventHandler().hitTestResultAtPoint(localMainFrame->view()->windowToContents(roundedIntPoint(floatPoint)), hitType);
+    auto result = m_page->mainFrame().eventHandler().hitTestResultAtPoint(m_page->mainFrame().view()->windowToContents(roundedIntPoint(floatPoint)), hitType);
 
     RefPtr frame = result.innerNonSharedNode() ? result.innerNonSharedNode()->document().frame() : &CheckedRef(m_page->focusController())->focusedOrMainFrame();
     if (!frame)
@@ -369,7 +366,7 @@ WebPaymentCoordinator* WebPage::paymentCoordinator()
 
 void WebPage::getContentsAsAttributedString(CompletionHandler<void(const WebCore::AttributedString&)>&& completionHandler)
 {
-    completionHandler(is<LocalFrame>(m_page->mainFrame()) ? attributedString(makeRangeSelectingNodeContents(*downcast<LocalFrame>(m_page->mainFrame()).document())) : AttributedString());
+    completionHandler(attributedString(makeRangeSelectingNodeContents(*m_page->mainFrame().document())));
 }
 
 void WebPage::setRemoteObjectRegistry(WebRemoteObjectRegistry* registry)
@@ -688,10 +685,7 @@ URL WebPage::allowedLookalikeCharacters(const URL& url)
 Node* WebPage::clickableNodeAtLocation(const FloatPoint& viewportLocation, FloatPoint& adjustedViewportLocation) const
 {
 #if PLATFORM(IOS_FAMILY)
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page->mainFrame());
-    if (!localMainFrame)
-        return nullptr;
-    return Ref(*localMainFrame)->nodeRespondingToClickEvents(viewportLocation, adjustedViewportLocation);
+    return Ref(m_page->mainFrame())->nodeRespondingToClickEvents(viewportLocation, adjustedViewportLocation);
 #else
     UNUSED_PARAM(adjustedViewportLocation);
 
@@ -747,10 +741,7 @@ Vector<FloatRect> WebPage::getEvasionRectsAroundSelection(const Vector<WebCore::
 
     float scaleFactor = pageScaleFactor();
     const double factorOfContentArea = 0.5;
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page->mainFrame());
-    if (!localMainFrame)
-        return { };
-    auto unobscuredContentArea = RefPtr(localMainFrame->view())->unobscuredContentRect().area();
+    auto unobscuredContentArea = RefPtr(m_page->mainFrame().view())->unobscuredContentRect().area();
     if (unobscuredContentArea.hasOverflowed())
         return { };
 

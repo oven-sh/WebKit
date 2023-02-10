@@ -61,7 +61,6 @@ class UnaryExpression;
 class Unsigned32Literal;
 
 class Function;
-class Parameter;
 
 class Identifier;
 
@@ -95,15 +94,18 @@ class ParameterizedTypeName;
 class StructTypeName;
 class ReferenceTypeName;
 
+class Value;
+class ConstantValue;
+class OverrideValue;
+class LetValue;
+class ParameterValue;
+
 class Variable;
 class VariableQualifier;
 
 enum class AccessMode : uint8_t;
-enum class BinaryOperation : uint8_t;
 enum class ParameterRole : uint8_t;
 enum class StorageClass : uint8_t;
 enum class StructureRole : uint8_t;
-enum class UnaryOperation : uint8_t;
-enum class VariableFlavor : uint8_t;
 
 } // namespace WGSL::AST

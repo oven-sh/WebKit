@@ -65,7 +65,6 @@ ANGLE_CHROMIUM_DEPS = [
     'third_party/jdk',
     'third_party/jdk/extras',
     'third_party/jinja2',
-    'third_party/kotlin_stdlib',
     'third_party/libjpeg_turbo',
     'third_party/markupsafe',
     'third_party/nasm',

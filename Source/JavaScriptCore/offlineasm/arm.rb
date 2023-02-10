@@ -335,7 +335,6 @@ class Sequence
 
     def getModifiedListARMCommon
         result = @list
-        result = riscDropTags(result)
         result = riscLowerSimpleBranchOps(result)
         result = riscLowerHardBranchOps(result)
         result = riscLowerShiftOps(result)

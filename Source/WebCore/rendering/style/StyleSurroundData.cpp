@@ -27,21 +27,13 @@ namespace WebCore {
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(StyleSurroundData);
 
 StyleSurroundData::StyleSurroundData()
-    : hasExplicitlySetBorderBottomLeftRadius(false)
-    , hasExplicitlySetBorderBottomRightRadius(false)
-    , hasExplicitlySetBorderTopLeftRadius(false)
-    , hasExplicitlySetBorderTopRightRadius(false)
-    , margin(LengthType::Fixed)
+    : margin(LengthType::Fixed)
     , padding(LengthType::Fixed)
 {
 }
 
 inline StyleSurroundData::StyleSurroundData(const StyleSurroundData& o)
     : RefCounted<StyleSurroundData>()
-    , hasExplicitlySetBorderBottomLeftRadius(o.hasExplicitlySetBorderBottomLeftRadius)
-    , hasExplicitlySetBorderBottomRightRadius(o.hasExplicitlySetBorderBottomRightRadius)
-    , hasExplicitlySetBorderTopLeftRadius(o.hasExplicitlySetBorderTopLeftRadius)
-    , hasExplicitlySetBorderTopRightRadius(o.hasExplicitlySetBorderTopRightRadius)
     , offset(o.offset)
     , margin(o.margin)
     , padding(o.padding)
@@ -56,11 +48,7 @@ Ref<StyleSurroundData> StyleSurroundData::copy() const
 
 bool StyleSurroundData::operator==(const StyleSurroundData& o) const
 {
-    return offset == o.offset && margin == o.margin && padding == o.padding && border == o.border
-        && hasExplicitlySetBorderBottomLeftRadius == o.hasExplicitlySetBorderBottomLeftRadius
-        && hasExplicitlySetBorderBottomRightRadius == o.hasExplicitlySetBorderBottomRightRadius
-        && hasExplicitlySetBorderTopLeftRadius == o.hasExplicitlySetBorderTopLeftRadius
-        && hasExplicitlySetBorderTopRightRadius == o.hasExplicitlySetBorderTopRightRadius;
+    return offset == o.offset && margin == o.margin && padding == o.padding && border == o.border;
 }
 
 } // namespace WebCore

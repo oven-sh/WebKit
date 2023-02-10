@@ -97,7 +97,6 @@
 #include "PointerCaptureController.h"
 #include "PointerEvent.h"
 #include "PointerLockController.h"
-#include "PopoverData.h"
 #include "PseudoClassChangeInvalidation.h"
 #include "Quirks.h"
 #include "RenderFragmentedFlow.h"
@@ -2417,27 +2416,16 @@ bool Element::hasDisplayContents() const
     if (!hasRareData())
         return false;
 
-    auto* style = elementRareData()->displayContentsStyle();
-    ASSERT(!style || style->display() == DisplayType::Contents);
-    return !!style;
+    const RenderStyle* style = elementRareData()->computedStyle();
+    return style && style->display() == DisplayType::Contents;
 }
 
 void Element::storeDisplayContentsStyle(std::unique_ptr<RenderStyle> style)
 {
-    // This is used by RenderTreeBuilder to store the style for Elements with display:contents.
-    // Normally style is held in renderers but display:contents doesn't generate one.
-    // This is kept distinct from ElementRareData::computedStyle() which can update outside style resolution.
-    // This way renderOrDisplayContentsStyle() always returns consistent styles matching the rendering state.
     ASSERT(style && style->display() == DisplayType::Contents);
     ASSERT(!renderer() || isPseudoElement());
-    ensureElementRareData().setDisplayContentsStyle(WTFMove(style));
-}
-
-void Element::clearDisplayContentsStyle()
-{
-    if (!hasRareData())
-        return;
-    elementRareData()->setDisplayContentsStyle(nullptr);
+    ensureElementRareData().setComputedStyle(WTFMove(style));
+    clearNodeFlag(NodeFlag::IsComputedStyleInvalidFlag);
 }
 
 // Returns true is the given attribute is an event handler.
@@ -2464,24 +2452,24 @@ void Element::stripScriptingAttributes(Vector<Attribute>& attributeVector) const
     });
 }
 
-void Element::parserSetAttributes(Span<const Attribute> attributes)
+void Element::parserSetAttributes(const Vector<Attribute>& attributeVector)
 {
     ASSERT(!isConnected());
     ASSERT(!parentNode());
     ASSERT(!m_elementData);
 
-    if (attributes.size()) {
+    if (!attributeVector.isEmpty()) {
         if (document().sharedObjectPool())
-            m_elementData = document().sharedObjectPool()->cachedShareableElementDataWithAttributes(attributes);
+            m_elementData = document().sharedObjectPool()->cachedShareableElementDataWithAttributes(attributeVector);
         else
-            m_elementData = ShareableElementData::createWithAttributes(attributes);
+            m_elementData = ShareableElementData::createWithAttributes(attributeVector);
 
     }
 
     parserDidSetAttributes();
 
-    // Use attributes instead of m_elementData because attributeChanged might modify m_elementData.
-    for (const auto& attribute : attributes)
+    // Use attributeVector instead of m_elementData because attributeChanged might modify m_elementData.
+    for (const auto& attribute : attributeVector)
         attributeChanged(attribute.name(), nullAtom(), attribute.value(), ModifiedDirectly);
 }
 
@@ -2763,25 +2751,6 @@ void Element::removedFromAncestor(RemovalType removalType, ContainerNode& oldPar
 
     if (UNLIKELY(isInTopLayer()))
         removeFromTopLayer();
-}
-
-PopoverData* Element::popoverData() const
-{
-    return hasRareData() ? elementRareData()->popoverData() : nullptr;
-}
-
-PopoverData& Element::ensurePopoverData()
-{
-    ElementRareData& data = ensureElementRareData();
-    if (!data.popoverData())
-        data.setPopoverData(makeUnique<PopoverData>());
-    return *data.popoverData();
-}
-
-void Element::clearPopoverData()
-{
-    if (hasRareData())
-        elementRareData()->setPopoverData(nullptr);
 }
 
 void Element::addShadowRoot(Ref<ShadowRoot>&& newShadowRoot)
@@ -3893,7 +3862,7 @@ const RenderStyle* Element::existingComputedStyle() const
             return style;
     }
 
-    return renderOrDisplayContentsStyle();
+    return renderStyle();
 }
 
 const RenderStyle* Element::renderOrDisplayContentsStyle(PseudoId pseudoId) const
@@ -3902,21 +3871,24 @@ const RenderStyle* Element::renderOrDisplayContentsStyle(PseudoId pseudoId) cons
         if (auto* pseudoElement = beforeOrAfterPseudoElement(*this, pseudoId))
             return pseudoElement->renderOrDisplayContentsStyle();
 
-        if (auto* style = renderOrDisplayContentsStyle()) {
-            if (auto* cachedPseudoStyle = style->getCachedPseudoStyle(pseudoId))
+        if (auto* computedStyle = existingComputedStyle()) {
+            if (auto* cachedPseudoStyle = computedStyle->getCachedPseudoStyle(pseudoId))
                 return cachedPseudoStyle;
         }
+
         return nullptr;
     }
 
-    if (hasRareData()) {
-        if (auto* style = elementRareData()->displayContentsStyle()) {
-            ASSERT(style->display() == DisplayType::Contents);
-            return style;
-        }
-    }
+    if (auto* style = renderStyle())
+        return style;
 
-    return renderStyle();
+    if (!hasRareData())
+        return nullptr;
+    auto* style = elementRareData()->computedStyle();
+    if (style && style->display() == DisplayType::Contents)
+        return style;
+
+    return nullptr;
 }
 
 const RenderStyle* Element::resolveComputedStyle(ResolveComputedStyleMode mode)
@@ -4851,7 +4823,7 @@ void Element::resetComputedStyle()
     auto reset = [](Element& element) {
         if (element.hasCustomStyleResolveCallbacks())
             element.willResetComputedStyle();
-        element.elementRareData()->setComputedStyle(nullptr);
+        element.elementRareData()->resetComputedStyle();
     };
     reset(*this);
     for (auto& child : descendantsOfType<Element>(*this)) {

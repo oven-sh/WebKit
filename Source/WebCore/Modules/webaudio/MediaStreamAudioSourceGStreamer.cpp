@@ -29,21 +29,25 @@
 
 namespace WebCore {
 
-static void copyBusData(AudioBus& bus, GstBuffer* buffer, bool isMuted)
+static Vector<size_t> copyBusData(AudioBus& bus, GstBuffer* buffer, bool isMuted)
 {
+    Vector<size_t> offsets;
     GstMappedBuffer mappedBuffer(buffer, GST_MAP_WRITE);
     if (isMuted) {
         memset(mappedBuffer.data(), 0, mappedBuffer.size());
-        return;
+        return offsets;
     }
 
-    size_t offset = 0;
+    DisableMallocRestrictionsForCurrentThreadScope disableMallocRestrictions;
+    offsets.reserveInitialCapacity(sizeof(size_t) * bus.numberOfChannels());
+    size_t size = mappedBuffer.size() / bus.numberOfChannels();
     for (size_t channelIndex = 0; channelIndex < bus.numberOfChannels(); ++channelIndex) {
         const auto& channel = *bus.channel(channelIndex);
-        auto dataSize = sizeof(float) * channel.length();
-        memcpy(mappedBuffer.data() + offset, channel.data(), dataSize);
-        offset += dataSize;
+        auto offset = channelIndex * size;
+        memcpy(mappedBuffer.data() + offset, channel.data(), sizeof(float) * channel.length());
+        offsets.uncheckedAppend(offset);
     }
+    return offsets;
 }
 
 void MediaStreamAudioSource::consumeAudio(AudioBus& bus, size_t numberOfFrames)
@@ -63,12 +67,8 @@ void MediaStreamAudioSource::consumeAudio(AudioBus& bus, size_t numberOfFrames)
 
     auto caps = adoptGRef(gst_audio_info_to_caps(&info));
     auto buffer = adoptGRef(gst_buffer_new_allocate(nullptr, size, nullptr));
-
-    GST_BUFFER_PTS(buffer.get()) = toGstClockTime(mediaTime);
-    GST_BUFFER_FLAG_SET(buffer.get(), GST_BUFFER_FLAG_LIVE);
-
-    copyBusData(bus, buffer.get(), muted());
-    gst_buffer_add_audio_meta(buffer.get(), &info, numberOfFrames, nullptr);
+    auto offsets = copyBusData(bus, buffer.get(), muted());
+    gst_buffer_add_audio_meta(buffer.get(), &info, numberOfFrames, offsets.data());
     auto sample = adoptGRef(gst_sample_new(buffer.get(), caps.get(), nullptr, nullptr));
     GStreamerAudioData audioBuffer(WTFMove(sample), info);
     GStreamerAudioStreamDescription description(&info);

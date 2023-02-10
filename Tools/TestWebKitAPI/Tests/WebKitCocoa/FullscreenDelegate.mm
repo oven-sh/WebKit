@@ -31,6 +31,8 @@
 #import "PlatformUtilities.h"
 #import <WebKit/WKPagePrivateMac.h>
 #import <WebKit/WKPreferencesPrivate.h>
+#import <WebKit/WKView.h>
+#import <WebKit/WKViewPrivate.h>
 #import <WebKit/WKWebViewConfigurationPrivate.h>
 #import <WebKit/WKWebViewPrivate.h>
 #import <WebKit/_WKFullscreenDelegate.h>

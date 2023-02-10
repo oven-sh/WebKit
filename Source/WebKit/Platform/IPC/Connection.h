@@ -129,14 +129,12 @@ class MachMessage;
 class UnixMessage;
 class WorkQueueMessageReceiver;
 
-enum AsyncReplyIDType { };
-using AsyncReplyID = ObjectIdentifier<AsyncReplyIDType>;
-
 class Connection : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<Connection, WTF::DestructionThread::MainRunLoop> {
 public:
     enum SyncRequestIDType { };
     using SyncRequestID = ObjectIdentifier<SyncRequestIDType>;
-    using AsyncReplyID = IPC::AsyncReplyID;
+    enum AsyncReplyIDType { };
+    using AsyncReplyID = ObjectIdentifier<AsyncReplyIDType>;
 
     class Client : public MessageReceiver {
     public:
@@ -381,8 +379,6 @@ public:
 
     template<typename T, typename C> static AsyncReplyHandler makeAsyncReplyHandler(C&& completionHandler, ThreadLikeAssertion callThread = CompletionHandlerCallThread::AnyThread);
 
-    CompletionHandler<void(Decoder*)> takeAsyncReplyHandler(AsyncReplyID);
-
 private:
     Connection(Identifier, bool isServer);
     void platformInitialize(Identifier);
@@ -451,6 +447,7 @@ private:
         void operator()(SyncMessageState*) const;
     };
     void addAsyncReplyHandler(AsyncReplyHandler&&);
+    CompletionHandler<void(Decoder*)> takeAsyncReplyHandler(AsyncReplyID);
     void cancelAsyncReplyHandlers();
 
     static Lock s_connectionMapLock;

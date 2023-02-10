@@ -62,6 +62,21 @@ namespace WebCore {
 // NSColor, NSBezierPath, and NSGraphicsContext calls do not raise exceptions
 // so we don't block exceptions.
 
+static RetainPtr<CGColorRef> grammarColor(bool useDarkMode)
+{
+#if ENABLE(POST_EDITING_GRAMMAR_CHECKING)
+    static bool useBlueForGrammar = false;
+    static std::once_flag flag;
+    std::call_once(flag, [] {
+        useBlueForGrammar = os_feature_enabled(TextComposer, PostEditing) && os_feature_enabled(TextComposer, PostEditingUseBlueDots);
+    });
+
+    if (useBlueForGrammar)
+        return cachedCGColor(useDarkMode ? SRGBA<uint8_t> { 40, 145, 255, 217 } : SRGBA<uint8_t> { 0, 122, 255, 191 });
+#endif
+    return cachedCGColor(useDarkMode ? SRGBA<uint8_t> { 50, 215, 75, 217 } : SRGBA<uint8_t> { 25, 175, 50, 191 });
+}
+
 void GraphicsContextCG::drawFocusRing(const Path& path, float, const Color& color)
 {
     if (path.isNull())
@@ -117,7 +132,23 @@ static inline void setPatternPhaseInUserSpace(CGContextRef context, CGPoint phas
     CGContextSetPatternPhase(context, CGSizeMake(phase.x, phase.y));
 }
 
-static inline void drawDotsForDocumentMarker(CGContextRef context, const FloatRect& rect, DocumentMarkerLineStyle style)
+static RetainPtr<CGColorRef> colorForMarkerLineStyle(DocumentMarkerLineStyleMode style, bool useDarkMode)
+{
+    switch (style) {
+    // Red
+    case DocumentMarkerLineStyleMode::Spelling:
+        return cachedCGColor(useDarkMode ? SRGBA<uint8_t> { 255, 140, 140, 217 } : SRGBA<uint8_t> { 255, 59, 48, 191 });
+    // Blue
+    case DocumentMarkerLineStyleMode::DictationAlternatives:
+    case DocumentMarkerLineStyleMode::TextCheckingDictationPhraseWithAlternatives:
+    case DocumentMarkerLineStyleMode::AutocorrectionReplacement:
+        return cachedCGColor(useDarkMode ? SRGBA<uint8_t> { 40, 145, 255, 217 } : SRGBA<uint8_t> { 0, 122, 255, 191 });
+    case DocumentMarkerLineStyleMode::Grammar:
+        return grammarColor(useDarkMode);
+    }
+}
+
+void GraphicsContextCG::drawDotsForDocumentMarker(const FloatRect& rect, DocumentMarkerLineStyle style)
 {
     // We want to find the number of full dots, so we're solving the equations:
     // dotDiameter = height
@@ -135,26 +166,20 @@ static inline void drawDotsForDocumentMarker(CGContextRef context, const FloatRe
     // Center the dots
     auto offset = (width - (dotDiameter * numberOfWholeDots + dotGap * numberOfWholeGaps)) / 2;
 
-    CGContextStateSaver stateSaver { context };
-    CGContextSetFillColorWithColor(context, cachedCGColor(style.color).get());
+    auto circleColor = colorForMarkerLineStyle(style.mode, style.shouldUseDarkAppearance);
+
+    CGContextRef platformContext = this->platformContext();
+    CGContextStateSaver stateSaver { platformContext };
+    CGContextSetFillColorWithColor(platformContext, circleColor.get());
     for (unsigned i = 0; i < numberOfWholeDots; ++i) {
         auto location = rect.location();
         location.move(offset + i * (dotDiameter + dotGap), 0);
         auto size = FloatSize(dotDiameter, dotDiameter);
-        CGContextAddEllipseInRect(context, FloatRect(location, size));
+        CGContextAddEllipseInRect(platformContext, FloatRect(location, size));
     }
-    CGContextSetCompositeOperation(context, kCGCompositeSover);
-    CGContextFillPath(context);
+    CGContextSetCompositeOperation(platformContext, kCGCompositeSover);
+    CGContextFillPath(platformContext);
 }
-
-#if USE(APPLE_INTERNAL_SDK)
-#include <WebKitAdditions/GraphicsContextCocoaAdditions.mm>
-#else
-void GraphicsContextCG::drawDotsForDocumentMarker(const FloatRect& rect, DocumentMarkerLineStyle style)
-{
-    WebCore::drawDotsForDocumentMarker(this->platformContext(), rect, style);
-}
-#endif
 
 void GraphicsContextCG::convertToDestinationColorSpaceIfNeeded(RetainPtr<CGImageRef>& image)
 {

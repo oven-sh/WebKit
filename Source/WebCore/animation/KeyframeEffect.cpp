@@ -1000,11 +1000,8 @@ void KeyframeEffect::setBlendingKeyframes(KeyframeList&& blendingKeyframes)
     computeHasImplicitKeyframeForAcceleratedProperty();
     computeHasKeyframeComposingAcceleratedProperty();
     computeHasExplicitlyInheritedKeyframeProperty();
-    computeHasAcceleratedPropertyOverriddenByCascadeProperty();
 
     checkForMatchingTransformFunctionLists();
-
-    updateAcceleratedAnimationIfNecessary();
 }
 
 void KeyframeEffect::checkForMatchingTransformFunctionLists()
@@ -1641,9 +1638,6 @@ bool KeyframeEffect::canBeAccelerated() const
     if (m_hasKeyframeComposingAcceleratedProperty)
         return false;
 
-    if (m_hasAcceleratedPropertyOverriddenByCascadeProperty)
-        return false;
-
     return true;
 }
 
@@ -1723,7 +1717,7 @@ void KeyframeEffect::addPendingAcceleratedAction(AcceleratedAction action)
     if (action == AcceleratedAction::Stop)
         m_pendingAcceleratedActions.clear();
     m_pendingAcceleratedActions.append(action);
-    if (action != AcceleratedAction::UpdateProperties && action != AcceleratedAction::TransformChange)
+    if (action != AcceleratedAction::UpdateTiming && action != AcceleratedAction::TransformChange)
         m_lastRecordedAcceleratedAction = action;
     animation()->acceleratedStateDidChange();
 }
@@ -1737,21 +1731,18 @@ void KeyframeEffect::animationDidTick()
 void KeyframeEffect::animationDidChangeTimingProperties()
 {
     computeSomeKeyframesUseStepsTimingFunction();
-    updateAcceleratedAnimationIfNecessary();
-    invalidate();
-}
 
-void KeyframeEffect::updateAcceleratedAnimationIfNecessary()
-{
     if (isRunningAccelerated() || isAboutToRunAccelerated()) {
         if (canBeAccelerated())
-            addPendingAcceleratedAction(AcceleratedAction::UpdateProperties);
+            addPendingAcceleratedAction(AcceleratedAction::UpdateTiming);
         else {
             abilityToBeAcceleratedDidChange();
             addPendingAcceleratedAction(AcceleratedAction::Stop);
         }
     } else if (canBeAccelerated())
         m_runningAccelerated = RunningAccelerated::NotStarted;
+
+    invalidate();
 }
 
 void KeyframeEffect::transformRelatedPropertyDidChange()
@@ -1947,9 +1938,9 @@ void KeyframeEffect::applyPendingAcceleratedActions()
         case AcceleratedAction::Pause:
             renderer->animationPaused(timeOffset, m_blendingKeyframes.animationName());
             break;
-        case AcceleratedAction::UpdateProperties:
+        case AcceleratedAction::UpdateTiming:
             m_runningAccelerated = startAnimation();
-            LOG_WITH_STREAM(Animations, stream << "KeyframeEffect " << this << " applyPendingAcceleratedActions " << m_blendingKeyframes.animationName() << " UpdateProperties, started accelerated: " << isRunningAccelerated());
+            LOG_WITH_STREAM(Animations, stream << "KeyframeEffect " << this << " applyPendingAcceleratedActions " << m_blendingKeyframes.animationName() << " UpdateTiming, started accelerated: " << isRunningAccelerated());
             if (animation()->playState() == WebAnimation::PlayState::Paused)
                 renderer->animationPaused(timeOffset, m_blendingKeyframes.animationName());
             break;
@@ -2409,20 +2400,6 @@ void KeyframeEffect::computeHasExplicitlyInheritedKeyframeProperty()
     }
 }
 
-void KeyframeEffect::computeHasAcceleratedPropertyOverriddenByCascadeProperty()
-{
-    if (!m_inTargetEffectStack)
-        return;
-
-    ASSERT(m_target);
-    auto* effectStack = m_target->keyframeEffectStack(m_pseudoId);
-    if (!effectStack)
-        return;
-
-    auto relevantAcceleratedPropertiesOverriddenByCascade = effectStack->acceleratedPropertiesOverriddenByCascade().intersectionWith(animatedProperties());
-    m_hasAcceleratedPropertyOverriddenByCascadeProperty = !relevantAcceleratedPropertiesOverriddenByCascade.isEmpty();
-}
-
 void KeyframeEffect::effectStackNoLongerPreventsAcceleration()
 {
     if (m_runningAccelerated == RunningAccelerated::Failed)
@@ -2449,12 +2426,6 @@ void KeyframeEffect::abilityToBeAcceleratedDidChange()
         effectStack->effectAbilityToBeAcceleratedDidChange(*this);
 }
 
-void KeyframeEffect::acceleratedPropertiesOverriddenByCascadeDidChange()
-{
-    CanBeAcceleratedMutationScope mutationScope(this);
-    computeHasAcceleratedPropertyOverriddenByCascadeProperty();
-}
-
 KeyframeEffect::CanBeAcceleratedMutationScope::CanBeAcceleratedMutationScope(KeyframeEffect* effect)
     : m_effect(effect)
 {
@@ -2476,14 +2447,6 @@ void KeyframeEffect::lastStyleChangeEventStyleDidChange(const RenderStyle* previ
 
     if (hasMotionPath(previousStyle) != hasMotionPath(currentStyle))
         abilityToBeAcceleratedDidChange();
-}
-
-bool KeyframeEffect::preventsAnimationReadiness() const
-{
-    // https://drafts.csswg.org/web-animations-1/#ready
-    // An animation cannot be ready if it's associated with a document that does not have a browsing
-    // context since this will prevent the first frame of the animmation from being rendered.
-    return document() && !document()->hasBrowsingContext();
 }
 
 } // namespace WebCore

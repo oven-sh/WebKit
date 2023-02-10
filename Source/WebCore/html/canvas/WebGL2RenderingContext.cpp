@@ -31,7 +31,6 @@
 #include "CachedImage.h"
 #include "EXTColorBufferFloat.h"
 #include "EXTColorBufferHalfFloat.h"
-#include "EXTDisjointTimerQueryWebGL2.h"
 #include "EXTFloatBlend.h"
 #include "EXTTextureCompressionBPTC.h"
 #include "EXTTextureCompressionRGTC.h"
@@ -49,7 +48,6 @@
 #include "OESDrawBuffersIndexed.h"
 #include "OESTextureFloatLinear.h"
 #include "RenderBox.h"
-#include "WebCodecsVideoFrame.h"
 #include "WebCoreOpaqueRoot.h"
 #include "WebGLActiveInfo.h"
 #include "WebGLBuffer.h"
@@ -1803,11 +1801,8 @@ std::optional<WebGL2RenderingContext::ActiveQueryKey> WebGL2RenderingContext::va
         return ActiveQueryKey::SamplesPassed;
     case GraphicsContextGL::TRANSFORM_FEEDBACK_PRIMITIVES_WRITTEN:
         return ActiveQueryKey::PrimitivesWritten;
-    case GraphicsContextGL::TIME_ELAPSED_EXT:
-        if (m_extDisjointTimerQueryWebGL2)
-            return ActiveQueryKey::TimeElapsed;
-        synthesizeGLError(GraphicsContextGL::INVALID_ENUM, functionName, "invalid target, EXT_disjoint_timer_query_webgl2 not enabled");
-        return std::nullopt;
+    default:
+        break;
     }
     synthesizeGLError(GraphicsContextGL::INVALID_ENUM, functionName, "invalid target");
     return std::nullopt;
@@ -1856,31 +1851,13 @@ void WebGL2RenderingContext::endQuery(GCGLenum target)
     });
 }
 
-WebGLAny WebGL2RenderingContext::getQuery(GCGLenum target, GCGLenum pname)
+RefPtr<WebGLQuery> WebGL2RenderingContext::getQuery(GCGLenum target, GCGLenum pname)
 {
     if (isContextLost() || !scriptExecutionContext())
         return nullptr;
-
-    // Timestamp queries require special treatment because they are never active.
-    if (target == GraphicsContextGL::TIMESTAMP_EXT) {
-        if (!m_extDisjointTimerQueryWebGL2) {
-            synthesizeGLError(GraphicsContextGL::INVALID_ENUM, "getQuery", "invalid target, EXT_disjoint_timer_query_webgl2 not enabled");
-            return nullptr;
-        }
-        if (pname == GraphicsContextGL::QUERY_COUNTER_BITS_EXT)
-            return m_context->getQuery(target, pname);
-        if (pname != GraphicsContextGL::CURRENT_QUERY)
-            synthesizeGLError(GraphicsContextGL::INVALID_ENUM, "getQuery", "invalid parameter name");
-        return nullptr;
-    }
-
-    auto activeQueryKey = validateQueryTarget("getQuery", target);
+    auto activeQueryKey = validateQueryTarget("beginQuery", target);
     if (!activeQueryKey)
         return nullptr;
-
-    // Time elapsed queries support one more parameter name.
-    if (target == GraphicsContextGL::TIME_ELAPSED_EXT && pname == GraphicsContextGL::QUERY_COUNTER_BITS_EXT)
-        return m_context->getQuery(target, pname);
 
     if (pname != GraphicsContextGL::CURRENT_QUERY) {
         synthesizeGLError(GraphicsContextGL::INVALID_ENUM, "getQuery", "invalid parameter name");
@@ -1908,17 +1885,18 @@ WebGLAny WebGL2RenderingContext::getQueryParameter(WebGLQuery& query, GCGLenum p
     switch (pname) {
     case GraphicsContextGL::QUERY_RESULT:
         if (!query.isResultAvailable())
-            return 0;
-        if (query.target() == GraphicsContextGL::TIME_ELAPSED_EXT || query.target() == GraphicsContextGL::TIMESTAMP_EXT)
-            return static_cast<unsigned long long>(m_context->getQueryObjectui64EXT(query.object(), pname));
-        return m_context->getQueryObjectui(query.object(), pname);
+            return false;
+        break;
     case GraphicsContextGL::QUERY_RESULT_AVAILABLE:
         if (!query.isResultAvailable())
             return false;
-        return static_cast<bool>(m_context->getQueryObjectui(query.object(), pname));
+        break;
+    default:
+        synthesizeGLError(GraphicsContextGL::INVALID_ENUM, "getQueryParameter", "invalid parameter name");
+        return nullptr;
     }
-    synthesizeGLError(GraphicsContextGL::INVALID_ENUM, "getQueryParameter", "invalid parameter name");
-    return nullptr;
+
+    return static_cast<unsigned>(m_context->getQueryObjectui(query.object(), pname));
 }
 
 RefPtr<WebGLSampler> WebGL2RenderingContext::createSampler()
@@ -2628,7 +2606,6 @@ WebGLExtension* WebGL2RenderingContext::getExtension(const String& name)
 
     ENABLE_IF_REQUESTED(EXTColorBufferFloat, m_extColorBufferFloat, "EXT_color_buffer_float"_s, EXTColorBufferFloat::supported(*m_context));
     ENABLE_IF_REQUESTED(EXTColorBufferHalfFloat, m_extColorBufferHalfFloat, "EXT_color_buffer_half_float"_s, EXTColorBufferHalfFloat::supported(*m_context));
-    ENABLE_IF_REQUESTED(EXTDisjointTimerQueryWebGL2, m_extDisjointTimerQueryWebGL2, "EXT_disjoint_timer_query_webgl2"_s, EXTDisjointTimerQueryWebGL2::supported(*m_context) && scriptExecutionContext()->settingsValues().webGLTimerQueriesEnabled);
     ENABLE_IF_REQUESTED(EXTFloatBlend, m_extFloatBlend, "EXT_float_blend"_s, EXTFloatBlend::supported(*m_context));
     ENABLE_IF_REQUESTED(EXTTextureCompressionBPTC, m_extTextureCompressionBPTC, "EXT_texture_compression_bptc"_s, EXTTextureCompressionBPTC::supported(*m_context));
     ENABLE_IF_REQUESTED(EXTTextureCompressionRGTC, m_extTextureCompressionRGTC, "EXT_texture_compression_rgtc"_s, EXTTextureCompressionRGTC::supported(*m_context));
@@ -2670,7 +2647,6 @@ std::optional<Vector<String>> WebGL2RenderingContext::getSupportedExtensions()
 
     APPEND_IF_SUPPORTED("EXT_color_buffer_float", EXTColorBufferFloat::supported(*m_context))
     APPEND_IF_SUPPORTED("EXT_color_buffer_half_float", EXTColorBufferHalfFloat::supported(*m_context))
-    APPEND_IF_SUPPORTED("EXT_disjoint_timer_query_webgl2", EXTDisjointTimerQueryWebGL2::supported(*m_context) && scriptExecutionContext()->settingsValues().webGLTimerQueriesEnabled)
     APPEND_IF_SUPPORTED("EXT_float_blend", EXTFloatBlend::supported(*m_context))
     APPEND_IF_SUPPORTED("EXT_texture_compression_bptc", EXTTextureCompressionBPTC::supported(*m_context))
     APPEND_IF_SUPPORTED("EXT_texture_compression_rgtc", EXTTextureCompressionRGTC::supported(*m_context))

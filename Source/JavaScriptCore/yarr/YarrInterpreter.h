@@ -51,12 +51,8 @@ struct ByteTerm {
                 CharacterClass* characterClass;
                 struct {
                     unsigned subpatternId;
-                    unsigned duplicateNamedGroupId;
-                } parenIds;
-                struct {
-                    unsigned firstSubpatternId;
                     unsigned lastSubpatternId;
-                } assertionIds;
+                } ids;
             };
             union {
                 ByteDisjunction* parenthesesDisjunction;
@@ -195,8 +191,7 @@ struct ByteTerm {
         , m_matchDirection(Forward)
         , inputPosition(inputPos)
     {
-        atom.parenIds.subpatternId = subpatternId;
-        atom.parenIds.duplicateNamedGroupId = 0;
+        atom.ids.subpatternId = subpatternId;
         atom.parenthesesDisjunction = parenthesesInfo;
         atom.quantityType = QuantifierType::FixedCount;
         atom.quantityMinCount = 1;
@@ -221,8 +216,7 @@ struct ByteTerm {
         , m_matchDirection(Forward)
         , inputPosition(inputPos)
     {
-        atom.parenIds.subpatternId = subpatternId;
-        atom.parenIds.duplicateNamedGroupId = 0;
+        atom.ids.subpatternId = subpatternId;
         atom.quantityType = QuantifierType::FixedCount;
         atom.quantityMinCount = 1;
         atom.quantityMaxCount = 1;
@@ -235,8 +229,7 @@ struct ByteTerm {
         , m_matchDirection(matchDirection)
         , inputPosition(inputPos)
     {
-        atom.parenIds.subpatternId = subpatternId;
-        atom.parenIds.duplicateNamedGroupId = 0;
+        atom.ids.subpatternId = subpatternId;
         atom.quantityType = QuantifierType::FixedCount;
         atom.quantityMinCount = 1;
         atom.quantityMaxCount = 1;
@@ -353,26 +346,7 @@ struct ByteTerm {
     {
         return ByteTerm(Type::SubpatternEnd);
     }
-
-    static ByteTerm ParentheticalAssertionBegin(unsigned firstSubpatternId, bool invert, MatchDirection matchDirection)
-    {
-        ByteTerm term(Type::ParentheticalAssertionBegin);
-        term.atom.assertionIds.firstSubpatternId = firstSubpatternId;
-        term.m_invert = invert;
-        term.m_matchDirection = matchDirection;
-        return term;
-    }
-
-    static ByteTerm ParentheticalAssertionEnd(unsigned firstSubpatternId, unsigned lastSubpatternId, bool invert, MatchDirection matchDirection)
-    {
-        ByteTerm term(Type::ParentheticalAssertionEnd);
-        term.atom.assertionIds.firstSubpatternId = firstSubpatternId;
-        term.atom.assertionIds.lastSubpatternId = lastSubpatternId;
-        term.m_invert = invert;
-        term.m_matchDirection = matchDirection;
-        return term;
-    }
-
+    
     static ByteTerm DotStarEnclosure(bool bolAnchor, bool eolAnchor)
     {
         ByteTerm term(Type::DotStarEnclosure);
@@ -400,27 +374,17 @@ struct ByteTerm {
     {
         ASSERT(this->type == Type::ParentheticalAssertionBegin
             || this->type == Type::ParentheticalAssertionEnd);
-        return lastSubpatternId() >= firstSubpatternId();
+        return lastSubpatternId() >= subpatternId();
     }
 
     unsigned subpatternId()
     {
-        return atom.parenIds.subpatternId;
-    }
-
-    unsigned duplicateNamedGroupId()
-    {
-        return atom.parenIds.duplicateNamedGroupId;
-    }
-
-    unsigned firstSubpatternId()
-    {
-        return atom.assertionIds.firstSubpatternId;
+        return atom.ids.subpatternId;
     }
 
     unsigned lastSubpatternId()
     {
-        return atom.assertionIds.lastSubpatternId;
+        return atom.ids.lastSubpatternId;
     }
     bool invert()
     {
@@ -457,14 +421,11 @@ public:
 struct BytecodePattern {
     WTF_MAKE_FAST_ALLOCATED;
 public:
-    BytecodePattern(std::unique_ptr<ByteDisjunction> body, Vector<std::unique_ptr<ByteDisjunction>>& parenthesesInfoToAdopt, YarrPattern& pattern, BumpPointerAllocator* allocator, ConcurrentJSLock* lock, unsigned offsetVectorBaseForNamedCaptures, unsigned offsetsSize)
+    BytecodePattern(std::unique_ptr<ByteDisjunction> body, Vector<std::unique_ptr<ByteDisjunction>>& parenthesesInfoToAdopt, YarrPattern& pattern, BumpPointerAllocator* allocator, ConcurrentJSLock* lock)
         : m_body(WTFMove(body))
         , m_flags(pattern.m_flags)
         , m_allocator(allocator)
         , m_lock(lock)
-        , m_offsetVectorBaseForNamedCaptures(offsetVectorBaseForNamedCaptures)
-        , m_offsetsSize(offsetsSize)
-        , m_duplicateNamedGroupForSubpatternId(pattern.m_duplicateNamedGroupForSubpatternId)
     {
         m_body->terms.shrinkToFit();
 
@@ -479,20 +440,10 @@ public:
 
         m_userCharacterClasses.swap(pattern.m_userCharacterClasses);
         m_userCharacterClasses.shrinkToFit();
-
-        m_numDuplicateNamedCaptureGroups = pattern.m_numDuplicateNamedCaptureGroups;
     }
 
     size_t estimatedSizeInBytes() const { return m_body->estimatedSizeInBytes(); }
-
-    bool hasDuplicateNamedCaptureGroups() const { return !!m_numDuplicateNamedCaptureGroups; }
-
-    unsigned offsetForDuplicateNamedGroupId(unsigned duplicateNamedGroupId)
-    {
-        ASSERT(duplicateNamedGroupId);
-        return m_offsetVectorBaseForNamedCaptures + duplicateNamedGroupId - 1;
-    }
-
+    
     bool ignoreCase() const { return m_flags.contains(Flags::IgnoreCase); }
     bool multiline() const { return m_flags.contains(Flags::Multiline); }
     bool hasIndices() const { return m_flags.contains(Flags::HasIndices); }
@@ -506,11 +457,6 @@ public:
     // with a VM.  Cache a pointer to our VM's m_regExpAllocator.
     BumpPointerAllocator* m_allocator;
     ConcurrentJSLock* m_lock;
-
-    unsigned m_numDuplicateNamedCaptureGroups;
-    unsigned m_offsetVectorBaseForNamedCaptures;
-    unsigned m_offsetsSize;
-    Vector<unsigned> m_duplicateNamedGroupForSubpatternId;
 
     CharacterClass* newlineCharacterClass;
     CharacterClass* wordcharCharacterClass;

@@ -46,14 +46,6 @@ CSSStyleRule::CSSStyleRule(StyleRule& styleRule, CSSStyleSheet* parent)
     : CSSRule(parent)
     , m_styleRule(styleRule)
     , m_styleMap(DeclaredStylePropertyMap::create(*this))
-    , m_childRuleCSSOMWrappers(0)
-{
-}
-
-CSSStyleRule::CSSStyleRule(StyleRuleWithNesting& styleRule, CSSStyleSheet* parent)
-    : CSSRule(parent)
-    , m_styleRule(styleRule)
-    , m_styleMap(DeclaredStylePropertyMap::create(*this))
     , m_childRuleCSSOMWrappers(styleRule.nestedRules().size())
 {
 }
@@ -127,14 +119,6 @@ void CSSStyleRule::setSelectorText(const String& selectorText)
     }
 }
 
-Vector<Ref<StyleRuleBase>> CSSStyleRule::nestedRules() const
-{
-    if (m_styleRule->isStyleRuleWithNesting())
-        return downcast<StyleRuleWithNesting>(m_styleRule.get()).nestedRules();
-
-    return { };
-}
-
 String CSSStyleRule::cssText() const
 {
     StringBuilder builder;
@@ -142,8 +126,9 @@ String CSSStyleRule::cssText() const
     builder.append(" {");
 
     auto declarations = m_styleRule->properties().asText();
+    const auto& nestedRules = m_styleRule->nestedRules();
 
-    if (nestedRules().isEmpty()) {
+    if (nestedRules.isEmpty()) {
         if (!declarations.isEmpty())
             builder.append(' ', declarations, " }");
         else
@@ -153,7 +138,7 @@ String CSSStyleRule::cssText() const
     }
 
     builder.append("\n  ", declarations);
-    for (const auto& nestedRule : nestedRules()) {
+    for (const auto& nestedRule : nestedRules) {
         auto wrapped = nestedRule->createCSSOMWrapper();
         auto text = wrapped->cssText();
         builder.append(text, "\n}");
@@ -171,7 +156,7 @@ void CSSStyleRule::reattach(StyleRuleBase& rule)
 
 unsigned CSSStyleRule::length() const
 {
-    return nestedRules().size();
+    return m_styleRule->nestedRules().size();
 }
 
 CSSRule* CSSStyleRule::item(unsigned index) const
@@ -179,11 +164,11 @@ CSSRule* CSSStyleRule::item(unsigned index) const
     if (index >= length())
         return nullptr;
 
-    ASSERT(m_childRuleCSSOMWrappers.size() == nestedRules().size());
+    ASSERT(m_childRuleCSSOMWrappers.size() == m_styleRule->nestedRules().size());
 
     auto& rule = m_childRuleCSSOMWrappers[index];
     if (!rule)
-        rule = nestedRules()[index]->createCSSOMWrapper(const_cast<CSSStyleRule&>(*this));
+        rule = m_styleRule->nestedRules()[index]->createCSSOMWrapper(const_cast<CSSStyleRule&>(*this));
 
     return rule.get();
 }

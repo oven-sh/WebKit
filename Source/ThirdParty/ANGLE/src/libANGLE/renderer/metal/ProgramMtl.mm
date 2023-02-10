@@ -13,7 +13,6 @@
 
 #include <sstream>
 
-#include "common/WorkerThread.h"
 #include "common/debug.h"
 #include "common/system_utils.h"
 
@@ -29,11 +28,6 @@
 #include "libANGLE/renderer/metal/mtl_utils.h"
 #include "libANGLE/renderer/metal/renderermtl_utils.h"
 #include "libANGLE/renderer/renderer_utils.h"
-#include "libANGLE/trace.h"
-
-#define ANGLE_PARALLEL_LINK_RETURN(X) return std::make_unique<LinkEventDone>(X);
-#define ANGLE_PARALLEL_LINK_TRY(EXPR) ANGLE_TRY_TEMPLATE(EXPR, ANGLE_PARALLEL_LINK_RETURN)
-
 namespace rx
 {
 
@@ -361,48 +355,6 @@ constexpr size_t PipelineParametersToFragmentShaderVariantIndex(bool emulateCove
     ASSERT(index < kFragmentShaderVariants);
     return index;
 }
-
-bool UseFastMathForShaderCompilation(ContextMtl *context,
-                                     const mtl::TranslatedShaderInfo *translatedMslInfo)
-{
-    return !context->getDisplay()->getFeatures().intelDisableFastMath.enabled ||
-           !translatedMslInfo->hasInvariantOrAtan;
-}
-
-angle::Result CreateMslShaderLib(ContextMtl *context,
-                                 gl::InfoLog &infoLog,
-                                 mtl::TranslatedShaderInfo *translatedMslInfo,
-                                 const std::map<std::string, std::string> &substitutionMacros)
-{
-    ANGLE_MTL_OBJC_SCOPE
-    {
-        mtl::LibraryCache &libraryCache = context->getDisplay()->getLibraryCache();
-
-        // Convert to actual binary shader
-        mtl::AutoObjCPtr<NSError *> err = nil;
-        bool enableFastMath = UseFastMathForShaderCompilation(context, translatedMslInfo);
-        translatedMslInfo->metalLibrary =
-            libraryCache.getOrCompileShaderLibrary(context, translatedMslInfo->metalShaderSource,
-                                                   substitutionMacros, enableFastMath, &err);
-        if (err && !translatedMslInfo->metalLibrary)
-        {
-            std::ostringstream ss;
-            ss << "Internal error compiling shader with Metal backend.\n";
-            ss << err.get().localizedDescription.UTF8String << "\n";
-            ss << "-----\n";
-            ss << translatedMslInfo->metalShaderSource;
-            ss << "-----\n";
-
-            infoLog << ss.str();
-
-            ANGLE_MTL_HANDLE_ERROR(context, ss.str().c_str(), GL_INVALID_OPERATION);
-            return angle::Result::Stop;
-        }
-
-        return angle::Result::Continue;
-    }
-}
-
 }  // namespace
 
 // TODO(angleproject:7979) Upgrade ANGLE Uniform buffer remapper to compute shaders
@@ -573,17 +525,7 @@ std::unique_ptr<rx::LinkEvent> ProgramMtl::load(const gl::Context *context,
                                                 gl::InfoLog &infoLog)
 {
 
-    ContextMtl *contextMtl = mtl::GetImpl(context);
-    // NOTE(hqle): No transform feedbacks for now, since we only support ES 2.0 atm
-
-    reset(contextMtl);
-
-    loadTranslatedShaders(stream);
-    loadShaderInternalInfo(stream);
-    ANGLE_PARALLEL_LINK_TRY(loadDefaultUniformBlocksInfo(context, stream));
-    ANGLE_PARALLEL_LINK_TRY(loadInterfaceBlockInfo(context, stream));
-
-    return compileMslShaderLibs(context, infoLog);
+    return std::make_unique<LinkEventDone>(linkTranslatedShaders(context, stream, infoLog));
 }
 
 void ProgramMtl::save(const gl::Context *context, gl::BinaryOutputStream *stream)
@@ -606,26 +548,39 @@ std::unique_ptr<LinkEvent> ProgramMtl::link(const gl::Context *context,
                                             gl::InfoLog &infoLog,
                                             const gl::ProgramMergedVaryings &mergedVaryings)
 {
-    ContextMtl *contextMtl = mtl::GetImpl(context);
-
     // Link resources before calling GetShaderSource to make sure they are ready for the set/binding
     // assignment done in that function.
     linkResources(context, resources);
 
+    // NOTE(hqle): Parallelize linking.
+    return std::make_unique<LinkEventDone>(linkImpl(context, resources, infoLog));
+}
+
+angle::Result ProgramMtl::linkImplDirect(const gl::Context *glContext,
+                                         const gl::ProgramLinkedResources &resources,
+                                         gl::InfoLog &infoLog)
+{
+    ContextMtl *contextMtl = mtl::GetImpl(glContext);
+
     reset(contextMtl);
-    ANGLE_PARALLEL_LINK_TRY(initDefaultUniformBlocks(context));
-    linkUpdateHasFlatAttributes(context);
+    ANGLE_TRY(initDefaultUniformBlocks(glContext));
 
     gl::ShaderMap<std::string> shaderSources;
     gl::ShaderMap<std::string> translatedMslShaders;
-    mtl::MSLGetShaderSource(context, mState, resources, &shaderSources);
+    mtl::MSLGetShaderSource(glContext, mState, resources, &shaderSources);
 
-    ANGLE_PARALLEL_LINK_TRY(mtl::MTLGetMSL(
-        context, mState, contextMtl->getCaps(), shaderSources, &mMslShaderTranslateInfo,
-        &translatedMslShaders, mState.getExecutable().getTransformFeedbackBufferCount()));
+    ANGLE_TRY(mtl::MTLGetMSL(glContext, mState, contextMtl->getCaps(), shaderSources,
+                             &mMslShaderTranslateInfo, &translatedMslShaders,
+                             mState.getExecutable().getTransformFeedbackBufferCount()));
     mMslXfbOnlyVertexShaderInfo = mMslShaderTranslateInfo[gl::ShaderType::Vertex];
-
-    return compileMslShaderLibs(context, infoLog);
+    for (gl::ShaderType shaderType : gl::kAllGLES2ShaderTypes)
+    {
+        // Create actual Metal shader
+        ANGLE_TRY(createMslShaderLib(contextMtl, shaderType, infoLog,
+                                     &mMslShaderTranslateInfo[shaderType],
+                                     getDefaultSubstitutionDictionary()));
+    }
+    return angle::Result::Continue;
 }
 
 void ProgramMtl::linkUpdateHasFlatAttributes(const gl::Context *context)
@@ -654,122 +609,36 @@ void ProgramMtl::linkUpdateHasFlatAttributes(const gl::Context *context)
     }
 }
 
-class ProgramMtl::CompileMslTask final : public angle::Closure
+angle::Result ProgramMtl::linkImpl(const gl::Context *glContext,
+                                   const gl::ProgramLinkedResources &resources,
+                                   gl::InfoLog &infoLog)
 {
-  public:
-    CompileMslTask(ContextMtl *context,
-                   mtl::TranslatedShaderInfo *translatedMslInfo,
-                   const std::map<std::string, std::string> &substitutionMacros)
-        : mContext(context),
-          mTranslatedMslInfo(translatedMslInfo),
-          mSubstitutionMacros(substitutionMacros)
-    {}
+    ANGLE_TRY(linkImplDirect(glContext, resources, infoLog));
+    linkUpdateHasFlatAttributes(glContext);
+    return angle::Result::Continue;
+}
 
-    void operator()() override
-    {
-        mResult = CreateMslShaderLib(mContext, mInfoLog, mTranslatedMslInfo, mSubstitutionMacros);
-    }
-
-    angle::Result getResult(gl::InfoLog &infoLog)
-    {
-        if (!mInfoLog.empty())
-        {
-            infoLog << mInfoLog.str();
-        }
-
-        return mResult;
-    }
-
-  private:
-    ContextMtl *mContext;
-    gl::InfoLog mInfoLog;
-    mtl::TranslatedShaderInfo *mTranslatedMslInfo;
-    std::map<std::string, std::string> mSubstitutionMacros;
-    angle::Result mResult = angle::Result::Continue;
-};
-
-// The LinkEvent implementation for linking a Metal program
-class ProgramMtl::ProgramLinkEvent final : public LinkEvent
+angle::Result ProgramMtl::linkTranslatedShaders(const gl::Context *glContext,
+                                                gl::BinaryInputStream *stream,
+                                                gl::InfoLog &infoLog)
 {
-  public:
-    ProgramLinkEvent(gl::InfoLog &infoLog,
-                     std::shared_ptr<angle::WorkerThreadPool> workerPool,
-                     std::vector<std::shared_ptr<ProgramMtl::CompileMslTask>> &&compileTasks)
-        : mInfoLog(infoLog), mTasks(std::move(compileTasks))
-    {
-        mWaitableEvents.reserve(mTasks.size());
-        for (const auto &task : mTasks)
-        {
-            mWaitableEvents.push_back(workerPool->postWorkerTask(task));
-        }
-    }
+    ContextMtl *contextMtl = mtl::GetImpl(glContext);
+    // NOTE(hqle): No transform feedbacks for now, since we only support ES 2.0 atm
 
-    bool isLinking() override { return !angle::WaitableEvent::AllReady(&mWaitableEvents); }
+    reset(contextMtl);
 
-    angle::Result wait(const gl::Context *context) override
-    {
-        ANGLE_TRACE_EVENT0("gpu.angle", "ProgramMtl::ProgramLinkEvent::wait");
-        angle::WaitableEvent::WaitMany(&mWaitableEvents);
+    loadTranslatedShaders(stream);
+    loadShaderInternalInfo(stream);
+    ANGLE_TRY(loadDefaultUniformBlocksInfo(glContext, stream));
+    ANGLE_TRY(loadInterfaceBlockInfo(glContext, stream));
+    ANGLE_TRY(createMslShaderLib(contextMtl, gl::ShaderType::Vertex, infoLog,
+                                 &mMslShaderTranslateInfo[gl::ShaderType::Vertex],
+                                 getDefaultSubstitutionDictionary()));
+    ANGLE_TRY(createMslShaderLib(contextMtl, gl::ShaderType::Fragment, infoLog,
+                                 &mMslShaderTranslateInfo[gl::ShaderType::Fragment],
+                                 getDefaultSubstitutionDictionary()));
 
-        for (const auto &task : mTasks)
-        {
-            ANGLE_TRY(task->getResult(mInfoLog));
-        }
-
-        return angle::Result::Continue;
-    }
-
-  private:
-    gl::InfoLog &mInfoLog;
-    std::vector<std::shared_ptr<ProgramMtl::CompileMslTask>> mTasks;
-    std::vector<std::shared_ptr<angle::WaitableEvent>> mWaitableEvents;
-};
-
-std::unique_ptr<LinkEvent> ProgramMtl::compileMslShaderLibs(const gl::Context *context,
-                                                            gl::InfoLog &infoLog)
-{
-    ANGLE_TRACE_EVENT0("gpu.angle", "ProgramMtl::compileMslShaderLibs");
-
-    ContextMtl *contextMtl = mtl::GetImpl(context);
-    bool asyncCompile =
-        contextMtl->getDisplay()->getFeatures().enableParallelMtlLibraryCompilation.enabled;
-    mtl::LibraryCache &libraryCache = contextMtl->getDisplay()->getLibraryCache();
-
-    std::vector<std::shared_ptr<ProgramMtl::CompileMslTask>> asyncTasks;
-    for (gl::ShaderType shaderType : gl::kAllGLES2ShaderTypes)
-    {
-        mtl::TranslatedShaderInfo *translateInfo  = &mMslShaderTranslateInfo[shaderType];
-        std::map<std::string, std::string> macros = getDefaultSubstitutionDictionary();
-        bool enableFastMath = UseFastMathForShaderCompilation(contextMtl, translateInfo);
-
-        // Check if the shader is already in the cache and use it instead of spawning a new thread
-        translateInfo->metalLibrary =
-            libraryCache.get(translateInfo->metalShaderSource, macros, enableFastMath);
-
-        if (!translateInfo->metalLibrary)
-        {
-            if (asyncCompile)
-            {
-                auto task =
-                    std::make_shared<ProgramMtl::CompileMslTask>(contextMtl, translateInfo, macros);
-                asyncTasks.push_back(task);
-            }
-            else
-            {
-                ANGLE_PARALLEL_LINK_TRY(
-                    CreateMslShaderLib(contextMtl, infoLog, translateInfo, macros));
-            }
-        }
-    }
-
-    if (asyncTasks.empty())
-    {
-        // All shaders were in the cache, no async work to do
-        return std::make_unique<LinkEventDone>(angle::Result::Continue);
-    }
-
-    return std::make_unique<ProgramMtl::ProgramLinkEvent>(infoLog, context->getWorkerThreadPool(),
-                                                          std::move(asyncTasks));
+    return angle::Result::Continue;
 }
 
 mtl::BufferPool *ProgramMtl::getBufferPool(ContextMtl *context)
@@ -915,7 +784,8 @@ angle::Result ProgramMtl::getSpecializedShader(ContextMtl *context,
             {
                 // Lazily compile XFB only shader
                 gl::InfoLog infoLog;
-                ANGLE_TRY(CreateMslShaderLib(context, infoLog, &mMslXfbOnlyVertexShaderInfo,
+                ANGLE_TRY(createMslShaderLib(context, shaderType, infoLog,
+                                             &mMslXfbOnlyVertexShaderInfo,
                                              {{"TRANSFORM_FEEDBACK_ENABLED", "1"}}));
                 translatedMslInfo->metalLibrary.get().label = @"TransformFeedback";
             }
@@ -1009,6 +879,44 @@ bool ProgramMtl::hasSpecializedShader(gl::ShaderType shaderType,
                                       const mtl::RenderPipelineDesc &renderPipelineDesc)
 {
     return true;
+}
+
+angle::Result ProgramMtl::createMslShaderLib(
+    ContextMtl *context,
+    gl::ShaderType shaderType,
+    gl::InfoLog &infoLog,
+    mtl::TranslatedShaderInfo *translatedMslInfo,
+    const std::map<std::string, std::string> &substitutionMacros)
+{
+    ANGLE_MTL_OBJC_SCOPE
+    {
+        mtl::LibraryCache &libraryCache = context->getDisplay()->getLibraryCache();
+
+        // Convert to actual binary shader
+        mtl::AutoObjCPtr<NSError *> err = nil;
+        bool disableFastMath = (context->getDisplay()->getFeatures().intelDisableFastMath.enabled &&
+                                translatedMslInfo->hasInvariantOrAtan);
+        translatedMslInfo->metalLibrary =
+            libraryCache.getOrCompileShaderLibrary(context, translatedMslInfo->metalShaderSource,
+                                                   substitutionMacros, !disableFastMath, &err);
+        if (err && !translatedMslInfo->metalLibrary)
+        {
+            std::ostringstream ss;
+            ss << "Internal error compiling shader with Metal backend.\n";
+            ss << err.get().localizedDescription.UTF8String << "\n";
+            ss << "-----\n";
+            ss << translatedMslInfo->metalShaderSource;
+            ss << "-----\n";
+
+            // ERR() << ss.str();
+            infoLog << ss.str();
+
+            ANGLE_MTL_HANDLE_ERROR(context, ss.str().c_str(), GL_INVALID_OPERATION);
+            return angle::Result::Stop;
+        }
+
+        return angle::Result::Continue;
+    }
 }
 
 void ProgramMtl::saveInterfaceBlockInfo(gl::BinaryOutputStream *stream)
@@ -1828,7 +1736,7 @@ angle::Result ProgramMtl::legalizeUniformBufferOffsets(
             // Has the content of the buffer has changed since last conversion?
             if (conversion->dirty)
             {
-                const uint8_t *srcBytes = bufferMtl->getClientShadowCopyData(context);
+                const uint8_t *srcBytes = bufferMtl->getBufferDataReadOnly(context);
                 srcBytes += srcOffset;
                 size_t sizeToCopy = bufferMtl->size() - srcOffset;
 
@@ -1914,10 +1822,6 @@ angle::Result ProgramMtl::encodeUniformBuffersInfoArgumentBuffer(
         context, bufferEncoder.metalArgBufferEncoder.get().encodedLength, nullptr, &argumentBuffer,
         &argumentBufferOffset));
 
-    // MTLArgumentEncoder is modifying the buffer indirectly on CPU. We need to call map()
-    // so that the buffer's data changes could be flushed to the GPU side later.
-    ANGLE_UNUSED_VARIABLE(argumentBuffer->mapWithOpt(context, /*readonly=*/false, /*noSync=*/true));
-
     [bufferEncoder.metalArgBufferEncoder setArgumentBuffer:argumentBuffer->get()
                                                     offset:argumentBufferOffset];
 
@@ -1954,9 +1858,7 @@ angle::Result ProgramMtl::encodeUniformBuffersInfoArgumentBuffer(
                                                atIndex:actualBufferIdx];
     }
 
-    // Flush changes made by MTLArgumentEncoder to GPU.
-    argumentBuffer->unmapAndFlushSubset(context, argumentBufferOffset,
-                                        bufferEncoder.metalArgBufferEncoder.get().encodedLength);
+    ANGLE_TRY(bufferEncoder.bufferPool.commit(context));
 
     cmdEncoder->setBuffer(shaderType, argumentBuffer, static_cast<uint32_t>(argumentBufferOffset),
                           mtl::kUBOArgumentBufferBindingIndex);

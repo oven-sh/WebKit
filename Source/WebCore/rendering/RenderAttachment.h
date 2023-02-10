@@ -42,6 +42,7 @@ public:
     void setShouldDrawBorder(bool drawBorder) { m_shouldDrawBorder = drawBorder; }
     bool shouldDrawBorder() const;
 
+    void invalidate();
     bool hasShadowContent() const { return m_hasShadowControls; }
     void setHasShadowControls(bool hasShadowControls) { m_hasShadowControls = hasShadowControls; }
     bool canHaveGeneratedChildren() const override { return m_hasShadowControls; }
@@ -64,6 +65,11 @@ private:
     bool m_shouldDrawBorder { true };
     bool m_hasShadowControls { false };
 };
+
+inline RenderAttachment* HTMLAttachmentElement::renderer() const
+{
+    return downcast<RenderAttachment>(HTMLElement::renderer());
+}
 
 } // namespace WebCore
 

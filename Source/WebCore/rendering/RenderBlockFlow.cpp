@@ -3,7 +3,7 @@
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)
  *           (C) 2007 David Smith (catfish.man@gmail.com)
  * Copyright (C) 2003-2023 Apple Inc. All rights reserved.
- * Copyright (C) 2014-2015 Google Inc. All rights reserved.
+ * Copyright (C) 2014 Google Inc. All rights reserved.
  * Copyright (C) Research In Motion Limited 2010. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
@@ -534,13 +534,6 @@ void RenderBlockFlow::layoutBlock(bool relayoutChildren, LayoutUnit pageLogicalH
             setChildrenInline(true);
         dirtyForLayoutFromPercentageHeightDescendants();
         layoutInFlowChildren(relayoutChildren, repaintLogicalTop, repaintLogicalBottom, maxFloatLogicalBottom);
-
-        // The containing block's of the floats within this BFC may specify margin-trim: block-end
-        // so we need to go through the floats that this BFC is aware of and check if any of
-        // the float's need their block-end margin trimmed
-        if (m_floatingObjects && establishesBlockFormattingContext())
-            trimFloatBlockEndMargins(blockFormattingContextInFlowBlockLevelContentHeight());
-
         // Expand our intrinsic height to encompass floats.
         LayoutUnit toAdd = borderAndPaddingAfter() + scrollbarLogicalHeight();
         if (lowestFloatLogicalBottom() > (logicalHeight() - toAdd) && createsNewFormattingContext())
@@ -1389,57 +1382,6 @@ bool RenderBlockFlow::shouldTrimChildMargin(MarginTrimType marginTrimType, const
     return lastInFlowChildBox() == &child;
 }
 
-void RenderBlockFlow::trimFloatBlockEndMargins(LayoutUnit blockFormattingContextInFlowContentHeight)
-{
-    ASSERT(m_floatingObjects && establishesBlockFormattingContext());
-    auto computeFloatMarginAfterStartLocationInBlockFormattingContext = [&](const RenderBox& floatBox) {
-        // Start with the location of the float within its containing block. If this containing
-        // block is the BFC in which we are trimming, then we can use this as the starting location
-        // since this is the float's positin within the BFC. If not, add the containing block's location
-        // to the float's location. This new value should be the location of the float relative to this
-        // new containing block. Keep doing this until we find the containing block that establishes
-        // a BFC
-        auto bfcRoot = floatBox.blockFormattingContextRoot();
-        ASSERT(bfcRoot);
-
-        LayoutSize offsetInsideBlockFormattingContext;
-        const RenderElement* currentBox = &floatBox;
-        while (currentBox != bfcRoot) {
-            offsetInsideBlockFormattingContext += currentBox->offsetFromContainer(*currentBox->container(), LayoutPoint { });
-            currentBox = currentBox->container();
-        }
-        if (bfcRoot->isHorizontalWritingMode())
-            return LayoutUnit { offsetInsideBlockFormattingContext.height() + bfcRoot->logicalHeightForChild(floatBox) };
-        return LayoutUnit { offsetInsideBlockFormattingContext.width() + bfcRoot->logicalWidthForChild(floatBox) };
-    };
-    for (auto& floatingObject : m_floatingObjects->set()) {
-        auto& floatBox = floatingObject->renderer();
-        auto floatContainingBlock = floatBox.containingBlock();
-        if (!floatContainingBlock->style().marginTrim().contains(MarginTrimType::BlockEnd) || floatBox.marginAfter() <= 0)
-            continue;
-
-        // There are 3 different cases that need to be taken into consideration when trimming the
-        // block-end margin of a float:
-        // 1.) The float margin box extends past the deepest past of content (margin should be trimmed all the way)
-        // 2.) The end of the deepest piece of is in between the float's border box and marign box (marign should be trimmed up to the content)
-        // 3.) The deepest piece of content is below the float's margin box (no trimming occurs)
-        auto floatMarginAfterStartLocation = computeFloatMarginAfterStartLocationInBlockFormattingContext(floatBox);
-        auto floatMarginAfter = floatContainingBlock->marginAfterForChild(floatBox);
-        if (floatMarginAfterStartLocation >= blockFormattingContextInFlowContentHeight)
-            trimMarginForFloat(*floatingObject, MarginTrimType::BlockEnd, floatMarginAfter);
-        else if (blockFormattingContextInFlowContentHeight > floatMarginAfterStartLocation && (blockFormattingContextInFlowContentHeight < floatMarginAfterStartLocation + floatMarginAfter))
-            trimMarginForFloat(*floatingObject, MarginTrimType::BlockEnd, floatMarginAfterStartLocation + floatMarginAfter - blockFormattingContextInFlowContentHeight);
-    }
-}
-
-bool RenderBlockFlow::shouldChildInlineMarginContributeToContainerIntrinsicSize(MarginTrimType marginSide, const RenderElement& child) const
-{
-    // For the purposes of computing a block container's intrinsic size, a float should not
-    // include its trimmed margins in its intrinsic size contributions
-    ASSERT((marginSide == MarginTrimType::InlineStart || marginSide == MarginTrimType::InlineEnd) && (child.containingBlock() == this));
-    return !child.isFloating() || !style().marginTrim().contains(marginSide);
-}
-
 LayoutUnit RenderBlockFlow::clearFloatsIfNeeded(RenderBox& child, MarginInfo& marginInfo, LayoutUnit oldTopPosMargin, LayoutUnit oldTopNegMargin, LayoutUnit yPos)
 {
     LayoutUnit heightIncrease = getClearDelta(child, yPos);
@@ -1707,6 +1649,7 @@ LayoutUnit RenderBlockFlow::applyAfterBreak(RenderBox& child, LayoutUnit logical
     bool checkAfterAlways = (checkColumnBreaks && child.style().breakAfter() == BreakBetween::Column)
         || (checkPageBreaks && alwaysPageBreak(child.style().breakAfter()));
     if (checkAfterAlways && inNormalFlow(child) && hasNextPage(logicalOffset, IncludePageBoundary)) {
+        LayoutUnit marginOffset = marginInfo.canCollapseWithMarginBefore() ? 0_lu : marginInfo.margin();
 
         // So our margin doesn't participate in the next collapsing steps.
         marginInfo.clearMargin();
@@ -1717,8 +1660,8 @@ LayoutUnit RenderBlockFlow::applyAfterBreak(RenderBox& child, LayoutUnit logical
         }
         if (checkFragmentBreaks) {
             LayoutUnit offsetBreakAdjustment;
-            if (fragmentedFlow->addForcedFragmentBreak(this, offsetFromLogicalTopOfFirstPage() + logicalOffset, &child, false, &offsetBreakAdjustment))
-                return logicalOffset + offsetBreakAdjustment;
+            if (fragmentedFlow->addForcedFragmentBreak(this, offsetFromLogicalTopOfFirstPage() + logicalOffset + marginOffset, &child, false, &offsetBreakAdjustment))
+                return logicalOffset + marginOffset + offsetBreakAdjustment;
         }
         return nextPageLogicalTop(logicalOffset, IncludePageBoundary);
     }
@@ -1814,25 +1757,28 @@ LayoutUnit RenderBlockFlow::adjustBlockChildForPagination(LayoutUnit logicalTopA
     return result;
 }
 
-static inline LayoutUnit calculateMinimumPageHeight(const RenderStyle& renderStyle, const InlineIterator::LineBoxIterator& lastLine, LayoutUnit lineTop, LayoutUnit lineBottom)
+static inline LayoutUnit calculateMinimumPageHeight(const RenderStyle& renderStyle, LegacyRootInlineBox& lastLine, LayoutUnit lineTop, LayoutUnit lineBottom)
 {
     // We may require a certain minimum number of lines per page in order to satisfy
     // orphans and widows, and that may affect the minimum page height.
     unsigned lineCount = std::max<unsigned>(renderStyle.hasAutoOrphans() ? 1 : renderStyle.orphans(), renderStyle.hasAutoWidows() ? 1 : renderStyle.widows());
     if (lineCount > 1) {
-        auto line = lastLine;
-        for (unsigned i = 1; i < lineCount && line->previous(); i++)
-            line = line->previous();
+        LegacyRootInlineBox* line = &lastLine;
+        for (unsigned i = 1; i < lineCount && line->prevRootBox(); i++)
+            line = line->prevRootBox();
 
         // FIXME: Paginating using line overflow isn't all fine. See FIXME in
         // adjustLinePositionForPagination() for more details.
-        lineTop = std::min(line->logicalTop(), line->inkOverflowTop());
+        LayoutRect overflow = line->logicalVisualOverflowRect(line->lineTop(), line->lineBottom());
+        lineTop = std::min(line->lineBoxTop(), overflow.y());
     }
     return lineBottom - lineTop;
 }
 
-static inline bool needsAppleMailPaginationQuirk(const RenderBlockFlow& renderer)
+static inline bool needsAppleMailPaginationQuirk(LegacyRootInlineBox& lineBox)
 {
+    auto& renderer = lineBox.renderer();
+
     if (!renderer.settings().appleMailPaginationQuirkEnabled())
         return false;
 
@@ -1850,17 +1796,7 @@ static void clearShouldBreakAtLineToAvoidWidowIfNeeded(RenderBlockFlow& blockFlo
     blockFlow.setDidBreakAtLineToAvoidWidow();
 }
 
-void RenderBlockFlow::adjustLinePositionForPagination(LegacyRootInlineBox* rootInlineBox, LayoutUnit& delta)
-{
-    auto adjustment = computeLineAdjustmentForPagination(rootInlineBox, delta);
-
-    rootInlineBox->setPaginationStrut(adjustment.strut);
-    rootInlineBox->setIsFirstAfterPageBreak(adjustment.isFirstAfterPageBreak);
-
-    delta += adjustment.strut;
-}
-
-RenderBlockFlow::LinePaginationAdjustment RenderBlockFlow::computeLineAdjustmentForPagination(const InlineIterator::LineBoxIterator& lineBox, LayoutUnit delta)
+void RenderBlockFlow::adjustLinePositionForPagination(LegacyRootInlineBox* lineBox, LayoutUnit& delta, bool& overflowsFragment, RenderFragmentedFlow* fragmentedFlow)
 {
     // FIXME: For now we paginate using line overflow. This ensures that lines don't overlap at all when we
     // put a strut between them for pagination purposes. However, this really isn't the desired rendering, since
@@ -1881,32 +1817,16 @@ RenderBlockFlow::LinePaginationAdjustment RenderBlockFlow::computeLineAdjustment
     // FIXME: Another problem with simply moving lines is that the available line width may change (because of floats).
     // Technically if the location we move the line to has a different line width than our old position, then we need to dirty the
     // line and all following lines.
-    auto computeLeafBoxTopAndBottom = [&] {
-        auto lineTop = LayoutUnit::max();
-        auto lineBottom = LayoutUnit::min();
-        for (auto box = lineBox->firstLeafBox(); box; box.traverseNextOnLine()) {
-            if (box->logicalTop() < lineTop)
-                lineTop = box->logicalTop();
-            if (box->logicalBottom() > lineBottom)
-                lineBottom = box->logicalBottom();
-        }
-        return std::pair { lineTop, lineBottom };
-    };
-
-    auto logicalOverflowTop = LayoutUnit { lineBox->inkOverflowTop() };
-    auto logicalOverflowBottom = LayoutUnit { lineBox->inkOverflowBottom() };
-    auto logicalOverflowHeight = logicalOverflowBottom - logicalOverflowTop;
-    auto logicalTop = LayoutUnit { lineBox->logicalTop() };
-    auto logicalOffset = std::min(logicalTop, logicalOverflowTop);
-    auto logicalBottom = std::max(LayoutUnit { lineBox->logicalBottom() }, logicalOverflowBottom);
-    auto lineHeight = logicalBottom - logicalOffset;
-
-    updateMinimumPageHeight(logicalOffset, calculateMinimumPageHeight(style(), lineBox, logicalOffset, logicalBottom));
+    overflowsFragment = false;
+    LayoutRect logicalVisualOverflow = lineBox->logicalVisualOverflowRect(lineBox->lineTop(), lineBox->lineBottom());
+    LayoutUnit logicalOffset = std::min(lineBox->lineBoxTop(), logicalVisualOverflow.y());
+    LayoutUnit logicalBottom = std::max(lineBox->lineBoxBottom(), logicalVisualOverflow.maxY());
+    LayoutUnit lineHeight = logicalBottom - logicalOffset;
+    updateMinimumPageHeight(logicalOffset, calculateMinimumPageHeight(style(), *lineBox, logicalOffset, logicalBottom));
     logicalOffset += delta;
-
+    lineBox->setPaginationStrut(0);
+    lineBox->setIsFirstAfterPageBreak(false);
     LayoutUnit pageLogicalHeight = pageLogicalHeightForOffset(logicalOffset);
-
-    auto* fragmentedFlow = enclosingFragmentedFlow();
     bool hasUniformPageLogicalHeight = !fragmentedFlow || fragmentedFlow->fragmentsHaveUniformLogicalHeight();
     // If lineHeight is greater than pageLogicalHeight, but logicalVisualOverflow.height() still fits, we are
     // still going to add a strut, so that the visible overflow fits on a single page.
@@ -1915,72 +1835,71 @@ RenderBlockFlow::LinePaginationAdjustment RenderBlockFlow::computeLineAdjustment
         // From here, the fix is not straightforward because it's not easy to always determine when the current line is the first in the page.
         // With no valid page height, we can't possibly accommodate the widow rules.
         clearShouldBreakAtLineToAvoidWidowIfNeeded(*this);
-        return { };
+        return;
     }
 
-    if (hasUniformPageLogicalHeight && logicalOverflowHeight > pageLogicalHeight) {
+    if (hasUniformPageLogicalHeight && logicalVisualOverflow.height() > pageLogicalHeight) {
         // We are so tall that we are bigger than a page. Before we give up and just leave the line where it is, try drilling into the
         // line and computing a new height that excludes anything we consider "blank space". We will discard margins, descent, and even overflow. If we are
         // able to fit with the blank space and overflow excluded, we will give the line its own page with the highest non-blank element being aligned with the
         // top of the page.
         // FIXME: We are still honoring gigantic margins, which does leave open the possibility of blank pages caused by this heuristic. It remains to be seen whether or not
         // this will be a real-world issue. For now we don't try to deal with this problem.
-        std::tie(logicalOffset, logicalBottom) = computeLeafBoxTopAndBottom();
+        logicalOffset = static_cast<float>(intMaxForLayoutUnit);
+        logicalBottom = static_cast<float>(intMinForLayoutUnit);
+        lineBox->computeReplacedAndTextLineTopAndBottom(logicalOffset, logicalBottom);
         lineHeight = logicalBottom - logicalOffset;
-        if (logicalOffset == LayoutUnit::max() || lineHeight > pageLogicalHeight) {
+        if (logicalOffset == intMaxForLayoutUnit || lineHeight > pageLogicalHeight) {
             // Give up. We're genuinely too big even after excluding blank space and overflow.
             clearShouldBreakAtLineToAvoidWidowIfNeeded(*this);
-            return { };
+            return;
         }
         pageLogicalHeight = pageLogicalHeightForOffset(logicalOffset);
     }
     
     LayoutUnit remainingLogicalHeight = pageRemainingLogicalHeightForOffset(logicalOffset, ExcludePageBoundary);
+    overflowsFragment = (lineHeight > remainingLogicalHeight);
 
-    int lineNumber = lineBox->lineIndex() + 1;
-    if (remainingLogicalHeight < lineHeight || (shouldBreakAtLineToAvoidWidow() && lineBreakToAvoidWidow() == lineNumber)) {
-        if (lineBreakToAvoidWidow() == lineNumber)
+    int lineIndex = legacyLineLayout()->lineCountUntil(lineBox);
+    if (remainingLogicalHeight < lineHeight || (shouldBreakAtLineToAvoidWidow() && lineBreakToAvoidWidow() == lineIndex)) {
+        if (lineBreakToAvoidWidow() == lineIndex)
             clearShouldBreakAtLineToAvoidWidowIfNeeded(*this);
         // If we have a non-uniform page height, then we have to shift further possibly.
         if (!hasUniformPageLogicalHeight && !pushToNextPageWithMinimumLogicalHeight(remainingLogicalHeight, logicalOffset, lineHeight))
-            return { };
+            return;
         if (lineHeight > pageLogicalHeight) {
             // Split the top margin in order to avoid splitting the visible part of the line.
-            remainingLogicalHeight -= std::min(lineHeight - pageLogicalHeight, std::max(0_lu, logicalOverflowTop - logicalTop));
+            remainingLogicalHeight -= std::min(lineHeight - pageLogicalHeight, std::max<LayoutUnit>(0, logicalVisualOverflow.y() - lineBox->lineBoxTop()));
         }
+        LayoutUnit remainingLogicalHeightAtNewOffset = pageRemainingLogicalHeightForOffset(logicalOffset + remainingLogicalHeight, ExcludePageBoundary);
+        overflowsFragment = (lineHeight > remainingLogicalHeightAtNewOffset);
         LayoutUnit totalLogicalHeight = lineHeight + std::max<LayoutUnit>(0, logicalOffset);
         LayoutUnit pageLogicalHeightAtNewOffset = hasUniformPageLogicalHeight ? pageLogicalHeight : pageLogicalHeightForOffset(logicalOffset + remainingLogicalHeight);
-
         setPageBreak(logicalOffset, lineHeight - remainingLogicalHeight);
-
-        bool avoidFirstLinePageBreak = lineBox->isFirst() && totalLogicalHeight < pageLogicalHeightAtNewOffset;
-        bool affectedByOrphans = !style().hasAutoOrphans() && style().orphans() >= lineNumber;
-
-        if ((avoidFirstLinePageBreak || affectedByOrphans) && !isOutOfFlowPositioned() && !isTableCell()) {
-            if (needsAppleMailPaginationQuirk(*this))
-                return { };
-
-            auto firstLineBox = InlineIterator::firstLineBoxFor(*this);
-            auto firstLineBoxOverflowTop = LayoutUnit { firstLineBox ? firstLineBox->inkOverflowTop() : 0 };
-            auto firstLineUpperOverhang = std::max(-firstLineBoxOverflowTop, 0_lu);
+        if (((lineBox == firstRootBox() && totalLogicalHeight < pageLogicalHeightAtNewOffset) || (!style().hasAutoOrphans() && style().orphans() >= lineIndex))
+            && !isOutOfFlowPositioned() && !isTableCell()) {
+            auto firstRootBox = this->firstRootBox();
+            if (!firstRootBox) {
+                setPaginationStrut(remainingLogicalHeight + logicalOffset);
+                return;
+            }
+            auto firstRootBoxOverflowRect = firstRootBox->logicalVisualOverflowRect(firstRootBox->lineTop(), firstRootBox->lineBottom());
+            auto firstLineUpperOverhang = std::max(-firstRootBoxOverflowRect.y(), 0_lu);
+            if (needsAppleMailPaginationQuirk(*lineBox))
+                return;
             setPaginationStrut(remainingLogicalHeight + logicalOffset + firstLineUpperOverhang);
-
-            return { };
+        } else {
+            delta += remainingLogicalHeight;
+            lineBox->setPaginationStrut(remainingLogicalHeight);
+            lineBox->setIsFirstAfterPageBreak(true);
         }
-
-        return { remainingLogicalHeight, true };
-    }
-
-    if (remainingLogicalHeight == pageLogicalHeight) {
+    } else if (remainingLogicalHeight == pageLogicalHeight) {
         // We're at the very top of a page or column.
-        bool isFirstLine = lineBox->isFirst();
-        if (!isFirstLine || offsetFromLogicalTopOfFirstPage())
+        if (lineBox != firstRootBox())
+            lineBox->setIsFirstAfterPageBreak(true);
+        if (lineBox != firstRootBox() || offsetFromLogicalTopOfFirstPage())
             setPageBreak(logicalOffset, lineHeight);
-
-        return { 0_lu, !isFirstLine };
     }
-
-    return { };
 }
 
 void RenderBlockFlow::setBreakAtLineToAvoidWidow(int lineToBreak)
@@ -2513,7 +2432,7 @@ FloatingObject* RenderBlockFlow::insertFloatingObject(RenderBox& floatBox)
     // Create the special floatingObject entry & append it to the list
 
     std::unique_ptr<FloatingObject> floatingObject = FloatingObject::create(floatBox);
-
+    
     // Our location is irrelevant if we're unsplittable or no pagination is in effect. Just lay out the float.
     bool isChildRenderBlock = floatBox.isRenderBlock();
     if (isChildRenderBlock && !floatBox.needsLayout() && view().frameView().layoutContext().layoutState()->pageLogicalHeightChanged())
@@ -2616,33 +2535,6 @@ LayoutUnit RenderBlockFlow::logicalRightOffsetForPositioningFloat(LayoutUnit log
     return adjustLogicalRightOffsetForLine(offset, applyTextIndent);
 }
 
-void RenderBlockFlow::trimMarginForFloat(FloatingObject& floatingObject, MarginTrimType marginTrimType, LayoutUnit trimAmount)
-{
-    ASSERT(!floatingObject.isPlaced() || marginTrimType == MarginTrimType::BlockEnd);
-    switch (marginTrimType) {
-    case MarginTrimType::InlineStart: {
-        setLogicalWidthForFloat(floatingObject, logicalWidthForFloat(floatingObject) - floatingObject.renderer().marginStart(&style()));
-        floatingObject.renderer().setMarginStart(0_lu, &style());
-        break; 
-    }
-    case MarginTrimType::InlineEnd: {
-        setLogicalWidthForFloat(floatingObject, logicalWidthForFloat(floatingObject) - floatingObject.renderer().marginEnd(&style()));
-        floatingObject.renderer().setMarginEnd(0_lu, &style());
-        break;
-    }
-    case MarginTrimType::BlockStart: {
-        setLogicalHeightForFloat(floatingObject, logicalHeightForFloat(floatingObject) - floatingObject.renderer().marginBefore(&style()));
-        floatingObject.renderer().setMarginBefore(0_lu, &style());
-        break;
-    }
-    case MarginTrimType::BlockEnd: {
-        ASSERT(trimAmount <= floatingObject.renderer().marginAfter(&style()) && trimAmount);
-        setLogicalHeightForFloat(floatingObject, logicalHeightForFloat(floatingObject) - trimAmount);
-        break;
-    }
-    }
-}
-
 void RenderBlockFlow::computeLogicalLocationForFloat(FloatingObject& floatingObject, LayoutUnit& logicalTopOffset)
 {
     auto& childBox = floatingObject.renderer();
@@ -2653,20 +2545,6 @@ void RenderBlockFlow::computeLogicalLocationForFloat(FloatingObject& floatingObj
 
     LayoutUnit floatLogicalLeft;
 
-    auto containingBlockMarginTrim = style().marginTrim();
-    auto floatWidthWithoutMargin = [&](FloatingObject& floatingObject, MarginTrimType marginSide) {
-        auto& containingBlockStyle = style();
-        switch (marginSide) {
-        case MarginTrimType::InlineStart:
-            return logicalWidthForFloat(floatingObject) - floatingObject.renderer().marginStart(&containingBlockStyle);
-        case MarginTrimType::InlineEnd:
-            return logicalWidthForFloat(floatingObject) - floatingObject.renderer().marginEnd(&containingBlockStyle);
-        default: {
-            ASSERT_NOT_REACHED();
-            return logicalWidthForFloat(floatingObject);
-        }
-        }
-    };
     bool insideFragmentedFlow = enclosingFragmentedFlow();
     bool isInitialLetter = childBox.style().styleType() == PseudoId::FirstLetter && childBox.style().initialLetterDrop() > 0;
     
@@ -2680,21 +2558,11 @@ void RenderBlockFlow::computeLogicalLocationForFloat(FloatingObject& floatingObj
         }
     }
 
-    // For trimming the margins of floats:
-    // It also affects floats for which the block container is a containing block by:
-    // Discarding the inline-start/inline-end margin of an inline-start/inline-end float (or equivalent) 
-    // whose outer edge on that side coincides with the inner edge of the container.
-    auto floatMarginAdjoinsContainerInnerEdge = [&](MarginTrimType marginTrimType, LayoutUnit floatLogicalPosition, LayoutUnit logicalOffset) {
-        return containingBlockMarginTrim.contains(marginTrimType) && floatLogicalPosition == logicalOffset;
-    };
     if (RenderStyle::usedFloat(childBox) == UsedFloat::Left) {
         LayoutUnit heightRemainingLeft = 1_lu;
         LayoutUnit heightRemainingRight = 1_lu;
         floatLogicalLeft = logicalLeftOffsetForPositioningFloat(logicalTopOffset, logicalLeftOffset, false, &heightRemainingLeft);
-        auto availableSpace = logicalRightOffsetForPositioningFloat(logicalTopOffset, logicalRightOffset, false, &heightRemainingRight) - floatLogicalLeft;
-        while (availableSpace < floatLogicalWidth) {
-            if (floatMarginAdjoinsContainerInnerEdge(MarginTrimType::InlineStart, floatLogicalLeft, logicalLeftOffset) && availableSpace >= floatWidthWithoutMargin(floatingObject, MarginTrimType::InlineStart))
-                break;
+        while (logicalRightOffsetForPositioningFloat(logicalTopOffset, logicalRightOffset, false, &heightRemainingRight) - floatLogicalLeft < floatLogicalWidth) {
             logicalTopOffset += std::min(heightRemainingLeft, heightRemainingRight);
             floatLogicalLeft = logicalLeftOffsetForPositioningFloat(logicalTopOffset, logicalLeftOffset, false, &heightRemainingLeft);
             if (insideFragmentedFlow) {
@@ -2703,20 +2571,13 @@ void RenderBlockFlow::computeLogicalLocationForFloat(FloatingObject& floatingObj
                 logicalLeftOffset = logicalLeftOffsetForContent(logicalTopOffset); // Constant part of left offset.
                 floatLogicalWidth = std::min(logicalWidthForFloat(floatingObject), logicalRightOffset - logicalLeftOffset);
             }
-            availableSpace = logicalRightOffsetForPositioningFloat(logicalTopOffset, logicalRightOffset, false, &heightRemainingRight) - floatLogicalLeft;
         }
         floatLogicalLeft = std::max(logicalLeftOffset - borderAndPaddingLogicalLeft(), floatLogicalLeft);
-        
-        if (containingBlockMarginTrim.contains(MarginTrimType::InlineStart) && logicalLeftOffset == floatLogicalLeft)
-            trimMarginForFloat(floatingObject, MarginTrimType::InlineStart);
     } else {
         LayoutUnit heightRemainingLeft = 1_lu;
         LayoutUnit heightRemainingRight = 1_lu;
         floatLogicalLeft = logicalRightOffsetForPositioningFloat(logicalTopOffset, logicalRightOffset, false, &heightRemainingRight);
-        auto availableSpace = floatLogicalLeft - logicalLeftOffsetForPositioningFloat(logicalTopOffset, logicalLeftOffset, false, &heightRemainingLeft);
-        while (availableSpace < floatLogicalWidth) {
-            if (floatMarginAdjoinsContainerInnerEdge(MarginTrimType::InlineEnd, floatLogicalLeft, logicalRightOffset) && (availableSpace >= floatWidthWithoutMargin(floatingObject, MarginTrimType::InlineEnd)))
-                break;
+        while (floatLogicalLeft - logicalLeftOffsetForPositioningFloat(logicalTopOffset, logicalLeftOffset, false, &heightRemainingLeft) < floatLogicalWidth) {
             logicalTopOffset += std::min(heightRemainingLeft, heightRemainingRight);
             floatLogicalLeft = logicalRightOffsetForPositioningFloat(logicalTopOffset, logicalRightOffset, false, &heightRemainingRight);
             if (insideFragmentedFlow) {
@@ -2725,20 +2586,12 @@ void RenderBlockFlow::computeLogicalLocationForFloat(FloatingObject& floatingObj
                 logicalLeftOffset = logicalLeftOffsetForContent(logicalTopOffset); // Constant part of left offset.
                 floatLogicalWidth = std::min(logicalWidthForFloat(floatingObject), logicalRightOffset - logicalLeftOffset);
             }
-            availableSpace = floatLogicalLeft - logicalLeftOffsetForPositioningFloat(logicalTopOffset, logicalLeftOffset, false, &heightRemainingLeft);
         }
-        // We trim before we update floatLogicalLeft becaue it currently represents the logical
-        // right for the float. We would have to otherwise update floatLogicalLeft each time we
-        // trim a margin by adding the trimmed margin to its value
-        if (containingBlockMarginTrim.contains(MarginTrimType::InlineEnd) && logicalRightOffset == floatLogicalLeft)
-            trimMarginForFloat(floatingObject, MarginTrimType::InlineEnd);    
         // Use the original width of the float here, since the local variable
         // |floatLogicalWidth| was capped to the available line width. See
         // fast/block/float/clamped-right-float.html.
         floatLogicalLeft -= logicalWidthForFloat(floatingObject);
     }
-    if (style().marginTrim().contains(MarginTrimType::BlockStart) && logicalTopOffset == borderAndPaddingBefore())
-        trimMarginForFloat(floatingObject, MarginTrimType::BlockStart);
 
     LayoutUnit childLogicalLeftMargin = style().isLeftToRightDirection() ? marginStartForChild(childBox) : marginEndForChild(childBox);
     LayoutUnit childBeforeMargin = marginBeforeForChild(childBox);
@@ -3987,6 +3840,9 @@ void RenderBlockFlow::layoutModernLines(bool relayoutChildren, LayoutUnit& repai
 
     layoutFormattingContextLineLayout.layout();
 
+    if (layoutState.isPaginated())
+        layoutFormattingContextLineLayout.adjustForPagination();
+
     auto newBorderBoxBottom = computeBorderBoxBottom();
 
     auto updateRepaintTopAndBottomIfNeeded = [&] {
@@ -4827,19 +4683,6 @@ bool RenderBlockFlow::tryComputePreferredWidthsUsingModernPath(LayoutUnit& minLo
         walker.current()->setPreferredLogicalWidthsDirty(false);
     return true;
 }
-
-LayoutUnit RenderBlockFlow::blockFormattingContextInFlowBlockLevelContentHeight() const
-{
-    ASSERT(establishesBlockFormattingContext());
-    // For block layout we should just be able to check the height of the last in flow box
-    auto lastChild = lastInFlowChildBox();
-    if (!lastChild)
-        return 0_lu;
-    // Child's margin box starting location + border box height + margin after size
-    return logicalMarginBoxTopForChild(*lastChild) + logicalMarginBoxHeightForChild(*lastChild);
-}
-
-
 
 }
 // namespace WebCore

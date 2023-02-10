@@ -45,7 +45,6 @@
 #include "APIOpenPanelParameters.h"
 #include "APIPageConfiguration.h"
 #include "APIPolicyClient.h"
-#include "APISerializedScriptValue.h"
 #include "APISessionState.h"
 #include "APIUIClient.h"
 #include "APIWebAuthenticationPanel.h"
@@ -1682,13 +1681,13 @@ void WKPageSetPageUIClient(WKPageRef pageRef, const WKPageUIClientBase* wkClient
         {
             if (m_client.runJavaScriptAlert) {
                 RefPtr<RunJavaScriptAlertResultListener> listener = RunJavaScriptAlertResultListener::create(WTFMove(completionHandler));
-                RefPtr<API::SecurityOrigin> securityOrigin = API::SecurityOrigin::create(frameInfo.securityOrigin);
+                RefPtr<API::SecurityOrigin> securityOrigin = API::SecurityOrigin::create(frameInfo.securityOrigin.protocol, frameInfo.securityOrigin.host, frameInfo.securityOrigin.port);
                 m_client.runJavaScriptAlert(toAPI(&page), toAPI(message.impl()), toAPI(frame), toAPI(securityOrigin.get()), toAPI(listener.get()), m_client.base.clientInfo);
                 return;
             }
 
             if (m_client.runJavaScriptAlert_deprecatedForUseWithV5) {
-                RefPtr<API::SecurityOrigin> securityOrigin = API::SecurityOrigin::create(frameInfo.securityOrigin);
+                RefPtr<API::SecurityOrigin> securityOrigin = API::SecurityOrigin::create(frameInfo.securityOrigin.protocol, frameInfo.securityOrigin.host, frameInfo.securityOrigin.port);
                 m_client.runJavaScriptAlert_deprecatedForUseWithV5(toAPI(&page), toAPI(message.impl()), toAPI(frame), toAPI(securityOrigin.get()), m_client.base.clientInfo);
                 completionHandler();
                 return;
@@ -1708,13 +1707,13 @@ void WKPageSetPageUIClient(WKPageRef pageRef, const WKPageUIClientBase* wkClient
         {
             if (m_client.runJavaScriptConfirm) {
                 RefPtr<RunJavaScriptConfirmResultListener> listener = RunJavaScriptConfirmResultListener::create(WTFMove(completionHandler));
-                RefPtr<API::SecurityOrigin> securityOrigin = API::SecurityOrigin::create(frameInfo.securityOrigin);
+                RefPtr<API::SecurityOrigin> securityOrigin = API::SecurityOrigin::create(frameInfo.securityOrigin.protocol, frameInfo.securityOrigin.host, frameInfo.securityOrigin.port);
                 m_client.runJavaScriptConfirm(toAPI(&page), toAPI(message.impl()), toAPI(frame), toAPI(securityOrigin.get()), toAPI(listener.get()), m_client.base.clientInfo);
                 return;
             }
 
             if (m_client.runJavaScriptConfirm_deprecatedForUseWithV5) {
-                RefPtr<API::SecurityOrigin> securityOrigin = API::SecurityOrigin::create(frameInfo.securityOrigin);
+                RefPtr<API::SecurityOrigin> securityOrigin = API::SecurityOrigin::create(frameInfo.securityOrigin.protocol, frameInfo.securityOrigin.host, frameInfo.securityOrigin.port);
                 bool result = m_client.runJavaScriptConfirm_deprecatedForUseWithV5(toAPI(&page), toAPI(message.impl()), toAPI(frame), toAPI(securityOrigin.get()), m_client.base.clientInfo);
                 
                 completionHandler(result);
@@ -1735,13 +1734,13 @@ void WKPageSetPageUIClient(WKPageRef pageRef, const WKPageUIClientBase* wkClient
         {
             if (m_client.runJavaScriptPrompt) {
                 RefPtr<RunJavaScriptPromptResultListener> listener = RunJavaScriptPromptResultListener::create(WTFMove(completionHandler));
-                RefPtr<API::SecurityOrigin> securityOrigin = API::SecurityOrigin::create(frameInfo.securityOrigin);
+                RefPtr<API::SecurityOrigin> securityOrigin = API::SecurityOrigin::create(frameInfo.securityOrigin.protocol, frameInfo.securityOrigin.host, frameInfo.securityOrigin.port);
                 m_client.runJavaScriptPrompt(toAPI(&page), toAPI(message.impl()), toAPI(defaultValue.impl()), toAPI(frame), toAPI(securityOrigin.get()), toAPI(listener.get()), m_client.base.clientInfo);
                 return;
             }
 
             if (m_client.runJavaScriptPrompt_deprecatedForUseWithV5) {
-                RefPtr<API::SecurityOrigin> securityOrigin = API::SecurityOrigin::create(frameInfo.securityOrigin);
+                RefPtr<API::SecurityOrigin> securityOrigin = API::SecurityOrigin::create(frameInfo.securityOrigin.protocol, frameInfo.securityOrigin.host, frameInfo.securityOrigin.port);
                 RefPtr<API::String> string = adoptRef(toImpl(m_client.runJavaScriptPrompt_deprecatedForUseWithV5(toAPI(&page), toAPI(message.impl()), toAPI(defaultValue.impl()), toAPI(frame), toAPI(securityOrigin.get()), m_client.base.clientInfo)));
                 
                 if (string)
@@ -1922,7 +1921,7 @@ void WKPageSetPageUIClient(WKPageRef pageRef, const WKPageUIClientBase* wkClient
             if (!m_client.decidePolicyForGeolocationPermissionRequest)
                 return;
 
-            auto origin = API::SecurityOrigin::create(frameInfo.securityOrigin);
+            auto origin = API::SecurityOrigin::create(frameInfo.securityOrigin.protocol, frameInfo.securityOrigin.host, frameInfo.securityOrigin.port);
             m_client.decidePolicyForGeolocationPermissionRequest(toAPI(&page), toAPI(&frame), toAPI(origin.ptr()), toAPI(GeolocationPermissionRequest::create(std::exchange(completionHandler, nullptr)).ptr()), m_client.base.clientInfo);
         }
 
@@ -2162,6 +2161,13 @@ void WKPageSetPageUIClient(WKPageRef pageRef, const WKPageUIClientBase* wkClient
             completionHandler(true);
         }
 #endif
+        void decidePolicyForSpeechRecognitionPermissionRequest(WebPageProxy& page, API::SecurityOrigin& origin, CompletionHandler<void(bool)>&& completionHandler) final
+        {
+            if (!m_client.decidePolicyForSpeechRecognitionPermissionRequest)
+                return;
+
+            m_client.decidePolicyForSpeechRecognitionPermissionRequest(toAPI(&page), toAPI(&origin), toAPI(SpeechRecognitionPermissionCallback::create(WTFMove(completionHandler)).ptr()));
+        }
 
         void decidePolicyForMediaKeySystemPermissionRequest(WebPageProxy& page, API::SecurityOrigin& origin, const String& keySystem, CompletionHandler<void(bool)>&& completionHandler) final
         {
@@ -3002,8 +3008,8 @@ void WKPageClearWheelEventTestMonitor(WKPageRef pageRef)
 void WKPageCallAfterNextPresentationUpdate(WKPageRef pageRef, void* context, WKPagePostPresentationUpdateFunction callback)
 {
     CRASH_IF_SUSPENDED;
-    toImpl(pageRef)->callAfterNextPresentationUpdate([context, callback] {
-        callback(nullptr, context);
+    toImpl(pageRef)->callAfterNextPresentationUpdate([context, callback](WebKit::CallbackBase::Error error) {
+        callback(error != WebKit::CallbackBase::Error::None ? toAPI(API::Error::create().ptr()) : 0, context);
     });
 }
 

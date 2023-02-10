@@ -71,15 +71,15 @@ public:
     RefPtr<WebCore::VideoFrame> paintCompositedResultsToVideoFrame() final { return nullptr; }
 #endif
 private:
-    RemoteGraphicsContextGLProxyWC(IPC::Connection& connection, Ref<IPC::StreamClientConnection> streamConnection, const WebCore::GraphicsContextGLAttributes& attributes
+    RemoteGraphicsContextGLProxyWC(IPC::Connection& connection, SerialFunctionDispatcher& dispatcher, const WebCore::GraphicsContextGLAttributes& attributes, RenderingBackendIdentifier renderingBackend
 #if ENABLE(VIDEO)
     , Ref<RemoteVideoFrameObjectHeapProxy>&& videoFrameObjectHeapProxy
 #endif
     )
 #if ENABLE(VIDEO)
-        : RemoteGraphicsContextGLProxy(connection, WTFMove(streamConnection), attributes, WTFMove(videoFrameObjectHeapProxy))
+        : RemoteGraphicsContextGLProxy(connection, dispatcher, attributes, renderingBackend, WTFMove(videoFrameObjectHeapProxy))
 #else
-        : RemoteGraphicsContextGLProxy(connection, WTFMove(streamConnection), attributes)
+        : RemoteGraphicsContextGLProxy(connection, dispatcher, attributes, renderingBackend)
 #endif
         , m_layerContentsDisplayDelegate(PlatformLayerDisplayDelegate::create(makeUnique<WCPlatformLayerGCGL>()))
     {
@@ -106,13 +106,13 @@ void RemoteGraphicsContextGLProxyWC::prepareForDisplay()
 
 }
 
-Ref<RemoteGraphicsContextGLProxy> RemoteGraphicsContextGLProxy::platformCreate(IPC::Connection& connection, Ref<IPC::StreamClientConnection> streamConnection, const WebCore::GraphicsContextGLAttributes& attributes
+RefPtr<RemoteGraphicsContextGLProxy> RemoteGraphicsContextGLProxy::create(IPC::Connection& connection, const WebCore::GraphicsContextGLAttributes& attributes, RemoteRenderingBackendProxy& renderingBackend
 #if ENABLE(VIDEO)
     , Ref<RemoteVideoFrameObjectHeapProxy>&& videoFrameObjectHeapProxy
 #endif
     )
 {
-    return adoptRef(*new RemoteGraphicsContextGLProxyWC(connection, WTFMove(streamConnection), attributes
+    return adoptRef(new RemoteGraphicsContextGLProxyWC(connection, renderingBackend.dispatcher(), attributes, renderingBackend.ensureBackendCreated()
 #if ENABLE(VIDEO)
         , WTFMove(videoFrameObjectHeapProxy)
 #endif

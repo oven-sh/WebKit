@@ -25,10 +25,6 @@
 #include "WebKitPermissionRequest.h"
 #include <wtf/glib/WTFGType.h>
 
-#if !ENABLE(2022_GLIB_API)
-typedef WebKitPermissionRequestIface WebKitPermissionRequestInterface;
-#endif
-
 using namespace WebKit;
 
 /**
@@ -61,15 +57,15 @@ using namespace WebKit;
  * does not match the name of a valid `.desktop` file.
  */
 
-static void webkit_permission_request_interface_init(WebKitPermissionRequestInterface*);
+static void webkit_permission_request_interface_init(WebKitPermissionRequestIface*);
 
 struct _WebKitGeolocationPermissionRequestPrivate {
     RefPtr<GeolocationPermissionRequest> request;
     bool madeDecision;
 };
 
-WEBKIT_DEFINE_FINAL_TYPE_WITH_CODE(
-    WebKitGeolocationPermissionRequest, webkit_geolocation_permission_request, G_TYPE_OBJECT, GObject,
+WEBKIT_DEFINE_FINAL_TYPE_WITH_CODE_IN_2022_API(
+    WebKitGeolocationPermissionRequest, webkit_geolocation_permission_request, G_TYPE_OBJECT,
     G_IMPLEMENT_INTERFACE(WEBKIT_TYPE_PERMISSION_REQUEST, webkit_permission_request_interface_init))
 
 static void webkitGeolocationPermissionRequestAllow(WebKitPermissionRequest* request)
@@ -100,7 +96,7 @@ static void webkitGeolocationPermissionRequestDeny(WebKitPermissionRequest* requ
     priv->madeDecision = true;
 }
 
-static void webkit_permission_request_interface_init(WebKitPermissionRequestInterface* iface)
+static void webkit_permission_request_interface_init(WebKitPermissionRequestIface* iface)
 {
     iface->allow = webkitGeolocationPermissionRequestAllow;
     iface->deny = webkitGeolocationPermissionRequestDeny;

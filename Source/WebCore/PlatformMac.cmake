@@ -297,6 +297,7 @@ list(APPEND WebCore_SOURCES
     platform/graphics/cg/ImageBufferIOSurfaceBackend.cpp
     platform/graphics/cg/ImageBufferUtilitiesCG.cpp
     platform/graphics/cg/ImageDecoderCG.cpp
+    platform/graphics/cg/ImageSourceCGMac.mm
     platform/graphics/cg/IntPointCG.cpp
     platform/graphics/cg/IntRectCG.cpp
     platform/graphics/cg/IntSizeCG.cpp
@@ -323,7 +324,6 @@ list(APPEND WebCore_SOURCES
     platform/graphics/cocoa/IntRectCocoa.mm
     platform/graphics/cocoa/IOSurface.mm
     platform/graphics/cocoa/IOSurfacePoolCocoa.mm
-    platform/graphics/cocoa/UnrealizedCoreTextFont.cpp
     platform/graphics/cocoa/WebActionDisablingCALayerDelegate.mm
     platform/graphics/cocoa/WebCoreCALayerExtras.mm
     platform/graphics/cocoa/WebCoreDecompressionSession.mm
@@ -742,9 +742,12 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/mediastream/libwebrtc/LibWebRTCProviderCocoa.h
     platform/mediastream/libwebrtc/VideoFrameLibWebRTC.h
 
+    platform/network/cf/AuthenticationCF.h
     platform/network/cf/AuthenticationChallenge.h
     platform/network/cf/CertificateInfo.h
     platform/network/cf/DownloadBundle.h
+    platform/network/cf/LoaderRunLoopCF.h
+    platform/network/cf/ProtectionSpaceCFNet.h
     platform/network/cf/ResourceError.h
     platform/network/cf/ResourceRequest.h
     platform/network/cf/ResourceRequestCFNet.h

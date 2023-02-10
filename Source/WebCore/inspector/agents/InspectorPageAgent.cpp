@@ -409,27 +409,21 @@ Protocol::ErrorStringOr<void> InspectorPageAgent::reload(std::optional<bool>&& i
         reloadOptions.add(ReloadOption::FromOrigin);
     if (!revalidateAllResources || !*revalidateAllResources)
         reloadOptions.add(ReloadOption::ExpiredOnly);
-
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_inspectedPage.mainFrame());
-    if (!localMainFrame)
-        return makeUnexpected("main frame is not local"_s);
-    localMainFrame->loader().reload(reloadOptions);
+    m_inspectedPage.mainFrame().loader().reload(reloadOptions);
 
     return { };
 }
 
 Protocol::ErrorStringOr<void> InspectorPageAgent::navigate(const String& url)
 {
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_inspectedPage.mainFrame());
-    if (!localMainFrame)
-        return { };
+    Frame& frame = m_inspectedPage.mainFrame();
 
-    UserGestureIndicator indicator { ProcessingUserGesture, localMainFrame->document() };
+    UserGestureIndicator indicator { ProcessingUserGesture, frame.document() };
 
-    ResourceRequest resourceRequest { localMainFrame->document()->completeURL(url) };
-    FrameLoadRequest frameLoadRequest { *localMainFrame->document(), localMainFrame->document()->securityOrigin(), WTFMove(resourceRequest), selfTargetFrameName(), InitiatedByMainFrame::Unknown };
+    ResourceRequest resourceRequest { frame.document()->completeURL(url) };
+    FrameLoadRequest frameLoadRequest { *frame.document(), frame.document()->securityOrigin(), WTFMove(resourceRequest), selfTargetFrameName(), InitiatedByMainFrame::Unknown };
     frameLoadRequest.disableNavigationToInvalidURL();
-    localMainFrame->loader().changeLocation(WTFMove(frameLoadRequest));
+    frame.loader().changeLocation(WTFMove(frameLoadRequest));
 
     return { };
 }
@@ -767,8 +761,7 @@ Protocol::ErrorStringOr<void> InspectorPageAgent::deleteCookie(const String& coo
 
 Protocol::ErrorStringOr<Ref<Protocol::Page::FrameResourceTree>> InspectorPageAgent::getResourceTree()
 {
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_inspectedPage.mainFrame());
-    return buildObjectForFrameTree(localMainFrame);
+    return buildObjectForFrameTree(&m_inspectedPage.mainFrame());
 }
 
 Protocol::ErrorStringOr<std::tuple<String, bool /* base64Encoded */>> InspectorPageAgent::getResourceContent(const Protocol::Network::FrameId& frameId, const String& url)
@@ -1055,10 +1048,7 @@ void InspectorPageAgent::didPaint(RenderObject& renderer, const LayoutRect& rect
     auto* localFrame = dynamicDowncast<LocalFrame>(view->frame());
     if (localFrame && !localFrame->isMainFrame()) {
         IntRect rootViewRect = view->contentsToRootView(snappedIntRect(absoluteRect));
-        auto* localMainFrame = dynamicDowncast<LocalFrame>(localFrame->mainFrame());
-        if (!localMainFrame)
-            return;
-        rootRect = localMainFrame->view()->rootViewToContents(rootViewRect);
+        rootRect = localFrame->mainFrame().view()->rootViewToContents(rootViewRect);
     }
 
     if (m_client->overridesShowPaintRects()) {
@@ -1165,11 +1155,7 @@ Protocol::ErrorStringOr<void> InspectorPageAgent::setEmulatedMedia(const String&
     // FIXME: Schedule a rendering update instead of synchronously updating the layout.
     m_inspectedPage.updateStyleAfterChangeInEnvironment();
 
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_inspectedPage.mainFrame());
-    if (!localMainFrame)
-        return { };
-
-    RefPtr document = localMainFrame->document();
+    RefPtr document = m_inspectedPage.mainFrame().document();
     if (!document)
         return { };
 
@@ -1200,12 +1186,8 @@ Protocol::ErrorStringOr<String> InspectorPageAgent::snapshotNode(Protocol::DOM::
     Node* node = domAgent->assertNode(errorString, nodeId);
     if (!node)
         return makeUnexpected(errorString);
-    
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_inspectedPage.mainFrame());
-    if (!localMainFrame)
-        return makeUnexpected("Main frame isn't local"_s);
 
-    auto snapshot = WebCore::snapshotNode(*localMainFrame, *node, { { }, PixelFormat::BGRA8, DestinationColorSpace::SRGB() });
+    auto snapshot = WebCore::snapshotNode(m_inspectedPage.mainFrame(), *node, { { }, PixelFormat::BGRA8, DestinationColorSpace::SRGB() });
     if (!snapshot)
         return makeUnexpected("Could not capture snapshot"_s);
 
@@ -1219,10 +1201,7 @@ Protocol::ErrorStringOr<String> InspectorPageAgent::snapshotRect(int x, int y, i
         options.flags.add(SnapshotFlags::InViewCoordinates);
 
     IntRect rectangle(x, y, width, height);
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_inspectedPage.mainFrame());
-    if (!localMainFrame)
-        return makeUnexpected("Main frame isn't local"_s);
-    auto snapshot = snapshotFrameRect(*localMainFrame, rectangle, WTFMove(options));
+    auto snapshot = snapshotFrameRect(m_inspectedPage.mainFrame(), rectangle, WTFMove(options));
 
     if (!snapshot)
         return makeUnexpected("Could not capture snapshot"_s);
@@ -1233,11 +1212,7 @@ Protocol::ErrorStringOr<String> InspectorPageAgent::snapshotRect(int x, int y, i
 #if ENABLE(WEB_ARCHIVE) && USE(CF)
 Protocol::ErrorStringOr<String> InspectorPageAgent::archive()
 {
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_inspectedPage.mainFrame());
-    if (!localMainFrame)
-        return makeUnexpected("Main frame isn't local"_s);
-
-    auto archive = LegacyWebArchive::create(*localMainFrame);
+    auto archive = LegacyWebArchive::create(m_inspectedPage.mainFrame());
     if (!archive)
         return makeUnexpected("Could not create web archive for main frame"_s);
 
@@ -1258,10 +1233,7 @@ Protocol::ErrorStringOr<void> InspectorPageAgent::setScreenSizeOverride(std::opt
     if (height && *height <= 0)
         return makeUnexpected("Screen height override should be a positive integer"_s);
 
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_inspectedPage.mainFrame());
-    if (!localMainFrame)
-        return makeUnexpected("Main frame isn't local"_s);
-    localMainFrame->setOverrideScreenSize(FloatSize(width.value_or(0), height.value_or(0)));
+    m_inspectedPage.mainFrame().setOverrideScreenSize(FloatSize(width.value_or(0), height.value_or(0)));
     return { };
 }
 #endif

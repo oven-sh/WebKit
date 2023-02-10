@@ -73,10 +73,7 @@ void Page::platformInitialize()
             WTFLogAlways("%u live pages:", numPages);
 
             Page::forEachPage([](Page& page) {
-                auto* localMainFrame = dynamicDowncast<LocalFrame>(page.mainFrame());
-                if (!localMainFrame)
-                    return;
-                const auto* mainFrameDocument = localMainFrame->document();
+                const auto* mainFrameDocument = page.mainFrame().document();
                 WTFLogAlways("Page %p with main document %p %s", &page, mainFrameDocument, mainFrameDocument ? mainFrameDocument->url().string().utf8().data() : "");
             });
 

@@ -184,8 +184,6 @@ void TestController::platformCreateWebView(WKPageConfigurationRef, const TestOpt
 
     if (options.enableAttachmentElement())
         [copiedConfiguration _setAttachmentElementEnabled:YES];
-    if (options.enableAttachmentWideLayout())
-        [copiedConfiguration _setAttachmentWideLayoutEnabled:YES];
 
     [copiedConfiguration setWebsiteDataStore:(WKWebsiteDataStore *)websiteDataStore()];
     [copiedConfiguration _setAllowTopNavigationToDataURLs:options.allowTopNavigationToDataURLs()];
@@ -528,11 +526,6 @@ void TestController::setAllowsAnySSLCertificate(bool allows)
     m_allowsAnySSLCertificate = allows;
     WKWebsiteDataStoreSetAllowsAnySSLCertificateForWebSocketTesting(websiteDataStore(), allows);
     [globalWebsiteDataStoreDelegateClient() setAllowAnySSLCertificate: allows];
-}
-
-void TestController::setBackgroundFetchPermission(bool value)
-{
-    [globalWebsiteDataStoreDelegateClient() setBackgroundFetchPermission: value];
 }
 
 void TestController::setAllowedMenuActions(const Vector<String>& actions)

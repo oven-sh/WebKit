@@ -42,6 +42,7 @@
 #include "PlatformLayer.h"
 #include "RealtimeMediaSourceCapabilities.h"
 #include "RealtimeMediaSourceFactory.h"
+#include "VideoFrame.h"
 #include "VideoFrameTimeMetadata.h"
 #include <wtf/CompletionHandler.h>
 #include <wtf/Lock.h>
@@ -71,13 +72,11 @@ class MediaStreamPrivate;
 class OrientationNotifier;
 class PlatformAudioData;
 class RealtimeMediaSourceSettings;
-class VideoFrame;
 
 struct CaptureSourceOrError;
 
 class WEBCORE_EXPORT RealtimeMediaSource
     : public ThreadSafeRefCounted<RealtimeMediaSource, WTF::DestructionThread::MainRunLoop>
-    , public CanMakeWeakPtr<RealtimeMediaSource>
 #if !RELEASE_LOG_DISABLED
     , public LoggerHelper
 #endif
@@ -109,7 +108,7 @@ public:
         virtual ~AudioSampleObserver() = default;
 
         // May be called on a background thread.
-        virtual void audioSamplesAvailable(const WTF::MediaTime&, const PlatformAudioData&, const AudioStreamDescription&, size_t /*numberOfFrames*/) = 0;
+        virtual void audioSamplesAvailable(const MediaTime&, const PlatformAudioData&, const AudioStreamDescription&, size_t /*numberOfFrames*/) = 0;
     };
     class VideoFrameObserver {
     public:
@@ -178,8 +177,8 @@ public:
     double aspectRatio() const { return m_aspectRatio; }
     void setAspectRatio(double);
 
-    VideoFacingMode facingMode() const { return m_facingMode; }
-    void setFacingMode(VideoFacingMode);
+    RealtimeMediaSourceSettings::VideoFacingMode facingMode() const { return m_facingMode; }
+    void setFacingMode(RealtimeMediaSourceSettings::VideoFacingMode);
 
     double volume() const { return m_volume; }
     void setVolume(double);
@@ -271,7 +270,7 @@ protected:
     void initializeEchoCancellation(bool echoCancellation) { m_echoCancellation = echoCancellation; }
 
     void videoFrameAvailable(VideoFrame&, VideoFrameTimeMetadata);
-    void audioSamplesAvailable(const WTF::MediaTime&, const PlatformAudioData&, const AudioStreamDescription&, size_t);
+    void audioSamplesAvailable(const MediaTime&, const PlatformAudioData&, const AudioStreamDescription&, size_t);
 
     void forEachObserver(const Function<void(Observer&)>&);
     void forEachVideoFrameObserver(const Function<void(VideoFrameObserver&)>&);
@@ -329,7 +328,7 @@ private:
     double m_sampleRate { 0 };
     double m_sampleSize { 0 };
     double m_fitnessScore { 0 };
-    VideoFacingMode m_facingMode { VideoFacingMode::User };
+    RealtimeMediaSourceSettings::VideoFacingMode m_facingMode { RealtimeMediaSourceSettings::User};
 
     bool m_muted { false };
     bool m_pendingSettingsDidChangeNotification { false };

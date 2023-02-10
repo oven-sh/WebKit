@@ -110,12 +110,12 @@ static HashSet<String, ASCIICaseInsensitiveHash>& mimeTypeCache()
     if (typeListInitialized)
         return cache;
 
-    const ASCIILiteral mimeTypes[] = {
-        "video/holepunch"_s
+    const char* mimeTypes[] = {
+        "video/holepunch"
     };
 
     for (unsigned i = 0; i < (sizeof(mimeTypes) / sizeof(*mimeTypes)); ++i)
-        cache.get().add(mimeTypes[i]);
+        cache.get().add(String(mimeTypes[i]));
 
     typeListInitialized = true;
 

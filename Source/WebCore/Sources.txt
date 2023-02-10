@@ -180,8 +180,6 @@ Modules/mediarecorder/MediaRecorder.cpp
 Modules/mediarecorder/MediaRecorderErrorEvent.cpp
 Modules/mediarecorder/MediaRecorderProvider.cpp
 Modules/mediasource/DOMURLMediaSource.cpp
-Modules/mediasource/ManagedMediaSource.cpp
-Modules/mediasource/ManagedSourceBuffer.cpp
 Modules/mediasource/MediaSource.cpp
 Modules/mediasource/MediaSourceRegistry.cpp
 Modules/mediasource/SampleMap.cpp
@@ -748,7 +746,6 @@ css/CSSCounterStyle.cpp
 css/CSSCounterStyleDescriptors.cpp
 css/CSSCounterStyleRegistry.cpp
 css/CSSCounterStyleRule.cpp
-css/CSSCounterValue.cpp
 css/CSSCrossfadeValue.cpp
 css/CSSCursorImageValue.cpp
 css/CSSCustomPropertyValue.cpp
@@ -775,7 +772,6 @@ css/CSSGridIntegerRepeatValue.cpp
 css/CSSGridLineNamesValue.cpp
 css/CSSGridTemplateAreasValue.cpp
 css/CSSGroupingRule.cpp
-css/CSSImageSetOptionValue.cpp
 css/CSSImageSetValue.cpp
 css/CSSImageValue.cpp
 css/CSSImportRule.cpp
@@ -795,9 +791,7 @@ css/CSSPrimitiveValue.cpp
 css/CSSProperty.cpp
 css/CSSPropertyRule.cpp
 css/CSSPropertySourceData.cpp
-css/CSSQuadValue.cpp
 css/CSSRayValue.cpp
-css/CSSRectValue.cpp
 css/CSSReflectValue.cpp
 css/CSSRegisteredCustomProperty.cpp
 css/CSSRule.cpp
@@ -1128,7 +1122,6 @@ dom/TextEncoder.cpp
 dom/TextEncoderStreamEncoder.cpp
 dom/TextEvent.cpp
 dom/TextNodeTraversal.cpp
-dom/ToggleEvent.cpp
 dom/Touch.cpp @no-unify
 dom/TouchEvent.cpp @no-unify
 dom/TouchList.cpp @no-unify
@@ -1424,8 +1417,6 @@ html/canvas/CanvasStyle.cpp
 html/canvas/EXTBlendMinMax.cpp
 html/canvas/EXTColorBufferFloat.cpp
 html/canvas/EXTColorBufferHalfFloat.cpp
-html/canvas/EXTDisjointTimerQuery.cpp
-html/canvas/EXTDisjointTimerQueryWebGL2.cpp
 html/canvas/EXTFloatBlend.cpp
 html/canvas/EXTFragDepth.cpp
 html/canvas/EXTShaderTextureLOD.cpp
@@ -1489,7 +1480,6 @@ html/canvas/WebGLSharedObject.cpp
 html/canvas/WebGLStateTracker.cpp
 html/canvas/WebGLSync.cpp
 html/canvas/WebGLTexture.cpp
-html/canvas/WebGLTimerQueryEXT.cpp
 html/canvas/WebGLTransformFeedback.cpp
 html/canvas/WebGLUniformLocation.cpp
 html/canvas/WebGLVertexArrayObject.cpp
@@ -1499,7 +1489,6 @@ html/forms/FileIconLoader.cpp
 html/parser/CSSPreloadScanner.cpp
 html/parser/HTMLConstructionSite.cpp
 html/parser/HTMLDocumentParser.cpp
-html/parser/HTMLDocumentParserFastPath.cpp
 html/parser/HTMLElementStack.cpp
 html/parser/HTMLEntityParser.cpp
 html/parser/HTMLEntitySearch.cpp
@@ -1771,7 +1760,6 @@ loader/cache/CachedFont.cpp
 loader/cache/CachedImage.cpp
 loader/cache/CachedRawResource.cpp
 loader/cache/CachedResource.cpp
-loader/cache/CachedResourceClient.cpp
 loader/cache/CachedResourceHandle.cpp
 loader/cache/CachedResourceLoader.cpp
 loader/cache/CachedResourceRequest.cpp
@@ -2156,7 +2144,6 @@ platform/graphics/FontGenericFamilies.cpp
 platform/graphics/FontPlatformData.cpp
 platform/graphics/FontRanges.cpp
 platform/graphics/FontSelectionAlgorithm.cpp
-platform/graphics/FontSelector.cpp
 platform/graphics/FontTaggedSettings.cpp
 platform/graphics/FourCC.cpp
 platform/graphics/GeneratedImage.cpp
@@ -2195,7 +2182,6 @@ platform/graphics/LayoutRect.cpp
 platform/graphics/LayoutSize.cpp
 platform/graphics/MIMETypeCache.cpp
 platform/graphics/MediaPlayer.cpp
-platform/graphics/MediaPlayerPrivate.cpp
 platform/graphics/Model.cpp
 platform/graphics/NamedImageGeneratedImage.cpp
 platform/graphics/NativeImage.cpp
@@ -2610,7 +2596,6 @@ rendering/style/StyleCanvasImage.cpp
 rendering/style/StyleContentAlignmentData.cpp
 rendering/style/StyleCrossfadeImage.cpp
 rendering/style/StyleCursorImage.cpp
-rendering/style/StyleCustomPropertyData.cpp
 rendering/style/StyleDeprecatedFlexibleBoxData.cpp
 rendering/style/StyleFilterData.cpp
 rendering/style/StyleFilterImage.cpp
@@ -2622,18 +2607,16 @@ rendering/style/StyleGridItemData.cpp
 rendering/style/StyleImageSet.cpp
 rendering/style/StyleInheritedData.cpp
 rendering/style/StyleMarqueeData.cpp
-rendering/style/StyleMiscNonInheritedData.cpp
 rendering/style/StyleMultiColData.cpp
 rendering/style/StyleMultiImage.cpp
 rendering/style/StyleNamedImage.cpp
-rendering/style/StyleNonInheritedData.cpp
 rendering/style/StylePaintImage.cpp
 rendering/style/StyleRareInheritedData.cpp
 rendering/style/StyleRareNonInheritedData.cpp
 rendering/style/StyleSelfAlignmentData.cpp
 rendering/style/StyleSurroundData.cpp
 rendering/style/StyleTransformData.cpp
-rendering/style/StyleVisitedLinkColorData.cpp
+rendering/style/StyleVisualData.cpp
 rendering/style/TextSizeAdjustment.cpp
 rendering/style/WillChangeData.cpp
 rendering/svg/LegacyRenderSVGContainer.cpp
@@ -2945,12 +2928,6 @@ workers/service/ServiceWorkerRegistrationKey.cpp
 workers/service/ServiceWorkerRegistrationOptions.cpp
 workers/service/ServiceWorkerWindowClient.cpp
 workers/service/WorkerSWClientConnection.cpp
-workers/service/background-fetch/BackgroundFetchEvent.cpp
-workers/service/background-fetch/BackgroundFetchManager.cpp
-workers/service/background-fetch/BackgroundFetchRecord.cpp
-workers/service/background-fetch/BackgroundFetchRegistration.cpp
-workers/service/background-fetch/BackgroundFetchUpdateUIEvent.cpp
-workers/service/background-fetch/ServiceWorkerRegistrationBackgroundFetchAPI.cpp
 workers/service/context/SWContextManager.cpp
 workers/service/context/ServiceWorkerDebuggable.cpp
 workers/service/context/ServiceWorkerFetch.cpp
@@ -3104,17 +3081,6 @@ JSBiquadFilterNode.cpp
 JSBiquadFilterOptions.cpp
 JSBiquadFilterType.cpp
 JSAvcEncoderConfig.cpp
-JSBackgroundFetchEvent.cpp
-JSBackgroundFetchEventInit.cpp
-JSBackgroundFetchFailureReason.cpp
-JSBackgroundFetchManager.cpp
-JSBackgroundFetchOptions.cpp
-JSBackgroundFetchRecord.cpp
-JSBackgroundFetchRegistration.cpp
-JSBackgroundFetchResult.cpp
-JSBackgroundFetchUIOptions.cpp
-JSBackgroundFetchUpdateUIEvent.cpp
-JSImageResource.cpp
 JSBitrateMode.cpp
 JSBlob.cpp
 JSBlobCallback.cpp
@@ -3302,8 +3268,6 @@ JSDynamicsCompressorOptions.cpp
 JSEXTBlendMinMax.cpp
 JSEXTColorBufferFloat.cpp
 JSEXTColorBufferHalfFloat.cpp
-JSEXTDisjointTimerQuery.cpp
-JSEXTDisjointTimerQueryWebGL2.cpp
 JSEXTFloatBlend.cpp
 JSEXTFragDepth.cpp
 JSEXTShaderTextureLOD.cpp
@@ -3651,8 +3615,6 @@ JSLocation.cpp
 JSLongRange.cpp
 JSMathMLElement.cpp
 JSMathMLMathElement.cpp
-JSManagedMediaSource.cpp
-JSManagedSourceBuffer.cpp
 JSMediaCapabilities.cpp
 JSMediaCapabilitiesDecodingInfo.cpp
 JSMediaCapabilitiesEncodingInfo.cpp
@@ -3925,7 +3887,6 @@ JSReportingObserver.cpp
 JSReportingObserverCallback.cpp
 JSRequestAnimationFrameCallback.cpp
 JSRequestCookieConsentOptions.cpp
-JSRequestPriority.cpp
 JSResidentKeyRequirement.cpp
 JSResizeObserver.cpp
 JSResizeObserverBoxOptions.cpp
@@ -4145,7 +4106,6 @@ JSTextTrackCueGeneric.cpp
 JSTextTrackCueList.cpp
 JSTextTrackList.cpp
 JSTimeRanges.cpp
-JSToggleEvent.cpp
 JSTrackEvent.cpp
 JSTransferFunction.cpp
 JSTransformStream.cpp
@@ -4276,7 +4236,6 @@ JSWebGLShader.cpp
 JSWebGLShaderPrecisionFormat.cpp
 JSWebGLSync.cpp
 JSWebGLTexture.cpp
-JSWebGLTimerQueryEXT.cpp
 JSWebGLTransformFeedback.cpp
 JSWebGLUniformLocation.cpp
 JSWebGLVertexArrayObject.cpp

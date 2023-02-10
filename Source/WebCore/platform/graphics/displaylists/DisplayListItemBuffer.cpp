@@ -276,9 +276,6 @@ void ItemHandle::destroy()
     case ItemType::DrawLinesForText:
         get<DrawLinesForText>().~DrawLinesForText();
         return;
-    case ItemType::DrawDotsForDocumentMarker:
-        get<DrawDotsForDocumentMarker>().~DrawDotsForDocumentMarker();
-        return;
     case ItemType::DrawPath:
         get<DrawPath>().~DrawPath();
         return;
@@ -340,6 +337,9 @@ void ItemHandle::destroy()
         return;
     case ItemType::ConcatenateCTM:
         static_assert(std::is_trivially_destructible<ConcatenateCTM>::value);
+        return;
+    case ItemType::DrawDotsForDocumentMarker:
+        static_assert(std::is_trivially_destructible<DrawDotsForDocumentMarker>::value);
         return;
     case ItemType::DrawEllipse:
         static_assert(std::is_trivially_destructible<DrawEllipse>::value);
@@ -664,9 +664,6 @@ ItemBuffer& ItemBuffer::operator=(ItemBuffer&& other)
     return *this;
 }
 
-DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(DisplayListItemBufferHandle);
-DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(DisplayListItemBufferHandle);
-
 ItemBufferHandle ItemBuffer::createItemBuffer(size_t capacity)
 {
     if (m_writingClient) {
@@ -677,7 +674,7 @@ ItemBufferHandle ItemBuffer::createItemBuffer(size_t capacity)
     constexpr size_t defaultItemBufferCapacity = 1 << 10;
 
     auto newBufferCapacity = std::max(capacity, defaultItemBufferCapacity);
-    auto* buffer = static_cast<uint8_t*>(DisplayListItemBufferHandleMalloc::malloc(newBufferCapacity));
+    auto* buffer = static_cast<uint8_t*>(fastMalloc(newBufferCapacity));
     m_allocatedBuffers.append(buffer);
     return { ItemBufferIdentifier::generate(), buffer, newBufferCapacity };
 }
@@ -694,7 +691,7 @@ void ItemBuffer::forEachItemBuffer(Function<void(const ItemBufferHandle&)>&& map
 void ItemBuffer::clear()
 {
     for (auto* buffer : std::exchange(m_allocatedBuffers, { }))
-        DisplayListItemBufferHandleMalloc::free(buffer);
+        fastFree(buffer);
 
     m_readOnlyBuffers.clear();
     m_writableBuffer = { };
@@ -703,16 +700,7 @@ void ItemBuffer::clear()
 
 void ItemBuffer::shrinkToFit()
 {
-    if (m_writableBuffer) {
-        if (m_allocatedBuffers.last() == m_writableBuffer.data) {
-            m_writableBuffer.data = static_cast<uint8_t*>(fastRealloc(m_writableBuffer.data, m_writtenNumberOfBytes));
-            m_writableBuffer.capacity = m_writtenNumberOfBytes;
-            m_allocatedBuffers.last() = m_writableBuffer.data;
-        } else
-            ASSERT(!m_allocatedBuffers.contains(m_writableBuffer.data));
-    }
     m_allocatedBuffers.shrinkToFit();
-    m_readOnlyBuffers.shrinkToFit();
 }
 
 DidChangeItemBuffer ItemBuffer::swapWritableBufferIfNeeded(size_t numberOfBytes)

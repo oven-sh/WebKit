@@ -725,7 +725,6 @@ enum class TextTransform : uint8_t {
     Capitalize,
     Uppercase,
     Lowercase,
-    FullSizeKana,
     None
 };
 

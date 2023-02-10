@@ -4277,10 +4277,8 @@ IGNORE_WARNINGS_END
 
     if (!_private->ignoringMouseDraggedEvents) {
         if (auto* frame = core([self _frame])) {
-            if (auto* page = frame->page()) {
-                if (auto* localMainFrame = dynamicDowncast<WebCore::LocalFrame>(page->mainFrame()))
-                    localMainFrame->eventHandler().mouseDragged(event, [[self _webView] _pressureEvent]);
-            }
+            if (auto* page = frame->page())
+                page->mainFrame().eventHandler().mouseDragged(event, [[self _webView] _pressureEvent]);
         }
     }
 
@@ -4456,14 +4454,11 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
     [self _stopAutoscrollTimer];
     if (auto* frame = core([self _frame])) {
         if (auto* page = frame->page()) {
-            auto* localMainFrame = dynamicDowncast<WebCore::LocalFrame>(page->mainFrame());
-            if (localMainFrame) {
 #if PLATFORM(IOS_FAMILY)
-                localMainFrame->eventHandler().mouseUp(event);
+            page->mainFrame().eventHandler().mouseUp(event);
 #else
-                localMainFrame->eventHandler().mouseUp(event, [[self _webView] _pressureEvent]);
+            page->mainFrame().eventHandler().mouseUp(event, [[self _webView] _pressureEvent]);
 #endif
-            }
         }
     }
 

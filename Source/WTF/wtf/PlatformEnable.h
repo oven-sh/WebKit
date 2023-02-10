@@ -85,8 +85,13 @@
 #include <wtf/PlatformEnableCocoa.h>
 #endif
 
-/* --------- Windows port --------- */
-#if PLATFORM(WIN)
+/* --------- Apple Windows port --------- */
+#if PLATFORM(WIN) && !PLATFORM(WIN_CAIRO)
+#include <wtf/PlatformEnableWinApple.h>
+#endif
+
+/* --------- Windows CAIRO port --------- */
+#if PLATFORM(WIN_CAIRO)
 #include <wtf/PlatformEnableWinCairo.h>
 #endif
 
@@ -362,10 +367,6 @@
 #define ENABLE_MEDIA_SOURCE 0
 #endif
 
-#if !defined(ENABLE_MANAGED_MEDIA_SOURCE)
-#define ENABLE_MANAGED_MEDIA_SOURCE 0
-#endif
-
 #if !defined(ENABLE_MEDIA_STATISTICS)
 #define ENABLE_MEDIA_STATISTICS 0
 #endif
@@ -580,11 +581,11 @@
 /* FIXME: This section of the file has not been cleaned up yet and needs major work. */
 
 /* FIXME: JSC_OBJC_API_ENABLED does not match the normal ENABLE naming convention. */
-#if !PLATFORM(COCOA)
-#if !defined(JSC_OBJC_API_ENABLED)
+//#if !PLATFORM(COCOA)
+//#if !defined(JSC_OBJC_API_ENABLED)
 #define JSC_OBJC_API_ENABLED 0
-#endif
-#endif
+//#endif
+//#endif
 
 /* The JIT is enabled by default on all x86-64 & ARM64 platforms. */
 #if !defined(ENABLE_JIT) && (CPU(X86_64) || (CPU(ARM64) && CPU(ADDRESS64)))
@@ -597,8 +598,6 @@
 #define ENABLE_WEBASSEMBLY 0
 #undef ENABLE_WEBASSEMBLY_B3JIT
 #define ENABLE_WEBASSEMBLY_B3JIT 0
-#undef ENABLE_WEBASSEMBLY_BBQJIT
-#define ENABLE_WEBASSEMBLY_BBQJIT 0
 #endif
 #if ((CPU(ARM_THUMB2) && CPU(ARM_HARDFP)) || CPU(MIPS)) && OS(LINUX)
 /* On ARMv7 and MIPS on Linux the JIT is enabled unless explicitly disabled. */
@@ -617,8 +616,6 @@
 #define ENABLE_WEBASSEMBLY 1
 #undef ENABLE_WEBASSEMBLY_B3JIT
 #define ENABLE_WEBASSEMBLY_B3JIT 0
-#undef ENABLE_WEBASSEMBLY_BBQJIT
-#define ENABLE_WEBASSEMBLY_BBQJIT 0
 #endif
 
 #if !defined(ENABLE_C_LOOP)
@@ -718,14 +715,11 @@
 #define ENABLE_B3_JIT 1
 #undef ENABLE_WEBASSEMBLY_B3JIT
 #define ENABLE_WEBASSEMBLY_B3JIT 1
-#undef ENABLE_WEBASSEMBLY_BBQJIT
-#define ENABLE_WEBASSEMBLY_BBQJIT 0
 #endif
 
 #if !defined(ENABLE_WEBASSEMBLY) && (ENABLE(B3_JIT) && PLATFORM(COCOA) && CPU(ADDRESS64))
 #define ENABLE_WEBASSEMBLY 1
 #define ENABLE_WEBASSEMBLY_B3JIT 1
-#define ENABLE_WEBASSEMBLY_BBQJIT 1
 #endif
 
 /* The SamplingProfiler is the probabilistic and low-overhead profiler used by
@@ -734,6 +728,10 @@
  * sampling profiler is enabled if WebKit uses pthreads and glibc. */
 #if !defined(ENABLE_SAMPLING_PROFILER) && (!ENABLE(C_LOOP) && (OS(WINDOWS) || HAVE(MACHINE_CONTEXT)))
 #define ENABLE_SAMPLING_PROFILER 1
+#endif
+
+#if ENABLE(WEBASSEMBLY) && HAVE(MACHINE_CONTEXT) && CPU(ADDRESS64)
+#define ENABLE_WEBASSEMBLY_SIGNALING_MEMORY 1
 #endif
 
 /* Counts uses of write barriers using sampling counters. Be sure to also
@@ -885,7 +883,7 @@
 #define ENABLE_OPENTYPE_VERTICAL 1
 #endif
 
-#if !defined(ENABLE_OPENTYPE_MATH) && (OS(DARWIN) && USE(CG)) || PLATFORM(WIN) || PLATFORM(PLAYSTATION)
+#if !defined(ENABLE_OPENTYPE_MATH) && (OS(DARWIN) && USE(CG)) || (USE(FREETYPE) && !PLATFORM(GTK)) || (PLATFORM(WIN) && (USE(CG) || USE(CAIRO)))
 #define ENABLE_OPENTYPE_MATH 1
 #endif
 
@@ -934,6 +932,7 @@
 #if !defined(ENABLE_GPU_PROCESS_DOM_RENDERING_BY_DEFAULT) && PLATFORM(IOS_FAMILY) && !PLATFORM(WATCHOS) && !HAVE(UIKIT_WEBKIT_INTERNALS)
 #define ENABLE_GPU_PROCESS_DOM_RENDERING_BY_DEFAULT 1
 #endif
+
 
 #if !defined(ENABLE_GPU_PROCESS_WEBGL_BY_DEFAULT) && (PLATFORM(IOS_FAMILY) || PLATFORM(MAC)) && !PLATFORM(WATCHOS) && !HAVE(UIKIT_WEBKIT_INTERNALS)
 #define ENABLE_GPU_PROCESS_WEBGL_BY_DEFAULT 1

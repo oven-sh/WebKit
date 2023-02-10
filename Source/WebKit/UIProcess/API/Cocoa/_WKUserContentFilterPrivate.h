@@ -25,7 +25,6 @@
 
 #import <WebKit/_WKUserContentFilter.h>
 
-@class WKContentRuleList;
 @class WKUserContentRuleList;
 
 @interface _WKUserContentFilter (WKPrivate)

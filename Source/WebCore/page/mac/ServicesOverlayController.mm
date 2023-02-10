@@ -654,9 +654,7 @@ void ServicesOverlayController::handleClick(const IntPoint& clickPoint, DataDete
 
 Frame& ServicesOverlayController::mainFrame() const
 {
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame()); 
-    ASSERT(localMainFrame);
-    return *localMainFrame;
+    return m_page.mainFrame();
 }
 
 } // namespace WebKit

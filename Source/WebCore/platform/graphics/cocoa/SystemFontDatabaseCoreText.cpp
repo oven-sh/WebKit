@@ -29,7 +29,6 @@
 #include "FontCache.h"
 #include "FontCacheCoreText.h"
 #include "FontCascadeDescription.h"
-#include "FontMetricsNormalization.h"
 
 #include <wtf/cf/TypeCastsCF.h>
 

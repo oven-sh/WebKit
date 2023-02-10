@@ -33,9 +33,7 @@ namespace TestWebKitAPI {
 
 TEST(StreamConnectionBufferTests, CreateWorks)
 {
-    auto buffer = IPC::StreamClientConnectionBuffer::create(8);
-    ASSERT_TRUE(buffer.has_value());
-    auto& b = *buffer;
+    IPC::StreamClientConnectionBuffer b(8);
     EXPECT_NE(b.data(), nullptr);
     EXPECT_EQ(b.dataSize(), 256u);
     {
@@ -43,9 +41,7 @@ TEST(StreamConnectionBufferTests, CreateWorks)
         ASSERT_TRUE(server.has_value());
         EXPECT_EQ(b.dataSize(), server->dataSize());
     }
-    auto buffer2 = IPC::StreamClientConnectionBuffer::create(24);
-    ASSERT_TRUE(buffer2.has_value());
-    auto& b2 = *buffer2;
+    IPC::StreamClientConnectionBuffer b2(24);
     EXPECT_NE(b2.data(), nullptr);
     EXPECT_EQ(b2.dataSize(), 16777216u);
     {
@@ -64,8 +60,7 @@ public:
 
     void SetUp() override
     {
-        m_client = IPC::StreamClientConnectionBuffer::create(bufferSizeLog2());
-        ASSERT(m_client);
+        m_client.emplace(bufferSizeLog2());
         m_maybeServer = IPC::StreamServerConnectionBuffer::map(m_client->createHandle());
     }
 

@@ -46,8 +46,6 @@ public:
 
     WEBCORE_EXPORT bool isCertificationVerificationError() const;
 
-    ErrorRecoveryMethod errorRecoveryMethod() const { return ErrorRecoveryMethod::NoRecovery; }
-
     static bool platformCompare(const ResourceError& a, const ResourceError& b);
 
 private:

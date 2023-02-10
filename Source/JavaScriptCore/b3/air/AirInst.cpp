@@ -89,6 +89,11 @@ unsigned Inst::jsHash() const
 void Inst::dump(PrintStream& out) const
 {
     out.print(kind, " ", listDump(args));
+    if (origin) {
+        if (args.size())
+            out.print(", ");
+        out.print(*origin);
+    }
 }
 
 } } } // namespace JSC::B3::Air

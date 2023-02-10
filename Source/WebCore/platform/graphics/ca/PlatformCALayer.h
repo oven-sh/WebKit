@@ -35,7 +35,9 @@
 
 OBJC_CLASS AVPlayerLayer;
 
+#if PLATFORM(COCOA)
 typedef struct CGContext *CGContextRef;
+#endif
 
 namespace WTF {
 #if HAVE(IOSURFACE)
@@ -292,7 +294,9 @@ public:
     virtual Ref<PlatformCALayer> createCompatibleLayer(LayerType, PlatformCALayerClient*) const = 0;
     Ref<PlatformCALayer> createCompatibleLayerOrTakeFromPool(LayerType, PlatformCALayerClient*, IntSize);
 
+#if PLATFORM(COCOA)
     virtual void enumerateRectsBeingDrawn(GraphicsContext&, void (^block)(FloatRect)) = 0;
+#endif
 
     static const unsigned webLayerMaxRectsToPaint = 5;
     constexpr static const float webLayerWastedSpaceThreshold = 0.75f;

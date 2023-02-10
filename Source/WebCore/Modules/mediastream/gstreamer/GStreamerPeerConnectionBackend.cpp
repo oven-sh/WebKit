@@ -293,9 +293,9 @@ ExceptionOr<Ref<RTCRtpTransceiver>> GStreamerPeerConnectionBackend::addTransceiv
     return addTransceiverFromTrackOrKind(WTFMove(track), init);
 }
 
-GStreamerRtpSenderBackend::Source GStreamerPeerConnectionBackend::createLinkedSourceForTrack(MediaStreamTrack& track)
+void GStreamerPeerConnectionBackend::setSenderSourceFromTrack(GStreamerRtpSenderBackend& sender, MediaStreamTrack& track)
 {
-    return m_endpoint->createLinkedSourceForTrack(track);
+    m_endpoint->setSenderSourceFromTrack(sender, track);
 }
 
 static inline GStreamerRtpTransceiverBackend& backendFromRTPTransceiver(RTCRtpTransceiver& transceiver)
@@ -365,9 +365,9 @@ void GStreamerPeerConnectionBackend::gatherDecoderImplementationName(Function<vo
     m_endpoint->gatherDecoderImplementationName(WTFMove(callback));
 }
 
-bool GStreamerPeerConnectionBackend::isNegotiationNeeded(uint32_t eventId) const
+bool GStreamerPeerConnectionBackend::isNegotiationNeeded(uint32_t) const
 {
-    return m_endpoint->isNegotiationNeeded(eventId);
+    return m_endpoint->isNegotiationNeeded();
 }
 
 } // namespace WebCore

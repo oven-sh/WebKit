@@ -137,7 +137,7 @@ class ClassLayoutBase(object):
 class ClassLayout(ClassLayoutBase):
     "Stores the layout of a class or struct."
 
-    def __init__(self, target, type, containerClass=None, derivedClass=None, skip_nested=False):
+    def __init__(self, target, type, containerClass=None, derivedClass=None):
         super(ClassLayout, self).__init__(type.GetName())
 
         self.target = target
@@ -147,7 +147,7 @@ class ClassLayout(ClassLayoutBase):
         self.total_pad_bytes = 0
         self.data_members = []
         self.virtual_base_classes = self._virtual_base_classes_dictionary()
-        self._parse(containerClass, derivedClass, skip_nested)
+        self._parse(containerClass, derivedClass)
         if containerClass == None and derivedClass == None:
             self.total_pad_bytes = self._compute_padding()
 
@@ -171,7 +171,7 @@ class ClassLayout(ClassLayoutBase):
             result[virtual_base.GetName()] = ClassLayout(self.target, virtual_base.GetType(), self)
         return result
 
-    def _parse(self, containerClass=None, derivedClass=None, skip_nested=False):
+    def _parse(self, containerClass=None, derivedClass=None):
         # It's moot where we actually show the vtable pointer, but to match clang -fdump-record-layouts, assign it to the
         # base-most polymorphic class (unless virtual inheritance is involved).
         if self.type.IsPolymorphicClass() and not self._has_polymorphic_non_virtual_base_class():
@@ -201,7 +201,7 @@ class ClassLayout(ClassLayoutBase):
                 member_offset = direct_base.GetOffsetInBytes()
                 member_byte_size = member_type.GetByteSize()
 
-                base_class = ClassLayout(self.target, member_type, None, self, skip_nested)
+                base_class = ClassLayout(self.target, member_type, None, self)
 
                 data_member = {
                     self.MEMBER_NAME_KEY : member_name,
@@ -243,8 +243,7 @@ class ClassLayout(ClassLayoutBase):
                 data_member[self.MEMBER_BYTE_SIZE] = (field.GetBitfieldSizeInBits() + 7) / 8
             elif member_type_class == lldb.eTypeClassStruct or member_type_class == lldb.eTypeClassClass:
                 nested_class = ClassLayout(self.target, member_type, self)
-                if not skip_nested:
-                    data_member[self.MEMBER_CLASS_INSTANCE] = nested_class
+                data_member[self.MEMBER_CLASS_INSTANCE] = nested_class
 
             self.data_members.append(data_member)
 
@@ -263,7 +262,7 @@ class ClassLayout(ClassLayoutBase):
                 member_offset = virtual_base.GetOffsetInBytes()
                 member_byte_size = member_type.GetByteSize()
 
-                nested_class = ClassLayout(self.target, member_type, None, self, skip_nested)
+                nested_class = ClassLayout(self.target, member_type, None, self)
 
                 data_member = {
                     self.MEMBER_NAME_KEY : member_name,
@@ -394,11 +393,11 @@ class LLDBDebuggerInstance:
         if lldb:
             lldb.SBDebugger.Destroy(self.debugger)
 
-    def layout_for_classname(self, classname, skip_nested=False):
+    def layout_for_classname(self, classname):
         types = self.module.FindTypes(classname)
         if types.GetSize():
             # There can be more that one type with a given name, but for now just return the first one.
-            return ClassLayout(self.target, types.GetTypeAtIndex(0), skip_nested=skip_nested)
+            return ClassLayout(self.target, types.GetTypeAtIndex(0))
 
         print('error: no type matches "%s" in "%s"' % (classname, self.module.file))
         return None

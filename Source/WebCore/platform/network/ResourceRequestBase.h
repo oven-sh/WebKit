@@ -247,7 +247,7 @@ public:
     WEBCORE_EXPORT void setSystemPreviewInfo(const SystemPreviewInfo&);
 #endif
 
-#if !PLATFORM(COCOA) && !USE(SOUP)
+#if !PLATFORM(COCOA)
     bool encodingRequiresPlatformData() const { return true; }
 #endif
 

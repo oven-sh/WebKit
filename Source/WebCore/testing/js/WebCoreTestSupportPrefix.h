@@ -86,7 +86,7 @@
 #include <CoreFoundation/CoreFoundation.h>
 #endif
 
-#if PLATFORM(WIN)
+#if PLATFORM(WIN_CAIRO)
 #include <windows.h>
 #else
 

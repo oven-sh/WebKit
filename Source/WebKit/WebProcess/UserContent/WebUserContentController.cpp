@@ -430,17 +430,14 @@ void WebUserContentController::addUserScriptInternal(InjectedBundleScriptWorld& 
         Page::forEachPage([&] (auto& page) {
             if (&page.userContentProvider() != this)
                 return;
-            
-            auto* localMainFrame = dynamicDowncast<LocalFrame>(page.mainFrame());
-            if (!localMainFrame)
-                return;
 
+            auto& mainFrame = page.mainFrame();
             if (userScript.injectedFrames() == UserContentInjectedFrames::InjectInTopFrameOnly) {
-                localMainFrame->injectUserScriptImmediately(world.coreWorld(), userScript);
+                mainFrame.injectUserScriptImmediately(world.coreWorld(), userScript);
                 return;
             }
 
-            for (AbstractFrame* frame = localMainFrame; frame; frame = frame->tree().traverseNext(localMainFrame)) {
+            for (AbstractFrame* frame = &mainFrame; frame; frame = frame->tree().traverseNext(&mainFrame)) {
                 auto* localFrame = dynamicDowncast<LocalFrame>(frame);
                 if (!localFrame)
                     continue;

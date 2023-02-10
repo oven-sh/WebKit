@@ -28,7 +28,6 @@
 
 #include "FontCascade.h"
 #include "FontFeatureValues.h"
-#include "TextSpacing.h"
 #include <functional>
 #include <numeric>
 #include <wtf/text/TextStream.h>
@@ -85,20 +84,20 @@ WTF::TextStream& operator<<(TextStream& ts, FontVariantAlternates alternates)
             // Separate elements with a space.
             builder.append(builder.isEmpty() ? "": " ", std::forward<Ts>(args)...);
         };
-        if (!values.stylistic.isNull())
-            append("stylistic(", values.stylistic, ")");
+        if (values.stylistic)
+            append("stylistic(", *values.stylistic, ")");
         if (values.historicalForms)
             append("historical-forms"_s);
         if (!values.styleset.isEmpty())
             append("styleset(", makeStringByJoining(values.styleset, ", "_s), ")");
         if (!values.characterVariant.isEmpty())
             append("character-variant(", makeStringByJoining(values.characterVariant, ", "_s), ")");
-        if (!values.swash.isNull())
-            append("swash(", values.swash, ")");
-        if (!values.ornaments.isNull())
-            append("ornaments(", values.ornaments, ")");
-        if (!values.annotation.isNull())
-            append("annotation(", values.annotation, ")");
+        if (values.swash)
+            append("swash(", *values.swash, ")");
+        if (values.ornaments)
+            append("ornaments(", *values.ornaments, ")");
+        if (values.annotation)
+            append("annotation(", *values.annotation, ")");
         
         ts << builder.toString();
     }
@@ -112,7 +111,7 @@ void add(Hasher& hasher, const FontVariantAlternatesValues& key)
 
 void add(Hasher& hasher, const FontVariantAlternates& key)
 {
-    add(hasher, !!key.m_values);
+    add(hasher, key.m_val.index());
     if (!key.isNormal())
         add(hasher, key.values());
 }

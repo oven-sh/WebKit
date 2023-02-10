@@ -5,9 +5,7 @@ async function helloCube() {
     }
 
     const adapter = await navigator.gpu.requestAdapter();
-    const device = await adapter.requestDevice({
-        requiredFeatures: [ "depth-clip-control" ],
-    });
+    const device = await adapter.requestDevice();
     
     /*** Vertex Buffer Setup ***/
     
@@ -158,6 +156,7 @@ async function helloCube() {
                                               0,     0,     0, 1);
                     vout.position = vertices[VertexIndex].position * m;
                     vout.position.xy += float2(offset, offset);
+                    vout.position.z = (vout.position.z + 0.5) * 0.5;
                     vout.color = vertices[VertexIndex].color;
                     return vout;
                 }
@@ -183,8 +182,7 @@ async function helloCube() {
         fragment: fragmentStageDescriptor,
         primitive: {
             topology: "triangle-list",
-            cullMode: "back",
-            unclippedDepth: true
+            cullMode: "back"
         },
     };
     /* GPURenderPipeline */

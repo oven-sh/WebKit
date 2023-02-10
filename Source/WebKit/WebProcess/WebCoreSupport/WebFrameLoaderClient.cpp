@@ -634,7 +634,7 @@ void WebFrameLoaderClient::dispatchDidCommitLoad(std::optional<HasInsecureConten
     webPage->didCommitLoad(m_frame.ptr());
 }
 
-void WebFrameLoaderClient::dispatchDidFailProvisionalLoad(const ResourceError& error, WillContinueLoading willContinueLoading, WillInternallyHandleFailure willInternallyHandleFailure)
+void WebFrameLoaderClient::dispatchDidFailProvisionalLoad(const ResourceError& error, WillContinueLoading willContinueLoading)
 {
     WebPage* webPage = m_frame->page();
     if (!webPage)
@@ -672,7 +672,7 @@ void WebFrameLoaderClient::dispatchDidFailProvisionalLoad(const ResourceError& e
 
     // Notify the UIProcess.
     WebCore::Frame* coreFrame = m_frame->coreFrame();
-    webPage->send(Messages::WebPageProxy::DidFailProvisionalLoadForFrame(m_frame->frameID(), m_frame->info(), request, navigationID, coreFrame->loader().provisionalLoadErrorBeingHandledURL().string(), error, willContinueLoading, UserData(WebProcess::singleton().transformObjectsToHandles(userData.get()).get()), willInternallyHandleFailure));
+    webPage->send(Messages::WebPageProxy::DidFailProvisionalLoadForFrame(m_frame->frameID(), m_frame->info(), request, navigationID, coreFrame->loader().provisionalLoadErrorBeingHandledURL().string(), error, willContinueLoading, UserData(WebProcess::singleton().transformObjectsToHandles(userData.get()).get())));
 
     // If we have a load listener, notify it.
     if (WebFrame::LoadListener* loadListener = m_frame->loadListener())
@@ -875,11 +875,7 @@ Frame* WebFrameLoaderClient::dispatchCreatePage(const NavigationAction& navigati
     if (!newPage)
         return nullptr;
     
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(newPage->mainFrame());
-    if (!localMainFrame)
-        return nullptr;
-
-    return localMainFrame;
+    return &newPage->mainFrame();
 }
 
 void WebFrameLoaderClient::dispatchShow()
@@ -1662,7 +1658,7 @@ void WebFrameLoaderClient::transitionToCommittedForNewPage()
     webPage->corePage()->setDelegatesScaling(drawingArea->usesDelegatedPageScaling());
 #endif
 
-    if (webPage->scrollPinningBehavior() != ScrollPinningBehavior::DoNotPin)
+    if (webPage->scrollPinningBehavior() != DoNotPin)
         view->setScrollPinningBehavior(webPage->scrollPinningBehavior());
 
 #if USE(COORDINATED_GRAPHICS)

@@ -24,4 +24,3 @@
  */
 
 var WI = {}; // Namespace
-var WebKitAdditions = {};

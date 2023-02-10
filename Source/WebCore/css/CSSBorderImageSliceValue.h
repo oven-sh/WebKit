@@ -25,31 +25,33 @@
 
 #pragma once
 
-#include "CSSValue.h"
-#include "Quad.h"
+#include "CSSPrimitiveValue.h"
+#include <wtf/RefPtr.h>
 
 namespace WebCore {
 
-class CSSPrimitiveValue;
+class Rect;
 
 class CSSBorderImageSliceValue final : public CSSValue {
 public:
-    static Ref<CSSBorderImageSliceValue> create(Quad, bool fill);
-    ~CSSBorderImageSliceValue();
-
-    const Quad& slices() const { return m_slices; }
-    bool fill() const { return m_fill; }
+    static Ref<CSSBorderImageSliceValue> create(Ref<Quad>&& slices, bool fill)
+    {
+        return adoptRef(*new CSSBorderImageSliceValue(WTFMove(slices), fill));
+    }
 
     String customCSSText() const;
-    bool equals(const CSSBorderImageSliceValue&) const;
 
-private:
-    CSSBorderImageSliceValue(Quad, bool fill);
+    Quad& slices() const { return m_slices.get(); }
+
+    bool equals(const CSSBorderImageSliceValue&) const;
 
     // These four values are used to make "cuts" in the border image. They can be numbers
     // or percentages.
-    Quad m_slices;
-    bool m_fill { false };
+    Ref<Quad> m_slices;
+    bool m_fill;
+
+private:
+    CSSBorderImageSliceValue(Ref<Quad>&& slices, bool fill);
 };
 
 } // namespace WebCore

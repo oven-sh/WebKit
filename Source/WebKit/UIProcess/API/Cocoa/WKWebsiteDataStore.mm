@@ -68,7 +68,6 @@ public:
         , m_hasShowNotificationSelector([m_delegate.get() respondsToSelector:@selector(websiteDataStore:showNotification:)])
         , m_hasNotificationPermissionsSelector([m_delegate.get() respondsToSelector:@selector(notificationPermissionsForWebsiteDataStore:)])
         , m_hasWorkerUpdatedAppBadgeSelector([m_delegate.get() respondsToSelector:@selector(websiteDataStore:workerOrigin:updatedAppBadge:)])
-        , m_hasRequestBackgroundFetchPermissionSelector([m_delegate.get() respondsToSelector:@selector(requestBackgroundFetchPermission:frameOrigin:decisionHandler:)])
     {
     }
 
@@ -173,27 +172,6 @@ private:
         [m_delegate.getAutoreleased() websiteDataStore:m_dataStore.getAutoreleased() workerOrigin:wrapper(apiOrigin.get()) updatedAppBadge:(NSNumber *)nsBadge];
     }
 
-    void requestBackgroundFetchPermission(const WebCore::SecurityOriginData& topOrigin, const WebCore::SecurityOriginData& frameOrigin, CompletionHandler<void(bool)>&& completionHandler)
-    {
-        if (!m_hasRequestBackgroundFetchPermissionSelector) {
-            completionHandler(false);
-            return;
-        }
-
-        auto checker = WebKit::CompletionHandlerCallChecker::create(m_delegate.getAutoreleased(), @selector(requestBackgroundFetchPermission: frameOrigin: decisionHandler:));
-        auto decisionHandler = makeBlockPtr([completionHandler = WTFMove(completionHandler), checker = WTFMove(checker)](bool result) mutable {
-            if (checker->completionHandlerHasBeenCalled())
-                return;
-            checker->didCallCompletionHandler();
-            completionHandler(result);
-        });
-
-        URL mainFrameURL { topOrigin.toString() };
-        URL frameURL { frameOrigin.toString() };
-
-        [m_delegate.getAutoreleased() requestBackgroundFetchPermission:mainFrameURL frameOrigin:frameURL decisionHandler:decisionHandler.get()];
-    }
-
     WeakObjCPtr<WKWebsiteDataStore> m_dataStore;
     WeakObjCPtr<id <_WKWebsiteDataStoreDelegate> > m_delegate;
     bool m_hasRequestStorageSpaceSelector { false };
@@ -202,7 +180,6 @@ private:
     bool m_hasShowNotificationSelector { false };
     bool m_hasNotificationPermissionsSelector { false };
     bool m_hasWorkerUpdatedAppBadgeSelector { false };
-    bool m_hasRequestBackgroundFetchPermissionSelector { false };
 };
 
 @implementation WKWebsiteDataStore
@@ -273,7 +250,7 @@ private:
     static dispatch_once_t onceToken;
     static NeverDestroyed<RetainPtr<NSSet>> allWebsiteDataTypes;
     dispatch_once(&onceToken, ^{
-        allWebsiteDataTypes.get() = adoptNS([[NSSet alloc] initWithArray:@[ WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeFetchCache, WKWebsiteDataTypeMemoryCache, WKWebsiteDataTypeOfflineWebApplicationCache, WKWebsiteDataTypeCookies, WKWebsiteDataTypeSessionStorage, WKWebsiteDataTypeLocalStorage, WKWebsiteDataTypeIndexedDBDatabases, WKWebsiteDataTypeServiceWorkerRegistrations, WKWebsiteDataTypeWebSQLDatabases, WKWebsiteDataTypeFileSystem, WKWebsiteDataTypeSearchFieldRecentSearches, WKWebsiteDataTypeMediaKeys ]]);
+        allWebsiteDataTypes.get() = adoptNS([[NSSet alloc] initWithArray:@[ WKWebsiteDataTypeDiskCache, WKWebsiteDataTypeFetchCache, WKWebsiteDataTypeMemoryCache, WKWebsiteDataTypeOfflineWebApplicationCache, WKWebsiteDataTypeCookies, WKWebsiteDataTypeSessionStorage, WKWebsiteDataTypeLocalStorage, WKWebsiteDataTypeIndexedDBDatabases, WKWebsiteDataTypeServiceWorkerRegistrations, WKWebsiteDataTypeWebSQLDatabases, WKWebsiteDataTypeFileSystem ]]);
     });
 
     return allWebsiteDataTypes.get().get();
@@ -340,11 +317,16 @@ static Vector<WebKit::WebsiteDataRecord> toWebsiteDataRecords(NSArray *dataRecor
     dispatch_once(&onceToken, ^ {
         auto *privateTypes = @[
             _WKWebsiteDataTypeHSTSCache,
+            _WKWebsiteDataTypeMediaKeys,
+            _WKWebsiteDataTypeSearchFieldRecentSearches,
             _WKWebsiteDataTypeResourceLoadStatistics,
             _WKWebsiteDataTypeCredentials,
             _WKWebsiteDataTypeAdClickAttributions,
             _WKWebsiteDataTypePrivateClickMeasurements,
             _WKWebsiteDataTypeAlternativeServices
+#if !TARGET_OS_IPHONE
+            , _WKWebsiteDataTypePlugInData
+#endif
         ];
 
         allWebsiteDataTypes.get() = [[self allWebsiteDataTypes] setByAddingObjectsFromArray:privateTypes];
@@ -757,9 +739,7 @@ static Vector<WebKit::WebsiteDataRecord> toWebsiteDataRecords(NSArray *dataRecor
     if (![dataTypes isSubsetOfSet:supportedTypes])
         [NSException raise:NSInvalidArgumentException format:@"_renameOrigin can only be called with WKWebsiteDataTypeLocalStorage and WKWebsiteDataTypeIndexedDBDatabases right now."];
 
-    auto oldOrigin = WebCore::SecurityOriginData::fromURLWithoutStrictOpaqueness(oldName);
-    auto newOrigin = WebCore::SecurityOriginData::fromURLWithoutStrictOpaqueness(newName);
-    _websiteDataStore->renameOriginInWebsiteData(WTFMove(oldOrigin), WTFMove(newOrigin), WebKit::toWebsiteDataTypes(dataTypes), [completionHandler = makeBlockPtr(completionHandler)] {
+    _websiteDataStore->renameOriginInWebsiteData(oldName, newName, WebKit::toWebsiteDataTypes(dataTypes), [completionHandler = makeBlockPtr(completionHandler)] {
         completionHandler();
     });
 }
@@ -1022,7 +1002,7 @@ static Vector<WebKit::WebsiteDataRecord> toWebsiteDataRecords(NSArray *dataRecor
         return completionHandler(nil);
 
     auto completionHandlerCopy = makeBlockPtr(completionHandler);
-    _websiteDataStore->originDirectoryForTesting(WebCore::ClientOrigin { WebCore::SecurityOriginData::fromURLWithoutStrictOpaqueness(topOrigin), WebCore::SecurityOriginData::fromURLWithoutStrictOpaqueness(origin) }, { *websiteDataType }, [completionHandlerCopy = WTFMove(completionHandlerCopy)](auto result) {
+    _websiteDataStore->originDirectoryForTesting(origin, topOrigin, *websiteDataType, [completionHandlerCopy = WTFMove(completionHandlerCopy)](auto result) {
         completionHandlerCopy(result);
     });
 }
@@ -1039,18 +1019,5 @@ static Vector<WebKit::WebsiteDataRecord> toWebsiteDataRecords(NSArray *dataRecor
 #endif
 }
 
-- (NSUUID *)_identifier
-{
-    auto identifier = _websiteDataStore->configuration().identifier();
-    if (!identifier)
-        return nil;
-
-    return *identifier;
-}
-
-- (NSString *)_webPushPartition
-{
-    return _websiteDataStore->configuration().webPushPartitionString();
-}
 
 @end

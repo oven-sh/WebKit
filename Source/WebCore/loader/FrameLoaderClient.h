@@ -173,7 +173,7 @@ public:
     virtual void dispatchDidStartProvisionalLoad() = 0;
     virtual void dispatchDidReceiveTitle(const StringWithDirection&) = 0;
     virtual void dispatchDidCommitLoad(std::optional<HasInsecureContent>, std::optional<UsedLegacyTLS>, std::optional<WasPrivateRelayed>) = 0;
-    virtual void dispatchDidFailProvisionalLoad(const ResourceError&, WillContinueLoading, WillInternallyHandleFailure) = 0;
+    virtual void dispatchDidFailProvisionalLoad(const ResourceError&, WillContinueLoading) = 0;
     virtual void dispatchDidFailLoad(const ResourceError&) = 0;
     virtual void dispatchDidFinishDocumentLoad() = 0;
     virtual void dispatchDidFinishLoad() = 0;
@@ -298,6 +298,11 @@ public:
     virtual RemoteAXObjectRef accessibilityRemoteObject() = 0;
     virtual void willCacheResponse(DocumentLoader*, ResourceLoaderIdentifier, NSCachedURLResponse*, CompletionHandler<void(NSCachedURLResponse *)>&&) const = 0;
     virtual NSDictionary *dataDetectionContext() { return nullptr; }
+#endif
+
+#if USE(CFURLCONNECTION)
+    // FIXME: Windows should use willCacheResponse - <https://bugs.webkit.org/show_bug.cgi?id=57257>.
+    virtual bool shouldCacheResponse(DocumentLoader*, ResourceLoaderIdentifier, const ResourceResponse&, const unsigned char* data, unsigned long long length) = 0;
 #endif
 
     virtual bool shouldAlwaysUsePluginDocument(const String& /*mimeType*/) const { return false; }

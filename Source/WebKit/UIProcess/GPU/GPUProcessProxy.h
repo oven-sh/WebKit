@@ -51,7 +51,7 @@ namespace WebCore {
 class CaptureDevice;
 struct MockMediaDevice;
 struct ScreenProperties;
-class SecurityOriginData;
+struct SecurityOriginData;
 }
 
 namespace WebKit {

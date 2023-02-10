@@ -85,7 +85,7 @@ private:
     void dispatchDidStartProvisionalLoad() final;
     void dispatchDidReceiveTitle(const StringWithDirection&) final;
     void dispatchDidCommitLoad(std::optional<HasInsecureContent>, std::optional<UsedLegacyTLS>, std::optional<WasPrivateRelayed>) final;
-    void dispatchDidFailProvisionalLoad(const ResourceError&, WillContinueLoading, WillInternallyHandleFailure) final;
+    void dispatchDidFailProvisionalLoad(const ResourceError&, WillContinueLoading) final;
     void dispatchDidFailLoad(const ResourceError&) final;
     void dispatchDidFinishDocumentLoad() final;
     void dispatchDidFinishLoad() final;
@@ -181,6 +181,10 @@ private:
 #if PLATFORM(COCOA)
     RemoteAXObjectRef accessibilityRemoteObject() final;
     void willCacheResponse(DocumentLoader*, ResourceLoaderIdentifier, NSCachedURLResponse *, CompletionHandler<void(NSCachedURLResponse *)>&&) const final;
+#endif
+
+#if USE(CFURLCONNECTION)
+    bool shouldCacheResponse(DocumentLoader*, ResourceLoaderIdentifier, const ResourceResponse&, const unsigned char*, unsigned long long) final;
 #endif
 
     Ref<FrameNetworkingContext> createNetworkingContext() final;

@@ -52,7 +52,7 @@ void adjustFrameAndStackInOSRExitCompilerThunk(MacroAssembler& jit, VM& vm, JITT
     if (isFTLOSRExit) {
         // FTL can use the scratch registers for values. The code below uses
         // the scratch registers. We need to preserve them before doing anything.
-        registersToPreserve.merge(RegisterSetBuilder::macroClobberedGPRs());
+        registersToPreserve.merge(RegisterSetBuilder::macroClobberedRegisters());
     }
 
     size_t scratchSize = sizeof(void*) * registersToPreserve.numberOfSetGPRs();

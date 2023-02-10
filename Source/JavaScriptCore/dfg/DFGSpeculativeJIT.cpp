@@ -9753,11 +9753,8 @@ void SpeculativeJIT::compileCreateClonedArguments(Node* node)
     cellResult(resultGPR, node);
 }
 
-void SpeculativeJIT::compileCreateArgumentsButterflyExcludingThis(Node* node)
+void SpeculativeJIT::compileCreateArgumentsButterfly(Node* node)
 {
-    SpeculateCellOperand target(this, node->child1());
-    GPRReg targetGPR = target.gpr();
-
     GPRFlushedCallResult result(this);
     GPRReg resultGPR = result.gpr();
     flushRegisters();
@@ -9765,10 +9762,7 @@ void SpeculativeJIT::compileCreateArgumentsButterflyExcludingThis(Node* node)
     // We set up the arguments ourselves, because we have the whole register file and we can
     // set them up directly into the argument registers.
 
-    // Arguments: 0:JSGlobalObject*, 1:start, 2:length, 3:target
-
-    // Do the targetGPR first, since it might alias an argument register.
-    setupArgument(3, [&] (GPRReg destGPR) { move(targetGPR, destGPR); });
+    // Arguments: 0:JSGlobalObject*, 1:start, 3:length
     setupArgument(2, [&] (GPRReg destGPR) { emitGetLength(node->origin.semantic, destGPR); });
     setupArgument(1, [&] (GPRReg destGPR) { emitGetArgumentStart(node->origin.semantic, destGPR); });
     setupArgument(
@@ -9776,7 +9770,7 @@ void SpeculativeJIT::compileCreateArgumentsButterflyExcludingThis(Node* node)
             loadLinkableConstant(LinkableConstant::globalObject(*this, node), destGPR);
         });
 
-    appendCallSetResult(operationCreateArgumentsButterflyExcludingThis, resultGPR);
+    appendCallSetResult(operationCreateArgumentsButterfly, resultGPR);
     exceptionCheck();
 
     cellResult(resultGPR, node);
@@ -11384,7 +11378,7 @@ void SpeculativeJIT::compileCallDOM(Node* node)
 
     // FIXME: We should have a way to call functions with the vector of registers.
     // https://bugs.webkit.org/show_bug.cgi?id=163099
-    using OperandVariant = std::variant<SpeculateCellOperand, SpeculateInt32Operand, SpeculateBooleanOperand>;
+    using OperandVariant = std::variant<SpeculateCellOperand, SpeculateInt32Operand, SpeculateBooleanOperand, SpeculateStrictInt52Operand>;
     Vector<OperandVariant, JSC_DOMJIT_SIGNATURE_MAX_ARGUMENTS_INCLUDING_THIS> operands;
     Vector<GPRReg, JSC_DOMJIT_SIGNATURE_MAX_ARGUMENTS_INCLUDING_THIS> regs;
 
@@ -11408,11 +11402,81 @@ void SpeculativeJIT::compileCallDOM(Node* node)
         operands.append(OperandVariant(std::in_place_type<SpeculateInt32Operand>, WTFMove(operand)));
     };
 
+    auto appendAnyIntAsDouble = [&](Edge& edge) {
+        SpeculateStrictInt52Operand operand(this, edge);
+        regs.append(operand.gpr());
+        operands.append(OperandVariant(std::in_place_type<SpeculateStrictInt52Operand>, WTFMove(operand)));
+    };
     auto appendBoolean = [&](Edge& edge) {
         SpeculateBooleanOperand operand(this, edge);
         regs.append(operand.gpr());
         operands.append(OperandVariant(std::in_place_type<SpeculateBooleanOperand>, WTFMove(operand)));
     };
+
+    auto appendInt8Array = [&](Edge& edge) {
+        SpeculateCellOperand operand(this, edge);
+        GPRReg gpr = operand.gpr();
+        regs.append(gpr);
+        speculateCellTypeWithoutTypeFiltering(edge, gpr, JSType::Int8ArrayType);
+        operands.append(OperandVariant(std::in_place_type<SpeculateCellOperand>, WTFMove(operand)));
+    };
+    auto appendInt16Array = [&](Edge& edge) {
+        SpeculateCellOperand operand(this, edge);
+        GPRReg gpr = operand.gpr();
+        regs.append(gpr);
+        speculateCellTypeWithoutTypeFiltering(edge, gpr, JSType::Int16ArrayType);
+        operands.append(OperandVariant(std::in_place_type<SpeculateCellOperand>, WTFMove(operand)));
+    };
+    auto appendInt32Array = [&](Edge& edge) {
+        SpeculateCellOperand operand(this, edge);
+        GPRReg gpr = operand.gpr();
+        regs.append(gpr);
+        speculateCellTypeWithoutTypeFiltering(edge, gpr, JSType::Int32ArrayType);
+        operands.append(OperandVariant(std::in_place_type<SpeculateCellOperand>, WTFMove(operand)));
+    };
+    auto appendUint8Array = [&](Edge& edge) {
+        SpeculateCellOperand operand(this, edge);
+        GPRReg gpr = operand.gpr();
+        regs.append(gpr);
+        speculateCellTypeWithoutTypeFiltering(edge, gpr, JSType::Uint8ArrayType);
+        operands.append(OperandVariant(std::in_place_type<SpeculateCellOperand>, WTFMove(operand)));
+    };
+    auto appendUint8ClampedArray = [&](Edge& edge) {
+        SpeculateCellOperand operand(this, edge);
+        GPRReg gpr = operand.gpr();
+        regs.append(gpr);
+        speculateCellTypeWithoutTypeFiltering(edge, gpr, JSType::Uint8ClampedArrayType);
+        operands.append(OperandVariant(std::in_place_type<SpeculateCellOperand>, WTFMove(operand)));
+    };
+    auto appendUint16Array = [&](Edge& edge) {
+        SpeculateCellOperand operand(this, edge);
+        GPRReg gpr = operand.gpr();
+        regs.append(gpr);
+        speculateCellTypeWithoutTypeFiltering(edge, gpr, JSType::Uint16ArrayType);
+        operands.append(OperandVariant(std::in_place_type<SpeculateCellOperand>, WTFMove(operand)));
+    };
+    auto appendUint32Array = [&](Edge& edge) {
+        SpeculateCellOperand operand(this, edge);
+        GPRReg gpr = operand.gpr();
+        regs.append(gpr);
+        speculateCellTypeWithoutTypeFiltering(edge, gpr, JSType::Uint32ArrayType);
+        operands.append(OperandVariant(std::in_place_type<SpeculateCellOperand>, WTFMove(operand)));
+    };
+    auto appendFloat32Array = [&](Edge& edge) {
+        SpeculateCellOperand operand(this, edge);
+        GPRReg gpr = operand.gpr();
+        regs.append(gpr);
+        speculateCellTypeWithoutTypeFiltering(edge, gpr, JSType::Float32ArrayType);
+        operands.append(OperandVariant(std::in_place_type<SpeculateCellOperand>, WTFMove(operand)));
+    };
+    auto appendFloat64Array = [&](Edge& edge) {
+        SpeculateCellOperand operand(this, edge);
+        GPRReg gpr = operand.gpr();
+        regs.append(gpr);
+        speculateCellTypeWithoutTypeFiltering(edge, gpr, JSType::Float64ArrayType);
+        operands.append(OperandVariant(std::in_place_type<SpeculateCellOperand>, WTFMove(operand)));
+    };
+    
 
     unsigned index = 0;
     m_graph.doToChildren(node, [&](Edge edge) {
@@ -11428,6 +11492,39 @@ void SpeculativeJIT::compileCallDOM(Node* node)
                 break;
             case SpecBoolean:
                 appendBoolean(edge);
+                break;
+            case SpecInt8Array: 
+                appendInt8Array(edge);
+                break;
+            case SpecInt16Array: 
+                appendInt16Array(edge);
+                break;
+            case SpecInt32Array: 
+                appendInt32Array(edge);
+                break;
+            case SpecUint8Array: 
+                appendUint8Array(edge);
+                break;
+            case SpecUint8ClampedArray: 
+                appendUint8ClampedArray(edge);
+                break;
+            case SpecUint16Array: 
+                appendUint16Array(edge);
+                break;
+            case SpecUint32Array: 
+                appendUint32Array(edge);
+                break;
+            case SpecFloat32Array: 
+                appendFloat32Array(edge);
+                break;
+            case SpecFloat64Array: 
+                appendFloat64Array(edge);
+                break;
+            case SpecAnyIntAsDouble:
+            case SpecNonInt32AsInt52:
+            case SpecInt32AsInt52:
+            case SpecInt52Any:
+                appendAnyIntAsDouble(edge);
                 break;
             default:
                 RELEASE_ASSERT_NOT_REACHED();

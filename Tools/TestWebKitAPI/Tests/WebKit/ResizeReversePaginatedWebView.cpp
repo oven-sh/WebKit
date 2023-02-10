@@ -74,8 +74,8 @@ TEST(WebKit, ResizeReversePaginatedWebView)
 
     WKPageListenForLayoutMilestones(webView.page(), kWKDidFirstLayoutAfterSuppressedIncrementalRendering);
 
-    auto configuration = adoptWK(WKPageCopyPageConfiguration(webView.page()));
-    auto* preferences = WKPageConfigurationGetPreferences(configuration.get());
+    WKPageGroupRef pageGroup =  WKPageGetPageGroup(webView.page());
+    WKPreferencesRef preferences = WKPageGroupGetPreferences(pageGroup);
     WKPreferencesSetSuppressesIncrementalRendering(preferences, true);
 
     WKPageSetPaginationMode(webView.page(), kWKPaginationModeRightToLeft);

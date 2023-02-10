@@ -61,7 +61,6 @@ EventDispatcher::EventDispatcher()
     , m_recentWheelEventDeltaFilter(WheelEventDeltaFilter::create())
 #if ENABLE(MOMENTUM_EVENT_DISPATCHER)
     , m_momentumEventDispatcher(WTF::makeUnique<MomentumEventDispatcher>(*this))
-    , m_observerID(DisplayLinkObserverID::generate())
 #endif
 {
 }
@@ -189,6 +188,13 @@ void EventDispatcher::wheelEvent(PageIdentifier pageID, const WebWheelEvent& whe
     internalWheelEvent(pageID, wheelEvent, rubberBandableEdges, WheelEventOrigin::UIProcess);
 }
 
+#if ENABLE(MOMENTUM_EVENT_DISPATCHER)
+void EventDispatcher::setScrollingAccelerationCurve(PageIdentifier pageID, std::optional<ScrollingAccelerationCurve> curve)
+{
+    m_momentumEventDispatcher->setScrollingAccelerationCurve(pageID, curve);
+}
+#endif
+
 #if ENABLE(MAC_GESTURE_EVENTS)
 void EventDispatcher::gestureEvent(PageIdentifier pageID, const WebKit::WebGestureEvent& gestureEvent)
 {
@@ -295,7 +301,7 @@ void EventDispatcher::sendDidReceiveEvent(PageIdentifier pageID, WebEventType ev
     WebProcess::singleton().parentProcessConnection()->send(Messages::WebPageProxy::DidReceiveEvent(eventType, didHandleEvent), pageID);
 }
 
-void EventDispatcher::notifyScrollingTreesDisplayDidRefresh(PlatformDisplayID displayID)
+void EventDispatcher::notifyScrollingTreesDisplayWasRefreshed(PlatformDisplayID displayID)
 {
 #if ENABLE(ASYNC_SCROLLING) && ENABLE(SCROLLING_THREAD)
     Locker locker { m_scrollingTreesLock };
@@ -305,23 +311,23 @@ void EventDispatcher::notifyScrollingTreesDisplayDidRefresh(PlatformDisplayID di
 }
 
 #if HAVE(CVDISPLAYLINK)
-void EventDispatcher::displayDidRefresh(PlatformDisplayID displayID, const DisplayUpdate& displayUpdate, bool sendToMainThread)
+void EventDispatcher::displayWasRefreshed(PlatformDisplayID displayID, const DisplayUpdate& displayUpdate, bool sendToMainThread)
 {
     tracePoint(DisplayRefreshDispatchingToMainThread, displayID, sendToMainThread);
 
     ASSERT(!RunLoop::isMain());
 
 #if ENABLE(MOMENTUM_EVENT_DISPATCHER)
-    m_momentumEventDispatcher->displayDidRefresh(displayID);
+    m_momentumEventDispatcher->displayWasRefreshed(displayID, displayUpdate);
 #endif
 
-    notifyScrollingTreesDisplayDidRefresh(displayID);
+    notifyScrollingTreesDisplayWasRefreshed(displayID);
 
     if (!sendToMainThread)
         return;
 
     RunLoop::main().dispatch([displayID, displayUpdate]() {
-        DisplayRefreshMonitorManager::sharedManager().displayDidRefresh(displayID, displayUpdate);
+        DisplayRefreshMonitorManager::sharedManager().displayWasUpdated(displayID, displayUpdate);
     });
 }
 #endif
@@ -335,37 +341,5 @@ void EventDispatcher::pageScreenDidChange(PageIdentifier pageID, PlatformDisplay
     UNUSED_PARAM(displayID);
 #endif
 }
-
-#if ENABLE(MOMENTUM_EVENT_DISPATCHER)
-void EventDispatcher::setScrollingAccelerationCurve(PageIdentifier pageID, std::optional<ScrollingAccelerationCurve> curve)
-{
-    m_momentumEventDispatcher->setScrollingAccelerationCurve(pageID, curve);
-}
-
-void EventDispatcher::handleSyntheticWheelEvent(WebCore::PageIdentifier pageIdentifier, const WebWheelEvent& event, WebCore::RectEdges<bool> rubberBandableEdges)
-{
-    internalWheelEvent(pageIdentifier, event, rubberBandableEdges, WheelEventOrigin::MomentumEventDispatcher);
-}
-
-void EventDispatcher::startDisplayDidRefreshCallbacks(WebCore::PlatformDisplayID displayID)
-{
-    WebProcess::singleton().parentProcessConnection()->send(Messages::WebProcessProxy::StartDisplayLink(m_observerID, displayID, WebCore::FullSpeedFramesPerSecond), 0);
-}
-
-void EventDispatcher::stopDisplayDidRefreshCallbacks(WebCore::PlatformDisplayID displayID)
-{
-    WebProcess::singleton().parentProcessConnection()->send(Messages::WebProcessProxy::StopDisplayLink(m_observerID, displayID), 0);
-}
-
-#if ENABLE(MOMENTUM_EVENT_DISPATCHER_TEMPORARY_LOGGING)
-void EventDispatcher::flushMomentumEventLoggingSoon()
-{
-    // FIXME: Nothing keeps this alive.
-    queue().dispatchAfter(1_s, [this] {
-        m_momentumEventDispatcher->flushLog();
-    });
-}
-#endif
-#endif // ENABLE(MOMENTUM_EVENT_DISPATCHER)
 
 } // namespace WebKit

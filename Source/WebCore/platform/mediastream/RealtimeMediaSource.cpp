@@ -43,7 +43,6 @@
 #include "RealtimeMediaSourceCenter.h"
 #include <wtf/CompletionHandler.h>
 #include <wtf/MainThread.h>
-#include <wtf/MediaTime.h>
 #include <wtf/UUID.h>
 #include <wtf/text/StringHash.h>
 
@@ -1069,7 +1068,7 @@ void RealtimeMediaSource::setAspectRatio(double ratio)
     notifySettingsDidChangeObservers({ RealtimeMediaSourceSettings::Flag::AspectRatio });
 }
 
-void RealtimeMediaSource::setFacingMode(VideoFacingMode mode)
+void RealtimeMediaSource::setFacingMode(RealtimeMediaSourceSettings::VideoFacingMode mode)
 {
     if (m_facingMode == mode)
         return;

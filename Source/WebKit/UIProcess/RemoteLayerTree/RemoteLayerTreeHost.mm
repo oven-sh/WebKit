@@ -31,7 +31,6 @@
 #import "RemoteLayerTreePropertyApplier.h"
 #import "RemoteLayerTreeTransaction.h"
 #import "ShareableBitmap.h"
-#import "VideoFullscreenManagerProxy.h"
 #import "WKAnimationDelegate.h"
 #import "WebPageProxy.h"
 #import "WebProcessProxy.h"
@@ -138,10 +137,9 @@ bool RemoteLayerTreeHost::updateLayerTree(const RemoteLayerTreeTransaction& tran
         RemoteLayerTreePropertyApplier::applyHierarchyUpdates(*node, properties, m_nodes);
     }
 
-    if (auto contextHostedID = transaction.remoteContextHostedIdentifier()) {
-        m_hostedLayers.set(*contextHostedID, rootNode->layerID());
-        rootNode->setRemoteContextHostedIdentifier(*contextHostedID);
-        if (auto* remoteRootNode = nodeForID(m_hostingLayers.get(*contextHostedID)))
+    if (auto contextHostID = transaction.remoteContextHostIdentifier()) {
+        m_hostedLayers.set(*contextHostID, rootNode->layerID());
+        if (auto* remoteRootNode = nodeForID(m_hostingLayers.get(*contextHostID)))
             [remoteRootNode->layer() addSublayer:rootNode->layer()];
     }
 
@@ -217,22 +215,12 @@ void RemoteLayerTreeHost::layerWillBeRemoved(WebCore::GraphicsLayer::PlatformLay
     }
 
     if (auto node = m_nodes.take(layerID)) {
-        if (auto hostingIdentifier = node->remoteContextHostingIdentifier())
-            m_hostingLayers.remove(*hostingIdentifier);
-        if (auto hostedIdentifier = node->remoteContextHostedIdentifier())
-            m_hostedLayers.remove(*hostedIdentifier);
+        if (auto hostIdentifier = node->remoteContextHostIdentifier()) {
+            ASSERT(m_hostingLayers.contains(*hostIdentifier));
+            m_hostingLayers.remove(*hostIdentifier);
+            m_hostedLayers.remove(*hostIdentifier);
+        }
     }
-
-#if HAVE(AVKIT)
-    auto videoLayerIter = m_videoLayers.find(layerID);
-    if (videoLayerIter != m_videoLayers.end()) {
-        if (auto videoManager = m_drawingArea->page().videoFullscreenManager())
-            videoManager->willRemoveLayerForID(videoLayerIter->value);
-        m_videoLayers.remove(videoLayerIter);
-    }
-#endif
-
-    m_nodes.remove(layerID);
 }
 
 void RemoteLayerTreeHost::animationDidStart(WebCore::GraphicsLayer::PlatformLayerID layerID, CAAnimation *animation, MonotonicTime startTime)
@@ -380,16 +368,6 @@ std::unique_ptr<RemoteLayerTreeNode> RemoteLayerTreeHost::makeNode(const RemoteL
     case PlatformCALayer::LayerTypeAVPlayerLayer:
         if (m_isDebugLayerTreeHost)
             return RemoteLayerTreeNode::createWithPlainLayer(properties.layerID);
-
-#if HAVE(AVKIT)
-        if (properties.playerIdentifier && properties.initialSize && properties.naturalSize) {
-            if (auto videoManager = m_drawingArea->page().videoFullscreenManager()) {
-                m_videoLayers.add(properties.layerID, *properties.playerIdentifier);
-                return makeWithLayer(videoManager->createLayerWithID(*properties.playerIdentifier, properties.hostingContextID, *properties.initialSize, *properties.naturalSize, properties.hostingDeviceScaleFactor));
-            }
-        }
-#endif
-
         return makeWithLayer([CALayer _web_renderLayerWithContextID:properties.hostingContextID shouldPreserveFlip:properties.preservesFlip]);
 
     case PlatformCALayer::LayerTypeShapeLayer:

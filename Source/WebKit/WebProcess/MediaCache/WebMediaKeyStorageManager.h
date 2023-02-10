@@ -31,7 +31,7 @@
 #include <wtf/text/WTFString.h>
 
 namespace WebCore {
-class SecurityOriginData;
+struct SecurityOriginData;
 }
 
 namespace WebKit {

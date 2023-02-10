@@ -285,6 +285,8 @@ public:
             parent()->clearDescendantsHaveSameLineHeightAndBaseline();
     }
 
+    void computeReplacedAndTextLineTopAndBottom(LayoutUnit& lineTop, LayoutUnit& lineBottom) const;
+
     bool hasSelfPaintInlineBox() const { return m_hasSelfPaintInlineBox; }
 
 private:

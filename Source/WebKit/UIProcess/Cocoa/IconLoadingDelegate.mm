@@ -30,7 +30,6 @@
 #import "_WKIconLoadingDelegate.h"
 #import "_WKLinkIconParametersInternal.h"
 #import <wtf/BlockPtr.h>
-#import <wtf/RunLoop.h>
 
 namespace WebKit {
 

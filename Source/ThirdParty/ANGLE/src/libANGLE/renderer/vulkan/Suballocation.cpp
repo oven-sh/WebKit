@@ -185,18 +185,20 @@ VkResult BufferSuballocation::map(Context *context)
 // SharedBufferSuballocationGarbage implementation.
 bool SharedBufferSuballocationGarbage::destroyIfComplete(RendererVk *renderer)
 {
-    if (renderer->hasResourceUseFinished(mLifetime))
+    if (renderer->hasUnfinishedUse(mLifetime))
     {
-        mBuffer.destroy(renderer->getDevice());
-        mSuballocation.destroy(renderer);
-        return true;
+        return false;
     }
-    return false;
+
+    mBuffer.destroy(renderer->getDevice());
+    mSuballocation.destroy(renderer);
+
+    return true;
 }
 
-bool SharedBufferSuballocationGarbage::hasResourceUseSubmitted(RendererVk *renderer) const
+bool SharedBufferSuballocationGarbage::hasUnsubmittedUse(RendererVk *renderer) const
 {
-    return renderer->hasResourceUseSubmitted(mLifetime);
+    return renderer->hasUnsubmittedUse(mLifetime);
 }
 }  // namespace vk
 }  // namespace rx

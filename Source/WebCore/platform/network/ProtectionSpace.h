@@ -27,6 +27,8 @@
 
 #if PLATFORM(COCOA)
 #include "ProtectionSpaceCocoa.h"
+#elif USE(CFURLCONNECTION)
+#include "ProtectionSpaceCFNet.h"
 #elif USE(CURL)
 #include "ProtectionSpaceCurl.h"
 #else

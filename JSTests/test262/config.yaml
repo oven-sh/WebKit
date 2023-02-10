@@ -16,7 +16,7 @@ skip:
     - FinalizationRegistry.prototype.cleanupSome
     - decorators
     - Intl.DurationFormat
-    - Intl.Locale-info # Getters are replaced with methods.
+    - regexp-duplicate-named-groups
   paths:
     - test/built-ins/Temporal/Calendar
     - test/built-ins/Temporal/Instant/prototype/toZonedDateTime

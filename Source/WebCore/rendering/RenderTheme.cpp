@@ -37,7 +37,6 @@
 #include "Frame.h"
 #include "FrameSelection.h"
 #include "GraphicsContext.h"
-#include "GraphicsTypes.h"
 #include "HTMLAttachmentElement.h"
 #include "HTMLButtonElement.h"
 #include "HTMLInputElement.h"
@@ -1967,6 +1966,31 @@ Color RenderTheme::tapHighlightColor()
 
 #endif
 
+// Value chosen by observation. This can be tweaked.
+constexpr double minColorContrastValue = 1.195;
+
+// For transparent or translucent background color, use lightening.
+constexpr float minDisabledColorAlphaValue = 0.5f;
+
+Color RenderTheme::disabledTextColor(const Color& textColor, const Color& backgroundColor) const
+{
+    // The explicit check for black is an optimization for the 99% case (black on white).
+    // This also means that black on black will turn into grey on black when disabled.
+    Color disabledColor;
+    if (equalIgnoringSemanticColor(textColor, Color::black) || backgroundColor.alphaAsFloat() < minDisabledColorAlphaValue || textColor.luminance() < backgroundColor.luminance())
+        disabledColor = textColor.lightened();
+    else
+        disabledColor = textColor.darkened();
+
+    // If there's not very much contrast between the disabled color and the background color,
+    // just leave the text color alone. We don't want to change a good contrast color scheme so that it has really bad contrast.
+    // If the contrast was already poor, then it doesn't do any good to change it to a different poor contrast color scheme.
+    if (contrastRatio(disabledColor, backgroundColor) < minColorContrastValue)
+        return textColor;
+
+    return disabledColor;
+}
+
 // Value chosen to return dark gray for both white on black and black on white.
 constexpr float datePlaceholderColorLightnessAdjustmentFactor = 0.66f;
 
@@ -1981,77 +2005,6 @@ Color RenderTheme::datePlaceholderTextColor(const Color& textColor, const Color&
 
     // FIXME: Consider keeping color in LCHA (if that change is made) or converting back to the initial underlying color type to avoid unnecessarily clamping colors outside of sRGB.
     return convertColor<SRGBA<float>>(hsla);
-}
-
-
-Color RenderTheme::spellingMarkerColor(OptionSet<StyleColorOptions> options) const
-{
-    auto& cache = colorCache(options);
-    if (!cache.spellingMarkerColor.isValid())
-        cache.spellingMarkerColor = platformSpellingMarkerColor(options);
-    return cache.spellingMarkerColor;
-}
-
-Color RenderTheme::platformSpellingMarkerColor(OptionSet<StyleColorOptions>) const
-{
-    return Color::red;
-}
-
-Color RenderTheme::dictationAlternativesMarkerColor(OptionSet<StyleColorOptions> options) const
-{
-    auto& cache = colorCache(options);
-    if (!cache.dictationAlternativesMarkerColor.isValid())
-        cache.dictationAlternativesMarkerColor = platformDictationAlternativesMarkerColor(options);
-    return cache.dictationAlternativesMarkerColor;
-}
-
-Color RenderTheme::platformDictationAlternativesMarkerColor(OptionSet<StyleColorOptions>) const
-{
-    return Color::green;
-}
-
-Color RenderTheme::autocorrectionReplacementMarkerColor(OptionSet<StyleColorOptions> options) const
-{
-    auto& cache = colorCache(options);
-    if (!cache.autocorrectionReplacementMarkerColor.isValid())
-        cache.autocorrectionReplacementMarkerColor = platformAutocorrectionReplacementMarkerColor(options);
-    return cache.autocorrectionReplacementMarkerColor;
-}
-
-Color RenderTheme::platformAutocorrectionReplacementMarkerColor(OptionSet<StyleColorOptions>) const
-{
-    return Color::green;
-}
-
-Color RenderTheme::grammarMarkerColor(OptionSet<StyleColorOptions> options) const
-{
-    auto& cache = colorCache(options);
-    if (!cache.grammarMarkerColor.isValid())
-        cache.grammarMarkerColor = platformGrammarMarkerColor(options);
-    return cache.grammarMarkerColor;
-}
-
-Color RenderTheme::platformGrammarMarkerColor(OptionSet<StyleColorOptions>) const
-{
-    return Color::green;
-}
-
-Color RenderTheme::documentMarkerLineColor(DocumentMarkerLineStyleMode mode, OptionSet<StyleColorOptions> options) const
-{
-    switch (mode) {
-    case DocumentMarkerLineStyleMode::Spelling:
-        return spellingMarkerColor(options);
-    case DocumentMarkerLineStyleMode::DictationAlternatives:
-    case DocumentMarkerLineStyleMode::TextCheckingDictationPhraseWithAlternatives:
-        return dictationAlternativesMarkerColor(options);
-    case DocumentMarkerLineStyleMode::AutocorrectionReplacement:
-        return autocorrectionReplacementMarkerColor(options);
-    case DocumentMarkerLineStyleMode::Grammar:
-        return grammarMarkerColor(options);
-    }
-
-    ASSERT_NOT_REACHED();
-    return Color::transparentBlack;
 }
 
 void RenderTheme::setCustomFocusRingColor(const Color& color)

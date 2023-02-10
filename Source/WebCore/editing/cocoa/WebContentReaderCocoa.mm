@@ -447,11 +447,7 @@ static std::optional<MarkupAndArchive> extractMarkupAndArchive(SharedBuffer& buf
 static String sanitizeMarkupWithArchive(Frame& frame, Document& destinationDocument, MarkupAndArchive& markupAndArchive, MSOListQuirks msoListQuirks, const std::function<bool(const String)>& canShowMIMETypeAsHTML)
 {
     auto page = createPageForSanitizingWebContent();
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(page->mainFrame());
-    if (!localMainFrame)
-        return String();
-
-    Document* stagingDocument = localMainFrame->document();
+    Document* stagingDocument = page->mainFrame().document();
     ASSERT(stagingDocument);
     auto fragment = createFragmentFromMarkup(*stagingDocument, markupAndArchive.markup, markupAndArchive.mainResource->url().string(), { });
 
@@ -673,11 +669,7 @@ bool WebContentReader::readPlainText(const String& text)
     if (!allowPlainText)
         return false;
 
-    String precomposedString = [text precomposedStringWithCanonicalMapping];
-    if (auto* page = frame.page())
-        precomposedString = page->sanitizeLookalikeCharacters(precomposedString, LookalikeCharacterSanitizationTrigger::Paste);
-
-    addFragment(createFragmentFromText(context, precomposedString));
+    addFragment(createFragmentFromText(context, [text precomposedStringWithCanonicalMapping]));
 
     madeFragmentFromPlainText = true;
     return true;
@@ -828,17 +820,11 @@ bool WebContentReader::readURL(const URL& url, const String& title)
         return false;
 #endif // PLATFORM(IOS_FAMILY)
 
-    auto sanitizedURLString = [&] {
-        if (auto* page = frame.page())
-            return page->sanitizeLookalikeCharacters(url, LookalikeCharacterSanitizationTrigger::Paste);
-        return url;
-    }().string();
-
     Ref document = *frame.document();
     auto anchor = HTMLAnchorElement::create(document.get());
-    anchor->setAttributeWithoutSynchronization(HTMLNames::hrefAttr, AtomString { sanitizedURLString });
+    anchor->setAttributeWithoutSynchronization(HTMLNames::hrefAttr, AtomString { url.string() });
 
-    NSString *linkText = title.isEmpty() ? sanitizedURLString : title;
+    NSString *linkText = title.isEmpty() ? [(NSURL *)url absoluteString] : (NSString *)title;
     anchor->appendChild(document->createTextNode([linkText precomposedStringWithCanonicalMapping]));
 
     auto newFragment = document->createDocumentFragment();

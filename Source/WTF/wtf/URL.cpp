@@ -269,7 +269,7 @@ URL URL::truncatedForUseAsBase() const
     return URL(m_string.left(m_pathAfterLastSlash));
 }
 
-#if !USE(CF) || PLATFORM(WIN)
+#if !USE(CF)
 
 String URL::fileSystemPath() const
 {
@@ -278,8 +278,7 @@ String URL::fileSystemPath() const
 
     auto result = decodeEscapeSequencesFromParsedURL(path());
 #if PLATFORM(WIN)
-    if (result.startsWith('/'))
-        result = result.substring(1);
+    result = FileSystem::fileSystemRepresentation(result);
 #endif
     return result;
 }
@@ -493,7 +492,7 @@ void URL::setHost(StringView newHost)
     bool slashSlashNeeded = m_userStart == m_schemeEnd + 1U;
     parse(makeString(
         StringView(m_string).left(hostStart()),
-        slashSlashNeeded ? "//"_s : ""_s,
+        slashSlashNeeded ? "//" : "",
         hasSpecialScheme() ? StringView(encodedHostName.data(), encodedHostName.size()) : newHost,
         StringView(m_string).substring(m_hostEnd)
     ));
@@ -546,9 +545,9 @@ void URL::setHostAndPort(StringView hostAndPort)
     bool slashSlashNeeded = m_userStart == m_schemeEnd + 1U;
     parse(makeString(
         StringView(m_string).left(hostStart()),
-        slashSlashNeeded ? "//"_s : ""_s,
+        slashSlashNeeded ? "//" : "",
         hasSpecialScheme() ? StringView(encodedHostName.data(), encodedHostName.size()) : hostName,
-        portString.isEmpty() ? ""_s : ":"_s,
+        portString.isEmpty() ? "" : ":",
         portString,
         StringView(m_string).substring(pathStart())
     ));
@@ -612,9 +611,9 @@ void URL::setUser(StringView newUser)
         bool needSeparator = end == m_hostEnd || (end == m_passwordEnd && m_string[end] != '@');
         parse(makeString(
             StringView(m_string).left(m_userStart),
-            slashSlashNeeded ? "//"_s : ""_s,
+            slashSlashNeeded ? "//" : "",
             percentEncodeCharacters(newUser, URLParser::isInUserInfoEncodeSet),
-            needSeparator ? "@"_s : ""_s,
+            needSeparator ? "@" : "",
             StringView(m_string).substring(end)
         ));
     } else {
@@ -634,7 +633,7 @@ void URL::setPassword(StringView newPassword)
         bool needLeadingSlashes = m_userEnd == m_schemeEnd + 1U;
         parse(makeString(
             StringView(m_string).left(m_userEnd),
-            needLeadingSlashes ? "//:"_s : ":"_s,
+            needLeadingSlashes ? "//:" : ":",
             percentEncodeCharacters(newPassword, URLParser::isInUserInfoEncodeSet),
             '@',
             StringView(m_string).substring(credentialsEnd())
@@ -688,7 +687,7 @@ void URL::setQuery(StringView newQuery)
 
     parse(makeString(
         StringView(m_string).left(m_pathEnd),
-        (!newQuery.startsWith('?') && !newQuery.isNull()) ? "?"_s : ""_s,
+        (!newQuery.startsWith('?') && !newQuery.isNull()) ? "?" : "",
         newQuery,
         StringView(m_string).substring(m_queryEnd)
     ));
@@ -1093,7 +1092,7 @@ String URL::stringCenterEllipsizedToLength(unsigned length) const
     if (m_string.length() <= length)
         return m_string;
 
-    return makeString(StringView(m_string).left(length / 2 - 1), "..."_s, StringView(m_string).right(length / 2 - 2));
+    return makeString(StringView(m_string).left(length / 2 - 1), "...", StringView(m_string).right(length / 2 - 2));
 }
 
 URL URL::fakeURLWithRelativePart(StringView relativePart)
@@ -1105,7 +1104,7 @@ URL URL::fileURLWithFileSystemPath(StringView path)
 {
     return URL(makeString(
         "file://"_s,
-        path.startsWith('/') ? ""_s : "/"_s,
+        path.startsWith('/') ? "" : "/",
         escapePathWithoutCopying(path)
     ));
 }

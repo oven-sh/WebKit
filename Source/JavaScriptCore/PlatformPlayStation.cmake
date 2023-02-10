@@ -9,7 +9,3 @@ list(APPEND JavaScriptCore_DEFINITIONS
 list(APPEND JavaScriptCore_PRIVATE_DEFINITIONS
     FIXED_EXECUTABLE_MEMORY_POOL_SIZE_IN_MB=64
 )
-
-if (DEVELOPER_MODE)
-    add_subdirectory(testmem)
-endif ()

@@ -219,12 +219,7 @@ void Chrome::runModal() const
 
     // JavaScript that runs within the nested event loop must not be run in the context of the
     // script that called showModalDialog. Null out entryScope to break the connection.
-
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
-    if (!localMainFrame)
-        return;
-
-    SetForScope entryScopeNullifier { localMainFrame->document()->vm().entryScope, nullptr };
+    SetForScope entryScopeNullifier { m_page.mainFrame().document()->vm().entryScope, nullptr };
 
     TimerBase::fireTimersInNestedEventLoop();
     m_client.runModal();
@@ -339,12 +334,8 @@ void Chrome::setStatusbarText(Frame& frame, const String& status)
 
 void Chrome::mouseDidMoveOverElement(const HitTestResult& result, unsigned modifierFlags)
 {
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
-    if (!localMainFrame)
-        return;
-
     if (result.innerNode() && result.innerNode()->document().isDNSPrefetchEnabled())
-        localMainFrame->loader().client().prefetchDNS(result.absoluteLinkURL().host().toString());
+        m_page.mainFrame().loader().client().prefetchDNS(result.absoluteLinkURL().host().toString());
 
     String toolTip;
     TextDirection toolTipDirection;

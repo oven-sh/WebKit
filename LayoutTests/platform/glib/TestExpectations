@@ -133,9 +133,6 @@ webkit.org/b/172056 fast/text/multiglyph-characters.html [ Pass ]
 
 imported/w3c/web-platform-tests/css/css-text/hyphens/hyphens-auto-001.html [ Pass ]
 
-# WTR should allow background-fetch permission.
-imported/w3c/web-platform-tests/background-fetch [ Pass Failure ]
-
 imported/mozilla/svg/blend-hard-light.svg [ Pass ]
 imported/mozilla/svg/dynamic-textPath-02.svg [ Pass ]
 
@@ -315,6 +312,7 @@ media/video-with-alpha.html [ Pass ]
 
 # NOTIFICATION_EVENT tests
 http/tests/workers/service/shownotification-allowed-document.html [ Pass ]
+http/tests/workers/service/shownotification-allowed.html [ Pass ]
 http/tests/workers/service/shownotification-invalid-data.html [ Pass ]
 http/wpt/push-api/pushEvent.any.serviceworker.html [ Pass ]
 imported/w3c/web-platform-tests/notifications/idlharness.https.any.html [ Pass ]
@@ -497,7 +495,6 @@ accessibility/aria-modal-with-text-crash.html [ Skip ]
 accessibility/display-contents-dynamically-added-children.html [ Skip ]
 accessibility/display-contents-object-ordering.html [ Skip ]
 accessibility/display-contents-search-traversal.html [ Skip ]
-accessibility/empty-text-under-element-cached.html [ Skip ]
 accessibility/search-traversal-after-role-change.html [ Skip ]
 accessibility/table-search-traversal.html [ Skip ]
 accessibility/dynamically-changing-iframe-remains-accessible.html [ Skip ]
@@ -851,7 +848,6 @@ webkit.org/b/251527 imported/w3c/web-platform-tests/css/css-scroll-snap/selectio
 webkit.org/b/251528 imported/w3c/web-platform-tests/html/semantics/interactive-elements/the-dialog-element/inert-node-is-uneditable.html [ Failure ]
 
 webkit.org/b/251529 imported/w3c/web-platform-tests/shadow-dom/accesskey.tentative.html [ Failure ]
-
 webkit.org/b/251530 imported/w3c/web-platform-tests/shadow-dom/focus-navigation/delegatesFocus-highlight-sibling.html [ Failure ]
 webkit.org/b/251530 imported/w3c/web-platform-tests/shadow-dom/focus-navigation/focus-navigation.html [ Failure ]
 webkit.org/b/251530 imported/w3c/web-platform-tests/shadow-dom/focus-navigation/focus-navigation-slot-fallback-default-tabindex.html [ Failure ]
@@ -863,8 +859,8 @@ webkit.org/b/251530 imported/w3c/web-platform-tests/shadow-dom/focus-navigation/
 webkit.org/b/251530 imported/w3c/web-platform-tests/shadow-dom/focus-navigation/focus-navigation-slot-shadow-in-fallback.html [ Failure ]
 webkit.org/b/251530 imported/w3c/web-platform-tests/shadow-dom/focus-navigation/focus-navigation-slot-shadow-in-slot.html [ Failure ]
 webkit.org/b/251530 imported/w3c/web-platform-tests/shadow-dom/focus-navigation/focus-navigation-slots.html [ Failure ]
-webkit.org/b/251530 imported/w3c/web-platform-tests/shadow-dom/focus-navigation/focus-navigation-slots-in-slot.html [ Failure ]
 webkit.org/b/251530 imported/w3c/web-platform-tests/shadow-dom/focus-navigation/focus-navigation-slot-with-tabindex.html [ Failure ]
+webkit.org/b/251530 imported/w3c/web-platform-tests/shadow-dom/focus-navigation/focus-navigation-web-component-input-type-radio.html [ Failure ]
 webkit.org/b/251530 imported/w3c/web-platform-tests/shadow-dom/focus-navigation/focus-navigation-with-delegatesFocus.html [ Failure ]
 webkit.org/b/251530 imported/w3c/web-platform-tests/shadow-dom/focus-navigation/focus-nested-slots.html [ Failure ]
 webkit.org/b/251530 imported/w3c/web-platform-tests/shadow-dom/focus-navigation/focus-reverse-unassignable-slot.html [ Failure ]
@@ -873,6 +869,7 @@ webkit.org/b/251530 imported/w3c/web-platform-tests/shadow-dom/focus-navigation/
 webkit.org/b/251530 imported/w3c/web-platform-tests/shadow-dom/focus-navigation/focus-with-negative-index.html [ Failure ]
 
 imported/w3c/web-platform-tests/css/css-writing-modes/forms/progress-appearance-native-computed-style.optional.html [ Failure ]
+
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of CSS-related bugs
@@ -1007,6 +1004,7 @@ webkit.org/b/213699 http/wpt/mediarecorder/MediaRecorder-AV-audio-video-dataavai
 # https://gitlab.freedesktop.org/gstreamer/gstreamer/-/issues/1017
 
 webkit.org/b/230415 fast/mediastream/RTCPeerConnection-iceconnectionstatechange-event.html [ Timeout ]
+webkit.org/b/79203 fast/mediastream/RTCRtpSender-replaceTrack.html [ Failure ]
 webkit.org/b/187603 fast/mediastream/media-stream-track-source-failure.html [ Timeout Failure Pass ]
 
 fast/mediastream/mediastreamtrack-configurationchange.html [ Failure ]
@@ -1014,9 +1012,6 @@ fast/mediastream/getDisplayMedia-displaySurface.html [ Failure ]
 
 webkit.org/b/218317 media/media-source/media-source-trackid-change.html [ Failure ]
 webkit.org/b/238201 media/media-source/media-mp4-hevc-bframes.html [ Failure ]
-
-# WebProcess's MemoryPressureHandler are disabled, test is nonfunctional
-media/media-source/media-managedmse-memorypressure.html [ Timeout ]
 
 webkit.org/b/211995 fast/images/animated-image-mp4.html [ Failure Timeout ]
 
@@ -1693,7 +1688,12 @@ webrtc/video-sframe.html [ Skip ]
 webkit.org/b/219825 webrtc/sframe-keys.html [ Skip ]
 webkit.org/b/229055 http/wpt/webrtc/sframe-transform-error.html [ Skip ]
 
-# GStreamerRtpReceiverBackend::getSynchronizationSources() unimplemented and also hitting srtpenc errors.
+# On-the-fly track switching not supported yet.
+webkit.org/b/235885 webrtc/video-replace-track-to-null.html [ Skip ]
+webkit.org/b/235885 webrtc/video-replace-track.html [ Skip ]
+webkit.org/b/235885 webrtc/video-replace-muted-track.html
+webkit.org/b/216538 webrtc/captureCanvas-webrtc-software-h264-baseline.html [ Skip ]
+webkit.org/b/216763 webkit.org/b/235885 webrtc/captureCanvas-webrtc-software-h264-high.html [ Skip ]
 webkit.org/b/235885 webrtc/video-addTransceiver.html [ Skip ]
 
 # GstWebRTC doesn't support transceiver direction changes.
@@ -1703,10 +1703,6 @@ webkit.org/b/235885 webrtc/direction-change.html [ Skip ]
 # Specific to LibWebRTC:
 webkit.org/b/235885 webrtc/disable-encryption.html [ Skip ]
 webkit.org/b/235885 webrtc/libwebrtc/release-while-getting-stats.html [ Skip ]
-
-# This test is flaky because sometimes the onnegotiationneeded event is not fired fast enough after
-# the addTrack() call.
-webrtc/video-replace-track.html [ Pass Failure ]
 
 # Pending investigation.
 webkit.org/b/235885 fast/mediastream/RTCPeerConnection-addIceCandidate.html [ Failure ]
@@ -1831,62 +1827,6 @@ webkit.org/b/208287 http/tests/eventsource/eventsource-page-cache-connected.html
 webkit.org/b/212818 http/tests/websocket/tests/hybi/send-object-tostring-check.html [ Failure Pass ]
 
 webkit.org/b/215912 http/tests/websocket/tests/hybi/handshake-fail-by-no-cr.html [ Failure ]
-
-# Libsoup doesn't support WebSocket over HTTP/2
-imported/w3c/web-platform-tests/websockets/binary/001.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/binary/002.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/binary/004.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/binary/005.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/closing-handshake/002.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/closing-handshake/003.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/closing-handshake/004.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/constructor/001.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/constructor/002.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/constructor/004.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/constructor/005.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/constructor/006.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/constructor/007.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/constructor/009.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/constructor/010.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/constructor/011.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/constructor/012.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/constructor/013.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/constructor/017.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/constructor/018.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/constructor/019.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/constructor/020.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/constructor/021.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/constructor/022.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/cookies/001.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/cookies/002.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/cookies/003.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/cookies/006.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/cookies/007.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/extended-payload-length.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/interfaces/CloseEvent/clean-close.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/interfaces/WebSocket/bufferedAmount/bufferedAmount-arraybuffer.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/interfaces/WebSocket/bufferedAmount/bufferedAmount-blob.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/interfaces/WebSocket/bufferedAmount/bufferedAmount-getting.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/interfaces/WebSocket/bufferedAmount/bufferedAmount-large.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/interfaces/WebSocket/bufferedAmount/bufferedAmount-unicode.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/interfaces/WebSocket/events/001.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/interfaces/WebSocket/events/002.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/interfaces/WebSocket/events/007.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/interfaces/WebSocket/events/015.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/interfaces/WebSocket/events/016.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/interfaces/WebSocket/events/017.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/interfaces/WebSocket/events/018.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/interfaces/WebSocket/send/006.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/interfaces/WebSocket/send/007.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/interfaces/WebSocket/send/009.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/interfaces/WebSocket/send/011.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/interfaces/WebSocket/send/012.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/keeping-connection-open/001.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/opening-handshake/001.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/opening-handshake/002.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/unload-a-document/001.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/unload-a-document/002.html?wpt_flags=h2 [ Skip ]
-imported/w3c/web-platform-tests/websockets/unload-a-document/005.html?wpt_flags=h2 [ Skip ]
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of WebSocket-related bugs
@@ -2388,7 +2328,6 @@ accessibility/ax-object-destroyed-on-reload.html [ Skip ]
 fast/mediastream/captureInGPUProcess.html [ Skip ]
 fast/mediastream/video-rotation-gpu-process-crash.html [ Skip ]
 http/wpt/mediarecorder/MediaRecorder-AV-audio-video-dataavailable-gpuprocess.html [ Skip ]
-webgl/webgl-fail-remote-context-ipc-buffer-allocation-no-crash.html [ Skip ]
 
 # Payment Request
 imported/w3c/web-platform-tests/payment-request [ Skip ]
@@ -2499,11 +2438,6 @@ http/tests/media/track-in-band-hls-metadata-crash.html [ Skip ]
 http/tests/media/track-in-band-hls-metadata.html [ Skip ]
 http/tests/media/video-hls-copy-into-canvas.html [ Skip ]
 http/tests/security/canvas-remote-read-remote-video-hls.html [ Skip ]
-http/tests/media/modern-media-controls/status-support/status-support-live-broadcast.html [ Skip ]
-http/tests/media/modern-media-controls/time-control/1-to-10-hours.html [ Skip ]
-http/tests/media/modern-media-controls/time-control/10-hours-or-more.html [ Skip ]
-http/tests/media/modern-media-controls/time-control/less-than-10-minutes.html [ Skip ]
-http/tests/media/modern-media-controls/time-control/10-minutes-to-1-hour.html [ Skip ]
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of UNSUPPORTED tests.
@@ -3211,26 +3145,6 @@ webkit.org/b/243614 imported/w3c/web-platform-tests/IndexedDB/idbobjectstore_put
 media/audio-session-category-unmute-mute.html [ Skip ]
 
 webkit.org/b/229732 fast/text/font-promises-gc.html [ Failure ]
-
-# Flaky tests detected both on GTK and WPE from 29Jan2023 to 23Feb2023
-webkit.org/b/252878 fast/css/caret-color-fallback-to-color.html [ ImageOnlyFailure Pass ]
-webkit.org/b/252878 fast/css/caret-color.html [ ImageOnlyFailure Pass ]
-webkit.org/b/252878 fast/css/caret-color-inherit.html [ ImageOnlyFailure Pass ]
-webkit.org/b/252878 fast/css/caret-color-span-inside-editable-parent.html [ ImageOnlyFailure Pass ]
-webkit.org/b/252878 fast/css/color-matching-translucent-border-color.html [ ImageOnlyFailure Pass ]
-webkit.org/b/252878 fast/css/computed-image-width-with-percent-height.html [ ImageOnlyFailure Pass ]
-webkit.org/b/252878 fast/hidpi/hidpi-long-page-with-inset-element.html [ ImageOnlyFailure Pass ]
-webkit.org/b/252878 http/tests/media/modern-media-controls/skip-back-support/skip-back-support-live-broadcast.html [ Failure Pass Timeout ]
-webkit.org/b/252878 http/tests/workers/service/shownotification-allowed.html [ Pass Timeout ]
-webkit.org/b/252878 imported/w3c/web-platform-tests/fetch/http-cache/split-cache.html [ Failure Pass ]
-webkit.org/b/252878 imported/w3c/web-platform-tests/html/browsers/history/the-location-interface/same-hash.html [ Failure Pass ]
-webkit.org/b/252878 imported/w3c/web-platform-tests/html/cross-origin-opener-policy/reporting/navigation-reporting/reporting-coop-navigated-opener.https.html [ Failure Pass ]
-webkit.org/b/252878 imported/w3c/web-platform-tests/service-workers/service-worker/navigation-timing.https.html [ Failure Pass ]
-webkit.org/b/252878 imported/w3c/web-platform-tests/wasm/webapi/instantiateStreaming.any.serviceworker.html [ Failure Pass ]
-webkit.org/b/252878 imported/w3c/web-platform-tests/wasm/webapi/instantiateStreaming.any.sharedworker.html [ Failure Pass ]
-webkit.org/b/252878 loader/navigation-policy/should-open-external-urls/subframe-navigated-programatically-by-main-frame.html [ Failure Pass ]
-webkit.org/b/252878 webrtc/multi-video.html [ Failure Pass Timeout ]
-webkit.org/b/252878 webrtc/peer-connection-remote-audio-mute2.html [ Pass Timeout ]
 
 # End: Common failures between GTK and WPE.
 

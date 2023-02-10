@@ -38,7 +38,6 @@
 #include "RealtimeMediaSourceSettings.h"
 #include "RealtimeVideoUtilities.h"
 #include "Timer.h"
-#include "VideoFrame.h"
 #include <IOSurface/IOSurfaceRef.h>
 #include <pal/avfoundation/MediaTimeAVFoundation.h>
 #include <pal/spi/cf/CoreAudioSPI.h>

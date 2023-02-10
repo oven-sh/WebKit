@@ -60,10 +60,10 @@ class ResourceRequest;
 class ResourceError;
 class SWServer;
 enum class IncludeHttpOnlyCookies : bool;
-enum class NetworkConnectionIntegrity : uint16_t;
+enum class NetworkConnectionIntegrity : uint8_t;
 enum class ShouldSample : bool;
 struct ClientOrigin;
-class SecurityOriginData;
+struct SecurityOriginData;
 }
 
 namespace WTF {
@@ -111,13 +111,11 @@ public:
     virtual ~NetworkSession();
 
     virtual void invalidateAndCancel();
+    virtual void clearCredentials() { };
     virtual bool shouldLogCookieInformation() const { return false; }
     virtual Vector<WebCore::SecurityOriginData> hostNamesWithAlternativeServices() const { return { }; }
     virtual void deleteAlternativeServicesForHostNames(const Vector<String>&) { }
     virtual void clearAlternativeServices(WallTime) { }
-    virtual HashSet<WebCore::SecurityOriginData> originsWithCredentials() { return { }; }
-    virtual void removeCredentialsForOrigins(const Vector<WebCore::SecurityOriginData>&) { }
-    virtual void clearCredentials(WallTime) { }
 
     PAL::SessionID sessionID() const { return m_sessionID; }
     NetworkProcess& networkProcess() { return m_networkProcess; }
@@ -260,6 +258,8 @@ public:
     void setEmulatedConditions(std::optional<int64_t>&& bytesPerSecondLimit);
 #endif
 
+    static bool needsAdditionalNetworkConnectionIntegritySettings(const WebCore::ResourceRequest&);
+
 protected:
     NetworkSession(NetworkProcess&, const NetworkSessionCreationParameters&);
 
@@ -272,8 +272,7 @@ protected:
     void createContextConnection(const WebCore::RegistrableDomain&, std::optional<WebCore::ProcessIdentifier>, std::optional<WebCore::ScriptExecutionContextIdentifier>, CompletionHandler<void()>&&) final;
     void appBoundDomains(CompletionHandler<void(HashSet<WebCore::RegistrableDomain>&&)>&&) final;
     void addAllowedFirstPartyForCookies(WebCore::ProcessIdentifier, std::optional<WebCore::ProcessIdentifier>, WebCore::RegistrableDomain&&) final;
-    void requestBackgroundFetchPermission(const WebCore::ClientOrigin&, CompletionHandler<void(bool)>&&) final;
-#endif // ENABLE(SERVICE_WORKER)
+#endif
 
     PAL::SessionID m_sessionID;
     Ref<NetworkProcess> m_networkProcess;

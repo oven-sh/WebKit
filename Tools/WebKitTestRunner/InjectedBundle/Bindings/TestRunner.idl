@@ -253,7 +253,6 @@ interface TestRunner {
     undefined setAuthenticationPassword(DOMString password);
 
     undefined setAllowsAnySSLCertificate(boolean value);
-    undefined setBackgroundFetchPermission(boolean value);
 
     undefined setShouldSwapToEphemeralSessionOnNextNavigation(boolean value);
     undefined setShouldSwapToDefaultSessionOnNextNavigation(boolean value);

@@ -85,17 +85,17 @@ static RetainPtr<NSURL> lastEchoedURL;
 
 #if WK_HAVE_C_SPI
 
-@interface WKContextRegisterURLSchemeAsCanDisplayOnlyIfCanRequestLoadDelegate : NSObject <WKNavigationDelegate>
+@interface WKContextRegisterURLSchemeAsCanDisplayOnlyIfCanRequestLoadDelegate : NSObject <WKBrowsingContextLoadDelegate>
 @end
 
 @implementation WKContextRegisterURLSchemeAsCanDisplayOnlyIfCanRequestLoadDelegate
 
-- (void)webView:(WKWebView *)webView didFailProvisionalNavigation:(WKNavigation *)navigation withError:(NSError *)error
+- (void)browsingContextController:(WKBrowsingContextController *)sender didFailProvisionalLoadWithError:(NSError *)error
 {
     didFinishLoad = true;
 }
 
-- (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation
+- (void)browsingContextControllerDidFinishLoad:(WKBrowsingContextController *)sender
 {
     didFinishLoad = true;
 }
@@ -187,8 +187,8 @@ TEST(WebKit, WKContextRegisterURLSchemeAsCanDisplayOnlyIfCanRequest_SameOriginLo
 
         PlatformWebView webView { context.get() };
         auto loadDelegate = adoptNS([[WKContextRegisterURLSchemeAsCanDisplayOnlyIfCanRequestLoadDelegate alloc] init]);
-        webView.platformView().navigationDelegate = loadDelegate.get();
-        [webView.platformView() loadHTMLString:@"<!DOCTYPE html><body><script src='echo://A/A_1'></script>" baseURL:[NSURL URLWithString:@"echo://A"]];
+        webView.platformView().browsingContextController.loadDelegate = loadDelegate.get();
+        [webView.platformView().browsingContextController loadHTMLString:@"<!DOCTYPE html><body><script src='echo://A/A_1'></script>" baseURL:[NSURL URLWithString:@"echo://A"]];
         Util::run(&didFinishLoad);
         didFinishLoad = false;
 
@@ -211,8 +211,8 @@ TEST(WebKit, WKContextRegisterURLSchemeAsCanDisplayOnlyIfCanRequest_CrossOriginL
 
         PlatformWebView webView { context.get() };
         auto loadDelegate = adoptNS([[WKContextRegisterURLSchemeAsCanDisplayOnlyIfCanRequestLoadDelegate alloc] init]);
-        webView.platformView().navigationDelegate = loadDelegate.get();
-        [webView.platformView() loadHTMLString:@"<!DOCTYPE html><body><script src='echo://A/A_1'></script>" baseURL:[NSURL URLWithString:@"echo://B"]];
+        webView.platformView().browsingContextController.loadDelegate = loadDelegate.get();
+        [webView.platformView().browsingContextController loadHTMLString:@"<!DOCTYPE html><body><script src='echo://A/A_1'></script>" baseURL:[NSURL URLWithString:@"echo://B"]];
         Util::run(&didFinishLoad);
         didFinishLoad = false;
 

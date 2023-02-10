@@ -38,7 +38,6 @@
 #include "NetworkResourceLoader.h"
 #include "NetworkSession.h"
 #include "RemoteWorkerType.h"
-#include "SharedBufferReference.h"
 #include "WebCoreArgumentCoders.h"
 #include "WebProcess.h"
 #include "WebProcessMessages.h"
@@ -118,12 +117,12 @@ void WebSWServerConnection::resolveUnregistrationJobInClient(ServiceWorkerJobIde
             completionHandler(unregistrationResult);
             return;
         }
-
+        
         auto scopeURL = registrationKey.scope();
         session()->notificationManager().unsubscribeFromPushService(WTFMove(scopeURL), std::nullopt, [completionHandler = WTFMove(completionHandler), unregistrationResult](auto&&) mutable {
             completionHandler(unregistrationResult);
         });
-
+        
 #else
         completionHandler(unregistrationResult);
 #endif
@@ -176,7 +175,6 @@ void WebSWServerConnection::controlClient(const NetworkResourceLoadParameters& p
         clientType = ServiceWorkerClientType::Window;
 
     ScriptExecutionContextIdentifier clientIdentifier { *parameters.options.resultingClientIdentifier, webProcessIdentifier };
-
     // As per step 12 of https://w3c.github.io/ServiceWorker/#on-fetch-request-algorithm, the active service worker should be controlling the document.
     // We register the service worker client using the identifier provided by DocumentLoader and notify DocumentLoader about it.
     // If notification is successful, DocumentLoader is responsible to unregister the service worker client as needed.
@@ -188,7 +186,7 @@ void WebSWServerConnection::controlClient(const NetworkResourceLoadParameters& p
 
     auto ancestorOrigins = map(parameters.frameAncestorOrigins, [](auto& origin) { return origin->toString(); });
     ServiceWorkerClientData data { clientIdentifier, clientType, ServiceWorkerClientFrameType::None, request.url(), URL(), parameters.webPageID, parameters.webFrameID, request.isAppInitiated() ? WebCore::LastNavigationWasAppInitiated::Yes : WebCore::LastNavigationWasAppInitiated::No, false, false, 0, WTFMove(ancestorOrigins) };
-    registerServiceWorkerClient(ClientOrigin { registration.key().topOrigin(), SecurityOriginData::fromURLWithoutStrictOpaqueness(request.url()) }, WTFMove(data), registration.identifier(), request.httpUserAgent());
+    registerServiceWorkerClient(ClientOrigin { registration.key().topOrigin(), SecurityOriginData::fromURL(request.url()) }, WTFMove(data), registration.identifier(), request.httpUserAgent());
 }
 
 std::unique_ptr<ServiceWorkerFetchTask> WebSWServerConnection::createFetchTask(NetworkResourceLoader& loader, const ResourceRequest& request)
@@ -206,7 +204,7 @@ std::unique_ptr<ServiceWorkerFetchTask> WebSWServerConnection::createFetchTask(N
 
     std::optional<ServiceWorkerRegistrationIdentifier> serviceWorkerRegistrationIdentifier;
     if (loader.parameters().options.mode == FetchOptions::Mode::Navigate || loader.parameters().options.destination == FetchOptions::Destination::Worker || loader.parameters().options.destination == FetchOptions::Destination::Sharedworker) {
-        auto topOrigin = loader.parameters().isMainFrameNavigation ? SecurityOriginData::fromURLWithoutStrictOpaqueness(request.url()) : loader.parameters().topOrigin->data();
+        auto topOrigin = loader.parameters().isMainFrameNavigation ? SecurityOriginData::fromURL(request.url()) : loader.parameters().topOrigin->data();
         auto* registration = doRegistrationMatching(topOrigin, request.url());
         if (!registration)
             return nullptr;
@@ -284,7 +282,7 @@ void WebSWServerConnection::startFetch(ServiceWorkerFetchTask& task, SWServerWor
 #endif
             if (!task)
                 return;
-
+            
             if (!weakThis) {
                 task->cannotHandle();
                 return;
@@ -411,7 +409,7 @@ void WebSWServerConnection::registerServiceWorkerClient(WebCore::ClientOrigin&& 
     auto& contextOrigin = clientOrigin.clientOrigin;
     if (data.url.protocolIsInHTTPFamily()) {
         // We do not register any sandbox document.
-        if (contextOrigin != SecurityOriginData::fromURLWithoutStrictOpaqueness(data.url))
+        if (contextOrigin != SecurityOriginData::fromURL(data.url))
             return;
     }
 
@@ -706,24 +704,6 @@ std::optional<SWServer::GatheredClientData> WebSWServerConnection::gatherClientD
         return { };
 
     return server().gatherClientData(iterator->value, clientIdentifier);
-}
-
-void WebSWServerConnection::updateBackgroundFetchRegistration(const WebCore::BackgroundFetchInformation& information)
-{
-    send(Messages::WebSWClientConnection::UpdateBackgroundFetchRegistration(information));
-}
-
-void WebSWServerConnection::retrieveRecordResponseBody(WebCore::BackgroundFetchRecordIdentifier recordIdentifier, RetrieveRecordResponseBodyCallbackIdentifier callbackIdentifier)
-{
-    SWServer::Connection::retrieveRecordResponseBody(recordIdentifier, [weakThis = WeakPtr { *this }, callbackIdentifier](auto&& result) {
-        if (!weakThis)
-            return;
-        if (!result.has_value()) {
-            weakThis->send(Messages::WebSWClientConnection::NotifyRecordResponseBodyEnd(callbackIdentifier, result.error()));
-            return;
-        }
-        weakThis->send(Messages::WebSWClientConnection::NotifyRecordResponseBodyChunk(callbackIdentifier, IPC::SharedBufferReference(WTFMove(result.value()))));
-    });
 }
 
 } // namespace WebKit

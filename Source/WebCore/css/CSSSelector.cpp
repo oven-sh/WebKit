@@ -496,9 +496,6 @@ String CSSSelector::selectorText(StringView separator, StringView rightSide) con
             case CSSSelector::PseudoClassChecked:
                 builder.append(":checked");
                 break;
-            case CSSSelector::PseudoClassClosed:
-                builder.append(":closed");
-                break;
             case CSSSelector::PseudoClassCornerPresent:
                 builder.append(":corner-present");
                 break;
@@ -653,9 +650,6 @@ String CSSSelector::selectorText(StringView separator, StringView rightSide) con
                 break;
             case CSSSelector::PseudoClassOnlyOfType:
                 builder.append(":only-of-type");
-                break;
-            case CSSSelector::PseudoClassOpen:
-                builder.append(":open");
                 break;
             case CSSSelector::PseudoClassOptional:
                 builder.append(":optional");

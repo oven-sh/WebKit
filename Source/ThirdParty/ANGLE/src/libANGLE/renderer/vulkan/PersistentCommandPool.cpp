@@ -22,8 +22,8 @@ PersistentCommandPool::~PersistentCommandPool()
     ASSERT(!mCommandPool.valid() && mFreeBuffers.empty());
 }
 
-angle::Result PersistentCommandPool::init(Context *context,
-                                          ProtectionType protectionType,
+angle::Result PersistentCommandPool::init(vk::Context *context,
+                                          bool hasProtectedContent,
                                           uint32_t queueFamilyIndex)
 {
     ASSERT(!mCommandPool.valid());
@@ -35,9 +35,7 @@ angle::Result PersistentCommandPool::init(Context *context,
     //  command buffers from this pool. Alternatively we could reset the entire command pool.
     commandPoolInfo.flags =
         VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT | VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
-    ASSERT(protectionType == ProtectionType::Unprotected ||
-           protectionType == ProtectionType::Protected);
-    if (protectionType == ProtectionType::Protected)
+    if (hasProtectedContent)
     {
         commandPoolInfo.flags |= VK_COMMAND_POOL_CREATE_PROTECTED_BIT;
     }
@@ -60,7 +58,7 @@ void PersistentCommandPool::destroy(VkDevice device)
 
     ASSERT(mCommandPool.valid());
 
-    for (PrimaryCommandBuffer &cmdBuf : mFreeBuffers)
+    for (vk::PrimaryCommandBuffer &cmdBuf : mFreeBuffers)
     {
         cmdBuf.destroy(device, mCommandPool);
     }
@@ -69,8 +67,8 @@ void PersistentCommandPool::destroy(VkDevice device)
     mCommandPool.destroy(device);
 }
 
-angle::Result PersistentCommandPool::allocate(Context *context,
-                                              PrimaryCommandBuffer *commandBufferOut)
+angle::Result PersistentCommandPool::allocate(vk::Context *context,
+                                              vk::PrimaryCommandBuffer *commandBufferOut)
 {
     if (mFreeBuffers.empty())
     {
@@ -84,7 +82,8 @@ angle::Result PersistentCommandPool::allocate(Context *context,
     return angle::Result::Continue;
 }
 
-angle::Result PersistentCommandPool::collect(Context *context, PrimaryCommandBuffer &&buffer)
+angle::Result PersistentCommandPool::collect(vk::Context *context,
+                                             vk::PrimaryCommandBuffer &&buffer)
 {
     // VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT NOT set, The CommandBuffer
     // can still hold the memory resource
@@ -94,9 +93,9 @@ angle::Result PersistentCommandPool::collect(Context *context, PrimaryCommandBuf
     return angle::Result::Continue;
 }
 
-angle::Result PersistentCommandPool::allocateCommandBuffer(Context *context)
+angle::Result PersistentCommandPool::allocateCommandBuffer(vk::Context *context)
 {
-    PrimaryCommandBuffer commandBuffer;
+    vk::PrimaryCommandBuffer commandBuffer;
     {
         // Only used for primary CommandBuffer allocation
         VkCommandBufferAllocateInfo commandBufferInfo = {};

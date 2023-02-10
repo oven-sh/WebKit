@@ -683,45 +683,6 @@
     "imported/w3c/pointerlock/pointerlock_shadow.html": [
         "slow"
     ],
-    "imported/w3c/preload/link-header-modulepreload.html": [
-        "slow"
-    ],
-    "imported/w3c/preload/link-header-preload-non-html.html": [
-        "slow"
-    ],
-    "imported/w3c/preload/onerror-event.html": [
-        "slow"
-    ],
-    "imported/w3c/preload/onload-event.html": [
-        "slow"
-    ],
-    "imported/w3c/preload/preconnect-onerror-event.html": [
-        "slow"
-    ],
-    "imported/w3c/preload/preconnect.html": [
-        "slow"
-    ],
-    "imported/w3c/preload/prefetch-events.html": [
-        "slow"
-    ],
-    "imported/w3c/preload/preload-connect-to-doc.html": [
-        "slow"
-    ],
-    "imported/w3c/preload/preload-error.sub.html": [
-        "slow"
-    ],
-    "imported/w3c/preload/preload-referrer-policy.html": [
-        "slow"
-    ],
-    "imported/w3c/preload/preload-time-to-fetch.https.html": [
-        "slow"
-    ],
-    "imported/w3c/preload/preload-type-match.html": [
-        "slow"
-    ],
-    "imported/w3c/preload/preload-with-type.html": [
-        "slow"
-    ],
     "imported/w3c/quirks/hashless-hex-color/limited-quirks.html": [
         "slow"
     ],
@@ -4023,30 +3984,6 @@
         "slow"
     ],
     "imported/w3c/web-platform-tests/html/semantics/links/links-created-by-a-and-area-elements/target_blank_implicit_noopener_base.html": [
-        "slow"
-    ],
-    "imported/w3c/web-platform-tests/html/semantics/popovers/popover-attribute-basic.html": [
-        "slow"
-    ],
-    "imported/w3c/web-platform-tests/html/semantics/popovers/popover-attribute-basic.tentative.html": [
-        "slow"
-    ],
-    "imported/w3c/web-platform-tests/html/semantics/popovers/popover-focus.html": [
-        "slow"
-    ],
-    "imported/w3c/web-platform-tests/html/semantics/popovers/popover-focus.tentative.html": [
-        "slow"
-    ],
-    "imported/w3c/web-platform-tests/html/semantics/popovers/popover-invoking-attribute.html": [
-        "slow"
-    ],
-    "imported/w3c/web-platform-tests/html/semantics/popovers/popover-invoking-attribute.tentative.html": [
-        "slow"
-    ],
-    "imported/w3c/web-platform-tests/html/semantics/popovers/popover-light-dismiss.html": [
-        "slow"
-    ],
-    "imported/w3c/web-platform-tests/html/semantics/popovers/popover-light-dismiss.tentative.html": [
         "slow"
     ],
     "imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/async_003.htm": [

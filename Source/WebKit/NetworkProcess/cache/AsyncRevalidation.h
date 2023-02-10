@@ -34,7 +34,7 @@
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
-enum class NetworkConnectionIntegrity : uint16_t;
+enum class NetworkConnectionIntegrity : uint8_t;
 class ResourceRequest;
 };
 

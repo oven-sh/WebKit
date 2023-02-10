@@ -5,9 +5,8 @@ async function helloCube() {
     }
 
     const canvas = document.querySelector("canvas");
-    const deviceScaleFactor = window.devicePixelRatio || 1;
-    canvas.width = 600 * deviceScaleFactor;
-    canvas.height = 600 * deviceScaleFactor;
+    canvas.width = 600;
+    canvas.height = 600;
     
     const adapter = await navigator.gpu.requestAdapter();
     const device = await adapter.requestDevice();
@@ -214,15 +213,16 @@ async function helloCube() {
         multisample: { count: 4 }
     };
 
+    const deviceScaleFactor = window.devicePixelRatio || 1;
     const depthTexture = device.createTexture({
-        size: [ canvas.width, canvas.height ],
+        size: [ canvas.width * deviceScaleFactor, canvas.height * deviceScaleFactor ],
         format: 'depth24plus',
         usage: GPUTextureUsage.RENDER_ATTACHMENT,
         sampleCount: 4
     });
 
     const msaaRenderTarget = device.createTexture({
-        size: [ canvas.width, canvas.height ],
+        size: [ canvas.width * deviceScaleFactor, canvas.height * deviceScaleFactor ],
         sampleCount: 4,
         format: 'bgra8unorm',
         usage: GPUTextureUsage.RENDER_ATTACHMENT,

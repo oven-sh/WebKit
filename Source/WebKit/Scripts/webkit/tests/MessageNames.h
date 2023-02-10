@@ -93,7 +93,6 @@ enum class MessageName : uint16_t {
     TestWithSemaphore_SendSemaphore,
     TestWithStreamBatched_SendString,
     TestWithStreamBuffer_SendStreamBuffer,
-    TestWithStream_CallWithIdentifier,
 #if PLATFORM(COCOA)
     TestWithStream_SendMachSendRight,
 #endif
@@ -159,7 +158,6 @@ enum class MessageName : uint16_t {
 #endif
     TestWithLegacyReceiver_RunJavaScriptAlertReply,
     TestWithSemaphore_ReceiveSemaphoreReply,
-    TestWithStream_CallWithIdentifierReply,
     TestWithStream_SendStringAsyncReply,
 #if ENABLE(TEST_FEATURE)
     TestWithSuperclass_TestAsyncMessageReply,

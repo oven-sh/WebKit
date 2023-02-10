@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022-2023 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2022 Apple Inc. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,9 +29,9 @@
 #if PLATFORM(MAC)
 
 #import "ControlFactoryMac.h"
-#import "GraphicsContext.h"
-#import "LocalDefaultSystemAppearance.h"
+#import "LocalCurrentGraphicsContext.h"
 #import "TextFieldPart.h"
+#import "WebControlView.h"
 
 namespace WebCore {
 
@@ -51,14 +51,13 @@ bool TextFieldMac::shouldPaintCustomTextField(const ControlStyle& style)
 
 void TextFieldMac::draw(GraphicsContext& context, const FloatRoundedRect& borderRect, float deviceScaleFactor, const ControlStyle& style)
 {
-    LocalDefaultSystemAppearance localAppearance(style.states.contains(ControlStyle::State::DarkAppearance), style.accentColor);
+    const auto& states = style.states;
+    auto enabled = states.contains(ControlStyle::State::Enabled) && !states.contains(ControlStyle::State::ReadOnly);
 
+    LocalCurrentGraphicsContext localContext(context);
     GraphicsContextStateSaver stateSaver(context);
 
     FloatRect paintRect(borderRect.rect());
-
-    const auto& states = style.states;
-    auto enabled = states.contains(ControlStyle::State::Enabled) && !states.contains(ControlStyle::State::ReadOnly);
 
     if (shouldPaintCustomTextField(style)) {
         constexpr int strokeThickness = 1;
@@ -79,12 +78,11 @@ void TextFieldMac::draw(GraphicsContext& context, const FloatRoundedRect& border
             paintRect.move(0, -1 / transform.yScale());
         }
         
+        auto *view = m_controlFactory.drawingView(borderRect.rect(), style);
+        
         [m_textFieldCell.get() setEnabled:enabled];
-
-        auto styleForDrawing = style;
-        styleForDrawing.states.remove(ControlStyle::State::Focused);
-
-        drawCell(context, paintRect, deviceScaleFactor, styleForDrawing, m_textFieldCell.get(), true);
+        [m_textFieldCell.get() drawWithFrame:NSRect(paintRect) inView:view];
+        [m_textFieldCell.get() setControlView:nil];
     }
 
 #if ENABLE(DATALIST_ELEMENT)

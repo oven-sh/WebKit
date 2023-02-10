@@ -636,7 +636,7 @@ class SecondaryCommandBuffer final : angle::NonCopyable
     static angle::Result InitializeCommandPool(Context *context,
                                                CommandPool *pool,
                                                uint32_t queueFamilyIndex,
-                                               ProtectionType protectionType)
+                                               bool hasProtectedContent)
     {
         return angle::Result::Continue;
     }

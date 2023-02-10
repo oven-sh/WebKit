@@ -52,7 +52,7 @@ namespace Style {
 struct ResolutionContext;
 }
 
-class KeyframeEffect final : public AnimationEffect, public CSSPropertyBlendingClient {
+class KeyframeEffect : public AnimationEffect, public CSSPropertyBlendingClient {
 public:
     static ExceptionOr<Ref<KeyframeEffect>> create(JSC::JSGlobalObject&, Document&, Element*, JSC::Strong<JSC::JSObject>&&, std::optional<std::variant<double, KeyframeEffectOptions>>&&);
     static Ref<KeyframeEffect> create(Ref<KeyframeEffect>&&);
@@ -132,9 +132,9 @@ public:
 
     void willChangeRenderer();
 
-    Document* document() const final;
-    RenderElement* renderer() const final;
-    const RenderStyle& currentStyle() const final;
+    Document* document() const override;
+    RenderElement* renderer() const override;
+    const RenderStyle& currentStyle() const override;
     bool triggersStackingContext() const { return m_triggersStackingContext; }
     bool isRunningAccelerated() const { return m_runningAccelerated == RunningAccelerated::Yes; }
 
@@ -146,7 +146,7 @@ public:
     // direct interpolation based on the function list of any two particular keyframes. The prefix serves as a way to
     // make sure that the results of blend(...) can be made to return the same results as rendered by the hardware
     // animation code.
-    std::optional<unsigned> transformFunctionListPrefix() const final { return (!preventsAcceleration()) ? std::optional<unsigned>(m_transformFunctionListsMatchPrefix) : std::nullopt; }
+    std::optional<unsigned> transformFunctionListPrefix() const override { return (!preventsAcceleration()) ? std::optional<unsigned>(m_transformFunctionListsMatchPrefix) : std::nullopt; }
 
     void computeDeclarativeAnimationBlendingKeyframes(const RenderStyle* oldStyle, const RenderStyle& newStyle, const Style::ResolutionContext&);
     const KeyframeList& blendingKeyframes() const { return m_blendingKeyframes; }
@@ -175,14 +175,13 @@ public:
     void effectStackNoLongerAllowsAcceleration();
 
     void lastStyleChangeEventStyleDidChange(const RenderStyle* previousStyle, const RenderStyle* currentStyle);
-    void acceleratedPropertiesOverriddenByCascadeDidChange();
 
     static String CSSPropertyIDToIDLAttributeName(CSSPropertyID);
 
 private:
     KeyframeEffect(Element*, PseudoId);
 
-    enum class AcceleratedAction : uint8_t { Play, Pause, UpdateProperties, TransformChange, Stop };
+    enum class AcceleratedAction : uint8_t { Play, Pause, UpdateTiming, TransformChange, Stop };
     enum class BlendingKeyframesSource : uint8_t { CSSAnimation, CSSTransition, WebAnimation };
     enum class AcceleratedProperties : uint8_t { None, Some, All };
     enum class RunningAccelerated : uint8_t { NotStarted, Yes, Prevented, Failed };
@@ -223,9 +222,7 @@ private:
     void computeHasImplicitKeyframeForAcceleratedProperty();
     void computeHasKeyframeComposingAcceleratedProperty();
     void computeHasExplicitlyInheritedKeyframeProperty();
-    void computeHasAcceleratedPropertyOverriddenByCascadeProperty();
     void abilityToBeAcceleratedDidChange();
-    void updateAcceleratedAnimationIfNecessary();
 
     // AnimationEffect
     bool isKeyframeEffect() const final { return true; }
@@ -238,7 +235,6 @@ private:
     Seconds timeToNextTick(const BasicEffectTiming&) const final;
     bool ticksContinouslyWhileActive() const final;
     std::optional<double> progressUntilNextStep(double) const final;
-    bool preventsAnimationReadiness() const final;
 
     AtomString m_keyframesName;
     KeyframeList m_blendingKeyframes { emptyAtom() };
@@ -263,7 +259,6 @@ private:
     bool m_hasImplicitKeyframeForAcceleratedProperty { false };
     bool m_hasKeyframeComposingAcceleratedProperty { false };
     bool m_hasExplicitlyInheritedKeyframeProperty { false };
-    bool m_hasAcceleratedPropertyOverriddenByCascadeProperty { false };
 };
 
 } // namespace WebCore

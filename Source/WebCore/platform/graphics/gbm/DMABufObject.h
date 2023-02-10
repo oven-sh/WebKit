@@ -63,8 +63,7 @@ struct DMABufObject {
     std::array<UnixFileDescriptor, DMABufFormat::c_maxPlanes> fd { };
     std::array<size_t, DMABufFormat::c_maxPlanes> offset { 0, 0, 0, 0 };
     std::array<uint32_t, DMABufFormat::c_maxPlanes> stride { 0, 0, 0, 0 };
-    std::array<bool, DMABufFormat::c_maxPlanes> modifierPresent { false, false, false, false };
-    std::array<uint64_t, DMABufFormat::c_maxPlanes> modifierValue { 0, 0, 0, 0 };
+    std::array<uint64_t, DMABufFormat::c_maxPlanes> modifier { 0, 0, 0, 0 };
 };
 
 template<class Encoder>
@@ -75,7 +74,7 @@ void DMABufObject::encode(Encoder& encoder) &&
 
     for (unsigned i = 0; i < DMABufFormat::c_maxPlanes; ++i) {
         encoder << WTFMove(fd[i]);
-        encoder << offset[i] << stride[i] << modifierPresent[i] << modifierValue[i];
+        encoder << offset[i] << stride[i] << modifier[i];
     }
 }
 
@@ -134,17 +133,11 @@ std::optional<DMABufObject> DMABufObject::decode(Decoder& decoder)
             return std::nullopt;
         dmabufObject.stride[i] = *stride;
 
-        std::optional<bool> modifierPresent;
-        decoder >> modifierPresent;
-        if (!modifierPresent)
+        std::optional<uint64_t> modifier;
+        decoder >> modifier;
+        if (!modifier)
             return std::nullopt;
-        dmabufObject.modifierPresent[i] = *modifierPresent;
-
-        std::optional<uint64_t> modifierValue;
-        decoder >> modifierValue;
-        if (!modifierValue)
-            return std::nullopt;
-        dmabufObject.modifierValue[i] = *modifierValue;
+        dmabufObject.modifier[i] = *modifier;
     }
 
     return dmabufObject;

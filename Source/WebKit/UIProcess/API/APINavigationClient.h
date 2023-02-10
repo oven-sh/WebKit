@@ -48,7 +48,7 @@ class ResourceError;
 class ResourceRequest;
 class ResourceResponse;
 class FragmentedSharedBuffer;
-class SecurityOriginData;
+struct SecurityOriginData;
 }
 
 namespace WebKit {

@@ -36,7 +36,6 @@
 #include "GraphicsLayerAsyncContentsDisplayDelegateCocoa.h"
 #include "GraphicsLayerContentsDisplayDelegate.h"
 #include "GraphicsLayerFactory.h"
-#include "HTMLVideoElement.h"
 #include "Image.h"
 #include "InMemoryDisplayList.h"
 #include "Logging.h"
@@ -267,7 +266,11 @@ static bool animationHasStepsTimingFunction(const KeyframeValueList& valueList, 
 
 static inline bool supportsAcceleratedFilterAnimations()
 {
+#if PLATFORM(COCOA)
     return true;
+#else
+    return false;
+#endif
 }
 
 static PlatformCALayer::FilterType toPlatformCALayerFilterType(GraphicsLayer::ScalingFilter filter)
@@ -295,7 +298,12 @@ bool GraphicsLayer::supportsLayerType(Type type)
     case Type::TiledBacking:
         return true;
     case Type::Shape:
+#if PLATFORM(COCOA)
+        // FIXME: we can use shaper layers on Windows when PlatformCALayerCocoa::setShapePath() etc are implemented.
         return true;
+#else
+        return false;
+#endif
     }
     ASSERT_NOT_REACHED();
     return false;
@@ -345,12 +353,6 @@ Ref<PlatformCALayer> GraphicsLayerCA::createPlatformCALayer(Ref<WebCore::Model>,
 Ref<PlatformCALayer> GraphicsLayerCA::createPlatformCALayerHost(LayerHostingContextIdentifier, PlatformCALayerClient* owner)
 {
     ASSERT_NOT_REACHED_WITH_MESSAGE("GraphicsLayerCARemote::createPlatformCALayerHost should always be called instead of this, but this symbol is needed to compile WebKitLegacy.");
-    return GraphicsLayerCA::createPlatformCALayer(PlatformCALayer::LayerTypeLayer, owner);
-}
-
-Ref<PlatformCALayer> GraphicsLayerCA::createPlatformVideoLayer(HTMLVideoElement&, PlatformCALayerClient* owner)
-{
-    // By default, just make a plain layer; subclasses can override to provide a custom PlatformCALayer for hosting context id.
     return GraphicsLayerCA::createPlatformCALayer(PlatformCALayer::LayerTypeLayer, owner);
 }
 
@@ -1292,23 +1294,6 @@ void GraphicsLayerCA::setContentsToPlatformLayerHost(LayerHostingContextIdentifi
     m_contentsDisplayDelegate = nullptr;
     noteSublayersChanged();
     noteLayerPropertyChanged(ContentsPlatformLayerChanged);
-}
-
-void GraphicsLayerCA::setContentsToVideoElement(HTMLVideoElement& videoElement, ContentsLayerPurpose purpose)
-{
-#if HAVE(AVKIT)
-    auto hostingContextID = videoElement.layerHostingContextID();
-    if (hostingContextID != m_layerHostingContextID) {
-        m_contentsLayer = createPlatformVideoLayer(videoElement, this);
-        m_layerHostingContextID = hostingContextID;
-    }
-    m_contentsLayerPurpose = purpose;
-    m_contentsDisplayDelegate = nullptr;
-    noteSublayersChanged();
-    noteLayerPropertyChanged(ContentsPlatformLayerChanged);
-#else
-    setContentsToPlatformLayer(videoElement.platformLayer(), purpose);
-#endif
 }
 
 void GraphicsLayerCA::setContentsDisplayDelegate(RefPtr<GraphicsLayerContentsDisplayDelegate>&& delegate, ContentsLayerPurpose purpose)
@@ -3022,7 +3007,8 @@ GraphicsLayerCA::CloneID GraphicsLayerCA::ReplicaState::cloneID() const
     const size_t bitsPerUChar = sizeof(UChar) * 8;
     size_t vectorSize = (depth + bitsPerUChar - 1) / bitsPerUChar;
     
-    Vector<UChar> result(vectorSize, 0);
+    Vector<UChar> result(vectorSize);
+    result.fill(0);
 
     // Create a string from the bit sequence which we can use to identify the clone.
     // Note that the string may contain embedded nulls, but that's OK.
@@ -4894,7 +4880,11 @@ Vector<std::pair<String, double>> GraphicsLayerCA::acceleratedAnimationsForTesti
 
 RefPtr<GraphicsLayerAsyncContentsDisplayDelegate> GraphicsLayerCA::createAsyncContentsDisplayDelegate()
 {
+#if PLATFORM(COCOA)
     return adoptRef(new GraphicsLayerAsyncContentsDisplayDelegateCocoa(*this));
+#else
+    return nullptr;
+#endif
 }
 
 } // namespace WebCore

@@ -41,6 +41,7 @@
 #include <wtf/text/StringHasher.h>
 #include <wtf/text/UTF8ConversionError.h>
 #include <wtf/unicode/UTF8Conversion.h>
+#include <wtf/ForkExtras.h>
 
 #if CPU(ARM64)
 #include <arm_neon.h>
@@ -405,10 +406,12 @@ public:
     WTF_EXPORT_PRIVATE static StaticStringImpl s_emptyAtomString;
     ALWAYS_INLINE static StringImpl* empty() { return reinterpret_cast<StringImpl*>(&s_emptyAtomString); }
 
+
     // FIXME: Do these functions really belong in StringImpl?
     template<typename CharacterType> static void copyCharacters(CharacterType* destination, const CharacterType* source, unsigned length);
     static void copyCharacters(UChar* destination, const LChar* source, unsigned length);
     static void copyCharacters(LChar* destination, const UChar* source, unsigned length);
+    template<typename SourceCharacterType> static void iterCharacters(jsstring_iterator* iter, unsigned start, const SourceCharacterType* source, unsigned numCharacters);
 
     // Some string features, like reference counting and the atomicity flag, are not
     // thread-safe. We achieve thread safety by isolation, giving each thread
@@ -1142,6 +1145,18 @@ inline void StringImpl::deref()
     m_refCount = tempRefCount;
 }
 
+template<typename SourceCharacterType>
+inline void StringImpl::iterCharacters(jsstring_iterator* iter, unsigned start, const SourceCharacterType* source, unsigned numCharacters)
+{
+    static_assert(std::is_same_v<SourceCharacterType, LChar> || std::is_same_v<SourceCharacterType, UChar>);
+
+    if constexpr (std::is_same_v<SourceCharacterType, LChar>) {
+       iter->write8(iter, (const void*) source, numCharacters, start);
+    } else {
+       iter->write16(iter, (const void*) source, numCharacters, start);
+    }
+}
+
 template<typename CharacterType> inline void StringImpl::copyCharacters(CharacterType* destination, const CharacterType* source, unsigned length)
 {
     if (length == 1)
@@ -1434,7 +1449,6 @@ template<typename CharacterType, typename Predicate> ALWAYS_INLINE Ref<StringImp
 template<typename Predicate>
 inline Ref<StringImpl> StringImpl::removeCharacters(const Predicate& findMatch)
 {
-    static_assert(!std::is_function_v<Predicate>, "Passing a lambda instead of a function pointer helps the compiler with inlining");
     if (is8Bit())
         return removeCharactersImpl(characters8(), findMatch);
     return removeCharactersImpl(characters16(), findMatch);

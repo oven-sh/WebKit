@@ -48,7 +48,7 @@ OBJC_CLASS NSURLCredentialStorage;
 #include <wtf/Seconds.h>
 
 namespace WebCore {
-enum class NetworkConnectionIntegrity : uint16_t;
+enum class NetworkConnectionIntegrity : uint8_t;
 }
 
 namespace WebKit {
@@ -149,10 +149,7 @@ public:
 
 private:
     void invalidateAndCancel() override;
-    HashSet<WebCore::SecurityOriginData> originsWithCredentials() final;
-    void removeCredentialsForOrigins(const Vector<WebCore::SecurityOriginData>&) final;
-    void clearCredentials(WallTime) final;
-
+    void clearCredentials() override;
     bool shouldLogCookieInformation() const override { return m_shouldLogCookieInformation; }
     SessionWrapper& isolatedSession(WebPageProxyIdentifier, WebCore::StoredCredentialsPolicy, const WebCore::RegistrableDomain&, NavigatingToAppBoundDomain);
 

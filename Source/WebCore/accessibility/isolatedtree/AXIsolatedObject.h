@@ -493,9 +493,6 @@ private:
     String accessibilityDescription() const override { return stringAttributeValue(AXPropertyName::AccessibilityDescription); }
     String title() const override { return stringAttributeValue(AXPropertyName::Title); }
     String text() const override;
-#if PLATFORM(COCOA)
-    RetainPtr<NSAttributedString> attributedStringForTextMarkerRange(AXTextMarkerRange&&, SpellCheck) const override { return nil; }
-#endif
     AXObjectCache* axObjectCache() const override;
     Element* actionElement() const override;
     Path elementPath() const override { return pathAttributeValue(AXPropertyName::Path); };

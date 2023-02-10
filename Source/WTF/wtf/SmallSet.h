@@ -84,41 +84,8 @@ public:
             SmallSetMalloc::free(m_inline.buffer);
     }
 
-    class iterator {
-        WTF_MAKE_FAST_ALLOCATED;
-    public:
-        iterator()
-        { }
-
-        iterator(unsigned index, unsigned capacity, T* buffer)
-            : m_index(index)
-            , m_capacity(capacity)
-            , m_buffer(buffer)
-        { }
-
-        iterator& operator++()
-        {
-            m_index++;
-            ASSERT(m_index <= m_capacity);
-            while (m_index < m_capacity && m_buffer[m_index] == emptyValue())
-                m_index++;
-            return *this;
-        }
-        
-        T& operator*() { ASSERT(m_index < m_capacity); return static_cast<T&>(m_buffer[m_index]); }
-        T operator*() const { ASSERT(m_index < m_capacity); return static_cast<T>(m_buffer[m_index]); }
-        bool operator==(const iterator& other) const { ASSERT(m_buffer == other.m_buffer); return m_index == other.m_index; }
-        bool operator!=(const iterator& other) const { ASSERT(m_buffer == other.m_buffer); return !(*this == other); }
-
-    private:
-        template<typename U, typename H, unsigned S> friend class WTF::SmallSet;
-        unsigned m_index;
-        unsigned m_capacity;
-        T* m_buffer;
-    };
-
+    // We could easily include an iterator in this to fully match the HashSet interface, but currently none of our clients require it.
     struct AddResult {
-        iterator entry;
         bool isNewEntry;
     };
 
@@ -128,14 +95,14 @@ public:
 
         if (isSmall()) {
             for (unsigned i = 0; i < m_size; i++) {
-                if (equal(m_inline.smallStorage[i], value))
-                    return { iterator { i, m_capacity, m_inline.smallStorage }, false };
+                if (m_inline.smallStorage[i] == value)
+                    return { false };
             }
 
             if (m_size < SmallArraySize) {
                 m_inline.smallStorage[m_size] = value;
                 ++m_size;
-                return { iterator { m_size - 1, m_capacity, m_inline.smallStorage }, true };
+                return { true };
             }
 
             grow(std::max(64u, SmallArraySize * 2));
@@ -149,12 +116,12 @@ public:
         }
 
         T* bucket = this->bucket(value);
-        if (!equal(*bucket, value)) {
+        if (*bucket != value) {
             *bucket = value;
             ++m_size;
-            return { iterator { static_cast<unsigned>(bucket - m_inline.buffer), m_capacity, m_inline.buffer }, true };
+            return { true };
         }
-        return { iterator { static_cast<unsigned>(bucket - m_inline.buffer), m_capacity, m_inline.buffer }, false };
+        return { false };
     }
 
     inline bool contains(T value) const
@@ -170,8 +137,31 @@ public:
         }
 
         T* bucket = this->bucket(value);
-        return equal(*bucket, value);
+        return *bucket == value;
     }
+
+    class iterator {
+        WTF_MAKE_FAST_ALLOCATED;
+    public:
+        iterator& operator++()
+        {
+            m_index++;
+            ASSERT(m_index <= m_capacity);
+            while (m_index < m_capacity && m_buffer[m_index] == emptyValue())
+                m_index++;
+            return *this;
+        }
+        
+        T operator*() const { ASSERT(m_index < m_capacity); return static_cast<T>(m_buffer[m_index]); }
+        bool operator==(const iterator& other) const { ASSERT(m_buffer == other.m_buffer); return m_index == other.m_index; }
+        bool operator!=(const iterator& other) const { ASSERT(m_buffer == other.m_buffer); return !(*this == other); }
+
+    private:
+        template<typename U, typename H, unsigned S> friend class WTF::SmallSet;
+        unsigned m_index;
+        unsigned m_capacity;
+        T* m_buffer;
+    };
 
     iterator begin() const
     {
@@ -221,19 +211,8 @@ private:
         return std::numeric_limits<T>::max();
     }
 
-    bool equal(const T left, const T right) const
-    {
-        if constexpr (Hash::safeToCompareToEmptyOrDeleted)
-            return Hash::equal(left, right);
-        if (isValidEntry(left) && isValidEntry(right))
-            return Hash::equal(left, right);
-        return left == right; 
-    }
-
     bool isValidEntry(const T value) const
     {
-        if constexpr (Hash::safeToCompareToEmptyOrDeleted)
-            return !Hash::equal(value, emptyValue());
         return value != emptyValue();
     }
 
@@ -277,7 +256,7 @@ private:
         m_capacity = size;
 
         for (unsigned i = 0; i < oldCapacity; i++) {
-            if (isValidEntry(oldBuffer[i])) {
+            if (oldBuffer[i] != emptyValue()) {
                 T* ptr = bucketInBuffer(newBuffer, static_cast<T>(oldBuffer[i]));
                 *ptr = oldBuffer[i];
             }
@@ -288,6 +267,7 @@ private:
 
         m_inline.buffer = newBuffer;
     }
+
 
     inline T* bucket(T target) const
     {
@@ -302,9 +282,9 @@ private:
         unsigned index = 0;
         while (true) {
             T* ptr = buffer + bucket;
-            if (!isValidEntry(*ptr))
+            if (*ptr == emptyValue())
                 return ptr;
-            if (equal(*ptr, target))
+            if (*ptr == target)
                 return ptr;
             index++;
             bucket = (bucket + index) & (m_capacity - 1);

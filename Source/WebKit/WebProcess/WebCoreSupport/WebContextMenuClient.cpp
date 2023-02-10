@@ -63,10 +63,7 @@ void WebContextMenuClient::searchWithGoogle(const WebCore::Frame* frame)
     auto searchURL = URL { "https://www.google.com/search?q=" + searchString + "&ie=UTF-8&oe=UTF-8" };
 
     WebCore::UserGestureIndicator indicator { WebCore::ProcessingUserGesture };
-    auto* localMainFrame = dynamicDowncast<WebCore::LocalFrame>(page->mainFrame());
-    if (!localMainFrame)
-        return;
-    localMainFrame->loader().changeLocation(searchURL, { }, nullptr, WebCore::ReferrerPolicy::EmptyString, WebCore::ShouldOpenExternalURLsPolicy::ShouldNotAllow);
+    page->mainFrame().loader().changeLocation(searchURL, { }, nullptr, WebCore::ReferrerPolicy::EmptyString, WebCore::ShouldOpenExternalURLsPolicy::ShouldNotAllow);
 }
 
 void WebContextMenuClient::lookUpInDictionary(WebCore::Frame*)

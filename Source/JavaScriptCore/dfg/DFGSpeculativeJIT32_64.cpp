@@ -3877,8 +3877,8 @@ void SpeculativeJIT::compile(Node* node)
         break;
     }
 
-    case CreateArgumentsButterflyExcludingThis: {
-        compileCreateArgumentsButterflyExcludingThis(node);
+    case CreateArgumentsButterfly: {
+        compileCreateArgumentsButterfly(node);
         break;
     }
 

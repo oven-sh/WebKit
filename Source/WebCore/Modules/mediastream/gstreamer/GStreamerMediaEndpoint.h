@@ -76,9 +76,9 @@ public:
     void resume();
 
     void gatherDecoderImplementationName(Function<void(String&&)>&&);
-    bool isNegotiationNeeded(uint32_t eventId) const { return eventId == m_negotiationNeededEventId; }
+    bool isNegotiationNeeded() const { return m_isNegotiationNeeded; }
 
-    void configureAndLinkSource(RealtimeOutgoingMediaSourceGStreamer&, bool shouldLookForUnusedPads = false);
+    void configureAndLinkSource(RealtimeOutgoingMediaSourceGStreamer&);
 
     bool addTrack(GStreamerRtpSenderBackend&, MediaStreamTrack&, const FixedVector<String>&);
     void removeTrack(GStreamerRtpSenderBackend&);
@@ -92,7 +92,7 @@ public:
     std::optional<Backends> addTransceiver(MediaStreamTrack&, const RTCRtpTransceiverInit&);
     std::unique_ptr<GStreamerRtpTransceiverBackend> transceiverBackendFromSender(GStreamerRtpSenderBackend&);
 
-    GStreamerRtpSenderBackend::Source createLinkedSourceForTrack(MediaStreamTrack&);
+    void setSenderSourceFromTrack(GStreamerRtpSenderBackend&, MediaStreamTrack&);
 
     void collectTransceivers();
 
@@ -146,7 +146,7 @@ private:
 
     void processSDPMessage(const GstSDPMessage*, Function<void(unsigned index, const char* mid, const GstSDPMedia*)>);
 
-    GRefPtr<GstPad> requestPad(std::optional<unsigned> mlineIndex, const GRefPtr<GstCaps>&, const String& mediaStreamID);
+    GRefPtr<GstPad> requestPad(unsigned mlineIndex, const GRefPtr<GstCaps>&, const String& mediaStreamID);
 
 #if !RELEASE_LOG_DISABLED
     void gatherStatsForLogging();
@@ -176,7 +176,7 @@ private:
     int m_ptCounter { 96 };
     unsigned m_pendingIncomingStreams { 0 };
     bool m_isInitiator { false };
-    uint32_t m_negotiationNeededEventId { 0 };
+    bool m_isNegotiationNeeded { false };
 
 #if !RELEASE_LOG_DISABLED
     Timer m_statsLogTimer;

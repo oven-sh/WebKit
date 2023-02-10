@@ -499,10 +499,10 @@ void ConfigFile::canonicalizePaths()
     }
 #endif
 
-    char* lastPathSeparator = strrchr(m_filename, '/');
+    char* lastPathSeperator = strrchr(m_filename, '/');
 
-    if (lastPathSeparator) {
-        unsigned dirnameLength = lastPathSeparator - &m_filename[0];
+    if (lastPathSeperator) {
+        unsigned dirnameLength = lastPathSeperator - &m_filename[0];
         strncpy(m_configDirectory, m_filename, dirnameLength);
         m_configDirectory[dirnameLength] = '\0';
     } else {

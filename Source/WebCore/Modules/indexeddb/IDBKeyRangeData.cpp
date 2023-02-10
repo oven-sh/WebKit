@@ -33,12 +33,14 @@ namespace WebCore {
 IDBKeyRangeData::IDBKeyRangeData(IDBKey* key)
     : lowerKey(key)
     , upperKey(key)
+    , isNull(!key)
 {
 }
 
 IDBKeyRangeData::IDBKeyRangeData(const IDBKeyData& keyData)
     : lowerKey(keyData)
     , upperKey(keyData)
+    , isNull(keyData.isNull())
 {
 }
 
@@ -46,6 +48,7 @@ IDBKeyRangeData IDBKeyRangeData::isolatedCopy() const
 {
     IDBKeyRangeData result;
 
+    result.isNull = isNull;
     result.lowerKey = lowerKey.isolatedCopy();
     result.upperKey = upperKey.isolatedCopy();
     result.lowerOpen = lowerOpen;
@@ -54,9 +57,17 @@ IDBKeyRangeData IDBKeyRangeData::isolatedCopy() const
     return result;
 }
 
+RefPtr<IDBKeyRange> IDBKeyRangeData::maybeCreateIDBKeyRange() const
+{
+    if (isNull)
+        return nullptr;
+
+    return IDBKeyRange::create(lowerKey.maybeCreateIDBKey(), upperKey.maybeCreateIDBKey(), lowerOpen, upperOpen);
+}
+
 bool IDBKeyRangeData::isExactlyOneKey() const
 {
-    if (isNull() || lowerOpen || upperOpen || !upperKey.isValid() || !lowerKey.isValid())
+    if (isNull || lowerOpen || upperOpen || !upperKey.isValid() || !lowerKey.isValid())
         return false;
 
     return !lowerKey.compare(upperKey);
@@ -84,7 +95,7 @@ bool IDBKeyRangeData::containsKey(const IDBKeyData& key) const
 
 bool IDBKeyRangeData::isValid() const
 {
-    if (isNull())
+    if (isNull)
         return false;
 
     if (!lowerKey.isValid() && !lowerKey.isNull())

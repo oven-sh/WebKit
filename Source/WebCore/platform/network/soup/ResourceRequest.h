@@ -37,6 +37,7 @@ class BlobRegistryImpl;
 
 struct ResourceRequestPlatformData {
     ResourceRequestBase::RequestData requestData;
+    std::optional<String> flattenedHTTPBody;
     bool acceptEncoding;
     uint16_t redirectCount;
 };
@@ -70,16 +71,19 @@ public:
     {
     }
 
-    explicit ResourceRequest(ResourceRequestPlatformData&& platformData)
+    ResourceRequest(ResourceRequestPlatformData&& platformData)
         : ResourceRequestBase(WTFMove(platformData.requestData))
-        , m_acceptEncoding(platformData.acceptEncoding)
-        , m_redirectCount(platformData.redirectCount)
     {
+        if (platformData.flattenedHTTPBody)
+            setHTTPBody(FormData::create(platformData.flattenedHTTPBody->utf8()));
+
+        m_acceptEncoding = platformData.acceptEncoding;
+        m_redirectCount =platformData.redirectCount;
     }
 
     GRefPtr<SoupMessage> createSoupMessage(BlobRegistryImpl&) const;
 
-    void updateFromDelegatePreservingOldProperties(const ResourceRequest& delegateProvidedRequest);
+    void updateFromDelegatePreservingOldProperties(const ResourceRequest& delegateProvidedRequest) { *this = delegateProvidedRequest; }
 
     bool acceptEncoding() const { return m_acceptEncoding; }
     void setAcceptEncoding(bool acceptEncoding) { m_acceptEncoding = acceptEncoding; }
@@ -91,9 +95,7 @@ public:
     void updateSoupMessageHeaders(SoupMessageHeaders*) const;
     void updateFromSoupMessageHeaders(SoupMessageHeaders*);
 
-    // We only need to encode platform data if acceptEncoding or redirectCount are not the default.
-    bool encodingRequiresPlatformData() const { return !m_acceptEncoding || m_redirectCount; }
-
+    ResourceRequestPlatformData getResourceRequestPlatformData() const;
     WEBCORE_EXPORT static ResourceRequest fromResourceRequestData(ResourceRequestData);
     WEBCORE_EXPORT ResourceRequestData getRequestDataToSerialize() const;
 

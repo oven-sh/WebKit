@@ -39,7 +39,6 @@ OBJC_CLASS NSMutableURLRequest;
 namespace WebCore {
 class RegistrableDomain;
 class SharedBuffer;
-enum class NetworkConnectionIntegrity : uint16_t;
 }
 
 namespace WebKit {
@@ -132,6 +131,6 @@ private:
 WebCore::Credential serverTrustCredential(const WebCore::AuthenticationChallenge&);
 void setPCMDataCarriedOnRequest(WebCore::PrivateClickMeasurement::PcmDataCarried, NSMutableURLRequest *);
 
-void enableNetworkConnectionIntegrity(NSMutableURLRequest *, OptionSet<WebCore::NetworkConnectionIntegrity>);
+void enableNetworkConnectionIntegrity(NSMutableURLRequest *, bool);
 
 } // namespace WebKit

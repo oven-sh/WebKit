@@ -52,7 +52,6 @@ NS_ASSUME_NONNULL_BEGIN
 
 @interface RBSTarget : NSObject
 + (RBSTarget *)targetWithPid:(pid_t)pid;
-+ (RBSTarget *)targetWithPid:(pid_t)pid environmentIdentifier:(NSString *)environment;
 + (RBSTarget *)currentProcess;
 @end
 

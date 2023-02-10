@@ -66,8 +66,6 @@ private:
     void updateLayerPositionsAfterScrolling() final;
     void updateCompositingLayersAfterScrolling() final;
 
-    void setFrameRect(const IntRect&) final;
-
     const Ref<RemoteFrame> m_frame;
 };
 

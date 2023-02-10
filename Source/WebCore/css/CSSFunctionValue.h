@@ -25,35 +25,32 @@
 
 #pragma once
 
+#include "CSSValueKeywords.h"
 #include "CSSValueList.h"
 
 namespace WebCore {
 
-enum CSSValueID : uint16_t;
-
-class CSSFunctionValue final : public CSSValueContainingVector {
+class CSSFunctionValue final : public CSSValueList {
 public:
-    static Ref<CSSFunctionValue> create(CSSValueID name, CSSValueListBuilder arguments);
-    static Ref<CSSFunctionValue> create(CSSValueID name);
-    static Ref<CSSFunctionValue> create(CSSValueID name, Ref<CSSValue> argument);
-    static Ref<CSSFunctionValue> create(CSSValueID name, Ref<CSSValue> firstArgument, Ref<CSSValue> secondArgument);
-    static Ref<CSSFunctionValue> create(CSSValueID name, Ref<CSSValue> firstArgument, Ref<CSSValue> secondArgument, Ref<CSSValue> thirdArgument);
-    static Ref<CSSFunctionValue> create(CSSValueID name, Ref<CSSValue> firstArgument, Ref<CSSValue> secondArgument, Ref<CSSValue> thirdArgument, Ref<CSSValue> fourthArgument);
+    static Ref<CSSFunctionValue> create(CSSValueID name)
+    {
+        return adoptRef(*new CSSFunctionValue(name));
+    }
+    
+    String customCSSText() const;
 
     CSSValueID name() const { return m_name; }
 
-    String customCSSText() const;
-    bool equals(const CSSFunctionValue& other) const { return m_name == other.m_name && itemsEqual(other); }
+    bool equals(const CSSFunctionValue& other) const { return m_name == other.m_name && CSSValueList::equals(other); }
 
 private:
-    CSSFunctionValue(CSSValueID name, CSSValueListBuilder);
-    explicit CSSFunctionValue(CSSValueID name);
-    CSSFunctionValue(CSSValueID name, Ref<CSSValue>);
-    CSSFunctionValue(CSSValueID name, Ref<CSSValue>, Ref<CSSValue>);
-    CSSFunctionValue(CSSValueID name, Ref<CSSValue>, Ref<CSSValue>, Ref<CSSValue>);
-    CSSFunctionValue(CSSValueID name, Ref<CSSValue>, Ref<CSSValue>, Ref<CSSValue>, Ref<CSSValue>);
+    CSSFunctionValue(CSSValueID name)
+        : CSSValueList(FunctionClass, CommaSeparator)
+        , m_name(name)
+    {
+    }
 
-    CSSValueID m_name { };
+    CSSValueID m_name { CSSValueInvalid };
 };
 
 } // namespace WebCore

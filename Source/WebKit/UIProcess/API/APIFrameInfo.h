@@ -31,7 +31,7 @@
 #include <WebCore/ResourceRequest.h>
 
 namespace WebCore {
-class SecurityOriginData;
+struct SecurityOriginData;
 }
 
 namespace WebKit {

@@ -61,9 +61,9 @@ void DrawingAreaProxyWC::sizeDidChange()
     m_webPageProxy.send(Messages::DrawingArea::UpdateGeometry(m_currentBackingStoreStateID, m_size), m_identifier);
 }
 
-void DrawingAreaProxyWC::dispatchAfterEnsuringDrawing(CompletionHandler<void()>&& completionHandler)
+void DrawingAreaProxyWC::dispatchAfterEnsuringDrawing(WTF::Function<void(CallbackBase::Error)>&& completionHandler)
 {
-    completionHandler();
+    completionHandler(CallbackBase::Error::None);
 }
 
 void DrawingAreaProxyWC::update(uint64_t backingStoreStateID, const UpdateInfo& updateInfo)

@@ -26,7 +26,7 @@ import re
 import sys
 
 from webkit import parser
-from webkit.model import BUILTIN_ATTRIBUTE, SYNCHRONOUS_ATTRIBUTE, ALLOWEDWHENWAITINGFORSYNCREPLY_ATTRIBUTE, ALLOWEDWHENWAITINGFORSYNCREPLYDURINGUNBOUNDEDIPC_ATTRIBUTE, MAINTHREADCALLBACK_ATTRIBUTE, STREAM_ATTRIBUTE, CALL_WITH_REPLY_ID_ATTRIBUTE, MessageReceiver, Message
+from webkit.model import BUILTIN_ATTRIBUTE, SYNCHRONOUS_ATTRIBUTE, ALLOWEDWHENWAITINGFORSYNCREPLY_ATTRIBUTE, ALLOWEDWHENWAITINGFORSYNCREPLYDURINGUNBOUNDEDIPC_ATTRIBUTE, MAINTHREADCALLBACK_ATTRIBUTE, STREAM_ATTRIBUTE, SYNCHRONOUS_ATTRIBUTE, MessageReceiver, Message
 
 _license_header = """/*
  * Copyright (C) 2021 Apple Inc. All rights reserved.
@@ -226,7 +226,6 @@ def forward_declarations_for_namespace(namespace, kind_and_types):
 # When updating this list, run "make -C Source/WebKit/Scripts/webkit/tests" to keep the webkitpy tests passing.
 def serialized_identifiers():
     return [
-        'WebCore::BackgroundFetchRecordIdentifier',
         'WebCore::BroadcastChannelIdentifier',
         'WebCore::DOMCacheIdentifier',
         'WebCore::DictationContext',
@@ -241,7 +240,6 @@ def serialized_identifiers():
         'WebCore::MediaKeySystemRequestIdentifier',
         'WebCore::MediaPlayerIdentifier',
         'WebCore::MediaSessionIdentifier',
-        'WebCore::OpaqueOriginIdentifier',
         'WebCore::PageIdentifier',
         'WebCore::PlaybackTargetClientContextIdentifier',
         'WebCore::PushSubscriptionIdentifier',
@@ -250,7 +248,6 @@ def serialized_identifiers():
         'WebCore::RealtimeMediaSourceIdentifier',
         'WebCore::RenderingResourceIdentifier',
         'WebCore::ResourceLoaderIdentifier',
-        'WebCore::RTCDataChannelLocalIdentifier',
         'WebCore::SWServerConnectionIdentifier',
         'WebCore::ServiceWorkerIdentifier',
         'WebCore::ServiceWorkerJobIdentifier',
@@ -266,7 +263,6 @@ def serialized_identifiers():
         'WebKit::AuthenticationChallengeIdentifier',
         'WebKit::ContentWorldIdentifier',
         'WebKit::DataTaskIdentifier',
-        'WebKit::DownloadID',
         'WebKit::FormSubmitListenerIdentifier',
         'WebKit::GeolocationIdentifier',
         'WebKit::GraphicsContextGLIdentifier',
@@ -296,7 +292,6 @@ def serialized_identifiers():
         'WebKit::RemoteRemoteCommandListenerIdentifier',
         'WebKit::RenderingBackendIdentifier',
         'WebKit::RenderingUpdateID',
-        'WebKit::RetrieveRecordResponseBodyCallbackIdentifier',
         'WebKit::SampleBufferDisplayLayerIdentifier',
         'WebKit::StorageAreaIdentifier',
         'WebKit::StorageAreaImplIdentifier',
@@ -320,7 +315,6 @@ def types_that_cannot_be_forward_declared():
     return frozenset([
         'CVPixelBufferRef',
         'GCGLint',
-        'IPC::AsyncReplyID',
         'IPC::DataReference',
         'IPC::FontReference',
         'IPC::Semaphore',
@@ -385,11 +379,6 @@ def conditions_for_header(header):
     conditions = {
         '"InputMethodState.h"': ["PLATFORM(GTK)", "PLATFORM(WPE)"],
         '"GestureTypes.h"': ["PLATFORM(IOS_FAMILY)"],
-        '"RemoteCDMIdentifier.h"': ["ENABLE(GPU_PROCESS) && ENABLE(ENCRYPTED_MEDIA)"],
-        '"RemoteCDMInstanceIdentifier.h"': ["ENABLE(GPU_PROCESS) && ENABLE(ENCRYPTED_MEDIA)"],
-        '"RemoteCDMInstanceSessionIdentifier.h"': ["ENABLE(GPU_PROCESS) && ENABLE(ENCRYPTED_MEDIA)"],
-        '"RemoteLegacyCDMIdentifier.h"': ["ENABLE(GPU_PROCESS) && ENABLE(LEGACY_ENCRYPTED_MEDIA)"],
-        '"RemoteLegacyCDMSessionIdentifier.h"': ["ENABLE(GPU_PROCESS) && ENABLE(LEGACY_ENCRYPTED_MEDIA)"],
         '"SharedCARingBuffer.h"': ["PLATFORM(COCOA)"],
         '"WCContentBufferIdentifier.h"': ["USE(GRAPHICS_LAYER_WC)"],
         '"WCLayerTreeHostIdentifier.h"': ["USE(GRAPHICS_LAYER_WC)"],
@@ -509,8 +498,6 @@ def async_message_statement(receiver, message):
     dispatch_function = 'handleMessage'
     if message.reply_parameters is not None and not message.has_attribute(SYNCHRONOUS_ATTRIBUTE):
         dispatch_function += 'Async'
-    if message.has_attribute(CALL_WITH_REPLY_ID_ATTRIBUTE):
-        dispatch_function += 'WithReplyID'
 
     connection = 'connection'
     if receiver.has_attribute(STREAM_ATTRIBUTE):
@@ -618,7 +605,6 @@ def headers_for_type(type):
         'Inspector::ExtensionError': ['"InspectorExtensionTypes.h"'],
         'Inspector::FrontendChannel::ConnectionType': ['<JavaScriptCore/InspectorFrontendChannel.h>'],
         'Inspector::InspectorTargetType': ['<JavaScriptCore/InspectorTarget.h>'],
-        'IPC::AsyncReplyID': ['"Connection.h"'],
         'IPC::Semaphore': ['"IPCSemaphore.h"'],
         'JSC::MessageLevel': ['<JavaScriptCore/ConsoleTypes.h>'],
         'JSC::MessageSource': ['<JavaScriptCore/ConsoleTypes.h>'],
@@ -745,7 +731,6 @@ def headers_for_type(type):
         'WebCore::MouseEventPolicy': ['<WebCore/DocumentLoader.h>'],
         'WebCore::MoveData': ['<WebCore/InlinePathData.h>'],
         'WebCore::NetworkTransactionInformation': ['<WebCore/NetworkLoadInformation.h>'],
-        'WebCore::OpaqueOriginIdentifier': ['<WebCore/SecurityOriginData.h>'],
         'WebCore::PasteboardCustomData': ['<WebCore/Pasteboard.h>'],
         'WebCore::PasteboardImage': ['<WebCore/Pasteboard.h>'],
         'WebCore::PasteboardURL': ['<WebCore/Pasteboard.h>'],
@@ -770,7 +755,6 @@ def headers_for_type(type):
         'WebCore::SameSiteStrictEnforcementEnabled': ['<WebCore/NetworkStorageSession.h>'],
         'WebCore::ScriptExecutionContextIdentifier': ['<WebCore/ProcessQualified.h>', '<WebCore/ScriptExecutionContextIdentifier.h>', '<wtf/ObjectIdentifier.h>'],
         'WebCore::ScrollGranularity': ['<WebCore/ScrollTypes.h>'],
-        'WebCore::ScrollPinningBehavior': ['<WebCore/ScrollTypes.h>'],
         'WebCore::SecurityPolicyViolationEventInit': ['<WebCore/SecurityPolicyViolationEvent.h>'],
         'WebCore::SelectionDirection': ['<WebCore/VisibleSelection.h>'],
         'WebCore::SelectionGeometry': ['"EditorState.h"'],
@@ -803,7 +787,6 @@ def headers_for_type(type):
         'WebCore::ViewportAttributes': ['<WebCore/ViewportArguments.h>'],
         'WebCore::WheelEventProcessingSteps': ['<WebCore/ScrollingCoordinatorTypes.h>'],
         'WebCore::WillContinueLoading': ['<WebCore/FrameLoaderTypes.h>'],
-        'WebCore::WillInternallyHandleFailure': ['<WebCore/FrameLoaderTypes.h>'],
         'WebKit::ActivityStateChangeID': ['"DrawingAreaInfo.h"'],
         'WebKit::AllowOverwrite': ['"DownloadID.h"'],
         'WebKit::AppPrivacyReportTestingData': ['"AppPrivacyReport.h"'],
@@ -1383,34 +1366,11 @@ def generate_message_argument_description_implementation(receivers, receiver_hea
     result.append('\n')
     result.append('Vector<ASCIILiteral> serializedIdentifiers()\n')
     result.append('{\n')
-
-    identifier_headers = {}
     for identifier in serialized_identifiers():
-        assert(len(headers_for_type(identifier)) == 1)
-        identifier_headers[identifier] = headers_for_type(identifier)[0]
-
-    for identifier in serialized_identifiers():
-        conditions = conditions_for_header(identifier_headers[identifier])
-        statement = '    static_assert(sizeof(uint64_t) == sizeof(' + identifier + '));\n'
-        if conditions and None not in conditions:
-            result.append('#if %s\n' % ' || '.join(sorted(set(conditions))))
-            result.append(statement)
-            result.append('#endif\n')
-        else:
-            result.append(statement)
-
+        result.append('    static_assert(sizeof(uint64_t) == sizeof(' + identifier + '));\n')
     result.append('    return {\n')
-
     for identifier in serialized_identifiers():
-        conditions = conditions_for_header(identifier_headers[identifier])
-        statement = '        "' + identifier + '"_s,\n'
-        if conditions and None not in conditions:
-            result.append('#if %s\n' % ' || '.join(sorted(set(conditions))))
-            result.append(statement)
-            result.append('#endif\n')
-        else:
-            result.append(statement)
-
+        result.append('        "' + identifier + '"_s,\n')
     result.append('    };\n')
     result.append('}\n')
 

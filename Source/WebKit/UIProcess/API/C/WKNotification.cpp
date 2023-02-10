@@ -89,12 +89,6 @@ uint64_t WKNotificationGetID(WKNotificationRef notification)
     return toImpl(notification)->notificationID();
 }
 
-WKStringRef WKNotificationCopyDataStoreIdentifier(WKNotificationRef notification)
-{
-    auto identifier = toImpl(notification)->dataStoreIdentifier();
-    return identifier ? toCopiedAPI(identifier->toString()) : nullptr;
-}
-
 WKDataRef WKNotificationCopyCoreIDForTesting(WKNotificationRef notification)
 {
     auto identifier = toImpl(notification)->coreNotificationID();

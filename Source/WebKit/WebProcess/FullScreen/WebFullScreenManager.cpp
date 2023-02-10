@@ -381,14 +381,12 @@ void WebFullScreenManager::close()
 
 void WebFullScreenManager::saveScrollPosition()
 {
-    if (auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page->corePage()->mainFrame()))
-        m_scrollPosition = localMainFrame->view()->scrollPosition();
+    m_scrollPosition = m_page->corePage()->mainFrame().view()->scrollPosition();
 }
 
 void WebFullScreenManager::restoreScrollPosition()
 {
-    if (auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page->corePage()->mainFrame()))
-        localMainFrame->view()->setScrollPosition(m_scrollPosition);
+    m_page->corePage()->mainFrame().view()->setScrollPosition(m_scrollPosition);
 }
 
 void WebFullScreenManager::setFullscreenInsets(const WebCore::FloatBoxExtent& insets)

@@ -121,11 +121,7 @@ static bool shouldSuppressEventDispatchInDOM(Node& node, Event& event)
     if (!frame)
         return false;
 
-    auto* localFrame = dynamicDowncast<LocalFrame>(frame->mainFrame());
-    if (!localFrame)
-        return false;
-
-    if (!localFrame->loader().shouldSuppressTextInputFromEditing())
+    if (!frame->mainFrame().loader().shouldSuppressTextInputFromEditing())
         return false;
 
     if (is<TextEvent>(event)) {

@@ -21,6 +21,7 @@
 #include "config.h"
 #include "CSSPrimitiveValue.h"
 
+#include "CSSBasicShapes.h"
 #include "CSSCalcValue.h"
 #include "CSSHelper.h"
 #include "CSSMarkup.h"
@@ -36,9 +37,13 @@
 #include "Color.h"
 #include "ColorSerialization.h"
 #include "ContainerQueryEvaluator.h"
+#include "Counter.h"
+#include "DeprecatedCSSOMPrimitiveValue.h"
 #include "FontCascade.h"
 #include "Length.h"
 #include "NodeRenderStyle.h"
+#include "Pair.h"
+#include "Rect.h"
 #include "RenderStyle.h"
 #include "RenderView.h"
 #include <wtf/NeverDestroyed.h>
@@ -118,12 +123,18 @@ static inline bool isValidCSSUnitTypeForDoubleConversion(CSSUnitType unitType)
     case CSSUnitType::CSS_CQMAX:
         return true;
     case CSSUnitType::CSS_ATTR:
+    case CSSUnitType::CSS_COUNTER:
     case CSSUnitType::CSS_COUNTER_NAME:
     case CSSUnitType::CSS_FONT_FAMILY:
     case CSSUnitType::CustomIdent:
+    case CSSUnitType::CSS_PAIR:
     case CSSUnitType::CSS_PROPERTY_ID:
+    case CSSUnitType::CSS_QUAD:
+    case CSSUnitType::CSS_RECT:
     case CSSUnitType::CSS_RGBCOLOR:
+    case CSSUnitType::CSS_SHAPE:
     case CSSUnitType::CSS_STRING:
+    case CSSUnitType::CSS_UNICODE_RANGE:
     case CSSUnitType::CSS_UNKNOWN:
     case CSSUnitType::CSS_UNRESOLVED_COLOR:
     case CSSUnitType::CSS_URI:
@@ -155,6 +166,7 @@ static inline bool isStringType(CSSUnitType type)
     case CSSUnitType::CSS_CHS:
     case CSSUnitType::CSS_IC:
     case CSSUnitType::CSS_CM:
+    case CSSUnitType::CSS_COUNTER:
     case CSSUnitType::CSS_DEG:
     case CSSUnitType::CSS_DIMENSION:
     case CSSUnitType::CSS_DPCM:
@@ -185,6 +197,7 @@ static inline bool isStringType(CSSUnitType type)
     case CSSUnitType::CSS_MS:
     case CSSUnitType::CSS_NUMBER:
     case CSSUnitType::CSS_INTEGER:
+    case CSSUnitType::CSS_PAIR:
     case CSSUnitType::CSS_PC:
     case CSSUnitType::CSS_PERCENTAGE:
     case CSSUnitType::CSS_PROPERTY_ID:
@@ -193,8 +206,10 @@ static inline bool isStringType(CSSUnitType type)
     case CSSUnitType::CSS_Q:
     case CSSUnitType::CSS_LHS:
     case CSSUnitType::CSS_RLHS:
+    case CSSUnitType::CSS_QUAD:
     case CSSUnitType::CSS_QUIRKY_EMS:
     case CSSUnitType::CSS_RAD:
+    case CSSUnitType::CSS_RECT:
     case CSSUnitType::CSS_REMS:
     case CSSUnitType::CSS_RGBCOLOR:
     case CSSUnitType::CSS_S:
@@ -204,7 +219,9 @@ static inline bool isStringType(CSSUnitType type)
     case CSSUnitType::CSS_SVMAX:
     case CSSUnitType::CSS_SVMIN:
     case CSSUnitType::CSS_SVW:
+    case CSSUnitType::CSS_SHAPE:
     case CSSUnitType::CSS_TURN:
+    case CSSUnitType::CSS_UNICODE_RANGE:
     case CSSUnitType::CSS_UNKNOWN:
     case CSSUnitType::CSS_UNRESOLVED_COLOR:
     case CSSUnitType::CSS_VALUE_ID:
@@ -247,7 +264,7 @@ CSSUnitType CSSPrimitiveValue::primitiveType() const
     if (primitiveUnitType() == CSSUnitType::CSS_FONT_FAMILY)
         return CSSUnitType::CSS_STRING;
 
-    if (!isCalculated())
+    if (primitiveUnitType() != CSSUnitType::CSS_CALC)
         return primitiveUnitType();
 
     switch (m_value.calc->category()) {
@@ -294,12 +311,12 @@ CSSPrimitiveValue::CSSPrimitiveValue(const String& string, CSSUnitType type)
         m_value.string->ref();
 }
 
-CSSPrimitiveValue::CSSPrimitiveValue(Color color)
+CSSPrimitiveValue::CSSPrimitiveValue(const Color& color)
     : CSSValue(PrimitiveClass)
 {
     setPrimitiveUnitType(CSSUnitType::CSS_RGBCOLOR);
     static_assert(sizeof(m_value.colorAsInteger) == sizeof(color));
-    new (reinterpret_cast<Color*>(&m_value.colorAsInteger)) Color(WTFMove(color));
+    new (reinterpret_cast<Color*>(&m_value.colorAsInteger)) Color(color);
 }
 
 CSSPrimitiveValue::CSSPrimitiveValue(StaticCSSValueTag, CSSValueID valueID)
@@ -310,8 +327,8 @@ CSSPrimitiveValue::CSSPrimitiveValue(StaticCSSValueTag, CSSValueID valueID)
     makeStatic();
 }
 
-CSSPrimitiveValue::CSSPrimitiveValue(StaticCSSValueTag, Color color)
-    : CSSPrimitiveValue(WTFMove(color))
+CSSPrimitiveValue::CSSPrimitiveValue(StaticCSSValueTag, const Color& color)
+    : CSSPrimitiveValue(color)
 {
     makeStatic();
 }
@@ -328,18 +345,53 @@ CSSPrimitiveValue::CSSPrimitiveValue(StaticCSSValueTag, ImplicitInitialValueTag)
     m_isImplicitInitialValue = true;
 }
 
-CSSPrimitiveValue::CSSPrimitiveValue(Ref<CSSCalcValue> value)
+CSSPrimitiveValue::CSSPrimitiveValue(Ref<Counter>&& counter)
+    : CSSValue(PrimitiveClass)
+{
+    setPrimitiveUnitType(CSSUnitType::CSS_COUNTER);
+    m_value.counter = &counter.leakRef();
+}
+
+CSSPrimitiveValue::CSSPrimitiveValue(Ref<Rect>&& rect)
+    : CSSValue(PrimitiveClass)
+{
+    setPrimitiveUnitType(CSSUnitType::CSS_RECT);
+    m_value.rect = &rect.leakRef();
+}
+
+CSSPrimitiveValue::CSSPrimitiveValue(Ref<Quad>&& quad)
+    : CSSValue(PrimitiveClass)
+{
+    setPrimitiveUnitType(CSSUnitType::CSS_QUAD);
+    m_value.quad = &quad.leakRef();
+}
+
+CSSPrimitiveValue::CSSPrimitiveValue(Ref<Pair>&& pair)
+    : CSSValue(PrimitiveClass)
+{
+    setPrimitiveUnitType(CSSUnitType::CSS_PAIR);
+    m_value.pair = &pair.leakRef();
+}
+
+CSSPrimitiveValue::CSSPrimitiveValue(Ref<CSSBasicShape>&& shape)
+    : CSSValue(PrimitiveClass)
+{
+    setPrimitiveUnitType(CSSUnitType::CSS_SHAPE);
+    m_value.shape = &shape.leakRef();
+}
+
+CSSPrimitiveValue::CSSPrimitiveValue(Ref<CSSCalcValue>&& value)
     : CSSValue(PrimitiveClass)
 {
     setPrimitiveUnitType(CSSUnitType::CSS_CALC);
     m_value.calc = &value.leakRef();
 }
 
-CSSPrimitiveValue::CSSPrimitiveValue(CSSUnresolvedColor unresolvedColor)
+CSSPrimitiveValue::CSSPrimitiveValue(Ref<CSSUnresolvedColor>&& unresolvedColor)
     : CSSValue(PrimitiveClass)
 {
     setPrimitiveUnitType(CSSUnitType::CSS_UNRESOLVED_COLOR);
-    m_value.unresolvedColor = new CSSUnresolvedColor(WTFMove(unresolvedColor));
+    m_value.unresolvedColor = &unresolvedColor.leakRef();
 }
 
 CSSPrimitiveValue::~CSSPrimitiveValue()
@@ -355,6 +407,18 @@ CSSPrimitiveValue::~CSSPrimitiveValue()
         if (m_value.string)
             m_value.string->deref();
         break;
+    case CSSUnitType::CSS_COUNTER:
+        m_value.counter->deref();
+        break;
+    case CSSUnitType::CSS_RECT:
+        m_value.rect->deref();
+        break;
+    case CSSUnitType::CSS_QUAD:
+        m_value.quad->deref();
+        break;
+    case CSSUnitType::CSS_PAIR:
+        m_value.pair->deref();
+        break;
     case CSSUnitType::CSS_CALC:
         m_value.calc->deref();
         break;
@@ -362,11 +426,14 @@ CSSPrimitiveValue::~CSSPrimitiveValue()
     case CSSUnitType::CSS_CALC_PERCENTAGE_WITH_LENGTH:
         ASSERT_NOT_REACHED();
         break;
+    case CSSUnitType::CSS_SHAPE:
+        m_value.shape->deref();
+        break;
     case CSSUnitType::CSS_RGBCOLOR:
         std::destroy_at(reinterpret_cast<Color*>(&m_value.colorAsInteger));
         break;
     case CSSUnitType::CSS_UNRESOLVED_COLOR:
-        delete m_value.unresolvedColor;
+        m_value.unresolvedColor->deref();
         break;
     case CSSUnitType::CSS_DIMENSION:
     case CSSUnitType::CSS_NUMBER:
@@ -426,6 +493,7 @@ CSSPrimitiveValue::~CSSPrimitiveValue()
     case CSSUnitType::CSS_RLHS:
     case CSSUnitType::CSS_IDENT:
     case CSSUnitType::CSS_UNKNOWN:
+    case CSSUnitType::CSS_UNICODE_RANGE:
     case CSSUnitType::CSS_PROPERTY_ID:
     case CSSUnitType::CSS_VALUE_ID:
     case CSSUnitType::CSS_CQW:
@@ -448,46 +516,31 @@ Ref<CSSPrimitiveValue> CSSPrimitiveValue::create(CSSPropertyID propertyID)
     return adoptRef(*new CSSPrimitiveValue(propertyID));
 }
 
-static CSSPrimitiveValue* valueFromPool(Span<LazyNeverDestroyed<CSSPrimitiveValue>> pool, double value)
-{
-    unsigned poolIndex = value;
-    double roundTripValue = poolIndex;
-    if (!memcmp(&value, &roundTripValue, sizeof(double)) && poolIndex < pool.size())
-        return &pool[poolIndex].get();
-    return nullptr;
-}
-
-Ref<CSSPrimitiveValue> CSSPrimitiveValue::create(double value)
-{
-    if (auto* result = valueFromPool(staticCSSValuePool->m_numberValues, value))
-        return *result;
-    return adoptRef(*new CSSPrimitiveValue(value, CSSUnitType::CSS_NUMBER));
-}
-
 Ref<CSSPrimitiveValue> CSSPrimitiveValue::create(double value, CSSUnitType type)
 {
-    switch (type) {
-    case CSSUnitType::CSS_NUMBER:
-        if (auto* result = valueFromPool(staticCSSValuePool->m_numberValues, value))
-            return *result;
-        break;
-    case CSSUnitType::CSS_PERCENTAGE:
-        if (auto* result = valueFromPool(staticCSSValuePool->m_percentValues, value))
-            return *result;
-        break;
-    case CSSUnitType::CSS_PX:
-        if (auto* result = valueFromPool(staticCSSValuePool->m_pixelValues, value))
-            return *result;
-        break;
-    default:
-        break;
+    if (auto values = [type]() -> LazyNeverDestroyed<CSSPrimitiveValue>* {
+        switch (type) {
+        case CSSUnitType::CSS_NUMBER:
+            return staticCSSValuePool->m_numberValues;
+        case CSSUnitType::CSS_PERCENTAGE:
+            return staticCSSValuePool->m_percentValues;
+        case CSSUnitType::CSS_PX:
+            return staticCSSValuePool->m_pixelValues;
+        default:
+            return nullptr;
+        }
+    }()) {
+        int intValue = value;
+        double roundTripValue = intValue;
+        if (!memcmp(&value, &roundTripValue, sizeof(double)) && intValue >= 0 && intValue <= StaticCSSValuePool::maximumCacheableIntegerValue)
+            return values[intValue].get();
     }
     return adoptRef(*new CSSPrimitiveValue(value, type));
 }
 
-Ref<CSSPrimitiveValue> CSSPrimitiveValue::create(String value)
+Ref<CSSPrimitiveValue> CSSPrimitiveValue::create(const String& value, CSSUnitType type)
 {
-    return adoptRef(*new CSSPrimitiveValue(WTFMove(value), CSSUnitType::CSS_STRING));
+    return adoptRef(*new CSSPrimitiveValue(value, type));
 }
 
 Ref<CSSPrimitiveValue> CSSPrimitiveValue::create(const Length& length)
@@ -547,44 +600,44 @@ Ref<CSSPrimitiveValue> CSSPrimitiveValue::create(const Length& length, const Ren
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-Ref<CSSPrimitiveValue> CSSPrimitiveValue::create(Ref<CSSCalcValue> value)
+Ref<CSSPrimitiveValue> CSSPrimitiveValue::create(const LengthSize& lengthSize, const RenderStyle& style)
+{
+    return create(Pair::create(create(lengthSize.width, style), create(lengthSize.height, style)));
+}
+
+Ref<CSSPrimitiveValue> CSSPrimitiveValue::create(Ref<CSSBasicShape>&& value)
 {
     return adoptRef(*new CSSPrimitiveValue(WTFMove(value)));
 }
 
-Ref<CSSPrimitiveValue> CSSPrimitiveValue::create(CSSUnresolvedColor value)
+Ref<CSSPrimitiveValue> CSSPrimitiveValue::create(Ref<CSSCalcValue>&& value)
 {
     return adoptRef(*new CSSPrimitiveValue(WTFMove(value)));
 }
 
-Ref<CSSPrimitiveValue> CSSPrimitiveValue::createAttr(String value)
+Ref<CSSPrimitiveValue> CSSPrimitiveValue::create(Ref<Counter>&& value)
 {
-    return adoptRef(*new CSSPrimitiveValue(WTFMove(value), CSSUnitType::CSS_ATTR));
+    return adoptRef(*new CSSPrimitiveValue(WTFMove(value)));
 }
 
-Ref<CSSPrimitiveValue> CSSPrimitiveValue::createCounterName(String value)
+Ref<CSSPrimitiveValue> CSSPrimitiveValue::create(Ref<Pair>&& value)
 {
-    return adoptRef(*new CSSPrimitiveValue(WTFMove(value), CSSUnitType::CSS_COUNTER_NAME));
+    return adoptRef(*new CSSPrimitiveValue(WTFMove(value)));
 }
 
-Ref<CSSPrimitiveValue> CSSPrimitiveValue::createCustomIdent(String value)
+Ref<CSSPrimitiveValue> CSSPrimitiveValue::create(Ref<Quad>&& value)
 {
-    return adoptRef(*new CSSPrimitiveValue(WTFMove(value), CSSUnitType::CustomIdent));
+    return adoptRef(*new CSSPrimitiveValue(WTFMove(value)));
 }
 
-Ref<CSSPrimitiveValue> CSSPrimitiveValue::createFontFamily(String value)
+Ref<CSSPrimitiveValue> CSSPrimitiveValue::create(Ref<Rect>&& value)
 {
-    return adoptRef(*new CSSPrimitiveValue(WTFMove(value), CSSUnitType::CSS_FONT_FAMILY));
+    return adoptRef(*new CSSPrimitiveValue(WTFMove(value)));
 }
 
-Ref<CSSPrimitiveValue> CSSPrimitiveValue::createInteger(double value)
+Ref<CSSPrimitiveValue> CSSPrimitiveValue::create(Ref<CSSUnresolvedColor>&& value)
 {
-    return adoptRef(*new CSSPrimitiveValue(value, CSSUnitType::CSS_INTEGER));
-}
-
-Ref<CSSPrimitiveValue> CSSPrimitiveValue::createURI(String value)
-{
-    return adoptRef(*new CSSPrimitiveValue(WTFMove(value), CSSUnitType::CSS_URI));
+    return adoptRef(*new CSSPrimitiveValue(WTFMove(value)));
 }
 
 double CSSPrimitiveValue::computeDegrees() const
@@ -634,7 +687,7 @@ template<> LayoutUnit CSSPrimitiveValue::computeLength(const CSSToLengthConversi
 
 double CSSPrimitiveValue::computeLengthDouble(const CSSToLengthConversionData& conversionData) const
 {
-    if (isCalculated()) {
+    if (primitiveUnitType() == CSSUnitType::CSS_CALC) {
         // The multiplier and factor is applied to each value in the calc expression individually
         return m_value.calc->computeLengthPx(conversionData);
     }
@@ -1046,37 +1099,47 @@ double CSSPrimitiveValue::doubleValue(CSSUnitType unitType) const
 
 double CSSPrimitiveValue::doubleValue() const
 {
-    return isCalculated() ? m_value.calc->doubleValue() : m_value.number;
+    return primitiveUnitType() != CSSUnitType::CSS_CALC ? m_value.number : m_value.calc->doubleValue();
 }
 
 double CSSPrimitiveValue::doubleValueDividingBy100IfPercentage() const
 {
-    if (isCalculated())
+    switch (primitiveUnitType()) {
+    case CSSUnitType::CSS_CALC:
         return m_value.calc->primitiveType() == CSSUnitType::CSS_PERCENTAGE ? m_value.calc->doubleValue() / 100.0 : m_value.calc->doubleValue();
-    if (isPercentage())
+    
+    case CSSUnitType::CSS_PERCENTAGE:
         return m_value.number / 100.0;
-    return m_value.number;
+        
+    default:
+        return m_value.number;
+    }
 }
 
 std::optional<bool> CSSPrimitiveValue::isZero() const
 {
-    if (isCalculated())
+    if (primitiveUnitType() == CSSUnitType::CSS_CALC)
         return std::nullopt;
     return !m_value.number;
 }
 
 std::optional<bool> CSSPrimitiveValue::isPositive() const
 {
-    if (isCalculated())
+    if (primitiveUnitType() == CSSUnitType::CSS_CALC)
         return std::nullopt;
     return m_value.number > 0;
 }
 
 std::optional<bool> CSSPrimitiveValue::isNegative() const
 {
-    if (isCalculated())
+    if (primitiveUnitType() == CSSUnitType::CSS_CALC)
         return std::nullopt;
     return m_value.number < 0;
+}
+
+bool CSSPrimitiveValue::isCenterPosition() const
+{
+    return valueID() == CSSValueCenter || doubleValue(CSSUnitType::CSS_PERCENTAGE) == 50;
 }
 
 std::optional<double> CSSPrimitiveValue::doubleValueInternal(CSSUnitType requestedUnitType) const
@@ -1251,16 +1314,22 @@ ASCIILiteral CSSPrimitiveValue::unitTypeString(CSSUnitType unitType)
     case CSSUnitType::CSS_CALC:
     case CSSUnitType::CSS_CALC_PERCENTAGE_WITH_LENGTH:
     case CSSUnitType::CSS_CALC_PERCENTAGE_WITH_NUMBER:
+    case CSSUnitType::CSS_COUNTER:
     case CSSUnitType::CSS_COUNTER_NAME:
     case CSSUnitType::CSS_DIMENSION:
     case CSSUnitType::CSS_FONT_FAMILY:
     case CSSUnitType::CSS_IDENT:
     case CSSUnitType::CSS_INTEGER:
     case CSSUnitType::CSS_NUMBER:
+    case CSSUnitType::CSS_PAIR:
     case CSSUnitType::CSS_PROPERTY_ID:
+    case CSSUnitType::CSS_QUAD:
     case CSSUnitType::CSS_QUIRKY_EMS:
+    case CSSUnitType::CSS_RECT:
     case CSSUnitType::CSS_RGBCOLOR:
+    case CSSUnitType::CSS_SHAPE:
     case CSSUnitType::CSS_STRING:
+    case CSSUnitType::CSS_UNICODE_RANGE:
     case CSSUnitType::CSS_UNKNOWN:
     case CSSUnitType::CSS_UNRESOLVED_COLOR:
     case CSSUnitType::CSS_URI:
@@ -1270,6 +1339,19 @@ ASCIILiteral CSSPrimitiveValue::unitTypeString(CSSUnitType unitType)
     }
     ASSERT_NOT_REACHED();
     return ""_s;
+}
+
+static String serialize(const Counter& counter)
+{
+    auto listStyleSeparator = counter.listStyle == CSSValueDecimal ? ""_s : ", "_s;
+    auto listStyleLiteral = counter.listStyle == CSSValueDecimal ? ""_s : nameLiteral(counter.listStyle);
+    if (counter.separator.isEmpty())
+        return makeString("counter("_s, counter.identifier, listStyleSeparator, listStyleLiteral, ')');
+    StringBuilder result;
+    result.append("counters("_s, counter.identifier, ", "_s);
+    serializeString(counter.separator, result);
+    result.append(listStyleSeparator, listStyleLiteral, ')');
+    return result.toString();
 }
 
 ALWAYS_INLINE String CSSPrimitiveValue::serializeInternal() const
@@ -1340,7 +1422,11 @@ ALWAYS_INLINE String CSSPrimitiveValue::serializeInternal() const
     case CSSUnitType::CSS_ATTR:
         return makeString("attr("_s, m_value.string, ')');
     case CSSUnitType::CSS_CALC:
+        if (!m_value.calc)
+            break;
         return m_value.calc->cssText();
+    case CSSUnitType::CSS_COUNTER:
+        return serialize(*m_value.counter);
     case CSSUnitType::CSS_COUNTER_NAME:
         return makeString("counter(", m_value.string, ')');
     case CSSUnitType::CSS_DIMENSION:
@@ -1350,10 +1436,18 @@ ALWAYS_INLINE String CSSPrimitiveValue::serializeInternal() const
         return serializeFontFamily(m_value.string);
     case CSSUnitType::CSS_INTEGER:
         return formatIntegerValue(""_s);
+    case CSSUnitType::CSS_PAIR:
+        return m_value.pair->cssText();
+    case CSSUnitType::CSS_QUAD:
+        return m_value.quad->cssText();
     case CSSUnitType::CSS_QUIRKY_EMS:
         return formatNumberValue("em"_s);
+    case CSSUnitType::CSS_RECT:
+        return m_value.rect->cssText();
     case CSSUnitType::CSS_RGBCOLOR:
         return serializationForCSS(color());
+    case CSSUnitType::CSS_SHAPE:
+        return m_value.shape->cssText();
     case CSSUnitType::CSS_STRING:
         return serializeString(m_value.string);
     case CSSUnitType::CSS_UNRESOLVED_COLOR:
@@ -1370,6 +1464,7 @@ ALWAYS_INLINE String CSSPrimitiveValue::serializeInternal() const
     case CSSUnitType::CSS_CALC_PERCENTAGE_WITH_NUMBER:
     case CSSUnitType::CSS_IDENT:
     case CSSUnitType::CSS_PROPERTY_ID:
+    case CSSUnitType::CSS_UNICODE_RANGE:
     case CSSUnitType::CSS_UNKNOWN:
     case CSSUnitType::CSS_VALUE_ID:
         break;
@@ -1481,13 +1576,24 @@ bool CSSPrimitiveValue::equals(const CSSPrimitiveValue& other) const
     case CSSUnitType::CSS_COUNTER_NAME:
     case CSSUnitType::CSS_FONT_FAMILY:
         return equal(m_value.string, other.m_value.string);
+    case CSSUnitType::CSS_COUNTER:
+        return m_value.counter->equals(*other.m_value.counter);
+    case CSSUnitType::CSS_RECT:
+        return m_value.rect->equals(*other.m_value.rect);
+    case CSSUnitType::CSS_QUAD:
+        return m_value.quad->equals(*other.m_value.quad);
     case CSSUnitType::CSS_RGBCOLOR:
         return color() == other.color();
+    case CSSUnitType::CSS_PAIR:
+        return m_value.pair->equals(*other.m_value.pair);
     case CSSUnitType::CSS_CALC:
-        return m_value.calc->equals(*other.m_value.calc);
+        return m_value.calc && other.m_value.calc && m_value.calc->equals(*other.m_value.calc);
+    case CSSUnitType::CSS_SHAPE:
+        return m_value.shape->equals(*other.m_value.shape);
     case CSSUnitType::CSS_UNRESOLVED_COLOR:
         return m_value.unresolvedColor->equals(*other.m_value.unresolvedColor);
     case CSSUnitType::CSS_IDENT:
+    case CSSUnitType::CSS_UNICODE_RANGE:
     case CSSUnitType::CSS_CALC_PERCENTAGE_WITH_NUMBER:
     case CSSUnitType::CSS_CALC_PERCENTAGE_WITH_LENGTH:
         // FIXME: seems like these should be handled.
@@ -1495,6 +1601,11 @@ bool CSSPrimitiveValue::equals(const CSSPrimitiveValue& other) const
         break;
     }
     return false;
+}
+
+Ref<DeprecatedCSSOMPrimitiveValue> CSSPrimitiveValue::createDeprecatedCSSOMPrimitiveWrapper(CSSStyleDeclaration& styleDeclaration) const
+{
+    return DeprecatedCSSOMPrimitiveValue::create(*this, styleDeclaration);
 }
 
 // https://drafts.css-houdini.org/css-properties-values-api/#dependency-cycles
@@ -1585,8 +1696,14 @@ void CSSPrimitiveValue::collectComputedStyleDependencies(ComputedStyleDependenci
     case CSSUnitType::CSS_IDENT:
     case CSSUnitType::CustomIdent:
     case CSSUnitType::CSS_ATTR:
+    case CSSUnitType::CSS_COUNTER:
+    case CSSUnitType::CSS_RECT:
     case CSSUnitType::CSS_RGBCOLOR:
+    case CSSUnitType::CSS_PAIR:
+    case CSSUnitType::CSS_UNICODE_RANGE:
     case CSSUnitType::CSS_COUNTER_NAME:
+    case CSSUnitType::CSS_SHAPE:
+    case CSSUnitType::CSS_QUAD:
     case CSSUnitType::CSS_CALC_PERCENTAGE_WITH_NUMBER:
     case CSSUnitType::CSS_CALC_PERCENTAGE_WITH_LENGTH:
     case CSSUnitType::CSS_UNRESOLVED_COLOR:

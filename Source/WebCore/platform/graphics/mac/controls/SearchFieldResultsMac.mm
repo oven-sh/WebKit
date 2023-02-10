@@ -31,8 +31,10 @@
 #import "ControlFactoryMac.h"
 #import "FloatRoundedRect.h"
 #import "GraphicsContext.h"
+#import "LocalCurrentGraphicsContext.h"
 #import "LocalDefaultSystemAppearance.h"
 #import "SearchFieldResultsPart.h"
+#import <wtf/BlockObjCExceptions.h>
 
 namespace WebCore {
 
@@ -55,8 +57,12 @@ void SearchFieldResultsMac::updateCellStates(const FloatRect& rect, const Contro
 
 void SearchFieldResultsMac::draw(GraphicsContext& context, const FloatRoundedRect& borderRect, float deviceScaleFactor, const ControlStyle& style)
 {
+    BEGIN_BLOCK_OBJC_EXCEPTIONS
+
     LocalDefaultSystemAppearance localAppearance(style.states.contains(ControlStyle::State::DarkAppearance), style.accentColor);
 
+    LocalCurrentGraphicsContext localContext(context);
+    
     GraphicsContextStateSaver stateSaver(context);
 
     auto logicalRect = borderRect.rect();
@@ -66,7 +72,11 @@ void SearchFieldResultsMac::draw(GraphicsContext& context, const FloatRoundedRec
         context.scale(style.zoomFactor);
     }
 
-    drawCell(context, logicalRect, deviceScaleFactor, style, [m_searchFieldCell searchButtonCell], true);
+    auto *view = m_controlFactory.drawingView(borderRect.rect(), style);
+
+    drawCell(context, logicalRect, deviceScaleFactor, style, [m_searchFieldCell searchButtonCell], view, true);
+
+    END_BLOCK_OBJC_EXCEPTIONS
 }
 
 } // namespace WebCore

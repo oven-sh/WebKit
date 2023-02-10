@@ -26,38 +26,18 @@
 #pragma once
 
 #include "ASTExpression.h"
-#include <wtf/EnumTraits.h>
-#include <wtf/Forward.h>
-#include <wtf/text/ASCIILiteral.h>
-
-#define WGSL_AST_UNARYOP_IMPL \
-    WGSL_AST_UNARYOP(AddressOf, "&") \
-    WGSL_AST_UNARYOP(Complement, "~") \
-    WGSL_AST_UNARYOP(Dereference, "*") \
-    WGSL_AST_UNARYOP(Negate, "-") \
-    WGSL_AST_UNARYOP(Not, "!")
+#include <wtf/PrintStream.h>
 
 namespace WGSL::AST {
 
 enum class UnaryOperation : uint8_t {
-#define WGSL_AST_UNARYOP(x, y) x,
-WGSL_AST_UNARYOP_IMPL
-#undef WGSL_AST_UNARYOP
+    AddressOf,
+    Complement,
+    Dereference,
+    Negate,
+    Not,
 };
-
-constexpr ASCIILiteral toASCIILiteral(UnaryOperation op)
-{
-    constexpr ASCIILiteral unaryOperationNames[] = {
-#define WGSL_AST_UNARYOP(x, y) y##_s,
-WGSL_AST_UNARYOP_IMPL
-#undef WGSL_AST_UNARYOP
-    };
-
-    return unaryOperationNames[WTF::enumToUnderlyingType(op)];
-}
-
-void printInternal(PrintStream&, UnaryOperation);
-
+    
 class UnaryExpression final : public Expression {
     WTF_MAKE_FAST_ALLOCATED;
 public:
@@ -76,6 +56,7 @@ private:
     UnaryOperation m_operation;
 };
 
+void printInternal(PrintStream&, UnaryOperation);
 
 } // namespace WGSL::AST
 

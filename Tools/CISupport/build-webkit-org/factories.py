@@ -44,7 +44,7 @@ class Factory(factory.BuildFactory):
             self.addStep(InstallWin32Dependencies())
         if platform == "gtk" and "--no-experimental-features" not in (additionalArguments or []):
             self.addStep(InstallGtkDependencies())
-        if platform == "wpe" and "--no-experimental-features" not in (additionalArguments or []):
+        if platform == "wpe":
             self.addStep(InstallWpeDependencies())
 
 

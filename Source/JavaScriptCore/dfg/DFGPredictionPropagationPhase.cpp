@@ -1238,7 +1238,7 @@ private:
             break;
         }
 
-        case CreateArgumentsButterflyExcludingThis: {
+        case CreateArgumentsButterfly: {
             setPrediction(SpecCellOther);
             break;
         }

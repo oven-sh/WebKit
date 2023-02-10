@@ -82,11 +82,9 @@ typedef NS_OPTIONS(NSUInteger, _WKWebsiteNetworkConnectionIntegrityPolicy) {
     _WKWebsiteNetworkConnectionIntegrityPolicyHTTPSOnly = 1 << 2,
     _WKWebsiteNetworkConnectionIntegrityPolicyHTTPSOnlyExplicitlyBypassedForDomain = 1 << 3,
     _WKWebsiteNetworkConnectionIntegrityPolicyFailClosed = 1 << 4,
-    _WKWebsiteNetworkConnectionIntegrityPolicyWebSearchContent WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA)) = 1 << 5,
-    _WKWebsiteNetworkConnectionIntegrityPolicyEnhancedTelemetry WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA)) = 1 << 6,
-    _WKWebsiteNetworkConnectionIntegrityPolicyRequestValidation WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA)) = 1 << 7,
-    _WKWebsiteNetworkConnectionIntegrityPolicySanitizeLookalikeCharacters WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA)) = 1 << 8,
-} WK_API_AVAILABLE(macos(13.3), ios(16.4));
+    _WKWebsiteNetworkConnectionIntegrityPolicyWebSearchContent = 1 << 5,
+    _WKWebsiteNetworkConnectionIntegrityPolicyEnhancedTelemetry = 1 << 6,
+} WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA));
 
 @class _WKCustomHeaderFields;
 @class WKUserContentController;
@@ -118,8 +116,8 @@ typedef NS_OPTIONS(NSUInteger, _WKWebsiteNetworkConnectionIntegrityPolicy) {
 
 @property (nonatomic, setter=_setColorSchemePreference:) _WKWebsiteColorSchemePreference _colorSchemePreference;
 
-@property (nonatomic, setter=_setNetworkConnectionIntegrityEnabled:) BOOL _networkConnectionIntegrityEnabled WK_API_AVAILABLE(macos(13.3), ios(16.4));
-@property (nonatomic, setter=_setNetworkConnectionIntegrityPolicy:) _WKWebsiteNetworkConnectionIntegrityPolicy _networkConnectionIntegrityPolicy WK_API_AVAILABLE(macos(13.3), ios(16.4));
+@property (nonatomic, setter=_setNetworkConnectionIntegrityEnabled:) BOOL _networkConnectionIntegrityEnabled WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA));
+@property (nonatomic, setter=_setNetworkConnectionIntegrityPolicy:) _WKWebsiteNetworkConnectionIntegrityPolicy _networkConnectionIntegrityPolicy WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA));
 
 - (void)_setContentRuleListsEnabled:(BOOL)enabled exceptions:(NSSet<NSString *> *)exceptions WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA));
 

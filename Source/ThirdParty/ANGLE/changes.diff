@@ -1,10 +1,10 @@
 diff --git a/src/common/ANGLEShaderProgramVersion.h b/src/common/ANGLEShaderProgramVersion.h
 new file mode 100644
-index 0000000000000000000000000000000000000000..e55905bf3c9a0ff338c7c970c4e6ac0b0403818d
+index 0000000000000000000000000000000000000000..451c309bcd874785a235e831ee99a6c8611e9d25
 --- /dev/null
 +++ b/src/common/ANGLEShaderProgramVersion.h
 @@ -0,0 +1,2 @@
-+#define ANGLE_PROGRAM_VERSION "fc7c14cde1fc55b40d84cc05829a365a"
++#define ANGLE_PROGRAM_VERSION "64a3d1fa4537ba219c1235144c59c474"
 +#define ANGLE_PROGRAM_VERSION_HASH_SIZE 16
 diff --git a/src/common/utilities.cpp b/src/common/utilities.cpp
 index 7a0a706519887e596a18e2dbd3489051c78c7ba0..f11469503fd488b856e448c8ed8385d01cc522f1 100644
@@ -36,21 +36,6 @@ index a7607c9e529ce7a57bdc6c3c82134b144eb67130..c9ec1adec020589bd4fcfe226721042a
  /* Bison implementation for Yacc-like parsers in C
  
     Copyright (C) 1984, 1989-1990, 2000-2015, 2018-2021 Free Software Foundation,
-diff --git a/src/compiler/translator/TranslatorMetalDirect.cpp b/src/compiler/translator/TranslatorMetalDirect.cpp
-index 77c40332376be8910aa2113b92cb903730568664..a0539c17c63ebcebe8cfedcda04910f82ce68902 100644
---- a/src/compiler/translator/TranslatorMetalDirect.cpp
-+++ b/src/compiler/translator/TranslatorMetalDirect.cpp
-@@ -337,8 +337,8 @@ void AddSampleMaskDeclaration(TIntermBlock &root, TSymbolTable &symbolTable)
-     TIntermSequence declareGLFragdataSequence;
- 
-     // Create gl_FragData_i or gl_SecondaryFragDataEXT_i
--    constexpr const char fragData[]             = "gl_FragData";
--    constexpr const char secondaryFragDataEXT[] = "gl_SecondaryFragDataEXT";
-+    static constexpr const char fragData[]             = "gl_FragData";
-+    static constexpr const char secondaryFragDataEXT[] = "gl_SecondaryFragDataEXT";
-     const char *name                                   = secondary ? secondaryFragDataEXT : fragData;
-     for (int i = 0; i < maxDrawBuffers; i++)
-     {
 diff --git a/src/compiler/translator/glslang_tab_autogen.cpp b/src/compiler/translator/glslang_tab_autogen.cpp
 index 233b571b7985ba9d33b245f495725851a12be569..6bd263e0b1ec4137e5b8bb1a6269ce07cc8a6b32 100644
 --- a/src/compiler/translator/glslang_tab_autogen.cpp
@@ -109,7 +94,7 @@ index 101e04ccdc4a7217be38960dd372878ad4c15472..9ddc681d320550b171a2916cac8e9a4b
  {
  
 diff --git a/src/libANGLE/State.cpp b/src/libANGLE/State.cpp
-index ea38c52af238f556dab0ccbef564d1a554eb5bbd..744ec1e62be1a7d5e152dd92a76318517e6b4dd5 100644
+index 1b0dc537ed9397cc47dbbac75787b1e8bfa2a3d9..dc9542eeee6c84137f6609a932d59076697c803c 100644
 --- a/src/libANGLE/State.cpp
 +++ b/src/libANGLE/State.cpp
 @@ -6,6 +6,9 @@
@@ -122,11 +107,151 @@ index ea38c52af238f556dab0ccbef564d1a554eb5bbd..744ec1e62be1a7d5e152dd92a7631851
  #include "libANGLE/State.h"
  
  #include <string.h>
+diff --git a/src/libANGLE/renderer/gl/egl/DisplayEGL.cpp b/src/libANGLE/renderer/gl/egl/DisplayEGL.cpp
+index 80ade026ca48d8d3a89522b251ce6eabf3b69a2c..381025e10c286c4ed786e037be5c660e18c295b0 100644
+--- a/src/libANGLE/renderer/gl/egl/DisplayEGL.cpp
++++ b/src/libANGLE/renderer/gl/egl/DisplayEGL.cpp
+@@ -255,7 +255,10 @@ egl::Error DisplayEGL::initialize(egl::Display *display)
+ 
+     void *eglHandle =
+         reinterpret_cast<void *>(mDisplayAttributes.get(EGL_PLATFORM_ANGLE_EGL_HANDLE_ANGLE, 0));
+-    ANGLE_TRY(mEGL->initialize(display->getNativeDisplayId(), getEGLPath(), eglHandle));
++    EGLAttrib platformType =
++        mDisplayAttributes.get(EGL_PLATFORM_ANGLE_NATIVE_PLATFORM_TYPE_ANGLE, 0);
++    ANGLE_TRY(
++        mEGL->initialize(platformType, display->getNativeDisplayId(), getEGLPath(), eglHandle));
+ 
+     gl::Version eglVersion(mEGL->majorVersion, mEGL->minorVersion);
+     if (eglVersion < gl::Version(1, 4))
+diff --git a/src/libANGLE/renderer/gl/egl/FunctionsEGL.cpp b/src/libANGLE/renderer/gl/egl/FunctionsEGL.cpp
+index d3061b57a2b727b4f5e0550422cf6e67fd03a54f..f2affc10317c4901150e9948ed5bed5f31ed2815 100644
+--- a/src/libANGLE/renderer/gl/egl/FunctionsEGL.cpp
++++ b/src/libANGLE/renderer/gl/egl/FunctionsEGL.cpp
+@@ -175,7 +175,7 @@ FunctionsEGL::~FunctionsEGL()
+     SafeDelete(mFnPtrs);
+ }
+ 
+-egl::Error FunctionsEGL::initialize(EGLNativeDisplayType nativeDisplay)
++egl::Error FunctionsEGL::initialize(EGLAttrib platformType, EGLNativeDisplayType nativeDisplay)
+ {
+ #define ANGLE_GET_PROC_OR_ERROR(MEMBER, NAME)                                           \
+     do                                                                                  \
+@@ -210,7 +210,15 @@ egl::Error FunctionsEGL::initialize(EGLNativeDisplayType nativeDisplay)
+     ANGLE_GET_PROC_OR_ERROR(&mFnPtrs->surfaceAttribPtr, eglSurfaceAttrib);
+     ANGLE_GET_PROC_OR_ERROR(&mFnPtrs->swapIntervalPtr, eglSwapInterval);
+ 
++    if (platformType != 0)
++    {
++        mEGLDisplay = getPlatformDisplay(platformType, nativeDisplay);
++    }
++    else
++    {
+         mEGLDisplay = mFnPtrs->getDisplayPtr(nativeDisplay);
++    }
++
+     if (mEGLDisplay != EGL_NO_DISPLAY)
+     {
+         if (mFnPtrs->initializePtr(mEGLDisplay, &majorVersion, &minorVersion) != EGL_TRUE)
+@@ -372,6 +380,32 @@ egl::Error FunctionsEGL::terminate()
+     return egl::Error(mFnPtrs->getErrorPtr());
+ }
+ 
++EGLDisplay FunctionsEGL::getPlatformDisplay(EGLAttrib platformType,
++                                            EGLNativeDisplayType nativeDisplay)
++{
++    // As in getNativeDisplay(), querying EGL_EXTENSIONS string and loading it into the mExtensions
++    // vector will at this point retrieve the client extensions since mEGLDisplay is still
++    // EGL_NO_DISPLAY. This is desired, and mExtensions will later be reinitialized with the display
++    // extensions once the display is created and initialized.
++    const char *extensions = queryString(EGL_EXTENSIONS);
++    if (!extensions)
++    {
++        return EGL_NO_DISPLAY;
++    }
++    angle::SplitStringAlongWhitespace(extensions, &mExtensions);
++
++    bool hasPlatformBaseEXT = hasExtension("EGL_EXT_platform_base");
++    PFNEGLGETPLATFORMDISPLAYEXTPROC getPlatformDisplayEXTPtr;
++    if (!hasPlatformBaseEXT ||
++        !SetPtr(&getPlatformDisplayEXTPtr, getProcAddress("eglGetPlatformDisplayEXT")))
++    {
++        return EGL_NO_DISPLAY;
++    }
++
++    return getPlatformDisplayEXTPtr(static_cast<EGLenum>(platformType),
++                                    reinterpret_cast<void *>(nativeDisplay), nullptr);
++}
++
+ EGLDisplay FunctionsEGL::getNativeDisplay(int *major, int *minor)
+ {
+     // We haven't queried extensions yet since some platforms require a display
+diff --git a/src/libANGLE/renderer/gl/egl/FunctionsEGL.h b/src/libANGLE/renderer/gl/egl/FunctionsEGL.h
+index 89fc42670cf1621818b6271c3d2fd6c1e0412c86..aa6c179804dc18b99d1d468acddee603d1035222 100644
+--- a/src/libANGLE/renderer/gl/egl/FunctionsEGL.h
++++ b/src/libANGLE/renderer/gl/egl/FunctionsEGL.h
+@@ -31,7 +31,7 @@ class FunctionsEGL
+     int majorVersion;
+     int minorVersion;
+ 
+-    egl::Error initialize(EGLNativeDisplayType nativeDisplay);
++    egl::Error initialize(EGLAttrib platformType, EGLNativeDisplayType nativeDisplay);
+     egl::Error terminate();
+ 
+     virtual void *getProcAddress(const char *name) const = 0;
+@@ -123,6 +123,9 @@ class FunctionsEGL
+     FunctionsEGL(const FunctionsEGL &)   = delete;
+     void operator=(const FunctionsEGL &) = delete;
+ 
++    // Helper mechanism for creating a display for the desired platform type.
++    EGLDisplay getPlatformDisplay(EGLAttrib platformType, EGLNativeDisplayType nativeDisplay);
++
+     // Fallback mechanism for creating a display from a native device object.
+     EGLDisplay getNativeDisplay(int *major, int *minor);
+ 
+diff --git a/src/libANGLE/renderer/gl/egl/FunctionsEGLDL.cpp b/src/libANGLE/renderer/gl/egl/FunctionsEGLDL.cpp
+index a9cd9349b1683997ffc1e233c27fcd70d7cd3ad8..8ad1e18292405e40f59310d5e3416fe6692949be 100644
+--- a/src/libANGLE/renderer/gl/egl/FunctionsEGLDL.cpp
++++ b/src/libANGLE/renderer/gl/egl/FunctionsEGLDL.cpp
+@@ -28,7 +28,8 @@ FunctionsEGLDL::FunctionsEGLDL() : mGetProcAddressPtr(nullptr) {}
+ 
+ FunctionsEGLDL::~FunctionsEGLDL() {}
+ 
+-egl::Error FunctionsEGLDL::initialize(EGLNativeDisplayType nativeDisplay,
++egl::Error FunctionsEGLDL::initialize(EGLAttrib platformType,
++                                      EGLNativeDisplayType nativeDisplay,
+                                       const char *libName,
+                                       void *eglHandle)
+ {
+@@ -56,7 +57,7 @@ egl::Error FunctionsEGLDL::initialize(EGLNativeDisplayType nativeDisplay,
+         return egl::EglNotInitialized() << "Could not find eglGetProcAddress";
+     }
+ 
+-    return FunctionsEGL::initialize(nativeDisplay);
++    return FunctionsEGL::initialize(platformType, nativeDisplay);
+ }
+ 
+ void *FunctionsEGLDL::getProcAddress(const char *name) const
+diff --git a/src/libANGLE/renderer/gl/egl/FunctionsEGLDL.h b/src/libANGLE/renderer/gl/egl/FunctionsEGLDL.h
+index 4d4a1f678fb11b5373c5c6a1e03949f057728313..22cfaf952404fd7d0dd1956708933974328857a0 100644
+--- a/src/libANGLE/renderer/gl/egl/FunctionsEGLDL.h
++++ b/src/libANGLE/renderer/gl/egl/FunctionsEGLDL.h
+@@ -20,7 +20,10 @@ class FunctionsEGLDL : public FunctionsEGL
+     FunctionsEGLDL();
+     ~FunctionsEGLDL() override;
+ 
+-    egl::Error initialize(EGLNativeDisplayType nativeDisplay, const char *libName, void *eglHandle);
++    egl::Error initialize(EGLAttrib platformType,
++                          EGLNativeDisplayType nativeDisplay,
++                          const char *libName,
++                          void *eglHandle);
+     void *getProcAddress(const char *name) const override;
+ 
+   private:
 diff --git a/src/libANGLE/renderer/metal/BufferMtl.mm b/src/libANGLE/renderer/metal/BufferMtl.mm
-index e261e90255c6de20704e79b01a6575fc120e6f84..dc5a3613d1532a9c6e3162c9fdce996378927a9e 100644
+index 3b66d34911c837c0891b67a4fc4b7ecb687859a6..6559d139848d826762957c37478e4231f310ef42 100644
 --- a/src/libANGLE/renderer/metal/BufferMtl.mm
 +++ b/src/libANGLE/renderer/metal/BufferMtl.mm
-@@ -372,7 +372,7 @@ ConversionBufferMtl *BufferMtl::getUniformConversionBuffer(ContextMtl *context,
+@@ -390,7 +390,7 @@ ConversionBufferMtl *BufferMtl::getUniformConversionBuffer(ContextMtl *context,
          {
              if (buffer.offset.second <= offset.second &&
                  (offset.second - buffer.offset.second) % buffer.uniformBufferBlockSize == 0)
@@ -136,10 +261,10 @@ index e261e90255c6de20704e79b01a6575fc120e6f84..dc5a3613d1532a9c6e3162c9fdce9963
      }
  
 diff --git a/src/libANGLE/renderer/metal/ContextMtl.mm b/src/libANGLE/renderer/metal/ContextMtl.mm
-index df9dadabc57d29d0ee96617827f5f6e837578af2..dbedfa11ddbf6a4c6180a0438e37d0f2c8088c38 100644
+index 1542bf579c645f8e59b3e01f5ee3da02bb2aa691..907166dc5531122d577d050820c8029c4b225afb 100644
 --- a/src/libANGLE/renderer/metal/ContextMtl.mm
 +++ b/src/libANGLE/renderer/metal/ContextMtl.mm
-@@ -2439,8 +2439,21 @@ angle::Result ContextMtl::setupDraw(const gl::Context *context,
+@@ -2464,8 +2464,21 @@ angle::Result ContextMtl::setupDraw(const gl::Context *context,
              return angle::Result::Continue;
          }
          // Setup with flushed state should either produce a working encoder or fail with an error
@@ -164,10 +289,10 @@ index df9dadabc57d29d0ee96617827f5f6e837578af2..dbedfa11ddbf6a4c6180a0438e37d0f2
      return angle::Result::Continue;
  }
 diff --git a/src/libANGLE/renderer/metal/DisplayMtl.mm b/src/libANGLE/renderer/metal/DisplayMtl.mm
-index cb06689bc777a256183610ef47a7db63fb50a0f2..7c57e581532b2e3dfb7c2e48994162f7d2cf32ef 100644
+index 64b457c82d3c1d05cda84e3fcbeec97fc9b4a089..03ac5e13e63044be359d47defdca007852910873 100644
 --- a/src/libANGLE/renderer/metal/DisplayMtl.mm
 +++ b/src/libANGLE/renderer/metal/DisplayMtl.mm
-@@ -1351,8 +1351,7 @@ bool DisplayMtl::supportsEitherGPUFamily(uint8_t iOSFamily, uint8_t macFamily) c
+@@ -1353,8 +1353,7 @@ bool DisplayMtl::supportsEitherGPUFamily(uint8_t iOSFamily, uint8_t macFamily) c
  bool DisplayMtl::supports32BitFloatFiltering() const
  {
  #if (defined(__MAC_11_0) && __MAC_OS_X_VERSION_MIN_REQUIRED >= __MAC_11_0) ||        \
@@ -178,10 +303,10 @@ index cb06689bc777a256183610ef47a7db63fb50a0f2..7c57e581532b2e3dfb7c2e48994162f7
      {
          return [mMetalDevice supports32BitFloatFiltering];
 diff --git a/src/libANGLE/renderer/metal/FrameBufferMtl.mm b/src/libANGLE/renderer/metal/FrameBufferMtl.mm
-index a74c4e6d9a0b930dd0f8c3c10f5e417f9d033f30..746dd53eee510da93f4498bb301f71e8b401582f 100644
+index 42ef9d230300170cbc2c7eb695fce83e1b87ba9f..5b362cb2742e173dac2a3c0f7b3c8263229a25c8 100644
 --- a/src/libANGLE/renderer/metal/FrameBufferMtl.mm
 +++ b/src/libANGLE/renderer/metal/FrameBufferMtl.mm
-@@ -1666,8 +1666,10 @@ angle::Result FramebufferMtl::readPixelsToPBO(const gl::Context *context,
+@@ -1667,8 +1667,10 @@ angle::Result FramebufferMtl::readPixelsToPBO(const gl::Context *context,
  
      ContextMtl *contextMtl = mtl::GetImpl(context);
  
@@ -194,10 +319,10 @@ index a74c4e6d9a0b930dd0f8c3c10f5e417f9d033f30..746dd53eee510da93f4498bb301f71e8
  
      BufferMtl *packBufferMtl = mtl::GetImpl(packPixelsParams.packBuffer);
 diff --git a/src/libANGLE/renderer/metal/ProgramMtl.mm b/src/libANGLE/renderer/metal/ProgramMtl.mm
-index 2855cbfc1adf69c01b70278e454b68dfdcfca4ae..9d731ac417dc6b7d7adbff8f938c6ee6d448c44c 100644
+index d6b655199e8fc58b1f5afb7efbe5964758c836e7..e2797de1e67c37b43383a0e341adb05dc58f9d5a 100644
 --- a/src/libANGLE/renderer/metal/ProgramMtl.mm
 +++ b/src/libANGLE/renderer/metal/ProgramMtl.mm
-@@ -1540,7 +1540,7 @@ angle::Result ProgramMtl::setupDraw(const gl::Context *glContext,
+@@ -1448,7 +1448,7 @@ angle::Result ProgramMtl::setupDraw(const gl::Context *glContext,
                                      bool uniformBuffersDirty)
  {
      ContextMtl *context = mtl::GetImpl(glContext);
@@ -207,7 +332,7 @@ index 2855cbfc1adf69c01b70278e454b68dfdcfca4ae..9d731ac417dc6b7d7adbff8f938c6ee6
          // Render pipeline state needs to be changed
          id<MTLRenderPipelineState> pipelineState =
 diff --git a/src/libANGLE/renderer/metal/VertexArrayMtl.mm b/src/libANGLE/renderer/metal/VertexArrayMtl.mm
-index 30f2faac716e9ac4e1a2005cccdaff61faa06233..f66c831fc00fe645206fb0b9b5341abd2927867a 100644
+index f205dbab5a8b12035d63ef7ef72c26c5e4c2d9bf..e6a3c8d90a6f4e7387ec990e82eb13e6303a0cdf 100644
 --- a/src/libANGLE/renderer/metal/VertexArrayMtl.mm
 +++ b/src/libANGLE/renderer/metal/VertexArrayMtl.mm
 @@ -1092,16 +1092,21 @@ angle::Result VertexArrayMtl::convertVertexBufferGPU(const gl::Context *glContex
@@ -236,19 +361,19 @@ index 30f2faac716e9ac4e1a2005cccdaff61faa06233..f66c831fc00fe645206fb0b9b5341abd
      params.srcDefaultAlphaData = convertedFormat.defaultAlpha;
  
 diff --git a/src/libANGLE/renderer/metal/mtl_command_buffer.h b/src/libANGLE/renderer/metal/mtl_command_buffer.h
-index aa42b9fe58729ab74699e0e638b94d577b8cc3e6..c7df3484536d9656e6f8aa7c0914a4cc3ef3d7c6 100644
+index e1788504fe123e1c36e99f3ac69f500b2792669a..5274e067c51f7293a9d7752c37fb5cfa01e9a4e0 100644
 --- a/src/libANGLE/renderer/metal/mtl_command_buffer.h
 +++ b/src/libANGLE/renderer/metal/mtl_command_buffer.h
-@@ -533,6 +533,7 @@ class RenderCommandEncoder final : public CommandEncoder
+@@ -536,6 +536,7 @@ class RenderCommandEncoder final : public CommandEncoder
  
      const RenderPassDesc &renderPassDesc() const { return mRenderPassDesc; }
      bool hasDrawCalls() const { return mHasDrawCalls; }
 +    bool hasPipelineState() const { return mPipelineStateSet; }
  
-   private:
-     // Override CommandEncoder
+     uint64_t getSerial() const { return mSerial; }
+ 
 diff --git a/src/libANGLE/renderer/metal/mtl_command_buffer.mm b/src/libANGLE/renderer/metal/mtl_command_buffer.mm
-index bcbe2a6303d2eda2ff7550da0b274b725ff32c6e..ffefdf656c8ce494629319804b17526b9dc56179 100644
+index 50d6d410fd2b572614d3c001aeb60e6b5f55a981..203847ffe0f6c3e0720d4f616f9f91977baee825 100644
 --- a/src/libANGLE/renderer/metal/mtl_command_buffer.mm
 +++ b/src/libANGLE/renderer/metal/mtl_command_buffer.mm
 @@ -364,24 +364,38 @@ inline void SetVisibilityResultModeCmd(id<MTLRenderCommandEncoder> encoder,
@@ -292,11 +417,146 @@ index bcbe2a6303d2eda2ff7550da0b274b725ff32c6e..ffefdf656c8ce494629319804b17526b
      [resource ANGLE_MTL_RELEASE];
  }
  
+diff --git a/src/libANGLE/renderer/metal/mtl_library_cache.h b/src/libANGLE/renderer/metal/mtl_library_cache.h
+index 15e5d925ef848a219658619b2494758620606af3..183b2245e700127aff29db4e20f2809dbc5a473d 100644
+--- a/src/libANGLE/renderer/metal/mtl_library_cache.h
++++ b/src/libANGLE/renderer/metal/mtl_library_cache.h
+@@ -33,41 +33,23 @@ class LibraryCache
+         AutoObjCPtr<NSError *> *errorOut);
+ 
+   private:
+-    struct LibraryKey
+-    {
+-        std::string source;
+-        std::map<std::string, std::string> macros;
+-        bool enableFastMath;
+-
+-        using LValueTuple = decltype(std::tie(std::as_const(source),
+-                                              std::as_const(macros),
+-                                              std::as_const(enableFastMath)));
+-
+-        LibraryKey() = default;
+-        explicit LibraryKey(const LValueTuple &fromTuple);
+-
+-        LValueTuple tie() const;
+-    };
++    using Key = std::tuple<std::string, std::map<std::string, std::string>, bool>;
+ 
+-    struct LibraryKeyCompare
++    struct KeyCompare
+     {
+-        // Mark this comparator as transparent. This allows types that are not LibraryKey to be used
+-        // as a key for unordered_map::find. We can avoid the construction of a LibraryKey (which
++        // Mark this comparator as transparent. This allows types that are not Key to be used
++        // as a key for unordered_map::find. We can avoid the construction of a Key (which
+         // copies std::strings) when searching the cache.
+         using is_transparent = void;
+ 
+-        // Hash functions for keys and lvalue tuples of keys
+-        size_t operator()(const LibraryKey::LValueTuple &k) const;
+-        size_t operator()(const LibraryKey &k) const;
++        template<typename K>
++        size_t operator()(K &&k) const;
+ 
+-        // Comparison operators for all key/lvalue combinations need by a map
+-        bool operator()(const LibraryKey &a, const LibraryKey &b) const;
+-        bool operator()(const LibraryKey &a, const LibraryKey::LValueTuple &b) const;
+-        bool operator()(const LibraryKey::LValueTuple &a, const LibraryKey &b) const;
++        template<typename K1, typename K2>
++        bool operator()(K1&& a, K2 &&b) const;
+     };
+ 
+-    angle::HashMap<LibraryKey, AutoObjCPtr<id<MTLLibrary>>, LibraryKeyCompare, LibraryKeyCompare>
+-        mCache;
++    angle::HashMap<Key, AutoObjCPtr<id<MTLLibrary>>, KeyCompare, KeyCompare> mCache;
+ };
+ 
+ }  // namespace mtl
+diff --git a/src/libANGLE/renderer/metal/mtl_library_cache.mm b/src/libANGLE/renderer/metal/mtl_library_cache.mm
+index abd88f5edae0f01be65a1af1641951e1e23bf9a4..3d263e8ce20234ffc9c4306bb536c01bfacb5d07 100644
+--- a/src/libANGLE/renderer/metal/mtl_library_cache.mm
++++ b/src/libANGLE/renderer/metal/mtl_library_cache.mm
+@@ -31,10 +31,13 @@ AutoObjCPtr<id<MTLLibrary>> LibraryCache::getOrCompileShaderLibrary(
+         return CreateShaderLibrary(context->getMetalDevice(), source, macros, enableFastMath,
+                                    errorOut);
+     }
++#if defined(__cpp_lib_generic_unordered_lookup) && __cpp_lib_generic_unordered_lookup >= 201811L
++    auto key = std::tie(source, macros, enableFastMath);
++#else
++    Key key(source, macros, enableFastMath);
++#endif
+ 
+-    LibraryKey::LValueTuple lValueKey = std::tie(source, macros, enableFastMath);
+-
+-    auto iter = mCache.find(lValueKey);
++    auto iter = mCache.find(key);
+     if (iter != mCache.end())
+     {
+         return iter->second;
+@@ -44,25 +47,14 @@ AutoObjCPtr<id<MTLLibrary>> LibraryCache::getOrCompileShaderLibrary(
+         CreateShaderLibrary(context->getMetalDevice(), source, macros, enableFastMath, errorOut);
+     if (library)
+     {
+-        mCache.insert_or_assign(LibraryKey(lValueKey), library);
++        mCache.insert_or_assign(std::move(key), library);
+     }
+ 
+     return library;
+ }
+ 
+-LibraryCache::LibraryKey::LibraryKey(const LValueTuple &fromTuple)
+-{
+-    source         = std::get<0>(fromTuple);
+-    macros         = std::get<1>(fromTuple);
+-    enableFastMath = std::get<2>(fromTuple);
+-}
+-
+-LibraryCache::LibraryKey::LValueTuple LibraryCache::LibraryKey::tie() const
+-{
+-    return std::tie(source, macros, enableFastMath);
+-}
+-
+-size_t LibraryCache::LibraryKeyCompare::operator()(const LibraryKey::LValueTuple &k) const
++template<typename K>
++size_t LibraryCache::KeyCompare::operator()(K &&k) const
+ {
+     size_t hash = std::hash<std::string>()(std::get<0>(k));
+     for (const auto &macro : std::get<1>(k))
+@@ -74,26 +66,10 @@ size_t LibraryCache::LibraryKeyCompare::operator()(const LibraryKey::LValueTuple
+     return hash;
+ }
+ 
+-size_t LibraryCache::LibraryKeyCompare::operator()(const LibraryKey &k) const
+-{
+-    return operator()(k.tie());
+-}
+-
+-bool LibraryCache::LibraryKeyCompare::operator()(const LibraryKey &a, const LibraryKey &b) const
+-{
+-    return a.tie() == b.tie();
+-}
+-
+-bool LibraryCache::LibraryKeyCompare::operator()(const LibraryKey &a,
+-                                                 const LibraryKey::LValueTuple &b) const
+-{
+-    return a.tie() == b;
+-}
+-
+-bool LibraryCache::LibraryKeyCompare::operator()(const LibraryKey::LValueTuple &a,
+-                                                 const LibraryKey &b) const
++template<typename K1, typename K2>
++bool LibraryCache::KeyCompare::operator()(K1 &&a, K2 &&b) const
+ {
+-    return a == b.tie();
++    return a == b;
+ }
+ 
+ }  // namespace mtl
 diff --git a/src/libANGLE/renderer/metal/mtl_render_utils.mm b/src/libANGLE/renderer/metal/mtl_render_utils.mm
-index 4b854d589c5c7042ba8ab2e32960425c4070eb2a..1e2b6888ef205c355b2220fb36d3b889a614fa25 100644
+index 8fceb8736e4a1403494bdae9ff9db2406cba4937..701f6cce21496cddbac68e1d39c513de2557e910 100644
 --- a/src/libANGLE/renderer/metal/mtl_render_utils.mm
 +++ b/src/libANGLE/renderer/metal/mtl_render_utils.mm
-@@ -2540,45 +2540,13 @@ angle::Result MipmapUtils::generateMipmapCS(ContextMtl *contextMtl,
+@@ -2538,45 +2538,13 @@ angle::Result MipmapUtils::generateMipmapCS(ContextMtl *contextMtl,
                                              bool sRGBMipmap,
                                              NativeTexLevelArray *mipmapOutputViews)
  {
@@ -342,7 +602,7 @@ index 4b854d589c5c7042ba8ab2e32960425c4070eb2a..1e2b6888ef205c355b2220fb36d3b889
      ComputeCommandEncoder *cmdEncoder = contextMtl->getComputeCommandEncoder();
      ASSERT(cmdEncoder);
  
-@@ -2615,8 +2583,29 @@ angle::Result MipmapUtils::generateMipmapCS(ContextMtl *contextMtl,
+@@ -2613,8 +2581,29 @@ angle::Result MipmapUtils::generateMipmapCS(ContextMtl *contextMtl,
              UNREACHABLE();
      }
  
@@ -447,6 +707,20 @@ index 3eaa9a64e79af26faa786102ece3f0bdea84d090..2ecf7b40bd5a2edc3fd9d69841e266b6
 +#endif
 +
 +#endif /* LIBANGLE_RENDERER_METAL_RESOURCE_SPI_H_ */
+diff --git a/src/libANGLE/renderer/metal/mtl_resources.mm b/src/libANGLE/renderer/metal/mtl_resources.mm
+index 5a08522a2ded6961d8709350a20a3f305cfbc0f5..db0b9c6798ee406129c408134715dea0e7837ea5 100644
+--- a/src/libANGLE/renderer/metal/mtl_resources.mm
++++ b/src/libANGLE/renderer/metal/mtl_resources.mm
+@@ -68,6 +68,9 @@ MTLResourceOptions resourceOptionsForStorageMode(MTLStorageMode storageMode)
+ {
+     switch (storageMode)
+     {
++        default:
++            UNREACHABLE();
++            return MTLResourceStorageModeShared;
+         case MTLStorageModeShared:
+             return MTLResourceStorageModeShared;
+ #if TARGET_OS_OSX || TARGET_OS_MACCATALYST
 diff --git a/src/libANGLE/renderer/metal/mtl_state_cache.mm b/src/libANGLE/renderer/metal/mtl_state_cache.mm
 index 558075b21cdcdcac0b9cd4ab8fc915bc032f57f7..b3990a828944bab60e692cdd16019ac26c5d99b3 100644
 --- a/src/libANGLE/renderer/metal/mtl_state_cache.mm
@@ -494,10 +768,10 @@ index 558075b21cdcdcac0b9cd4ab8fc915bc032f57f7..b3990a828944bab60e692cdd16019ac2
          if (!ValidateRenderPipelineState(objCDesc, context, metalDevice))
          {
 diff --git a/src/libANGLE/renderer/metal/mtl_utils.mm b/src/libANGLE/renderer/metal/mtl_utils.mm
-index bfa6a6838035d47c36040eec48293b09493949c4..47be2fdef6a650588ac83ae4ea1084a6fa94455a 100644
+index 0059adda2402128f4cd45f704d849028b2c59c99..512b14708acfd8abfa7a4acb7de7c59a982ed139 100644
 --- a/src/libANGLE/renderer/metal/mtl_utils.mm
 +++ b/src/libANGLE/renderer/metal/mtl_utils.mm
-@@ -1356,6 +1356,24 @@ bool SupportsAppleGPUFamily(id<MTLDevice> device, uint8_t appleFamily)
+@@ -1348,6 +1348,24 @@ bool SupportsAppleGPUFamily(id<MTLDevice> device, uint8_t appleFamily)
  #endif      // TARGET_OS_IOS || TARGET_OS_TV
  }
  
@@ -522,7 +796,7 @@ index bfa6a6838035d47c36040eec48293b09493949c4..47be2fdef6a650588ac83ae4ea1084a6
  bool SupportsMacGPUFamily(id<MTLDevice> device, uint8_t macFamily)
  {
  #if TARGET_OS_OSX || TARGET_OS_MACCATALYST
-@@ -1370,10 +1388,10 @@ bool SupportsMacGPUFamily(id<MTLDevice> device, uint8_t macFamily)
+@@ -1362,10 +1380,10 @@ bool SupportsMacGPUFamily(id<MTLDevice> device, uint8_t macFamily)
  #        if TARGET_OS_MACCATALYST
              ANGLE_APPLE_ALLOW_DEPRECATED_BEGIN
              case 1:
@@ -535,7 +809,7 @@ index bfa6a6838035d47c36040eec48293b09493949c4..47be2fdef6a650588ac83ae4ea1084a6
                  break;
                  ANGLE_APPLE_ALLOW_DEPRECATED_END
  #        else   // TARGET_OS_MACCATALYST
-@@ -1396,7 +1414,7 @@ bool SupportsMacGPUFamily(id<MTLDevice> device, uint8_t macFamily)
+@@ -1388,7 +1406,7 @@ bool SupportsMacGPUFamily(id<MTLDevice> device, uint8_t macFamily)
  
      // If device doesn't support [MTLDevice supportsFamily:], then use
      // [MTLDevice supportsFeatureSet:].

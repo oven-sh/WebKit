@@ -947,12 +947,7 @@ WKRetainPtr<WKTypeRef> TestInvocation::didReceiveSynchronousMessageFromInjectedB
         TestController::singleton().setAllowsAnySSLCertificate(booleanValue(messageBody));
         return nullptr;
     }
-
-    if (WKStringIsEqualToUTF8CString(messageName, "SetBackgroundFetchPermission")) {
-        TestController::singleton().setBackgroundFetchPermission(booleanValue(messageBody));
-        return nullptr;
-    }
-
+    
     if (WKStringIsEqualToUTF8CString(messageName, "SetShouldSwapToEphemeralSessionOnNextNavigation")) {
         TestController::singleton().setShouldSwapToEphemeralSessionOnNextNavigation(booleanValue(messageBody));
         return nullptr;

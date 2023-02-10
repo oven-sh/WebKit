@@ -31,9 +31,7 @@
 #include "Logging.h"
 #include "RealtimeMediaSourceCenter.h"
 #include "RealtimeMediaSourceSettings.h"
-#include <VideoFrame.h>
 #include <wtf/JSONValues.h>
-#include <wtf/MediaTime.h>
 
 namespace WebCore {
 
@@ -44,11 +42,6 @@ RealtimeVideoCaptureSource::RealtimeVideoCaptureSource(const CaptureDevice& devi
 
 RealtimeVideoCaptureSource::~RealtimeVideoCaptureSource()
 {
-}
-
-VideoFrame::Rotation RealtimeVideoCaptureSource::videoFrameRotation() const
-{
-    return VideoFrame::Rotation::None;
 }
 
 const Vector<Ref<VideoPreset>>& RealtimeVideoCaptureSource::presets()

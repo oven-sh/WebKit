@@ -74,15 +74,15 @@ public:
         default:
             return ParseResult::UnknownValue;
         }
-        m_result.append(CSSPropertyParserHelpers::consumeIdent(range).releaseNonNull());
+        m_result->append(CSSPropertyParserHelpers::consumeIdent(range).releaseNonNull());
         return ParseResult::ConsumedValue;
     }
 
     RefPtr<CSSValue> finalizeValue()
     {
-        if (m_result.isEmpty())
+        if (!m_result->length())
             return CSSPrimitiveValue::create(CSSValueNormal);
-        return CSSValueList::createSpaceSeparated(WTFMove(m_result));
+        return WTFMove(m_result);
     }
 
 private:
@@ -91,7 +91,7 @@ private:
     bool m_sawNumericFractionValue = false;
     bool m_sawOrdinalValue = false;
     bool m_sawSlashedZeroValue = false;
-    CSSValueListBuilder m_result;
+    RefPtr<CSSValueList> m_result = CSSValueList::createSpaceSeparated();
 };
 
 } // namespace WebCore

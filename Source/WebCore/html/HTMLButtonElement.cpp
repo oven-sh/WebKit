@@ -61,11 +61,6 @@ Ref<HTMLButtonElement> HTMLButtonElement::create(const QualifiedName& tagName, D
     return adoptRef(*new HTMLButtonElement(tagName, document, form));
 }
 
-Ref<HTMLButtonElement> HTMLButtonElement::create(Document& document)
-{
-    return adoptRef(*new HTMLButtonElement(buttonTag, document, nullptr));
-}
-
 void HTMLButtonElement::setType(const AtomString& type)
 {
     setAttributeWithoutSynchronization(typeAttr, type);

@@ -955,7 +955,7 @@ void CommandEncoder::clearBuffer(const Buffer& buffer, uint64_t offset, uint64_t
 {
     // https://gpuweb.github.io/gpuweb/#dom-gpucommandencoder-clearbuffer
 
-    if (!prepareTheEncoderState() || !size)
+    if (!prepareTheEncoderState())
         return;
 
     if (size == WGPU_WHOLE_SIZE) {

@@ -101,7 +101,7 @@ HTTPParser::Process HTTPParser::handlePhase()
 HTTPParser::Process HTTPParser::abortProcess(const char* message)
 {
     if (message)
-        LOG_ERROR("%s", message);
+        LOG_ERROR(message);
 
     m_phase = Phase::Error;
 

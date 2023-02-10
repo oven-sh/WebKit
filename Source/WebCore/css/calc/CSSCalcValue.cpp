@@ -47,7 +47,6 @@
 #include "CalcExpressionNegation.h"
 #include "CalcExpressionNumber.h"
 #include "CalcExpressionOperation.h"
-#include "CalculationValue.h"
 #include "Logging.h"
 #include "StyleResolver.h"
 #include <wtf/MathExtras.h>
@@ -62,7 +61,7 @@ static RefPtr<CSSCalcExpressionNode> createCSS(const Length&, const RenderStyle&
 static inline RefPtr<CSSCalcOperationNode> createBlendHalf(const Length& length, const RenderStyle& style, float progress)
 {
     return CSSCalcOperationNode::create(CalcOperator::Multiply, createCSS(length, style),
-        CSSCalcPrimitiveValueNode::create(CSSPrimitiveValue::create(progress)));
+        CSSCalcPrimitiveValueNode::create(CSSPrimitiveValue::create(progress, CSSUnitType::CSS_NUMBER)));
 }
 
 static Vector<Ref<CSSCalcExpressionNode>> createCSS(const Vector<std::unique_ptr<CalcExpressionNode>>& nodes, const RenderStyle& style)
@@ -77,7 +76,7 @@ static RefPtr<CSSCalcExpressionNode> createCSS(const CalcExpressionNode& node, c
     switch (node.type()) {
     case CalcExpressionNodeType::Number: {
         float value = downcast<CalcExpressionNumber>(node).value(); // double?
-        return CSSCalcPrimitiveValueNode::create(CSSPrimitiveValue::create(value));
+        return CSSCalcPrimitiveValueNode::create(CSSPrimitiveValue::create(value, CSSUnitType::CSS_NUMBER));
     }
     case CalcExpressionNodeType::Length: {
         auto& length = downcast<CalcExpressionLength>(node).length();
@@ -273,10 +272,10 @@ static RefPtr<CSSCalcExpressionNode> createCSS(const Length& length, const Rende
     return nullptr;
 }
 
-CSSCalcValue::CSSCalcValue(Ref<CSSCalcExpressionNode>&& expression, bool shouldClampToNonNegative)
+CSSCalcValue::CSSCalcValue(Ref<CSSCalcExpressionNode>&& expression, ShouldClampToNonNegative shouldClampToNonNegative)
     : CSSValue(CalculationClass)
     , m_expression(WTFMove(expression))
-    , m_shouldClampToNonNegative(shouldClampToNonNegative)
+    , m_shouldClampToNonNegative(shouldClampToNonNegative == ShouldClampToNonNegative::Yes)
 {
 }
 
@@ -393,7 +392,7 @@ RefPtr<CSSCalcValue> CSSCalcValue::create(CSSValueID function, const CSSParserTo
     auto expression = parser.parseCalc(tokens, function, allowsNegativePercentage);
     if (!expression)
         return nullptr;
-    auto result = adoptRef(new CSSCalcValue(expression.releaseNonNull(), range != ValueRange::All));
+    auto result = adoptRef(new CSSCalcValue(expression.releaseNonNull(), range != ValueRange::All ? ShouldClampToNonNegative::Yes : ShouldClampToNonNegative::No));
     LOG_WITH_STREAM(Calc, stream << "CSSCalcValue::create " << *result);
     return result;
 }
@@ -411,12 +410,12 @@ RefPtr<CSSCalcValue> CSSCalcValue::create(const CalculationValue& value, const R
 
     auto simplifiedExpression = CSSCalcOperationNode::simplify(expression.releaseNonNull());
 
-    auto result = adoptRef(new CSSCalcValue(WTFMove(simplifiedExpression), value.shouldClampToNonNegative()));
+    auto result = adoptRef(new CSSCalcValue(WTFMove(simplifiedExpression), value.shouldClampToNonNegative() ? ShouldClampToNonNegative::Yes : ShouldClampToNonNegative::No));
     LOG_WITH_STREAM(Calc, stream << "CSSCalcValue::create from CalculationValue: " << *result);
     return result;
 }
 
-Ref<CSSCalcValue> CSSCalcValue::create(Ref<CSSCalcExpressionNode>&& node, bool shouldClampToNonNegative)
+RefPtr<CSSCalcValue> CSSCalcValue::create(Ref<CSSCalcExpressionNode>&& node, ShouldClampToNonNegative shouldClampToNonNegative)
 {
     return adoptRef(*new CSSCalcValue(WTFMove(node), shouldClampToNonNegative));
 }

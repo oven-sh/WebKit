@@ -58,12 +58,9 @@ class InlineDamage;
 namespace LayoutIntegration {
 
 struct InlineContent;
-struct LineAdjustment;
-
-DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(LayoutIntegration_LineLayout);
 
 class LineLayout : public CanMakeCheckedPtr {
-    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(LayoutIntegration_LineLayout);
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     LineLayout(RenderBlockFlow&);
     ~LineLayout();
@@ -76,7 +73,6 @@ public:
     static bool canUseFor(const RenderBlockFlow&);
     static bool canUseForAfterStyleChange(const RenderBlockFlow&, StyleDifference);
     static bool canUseForAfterInlineBoxStyleChange(const RenderInline&, StyleDifference);
-    static bool shouldInvalidateLineLayoutPathAfterContentChange(const RenderBlockFlow& parent, const RenderObject& newChild, const LineLayout&);
 
     bool shouldSwitchToLegacyOnInvalidation() const;
 
@@ -92,14 +88,11 @@ public:
     bool hitTest(const HitTestRequest&, HitTestResult&, const HitTestLocation&, const LayoutPoint& accumulatedOffset, HitTestAction, const RenderInline* layerRenderer = nullptr);
     void adjustForPagination();
 
-    // FIXME: Partial content mutation may need to talk to the box tree directly.
-    void insertedIntoTree(const RenderElement& parent, RenderObject& child);
-
     void collectOverflow();
     LayoutRect visualOverflowBoundingBoxRectFor(const RenderInline&) const;
     Vector<FloatRect> collectInlineBoxRects(const RenderInline&) const;
 
-    bool isPaginated() const;
+    bool isPaginated() const { return m_isPaginatedContent; }
     LayoutUnit contentBoxLogicalHeight() const;
     size_t lineCount() const;
     bool hasVisualOverflow() const;
@@ -138,9 +131,6 @@ private:
     void prepareLayoutState();
     void prepareFloatingState();
     void constructContent();
-    Vector<LineAdjustment> adjustContent();
-    void updateRenderTreePositions(const Vector<LineAdjustment>&);
-
     InlineContent& ensureInlineContent();
     void updateLayoutBoxDimensions(const RenderBox&);
 
@@ -164,6 +154,7 @@ private:
     // FIXME: This should be part of LayoutState.
     std::unique_ptr<Layout::InlineDamage> m_lineDamage;
     std::unique_ptr<InlineContent> m_inlineContent;
+    bool m_isPaginatedContent { false };
 };
 
 }

@@ -91,7 +91,7 @@ void AccessibilityAttachment::accessibilityText(Vector<AccessibilityText>& textO
         return;
     
     auto title = attachmentElement->attachmentTitle();
-    auto& subtitle = attachmentElement->attachmentSubtitle();
+    auto& subtitle = getAttribute(subtitleAttr);
     auto& action = getAttribute(actionAttr);
     
     if (action.length())

@@ -1,6 +1,6 @@
 /*
  *  Copyright (C) 1999-2000 Harri Porten (porten@kde.org)
- *  Copyright (C) 2004-2023 Apple Inc. All rights reserved.
+ *  Copyright (C) 2004-2022 Apple Inc. All rights reserved.
  *  Copyright (C) 2006 Bjoern Graf (bjoern.graf@gmail.com)
  *
  *  This library is free software; you can redistribute it and/or
@@ -3072,8 +3072,6 @@ JSC_DEFINE_HOST_FUNCTION(functionDropAllLocks, (JSGlobalObject* globalObject, Ca
 #define EXCEPT(x)
 #endif
 
-static BinarySemaphore waitToExit;
-
 int jscmain(int argc, char** argv);
 
 #if OS(DARWIN) || OS(LINUX)
@@ -3221,6 +3219,19 @@ int main(int argc, char** argv)
     WTF::initialize();
 #if PLATFORM(COCOA)
     WTF::disableForwardingVPrintfStdErrToOSLog();
+#endif
+
+#if OS(UNIX)
+    BinarySemaphore waitToExit;
+
+    if (getenv("JS_SHELL_WAIT_FOR_SIGUSR2_TO_EXIT")) {
+        addSignalHandler(Signal::Usr, SignalHandler([&] (Signal, SigInfo&, PlatformRegisters&) {
+            dataLogLn("Signal handler hit, we can exit now.");
+            waitToExit.signal();
+            return SignalAction::Handled;
+        }));
+        activateSignalHandlersFor(Signal::Usr);
+    }
 #endif
 
     // We can't use destructors in the following code because it uses Windows
@@ -3661,8 +3672,6 @@ void CommandLine::parseArguments(int argc, char** argv)
         }
         if (!strcmp(arg, "-s")) {
 #if OS(UNIX)
-            initializeSignalHandling();
-
             SignalAction (*exit)(Signal, SigInfo&, PlatformRegisters&) = [] (Signal, SigInfo&, PlatformRegisters&) {
                 dataLogLn("Signal handler hit. Exiting with status 0");
                 _exit(0);
@@ -3945,19 +3954,6 @@ int jscmain(int argc, char** argv)
     // Note that the options parsing can affect VM creation, and thus
     // comes first.
     mainCommandLine.construct(argc, argv);
-
-#if OS(UNIX)
-
-    if (getenv("JS_SHELL_WAIT_FOR_SIGUSR2_TO_EXIT")) {
-        initializeSignalHandling();
-        addSignalHandler(Signal::Usr, SignalHandler([&] (Signal, SigInfo&, PlatformRegisters&) {
-            dataLogLn("Signal handler hit, we can exit now.");
-            waitToExit.signal();
-            return SignalAction::Handled;
-        }));
-        activateSignalHandlersFor(Signal::Usr);
-    }
-#endif
 
     {
         Options::AllowUnfinalizedAccessScope scope;

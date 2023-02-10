@@ -32,8 +32,6 @@
 #import "IntSize.h"
 #import "Logging.h"
 #import "MediaUtilities.h"
-#import "VideoFrame.h"
-#import "VideoFrameMetadata.h"
 
 #import <AVFoundation/AVSampleBufferDisplayLayer.h>
 #import <QuartzCore/CALayer.h>

@@ -28,17 +28,13 @@
 
 #if PLATFORM(MAC)
 
-#import "DrawingArea.h"
 #import "DrawingAreaMessages.h"
 #import "RemoteScrollingCoordinatorProxyMac.h"
 #import "WebPageProxy.h"
 #import "WebProcessPool.h"
 #import "WebProcessProxy.h"
 #import <QuartzCore/QuartzCore.h>
-#import <WebCore/FloatPoint.h>
 #import <WebCore/ScrollView.h>
-#import <WebCore/ScrollingTreeFrameScrollingNode.h>
-#import <pal/spi/cocoa/QuartzCoreSPI.h>
 #import <wtf/BlockObjCExceptions.h>
 
 namespace WebKit {
@@ -105,15 +101,21 @@ DisplayLink* RemoteLayerTreeDrawingAreaProxyMac::exisingDisplayLink()
     if (!m_displayID)
         return nullptr;
     
-    return m_webPageProxy.process().processPool().displayLinks().existingDisplayLinkForDisplay(*m_displayID);
+    return m_webPageProxy.process().processPool().displayLinks().displayLinkForDisplay(*m_displayID);
 }
 
-DisplayLink& RemoteLayerTreeDrawingAreaProxyMac::displayLink()
+DisplayLink& RemoteLayerTreeDrawingAreaProxyMac::ensureDisplayLink()
 {
     ASSERT(m_displayID);
 
     auto& displayLinks = m_webPageProxy.process().processPool().displayLinks();
-    return displayLinks.displayLinkForDisplay(*m_displayID);
+    auto* displayLink = displayLinks.displayLinkForDisplay(*m_displayID);
+    if (!displayLink) {
+        auto newDisplayLink = makeUnique<DisplayLink>(*m_displayID);
+        displayLink = newDisplayLink.get();
+        displayLinks.add(WTFMove(newDisplayLink));
+    }
+    return *displayLink;
 }
 
 void RemoteLayerTreeDrawingAreaProxyMac::removeObserver(std::optional<DisplayLinkObserverID>& observerID)
@@ -127,7 +129,7 @@ void RemoteLayerTreeDrawingAreaProxyMac::removeObserver(std::optional<DisplayLin
     observerID = { };
 }
 
-void RemoteLayerTreeDrawingAreaProxyMac::didCommitLayerTree(IPC::Connection&, const RemoteLayerTreeTransaction& transaction, const RemoteScrollingCoordinatorTransaction&)
+void RemoteLayerTreeDrawingAreaProxyMac::didCommitLayerTree(const RemoteLayerTreeTransaction& transaction, const RemoteScrollingCoordinatorTransaction&)
 {
     m_pageScalingLayerID = transaction.pageScalingLayerID();
     if (m_transientZoomScale)
@@ -194,9 +196,8 @@ void RemoteLayerTreeDrawingAreaProxyMac::adjustTransientZoom(double scale, Float
 
     applyTransientZoomToLayer();
 
-    if (auto* rootNode = dynamicDowncast<ScrollingTreeFrameScrollingNode>(m_webPageProxy.scrollingCoordinatorProxy()->rootNode()))
-        m_webPageProxy.adjustLayersForLayoutViewport(rootNode->currentScrollPosition(), rootNode->layoutViewport(), scale);
-    
+    // FIXME: Update the scrolling tree via WebPageProxy::adjustLayersForLayoutViewport() here.
+
     // FIXME: Only send these messages as fast as the web process is responding to them.
     m_webPageProxy.send(Messages::DrawingArea::AdjustTransientZoom(scale, origin), m_identifier);
 }
@@ -205,39 +206,12 @@ void RemoteLayerTreeDrawingAreaProxyMac::commitTransientZoom(double scale, Float
 {
     LOG_WITH_STREAM(ViewGestures, stream << "RemoteLayerTreeDrawingAreaProxyMac::commitTransientZoom - scale " << scale << " origin " << origin);
 
-    auto transientZoomScale = std::exchange(m_transientZoomScale, { });
-    auto transientZoomOrigin = std::exchange(m_transientZoomOrigin, { });
+    m_transientZoomScale = { };
+    m_transientZoomOrigin = { };
     
-    if (transientZoomScale == scale && roundedIntPoint(*transientZoomOrigin) == roundedIntPoint(origin)) {
-        // We're already at the right scale and position, so we don't need to animate.
-        m_transactionIDAfterEndingTransientZoom = nextLayerTreeTransactionID();
-        m_webPageProxy.send(Messages::DrawingArea::CommitTransientZoom(scale, origin), m_identifier);
-        return;
-    }
-    // TODO: Need to perform origin constraining here like in TiledCoreAnimationDrawingArea
-    TransformationMatrix transform;
-    transform.translate(origin.x(), origin.y());
-    transform.scale(scale);
-    BEGIN_BLOCK_OBJC_EXCEPTIONS
-
-    [CATransaction begin];
-    CALayer *layerForPageScale = remoteLayerTreeHost().layerForID(m_pageScalingLayerID);
-    RetainPtr<CABasicAnimation> renderViewAnimationCA = DrawingArea::transientZoomSnapAnimationForKeyPath("transform"_s);
-    NSValue *transformValue = [NSValue valueWithCATransform3D:transform];
-    [renderViewAnimationCA setToValue:transformValue];
-    
-    [CATransaction setCompletionBlock:[layerForPageScale, this, scale, origin, transform] () {
-        layerForPageScale.transform = transform;
-        [layerForPageScale removeAnimationForKey:transientAnimationKey];
-        [layerForPageScale removeAnimationForKey:@"transientZoomCommit"];
-        m_transactionIDAfterEndingTransientZoom = nextLayerTreeTransactionID();
-        m_webPageProxy.send(Messages::DrawingArea::CommitTransientZoom(scale, origin), m_identifier);
-    }];
-
-    [layerForPageScale addAnimation:renderViewAnimationCA.get() forKey:@"transientZoomCommit"];
-    [CATransaction commit];
-    if (layerForPageScale && renderViewAnimationCA) { }
-    END_BLOCK_OBJC_EXCEPTIONS
+    // FIXME: Need to constrain the last scale and origin and do a "bounce back" animation if necessary (see TiledCoreAnimationDrawingArea).
+    m_transactionIDAfterEndingTransientZoom = nextLayerTreeTransactionID();
+    m_webPageProxy.send(Messages::DrawingArea::CommitTransientZoom(scale, origin), m_identifier);
 }
 
 void RemoteLayerTreeDrawingAreaProxyMac::scheduleDisplayRefreshCallbacks()
@@ -251,7 +225,7 @@ void RemoteLayerTreeDrawingAreaProxyMac::scheduleDisplayRefreshCallbacks()
         return;
     }
 
-    auto& displayLink = this->displayLink();
+    auto& displayLink = ensureDisplayLink();
     m_displayRefreshObserverID = DisplayLinkObserverID::generate();
     displayLink.addObserver(*m_displayLinkClient, *m_displayRefreshObserverID, m_clientPreferredFramesPerSecond);
 }
@@ -281,7 +255,7 @@ void RemoteLayerTreeDrawingAreaProxyMac::setDisplayLinkWantsFullSpeedUpdates(boo
     if (!m_displayID)
         return;
 
-    auto& displayLink = this->displayLink();
+    auto& displayLink = ensureDisplayLink();
 
     // Use a second observer for full-speed updates (used to drive scroll animations).
     if (wantsFullSpeedUpdates) {
@@ -308,8 +282,6 @@ void RemoteLayerTreeDrawingAreaProxyMac::windowScreenDidChange(PlatformDisplayID
     m_displayID = displayID;
     m_displayNominalFramesPerSecond = nominalFramesPerSecond;
 
-    m_webPageProxy.scrollingCoordinatorProxy()->windowScreenDidChange(displayID, nominalFramesPerSecond);
-
     scheduleDisplayRefreshCallbacks();
     if (hadFullSpeedOberver) {
         m_fullSpeedUpdateObserverID = DisplayLinkObserverID::generate();
@@ -335,45 +307,6 @@ void RemoteLayerTreeDrawingAreaProxyMac::colorSpaceDidChange()
 {
     m_webPageProxy.send(Messages::DrawingArea::SetColorSpace(m_webPageProxy.colorSpace()), m_identifier);
 }
-
-MachSendRight RemoteLayerTreeDrawingAreaProxyMac::createFence()
-{
-    if (!m_webPageProxy.hasRunningProcess())
-        return MachSendRight();
-
-    RetainPtr<CAContext> rootLayerContext = [m_webPageProxy.acceleratedCompositingRootLayer() context];
-    if (!rootLayerContext)
-        return MachSendRight();
-
-    // Don't fence if we don't have a connection, because the message
-    // will likely get dropped on the floor (if the Web process is terminated)
-    // or queued up until process launch completes, and there's nothing useful
-    // to synchronize in these cases.
-    if (!m_webPageProxy.process().connection())
-        return MachSendRight();
-
-    // Don't fence if we have incoming synchronous messages, because we may not
-    // be able to reply to the message until the fence times out.
-    if (m_webPageProxy.process().connection()->hasIncomingSyncMessage())
-        return MachSendRight();
-
-    MachSendRight fencePort = MachSendRight::adopt([rootLayerContext createFencePort]);
-
-    // Invalidate the fence if a synchronous message arrives while it's installed,
-    // because we won't be able to reply during the fence-wait.
-    uint64_t callbackID = m_webPageProxy.process().connection()->installIncomingSyncMessageCallback([rootLayerContext] {
-        [rootLayerContext invalidateFences];
-    });
-    [CATransaction addCommitHandler:[callbackID, protectedPage = Ref { m_webPageProxy }] {
-        if (!protectedPage->hasRunningProcess())
-            return;
-        if (auto* connection = protectedPage->process().connection())
-            connection->uninstallIncomingSyncMessageCallback(callbackID);
-    } forPhase:kCATransactionPhasePostCommit];
-
-    return fencePort;
-}
-
 
 } // namespace WebKit
 

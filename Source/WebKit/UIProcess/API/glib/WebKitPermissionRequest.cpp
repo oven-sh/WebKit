@@ -20,10 +20,6 @@
 #include "config.h"
 #include "WebKitPermissionRequest.h"
 
-#if !ENABLE(2022_GLIB_API)
-typedef WebKitPermissionRequestIface WebKitPermissionRequestInterface;
-#endif
-
 /**
  * WebKitPermissionRequest:
  * @See_also: #WebKitWebView
@@ -38,9 +34,10 @@ typedef WebKitPermissionRequestIface WebKitPermissionRequestInterface;
  * #WebKitPermissionRequest object attached to it.
  */
 
+typedef WebKitPermissionRequestIface WebKitPermissionRequestInterface;
 G_DEFINE_INTERFACE(WebKitPermissionRequest, webkit_permission_request, G_TYPE_OBJECT)
 
-static void webkit_permission_request_default_init(WebKitPermissionRequestInterface*)
+static void webkit_permission_request_default_init(WebKitPermissionRequestIface*)
 {
 }
 
@@ -54,7 +51,7 @@ void webkit_permission_request_allow(WebKitPermissionRequest* request)
 {
     g_return_if_fail(WEBKIT_IS_PERMISSION_REQUEST(request));
 
-    WebKitPermissionRequestInterface* iface = WEBKIT_PERMISSION_REQUEST_GET_IFACE(request);
+    WebKitPermissionRequestIface* iface = WEBKIT_PERMISSION_REQUEST_GET_IFACE(request);
     if (iface->allow)
         iface->allow(request);
 }
@@ -69,7 +66,7 @@ void webkit_permission_request_deny(WebKitPermissionRequest* request)
 {
     g_return_if_fail(WEBKIT_IS_PERMISSION_REQUEST(request));
 
-    WebKitPermissionRequestInterface* iface = WEBKIT_PERMISSION_REQUEST_GET_IFACE(request);
+    WebKitPermissionRequestIface* iface = WEBKIT_PERMISSION_REQUEST_GET_IFACE(request);
     if (iface->deny)
         iface->deny(request);
 }

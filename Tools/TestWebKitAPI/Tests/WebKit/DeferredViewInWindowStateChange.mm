@@ -30,7 +30,7 @@
 #import "JavaScriptTest.h"
 #import "PlatformUtilities.h"
 #import "PlatformWebView.h"
-#import <WebKit/WKWebViewPrivate.h>
+#import <WebKit/WKViewPrivate.h>
 
 namespace TestWebKitAPI {
 
@@ -57,7 +57,7 @@ TEST(WebKit, DeferredViewInWindowStateChange)
     WKRetainPtr<WKContextRef> context = adoptWK(Util::createContextForInjectedBundleTest("MouseMoveAfterCrashTest"));
 
     PlatformWebView webView(context.get());
-    WKWebView *wkView = webView.platformView();
+    WKView *wkView = webView.platformView();
     setPageLoaderClient(webView.page());
 
     WKRetainPtr<WKURLRef> url = adoptWK(Util::createURLForResource("lots-of-text", "html"));
@@ -67,13 +67,13 @@ TEST(WebKit, DeferredViewInWindowStateChange)
 
     EXPECT_JS_FALSE(webView.page(), "document.hidden");
 
-    [wkView _beginDeferringViewInWindowChanges];
+    [wkView beginDeferringViewInWindowChanges];
     [wkView removeFromSuperview];
 
     // The document should still not be hidden, even though we're not in-window, because we are deferring in-window changes.
     EXPECT_JS_FALSE(webView.page(), "document.hidden");
 
-    [wkView _endDeferringViewInWindowChanges];
+    [wkView endDeferringViewInWindowChanges];
 
     __block bool done = false;
     WKPageRef page = webView.page();

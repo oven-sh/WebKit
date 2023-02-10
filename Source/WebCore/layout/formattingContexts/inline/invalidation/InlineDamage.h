@@ -25,7 +25,6 @@
 
 #pragma once
 
-#include "InlineLineTypes.h"
 #include <wtf/IsoMallocInlines.h>
 
 namespace WebCore {
@@ -51,20 +50,16 @@ public:
     };
     Type type() const { return m_damageType; }
     // FIXME: Add support for damage range with multiple, different damage types.
-    struct ContentPosition {
-        size_t lineIndex { 0 };
-        InlineItemPosition inlineItemPosition { };
-    };
-    std::optional<ContentPosition> contentPosition() const { return m_contentPosition; }
+    std::optional<size_t> line() const { return m_damagedLine; }
 
 private:
     friend class InlineInvalidation;
 
     void setDamageType(Type type) { m_damageType = type; }
-    void setDamagedPosition(ContentPosition contentPosition) { m_contentPosition = contentPosition; }
+    void setDamagedLine(size_t lineIndex) { m_damagedLine = lineIndex; }
 
     Type m_damageType { Type::NeedsContentUpdateAndLineLayout };
-    std::optional<ContentPosition> m_contentPosition;
+    std::optional<size_t> m_damagedLine;
 };
 
 }

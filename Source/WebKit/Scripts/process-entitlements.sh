@@ -528,19 +528,4 @@ else
     echo "Unsupported/unknown platform: ${WK_PLATFORM_NAME}"
 fi
 
-function process_additional_entitlements()
-{
-    local ENTITLEMENTS_SCRIPT=$1
-    shift
-    for PREFIX in "${@}"; do
-        if [[ -f "${PREFIX}/${ENTITLEMENTS_SCRIPT}" ]]; then
-            source "${PREFIX}/${ENTITLEMENTS_SCRIPT}"
-            break
-        fi
-    done
-}
-
-ADDITIONAL_ENTITLEMENTS_SCRIPT=usr/local/include/WebKitAdditions/Scripts/process-additional-entitlements.sh
-process_additional_entitlements "${ADDITIONAL_ENTITLEMENTS_SCRIPT}" "${BUILT_PRODUCTS_DIR}" "${SDKROOT}"
-
 exit 0

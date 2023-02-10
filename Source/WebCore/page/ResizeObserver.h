@@ -49,19 +49,14 @@ struct ResizeObserverData {
     Vector<WeakPtr<ResizeObserver>> observers;
 };
 
-using NativeResizeObserverCallback = void (*)(const Vector<Ref<ResizeObserverEntry>>&, ResizeObserver&);
-using JSOrNativeResizeObserverCallback = std::variant<RefPtr<ResizeObserverCallback>, NativeResizeObserverCallback>;
-
 class ResizeObserver : public RefCounted<ResizeObserver>, public CanMakeWeakPtr<ResizeObserver> {
 public:
     static Ref<ResizeObserver> create(Document&, Ref<ResizeObserverCallback>&&);
-    static Ref<ResizeObserver> createNativeObserver(Document&, NativeResizeObserverCallback&&);
     ~ResizeObserver();
 
     bool hasObservations() const { return m_observations.size(); }
     bool hasActiveObservations() const { return m_activeObservations.size(); }
 
-    void observe(Element&);
     void observe(Element&, const ResizeObserverOptions&);
     void unobserve(Element&);
     void disconnect();
@@ -73,23 +68,18 @@ public:
     bool hasSkippedObservations() const { return m_hasSkippedObservations; }
     void setHasSkippedObservations(bool skipped) { m_hasSkippedObservations = skipped; }
 
-    void resetObservationSize(Element&);
-
-    ResizeObserverCallback* callbackConcurrently();
+    ResizeObserverCallback* callbackConcurrently() { return m_callback.get(); }
     bool isReachableFromOpaqueRoots(JSC::AbstractSlotVisitor&) const;
 
 private:
-    ResizeObserver(Document&, JSOrNativeResizeObserverCallback&&);
+    ResizeObserver(Document&, Ref<ResizeObserverCallback>&&);
 
     bool removeTarget(Element&);
     void removeAllTargets();
     bool removeObservation(const Element&);
-    void observeInternal(Element&, const ResizeObserverBoxOptions);
-    bool isNativeCallback();
-    bool isJSCallback();
 
     WeakPtr<Document, WeakPtrImplWithEventTargetData> m_document;
-    JSOrNativeResizeObserverCallback m_JSOrNativeCallback;
+    RefPtr<ResizeObserverCallback> m_callback;
     Vector<Ref<ResizeObservation>> m_observations;
 
     Vector<Ref<ResizeObservation>> m_activeObservations;

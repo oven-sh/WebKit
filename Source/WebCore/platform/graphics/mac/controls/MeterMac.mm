@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2022-2023 Apple Inc. All Rights Reserved.
+ * Copyright (C) 2022 Apple Inc. All Rights Reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,6 +30,7 @@
 
 #import "ControlFactoryMac.h"
 #import "GraphicsContext.h"
+#import "LocalCurrentGraphicsContext.h"
 #import "LocalDefaultSystemAppearance.h"
 #import "MeterPart.h"
 #import <wtf/BlockObjCExceptions.h>
@@ -91,7 +92,9 @@ void MeterMac::draw(GraphicsContext& context, const FloatRoundedRect& borderRect
 {
     LocalDefaultSystemAppearance localAppearance(style.states.contains(ControlStyle::State::DarkAppearance), style.accentColor);
 
-    drawCell(context, borderRect.rect(), deviceScaleFactor, style, m_levelIndicatorCell.get());
+    auto *view = m_controlFactory.drawingView(borderRect.rect(), style);
+
+    drawCell(context, borderRect.rect(), deviceScaleFactor, style, m_levelIndicatorCell.get(), view);
 }
 
 } // namespace WebCore

@@ -48,7 +48,7 @@ enum class MessageLevel : uint8_t;
 }
 
 namespace WebCore {
-class SecurityOriginData;
+struct SecurityOriginData;
 }
 
 using WebKit::WebPushD::PushMessageForTesting;

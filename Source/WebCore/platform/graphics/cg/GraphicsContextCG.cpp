@@ -211,27 +211,6 @@ CGContextRef GraphicsContextCG::platformContext() const
     return m_data->m_cgContext.get();
 }
 
-const DestinationColorSpace& GraphicsContextCG::colorSpace() const
-{
-    if (m_colorSpace)
-        return *m_colorSpace;
-
-    auto context = platformContext();
-    RetainPtr<CGColorSpaceRef> colorSpace;
-
-    // FIXME: Need to handle kCGContextTypePDF.
-    if (CGContextGetType(context) == kCGContextTypeIOSurface)
-        colorSpace = CGIOSurfaceContextGetColorSpace(context);
-    else if (CGContextGetType(context) == kCGContextTypeBitmap)
-        colorSpace = CGBitmapContextGetColorSpace(context);
-    else
-        colorSpace = adoptCF(CGContextCopyDeviceColorSpace(context));
-
-    // FIXME: Need to ASSERT(colorSpace). For now fall back to sRGB if colorSpace is nil.
-    m_colorSpace = colorSpace ? DestinationColorSpace(colorSpace) : DestinationColorSpace::SRGB();
-    return *m_colorSpace;
-}
-
 void GraphicsContextCG::save()
 {
     GraphicsContext::save();
@@ -254,7 +233,7 @@ void GraphicsContextCG::restore()
     m_data->m_userToDeviceTransformKnownToBeIdentity = false;
 }
 
-void GraphicsContextCG::drawNativeImageInternal(NativeImage& nativeImage, const FloatSize& imageSize, const FloatRect& destRect, const FloatRect& srcRect, const ImagePaintingOptions& options)
+void GraphicsContextCG::drawNativeImage(NativeImage& nativeImage, const FloatSize& imageSize, const FloatRect& destRect, const FloatRect& srcRect, const ImagePaintingOptions& options)
 {
     auto image = nativeImage.platformImage();
     auto imageRect = FloatRect { { }, imageSize };
@@ -390,7 +369,7 @@ void GraphicsContextCG::drawNativeImageInternal(NativeImage& nativeImage, const 
         setCGBlendMode(context, oldCompositeOperator, oldBlendMode);
     }
 
-    LOG_WITH_STREAM(Images, stream << "GraphicsContextCG::drawNativeImageInternal " << image.get() << " size " << imageSize << " into " << destRect << " took " << (MonotonicTime::now() - startTime).milliseconds() << "ms");
+    LOG_WITH_STREAM(Images, stream << "GraphicsContextCG::drawNativeImage " << image.get() << " size " << imageSize << " into " << destRect << " took " << (MonotonicTime::now() - startTime).milliseconds() << "ms");
 }
 
 bool GraphicsContextCG::needsCachedNativeImageInvalidationWorkaround(RenderingMode imageRenderingMode)
@@ -1105,6 +1084,7 @@ void GraphicsContextCG::clearCGShadow()
     CGContextSetShadowWithColor(platformContext(), CGSizeZero, 0, 0);
 }
 
+#if PLATFORM(COCOA)
 static void setCGStyle(CGContextRef context, const std::optional<GraphicsStyle>& style)
 {
     if (!style) {
@@ -1150,6 +1130,7 @@ static void setCGStyle(CGContextRef context, const std::optional<GraphicsStyle>&
     if (cgStyle)
         CGContextSetStyle(context, cgStyle.get());
 }
+#endif
 
 void GraphicsContextCG::didUpdateState(GraphicsContextState& state)
 {
@@ -1181,7 +1162,9 @@ void GraphicsContextCG::didUpdateState(GraphicsContextState& state)
             break;
 
         case GraphicsContextState::Change::Style:
+#if PLATFORM(COCOA)
             setCGStyle(context, state.style());
+#endif
             break;
 
         case GraphicsContextState::Change::Alpha:

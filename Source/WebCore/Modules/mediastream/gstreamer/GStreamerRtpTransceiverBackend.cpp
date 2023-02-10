@@ -25,6 +25,7 @@
 #include "GStreamerRtpReceiverBackend.h"
 #include "GStreamerRtpSenderBackend.h"
 #include "GStreamerWebRTCUtils.h"
+#include "NotImplemented.h"
 #include "RTCRtpCodecCapability.h"
 #include <wtf/glib/GUniquePtr.h>
 
@@ -85,14 +86,14 @@ String GStreamerRtpTransceiverBackend::mid()
 
 void GStreamerRtpTransceiverBackend::stop()
 {
-    // Ideally we should also stop webrtcbin transceivers but it's not supported yet.
-    m_isStopped = true;
+    // FIXME: webrtcbin transceivers can't be stopped yet.
+    notImplemented();
 }
 
 bool GStreamerRtpTransceiverBackend::stopped() const
 {
-    // Ideally this should be queried on webrtcbin, but its transceivers can't be stopped yet.
-    return m_isStopped;
+    // FIXME: webrtcbin transceivers can't be stopped yet.
+    return false;
 }
 
 static inline WARN_UNUSED_RETURN ExceptionOr<GstCaps*> toRtpCodecCapability(const RTCRtpCodecCapability& codec, int payloadType)

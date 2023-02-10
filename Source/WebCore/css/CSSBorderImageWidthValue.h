@@ -25,29 +25,31 @@
 
 #pragma once
 
-#include "CSSValue.h"
-#include "Quad.h"
+#include "CSSPrimitiveValue.h"
+#include <wtf/RefPtr.h>
 
 namespace WebCore {
 
-class CSSPrimitiveValue;
+class Rect;
 
 class CSSBorderImageWidthValue final : public CSSValue {
 public:
-    static Ref<CSSBorderImageWidthValue> create(Quad, bool overridesBorderWidths);
-    ~CSSBorderImageWidthValue();
-
-    const Quad& widths() const { return m_widths; }
-    bool overridesBorderWidths() const { return m_overridesBorderWidths; }
+    static Ref<CSSBorderImageWidthValue> create(Ref<Quad>&& widths, bool overridesBorderWidths)
+    {
+        return adoptRef(*new CSSBorderImageWidthValue(WTFMove(widths), overridesBorderWidths));
+    }
 
     String customCSSText() const;
+
+    Quad& widths() const { return m_widths.get(); }
+
     bool equals(const CSSBorderImageWidthValue&) const;
 
-private:
-    CSSBorderImageWidthValue(Quad, bool overridesBorderWidths);
+    Ref<Quad> m_widths;
+    bool m_overridesBorderWidths;
 
-    Quad m_widths;
-    bool m_overridesBorderWidths { false };
+private:
+    CSSBorderImageWidthValue(Ref<Quad>&& widths, bool overridesBorderWidths);
 };
 
 } // namespace WebCore

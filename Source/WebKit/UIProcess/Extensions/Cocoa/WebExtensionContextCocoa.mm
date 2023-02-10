@@ -497,11 +497,6 @@ void WebExtensionContext::postAsyncNotification(NSNotificationName notificationN
     if (permissions.isEmpty())
         return;
 
-    if ([notificationName isEqualToString:_WKWebExtensionContextPermissionsWereGrantedNotification])
-        firePermissionsEventListenerIfNecessary(WebExtensionEventListenerType::PermissionsOnAdded, permissions, { });
-    else if ([notificationName isEqualToString:_WKWebExtensionContextGrantedPermissionsWereRemovedNotification])
-        firePermissionsEventListenerIfNecessary(WebExtensionEventListenerType::PermissionsOnRemoved, permissions, { });
-
     dispatch_async(dispatch_get_main_queue(), makeBlockPtr([this, protectedThis = Ref { *this }, notificationName = retainPtr(notificationName), permissions]() {
         [NSNotificationCenter.defaultCenter postNotificationName:notificationName.get() object:wrapper() userInfo:@{ _WKWebExtensionContextNotificationUserInfoKeyPermissions: toAPI(permissions) }];
     }).get());
@@ -511,11 +506,6 @@ void WebExtensionContext::postAsyncNotification(NSNotificationName notificationN
 {
     if (matchPatterns.isEmpty())
         return;
-
-    if ([notificationName isEqualToString:_WKWebExtensionContextPermissionsWereGrantedNotification])
-        firePermissionsEventListenerIfNecessary(WebExtensionEventListenerType::PermissionsOnAdded, { }, matchPatterns);
-    else if ([notificationName isEqualToString:_WKWebExtensionContextGrantedPermissionsWereRemovedNotification])
-        firePermissionsEventListenerIfNecessary(WebExtensionEventListenerType::PermissionsOnRemoved, { }, matchPatterns);
 
     dispatch_async(dispatch_get_main_queue(), makeBlockPtr([this, protectedThis = Ref { *this }, notificationName = retainPtr(notificationName), matchPatterns]() {
         [NSNotificationCenter.defaultCenter postNotificationName:notificationName.get() object:wrapper() userInfo:@{ _WKWebExtensionContextNotificationUserInfoKeyMatchPatterns: toAPI(matchPatterns) }];
@@ -752,7 +742,7 @@ bool WebExtensionContext::hasPermissions(PermissionsSet permissions, MatchPatter
     for (auto& pattern : matchPatterns) {
         bool matchFound = false;
         for (auto& grantedPattern : currentPermissionMatchPatterns()) {
-            if (grantedPattern->matchesPattern(pattern, { WebExtensionMatchPattern::Options::IgnorePaths })) {
+            if (pattern->matchesPattern(grantedPattern, { WebExtensionMatchPattern::Options::IgnorePaths })) {
                 matchFound = true;
                 break;
             }
@@ -1356,7 +1346,7 @@ void WebExtensionContext::performTasksAfterBackgroundContentLoads()
     scheduleBackgroundContentToUnload();
 }
 
-void WebExtensionContext::wakeUpBackgroundContentIfNecessaryToFireEvents(EventListenerTypeSet types, CompletionHandler<void()>&& completionHandler)
+void WebExtensionContext::fireEvents(EventListenerTypeSet types, CompletionHandler<void()>&& completionHandler)
 {
     if (extension().backgroundContentIsPersistent()) {
         completionHandler();

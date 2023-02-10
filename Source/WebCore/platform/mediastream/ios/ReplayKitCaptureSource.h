@@ -57,7 +57,7 @@ private:
     void stop() final;
     DisplayCaptureSourceCocoa::DisplayFrameType generateFrame() final;
     CaptureDevice::DeviceType deviceType() const final { return CaptureDevice::DeviceType::Screen; }
-    DisplaySurfaceType surfaceType() const final { return DisplaySurfaceType::Monitor; }
+    RealtimeMediaSourceSettings::DisplaySurfaceType surfaceType() const final { return RealtimeMediaSourceSettings::DisplaySurfaceType::Monitor; }
     virtual void commitConfiguration(const RealtimeMediaSourceSettings&) { }
     virtual IntSize intrinsicSize() const { return m_intrinsicSize; }
 

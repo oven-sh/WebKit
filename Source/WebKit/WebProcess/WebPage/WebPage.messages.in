@@ -449,9 +449,8 @@ GenerateSyntheticEditingCommand(enum:uint8_t WebKit::SyntheticEditingCommandType
 #if PLATFORM(IOS_FAMILY)
     ComputePagesForPrintingiOS(WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo) -> (size_t pageCount) Synchronous
     DrawToPDFiOS(WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo, size_t pageCount) -> (RefPtr<WebCore::SharedBuffer> data)
-    DrawToImage(WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo, size_t pageCount) -> (WebKit::ShareableBitmapHandle data)
 #endif
-    DrawToPDF(WebCore::FrameIdentifier frameID, std::optional<WebCore::FloatRect> rect, bool allowTransparentBackground) -> (RefPtr<WebCore::SharedBuffer> data)
+    DrawToPDF(WebCore::FrameIdentifier frameID, std::optional<WebCore::FloatRect> rect) -> (RefPtr<WebCore::SharedBuffer> data)
 #endif
 #if PLATFORM(GTK)
     DrawPagesForPrinting(WebCore::FrameIdentifier frameID, struct WebKit::PrintInfo printInfo) -> (std::optional<WebKit::SharedMemory::Handle> data, WebCore::ResourceError error)
@@ -530,7 +529,7 @@ GenerateSyntheticEditingCommand(enum:uint8_t WebKit::SyntheticEditingCommandType
     WillStartUserTriggeredZooming();
 #endif
 
-    SetScrollPinningBehavior(enum:uint8_t WebCore::ScrollPinningBehavior pinning)
+    SetScrollPinningBehavior(uint32_t pinning)
     SetScrollbarOverlayStyle(std::optional<uint32_t> scrollbarStyle)
 
     GetBytecodeProfile() -> (String string)
@@ -676,9 +675,7 @@ GenerateSyntheticEditingCommand(enum:uint8_t WebKit::SyntheticEditingCommandType
 #endif
 
     HandleWheelEvent(WebKit::WebWheelEvent event, OptionSet<WebCore::WheelEventProcessingSteps> processingSteps)
-#if PLATFORM(IOS_FAMILY)
     DispatchWheelEventWithoutScrolling(WebKit::WebWheelEvent event) -> (bool handled)
-#endif
 
     LastNavigationWasAppInitiated() -> (bool wasAppBound)
 

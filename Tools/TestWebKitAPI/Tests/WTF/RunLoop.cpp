@@ -305,8 +305,7 @@ TEST(WTF_RunLoop, MAYBE_DispatchInRunLoopIterationDispatchesOnNextIteration1)
     auto& runLoop = RunLoop::current();
     bool outer = false;
     bool inner = false;
-    int i = 0;
-    for (; i < 100; ++i) {
+    for (int i = 0; i < 100; ++i) {
         SCOPED_TRACE(i);
         runLoop.dispatch([&] {
             outer = true;
@@ -342,8 +341,7 @@ TEST(WTF_RunLoop, MAYBE_DispatchInRunLoopIterationDispatchesOnNextIteration2)
     auto& runLoop = RunLoop::current();
     int outer = 0;
     int inner = 0;
-    int i = 0;
-    for (; i < 100; ++i) {
+    for (int i = 0; i < 100; ++i) {
         SCOPED_TRACE(i);
         runLoop.dispatch([&] {
             outer++;

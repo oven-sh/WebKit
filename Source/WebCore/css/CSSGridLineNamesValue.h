@@ -30,25 +30,21 @@
 
 #pragma once
 
-#include "CSSValue.h"
-#include <wtf/FixedVector.h>
-#include <wtf/text/WTFString.h>
+#include "CSSValueList.h"
 
 namespace WebCore {
 
-class CSSGridLineNamesValue final : public CSSValue {
+class CSSGridLineNamesValue final : public CSSValueList {
 public:
-    static Ref<CSSGridLineNamesValue> create(Span<const String>);
-
-    Span<const String> names() const { return m_names; }
+    static Ref<CSSGridLineNamesValue> create()
+    {
+        return adoptRef(*new CSSGridLineNamesValue);
+    }
 
     String customCSSText() const;
-    bool equals(const CSSGridLineNamesValue& other) const { return m_names == other.m_names; }
 
 private:
-    explicit CSSGridLineNamesValue(Span<const String>);
-
-    FixedVector<String> m_names;
+    CSSGridLineNamesValue();
 };
 
 } // namespace WebCore

@@ -186,7 +186,6 @@
 #endif
 
 #import <pal/cocoa/VisionKitCoreSoftLink.h>
-#import <pal/cocoa/TranslationUIServicesSoftLink.h>
 #import <pal/ios/ManagedConfigurationSoftLink.h>
 #import <pal/ios/QuickLookSoftLink.h>
 
@@ -1764,12 +1763,6 @@ typedef NS_ENUM(NSInteger, EndEditingReason) {
         && [uiDelegate _webView:webView touchEventsMustRequireGestureRecognizerToFail:gestureRecognizer];
 }
 
-- (BOOL)_gestureRecognizerCanBePreventedByTouchEvents:(UIGestureRecognizer *)gestureRecognizer
-{
-    id<WKUIDelegatePrivate> uiDelegate = static_cast<id<WKUIDelegatePrivate>>([self.webView UIDelegate]);
-    return [uiDelegate respondsToSelector:@selector(_webView:gestureRecognizerCanBePreventedByTouchEvents:)] && [uiDelegate _webView:self.webView gestureRecognizerCanBePreventedByTouchEvents:gestureRecognizer];
-}
-
 - (void)_webTouchEventsRecognized:(UIWebTouchEventsGestureRecognizer *)gestureRecognizer
 {
     if (!_page->hasRunningProcess())
@@ -2500,7 +2493,7 @@ static NSValue *nsSizeForTapHighlightBorderRadius(WebCore::IntSize borderRadius,
     if (_page->waitingForPostLayoutEditorStateUpdateAfterFocusingElement())
         return _focusedElementInformation.interactionRect;
 
-    if (_page->editorState().hasVisualData() && !_page->editorState().visualData->selectionClipRect.isEmpty())
+    if (!_page->editorState().visualData->selectionClipRect.isEmpty())
         return _page->editorState().visualData->selectionClipRect;
 
     return CGRectNull;
@@ -4081,13 +4074,8 @@ WEBCORE_COMMAND_FOR_WEBVIEW(pasteAndMatchStyle);
         return UIKeyboardEnabledInputModesAllowChineseTransliterationForText([self selectedText]);
     }
 
-#if HAVE(TRANSLATION_UI_SERVICES)
-    if (action == @selector(_translate:)) {
-        if (!PAL::isTranslationUIServicesFrameworkAvailable() || ![PAL::getLTUITranslationViewControllerClass() isAvailable])
-            return NO;
+    if (action == @selector(_translate:))
         return !editorState.isInPasswordField && editorState.selectionIsRange;
-    }
-#endif // HAVE(TRANSLATION_UI_SERVICES)
 
     if (action == @selector(select:)) {
         // Disable select in password fields so that you can't see word boundaries.
@@ -5471,7 +5459,7 @@ static void logTextInteractionAssistantSelectionChange(const char* methodName, U
 {
     _ignoreSelectionCommandFadeCount++;
     _page->scheduleFullEditorStateUpdate();
-    _page->callAfterNextPresentationUpdate([weakSelf = WeakObjCPtr<WKContentView>(self)] {
+    _page->callAfterNextPresentationUpdate([weakSelf = WeakObjCPtr<WKContentView>(self)] (auto) {
         if (auto strongSelf = weakSelf.get())
             strongSelf->_ignoreSelectionCommandFadeCount--;
     });
@@ -5652,15 +5640,10 @@ static Vector<WebCore::CompositionHighlight> compositionHighlights(NSAttributedS
         if (!attributes[NSMarkedClauseSegmentAttributeName])
             return;
 
-        WebCore::Color backgroundHighlightColor { WebCore::CompositionHighlight::defaultCompositionFillColor };
-        if (UIColor *backgroundColor = attributes[NSBackgroundColorAttributeName])
-            backgroundHighlightColor = WebCore::colorFromCocoaColor(backgroundColor);
-
-        std::optional<WebCore::Color> foregroundHighlightColor;
-        if (UIColor *foregroundColor = attributes[NSForegroundColorAttributeName])
-            foregroundHighlightColor = WebCore::colorFromCocoaColor(foregroundColor);
-
-        highlights.append({ static_cast<unsigned>(range.location), static_cast<unsigned>(NSMaxRange(range)), backgroundHighlightColor, foregroundHighlightColor });
+        WebCore::Color highlightColor { WebCore::CompositionHighlight::defaultCompositionFillColor };
+        if (UIColor *uiColor = attributes[NSBackgroundColorAttributeName])
+            highlightColor = WebCore::colorFromCocoaColor(uiColor);
+        highlights.append({ static_cast<unsigned>(range.location), static_cast<unsigned>(NSMaxRange(range)), highlightColor });
     }];
 
     std::sort(highlights.begin(), highlights.end(), [](auto& a, auto& b) {
@@ -5674,7 +5657,7 @@ static Vector<WebCore::CompositionHighlight> compositionHighlights(NSAttributedS
     Vector<WebCore::CompositionHighlight> mergedHighlights;
     mergedHighlights.reserveInitialCapacity(highlights.size());
     for (auto& highlight : highlights) {
-        if (mergedHighlights.isEmpty() || mergedHighlights.last().backgroundColor != highlight.backgroundColor || mergedHighlights.last().foregroundColor != highlight.foregroundColor)
+        if (mergedHighlights.isEmpty() || mergedHighlights.last().color != highlight.color)
             mergedHighlights.append(highlight);
         else
             mergedHighlights.last().endOffset = highlight.endOffset;
@@ -8655,7 +8638,7 @@ static WebCore::DataOwnerType coreDataOwnerType(_UIDataOwner platformType)
         view = view.superview;
     }
 
-    if (!gestureIsInstalledOnOrUnderWebView && ![self _gestureRecognizerCanBePreventedByTouchEvents:gestureRecognizer])
+    if (!gestureIsInstalledOnOrUnderWebView)
         return NO;
 
     if ([gestureRecognizer isKindOfClass:WKDeferringGestureRecognizer.class])
@@ -9747,7 +9730,7 @@ static Vector<WebCore::IntSize> sizesOfPlaceholderElementsToInsertWhenDroppingIt
         RELEASE_LOG(DragAndDrop, "Drag interaction willAnimateCancelWithAnimator (animation completion block fired)");
         page->dragCancelled();
         if (auto completion = protectedSelf->_dragDropInteractionState.takeDragCancelSetDownBlock()) {
-            page->callAfterNextPresentationUpdate([completion, protectedSelf] {
+            page->callAfterNextPresentationUpdate([completion, protectedSelf] (WebKit::CallbackBase::Error) {
                 completion();
                 protectedSelf->_isAnimatingDragCancel = NO;
             });
@@ -11377,6 +11360,10 @@ static BOOL shouldUseMachineReadableCodeMenuFromImageAnalysisResult(CocoaImageAn
 
 #endif // ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
 
+#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+constexpr auto analysisTypesForFullscreenVideo = VKAnalysisTypeAll & ~VKAnalysisTypeVisualSearch;
+#endif
+
 - (void)beginTextRecognitionForFullscreenVideo:(const WebKit::ShareableBitmapHandle&)imageData playerViewController:(AVPlayerViewController *)controller
 {
 #if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
@@ -11393,7 +11380,7 @@ static BOOL shouldUseMachineReadableCodeMenuFromImageAnalysisResult(CocoaImageAn
     if (!cgImage)
         return;
 
-    auto request = [self createImageAnalyzerRequest:WebKit::analysisTypesForFullscreenVideo() image:cgImage.get()];
+    auto request = [self createImageAnalyzerRequest:analysisTypesForFullscreenVideo image:cgImage.get()];
     _fullscreenVideoImageAnalysisRequestIdentifier = [self.imageAnalyzer processRequest:request.get() progressHandler:nil completionHandler:makeBlockPtr([weakSelf = WeakObjCPtr<WKContentView>(self), controller = RetainPtr { controller }] (CocoaImageAnalysis *result, NSError *) mutable {
         auto strongSelf = weakSelf.get();
         if (!strongSelf)
@@ -11438,7 +11425,7 @@ static BOOL shouldUseMachineReadableCodeMenuFromImageAnalysisResult(CocoaImageAn
     if (!image)
         return;
 
-    auto request = WebKit::createImageAnalyzerRequest(image.get(), WebKit::analysisTypesForElementFullscreenVideo());
+    auto request = WebKit::createImageAnalyzerRequest(image.get(), analysisTypesForFullscreenVideo);
     _fullscreenVideoImageAnalysisRequestIdentifier = [self.imageAnalyzer processRequest:request.get() progressHandler:nil completionHandler:[weakSelf = WeakObjCPtr<WKContentView>(self), bounds](CocoaImageAnalysis *result, NSError *error) {
         auto strongSelf = weakSelf.get();
         if (!strongSelf || !strongSelf->_fullscreenVideoImageAnalysisRequestIdentifier)
@@ -11477,7 +11464,7 @@ static BOOL shouldUseMachineReadableCodeMenuFromImageAnalysisResult(CocoaImageAn
             if (auto strongSelf = weakSelf.get())
                 [strongSelf->_imageAnalysisActionButtons addObject:button];
         }];
-        WebKit::prepareImageAnalysisForOverlayView(_imageAnalysisInteraction.get());
+        WebKit::setUpAdditionalImageAnalysisBehaviors(_imageAnalysisInteraction.get());
         [self addInteraction:_imageAnalysisInteraction.get()];
         RELEASE_LOG(ImageAnalysis, "Installing image analysis interaction at {{ %.0f, %.0f }, { %.0f, %.0f }}",
             _imageAnalysisInteractionBounds.x(), _imageAnalysisInteractionBounds.y(), _imageAnalysisInteractionBounds.width(), _imageAnalysisInteractionBounds.height());

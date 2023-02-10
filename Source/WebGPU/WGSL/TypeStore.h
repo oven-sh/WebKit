@@ -26,13 +26,11 @@
 #pragma once
 
 #include "ASTTypeName.h"
+#include "Types.h"
 #include <wtf/FixedVector.h>
-#include <wtf/HashMap.h>
 #include <wtf/Vector.h>
 
 namespace WGSL {
-
-struct Type;
 
 namespace AST {
 class Identifier;
@@ -54,38 +52,18 @@ public:
     Type* f32Type() const { return m_f32; }
 
     Type* structType(const AST::Identifier& name);
-    Type* arrayType(Type*, std::optional<unsigned>);
-    Type* vectorType(Type*, uint8_t);
-    Type* matrixType(Type*, uint8_t columns, uint8_t rows);
-
     Type* constructType(AST::ParameterizedTypeName::Base, Type*);
+    Type* arrayType(Type*, std::optional<unsigned>);
 
 private:
-    class TypeCache {
-    public:
-        template<typename Key>
-        Type* find(const Key&) const;
-
-        template<typename Key>
-        void insert(const Key&, Type*);
-
-    private:
-        HashMap<std::pair<Type*, uint64_t>, Type*> m_storage;
-    };
-
     template<typename TypeKind, typename... Arguments>
     Type* allocateType(Arguments&&...);
 
-    template<typename TargetConstructor, typename Base, typename... Arguments>
-    void allocateConstructor(TargetConstructor, Base, Arguments&&...);
+    template<typename TargetType, typename Base, typename... Arguments>
+    void allocateConstructor(Base, Arguments&&...);
 
-    struct TypeConstructor {
-        std::function<Type*(Type*)> construct;
-    };
-
-    Vector<std::unique_ptr<Type>> m_types;
+    WTF::Vector<std::unique_ptr<Type>> m_types;
     FixedVector<TypeConstructor> m_typeConstrutors;
-    TypeCache m_cache;
 
     Type* m_bottom;
     Type* m_abstractInt;

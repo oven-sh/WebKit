@@ -38,6 +38,5 @@ WKTypeID WKSpeechRecognitionPermissionCallbackGetTypeID()
 
 void WKSpeechRecognitionPermissionCallbackComplete(WKSpeechRecognitionPermissionCallbackRef speechRecognitionPermissionCallback, bool granted)
 {
-    // FIXME: Deprecate and remove this.
     return toImpl(speechRecognitionPermissionCallback)->complete(granted);
 }

@@ -182,7 +182,6 @@
 #include "RenderLayerScrollableArea.h"
 #include "RenderListBox.h"
 #include "RenderMenuList.h"
-#include "RenderSearchField.h"
 #include "RenderTheme.h"
 #include "RenderThemeIOS.h"
 #include "RenderTreeAsText.h"
@@ -300,7 +299,6 @@
 #if ENABLE(MEDIA_STREAM)
 #include "MediaStream.h"
 #include "MockRealtimeMediaSourceCenter.h"
-#include "VideoFrame.h"
 #endif
 
 #if ENABLE(MEDIA_RECORDER)
@@ -546,15 +544,11 @@ void Internals::resetToConsistentState(Page& page)
 
     page.setDefersLoading(false);
 
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(page.mainFrame());
-    if (!localMainFrame)
-        return;
-
-    localMainFrame->setTextZoomFactor(1.0f);
+    page.mainFrame().setTextZoomFactor(1.0f);
 
     page.setCompositingPolicyOverride(WebCore::CompositingPolicy::Normal);
 
-    FrameView* mainFrameView = localMainFrame->view();
+    FrameView* mainFrameView = page.mainFrame().view();
     if (mainFrameView) {
         page.setHeaderHeight(0);
         page.setFooterHeight(0);
@@ -572,11 +566,11 @@ void Internals::resetToConsistentState(Page& page)
     WTF::clearDefaultPortForProtocolMapForTesting();
     overrideUserPreferredLanguages(Vector<String>());
     WebCore::DeprecatedGlobalSettings::setUsesOverlayScrollbars(false);
-    if (!localMainFrame->editor().isContinuousSpellCheckingEnabled())
-        localMainFrame->editor().toggleContinuousSpellChecking();
-    if (localMainFrame->editor().isOverwriteModeEnabled())
-        localMainFrame->editor().toggleOverwriteModeEnabled();
-    localMainFrame->loader().clearTestingOverrides();
+    if (!page.mainFrame().editor().isContinuousSpellCheckingEnabled())
+        page.mainFrame().editor().toggleContinuousSpellChecking();
+    if (page.mainFrame().editor().isOverwriteModeEnabled())
+        page.mainFrame().editor().toggleOverwriteModeEnabled();
+    page.mainFrame().loader().clearTestingOverrides();
     page.applicationCacheStorage().setDefaultOriginQuota(ApplicationCacheStorage::noQuota());
 #if ENABLE(VIDEO)
     page.group().ensureCaptionPreferences().setCaptionDisplayMode(CaptionUserPreferences::ForcedOnly);
@@ -1033,13 +1027,6 @@ static BitmapImage* bitmapImageFromImageElement(HTMLImageElement& element)
     return dynamicDowncast<BitmapImage>(imageFromImageElement(element));
 }
 
-#if USE(CG)
-static PDFDocumentImage* pdfDocumentImageFromImageElement(HTMLImageElement& element)
-{
-    return dynamicDowncast<PDFDocumentImage>(imageFromImageElement(element));
-}
-#endif
-
 unsigned Internals::imageFrameIndex(HTMLImageElement& element)
 {
     auto* bitmapImage = bitmapImageFromImageElement(element);
@@ -1113,13 +1100,8 @@ unsigned Internals::imageDecodeCount(HTMLImageElement& element)
 
 unsigned Internals::imageCachedSubimageCreateCount(HTMLImageElement& element)
 {
-#if USE(CG)
-    if (auto* pdfDocumentImage = pdfDocumentImageFromImageElement(element))
-        return pdfDocumentImage->cachedSubimageCreateCountForTesting();
-#else
-    UNUSED_PARAM(element);
-#endif
-    return 0;
+    auto* image = imageFromImageElement(element);
+    return image ? image->cachedSubimageCreateCountForTesting() : 0;
 }
 
 unsigned Internals::remoteImagesCountForTesting() const
@@ -1987,12 +1969,7 @@ ExceptionOr<void> Internals::scrollBySimulatingWheelEvent(Element& element, doub
     ScrollableArea* scrollableArea;
 
     if (&element == document->scrollingElementForAPI()) {
-
-        auto* localFrame = dynamicDowncast<LocalFrame>(box.frame().mainFrame());
-        if (!localFrame)
-            return Exception { InvalidAccessError };
-
-        FrameView* frameView = localFrame->view();
+        FrameView* frameView = box.frame().mainFrame().view();
         if (!frameView || !frameView->isScrollable())
             return Exception { InvalidAccessError };
 
@@ -2236,24 +2213,6 @@ auto Internals::autoFillButtonType(const HTMLInputElement& element) -> AutoFillB
 auto Internals::lastAutoFillButtonType(const HTMLInputElement& element) -> AutoFillButtonType
 {
     return toInternalsAutoFillButtonType(element.lastAutoFillButtonType());
-}
-
-Vector<String> Internals::recentSearches(const HTMLInputElement& element)
-{
-    if (!element.isSearchField())
-        return { };
-
-    element.document().updateLayoutIgnorePendingStylesheets();
-    auto* renderer = element.renderer();
-    if (!is<RenderSearchField>(renderer))
-        return { };
-
-    Vector<String> result;
-    auto& searchField = downcast<RenderSearchField>(*renderer);
-    for (auto search : searchField.recentSearches())
-        result.append(search.string);
-
-    return result;
 }
 
 ExceptionOr<void> Internals::scrollElementToRect(Element& element, int x, int y, int w, int h)
@@ -2932,10 +2891,8 @@ bool Internals::isElementAlive(uint64_t elementIdentifier) const
 
 uint64_t Internals::frameIdentifier(const Document& document) const
 {
-    if (auto* page = document.page()) {
-        if (auto* localMainFrame = dynamicDowncast<LocalFrame>(page->mainFrame()))
-            return localMainFrame->loader().frameID().object().toUInt64();
-    }
+    if (auto* page = document.page())
+        return page->mainFrame().loader().frameID().object().toUInt64();
     return 0;
 }
 
@@ -2957,8 +2914,7 @@ String Internals::serviceWorkerClientInternalIdentifier(const Document& document
 RefPtr<WindowProxy> Internals::openDummyInspectorFrontend(const String& url)
 {
     auto* inspectedPage = contextDocument()->frame()->page();
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(inspectedPage->mainFrame());
-    auto* window = localMainFrame ? localMainFrame->document()->domWindow() : nullptr;
+    auto* window = inspectedPage->mainFrame().document()->domWindow();
     auto frontendWindowProxy = window->open(*window, *window, url, emptyAtom(), emptyString()).releaseReturnValue();
     m_inspectorFrontend = makeUnique<InspectorStubFrontend>(*inspectedPage, downcast<DOMWindow>(frontendWindowProxy->window()));
     return frontendWindowProxy;

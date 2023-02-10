@@ -51,13 +51,8 @@ void ScrollingTreeStickyNodeCocoa::commitStateBeforeChildren(const ScrollingStat
 {
     const ScrollingStateStickyNode& stickyStateNode = downcast<ScrollingStateStickyNode>(stateNode);
 
-    if (stickyStateNode.hasChangedProperty(ScrollingStateNode::Property::Layer)) {
+    if (stickyStateNode.hasChangedProperty(ScrollingStateNode::Property::Layer))
         m_layer = static_cast<CALayer*>(stickyStateNode.layer());
-#if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
-        m_interactionRegionsLayer = static_cast<CALayer*>(stickyStateNode.interactionRegionsLayer());
-#endif
-    }
-
 
     ScrollingTreeStickyNode::commitStateBeforeChildren(stateNode);
 }
@@ -77,9 +72,6 @@ void ScrollingTreeStickyNodeCocoa::applyLayerPositions()
 #endif
 
     [m_layer _web_setLayerTopLeftPosition:layerPosition - m_constraints.alignmentOffset()];
-#if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
-    [m_interactionRegionsLayer _web_setLayerTopLeftPosition:layerPosition - m_constraints.alignmentOffset()];
-#endif
 }
 
 FloatPoint ScrollingTreeStickyNodeCocoa::layerTopLeft() const

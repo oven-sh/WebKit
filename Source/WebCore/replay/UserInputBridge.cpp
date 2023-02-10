@@ -55,42 +55,27 @@ bool UserInputBridge::handleContextMenuEvent(const PlatformMouseEvent& mouseEven
 
 bool UserInputBridge::handleMousePressEvent(const PlatformMouseEvent& mouseEvent, InputSource)
 {
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
-    if (!localMainFrame)
-        return false;
-    return Ref(*localMainFrame)->eventHandler().handleMousePressEvent(mouseEvent);
+    return Ref(m_page.mainFrame())->eventHandler().handleMousePressEvent(mouseEvent);
 }
 
 bool UserInputBridge::handleMouseReleaseEvent(const PlatformMouseEvent& mouseEvent, InputSource)
 {
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
-    if (!localMainFrame)
-        return false;
-    return Ref(*localMainFrame)->eventHandler().handleMouseReleaseEvent(mouseEvent);
+    return Ref(m_page.mainFrame())->eventHandler().handleMouseReleaseEvent(mouseEvent);
 }
 
 bool UserInputBridge::handleMouseMoveEvent(const PlatformMouseEvent& mouseEvent, InputSource)
 {
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
-    if (!localMainFrame)
-        return false;
-    return Ref(*localMainFrame)->eventHandler().mouseMoved(mouseEvent);
+    return Ref(m_page.mainFrame())->eventHandler().mouseMoved(mouseEvent);
 }
 
 bool UserInputBridge::handleMouseMoveOnScrollbarEvent(const PlatformMouseEvent& mouseEvent, InputSource)
 {
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
-    if (!localMainFrame)
-        return false;
-    return Ref(*localMainFrame)->eventHandler().passMouseMovedEventToScrollbars(mouseEvent);
+    return Ref(m_page.mainFrame())->eventHandler().passMouseMovedEventToScrollbars(mouseEvent);
 }
 
 bool UserInputBridge::handleMouseForceEvent(const PlatformMouseEvent& mouseEvent, InputSource)
 {
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
-    if (!localMainFrame)
-        return false;
-    return Ref(*localMainFrame)->eventHandler().handleMouseForceEvent(mouseEvent);
+    return Ref(m_page.mainFrame())->eventHandler().handleMouseForceEvent(mouseEvent);
 }
 
 bool UserInputBridge::handleKeyEvent(const PlatformKeyboardEvent& keyEvent, InputSource)
@@ -105,10 +90,7 @@ bool UserInputBridge::handleAccessKeyEvent(const PlatformKeyboardEvent& keyEvent
 
 bool UserInputBridge::handleWheelEvent(const PlatformWheelEvent& wheelEvent, OptionSet<WheelEventProcessingSteps> processingSteps, InputSource)
 {
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
-    if (!localMainFrame)
-        return false;
-    return Ref(*localMainFrame)->eventHandler().handleWheelEvent(wheelEvent, processingSteps);
+    return Ref(m_page.mainFrame())->eventHandler().handleWheelEvent(wheelEvent, processingSteps);
 }
 
 void UserInputBridge::focusSetActive(bool active, InputSource)
@@ -136,10 +118,7 @@ void UserInputBridge::loadRequest(FrameLoadRequest&& request, InputSource)
 #if ENABLE(WEB_AUTHN)
     m_page.authenticatorCoordinator().resetUserGestureRequirement();
 #endif
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
-    if (!localMainFrame)
-        return;
-    Ref(*localMainFrame)->loader().load(WTFMove(request));
+    Ref(m_page.mainFrame())->loader().load(WTFMove(request));
 }
 
 void UserInputBridge::reloadFrame(Frame& frame, OptionSet<ReloadOption> options, InputSource)
@@ -157,10 +136,7 @@ void UserInputBridge::stopLoadingFrame(Frame& frame, InputSource)
 
 bool UserInputBridge::tryClosePage(InputSource)
 {
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page.mainFrame());
-    if (!localMainFrame)
-        return false;
-    return Ref(*localMainFrame)->loader().shouldClose();
+    return Ref(m_page.mainFrame())->loader().shouldClose();
 }
 
 } // namespace WebCore

@@ -44,7 +44,7 @@ WKFrameHandleRef WKFrameInfoCreateFrameHandleRef(WKFrameInfoRef frameInfo)
 WKSecurityOriginRef WKFrameInfoCopySecurityOrigin(WKFrameInfoRef frameInfo)
 {
     auto origin = WebKit::toImpl(frameInfo)->securityOrigin();
-    return WebKit::toAPI(&API::SecurityOrigin::create(origin).leakRef());
+    return WebKit::toAPI(&API::SecurityOrigin::create(origin.protocol, origin.host, origin.port).leakRef());
 }
 
 bool WKFrameInfoGetIsMainFrame(WKFrameInfoRef frameInfo)

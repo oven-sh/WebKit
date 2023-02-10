@@ -228,7 +228,6 @@ namespace JSC { namespace B3 {
     case VectorExtaddPairwise: \
     case VectorMulSat: \
     case VectorSwizzle: \
-    case VectorMulByElement: \
         return MACRO(SIMDValue); \
     default: \
         RELEASE_ASSERT_NOT_REACHED(); \

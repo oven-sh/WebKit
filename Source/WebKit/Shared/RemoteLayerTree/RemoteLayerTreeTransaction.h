@@ -25,18 +25,16 @@
 
 #pragma once
 
-#include "Connection.h"
 #include "DrawingAreaInfo.h"
 #include "EditorState.h"
+#include "GenericCallback.h"
 #include "PlatformCAAnimationRemote.h"
-#include "PlaybackSessionContextIdentifier.h"
 #include "RemoteLayerBackingStore.h"
 #include "TransactionID.h"
 #include <WebCore/Color.h>
 #include <WebCore/FilterOperations.h>
 #include <WebCore/FloatPoint3D.h>
 #include <WebCore/FloatSize.h>
-#include <WebCore/HTMLMediaElementIdentifier.h>
 #include <WebCore/LayoutMilestone.h>
 #include <WebCore/Model.h>
 #include <WebCore/PlatformCALayer.h>
@@ -119,9 +117,6 @@ public:
 
         WebCore::GraphicsLayer::PlatformLayerID layerID;
         WebCore::PlatformCALayer::LayerType type;
-        std::optional<PlaybackSessionContextIdentifier> playerIdentifier;
-        std::optional<WebCore::FloatSize> initialSize;
-        std::optional<WebCore::FloatSize> naturalSize;
 
         uint32_t hostingContextID;
         float hostingDeviceScaleFactor;
@@ -243,9 +238,9 @@ public:
     const LayerPropertiesMap& changedLayerProperties() const { return m_changedLayerProperties; }
     LayerPropertiesMap& changedLayerProperties() { return m_changedLayerProperties; }
 
-    void setRemoteContextHostedIdentifier(Markable<WebCore::LayerHostingContextIdentifier> identifier) { m_remoteContextHostedIdentifier = identifier; }
-    Markable<WebCore::LayerHostingContextIdentifier> remoteContextHostedIdentifier() const { return m_remoteContextHostedIdentifier; }
-    bool isMainFrameProcessTransaction() const { return !m_remoteContextHostedIdentifier; }
+    void setRemoteContextHostIdentifier(Markable<WebCore::LayerHostingContextIdentifier> identifier) { m_remoteContextHostIdentifier = identifier; }
+    Markable<WebCore::LayerHostingContextIdentifier> remoteContextHostIdentifier() const { return m_remoteContextHostIdentifier; }
+    bool isMainFrameProcessTransaction() const { return !m_remoteContextHostIdentifier; }
 
     WebCore::IntSize contentsSize() const { return m_contentsSize; }
     void setContentsSize(const WebCore::IntSize& size) { m_contentsSize = size; };
@@ -321,7 +316,7 @@ public:
     ActivityStateChangeID activityStateChangeID() const { return m_activityStateChangeID; }
     void setActivityStateChangeID(ActivityStateChangeID activityStateChangeID) { m_activityStateChangeID = activityStateChangeID; }
 
-    using TransactionCallbackID = IPC::AsyncReplyID;
+    typedef CallbackID TransactionCallbackID;
     const Vector<TransactionCallbackID>& callbackIDs() const { return m_callbackIDs; }
     void setCallbackIDs(Vector<TransactionCallbackID>&& callbackIDs) { m_callbackIDs = WTFMove(callbackIDs); }
 
@@ -342,7 +337,7 @@ private:
     HashSet<RefPtr<PlatformCALayerRemote>> m_changedLayers; // Only used in the Web process.
     LayerPropertiesMap m_changedLayerProperties; // Only used in the UI process.
 
-    Markable<WebCore::LayerHostingContextIdentifier> m_remoteContextHostedIdentifier;
+    Markable<WebCore::LayerHostingContextIdentifier> m_remoteContextHostIdentifier;
 
     Vector<LayerCreationProperties> m_createdLayers;
     Vector<WebCore::GraphicsLayer::PlatformLayerID> m_destroyedLayerIDs;

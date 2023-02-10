@@ -281,9 +281,7 @@ CacheControlDirectives parseCacheControlDirectives(const HTTPHeaderMap& headers)
 
     String cacheControlValue = headers.get(HTTPHeaderName::CacheControl);
     if (!cacheControlValue.isEmpty()) {
-        auto safeHeaderString = cacheControlValue.removeCharacters([](auto character) {
-            return isControlCharacterOrSpace(character);
-        });
+        auto safeHeaderString = cacheControlValue.removeCharacters(isControlCharacterOrSpace);
         auto directives = parseCacheHeader(safeHeaderString);
 
         size_t directivesSize = directives.size();

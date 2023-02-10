@@ -223,23 +223,15 @@ static void simpleSignalHandler(int sig)
 
 static void lockDownDiscreteGraphics(void)
 {
-    mach_port_t mainPort;
-
-#if HAVE(IOKIT_MAIN_PORT)
-    if (IOMainPort(bootstrap_port, &mainPort) != KERN_SUCCESS)
+    mach_port_t masterPort;
+    kern_return_t kernResult = IOMasterPort(bootstrap_port, &masterPort);
+    if (kernResult != KERN_SUCCESS)
         return;
-#else
-    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-    if (IOMasterPort(bootstrap_port, &mainPort) != KERN_SUCCESS)
-        return;
-    ALLOW_DEPRECATED_DECLARATIONS_END
-#endif
-
     CFDictionaryRef classToMatch = IOServiceMatching("AppleGraphicsControl");
     if (!classToMatch)
         return;
 
-    io_service_t serviceObject = IOServiceGetMatchingService(mainPort, classToMatch);
+    io_service_t serviceObject = IOServiceGetMatchingService(masterPort, classToMatch);
     if (!serviceObject) {
         // The machine does not allow control over the choice of graphics device.
         return;
@@ -250,7 +242,7 @@ static void lockDownDiscreteGraphics(void)
     static io_connect_t permanentLockDownService = 0;
 
     // This call stalls until the graphics device lock is granted.
-    kern_return_t kernResult = IOServiceOpen(serviceObject, mach_task_self(), 1, &permanentLockDownService);
+    kernResult = IOServiceOpen(serviceObject, mach_task_self(), 1, &permanentLockDownService);
     if (kernResult != KERN_SUCCESS) {
         NSLog(@"IOServiceOpen() failed in %s with kernResult = %d", __FUNCTION__, kernResult);
         return;

@@ -39,13 +39,13 @@
 
 #if defined(__APPLE__) && !PLATFORM(GTK)
 #ifdef __OBJC__
-@class WKWebView;
+@class WKView;
 @class NSWindow;
 #else
-class WKWebView;
+class WKView;
 class NSWindow;
 #endif
-typedef WKWebView *PlatformWKView;
+typedef WKView *PlatformWKView;
 typedef NSWindow *PlatformWindow;
 #elif PLATFORM(GTK)
 typedef WKViewRef PlatformWKView;

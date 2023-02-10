@@ -44,11 +44,13 @@ using namespace WebCore;
 
 TiledCoreAnimationDrawingAreaProxy::TiledCoreAnimationDrawingAreaProxy(WebPageProxy& webPageProxy)
     : DrawingAreaProxy(DrawingAreaType::TiledCoreAnimation, webPageProxy)
+    , m_isWaitingForDidUpdateGeometry(false)
 {
 }
 
 TiledCoreAnimationDrawingAreaProxy::~TiledCoreAnimationDrawingAreaProxy()
 {
+    m_callbacks.invalidate(CallbackBase::Error::OwnerWasInvalidated);
 }
 
 void TiledCoreAnimationDrawingAreaProxy::deviceScaleFactorDidChange()
@@ -188,11 +190,7 @@ void TiledCoreAnimationDrawingAreaProxy::sendUpdateGeometry()
     ASSERT(!m_isWaitingForDidUpdateGeometry);
 
     willSendUpdateGeometry();
-    m_webPageProxy.sendWithAsyncReply(Messages::DrawingArea::UpdateGeometry(m_size, true /* flushSynchronously */, createFence()), [weakThis = WeakPtr { *this }] {
-        if (!weakThis)
-            return;
-        weakThis->didUpdateGeometry();
-    }, m_identifier);
+    m_webPageProxy.send(Messages::DrawingArea::UpdateGeometry(m_size, true /* flushSynchronously */, createFence()), m_identifier);
 }
 
 void TiledCoreAnimationDrawingAreaProxy::adjustTransientZoom(double scale, FloatPoint origin)
@@ -205,21 +203,21 @@ void TiledCoreAnimationDrawingAreaProxy::commitTransientZoom(double scale, Float
     m_webPageProxy.send(Messages::DrawingArea::CommitTransientZoom(scale, origin), m_identifier);
 }
 
-void TiledCoreAnimationDrawingAreaProxy::dispatchAfterEnsuringDrawing(CompletionHandler<void()>&& callback)
+void TiledCoreAnimationDrawingAreaProxy::dispatchAfterEnsuringDrawing(WTF::Function<void (CallbackBase::Error)>&& callback)
 {
     if (!m_webPageProxy.hasRunningProcess()) {
-        callback();
+        callback(CallbackBase::Error::OwnerWasInvalidated);
         return;
     }
 
-    m_webPageProxy.sendWithAsyncReply(Messages::DrawingArea::DispatchAfterEnsuringDrawing(), WTFMove(callback), m_identifier.toUInt64());
+    m_webPageProxy.send(Messages::DrawingArea::AddTransactionCallbackID(m_callbacks.put(WTFMove(callback), nullptr)), m_identifier);
 }
 
-void TiledCoreAnimationDrawingAreaProxy::dispatchPresentationCallbacksAfterFlushingLayers(IPC::Connection& connection, Vector<IPC::AsyncReplyID>&& callbackIDs)
+void TiledCoreAnimationDrawingAreaProxy::dispatchPresentationCallbacksAfterFlushingLayers(const Vector<CallbackID>& callbackIDs)
 {
     for (auto& callbackID : callbackIDs) {
-        if (auto callback = connection.takeAsyncReplyHandler(callbackID))
-            callback(nullptr);
+        if (auto callback = m_callbacks.take<VoidCallback>(callbackID))
+            callback->performCallback();
     }
 }
 

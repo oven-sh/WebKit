@@ -57,11 +57,6 @@ PlatformGraphicsContext* BifurcatedGraphicsContext::platformContext() const
     return m_primaryContext.platformContext();
 }
 
-const DestinationColorSpace& BifurcatedGraphicsContext::colorSpace() const
-{
-    return m_primaryContext.colorSpace();
-}
-
 void BifurcatedGraphicsContext::save()
 {
     // FIXME: Consider not using the BifurcatedGraphicsContext's state stack at all,
@@ -340,10 +335,10 @@ void BifurcatedGraphicsContext::setMiterLimit(float miterLimit)
     VERIFY_STATE_SYNCHRONIZATION();
 }
 
-void BifurcatedGraphicsContext::drawNativeImageInternal(NativeImage& nativeImage, const FloatSize& selfSize, const FloatRect& destRect, const FloatRect& srcRect, const ImagePaintingOptions& options)
+void BifurcatedGraphicsContext::drawNativeImage(NativeImage& nativeImage, const FloatSize& selfSize, const FloatRect& destRect, const FloatRect& srcRect, const ImagePaintingOptions& options)
 {
-    m_primaryContext.drawNativeImageInternal(nativeImage, selfSize, destRect, srcRect, options);
-    m_secondaryContext.drawNativeImageInternal(nativeImage, selfSize, destRect, srcRect, options);
+    m_primaryContext.drawNativeImage(nativeImage, selfSize, destRect, srcRect, options);
+    m_secondaryContext.drawNativeImage(nativeImage, selfSize, destRect, srcRect, options);
 
     VERIFY_STATE_SYNCHRONIZATION();
 }

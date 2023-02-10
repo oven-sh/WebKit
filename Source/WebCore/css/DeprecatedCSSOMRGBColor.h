@@ -43,7 +43,7 @@ public:
 private:
     template<typename NumberType> static Ref<DeprecatedCSSOMPrimitiveValue> createWrapper(CSSStyleDeclaration& owner, NumberType number)
     {
-        return DeprecatedCSSOMPrimitiveValue::create(CSSPrimitiveValue::create(number), owner);
+        return CSSPrimitiveValue::create(number, CSSUnitType::CSS_NUMBER)->createDeprecatedCSSOMPrimitiveWrapper(owner);
     }
 
     DeprecatedCSSOMRGBColor(CSSStyleDeclaration& owner, const Color& color)

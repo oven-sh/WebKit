@@ -28,6 +28,7 @@
 #include "MediaQueryEvaluator.h"
 #include "RenderStyle.h"
 #include "RuleSet.h"
+#include "StyleBuilderState.h"
 #include "StyleScopeRuleSets.h"
 #include <memory>
 #include <wtf/HashMap.h>

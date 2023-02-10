@@ -29,10 +29,23 @@
 
 namespace WebKit {
 
-enum class WebsiteMetaViewportPolicy : uint8_t {
+enum class WebsiteMetaViewportPolicy {
     Default,
     Respect,
     Ignore,
 };
 
 }
+
+namespace WTF {
+
+template<> struct EnumTraits<WebKit::WebsiteMetaViewportPolicy> {
+    using values = EnumValues<
+        WebKit::WebsiteMetaViewportPolicy,
+        WebKit::WebsiteMetaViewportPolicy::Default,
+        WebKit::WebsiteMetaViewportPolicy::Respect,
+        WebKit::WebsiteMetaViewportPolicy::Ignore
+    >;
+};
+
+} // namespace WTF

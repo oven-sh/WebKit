@@ -1089,8 +1089,6 @@ http/tests/cookies/same-site/fetch-in-same-origin-service-worker.html [ Skip ]
 http/wpt/cache-storage [ Skip ]
 http/wpt/push-api [ Skip ]
 http/wpt/service-workers [ Skip ]
-http/wpt/background-fetch [ Skip ]
-imported/w3c/web-platform-tests/background-fetch [ Skip ]
 imported/w3c/web-platform-tests/content-security-policy/inside-worker/serviceworker-report-only.https.sub.html [ Skip ]
 imported/w3c/web-platform-tests/content-security-policy/sandbox/service-worker-sandbox.https.html [ Skip ]
 imported/w3c/web-platform-tests/content-security-policy/securitypolicyviolation/inside-service-worker.https.html [ Skip ]
@@ -1456,7 +1454,6 @@ accessibility/parent-delete.html [ Failure ]
 # Skip because the embedded plugin never resolves in WK1, resulting in a timeout.
 accessibility/mac/basic-embed-pdf-accessibility.html [ Skip ]
 accessibility/mac/iframe-pdf.html [ Skip ]
-accessibility/mac/scrolling-in-pdf-crash.html [ Skip ]
 
 # rdar://problem/26478296
 svg/hixie/text/003.html [ Failure ]
@@ -1841,12 +1838,6 @@ webkit.org/b/208022 http/tests/history/back-to-post.py [ Pass Failure ]
 
 # prefetch not supported in WK1
 http/wpt/prefetch [ Skip ]
-imported/w3c/web-platform-tests/preload/prefetch-accept.html [ Skip ]
-imported/w3c/web-platform-tests/preload/prefetch-cache.html [ Skip ]
-imported/w3c/web-platform-tests/preload/prefetch-document.html [ Skip ]
-imported/w3c/web-platform-tests/preload/prefetch-headers.html [ Skip ]
-imported/w3c/web-platform-tests/preload/prefetch-types.html [ Skip ]
-imported/w3c/web-platform-tests/preload/preload-in-data-doc.html [ Skip ]
 
 webkit.org/b/208384 imported/w3c/web-platform-tests/requestidlecallback/callback-timeout-when-busy.html [ Pass Failure ]
 
@@ -2082,6 +2073,7 @@ webkit.org/b/223944 [ BigSur Debug ] imported/w3c/web-platform-tests/xhr/event-u
 
 # webkit.org/b/224066 Updating test expectations for 10 tests
 [ BigSur ] webanimations/accelerated-animation-easing-and-direction-update.html [ Pass ImageOnlyFailure ]
+[ BigSur ] webanimations/accelerated-animation-slot-invalidation.html [ Pass ImageOnlyFailure ]
 [ BigSur ] webanimations/accelerated-animation-with-easing.html [ Pass ImageOnlyFailure ]
 [ BigSur ] webanimations/accelerated-overlapping-transform-animations.html [ Pass ImageOnlyFailure ]
 [ BigSur ] webanimations/accelerated-transform-related-animation-property-order.html [ Pass ImageOnlyFailure ]
@@ -2105,7 +2097,10 @@ webkit.org/b/223944 [ BigSur Debug ] imported/w3c/web-platform-tests/xhr/event-u
 # rdar://80332615 ([Monterey Wk1 Debug] compositing/clipping/border-radius-on-webgl.html is a constant failure)
 [ Monterey Debug ] compositing/clipping/border-radius-on-webgl.html [ Pass ImageOnlyFailure ]
 
-# rdar://80343068 ([ Monterey wk1 arm64] webanimations/accelerated-translate-animation-additional-animation-added-in-flight.html is a flaky image only failure)
+# rdar://80346720 ([Monterey Wk1] media/media-source/media-webm-opus-partial.html is a consistent failure)
+[ Monterey ] media/media-source/media-webm-opus-partial.html [ Failure ]
+
+#nrdar://80343068 ([ Monterey wk1 arm64] webanimations/accelerated-translate-animation-additional-animation-added-in-flight.html is a flaky image only failure)
 [ Monterey arm64 ] webanimations/accelerated-translate-animation-additional-animation-added-in-flight.html [ Pass ImageOnlyFailure ]
 
 # rdar://80342885 ([ Monterey wk1 arm64 ] webanimations/accelerated-transition-by-removing-property.html is a flaky image only failure)
@@ -2310,6 +2305,13 @@ webkit.org/b/241376 imported/w3c/web-platform-tests/css/css-sizing/aspect-ratio/
 
 webkit.org/b/242546 media/video-canvas-createPattern.html [ Pass Failure ]
 
+webkit.org/b/242692 [ Debug ] fast/text/glyph-display-lists/glyph-display-list-shadow-unshared.html [ Pass Failure ]
+webkit.org/b/242692 [ Debug ] fast/text/glyph-display-lists/glyph-display-list-gpu-process-crash.html [ Pass Timeout ]
+webkit.org/b/242692 [ Debug ] fast/text/glyph-display-lists/glyph-display-list-scaled-unshared.html [ Pass Failure ]
+webkit.org/b/242692 [ Debug ] fast/text/glyph-display-lists/glyph-display-list-colr-unshared.html [ Pass Failure ]
+webkit.org/b/242692 [ Debug ] fast/text/glyph-display-lists/glyph-display-list-svg-unshared.html [ Pass Failure ]
+webkit.org/b/242692 [ Debug ] fast/text/glyph-display-lists/glyph-display-list-color.html [ Pass Failure ]
+
 webkit.org/b/243494 [ Debug ] compositing/layer-creation/scale-rotation-animation-overlap.html [ Pass Timeout ]
 
 # Skip Compression Stream Tests on WK1
@@ -2396,13 +2398,6 @@ webkit.org/b/245102 imported/w3c/web-platform-tests/html/browsers/windows/auxili
 webkit.org/b/245902 [ Debug ] contentfiltering/allow-media-document.html [ Skip ]
 
 webkit.org/b/246653 [ Debug ] media/modern-media-controls/media-documents/click-on-video-should-not-pause.html [ Skip ]
-
-# webkit.org/b/252582 5 x editing/mac/attributed-string tests are constant failures
-editing/mac/attributed-string/attributed-string-across-shadow-boundaries-1.html [ Failure ]
-editing/mac/attributed-string/attributed-string-across-shadow-boundaries-2.html [ Failure ]
-editing/mac/attributed-string/attributed-string-across-shadow-boundaries-3.html [ Failure ]
-editing/mac/attributed-string/attributed-string-across-shadow-boundaries-4.html [ Failure ]
-editing/mac/attributed-string/attributed-string-across-shadow-boundaries-5.html [ Failure ]
 
 # CONSOLE MESSAGE output is nondeterministic and varies from run-to-run
 http/tests/security/basic-auth-subresource.html [ Failure Pass ]

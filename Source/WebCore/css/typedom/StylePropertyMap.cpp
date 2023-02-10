@@ -50,15 +50,12 @@ static RefPtr<CSSValue> cssValueFromStyleValues(std::optional<CSSPropertyID> pro
     };
     if (values.size() == 1)
         return toCSSValue(values[0]);
-    CSSValueListBuilder list;
+    auto list = propertyID ? CSSProperty::createListForProperty(*propertyID) : CSSValueList::createCommaSeparated();
     for (auto&& value : WTFMove(values)) {
         if (auto cssValue = toCSSValue(value))
-            list.append(cssValue.releaseNonNull());
+            list->append(cssValue.releaseNonNull());
     }
-    auto separator = ',';
-    if (propertyID)
-        separator = CSSProperty::listValuedPropertySeparator(*propertyID);
-    return CSSValueList::create(separator, WTFMove(list));
+    return list;
 }
 
 // https://drafts.css-houdini.org/css-typed-om/#dom-stylepropertymap-set
@@ -144,12 +141,14 @@ ExceptionOr<void> StylePropertyMap::append(Document& document, const AtomString&
     if (!CSSProperty::isListValuedProperty(propertyID))
         return Exception { TypeError, makeString(property, " does not support multiple values"_s) };
 
+    RefPtr<CSSValueList> list;
     auto currentValue = propertyValue(propertyID);
-    CSSValueListBuilder list;
-    if (auto* currentList = dynamicDowncast<CSSValueList>(currentValue.get()))
-        list = currentList->copyValues();
-    else if (currentValue)
-        list.append(currentValue.releaseNonNull());
+    if (!currentValue || !is<CSSValueList>(*currentValue)) {
+        list = CSSProperty::createListForProperty(propertyID);
+        if (currentValue)
+            list->append(currentValue.releaseNonNull());
+    } else
+        list = &downcast<CSSValueList>(*currentValue);
 
     auto styleValuesOrException = CSSStyleValueFactory::vectorFromStyleValuesOrStrings(property, WTFMove(values));
     if (styleValuesOrException.hasException())
@@ -160,10 +159,10 @@ ExceptionOr<void> StylePropertyMap::append(Document& document, const AtomString&
         if (is<CSSUnparsedValue>(styleValue.get()))
             return Exception { TypeError, "Values cannot contain a CSSVariableReferenceValue or a CSSUnparsedValue"_s };
         if (auto cssValue = styleValue->toCSSValue())
-            list.append(cssValue.releaseNonNull());
+            list->append(cssValue.releaseNonNull());
     }
 
-    if (!setProperty(propertyID, CSSValueList::create(CSSProperty::listValuedPropertySeparator(propertyID), WTFMove(list))))
+    if (!setProperty(propertyID, list.releaseNonNull()))
         return Exception { TypeError, "Invalid values"_s };
 
     return { };

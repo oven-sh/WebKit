@@ -29,13 +29,10 @@
 
 namespace WebCore {
 
-class IntSize;
-
 class RemoteFrameClient {
     WTF_MAKE_FAST_ALLOCATED;
 public:
     virtual void frameDetached() = 0;
-    virtual void sizeDidChange(IntSize) = 0;
     virtual ~RemoteFrameClient() { }
 };
 

@@ -39,7 +39,7 @@ class ShareableElementData;
 class DocumentSharedObjectPool {
     WTF_MAKE_FAST_ALLOCATED;
 public:
-    Ref<ShareableElementData> cachedShareableElementDataWithAttributes(Span<const Attribute>);
+    Ref<ShareableElementData> cachedShareableElementDataWithAttributes(const Vector<Attribute>&);
 
 private:
     typedef HashMap<unsigned, RefPtr<ShareableElementData>, AlreadyHashed> ShareableElementDataCache;

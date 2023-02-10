@@ -237,6 +237,7 @@ public:
 #endif
 
 #if PLATFORM(IOS_FAMILY)
+    void elementsForRange(unsigned location, unsigned length, Vector<AccessibilityUIElement>& elements);
     JSRetainPtr<JSStringRef> stringForSelection();
     void increaseTextSelection();
     void decreaseTextSelection();

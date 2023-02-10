@@ -28,7 +28,7 @@ angle::Result Resource::waitForIdle(ContextVk *contextVk,
 
     RendererVk *renderer = contextVk->getRenderer();
     // Make sure the driver is done with the resource.
-    if (!renderer->hasResourceUseFinished(mUse))
+    if (renderer->hasUnfinishedUse(mUse))
     {
         if (debugMessage)
         {
@@ -37,25 +37,9 @@ angle::Result Resource::waitForIdle(ContextVk *contextVk,
         ANGLE_TRY(renderer->finishResourceUse(contextVk, mUse));
     }
 
-    ASSERT(renderer->hasResourceUseFinished(mUse));
+    ASSERT(!renderer->hasUnfinishedUse(mUse));
 
     return angle::Result::Continue;
-}
-
-std::ostream &operator<<(std::ostream &os, const ResourceUse &use)
-{
-    const Serials &serials = use.getSerials();
-    os << '{';
-    for (size_t i = 0; i < serials.size(); i++)
-    {
-        os << serials[i].getValue();
-        if (i < serials.size() - 1)
-        {
-            os << ",";
-        }
-    }
-    os << '}';
-    return os;
 }
 
 // SharedGarbage implementation.
@@ -81,20 +65,22 @@ SharedGarbage &SharedGarbage::operator=(SharedGarbage &&rhs)
 
 bool SharedGarbage::destroyIfComplete(RendererVk *renderer)
 {
-    if (renderer->hasResourceUseFinished(mLifetime))
+    if (renderer->hasUnfinishedUse(mLifetime))
     {
-        for (GarbageObject &object : mGarbage)
-        {
-            object.destroy(renderer);
-        }
-        return true;
+        return false;
     }
-    return false;
+
+    for (GarbageObject &object : mGarbage)
+    {
+        object.destroy(renderer);
+    }
+
+    return true;
 }
 
-bool SharedGarbage::hasResourceUseSubmitted(RendererVk *renderer) const
+bool SharedGarbage::hasUnsubmittedUse(RendererVk *renderer) const
 {
-    return renderer->hasResourceUseSubmitted(mLifetime);
+    return renderer->hasUnsubmittedUse(mLifetime);
 }
 }  // namespace vk
 }  // namespace rx

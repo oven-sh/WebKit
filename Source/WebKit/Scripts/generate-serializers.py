@@ -40,6 +40,7 @@ import sys
 #
 # BitField - work around the need for http://wg21.link/P0572 and don't check that the serialization order matches the memory layout.
 # Nullable - check if the member is truthy before serializing.
+# ReturnEarlyIfTrue - if this member is truthy then don't serialize the other members.
 
 class SerializedType(object):
     def __init__(self, struct_or_class, namespace, name, parent_class_name, members, condition, attributes, other_metadata=None):
@@ -364,6 +365,9 @@ def encode_type(type):
             result.append('    }')
         else:
             result.append('    encoder << instance.' + member.name + ('()' if type.serialize_with_function_calls else '') + ';')
+            if 'ReturnEarlyIfTrue' in member.attributes:
+                result.append('    if (instance.' + member.name + ')')
+                result.append('        return;')
         if member.condition is not None:
             result.append('#endif')
 
@@ -394,6 +398,9 @@ def decode_type(type):
             result.append('    auto ' + sanitized_variable_name + ' = IPC::decode<' + match.groups()[0] + '>(decoder, @[ ' + decodable_classes[0] + ' ]);')
             result.append('    if (!' + sanitized_variable_name + ')')
             result.append('        return std::nullopt;')
+            if 'ReturnEarlyIfTrue' in member.attributes:
+                result.append('    if (*' + sanitized_variable_name + ')')
+                result.append('        return { ' + type.namespace_and_name() + ' { } };')
         elif member.is_subclass:
             result.append('    if (type == ' + type.subclass_enum_name() + "::" + member.name + ') {')
             typename = member.namespace + "::" + member.name
@@ -425,6 +432,9 @@ def decode_type(type):
                 if 'Nullable' in member.attributes:
                     result.append('    } else')
                     result.append('        ' + sanitized_variable_name + ' = std::optional<' + member.type + '> { ' + member.type + ' { } };')
+                elif 'ReturnEarlyIfTrue' in member.attributes:
+                    result.append('    if (*' + sanitized_variable_name + ')')
+                    result.append('        return { ' + type.namespace_and_name() + ' { } };')
             elif 'Nullable' in member.attributes:
                 result.append('    auto has' + sanitized_variable_name + ' = decoder.decode<bool>();')
                 result.append('    if (!has' + sanitized_variable_name + ')')
@@ -442,6 +452,9 @@ def decode_type(type):
                 result.append('    auto ' + sanitized_variable_name + ' = decoder.decode<' + member.type + '>();')
                 result.append('    if (!' + sanitized_variable_name + ')')
                 result.append('        return std::nullopt;')
+                if 'ReturnEarlyIfTrue' in member.attributes:
+                    result.append('    if (*' + sanitized_variable_name + ')')
+                    result.append('        return { ' + type.namespace_and_name() + ' { } };')
         for attribute in member.attributes:
             match = re.search(r'Validator=\'(.*)\'', attribute)
             if match:
@@ -524,7 +537,7 @@ def generate_impl(serialized_types, serialized_enums, headers):
             result.append('#if ' + type.condition)
 
         if type.members_are_subclasses:
-            result.append('enum class ' + type.subclass_enum_name() + " : IPC::EncodedVariantIndex {")
+            result.append('enum class ' + type.subclass_enum_name() + " : uint8_t {")
             for idx in range(0, len(type.members)):
                 member = type.members[idx]
                 if idx == len(type.members) - 1:
@@ -578,7 +591,7 @@ def generate_impl(serialized_types, serialized_enums, headers):
         result.append('')
         if type.condition is not None:
             result.append('#if ' + type.condition)
-        result.append('template<> bool ' + type.function_name_for_enum() + '<IPC::' + type.subclass_enum_name() + ', void>(IPC::EncodedVariantIndex value)')
+        result.append('template<> bool ' + type.function_name_for_enum() + '<IPC::' + type.subclass_enum_name() + ', void>(uint8_t value)')
         result.append('{')
         result.append('    switch (static_cast<IPC::' + type.subclass_enum_name() + '>(value)) {')
         for member in type.members:
@@ -659,18 +672,13 @@ def generate_serialized_type_info(serialized_types, serialized_enums, headers, t
     result.append('{')
     result.append('    return {')
     for type in serialized_types:
-        result.append('        { "' + type.namespace_unless_wtf_and_name() + '"_s, {')
         if type.members_are_subclasses:
-            result.append('            { "std::variant<' + ', '.join([member.namespace + '::' + member.name for member in type.members]) + '>"_s, "subclasses"_s }')
-            result.append('        } },')
             continue
+        result.append('        { "' + type.namespace_unless_wtf_and_name() + '"_s, {')
         for i in range(len(type.members)):
             if i == 0:
                 result.append('            {')
-            if 'Nullable' in type.members[i].attributes:
-                result.append('                "std::optional<' + type.members[i].type + '>"_s,')
-            else:
-                result.append('                "' + type.members[i].type + '"_s,')
+            result.append('                "' + type.members[i].type + '"_s,')
             result.append('                "' + type.members[i].name + '"_s')
             if i == len(type.members) - 1:
                 result.append('            }')

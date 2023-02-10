@@ -37,7 +37,7 @@ namespace WebCore {
 enum class PermissionQuerySource : uint8_t;
 enum class PermissionState : uint8_t;
 class Page;
-class SecurityOriginData;
+struct SecurityOriginData;
 }
 
 namespace WebKit {

@@ -87,7 +87,7 @@ std::optional<FilterOperations> createFilterOperations(const Document& document,
 
     for (auto& currentValue : downcast<CSSValueList>(inValue)) {
         if (is<CSSPrimitiveValue>(currentValue)) {
-            auto& primitiveValue = downcast<CSSPrimitiveValue>(currentValue);
+            auto& primitiveValue = downcast<CSSPrimitiveValue>(currentValue.get());
             if (!primitiveValue.isURI())
                 continue;
 
@@ -100,7 +100,7 @@ std::optional<FilterOperations> createFilterOperations(const Document& document,
         if (!is<CSSFunctionValue>(currentValue))
             continue;
 
-        auto& filterValue = downcast<CSSFunctionValue>(currentValue);
+        auto& filterValue = downcast<CSSFunctionValue>(currentValue.get());
         auto operationType = filterOperationForType(filterValue.name());
 
         // Check that all parameters are primitive values, with the

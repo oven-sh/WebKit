@@ -38,7 +38,6 @@ struct SupportedLimits {
     uint32_t maxTextureDimension3D { 0 };
     uint32_t maxTextureArrayLayers { 0 };
     uint32_t maxBindGroups { 0 };
-    uint32_t maxBindingsPerBindGroup { 0 };
     uint32_t maxDynamicUniformBuffersPerPipelineLayout { 0 };
     uint32_t maxDynamicStorageBuffersPerPipelineLayout { 0 };
     uint32_t maxSampledTexturesPerShaderStage { 0 };
@@ -51,13 +50,9 @@ struct SupportedLimits {
     uint32_t minUniformBufferOffsetAlignment { 0 };
     uint32_t minStorageBufferOffsetAlignment { 0 };
     uint32_t maxVertexBuffers { 0 };
-    uint64_t maxBufferSize { 0 };
     uint32_t maxVertexAttributes { 0 };
     uint32_t maxVertexBufferArrayStride { 0 };
     uint32_t maxInterStageShaderComponents { 0 };
-    uint32_t maxInterStageShaderVariables { 0 };
-    uint32_t maxColorAttachments { 0 };
-    uint32_t maxColorAttachmentBytesPerSample { 0 };
     uint32_t maxComputeWorkgroupStorageSize { 0 };
     uint32_t maxComputeInvocationsPerWorkgroup { 0 };
     uint32_t maxComputeWorkgroupSizeX { 0 };

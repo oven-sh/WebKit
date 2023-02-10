@@ -26,7 +26,6 @@
 #include "config.h"
 #include "GPUAdapter.h"
 
-#include "Exception.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSGPUDevice.h"
 
@@ -62,11 +61,8 @@ static PAL::WebGPU::DeviceDescriptor convertToBacking(const std::optional<GPUDev
 
 void GPUAdapter::requestDevice(ScriptExecutionContext&, const std::optional<GPUDeviceDescriptor>& deviceDescriptor, RequestDevicePromise&& promise)
 {
-    m_backing->requestDevice(convertToBacking(deviceDescriptor), [promise = WTFMove(promise)] (RefPtr<PAL::WebGPU::Device>&& device) mutable {
-        if (!device.get())
-            promise.reject(Exception(OperationError));
-        else
-            promise.resolve(GPUDevice::create(nullptr, device.releaseNonNull()));
+    m_backing->requestDevice(convertToBacking(deviceDescriptor), [promise = WTFMove(promise)] (Ref<PAL::WebGPU::Device>&& device) mutable {
+        promise.resolve(GPUDevice::create(nullptr, WTFMove(device)));
     });
 }
 

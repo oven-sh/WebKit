@@ -701,10 +701,7 @@ void distanceDataForNode(FocusDirection direction, const FocusCandidate& current
 
     float distance = euclidianDistance + sameAxisDistance + 2 * otherAxisDistance;
     candidate.distance = roundf(distance);
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(candidate.visibleNode->document().page()->mainFrame());
-    if (!localMainFrame)
-        return;
-    LayoutSize viewSize = localMainFrame->view()->visibleContentRect().size();
+    LayoutSize viewSize = candidate.visibleNode->document().page()->mainFrame().view()->visibleContentRect().size();
     candidate.alignment = alignmentForRects(direction, currentRect, nodeRect, viewSize);
 }
 

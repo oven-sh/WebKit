@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2007-2021 Apple Inc. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -29,7 +29,6 @@
 #include "FontPlatformData.h"
 #include "SharedBuffer.h"
 #include "StyleFontSizeFunctions.h"
-#include "UnrealizedCoreTextFont.h"
 #include <CoreFoundation/CoreFoundation.h>
 #include <CoreGraphics/CoreGraphics.h>
 #include <CoreText/CoreText.h>
@@ -41,17 +40,17 @@ FontCustomPlatformData::~FontCustomPlatformData() = default;
 
 FontPlatformData FontCustomPlatformData::fontPlatformData(const FontDescription& fontDescription, bool bold, bool italic, const FontCreationContext& fontCreationContext)
 {
-    UnrealizedCoreTextFont unrealizedFont = { RetainPtr { fontDescriptor } };
-    unrealizedFont.setSize(fontDescription.computedPixelSize());
-    unrealizedFont.modify([&](CFMutableDictionaryRef attributes) {
-        addAttributesForWebFonts(attributes, fontDescription.shouldAllowUserInstalledFonts());
-    });
+    auto attributes = adoptCF(CFDictionaryCreateMutable(kCFAllocatorDefault, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
+    addAttributesForWebFonts(attributes.get(), fontDescription.shouldAllowUserInstalledFonts());
+    auto modifiedFontDescriptor = adoptCF(CTFontDescriptorCreateCopyWithAttributes(fontDescriptor.get(), attributes.get()));
+    ASSERT(modifiedFontDescriptor);
 
     int size = fontDescription.computedPixelSize();
     FontOrientation orientation = fontDescription.orientation();
     FontWidthVariant widthVariant = fontDescription.widthVariant();
 
-    auto font = preparePlatformFont(WTFMove(unrealizedFont), fontDescription, fontCreationContext);
+    auto font = adoptCF(CTFontCreateWithFontDescriptor(modifiedFontDescriptor.get(), size, nullptr));
+    font = preparePlatformFont(font.get(), fontDescription, fontCreationContext);
     ASSERT(font);
     FontPlatformData platformData(font.get(), size, bold, italic, orientation, widthVariant, fontDescription.textRenderingMode(), &creationData);
 

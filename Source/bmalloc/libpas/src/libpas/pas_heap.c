@@ -38,7 +38,6 @@
 #include "pas_log.h"
 #include "pas_monotonic_time.h"
 #include "pas_primitive_heap_ref.h"
-#include "pas_probabilistic_guard_malloc_allocator.h"
 #include "pas_segregated_size_directory.h"
 
 pas_heap* pas_heap_create(pas_heap_ref* heap_ref,
@@ -69,10 +68,6 @@ pas_heap* pas_heap_create(pas_heap_ref* heap_ref,
     heap->heap_ref = heap_ref;
     heap->heap_ref_kind = heap_ref_kind;
     heap->config_kind = config->kind;
-
-    // PGM being enabled in the config does not guarantee it will be called during runtime.
-    if (config->pgm_enabled)
-        pas_probabilistic_guard_malloc_initialize_pgm();
     
     pas_all_heaps_add_heap(heap);
     

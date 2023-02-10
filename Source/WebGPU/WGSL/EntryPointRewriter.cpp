@@ -66,6 +66,7 @@ private:
     ShaderModule& m_shaderModule;
     AST::Function& m_function;
 
+    const SourceSpan m_emptySourceSpan;
     Vector<MemberOrParameter> m_builtins;
     Vector<MemberOrParameter> m_parameters;
     AST::Statement::List m_materializations;
@@ -78,6 +79,7 @@ EntryPointRewriter::EntryPointRewriter(ShaderModule& shaderModule, AST::Function
     : m_stage(stage)
     , m_shaderModule(shaderModule)
     , m_function(function)
+    , m_emptySourceSpan(0, 0, 0, 0)
 {
     switch (m_stage) {
     case AST::StageAttribute::Stage::Compute:
@@ -120,10 +122,10 @@ void EntryPointRewriter::rewrite()
     appendBuiltins();
 
     // add parameter to builtins: ${structName} : ${structType}
-    m_function.parameters().append(makeUniqueRef<AST::Parameter>(
-        SourceSpan::empty(),
+    m_function.parameters().append(makeUniqueRef<AST::ParameterValue>(
+        m_emptySourceSpan,
         AST::Identifier::make(m_structParameterName),
-        adoptRef(*new AST::NamedTypeName(SourceSpan::empty(), AST::Identifier::make(m_structTypeName))),
+        adoptRef(*new AST::NamedTypeName(m_emptySourceSpan, AST::Identifier::make(m_structTypeName))),
         AST::Attribute::List { },
         AST::ParameterRole::StageIn
     ));
@@ -168,7 +170,7 @@ void EntryPointRewriter::constructInputStruct()
     AST::StructureMember::List structMembers;
     for (auto& parameter : m_parameters) {
         structMembers.append(makeUniqueRef<AST::StructureMember>(
-            SourceSpan::empty(),
+            m_emptySourceSpan,
             WTFMove(parameter.m_name),
             WTFMove(parameter.m_type),
             WTFMove(parameter.m_attributes)
@@ -189,7 +191,7 @@ void EntryPointRewriter::constructInputStruct()
     }
 
     m_shaderModule.structures().append(makeUniqueRef<AST::Structure>(
-        SourceSpan::empty(),
+        m_emptySourceSpan,
         AST::Identifier::make(m_structTypeName),
         WTFMove(structMembers),
         AST::Attribute::List { },
@@ -201,21 +203,20 @@ void EntryPointRewriter::materialize(Vector<String>& path, MemberOrParameter& da
 {
     std::unique_ptr<AST::Expression> rhs;
     if (isBuiltin == IsBuiltin::Yes)
-        rhs = makeUnique<AST::IdentifierExpression>(SourceSpan::empty(), AST::Identifier::make(data.m_name));
+        rhs = makeUnique<AST::IdentifierExpression>(m_emptySourceSpan, AST::Identifier::make(data.m_name));
     else {
         rhs = makeUnique<AST::FieldAccessExpression>(
-            SourceSpan::empty(),
-            makeUniqueRef<AST::IdentifierExpression>(SourceSpan::empty(), AST::Identifier::make(m_structParameterName)),
+            m_emptySourceSpan,
+            makeUniqueRef<AST::IdentifierExpression>(m_emptySourceSpan, AST::Identifier::make(m_structParameterName)),
             AST::Identifier::make(data.m_name)
         );
     }
 
     if (!path.size()) {
         m_materializations.append(makeUniqueRef<AST::VariableStatement>(
-            SourceSpan::empty(),
+            m_emptySourceSpan,
             makeUniqueRef<AST::Variable>(
-                SourceSpan::empty(),
-                AST::VariableFlavor::Var,
+                m_emptySourceSpan,
                 AST::Identifier::make(data.m_name),
                 nullptr, // TODO: do we need a VariableQualifier?
                 data.m_type.copyRef(),
@@ -228,17 +229,17 @@ void EntryPointRewriter::materialize(Vector<String>& path, MemberOrParameter& da
 
     path.append(data.m_name);
     unsigned i = 0;
-    UniqueRef<AST::Expression> lhs = makeUniqueRef<AST::IdentifierExpression>(SourceSpan::empty(), AST::Identifier::make(path[i++]));
+    UniqueRef<AST::Expression> lhs = makeUniqueRef<AST::IdentifierExpression>(m_emptySourceSpan, AST::Identifier::make(path[i++]));
     while (i < path.size()) {
         lhs = makeUniqueRef<AST::FieldAccessExpression>(
-            SourceSpan::empty(),
+            m_emptySourceSpan,
             WTFMove(lhs),
             AST::Identifier::make(path[i++])
         );
     }
     path.removeLast();
     m_materializations.append(makeUniqueRef<AST::AssignmentStatement>(
-        SourceSpan::empty(),
+        m_emptySourceSpan,
         WTFMove(lhs),
         makeUniqueRefFromNonNullUniquePtr(WTFMove(rhs))
     ));
@@ -250,10 +251,9 @@ void EntryPointRewriter::visit(Vector<String>& path, MemberOrParameter&& data)
 
     if (is<AST::StructTypeName>(type)) {
         m_materializations.append(makeUniqueRef<AST::VariableStatement>(
-            SourceSpan::empty(),
+            m_emptySourceSpan,
             makeUniqueRef<AST::Variable>(
-                SourceSpan::empty(),
-                AST::VariableFlavor::Var,
+                m_emptySourceSpan,
                 AST::Identifier::make(data.m_name),
                 nullptr,
                 &type,
@@ -296,8 +296,8 @@ void EntryPointRewriter::visit(Vector<String>& path, MemberOrParameter&& data)
 void EntryPointRewriter::appendBuiltins()
 {
     for (auto& data : m_builtins) {
-        m_function.parameters().append(makeUniqueRef<AST::Parameter>(
-            SourceSpan::empty(),
+        m_function.parameters().append(makeUniqueRef<AST::ParameterValue>(
+            m_emptySourceSpan,
             AST::Identifier::make(data.m_name),
             WTFMove(data.m_type),
             WTFMove(data.m_attributes),

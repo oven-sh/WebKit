@@ -227,7 +227,6 @@
 		3A7AA56028E28E99009E09C2 /* ConstLiteralTests.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3A7AA55F28E28E99009E09C2 /* ConstLiteralTests.cpp */; };
 		3A9C438828E3E057002F7294 /* ASTStringDumperTests.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3A9C438028E3E057002F7294 /* ASTStringDumperTests.cpp */; };
 		3A9C438B28E3E240002F7294 /* TestWGSLAPI.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3A9C438928E3E240002F7294 /* TestWGSLAPI.cpp */; };
-		3ADD8988299F192F005DCE4E /* MetalGenerationTests.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 3ADD897E299F1400005DCE4E /* MetalGenerationTests.cpp */; };
 		3FBD1B4A1D3D66AB00E6D6FA /* FullscreenLayoutConstraints.html in Copy Resources */ = {isa = PBXBuildFile; fileRef = 3FBD1B491D39D1DB00E6D6FA /* FullscreenLayoutConstraints.html */; };
 		3FCC4FE81EC4E8CA0076E37C /* PictureInPictureDelegate.html in Copy Resources */ = {isa = PBXBuildFile; fileRef = 3FCC4FE61EC4E87E0076E37C /* PictureInPictureDelegate.html */; };
 		4102EE1727845ED500D6BE74 /* ServiceWorkerRoutines.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 4102EE1627845ED500D6BE74 /* ServiceWorkerRoutines.cpp */; };
@@ -2255,7 +2254,6 @@
 		3A9C438028E3E057002F7294 /* ASTStringDumperTests.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = ASTStringDumperTests.cpp; sourceTree = "<group>"; };
 		3A9C438928E3E240002F7294 /* TestWGSLAPI.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = TestWGSLAPI.cpp; sourceTree = "<group>"; };
 		3A9C438A28E3E240002F7294 /* TestWGSLAPI.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = TestWGSLAPI.h; sourceTree = "<group>"; };
-		3ADD897E299F1400005DCE4E /* MetalGenerationTests.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = MetalGenerationTests.cpp; sourceTree = "<group>"; };
 		3F1B52681D3D7129008D60C4 /* FullscreenLayoutConstraints.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = FullscreenLayoutConstraints.mm; sourceTree = "<group>"; };
 		3FBD1B491D39D1DB00E6D6FA /* FullscreenLayoutConstraints.html */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.html; path = FullscreenLayoutConstraints.html; sourceTree = "<group>"; };
 		3FCC4FE41EC4E8520076E37C /* PictureInPictureDelegate.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = PictureInPictureDelegate.mm; sourceTree = "<group>"; };
@@ -3047,9 +3045,6 @@
 		B55AD1D3179F3ABF00AC1494 /* PreventImageLoadWithAutoResizing_Bundle.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = PreventImageLoadWithAutoResizing_Bundle.cpp; path = WebKitObjC/PreventImageLoadWithAutoResizing_Bundle.cpp; sourceTree = "<group>"; };
 		B55F119F1516834F00915916 /* AttributedString.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; path = AttributedString.mm; sourceTree = "<group>"; };
 		B55F11B01517A2C400915916 /* attributedStringCustomFont.html */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.html; path = attributedStringCustomFont.html; sourceTree = "<group>"; };
-		B61EB1642994734A0048DFC0 /* WKWebExtensionAPIPermissions.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = WKWebExtensionAPIPermissions.mm; sourceTree = "<group>"; };
-		B63EF53E2995797F00A190A3 /* TestWebExtensionsDelegate.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = TestWebExtensionsDelegate.h; path = cocoa/TestWebExtensionsDelegate.h; sourceTree = "<group>"; };
-		B63EF5462995797F00A190A3 /* TestWebExtensionsDelegate.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; name = TestWebExtensionsDelegate.mm; path = cocoa/TestWebExtensionsDelegate.mm; sourceTree = "<group>"; };
 		B6E1E1E02942B0DD00F314D2 /* WKWebExtensionAPIEvent.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = WKWebExtensionAPIEvent.mm; sourceTree = "<group>"; };
 		BC029B161486AD6400817DA9 /* RetainPtr.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = RetainPtr.cpp; sourceTree = "<group>"; };
 		BC029B1B1486B25900817DA9 /* RetainPtr.mm */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.objcpp; name = RetainPtr.mm; path = ns/RetainPtr.mm; sourceTree = "<group>"; };
@@ -3738,8 +3733,6 @@
 				A14FC58E1B8AE36500D107EB /* TestProtocol.mm */,
 				5CBAA7F324327F6B00564A8B /* TestUIDelegate.h */,
 				5CBAA7F424327F6B00564A8B /* TestUIDelegate.mm */,
-				B63EF53E2995797F00A190A3 /* TestWebExtensionsDelegate.h */,
-				B63EF5462995797F00A190A3 /* TestWebExtensionsDelegate.mm */,
 				2EFF06D21D8AEDBB0004BB30 /* TestWKWebView.h */,
 				2EFF06D31D8AEDBB0004BB30 /* TestWKWebView.mm */,
 				41733D7A25DE96DA00A136E5 /* UserMediaCaptureUIDelegate.h */,
@@ -4122,7 +4115,6 @@
 				B6E1E1E02942B0DD00F314D2 /* WKWebExtensionAPIEvent.mm */,
 				1C1549A2292ADB64001B9E5B /* WKWebExtensionAPIExtension.mm */,
 				330E135E2943C92000367438 /* WKWebExtensionAPINamespace.mm */,
-				B61EB1642994734A0048DFC0 /* WKWebExtensionAPIPermissions.mm */,
 				1C1549852926F4CA001B9E5B /* WKWebExtensionAPIRuntime.mm */,
 				3378222C2947C095002106BB /* WKWebExtensionAPIWebNavigation.mm */,
 				1CBEE26228F47FA9006D1A02 /* WKWebExtensionContext.mm */,
@@ -4184,7 +4176,6 @@
 				3A9C438028E3E057002F7294 /* ASTStringDumperTests.cpp */,
 				3A7AA55F28E28E99009E09C2 /* ConstLiteralTests.cpp */,
 				3A5DDAD228D15169004DA950 /* LexerTests.cpp */,
-				3ADD897E299F1400005DCE4E /* MetalGenerationTests.cpp */,
 				3A5DDAED28D156FC004DA950 /* ParserTests.cpp */,
 				3A9C438928E3E240002F7294 /* TestWGSLAPI.cpp */,
 				3A9C438A28E3E240002F7294 /* TestWGSLAPI.h */,
@@ -6009,7 +6000,6 @@
 				3A5DDADA28D15169004DA950 /* LexerTests.cpp in Sources */,
 				3A15784128D1505B00142DB1 /* mainIOS.mm in Sources */,
 				3A15784228D1505B00142DB1 /* mainMac.mm in Sources */,
-				3ADD8988299F192F005DCE4E /* MetalGenerationTests.cpp in Sources */,
 				3A5DDAEE28D156FC004DA950 /* ParserTests.cpp in Sources */,
 				3A15784428D1505B00142DB1 /* TestsController.cpp in Sources */,
 				3A9C438B28E3E240002F7294 /* TestWGSLAPI.cpp in Sources */,

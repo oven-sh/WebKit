@@ -45,8 +45,6 @@ RemoteLayerTreeTransaction& RemoteLayerTreeTransaction::operator=(RemoteLayerTre
 
 RemoteLayerTreeTransaction::LayerCreationProperties::LayerCreationProperties()
     : type(WebCore::PlatformCALayer::LayerTypeLayer)
-    , playerIdentifier(std::nullopt)
-    , naturalSize(std::nullopt)
     , hostingContextID(0)
     , hostingDeviceScaleFactor(1)
     , preservesFlip(false)
@@ -59,9 +57,6 @@ void RemoteLayerTreeTransaction::LayerCreationProperties::encode(IPC::Encoder& e
     encoder << type;
     
     // PlatformCALayerRemoteCustom
-    encoder << playerIdentifier;
-    encoder << naturalSize;
-    encoder << initialSize;
     encoder << hostingContextID;
     encoder << hostingDeviceScaleFactor;
     encoder << preservesFlip;
@@ -87,13 +82,6 @@ auto RemoteLayerTreeTransaction::LayerCreationProperties::decode(IPC::Decoder& d
         return std::nullopt;
     
     // PlatformCALayerRemoteCustom
-    if (!decoder.decode(result.playerIdentifier))
-        return std::nullopt;
-    if (!decoder.decode(result.naturalSize))
-        return std::nullopt;
-    if (!decoder.decode(result.initialSize))
-        return std::nullopt;
-
     if (!decoder.decode(result.hostingContextID))
         return std::nullopt;
 
@@ -593,7 +581,7 @@ void RemoteLayerTreeTransaction::encode(IPC::Encoder& encoder) const
 {
     encoder << m_rootLayerID;
     encoder << m_createdLayers;
-    encoder << m_remoteContextHostedIdentifier;
+    encoder << m_remoteContextHostIdentifier;
 
     encoder << static_cast<uint64_t>(m_changedLayers.size());
 
@@ -666,7 +654,7 @@ bool RemoteLayerTreeTransaction::decode(IPC::Decoder& decoder, RemoteLayerTreeTr
     if (!decoder.decode(result.m_createdLayers))
         return false;
 
-    if (!decoder.decode(result.m_remoteContextHostedIdentifier))
+    if (!decoder.decode(result.m_remoteContextHostIdentifier))
         return false;
 
     uint64_t numChangedLayerProperties;

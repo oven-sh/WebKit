@@ -175,10 +175,7 @@ void InspectorFrontendHost::addSelfToGlobalObjectInWorld(DOMWrapperWorld& world)
 {
     // FIXME: What guarantees m_frontendPage is non-null?
     // FIXME: What guarantees globalObject's return value is non-null?
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_frontendPage->mainFrame());
-    if (!localMainFrame)
-        return;
-    auto& globalObject = *localMainFrame->script().globalObject(world);
+    auto& globalObject = *m_frontendPage->mainFrame().script().globalObject(world);
     auto& vm = globalObject.vm();
     JSC::JSLockHolder lock(vm);
     auto scope = DECLARE_CATCH_SCOPE(vm);
@@ -265,18 +262,14 @@ void InspectorFrontendHost::inspectedURLChanged(const String& newURL)
 
 void InspectorFrontendHost::setZoomFactor(float zoom)
 {
-    if (m_frontendPage) {
-        if (auto* localMainFrame = dynamicDowncast<LocalFrame>(m_frontendPage->mainFrame()))
-            localMainFrame->setPageAndTextZoomFactors(zoom, 1);
-    }
+    if (m_frontendPage)
+        m_frontendPage->mainFrame().setPageAndTextZoomFactors(zoom, 1);
 }
 
 float InspectorFrontendHost::zoomFactor()
 {
-    if (m_frontendPage) {
-        if (auto* localMainFrame = dynamicDowncast<LocalFrame>(m_frontendPage->mainFrame()))
-            return localMainFrame->pageZoomFactor();
-    }
+    if (m_frontendPage)
+        return m_frontendPage->mainFrame().pageZoomFactor();
 
     return 1.0;
 }
@@ -428,8 +421,7 @@ String InspectorFrontendHost::platformVersionName() const
 
 void InspectorFrontendHost::copyText(const String& text)
 {
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_frontendPage->mainFrame());
-    auto pageID = m_frontendPage && localMainFrame ? localMainFrame->pageID() : std::nullopt;
+    auto pageID = m_frontendPage ? m_frontendPage->mainFrame().pageID() : std::nullopt;
     Pasteboard::createForCopyAndPaste(PagePasteboardContext::create(WTFMove(pageID)))->writePlainText(text, Pasteboard::CannotSmartReplace);
 }
 
@@ -573,10 +565,7 @@ void InspectorFrontendHost::showContextMenu(Event& event, Vector<ContextMenuItem
     // FIXME: What guarantees m_frontendPage is non-null?
     // FIXME: What guarantees globalObject's return value is non-null?
     ASSERT(m_frontendPage);
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_frontendPage->mainFrame());
-    if (!localMainFrame)
-        return;
-    auto& globalObject = *localMainFrame->script().globalObject(debuggerWorld());
+    auto& globalObject = *m_frontendPage->mainFrame().script().globalObject(debuggerWorld());
     auto& vm = globalObject.vm();
     auto value = globalObject.get(&globalObject, JSC::Identifier::fromString(vm, "InspectorFrontendAPI"_s));
     ASSERT(value);

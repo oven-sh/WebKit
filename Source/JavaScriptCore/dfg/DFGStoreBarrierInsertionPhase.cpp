@@ -385,7 +385,7 @@ private:
             case CreateDirectArguments:
             case CreateScopedArguments:
             case CreateClonedArguments:
-            case CreateArgumentsButterflyExcludingThis:
+            case CreateArgumentsButterfly:
             case NewFunction:
             case NewGeneratorFunction:
             case NewAsyncGeneratorFunction:

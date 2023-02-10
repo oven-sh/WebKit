@@ -52,7 +52,7 @@ struct _JSCExceptionPrivate {
     GUniquePtr<char> backtrace;
 };
 
-WEBKIT_DEFINE_FINAL_TYPE(JSCException, jsc_exception, G_TYPE_OBJECT, GObject)
+WEBKIT_DEFINE_TYPE(JSCException, jsc_exception, G_TYPE_OBJECT)
 
 static void jsc_exception_class_init(JSCExceptionClass*)
 {
@@ -64,7 +64,7 @@ GRefPtr<JSCException> jscExceptionCreate(JSCContext* context, JSValueRef jsExcep
     auto* jsContext = jscContextGetJSContext(context);
     JSC::JSGlobalObject* globalObject = toJS(jsContext);
     JSC::VM& vm = globalObject->vm();
-    JSC::JSLockHolder locker(vm);
+
     exception->priv->jsException.set(vm, toJS(JSValueToObject(jsContext, jsException, nullptr)));
     // The context has a strong reference to the exception, so we can't ref the context. We use a weak
     // pointer instead to invalidate the exception if the context is destroyed before.

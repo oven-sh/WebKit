@@ -315,7 +315,6 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/fetch/FetchRequestMode.idl \
     $(WebCore)/Modules/fetch/FetchRequestRedirect.idl \
     $(WebCore)/Modules/fetch/FetchResponse.idl \
-    $(WebCore)/Modules/fetch/RequestPriority.idl \
     $(WebCore)/Modules/fetch/WindowOrWorkerGlobalScope+Fetch.idl \
     $(WebCore)/Modules/filesystemaccess/FileSystemDirectoryHandle.idl \
     $(WebCore)/Modules/filesystemaccess/FileSystemFileHandle.idl \
@@ -377,8 +376,6 @@ JS_BINDING_IDLS := \
     $(WebCore)/Modules/mediarecorder/MediaRecorderErrorEvent.idl \
     $(WebCore)/Modules/mediasource/AudioTrack+MediaSource.idl \
     $(WebCore)/Modules/mediasource/DOMURL+MediaSource.idl \
-    $(WebCore)/Modules/mediasource/ManagedMediaSource.idl \
-    $(WebCore)/Modules/mediasource/ManagedSourceBuffer.idl \
     $(WebCore)/Modules/mediasource/MediaSource.idl \
     $(WebCore)/Modules/mediasource/SourceBuffer.idl \
     $(WebCore)/Modules/mediasource/SourceBufferList.idl \
@@ -1049,7 +1046,6 @@ JS_BINDING_IDLS := \
     $(WebCore)/dom/TextEncoderStream.idl \
     $(WebCore)/dom/TextEncoderStreamEncoder.idl \
     $(WebCore)/dom/TextEvent.idl \
-    $(WebCore)/dom/ToggleEvent.idl \
     $(WebCore)/dom/TreeWalker.idl \
     $(WebCore)/dom/UIEvent.idl \
     $(WebCore)/dom/UIEventInit.idl \
@@ -1202,8 +1198,6 @@ JS_BINDING_IDLS := \
     $(WebCore)/html/canvas/EXTBlendMinMax.idl \
     $(WebCore)/html/canvas/EXTColorBufferFloat.idl \
     $(WebCore)/html/canvas/EXTColorBufferHalfFloat.idl \
-    $(WebCore)/html/canvas/EXTDisjointTimerQuery.idl \
-    $(WebCore)/html/canvas/EXTDisjointTimerQueryWebGL2.idl \
     $(WebCore)/html/canvas/EXTFloatBlend.idl \
     $(WebCore)/html/canvas/EXTFragDepth.idl \
     $(WebCore)/html/canvas/EXTShaderTextureLOD.idl \
@@ -1263,7 +1257,6 @@ JS_BINDING_IDLS := \
     $(WebCore)/html/canvas/WebGLShaderPrecisionFormat.idl \
     $(WebCore)/html/canvas/WebGLSync.idl \
     $(WebCore)/html/canvas/WebGLTexture.idl \
-    $(WebCore)/html/canvas/WebGLTimerQueryEXT.idl \
     $(WebCore)/html/canvas/WebGLTransformFeedback.idl \
     $(WebCore)/html/canvas/WebGLUniformLocation.idl \
     $(WebCore)/html/canvas/WebGLVertexArrayObject.idl \
@@ -1556,19 +1549,6 @@ JS_BINDING_IDLS := \
     $(WebCore)/workers/service/ServiceWorkerRegistration.idl \
     $(WebCore)/workers/service/ServiceWorkerUpdateViaCache.idl \
     $(WebCore)/workers/service/ServiceWorkerWindowClient.idl \
-    $(WebCore)/workers/service/background-fetch/BackgroundFetchEvent.idl \
-    $(WebCore)/workers/service/background-fetch/BackgroundFetchEventInit.idl \
-    $(WebCore)/workers/service/background-fetch/BackgroundFetchFailureReason.idl \
-    $(WebCore)/workers/service/background-fetch/BackgroundFetchManager.idl \
-    $(WebCore)/workers/service/background-fetch/BackgroundFetchOptions.idl \
-    $(WebCore)/workers/service/background-fetch/BackgroundFetchRecord.idl \
-    $(WebCore)/workers/service/background-fetch/BackgroundFetchRegistration.idl \
-    $(WebCore)/workers/service/background-fetch/BackgroundFetchResult.idl \
-    $(WebCore)/workers/service/background-fetch/BackgroundFetchUIOptions.idl \
-    $(WebCore)/workers/service/background-fetch/BackgroundFetchUpdateUIEvent.idl \
-    $(WebCore)/workers/service/background-fetch/ImageResource.idl \
-    $(WebCore)/workers/service/background-fetch/ServiceWorkerGlobalScope+BackgroundFetchAPI.idl \
-    $(WebCore)/workers/service/background-fetch/ServiceWorkerRegistration+BackgroundFetchAPI.idl \
     $(WebCore)/workers/shared/SharedWorker.idl \
     $(WebCore)/workers/shared/SharedWorkerGlobalScope.idl \
     $(WebCore)/worklets/PaintWorkletGlobalScope.idl \
@@ -1880,7 +1860,6 @@ POSSIBLE_ADDITIONAL_USER_AGENT_STYLE_SHEETS = \
             $(ADDITIONS_PATH)/$(STYLE_SHEET)))))
 
 USER_AGENT_STYLE_SHEETS = \
-    $(WebCore)/css/counterStyles.css \
     $(WebCore)/css/dialog.css \
     $(WebCore)/css/fullscreen.css \
     $(WebCore)/css/horizontalFormControls.css \
@@ -1889,11 +1868,9 @@ USER_AGENT_STYLE_SHEETS = \
     $(WebCore)/css/mathml.css \
     $(WebCore)/css/mediaControls.css \
     $(WebCore)/css/plugIns.css \
-    $(WebCore)/css/popover.css \
     $(WebCore)/css/quirks.css \
     $(WebCore)/css/svg.css \
     $(WebCore)/html/shadow/mac/imageControlsMac.css \
-    $(WebCore)/html/shadow/attachmentElementShadow.css \
     $(WebCore)/html/shadow/imageOverlay.css \
     $(WebCore)/html/shadow/meterElementShadow.css \
     ModernMediaControls.css \

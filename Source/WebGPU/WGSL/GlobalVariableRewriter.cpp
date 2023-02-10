@@ -224,7 +224,7 @@ void RewriteGlobalVariables::insertStructs()
         }
 
         m_callGraph.ast().structures().append(makeUniqueRef<AST::Structure>(
-            SourceSpan::empty(),
+            SourceSpan(0, 0, 0, 0),
             WTFMove(structName),
             WTFMove(structMembers),
             AST::Attribute::List { },
@@ -237,7 +237,7 @@ void RewriteGlobalVariables::insertParameters(AST::Function& function, const Ind
 {
     auto span = function.span();
     for (unsigned group : requiredGroups) {
-        function.parameters().append(makeUniqueRef<AST::Parameter>(
+        function.parameters().append(makeUniqueRef<AST::ParameterValue>(
             span,
             argumentBufferParameterName(group),
             adoptRef(*new AST::NamedTypeName(span, argumentBufferStructName(group))),

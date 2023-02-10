@@ -40,7 +40,6 @@ public:
 
 private:
     void frameDetached() final;
-    void sizeDidChange(WebCore::IntSize) final;
 
     Ref<WebFrame> m_frame;
     ScopeExit<Function<void()>> m_frameInvalidator;

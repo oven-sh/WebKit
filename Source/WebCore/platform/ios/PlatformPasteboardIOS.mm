@@ -81,7 +81,9 @@ void PlatformPasteboard::getTypes(Vector<String>& types) const
 
 RefPtr<SharedBuffer> PlatformPasteboard::bufferForType(const String& type) const
 {
-    return readBuffer(0, type);
+    if (NSData *data = [m_pasteboard dataForPasteboardType:type])
+        return SharedBuffer::create(data);
+    return nullptr;
 }
 
 void PlatformPasteboard::performAsDataOwner(DataOwnerType type, Function<void()>&& actions)
@@ -739,17 +741,12 @@ Vector<String> PlatformPasteboard::allStringsForType(const String& type) const
     return strings;
 }
 
-static bool isDisallowedTypeForReadBuffer(NSString *type)
-{
-    return [type isEqualToString:UIImagePboardType];
-}
-
 RefPtr<SharedBuffer> PlatformPasteboard::readBuffer(std::optional<size_t> index, const String& type) const
 {
-    if (isDisallowedTypeForReadBuffer(type))
-        return nullptr;
+    if (!index)
+        return bufferForType(type);
 
-    NSInteger integerIndex = index.value_or(0);
+    NSInteger integerIndex = *index;
     if (integerIndex < 0 || integerIndex >= [m_pasteboard numberOfItems])
         return nullptr;
 
@@ -759,10 +756,7 @@ RefPtr<SharedBuffer> PlatformPasteboard::readBuffer(std::optional<size_t> index,
 
     if (![pasteboardItem count])
         return nullptr;
-
-    if (NSData *data = [pasteboardItem firstObject])
-        return SharedBuffer::create(data);
-    return nullptr;
+    return SharedBuffer::create([pasteboardItem objectAtIndex:0]);
 }
 
 String PlatformPasteboard::readString(size_t index, const String& type) const

@@ -37,7 +37,7 @@ class PrintStream;
 
 class ASCIILiteral final {
 public:
-    constexpr operator const char*() const { return m_characters; }
+    operator const char*() const { return m_characters; }
 
     static constexpr ASCIILiteral fromLiteralUnsafe(const char* string)
     {

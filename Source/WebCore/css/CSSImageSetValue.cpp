@@ -26,7 +26,6 @@
 #include "config.h"
 #include "CSSImageSetValue.h"
 
-#include "CSSImageSetOptionValue.h"
 #include "CSSImageValue.h"
 #include "CSSPrimitiveValue.h"
 #include "StyleBuilderState.h"
@@ -35,25 +34,27 @@
 
 namespace WebCore {
 
-Ref<CSSImageSetValue> CSSImageSetValue::create(CSSValueListBuilder builder)
+Ref<CSSImageSetValue> CSSImageSetValue::create()
 {
-    return adoptRef(*new CSSImageSetValue(WTFMove(builder)));
+    return adoptRef(*new CSSImageSetValue);
 }
 
-CSSImageSetValue::CSSImageSetValue(CSSValueListBuilder builder)
-    : CSSValueContainingVector(ImageSetClass, CommaSeparator, WTFMove(builder))
+CSSImageSetValue::CSSImageSetValue()
+    : CSSValueList(ImageSetClass, CommaSeparator)
 {
 }
+
+CSSImageSetValue::~CSSImageSetValue() = default;
 
 String CSSImageSetValue::customCSSText() const
 {
     StringBuilder result;
-    result.append("image-set("_s);
-    for (size_t i = 0; i < this->length(); ++i) {
+    result.append("image-set(");
+    size_t length = this->length();
+    for (size_t i = 0; i + 1 < length; i += 2) {
         if (i > 0)
-            result.append(", "_s);
-        ASSERT(is<CSSImageSetOptionValue>(item(i)));
-        result.append(item(i)->cssText());
+            result.append(", ");
+        result.append(item(i)->cssText(), ' ', item(i + 1)->cssText());
     }
     result.append(')');
     return result.toString();
@@ -64,20 +65,17 @@ RefPtr<StyleImage> CSSImageSetValue::createStyleImage(Style::BuilderState& state
     size_t length = this->length();
 
     Vector<ImageWithScale> images;
-    images.reserveInitialCapacity(length);
+    images.reserveInitialCapacity(length / 2);
 
-    for (size_t i = 0; i < length; ++i) {
-        ASSERT(is<CSSImageSetOptionValue>(item(i)));
-        auto option = downcast<CSSImageSetOptionValue>(item(i));
+    for (size_t i = 0; i + 1 < length; i += 2) {
+        auto* imageValue = item(i);
+        auto* scaleFactorValue = item(i + 1);
 
-        if (option->type() && !option->type()->isSupported())
-            continue;
+        ASSERT(is<CSSImageValue>(imageValue) || imageValue->isImageGeneratorValue());
+        ASSERT(is<CSSPrimitiveValue>(scaleFactorValue));
 
-        float scaleFactor = 1.0;
-        if (option->resolution())
-            scaleFactor = option->resolution()->floatValue(CSSUnitType::CSS_DPPX);
-
-        images.uncheckedAppend(ImageWithScale { state.createStyleImage(option->image()), scaleFactor, option->type() ? option->type()->mimeType() : String() });
+        float scaleFactor = downcast<CSSPrimitiveValue>(scaleFactorValue)->floatValue(CSSUnitType::CSS_DPPX);
+        images.uncheckedAppend({ state.createStyleImage(*imageValue), scaleFactor });
     }
 
     // Sort the images so that they are stored in order from lowest resolution to highest.

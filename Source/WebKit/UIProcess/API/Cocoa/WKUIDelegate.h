@@ -261,7 +261,7 @@ typedef NS_ENUM(NSInteger, WKDialogResult) {
  * @param webView The web view displaying the menu.
  * @param animator Appearance animator. Add animations to this object to run them alongside the appearance transition.
  */
-- (void)webView:(WKWebView *)webView willPresentEditMenuWithAnimator:(id<UIEditMenuInteractionAnimating>)animator WK_API_AVAILABLE(ios(16.4));
+- (void)webView:(WKWebView *)webView willPresentEditMenuWithAnimator:(id<UIEditMenuInteractionAnimating>)animator WK_API_AVAILABLE(ios(WK_IOS_TBA));
 
 /**
  * @abstract Called when the web view is about to dismiss its edit menu.
@@ -269,7 +269,7 @@ typedef NS_ENUM(NSInteger, WKDialogResult) {
  * @param webView The web view displaying the menu.
  * @param animator Dismissal animator. Add animations to this object to run them alongside the dismissal transition.
  */
-- (void)webView:(WKWebView *)webView willDismissEditMenuWithAnimator:(id<UIEditMenuInteractionAnimating>)animator WK_API_AVAILABLE(ios(16.4));
+- (void)webView:(WKWebView *)webView willDismissEditMenuWithAnimator:(id<UIEditMenuInteractionAnimating>)animator WK_API_AVAILABLE(ios(WK_IOS_TBA));
 
 #endif // TARGET_OS_IOS
 

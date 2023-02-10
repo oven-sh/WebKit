@@ -32,14 +32,8 @@ namespace WebCore {
 class RenderBlockFlow;
 
 namespace LayoutIntegration {
-
-struct LineAdjustment {
-    LayoutUnit offset { 0 };
-    bool isFirstAfterPageBreak { false };
-};
-
-Vector<LineAdjustment> computeAdjustmentsForPagination(const InlineContent&, RenderBlockFlow&);
-void adjustLinePositionsForPagination(InlineContent&, const Vector<LineAdjustment>&);
+    
+std::unique_ptr<InlineContent> adjustLinePositionsForPagination(const InlineContent&, RenderBlockFlow&);
 
 }
 }

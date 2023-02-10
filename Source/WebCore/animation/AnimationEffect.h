@@ -102,8 +102,6 @@ public:
 
     virtual Seconds timeToNextTick(const BasicEffectTiming&) const;
 
-    virtual bool preventsAnimationReadiness() const { return false; }
-
 protected:
     explicit AnimationEffect();
 

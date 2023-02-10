@@ -203,6 +203,7 @@ set(WTF_PUBLIC_HEADERS
     PlatformEnable.h
     PlatformEnableCocoa.h
     PlatformEnablePlayStation.h
+    PlatformEnableWinApple.h
     PlatformEnableWinCairo.h
     PlatformHave.h
     PlatformLegacy.h
@@ -422,6 +423,8 @@ set(WTF_PUBLIC_HEADERS
     unicode/UTF8Conversion.h
 
     unicode/icu/ICUHelpers.h
+
+    ForkExtras.h
 )
 
 set(WTF_SOURCES
@@ -431,7 +434,6 @@ set(WTF_SOURCES
     AutomaticThread.cpp
     Bag.cpp
     BitVector.cpp
-    BloomFilter.cpp
     CPUTime.cpp
     ClockType.cpp
     CodePtr.cpp
@@ -447,7 +449,6 @@ set(WTF_SOURCES
     DataLog.cpp
     DateMath.cpp
     DebugHeap.cpp
-    EmbeddedFixedVector.cpp
     FastBitVector.cpp
     FastFloat.cpp
     FastMalloc.cpp
@@ -518,7 +519,6 @@ set(WTF_SOURCES
     WTFAssertions.cpp
     WTFConfig.cpp
     WallTime.cpp
-    WeakPtr.cpp
     WeakRandomNumber.cpp
     WordLock.cpp
     WorkQueue.cpp

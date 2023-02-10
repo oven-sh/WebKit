@@ -37,7 +37,7 @@ class StorageSyncManager;
 
 enum class StorageType : uint8_t;
 
-class SecurityOriginData;
+struct SecurityOriginData;
 
 class StorageArea : public RefCounted<StorageArea> {
 public:

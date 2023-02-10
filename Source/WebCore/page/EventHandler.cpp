@@ -1209,11 +1209,10 @@ HitTestResult EventHandler::hitTestResultAtPoint(const LayoutPoint& point, Optio
     // We always send hitTestResultAtPoint to the main frame if we have one,
     // otherwise we might hit areas that are obscured by higher frames.
     if (!m_frame.isMainFrame()) {
-        if (RefPtr mainFrame = dynamicDowncast<LocalFrame>(m_frame.mainFrame())) {
-            if (RefPtr frameView = m_frame.view(), mainView = mainFrame->view(); frameView && mainView) {
-                IntPoint mainFramePoint = mainView->rootViewToContents(frameView->contentsToRootView(roundedIntPoint(point)));
-                return mainFrame->eventHandler().hitTestResultAtPoint(mainFramePoint, hitType);
-            }
+        Ref mainFrame = m_frame.mainFrame();
+        if (RefPtr frameView = m_frame.view(), mainView = mainFrame->view(); frameView && mainView) {
+            IntPoint mainFramePoint = mainView->rootViewToContents(frameView->contentsToRootView(roundedIntPoint(point)));
+            return mainFrame->eventHandler().hitTestResultAtPoint(mainFramePoint, hitType);
         }
     }
 
@@ -1472,11 +1471,7 @@ std::optional<Cursor> EventHandler::selectCursor(const HitTestResult& result, bo
         return std::nullopt;
 
 #if ENABLE(PAN_SCROLLING)
-    auto* localFrame = dynamicDowncast<LocalFrame>(m_frame.mainFrame());
-    if (!localFrame)
-        return std::nullopt;
-
-    if (localFrame->eventHandler().panScrollInProgress())
+    if (m_frame.mainFrame().eventHandler().panScrollInProgress())
         return std::nullopt;
 #endif
 
@@ -1805,11 +1800,7 @@ bool EventHandler::handleMousePressEvent(const PlatformMouseEvent& platformMouse
 #if ENABLE(PAN_SCROLLING)
     // We store whether pan scrolling is in progress before calling stopAutoscrollTimer()
     // because it will set m_autoscrollType to NoAutoscroll on return.
-    auto* localFrame = dynamicDowncast<LocalFrame>(m_frame.mainFrame());
-    if (!localFrame)
-        return false;
-
-    bool isPanScrollInProgress = Ref(*localFrame)->eventHandler().panScrollInProgress();
+    bool isPanScrollInProgress = Ref(m_frame.mainFrame())->eventHandler().panScrollInProgress();
     stopAutoscrollTimer();
     if (isPanScrollInProgress) {
         // We invalidate the click when exiting pan scrolling so that we don't inadvertently navigate
@@ -3647,11 +3638,7 @@ bool EventHandler::internalKeyEvent(const PlatformKeyboardEvent& initialKeyEvent
         capsLockStateMayHaveChanged();
 
 #if ENABLE(PAN_SCROLLING)
-    auto* localFrame = dynamicDowncast<LocalFrame>(m_frame.mainFrame());
-    if (!localFrame)
-        return false;
-
-    if (Ref(*localFrame)->eventHandler().panScrollInProgress()) {
+    if (Ref(m_frame.mainFrame())->eventHandler().panScrollInProgress()) {
         // If a key is pressed while the panScroll is in progress then we want to stop
         if (initialKeyEvent.type() == PlatformEvent::Type::KeyDown || initialKeyEvent.type() == PlatformEvent::Type::RawKeyDown)
             stopAutoscrollTimer();
@@ -4008,10 +3995,8 @@ static void removeDraggedContentDocumentMarkersFromAllFramesInPage(Page& page)
         document.markers().removeMarkers(DocumentMarker::DraggedContent);
     });
 
-    if (auto* localMainFrame = dynamicDowncast<LocalFrame>(page.mainFrame())) {
-        if (auto* mainFrameRenderer = localMainFrame->contentRenderer())
-            mainFrameRenderer->repaintRootContents();
-    }
+    if (auto* mainFrameRenderer = page.mainFrame().contentRenderer())
+        mainFrameRenderer->repaintRootContents();
 }
 
 void EventHandler::dragCancelled()
@@ -4348,7 +4333,7 @@ bool EventHandler::defaultKeyboardScrollEventHandler(KeyboardEvent& event, Scrol
 
 void EventHandler::defaultPageUpDownEventHandler(KeyboardEvent& event)
 {
-#if PLATFORM(GTK) || PLATFORM(WPE) || PLATFORM(WIN) || PLATFORM(COCOA)
+#if PLATFORM(GTK) || PLATFORM(WPE) || PLATFORM(WIN_CAIRO) || PLATFORM(COCOA)
     ASSERT(event.type() == eventNames().keydownEvent);
 
     if (event.ctrlKey() || event.metaKey() || event.altKey() || event.altGraphKey() || event.shiftKey())
@@ -4364,7 +4349,7 @@ void EventHandler::defaultPageUpDownEventHandler(KeyboardEvent& event)
 
 void EventHandler::defaultHomeEndEventHandler(KeyboardEvent& event)
 {
-#if PLATFORM(GTK) || PLATFORM(WPE) || PLATFORM(WIN)
+#if PLATFORM(GTK) || PLATFORM(WPE) || PLATFORM(WIN_CAIRO)
     ASSERT(event.type() == eventNames().keydownEvent);
 
     if (event.ctrlKey() || event.metaKey() || event.altKey() || event.altGraphKey() || event.shiftKey())

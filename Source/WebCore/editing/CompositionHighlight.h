@@ -31,11 +31,10 @@ namespace WebCore {
 
 struct CompositionHighlight {
     CompositionHighlight() = default;
-    CompositionHighlight(unsigned startOffset, unsigned endOffset, const std::optional<Color>& backgroundColor, const std::optional<Color>& foregroundColor)
+    CompositionHighlight(unsigned startOffset, unsigned endOffset, const Color& c)
         : startOffset(startOffset)
         , endOffset(endOffset)
-        , backgroundColor(backgroundColor)
-        , foregroundColor(foregroundColor)
+        , color(c)
     {
     }
 
@@ -47,8 +46,7 @@ struct CompositionHighlight {
 
     unsigned startOffset { 0 };
     unsigned endOffset { 0 };
-    std::optional<Color> backgroundColor;
-    std::optional<Color> foregroundColor;
+    Color color { defaultCompositionFillColor };
 };
 
 } // namespace WebCore

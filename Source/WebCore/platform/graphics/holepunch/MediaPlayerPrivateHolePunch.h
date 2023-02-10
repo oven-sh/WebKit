@@ -83,7 +83,7 @@ public:
 
     bool didLoadingProgress() const final { return false; };
 
-    void setPresentationSize(const IntSize& size) final { m_size = size; };
+    void setSize(const IntSize& size) final { m_size = size; };
 
     void paint(GraphicsContext&, const FloatRect&) final { };
 

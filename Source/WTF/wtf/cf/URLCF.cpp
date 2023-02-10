@@ -73,15 +73,18 @@ RetainPtr<CFURLRef> URL::createCFURL() const
     return result;
 }
 
-#if !PLATFORM(WIN)
 String URL::fileSystemPath() const
 {
     auto cfURL = createCFURL();
     if (!cfURL)
         return String();
 
-    return adoptCF(CFURLCopyFileSystemPath(cfURL.get(), kCFURLPOSIXPathStyle)).get();
-}
+#if PLATFORM(WIN)
+    CFURLPathStyle pathStyle = kCFURLWindowsPathStyle;
+#else
+    CFURLPathStyle pathStyle = kCFURLPOSIXPathStyle;
 #endif
+    return adoptCF(CFURLCopyFileSystemPath(cfURL.get(), pathStyle)).get();
+}
 
 }

@@ -30,9 +30,8 @@
 #include "IPCSemaphore.h"
 #include "RemoteVideoFrameIdentifier.h"
 #include "SharedMemory.h"
-#include <WebCore/IntSize.h>
 #include <WebCore/ProcessIdentity.h>
-#include <wtf/MediaTime.h>
+#include <WebCore/VideoFrame.h>
 #include <wtf/RefPtr.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/UniqueRef.h>
@@ -42,8 +41,6 @@ typedef struct __CVPixelBufferPool* CVPixelBufferPoolRef;
 
 namespace WebCore {
 class SharedVideoFrameInfo;
-class VideoFrame;
-enum class VideoFrameRotation : uint16_t;
 }
 
 namespace webrtc {
@@ -58,7 +55,7 @@ class RemoteVideoFrameObjectHeap;
 struct SharedVideoFrame {
     MediaTime time;
     bool mirrored { false };
-    WebCore::VideoFrameRotation rotation { };
+    WebCore::VideoFrame::Rotation rotation { WebCore::VideoFrame::Rotation::None };
     using Buffer = std::variant<std::nullptr_t, RemoteVideoFrameReadReference, MachSendRight, WebCore::IntSize>;
     Buffer buffer;
 

@@ -30,6 +30,7 @@
 #include "MediaPlayerPrivate.h"
 #include "MediaStreamPrivate.h"
 #include "SampleBufferDisplayLayer.h"
+#include "VideoFrame.h"
 #include <wtf/Deque.h>
 #include <wtf/Forward.h>
 #include <wtf/Lock.h>
@@ -47,8 +48,6 @@ class MediaSourcePrivateClient;
 class PixelBufferConformerCV;
 class VideoLayerManagerObjC;
 class VideoTrackPrivateMediaStream;
-
-enum class VideoFrameRotation : uint16_t;
 
 class MediaPlayerPrivateMediaStreamAVFObjC final
     : public MediaPlayerPrivateInterface
@@ -265,7 +264,7 @@ private:
     // Written on main thread, read on sample thread.
     bool m_canEnqueueDisplayLayer { false };
     // Used on sample thread.
-    VideoFrameRotation m_videoRotation { };
+    VideoFrame::Rotation m_videoRotation { VideoFrame::Rotation::None };
     bool m_videoMirrored { false };
 
     Ref<const Logger> m_logger;

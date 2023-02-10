@@ -251,6 +251,14 @@ FloatRect WebPageProxy::unconstrainedLayoutViewportRect() const
     return computeLayoutViewportRect(unobscuredContentRect(), unobscuredContentRectRespectingInputViewBounds(), layoutViewportRect(), displayedContentScale(), FrameView::LayoutViewportConstraint::Unconstrained);
 }
 
+void WebPageProxy::adjustLayersForLayoutViewport(const FloatRect& layoutViewport)
+{
+    if (!m_scrollingCoordinatorProxy)
+        return;
+
+    m_scrollingCoordinatorProxy->viewportChangedViaDelegatedScrolling(unobscuredContentRect().location(), layoutViewport, displayedContentScale());
+}
+
 void WebPageProxy::scrollingNodeScrollViewWillStartPanGesture(ScrollingNodeID nodeID)
 {
     pageClient().scrollingNodeScrollViewWillStartPanGesture(nodeID);
@@ -1051,16 +1059,6 @@ IPC::Connection::AsyncReplyID WebPageProxy::drawToPDFiOS(FrameIdentifier frameID
     }
 
     return sendWithAsyncReply(Messages::WebPage::DrawToPDFiOS(frameID, printInfo, pageCount), WTFMove(completionHandler));
-}
-
-IPC::Connection::AsyncReplyID WebPageProxy::drawToImage(FrameIdentifier frameID, const PrintInfo& printInfo, size_t pageCount, CompletionHandler<void(WebKit::ShareableBitmapHandle&&)>&& completionHandler)
-{
-    if (!hasRunningProcess()) {
-        completionHandler({ });
-        return { };
-    }
-
-    return sendWithAsyncReply(Messages::WebPage::DrawToImage(frameID, printInfo, pageCount), WTFMove(completionHandler));
 }
 
 void WebPageProxy::contentSizeCategoryDidChange(const String& contentSizeCategory)

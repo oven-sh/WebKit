@@ -1251,12 +1251,7 @@ bool ValidImageDataSize(const Context *context,
     // ...the data would be unpacked from the buffer object such that the memory reads required
     // would exceed the data store size.
     const InternalFormat &formatInfo = GetInternalFormatInfo(format, type);
-    if (formatInfo.internalFormat == GL_NONE)
-    {
-        UNREACHABLE();
-        context->validationError(entryPoint, GL_INVALID_OPERATION, kInternalErrorFormatNotFound);
-        return false;
-    }
+    ASSERT(formatInfo.internalFormat != GL_NONE);
     const Extents size(width, height, depth);
     const auto &unpack = context->getState().getUnpackState();
 
@@ -7117,7 +7112,7 @@ bool ValidateGetTexParameterBase(const Context *context,
             break;
 
         case GL_TEXTURE_BORDER_COLOR:
-            if (!context->getExtensions().textureBorderClampAny() &&
+            if (!context->getExtensions().textureBorderClampOES &&
                 context->getClientVersion() < ES_3_2)
             {
                 context->validationError(entryPoint, GL_INVALID_ENUM, kExtensionNotEnabled);
@@ -7860,7 +7855,7 @@ bool ValidateTexParameterBase(const Context *context,
             break;
 
         case GL_TEXTURE_BORDER_COLOR:
-            if (!context->getExtensions().textureBorderClampAny() &&
+            if (!context->getExtensions().textureBorderClampOES &&
                 context->getClientVersion() < ES_3_2)
             {
                 context->validationError(entryPoint, GL_INVALID_ENUM, kExtensionNotEnabled);
@@ -8081,7 +8076,7 @@ bool ValidateSamplerParameterBase(const Context *context,
         break;
 
         case GL_TEXTURE_BORDER_COLOR:
-            if (!context->getExtensions().textureBorderClampAny() &&
+            if (!context->getExtensions().textureBorderClampOES &&
                 context->getClientVersion() < ES_3_2)
             {
                 context->validationError(entryPoint, GL_INVALID_ENUM, kExtensionNotEnabled);
@@ -8176,7 +8171,7 @@ bool ValidateGetSamplerParameterBase(const Context *context,
             break;
 
         case GL_TEXTURE_BORDER_COLOR:
-            if (!context->getExtensions().textureBorderClampAny() &&
+            if (!context->getExtensions().textureBorderClampOES &&
                 context->getClientVersion() < ES_3_2)
             {
                 context->validationError(entryPoint, GL_INVALID_ENUM, kExtensionNotEnabled);

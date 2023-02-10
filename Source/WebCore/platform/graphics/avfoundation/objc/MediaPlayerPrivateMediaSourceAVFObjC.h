@@ -29,7 +29,6 @@
 
 #include "MediaPlayerPrivate.h"
 #include "SourceBufferPrivateClient.h"
-#include "VideoFrameMetadata.h"
 #include <CoreMedia/CMTime.h>
 #include <wtf/Deque.h>
 #include <wtf/Function.h>

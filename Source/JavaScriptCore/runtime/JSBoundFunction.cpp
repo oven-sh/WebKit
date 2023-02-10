@@ -40,9 +40,9 @@ JSC_DEFINE_HOST_FUNCTION(boundThisNoArgsFunctionCall, (JSGlobalObject* globalObj
     JSImmutableButterfly* boundArgs = boundFunction->boundArgs();
 
     MarkedArgumentBuffer args;
-    args.ensureCapacity((boundArgs ? boundArgs->length() : 0) + callFrame->argumentCount());
     if (boundArgs) {
-        for (unsigned i = 0; i < boundArgs->length(); ++i)
+        // Starts with 1 since the first one is |this|.
+        for (unsigned i = 1; i < boundArgs->length(); ++i)
             args.append(boundArgs->get(i));
     }
     for (unsigned i = 0; i < callFrame->argumentCount(); ++i)
@@ -69,9 +69,9 @@ JSC_DEFINE_HOST_FUNCTION(boundFunctionCall, (JSGlobalObject* globalObject, CallF
     JSImmutableButterfly* boundArgs = boundFunction->boundArgs();
 
     MarkedArgumentBuffer args;
-    args.ensureCapacity((boundArgs ? boundArgs->length() : 0) + callFrame->argumentCount());
     if (boundArgs) {
-        for (unsigned i = 0; i < boundArgs->length(); ++i)
+        // Starts with 1 since the first one is |this|.
+        for (unsigned i = 1; i < boundArgs->length(); ++i)
             args.append(boundArgs->get(i));
     }
     for (unsigned i = 0; i < callFrame->argumentCount(); ++i)
@@ -95,7 +95,8 @@ JSC_DEFINE_HOST_FUNCTION(boundThisNoArgsFunctionConstruct, (JSGlobalObject* glob
 
     MarkedArgumentBuffer args;
     if (boundArgs) {
-        for (unsigned i = 0; i < boundArgs->length(); ++i)
+        // Starts with 1 since the first one is |this|.
+        for (unsigned i = 1; i < boundArgs->length(); ++i)
             args.append(boundArgs->get(i));
     }
     for (unsigned i = 0; i < callFrame->argumentCount(); ++i)
@@ -107,7 +108,7 @@ JSC_DEFINE_HOST_FUNCTION(boundThisNoArgsFunctionConstruct, (JSGlobalObject* glob
     ASSERT(constructData.type != CallData::Type::None);
 
     JSValue newTarget = callFrame->newTarget();
-    if (newTarget.inherits<JSBoundFunction>())
+    if (newTarget == boundFunction)
         newTarget = targetFunction;
     return JSValue::encode(construct(globalObject, targetFunction, constructData, args, newTarget));
 }
@@ -122,7 +123,8 @@ JSC_DEFINE_HOST_FUNCTION(boundFunctionConstruct, (JSGlobalObject* globalObject, 
 
     MarkedArgumentBuffer args;
     if (boundArgs) {
-        for (unsigned i = 0; i < boundArgs->length(); ++i)
+        // Starts with 1 since the first one is |this|.
+        for (unsigned i = 1; i < boundArgs->length(); ++i)
             args.append(boundArgs->get(i));
     }
     for (unsigned i = 0; i < callFrame->argumentCount(); ++i)
@@ -137,7 +139,7 @@ JSC_DEFINE_HOST_FUNCTION(boundFunctionConstruct, (JSGlobalObject* globalObject, 
     ASSERT(constructData.type != CallData::Type::None);
 
     JSValue newTarget = callFrame->newTarget();
-    if (newTarget.inherits<JSBoundFunction>())
+    if (newTarget == boundFunction)
         newTarget = targetFunction;
     RELEASE_AND_RETURN(scope, JSValue::encode(construct(globalObject, targetFunction, constructData, args, newTarget)));
 }
@@ -232,7 +234,8 @@ JSArray* JSBoundFunction::boundArgsCopy(JSGlobalObject* globalObject)
     JSArray* result = constructEmptyArray(this->globalObject(), nullptr);
     RETURN_IF_EXCEPTION(scope, nullptr);
     if (m_boundArgs) {
-        for (unsigned i = 0; i < m_boundArgs->length(); ++i) {
+        // Starts with 1 since the first one is bound |this|.
+        for (unsigned i = 1; i < m_boundArgs->length(); ++i) {
             result->push(globalObject, m_boundArgs->get(i));
             RETURN_IF_EXCEPTION(scope, nullptr);
         }

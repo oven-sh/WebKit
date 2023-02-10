@@ -274,8 +274,6 @@ static BOOL areEssentiallyEqual(double a, double b)
         menuItem.state = _webView._alwaysShowsHorizontalScroller ? NSControlStateValueOn : NSControlStateValueOff;
     else if (action == @selector(toggleAlwaysShowsVerticalScroller:))
         menuItem.state = _webView._alwaysShowsVerticalScroller ? NSControlStateValueOn : NSControlStateValueOff;
-    else if (action == @selector(toggleMainThreadStalls:))
-        menuItem.state = self.mainThreadStallsEnabled ? NSControlStateValueOn : NSControlStateValueOff;
 
     if (action == @selector(setPageScale:))
         [menuItem setState:areEssentiallyEqual([_webView _pageScale], [self pageScaleForMenuItemTag:[menuItem tag]])];
@@ -495,7 +493,6 @@ static BOOL areEssentiallyEqual(double a, double b)
     preferences._animatedImageAsyncDecodingEnabled = settings.animatedImageAsyncDecodingEnabled;
     preferences._colorFilterEnabled = settings.appleColorFilterEnabled;
     preferences._punchOutWhiteBackgroundsInDarkMode = settings.punchOutWhiteBackgroundsInDarkMode;
-    preferences._mockCaptureDevicesEnabled = settings.useMockCaptureDevices;
 
     _webView.configuration.websiteDataStore._resourceLoadStatisticsEnabled = settings.resourceLoadStatisticsEnabled;
 

@@ -357,13 +357,22 @@
 #import <WebCore/PlaybackSessionModelMediaElement.h>
 #endif
 
+#if HAVE(TRANSLATION_UI_SERVICES)
+#import <TranslationUIServices/LTUITranslationViewController.h>
+
+@interface LTUITranslationViewController (Staging_77660675)
+@property (nonatomic, copy) void(^replacementHandler)(NSAttributedString *);
+@end
+
+SOFT_LINK_PRIVATE_FRAMEWORK_OPTIONAL(TranslationUIServices)
+SOFT_LINK_CLASS_OPTIONAL(TranslationUIServices, LTUITranslationViewController)
+#endif
+
 #if PLATFORM(IOS_FAMILY)
 #import <UIKit/UIColor.h>
 #import <UIKit/UIImage.h>
 #import <pal/ios/UIKitSoftLink.h>
 #endif
-
-#import <pal/cocoa/TranslationUIServicesSoftLink.h>
 
 #if PLATFORM(IOS_FAMILY)
 #import <pal/ios/ManagedConfigurationSoftLink.h>
@@ -1923,10 +1932,7 @@ static void WebKitInitializeGamepadProviderIfNecessary()
 - (BOOL)_requestStartDataInteraction:(CGPoint)clientPosition globalPosition:(CGPoint)globalPosition
 {
     WebThreadLock();
-    auto* localMainFrame = dynamicDowncast<WebCore::LocalFrame>(_private->page->mainFrame());
-    if (!localMainFrame)
-        return NO;
-    return localMainFrame->eventHandler().tryToBeginDragAtPoint(WebCore::IntPoint(clientPosition), WebCore::IntPoint(globalPosition));
+    return _private->page->mainFrame().eventHandler().tryToBeginDragAtPoint(WebCore::IntPoint(clientPosition), WebCore::IntPoint(globalPosition));
 }
 
 - (void)_startDrag:(const WebCore::DragItem&)dragItem
@@ -2781,8 +2787,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
             // If this item is showing , save away its current scroll and form state,
             // since that might have changed since loading and it is normally not saved
             // until we leave that page.
-            if (auto* localMainFrame = dynamicDowncast<WebCore::LocalFrame>(otherView->_private->page->mainFrame()))
-                localMainFrame->loader().history().saveDocumentAndScrollState();
+            otherView->_private->page->mainFrame().loader().history().saveDocumentAndScrollState();
         }
         Ref<WebCore::HistoryItem> newItem = otherBackForward.itemAtIndex(i)->copy();
         if (i == 0)
@@ -3426,12 +3431,8 @@ IGNORE_WARNINGS_END
 
     if (!_private->page)
         return nil;
-    
-    auto* localMainFrame = dynamicDowncast<WebCore::LocalFrame>(_private->page->mainFrame());
-    if (!localMainFrame)
-        return nil;
 
-    if (auto storageSession = localMainFrame->loader().networkingContext()->storageSession()->platformSession())
+    if (auto storageSession = _private->page->mainFrame().loader().networkingContext()->storageSession()->platformSession())
         cachedResponse = WebCore::cachedResponseForRequest(storageSession, request.get());
     else
         cachedResponse = [[NSURLCache sharedURLCache] cachedResponseForRequest:request.get()];
@@ -4098,8 +4099,7 @@ IGNORE_WARNINGS_END
 
 - (void)_clearMainFrameName
 {
-    if (auto* localMainFrame = dynamicDowncast<WebCore::LocalFrame>(_private->page->mainFrame()))
-        localMainFrame->tree().clearName();
+    _private->page->mainFrame().tree().clearName();
 }
 
 - (void)setSelectTrailingWhitespaceEnabled:(BOOL)flag
@@ -5909,12 +5909,7 @@ static NSString * const backingPropertyOldScaleFactorKey = @"NSBackingPropertyOl
     // This can be called in initialization, before _private has been set up (3465613)
     if (!_private || !_private->page)
         return nil;
-
-    auto* localMainFrame = dynamicDowncast<WebCore::LocalFrame>(_private->page->mainFrame());
-    if (!localMainFrame)
-        return nil;
-
-    return kit(localMainFrame);
+    return kit(&_private->page->mainFrame());
 }
 
 - (WebFrame *)selectedFrame
@@ -7877,12 +7872,7 @@ static NSAppleEventDescriptor* aeDescFromJSValue(JSC::JSGlobalObject* lexicalGlo
     auto* page = core(self);
     if (!page)
         return nil;
-
-    auto* localMainFrame = dynamicDowncast<WebCore::LocalFrame>(page->mainFrame());
-    if (!localMainFrame)
-        return nil;
-
-    return kit(localMainFrame->editor().rangeForPoint(WebCore::IntPoint([self convertPoint:point toView:nil])));
+    return kit(page->mainFrame().editor().rangeForPoint(WebCore::IntPoint([self convertPoint:point toView:nil])));
 }
 
 - (BOOL)_shouldChangeSelectedDOMRange:(DOMRange *)currentRange toDOMRange:(DOMRange *)proposedRange affinity:(NSSelectionAffinity)selectionAffinity stillSelecting:(BOOL)flag
@@ -8760,7 +8750,7 @@ FORWARD(toggleUnderline)
 
 - (WebCore::Frame*)_mainCoreFrame
 {
-    return (_private && _private->page) ? dynamicDowncast<WebCore::LocalFrame>(_private->page->mainFrame()) : 0;
+    return (_private && _private->page) ? &_private->page->mainFrame() : 0;
 }
 
 - (WebFrame *)_selectedOrMainFrame
@@ -9606,7 +9596,7 @@ static NSTextAlignment nsTextAlignmentFromRenderStyle(const WebCore::RenderStyle
 
 + (BOOL)_canHandleContextMenuTranslation
 {
-    return PAL::isTranslationUIServicesFrameworkAvailable() && [PAL::getLTUITranslationViewControllerClass() isAvailable];
+    return TranslationUIServicesLibrary() && [getLTUITranslationViewControllerClass() isAvailable];
 }
 
 - (void)_handleContextMenuTranslation:(const WebCore::TranslationContextMenuInfo&)info
@@ -9616,7 +9606,7 @@ static NSTextAlignment nsTextAlignmentFromRenderStyle(const WebCore::RenderStyle
         return;
     }
 
-    auto translationViewController = adoptNS([PAL::allocLTUITranslationViewControllerInstance() init]);
+    auto translationViewController = adoptNS([allocLTUITranslationViewControllerInstance() init]);
     [translationViewController setText:adoptNS([[NSAttributedString alloc] initWithString:info.text]).get()];
     if (info.mode == WebCore::TranslationContextMenuMode::Editable && [translationViewController respondsToSelector:@selector(setReplacementHandler:)]) {
         [translationViewController setIsSourceEditable:YES];

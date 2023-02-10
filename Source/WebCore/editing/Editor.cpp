@@ -532,11 +532,7 @@ bool Editor::canCopy() const
 
 bool Editor::canPaste() const
 {
-    auto* localFrame = dynamicDowncast<LocalFrame>(m_document.frame()->mainFrame());
-    if (!localFrame)
-        return false;
-
-    if (localFrame->loader().shouldSuppressTextInputFromEditing())
+    if (m_document.frame()->mainFrame().loader().shouldSuppressTextInputFromEditing())
         return false;
 
     return canEdit();
@@ -646,10 +642,7 @@ void Editor::pasteAsPlainText(const String& pastingText, bool smartReplace)
     auto target = findEventTargetFromSelection();
     if (!target)
         return;
-    auto sanitizedText = pastingText;
-    if (auto* page = m_document.page())
-        sanitizedText = page->sanitizeLookalikeCharacters(sanitizedText, LookalikeCharacterSanitizationTrigger::Paste);
-    target->dispatchEvent(TextEvent::createForPlainTextPaste(document().windowProxy(), WTFMove(sanitizedText), smartReplace));
+    target->dispatchEvent(TextEvent::createForPlainTextPaste(document().windowProxy(), pastingText, smartReplace));
 }
 
 void Editor::pasteAsFragment(Ref<DocumentFragment>&& pastingFragment, bool smartReplace, bool matchStyle, MailBlockquoteHandling respectsMailBlockquote, EditAction action)
@@ -803,11 +796,7 @@ bool Editor::tryDHTMLCut()
 
 bool Editor::shouldInsertText(const String& text, const std::optional<SimpleRange>& range, EditorInsertAction action) const
 {
-    auto* localFrame = dynamicDowncast<LocalFrame>(m_document.frame()->mainFrame());
-    if (!localFrame)
-        return false;
-
-    if (localFrame->loader().shouldSuppressTextInputFromEditing() && action == EditorInsertAction::Typed)
+    if (m_document.frame()->mainFrame().loader().shouldSuppressTextInputFromEditing() && action == EditorInsertAction::Typed)
         return false;
 
     return client() && client()->shouldInsertText(text, range, action);

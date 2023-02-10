@@ -29,7 +29,11 @@
 #include <wtf/Forward.h>
 #include <wtf/Ref.h>
 
-#if PLATFORM(IOS_FAMILY)
+#if USE(CFURLCONNECTION)
+#include <pal/spi/win/CFNetworkSPIWin.h>
+#endif
+
+#if PLATFORM(IOS_FAMILY) || USE(CFURLCONNECTION)
 #include <wtf/RetainPtr.h>
 #endif
 
@@ -80,7 +84,9 @@ public:
     WEBCORE_EXPORT virtual void canAuthenticateAgainstProtectionSpaceAsync(ResourceHandle*, const ProtectionSpace&, CompletionHandler<void(bool)>&&) = 0;
 #endif
 
-#if PLATFORM(COCOA)
+#if USE(CFURLCONNECTION)
+    virtual void willCacheResponseAsync(ResourceHandle*, CFCachedURLResponseRef response, CompletionHandler<void(CFCachedURLResponseRef)>&& completionHandler) { completionHandler(response); }
+#elif PLATFORM(COCOA)
     virtual void willCacheResponseAsync(ResourceHandle*, NSCachedURLResponse *response, CompletionHandler<void(NSCachedURLResponse *)>&& completionHandler) { completionHandler(response); }
 #endif
 
@@ -88,7 +94,7 @@ public:
     virtual void didReceiveAuthenticationChallenge(ResourceHandle*, const AuthenticationChallenge&) { }
     virtual void receivedCancellation(ResourceHandle*, const AuthenticationChallenge&) { }
 
-#if PLATFORM(IOS_FAMILY)
+#if PLATFORM(IOS_FAMILY) || USE(CFURLCONNECTION)
     virtual RetainPtr<CFDictionaryRef> connectionProperties(ResourceHandle*) { return nullptr; }
 #endif
 };

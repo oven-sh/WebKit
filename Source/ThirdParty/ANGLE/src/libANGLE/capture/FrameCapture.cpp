@@ -986,7 +986,7 @@ void WriteInitReplayCall(bool compression,
         out << "    // max" << name << " = " << maxIDs[resourceID] << "\n";
     }
 
-    out << "    InitializeReplay4(\"" << binaryDataFileName << "\", " << maxClientArraySize << ", "
+    out << "    InitializeReplay3(\"" << binaryDataFileName << "\", " << maxClientArraySize << ", "
         << readBufferSize << ", " << resourceIDBufferSize << ", " << contextID;
 
     for (ResourceIDType resourceID : AllEnums<ResourceIDType>())
@@ -2254,7 +2254,6 @@ bool IsSharedObjectResource(ResourceIDType type)
         case ResourceIDType::Context:
         case ResourceIDType::Image:
         case ResourceIDType::Surface:
-        case ResourceIDType::egl_Sync:
             // Return false for all EGL object types.
             return false;
 
@@ -2932,7 +2931,6 @@ void CaptureVertexArrayState(std::vector<CallCapture> *setupCalls,
         if (!skipInvalidAttrib &&
             (attrib.format != defaultAttrib.format || attrib.pointer != defaultAttrib.pointer ||
              binding.getStride() != defaultBinding.getStride() ||
-             attrib.bindingIndex != defaultAttrib.bindingIndex ||
              binding.getBuffer().get() != nullptr))
         {
             // Each attribute can pull from a separate buffer, so check the binding
@@ -3272,18 +3270,6 @@ void CaptureCustomCreateEGLImage(const char *name,
     EGLImage returnVal   = params.getReturnValue().value.EGLImageVal;
     egl::ImageID imageID = egl::PackParam<egl::ImageID>(returnVal);
     params.addValueParam("image", ParamType::TGLuint, imageID.value);
-    call.customFunctionName = name;
-    callsOut.emplace_back(std::move(call));
-}
-
-void CaptureCustomCreateEGLSync(const char *name,
-                                CallCapture &call,
-                                std::vector<CallCapture> &callsOut)
-{
-    ParamBuffer &&params = std::move(call.params);
-    EGLSync returnVal    = params.getReturnValue().value.EGLSyncVal;
-    egl::SyncID syncID   = egl::PackParam<egl::SyncID>(returnVal);
-    params.addValueParam("sync", ParamType::TGLuint, syncID.value);
     call.customFunctionName = name;
     callsOut.emplace_back(std::move(call));
 }
@@ -6635,16 +6621,6 @@ void FrameCaptureShared::maybeOverrideEntryPoint(const gl::Context *context,
             CaptureCustomCreateEGLImage("CreateEGLImageKHR", inCall, outCalls);
             break;
         }
-        case EntryPoint::EGLCreateSync:
-        {
-            CaptureCustomCreateEGLSync("CreateEGLSync", inCall, outCalls);
-            break;
-        }
-        case EntryPoint::EGLCreateSyncKHR:
-        {
-            CaptureCustomCreateEGLSync("CreateEGLSyncKHR", inCall, outCalls);
-            break;
-        }
         case EntryPoint::EGLCreatePbufferSurface:
         {
             CaptureCustomCreatePbufferSurface(inCall, outCalls);
@@ -7508,11 +7484,7 @@ void FrameCaptureShared::updateResourceCountsFromCallCapture(const CallCapture &
             updateResourceCountsFromParamCapture(call.params.getReturnValue(),
                                                  ResourceIDType::Sync);
             break;
-        case EntryPoint::EGLCreateSync:
-        case EntryPoint::EGLCreateSyncKHR:
-            updateResourceCountsFromParamCapture(call.params.getReturnValue(),
-                                                 ResourceIDType::egl_Sync);
-            break;
+
         default:
             break;
     }
@@ -8637,7 +8609,7 @@ void FrameCaptureShared::writeCppReplayIndexFiles(const gl::Context *context,
                    << ";\n";
         }
         source << "        default:\n";
-        source << "            return NULL;\n";
+        source << "            return nullptr;\n";
         source << "    }\n";
         source << "}\n";
 
@@ -8753,8 +8725,8 @@ void FrameCaptureShared::writeMainContextCppReplay(const gl::Context *context,
             if (shareContextSet.size() > 1)
             {
                 out << "\n";
-                out << "    eglMakeCurrent(NULL, NULL, NULL, gContextMap2[" << context->id()
-                    << "]);\n";
+                out << "    eglMakeCurrent(nullptr, nullptr, nullptr, gContextMap2["
+                    << context->id() << "]);\n";
             }
 
             out << "}\n";
@@ -8862,7 +8834,7 @@ void FrameCaptureShared::writeMainContextCppReplay(const gl::Context *context,
                 if (anyResourceReset && contextID != context->id())
                 {
                     contextChanged = true;
-                    bodyStream << "    eglMakeCurrent(NULL, NULL, NULL, gContextMap2["
+                    bodyStream << "    eglMakeCurrent(nullptr, nullptr, nullptr, gContextMap2["
                                << contextID.value << "]);\n\n";
                 }
 
@@ -8881,7 +8853,7 @@ void FrameCaptureShared::writeMainContextCppReplay(const gl::Context *context,
         // Bind the main context again if we bound any additional contexts
         if (contextChanged)
         {
-            resetBodyStream << "    eglMakeCurrent(NULL, NULL, NULL, gContextMap2["
+            resetBodyStream << "    eglMakeCurrent(nullptr, nullptr, nullptr, gContextMap2["
                             << context->id().value << "]);\n";
         }
 

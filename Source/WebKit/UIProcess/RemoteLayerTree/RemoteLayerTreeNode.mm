@@ -40,7 +40,7 @@ static NSString *const WKRemoteLayerTreeNodePropertyKey = @"WKRemoteLayerTreeNod
 
 RemoteLayerTreeNode::RemoteLayerTreeNode(WebCore::GraphicsLayer::PlatformLayerID layerID, Markable<WebCore::LayerHostingContextIdentifier> hostIdentifier, RetainPtr<CALayer> layer)
     : m_layerID(layerID)
-    , m_remoteContextHostingIdentifier(hostIdentifier)
+    , m_remoteContextHostIdentifier(hostIdentifier)
     , m_layer(WTFMove(layer))
 {
     initializeLayer();
@@ -50,7 +50,7 @@ RemoteLayerTreeNode::RemoteLayerTreeNode(WebCore::GraphicsLayer::PlatformLayerID
 #if PLATFORM(IOS_FAMILY)
 RemoteLayerTreeNode::RemoteLayerTreeNode(WebCore::GraphicsLayer::PlatformLayerID layerID, Markable<WebCore::LayerHostingContextIdentifier> hostIdentifier, RetainPtr<UIView> uiView)
     : m_layerID(layerID)
-    , m_remoteContextHostingIdentifier(hostIdentifier)
+    , m_remoteContextHostIdentifier(hostIdentifier)
     , m_layer([uiView.get() layer])
     , m_uiView(WTFMove(uiView))
 {
@@ -71,15 +71,14 @@ std::unique_ptr<RemoteLayerTreeNode> RemoteLayerTreeNode::createWithPlainLayer(W
 
 void RemoteLayerTreeNode::detachFromParent()
 {
-#if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
-    [interactionRegionsLayer() removeFromSuperlayer];
-#endif
-
 #if PLATFORM(IOS_FAMILY)
     if (auto view = uiView()) {
         [view removeFromSuperview];
         return;
     }
+#endif
+#if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
+    [interactionRegionsLayer() removeFromSuperlayer];
 #endif
     [layer() removeFromSuperlayer];
 }
@@ -95,7 +94,6 @@ void RemoteLayerTreeNode::initializeLayer()
 #if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
     m_interactionRegionsLayer = adoptNS([[CALayer alloc] init]);
     [m_interactionRegionsLayer setName:@"InteractionRegions Container"];
-    [m_interactionRegionsLayer setDelegate:[WebActionDisablingCALayerDelegate shared]];
 #endif
 }
 

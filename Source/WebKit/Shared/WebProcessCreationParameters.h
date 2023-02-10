@@ -248,7 +248,6 @@ struct WebProcessCreationParameters {
 
 #if PLATFORM(GTK) || PLATFORM(WPE)
     std::optional<MemoryPressureHandler::Configuration> memoryPressureHandlerConfiguration;
-    bool disableFontHintingForTesting { false };
 #endif
 
 #if USE(GLIB)

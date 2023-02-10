@@ -117,7 +117,7 @@ void KeyframeEffectStack::ensureEffectsAreSorted()
     if (m_isSorted || m_effects.size() < 2)
         return;
 
-    std::stable_sort(m_effects.begin(), m_effects.end(), [](auto& lhs, auto& rhs) {
+    std::stable_sort(m_effects.begin(), m_effects.end(), [&](auto& lhs, auto& rhs) {
         RELEASE_ASSERT(lhs.get());
         RELEASE_ASSERT(rhs.get());
         
@@ -246,27 +246,5 @@ void KeyframeEffectStack::lastStyleChangeEventStyleDidChange(const RenderStyle* 
     for (auto& effect : m_effects)
         effect->lastStyleChangeEventStyleDidChange(previousStyle, currentStyle);
 }
-
-void KeyframeEffectStack::didApplyCascade(const RenderStyle& styleBeforeCascade, const RenderStyle& styleAfterCascade, const HashSet<AnimatableProperty> animatedProperties, const Document& document)
-{
-    HashSet<AnimatableProperty> acceleratedPropertiesOverriddenByCascade;
-    if (styleBeforeCascade != styleAfterCascade) {
-        for (auto animatedProperty : animatedProperties) {
-            if (!CSSPropertyAnimation::animationOfPropertyIsAccelerated(animatedProperty))
-                continue;
-            if (!CSSPropertyAnimation::propertiesEqual(animatedProperty, styleBeforeCascade, styleAfterCascade, document))
-                acceleratedPropertiesOverriddenByCascade.add(animatedProperty);
-        }
-    }
-
-    if (acceleratedPropertiesOverriddenByCascade == m_acceleratedPropertiesOverriddenByCascade)
-        return;
-
-    m_acceleratedPropertiesOverriddenByCascade = WTFMove(acceleratedPropertiesOverriddenByCascade);
-
-    for (auto& effect : m_effects)
-        effect->acceleratedPropertiesOverriddenByCascadeDidChange();
-}
-
 
 } // namespace WebCore

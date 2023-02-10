@@ -36,6 +36,7 @@ namespace WebCore {
 namespace Layout {
 
 using InlineItems = Vector<InlineItem>;
+using InlineLineBoxes = Vector<LineBox>;
 using DisplayLines = Vector<InlineDisplay::Line>;
 using DisplayBoxes = Vector<InlineDisplay::Box>;
 
@@ -48,8 +49,10 @@ public:
 
     InlineItems& inlineItems() { return m_inlineItems; }
     const InlineItems& inlineItems() const { return m_inlineItems; }
-    void setInlineItems(InlineItems&& inlineItems) { m_inlineItems = WTFMove(inlineItems); }
-    void appendInlineItems(InlineItems&& inlineItems) { m_inlineItems.appendVector(WTFMove(inlineItems)); }
+    void addInlineItems(InlineItems&& inlineItems) { m_inlineItems.appendVector(WTFMove(inlineItems)); }
+
+    const InlineLineBoxes& lineBoxes() const { return m_lineBoxes; }
+    void addLineBox(LineBox&& lineBox) { m_lineBoxes.append(WTFMove(lineBox)); }
 
     const DisplayLines& lines() const { return m_displayLines; }
     DisplayLines& lines() { return m_displayLines; }
@@ -66,6 +69,7 @@ public:
     InlineLayoutUnit clearGapBeforeFirstLine() const { return m_clearGapBeforeFirstLine; }
 
     void clearInlineItems() { m_inlineItems.clear(); }
+    void clearLineAndBoxes();
     void shrinkToFit();
 
     void addNestedListMarkerOffset(const ElementBox& listMarkerBox, LayoutUnit offset) { m_nestedListMarkerOffset.add(&listMarkerBox, offset); }
@@ -75,6 +79,7 @@ public:
 private:
     // Cacheable input to line layout.
     InlineItems m_inlineItems;
+    InlineLineBoxes m_lineBoxes;
     DisplayLines m_displayLines;
     DisplayBoxes m_displayBoxes;
     // FIXME: This should be part of a non-persistent formatting state.
@@ -89,10 +94,20 @@ inline void InlineFormattingState::setClearGapAfterLastLine(InlineLayoutUnit ver
     m_clearGapAfterLastLine = verticalGap;
 }
 
+inline void InlineFormattingState::clearLineAndBoxes()
+{
+    m_lineBoxes.clear();
+    m_displayBoxes.clear();
+    m_displayLines.clear();
+    m_clearGapBeforeFirstLine = { };
+    m_clearGapAfterLastLine = { };
+}
+
 inline void InlineFormattingState::shrinkToFit()
 {
     m_inlineItems.shrinkToFit();
     m_displayLines.shrinkToFit();
+    m_lineBoxes.shrinkToFit();
     m_displayBoxes.shrinkToFit();
 }
 

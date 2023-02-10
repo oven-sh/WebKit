@@ -62,7 +62,6 @@
 #include "WidthIterator.h"
 #include <wtf/IsoMallocInlines.h>
 #include <wtf/NeverDestroyed.h>
-#include <wtf/SortedArrayMap.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/TextBreakIterator.h>
 #include <wtf/unicode/CharacterNames.h>
@@ -195,7 +194,14 @@ String capitalize(const String& string, UChar previousCharacter)
 
 inline RenderText::RenderText(Node& node, const String& text)
     : RenderObject(node)
+    , m_hasTab(false)
+    , m_linesDirty(false)
+    , m_needsVisualReordering(false)
     , m_isAllASCII(text.impl()->isAllASCII())
+    , m_knownToHaveNoOverflowAndNoFallbackFonts(false)
+    , m_useBackslashAsYenSymbol(false)
+    , m_originalTextDiffersFromRendered(false)
+    , m_hasInlineWrapperForDisplayContents(false)
     , m_text(text)
 {
     ASSERT(!m_text.isNull());
@@ -268,6 +274,9 @@ void RenderText::styleDidChange(StyleDifference diff, const RenderStyle* oldStyl
         m_useBackslashAsYenSymbol = computeUseBackslashAsYenSymbol();
         needsResetText = true;
     }
+
+    if (!oldStyle || oldStyle->fontCascade() != newStyle.fontCascade())
+        m_canUseSimplifiedTextMeasuring = computeCanUseSimplifiedTextMeasuring();
 
     TextTransform oldTransform = oldStyle ? oldStyle->textTransform() : TextTransform::None;
     TextSecurity oldSecurity = oldStyle ? oldStyle->textSecurity() : TextSecurity::None;
@@ -1320,73 +1329,6 @@ UChar RenderText::previousCharacter() const
     return previousString[previousString.length() - 1];
 }
 
-static String convertToFullSizeKana(const String& string)
-{
-    // https://www.w3.org/TR/css-text-3/#small-kana
-    static constexpr std::pair<UChar, UChar> kanasMap[] = {
-        { 0x3041, 0x3042 },
-        { 0x3043, 0x3044 },
-        { 0x3045, 0x3046 },
-        { 0x3047, 0x3048 },
-        { 0x3049, 0x304A },
-        { 0x3063, 0x3064 },
-        { 0x3083, 0x3084 },
-        { 0x3085, 0x3086 },
-        { 0x3087, 0x3088 },
-        { 0x308E, 0x308F },
-        { 0x3095, 0x304B },
-        { 0x3096, 0x3051 },
-        { 0x30A1, 0x30A2 },
-        { 0x30A3, 0x30A4 },
-        { 0x30A5, 0x30A6 },
-        { 0x30A7, 0x30A8 },
-        { 0x30A9, 0x30AA },
-        { 0x30C3, 0x30C4 },
-        { 0x30E3, 0x30E4 },
-        { 0x30E5, 0x30E6 },
-        { 0x30E7, 0x30E8 },
-        { 0x30EE, 0x30EF },
-        { 0x30F5, 0x30AB },
-        { 0x30F6, 0x30B1 },
-        { 0x31F0, 0x30AF },
-        { 0x31F1, 0x30B7 },
-        { 0x31F2, 0x30B9 },
-        { 0x31F3, 0x30C8 },
-        { 0x31F4, 0x30CC },
-        { 0x31F5, 0x30CF },
-        { 0x31F6, 0x30D2 },
-        { 0x31F7, 0x30D5 },
-        { 0x31F8, 0x30D8 },
-        { 0x31F9, 0x30DB },
-        { 0x31FA, 0x30E0 },
-        { 0x31FB, 0x30E9 },
-        { 0x31FC, 0x30EA },
-        { 0x31FD, 0x30EB },
-        { 0x31FE, 0x30EC },
-        { 0x31FF, 0x30ED },
-        { 0xFF67, 0xFF71 },
-        { 0xFF68, 0xFF72 },
-        { 0xFF69, 0xFF73 },
-        { 0xFF6A, 0xFF74 },
-        { 0xFF6B, 0xFF75 },
-        { 0xFF6C, 0xFF94 },
-        { 0xFF6D, 0xFF95 },
-        { 0xFF6E, 0xFF96 },
-        { 0xFF6F, 0xFF82 }
-    };
-    static constexpr auto sortedMap = SortedArrayMap { kanasMap };
-
-    StringBuilder result;
-    auto codeUnits = StringView { string }.codeUnits();
-    for (const auto character : codeUnits) {
-        if (auto found = sortedMap.tryGet(character))
-            result.append(*found);
-        else
-            result.append(character);
-    }
-    return result == string ? string : result.toString();
-}
-
 String applyTextTransform(const RenderStyle& style, const String& text, UChar previousCharacter)
 {
     switch (style.textTransform()) {
@@ -1398,8 +1340,6 @@ String applyTextTransform(const RenderStyle& style, const String& text, UChar pr
         return text.convertToUppercaseWithLocale(style.computedLocale());
     case TextTransform::Lowercase:
         return text.convertToLowercaseWithLocale(style.computedLocale());
-    case TextTransform::FullSizeKana:
-        return convertToFullSizeKana(text);
     }
     ASSERT_NOT_REACHED();
     return text;
@@ -1449,6 +1389,7 @@ void RenderText::setRenderedText(const String& newText)
 
     m_isAllASCII = text().isAllASCII();
     m_canUseSimpleFontCodePath = computeCanUseSimpleFontCodePath();
+    m_canUseSimplifiedTextMeasuring = computeCanUseSimplifiedTextMeasuring();
     
     if (m_text != originalText) {
         originalTextMap().set(this, originalText);
@@ -1489,6 +1430,42 @@ void RenderText::secureText(UChar maskingCharacter)
         characters[i] = maskingCharacter;
     if (characterToReveal)
         characters[revealedCharactersOffset] = characterToReveal;
+}
+
+bool RenderText::computeCanUseSimplifiedTextMeasuring() const
+{
+    if (!m_canUseSimpleFontCodePath)
+        return false;
+    
+    // FIXME: All these checks should be more fine-grained at the inline item level.
+    auto& style = this->style();
+    auto& fontCascade = style.fontCascade();
+    if (fontCascade.wordSpacing() || fontCascade.letterSpacing())
+        return false;
+
+    // Additional check on the font codepath.
+    TextRun run(m_text);
+    run.setCharacterScanForCodePath(false);
+    if (fontCascade.codePath(run) != FontCascade::CodePath::Simple)
+        return false;
+
+    if (&style != &firstLineStyle() && fontCascade != firstLineStyle().fontCascade())
+        return false;
+
+    auto& primaryFont = fontCascade.primaryFont();
+    if (primaryFont.syntheticBoldOffset())
+        return false;
+
+    auto whitespaceIsCollapsed = style.collapseWhiteSpace();
+    for (unsigned i = 0; i < text().length(); ++i) {
+        auto character = text()[i];
+        if (!WidthIterator::characterCanUseSimplifiedTextMeasuring(character, whitespaceIsCollapsed))
+            return false;
+        auto glyphData = fontCascade.glyphDataForCharacter(character, false);
+        if (!glyphData.isValid() || glyphData.font != &primaryFont)
+            return false;
+    }
+    return true;
 }
 
 void RenderText::setText(const String& text, bool force)
@@ -1581,7 +1558,7 @@ float RenderText::width(unsigned from, unsigned length, const FontCascade& fontC
         return *width;
 
     if (length == 1 && (characterAt(from) == space))
-        return fontCascade.widthOfSpaceString();
+        return canUseSimplifiedTextMeasuring() ? fontCascade.primaryFont().spaceWidth() : fontCascade.widthOfSpaceString();
 
     float width = 0.f;
     if (&fontCascade == &style.fontCascade()) {

@@ -232,7 +232,7 @@ const RealtimeMediaSourceCapabilities& GStreamerVideoCaptureSource::capabilities
     capabilities.setDeviceId(hashedId());
     updateCapabilities(capabilities);
 
-    capabilities.addFacingMode(VideoFacingMode::Unknown);
+    capabilities.addFacingMode(RealtimeMediaSourceSettings::Unknown);
 
     m_capabilities = WTFMove(capabilities);
 

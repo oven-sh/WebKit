@@ -31,6 +31,8 @@
 #pragma once
 
 #include "CSSValue.h"
+#include "CSSValueKeywords.h"
+#include "CalculationValue.h"
 #include <wtf/Forward.h>
 #include <wtf/Ref.h>
 
@@ -40,21 +42,20 @@ class CSSCalcExpressionNode;
 class CSSCalcSymbolTable;
 class CSSParserTokenRange;
 class CSSToLengthConversionData;
-class CalculationValue;
 class RenderStyle;
-
-enum CSSValueID : uint16_t;
 
 enum class CSSUnitType : uint8_t;
 enum class CalculationCategory : uint8_t;
 enum class ValueRange : uint8_t;
+
+enum class ShouldClampToNonNegative : bool { No, Yes };
 
 class CSSCalcValue final : public CSSValue {
 public:
     static RefPtr<CSSCalcValue> create(CSSValueID function, const CSSParserTokenRange&, CalculationCategory destinationCategory, ValueRange, const CSSCalcSymbolTable&, bool allowsNegativePercentage = false);
     static RefPtr<CSSCalcValue> create(CSSValueID function, const CSSParserTokenRange&, CalculationCategory destinationCategory, ValueRange);
     static RefPtr<CSSCalcValue> create(const CalculationValue&, const RenderStyle&);
-    static Ref<CSSCalcValue> create(Ref<CSSCalcExpressionNode>&&, bool shouldClampToNonNegative = false);
+    static RefPtr<CSSCalcValue> create(Ref<CSSCalcExpressionNode>&&, ShouldClampToNonNegative = ShouldClampToNonNegative::No);
     ~CSSCalcValue();
 
     CalculationCategory category() const;
@@ -79,7 +80,7 @@ public:
     const CSSCalcExpressionNode& expressionNode() const { return m_expression; }
 
 private:
-    explicit CSSCalcValue(Ref<CSSCalcExpressionNode>&&, bool shouldClampToNonNegative = false);
+    CSSCalcValue(Ref<CSSCalcExpressionNode>&&, ShouldClampToNonNegative);
 
     double clampToPermittedRange(double) const;
 

@@ -1008,7 +1008,7 @@ private:
 
     enum class ViewportRendererType : uint8_t { None, Document, Body };
     ViewportRendererType m_viewportRendererType { ViewportRendererType::None };
-    ScrollPinningBehavior m_scrollPinningBehavior { ScrollPinningBehavior::DoNotPin };
+    ScrollPinningBehavior m_scrollPinningBehavior { DoNotPin };
     SelectionRevealMode m_selectionRevealModeForFocusedElement { SelectionRevealMode::DoNotReveal };
     std::unique_ptr<ScrollAnchoringController> m_scrollAnchoringController;
 

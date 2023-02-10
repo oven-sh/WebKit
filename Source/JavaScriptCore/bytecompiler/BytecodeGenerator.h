@@ -691,7 +691,7 @@ namespace JSC {
         RegisterID* emitCreatePromise(RegisterID* dst, RegisterID* newTarget, bool isInternalPromise);
         RegisterID* emitCreateGenerator(RegisterID* dst, RegisterID* newTarget);
         RegisterID* emitCreateAsyncGenerator(RegisterID* dst, RegisterID* newTarget);
-        RegisterID* emitCreateArgumentsButterflyExcludingThis(RegisterID* dst, RegisterID* targetFunction);
+        RegisterID* emitCreateArgumentsButterfly(RegisterID* dst);
         RegisterID* emitInstanceFieldInitializationIfNeeded(RegisterID* dst, RegisterID* constructor, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
         void emitTDZCheck(RegisterID* target);
         bool needsTDZCheck(const Variable&);
@@ -763,7 +763,6 @@ namespace JSC {
 
         RegisterID* emitPutByVal(RegisterID* base, RegisterID* property, RegisterID* value);
         RegisterID* emitPutByVal(RegisterID* base, RegisterID* thisValue, RegisterID* property, RegisterID* value);
-        RegisterID* emitPutByValWithECMAMode(RegisterID* base, RegisterID* thisValue, RegisterID* property, RegisterID* value, ECMAMode);
         RegisterID* emitDirectPutByVal(RegisterID* base, RegisterID* property, RegisterID* value);
         RegisterID* emitDeleteByVal(RegisterID* dst, RegisterID* base, RegisterID* property);
 
@@ -1076,7 +1075,7 @@ namespace JSC {
         void retrieveLastUnaryOp(int& dstIndex, int& srcIndex);
         ALWAYS_INLINE void rewind();
 
-        void allocateScope();
+        void allocateAndEmitScope();
 
         template<typename JumpOp>
         void setTargetForJumpInstruction(JSInstructionStream::MutableRef&, int target);
@@ -1237,6 +1236,7 @@ namespace JSC {
         RegisterID m_thisRegister;
         RegisterID m_calleeRegister;
         RegisterID* m_scopeRegister { nullptr };
+        RegisterID* m_topMostScope { nullptr };
         RegisterID* m_argumentsRegister { nullptr };
         RegisterID* m_lexicalEnvironmentRegister { nullptr };
         RegisterID* m_generatorRegister { nullptr };

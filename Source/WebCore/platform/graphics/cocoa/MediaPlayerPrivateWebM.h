@@ -31,7 +31,6 @@
 #include "PlatformLayer.h"
 #include "SourceBufferParserWebM.h"
 #include "TimeRanges.h"
-#include "VideoFrameMetadata.h"
 #include "WebMResourceClient.h"
 #include <wtf/HashFunctions.h>
 #include <wtf/HashMap.h>
