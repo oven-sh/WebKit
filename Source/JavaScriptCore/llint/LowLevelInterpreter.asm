@@ -2799,7 +2799,7 @@ _wasm_trampoline_wasm_tail_call_wide32:
 _wasm_trampoline_wasm_tail_call_indirect_wide32:
     crash()
 
-end
+end # WEBASSEMBLY and not X86_64_WIN
 
 include? LowLevelInterpreterAdditions
 

@@ -131,7 +131,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     Modules/airplay/PlaybackTargetClientContextIdentifier.h
 
-    Modules/applepay/ApplePayButtonSystemImage.h
     Modules/applepay/ApplePayLogoSystemImage.h
     Modules/applepay/ApplePaySessionPaymentRequest.h
     Modules/applepay/Payment.h
@@ -786,6 +785,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     dom/OverflowEvent.h
     dom/PointerEvent.h
     dom/PointerEventTypeNames.h
+    dom/PortIdentifier.h
     dom/Position.h
     dom/ProcessingInstruction.h
     dom/ProgressEvent.h
@@ -1078,10 +1078,12 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     layout/formattingContexts/inline/InlineItem.h
     layout/formattingContexts/inline/InlineLine.h
+    layout/formattingContexts/inline/InlineLineTypes.h
     layout/formattingContexts/inline/InlineRect.h
     layout/formattingContexts/inline/InlineTextItem.h
 
     layout/formattingContexts/inline/display/InlineDisplayBox.h
+    layout/formattingContexts/inline/display/InlineDisplayLine.h
 
     layout/formattingContexts/inline/text/TextUtil.h
 
@@ -1098,7 +1100,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     layout/integration/inline/InlineIteratorLogicalOrderTraversal.h
     layout/integration/inline/InlineIteratorTextBox.h
     layout/integration/inline/LayoutIntegrationInlineContent.h
-    layout/integration/inline/LayoutIntegrationLine.h
 
     layout/layouttree/LayoutBox.h
     layout/layouttree/LayoutElementBox.h
@@ -1267,7 +1268,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/MemoryRelease.h
     page/ModalContainerTypes.h
     page/NavigatorIsLoggedIn.h
-    page/PDFImageCachingPolicy.h
     page/Page.h
     page/PageColorSampler.h
     page/PageConfiguration.h
@@ -1582,6 +1582,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/BifurcatedGraphicsContext.h
     platform/graphics/BitmapImage.h
     platform/graphics/ByteArrayPixelBuffer.h
+    platform/graphics/CachedSubimage.h
     platform/graphics/Color.h
     platform/graphics/ColorComponents.h
     platform/graphics/ColorConversion.h
@@ -1624,6 +1625,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/FontCascadeDescription.h
     platform/graphics/FontCascadeFonts.h
     platform/graphics/FontCreationContext.h
+    platform/graphics/FontCustomPlatformData.h
     platform/graphics/FontDescription.h
     platform/graphics/FontFamilySpecificationNull.h
     platform/graphics/FontFeatureValues.h
@@ -1672,6 +1674,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/ImageBuffer.h
     platform/graphics/ImageBufferAllocator.h
     platform/graphics/ImageBufferBackend.h
+    platform/graphics/ImageBufferBackendParameters.h
     platform/graphics/ImageDecoder.h
     platform/graphics/ImageDecoderIdentifier.h
     platform/graphics/ImageFrame.h
@@ -1691,6 +1694,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/IntRectHash.h
     platform/graphics/IntSize.h
     platform/graphics/IntSizeHash.h
+    platform/graphics/LayerHostingContextIdentifier.h
     platform/graphics/LayerTreeAsTextOptions.h
     platform/graphics/LayoutPoint.h
     platform/graphics/LayoutRect.h
@@ -1992,6 +1996,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/sql/SQLiteStatementAutoResetScope.h
     platform/sql/SQLiteTransaction.h
 
+    platform/text/CharacterProperties.h
     platform/text/BidiContext.h
     platform/text/FontRenderingMode.h
     platform/text/StringWithDirection.h
@@ -2172,6 +2177,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     svg/graphics/filters/SVGFilter.h
     svg/graphics/filters/SVGFilterExpression.h
+    svg/graphics/filters/SVGFilterExpressionReference.h
 
     svg/properties/SVGList.h
     svg/properties/SVGPrimitiveList.h
@@ -2237,6 +2243,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     workers/service/server/RegistrationDatabase.h
     workers/service/server/SWOriginStore.h
     workers/service/server/SWServer.h
+    workers/service/server/SWServerDelegate.h
     workers/service/server/SWServerRegistration.h
     workers/service/server/SWServerToContextConnection.h
     workers/service/server/SWServerWorker.h

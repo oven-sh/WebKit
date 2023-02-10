@@ -197,7 +197,7 @@
 #include <JavaScriptCore/RemoteInspector.h>
 #endif
 
-#if ENABLE(GPU_PROCESS)
+#if ENABLE(GPU_PROCESS) && ENABLE(VIDEO)
 #include "RemoteMediaPlayerManager.h"
 #endif
 
@@ -330,7 +330,7 @@ WebProcess::WebProcess()
     addSupplement<UserMediaCaptureManager>();
 #endif
 
-#if ENABLE(GPU_PROCESS)
+#if ENABLE(GPU_PROCESS) && ENABLE(VIDEO)
     addSupplement<RemoteMediaPlayerManager>();
 #endif
 
@@ -1455,6 +1455,15 @@ void WebProcess::deleteWebsiteDataForOrigin(OptionSet<WebsiteDataType> websiteDa
         MemoryCache::singleton().removeResourcesWithOrigin(origin);
         if (origin.topOrigin == origin.clientOrigin)
             BackForwardCache::singleton().clearEntriesForOrigins({ RefPtr<SecurityOrigin> { origin.clientOrigin.securityOrigin() } });
+    }
+    completionHandler();
+}
+
+void WebProcess::reloadExecutionContextsForOrigin(const ClientOrigin& origin, std::optional<FrameIdentifier> triggeringFrame, CompletionHandler<void()>&& completionHandler)
+{
+    for (auto& page : m_pageMap.values()) {
+        if (auto* corePage = page->corePage())
+            corePage->reloadExecutionContextsForOrigin(origin, triggeringFrame);
     }
     completionHandler();
 }

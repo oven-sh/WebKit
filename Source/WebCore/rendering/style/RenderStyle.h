@@ -25,7 +25,6 @@
 #pragma once
 
 #include "AnimationList.h"
-#include "ApplePayButtonSystemImage.h"
 #include "BorderValue.h"
 #include "CSSLineBoxContainValue.h"
 #include "CSSPrimitiveValue.h"
@@ -83,6 +82,10 @@
 #include "StyleGridData.h"
 #include "StyleGridItemData.h"
 
+#if ENABLE(APPLE_PAY)
+#include "ApplePayButtonPart.h"
+#endif
+
 #if ENABLE(TEXT_AUTOSIZING)
 #include "TextSizeAdjustment.h"
 #endif
@@ -131,7 +134,12 @@ namespace Style {
 class CustomPropertyRegistry;
 }
 
-using PseudoStyleCache = Vector<std::unique_ptr<RenderStyle>, 4>;
+DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(PseudoStyleCache);
+class PseudoStyleCache {
+    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(PseudoStyleCache);
+public:
+    Vector<std::unique_ptr<RenderStyle>, 4> styles;
+};
 
 template<typename T, typename U> inline bool compareEqual(const T& t, const U& u) { return t == static_cast<const T&>(u); }
 
@@ -156,6 +164,7 @@ public:
 
     static RenderStyle create();
     static std::unique_ptr<RenderStyle> createPtr();
+    static std::unique_ptr<RenderStyle> createPtrWithRegisteredInitialValues(const Style::CustomPropertyRegistry&);
 
     static RenderStyle clone(const RenderStyle&);
     static RenderStyle cloneIncludingPseudoElements(const RenderStyle&);
@@ -172,6 +181,7 @@ public:
     bool operator!=(const RenderStyle& other) const { return !(*this == other); }
 
     void inheritFrom(const RenderStyle&);
+    void inheritIgnoringCustomPropertiesFrom(const RenderStyle&);
     void fastPathInheritFrom(const RenderStyle&);
     void copyNonInheritedFrom(const RenderStyle&);
     void copyContentFrom(const RenderStyle&);
@@ -198,12 +208,10 @@ public:
 
     const CustomPropertyValueMap& inheritedCustomProperties() const { return m_rareInheritedData->customProperties->values; }
     const CustomPropertyValueMap& nonInheritedCustomProperties() const { return m_rareNonInheritedData->customProperties->values; }
-    const CSSCustomPropertyValue* customPropertyValue(const AtomString&, const Style::CustomPropertyRegistry&) const;
-    const CSSCustomPropertyValue* customPropertyValueWithoutResolvingInitial(const AtomString&) const;
+    const CSSCustomPropertyValue* customPropertyValue(const AtomString&) const;
 
-    void deduplicateInheritedCustomProperties(const RenderStyle&);
-    void setInheritedCustomPropertyValue(const AtomString& name, Ref<CSSCustomPropertyValue>&&);
-    void setNonInheritedCustomPropertyValue(const AtomString& name, Ref<CSSCustomPropertyValue>&&);
+    void deduplicateCustomProperties(const RenderStyle&);
+    void setCustomPropertyValue(Ref<const CSSCustomPropertyValue>&&, bool isInherited);
     bool customPropertiesEqual(const RenderStyle&) const;
 
     void setUsesViewportUnits() { m_nonInheritedFlags.usesViewportUnits = true; }

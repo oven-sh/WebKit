@@ -11664,7 +11664,7 @@ IGNORE_CLANG_WARNINGS_END
             case Wasm::TypeKind::I64: {
                 // FIXME: We are handling BigInt extraction here. But once BigInt Int64 value is natively represented in DFG / FTL pipeline, we should extract this as a DFG node,
                 // and we should attempt to perform constant-folding etc. And also, we can avoid usign this at all for DFG Int64 value.
-                LValue argument = lowHeapBigInt(m_graph.varArgChild(node, 2 + i));
+                LValue argument = lowCell(m_graph.varArgChild(node, 2 + i));
                 PatchpointValue* patchpoint = m_out.patchpoint(Int64);
                 patchpoint->numGPScratchRegisters = 2;
                 patchpoint->append(ConstrainedValue(argument, ValueRep::SomeLateRegister));
@@ -11702,6 +11702,7 @@ IGNORE_CLANG_WARNINGS_END
                 else
                     arguments.append(ConstrainedValue(lowDouble(m_graph.varArgChild(node, 2 + i)), ValueRep::reg(wasmCallInfo.params[i].location.fpr())));
                 break;
+            case Wasm::TypeKind::V128:
             default:
                 RELEASE_ASSERT_NOT_REACHED();
             }
@@ -11761,6 +11762,7 @@ IGNORE_CLANG_WARNINGS_END
                 patchpoint->resultConstraints = { ValueRep::reg(wasmCallInfo.results[0].location.fpr()) };
                 break;
             }
+            case Wasm::TypeKind::V128:
             default:
                 RELEASE_ASSERT_NOT_REACHED();
                 break;
@@ -11848,6 +11850,7 @@ IGNORE_CLANG_WARNINGS_END
                 setJSValue(boxDouble(purifyNaN(patchpoint)));
                 break;
             }
+            case Wasm::TypeKind::V128:
             default:
                 RELEASE_ASSERT_NOT_REACHED();
                 break;
@@ -13663,20 +13666,43 @@ IGNORE_CLANG_WARNINGS_END
 
     void compileParseInt()
     {
-        RELEASE_ASSERT(m_node->child1().useKind() == UntypedUse || m_node->child1().useKind() == StringUse);
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
         LValue result;
         if (m_node->child2()) {
             LValue radix = lowInt32(m_node->child2());
-            if (m_node->child1().useKind() == UntypedUse)
+            switch (m_node->child1().useKind()) {
+            case UntypedUse:
                 result = vmCall(Int64, operationParseIntGeneric, weakPointer(globalObject), lowJSValue(m_node->child1()), radix);
-            else
+                break;
+            case StringUse:
                 result = vmCall(Int64, operationParseIntString, weakPointer(globalObject), lowString(m_node->child1()), radix);
+                break;
+            case Int32Use:
+                result = vmCall(Int64, operationParseIntInt32, weakPointer(globalObject), lowInt32(m_node->child1()), radix);
+                break;
+            case DoubleRepUse:
+                result = vmCall(Int64, operationParseIntDouble, weakPointer(globalObject), lowDouble(m_node->child1()), radix);
+                break;
+            default:
+                DFG_CRASH(m_graph, m_node, "Bad use kind");
+                break;
+            }
         } else {
-            if (m_node->child1().useKind() == UntypedUse)
-                result = vmCall(Int64, operationParseIntNoRadixGeneric, weakPointer(globalObject), lowJSValue(m_node->child1()));
-            else
+            switch (m_node->child1().useKind()) {
+            case UntypedUse:
+                result = vmCall(Int64, operationParseIntGenericNoRadix, weakPointer(globalObject), lowJSValue(m_node->child1()));
+                break;
+            case StringUse:
                 result = vmCall(Int64, operationParseIntStringNoRadix, weakPointer(globalObject), lowString(m_node->child1()));
+                break;
+            case DoubleRepUse:
+                result = vmCall(Int64, operationParseIntDoubleNoRadix, weakPointer(globalObject), lowDouble(m_node->child1()));
+                break;
+            // Int32Use is converted to Identity.
+            default:
+                DFG_CRASH(m_graph, m_node, "Bad use kind");
+                break;
+            }
         }
         setJSValue(result);
     }

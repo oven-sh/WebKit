@@ -38,7 +38,6 @@ if (NOT HAS_RUN_WEBKIT_COMMON)
     # Determine which port will be built
     # -----------------------------------------------------------------------------
     set(ALL_PORTS
-        AppleWin
         Efl
         FTW
         GTK

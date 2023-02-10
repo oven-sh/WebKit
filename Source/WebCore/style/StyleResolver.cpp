@@ -30,6 +30,7 @@
 #include "config.h"
 #include "StyleResolver.h"
 
+#include "CSSCustomPropertyValue.h"
 #include "CSSFontSelector.h"
 #include "CSSKeyframeRule.h"
 #include "CSSKeyframesRule.h"
@@ -243,8 +244,12 @@ ResolvedStyle Resolver::styleForElement(const Element& element, const Resolution
     auto state = State(element, context.parentStyle, context.documentElementStyle);
 
     if (state.parentStyle()) {
-        state.setStyle(RenderStyle::createPtr());
-        state.style()->inheritFrom(*state.parentStyle());
+        state.setStyle(RenderStyle::createPtrWithRegisteredInitialValues(document().customPropertyRegistry()));
+        if (&element == document().documentElement()) {
+            // Initial values for custom properties are inserted to the document element style. Don't overwrite them.
+            state.style()->inheritIgnoringCustomPropertiesFrom(*state.parentStyle());
+        } else
+            state.style()->inheritFrom(*state.parentStyle());
     } else {
         state.setStyle(defaultStyleForElement(&element));
         state.setParentStyle(RenderStyle::clonePtr(*state.style()));
@@ -430,19 +435,14 @@ Vector<Ref<StyleRuleKeyframe>> Resolver::keyframeRulesForName(const AtomString& 
     return deduplicatedKeyframes;
 }
 
-void Resolver::keyframeStylesForAnimation(const Element& element, const RenderStyle& elementStyle, const ResolutionContext& context, KeyframeList& list, bool& containsCSSVariableReferences, bool& hasRelativeFontWeight, HashSet<CSSPropertyID>& inheritedProperties, HashSet<CSSPropertyID>& currentColorProperties)
+void Resolver::keyframeStylesForAnimation(const Element& element, const RenderStyle& elementStyle, const ResolutionContext& context, KeyframeList& list)
 {
-    inheritedProperties.clear();
-    currentColorProperties.clear();
-
     list.clear();
 
     auto keyframeRules = keyframeRulesForName(list.animationName());
     if (keyframeRules.isEmpty())
         return;
 
-    containsCSSVariableReferences = false;
-    hasRelativeFontWeight = false;
     // Construct and populate the style for each keyframe.
     for (auto& keyframeRule : keyframeRules) {
         // Add this keyframe style to all the indicated key times
@@ -450,28 +450,14 @@ void Resolver::keyframeStylesForAnimation(const Element& element, const RenderSt
             KeyframeValue keyframeValue(0, nullptr);
             keyframeValue.setStyle(styleForKeyframe(element, elementStyle, context, keyframeRule.get(), keyframeValue));
             keyframeValue.setKey(key);
-            if (!containsCSSVariableReferences)
-                containsCSSVariableReferences = keyframeRule->containsCSSVariableReferences();
             if (auto timingFunctionCSSValue = keyframeRule->properties().getPropertyCSSValue(CSSPropertyAnimationTimingFunction))
                 keyframeValue.setTimingFunction(TimingFunction::createFromCSSValue(*timingFunctionCSSValue.get()));
             if (auto compositeOperationCSSValue = keyframeRule->properties().getPropertyCSSValue(CSSPropertyAnimationComposition)) {
                 if (auto compositeOperation = toCompositeOperation(*compositeOperationCSSValue))
                     keyframeValue.setCompositeOperation(*compositeOperation);
             }
-            for (auto property : keyframeRule->properties()) {
-                if (auto* cssValue = property.value()) {
-                    if (cssValue->isPrimitiveValue()) {
-                        auto valueId = downcast<CSSPrimitiveValue>(*cssValue).valueID();
-                        if (valueId == CSSValueInherit)
-                            inheritedProperties.add(property.id());
-                        else if (valueId == CSSValueCurrentcolor)
-                            currentColorProperties.add(property.id());
-                        else if (property.id() == CSSPropertyFontWeight && (valueId == CSSValueBolder || valueId == CSSValueLighter))
-                            hasRelativeFontWeight = true;
-                    }
-                }
-            }
             list.insert(WTFMove(keyframeValue));
+            list.updatePropertiesMetadata(keyframeRule->properties());
         }
     }
 }
@@ -481,7 +467,7 @@ std::optional<ResolvedStyle> Resolver::styleForPseudoElement(const Element& elem
     auto state = State(element, context.parentStyle, context.documentElementStyle);
 
     if (state.parentStyle()) {
-        state.setStyle(RenderStyle::createPtr());
+        state.setStyle(RenderStyle::createPtrWithRegisteredInitialValues(document().customPropertyRegistry()));
         state.style()->inheritFrom(*state.parentStyle());
     } else {
         state.setStyle(defaultStyleForElement(&element));
@@ -541,7 +527,7 @@ std::unique_ptr<RenderStyle> Resolver::styleForPage(int pageIndex)
 
 std::unique_ptr<RenderStyle> Resolver::defaultStyleForElement(const Element* element)
 {
-    auto style = RenderStyle::createPtr();
+    auto style = RenderStyle::createPtrWithRegisteredInitialValues(document().customPropertyRegistry());
 
     FontCascadeDescription fontDescription;
     fontDescription.setRenderingMode(settings().fontRenderingMode());

@@ -149,6 +149,7 @@ public:
     WEBCORE_EXPORT PlatformLayer* contentsLayerForMedia() const override;
 #endif
     WEBCORE_EXPORT void setContentsToPlatformLayer(PlatformLayer*, ContentsLayerPurpose) override;
+    WEBCORE_EXPORT void setContentsToPlatformLayerHost(LayerHostingContextIdentifier) override;
     WEBCORE_EXPORT void setContentsDisplayDelegate(RefPtr<GraphicsLayerContentsDisplayDelegate>&&, ContentsLayerPurpose) override;
 
     WEBCORE_EXPORT void setContentsToSolidColor(const Color&) override;
@@ -229,7 +230,7 @@ private:
     WEBCORE_EXPORT bool platformCALayerUseGiantTiles() const override;
     WEBCORE_EXPORT bool platformCALayerUseCSS3DTransformInteroperability() const override;
     WEBCORE_EXPORT void platformCALayerLogFilledVisibleFreshTile(unsigned) override;
-    bool platformCALayerContainsBitmapOnly(PlatformCALayer*) const override { return client().layerContainsBitmapOnly(this); }
+    bool platformCALayerContainsBitmapOnly(const PlatformCALayer*) const override { return client().layerContainsBitmapOnly(this); }
 
     bool isCommittingChanges() const override { return m_isCommittingChanges; }
     bool isUsingDisplayListDrawing(PlatformCALayer*) const override { return m_usesDisplayListDrawing; }
@@ -259,6 +260,7 @@ private:
 #if ENABLE(MODEL_ELEMENT)
     virtual Ref<PlatformCALayer> createPlatformCALayer(Ref<WebCore::Model>, PlatformCALayerClient* owner);
 #endif
+    virtual Ref<PlatformCALayer> createPlatformCALayerHost(LayerHostingContextIdentifier, PlatformCALayerClient*);
     virtual Ref<PlatformCAAnimation> createPlatformCAAnimation(PlatformCAAnimation::AnimationType, const String& keyPath);
 
     PlatformCALayer* primaryLayer() const { return m_structuralLayer.get() ? m_structuralLayer.get() : m_layer.get(); }

@@ -58,17 +58,27 @@ void GPUImpl::requestAdapter(const RequestAdapterOptions& options, CompletionHan
         options.forceFallbackAdapter,
     };
 
-    wgpuInstanceRequestAdapterWithBlock(m_backing, &backingOptions, makeBlockPtr([convertToBackingContext = m_convertToBackingContext.copyRef(), callback = WTFMove(callback)](WGPURequestAdapterStatus, WGPUAdapter adapter, const char*) mutable {
-        callback(AdapterImpl::create(adapter, convertToBackingContext));
+    wgpuInstanceRequestAdapterWithBlock(m_backing, &backingOptions, makeBlockPtr([convertToBackingContext = m_convertToBackingContext.copyRef(), callback = WTFMove(callback)](WGPURequestAdapterStatus status, WGPUAdapter adapter, const char*) mutable {
+        if (status == WGPURequestAdapterStatus_Success)
+            callback(AdapterImpl::create(adapter, convertToBackingContext));
+        else
+            callback(nullptr);
     }).get());
+}
+
+static WTF::Function<void(CompletionHandler<void()>&&)> convert(WGPUOnSubmittedWorkScheduledCallback&& onSubmittedWorkScheduledCallback)
+{
+    return [onSubmittedWorkScheduledCallback = makeBlockPtr(WTFMove(onSubmittedWorkScheduledCallback))](CompletionHandler<void()>&& completionHandler) {
+        onSubmittedWorkScheduledCallback(makeBlockPtr(WTFMove(completionHandler)).get());
+    };
 }
 
 Ref<PresentationContext> GPUImpl::createPresentationContext(const PresentationContextDescriptor& presentationContextDescriptor)
 {
     auto& compositorIntegration = m_convertToBackingContext->convertToBacking(presentationContextDescriptor.compositorIntegration);
 
-    auto registerCallbacksBlock = BlockPtr<void(WGPURenderBuffersWereRecreatedBlockCallback)>::fromCallable([&](WGPURenderBuffersWereRecreatedBlockCallback renderBuffersWereRecreatedCallback) {
-        compositorIntegration.registerCallbacks(BlockPtr<void(CFArrayRef)>(renderBuffersWereRecreatedCallback));
+    auto registerCallbacksBlock = makeBlockPtr([&](WGPURenderBuffersWereRecreatedBlockCallback renderBuffersWereRecreatedCallback, WGPUOnSubmittedWorkScheduledCallback onSubmittedWorkScheduledCallback) {
+        compositorIntegration.registerCallbacks(makeBlockPtr(WTFMove(renderBuffersWereRecreatedCallback)), convert(WTFMove(onSubmittedWorkScheduledCallback)));
     });
 
     WGPUSurfaceDescriptorCocoaCustomSurface cocoaSurface {

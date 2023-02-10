@@ -83,12 +83,14 @@
 #include <WebCore/FileSystemHandleIdentifier.h>
 #include <WebCore/FileSystemSyncAccessHandleIdentifier.h>
 #include <WebCore/ImageDecoderIdentifier.h>
+#include <WebCore/LayerHostingContextIdentifier.h>
 #include <WebCore/LibWebRTCSocketIdentifier.h>
 #include <WebCore/MediaKeySystemRequestIdentifier.h>
 #include <WebCore/MediaPlayerIdentifier.h>
 #include <WebCore/MediaSessionIdentifier.h>
 #include <WebCore/PageIdentifier.h>
 #include <WebCore/PlaybackTargetClientContextIdentifier.h>
+#include <WebCore/PortIdentifier.h>
 #include <WebCore/ProcessIdentifier.h>
 #include <WebCore/PushSubscriptionIdentifier.h>
 #include <WebCore/RealtimeMediaSourceIdentifier.h>
@@ -391,6 +393,7 @@ Vector<ASCIILiteral> serializedIdentifiers()
     static_assert(sizeof(uint64_t) == sizeof(WebCore::FileSystemHandleIdentifier));
     static_assert(sizeof(uint64_t) == sizeof(WebCore::FileSystemSyncAccessHandleIdentifier));
     static_assert(sizeof(uint64_t) == sizeof(WebCore::ImageDecoderIdentifier));
+    static_assert(sizeof(uint64_t) == sizeof(WebCore::LayerHostingContextIdentifier));
     static_assert(sizeof(uint64_t) == sizeof(WebCore::LibWebRTCSocketIdentifier));
     static_assert(sizeof(uint64_t) == sizeof(WebCore::MediaKeySystemRequestIdentifier));
     static_assert(sizeof(uint64_t) == sizeof(WebCore::MediaPlayerIdentifier));
@@ -398,6 +401,7 @@ Vector<ASCIILiteral> serializedIdentifiers()
     static_assert(sizeof(uint64_t) == sizeof(WebCore::PageIdentifier));
     static_assert(sizeof(uint64_t) == sizeof(WebCore::PlaybackTargetClientContextIdentifier));
     static_assert(sizeof(uint64_t) == sizeof(WebCore::PushSubscriptionIdentifier));
+    static_assert(sizeof(uint64_t) == sizeof(WebCore::PortIdentifier));
     static_assert(sizeof(uint64_t) == sizeof(WebCore::ProcessIdentifier));
     static_assert(sizeof(uint64_t) == sizeof(WebCore::RealtimeMediaSourceIdentifier));
     static_assert(sizeof(uint64_t) == sizeof(WebCore::RenderingResourceIdentifier));
@@ -472,6 +476,7 @@ Vector<ASCIILiteral> serializedIdentifiers()
         "WebCore::FileSystemHandleIdentifier"_s,
         "WebCore::FileSystemSyncAccessHandleIdentifier"_s,
         "WebCore::ImageDecoderIdentifier"_s,
+        "WebCore::LayerHostingContextIdentifier"_s,
         "WebCore::LibWebRTCSocketIdentifier"_s,
         "WebCore::MediaKeySystemRequestIdentifier"_s,
         "WebCore::MediaPlayerIdentifier"_s,
@@ -479,6 +484,7 @@ Vector<ASCIILiteral> serializedIdentifiers()
         "WebCore::PageIdentifier"_s,
         "WebCore::PlaybackTargetClientContextIdentifier"_s,
         "WebCore::PushSubscriptionIdentifier"_s,
+        "WebCore::PortIdentifier"_s,
         "WebCore::ProcessIdentifier"_s,
         "WebCore::RealtimeMediaSourceIdentifier"_s,
         "WebCore::RenderingResourceIdentifier"_s,

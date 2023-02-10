@@ -31,6 +31,8 @@
 
 namespace WebGPU {
 
+class Device;
+
 class PresentationContextIOSurface : public PresentationContext {
     WTF_MAKE_FAST_ALLOCATED;
 public:
@@ -45,16 +47,13 @@ public:
     Texture* getCurrentTexture() override; // FIXME: This should return a Texture&.
     TextureView* getCurrentTextureView() override; // FIXME: This should return a TextureView&.
 
-    // FIXME: Delete these.
-    IOSurface *displayBuffer() const;
-    IOSurface *drawingBuffer() const;
-
     bool isPresentationContextIOSurface() const override { return true; }
 
 private:
     PresentationContextIOSurface(const WGPUSurfaceDescriptor&);
 
     void renderBuffersWereRecreated(NSArray<IOSurface *> *renderBuffers);
+    void onSubmittedWorkScheduled(CompletionHandler<void()>&&);
 
     NSArray<IOSurface *> *m_ioSurfaces { nil };
     struct RenderBuffer {
@@ -62,6 +61,7 @@ private:
         Ref<TextureView> textureView;
     };
     Vector<RenderBuffer> m_renderBuffers;
+    RefPtr<Device> m_device;
     size_t m_currentIndex { 0 };
 };
 

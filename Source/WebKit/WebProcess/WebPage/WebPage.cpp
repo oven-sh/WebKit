@@ -568,6 +568,7 @@ WebPage::WebPage(PageIdentifier pageID, WebPageCreationParameters&& parameters)
     , m_limitsNavigationsToAppBoundDomains(parameters.limitsNavigationsToAppBoundDomains)
 #endif
     , m_lastNavigationWasAppInitiated(parameters.lastNavigationWasAppInitiated)
+    , m_layerHostingContextIdentifier(parameters.layerHostingContextIdentifier)
 #if ENABLE(APP_HIGHLIGHTS)
     , m_appHighlightsVisible(parameters.appHighlightsVisible)
 #endif
@@ -653,7 +654,7 @@ WebPage::WebPage(PageIdentifier pageID, WebPageCreationParameters&& parameters)
     pageConfiguration.applicationCacheStorage = &WebProcess::singleton().applicationCacheStorage();
     pageConfiguration.databaseProvider = WebDatabaseProvider::getOrCreate(m_pageGroup->pageGroupID());
     pageConfiguration.pluginInfoProvider = &WebPluginInfoProvider::singleton();
-    pageConfiguration.storageNamespaceProvider = WebStorageNamespaceProvider::getOrCreate(*m_pageGroup);
+    pageConfiguration.storageNamespaceProvider = WebStorageNamespaceProvider::getOrCreate();
     pageConfiguration.visitedLinkStore = VisitedLinkTableController::getOrCreate(parameters.visitedLinkTableID);
 
 #if ENABLE(APPLE_PAY)
@@ -717,7 +718,7 @@ WebPage::WebPage(PageIdentifier pageID, WebPageCreationParameters&& parameters)
     
     m_page = makeUnique<Page>(WTFMove(pageConfiguration));
 
-    WebStorageNamespaceProvider::incrementUseCount(*m_pageGroup, sessionStorageNamespaceIdentifier());
+    WebStorageNamespaceProvider::incrementUseCount(sessionStorageNamespaceIdentifier());
 
     updatePreferences(parameters.store);
 
@@ -1126,7 +1127,7 @@ WebPage::~WebPage()
         m_footerBanner->detachFromPage();
 #endif
 
-    WebStorageNamespaceProvider::decrementUseCount(*m_pageGroup, sessionStorageNamespaceIdentifier());
+    WebStorageNamespaceProvider::decrementUseCount(sessionStorageNamespaceIdentifier());
 
 #ifndef NDEBUG
     webPageCounter.decrement();
@@ -1581,7 +1582,8 @@ void WebPage::close()
     m_page->inspectorController().disconnectAllFrontends();
 
 #if ENABLE(FULLSCREEN_API)
-    m_fullScreenManager = nullptr;
+    if (auto manager = std::exchange(m_fullScreenManager, { }))
+        manager->invalidate();
 #endif
 
     if (m_activePopupMenu) {
@@ -1802,7 +1804,7 @@ void WebPage::loadDataImpl(uint64_t navigationID, ShouldTreatAsContinuingLoad sh
 
     // Let the InjectedBundle know we are about to start the load, passing the user data from the UIProcess
     // to all the client to set up any needed state.
-    m_loaderClient->willLoadDataRequest(*this, request, const_cast<FragmentedSharedBuffer*>(substituteData.content()), substituteData.mimeType(), substituteData.textEncoding(), substituteData.failingURL(), WebProcess::singleton().transformHandlesToObjects(userData.object()).get());
+    m_loaderClient->willLoadDataRequest(*this, request, substituteData.content(), substituteData.mimeType(), substituteData.textEncoding(), substituteData.failingURL(), WebProcess::singleton().transformHandlesToObjects(userData.object()).get());
 
     // Initate the load in WebCore.
     FrameLoadRequest frameLoadRequest(*m_mainFrame->coreFrame(), request, substituteData);
@@ -4271,7 +4273,9 @@ void WebPage::updatePreferences(const WebPreferencesStore& store)
 
 #if ENABLE(GPU_PROCESS)
     static_cast<WebMediaStrategy&>(platformStrategies()->mediaStrategy()).setUseGPUProcess(m_shouldPlayMediaInGPUProcess);
+#if ENABLE(VIDEO)
     WebProcess::singleton().supplement<RemoteMediaPlayerManager>()->setUseGPUProcess(m_shouldPlayMediaInGPUProcess);
+#endif
 #if HAVE(AVASSETREADER)
     WebProcess::singleton().supplement<RemoteImageDecoderAVFManager>()->setUseGPUProcess(m_shouldPlayMediaInGPUProcess);
 #endif

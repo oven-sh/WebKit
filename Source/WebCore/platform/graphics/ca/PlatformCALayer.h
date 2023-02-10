@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2010-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -59,11 +59,7 @@ class IOSurface;
 #endif
 
 class WEBCORE_EXPORT PlatformCALayer : public ThreadSafeRefCounted<PlatformCALayer, WTF::DestructionThread::Main> {
-#if PLATFORM(COCOA)
     friend class PlatformCALayerCocoa;
-#elif PLATFORM(WIN)
-    friend class PlatformCALayerWin;
-#endif
 public:
     static CFTimeInterval currentTimeToMediaTime(MonotonicTime);
 
@@ -88,6 +84,7 @@ public:
         LayerTypeModelLayer,
 #endif
         LayerTypeCustom,
+        LayerTypeHost,
     };
     enum FilterType { Linear, Nearest, Trilinear };
 
@@ -97,9 +94,14 @@ public:
 
     GraphicsLayer::PlatformLayerID layerID() const { return m_layerID; }
 
-    virtual bool isPlatformCALayerCocoa() const { return false; }
-    virtual bool isPlatformCALayerRemote() const { return false; }
-    virtual bool isPlatformCALayerRemoteCustom() const { return false; }
+    enum class Type : uint8_t {
+        Cocoa,
+        Remote,
+        RemoteCustom,
+        RemoteHost,
+        RemoteModel
+    };
+    virtual Type type() const = 0;
 
     // This function passes the layer as a void* rather than a PlatformLayer because PlatformLayer
     // is defined differently for Obj C and C++. This allows callers from both languages.
@@ -282,13 +284,6 @@ public:
     
     virtual unsigned backingStoreBytesPerPixel() const { return 4; }
 
-#if PLATFORM(WIN)
-    virtual PlatformCALayer* rootLayer() const = 0;
-    virtual void setNeedsLayout() = 0;
-    virtual void setNeedsCommit() = 0;
-    virtual String layerTreeAsString() const = 0;
-#endif // PLATFORM(WIN)
-
 #if PLATFORM(IOS_FAMILY)
     bool isWebLayer();
     void setBoundsOnMainThread(CGRect);
@@ -304,11 +299,7 @@ public:
 #endif
 
     static const unsigned webLayerMaxRectsToPaint = 5;
-#if COMPILER(MSVC)
-    static const float webLayerWastedSpaceThreshold;
-#else
     constexpr static const float webLayerWastedSpaceThreshold = 0.75f;
-#endif
 
     typedef Vector<FloatRect, webLayerMaxRectsToPaint> RepaintRectList;
         
@@ -373,7 +364,8 @@ template<> struct EnumTraits<WebCore::PlatformCALayer::LayerType> {
 #if ENABLE(MODEL_ELEMENT)
         WebCore::PlatformCALayer::LayerType::LayerTypeModelLayer,
 #endif
-        WebCore::PlatformCALayer::LayerType::LayerTypeCustom
+        WebCore::PlatformCALayer::LayerType::LayerTypeCustom,
+        WebCore::PlatformCALayer::LayerType::LayerTypeHost
     >;
 };
 

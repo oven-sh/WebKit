@@ -140,12 +140,6 @@ bool MacApplication::isAppleMail()
     return isAppleMail;
 }
 
-bool MacApplication::isITunes()
-{
-    static bool isITunes = applicationBundleIsEqualTo("com.apple.iTunes"_s);
-    return isITunes;
-}
-
 bool MacApplication::isMicrosoftMessenger()
 {
     static bool isMicrosoftMessenger = applicationBundleIsEqualTo("com.microsoft.Messenger"_s);
@@ -156,12 +150,6 @@ bool MacApplication::isAdobeInstaller()
 {
     static bool isAdobeInstaller = applicationBundleIsEqualTo("com.adobe.Installers.Setup"_s);
     return isAdobeInstaller;
-}
-
-bool MacApplication::isAOLInstantMessenger()
-{
-    static bool isAOLInstantMessenger = applicationBundleIsEqualTo("com.aol.aim.desktop"_s);
-    return isAOLInstantMessenger;
 }
 
 bool MacApplication::isMicrosoftMyDay()
@@ -186,12 +174,6 @@ bool MacApplication::isQuickenEssentials()
 {
     static bool isQuickenEssentials = applicationBundleIsEqualTo("com.intuit.QuickenEssentials"_s);
     return isQuickenEssentials;
-}
-
-bool MacApplication::isAperture()
-{
-    static bool isAperture = applicationBundleIsEqualTo("com.apple.Aperture"_s);
-    return isAperture;
 }
 
 bool MacApplication::isVersions()
@@ -293,6 +275,12 @@ bool IOSApplication::isSpringBoard()
 bool IOSApplication::isWebProcess()
 {
     return isInWebProcess();
+}
+
+bool IOSApplication::isBackboneApp()
+{
+    static bool isBackboneApp = applicationBundleIsEqualTo("com.backbonelabs.backboneapp"_s);
+    return isBackboneApp;
 }
 
 bool IOSApplication::isIBooksStorytime()
@@ -449,6 +437,12 @@ bool IOSApplication::isWechat()
 {
     static bool isWechat = applicationBundleIsEqualTo("com.tencent.xin"_s);
     return isWechat;
+}
+
+bool IOSApplication::isUNIQLOApp()
+{
+    static bool isUNIQLO = applicationBundleIdentifier().startsWith("com.uniqlo"_s);
+    return isUNIQLO;
 }
 
 bool IOSApplication::isLutron()

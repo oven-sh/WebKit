@@ -119,4 +119,6 @@ typedef NS_OPTIONS(NSUInteger, _WKWebsiteNetworkConnectionIntegrityPolicy) {
 @property (nonatomic, setter=_setNetworkConnectionIntegrityEnabled:) BOOL _networkConnectionIntegrityEnabled WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA));
 @property (nonatomic, setter=_setNetworkConnectionIntegrityPolicy:) _WKWebsiteNetworkConnectionIntegrityPolicy _networkConnectionIntegrityPolicy WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA));
 
+- (void)_setContentRuleListsEnabled:(BOOL)enabled exceptions:(NSSet<NSString *> *)exceptions WK_API_AVAILABLE(macos(WK_MAC_TBA), ios(WK_IOS_TBA));
+
 @end

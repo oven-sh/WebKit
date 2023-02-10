@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2006 Samuel Weinig (sam.weinig@gmail.com)
- * Copyright (C) 2004, 2005, 2006, 2013 Apple Inc.  All rights reserved.
+ * Copyright (C) 2004-2023 Apple Inc.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,6 +26,7 @@
 
 #pragma once
 
+#include "CachedSubimage.h"
 #include "Color.h"
 #include "DecodingOptions.h"
 #include "FloatRect.h"
@@ -58,6 +59,7 @@ typedef struct HBITMAP__ *HBITMAP;
 #endif
 
 #if PLATFORM(GTK)
+#include <wtf/glib/GRefPtr.h>
 typedef struct _GdkPixbuf GdkPixbuf;
 #if USE(GTK4)
 typedef struct _GdkTexture GdkTexture;
@@ -77,6 +79,7 @@ struct Length;
 class ImageObserver;
 
 class Image : public RefCounted<Image> {
+    friend class CachedSubimage;
     friend class GraphicsContext;
 public:
     virtual ~Image();
@@ -132,7 +135,7 @@ public:
     virtual String filenameExtension() const { return String(); } // null string if unknown
     virtual String accessibilityDescription() const { return String(); } // null string if unknown
 
-    virtual void destroyDecodedData(bool destroyAll = true) = 0;
+    virtual void destroyDecodedData(bool destroyAll = true);
 
     FragmentedSharedBuffer* data() { return m_encodedImageData.get(); }
     const FragmentedSharedBuffer* data() const { return m_encodedImageData.get(); }
@@ -156,6 +159,9 @@ public:
     URL sourceURL() const;
     WEBCORE_EXPORT String mimeType() const;
     long long expectedContentLength() const;
+
+    unsigned cachedSubimageCreateCountForTesting() const { return m_cachedSubimageCreateCountForTesting; }
+    unsigned cachedSubimageDrawCountForTesting() const { return m_cachedSubimageDrawCountForTesting; }
 
     enum TileRule { StretchTile, RoundTile, SpaceTile, RepeatTile };
 
@@ -181,9 +187,9 @@ public:
 #endif
 
 #if PLATFORM(GTK)
-    virtual GdkPixbuf* getGdkPixbuf() { return nullptr; }
+    virtual GRefPtr<GdkPixbuf> gdkPixbuf() { return nullptr; }
 #if USE(GTK4)
-    virtual GdkTexture* gdkTexture() { return nullptr; }
+    virtual GRefPtr<GdkTexture> gdkTexture() { return nullptr; }
 #endif
 #endif
 
@@ -203,7 +209,10 @@ protected:
 #if PLATFORM(WIN)
     virtual void drawFrameMatchingSourceSize(GraphicsContext&, const FloatRect& dstRect, const IntSize& srcSize, CompositeOperator) { }
 #endif
+    virtual bool shouldDrawFromCachedSubimage(GraphicsContext&) const { return false; }
+    virtual bool mustDrawFromCachedSubimage(GraphicsContext&) const { return false; }
     virtual ImageDrawResult draw(GraphicsContext&, const FloatRect& dstRect, const FloatRect& srcRect, const ImagePaintingOptions& = { }) = 0;
+    ImageDrawResult drawCachedSubimage(GraphicsContext&, const FloatRect& dstRect, const FloatRect& srcRect, const ImagePaintingOptions& = { });
     ImageDrawResult drawTiled(GraphicsContext&, const FloatRect& dstRect, const FloatPoint& srcPoint, const FloatSize& tileSize, const FloatSize& spacing, const ImagePaintingOptions& = { });
     ImageDrawResult drawTiled(GraphicsContext&, const FloatRect& dstRect, const FloatRect& srcRect, const FloatSize& tileScaleFactor, TileRule hRule, TileRule vRule, const ImagePaintingOptions& = { });
 
@@ -213,10 +222,14 @@ protected:
 private:
     RefPtr<FragmentedSharedBuffer> m_encodedImageData;
     ImageObserver* m_imageObserver;
-    std::unique_ptr<Timer> m_animationStartTimer;
 
     // A value of true or false will override the default Page::imageAnimationEnabled state.
     std::optional<bool> m_allowsAnimation { std::nullopt };
+    std::unique_ptr<Timer> m_animationStartTimer;
+
+    std::unique_ptr<CachedSubimage> m_cachedSubimage;
+    unsigned m_cachedSubimageCreateCountForTesting { 0 };
+    unsigned m_cachedSubimageDrawCountForTesting { 0 };
 };
 
 WTF::TextStream& operator<<(WTF::TextStream&, const Image&);

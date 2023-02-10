@@ -29,7 +29,9 @@
 #if PLATFORM(MAC)
 
 #import "ButtonMac.h"
+#import "ButtonPart.h"
 #import "ColorWellMac.h"
+#import "ControlStyle.h"
 #import "ImageControlsButtonMac.h"
 #import "InnerSpinButtonMac.h"
 #import "MenuListButtonMac.h"
@@ -70,9 +72,7 @@ NSView *ControlFactoryMac::drawingView(const FloatRect& rect, const ControlStyle
 
     // Use a fake view.
     [m_drawingView setFrameSize:NSSizeFromCGSize(rect.size())];
-    ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-    [m_drawingView setAppearance:[NSAppearance currentAppearance]];
-    ALLOW_DEPRECATED_DECLARATIONS_END
+    [m_drawingView setAppearance:[NSAppearance currentDrawingAppearance]];
 #if USE(NSVIEW_SEMANTICCONTEXT)
     if (style.states.contains(ControlStyle::State::FormSemanticContext))
         [m_drawingView _setSemanticContext:NSViewSemanticContextForm];

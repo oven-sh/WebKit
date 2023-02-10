@@ -5601,18 +5601,6 @@ bool HTMLMediaElement::mediaPlayerAcceleratedCompositingEnabled()
     return document().settings().acceleratedCompositingEnabled();
 }
 
-#if PLATFORM(WIN) && USE(AVFOUNDATION)
-
-GraphicsDeviceAdapter* HTMLMediaElement::mediaPlayerGraphicsDeviceAdapter() const
-{
-    auto* page = document().page();
-    if (!page)
-        return nullptr;
-    return page->chrome().client().graphicsDeviceAdapter();
-}
-
-#endif
-
 void HTMLMediaElement::scheduleMediaEngineWasUpdated()
 {
     if (m_mediaEngineUpdatedTaskCancellationGroup.hasPendingTask())
@@ -7826,7 +7814,11 @@ const std::optional<Vector<FourCC>>& HTMLMediaElement::allowedMediaCaptionFormat
 
 void HTMLMediaElement::mediaPlayerBufferedTimeRangesChanged()
 {
-    if (!m_textTracks || m_bufferedTimeRangesChangedTaskCancellationGroup.hasPendingTask())
+    if (!m_textTracks || m_readyState < HAVE_ENOUGH_DATA || m_bufferedTimeRangesChangedTaskCancellationGroup.hasPendingTask())
+        return;
+
+    auto duration = durationMediaTime();
+    if (!duration.isValid() || duration.toDouble() < 60.)
         return;
 
     auto logSiteIdentifier = LOGIDENTIFIER;

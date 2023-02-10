@@ -352,9 +352,16 @@ imported/w3c/web-platform-tests/referrer-policy/generic/unsupported-csp-referrer
 # This test is timing out in both WebKit and Blink (one of the subtests is timing out in Gecko).
 imported/w3c/web-platform-tests/html/browsers/browsing-the-web/overlapping-navigations-and-traversals/tentative/cross-document-traversal-same-document-nav.html [ Skip ]
 
-# This test times out. We should fix that.
+# These tests times out. We should fix that.
 imported/w3c/web-platform-tests/selection/collapse-30.html [ Skip ]
 imported/w3c/web-platform-tests/selection/dir-manual.html [ Skip ]
+imported/w3c/web-platform-tests/editing/crashtests/inserthorizontalrule-in-textarea-in-editor-and-undo-on-error-events.html [ Skip ]
+
+# This test hits a debug assertion in WebKit
+imported/w3c/web-platform-tests/editing/run/delete.html?6001-7000 [ Skip ]
+
+# This test's output is not stable from run to run.
+imported/w3c/web-platform-tests/editing/run/undo-redo.html [ Skip ]
 
 http/wpt/selection-live-range/collapse-00.html [ Slow ]
 http/wpt/selection-live-range/collapse-15.html [ Slow ]
@@ -430,9 +437,6 @@ imported/w3c/web-platform-tests/server-timing/test_server_timing.https.html [ Sk
 imported/w3c/web-platform-tests/server-timing/navigation_timing_idl.html [ Skip ]
 imported/w3c/web-platform-tests/server-timing/navigation_timing_idl.https.html [ Skip ]
 
-# No support for Clear-Site-Data: "executionContexts".
-imported/w3c/web-platform-tests/clear-site-data/executionContexts.sub.html [ Skip ]
-
 # Console log lines may appear in a different order so we silence them.
 http/tests/security/cookie-module.html [ DumpJSConsoleLogInStdErr ]
 http/tests/security/cookie-module-import-propagate.html [ DumpJSConsoleLogInStdErr ]
@@ -475,9 +479,6 @@ imported/w3c/web-platform-tests/html/infrastructure/urls/resolving-urls/query-en
 imported/w3c/web-platform-tests/html/semantics/embedded-content/media-elements/autoplay-allowed-by-feature-policy-attribute.https.sub.html [ DumpJSConsoleLogInStdErr ]
 imported/w3c/web-platform-tests/html/semantics/embedded-content/the-iframe-element/iframe-network-error.sub.html [ DumpJSConsoleLogInStdErr ]
 imported/w3c/web-platform-tests/html/semantics/embedded-content/the-iframe-element/iframe_sandbox_anchor_download_allow_downloads.tentative.html [ DumpJSConsoleLogInStdErr ]
-imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/css-module/integrity.html [ DumpJSConsoleLogInStdErr ]
-imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/css-module/import-css-module-basic.html [ DumpJSConsoleLogInStdErr ]
-imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/json-module/integrity.html [ DumpJSConsoleLogInStdErr ]
 imported/w3c/web-platform-tests/html/canvas/element/manual/imagebitmap/createImageBitmap-invalid-args.html [ DumpJSConsoleLogInStdErr ]
 imported/w3c/web-platform-tests/html/user-activation/no-activation-thru-escape-key.html [ DumpJSConsoleLogInStdErr ]
 imported/w3c/web-platform-tests/html/webappapis/scripting/processing-model-2/unhandled-promise-rejections/promise-rejection-event-during-parse.html [ DumpJSConsoleLogInStdErr ]
@@ -837,6 +838,7 @@ imported/w3c/web-platform-tests/html/canvas/element/manual/layers/layers-several
 imported/w3c/web-platform-tests/html/rendering/widgets/appearance/appearance-animation-002.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/html/rendering/widgets/appearance/appearance-transition-003.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/html/semantics/embedded-content/the-embed-element/embed-hidden-attribute.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-grid/grid-model/grid-layout-stale-002.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/html/semantics/interactive-elements/the-dialog-element/modal-dialog-selection.html [ Pass Failure ]
 imported/w3c/web-platform-tests/streams/readable-streams/global.html [ Pass Failure ]
 
@@ -3524,6 +3526,17 @@ webkit.org/b/200207 imported/w3c/web-platform-tests/css/css-images/css-image-fal
 webkit.org/b/200207 imported/w3c/web-platform-tests/css/css-images/css-image-fallbacks-and-annotations.html [ ImageOnlyFailure ]
 webkit.org/b/200209 imported/w3c/web-platform-tests/css/css-images/multiple-position-color-stop-radial.html [ ImageOnlyFailure ]
 
+# wpt image-set failures
+webkit.org/b/251811 imported/w3c/web-platform-tests/css/css-images/image-set/image-set-no-res-rendering-2.html [ ImageOnlyFailure ]
+webkit.org/b/251811 imported/w3c/web-platform-tests/css/css-images/image-set/image-set-no-res-rendering.html [ ImageOnlyFailure ]
+webkit.org/b/251811 imported/w3c/web-platform-tests/css/css-images/image-set/image-set-type-first-match-rendering.html [ ImageOnlyFailure ]
+webkit.org/b/251811 imported/w3c/web-platform-tests/css/css-images/image-set/image-set-type-rendering-2.html [ ImageOnlyFailure ]
+webkit.org/b/251811 imported/w3c/web-platform-tests/css/css-images/image-set/image-set-type-rendering-3.html [ ImageOnlyFailure ]
+webkit.org/b/251811 imported/w3c/web-platform-tests/css/css-images/image-set/image-set-type-rendering.html [ ImageOnlyFailure ]
+webkit.org/b/251811 imported/w3c/web-platform-tests/css/css-images/image-set/image-set-type-skip-unsupported-rendering.html [ ImageOnlyFailure ]
+webkit.org/b/251811 imported/w3c/web-platform-tests/css/css-images/image-set/image-set-type-unsupported-rendering-2.html [ ImageOnlyFailure ]
+webkit.org/b/251811 imported/w3c/web-platform-tests/css/css-images/image-set/image-set-type-unsupported-rendering.html [ ImageOnlyFailure ]
+
 # wpt css-transitions and css-animations failures and flakiness
 webkit.org/b/225407 imported/w3c/web-platform-tests/css/css-animations/nested-scale-animations.html [ ImageOnlyFailure ]
 webkit.org/b/225407 imported/w3c/web-platform-tests/css/css-animations/transform-animation-under-large-scale.html [ ImageOnlyFailure ]
@@ -6195,6 +6208,9 @@ imported/w3c/web-platform-tests/html/browsers/the-window-object/window-open-noop
 imported/w3c/web-platform-tests/html/browsers/the-window-object/window-open-noopener.html?_parent [ Skip ]
 imported/w3c/web-platform-tests/html/browsers/the-window-object/window-open-noopener.html?_top [ Skip ]
 
+# CSS nesting unsupported yet
+imported/w3c/web-platform-tests/css/css-nesting/nest-containing-forgiving.html [ ImageOnlyFailure ]
+
 # Needs non-zero line gap in 'Arial'
 fast/text/text-edge-no-half-leading-simple.html [ Skip ]
 fast/text/text-edge-no-half-leading-with-line-height-simple.html [ Skip ]
@@ -6207,3 +6223,18 @@ webkit.org/b/245905 imported/w3c/web-platform-tests/css/css-text/line-breaking/l
 js/dom/Promise-reject-large-string.html [ DumpJSConsoleLogInStdErr ]
 
 webkit.org/b/251624 fast/images/animated-heics-verify.html [ Skip ]
+
+# Import-assertion gets reverted to stage-2.
+imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/css-module/content-type-checking.html [ Skip ]
+imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/css-module/import-css-module-basic.html [ Skip ]
+imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/css-module/integrity.html [ Skip ]
+imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/css-module/load-error-events.html [ Skip ]
+imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/import-assertions/empty-assertion-clause.html [ Skip ]
+imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/import-assertions/invalid-type-assertion-error.html [ Skip ]
+imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/import-assertions/unsupported-assertion.html [ Skip ]
+imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/json-module/charset.html [ Skip ]
+imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/json-module/integrity.html [ Skip ]
+imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/json-module/json-module-service-worker-test.https.html [ Skip ]
+imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/json-module/load-error-events.html [ Skip ]
+imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/json-module/module.html [ Skip ]
+imported/w3c/web-platform-tests/html/semantics/scripting-1/the-script-element/json-module/valid-content-type.html [ Skip ]

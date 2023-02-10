@@ -3578,7 +3578,7 @@ void WebPageProxy::receivedNavigationPolicyDecision(PolicyAction policyAction, A
     if (navigation && !navigation->userContentExtensionsEnabled()) {
         if (!navigation->websitePolicies())
             navigation->setWebsitePolicies(API::WebsitePolicies::create());
-        navigation->websitePolicies()->setContentBlockersEnabled(false);
+        navigation->websitePolicies()->setContentExtensionEnablement({ ContentExtensionDefaultEnablement::Disabled, { } });
     }
 
 #if ENABLE(DEVICE_ORIENTATION)
@@ -11767,6 +11767,7 @@ void WebPageProxy::decidePolicyForModalContainer(OptionSet<ModalContainerControl
     m_uiClient->decidePolicyForModalContainer(types, WTFMove(completion));
 }
 
+#if ENABLE(VIDEO)
 void WebPageProxy::beginTextRecognitionForVideoInElementFullScreen(MediaPlayerIdentifier identifier, FloatRect bounds)
 {
     if (!pageClient().isTextRecognitionInFullscreenVideoEnabled())
@@ -11800,6 +11801,7 @@ void WebPageProxy::cancelTextRecognitionForVideoInElementFullScreen()
     m_isPerformingTextRecognitionInElementFullScreen = false;
     pageClient().cancelTextRecognitionForVideoInElementFullscreen();
 }
+#endif
 
 #if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
 

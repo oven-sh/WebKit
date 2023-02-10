@@ -32,6 +32,7 @@
 #import "Download.h"
 #import "DownloadProxyMessages.h"
 #import "Logging.h"
+#import "NetworkConnectionIntegrityHelpers.h"
 #import "NetworkIssueReporter.h"
 #import "NetworkProcess.h"
 #import "NetworkSessionCocoa.h"
@@ -401,8 +402,13 @@ NetworkDataTaskCocoa::NetworkDataTaskCocoa(NetworkSession& session, NetworkDataT
 #endif
 
     auto networkConnectionIntegrityPolicy = parameters.networkConnectionIntegrityPolicy;
-    if (networkConnectionIntegrityPolicy.contains(WebCore::NetworkConnectionIntegrity::Enabled))
+    if (networkConnectionIntegrityPolicy.contains(WebCore::NetworkConnectionIntegrity::Enabled)) {
         enableNetworkConnectionIntegrity(mutableRequest.get(), NetworkSession::needsAdditionalNetworkConnectionIntegritySettings(request));
+#if ENABLE(NETWORK_CONNECTION_INTEGRITY)
+        if (parameters.isMainFrameNavigation) 
+            configureForNetworkConnectionIntegrity(m_sessionWrapper->session.get());
+#endif
+    }
 
 #if HAVE(PRIVACY_PROXY_FAIL_CLOSED_FOR_UNREACHABLE_HOSTS)
     if ([mutableRequest respondsToSelector:@selector(_setPrivacyProxyFailClosedForUnreachableHosts:)] && networkConnectionIntegrityPolicy.contains(WebCore::NetworkConnectionIntegrity::FailClosed))
@@ -428,6 +434,8 @@ NetworkDataTaskCocoa::NetworkDataTaskCocoa(NetworkSession& session, NetworkDataT
 
     m_task = [m_sessionWrapper->session dataTaskWithRequest:nsRequest.get()];
 
+    WTFBeginSignpost(m_task.get(), "DataTask", "%" PUBLIC_LOG_STRING " %" PRIVATE_LOG_STRING " pri: %.2f preconnect: %d", request.httpMethod().utf8().data(), url.string().utf8().data(), toNSURLSessionTaskPriority(request.priority()), parameters.shouldPreconnectOnly == PreconnectOnly::Yes);
+
     switch (parameters.storedCredentialsPolicy) {
     case WebCore::StoredCredentialsPolicy::Use:
         ASSERT(m_sessionWrapper->session.get().configuration.URLCredentialStorage);
@@ -448,8 +456,6 @@ NetworkDataTaskCocoa::NetworkDataTaskCocoa(NetworkSession& session, NetworkDataT
 #endif
         break;
     };
-
-    WTFBeginSignpost(m_task.get(), "DataTask", "%" PRIVATE_LOG_STRING " pri: %.2f preconnect: %d", url.string().ascii().data(), toNSURLSessionTaskPriority(request.priority()), parameters.shouldPreconnectOnly == PreconnectOnly::Yes);
 
     RELEASE_ASSERT(!m_sessionWrapper->dataTaskMap.contains([m_task taskIdentifier]));
     m_sessionWrapper->dataTaskMap.add([m_task taskIdentifier], this);
@@ -491,6 +497,9 @@ NetworkDataTaskCocoa::NetworkDataTaskCocoa(NetworkSession& session, NetworkDataT
 
 NetworkDataTaskCocoa::~NetworkDataTaskCocoa()
 {
+    if (m_task)
+        WTFEndSignpost(m_task.get(), "DataTask");
+
     if (m_task && m_sessionWrapper) {
         auto dataTask = m_sessionWrapper->dataTaskMap.take([m_task taskIdentifier]);
         RELEASE_ASSERT(dataTask == this);
@@ -528,10 +537,7 @@ void NetworkDataTaskCocoa::didNegotiateModernTLS(const URL& url)
 
 void NetworkDataTaskCocoa::didCompleteWithError(const WebCore::ResourceError& error, const WebCore::NetworkLoadMetrics& networkLoadMetrics)
 {
-    if (error.isNull())
-        WTFEndSignpost(m_task.get(), "DataTask", "completed");
-    else
-        WTFEndSignpost(m_task.get(), "DataTask", "failed");
+    WTFEmitSignpost(m_task.get(), "DataTask", "completed with error: %d", !error.isNull());
 
     if (m_client)
         m_client->didCompleteWithError(error, networkLoadMetrics);

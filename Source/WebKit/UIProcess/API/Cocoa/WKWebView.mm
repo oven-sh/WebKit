@@ -1436,7 +1436,7 @@ inline OptionSet<WebKit::FindOptions> toFindOptions(WKFindConfiguration *configu
     _page->restoreFromSessionState(sessionState, true);
 }
 
-- (BOOL)inspectable
+- (BOOL)isInspectable
 {
 #if ENABLE(REMOTE_INSPECTOR)
     // FIXME: <http://webkit.org/b/246237> Local inspection should be controlled by `inspectable` API.
@@ -3735,17 +3735,6 @@ static inline OptionSet<WebKit::FindOptions> toFindOptions(_WKFindOptions wkFind
 
     _page->setViewportConfigurationViewLayoutSize(_page->viewLayoutSize(), viewScale, _page->minimumEffectiveDeviceWidth());
 #endif
-}
-
-- (NSArray<NSString *> *)_corsDisablingPatterns
-{
-    return createNSArray(_page->corsDisablingPatterns()).autorelease();
-}
-
-- (void)_setCORSDisablingPatterns:(NSArray<NSString *> *)patterns
-{
-    THROW_IF_SUSPENDED;
-    _page->setCORSDisablingPatterns(makeVector<String>(patterns));
 }
 
 - (void)_getProcessDisplayNameWithCompletionHandler:(void (^)(NSString *))completionHandler

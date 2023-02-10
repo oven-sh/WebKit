@@ -76,6 +76,7 @@ enum class SDKAlignedBehavior {
     NoTypedArrayAPIQuirk,
     NoUnconditionalUniversalSandboxExtension,
     NoWeChatScrollingQuirk,
+    NoUNIQLOLazyIframeLoadingQuirk,
     NullOriginForNonSpecialSchemedURLs,
     ObservesClassProperty,
     PictureInPictureMediaPlayback,
@@ -102,6 +103,7 @@ enum class SDKAlignedBehavior {
     WKWebsiteDataStoreInitReturningNil,
     UIBackForwardSkipsHistoryItemsWithoutUserGesture,
     ProgrammaticFocusDuringUserScriptShowsInputViews,
+    UsesGameControllerPhysicalInputProfile,
 
     NumberOfBehaviors
 };

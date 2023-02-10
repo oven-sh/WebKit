@@ -27,6 +27,7 @@
 #include "ASTStringDumper.h"
 
 #include "AST.h"
+#include "WGSLShaderModule.h"
 #include <wtf/DataLog.h>
 #include <wtf/EnumTraits.h>
 #include <wtf/SetForScope.h>
@@ -404,14 +405,6 @@ void StringDumper::visit(VariableQualifier& qualifier)
     auto sc = WTF::enumToUnderlyingType(qualifier.storageClass());
     auto am = WTF::enumToUnderlyingType(qualifier.accessMode());
     m_out.print("<", storageClass[sc], ",", accessMode[am], ">");
-}
-
-template<typename T>
-void dumpNode(PrintStream& out, T& node)
-{
-    StringDumper dumper;
-    dumper.visit(node);
-    out.print(dumper.toString());
 }
 
 void dumpAST(ShaderModule& shaderModule)

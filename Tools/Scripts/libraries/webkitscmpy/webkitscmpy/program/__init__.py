@@ -1,4 +1,4 @@
-# Copyright (C) 2020-2022 Apple Inc. All rights reserved.
+# Copyright (C) 2020-2023 Apple Inc. All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -37,6 +37,7 @@ from .checkout import Checkout
 from .credentials import Credentials
 from .find import Find, Info
 from .pickable import Pickable
+from .publish import Publish
 from .install_git_lfs import InstallGitLFS
 from .land import Land
 from .log import Log
@@ -50,7 +51,7 @@ from .trace import Trace
 from .track import Track
 
 from webkitbugspy import log as webkitbugspy_log
-from webkitcorepy import arguments, log as webkitcorepy_log
+from webkitcorepy import arguments, filtered_call, log as webkitcorepy_log
 from webkitscmpy import local, log, remote
 
 
@@ -91,7 +92,7 @@ def main(
         Clean, Find, Info, Land, Log, Pull,
         PullRequest, Revert, Setup, InstallGitLFS,
         Credentials, Commit, DeletePRBranches, Squash,
-        Pickable, CherryPick, Trace, Track, Show,
+        Pickable, CherryPick, Trace, Track, Show, Publish,
     ] + (programs or [])
     if subversion:
         programs.append(SetupGitSvn)
@@ -145,12 +146,8 @@ def main(
     if callable(hooks):
         hooks = hooks(repository) if repository else None
 
-    if sys.version_info > (3, 0):
-        import inspect
-    else:
-        import inspect2 as inspect
-    if callable(additional_setup) and list(inspect.signature(additional_setup).parameters.keys()) == ['repository']:
-        additional_setup = additional_setup(repository)
+    if callable(additional_setup):
+        additional_setup = filtered_call(additional_setup, repository=repository)
 
     if callable(canonical_svn):
         canonical_svn = canonical_svn(repository) if repository else repository

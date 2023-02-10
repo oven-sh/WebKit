@@ -90,6 +90,7 @@ struct SameSizeAsRenderStyle {
 
 static_assert(sizeof(RenderStyle) == sizeof(SameSizeAsRenderStyle), "RenderStyle should stay small");
 
+DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(PseudoStyleCache);
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(RenderStyle);
 
 RenderStyle& RenderStyle::defaultStyle()
@@ -106,6 +107,11 @@ RenderStyle RenderStyle::create()
 std::unique_ptr<RenderStyle> RenderStyle::createPtr()
 {
     return clonePtr(defaultStyle());
+}
+
+std::unique_ptr<RenderStyle> RenderStyle::createPtrWithRegisteredInitialValues(const Style::CustomPropertyRegistry& registry)
+{
+    return clonePtr(registry.initialValuePrototypeStyle());
 }
 
 RenderStyle RenderStyle::clone(const RenderStyle& style)
@@ -349,6 +355,14 @@ void RenderStyle::inheritFrom(const RenderStyle& inheritParent)
         m_svgStyle.access().inheritFrom(inheritParent.m_svgStyle.get());
 }
 
+void RenderStyle::inheritIgnoringCustomPropertiesFrom(const RenderStyle& inheritParent)
+{
+    auto oldCustomProperties = m_rareInheritedData->customProperties;
+    inheritFrom(inheritParent);
+    if (oldCustomProperties != m_rareInheritedData->customProperties)
+        m_rareInheritedData.access().customProperties = oldCustomProperties;
+}
+
 void RenderStyle::fastPathInheritFrom(const RenderStyle& inheritParent)
 {
     ASSERT(!disallowsFastPathInheritance());
@@ -391,7 +405,7 @@ void RenderStyle::copyPseudoElementsFrom(const RenderStyle& other)
     if (!other.m_cachedPseudoStyles)
         return;
 
-    for (auto& pseudoElementStyle : *other.m_cachedPseudoStyles)
+    for (auto& pseudoElementStyle : other.m_cachedPseudoStyles->styles)
         addCachedPseudoStyle(makeUnique<RenderStyle>(cloneIncludingPseudoElements(*pseudoElementStyle)));
 }
 
@@ -415,7 +429,7 @@ bool RenderStyle::hasUniquePseudoStyle() const
     if (!m_cachedPseudoStyles || styleType() != PseudoId::None)
         return false;
 
-    for (auto& pseudoStyle : *m_cachedPseudoStyles) {
+    for (auto& pseudoStyle : m_cachedPseudoStyles->styles) {
         if (pseudoStyle->unique())
             return true;
     }
@@ -425,10 +439,10 @@ bool RenderStyle::hasUniquePseudoStyle() const
 
 RenderStyle* RenderStyle::getCachedPseudoStyle(PseudoId pid) const
 {
-    if (!m_cachedPseudoStyles || !m_cachedPseudoStyles->size())
+    if (!m_cachedPseudoStyles)
         return nullptr;
 
-    for (auto& pseudoStyle : *m_cachedPseudoStyles) {
+    for (auto& pseudoStyle : m_cachedPseudoStyles->styles) {
         if (pseudoStyle->styleType() == pid)
             return pseudoStyle.get();
     }
@@ -448,7 +462,7 @@ RenderStyle* RenderStyle::addCachedPseudoStyle(std::unique_ptr<RenderStyle> pseu
     if (!m_cachedPseudoStyles)
         m_cachedPseudoStyles = makeUnique<PseudoStyleCache>();
 
-    m_cachedPseudoStyles->append(WTFMove(pseudo));
+    m_cachedPseudoStyles->styles.append(WTFMove(pseudo));
 
     return result;
 }
@@ -1172,8 +1186,8 @@ inline static bool changedCustomPaintWatchedProperty(const RenderStyle& a, const
                 RefPtr<const CSSValue> valueA;
                 RefPtr<const CSSValue> valueB;
                 if (isCustomPropertyName(name)) {
-                    valueA = a.customPropertyValueWithoutResolvingInitial(name);
-                    valueB = b.customPropertyValueWithoutResolvingInitial(name);
+                    valueA = a.customPropertyValue(name);
+                    valueB = b.customPropertyValue(name);
                 } else {
                     CSSPropertyID propertyID = cssPropertyID(name);
                     if (!propertyID)
@@ -2638,41 +2652,39 @@ void RenderStyle::setColumnStylesFromPaginationMode(const Pagination::Mode& pagi
     }
 }
 
-void RenderStyle::deduplicateInheritedCustomProperties(const RenderStyle& other)
+void RenderStyle::deduplicateCustomProperties(const RenderStyle& other)
 {
-    auto& properties = const_cast<DataRef<StyleCustomPropertyData>&>(m_rareInheritedData->customProperties);
-    auto& otherProperties = other.m_rareInheritedData->customProperties;
-    if (properties.ptr() != otherProperties.ptr() && *properties == *otherProperties)
+    auto deduplicate = [&](auto& data, auto& otherData) {
+        auto& properties = const_cast<DataRef<StyleCustomPropertyData>&>(data->customProperties);
+        auto& otherProperties = otherData->customProperties;
+        if (properties.ptr() == otherProperties.ptr() || *properties != *otherProperties)
+            return;
         properties = otherProperties;
+        if (data == otherData)
+            data = otherData;
+    };
+
+    deduplicate(m_rareInheritedData, other.m_rareInheritedData);
+    deduplicate(m_rareNonInheritedData, other.m_rareNonInheritedData);
 }
 
-void RenderStyle::setInheritedCustomPropertyValue(const AtomString& name, Ref<CSSCustomPropertyValue>&& value)
+void RenderStyle::setCustomPropertyValue(Ref<const CSSCustomPropertyValue>&& value, bool isInherited)
 {
-    auto* existingValue = m_rareInheritedData->customProperties->values.get(name);
-    if (existingValue && existingValue->equals(value.get()))
-        return;
-    m_rareInheritedData.access().customProperties.access().setCustomPropertyValue(name, WTFMove(value));
+    auto set = [&](auto& data) {
+        auto& name = value->name();
+        auto* existingValue = data->customProperties->values.get(name);
+        if (existingValue && existingValue->equals(value.get()))
+            return;
+        data.access().customProperties.access().setCustomPropertyValue(name, WTFMove(value));
+    };
+
+    if (isInherited)
+        set(m_rareInheritedData);
+    else
+        set(m_rareNonInheritedData);
 }
 
-void RenderStyle::setNonInheritedCustomPropertyValue(const AtomString& name, Ref<CSSCustomPropertyValue>&& value)
-{
-    auto* existingValue = m_rareNonInheritedData->customProperties->values.get(name);
-    if (existingValue && existingValue->equals(value.get()))
-        return;
-    m_rareNonInheritedData.access().customProperties.access().setCustomPropertyValue(name, WTFMove(value));
-}
-
-const CSSCustomPropertyValue* RenderStyle::customPropertyValue(const AtomString& name, const Style::CustomPropertyRegistry& registry) const
-{
-    if (auto* value = customPropertyValueWithoutResolvingInitial(name))
-        return value;
-
-    // Alternatively we could just initialize the registered initial values to each RenderStyle.
-    auto* registered = registry.get(name);
-    return registered ? registered->initialValue.get() : nullptr;
-}
-
-const CSSCustomPropertyValue* RenderStyle::customPropertyValueWithoutResolvingInitial(const AtomString& name) const
+const CSSCustomPropertyValue* RenderStyle::customPropertyValue(const AtomString& name) const
 {
     for (auto* map : { &nonInheritedCustomProperties(), &inheritedCustomProperties() }) {
         if (auto* value = map->get(name))

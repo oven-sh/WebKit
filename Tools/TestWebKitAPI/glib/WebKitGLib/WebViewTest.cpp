@@ -41,8 +41,6 @@ WebViewTest::~WebViewTest()
     platformDestroy();
     if (m_javascriptResult)
         webkit_javascript_result_unref(m_javascriptResult);
-    if (m_surface)
-        cairo_surface_destroy(m_surface);
     s_dbusConnectionPageMap.remove(webkit_web_view_get_page_id(m_webView));
     g_object_unref(m_webView);
     g_main_loop_unref(m_mainLoop);
@@ -322,82 +320,84 @@ const char* WebViewTest::mainResourceData(size_t& mainResourceDataSize)
 
 static void runJavaScriptReadyCallback(GObject* object, GAsyncResult* result, WebViewTest* test)
 {
-    test->m_javascriptResult = webkit_web_view_run_javascript_finish(WEBKIT_WEB_VIEW(object), result, test->m_javascriptError);
+    test->m_javascriptResult = webkit_web_view_evaluate_javascript_finish(WEBKIT_WEB_VIEW(object), result, test->m_javascriptError);
     g_main_loop_quit(test->m_mainLoop);
 }
 
-static void runJavaScriptFromGResourceReadyCallback(GObject*, GAsyncResult* result, WebViewTest* test)
+static void runAsyncJavaScriptFunctionInWorldReadyCallback(GObject*, GAsyncResult* result, WebViewTest* test)
 {
-    test->m_javascriptResult = webkit_web_view_run_javascript_from_gresource_finish(test->m_webView, result, test->m_javascriptError);
+    test->m_javascriptResult = webkit_web_view_call_async_javascript_function_finish(test->m_webView, result, test->m_javascriptError);
     g_main_loop_quit(test->m_mainLoop);
 }
 
-static void runJavaScriptInWorldReadyCallback(GObject*, GAsyncResult* result, WebViewTest* test)
+WebKitJavascriptResult* WebViewTest::runJavaScriptAndWaitUntilFinished(const char* javascript, gsize length, GError** error)
 {
-    test->m_javascriptResult = webkit_web_view_run_javascript_in_world_finish(test->m_webView, result, test->m_javascriptError);
-    g_main_loop_quit(test->m_mainLoop);
+    g_clear_pointer(&m_javascriptResult, webkit_javascript_result_unref);
+    m_javascriptError = error;
+    webkit_web_view_evaluate_javascript(m_webView, javascript, length, nullptr, nullptr, nullptr, reinterpret_cast<GAsyncReadyCallback>(runJavaScriptReadyCallback), this);
+    g_main_loop_run(m_mainLoop);
+    return m_javascriptResult;
 }
 
 WebKitJavascriptResult* WebViewTest::runJavaScriptAndWaitUntilFinished(const char* javascript, GError** error, WebKitWebView* webView)
 {
-    if (m_javascriptResult)
-        webkit_javascript_result_unref(m_javascriptResult);
-    m_javascriptResult = 0;
+    g_clear_pointer(&m_javascriptResult, webkit_javascript_result_unref);
     m_javascriptError = error;
     if (!webView)
         webView = m_webView;
-    webkit_web_view_run_javascript(webView, javascript, 0, reinterpret_cast<GAsyncReadyCallback>(runJavaScriptReadyCallback), this);
+    webkit_web_view_evaluate_javascript(webView, javascript, -1, nullptr, nullptr, nullptr, reinterpret_cast<GAsyncReadyCallback>(runJavaScriptReadyCallback), this);
     g_main_loop_run(m_mainLoop);
-
     return m_javascriptResult;
 }
 
 WebKitJavascriptResult* WebViewTest::runJavaScriptFromGResourceAndWaitUntilFinished(const char* resource, GError** error)
 {
-    if (m_javascriptResult)
-        webkit_javascript_result_unref(m_javascriptResult);
-    m_javascriptResult = 0;
-    m_javascriptError = error;
-    webkit_web_view_run_javascript_from_gresource(m_webView, resource, 0, reinterpret_cast<GAsyncReadyCallback>(runJavaScriptFromGResourceReadyCallback), this);
-    g_main_loop_run(m_mainLoop);
+    g_clear_pointer(&m_javascriptResult, webkit_javascript_result_unref);
+    GRefPtr<GBytes> bytes = adoptGRef(g_resources_lookup_data(resource, G_RESOURCE_LOOKUP_FLAGS_NONE, error));
+    if (!bytes)
+        return nullptr;
 
+    gsize length;
+    const auto* script = g_bytes_get_data(bytes.get(), &length);
+    GUniquePtr<char> sourceURI(g_strdup_printf("resource://%s", resource));
+
+    m_javascriptError = error;
+    webkit_web_view_evaluate_javascript(m_webView, reinterpret_cast<const char*>(script), length, nullptr, sourceURI.get(), nullptr, reinterpret_cast<GAsyncReadyCallback>(runJavaScriptReadyCallback), this);
+    g_main_loop_run(m_mainLoop);
     return m_javascriptResult;
 }
 
-WebKitJavascriptResult* WebViewTest::runJavaScriptInWorldAndWaitUntilFinished(const char* javascript, const char* world, GError** error)
+WebKitJavascriptResult* WebViewTest::runJavaScriptInWorldAndWaitUntilFinished(const char* javascript, const char* world, const char* sourceURI, GError** error)
 {
-    if (m_javascriptResult)
-        webkit_javascript_result_unref(m_javascriptResult);
-    m_javascriptResult = 0;
+    g_clear_pointer(&m_javascriptResult, webkit_javascript_result_unref);
     m_javascriptError = error;
-    webkit_web_view_run_javascript_in_world(m_webView, javascript, world, nullptr, reinterpret_cast<GAsyncReadyCallback>(runJavaScriptInWorldReadyCallback), this);
+    webkit_web_view_evaluate_javascript(m_webView, javascript, -1, world, sourceURI, nullptr, reinterpret_cast<GAsyncReadyCallback>(runJavaScriptReadyCallback), this);
     g_main_loop_run(m_mainLoop);
-
     return m_javascriptResult;
 }
 
 WebKitJavascriptResult* WebViewTest::runAsyncJavaScriptFunctionInWorldAndWaitUntilFinished(const char* body, GVariant* arguments, const char* world, GError** error)
 {
-    if (m_javascriptResult)
-        webkit_javascript_result_unref(m_javascriptResult);
-    m_javascriptResult = 0;
+    g_clear_pointer(&m_javascriptResult, webkit_javascript_result_unref);
     m_javascriptError = error;
-    webkit_web_view_run_async_javascript_function_in_world(m_webView, body, arguments, world, nullptr, reinterpret_cast<GAsyncReadyCallback>(runJavaScriptInWorldReadyCallback), this);
+    webkit_web_view_call_async_javascript_function(m_webView, body, -1, arguments, world, nullptr, nullptr, reinterpret_cast<GAsyncReadyCallback>(runAsyncJavaScriptFunctionInWorldReadyCallback), this);
     g_main_loop_run(m_mainLoop);
-
     return m_javascriptResult;
 }
 
 WebKitJavascriptResult* WebViewTest::runJavaScriptWithoutForcedUserGesturesAndWaitUntilFinished(const char* javascript, GError** error)
 {
-    if (m_javascriptResult)
-        webkit_javascript_result_unref(m_javascriptResult);
-    m_javascriptResult = 0;
+    g_clear_pointer(&m_javascriptResult, webkit_javascript_result_unref);
     m_javascriptError = error;
-    webkitWebViewRunJavascriptWithoutForcedUserGestures(m_webView, javascript, 0, reinterpret_cast<GAsyncReadyCallback>(runJavaScriptReadyCallback), this);
+    webkitWebViewRunJavascriptWithoutForcedUserGestures(m_webView, javascript, nullptr, reinterpret_cast<GAsyncReadyCallback>(runJavaScriptReadyCallback), this);
     g_main_loop_run(m_mainLoop);
-
     return m_javascriptResult;
+}
+
+void WebViewTest::runJavaScriptAndWait(const char* javascript)
+{
+    webkit_web_view_evaluate_javascript(m_webView, javascript, -1, nullptr, nullptr, nullptr, nullptr, nullptr);
+    g_main_loop_run(m_mainLoop);
 }
 
 char* WebViewTest::javascriptResultToCString(WebKitJavascriptResult* javascriptResult)
@@ -437,28 +437,6 @@ bool WebViewTest::javascriptResultIsUndefined(WebKitJavascriptResult* javascript
     g_assert_true(JSC_IS_VALUE(value));
     return jsc_value_is_undefined(value);
 }
-
-#if PLATFORM(GTK)
-static void onSnapshotReady(WebKitWebView* web_view, GAsyncResult* res, WebViewTest* test)
-{
-    GUniqueOutPtr<GError> error;
-    test->m_surface = webkit_web_view_get_snapshot_finish(web_view, res, &error.outPtr());
-    g_assert_true(!test->m_surface || !error.get());
-    if (error)
-        g_assert_error(error.get(), WEBKIT_SNAPSHOT_ERROR, WEBKIT_SNAPSHOT_ERROR_FAILED_TO_CREATE);
-    test->quitMainLoop();
-}
-
-cairo_surface_t* WebViewTest::getSnapshotAndWaitUntilReady(WebKitSnapshotRegion region, WebKitSnapshotOptions options)
-{
-    if (m_surface)
-        cairo_surface_destroy(m_surface);
-    m_surface = 0;
-    webkit_web_view_get_snapshot(m_webView, region, options, 0, reinterpret_cast<GAsyncReadyCallback>(onSnapshotReady), this);
-    g_main_loop_run(m_mainLoop);
-    return m_surface;
-}
-#endif
 
 bool WebViewTest::runWebProcessTest(const char* suiteName, const char* testName, const char* contents, const char* contentType)
 {

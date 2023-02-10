@@ -96,6 +96,7 @@
 #include "MediaCanStartListener.h"
 #include "MediaRecorderProvider.h"
 #include "ModelPlayerProvider.h"
+#include "NavigationScheduler.h"
 #include "Navigator.h"
 #include "PageColorSampler.h"
 #include "PageConfiguration.h"
@@ -1733,6 +1734,13 @@ void Page::updateRendering()
         document.updateResizeObservations(*this);
     });
 
+    runProcessingStep(RenderingUpdateStep::FocusFixup, [&] (Document& document) {
+        if (RefPtr focusedElement = document.focusedElement()) {
+            if (!focusedElement->isFocusable())
+                document.setFocusedElement(nullptr);
+        }
+    });
+
     runProcessingStep(RenderingUpdateStep::IntersectionObservations, [] (Document& document) {
         document.updateIntersectionObservations();
     });
@@ -2003,15 +2011,14 @@ void Page::setLoadSchedulingMode(LoadSchedulingMode mode)
 #if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
 void Page::setImageAnimationEnabled(bool enabled)
 {
-    if (m_imageAnimationEnabled == enabled || !settings().imageAnimationControlEnabled())
+    if (!settings().imageAnimationControlEnabled())
         return;
+
+    // This method overrides any individually set animation play-states (so we need to do work even if `enabled` is
+    // already equal to `m_imageAnimationEnabled` because there may be individually playing or paused images).
     m_imageAnimationEnabled = enabled;
     updatePlayStateForAllAnimations();
-
-    // If the state of isAnyAnimationAllowedToPlay is not affected by the presence of individually playing
-    // animations (because there are none), then we should update it with the new animation enabled state.
-    if (!m_individuallyPlayingAnimationElements.computeSize())
-        chrome().client().isAnyAnimationAllowedToPlayDidChange(enabled);
+    chrome().client().isAnyAnimationAllowedToPlayDidChange(enabled);
 }
 #endif
 
@@ -2771,6 +2778,16 @@ void Page::whenUnnested(Function<void()>&& callback)
 void Page::setCurrentKeyboardScrollingAnimator(KeyboardScrollingAnimator* animator)
 {
     m_currentKeyboardScrollingAnimator = animator;
+}
+
+bool Page::isLoadingInHeadlessMode() const
+{
+    RefPtr document = mainFrame().document();
+    if (!document)
+        return false;
+
+    RefPtr loader = document->loader();
+    return loader && loader->isLoadingInHeadlessMode();
 }
 
 #if ENABLE(REMOTE_INSPECTOR)
@@ -3956,6 +3973,7 @@ WTF::TextStream& operator<<(WTF::TextStream& ts, RenderingUpdateStep step)
     case RenderingUpdateStep::VideoFrameCallbacks: ts << "VideoFrameCallbacks"; break;
     case RenderingUpdateStep::PrepareCanvasesForDisplay: ts << "PrepareCanvasesForDisplay"; break;
     case RenderingUpdateStep::CaretAnimation: ts << "CaretAnimation"; break;
+    case RenderingUpdateStep::FocusFixup: ts << "FocusFixup"; break;
     }
     return ts;
 }
@@ -4123,13 +4141,13 @@ void Page::forceRepaintAllFrames()
     }
 }
 
+#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
 void Page::updatePlayStateForAllAnimations()
 {
     if (auto* view = mainFrame().view())
         view->updatePlayStateForAllAnimationsIncludingSubframes();
 }
 
-#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
 void Page::addIndividuallyPlayingAnimationElement(HTMLImageElement& element)
 {
     ASSERT(element.allowsAnimation());
@@ -4186,6 +4204,27 @@ void Page::didFinishScrolling()
 #if USE(APPKIT)
     editorClient().setCaretDecorationVisibility(true);
 #endif
+}
+
+void Page::reloadExecutionContextsForOrigin(const ClientOrigin& origin, std::optional<FrameIdentifier> triggeringFrame) const
+{
+    if (m_mainFrame->document()->topOrigin().data() != origin.topOrigin)
+        return;
+
+    for (AbstractFrame* frame = &m_mainFrame.get(); frame;) {
+        auto* localFrame = dynamicDowncast<LocalFrame>(frame);
+        if (!localFrame || frame->frameID() == triggeringFrame) {
+            frame = frame->tree().traverseNext();
+            continue;
+        }
+        auto* document = localFrame->document();
+        if (!document || document->securityOrigin().data() != origin.clientOrigin) {
+            frame = frame->tree().traverseNext();
+            continue;
+        }
+        localFrame->navigationScheduler().scheduleRefresh(*document);
+        frame = frame->tree().traverseNextSkippingChildren();
+    }
 }
 
 } // namespace WebCore

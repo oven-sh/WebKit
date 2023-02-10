@@ -85,6 +85,7 @@ static void testWebViewWebContext(WebViewTest* test, gconstpointer)
     g_assert_true(webkit_web_view_get_context(webView.get()) == test->m_webContext.get());
 
     // Check that a web context given as construct parameter is ignored if a related view is also provided.
+    Test::removeLogFatalFlag(G_LOG_LEVEL_CRITICAL);
     webView = Test::adoptView(g_object_new(WEBKIT_TYPE_WEB_VIEW,
 #if PLATFORM(WPE)
         "backend", Test::createWebViewBackend(),
@@ -92,6 +93,7 @@ static void testWebViewWebContext(WebViewTest* test, gconstpointer)
         "web-context", webkit_web_context_get_default(),
         "related-view", test->m_webView,
         nullptr));
+    Test::addLogFatalFlag(G_LOG_LEVEL_CRITICAL);
     g_assert_true(webkit_web_view_get_context(webView.get()) == test->m_webContext.get());
 }
 
@@ -387,6 +389,13 @@ static void testWebViewRunAsyncFunctions(WebViewTest* test, gconstpointer)
     g_assert_no_error(error.get());
     g_assert_cmpfloat(WebViewTest::javascriptResultToNumber(javascriptResult), ==, 42);
 
+    g_variant_dict_init(&dict, nullptr);
+    g_variant_dict_insert(&dict, "count", "(u)", 42);
+    args = g_variant_dict_end(&dict);
+    javascriptResult = test->runAsyncJavaScriptFunctionInWorldAndWaitUntilFinished("return new Promise((resolve) => { resolve(count); });", args, nullptr, &error.outPtr());
+    g_assert_null(javascriptResult);
+    g_assert_error(error.get(), WEBKIT_JAVASCRIPT_ERROR, WEBKIT_JAVASCRIPT_ERROR_INVALID_PARAMETER);
+
     {
         // Set a value in main world.
         WebKitJavascriptResult* javascriptResult = test->runJavaScriptAndWaitUntilFinished("a = 25;", &error.outPtr());
@@ -463,7 +472,7 @@ static void testWebViewRunAsyncFunctions(WebViewTest* test, gconstpointer)
 static void testWebViewRunJavaScript(WebViewTest* test, gconstpointer)
 {
     static const char* html = "<html><body><a id='WebKitLink' href='http://www.webkitgtk.org/' title='WebKitGTK Title'>WebKitGTK Website</a></body></html>";
-    test->loadHtml(html, 0);
+    test->loadHtml(html, "file:///");
     test->waitUntilLoadFinished();
 
     GUniqueOutPtr<GError> error;
@@ -524,6 +533,31 @@ static void testWebViewRunJavaScript(WebViewTest* test, gconstpointer)
     g_assert_no_error(error.get());
     g_assert_true(WebViewTest::javascriptResultIsUndefined(javascriptResult));
 
+    GUniquePtr<char> scriptFile(g_build_filename(WEBKIT_SRC_DIR, "Tools", "TestWebKitAPI", "Tests", "JavaScriptCore", "glib", "script.js", nullptr));
+    GUniqueOutPtr<char> contents;
+    gsize contentsSize;
+    g_assert_true(g_file_get_contents(scriptFile.get(), &contents.outPtr(), &contentsSize, nullptr));
+    javascriptResult = test->runJavaScriptAndWaitUntilFinished(contents.get(), contentsSize, &error.outPtr());
+    g_assert_nonnull(javascriptResult);
+    g_assert_no_error(error.get());
+    javascriptResult = test->runJavaScriptAndWaitUntilFinished("testStringWithNull()", &error.outPtr());
+    g_assert_nonnull(javascriptResult);
+    g_assert_no_error(error.get());
+    auto* value = webkit_javascript_result_get_js_value(javascriptResult);
+    g_assert_true(JSC_IS_VALUE(value));
+    test->assertObjectIsDeletedWhenTestFinishes(G_OBJECT(value));
+    g_assert_true(jsc_value_is_string(value));
+    valueString.reset(jsc_value_to_string(value));
+    g_assert_cmpstr(valueString.get(), ==, "String");
+    GRefPtr<GBytes> valueBytes = adoptGRef(jsc_value_to_string_as_bytes(value));
+    GString* expected = g_string_new("String");
+    expected = g_string_append_c(expected, '\0');
+    expected = g_string_append(expected, "With");
+    expected = g_string_append_c(expected, '\0');
+    expected = g_string_append(expected, "Null");
+    GRefPtr<GBytes> expectedBytes = adoptGRef(g_string_free_to_bytes(expected));
+    g_assert_true(g_bytes_equal(valueBytes.get(), expectedBytes.get()));
+
     javascriptResult = test->runJavaScriptFromGResourceAndWaitUntilFinished("/org/webkit/glib/tests/link-title.js", &error.outPtr());
     g_assert_nonnull(javascriptResult);
     test->assertObjectIsDeletedWhenTestFinishes(G_OBJECT(webkit_javascript_result_get_js_value(javascriptResult)));
@@ -538,13 +572,19 @@ static void testWebViewRunJavaScript(WebViewTest* test, gconstpointer)
     javascriptResult = test->runJavaScriptAndWaitUntilFinished("foo();", &error.outPtr());
     g_assert_null(javascriptResult);
     g_assert_error(error.get(), WEBKIT_JAVASCRIPT_ERROR, WEBKIT_JAVASCRIPT_ERROR_SCRIPT_FAILED);
+    g_assert_true(g_str_has_prefix(error->message, "file:///"));
+
+    javascriptResult = test->runJavaScriptAndWaitUntilFinished("window.document.body", &error.outPtr());
+    g_assert_null(javascriptResult);
+    g_assert_error(error.get(), WEBKIT_JAVASCRIPT_ERROR, WEBKIT_JAVASCRIPT_ERROR_INVALID_RESULT);
 
     // Values of the main world are not available in the isolated one.
-    javascriptResult = test->runJavaScriptInWorldAndWaitUntilFinished("a", "WebExtensionTestScriptWorld", &error.outPtr());
+    javascriptResult = test->runJavaScriptInWorldAndWaitUntilFinished("a", "WebExtensionTestScriptWorld", nullptr, &error.outPtr());
     g_assert_null(javascriptResult);
     g_assert_error(error.get(), WEBKIT_JAVASCRIPT_ERROR, WEBKIT_JAVASCRIPT_ERROR_SCRIPT_FAILED);
+    g_assert_true(g_str_has_prefix(error->message, "file:///"));
 
-    javascriptResult = test->runJavaScriptInWorldAndWaitUntilFinished("a = 50", "WebExtensionTestScriptWorld", &error.outPtr());
+    javascriptResult = test->runJavaScriptInWorldAndWaitUntilFinished("a = 50", "WebExtensionTestScriptWorld", nullptr, &error.outPtr());
     g_assert_nonnull(javascriptResult);
     test->assertObjectIsDeletedWhenTestFinishes(G_OBJECT(webkit_javascript_result_get_js_value(javascriptResult)));
     g_assert_no_error(error.get());
@@ -558,9 +598,10 @@ static void testWebViewRunJavaScript(WebViewTest* test, gconstpointer)
     g_assert_cmpfloat(WebViewTest::javascriptResultToNumber(javascriptResult), ==, 25);
 
     // Running a script in a world that doesn't exist should fail.
-    javascriptResult = test->runJavaScriptInWorldAndWaitUntilFinished("a", "InvalidScriptWorld", &error.outPtr());
+    javascriptResult = test->runJavaScriptInWorldAndWaitUntilFinished("a", "InvalidScriptWorld", "foo:///bar", &error.outPtr());
     g_assert_null(javascriptResult);
     g_assert_error(error.get(), WEBKIT_JAVASCRIPT_ERROR, WEBKIT_JAVASCRIPT_ERROR_SCRIPT_FAILED);
+    g_assert_true(g_str_has_prefix(error->message, "foo:///bar"));
 
     {
         // Disable JS support and expect an error when attempting to evaluate JS code.
@@ -644,8 +685,7 @@ public:
     void requestFullScreenAndWaitUntilEnteredFullScreen()
     {
         m_event = None;
-        webkit_web_view_run_javascript(m_webView, "document.documentElement.webkitRequestFullScreen();", 0, 0, 0);
-        g_main_loop_run(m_mainLoop);
+        runJavaScriptAndWait("document.documentElement.webkitRequestFullScreen();");
     }
 
     static gboolean leaveFullScreenIdle(FullScreenClientTest* test)
@@ -1025,20 +1065,68 @@ class SnapshotWebViewTest: public WebViewTest {
 public:
     MAKE_GLIB_TEST_FIXTURE(SnapshotWebViewTest);
 
-    static void onSnapshotCancelledReady(WebKitWebView* web_view, GAsyncResult* res, SnapshotWebViewTest* test)
+#if !USE(GTK4)
+    ~SnapshotWebViewTest()
+    {
+        if (m_snapshot)
+            cairo_surface_destroy(m_snapshot);
+    }
+#endif
+
+    static void onSnapshotReady(WebKitWebView* webView, GAsyncResult* result, SnapshotWebViewTest* test)
     {
         GUniqueOutPtr<GError> error;
-        test->m_surface = webkit_web_view_get_snapshot_finish(web_view, res, &error.outPtr());
-        g_assert_null(test->m_surface);
+#if USE(GTK4)
+        test->m_snapshot = adoptGRef(webkit_web_view_get_snapshot_finish(webView, result, &error.outPtr()));
+#else
+        test->m_snapshot = webkit_web_view_get_snapshot_finish(webView, result, &error.outPtr());
+#endif
+        g_assert_true(!test->m_snapshot || !error.get());
+        if (error)
+            g_assert_error(error.get(), WEBKIT_SNAPSHOT_ERROR, WEBKIT_SNAPSHOT_ERROR_FAILED_TO_CREATE);
+        test->quitMainLoop();
+    }
+
+#if USE(GTK4)
+    GdkTexture* getSnapshotAndWaitUntilReady(WebKitSnapshotRegion region, WebKitSnapshotOptions options)
+#else
+    cairo_surface_t* getSnapshotAndWaitUntilReady(WebKitSnapshotRegion region, WebKitSnapshotOptions options)
+#endif
+    {
+#if !USE(GTK4)
+        if (m_snapshot)
+            cairo_surface_destroy(m_snapshot);
+#endif
+        m_snapshot = nullptr;
+        webkit_web_view_get_snapshot(m_webView, region, options, nullptr, reinterpret_cast<GAsyncReadyCallback>(onSnapshotReady), this);
+        g_main_loop_run(m_mainLoop);
+#if USE(GTK4)
+        return m_snapshot.get();
+#else
+        return m_snapshot;
+#endif
+    }
+
+    static void onSnapshotCancelledReady(WebKitWebView* webView, GAsyncResult* result, SnapshotWebViewTest* test)
+    {
+        GUniqueOutPtr<GError> error;
+#if USE(GTK4)
+        test->m_snapshot = adoptGRef(webkit_web_view_get_snapshot_finish(webView, result, &error.outPtr()));
+#else
+        test->m_snapshot = webkit_web_view_get_snapshot_finish(webView, result, &error.outPtr());
+#endif
+        g_assert_null(test->m_snapshot);
         g_assert_error(error.get(), G_IO_ERROR, G_IO_ERROR_CANCELLED);
         test->quitMainLoop();
     }
 
     gboolean getSnapshotAndCancel()
     {
-        if (m_surface)
-            cairo_surface_destroy(m_surface);
-        m_surface = 0;
+#if !USE(GTK4)
+        if (m_snapshot)
+            cairo_surface_destroy(m_snapshot);
+#endif
+        m_snapshot = nullptr;
         GRefPtr<GCancellable> cancellable = adoptGRef(g_cancellable_new());
         webkit_web_view_get_snapshot(m_webView, WEBKIT_SNAPSHOT_REGION_VISIBLE, WEBKIT_SNAPSHOT_OPTIONS_NONE, cancellable.get(), reinterpret_cast<GAsyncReadyCallback>(onSnapshotCancelledReady), this);
         g_cancellable_cancel(cancellable.get());
@@ -1047,6 +1135,26 @@ public:
         return true;
     }
 
+#if USE(GTK4)
+    static cairo_surface_t* snapshotToSurface(GdkTexture* snapshot)
+    {
+        cairo_surface_t* surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, gdk_texture_get_width(snapshot), gdk_texture_get_height(snapshot));
+        gdk_texture_download(snapshot, cairo_image_surface_get_data(surface), cairo_image_surface_get_stride(surface));
+        cairo_surface_mark_dirty(surface);
+        return surface;
+    }
+#else
+    static cairo_surface_t* snapshotToSurface(cairo_surface_t* snapshot)
+    {
+        return cairo_surface_reference(snapshot);
+    }
+#endif
+
+#if USE(GTK4)
+    GRefPtr<GdkTexture> m_snapshot;
+#else
+    cairo_surface_t* m_snapshot { nullptr };
+#endif
 };
 
 static void testWebViewSnapshot(SnapshotWebViewTest* test, gconstpointer)
@@ -1054,45 +1162,79 @@ static void testWebViewSnapshot(SnapshotWebViewTest* test, gconstpointer)
     test->loadHtml("<html><head><style>html { width: 200px; height: 100px; } ::-webkit-scrollbar { display: none; }</style></head><body><p>Whatever</p></body></html>", nullptr);
     test->waitUntilLoadFinished();
 
-    // WEBKIT_SNAPSHOT_REGION_VISIBLE returns a null surface when the view is not visible.
-    cairo_surface_t* surface1 = test->getSnapshotAndWaitUntilReady(WEBKIT_SNAPSHOT_REGION_VISIBLE, WEBKIT_SNAPSHOT_OPTIONS_NONE);
-    g_assert_null(surface1);
+    // WEBKIT_SNAPSHOT_REGION_VISIBLE returns a null snapshot when the view is not visible.
+    auto* snapshot1 = test->getSnapshotAndWaitUntilReady(WEBKIT_SNAPSHOT_REGION_VISIBLE, WEBKIT_SNAPSHOT_OPTIONS_NONE);
+    g_assert_null(snapshot1);
 
     // WEBKIT_SNAPSHOT_REGION_FULL_DOCUMENT works even if the window is not visible.
-    surface1 = test->getSnapshotAndWaitUntilReady(WEBKIT_SNAPSHOT_REGION_FULL_DOCUMENT, WEBKIT_SNAPSHOT_OPTIONS_NONE);
-    g_assert_nonnull(surface1);
-    g_assert_cmpuint(cairo_surface_get_type(surface1), ==, CAIRO_SURFACE_TYPE_IMAGE);
-    g_assert_cmpint(cairo_image_surface_get_width(surface1), ==, 200);
-    g_assert_cmpint(cairo_image_surface_get_height(surface1), ==, 100);
+    snapshot1 = test->getSnapshotAndWaitUntilReady(WEBKIT_SNAPSHOT_REGION_FULL_DOCUMENT, WEBKIT_SNAPSHOT_OPTIONS_NONE);
+    g_assert_nonnull(snapshot1);
+#if USE(GTK4)
+    g_assert_true(GDK_IS_MEMORY_TEXTURE(snapshot1));
+    g_assert_cmpint(gdk_texture_get_width(snapshot1), ==, 200);
+    g_assert_cmpint(gdk_texture_get_height(snapshot1), ==, 100);
+#else
+    g_assert_cmpuint(cairo_surface_get_type(snapshot1), ==, CAIRO_SURFACE_TYPE_IMAGE);
+    g_assert_cmpint(cairo_image_surface_get_width(snapshot1), ==, 200);
+    g_assert_cmpint(cairo_image_surface_get_height(snapshot1), ==, 100);
+#endif
 
     // Show the WebView in a popup widow of 50x50 and try again with WEBKIT_SNAPSHOT_REGION_VISIBLE.
     test->showInWindow(50, 50);
-    surface1 = cairo_surface_reference(test->getSnapshotAndWaitUntilReady(WEBKIT_SNAPSHOT_REGION_VISIBLE, WEBKIT_SNAPSHOT_OPTIONS_NONE));
-    g_assert_nonnull(surface1);
-    g_assert_cmpuint(cairo_surface_get_type(surface1), ==, CAIRO_SURFACE_TYPE_IMAGE);
-    g_assert_cmpint(cairo_image_surface_get_width(surface1), ==, 50);
-    g_assert_cmpint(cairo_image_surface_get_height(surface1), ==, 50);
+    snapshot1 = test->getSnapshotAndWaitUntilReady(WEBKIT_SNAPSHOT_REGION_VISIBLE, WEBKIT_SNAPSHOT_OPTIONS_NONE);
+    g_assert_nonnull(snapshot1);
+    auto* surface1 = SnapshotWebViewTest::snapshotToSurface(snapshot1);
+#if USE(GTK4)
+    GRefPtr<GdkTexture> protectSnapshot1 = snapshot1;
+    g_assert_true(GDK_IS_MEMORY_TEXTURE(snapshot1));
+    g_assert_cmpint(gdk_texture_get_width(snapshot1), ==, 50);
+    g_assert_cmpint(gdk_texture_get_height(snapshot1), ==, 50);
+#else
+    g_assert_cmpuint(cairo_surface_get_type(snapshot1), ==, CAIRO_SURFACE_TYPE_IMAGE);
+    g_assert_cmpint(cairo_image_surface_get_width(snapshot1), ==, 50);
+    g_assert_cmpint(cairo_image_surface_get_height(snapshot1), ==, 50);
+#endif
 
     // Select all text in the WebView, request a snapshot ignoring selection.
     test->selectAll();
-    cairo_surface_t* surface2 = test->getSnapshotAndWaitUntilReady(WEBKIT_SNAPSHOT_REGION_VISIBLE, WEBKIT_SNAPSHOT_OPTIONS_NONE);
-    g_assert_nonnull(surface2);
+    auto* snapshot2 = test->getSnapshotAndWaitUntilReady(WEBKIT_SNAPSHOT_REGION_VISIBLE, WEBKIT_SNAPSHOT_OPTIONS_NONE);
+    g_assert_nonnull(snapshot2);
+    auto* surface2 = SnapshotWebViewTest::snapshotToSurface(snapshot2);
     g_assert_true(Test::cairoSurfacesEqual(surface1, surface2));
+    cairo_surface_destroy(surface2);
 
     // Request a new snapshot, including the selection this time. The size should be the same but the result
     // must be different to the one previously obtained.
-    surface2 = test->getSnapshotAndWaitUntilReady(WEBKIT_SNAPSHOT_REGION_VISIBLE, WEBKIT_SNAPSHOT_OPTIONS_INCLUDE_SELECTION_HIGHLIGHTING);
-    g_assert_cmpuint(cairo_surface_get_type(surface2), ==, CAIRO_SURFACE_TYPE_IMAGE);
-    g_assert_cmpint(cairo_image_surface_get_width(surface1), ==, cairo_image_surface_get_width(surface2));
-    g_assert_cmpint(cairo_image_surface_get_height(surface1), ==, cairo_image_surface_get_height(surface2));
+    snapshot2 = test->getSnapshotAndWaitUntilReady(WEBKIT_SNAPSHOT_REGION_VISIBLE, WEBKIT_SNAPSHOT_OPTIONS_INCLUDE_SELECTION_HIGHLIGHTING);
+    g_assert_nonnull(snapshot2);
+    surface2 = SnapshotWebViewTest::snapshotToSurface(snapshot2);
+#if USE(GTK4)
+    g_assert_true(GDK_IS_MEMORY_TEXTURE(snapshot2));
+    g_assert_cmpint(gdk_texture_get_width(snapshot1), ==, gdk_texture_get_width(snapshot2));
+    g_assert_cmpint(gdk_texture_get_height(snapshot1), ==, gdk_texture_get_height(snapshot2));
+#else
+    g_assert_cmpuint(cairo_surface_get_type(snapshot2), ==, CAIRO_SURFACE_TYPE_IMAGE);
+    g_assert_cmpint(cairo_image_surface_get_width(snapshot1), ==, cairo_image_surface_get_width(snapshot2));
+    g_assert_cmpint(cairo_image_surface_get_height(snapshot1), ==, cairo_image_surface_get_height(snapshot2));
+#endif
     g_assert_false(Test::cairoSurfacesEqual(surface1, surface2));
+    cairo_surface_destroy(surface2);
 
     // Get a snpashot with a transparent background, the result must be different.
-    surface2 = test->getSnapshotAndWaitUntilReady(WEBKIT_SNAPSHOT_REGION_VISIBLE, WEBKIT_SNAPSHOT_OPTIONS_TRANSPARENT_BACKGROUND);
-    g_assert_cmpuint(cairo_surface_get_type(surface2), ==, CAIRO_SURFACE_TYPE_IMAGE);
-    g_assert_cmpint(cairo_image_surface_get_width(surface1), ==, cairo_image_surface_get_width(surface2));
-    g_assert_cmpint(cairo_image_surface_get_height(surface1), ==, cairo_image_surface_get_height(surface2));
+    snapshot2 = test->getSnapshotAndWaitUntilReady(WEBKIT_SNAPSHOT_REGION_VISIBLE, WEBKIT_SNAPSHOT_OPTIONS_TRANSPARENT_BACKGROUND);
+    g_assert_nonnull(snapshot2);
+    surface2 = SnapshotWebViewTest::snapshotToSurface(snapshot2);
+#if USE(GTK4)
+    g_assert_true(GDK_IS_MEMORY_TEXTURE(snapshot2));
+    g_assert_cmpint(gdk_texture_get_width(snapshot1), ==, gdk_texture_get_width(snapshot2));
+    g_assert_cmpint(gdk_texture_get_height(snapshot1), ==, gdk_texture_get_height(snapshot2));
+#else
+    g_assert_cmpuint(cairo_surface_get_type(snapshot2), ==, CAIRO_SURFACE_TYPE_IMAGE);
+    g_assert_cmpint(cairo_image_surface_get_width(snapshot1), ==, cairo_image_surface_get_width(snapshot2));
+    g_assert_cmpint(cairo_image_surface_get_height(snapshot1), ==, cairo_image_surface_get_height(snapshot2));
+#endif
     g_assert_false(Test::cairoSurfacesEqual(surface1, surface2));
+    cairo_surface_destroy(surface2);
     cairo_surface_destroy(surface1);
 
     // Test that cancellation works.
@@ -1209,8 +1351,7 @@ public:
     {
         m_event = None;
         m_isExpectingPermissionRequest = true;
-        webkit_web_view_run_javascript(m_webView, "Notification.requestPermission();", nullptr, nullptr, nullptr);
-        g_main_loop_run(m_mainLoop);
+        runJavaScriptAndWait("Notification.requestPermission();");
     }
 
     void requestNotificationAndWaitUntilShown(const char* title, const char* body)
@@ -1218,9 +1359,7 @@ public:
         m_event = None;
 
         GUniquePtr<char> jscode(g_strdup_printf("n = new Notification('%s', { body: '%s'});", title, body));
-        webkit_web_view_run_javascript(m_webView, jscode.get(), nullptr, nullptr, nullptr);
-
-        g_main_loop_run(m_mainLoop);
+        runJavaScriptAndWait(jscode.get());
     }
 
     void requestNotificationAndWaitUntilShown(const char* title, const char* body, const char* tag)
@@ -1228,9 +1367,7 @@ public:
         m_event = None;
 
         GUniquePtr<char> jscode(g_strdup_printf("n = new Notification('%s', { body: '%s', tag: '%s'});", title, body, tag));
-        webkit_web_view_run_javascript(m_webView, jscode.get(), nullptr, nullptr, nullptr);
-
-        g_main_loop_run(m_mainLoop);
+        runJavaScriptAndWait(jscode.get());
     }
 
     void clickNotificationAndWaitUntilClicked()
@@ -1245,8 +1382,7 @@ public:
     void closeNotificationAndWaitUntilClosed()
     {
         m_event = None;
-        webkit_web_view_run_javascript(m_webView, "n.close()", nullptr, nullptr, nullptr);
-        g_main_loop_run(m_mainLoop);
+        runJavaScriptAndWait("n.close()");
     }
 
     void closeNotificationAndWaitUntilOnClosed()

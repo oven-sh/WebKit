@@ -27,109 +27,97 @@
 #include "TypeCheck.h"
 
 #include "AST.h"
+#include "ASTStringDumper.h"
 #include "ASTVisitor.h"
+#include "CompilationMessage.h"
 #include "ContextProviderInlines.h"
-#include <wtf/SetForScope.h>
-#include <wtf/Vector.h>
+#include "TypeStore.h"
+#include "Types.h"
+#include "WGSLShaderModule.h"
+#include <wtf/DataLog.h>
 
 namespace WGSL {
 
-class UnificationContext;
-
-struct Type {
-    enum Kind {
-        Variable,
-        Primitive,
-        Constructor,
-        Application,
-        Function,
-    };
-};
-
-using SubstituionCallback = std::function<void(Type*)>;
+static constexpr bool shouldDumpInferredTypes = false;
 
 class TypeChecker : public AST::Visitor, public ContextProvider<Type*> {
-    friend class UnificationContext;
-
 public:
-    TypeChecker(AST::ShaderModule& shaderModule)
-        : m_shaderModule(shaderModule)
-    {
-    }
+    TypeChecker(ShaderModule&);
 
     void check();
 
+    // Declarations
     void visit(AST::Structure&) override;
     void visit(AST::Variable&) override;
     void visit(AST::Function&) override;
-    void visit(AST::Statement&) override;
+
+    // Statements
     void visit(AST::AssignmentStatement&) override;
     void visit(AST::ReturnStatement&) override;
+
+    // Expressions
     void visit(AST::Expression&) override;
     void visit(AST::FieldAccessExpression&) override;
     void visit(AST::IndexAccessExpression&) override;
     void visit(AST::BinaryExpression&) override;
     void visit(AST::IdentifierExpression&) override;
+    void visit(AST::CallExpression&) override;
+
+    // Literal Expressions
+    void visit(AST::BoolLiteral&) override;
+    void visit(AST::Signed32Literal&) override;
+    void visit(AST::Float32Literal&) override;
+    void visit(AST::Unsigned32Literal&) override;
+    void visit(AST::AbstractIntegerLiteral&) override;
+    void visit(AST::AbstractFloatLiteral&) override;
+
+    // Types
     void visit(AST::TypeName&) override;
+    void visit(AST::ArrayTypeName&) override;
+    void visit(AST::NamedTypeName&) override;
+    void visit(AST::ParameterizedTypeName&) override;
+    void visit(AST::ReferenceTypeName&) override;
 
 private:
+    void visitFunctionBody(AST::Function&);
+    void visitStructMembers(AST::Structure&);
+
+    template<typename... Arguments>
+    void typeError(const SourceSpan&, Arguments&&...);
+
+    enum class InferBottom : bool { No, Yes };
+    template<typename... Arguments>
+    void typeError(InferBottom, const SourceSpan&, Arguments&&...);
+
     Type* infer(AST::Expression&);
-    Type* variable();
     Type* resolve(AST::TypeName&);
     void inferred(Type*);
-    void unify(Type*, Type*);
+    bool unify(Type*, Type*) WARN_UNUSED_RETURN;
+    bool isBottom(Type*) const;
+    std::optional<unsigned> extractInteger(AST::Expression&);
 
-    void substitute(Type*, SubstituionCallback&&);
-
-    AST::ShaderModule& m_shaderModule;
+    ShaderModule& m_shaderModule;
     Type* m_inferredType { nullptr };
-    UnificationContext* m_unificationContext { nullptr };
 
-    // FIXME: remove this once we start allocating types
-    Type m_type;
+    // FIXME: move this into a class that contains the AST
+    TypeStore m_types;
+    WTF::Vector<Error> m_errors;
 };
 
-class UnificationContext {
-public:
-    UnificationContext(TypeChecker* typeChecker)
-        : m_setForScope(typeChecker->m_unificationContext, this)
-    {
-    }
-
-    ~UnificationContext()
-    {
-        solveConstraints();
-        runSubstitutions();
-    }
-
-    void unify(Type* lhs, Type* rhs)
-    {
-        m_constraints.append({ lhs, rhs });
-    }
-
-    void substitute(Type* type, SubstituionCallback&& callback)
-    {
-        m_substitutions.append({ type, WTFMove(callback) });
-    }
-
-private:
-    void solveConstraints()
-    {
-        // FIXME: implement this
-    }
-
-    void runSubstitutions()
-    {
-        // FIXME: implement this
-    }
-
-    SetForScope<UnificationContext*> m_setForScope;
-    Vector<std::pair<Type*, Type*>> m_constraints;
-    Vector<std::pair<Type*, SubstituionCallback>> m_substitutions;
-};
+TypeChecker::TypeChecker(ShaderModule& shaderModule)
+    : m_shaderModule(shaderModule)
+{
+    introduceVariable(AST::Identifier::make("void"_s), m_types.voidType());
+    introduceVariable(AST::Identifier::make("bool"_s), m_types.boolType());
+    introduceVariable(AST::Identifier::make("i32"_s), m_types.i32Type());
+    introduceVariable(AST::Identifier::make("u32"_s), m_types.u32Type());
+    introduceVariable(AST::Identifier::make("f32"_s), m_types.f32Type());
+}
 
 void TypeChecker::check()
 {
+    // FIXME: fill in struct fields in a second pass since declarations might be
+    // out of order
     for (auto& structure : m_shaderModule.structures())
         visit(structure);
 
@@ -140,52 +128,62 @@ void TypeChecker::check()
         visit(function);
 
     for (auto& function : m_shaderModule.functions())
-        visit(function.body());
+        visitFunctionBody(function);
+
+    if (shouldDumpInferredTypes) {
+        for (auto& error : m_errors)
+            dataLogLn(error);
+    }
 }
 
 // Declarations
 void TypeChecker::visit(AST::Structure& structure)
 {
-    UnificationContext declarationContext(this);
-
-    // FIXME: allocate and build struct type from struct members
-    Type* structType = nullptr;
-    ContextProvider::introduceVariable(structure.name(), structType);
+    Type* structType = m_types.structType(structure.name());
+    introduceVariable(structure.name(), structType);
 }
 
 void TypeChecker::visit(AST::Variable& variable)
 {
-    UnificationContext declarationContext(this);
-
-    auto* result = TypeChecker::variable();
+    Type* result = nullptr;
     if (variable.maybeTypeName())
-        unify(result, resolve(*variable.maybeTypeName()));
-    if (variable.maybeInitializer())
-        unify(result, infer(*variable.maybeInitializer()));
-    ContextProvider::introduceVariable(variable.name(), result);
+        result = resolve(*variable.maybeTypeName());
+    if (variable.maybeInitializer()) {
+        auto* initializerType = infer(*variable.maybeInitializer());
+        if (!result)
+            result = initializerType;
+        else if (!unify(result, initializerType))
+            typeError(InferBottom::No, variable.span(), "cannot initialize var of type '", *result, "' with value of type '", *initializerType, "'");
+    }
+    introduceVariable(variable.name(), result);
 }
 
 void TypeChecker::visit(AST::Function& function)
 {
-    UnificationContext declarationContext(this);
-
     // FIXME: allocate and build function type fromp parameters and return type
     Type* functionType = nullptr;
-    ContextProvider::introduceVariable(function.name(), functionType);
+    introduceVariable(function.name(), functionType);
+}
+
+void TypeChecker::visitFunctionBody(AST::Function& function)
+{
+    ContextProvider::ContextScope functionContext(this);
+
+    for (auto& parameter : function.parameters()) {
+        auto* parameterType = resolve(parameter.typeName());
+        ContextProvider::introduceVariable(parameter.name(), parameterType);
+    }
+
+    AST::Visitor::visit(function.body());
 }
 
 // Statements
-void TypeChecker::visit(AST::Statement& statement)
-{
-    UnificationContext statementContext(this);
-    AST::Visitor::visit(statement);
-}
-
 void TypeChecker::visit(AST::AssignmentStatement& statement)
 {
     auto* lhs = infer(statement.lhs());
     auto* rhs = infer(statement.rhs());
-    unify(lhs, rhs);
+    if (!unify(lhs, rhs))
+        typeError(InferBottom::No, statement.span(), "cannot assign value of type '", *rhs, "' to '", *lhs, "'");
 }
 
 void TypeChecker::visit(AST::ReturnStatement& statement)
@@ -200,18 +198,16 @@ void TypeChecker::visit(AST::ReturnStatement& statement)
 // Expressions
 void TypeChecker::visit(AST::Expression&)
 {
-    // FIXME: remove this function once we start allocating types
-    inferred(&m_type);
+    // NOTE: this should never be called directly, only through `resolve`, which
+    // captures the inferred type
+    ASSERT_NOT_REACHED();
 }
 
 void TypeChecker::visit(AST::FieldAccessExpression& access)
 {
     auto* structType = infer(access.base());
     // FIXME: implement member lookup once we have a struct type
-    UNUSED_PARAM(structType);
-
-    Type* fieldType = nullptr;
-    inferred(fieldType);
+    inferred(structType);
 }
 
 void TypeChecker::visit(AST::IndexAccessExpression& access)
@@ -224,59 +220,161 @@ void TypeChecker::visit(AST::IndexAccessExpression& access)
     UNUSED_PARAM(index);
 
     // FIXME: set the inferred type to the array's member type
-    UNUSED_PARAM(arrayType);
+    inferred(arrayType);
 }
 
 void TypeChecker::visit(AST::BinaryExpression& binary)
 {
     // FIXME: this needs to resolve overloads, not just unify both types
-    auto* result = variable();
     auto* leftType = infer(binary.leftExpression());
     auto* rightType = infer(binary.rightExpression());
-    unify(result, leftType);
-    unify(result, rightType);
-    inferred(result);
+    if (unify(leftType, rightType))
+        inferred(leftType);
+    else
+        typeError(binary.span(), "no matching overload for operator ", toString(binary.operation()), " (", *leftType, ", ", *rightType, ")");
 }
 
 void TypeChecker::visit(AST::IdentifierExpression& identifier)
 {
-    auto* const* type = ContextProvider::readVariable(identifier.identifier());
-    // FIXME: this should be unconditional
-    ASSERT(type);
-    if (type)
+    auto* const* type = readVariable(identifier.identifier());
+    if (type) {
         inferred(*type);
+        return;
+    }
+
+    typeError(identifier.span(), "unknown identifier: '", identifier.identifier(), "'");
+}
+
+void TypeChecker::visit(AST::CallExpression& call)
+{
+    auto* target = resolve(call.target());
+    // FIXME: validate arguments
+    inferred(target);
+}
+
+// Literal Expressions
+void TypeChecker::visit(AST::BoolLiteral&)
+{
+    inferred(m_types.boolType());
+}
+
+void TypeChecker::visit(AST::Signed32Literal&)
+{
+    inferred(m_types.i32Type());
+}
+
+void TypeChecker::visit(AST::Float32Literal&)
+{
+    inferred(m_types.f32Type());
+}
+
+void TypeChecker::visit(AST::Unsigned32Literal&)
+{
+    inferred(m_types.u32Type());
+}
+
+void TypeChecker::visit(AST::AbstractIntegerLiteral&)
+{
+    inferred(m_types.abstractIntType());
+}
+
+void TypeChecker::visit(AST::AbstractFloatLiteral&)
+{
+    inferred(m_types.abstractFloatType());
 }
 
 // Types
 void TypeChecker::visit(AST::TypeName&)
 {
-    // FIXME: remove this function once we start allocating types
-    inferred(&m_type);
+    // NOTE: this should never be called directly, only through `resolve`, which
+    // captures the inferred type
+    ASSERT_NOT_REACHED();
+}
+
+void TypeChecker::visit(AST::ArrayTypeName& array)
+{
+    // FIXME: handle the case where there is no element type
+    ASSERT(array.maybeElementType());
+
+    auto* elementType = resolve(*array.maybeElementType());
+    if (isBottom(elementType)) {
+        inferred(m_types.bottomType());
+        return;
+    }
+
+    std::optional<unsigned> size;
+    if (array.maybeElementCount()) {
+        size = extractInteger(*array.maybeElementCount());
+        if (!size) {
+            typeError(array.span(), "array count must evaluate to a constant integer expression or override variable");
+            return;
+        }
+    }
+
+    inferred(m_types.arrayType(elementType, size));
+}
+
+void TypeChecker::visit(AST::NamedTypeName& namedType)
+{
+    auto* const* type = ContextProvider::readVariable(namedType.name());
+    if (type) {
+        inferred(*type);
+        return;
+    }
+
+    typeError(namedType.span(), "unknown type: '", namedType.name(), "'");
+}
+
+void TypeChecker::visit(AST::ParameterizedTypeName& type)
+{
+    auto* elementType = resolve(type.elementType());
+    if (isBottom(elementType))
+        inferred(m_types.bottomType());
+    else
+        inferred(m_types.constructType(type.base(), elementType));
+}
+
+void TypeChecker::visit(AST::ReferenceTypeName&)
+{
+    // FIXME: we don't yet parse reference types
+    ASSERT_NOT_REACHED();
 }
 
 // Private helpers
+std::optional<unsigned> TypeChecker::extractInteger(AST::Expression& expression)
+{
+    switch (expression.kind()) {
+    case AST::NodeKind::AbstractIntegerLiteral:
+        return { static_cast<unsigned>(downcast<AST::AbstractIntegerLiteral>(expression).value()) };
+    case AST::NodeKind::Unsigned32Literal:
+        return { static_cast<unsigned>(downcast<AST::Unsigned32Literal>(expression).value()) };
+    case AST::NodeKind::Signed32Literal:
+        return { static_cast<unsigned>(downcast<AST::Signed32Literal>(expression).value()) };
+    default:
+        // FIXME: handle constants and overrides
+        return std::nullopt;
+    }
+}
+
 Type* TypeChecker::infer(AST::Expression& expression)
 {
     ASSERT(!m_inferredType);
-    // FIXME: this should call the base class and TypeChecker::visit should assert
-    // that it is never called directly on expressions
-    visit(expression);
+    AST::Visitor::visit(expression);
     ASSERT(m_inferredType);
 
     auto* type = m_inferredType;
-    substitute(type, [&](Type* resolvedType) {
-        // FIXME: store resolved type in the expression
-        UNUSED_PARAM(resolvedType);
-    });
+
+    if (shouldDumpInferredTypes) {
+        dataLog("> Type inference [expression]: ");
+        dumpNode(WTF::dataFile(), expression);
+        dataLog(" : ");
+        dataLogLn(*type);
+    }
+
+    // FIXME: store resolved type in the expression
     m_inferredType = nullptr;
 
     return type;
-}
-
-Type* TypeChecker::variable()
-{
-    // FIXME: allocate new type variables
-    return nullptr;
 }
 
 Type* TypeChecker::resolve(AST::TypeName& type)
@@ -284,14 +382,19 @@ Type* TypeChecker::resolve(AST::TypeName& type)
     ASSERT(!m_inferredType);
     // FIXME: this should call the base class and TypeChecker::visit should assert
     // that it is never called directly on types
-    visit(type);
+    AST::Visitor::visit(type);
     ASSERT(m_inferredType);
 
     auto* inferredType = m_inferredType;
-    substitute(inferredType, [&](Type* resolvedType) {
-        // FIXME: store resolved type in the AST type
-        UNUSED_PARAM(resolvedType);
-    });
+
+    if (shouldDumpInferredTypes) {
+        dataLog("> Type inference [type]: ");
+        dumpNode(WTF::dataFile(), type);
+        dataLog(" : ");
+        dataLogLn(*inferredType);
+    }
+
+    // FIXME: store resolved type in the AST type
     m_inferredType = nullptr;
 
     return inferredType;
@@ -303,17 +406,42 @@ void TypeChecker::inferred(Type* type)
     m_inferredType = type;
 }
 
-void TypeChecker::unify(Type* lhs, Type* rhs)
+bool TypeChecker::unify(Type* lhs, Type* rhs)
 {
-    m_unificationContext->unify(lhs, rhs);
+    if (shouldDumpInferredTypes)
+        dataLogLn("[unify] '", *lhs, "' <", RawPointer(lhs), ">  and '", *rhs, "' <", RawPointer(rhs), ">");
+
+    if (lhs == rhs)
+        return true;
+
+    // Bottom is only inferred when a type error is reported, so we skip further
+    // checks that are a consequence of an already reported error.
+    if (isBottom(lhs) || isBottom(rhs))
+        return true;
+
+    return false;
 }
 
-void TypeChecker::substitute(Type* type, SubstituionCallback&& callback)
+bool TypeChecker::isBottom(Type* type) const
 {
-    m_unificationContext->substitute(type, WTFMove(callback));
+    return type == m_types.bottomType();
 }
 
-void typeCheck(AST::ShaderModule& shaderModule)
+template<typename... Arguments>
+void TypeChecker::typeError(const SourceSpan& span, Arguments&&... arguments)
+{
+    typeError(InferBottom::Yes, span, std::forward<Arguments>(arguments)...);
+}
+
+template<typename... Arguments>
+void TypeChecker::typeError(InferBottom inferBottom, const SourceSpan& span, Arguments&&... arguments)
+{
+    m_errors.append({ makeString(std::forward<Arguments>(arguments)...), span });
+    if (inferBottom == InferBottom::Yes)
+        inferred(m_types.bottomType());
+}
+
+void typeCheck(ShaderModule& shaderModule)
 {
     TypeChecker(shaderModule).check();
 }

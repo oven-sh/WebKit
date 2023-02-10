@@ -2548,6 +2548,34 @@ private:
     ValueRange m_valueRange;
 };
 
+class LineHeightWrapper final : public LengthPropertyWrapper {
+    WTF_MAKE_FAST_ALLOCATED;
+public:
+    LineHeightWrapper()
+        : LengthPropertyWrapper(CSSPropertyLineHeight, &RenderStyle::specifiedLineHeight, &RenderStyle::setLineHeight)
+    {
+    }
+
+private:
+    bool canInterpolate(const RenderStyle& from, const RenderStyle& to, CompositeOperation compositeOperation) const final
+    {
+        // We must account for how BuilderConverter::convertLineHeight() deals with line-height values:
+        // - "normal" is converted to LengthType::Percent with a -100 value
+        // - <number> values are converted to LengthType::Percent
+        // - <length-percentage> values are converted to LengthType::Fixed
+        // This means that animating between "normal" and a "<number>" would work with LengthPropertyWrapper::canInterpolate()
+        // since it would see two LengthType::Percent values. So if either value is "normal" we cannot interpolate since those
+        // values are either equal or of incompatible types.
+        auto normalLineHeight = RenderStyle::initialLineHeight();
+        if (value(from) == normalLineHeight || value(to) == normalLineHeight)
+            return false;
+
+        // The default logic will now apply since <number> and <length-percentage> values
+        // are converted to different LengthType values.
+        return LengthPropertyWrapper::canInterpolate(from, to, compositeOperation);
+    }
+};
+
 class VerticalAlignWrapper final : public LengthPropertyWrapper {
     WTF_MAKE_FAST_ALLOCATED;
 public:
@@ -2579,6 +2607,15 @@ public:
     }
 
 private:
+    bool equals(const RenderStyle& a, const RenderStyle& b) const final
+    {
+        if (a.textIndentLine() != b.textIndentLine())
+            return false;
+        if (a.textIndentType() != b.textIndentType())
+            return false;
+        return LengthPropertyWrapper::equals(a, b);
+    }
+
     bool canInterpolate(const RenderStyle& from, const RenderStyle& to, CompositeOperation compositeOperation) const final
     {
         if (from.textIndentLine() != to.textIndentLine())
@@ -3264,7 +3301,7 @@ CSSPropertyAnimationWrapperMap::CSSPropertyAnimationWrapperMap()
         new AutoPropertyWrapper<int>(CSSPropertyZIndex, &RenderStyle::specifiedZIndex, &RenderStyle::setSpecifiedZIndex, &RenderStyle::hasAutoSpecifiedZIndex, &RenderStyle::setHasAutoSpecifiedZIndex),
         new PositivePropertyWrapper<unsigned short>(CSSPropertyOrphans, &RenderStyle::orphans, &RenderStyle::setOrphans),
         new PositivePropertyWrapper<unsigned short>(CSSPropertyWidows, &RenderStyle::widows, &RenderStyle::setWidows),
-        new LengthPropertyWrapper(CSSPropertyLineHeight, &RenderStyle::specifiedLineHeight, &RenderStyle::setLineHeight),
+        new LineHeightWrapper,
         new PropertyWrapper<float>(CSSPropertyOutlineOffset, &RenderStyle::outlineOffset, &RenderStyle::setOutlineOffset),
         new FloatPropertyWrapper(CSSPropertyOutlineWidth, &RenderStyle::outlineWidth, &RenderStyle::setOutlineWidth, FloatPropertyWrapper::ValueRange::NonNegative),
         new PropertyWrapper<float>(CSSPropertyLetterSpacing, &RenderStyle::letterSpacing, &RenderStyle::setLetterSpacing),
@@ -3914,7 +3951,7 @@ static std::optional<CSSCustomPropertyValue::SyntaxValueList> blendSyntaxValueLi
     return CSSCustomPropertyValue::SyntaxValueList { blendedSyntaxValues, from.separator };
 }
 
-static Ref<CSSCustomPropertyValue> blendedCSSCustomPropertyValue(const RenderStyle& fromStyle, const RenderStyle& toStyle, const CSSCustomPropertyValue& from, const CSSCustomPropertyValue& to, const CSSPropertyBlendingContext& blendingContext)
+static Ref<const CSSCustomPropertyValue> blendedCSSCustomPropertyValue(const RenderStyle& fromStyle, const RenderStyle& toStyle, const CSSCustomPropertyValue& from, const CSSCustomPropertyValue& to, const CSSPropertyBlendingContext& blendingContext)
 {
     if (std::holds_alternative<CSSCustomPropertyValue::SyntaxValue>(from.value()) && std::holds_alternative<CSSCustomPropertyValue::SyntaxValue>(to.value())) {
         auto& fromSyntaxValue = std::get<CSSCustomPropertyValue::SyntaxValue>(from.value());
@@ -3931,18 +3968,14 @@ static Ref<CSSCustomPropertyValue> blendedCSSCustomPropertyValue(const RenderSty
     }
 
     // Use a discrete interpolation for all other cases.
-    return CSSCustomPropertyValue::create(blendingContext.progress < 0.5 ? from : to);
+    return blendingContext.progress < 0.5 ? from : to;
 }
 
-static std::pair<const CSSCustomPropertyValue*, const CSSCustomPropertyValue*> customPropertyValuesForBlending(const Document* document, const AtomString& customProperty, const RenderStyle& fromStyle, const RenderStyle& toStyle)
+static std::pair<const CSSCustomPropertyValue*, const CSSCustomPropertyValue*> customPropertyValuesForBlending(const AtomString& customProperty, const RenderStyle& fromStyle, const RenderStyle& toStyle)
 {
-    // FIXME: When would there be no document?
-    if (!document)
-        return { };
-
     return {
-        fromStyle.customPropertyValue(customProperty, document->customPropertyRegistry()),
-        toStyle.customPropertyValue(customProperty, document->customPropertyRegistry())
+        fromStyle.customPropertyValue(customProperty),
+        toStyle.customPropertyValue(customProperty)
     };
 }
 
@@ -3950,14 +3983,12 @@ static void blendCustomProperty(const CSSPropertyBlendingClient& client, const A
 {
     CSSPropertyBlendingContext blendingContext { progress, false, compositeOperation, client, customProperty, iterationCompositeOperation, currentIteration };
 
-    auto [fromValue, toValue] = customPropertyValuesForBlending(client.document(), customProperty, from, to);
+    auto [fromValue, toValue] = customPropertyValuesForBlending(customProperty, from, to);
     if (!fromValue || !toValue)
         return;
 
-    if (client.document()->customPropertyRegistry().isInherited(customProperty))
-        destination.setInheritedCustomPropertyValue(customProperty, blendedCSSCustomPropertyValue(from, to, *fromValue, *toValue, blendingContext));
-    else
-        destination.setNonInheritedCustomPropertyValue(customProperty, blendedCSSCustomPropertyValue(from, to, *fromValue, *toValue, blendingContext));
+    bool isInherited = client.document()->customPropertyRegistry().isInherited(customProperty);
+    destination.setCustomPropertyValue(blendedCSSCustomPropertyValue(from, to, *fromValue, *toValue, blendingContext), isInherited);
 }
 
 void CSSPropertyAnimation::blendProperty(const CSSPropertyBlendingClient& client, AnimatableProperty property, RenderStyle& destination, const RenderStyle& from, const RenderStyle& to, double progress, CompositeOperation compositeOperation, IterationCompositeOperation iterationCompositeOperation, double currentIteration)
@@ -4009,7 +4040,7 @@ static bool syntaxValuesRequireBlendingForAccumulativeIteration(const CSSCustomP
     });
 }
 
-bool CSSPropertyAnimation::propertyRequiresBlendingForAccumulativeIteration(const CSSPropertyBlendingClient& client, AnimatableProperty property, const RenderStyle& a, const RenderStyle& b)
+bool CSSPropertyAnimation::propertyRequiresBlendingForAccumulativeIteration(const CSSPropertyBlendingClient&, AnimatableProperty property, const RenderStyle& a, const RenderStyle& b)
 {
     return WTF::switchOn(property,
         [&] (CSSPropertyID propertyId) {
@@ -4017,7 +4048,7 @@ bool CSSPropertyAnimation::propertyRequiresBlendingForAccumulativeIteration(cons
                 return wrapper->requiresBlendingForAccumulativeIteration(a, b);
             return false;
         }, [&] (const AtomString& customProperty) {
-            auto [from, to] = customPropertyValuesForBlending(client.document(), customProperty, a, b);
+            auto [from, to] = customPropertyValuesForBlending(customProperty, a, b);
             if (!from || !to)
                 return false;
 
@@ -4055,7 +4086,7 @@ bool CSSPropertyAnimation::animationOfPropertyIsAccelerated(AnimatableProperty p
     );
 }
 
-bool CSSPropertyAnimation::propertiesEqual(AnimatableProperty property, const RenderStyle& a, const RenderStyle& b, const Document& document)
+bool CSSPropertyAnimation::propertiesEqual(AnimatableProperty property, const RenderStyle& a, const RenderStyle& b, const Document&)
 {
     return WTF::switchOn(property,
         [&] (CSSPropertyID propertyId) {
@@ -4063,7 +4094,7 @@ bool CSSPropertyAnimation::propertiesEqual(AnimatableProperty property, const Re
                 return wrapper->equals(a, b);
             return true;
         }, [&] (const AtomString& customProperty) {
-            auto [aCustomPropertyValue, bCustomPropertyValue] = customPropertyValuesForBlending(&document, customProperty, a, b);
+            auto [aCustomPropertyValue, bCustomPropertyValue] = customPropertyValuesForBlending(customProperty, a, b);
             if (!aCustomPropertyValue && !bCustomPropertyValue)
                 return true;
             if (!aCustomPropertyValue || !bCustomPropertyValue)
@@ -4101,7 +4132,7 @@ static bool typeOfSyntaxValueCanBeInterpolated(const CSSCustomPropertyValue::Syn
     );
 }
 
-bool CSSPropertyAnimation::canPropertyBeInterpolated(AnimatableProperty property, const RenderStyle& a, const RenderStyle& b, const Document& document)
+bool CSSPropertyAnimation::canPropertyBeInterpolated(AnimatableProperty property, const RenderStyle& a, const RenderStyle& b, const Document&)
 {
     return WTF::switchOn(property,
         [&] (CSSPropertyID propertyId) {
@@ -4109,7 +4140,7 @@ bool CSSPropertyAnimation::canPropertyBeInterpolated(AnimatableProperty property
                 return wrapper->canInterpolate(a, b, CompositeOperation::Replace);
             return true;
         }, [&] (const AtomString& customProperty) {
-            auto [aCustomPropertyValue, bCustomPropertyValue] = customPropertyValuesForBlending(&document, customProperty, a, b);
+            auto [aCustomPropertyValue, bCustomPropertyValue] = customPropertyValuesForBlending(customProperty, a, b);
             if (!aCustomPropertyValue || !bCustomPropertyValue || aCustomPropertyValue == bCustomPropertyValue)
                 return false;
             auto& aVariantValue = aCustomPropertyValue->value();

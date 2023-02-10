@@ -778,6 +778,9 @@ webkit.org/b/246719 imported/w3c/web-platform-tests/reporting/cross-origin-repor
 webkit.org/b/246350 imported/w3c/web-platform-tests/content-security-policy/reporting-api/reporting-api-sends-reports-on-violation.https.sub.html [ Pass Failure ]
 webkit.org/b/246350 imported/w3c/web-platform-tests/content-security-policy/reporting-api/report-to-directive-allowed-in-meta.https.sub.html [ Pass Failure ]
 
+webkit.org/b/251618 imported/w3c/web-platform-tests/editing/other/exec-command-with-text-editor.tentative.html [ Failure ]
+webkit.org/b/251618 imported/w3c/web-platform-tests/editing/other/exec-command-without-editable-element.tentative.html [ Failure ]
+
 http/wpt/mediarecorder [ Skip ]
 imported/w3c/web-platform-tests/mediacapture-record [ Skip ]
 fast/history/page-cache-media-recorder.html [ Skip ]
@@ -2274,8 +2277,6 @@ webkit.org/b/237783 imported/w3c/web-platform-tests/html/semantics/forms/input-c
 
 webkit.org/b/237552 imported/w3c/web-platform-tests/html/browsers/history/the-location-interface/same-hash.html [ Pass Failure ]
 
-webkit.org/b/240081 [ Debug ]  webaudio/AudioBuffer/huge-buffer.html [ Pass Slow ]
-
 # Flaky since their import.
 imported/w3c/web-platform-tests/html/browsers/browsing-the-web/navigating-across-documents/replace-before-load/window-open-self-during-load.html [ Failure Pass ]
 imported/w3c/web-platform-tests/html/browsers/browsing-the-web/navigating-across-documents/replace-before-load/window-open-self-during-pageshow.html [ Failure Pass ]
@@ -2451,3 +2452,6 @@ imported/w3c/web-platform-tests/geolocation-API/permission.https.html [ WontFix 
 
 # Per-process limit is only for WK2
 http/tests/websocket/tests/hybi/multiple-connections-limit.html [ Skip ]
+
+# Displays blank on WK1
+fullscreen/fullscreen-iframe-navigation.html [ Skip ]

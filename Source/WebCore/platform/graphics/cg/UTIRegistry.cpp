@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2022 Apple Inc.  All rights reserved.
+ * Copyright (C) 2017-2023 Apple Inc.  All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -49,16 +49,14 @@ const MemoryCompactLookupOnlyRobinHoodHashSet<String>& defaultSupportedImageType
             "public.jpeg"_s,
             "public.png"_s,
             "public.tiff"_s,
-#if !PLATFORM(WIN)
             "public.jpeg-2000"_s,
             "public.mpo-image"_s,
-#endif
 #if HAVE(WEBP)
             "public.webp"_s,
             "com.google.webp"_s,
             "org.webmproject.webp"_s,
 #endif
-#if HAVE(AVIF) || USE(AVIF)
+#if HAVE(AVIF)
             "public.avif"_s,
             "public.avis"_s,
 #endif
@@ -78,6 +76,11 @@ const MemoryCompactLookupOnlyRobinHoodHashSet<String>& defaultSupportedImageType
             if (systemSupportedImageTypes.contains(imageType))
                 filtered.add(imageType);
         }
+        // rdar://104940377 Workaround for CGImageSourceCopyTypeIdentifiers not returning AVIF for iOS simulator
+#if HAVE(CG_IMAGE_SOURCE_AVIF_IMAGE_TYPES_BUG)
+        filtered.add("public.avif"_s);
+        filtered.add("public.avis"_s);
+#endif
         return filtered;
     }();
 

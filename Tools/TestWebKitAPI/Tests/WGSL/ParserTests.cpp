@@ -27,12 +27,11 @@
 #include "ASTAttribute.h"
 #include "ASTTypeName.h"
 #include "Parser.h"
-#include "ParserPrivate.h"
 
 #include "AST.h"
 #include "Lexer.h"
 #include "TestWGSLAPI.h"
-#include "WGSL.h"
+#include "WGSLShaderModule.h"
 
 #include <wtf/Assertions.h>
 
@@ -70,19 +69,13 @@ static void checkVec4F32Type(WGSL::AST::TypeName& type)
 
 namespace TestWGSLAPI {
 
-inline Expected<WGSL::AST::ShaderModule, WGSL::Error> parse(const String& wgsl)
+inline Expected<WGSL::ShaderModule, WGSL::Error> parse(const String& wgsl)
 {
-    WGSL::Configuration configuration;
-    configuration.maxBuffersPlusVertexBuffersForVertexStage = 8;
-    return WGSL::parseLChar(wgsl, configuration);
-}
-
-Expected<WGSL::AST::Expression::Ref, WGSL::Error> parseExpression(const String& wgsl)
-{
-    WGSL::Lexer<LChar> lexer(wgsl);
-    WGSL::Parser parser(lexer);
-
-    return parser.parseExpression();
+    WGSL::ShaderModule shaderModule(wgsl, { 8 });
+    auto maybeError = WGSL::parse(shaderModule);
+    if (maybeError.has_value())
+        return makeUnexpected(*maybeError);
+    return { WTFMove(shaderModule) };
 }
 
 static void testStruct(ASCIILiteral program, const Vector<String>& fieldNames, const Vector<String>& typeNames)
@@ -113,7 +106,7 @@ static void testStruct(ASCIILiteral program, const Vector<String>& fieldNames, c
 
 TEST(WGSLParserTests, SourceLifecycle)
 {
-    Expected<WGSL::AST::ShaderModule, WGSL::Error> shader = ([&]() {
+    Expected<WGSL::ShaderModule, WGSL::Error> shader = ([&]() {
         auto source = makeString(
             "@group(0)"_s,
             " "_s,
@@ -502,105 +495,6 @@ TEST(WGSLParserTests, BinaryExpression)
         EXPECT_EQ(rhs.identifier(), "y"_s);
     }
 }
-
-TEST(WGSLParserTests, BinaryExpression2)
-{
-    EXPECT_EXPRESSION(expression, parseExpression(R"(x - y + 1)"_s));
-    EXPECT_TRUE(is<WGSL::AST::BinaryExpression>(expression));
-    auto& binaryExpression = downcast<WGSL::AST::BinaryExpression>(expression.get());
-
-    {
-        // op: +
-        EXPECT_EQ(binaryExpression.operation(), WGSL::AST::BinaryOperation::Add);
-        // lhs: x - y
-        EXPECT_TRUE(is<WGSL::AST::BinaryExpression>(binaryExpression.leftExpression()));
-        // rhs: 1
-        EXPECT_TRUE(is<WGSL::AST::AbstractIntegerLiteral>(binaryExpression.rightExpression()));
-        checkIntLiteral(binaryExpression.rightExpression(), 1);
-    }
-
-    {
-        EXPECT_TRUE(is<WGSL::AST::BinaryExpression>(binaryExpression.leftExpression()));
-        auto& binaryExpression2 = downcast<WGSL::AST::BinaryExpression>(binaryExpression.leftExpression());
-        // op: -
-        EXPECT_EQ(binaryExpression2.operation(), WGSL::AST::BinaryOperation::Subtract);
-        // lhs: x
-        EXPECT_TRUE(is<WGSL::AST::IdentifierExpression>(binaryExpression2.leftExpression()));
-        auto& lhs = downcast<WGSL::AST::IdentifierExpression>(binaryExpression2.leftExpression());
-        EXPECT_EQ(lhs.identifier(), "x"_s);
-        // rhs: y
-        EXPECT_TRUE(is<WGSL::AST::IdentifierExpression>(binaryExpression2.rightExpression()));
-        auto& rhs = downcast<WGSL::AST::IdentifierExpression>(binaryExpression2.rightExpression());
-        EXPECT_EQ(rhs.identifier(), "y"_s);
-    }
-}
-
-TEST(WGSLParserTests, BinaryExpression3)
-{
-    EXPECT_EXPRESSION(expression, parseExpression(R"(x + y * z)"_s));
-    EXPECT_TRUE(is<WGSL::AST::BinaryExpression>(expression));
-    auto& binaryExpression = downcast<WGSL::AST::BinaryExpression>(expression.get());
-
-    {
-        // op: +
-        EXPECT_EQ(binaryExpression.operation(), WGSL::AST::BinaryOperation::Add);
-        // lhs: x
-        EXPECT_TRUE(is<WGSL::AST::IdentifierExpression>(binaryExpression.leftExpression()));
-        auto& lhs = downcast<WGSL::AST::IdentifierExpression>(binaryExpression.leftExpression());
-        EXPECT_EQ(lhs.identifier(), "x"_s);
-        // rhs: y * z
-        EXPECT_TRUE(is<WGSL::AST::BinaryExpression>(binaryExpression.rightExpression()));
-    }
-
-    {
-        EXPECT_TRUE(is<WGSL::AST::BinaryExpression>(binaryExpression.rightExpression()));
-        auto& binaryExpression2 = downcast<WGSL::AST::BinaryExpression>(binaryExpression.rightExpression());
-        // op: *
-        EXPECT_EQ(binaryExpression2.operation(), WGSL::AST::BinaryOperation::Multiply);
-        // lhs: y
-        EXPECT_TRUE(is<WGSL::AST::IdentifierExpression>(binaryExpression2.leftExpression()));
-        auto& lhs = downcast<WGSL::AST::IdentifierExpression>(binaryExpression2.leftExpression());
-        EXPECT_EQ(lhs.identifier(), "y"_s);
-        // rhs: z
-        EXPECT_TRUE(is<WGSL::AST::IdentifierExpression>(binaryExpression2.rightExpression()));
-        auto& rhs = downcast<WGSL::AST::IdentifierExpression>(binaryExpression2.rightExpression());
-        EXPECT_EQ(rhs.identifier(), "z"_s);
-    }
-}
-
-TEST(WGSLParserTests, BinaryExpression4)
-{
-    EXPECT_EXPRESSION(expression, parseExpression(R"(x / y + z)"_s));
-    EXPECT_TRUE(is<WGSL::AST::BinaryExpression>(expression));
-    auto& binaryExpression = downcast<WGSL::AST::BinaryExpression>(expression.get());
-
-    {
-        // op: +
-        EXPECT_EQ(binaryExpression.operation(), WGSL::AST::BinaryOperation::Add);
-        // lhs: x * y
-        EXPECT_TRUE(is<WGSL::AST::BinaryExpression>(binaryExpression.leftExpression()));
-        // rhs: z
-        EXPECT_TRUE(is<WGSL::AST::IdentifierExpression>(binaryExpression.rightExpression()));
-        auto& rhs = downcast<WGSL::AST::IdentifierExpression>(binaryExpression.rightExpression());
-        EXPECT_EQ(rhs.identifier(), "z"_s);
-    }
-
-    {
-        EXPECT_TRUE(is<WGSL::AST::BinaryExpression>(binaryExpression.leftExpression()));
-        auto& binaryExpression2 = downcast<WGSL::AST::BinaryExpression>(binaryExpression.leftExpression());
-        // op: /
-        EXPECT_EQ(binaryExpression2.operation(), WGSL::AST::BinaryOperation::Divide);
-        // lhs: x
-        EXPECT_TRUE(is<WGSL::AST::IdentifierExpression>(binaryExpression2.leftExpression()));
-        auto& lhs = downcast<WGSL::AST::IdentifierExpression>(binaryExpression2.leftExpression());
-        EXPECT_EQ(lhs.identifier(), "x"_s);
-        // rhs: y
-        EXPECT_TRUE(is<WGSL::AST::IdentifierExpression>(binaryExpression2.rightExpression()));
-        auto& rhs = downcast<WGSL::AST::IdentifierExpression>(binaryExpression2.rightExpression());
-        EXPECT_EQ(rhs.identifier(), "y"_s);
-    }
-}
-
 #pragma mark -
 #pragma mark WebGPU Example Shaders
 

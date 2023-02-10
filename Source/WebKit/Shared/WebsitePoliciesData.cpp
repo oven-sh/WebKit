@@ -36,7 +36,7 @@ namespace WebKit {
 
 void WebsitePoliciesData::encode(IPC::Encoder& encoder) const
 {
-    encoder << contentBlockersEnabled;
+    encoder << contentExtensionEnablement;
     encoder << activeContentRuleListActionPatterns;
     encoder << autoplayPolicy;
 #if ENABLE(DEVICE_ORIENTATION)
@@ -64,9 +64,9 @@ void WebsitePoliciesData::encode(IPC::Encoder& encoder) const
 
 std::optional<WebsitePoliciesData> WebsitePoliciesData::decode(IPC::Decoder& decoder)
 {
-    std::optional<bool> contentBlockersEnabled;
-    decoder >> contentBlockersEnabled;
-    if (!contentBlockersEnabled)
+    std::optional<WebCore::ContentExtensionEnablement> contentExtensionEnablement;
+    decoder >> contentExtensionEnablement;
+    if (!contentExtensionEnablement)
         return std::nullopt;
 
     std::optional<HashMap<WTF::String, Vector<WTF::String>>> activeContentRuleListActionPatterns;
@@ -177,7 +177,7 @@ std::optional<WebsitePoliciesData> WebsitePoliciesData::decode(IPC::Decoder& dec
         return std::nullopt;
 
     return { {
-        WTFMove(*contentBlockersEnabled),
+        WTFMove(*contentExtensionEnablement),
         WTFMove(*activeContentRuleListActionPatterns),
         WTFMove(*allowedAutoplayQuirks),
         WTFMove(*autoplayPolicy),
@@ -216,9 +216,10 @@ void WebsitePoliciesData::applyToDocumentLoader(WebsitePoliciesData&& websitePol
     documentLoader.setDeviceOrientationAndMotionAccessState(websitePolicies.deviceOrientationAndMotionAccessState);
 #endif
 
-    // Only setUserContentExtensionsEnabled if it hasn't already been disabled by reloading without content blockers.
-    if (documentLoader.userContentExtensionsEnabled())
-        documentLoader.setUserContentExtensionsEnabled(websitePolicies.contentBlockersEnabled);
+    // Only disable content blockers if it hasn't already been disabled by reloading without content blockers.
+    auto& [defaultEnablement, exceptions] = documentLoader.contentExtensionEnablement();
+    if (defaultEnablement == WebCore::ContentExtensionDefaultEnablement::Enabled && exceptions.isEmpty())
+        documentLoader.setContentExtensionEnablement(WTFMove(websitePolicies.contentExtensionEnablement));
 
     documentLoader.setActiveContentRuleListActionPatterns(websitePolicies.activeContentRuleListActionPatterns);
 

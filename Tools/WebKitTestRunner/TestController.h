@@ -317,6 +317,7 @@ public:
     uint64_t domCacheSize(WKStringRef origin);
 
     void setAllowStorageQuotaIncrease(bool);
+    void setQuota(uint64_t);
 
     bool didReceiveServerRedirectForProvisionalNavigation() const { return m_didReceiveServerRedirectForProvisionalNavigation; }
     void clearDidReceiveServerRedirectForProvisionalNavigation() { m_didReceiveServerRedirectForProvisionalNavigation = false; }
@@ -700,7 +701,7 @@ private:
             , abandonedDocumentURL(inAbandonedDocumentURL)
         { }
     };
-    HashMap<uint64_t, AbandonedDocumentInfo> m_abandonedDocumentInfo;
+    HashMap<String, AbandonedDocumentInfo> m_abandonedDocumentInfo;
 
     uint64_t m_serverTrustEvaluationCallbackCallsCount { 0 };
     bool m_shouldDismissJavaScriptAlertsAsynchronously { false };

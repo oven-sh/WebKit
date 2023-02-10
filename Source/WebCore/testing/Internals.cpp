@@ -1027,13 +1027,6 @@ static BitmapImage* bitmapImageFromImageElement(HTMLImageElement& element)
     return dynamicDowncast<BitmapImage>(imageFromImageElement(element));
 }
 
-#if USE(CG)
-static PDFDocumentImage* pdfDocumentImageFromImageElement(HTMLImageElement& element)
-{
-    return dynamicDowncast<PDFDocumentImage>(imageFromImageElement(element));
-}
-#endif
-
 unsigned Internals::imageFrameIndex(HTMLImageElement& element)
 {
     auto* bitmapImage = bitmapImageFromImageElement(element);
@@ -1105,15 +1098,10 @@ unsigned Internals::imageDecodeCount(HTMLImageElement& element)
     return bitmapImage ? bitmapImage->decodeCountForTesting() : 0;
 }
 
-unsigned Internals::pdfDocumentCachingCount(HTMLImageElement& element)
+unsigned Internals::imageCachedSubimageCreateCount(HTMLImageElement& element)
 {
-#if USE(CG)
-    auto* pdfDocumentImage = pdfDocumentImageFromImageElement(element);
-    return pdfDocumentImage ? pdfDocumentImage->cachingCountForTesting() : 0;
-#else
-    UNUSED_PARAM(element);
-    return 0;
-#endif
+    auto* image = imageFromImageElement(element);
+    return image ? image->cachedSubimageCreateCountForTesting() : 0;
 }
 
 unsigned Internals::remoteImagesCountForTesting() const
@@ -1552,6 +1540,18 @@ ExceptionOr<void> Internals::setSpeechUtteranceDuration(double duration)
 
     m_platformSpeechSynthesizer->setUtteranceDuration(Seconds(duration));
     return { };
+}
+
+unsigned Internals::minimumExpectedVoiceCount()
+{
+    // https://webkit.org/b/250656
+#if PLATFORM(MAC)
+    return 21;
+#elif USE(GLIB)
+    return 4;
+#else
+    return 1;
+#endif
 }
 
 #endif
@@ -2866,7 +2866,7 @@ uint64_t Internals::messagePortIdentifier(const MessagePort& port) const
 
 bool Internals::isMessagePortAlive(uint64_t messagePortIdentifier) const
 {
-    MessagePortIdentifier portIdentifier { Process::identifier(), makeObjectIdentifier<MessagePortIdentifier::PortIdentifierType>(messagePortIdentifier) };
+    MessagePortIdentifier portIdentifier { Process::identifier(), makeObjectIdentifier<PortIdentifierType>(messagePortIdentifier) };
     return MessagePort::isMessagePortAliveForTesting(portIdentifier);
 }
 
@@ -7012,6 +7012,16 @@ Internals::SelectorFilterHashCounts Internals::selectorFilterHashCounts(const St
     auto hashes = SelectorFilter::collectHashesForTesting(*selectorList->first());
 
     return { hashes.ids.size(), hashes.classes.size(), hashes.tags.size(), hashes.attributes.size() };
+}
+
+bool Internals::isVisuallyNonEmpty() const
+{
+    auto* document = contextDocument();
+    if (!document || !document->frame())
+        return false;
+
+    auto* frameView = document->frame()->view();
+    return frameView && frameView->isVisuallyNonEmpty();
 }
 
 } // namespace WebCore

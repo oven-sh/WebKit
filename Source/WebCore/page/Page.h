@@ -236,6 +236,7 @@ enum class RenderingUpdateStep : uint32_t {
     VideoFrameCallbacks             = 1 << 15,
     PrepareCanvasesForDisplay       = 1 << 16,
     CaretAnimation                  = 1 << 17,
+    FocusFixup                      = 1 << 18,
 };
 
 enum LookalikeCharacterSanitizationTrigger : uint8_t {
@@ -293,6 +294,8 @@ public:
     WEBCORE_EXPORT OptionSet<DisabledAdaptations> disabledAdaptations() const;
     WEBCORE_EXPORT ViewportArguments viewportArguments() const;
 
+    WEBCORE_EXPORT void reloadExecutionContextsForOrigin(const ClientOrigin&, std::optional<FrameIdentifier> triggeringFrame) const;
+
     const std::optional<ViewportArguments>& overrideViewportArguments() const { return m_overrideViewportArguments; }
     WEBCORE_EXPORT void setOverrideViewportArguments(const std::optional<ViewportArguments>&);
 
@@ -337,6 +340,7 @@ public:
     void setCurrentKeyboardScrollingAnimator(KeyboardScrollingAnimator*);
     KeyboardScrollingAnimator* currentKeyboardScrollingAnimator() const { return m_currentKeyboardScrollingAnimator.get(); }
 
+    bool isLoadingInHeadlessMode() const;
 
 #if ENABLE(REMOTE_INSPECTOR)
     WEBCORE_EXPORT bool inspectable() const;
@@ -667,6 +671,7 @@ public:
     bool scriptedAnimationsSuspended() const { return m_scriptedAnimationsSuspended; }
 
 #if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
+    void updatePlayStateForAllAnimations();
     WEBCORE_EXPORT void setImageAnimationEnabled(bool);
     void addIndividuallyPlayingAnimationElement(HTMLImageElement&);
     void removeIndividuallyPlayingAnimationElement(HTMLImageElement&);
@@ -716,7 +721,6 @@ public:
 
     WEBCORE_EXPORT VisibilityState visibilityState() const;
     WEBCORE_EXPORT void resumeAnimatingImages();
-    void updatePlayStateForAllAnimations();
 
     void didFinishLoadingImageForElement(HTMLImageElement&);
 

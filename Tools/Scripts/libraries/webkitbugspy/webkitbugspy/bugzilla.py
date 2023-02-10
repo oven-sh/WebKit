@@ -50,6 +50,7 @@ class Tracker(GenericTracker):
                 result = dict(
                     type='bugzilla',
                     url=obj.url,
+                    hide_title=obj.hide_title,
                 )
                 if obj._res[len(Tracker.RE_TEMPLATES):]:
                     result['res'] = [compiled.pattern for compiled in obj._res[len(Tracker.RE_TEMPLATES):]]
@@ -60,8 +61,8 @@ class Tracker(GenericTracker):
                 raise TypeError('Cannot invoke parent class when classmethod')
             return super(Tracker.Encoder, context).default(obj)
 
-    def __init__(self, url, users=None, res=None, login_attempts=3, redact=None, radar_importer=None):
-        super(Tracker, self).__init__(users=users, redact=redact)
+    def __init__(self, url, users=None, res=None, login_attempts=3, redact=None, radar_importer=None, hide_title=None):
+        super(Tracker, self).__init__(users=users, redact=redact, hide_title=hide_title)
 
         self._logins_left = login_attempts + 1 if login_attempts else 1
         match = self.ROOT_RE.match(url)
@@ -164,6 +165,7 @@ class Tracker(GenericTracker):
     def populate(self, issue, member=None):
         issue._link = '{}/show_bug.cgi?id={}'.format(self.url, issue.id)
         issue._labels = []
+        issue._classification = ''  # Bugzilla doesn't have a concept of "classification"
 
         if member in ('title', 'timestamp', 'creator', 'opened', 'assignee', 'watchers', 'project', 'component', 'version', 'keywords'):
             response = requests.get('{}/rest/bug/{}{}'.format(self.url, issue.id, self._login_arguments(required=False)))

@@ -43,6 +43,8 @@ Ref<PresentationContextIOSurface> PresentationContextIOSurface::create(const WGP
     const auto& descriptor = *reinterpret_cast<const WGPUSurfaceDescriptorCocoaCustomSurface*>(surfaceDescriptor.nextInChain);
     descriptor.compositorIntegrationRegister([presentationContext = presentationContextIOSurface.copyRef()](CFArrayRef ioSurfaces) {
         presentationContext->renderBuffersWereRecreated(bridge_cast(ioSurfaces));
+    }, [presentationContext = presentationContextIOSurface.copyRef()](WGPUWorkItem workItem) {
+        presentationContext->onSubmittedWorkScheduled(makeBlockPtr(WTFMove(workItem)));
     });
 
     return presentationContextIOSurface;
@@ -54,23 +56,18 @@ PresentationContextIOSurface::PresentationContextIOSurface(const WGPUSurfaceDesc
 
 PresentationContextIOSurface::~PresentationContextIOSurface() = default;
 
-IOSurface *PresentationContextIOSurface::displayBuffer() const
-{
-    ASSERT(m_ioSurfaces.count == m_renderBuffers.size());
-    size_t index = (m_currentIndex + 1) % m_renderBuffers.size();
-    return m_ioSurfaces[index];
-}
-
-IOSurface *PresentationContextIOSurface::drawingBuffer() const
-{
-    ASSERT(m_ioSurfaces.count == m_renderBuffers.size());
-    return m_ioSurfaces[m_currentIndex];
-}
-
 void PresentationContextIOSurface::renderBuffersWereRecreated(NSArray<IOSurface *> *ioSurfaces)
 {
     m_ioSurfaces = ioSurfaces;
     m_renderBuffers.clear();
+}
+
+void PresentationContextIOSurface::onSubmittedWorkScheduled(CompletionHandler<void()>&& completionHandler)
+{
+    if (m_device)
+        m_device->getQueue().onSubmittedWorkScheduled(WTFMove(completionHandler));
+    else
+        completionHandler();
 }
 
 void PresentationContextIOSurface::configure(Device& device, const WGPUSwapChainDescriptor& descriptor)
@@ -83,6 +80,8 @@ void PresentationContextIOSurface::configure(Device& device, const WGPUSwapChain
 
     if (descriptor.format != WGPUTextureFormat_BGRA8Unorm)
         return;
+
+    m_device = &device;
 
     WGPUTextureDescriptor wgpuTextureDescriptor = {
         nullptr,
@@ -126,6 +125,7 @@ void PresentationContextIOSurface::unconfigure()
     m_ioSurfaces = nil;
     m_renderBuffers.clear();
     m_currentIndex = 0;
+    m_device = nullptr;
 }
 
 void PresentationContextIOSurface::present()
@@ -149,17 +149,3 @@ TextureView* PresentationContextIOSurface::getCurrentTextureView()
 } // namespace WebGPU
 
 #pragma mark WGPU Stubs
-
-IOSurfaceRef wgpuSurfaceCocoaCustomSurfaceGetDisplayBuffer(WGPUSurface surface)
-{
-    if (auto* presentationContextIOSurface = downcast<WebGPU::PresentationContextIOSurface>(&WebGPU::fromAPI(surface)))
-        return bridge_cast(presentationContextIOSurface->displayBuffer());
-    return nullptr;
-}
-
-IOSurfaceRef wgpuSurfaceCocoaCustomSurfaceGetDrawingBuffer(WGPUSurface surface)
-{
-    if (auto* presentationContextIOSurface = downcast<WebGPU::PresentationContextIOSurface>(&WebGPU::fromAPI(surface)))
-        return bridge_cast(presentationContextIOSurface->drawingBuffer());
-    return nullptr;
-}

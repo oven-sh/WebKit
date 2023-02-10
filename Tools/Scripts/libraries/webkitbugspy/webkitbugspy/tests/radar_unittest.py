@@ -31,7 +31,7 @@ class TestRadar(unittest.TestCase):
     def test_encoding(self):
         self.assertEqual(
             radar.Tracker.Encoder().default(radar.Tracker(project='WebKit')),
-            dict(type='radar', projects=['WebKit']),
+            dict(hide_title=True, type='radar', projects=['WebKit']),
         )
 
     def test_decoding(self):
@@ -382,3 +382,8 @@ What version of 'WebKit Text' should the bug be associated with?:
         with mocks.Radar(issues=mocks.ISSUES):
             tracker = radar.Tracker()
             self.assertEqual(tracker.issue(1).keywords, ['Keyword A'])
+
+    def test_classification(self):
+        with mocks.Radar(issues=mocks.ISSUES):
+            tracker = radar.Tracker()
+            self.assertEqual(tracker.issue(1).classification, 'Other Bug')

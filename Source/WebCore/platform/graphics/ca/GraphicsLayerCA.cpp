@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2010-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -33,14 +33,17 @@
 #include "DisplayListReplayer.h"
 #include "FloatConversion.h"
 #include "FloatRect.h"
+#include "GraphicsLayerAsyncContentsDisplayDelegateCocoa.h"
 #include "GraphicsLayerContentsDisplayDelegate.h"
 #include "GraphicsLayerFactory.h"
 #include "Image.h"
 #include "InMemoryDisplayList.h"
 #include "Logging.h"
 #include "Model.h"
+#include "PlatformCAAnimationCocoa.h"
 #include "PlatformCAFilters.h"
 #include "PlatformCALayer.h"
+#include "PlatformCALayerCocoa.h"
 #include "PlatformScreen.h"
 #include "Region.h"
 #include "RotateTransformOperation.h"
@@ -65,22 +68,6 @@
 #if PLATFORM(IOS_FAMILY)
 #include "SystemMemory.h"
 #include "WebCoreThread.h"
-#endif
-
-#if PLATFORM(COCOA)
-#include "GraphicsLayerAsyncContentsDisplayDelegateCocoa.h"
-#include "PlatformCAAnimationCocoa.h"
-#include "PlatformCALayerCocoa.h"
-#endif
-
-#if PLATFORM(WIN)
-#include "PlatformCAAnimationWin.h"
-#include "PlatformCALayerWin.h"
-#endif
-
-#if COMPILER(MSVC)
-// See https://msdn.microsoft.com/en-us/library/1wea5zwe.aspx
-#pragma warning(disable: 4701)
 #endif
 
 namespace WebCore {
@@ -337,34 +324,22 @@ Ref<GraphicsLayer> GraphicsLayer::create(GraphicsLayerFactory* factory, Graphics
 
 bool GraphicsLayerCA::filtersCanBeComposited(const FilterOperations& filters)
 {
-#if PLATFORM(COCOA)
     return PlatformCALayerCocoa::filtersCanBeComposited(filters);
-#elif PLATFORM(WIN)
-    return PlatformCALayerWin::filtersCanBeComposited(filters);
-#endif
 }
 
 Ref<PlatformCALayer> GraphicsLayerCA::createPlatformCALayer(PlatformCALayer::LayerType layerType, PlatformCALayerClient* owner)
 {
-#if PLATFORM(COCOA)
     auto result = PlatformCALayerCocoa::create(layerType, owner);
     
     if (result->canHaveBackingStore())
         result->setWantsDeepColorBackingStore(screenSupportsExtendedColor());
     
     return result;
-#elif PLATFORM(WIN)
-    return PlatformCALayerWin::create(layerType, owner);
-#endif
 }
     
 Ref<PlatformCALayer> GraphicsLayerCA::createPlatformCALayer(PlatformLayer* platformLayer, PlatformCALayerClient* owner)
 {
-#if PLATFORM(COCOA)
     return PlatformCALayerCocoa::create(platformLayer, owner);
-#elif PLATFORM(WIN)
-    return PlatformCALayerWin::create(platformLayer, owner);
-#endif
 }
 
 #if ENABLE(MODEL_ELEMENT)
@@ -375,13 +350,15 @@ Ref<PlatformCALayer> GraphicsLayerCA::createPlatformCALayer(Ref<WebCore::Model>,
 }
 #endif
 
+Ref<PlatformCALayer> GraphicsLayerCA::createPlatformCALayerHost(LayerHostingContextIdentifier, PlatformCALayerClient* owner)
+{
+    ASSERT_NOT_REACHED_WITH_MESSAGE("GraphicsLayerCARemote::createPlatformCALayerHost should always be called instead of this, but this symbol is needed to compile WebKitLegacy.");
+    return GraphicsLayerCA::createPlatformCALayer(PlatformCALayer::LayerTypeLayer, owner);
+}
+
 Ref<PlatformCAAnimation> GraphicsLayerCA::createPlatformCAAnimation(PlatformCAAnimation::AnimationType type, const String& keyPath)
 {
-#if PLATFORM(COCOA)
     return PlatformCAAnimationCocoa::create(type, keyPath);
-#elif PLATFORM(WIN)
-    return PlatformCAAnimationWin::create(type, keyPath);
-#endif
 }
 
 typedef HashMap<const GraphicsLayerCA*, std::pair<FloatRect, std::unique_ptr<DisplayList::InMemoryDisplayList>>> LayerDisplayListHashMap;
@@ -491,7 +468,7 @@ String GraphicsLayerCA::debugName() const
 {
 #if ENABLE(TREE_DEBUGGING)
     String caLayerDescription;
-    if (!m_layer->isPlatformCALayerRemote())
+    if (m_layer->type() == PlatformCALayer::Type::Cocoa)
         caLayerDescription = makeString("CALayer(0x", hex(reinterpret_cast<uintptr_t>(m_layer->platformLayer()), Lowercase), ") ");
     return makeString(caLayerDescription, "GraphicsLayer(0x", hex(reinterpret_cast<uintptr_t>(this), Lowercase), ", ", primaryLayerID().object(), ") ", name());
 #else
@@ -1310,6 +1287,15 @@ void GraphicsLayerCA::setContentsToPlatformLayer(PlatformLayer* platformLayer, C
     noteLayerPropertyChanged(ContentsPlatformLayerChanged);
 }
 
+void GraphicsLayerCA::setContentsToPlatformLayerHost(LayerHostingContextIdentifier identifier)
+{
+    m_contentsLayer = createPlatformCALayerHost(identifier, this);
+    m_contentsLayerPurpose = GraphicsLayer::ContentsLayerPurpose::Host;
+    m_contentsDisplayDelegate = nullptr;
+    noteSublayersChanged();
+    noteLayerPropertyChanged(ContentsPlatformLayerChanged);
+}
+
 void GraphicsLayerCA::setContentsDisplayDelegate(RefPtr<GraphicsLayerContentsDisplayDelegate>&& delegate, ContentsLayerPurpose purpose)
 {
     if (m_contentsLayer && delegate == m_contentsDisplayDelegate)
@@ -1405,7 +1391,7 @@ void GraphicsLayerCA::flushCompositingState(const FloatRect& visibleRect)
 #if PLATFORM(IOS_FAMILY)
     // In WK1, UIKit may be changing layer bounds behind our back in overflow-scroll layers, so disable the optimization.
     // See the similar test in computeVisibleAndCoverageRect().
-    if (m_layer->isPlatformCALayerCocoa())
+    if (m_layer->type() == PlatformCALayer::Type::Cocoa)
         commitState.ancestorHadChanges = true;
 #endif
 
@@ -1608,7 +1594,7 @@ GraphicsLayerCA::VisibleAndCoverageRects GraphicsLayerCA::computeVisibleAndCover
     auto boundsOrigin = m_boundsOrigin;
 #if PLATFORM(IOS_FAMILY)
     // In WK1, UIKit may be changing layer bounds behind our back in overflow-scroll layers, so use the layer's origin.
-    if (m_layer->isPlatformCALayerCocoa())
+    if (m_layer->type() == PlatformCALayer::Type::Cocoa)
         boundsOrigin = m_layer->bounds().location();
 #endif
 
@@ -4153,6 +4139,8 @@ const char* GraphicsLayerCA::purposeNameForInnerLayer(PlatformCALayer& layer) co
             return "contents layer (plugin)";
         case ContentsLayerPurpose::Model:
             return "contents layer (model)";
+        case ContentsLayerPurpose::Host:
+            return "contents layer (host)";
         }
     }
     if (&layer == m_contentsShapeMaskLayer.get())

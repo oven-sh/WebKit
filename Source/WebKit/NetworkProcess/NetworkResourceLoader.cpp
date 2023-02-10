@@ -598,7 +598,7 @@ void NetworkResourceLoader::transferToNewWebProcess(NetworkConnectionToWebProces
     ASSERT(m_responseCompletionHandler || m_cacheEntryWaitingForContinueDidReceiveResponse || m_serviceWorkerFetchTask);
     if (m_serviceWorkerRegistration) {
         if (auto* swConnection = newConnection.swConnection())
-            swConnection->transferServiceWorkerLoadToNewWebProcess(*this, *m_serviceWorkerRegistration);
+            swConnection->transferServiceWorkerLoadToNewWebProcess(*this, *m_serviceWorkerRegistration, m_connection->webProcessIdentifier());
     }
     if (m_workerStart)
         send(Messages::WebResourceLoader::SetWorkerStart { m_workerStart }, coreIdentifier());
@@ -764,7 +764,8 @@ void NetworkResourceLoader::processClearSiteDataHeader(const WebCore::ResourceRe
 #endif
     }
 
-    if (!typesToRemove)
+    bool shouldReloadExecutionContexts = clearSiteDataValues.contains(ClearSiteDataValue::ExecutionContexts);
+    if (!typesToRemove && !shouldReloadExecutionContexts)
         return completionHandler();
 
     LOADER_RELEASE_LOG("processClearSiteDataHeader: BEGIN");
@@ -785,10 +786,18 @@ void NetworkResourceLoader::processClearSiteDataHeader(const WebCore::ResourceRe
         LOADER_RELEASE_LOG("processClearSiteDataHeader: END");
         completionHandler();
     });
-    m_connection->networkProcess().deleteWebsiteDataForOrigin(sessionID(), typesToRemove, clientOrigin, [callbackAggregator] { });
+    if (typesToRemove)
+        m_connection->networkProcess().deleteWebsiteDataForOrigin(sessionID(), typesToRemove, clientOrigin, [callbackAggregator] { });
 
     if (WebsiteDataStore::computeWebProcessAccessTypeForDataRemoval(typesToRemove, sessionID().isEphemeral()) != WebsiteDataStore::ProcessAccessType::None)
-        m_connection->networkProcess().parentProcessConnection()->sendWithAsyncReply(Messages::NetworkProcessProxy::DeleteWebsiteDataInWebProcessesForOrigin(typesToRemove, clientOrigin, sessionID()), [callbackAggregator] { });
+        m_connection->networkProcess().parentProcessConnection()->sendWithAsyncReply(Messages::NetworkProcessProxy::DeleteWebsiteDataInWebProcessesForOrigin(typesToRemove, clientOrigin, sessionID(), m_parameters.webPageProxyID), [callbackAggregator] { });
+
+    if (shouldReloadExecutionContexts) {
+        std::optional<WebCore::FrameIdentifier> triggeringFrame;
+        if (isMainResource())
+            triggeringFrame = frameID();
+        m_connection->networkProcess().parentProcessConnection()->sendWithAsyncReply(Messages::NetworkProcessProxy::ReloadExecutionContextsForOrigin(clientOrigin, sessionID(), triggeringFrame), [callbackAggregator] { });
+    }
 }
 
 static BrowsingContextGroupSwitchDecision toBrowsingContextGroupSwitchDecision(const std::optional<CrossOriginOpenerPolicyEnforcementResult>& currentCoopEnforcementResult)
@@ -2003,6 +2012,7 @@ void NetworkResourceLoader::cancelMainResourceLoadForContentFilter(const WebCore
 
 void NetworkResourceLoader::handleProvisionalLoadFailureFromContentFilter(const URL& blockedPageURL, WebCore::SubstituteData& substituteData)
 {
+    m_connection->networkProcess().addAllowedFirstPartyForCookies(m_connection->webProcessIdentifier(), RegistrableDomain { WebCore::ContentFilter::blockedPageURL() }, LoadedWebArchive::No, [] { });
     send(Messages::WebResourceLoader::ContentFilterDidBlockLoad(m_unblockHandler, m_unblockRequestDeniedScript, m_contentFilter->blockedError(), blockedPageURL, substituteData));
 }
 #endif // ENABLE(CONTENT_FILTERING_IN_NETWORKING_PROCESS)

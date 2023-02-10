@@ -1196,6 +1196,8 @@ bool TestController::resetStateToConsistentValues(const TestOptions& options, Re
     m_shouldLogCanAuthenticateAgainstProtectionSpace = false;
 
     setHidden(false);
+    setAllowStorageQuotaIncrease(true);
+    setQuota(40 * KB);
 
     if (!platformResetStateToConsistentValues(options))
         return false;
@@ -1780,10 +1782,10 @@ void TestController::didReceiveLiveDocumentsList(WKArrayRef liveDocumentList)
 {
     auto numDocuments = WKArrayGetSize(liveDocumentList);
 
-    HashMap<uint64_t, String> documentInfo;
+    HashMap<String, String> documentInfo;
     for (size_t i = 0; i < numDocuments; ++i) {
         if (auto dictionary = dictionaryValue(WKArrayGetItemAtIndex(liveDocumentList, i)))
-            documentInfo.add(uint64Value(dictionary, "id"), toWTFString(stringValue(dictionary, "url")));
+            documentInfo.add(toWTFString(stringValue(dictionary, "id")), toWTFString(stringValue(dictionary, "url")));
     }
 
     if (!documentInfo.size()) {
@@ -2722,7 +2724,7 @@ void TestController::decidePolicyForUserMediaPermissionRequestIfPossible()
         auto audioDeviceUIDs = adoptWK(WKUserMediaPermissionRequestAudioDeviceUIDs(request));
         auto videoDeviceUIDs = adoptWK(WKUserMediaPermissionRequestVideoDeviceUIDs(request));
 
-        if (!WKArrayGetSize(videoDeviceUIDs.get()) && !WKArrayGetSize(audioDeviceUIDs.get())) {
+        if (!WKUserMediaPermissionRequestRequiresDisplayCapture(request) && !WKArrayGetSize(videoDeviceUIDs.get()) && !WKArrayGetSize(audioDeviceUIDs.get())) {
             WKUserMediaPermissionRequestDeny(request, kWKNoConstraints);
             continue;
         }
@@ -3386,6 +3388,11 @@ uint64_t TestController::domCacheSize(WKStringRef origin)
 
 #if !PLATFORM(COCOA)
 void TestController::setAllowStorageQuotaIncrease(bool)
+{
+    // FIXME: To implement.
+}
+
+void TestController::setQuota(uint64_t)
 {
     // FIXME: To implement.
 }

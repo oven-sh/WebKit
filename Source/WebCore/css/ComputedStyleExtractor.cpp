@@ -53,6 +53,7 @@
 #include "ContentData.h"
 #include "CursorList.h"
 #include "CustomPropertyRegistry.h"
+#include "FontCascade.h"
 #include "FontSelectionValueInlines.h"
 #include "GridPositionsResolver.h"
 #include "NodeRenderStyle.h"
@@ -2724,7 +2725,7 @@ RefPtr<CSSValue> ComputedStyleExtractor::customPropertyValue(const AtomString& p
     if (!style)
         return nullptr;
 
-    auto* value = style->customPropertyValue(propertyName, styledElement->document().customPropertyRegistry());
+    auto* value = style->customPropertyValue(propertyName);
 
     return const_cast<CSSCustomPropertyValue*>(value);
 }

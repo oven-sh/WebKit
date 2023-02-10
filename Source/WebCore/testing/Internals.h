@@ -237,7 +237,7 @@ public:
     unsigned imagePendingDecodePromisesCountForTesting(HTMLImageElement&);
     void setClearDecoderAfterAsyncFrameRequestForTesting(HTMLImageElement&, bool enabled);
     unsigned imageDecodeCount(HTMLImageElement&);
-    unsigned pdfDocumentCachingCount(HTMLImageElement&);
+    unsigned imageCachedSubimageCreateCount(HTMLImageElement&);
     unsigned remoteImagesCountForTesting() const;
     void setLargeImageAsyncDecodingEnabledForTesting(HTMLImageElement&, bool enabled);
     void setForceUpdateImageDataEnabledForTesting(HTMLImageElement&, bool enabled);
@@ -673,6 +673,7 @@ public:
     void enableMockSpeechSynthesizer();
     void enableMockSpeechSynthesizerForMediaElement(HTMLMediaElement&);
     ExceptionOr<void> setSpeechUtteranceDuration(double);
+    unsigned minimumExpectedVoiceCount();
 #endif
 
 #if ENABLE(MEDIA_STREAM)
@@ -1367,6 +1368,8 @@ public:
         size_t attributes { 0 };
     };
     SelectorFilterHashCounts selectorFilterHashCounts(const String& selector);
+
+    bool isVisuallyNonEmpty() const;
 
 private:
     explicit Internals(Document&);
