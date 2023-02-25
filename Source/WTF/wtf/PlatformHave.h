@@ -255,6 +255,13 @@
 
 #endif
 
+#if defined(USE_BUN_FAST_TLS)
+
+#define BUN_FAST_TLS 1
+#define HAVE_FAST_TLS 1
+
+#endif
+
 #if COMPILER(GCC_COMPATIBLE)
 #define HAVE_COMPUTED_GOTO 1
 #endif

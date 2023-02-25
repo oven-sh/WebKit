@@ -660,6 +660,10 @@ if (CMAKE_SYSTEM_NAME MATCHES "Darwin")
     list(APPEND bmalloc_SOURCES
         bmalloc/Zone.cpp
     )
+
+    list(APPEND bmalloc_PUBLIC_HEADERS
+        bmalloc/BunFastTLS.h    
+    )
 endif ()
 
 set(bmalloc_LIBRARIES

@@ -32,7 +32,13 @@
 #include <mutex>
 #include <pthread.h>
 
-#if defined(__has_include)
+#if defined(HAVE_BUN_FAST_TLS)
+
+#include "BunFastTLS.h"
+
+#define HAVE_PTHREAD_MACHDEP_H 1
+
+#elif defined(__has_include)
 #if __has_include(<System/pthread_machdep.h>)
 #include <System/pthread_machdep.h>
 #define HAVE_PTHREAD_MACHDEP_H 1

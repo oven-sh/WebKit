@@ -28,7 +28,11 @@
 #if HAVE(FAST_TLS)
 
 #include <pthread.h>
+#if USE(BUN_FAST_TLS)
+#include <bmalloc/BunFastTLS.h>
+#else 
 #include <System/pthread_machdep.h>
+#endif
 #include <wtf/Platform.h>
 
 namespace WTF {

@@ -31,6 +31,7 @@ cmake \
     -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" \
     -DCMAKE_AR=$(which llvm-ar) \
     -DCMAKE_RANLIB=$(which llvm-ranlib) \
+    -DBUN_FAST_TLS=ON \
     -G Ninja \
     -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
     -DPTHREAD_JIT_PERMISSIONS_API=1 \
