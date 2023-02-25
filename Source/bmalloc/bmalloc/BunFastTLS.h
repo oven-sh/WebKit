@@ -70,7 +70,6 @@
 */
 #ifndef __PTHREAD_TSD_H__
 #define __PTHREAD_TSD_H__
-#ifdef USE_BUN_FAST_TLS
 
 
 #ifndef __ASSEMBLER__
@@ -364,4 +363,3 @@ _pthread_setspecific_direct(unsigned long slot, void * val)
 
 #endif /* ! __ASSEMBLER__ */
 #endif /* __PTHREAD_TSD_H__ */
-#endif /* USE_BUN_FAST_TLS */

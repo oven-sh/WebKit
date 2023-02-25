@@ -34,9 +34,15 @@
 #if __has_include(<System/pthread_machdep.h>)
 #include <System/pthread_machdep.h>
 #define PAS_HAVE_PTHREAD_MACHDEP_H 1
+#elif defined(USE_BUN_FAST_TLS)
+#include "BunFastTLS.h"
+#define PAS_HAVE_PTHREAD_MACHDEP_H 1
 #else
 #define PAS_HAVE_PTHREAD_MACHDEP_H 0
 #endif
+#elif defined(USE_BUN_FAST_TLS)
+#include "BunFastTLS.h"
+#define PAS_HAVE_PTHREAD_MACHDEP_H 1
 #else
 #define PAS_HAVE_PTHREAD_MACHDEP_H 0
 #endif
