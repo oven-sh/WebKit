@@ -72,9 +72,6 @@
 #define __PTHREAD_TSD_H__
 
 
-#ifndef __ASSEMBLER__
-
-
 /* Constant TSD slots for inline pthread_getspecific() usage. */
 
 // /* Keys 0 - 9 are for Libsyscall/libplatform usage */
@@ -361,5 +358,4 @@ _pthread_setspecific_direct(unsigned long slot, void * val)
 }
 
 
-#endif /* ! __ASSEMBLER__ */
 #endif /* __PTHREAD_TSD_H__ */
