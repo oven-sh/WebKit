@@ -47,11 +47,8 @@
 #include <wtf/text/StringBuilder.h>
 #include <wtf/threads/Signals.h>
 
-#if OS(DARWIN)
-#include <wtf/darwin/OSLogPrintStream.h>
-#endif
-
 #if PLATFORM(COCOA)
+#include <wtf/darwin/OSLogPrintStream.h>
 #include <crt_externs.h>
 #endif
 
@@ -177,7 +174,7 @@ std::optional<OptionsStorage::OSLogType> parse(const char* string)
     return result;
 }
 
-#if OS(DARWIN)
+#if PLATFORM(COCOA)
 static os_log_type_t asDarwinOSLogType(OSLogType type)
 {
     switch (type) {
@@ -733,7 +730,7 @@ void Options::notifyOptionsChanged()
         FOR_EACH_JSC_EXPERIMENTAL_OPTION(DISABLE_TIERS);
     }
 
-#if OS(DARWIN)
+#if PLATFORM(COCOA)
     if (useOSLogOptionHasChanged) {
         initializeDatafileToUseOSLog();
         useOSLogOptionHasChanged = false;
