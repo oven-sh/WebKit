@@ -212,6 +212,9 @@ namespace JSC {
     macro(hasOwn) \
     macro(indexOf) \
     macro(pop) \
+    macro(pushAsyncContextFrame) \
+    macro(popAsyncContextFrame) \
+    macro(getAsyncContextFrame) \
 
 
 namespace Symbols {

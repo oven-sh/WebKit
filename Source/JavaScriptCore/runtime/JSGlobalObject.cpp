@@ -1669,6 +1669,10 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         putDirectWithoutTransition(vm, Identifier::fromString(vm, "__signpostStop"_s), JSFunction::create(vm, this, 1, "signpostStop"_s, signpostStop, ImplementationVisibility::Public), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     }
 
+    putDirectWithoutTransition(vm, vm.propertyNames->builtinNames().pushAsyncContextFramePrivateName(), jsUndefined(), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
+    putDirectWithoutTransition(vm, vm.propertyNames->builtinNames().popAsyncContextFramePrivateName(), jsUndefined(), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
+    putDirectWithoutTransition(vm, vm.propertyNames->builtinNames().getAsyncContextFramePrivateName(), jsUndefined(), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | 0);
+
     initStaticGlobals(vm);
     
     if (UNLIKELY(Options::useDollarVM()))

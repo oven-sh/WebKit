@@ -36,7 +36,7 @@ function pushNewPromiseReaction(thenable, existingReactions, promiseOrCapability
             @promiseOrCapability: promiseOrCapability,
             @onFulfilled: onFulfilled,
             @onRejected: onRejected,
-            @context: context,
+            @context: @getAsyncContextFrame ? @getAsyncContextFrame(context) : context,
             // This is 4x the number of out of line reactions (promise, fulfill callback, reject callback, context).
             @outOfLineReactionCounts: 0,
         };
@@ -46,7 +46,7 @@ function pushNewPromiseReaction(thenable, existingReactions, promiseOrCapability
         @putByValDirect(existingReactions, outOfLineReactionCounts++, promiseOrCapability);
         @putByValDirect(existingReactions, outOfLineReactionCounts++, onFulfilled);
         @putByValDirect(existingReactions, outOfLineReactionCounts++, onRejected);
-        @putByValDirect(existingReactions, outOfLineReactionCounts++, context);
+        @putByValDirect(existingReactions, outOfLineReactionCounts++, @getAsyncContextFrame ? @getAsyncContextFrame(context) : context);
         existingReactions.@outOfLineReactionCounts = outOfLineReactionCounts;
     }
 }
@@ -318,6 +318,10 @@ function createResolvingFunctions(promise)
 function promiseReactionJobWithoutPromise(handler, argument, context)
 {
     "use strict";
+    var pushed;
+    if (@pushAsyncContextFrame) {
+        pushed = @pushAsyncContextFrame(context);
+    }
 
     try {
         if (context)
@@ -326,6 +330,10 @@ function promiseReactionJobWithoutPromise(handler, argument, context)
             handler(argument);
     } catch {
         // This is user-uncatchable promise. We just ignore the error here.
+    } finally {
+        if (@popAsyncContextFrame) {
+            @popAsyncContextFrame(pushed);
+        }
     }
 }
 
@@ -457,6 +465,11 @@ function promiseReactionJob(promiseOrCapability, handler, argument, contextOrSta
         return;
     }
 
+    var pushed;
+    if (@pushAsyncContextFrame) {
+        pushed = @pushAsyncContextFrame(contextOrState);
+    }
+
     // Case (1), or (2).
     try {
         var result = (contextOrState) ? handler(argument, contextOrState) : handler(argument);
@@ -466,14 +479,23 @@ function promiseReactionJob(promiseOrCapability, handler, argument, contextOrSta
             return;
         }
         promiseOrCapability.@reject.@call(@undefined, error);
+        if (@popAsyncContextFrame) {
+            @popAsyncContextFrame(pushed);
+        }
         return;
     }
 
     if (@isPromise(promiseOrCapability)) {
         @resolvePromise(promiseOrCapability, result);
+        if (@popAsyncContextFrame) {
+            @popAsyncContextFrame(pushed);
+        }
         return;
     }
     promiseOrCapability.@resolve.@call(@undefined, result);
+    if (@popAsyncContextFrame) {
+        @popAsyncContextFrame(pushed);
+    }
 }
 
 @linkTimeConstant
