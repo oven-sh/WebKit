@@ -36,7 +36,7 @@ function pushNewPromiseReaction(thenable, existingReactions, promiseOrCapability
             @promiseOrCapability: promiseOrCapability,
             @onFulfilled: onFulfilled,
             @onRejected: onRejected,
-            @context: @getAsyncContextFrame ? @getAsyncContextFrame(context) : context,
+            @context: @asyncContext ? [context, new Map(@asyncContext)] : context,
             // This is 4x the number of out of line reactions (promise, fulfill callback, reject callback, context).
             @outOfLineReactionCounts: 0,
         };
@@ -46,7 +46,7 @@ function pushNewPromiseReaction(thenable, existingReactions, promiseOrCapability
         @putByValDirect(existingReactions, outOfLineReactionCounts++, promiseOrCapability);
         @putByValDirect(existingReactions, outOfLineReactionCounts++, onFulfilled);
         @putByValDirect(existingReactions, outOfLineReactionCounts++, onRejected);
-        @putByValDirect(existingReactions, outOfLineReactionCounts++, @getAsyncContextFrame ? @getAsyncContextFrame(context) : context);
+        @putByValDirect(existingReactions, outOfLineReactionCounts++, @asyncContext ? [context, new Map(@asyncContext)] : context);
         existingReactions.@outOfLineReactionCounts = outOfLineReactionCounts;
     }
 }
@@ -318,9 +318,12 @@ function createResolvingFunctions(promise)
 function promiseReactionJobWithoutPromise(handler, argument, context)
 {
     "use strict";
-    var pushed;
-    if (@pushAsyncContextFrame) {
-        pushed = @pushAsyncContextFrame(context);
+    var prev;
+    if (@isArray(context)) {
+        prev = @asyncContext;
+        var hasAsyncContext = true
+        @asyncContext = context[1];
+        context = context[0];
     }
 
     try {
@@ -331,8 +334,8 @@ function promiseReactionJobWithoutPromise(handler, argument, context)
     } catch {
         // This is user-uncatchable promise. We just ignore the error here.
     } finally {
-        if (@popAsyncContextFrame) {
-            @popAsyncContextFrame(pushed);
+        if (hasAsyncContext) {
+            @asyncContext = prev;
         }
     }
 }
@@ -465,9 +468,12 @@ function promiseReactionJob(promiseOrCapability, handler, argument, contextOrSta
         return;
     }
 
-    var pushed;
-    if (@pushAsyncContextFrame) {
-        pushed = @pushAsyncContextFrame(contextOrState);
+    var prev;
+    if (@isArray(contextOrState)) {
+        prev = @asyncContext;
+        var hasAsyncContext = true
+        @asyncContext = contextOrState[1];
+        contextOrState = contextOrState[0];
     }
 
     // Case (1), or (2).
@@ -479,22 +485,24 @@ function promiseReactionJob(promiseOrCapability, handler, argument, contextOrSta
             return;
         }
         promiseOrCapability.@reject.@call(@undefined, error);
-        if (@popAsyncContextFrame) {
-            @popAsyncContextFrame(pushed);
+        if (hasAsyncContext) {
+            @asyncContext = prev;
         }
         return;
     }
 
     if (@isPromise(promiseOrCapability)) {
         @resolvePromise(promiseOrCapability, result);
-        if (@popAsyncContextFrame) {
-            @popAsyncContextFrame(pushed);
+        // DOUBLE CHECK: this might have to be reset BEFORE
+        if (hasAsyncContext) {
+            @asyncContext = prev;
         }
         return;
     }
     promiseOrCapability.@resolve.@call(@undefined, result);
-    if (@popAsyncContextFrame) {
-        @popAsyncContextFrame(pushed);
+    // DOUBLE CHECK: this might have to be reset BEFORE
+    if (hasAsyncContext) {
+        @asyncContext = prev;
     }
 }
 
@@ -625,7 +633,7 @@ function performPromiseThen(promise, onFulfilled, onRejected, promiseOrCapabilit
                 @hostPromiseRejectionTracker(promise, @promiseRejectionHandle);
         } else
             handler = onFulfilled;
-        @enqueueJob(@promiseReactionJob, promiseOrCapability, handler, reactionsOrResult, context);
+        @enqueueJob(@promiseReactionJob, promiseOrCapability, handler, reactionsOrResult, @asyncContext ? [context, new Map(@asyncContext)] : context);
     }
     @putPromiseInternalField(promise, @promiseFieldFlags, @getPromiseInternalField(promise, @promiseFieldFlags) | @promiseFlagsIsHandled);
 }

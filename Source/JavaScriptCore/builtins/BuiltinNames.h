@@ -212,10 +212,7 @@ namespace JSC {
     macro(hasOwn) \
     macro(indexOf) \
     macro(pop) \
-    macro(pushAsyncContextFrame) \
-    macro(popAsyncContextFrame) \
-    macro(getAsyncContextFrame) \
-
+    macro(asyncContext) \
 
 namespace Symbols {
 #define DECLARE_BUILTIN_STATIC_SYMBOLS(name) extern JS_EXPORT_PRIVATE LazyNeverDestroyed<SymbolImpl*> name##Symbol;
