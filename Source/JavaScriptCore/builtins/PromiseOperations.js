@@ -36,7 +36,7 @@ function pushNewPromiseReaction(thenable, existingReactions, promiseOrCapability
             @promiseOrCapability: promiseOrCapability,
             @onFulfilled: onFulfilled,
             @onRejected: onRejected,
-            @context: @asyncContext ? [context, new Map(@asyncContext)] : context,
+            @context: @asyncContext ? [context, @asyncContext.slice()] : context,
             // This is 4x the number of out of line reactions (promise, fulfill callback, reject callback, context).
             @outOfLineReactionCounts: 0,
         };
@@ -46,7 +46,7 @@ function pushNewPromiseReaction(thenable, existingReactions, promiseOrCapability
         @putByValDirect(existingReactions, outOfLineReactionCounts++, promiseOrCapability);
         @putByValDirect(existingReactions, outOfLineReactionCounts++, onFulfilled);
         @putByValDirect(existingReactions, outOfLineReactionCounts++, onRejected);
-        @putByValDirect(existingReactions, outOfLineReactionCounts++, @asyncContext ? [context, new Map(@asyncContext)] : context);
+        @putByValDirect(existingReactions, outOfLineReactionCounts++, @asyncContext ? [context, @asyncContext.slice()] : context);
         existingReactions.@outOfLineReactionCounts = outOfLineReactionCounts;
     }
 }
@@ -405,7 +405,7 @@ function resolveWithoutPromiseForAsyncAwait(resolution, onFulfilled, onRejected,
             return @performPromiseThen(resolution, onFulfilled, onRejected, @undefined, context);
     }
 
-    return @resolveWithoutPromise(resolution, onFulfilled, onRejected, context);
+    return @resolveWithoutPromise(resolution, onFulfilled, onRejected, @asyncContext ? [context, @asyncContext.slice()] : context);
 }
 
 @linkTimeConstant
@@ -633,7 +633,7 @@ function performPromiseThen(promise, onFulfilled, onRejected, promiseOrCapabilit
                 @hostPromiseRejectionTracker(promise, @promiseRejectionHandle);
         } else
             handler = onFulfilled;
-        @enqueueJob(@promiseReactionJob, promiseOrCapability, handler, reactionsOrResult, @asyncContext ? [context, new Map(@asyncContext)] : context);
+        @enqueueJob(@promiseReactionJob, promiseOrCapability, handler, reactionsOrResult, @asyncContext ? [context, @asyncContext.slice()] : context);
     }
     @putPromiseInternalField(promise, @promiseFieldFlags, @getPromiseInternalField(promise, @promiseFieldFlags) | @promiseFlagsIsHandled);
 }
