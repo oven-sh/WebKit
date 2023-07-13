@@ -30,13 +30,14 @@
 function pushNewPromiseReaction(thenable, existingReactions, promiseOrCapability, onFulfilled, onRejected, context)
 {
     "use strict";
+    var asyncContext = @getInternalField(@asyncContext, 0);
 
     if (!existingReactions) {
         existingReactions = {
             @promiseOrCapability: promiseOrCapability,
             @onFulfilled: onFulfilled,
             @onRejected: onRejected,
-            @context: @asyncContext ? [context, @asyncContext.slice()] : context,
+            @context: asyncContext ? [context, asyncContext] : context,
             // This is 4x the number of out of line reactions (promise, fulfill callback, reject callback, context).
             @outOfLineReactionCounts: 0,
         };
@@ -46,7 +47,7 @@ function pushNewPromiseReaction(thenable, existingReactions, promiseOrCapability
         @putByValDirect(existingReactions, outOfLineReactionCounts++, promiseOrCapability);
         @putByValDirect(existingReactions, outOfLineReactionCounts++, onFulfilled);
         @putByValDirect(existingReactions, outOfLineReactionCounts++, onRejected);
-        @putByValDirect(existingReactions, outOfLineReactionCounts++, @asyncContext ? [context, @asyncContext.slice()] : context);
+        @putByValDirect(existingReactions, outOfLineReactionCounts++, asyncContext ? [context, asyncContext] : context);
         existingReactions.@outOfLineReactionCounts = outOfLineReactionCounts;
     }
 }
@@ -320,9 +321,9 @@ function promiseReactionJobWithoutPromise(handler, argument, context)
     "use strict";
     var prev;
     if (@isArray(context)) {
-        prev = @asyncContext;
+        prev = @getInternalField(@asyncContext, 0);
         var hasAsyncContext = true
-        @asyncContext = context[1];
+        @putInternalField(@asyncContext, 0, context[1]);
         context = context[0];
     }
 
@@ -335,7 +336,7 @@ function promiseReactionJobWithoutPromise(handler, argument, context)
         // This is user-uncatchable promise. We just ignore the error here.
     } finally {
         if (hasAsyncContext) {
-            @asyncContext = prev;
+            @putInternalField(@asyncContext, 0, prev);
         }
     }
 }
@@ -405,7 +406,8 @@ function resolveWithoutPromiseForAsyncAwait(resolution, onFulfilled, onRejected,
             return @performPromiseThen(resolution, onFulfilled, onRejected, @undefined, context);
     }
 
-    return @resolveWithoutPromise(resolution, onFulfilled, onRejected, @asyncContext ? [context, @asyncContext.slice()] : context);
+    var asyncContext = @getInternalField(@asyncContext, 0);
+    return @resolveWithoutPromise(resolution, onFulfilled, onRejected, asyncContext ? [context, asyncContext] : context);
 }
 
 @linkTimeConstant
@@ -470,9 +472,9 @@ function promiseReactionJob(promiseOrCapability, handler, argument, contextOrSta
 
     var prev;
     if (@isArray(contextOrState)) {
-        prev = @asyncContext;
+        prev = @getInternalField(@asyncContext, 0);
         var hasAsyncContext = true
-        @asyncContext = contextOrState[1];
+        @putInternalField(@asyncContext, 0, contextOrState[1]);
         contextOrState = contextOrState[0];
     }
 
@@ -486,7 +488,7 @@ function promiseReactionJob(promiseOrCapability, handler, argument, contextOrSta
         }
         promiseOrCapability.@reject.@call(@undefined, error);
         if (hasAsyncContext) {
-            @asyncContext = prev;
+            @putInternalField(@asyncContext, 0, prev);
         }
         return;
     }
@@ -495,14 +497,14 @@ function promiseReactionJob(promiseOrCapability, handler, argument, contextOrSta
         @resolvePromise(promiseOrCapability, result);
         // DOUBLE CHECK: this might have to be reset BEFORE
         if (hasAsyncContext) {
-            @asyncContext = prev;
+            @putInternalField(@asyncContext, 0, prev);
         }
         return;
     }
     promiseOrCapability.@resolve.@call(@undefined, result);
     // DOUBLE CHECK: this might have to be reset BEFORE
     if (hasAsyncContext) {
-        @asyncContext = prev;
+        @putInternalField(@asyncContext, 0, prev);
     }
 }
 
@@ -633,7 +635,8 @@ function performPromiseThen(promise, onFulfilled, onRejected, promiseOrCapabilit
                 @hostPromiseRejectionTracker(promise, @promiseRejectionHandle);
         } else
             handler = onFulfilled;
-        @enqueueJob(@promiseReactionJob, promiseOrCapability, handler, reactionsOrResult, @asyncContext ? [context, @asyncContext.slice()] : context);
+        var asyncContext = @getInternalField(@asyncContext, 0);
+        @enqueueJob(@promiseReactionJob, promiseOrCapability, handler, reactionsOrResult, asyncContext ? [context, asyncContext] : context);
     }
     @putPromiseInternalField(promise, @promiseFieldFlags, @getPromiseInternalField(promise, @promiseFieldFlags) | @promiseFlagsIsHandled);
 }

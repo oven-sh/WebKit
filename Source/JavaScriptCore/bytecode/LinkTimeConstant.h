@@ -140,7 +140,6 @@ class JSGlobalObject;
     v(BigInt64Array, nullptr) \
     v(BigUint64Array, nullptr) \
 
-
 #define DECLARE_LINK_TIME_CONSTANT(name, code) name,
 enum class LinkTimeConstant : int32_t {
     JSC_FOREACH_LINK_TIME_CONSTANTS(DECLARE_LINK_TIME_CONSTANT)

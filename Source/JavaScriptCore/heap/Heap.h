@@ -98,6 +98,7 @@ class VM;
 class VerifierSlotVisitor;
 class WeakGCHashTable;
 struct CurrentThreadState;
+class AsyncContext;
 
 #ifdef JSC_GLIB_API_ENABLED
 class JSCGLibWrapperObject;
@@ -140,7 +141,8 @@ class Heap;
     v(stringObjectSpace, cellHeapCellType, StringObject) \
     v(structureChainSpace, cellHeapCellType, StructureChain) \
     v(structureRareDataSpace, destructibleCellHeapCellType, StructureRareData) \
-    v(symbolTableSpace, destructibleCellHeapCellType, SymbolTable)
+    v(symbolTableSpace, destructibleCellHeapCellType, SymbolTable) \
+    v(asyncContextDataSpace, cellHeapCellType, AsyncContextData)
     
 #define FOR_EACH_JSC_STRUCTURE_ISO_SUBSPACE(v) \
     v(structureSpace, destructibleCellHeapCellType, Structure) \
