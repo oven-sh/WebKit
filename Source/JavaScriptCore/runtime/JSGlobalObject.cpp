@@ -2948,8 +2948,7 @@ void JSGlobalObject::queueMicrotask(JSValue job, JSValue argument0, JSValue argu
     }
 
     auto microtaskIdentifier = MicrotaskIdentifier::generate();
-    auto asyncContextData = m_asyncContextData.get()->internalValue();
-    vm().queueMicrotask(QueuedTask { microtaskIdentifier, job, argument0, argument1, argument2, argument3, asyncContextData });
+    vm().queueMicrotask(QueuedTask { microtaskIdentifier, job, argument0, argument1, argument2, argument3 });
     if (UNLIKELY(m_debugger))
         m_debugger->didQueueMicrotask(this, microtaskIdentifier);
 }
