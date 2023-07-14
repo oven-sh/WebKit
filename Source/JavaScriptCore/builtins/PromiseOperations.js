@@ -320,7 +320,7 @@ function promiseReactionJobWithoutPromise(handler, argument, context)
 {
     "use strict";
     var prev;
-    if (@isArray(context)) {
+    if (@isJSArray(context)) {
         prev = @getInternalField(@asyncContext, 0);
         var hasAsyncContext = true
         @putInternalField(@asyncContext, 0, context[1]);
@@ -471,7 +471,7 @@ function promiseReactionJob(promiseOrCapability, handler, argument, contextOrSta
     }
 
     var prev;
-    if (@isArray(contextOrState)) {
+    if (@isJSArray(contextOrState)) {
         prev = @getInternalField(@asyncContext, 0);
         var hasAsyncContext = true
         @putInternalField(@asyncContext, 0, contextOrState[1]);
