@@ -103,7 +103,7 @@ class ShadowRealmPrototype;
 class SourceOrigin;
 class StringConstructor;
 class WrapperMap;
-class AsyncContextData;
+class InternalFieldTuple;
 
 enum class ArrayBufferSharingMode : bool;
 enum class CodeGenerationMode : uint8_t;
@@ -196,7 +196,7 @@ public:
     template<typename T> using Initializer = typename LazyProperty<JSGlobalObject, T>::Initializer;
 
     WriteBarrier<JSObject> m_globalThis;
-    WriteBarrier<AsyncContextData> m_asyncContextData;
+    WriteBarrier<InternalFieldTuple> m_asyncContextData;
 
     WriteBarrier<JSGlobalLexicalEnvironment> m_globalLexicalEnvironment;
     WriteBarrier<JSScope> m_globalScopeExtension;
@@ -234,6 +234,7 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_segmentIteratorStructure;
     LazyProperty<JSGlobalObject, Structure> m_segmenterStructure;
     LazyProperty<JSGlobalObject, Structure> m_segmentsStructure;
+    LazyProperty<JSGlobalObject, Structure> m_internalFieldTupleStructure;
     LazyClassStructure m_dateTimeFormatStructure;
     LazyClassStructure m_numberFormatStructure;
 

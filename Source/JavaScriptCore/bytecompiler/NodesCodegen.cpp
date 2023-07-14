@@ -2050,6 +2050,7 @@ CREATE_INTRINSIC_FOR_BRAND_CHECK(isStringIterator, IsStringIterator)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isArrayIterator, IsArrayIterator)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isMapIterator, IsMapIterator)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isSetIterator, IsSetIterator)
+CREATE_INTRINSIC_FOR_BRAND_CHECK(isInternalFieldTuple, IsInternalFieldTuple)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isUndefinedOrNull, IsUndefinedOrNull)
 
 #undef CREATE_INTRINSIC_FOR_BRAND_CHECK

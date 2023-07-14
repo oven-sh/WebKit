@@ -1371,7 +1371,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
 
     jit/Width.h
     runtime/ClonedArguments.h
-    runtime/AsyncContextData.h
+    runtime/InternalFieldTuple.h
 )
 
 if(USE_INSPECTOR_SOCKET_SERVER)

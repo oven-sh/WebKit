@@ -142,7 +142,7 @@ class Heap;
     v(structureChainSpace, cellHeapCellType, StructureChain) \
     v(structureRareDataSpace, destructibleCellHeapCellType, StructureRareData) \
     v(symbolTableSpace, destructibleCellHeapCellType, SymbolTable) \
-    v(asyncContextDataSpace, cellHeapCellType, AsyncContextData)
+    v(internalFieldTupleSpace, cellHeapCellType, InternalFieldTuple)
     
 #define FOR_EACH_JSC_STRUCTURE_ISO_SUBSPACE(v) \
     v(structureSpace, destructibleCellHeapCellType, Structure) \

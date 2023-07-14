@@ -36,7 +36,7 @@
 #include "ArrayConstructor.h"
 #include "ArrayIteratorPrototype.h"
 #include "ArrayPrototype.h"
-#include "AsyncContextData.h"
+#include "InternalFieldTuple.h"
 #include "AsyncFromSyncIteratorPrototype.h"
 #include "AsyncFunctionConstructor.h"
 #include "AsyncFunctionPrototype.h"
@@ -1663,7 +1663,9 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     //     init.set(AsyncContext::create(init.vm, AsyncContext::createStructure(init.vm, globalObject, globalObject->objectPrototype())));
     // });
 
-    AsyncContextData* asyncContext = AsyncContextData::create(vm, AsyncContextData::createStructure(vm, this, objectPrototype()));
+    m_internalFieldTupleStructure.set(vm, this, InternalFieldTuple::createStructure(vm, this));
+
+    InternalFieldTuple* asyncContext = InternalFieldTuple::create(this, vm, m_internalFieldTupleStructure.get(this), jsUndefined(), jsUndefined());
     putDirectWithoutTransition(
         vm, vm.propertyNames->builtinNames().asyncContextPrivateName(),
         asyncContext, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
@@ -2332,6 +2334,7 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     visitor.append(thisObject->m_globalThis);
     visitor.append(thisObject->m_asyncContextData);
+    thisObject->m_internalFieldTupleStructure.visit(visitor);
 
     visitor.append(thisObject->m_globalLexicalEnvironment);
     visitor.append(thisObject->m_globalScopeExtension);
