@@ -30,14 +30,12 @@
 function pushNewPromiseReaction(thenable, existingReactions, promiseOrCapability, onFulfilled, onRejected, context)
 {
     "use strict";
-    var asyncContext = @getInternalField(@asyncContext, 0);
-
     if (!existingReactions) {
         existingReactions = {
             @promiseOrCapability: promiseOrCapability,
             @onFulfilled: onFulfilled,
             @onRejected: onRejected,
-            @context: asyncContext ? [context, asyncContext] : context,
+            @context: @wrapInAsyncContextFrame(context),
             // This is 4x the number of out of line reactions (promise, fulfill callback, reject callback, context).
             @outOfLineReactionCounts: 0,
         };
@@ -47,7 +45,7 @@ function pushNewPromiseReaction(thenable, existingReactions, promiseOrCapability
         @putByValDirect(existingReactions, outOfLineReactionCounts++, promiseOrCapability);
         @putByValDirect(existingReactions, outOfLineReactionCounts++, onFulfilled);
         @putByValDirect(existingReactions, outOfLineReactionCounts++, onRejected);
-        @putByValDirect(existingReactions, outOfLineReactionCounts++, asyncContext ? [context, asyncContext] : context);
+        @putByValDirect(existingReactions, outOfLineReactionCounts++, @wrapInAsyncContextFrame(context));
         existingReactions.@outOfLineReactionCounts = outOfLineReactionCounts;
     }
 }
@@ -320,11 +318,11 @@ function promiseReactionJobWithoutPromise(handler, argument, context)
 {
     "use strict";
     var prev;
-    if (@isJSArray(context)) {
+    if (@isInternalFieldTuple(context)) {
         prev = @getInternalField(@asyncContext, 0);
         var hasAsyncContext = true
-        @putInternalField(@asyncContext, 0, context[1]);
-        context = context[0];
+        @putInternalField(@asyncContext, 0, @getInternalField(context, 1));
+        context = @getInternalField(context, 0);
     }
 
     try {
@@ -406,8 +404,7 @@ function resolveWithoutPromiseForAsyncAwait(resolution, onFulfilled, onRejected,
             return @performPromiseThen(resolution, onFulfilled, onRejected, @undefined, context);
     }
 
-    var asyncContext = @getInternalField(@asyncContext, 0);
-    return @resolveWithoutPromise(resolution, onFulfilled, onRejected, asyncContext ? [context, asyncContext] : context);
+    return @resolveWithoutPromise(resolution, onFulfilled, onRejected, context);
 }
 
 @linkTimeConstant
@@ -451,6 +448,7 @@ function promiseReactionJob(promiseOrCapability, handler, argument, contextOrSta
     "use strict";
 
     // Case (3).
+
     if (@isUndefinedOrNull(handler)) {
         try {
             @assert(@isPromise(promiseOrCapability));
@@ -471,11 +469,11 @@ function promiseReactionJob(promiseOrCapability, handler, argument, contextOrSta
     }
 
     var prev;
-    if (@isJSArray(contextOrState)) {
+    if (@isInternalFieldTuple(contextOrState)) {
         prev = @getInternalField(@asyncContext, 0);
         var hasAsyncContext = true
-        @putInternalField(@asyncContext, 0, contextOrState[1]);
-        contextOrState = contextOrState[0];
+        @putInternalField(@asyncContext, 0, @getInternalField(contextOrState, 1));
+        contextOrState = @getInternalField(contextOrState, 0);
     }
 
     // Case (1), or (2).
@@ -636,7 +634,7 @@ function performPromiseThen(promise, onFulfilled, onRejected, promiseOrCapabilit
         } else
             handler = onFulfilled;
         var asyncContext = @getInternalField(@asyncContext, 0);
-        @enqueueJob(@promiseReactionJob, promiseOrCapability, handler, reactionsOrResult, asyncContext ? [context, asyncContext] : context);
+        @enqueueJob(@promiseReactionJob, promiseOrCapability, handler, reactionsOrResult, @wrapInAsyncContextFrame(context));
     }
     @putPromiseInternalField(promise, @promiseFieldFlags, @getPromiseInternalField(promise, @promiseFieldFlags) | @promiseFlagsIsHandled);
 }

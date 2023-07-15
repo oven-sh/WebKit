@@ -44,6 +44,7 @@
 #include "JSInternalPromise.h"
 #include "JSMapIterator.h"
 #include "JSSetIterator.h"
+#include "InternalFieldTuple.h"
 #include "StructureInlines.h"
 #include <wtf/StdList.h>
 
@@ -981,6 +982,9 @@ private:
                 break;
             case JSSetIteratorType:
                 target = handleInternalFieldClass<JSSetIterator>(node, writes);
+                break;
+            case InternalFieldTupleType:
+                target = handleInternalFieldClass<InternalFieldTuple>(node, writes);
                 break;
             case JSPromiseType:
                 if (node->structure()->classInfoForCells() == JSInternalPromise::info())

@@ -1665,7 +1665,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
 
     m_internalFieldTupleStructure.set(vm, this, InternalFieldTuple::createStructure(vm, this));
 
-    InternalFieldTuple* asyncContext = InternalFieldTuple::create(this, vm, m_internalFieldTupleStructure.get(this), jsUndefined(), jsUndefined());
+    InternalFieldTuple* asyncContext = InternalFieldTuple::create(vm, m_internalFieldTupleStructure.get(this), jsUndefined(), jsUndefined());
     putDirectWithoutTransition(
         vm, vm.propertyNames->builtinNames().asyncContextPrivateName(),
         asyncContext, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);

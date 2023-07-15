@@ -2161,6 +2161,7 @@ slowPathOp(typeof_is_object)
 slowPathOp(typeof_is_function)
 slowPathOp(unreachable)
 slowPathOp(new_promise)
+slowPathOp(wrap_in_async_context_frame)
 slowPathOp(new_generator)
 
 macro llintSlowPathOp(opcodeName)

@@ -54,6 +54,7 @@
 #include "ObjectConstructor.h"
 #include "ScopedArguments.h"
 #include "TypeProfilerLog.h"
+#include "InternalFieldTuple.h"
 
 namespace JSC {
 
@@ -246,6 +247,19 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_new_promise)
         result = JSInternalPromise::create(vm, globalObject->internalPromiseStructure());
     else
         result = JSPromise::create(vm, globalObject->promiseStructure());
+    RETURN(result);
+}
+
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_wrap_in_async_context_frame)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpWrapInAsyncContextFrame>();
+    auto context = GET_C(bytecode.m_context).jsValue();
+    auto value = globalObject->m_asyncContextData.get()->getInternalField(0);
+    if (value.isUndefined()) {
+        RETURN(context);
+    }
+    InternalFieldTuple* result = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), context, value);
     RETURN(result);
 }
 

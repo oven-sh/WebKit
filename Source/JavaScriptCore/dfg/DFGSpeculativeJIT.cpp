@@ -63,6 +63,7 @@
 #include "JSMapIterator.h"
 #include "JSPropertyNameEnumerator.h"
 #include "JSSetIterator.h"
+#include "InternalFieldTuple.h"
 #include "JSWebAssemblyInstance.h"
 #include "LLIntThunks.h"
 #include "MaxFrameExtentForSlowPathCall.h"
@@ -15685,6 +15686,9 @@ void SpeculativeJIT::compileNewInternalFieldObject(Node* node)
         break;
     case JSSetIteratorType:
         compileNewInternalFieldObjectImpl<JSSetIterator>(node, operationNewSetIterator);
+        break;
+    case InternalFieldTupleType:
+        compileNewInternalFieldObjectImpl<InternalFieldTuple>(node, operationNewInternalFieldTuple);
         break;
     case JSPromiseType: {
         if (node->structure()->classInfoForCells() == JSInternalPromise::info())

@@ -3010,6 +3010,12 @@ RegisterID* BytecodeGenerator::emitCreateAsyncGenerator(RegisterID* dst, Registe
     return dst;
 }
 
+RegisterID* BytecodeGenerator::emitWrapInAsyncContextFrame(RegisterID* dst, RegisterID* a)
+{
+    OpWrapInAsyncContextFrame::emit(this, dst, a);
+    return dst;
+}
+
 RegisterID* BytecodeGenerator::emitInstanceFieldInitializationIfNeeded(RegisterID* dst, RegisterID* constructor, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd)
 {
     if (!(isConstructor() || isDerivedConstructorContext()) || needsClassFieldInitializer() == NeedsClassFieldInitializer::No)
@@ -5541,4 +5547,3 @@ void printInternal(PrintStream& out, JSC::Variable::VariableKind kind)
 }
 
 } // namespace WTF
-

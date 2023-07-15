@@ -1215,6 +1215,12 @@ op :new_promise,
         isInternalPromise: bool,
     }
 
+op :wrap_in_async_context_frame,
+    args: {
+        dst: VirtualRegister,
+        context: VirtualRegister,
+    }
+
 op :new_generator,
     args: {
         dst: VirtualRegister,

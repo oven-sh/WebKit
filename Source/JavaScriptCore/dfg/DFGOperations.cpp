@@ -44,6 +44,7 @@
 #include "FTLOSREntry.h"
 #include "FrameTracers.h"
 #include "HasOwnPropertyCache.h"
+#include "InternalFieldTuple.h"
 #include "Interpreter.h"
 #include "InterpreterInlines.h"
 #include "IntlCollator.h"
@@ -2043,6 +2044,15 @@ JSC_DEFINE_JIT_OPERATION(operationNewSetIterator, JSCell*, (VM* vmPointer, Struc
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
 
     return JSSetIterator::createWithInitialValues(vm, structure);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationNewInternalFieldTuple, JSCell*, (VM* vmPointer, Structure* structure))
+{
+    VM& vm = *vmPointer;
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+
+    return InternalFieldTuple::create(vm, structure);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationCreateActivationDirect, JSCell*, (VM* vmPointer, Structure* structure, JSScope* scope, SymbolTable* table, EncodedJSValue initialValueEncoded))

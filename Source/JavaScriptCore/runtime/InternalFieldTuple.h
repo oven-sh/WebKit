@@ -17,6 +17,13 @@ protected:
 public:
     using Base = JSInternalFieldObjectImpl<numberOfInternalFields>;
 
+    enum class Field : uint8_t {
+        Slot0 = 0,
+        Slot1,
+    };
+    const WriteBarrier<Unknown>& internalField(Field field) const { return Base::internalField(static_cast<uint32_t>(field)); }
+    WriteBarrier<Unknown>& internalField(Field field) { return Base::internalField(static_cast<uint32_t>(field)); }
+
     template<typename, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
     {
@@ -31,12 +38,20 @@ public:
         } };
     }
 
-    static InternalFieldTuple* create(JSGlobalObject* globalObject, VM& vm, Structure* structure, JSValue f1, JSValue f2)
+    static InternalFieldTuple* create(VM& vm, Structure* structure)
     {
         InternalFieldTuple* fields = new (NotNull, allocateCell<InternalFieldTuple>(vm)) InternalFieldTuple(vm, structure);
         fields->finishCreation(vm);
-        fields->m_internalFields[0].set(vm, fields, f1);
-        fields->m_internalFields[1].set(vm, fields, f2);
+        fields->putInternalField(vm, 0, jsUndefined());
+        fields->putInternalField(vm, 1, jsUndefined());
+        return fields;
+    }
+
+    static inline InternalFieldTuple* create(VM& vm, Structure* structure, JSValue a, JSValue b)
+    {
+        InternalFieldTuple* fields = create(vm, structure);
+        fields->putInternalField(vm, 0, a);
+        fields->putInternalField(vm, 1, b);
         return fields;
     }
 
@@ -45,15 +60,16 @@ public:
         return Structure::create(vm, globalObject, jsNull(), TypeInfo(InternalFieldTupleType, Base::StructureFlags), info());
     }
 
+    // These two are equivilent to @getInteralField and @putInternalField
     inline JSValue getInternalField(unsigned index) const
     {
-        ASSERT(index < numInternalSlots);
+        ASSERT(index < numberOfInternalFields);
         return m_internalFields[index].get();
     }
 
     inline void putInternalField(VM& vm, unsigned index, JSValue value)
     {
-        ASSERT(index < numInternalSlots);
+        ASSERT(index < numberOfInternalFields);
         m_internalFields[index].set(vm, this, value);
     }
 

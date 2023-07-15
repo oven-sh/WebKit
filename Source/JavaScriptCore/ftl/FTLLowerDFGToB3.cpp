@@ -64,6 +64,7 @@
 #include "FTLSnippetParams.h"
 #include "FTLThunks.h"
 #include "FTLWeightedTarget.h"
+#include "InternalFieldTuple.h"
 #include "JITAddGenerator.h"
 #include "JITBitAndGenerator.h"
 #include "JITBitOrGenerator.h"
@@ -8271,6 +8272,9 @@ IGNORE_CLANG_WARNINGS_END
         case JSSetIteratorType:
             compileNewInternalFieldObjectImpl<JSSetIterator>(operationNewSetIterator);
             break;
+        case InternalFieldTupleType:
+            compileNewInternalFieldObjectImpl<InternalFieldTuple>(operationNewInternalFieldTuple);
+            break;
         case JSPromiseType:
             if (m_node->structure()->classInfoForCells() == JSInternalPromise::info())
                 compileNewInternalFieldObjectImpl<JSInternalPromise>(operationNewInternalPromise);
@@ -15689,6 +15693,9 @@ IGNORE_CLANG_WARNINGS_END
         case JSSetIteratorType:
             compileMaterializeNewInternalFieldObjectImpl<JSSetIterator>(operationNewSetIterator);
             break;
+        case InternalFieldTupleType:
+            compileMaterializeNewInternalFieldObjectImpl<JSSetIterator>(operationNewInternalFieldTuple);
+            break;
         case JSPromiseType:
             if (m_node->structure()->classInfoForCells() == JSInternalPromise::info())
                 compileMaterializeNewInternalFieldObjectImpl<JSInternalPromise>(operationNewInternalPromise);
@@ -22792,4 +22799,3 @@ void lowerDFGToB3(State& state)
 } } // namespace JSC::FTL
 
 #endif // ENABLE(FTL_JIT)
-

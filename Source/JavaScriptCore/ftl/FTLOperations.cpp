@@ -36,6 +36,7 @@
 #include "FTLLazySlowPath.h"
 #include "FrameTracers.h"
 #include "InlineCallFrame.h"
+#include "InternalFieldTuple.h"
 #include "JSArrayIterator.h"
 #include "JSAsyncFunction.h"
 #include "JSAsyncGeneratorFunction.h"
@@ -145,6 +146,9 @@ JSC_DEFINE_JIT_OPERATION(operationPopulateObjectInOSR, void, (JSGlobalObject* gl
             break;
         case JSSetIteratorType:
             materialize(jsCast<JSSetIterator*>(target));
+            break;
+        case InternalFieldTupleType:
+            materialize(jsCast<InternalFieldTuple*>(target));
             break;
         case JSPromiseType:
             if (target->classInfo() == JSInternalPromise::info())
@@ -761,4 +765,3 @@ JSC_DEFINE_JIT_OPERATION_WITH_ATTRIBUTES(operationReportBoundsCheckEliminationEr
 IGNORE_WARNINGS_END
 
 #endif // ENABLE(FTL_JIT)
-
