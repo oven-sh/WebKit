@@ -8263,7 +8263,7 @@ IGNORE_CLANG_WARNINGS_END
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
         LValue asyncContext = lowJSValue(m_node->child1());
         LValue context = lowJSValue(m_node->child2());
-        setJSValue(vmCall(pointerType(), operationWrapInAsyncContextFrame, weakPointer(globalObject), frozenPointer(m_graph.freezeStrong(m_node->structure().get())), asyncContext, context));
+        setJSValue(vmCall(Int64, operationWrapInAsyncContextFrame, weakPointer(globalObject), asyncContext, context));
     }
 
     void compileNewAsyncGenerator()

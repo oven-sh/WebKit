@@ -2239,7 +2239,6 @@ public:
         case NewAsyncGenerator:
         case NewInternalFieldObject:
         case NewStringObject:
-        case WrapInAsyncContextFrame:
             return true;
         default:
             return false;

@@ -1116,4 +1116,3 @@ void validate(Graph& graph, GraphDumpMode graphDumpMode, CString graphDumpBefore
 } } // namespace JSC::DFG
 
 #endif // ENABLE(DFG_JIT)
-

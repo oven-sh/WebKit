@@ -15708,13 +15708,19 @@ void SpeculativeJIT::compileWrapInAsyncContextFrame(Node* node)
 {
     JSValueOperand asyncContext(this, node->child1());
     JSValueOperand context(this, node->child2());
-    GPRReg asyncContextGPR = asyncContext.gpr();
-    GPRReg contextGPR = context.gpr();
+    JSValueRegs asyncContextRegs = asyncContext.jsValueRegs();
+    JSValueRegs contextRegs = context.jsValueRegs();
+
+    asyncContext.use();
+    context.use();
+
     flushRegisters();
-    GPRFlushedCallResult result(this);
-    GPRReg resultGPR = result.gpr();
-    callOperation(operationWrapInAsyncContextFrame, resultGPR, LinkableConstant::globalObject(*this, node), node->structure(), asyncContextGPR, contextGPR);
-    cellResult(resultGPR, node);
+    JSValueRegsFlushedCallResult result(this);
+    JSValueRegs resultRegs = result.regs();
+
+    callOperation(operationWrapInAsyncContextFrame, resultRegs, LinkableConstant::globalObject(*this, node), asyncContextRegs, contextRegs);
+    exceptionCheck();
+    jsValueResult(resultRegs, node, DataFormatJS, UseChildrenCalledExplicitly);
 }
 
 void SpeculativeJIT::compileToPrimitive(Node* node)

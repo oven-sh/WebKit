@@ -1954,7 +1954,7 @@ JSC_DEFINE_JIT_OPERATION(operationNewArrayWithSizeAndProfile, EncodedJSValue, (J
     return JSValue::encode(constructArrayWithSizeQuirk(globalObject, profile, sizeValue));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationWrapInAsyncContextFrame, EncodedJSValue, (JSGlobalObject* globalObject, Structure* structure, EncodedJSValue asyncContext, EncodedJSValue context))
+JSC_DEFINE_JIT_OPERATION(operationWrapInAsyncContextFrame, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue asyncContext, EncodedJSValue context))
 {
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
@@ -1964,7 +1964,8 @@ JSC_DEFINE_JIT_OPERATION(operationWrapInAsyncContextFrame, EncodedJSValue, (JSGl
     if (value.isUndefined()) {
         return context;
     }
-    InternalFieldTuple* result = InternalFieldTuple::create(vm, structure, JSValue::decode(context), value);
+
+    InternalFieldTuple* result = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), JSValue::decode(context), value);
     return JSValue::encode(result);
 }
 

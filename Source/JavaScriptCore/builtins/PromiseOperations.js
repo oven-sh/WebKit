@@ -31,12 +31,11 @@ function pushNewPromiseReaction(thenable, existingReactions, promiseOrCapability
 {
     "use strict";
     if (!existingReactions) {
-        var bruh = @wrapInAsyncContextFrame(@getInternalField(@asyncContext, 0), context);
         existingReactions = {
             @promiseOrCapability: promiseOrCapability,
             @onFulfilled: onFulfilled,
             @onRejected: onRejected,
-            @context: bruh,
+            @context: @wrapInAsyncContextFrame(@getInternalField(@asyncContext, 0), context),
             // This is 4x the number of out of line reactions (promise, fulfill callback, reject callback, context).
             @outOfLineReactionCounts: 0,
         };
