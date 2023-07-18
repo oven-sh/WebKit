@@ -31,11 +31,12 @@ function pushNewPromiseReaction(thenable, existingReactions, promiseOrCapability
 {
     "use strict";
     if (!existingReactions) {
+        var bruh = @wrapInAsyncContextFrame(@getInternalField(@asyncContext, 0), context);
         existingReactions = {
             @promiseOrCapability: promiseOrCapability,
             @onFulfilled: onFulfilled,
             @onRejected: onRejected,
-            @context: @wrapInAsyncContextFrame(context),
+            @context: bruh,
             // This is 4x the number of out of line reactions (promise, fulfill callback, reject callback, context).
             @outOfLineReactionCounts: 0,
         };
@@ -45,7 +46,7 @@ function pushNewPromiseReaction(thenable, existingReactions, promiseOrCapability
         @putByValDirect(existingReactions, outOfLineReactionCounts++, promiseOrCapability);
         @putByValDirect(existingReactions, outOfLineReactionCounts++, onFulfilled);
         @putByValDirect(existingReactions, outOfLineReactionCounts++, onRejected);
-        @putByValDirect(existingReactions, outOfLineReactionCounts++, @wrapInAsyncContextFrame(context));
+        @putByValDirect(existingReactions, outOfLineReactionCounts++, @wrapInAsyncContextFrame(@getInternalField(@asyncContext, 0), context));
         existingReactions.@outOfLineReactionCounts = outOfLineReactionCounts;
     }
 }
@@ -313,8 +314,35 @@ function createResolvingFunctions(promise)
     return { @resolve: resolve, @reject: reject };
 }
 
+// Both of the next two functions support async context swapping, but one unwraps it from the InternalFieldTuple
+// and the other one is passed it directly as the forth argument.
 @linkTimeConstant
-function promiseReactionJobWithoutPromise(handler, argument, context)
+function promiseReactionJobWithoutPromise(handler, argument, context, asyncContext)
+{
+    "use strict";
+    var prev;
+    if (asyncContext) {
+        prev = @getInternalField(@asyncContext, 0);
+        var hasAsyncContext = true;
+        @putInternalField(@asyncContext, 0, asyncContext);
+    }
+
+    try {
+        if (context)
+            handler(argument, context);
+        else
+            handler(argument);
+    } catch {
+        // This is user-uncatchable promise. We just ignore the error here.
+    } finally {
+        if (hasAsyncContext) {
+            @putInternalField(@asyncContext, 0, prev);
+        }
+    }
+}
+
+@linkTimeConstant
+function promiseReactionJobWithoutPromiseUnwrapAsyncContext(handler, argument, context)
 {
     "use strict";
     var prev;
@@ -341,7 +369,7 @@ function promiseReactionJobWithoutPromise(handler, argument, context)
 
 // This function has strong guarantee that each handler function (onFulfilled and onRejected) will be called at most once.
 @linkTimeConstant
-function resolveWithoutPromise(resolution, onFulfilled, onRejected, context)
+function resolveWithoutPromise(resolution, onFulfilled, onRejected, context, temp)
 {
     "use strict";
 
@@ -378,7 +406,7 @@ function rejectWithoutPromise(reason, onFulfilled, onRejected, context)
 {
     "use strict";
 
-    @enqueueJob(@promiseReactionJobWithoutPromise, onRejected, reason, context);
+    @enqueueJob(@promiseReactionJobWithoutPromise, onRejected, reason, context, @getInternalField(@asyncContext, 0));
 }
 
 // This function has strong guarantee that each handler function (onFulfilled and onRejected) will be called at most once.
@@ -387,7 +415,7 @@ function fulfillWithoutPromise(value, onFulfilled, onRejected, context)
 {
     "use strict";
 
-    @enqueueJob(@promiseReactionJobWithoutPromise, onFulfilled, value, context);
+    @enqueueJob(@promiseReactionJobWithoutPromise, onFulfilled, value, context, @getInternalField(@asyncContext, 0));
 }
 
 // This function has strong guarantee that each handler function (onFulfilled and onRejected) will be called at most once.
@@ -464,7 +492,7 @@ function promiseReactionJob(promiseOrCapability, handler, argument, contextOrSta
 
     // Case (4).
     if (!promiseOrCapability) {
-        @promiseReactionJobWithoutPromise(handler, argument, contextOrState);
+        @promiseReactionJobWithoutPromiseUnwrapAsyncContext(handler, argument, contextOrState);
         return;
     }
 
@@ -633,8 +661,7 @@ function performPromiseThen(promise, onFulfilled, onRejected, promiseOrCapabilit
                 @hostPromiseRejectionTracker(promise, @promiseRejectionHandle);
         } else
             handler = onFulfilled;
-        var asyncContext = @getInternalField(@asyncContext, 0);
-        @enqueueJob(@promiseReactionJob, promiseOrCapability, handler, reactionsOrResult, @wrapInAsyncContextFrame(context));
+        @enqueueJob(@promiseReactionJob, promiseOrCapability, handler, reactionsOrResult, @wrapInAsyncContextFrame(@getInternalField(@asyncContext, 0), context));
     }
     @putPromiseInternalField(promise, @promiseFieldFlags, @getPromiseInternalField(promise, @promiseFieldFlags) | @promiseFlagsIsHandled);
 }

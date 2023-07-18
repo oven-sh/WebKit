@@ -598,6 +598,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case NewArrayBuffer:
     case NewArrayWithSpread:
     case NewInternalFieldObject:
+    case WrapInAsyncContextFrame:
     case Spread:
     case NewRegexp:
     case NewSymbol:

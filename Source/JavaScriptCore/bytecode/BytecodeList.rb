@@ -1218,6 +1218,7 @@ op :new_promise,
 op :wrap_in_async_context_frame,
     args: {
         dst: VirtualRegister,
+        asyncContext: VirtualRegister,
         context: VirtualRegister,
     }
 

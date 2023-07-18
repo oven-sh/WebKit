@@ -708,7 +708,7 @@ namespace JSC {
         RegisterID* emitNewGenerator(RegisterID* dst);
         RegisterID* emitNewArray(RegisterID* dst, ElementNode*, unsigned length, IndexingType recommendedIndexingType); // stops at first elision
         RegisterID* emitNewArrayBuffer(RegisterID* dst, JSImmutableButterfly*, IndexingType recommendedIndexingType);
-        RegisterID* emitWrapInAsyncContextFrame(RegisterID* dst, RegisterID* value1);
+        RegisterID* emitWrapInAsyncContextFrame(RegisterID* dst, RegisterID* value1, RegisterID* value2);
         // FIXME: new_array_with_spread should use an array allocation profile and take a recommendedIndexingType
         RegisterID* emitNewArrayWithSpread(RegisterID* dst, ElementNode*);
         RegisterID* emitNewArrayWithSize(RegisterID* dst, RegisterID* length);

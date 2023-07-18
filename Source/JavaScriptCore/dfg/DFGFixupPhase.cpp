@@ -3021,6 +3021,7 @@ private:
         case NewGenerator:
         case NewAsyncGenerator:
         case NewInternalFieldObject:
+        case WrapInAsyncContextFrame:
         case NewRegexp:
         case IsTypedArrayView:
         case IsEmpty:
@@ -4973,4 +4974,3 @@ bool performFixup(Graph& graph)
 } } // namespace JSC::DFG
 
 #endif // ENABLE(DFG_JIT)
-

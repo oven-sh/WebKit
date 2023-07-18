@@ -402,6 +402,7 @@ private:
             case NewBoundFunction:
             case AllocatePropertyStorage:
             case ReallocatePropertyStorage:
+            case WrapInAsyncContextFrame:
                 // Nodes that allocate get to set their epoch because for those nodes we know
                 // that they will be the newest object in the heap.
                 m_node->setEpoch(m_currentEpoch);
@@ -679,4 +680,3 @@ bool performGlobalStoreBarrierInsertion(Graph& graph)
 } } // namespace JSC::DFG
 
 #endif // ENABLE(DFG_JIT)
-

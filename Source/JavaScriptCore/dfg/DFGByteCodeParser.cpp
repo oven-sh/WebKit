@@ -6168,8 +6168,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
         case op_wrap_in_async_context_frame: {
             auto bytecode = currentInstruction->as<OpWrapInAsyncContextFrame>();
             JSGlobalObject* globalObject = m_graph.globalObjectFor(currentNodeOrigin().semantic);
-            Node* tuple = addToGraph(NewInternalFieldObject, OpInfo(m_graph.registerStructure(globalObject->internalFieldTupleStructure())));
-            set(bytecode.m_dst, tuple);
+            set(bytecode.m_dst, addToGraph(WrapInAsyncContextFrame, OpInfo(m_graph.registerStructure(globalObject->internalFieldTupleStructure())), get(bytecode.m_asyncContext), get(bytecode.m_context)));
             NEXT_OPCODE(op_wrap_in_async_context_frame);
         }
 

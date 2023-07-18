@@ -15704,6 +15704,19 @@ void SpeculativeJIT::compileNewInternalFieldObject(Node* node)
     }
 }
 
+void SpeculativeJIT::compileWrapInAsyncContextFrame(Node* node)
+{
+    JSValueOperand asyncContext(this, node->child1());
+    JSValueOperand context(this, node->child2());
+    GPRReg asyncContextGPR = asyncContext.gpr();
+    GPRReg contextGPR = context.gpr();
+    flushRegisters();
+    GPRFlushedCallResult result(this);
+    GPRReg resultGPR = result.gpr();
+    callOperation(operationWrapInAsyncContextFrame, resultGPR, LinkableConstant::globalObject(*this, node), node->structure(), asyncContextGPR, contextGPR);
+    cellResult(resultGPR, node);
+}
+
 void SpeculativeJIT::compileToPrimitive(Node* node)
 {
     DFG_ASSERT(m_graph, node, node->child1().useKind() == UntypedUse, node->child1().useKind());

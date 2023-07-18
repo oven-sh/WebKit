@@ -384,6 +384,7 @@ bool doesGC(Graph& graph, Node* node)
     case NewArray:
     case NewArrayWithSpread:
     case NewInternalFieldObject:
+    case WrapInAsyncContextFrame:
     case Spread:
     case NewArrayWithSize:
     case NewArrayWithSpecies:

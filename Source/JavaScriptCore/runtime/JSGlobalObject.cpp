@@ -1665,7 +1665,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
 
     m_internalFieldTupleStructure.set(vm, this, InternalFieldTuple::createStructure(vm, this));
 
-    InternalFieldTuple* asyncContext = InternalFieldTuple::create(vm, m_internalFieldTupleStructure.get(this), jsUndefined(), jsUndefined());
+    InternalFieldTuple* asyncContext = InternalFieldTuple::create(vm, internalFieldTupleStructure(), jsUndefined(), jsUndefined());
     putDirectWithoutTransition(
         vm, vm.propertyNames->builtinNames().asyncContextPrivateName(),
         asyncContext, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
@@ -2334,7 +2334,7 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     visitor.append(thisObject->m_globalThis);
     visitor.append(thisObject->m_asyncContextData);
-    thisObject->m_internalFieldTupleStructure.visit(visitor);
+    visitor.append(thisObject->m_internalFieldTupleStructure);
 
     visitor.append(thisObject->m_globalLexicalEnvironment);
     visitor.append(thisObject->m_globalScopeExtension);

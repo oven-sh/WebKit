@@ -58,6 +58,7 @@ bool clobbersExitState(Graph& graph, Node* node)
     case NewGenerator:
     case NewAsyncGenerator:
     case NewInternalFieldObject:
+    case WrapInAsyncContextFrame:
     case NewRegexp:
     case NewStringObject:
     case NewBoundFunction:

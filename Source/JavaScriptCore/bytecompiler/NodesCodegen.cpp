@@ -2121,8 +2121,10 @@ RegisterID* BytecodeIntrinsicNode::emit_intrinsic_wrapInAsyncContextFrame(JSC::B
 {
     ArgumentListNode* node = m_args->m_listNode;
     RefPtr<RegisterID> arg1 = generator.emitNode(node);
+    node = node->m_next;
+    RefPtr<RegisterID> arg2 = generator.emitNode(node);
     ASSERT(!node->m_next);
-    return generator.emitWrapInAsyncContextFrame(generator.finalDestination(dst), arg1.get());
+    return generator.emitWrapInAsyncContextFrame(generator.finalDestination(dst), arg1.get(), arg2.get());
 }
 
 #define JSC_DECLARE_BYTECODE_INTRINSIC_CONSTANT_GENERATORS(name) \

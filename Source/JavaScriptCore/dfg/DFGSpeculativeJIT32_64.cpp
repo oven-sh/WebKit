@@ -3217,6 +3217,11 @@ void SpeculativeJIT::compile(Node* node)
         break;
     }
 
+    case WrapInAsyncContextFrame: {
+        compileWrapInAsyncContextFrame(node);
+        break;
+    }
+
     case NewAsyncGenerator: {
         compileNewAsyncGenerator(node);
         break;

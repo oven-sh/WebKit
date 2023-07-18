@@ -71,6 +71,7 @@
 #include "TypeProfilerLog.h"
 #include "VMInlines.h"
 #include "VMTrapsInlines.h"
+#include "InternalFieldTuple.h"
 
 IGNORE_WARNINGS_BEGIN("frame-address")
 
@@ -1951,6 +1952,20 @@ JSC_DEFINE_JIT_OPERATION(operationNewArrayWithSizeAndProfile, EncodedJSValue, (J
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     JSValue sizeValue = JSValue::decode(size);
     return JSValue::encode(constructArrayWithSizeQuirk(globalObject, profile, sizeValue));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationWrapInAsyncContextFrame, EncodedJSValue, (JSGlobalObject* globalObject, Structure* structure, EncodedJSValue asyncContext, EncodedJSValue context))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+
+    auto value = JSValue::decode(asyncContext);
+    if (value.isUndefined()) {
+        return context;
+    }
+    InternalFieldTuple* result = InternalFieldTuple::create(vm, structure, JSValue::decode(context), value);
+    return JSValue::encode(result);
 }
 
 template<typename FunctionType>

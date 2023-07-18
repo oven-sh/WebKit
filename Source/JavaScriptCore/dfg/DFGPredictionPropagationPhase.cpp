@@ -1191,6 +1191,7 @@ private:
         case NewGenerator:
         case CreateAsyncGenerator:
         case NewAsyncGenerator:
+        case WrapInAsyncContextFrame:
             setPrediction(SpecObjectOther);
             break;
 
@@ -1624,4 +1625,3 @@ bool performPredictionPropagation(Graph& graph)
 } } // namespace JSC::DFG
 
 #endif // ENABLE(DFG_JIT)
-

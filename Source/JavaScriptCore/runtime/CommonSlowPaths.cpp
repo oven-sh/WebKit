@@ -255,7 +255,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_wrap_in_async_context_frame)
     BEGIN();
     auto bytecode = pc->as<OpWrapInAsyncContextFrame>();
     auto context = GET_C(bytecode.m_context).jsValue();
-    auto value = globalObject->m_asyncContextData.get()->getInternalField(0);
+    auto value = GET_C(bytecode.m_context).jsValue();
     if (value.isUndefined()) {
         RETURN(context);
     }

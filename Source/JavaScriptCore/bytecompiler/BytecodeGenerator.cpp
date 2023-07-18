@@ -3010,9 +3010,9 @@ RegisterID* BytecodeGenerator::emitCreateAsyncGenerator(RegisterID* dst, Registe
     return dst;
 }
 
-RegisterID* BytecodeGenerator::emitWrapInAsyncContextFrame(RegisterID* dst, RegisterID* a)
+RegisterID* BytecodeGenerator::emitWrapInAsyncContextFrame(RegisterID* dst, RegisterID* a, RegisterID* b)
 {
-    OpWrapInAsyncContextFrame::emit(this, dst, a);
+    OpWrapInAsyncContextFrame::emit(this, dst, a, b);
     return dst;
 }
 

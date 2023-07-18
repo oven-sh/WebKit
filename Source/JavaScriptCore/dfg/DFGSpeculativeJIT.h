@@ -1612,6 +1612,7 @@ public:
     void compileCreateAsyncGenerator(Node*);
     void compileNewObject(Node*);
     void compileNewGenerator(Node*);
+    void compileWrapInAsyncContextFrame(Node*);
     void compileNewAsyncGenerator(Node*);
     void compileNewInternalFieldObject(Node*);
     void compileToPrimitive(Node*);

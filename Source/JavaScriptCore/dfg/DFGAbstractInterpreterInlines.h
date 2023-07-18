@@ -3327,6 +3327,13 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         setForNode(node, node->structure());
         break;
 
+    case WrapInAsyncContextFrame: {
+        clobberWorld();
+        ASSERT(!!node->structure().get());
+        setForNode(node, node->structure());
+        break;
+    }
+
     case ObjectAssign: {
         clobberWorld();
         break;
