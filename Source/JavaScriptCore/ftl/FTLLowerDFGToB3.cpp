@@ -1182,9 +1182,6 @@ private:
         case NewGenerator:
             compileNewGenerator();
             break;
-        case WrapInAsyncContextFrame:
-            compileWrapInAsyncContextFrame();
-            break;
         case NewAsyncGenerator:
             compileNewAsyncGenerator();
             break;
@@ -8256,14 +8253,6 @@ IGNORE_CLANG_WARNINGS_END
     void compileNewGenerator()
     {
         compileNewInternalFieldObjectImpl<JSGenerator>(operationNewGenerator);
-    }
-
-    void compileWrapInAsyncContextFrame()
-    {
-        JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
-        LValue asyncContext = lowJSValue(m_node->child1());
-        LValue context = lowJSValue(m_node->child2());
-        setJSValue(vmCall(Int64, operationWrapInAsyncContextFrame, weakPointer(globalObject), asyncContext, context));
     }
 
     void compileNewAsyncGenerator()

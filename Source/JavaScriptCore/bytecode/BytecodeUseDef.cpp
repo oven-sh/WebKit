@@ -82,7 +82,7 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     case op_jmp:
     case op_new_object:
     case op_new_promise:
-    case op_wrap_in_async_context_frame:
+    case op_new_internal_field_tuple:
     case op_new_generator:
     case op_enter:
     case op_argument_count:
@@ -544,7 +544,7 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     DEFS(OpMov, dst)
     DEFS(OpNewObject, dst)
     DEFS(OpNewPromise, dst)
-    DEFS(OpWrapInAsyncContextFrame, dst)
+    DEFS(OpNewInternalFieldTuple, dst)
     DEFS(OpNewGenerator, dst)
     DEFS(OpToThis, srcDst)
     DEFS(OpGetScope, dst)

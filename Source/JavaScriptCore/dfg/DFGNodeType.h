@@ -582,8 +582,6 @@ namespace JSC { namespace DFG {
     /* Date access */ \
     macro(DateGetInt32OrNaN, NodeResultJS) \
     macro(DateGetTime, NodeResultDouble) \
-    /* Bun async_hooks */ \
-    macro(WrapInAsyncContextFrame, NodeMustGenerate | NodeResultJS) \
 
 // This enum generates a monotonically increasing id for all Node types,
 // and is used by the subsequent enum to fill out the id (as accessed via the NodeIdMask).

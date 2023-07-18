@@ -30,12 +30,19 @@
 function pushNewPromiseReaction(thenable, existingReactions, promiseOrCapability, onFulfilled, onRejected, context)
 {
     "use strict";
+    var asyncContext = @getInternalField(@asyncContext, 0);
+    if (asyncContext) {
+        var x = @newInternalFieldTuple(context, asyncContext);
+        console.log([@getInternalField(x, 0) === context, @getInternalField(x, 1) == asyncContext, @isInternalFieldTuple(x)]);
+    } else {
+        var x = context;
+    }
     if (!existingReactions) {
         existingReactions = {
             @promiseOrCapability: promiseOrCapability,
             @onFulfilled: onFulfilled,
             @onRejected: onRejected,
-            @context: @wrapInAsyncContextFrame(@getInternalField(@asyncContext, 0), context),
+            @context: x,
             // This is 4x the number of out of line reactions (promise, fulfill callback, reject callback, context).
             @outOfLineReactionCounts: 0,
         };
@@ -45,7 +52,7 @@ function pushNewPromiseReaction(thenable, existingReactions, promiseOrCapability
         @putByValDirect(existingReactions, outOfLineReactionCounts++, promiseOrCapability);
         @putByValDirect(existingReactions, outOfLineReactionCounts++, onFulfilled);
         @putByValDirect(existingReactions, outOfLineReactionCounts++, onRejected);
-        @putByValDirect(existingReactions, outOfLineReactionCounts++, @wrapInAsyncContextFrame(@getInternalField(@asyncContext, 0), context));
+        @putByValDirect(existingReactions, outOfLineReactionCounts++, x);
         existingReactions.@outOfLineReactionCounts = outOfLineReactionCounts;
     }
 }
@@ -463,6 +470,7 @@ function createResolvingFunctionsWithoutPromise(onFulfilled, onRejected, context
 @linkTimeConstant
 function promiseReactionJob(promiseOrCapability, handler, argument, contextOrState)
 {
+    console.log('hey', promiseOrCapability, handler, argument, contextOrState)
     // Promise Reaction has four types.
     // 1. @promiseOrCapability is PromiseCapability, and having handlers.
     //     The most generic one.
@@ -501,6 +509,9 @@ function promiseReactionJob(promiseOrCapability, handler, argument, contextOrSta
         var hasAsyncContext = true
         @putInternalField(@asyncContext, 0, @getInternalField(contextOrState, 1));
         contextOrState = @getInternalField(contextOrState, 0);
+        console.log('unwrap');
+    } else {
+        console.log('not unwrapped');
     }
 
     // Case (1), or (2).
@@ -660,7 +671,9 @@ function performPromiseThen(promise, onFulfilled, onRejected, promiseOrCapabilit
                 @hostPromiseRejectionTracker(promise, @promiseRejectionHandle);
         } else
             handler = onFulfilled;
-        @enqueueJob(@promiseReactionJob, promiseOrCapability, handler, reactionsOrResult, @wrapInAsyncContextFrame(@getInternalField(@asyncContext, 0), context));
+        var asyncContext = @getInternalField(@asyncContext, 0);
+        console.log('2a')
+        @enqueueJob(@promiseReactionJob, promiseOrCapability, handler, reactionsOrResult, asyncContext ? @newInternalFieldTuple(context, asyncContext) : context);
     }
     @putPromiseInternalField(promise, @promiseFieldFlags, @getPromiseInternalField(promise, @promiseFieldFlags) | @promiseFlagsIsHandled);
 }

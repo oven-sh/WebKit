@@ -15704,25 +15704,6 @@ void SpeculativeJIT::compileNewInternalFieldObject(Node* node)
     }
 }
 
-void SpeculativeJIT::compileWrapInAsyncContextFrame(Node* node)
-{
-    JSValueOperand asyncContext(this, node->child1());
-    JSValueOperand context(this, node->child2());
-    JSValueRegs asyncContextRegs = asyncContext.jsValueRegs();
-    JSValueRegs contextRegs = context.jsValueRegs();
-
-    asyncContext.use();
-    context.use();
-
-    flushRegisters();
-    JSValueRegsFlushedCallResult result(this);
-    JSValueRegs resultRegs = result.regs();
-
-    callOperation(operationWrapInAsyncContextFrame, resultRegs, LinkableConstant::globalObject(*this, node), asyncContextRegs, contextRegs);
-    exceptionCheck();
-    jsValueResult(resultRegs, node, DataFormatJS, UseChildrenCalledExplicitly);
-}
-
 void SpeculativeJIT::compileToPrimitive(Node* node)
 {
     DFG_ASSERT(m_graph, node, node->child1().useKind() == UntypedUse, node->child1().useKind());

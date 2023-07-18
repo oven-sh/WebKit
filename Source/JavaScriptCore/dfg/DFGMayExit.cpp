@@ -134,7 +134,6 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
     case NewBoundFunction:
     case NewStringObject:
     case NewInternalFieldObject:
-    case WrapInAsyncContextFrame:
     case NewRegexp:
     case ToNumber:
     case ToNumeric:

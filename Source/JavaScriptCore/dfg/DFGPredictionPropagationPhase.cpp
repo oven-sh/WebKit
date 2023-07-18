@@ -1191,7 +1191,6 @@ private:
         case NewGenerator:
         case CreateAsyncGenerator:
         case NewAsyncGenerator:
-        case WrapInAsyncContextFrame:
             setPrediction(SpecObjectOther);
             break;
 

@@ -1215,11 +1215,11 @@ op :new_promise,
         isInternalPromise: bool,
     }
 
-op :wrap_in_async_context_frame,
+op :new_internal_field_tuple,
     args: {
         dst: VirtualRegister,
-        asyncContext: VirtualRegister,
-        context: VirtualRegister,
+        first: VirtualRegister,
+        second: VirtualRegister,
     }
 
 op :new_generator,

@@ -75,7 +75,6 @@ inline CapabilityLevel canCompile(Node* node)
     case GetButterfly:
     case NewObject:
     case NewGenerator:
-    case WrapInAsyncContextFrame:
     case NewAsyncGenerator:
     case NewStringObject:
     case NewSymbol:

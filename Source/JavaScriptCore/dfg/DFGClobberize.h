@@ -1893,10 +1893,6 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         write(HeapObjectCount);
         return;
 
-    case WrapInAsyncContextFrame:
-        clobberTop();
-        return;
-
     case NewFunction:
     case NewGeneratorFunction:
     case NewAsyncGeneratorFunction:
