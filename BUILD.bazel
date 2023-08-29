@@ -1,0 +1,159 @@
+load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
+
+filegroup(
+    name = "srcs",
+    srcs = glob(["**"]),
+    visibility = ["//visibility:private"],
+)
+
+cmake(
+    name = "bun-webkit",
+    cache_entries = {
+        "PORT": "JSCOnly",
+    },
+    generate_args = [
+        "-GNinja",
+    ] + select({
+        ":macOS": [
+            "-DCMAKE_OSX_ARCHITECTURES=x86_64;arm64",
+            "-DCMAKE_OSX_DEPLOYMENT_TARGET=10.15",
+        ],
+        ":Windows": [
+            "-DCMAKE_SYSTEM_NAME=Windows",
+            "-DCMAKE_SYSTEM_VERSION=10.0",
+            "-DCMAKE_C_COMPILER=cl.exe",
+            "-DCMAKE_CXX_COMPILER=cl.exe",
+            "-DCMAKE_RC_COMPILER=rc.exe",
+            "-DCMAKE_LINKER=link.exe",
+            "-DCMAKE_RC_FLAGS=/nologo",
+            "-DCMAKE_CXX_FLAGS=/EHsc",
+            "-DCMAKE_CXX_FLAGS_DEBUG=/MTd",
+            "-DCMAKE_CXX_FLAGS_RELEASE=/MT",
+            "-DCMAKE_C_FLAGS=/EHsc",
+            "-DCMAKE_C_FLAGS_DEBUG=/MTd",
+            "-DCMAKE_C_FLAGS_RELEASE=/MT",
+            "-DCMAKE_EXE_LINKER_FLAGS=/SUBSYSTEM:WINDOWS",
+            "-DCMAKE_SHARED_LINKER_FLAGS=/SUBSYSTEM:WINDOWS",
+            "-DCMAKE_STATIC_LINKER_FLAGS=/SUBSYSTEM:WINDOWS",
+        ],
+        ":Linux": [
+            "-DCMAKE_SYSTEM_NAME=Linux",
+            "-DCMAKE_SYSTEM_VERSION=1",
+            "-DCMAKE_C_COMPILER=clang",
+            "-DCMAKE_CXX_COMPILER=clang++",
+            "-DCMAKE_LINKER=ld",
+            "-DCMAKE_CXX_FLAGS=-std=c++17",
+            "-DCMAKE_CXX_FLAGS_DEBUG=-g",
+            "-DCMAKE_CXX_FLAGS_RELEASE=-O3",
+            "-DCMAKE_C_FLAGS=-std=c11",
+            "-DCMAKE_C_FLAGS_DEBUG=-g",
+            "-DCMAKE_C_FLAGS_RELEASE=-O3",
+        ],
+    }),
+    lib_source = ":srcs",
+    out_static_libs = ["libbun-webkit"],
+)
+
+config_setting(
+    name = "os",
+    constraint_values = [
+        ":macOS",
+        ":Windows",
+        ":Linux",
+    ],
+)
+
+config_setting(
+    name = "arch",
+    constraint_values = [
+        ":x86",
+        ":x64",
+        ":arm64",
+    ],
+)
+
+# constraint_setting acts as an enum type, and constraint_value as an enum value.
+constraint_setting(name = "platform")
+
+constraint_value(
+    name = "macOS",
+    constraint_setting = "platform",
+)
+
+constraint_value(
+    name = "Windows",
+    constraint_setting = "platform",
+)
+
+constraint_value(
+    name = "Linux",
+    constraint_setting = "platform",
+)
+
+constraint_setting(name = "architecture")
+
+constraint_value(
+    name = "x86",
+    constraint_setting = "architecture",
+)
+
+constraint_value(
+    name = "x64",
+    constraint_setting = "architecture",
+)
+
+constraint_value(
+    name = "arm64",
+    constraint_setting = "architecture",
+)
+
+# Windows
+platform(
+    name = "win32",
+    constraint_values = [
+        ":Windows",
+        ":x86",
+    ],
+)
+
+platform(
+    name = "win64",
+    constraint_values = [
+        ":Windows",
+        ":x64",
+    ],
+)
+
+# macOS
+platform(
+    name = "mac_intel",
+    constraint_values = [
+        ":macOS",
+        ":x64",
+    ],
+)
+
+platform(
+    name = "mac_apple_silicon",
+    constraint_values = [
+        ":macOS",
+        ":arm64",
+    ],
+)
+
+# Linux
+platform(
+    name = "linux_x86",
+    constraint_values = [
+        ":Linux",
+        ":x86",
+    ],
+)
+
+platform(
+    name = "linux_x64",
+    constraint_values = [
+        ":Linux",
+        ":x64",
+    ],
+)
