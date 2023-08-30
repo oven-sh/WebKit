@@ -1,0 +1,14 @@
+"""
+To use this module:
+
+in MODULE.bazel
+```
+bazel_dep(name = "bun-webkit", version = "0.0.1")
+local_path_override(name = "bun-webkit", path = "PATH_TO_THIS_MODULE")
+```
+
+optionally add this to `https://github.com/bazelbuild/bazel-central-registry`
+
+"""
+
+module(name = "bun-webkit", version = "1.0")

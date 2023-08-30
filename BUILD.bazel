@@ -1,4 +1,16 @@
+"""
+Build script for bun-webkit
+
+
+## Build
+```
+bazel build //:bun-webkit --platforms=//:linux_x64 -c opt
+```
+
+"""
+
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
+load("@bazel_skylib//lib:selects.bzl", "selects")
 
 filegroup(
     name = "srcs",
@@ -9,49 +21,84 @@ filegroup(
 cmake(
     name = "bun-webkit",
     cache_entries = {
-        "PORT": "JSCOnly",
-    },
+                        "PORT": "JSCOnly",  # Port
+                    } |
+                    # Platform
+                    select(
+                        {
+                            ":macOS": {
+                                "ENABLE_STATIC_JSC": "ON",
+                                "ENABLE_SINGLE_THREADED_VM_ENTRY_SCOPE": "ON",
+                                "ENABLE_BUN_SKIP_FAILING_ASSERTIONS": "ON",
+                                "USE_THIN_ARCHIVES": "OFF",
+                                "ENABLE_FTL_JIT": "ON",
+                                "USE_BUN_JSC_ADDITIONS": "ON",
+                                "CMAKE_EXE_LINKER_FLAGS": "-fuse-ld=lld",
+                                "CMAKE_AR": "$(which llvm-ar)",
+                                "CMAKE_RANLIB": "$(which llvm-ranlib)",
+                                "ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS": "ON",
+                                "CMAKE_OSX_DEPLOYMENT_TARGET": "11.0",
+                                "PTHREAD_JIT_PERMISSIONS_API": "1",
+                                "USE_PTHREAD_JIT_PERMISSIONS": "ON",
+                                "ENABLE_REMOTE_INSPECTOR": "ON",
+                                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                            },
+                            ":Linux": {
+                                "ENABLE_STATIC_JSC": "ON",
+                                "ENABLE_BUN_SKIP_FAILING_ASSERTIONS": "ON",
+                                "USE_THIN_ARCHIVES": "OFF",
+                                "USE_BUN_JSC_ADDITIONS": "ON",
+                                "ENABLE_FTL_JIT": "ON",
+                                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                                "ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS": "ON",
+                                "ENABLE_SINGLE_THREADED_VM_ENTRY_SCOPE": "ON",
+                            },
+                            ":Windows": {},
+                        },
+                        no_match_error = "Please provide platform",
+                    ) |
+                    # Architecture
+                    select(
+                        {
+                            ":mac_and_x64": {
+                                "CMAKE_OSX_ARCHITECTURES": "x86_64",
+                            },
+                            ":mac_and_arm64": {
+                                "CMAKE_OSX_ARCHITECTURES": "arm64",
+                            },
+                            ":linux_and_x86": {
+                                "CMAKE_CXX_FLAGS": "-m32",
+                                "CMAKE_C_FLAGS": "-m32",
+                                "CMAKE_EXE_LINKER_FLAGS": "-m32",
+                                "CMAKE_SHARED_LINKER_FLAGS": "-m32",
+                            },
+                            ":linux_and_x64": {
+                                "CMAKE_CXX_FLAGS": "-m64",
+                                "CMAKE_C_FLAGS": "-m64",
+                                "CMAKE_EXE_LINKER_FLAGS": "-m64",
+                                "CMAKE_SHARED_LINKER_FLAGS": "-m64",
+                            },
+                            ":windows_and_x86": {
+                                "CMAKE_CXX_FLAGS": "-m32",
+                                "CMAKE_C_FLAGS": "-m32",
+                                "CMAKE_EXE_LINKER_FLAGS": "-m32",
+                                "CMAKE_SHARED_LINKER_FLAGS": "-m32",
+                            },
+                            ":windows_and_x64": {
+                                "CMAKE_CXX_FLAGS": "-m64",
+                                "CMAKE_C_FLAGS": "-m64",
+                                "CMAKE_EXE_LINKER_FLAGS": "-m64",
+                                "CMAKE_SHARED_LINKER_FLAGS": "-m64",
+                            },
+                        },
+                        no_match_error = "Please provide platform",
+                    ),
     generate_args = [
         "-GNinja",
-    ] + select({
-        ":macOS": [
-            "-DCMAKE_OSX_ARCHITECTURES=x86_64;arm64",
-            "-DCMAKE_OSX_DEPLOYMENT_TARGET=10.15",
-        ],
-        ":Windows": [
-            "-DCMAKE_SYSTEM_NAME=Windows",
-            "-DCMAKE_SYSTEM_VERSION=10.0",
-            "-DCMAKE_C_COMPILER=cl.exe",
-            "-DCMAKE_CXX_COMPILER=cl.exe",
-            "-DCMAKE_RC_COMPILER=rc.exe",
-            "-DCMAKE_LINKER=link.exe",
-            "-DCMAKE_RC_FLAGS=/nologo",
-            "-DCMAKE_CXX_FLAGS=/EHsc",
-            "-DCMAKE_CXX_FLAGS_DEBUG=/MTd",
-            "-DCMAKE_CXX_FLAGS_RELEASE=/MT",
-            "-DCMAKE_C_FLAGS=/EHsc",
-            "-DCMAKE_C_FLAGS_DEBUG=/MTd",
-            "-DCMAKE_C_FLAGS_RELEASE=/MT",
-            "-DCMAKE_EXE_LINKER_FLAGS=/SUBSYSTEM:WINDOWS",
-            "-DCMAKE_SHARED_LINKER_FLAGS=/SUBSYSTEM:WINDOWS",
-            "-DCMAKE_STATIC_LINKER_FLAGS=/SUBSYSTEM:WINDOWS",
-        ],
-        ":Linux": [
-            "-DCMAKE_SYSTEM_NAME=Linux",
-            "-DCMAKE_SYSTEM_VERSION=1",
-            "-DCMAKE_C_COMPILER=clang",
-            "-DCMAKE_CXX_COMPILER=clang++",
-            "-DCMAKE_LINKER=ld",
-            "-DCMAKE_CXX_FLAGS=-std=c++17",
-            "-DCMAKE_CXX_FLAGS_DEBUG=-g",
-            "-DCMAKE_CXX_FLAGS_RELEASE=-O3",
-            "-DCMAKE_C_FLAGS=-std=c11",
-            "-DCMAKE_C_FLAGS_DEBUG=-g",
-            "-DCMAKE_C_FLAGS_RELEASE=-O3",
-        ],
-    }),
+    ],
     lib_source = ":srcs",
-    out_static_libs = ["libbun-webkit"],
+    tags = ["no-sandbox"],  # ccache need write access to cache dir
+    # out_static_libs = ["libbun-webkit"],
 )
 
 config_setting(
@@ -106,6 +153,53 @@ constraint_value(
     name = "arm64",
     constraint_setting = "architecture",
 )
+
+# for condition AND of select
+selects.config_setting_group(
+    name = "windows_and_x86",
+    match_all = [
+        "//:Windows",
+        "//:x86",
+    ],
+)
+selects.config_setting_group(
+    name = "windows_and_x64",
+    match_all = [
+        "//:Windows",
+        "//:x64",
+    ],
+)
+
+selects.config_setting_group(
+    name = "mac_and_x64",
+    match_all = [
+        "//:macOS",
+        "//:x64",
+    ],
+)
+selects.config_setting_group(
+    name = "mac_and_arm64",
+    match_all = [
+        "//:macOS",
+        "//:arm64",
+    ],
+)
+
+selects.config_setting_group(
+    name = "linux_and_x86",
+    match_all = [
+        "//:Linux",
+        "//:x86",
+    ],
+)
+selects.config_setting_group(
+    name = "linux_and_x64",
+    match_all = [
+        "//:Linux",
+        "//:x64",
+    ],
+)
+
 
 # Windows
 platform(
