@@ -19,6 +19,8 @@ filegroup(
     visibility = ["//visibility:private"],
 )
 
+print("??????????????????? %s, %s" % (CLANG_EXE, CLANGPP_EXE))
+
 cmake(
     name = "bun-webkit",
     cache_entries = {
@@ -91,6 +93,17 @@ cmake(
     ],
     lib_source = ":srcs",
     tags = ["no-sandbox"],  # ccache need write access to cache dir
+    env = select({
+        "@platforms//os:osx": {
+            "CC": CLANG_EXE,
+            "CXX": CLANGPP_EXE,
+        },
+        "@platforms//os:linux": {
+            "CC": CLANG_EXE,
+            "CXX": CLANGPP_EXE,
+        },
+        "@platforms//os:windows": {},
+    }),
     # out_static_libs = ["libbun-webkit"],
 )
 
