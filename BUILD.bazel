@@ -8,8 +8,10 @@ bazel build //:bun-webkit --platforms=//:linux_x64 -c opt
 ```
 
 """
+
 load("@bazel_skylib//lib:selects.bzl", "selects")
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
+load("//:bazel/install_clang.bzl", "CLANGPP_EXE", "CLANG_EXE")
 
 filegroup(
     name = "srcs",
@@ -41,6 +43,8 @@ cmake(
                                 "USE_PTHREAD_JIT_PERMISSIONS": "ON",
                                 "ENABLE_REMOTE_INSPECTOR": "ON",
                                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                                "CMAKE_C_COMPILER": CLANG_EXE,
+                                "CMAKE_CXX_COMPILER": CLANGPP_EXE,
                             },
                             "@platforms//os:linux": {
                                 "ENABLE_STATIC_JSC": "ON",
@@ -51,6 +55,8 @@ cmake(
                                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                                 "ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS": "ON",
                                 "ENABLE_SINGLE_THREADED_VM_ENTRY_SCOPE": "ON",
+                                "CMAKE_C_COMPILER": CLANG_EXE,
+                                "CMAKE_CXX_COMPILER": CLANGPP_EXE,
                             },
                             "@platforms//os:windows": {},
                         },
