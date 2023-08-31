@@ -65,23 +65,11 @@ cmake(
                             ":mac_and_arm64": {
                                 "CMAKE_OSX_ARCHITECTURES": "arm64",
                             },
-                            ":linux_and_x86": {
-                                "CMAKE_CXX_FLAGS": "-m32",
-                                "CMAKE_C_FLAGS": "-m32",
-                                "CMAKE_EXE_LINKER_FLAGS": "-m32",
-                                "CMAKE_SHARED_LINKER_FLAGS": "-m32",
-                            },
                             ":linux_and_x64": {
                                 "CMAKE_CXX_FLAGS": "-m64",
                                 "CMAKE_C_FLAGS": "-m64",
                                 "CMAKE_EXE_LINKER_FLAGS": "-m64",
                                 "CMAKE_SHARED_LINKER_FLAGS": "-m64",
-                            },
-                            ":windows_and_x86": {
-                                "CMAKE_CXX_FLAGS": "-m32",
-                                "CMAKE_C_FLAGS": "-m32",
-                                "CMAKE_EXE_LINKER_FLAGS": "-m32",
-                                "CMAKE_SHARED_LINKER_FLAGS": "-m32",
                             },
                             ":windows_and_x64": {
                                 "CMAKE_CXX_FLAGS": "-m64",
@@ -112,21 +100,12 @@ config_setting(
 config_setting(
     name = "arch",
     constraint_values = [
-        "@platforms//cpu:x86_32",
         "@platforms//cpu:x86_64",
         "@platforms//cpu:aarch64",
     ],
 )
 
 # for condition AND of select
-selects.config_setting_group(
-    name = "windows_and_x86",
-    match_all = [
-        "@platforms//os:windows",
-        "@platforms//cpu:x86_32",
-    ],
-)
-
 selects.config_setting_group(
     name = "windows_and_x64",
     match_all = [
@@ -152,14 +131,6 @@ selects.config_setting_group(
 )
 
 selects.config_setting_group(
-    name = "linux_and_x86",
-    match_all = [
-        "@platforms//os:linux",
-        "@platforms//cpu:x86_32",
-    ],
-)
-
-selects.config_setting_group(
     name = "linux_and_x64",
     match_all = [
         "@platforms//os:linux",
@@ -168,14 +139,6 @@ selects.config_setting_group(
 )
 
 # Windows
-platform(
-    name = "win32",
-    constraint_values = [
-        "@platforms//os:windows",
-        "@platforms//cpu:x86_32",
-    ],
-)
-
 platform(
     name = "win64",
     constraint_values = [
@@ -202,14 +165,6 @@ platform(
 )
 
 # Linux
-platform(
-    name = "linux_x86",
-    constraint_values = [
-        "@platforms//os:linux",
-        "@platforms//cpu:x86_32",
-    ],
-)
-
 platform(
     name = "linux_x64",
     constraint_values = [
