@@ -30,27 +30,30 @@ bazel_skylib_workspace()
 
 
 # llvm start
-BAZEL_TOOLCHAIN_TAG = "0.8.2"
-BAZEL_TOOLCHAIN_SHA = "0fc3a2b0c9c929920f4bed8f2b446a8274cad41f5ee823fd3faa0d7641f20db0"
+# BAZEL_TOOLCHAIN_TAG = "0.8.2"
+# BAZEL_TOOLCHAIN_SHA = "0fc3a2b0c9c929920f4bed8f2b446a8274cad41f5ee823fd3faa0d7641f20db0"
 
-http_archive(
-    name = "com_grail_bazel_toolchain",
-    sha256 = BAZEL_TOOLCHAIN_SHA,
-    strip_prefix = "bazel-toolchain-{tag}".format(tag = BAZEL_TOOLCHAIN_TAG),
-    canonical_id = BAZEL_TOOLCHAIN_TAG,
-    url = "https://github.com/grailbio/bazel-toolchain/archive/refs/tags/{tag}.tar.gz".format(tag = BAZEL_TOOLCHAIN_TAG),
-)
+# http_archive(
+#     name = "com_grail_bazel_toolchain",
+#     sha256 = BAZEL_TOOLCHAIN_SHA,
+#     strip_prefix = "bazel-toolchain-{tag}".format(tag = BAZEL_TOOLCHAIN_TAG),
+#     canonical_id = BAZEL_TOOLCHAIN_TAG,
+#     url = "https://github.com/grailbio/bazel-toolchain/archive/refs/tags/{tag}.tar.gz".format(tag = BAZEL_TOOLCHAIN_TAG),
+# )
 
-load("@com_grail_bazel_toolchain//toolchain:deps.bzl", "bazel_toolchain_dependencies")
-bazel_toolchain_dependencies()
+# load("@com_grail_bazel_toolchain//toolchain:deps.bzl", "bazel_toolchain_dependencies")
+# bazel_toolchain_dependencies()
 
-load("@com_grail_bazel_toolchain//toolchain:rules.bzl", "llvm_toolchain")
-llvm_toolchain(
-    name = "llvm_toolchain",
-    llvm_version = "16.0.0",
-)
+# load("@com_grail_bazel_toolchain//toolchain:rules.bzl", "llvm_toolchain")
+# llvm_toolchain(
+#     name = "llvm_toolchain",
+#     llvm_version = "16.0.0",
+# )
 
-load("@llvm_toolchain//:toolchains.bzl", "llvm_register_toolchains")
-llvm_register_toolchains()
+# load("@llvm_toolchain//:toolchains.bzl", "llvm_register_toolchains")
+# llvm_register_toolchains()
 
 ### llvm end
+
+load("//:bazel/install_clang.bzl", "install_clang")
+install_clang()
