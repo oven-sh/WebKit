@@ -47,3 +47,9 @@ endif ()
 # Print the features list last, for maximum visibility.
 # -----------------------------------------------------------------------------
 PRINT_WEBKIT_OPTIONS()
+
+# HACK: rules_foreign_cc cmake requires that target to be installed
+# in order to tell build process is succeded or not.
+install(
+    TARGETS JavaScriptCore DESTINATION lib
+)

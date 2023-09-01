@@ -9,7 +9,7 @@ load(
     "flag_set",
     "tool_path",
 )
-load("//bazel:install_clang.bzl", "CLANGPP_EXE", "LLVM_LINKER_EXE", "LLVM_AR_EXE")
+load("//bazel:install_clang.bzl", "CLANG_EXE", "CLANGPP_EXE", "LLVM_LINKER_EXE", "LLVM_AR_EXE")
 
 all_link_actions = [
     # NEW
@@ -23,7 +23,7 @@ def _cc_toolchain_config_impl(ctx):
         tool_path(
             name = "gcc",
             # path = "/usr/bin/clang",
-            path = "/usr/bin/%s" % CLANGPP_EXE,
+            path = "/usr/bin/%s" % CLANG_EXE,
         ),
         tool_path(
             name = "ld",
