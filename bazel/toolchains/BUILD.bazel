@@ -1,0 +1,34 @@
+load(":clang_linux.bzl", "cc_clang_linux_toolchain_config")
+
+cc_clang_linux_toolchain_config(name = "clang_linux_toolchain_config")
+filegroup(name = "empty")
+cc_toolchain(
+    name = "_clang_linux_toolchain",
+    all_files = ":empty",
+    ar_files = ":empty",
+    as_files = ":empty",
+    compiler_files = ":empty",
+    dwp_files = ":empty",
+    linker_files = ":empty",
+    objcopy_files = ":empty",
+    strip_files = ":empty",
+    tags = ["no-sandbox"],
+    toolchain_config = ":clang_linux_toolchain_config",
+    toolchain_identifier = "clang",
+    visibility = ["//visibility:public"],
+)
+
+toolchain(
+    name = "clang_linux_toolchain",
+    target_compatible_with = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+    ],
+    exec_compatible_with = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+    ],
+    toolchain = ":_clang_linux_toolchain",
+    toolchain_type = "@bazel_tools//tools/cpp:toolchain_type",
+    visibility = ["//visibility:public"],
+)

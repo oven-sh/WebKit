@@ -30,8 +30,13 @@ bazel_skylib_workspace()
 
 
 # install clang for macOS or Ubuntu
-load("//:bazel/install_clang.bzl", "install_clang")
+load("//bazel:install_clang.bzl", "install_clang")
 install_clang()
+
+# register clang toolchains
+register_toolchains(
+    "//bazel/toolchains:clang_linux_toolchain",
+)
 
 # llvm start
 # BAZEL_TOOLCHAIN_TAG = "0.8.2"

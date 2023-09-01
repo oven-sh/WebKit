@@ -20,12 +20,14 @@ def _install_clang_on_ubuntu(ctx):
     CLANGPP_EXE = ctx.attr.clangpp_exe
     LLVM_AR_EXE = ctx.attr.llvm_ar_exe
     LLVM_RANLIB_EXE = ctx.attr.llvm_ranlib_exe
+    LLVM_LINKER_EXE = ctx.attr.llvm_linker_exe
 
     if ctx.os.name != "linux" or \
        (ctx.which(CLANG_EXE) == None) or \
        (ctx.which(CLANGPP_EXE) == None) or \
        (ctx.which(LLVM_AR_EXE) == None) or \
-       (ctx.which(LLVM_RANLIB_EXE) == None):
+       (ctx.which(LLVM_RANLIB_EXE) == None) or \
+       (ctx.which(LLVM_LINKER_EXE) == None):
         return
     what = _download_and_run_llvm_script(ctx)
     if what.return_code == 0:
@@ -42,11 +44,12 @@ def _install_clang_on_ubuntu(ctx):
 install_clang_on_ubuntu = repository_rule(
     implementation = _install_clang_on_ubuntu,
     attrs = {
-        "llvm_version": attr.string(mandatory=True),
-        "clang_exe": attr.string(mandatory=True),
-        "clangpp_exe": attr.string(mandatory=True),
-        "llvm_ar_exe": attr.string(mandatory=True),
-        "llvm_ranlib_exe": attr.string(mandatory=True),
+        "llvm_version": attr.string(mandatory = True),
+        "clang_exe": attr.string(mandatory = True),
+        "clangpp_exe": attr.string(mandatory = True),
+        "llvm_ar_exe": attr.string(mandatory = True),
+        "llvm_ranlib_exe": attr.string(mandatory = True),
+        "llvm_linker_exe": attr.string(mandatory = True),
     },
     doc = "Install LLVM using official script",
 )

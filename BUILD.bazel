@@ -11,7 +11,7 @@ bazel build //:bun-webkit --platforms=//:linux_x64 -c opt
 
 load("@bazel_skylib//lib:selects.bzl", "selects")
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
-load("//:bazel/install_clang.bzl", "CLANGPP_EXE", "CLANG_EXE")
+load("//bazel:install_clang.bzl", "CLANGPP_EXE", "CLANG_EXE")
 
 filegroup(
     name = "srcs",
