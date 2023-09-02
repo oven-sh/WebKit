@@ -89,6 +89,8 @@ cmake(
     out_static_libs = select(
         {
             "@platforms//os:linux": ["libJavaScriptCore.a"],
+            "@platforms//os:osx": ["libJavaScriptCore.a"],
+            "@platforms//os:windows": ["JavaScriptCore.lib"],
         },
         no_match_error = "Please provide platform",
     ),

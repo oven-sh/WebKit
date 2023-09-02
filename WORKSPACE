@@ -36,6 +36,7 @@ install_clang()
 # register clang toolchains
 register_toolchains(
     "//bazel/toolchains:clang_linux_toolchain",
+    "//bazel/toolchains:clang_darwin_toolchain",
 )
 
 # llvm start
