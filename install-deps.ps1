@@ -2,6 +2,7 @@
 
 if ($null -eq (Get-Command "choco" -ErrorAction SilentlyContinue)) 
 { 
+    # FROM https://chocolatey.org/install
     Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
 }
 
@@ -27,6 +28,7 @@ if ($null -eq (Get-Command "ruby" -ErrorAction SilentlyContinue))
 
 if ($null -eq (Get-Command "cmake" -ErrorAction SilentlyContinue)) 
 { 
+    # SEE https://community.chocolatey.org/packages/cmake
     choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
 }
 
