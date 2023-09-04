@@ -8,19 +8,6 @@
 
 cmake_minimum_required(VERSION 3.16)
 
-# https://github.com/microsoft/vcpkg#vcpkg-as-a-submodule-with-cmake
-# > When using vcpkg as a submodule of your project, 
-# > you can add the following to your CMakeLists.txt before the first project() call,
-# > instead of passing CMAKE_TOOLCHAIN_FILE to the cmake invocation.
-set(CMAKE_TOOLCHAIN_FILE "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg/scripts/buildsystems/vcpkg.cmake"
-  CACHE STRING "Vcpkg toolchain file")
-
-set(VCPKG_LIBRARY_LINKAGE static)
-if (WIN32)
-    set(VCPKG_CRT_LINKAGE static)
-    set(VCPKG_TARGET_ARCHITECTURE x64)
-endif()
-
 project(WebKit)
 
 # Remove this cmake_policy() after upgrading cmake_minimum_required() to 3.20.
