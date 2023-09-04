@@ -13,7 +13,10 @@
 # ICU::<C> : need to be kept for Apple ICU
 # LibXslt::LibXslt: since 3.18
 
-macro(find_package package)
+# PATCHING is a workaround for
+# https://github.com/microsoft/vcpkg/issues/33507#issuecomment-1703799637
+# should be OK after https://github.com/microsoft/vcpkg/pull/23195 merged
+macro(find_package_ package)
     set(_found_package OFF)
 
     # Apple builds have a unique location for ICU
