@@ -1,11 +1,34 @@
+$ErrorActionPreference = "Stop"
+
 # Set default OUT_DIR to WebKitBuild
-if (!$env:WEBKIT_BUILD_DIR) {
-    $env:WEBKIT_BUILD_DIR = "WebKitBuild"
+if ($env:WEBKIT_BUILD_DIR) {
+    $WebKitBuild = $env:WEBKIT_BUILD_DIR
+}
+else {
+    $WebKitBuild = "WebKitBuild"
 }
 
-# ICU_LIBRARY is expected to exist: C:\Users\windo\Build\libicu\lib64
-# ICU_INCLUDE_DIR is expected to exist: C:\Users\windo\Build\libicu\include
-# ICU_ROOT is expected to exist: C:\Users\windo\Build\libicu
+$ICUURL = "https://github.com/unicode-org/icu/releases/download/release-73-1/icu4c-73_1-Win64-MSVC2019.zip"
+
+if (!(Test-Path -Path $WebKitBuild)) {
+    mkdir $WebKitBuild
+}
+
+if (!(Test-Path -Path $WebKitBuild/libicu)) {
+    # Download and extract URL
+    $icuZipPath = Join-Path $WebKitBuild "icu.zip"
+    if (!(Test-Path -Path $icuZipPath)) {
+        Invoke-WebRequest -Uri $ICUURL -OutFile $icuZipPath
+    }
+    New-Item -ItemType Directory -Path $WebKitBuild\libicu
+    Expand-Archive -Path $icuZipPath -OutputPath $WebKitBuild\libicu
+    Remove-Item -Path $icuZipPath
+}
+
+$env:ICU_ROOT = Join-Path $WebKitBuild "libicu"
+$env:ICU_LIBRARY = Join-Path $env:ICU_ROOT "lib64"
+$env:ICU_INCLUDE_DIR = Join-Path $env:ICU_ROOT "include"
+
 cmake `
     -DPORT="JSCOnly" `
     -DENABLE_STATIC_JSC=ON `
@@ -18,39 +41,45 @@ cmake `
     -DENABLE_WEBASSEMBLY=OFF `
     -DUSE_BUN_JSC_ADDITIONS=ON `
     -S . `
-    -B ${env:WEBKIT_BUILD_DIR} `
+    -B $WebKitBuild `
     -DUSE_SYSTEM_MALLOC=ON `
-    -DSTATICALLY_LINKED_WITH_WTF=ON
+    -DSTATICALLY_LINKED_WITH_WTF=ON `
+    "-DICU_ROOT=${env:ICU_ROOT}" `
+    "-DICU_LIBRARY=${env:ICU_LIBRARY}" `
+    "-DICU_INCLUDE_DIR=${env:ICU_INCLUDE_DIR}"
 
-cmake --build WebKitBuild --config Release --target jsc
+cmake --build $WebKitBuild --config Release --target jsc
 
 $output = "bun-webkit-x64"
 if ($env:WEBKIT_OUTPUT_DIR) {
     $output = $env:WEBKIT_OUTPUT_DIR
 }
 
-rm -r -Force $output
-mkdir -Force $output
-mkdir -Force $output/lib
-mkdir -Force $output/include
-mkdir -Force $output/scripts
-mkdir -Force $output/include/JavaScriptCore
-mkdir -Force $output/include/wtf
+Remove-Item -r -Force $output
+$null = mkdir -Force $output
+$null = mkdir -Force $output/lib
+$null = mkdir -Force $output/include
+$null = mkdir -Force $output/include/JavaScriptCore
+$null = mkdir -Force $output/include/wtf
 
-cp WebKitBuild/cmakeconfig.h $output/include/cmakeconfig.h
-cp WebKitBuild/lib64/*.lib $output/lib/
-cp WebKitBuild/lib64/*.pdb $output/lib/
+Copy-Item $WebKitBuild/cmakeconfig.h $output/include/cmakeconfig.h
+Copy-Item $WebKitBuild/lib64/JavaScriptCore.lib $output/lib/
+Copy-Item $WebKitBuild/lib64/JavaScriptCore.pdb $output/lib/
+Copy-Item $WebKitBuild/lib64/WTF.pdb $output/lib/
+Copy-Item $WebKitBuild/lib64/WTF.lib $output/lib/
 
 $BUN_WEBKIT_VERSION = $(git rev-parse HEAD)
 
 # Append #define BUN_WEBKIT_VERSION "${BUN_WEBKIT_VERSION}" to $output/include/cmakeconfig.h
-Add-Content -Path $output/include/cmakeconfig.h -Value "`#define BUN_WEBKIT_VERSION `"`"$BUN_WEBKIT_VERSION`"`""
+Add-Content -Path $output/include/cmakeconfig.h -Value "`#define BUN_WEBKIT_VERSION `"$BUN_WEBKIT_VERSION`""
 
-cp -r -Force WebKitBuild/JavaScriptCore/DerivedSources/* $output/include/JavaScriptCore
-cp -r -Force WebKitBuild/JavaScriptCore/Headers/JavaScriptCore/* $output/include/JavaScriptCore/
-cp -r -Force WebKitBuild/JavaScriptCore/PrivateHeaders/JavaScriptCore/* $output/include/JavaScriptCore/
+Copy-Item -r -Force $WebKitBuild/JavaScriptCore/DerivedSources/* $output/include/JavaScriptCore
+Copy-Item -r -Force $WebKitBuild/JavaScriptCore/Headers/JavaScriptCore/* $output/include/JavaScriptCore/
+Copy-Item -r -Force $WebKitBuild/JavaScriptCore/PrivateHeaders/JavaScriptCore/* $output/include/JavaScriptCore/
 
-cp -r WebKitBuild/WTF/DerivedSources/* $output/include/wtf/
-cp -r WebKitBuild/WTF/Headers/wtf/* $output/include/wtf/
+Copy-Item -r $WebKitBuild/WTF/DerivedSources/* $output/include/wtf/
+Copy-Item -r $WebKitBuild/WTF/Headers/wtf/* $output/include/wtf/
 
-cp  WebKitBuild/JavaScriptCore/Scripts/*.py $output/scripts/
+(Get-Content -Path $output/include/JavaScriptCore/JSValueInternal.h) -replace "#import <JavaScriptCore/JSValuePrivate.h>", "#include <JavaScriptCore/JSValuePrivate.h>" | Set-Content -Path $output/include/JavaScriptCore/JSValueInternal.h
+
+Copy-Item $WebKitBuild/libicu/lib64/* $output/lib/
