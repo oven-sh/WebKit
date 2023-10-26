@@ -11,7 +11,7 @@ else {
 $ICUURL = "https://github.com/unicode-org/icu/releases/download/release-73-1/icu4c-73_1-Win64-MSVC2019.zip"
 
 if (!(Test-Path -Path $WebKitBuild)) {
-    mkdir $WebKitBuild
+    $null = mkdir $WebKitBuild
 }
 
 if (!(Test-Path -Path $WebKitBuild/libicu)) {
@@ -20,8 +20,8 @@ if (!(Test-Path -Path $WebKitBuild/libicu)) {
     if (!(Test-Path -Path $icuZipPath)) {
         Invoke-WebRequest -Uri $ICUURL -OutFile $icuZipPath
     }
-    New-Item -ItemType Directory -Path $WebKitBuild\libicu
-    Expand-Archive -Path $icuZipPath -OutputPath $WebKitBuild\libicu
+    $null = New-Item -ItemType Directory -Path $WebKitBuild\libicu
+    $null = Expand-Archive $icuZipPath $WebKitBuild\libicu
     Remove-Item -Path $icuZipPath
 }
 
