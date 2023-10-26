@@ -83,3 +83,7 @@ Copy-Item -r $WebKitBuild/WTF/Headers/wtf/* $output/include/wtf/
 (Get-Content -Path $output/include/JavaScriptCore/JSValueInternal.h) -replace "#import <JavaScriptCore/JSValuePrivate.h>", "#include <JavaScriptCore/JSValuePrivate.h>" | Set-Content -Path $output/include/JavaScriptCore/JSValueInternal.h
 
 Copy-Item $WebKitBuild/libicu/lib64/* $output/lib/
+
+Remove-Item $output/lib/testplug.pdb
+
+tar -czf $output.tar.gz $output

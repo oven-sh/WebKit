@@ -10,9 +10,9 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: ilammy/msvc-dev-cmd@v1
+      # - uses: ilammy/msvc-dev-cmd@v1
       - run: ./windows-release.ps1
-      - uses: actions/upload-artifact@v2
+      - uses: actions/upload-artifact@v3
         with:
-          name: Windows
-          path: bun-webkit-x64
+          name: bun-webkit-x64
+          path: bun-webkit-x64.tar.gz
