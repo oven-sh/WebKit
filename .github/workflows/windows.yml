@@ -1,0 +1,18 @@
+name: Windows
+
+on:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Packages
+        run: choco install -y python ruby activeperl
+      - uses: ilammy/msvc-dev-cmd@v1
+      - run: ./windows-release.ps1
+      - uses: actions/upload-artifact@v2
+        with:
+          name: Windows
+          path: bun-webkit-x64
