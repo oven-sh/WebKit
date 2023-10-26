@@ -55,7 +55,7 @@ if ($env:WEBKIT_OUTPUT_DIR) {
     $output = $env:WEBKIT_OUTPUT_DIR
 }
 
-Remove-Item -r -Force $output
+Remove-Item -Recurse -ErrorAction SilentlyContinue $output
 $null = mkdir -Force $output
 $null = mkdir -Force $output/lib
 $null = mkdir -Force $output/include
