@@ -12,6 +12,9 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
       - uses: KyleMayes/install-llvm-action@v1
         with:
           version: 16.0.6
