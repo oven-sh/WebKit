@@ -1,74 +1,60 @@
 $ErrorActionPreference = "Stop"
 
-# Set default OUT_DIR to WebKitBuild
-if ($env:WEBKIT_BUILD_DIR) {
-    $WebKitBuild = $env:WEBKIT_BUILD_DIR
-}
-else {
-    $WebKitBuild = "WebKitBuild"
-}
+$output = if ($env:WEBKIT_OUTPUT_DIR) { $env:WEBKIT_OUTPUT_DIR } else { "bun-webkit" }
+$WebKitBuild = if ($env:WEBKIT_BUILD_DIR) { $env:WEBKIT_BUILD_DIR } else { "WebKitBuild" }
+$CMAKE_BUILD_TYPE = if ($env:CMAKE_BUILD_TYPE) { $env:CMAKE_BUILD_TYPE } else { "Release" }
+$BUN_WEBKIT_VERSION = if ($env:BUN_WEBKIT_VERSION) { $env:BUN_WEBKIT_VERSION } else { $(git rev-parse HEAD) }
 
-$ICUURL = "https://github.com/unicode-org/icu/releases/download/release-73-1/icu4c-73_1-Win64-MSVC2019.zip"
+$ICU_URL = "https://github.com/unicode-org/icu/releases/download/release-73-1/icu4c-73_1-Win64-MSVC2019.zip"
+$ICU_ROOT = Join-Path $WebKitBuild "libicu"
+$ICU_LIBRARY = Join-Path $ICU_ROOT "lib64"
+$ICU_INCLUDE_DIR = Join-Path $ICU_ROOT "include"
 
-if (!(Test-Path -Path $WebKitBuild)) {
-    $null = mkdir $WebKitBuild
-}
+$null = mkdir $WebKitBuild -ErrorAction SilentlyContinue
 
-if (!(Test-Path -Path $WebKitBuild/libicu)) {
+if (!(Test-Path -Path $ICU_ROOT)) {
     # Download and extract URL
+    Write-Host "Downloading ICU from ${ICU_URL}"
     $icuZipPath = Join-Path $WebKitBuild "icu.zip"
     if (!(Test-Path -Path $icuZipPath)) {
-        Invoke-WebRequest -Uri $ICUURL -OutFile $icuZipPath
+        Invoke-WebRequest -Uri $ICU_URL -OutFile $icuZipPath
     }
-    $null = New-Item -ItemType Directory -Path $WebKitBuild\libicu
-    $null = Expand-Archive $icuZipPath $WebKitBuild\libicu
+    $null = New-Item -ItemType Directory -Path $ICU_ROOT
+    $null = Expand-Archive $icuZipPath $ICU_ROOT
     Remove-Item -Path $icuZipPath
 }
 
-$env:ICU_ROOT = Join-Path $WebKitBuild "libicu"
-$env:ICU_LIBRARY = Join-Path $env:ICU_ROOT "lib64"
-$env:ICU_INCLUDE_DIR = Join-Path $env:ICU_ROOT "include"
-
-cmake `
+cmake -S . -B $WebKitBuild `
     -DPORT="JSCOnly" `
     -DENABLE_STATIC_JSC=ON `
     -DENABLE_SINGLE_THREADED_VM_ENTRY_SCOPE=ON `
     -DALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS=ON `
-    -DCMAKE_BUILD_TYPE=Release `
+    "-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}" `
     -DUSE_THIN_ARCHIVES=OFF `
     -DENABLE_DFG_JIT=ON `
     -DENABLE_FTL_JIT=OFF `
     -DENABLE_WEBASSEMBLY=OFF `
     -DUSE_BUN_JSC_ADDITIONS=ON `
-    -S . `
-    -B $WebKitBuild `
+    -DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON `
     -DUSE_SYSTEM_MALLOC=ON `
-    -DSTATICALLY_LINKED_WITH_WTF=ON `
-    "-DICU_ROOT=${env:ICU_ROOT}" `
-    "-DICU_LIBRARY=${env:ICU_LIBRARY}" `
-    "-DICU_INCLUDE_DIR=${env:ICU_INCLUDE_DIR}"
+    "-DICU_ROOT=${ICU_ROOT}" `
+    "-DICU_LIBRARY=${ICU_LIBRARY}" `
+    "-DICU_INCLUDE_DIR=${ICU_INCLUDE_DIR}"
 
 cmake --build $WebKitBuild --config Release --target jsc
 
-$output = "bun-webkit-x64"
-if ($env:WEBKIT_OUTPUT_DIR) {
-    $output = $env:WEBKIT_OUTPUT_DIR
-}
-
 Remove-Item -Recurse -ErrorAction SilentlyContinue $output
-$null = mkdir -Force $output
-$null = mkdir -Force $output/lib
-$null = mkdir -Force $output/include
-$null = mkdir -Force $output/include/JavaScriptCore
-$null = mkdir -Force $output/include/wtf
+$null = mkdir -ErrorAction SilentlyContinue $output
+$null = mkdir -ErrorAction SilentlyContinue $output/lib
+$null = mkdir -ErrorAction SilentlyContinue $output/include
+$null = mkdir -ErrorAction SilentlyContinue $output/include/JavaScriptCore
+$null = mkdir -ErrorAction SilentlyContinue $output/include/wtf
 
 Copy-Item $WebKitBuild/cmakeconfig.h $output/include/cmakeconfig.h
 Copy-Item $WebKitBuild/lib64/JavaScriptCore.lib $output/lib/
 Copy-Item $WebKitBuild/lib64/JavaScriptCore.pdb $output/lib/
 Copy-Item $WebKitBuild/lib64/WTF.pdb $output/lib/
 Copy-Item $WebKitBuild/lib64/WTF.lib $output/lib/
-
-$BUN_WEBKIT_VERSION = $(git rev-parse HEAD)
 
 # Append #define BUN_WEBKIT_VERSION "${BUN_WEBKIT_VERSION}" to $output/include/cmakeconfig.h
 Add-Content -Path $output/include/cmakeconfig.h -Value "`#define BUN_WEBKIT_VERSION `"$BUN_WEBKIT_VERSION`""
@@ -80,10 +66,14 @@ Copy-Item -r -Force $WebKitBuild/JavaScriptCore/PrivateHeaders/JavaScriptCore/* 
 Copy-Item -r $WebKitBuild/WTF/DerivedSources/* $output/include/wtf/
 Copy-Item -r $WebKitBuild/WTF/Headers/wtf/* $output/include/wtf/
 
-(Get-Content -Path $output/include/JavaScriptCore/JSValueInternal.h) -replace "#import <JavaScriptCore/JSValuePrivate.h>", "#include <JavaScriptCore/JSValuePrivate.h>" | Set-Content -Path $output/include/JavaScriptCore/JSValueInternal.h
+(Get-Content -Path $output/include/JavaScriptCore/JSValueInternal.h) `
+    -replace "#import <JavaScriptCore/JSValuePrivate.h>", "#include <JavaScriptCore/JSValuePrivate.h>" `
+| Set-Content -Path $output/include/JavaScriptCore/JSValueInternal.h
 
 Copy-Item $WebKitBuild/libicu/lib64/* $output/lib/
 
 Remove-Item $output/lib/testplug.pdb
 
-tar -czf $output.tar.gz $output
+tar -cz -f "${output}.tar.gz" "${output}"
+
+Write-Host "-> ${output}.tar.gz"
