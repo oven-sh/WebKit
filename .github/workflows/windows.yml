@@ -1,0 +1,25 @@
+on:
+  push:
+    branches: [windows-ci]
+jobs:
+  windows:
+    strategy:
+      matrix:
+        include:
+          - runner: windows-latest
+            build-type: Release
+            arch: amd64
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build WebKit
+        run: |
+          $env:WEBKIT_OUTPUT_DIR = "bun-webkit"
+          $env:BUN_WEBKIT_VERSION = "${{ github.sha }}"
+          $env:CMAKE_BUILD_TYPE = "${{matrix.build-type}}"
+          ./windows-release.ps1
+      - uses: actions/upload-artifact@v3
+        with:
+          name: bun-webkit-windows-${{ matrix.arch }}
+          path: bun-webkit.tar.gz

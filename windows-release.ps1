@@ -24,6 +24,11 @@ if (!(Test-Path -Path $ICU_ROOT)) {
     Remove-Item -Path $icuZipPath
 }
 
+$env:CC = "clang-cl"
+$env:CXX = "clang-cl"
+$env:CFLAGS = "/Zi /Z7"
+$env:CXXFLAGS = "/Zi /Z7"
+
 cmake -S . -B $WebKitBuild `
     -DPORT="JSCOnly" `
     -DENABLE_STATIC_JSC=ON `
@@ -39,7 +44,24 @@ cmake -S . -B $WebKitBuild `
     -DUSE_SYSTEM_MALLOC=ON `
     "-DICU_ROOT=${ICU_ROOT}" `
     "-DICU_LIBRARY=${ICU_LIBRARY}" `
-    "-DICU_INCLUDE_DIR=${ICU_INCLUDE_DIR}"
+    "-DICU_INCLUDE_DIR=${ICU_INCLUDE_DIR}" `
+    "-DCMAKE_C_COMPILER=clang-cl" `
+    "-DCMAKE_CXX_COMPILER=clang-cl" `
+    "-DCMAKE_C_FLAGS_RELEASE=`"/Zi /O2 /Ob2 /DNDEBUG`"" `
+    "-DCMAKE_CXX_FLAGS_RELEASE=`"/Zi /O2 /Ob2 /DNDEBUG`"" `
+    -DENABLE_REMOTE_INSPECTOR=ON `
+    -G Ninja
+
+# Workaround for what is probably a CMake bug
+$batFiles = Get-ChildItem -Path $WebKitBuild -Filter "*.bat" -File -Recurse
+foreach ($file in $batFiles) {
+    $content = Get-Content $file.FullName -Raw
+    $newContent = $content -replace "(\|\| \(set FAIL_LINE=\d+& goto :ABORT\))", ""
+    if ($content -ne $newContent) {
+        Set-Content -Path $file.FullName -Value $newContent
+        Write-Host "Patched: $($file.FullName)"
+    }
+}
 
 cmake --build $WebKitBuild --config Release --target jsc
 
@@ -52,11 +74,10 @@ $null = mkdir -ErrorAction SilentlyContinue $output/include/wtf
 
 Copy-Item $WebKitBuild/cmakeconfig.h $output/include/cmakeconfig.h
 Copy-Item $WebKitBuild/lib64/JavaScriptCore.lib $output/lib/
-Copy-Item $WebKitBuild/lib64/JavaScriptCore.pdb $output/lib/
-Copy-Item $WebKitBuild/lib64/WTF.pdb $output/lib/
+# Copy-Item $WebKitBuild/lib64/JavaScriptCore.pdb $output/lib/
 Copy-Item $WebKitBuild/lib64/WTF.lib $output/lib/
+# Copy-Item $WebKitBuild/lib64/WTF.pdb $output/lib/
 
-# Append #define BUN_WEBKIT_VERSION "${BUN_WEBKIT_VERSION}" to $output/include/cmakeconfig.h
 Add-Content -Path $output/include/cmakeconfig.h -Value "`#define BUN_WEBKIT_VERSION `"$BUN_WEBKIT_VERSION`""
 
 Copy-Item -r -Force $WebKitBuild/JavaScriptCore/DerivedSources/* $output/include/JavaScriptCore
@@ -70,6 +91,7 @@ Copy-Item -r $WebKitBuild/WTF/Headers/wtf/* $output/include/wtf/
     -replace "#import <JavaScriptCore/JSValuePrivate.h>", "#include <JavaScriptCore/JSValuePrivate.h>" `
 | Set-Content -Path $output/include/JavaScriptCore/JSValueInternal.h
 
+Copy-Item $WebKitBuild/libicu/include/* $output/include/
 Copy-Item $WebKitBuild/libicu/lib64/* $output/lib/
 
 Remove-Item $output/lib/testplug.pdb
