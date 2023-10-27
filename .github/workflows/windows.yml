@@ -15,7 +15,7 @@ jobs:
       - uses: KyleMayes/install-llvm-action@v1
         with:
           version: 16.0.6
-      - uses: ashutoshvarma/setup-ninja@master
+      - run: choco install -y ninja
       - uses: actions/checkout@v4
       - name: Build WebKit
         run: |
