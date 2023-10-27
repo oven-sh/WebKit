@@ -26,6 +26,9 @@ if (!(Test-Path -Path $ICU_ROOT)) {
 
 $env:CC = "clang-cl"
 $env:CXX = "clang-cl"
+# for some reason we don't get pdb files by default
+# if we used MSVC we would, so it's something with clang-cl??
+# these flags don't actually work, but docs say they should...
 $env:CFLAGS = "/Zi /Z7"
 $env:CXXFLAGS = "/Zi /Z7"
 
@@ -47,8 +50,6 @@ cmake -S . -B $WebKitBuild `
     "-DICU_INCLUDE_DIR=${ICU_INCLUDE_DIR}" `
     "-DCMAKE_C_COMPILER=clang-cl" `
     "-DCMAKE_CXX_COMPILER=clang-cl" `
-    "-DCMAKE_C_FLAGS_RELEASE=`"/Zi /O2 /Ob2 /DNDEBUG`"" `
-    "-DCMAKE_CXX_FLAGS_RELEASE=`"/Zi /O2 /Ob2 /DNDEBUG`"" `
     -DENABLE_REMOTE_INSPECTOR=ON `
     -G Ninja
 
@@ -73,6 +74,8 @@ $null = mkdir -ErrorAction SilentlyContinue $output/include/JavaScriptCore
 $null = mkdir -ErrorAction SilentlyContinue $output/include/wtf
 
 Copy-Item $WebKitBuild/cmakeconfig.h $output/include/cmakeconfig.h
+
+# the pdb is commented because of above
 Copy-Item $WebKitBuild/lib64/JavaScriptCore.lib $output/lib/
 # Copy-Item $WebKitBuild/lib64/JavaScriptCore.pdb $output/lib/
 Copy-Item $WebKitBuild/lib64/WTF.lib $output/lib/
