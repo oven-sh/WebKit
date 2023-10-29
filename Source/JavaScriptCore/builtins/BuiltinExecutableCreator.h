@@ -30,9 +30,12 @@
 #include "ImplementationVisibility.h"
 #include "ParserModes.h"
 #include "SourceCode.h"
+#include "BuiltinExecutableMetadata.h"
 
 namespace JSC {
 
 JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* createBuiltinExecutable(VM&, const SourceCode&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility);
+JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* createBuiltinExecutable(VM&, const SourceCode&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, const BuiltinExecutableMetadata&);
+
 
 } // namespace JSC
