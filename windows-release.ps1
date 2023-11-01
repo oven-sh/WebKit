@@ -20,9 +20,11 @@ if ($Env:VSCMD_ARG_TGT_ARCH -eq "x86") {
 }
 
 # Fix up $PATH
+Write-Host $Env:PATH
+
 $SplitPath = $env:PATH -split ";";
 $MSVCToolsPath = $SplitPath | Where-Object { $_ -like "*HostX64/x64" } | Select-Object -First 1
-$SplitPath = $MSVCToolsPath + ($SplitPath | Where-Object { $_ -notlike "*HostX64/x64" })
+$SplitPath = @($MSVCToolsPath) + ($SplitPath | Where-Object { $_ -notlike "*HostX64/x64" })
 $PathWithPerl = $SplitPath -join ";"
 $env:PATH = ($SplitPath | Where-Object { $_ -notlike "*strawberry*" }) -join ';'
 
@@ -89,7 +91,10 @@ if (!(Test-Path -Path $ICU_STATIC_ROOT)) {
             --disable-tests `
             --disable-debug `
             --enable-release
-        if ($LASTEXITCODE -ne 0) { throw "runConfigureICU failed with exit code $LASTEXITCODE" }
+        if ($LASTEXITCODE -ne 0) { 
+            Get-Content "$ICU_STATIC_ROOT/source/config.log"
+            throw "runConfigureICU failed with exit code $LASTEXITCODE"
+        }
     
         Write-Host ":: Building ICU"
         make "-j$((Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors)"
