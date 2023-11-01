@@ -35,8 +35,6 @@ clang-cl.exe --version
 
 $env:CC = "clang-cl"
 $env:CXX = "clang-cl"
-$env:CFLAGS = "/Zi /Z7"
-$env:CXXFLAGS = "/Zi /Z7"
 
 $output = if ($env:WEBKIT_OUTPUT_DIR) { $env:WEBKIT_OUTPUT_DIR } else { "bun-webkit" }
 $WebKitBuild = if ($env:WEBKIT_BUILD_DIR) { $env:WEBKIT_BUILD_DIR } else { "WebKitBuild" }
@@ -132,6 +130,9 @@ if (!(Test-Path -Path $ICU_SHARED_ROOT)) {
 Write-Host ":: Configuring WebKit"
 
 $env:PATH = $PathWithPerl
+
+$env:CFLAGS = "/Zi /Z7"
+$env:CXXFLAGS = "/Zi /Z7"
 
 cmake -S . -B $WebKitBuild `
     -DPORT="JSCOnly" `
