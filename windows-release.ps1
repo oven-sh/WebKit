@@ -19,10 +19,17 @@ if ($Env:VSCMD_ARG_TGT_ARCH -eq "x86") {
     throw "Visual Studio environment is targetting 32 bit. This configuration is definetly a mistake."
 }
 
-# Remove strawberry from the path while compiling ICU
-# They define `link.exe` and many other things which will cause the build to fail.
-$OriginalPath = $env:PATH
-$env:PATH = ($env:PATH -split ";" | Where-Object { $_ -notlike "*strawberry*" }) -join ';'
+# Fix up $PATH
+$SplitPath = $env:PATH -split ";";
+$MSVCToolsPath = $SplitPath | Where-Object { $_ -like "*HostX64/x64" } | Select-Object -First 1
+$SplitPath = $MSVCToolsPath + ($SplitPath | Where-Object { $_ -notlike "*HostX64/x64" })
+$PathWithPerl = $SplitPath -join ";"
+$env:PATH = ($SplitPath | Where-Object { $_ -notlike "*strawberry*" }) -join ';'
+
+$env:CC = "clang-cl"
+$env:CXX = "clang-cl"
+$env:CFLAGS = "/Zi /Z7"
+$env:CXXFLAGS = "/Zi /Z7"
 
 $output = if ($env:WEBKIT_OUTPUT_DIR) { $env:WEBKIT_OUTPUT_DIR } else { "bun-webkit" }
 $WebKitBuild = if ($env:WEBKIT_BUILD_DIR) { $env:WEBKIT_BUILD_DIR } else { "WebKitBuild" }
@@ -112,14 +119,9 @@ if (!(Test-Path -Path $ICU_SHARED_ROOT)) {
 
 }
 
-$env:CC = "clang-cl"
-$env:CXX = "clang-cl"
-$env:CFLAGS = "/Zi /Z7"
-$env:CXXFLAGS = "/Zi /Z7"
-
 Write-Host ":: Configuring WebKit"
 
-$env:PATH = $OriginalPath
+$env:PATH = $PathWithPerl
 
 cmake -S . -B $WebKitBuild `
     -DPORT="JSCOnly" `
