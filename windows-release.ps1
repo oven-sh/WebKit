@@ -2,21 +2,26 @@ $ErrorActionPreference = "Stop"
 
 # Set up MSVC environment variables. This is taken from Bun's 'scripts\env.ps1'
 if ($env:VSINSTALLDIR -eq $null) {
-  Write-Host "Loading Visual Studio environment, this may take a second..."
-  $vsDir = Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio\2022" -Directory
-  if ($vsDir -eq $null) {
-      throw "Visual Studio directory not found."
-  } 
-  Push-Location $vsDir
-  try {
-    . (Join-Path -Path $vsDir.FullName -ChildPath "Common7\Tools\Launch-VsDevShell.ps1") -Arch amd64 -HostArch amd64
-  } finally { Pop-Location }
+    Write-Host "Loading Visual Studio environment, this may take a second..."
+    $vsDir = Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio\2022" -Directory
+    if ($vsDir -eq $null) {
+        throw "Visual Studio directory not found."
+    } 
+    Push-Location $vsDir
+    try {
+        . (Join-Path -Path $vsDir.FullName -ChildPath "Common7\Tools\Launch-VsDevShell.ps1") -Arch amd64 -HostArch amd64
+    }
+    finally { Pop-Location }
 }
 
-if($Env:VSCMD_ARG_TGT_ARCH -eq "x86") {
-  # Please do not try to compile Bun for 32 bit. It will not work. I promise.
-  throw "Visual Studio environment is targetting 32 bit. This configuration is definetly a mistake."
+if ($Env:VSCMD_ARG_TGT_ARCH -eq "x86") {
+    # Please do not try to compile Bun for 32 bit. It will not work. I promise.
+    throw "Visual Studio environment is targetting 32 bit. This configuration is definetly a mistake."
 }
+
+# Remove strawberry from the path while compiling ICU
+# They define `link.exe` and many other things which will cause the build to fail.
+$env:PATH = $env:PATH -replace "C:\\Strawberry\\c\\bin;", ""
 
 $output = if ($env:WEBKIT_OUTPUT_DIR) { $env:WEBKIT_OUTPUT_DIR } else { "bun-webkit" }
 $WebKitBuild = if ($env:WEBKIT_BUILD_DIR) { $env:WEBKIT_BUILD_DIR } else { "WebKitBuild" }
