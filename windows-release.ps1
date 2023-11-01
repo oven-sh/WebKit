@@ -24,13 +24,14 @@ Write-Host $env:PATH
 
 $SplitPath = $env:PATH -split ";";
 $MSVCPaths = $SplitPath | Where-Object { $_ -like "Microsoft Visual Studio" }
-$SplitPath = $MSVCPaths + ($SplitPath | Where-Object { $_ -notlike "Microsoft Visual Studio" } | Where-Object { $_ -notlike "*mingw64\bin" })
+$SplitPath = $MSVCPaths + ($SplitPath | Where-Object { $_ -notlike "Microsoft Visual Studio" } | Where-Object { $_ -notlike "*mingw" })
 $PathWithPerl = $SplitPath -join ";"
 $env:PATH = ($SplitPath | Where-Object { $_ -notlike "*strawberry*" }) -join ';'
 
 Write-Host $env:PATH
 
-link.exe /version
+(Get-Command link).Path
+(Get-Command bash).Path
 clang-cl.exe --version
 
 $env:CC = "clang-cl"
