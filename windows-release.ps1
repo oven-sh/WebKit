@@ -24,7 +24,7 @@ Write-Host $env:PATH
 
 $SplitPath = $env:PATH -split ";";
 $MSVCPaths = $SplitPath | Where-Object { $_ -like "Microsoft Visual Studio" }
-$SplitPath = $MSVCPaths + ($SplitPath | Where-Object { $_ -notlike "Microsoft Visual Studio" })
+$SplitPath = $MSVCPaths + ($SplitPath | Where-Object { $_ -notlike "Microsoft Visual Studio" } | Where-Object { $_ -notlike "*mingw64\bin" })
 $PathWithPerl = $SplitPath -join ";"
 $env:PATH = ($SplitPath | Where-Object { $_ -notlike "*strawberry*" }) -join ';'
 
