@@ -21,7 +21,8 @@ if ($Env:VSCMD_ARG_TGT_ARCH -eq "x86") {
 
 # Remove strawberry from the path while compiling ICU
 # They define `link.exe` and many other things which will cause the build to fail.
-$env:PATH = $env:PATH -replace "C:\\Strawberry\\c\\bin;", ""
+$OriginalPath = $env:PATH
+$env:PATH = ($env:PATH -split ";" | Where-Object { $_ -notlike "*strawberry*" }) -join ';'
 
 $output = if ($env:WEBKIT_OUTPUT_DIR) { $env:WEBKIT_OUTPUT_DIR } else { "bun-webkit" }
 $WebKitBuild = if ($env:WEBKIT_BUILD_DIR) { $env:WEBKIT_BUILD_DIR } else { "WebKitBuild" }
@@ -117,6 +118,8 @@ $env:CFLAGS = "/Zi /Z7"
 $env:CXXFLAGS = "/Zi /Z7"
 
 Write-Host ":: Configuring WebKit"
+
+$env:PATH = $OriginalPath
 
 cmake -S . -B $WebKitBuild `
     -DPORT="JSCOnly" `
