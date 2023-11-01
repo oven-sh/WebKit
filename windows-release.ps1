@@ -22,6 +22,8 @@ if ($Env:VSCMD_ARG_TGT_ARCH -eq "x86") {
 # Fix up $PATH
 Write-Host $env:PATH
 
+$MakeExe = (Get-Command make).Path
+
 $SplitPath = $env:PATH -split ";";
 $MSVCPaths = $SplitPath | Where-Object { $_ -like "Microsoft Visual Studio" }
 $SplitPath = $MSVCPaths + ($SplitPath | Where-Object { $_ -notlike "Microsoft Visual Studio" } | Where-Object { $_ -notlike "*mingw*" })
@@ -101,7 +103,7 @@ if (!(Test-Path -Path $ICU_STATIC_ROOT)) {
         }
     
         Write-Host ":: Building ICU"
-        make "-j$((Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors)"
+        & $MakeExe "-j$((Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors)"
         if ($LASTEXITCODE -ne 0) { throw "make failed with exit code $LASTEXITCODE" }
     }
     finally { Pop-Location }
