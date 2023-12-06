@@ -104,8 +104,8 @@ jobs:
             CMAKE_BUILD_TYPE: "Debug"
           - lto_flag: ""
             label: bun-webkit-linux-arm64-debug
-            os: big-ubuntu
-            package_json_arch: "x64"
+            os: linux-arm64
+            package_json_arch: "arm64"
             CMAKE_BUILD_TYPE: "Debug"
           - lto_flag: "-flto='full'"
             label: bun-webkit-linux-arm64-lto
