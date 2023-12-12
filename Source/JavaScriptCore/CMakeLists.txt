@@ -1404,6 +1404,8 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
 
     runtime/JSModuleEnvironment.h
     runtime/JSModuleEnvironmentInlines.h
+
+    runtime/BuiltinExecutableMetadata.h
 )
 
 if(USE_INSPECTOR_SOCKET_SERVER)

@@ -31,6 +31,7 @@
 #include "JSCJSValueInlines.h"
 #include "Parser.h"
 #include <wtf/NeverDestroyed.h>
+#include "BuiltinExecutableMetadata.h"
 
 namespace JSC {
 
@@ -75,34 +76,39 @@ UnlinkedFunctionExecutable* BuiltinExecutables::createDefaultConstructor(Constru
 
 UnlinkedFunctionExecutable* BuiltinExecutables::createBuiltinExecutable(const SourceCode& code, const Identifier& name, ImplementationVisibility implementationVisibility, ConstructorKind constructorKind, ConstructAbility constructAbility)
 {
-    return createExecutable(m_vm, code, name, implementationVisibility, constructorKind, constructAbility, NeedsClassFieldInitializer::No);
+    StringView view = code.view();
+    RELEASE_ASSERT(!view.isNull());
+    RELEASE_ASSERT(view.is8Bit());
+    BuiltinExecutableMetadata meta(reinterpret_cast<const unsigned char*>(view.characters8()), view.length());
+    return createExecutable(m_vm, code, name, implementationVisibility, constructorKind, constructAbility, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None, meta);
 }
 
 UnlinkedFunctionExecutable* BuiltinExecutables::createExecutable(VM& vm, const SourceCode& source, const Identifier& name, ImplementationVisibility implementationVisibility, ConstructorKind constructorKind, ConstructAbility constructAbility, NeedsClassFieldInitializer needsClassFieldInitializer, PrivateBrandRequirement privateBrandRequirement)
 {
-    // FIXME: Can we just make MetaData computation be constexpr and have the compiler do this for us?
-    // https://bugs.webkit.org/show_bug.cgi?id=193272
-    // Someone should get mad at me for writing this code. But, it prevents us from recursing into
-    // the parser, and hence, from throwing stack overflow when parsing a builtin.
     StringView view = source.view();
     RELEASE_ASSERT(!view.isNull());
     RELEASE_ASSERT(view.is8Bit());
-    auto* characters = view.characters8();
+    BuiltinExecutableMetadata meta(reinterpret_cast<const unsigned char*>(view.characters8()), view.length());
+    return createExecutable(vm, source, name, implementationVisibility, constructorKind, constructAbility, needsClassFieldInitializer, privateBrandRequirement, meta);
+}
+
+BuiltinExecutableMetadata::BuiltinExecutableMetadata(const unsigned char* characters, unsigned length)
+{
     const char* regularFunctionBegin = "(function (";
     const char* asyncFunctionBegin = "(async function (";
-    RELEASE_ASSERT(view.length() >= strlen("(function (){})"));
-    bool isAsyncFunction = view.length() >= strlen("(async function (){})") && !memcmp(characters, asyncFunctionBegin, strlen(asyncFunctionBegin));
+    RELEASE_ASSERT(length >= strlen("(function (){})"));
+    isAsyncFunction = length >= strlen("(async function (){})") && !memcmp(characters, asyncFunctionBegin, strlen(asyncFunctionBegin));
     RELEASE_ASSERT(isAsyncFunction || !memcmp(characters, regularFunctionBegin, strlen(regularFunctionBegin)));
 
-    unsigned asyncOffset = isAsyncFunction ? strlen("async ") : 0;
-    unsigned parametersStart = strlen("function (") + asyncOffset;
-    unsigned startColumn = parametersStart;
-    int functionKeywordStart = strlen("(") + asyncOffset;
-    int functionNameStart = parametersStart;
-    bool isInStrictContext = false;
-    bool isArrowFunctionBodyExpression = false;
+    asyncOffset = isAsyncFunction ? strlen("async ") : 0;
+    parametersStart = strlen("function (") + asyncOffset;
+    startColumn = parametersStart;
+    functionKeywordStart = strlen("(") + asyncOffset;
+    functionNameStart = parametersStart;
+    isInStrictContext = false;
+    isArrowFunctionBodyExpression = false;
 
-    unsigned parameterCount;
+    parameterCount = 0;
     {
         unsigned i = parametersStart + 1;
         unsigned commas = 0;
@@ -110,7 +116,7 @@ UnlinkedFunctionExecutable* BuiltinExecutables::createExecutable(VM& vm, const S
         bool sawOneParam = false;
         bool hasRestParam = false;
         while (true) {
-            ASSERT(i < view.length());
+            ASSERT(i < length);
             if (characters[i] == ')')
                 break;
 
@@ -125,7 +131,7 @@ UnlinkedFunctionExecutable* BuiltinExecutables::createExecutable(VM& vm, const S
             else if (!Lexer<LChar>::isWhiteSpace(characters[i]))
                 sawOneParam = true;
 
-            if (i + 2 < view.length() && characters[i] == '.' && characters[i + 1] == '.' && characters[i + 2] == '.') {
+            if (i + 2 < length && characters[i] == '.' && characters[i + 1] == '.' && characters[i + 2] == '.') {
                 hasRestParam = true;
                 i += 2;
             }
@@ -146,11 +152,11 @@ UnlinkedFunctionExecutable* BuiltinExecutables::createExecutable(VM& vm, const S
         }
     }
 
-    unsigned lineCount = 0;
-    unsigned endColumn = 0;
-    unsigned offsetOfLastNewline = 0;
+    lineCount = 0;
+    endColumn = 0;
+    offsetOfLastNewline = 0;
     std::optional<unsigned> offsetOfSecondToLastNewline;
-    for (unsigned i = 0; i < view.length(); ++i) {
+    for (unsigned i = 0; i < length; ++i) {
         if (characters[i] == '\n') {
             if (lineCount)
                 offsetOfSecondToLastNewline = offsetOfLastNewline;
@@ -162,7 +168,7 @@ UnlinkedFunctionExecutable* BuiltinExecutables::createExecutable(VM& vm, const S
 
         if (!isInStrictContext && (characters[i] == '"' || characters[i] == '\'')) {
             const unsigned useStrictLength = strlen("use strict");
-            if (i + 1 + useStrictLength < view.length()) {
+            if (i + 1 + useStrictLength < length) {
                 if (!memcmp(characters + i + 1, "use strict", useStrictLength)) {
                     isInStrictContext = true;
                     i += 1 + useStrictLength;
@@ -171,14 +177,34 @@ UnlinkedFunctionExecutable* BuiltinExecutables::createExecutable(VM& vm, const S
         }
     }
 
-    unsigned positionBeforeLastNewlineLineStartOffset = offsetOfSecondToLastNewline ? *offsetOfSecondToLastNewline + 1 : 0;
+    positionBeforeLastNewlineLineStartOffset = offsetOfSecondToLastNewline ? *offsetOfSecondToLastNewline + 1 : 0;
 
-    int closeBraceOffsetFromEnd = 1;
+    closeBraceOffsetFromEnd = 1;
     while (true) {
-        if (characters[view.length() - closeBraceOffsetFromEnd] == '}')
+        if (characters[length - closeBraceOffsetFromEnd] == '}')
             break;
         ++closeBraceOffsetFromEnd;
     }
+}
+
+UnlinkedFunctionExecutable* BuiltinExecutables::createExecutable(VM& vm, const SourceCode& source, const Identifier& name, ImplementationVisibility implementationVisibility, ConstructorKind constructorKind, ConstructAbility constructAbility, NeedsClassFieldInitializer needsClassFieldInitializer, PrivateBrandRequirement privateBrandRequirement, const BuiltinExecutableMetadata& meta)
+{
+    StringView view = source.view();
+    unsigned startColumn = meta.startColumn;
+    unsigned endColumn = meta.endColumn;
+    int functionKeywordStart = meta.functionKeywordStart;
+    int functionNameStart = meta.functionNameStart;
+    unsigned parametersStart = meta.parametersStart;
+    bool isInStrictContext = meta.isInStrictContext;
+    bool isArrowFunctionBodyExpression = meta.isArrowFunctionBodyExpression;
+    bool isAsyncFunction = meta.isAsyncFunction;
+
+    unsigned lineCount = meta.lineCount;
+    unsigned offsetOfLastNewline = meta.offsetOfLastNewline;
+    unsigned positionBeforeLastNewlineLineStartOffset = meta.positionBeforeLastNewlineLineStartOffset;
+    unsigned closeBraceOffsetFromEnd = meta.closeBraceOffsetFromEnd;
+    unsigned asyncOffset = meta.asyncOffset;
+    unsigned parameterCount = meta.parameterCount;
 
     JSTextPosition positionBeforeLastNewline;
     positionBeforeLastNewline.line = lineCount;

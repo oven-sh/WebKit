@@ -42,7 +42,10 @@ class Identifier;
 class SourceCode;
 class UnlinkedFunctionExecutable;
 class VM;
+class BuiltinExecutableMetadata;
 
 JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* createBuiltinExecutable(VM&, const SourceCode&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility);
+JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* createBuiltinExecutable(VM&, const SourceCode&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, const BuiltinExecutableMetadata&);
+
     
 } // namespace JSC

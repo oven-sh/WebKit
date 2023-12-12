@@ -37,6 +37,7 @@ namespace JSC {
 class UnlinkedFunctionExecutable;
 class Identifier;
 class VM;
+class BuiltinExecutableMetadata;
 
 #define BUILTIN_NAME_ONLY(name, functionName, overriddenName, length) name,
 enum class BuiltinCodeIndex {
@@ -61,7 +62,7 @@ SourceCode name##Source();
     UnlinkedFunctionExecutable* createDefaultConstructor(ConstructorKind, const Identifier& name, NeedsClassFieldInitializer, PrivateBrandRequirement);
 
     static UnlinkedFunctionExecutable* createExecutable(VM&, const SourceCode&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, NeedsClassFieldInitializer, PrivateBrandRequirement = PrivateBrandRequirement::None);
-
+    static UnlinkedFunctionExecutable* createExecutable(VM&, const SourceCode&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, NeedsClassFieldInitializer, PrivateBrandRequirement, const BuiltinExecutableMetadata&);
     void finalizeUnconditionally(CollectionScope);
 
 private:
