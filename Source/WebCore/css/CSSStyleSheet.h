@@ -150,6 +150,7 @@ public:
     void reattachChildRuleCSSOMWrappers();
 
     StyleSheetContents& contents() { return m_contents; }
+    Ref<StyleSheetContents> protectedContents();
 
     bool isInline() const { return m_isInlineStylesheet; }
     TextPosition startPosition() const { return m_startPosition; }
@@ -159,6 +160,8 @@ public:
     bool canAccessRules() const;
 
     String debugDescription() const final;
+    String cssTextWithReplacementURLs(const HashMap<String, String>&, const HashMap<RefPtr<CSSStyleSheet>, String>&);
+    void getChildStyleSheets(HashSet<RefPtr<CSSStyleSheet>>&);
 
 private:
     CSSStyleSheet(Ref<StyleSheetContents>&&, CSSImportRule* ownerRule);

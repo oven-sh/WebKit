@@ -345,44 +345,25 @@ JSC_DEFINE_HOST_FUNCTION(moduleLoaderParseModule, (JSGlobalObject* globalObject,
     JSValue source = callFrame->argument(1);
     auto* jsSourceCode = jsCast<JSSourceCode*>(source);
     SourceCode sourceCode = jsSourceCode->sourceCode();
-    SourceProviderSourceType sourceType = sourceCode.provider()->sourceType();
 
-    switch (sourceType) {
 #if ENABLE(WEBASSEMBLY)
-        case SourceProviderSourceType::WebAssembly:
-            RELEASE_AND_RETURN(scope, JSValue::encode(JSWebAssembly::instantiate(globalObject, promise, moduleKey, jsSourceCode)));
+    if (sourceCode.provider()->sourceType() == SourceProviderSourceType::WebAssembly)
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSWebAssembly::instantiate(globalObject, promise, moduleKey, jsSourceCode)));
 #endif
-        case SourceProviderSourceType::JSON: {
-            // https://tc39.es/proposal-json-modules/#sec-parse-json-module
-            auto* moduleRecord = SyntheticModuleRecord::parseJSONModule(globalObject, moduleKey, WTFMove(sourceCode));
-            RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(globalObject, scope)));
-            scope.release();
-            promise->resolve(globalObject, moduleRecord);
-            return JSValue::encode(promise);
-        }
-        case SourceProviderSourceType::Synthetic: {
-            SyntheticSourceProvider* syntheticSourceProvider = reinterpret_cast<SyntheticSourceProvider*>(sourceCode.provider());
-            MarkedArgumentBuffer args;
-            Vector<Identifier, 4> exportNames;
-            syntheticSourceProvider->generate(globalObject, moduleKey, exportNames, args);
-            RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(globalObject, scope)));
-            
-            auto* moduleRecord = SyntheticModuleRecord::tryCreateWithExportNamesAndValues(globalObject, moduleKey, exportNames, args);
-            RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(globalObject, scope)));
 
-            scope.release();
-            promise->resolve(globalObject, moduleRecord);
-            return JSValue::encode(promise);
-        }
-        default: {
-            break;
-        }
+    // https://tc39.es/proposal-json-modules/#sec-parse-json-module
+    if (sourceCode.provider()->sourceType() == SourceProviderSourceType::JSON) {
+        auto* moduleRecord = SyntheticModuleRecord::parseJSONModule(globalObject, moduleKey, WTFMove(sourceCode));
+        RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(globalObject, scope)));
+        scope.release();
+        promise->resolve(globalObject, moduleRecord);
+        return JSValue::encode(promise);
     }
 
     ParserError error;
     std::unique_ptr<ModuleProgramNode> moduleProgramNode = parse<ModuleProgramNode>(
         vm, sourceCode, Identifier(), ImplementationVisibility::Public, JSParserBuiltinMode::NotBuiltin,
-        JSParserStrictMode::Strict, JSParserScriptMode::Module, SourceParseMode::ModuleAnalyzeMode, SuperBinding::NotNeeded, error);
+        JSParserStrictMode::Strict, JSParserScriptMode::Module, SourceParseMode::ModuleAnalyzeMode, FunctionMode::None, SuperBinding::NotNeeded, error);
     if (error.isValid())
         RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(error.toErrorObject(globalObject, sourceCode))));
     ASSERT(moduleProgramNode);

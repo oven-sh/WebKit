@@ -132,7 +132,7 @@ static GRefPtr<JSCContext> jscContextForObject(JSC::JSObject* jsObject)
 
 static JSValueRef getProperty(JSContextRef callerContext, JSObjectRef object, JSStringRef propertyName, JSValueRef* exception)
 {
-
+    JSC::JSLockHolder locker(toJS(callerContext));
     auto* jsObject = toJS(object);
     if (!isWrappedObject(jsObject))
         return nullptr;
@@ -159,7 +159,7 @@ static JSValueRef getProperty(JSContextRef callerContext, JSObjectRef object, JS
 
 static bool setProperty(JSContextRef callerContext, JSObjectRef object, JSStringRef propertyName, JSValueRef value, JSValueRef* exception)
 {
-
+    JSC::JSLockHolder locker(toJS(callerContext));
     auto* jsObject = toJS(object);
     if (!isWrappedObject(jsObject))
         return false;
@@ -189,7 +189,7 @@ static bool setProperty(JSContextRef callerContext, JSObjectRef object, JSString
 
 static bool hasProperty(JSContextRef callerContext, JSObjectRef object, JSStringRef propertyName)
 {
-
+    JSC::JSLockHolder locker(toJS(callerContext));
     auto* jsObject = toJS(object);
     if (!isWrappedObject(jsObject))
         return false;
@@ -215,7 +215,7 @@ static bool hasProperty(JSContextRef callerContext, JSObjectRef object, JSString
 
 static bool deleteProperty(JSContextRef callerContext, JSObjectRef object, JSStringRef propertyName, JSValueRef* exception)
 {
-
+    JSC::JSLockHolder locker(toJS(callerContext));
     auto* jsObject = toJS(object);
     if (!isWrappedObject(jsObject))
         return false;
@@ -242,7 +242,7 @@ static bool deleteProperty(JSContextRef callerContext, JSObjectRef object, JSStr
 
 static void getPropertyNames(JSContextRef callerContext, JSObjectRef object, JSPropertyNameAccumulatorRef propertyNames)
 {
-
+    JSC::JSLockHolder locker(toJS(callerContext));
     auto* jsObject = toJS(object);
     if (!isWrappedObject(jsObject))
         return;
@@ -550,7 +550,7 @@ static GRefPtr<JSCValue> jscClassCreateConstructor(JSCClass* jscClass, const cha
     JSCClassPrivate* priv = jscClass->priv;
     JSC::JSGlobalObject* globalObject = toJS(priv->context);
     JSC::VM& vm = globalObject->vm();
-
+    JSC::JSLockHolder locker(vm);
     auto* functionObject = JSC::JSCCallbackFunction::create(vm, globalObject, String::fromUTF8(name),
         JSC::JSCCallbackFunction::Type::Constructor, jscClass, WTFMove(closure), returnType, WTFMove(parameters));
     auto context = jscContextGetOrCreate(priv->context);
@@ -599,12 +599,9 @@ JSCValue* jsc_class_add_constructor(JSCClass* jscClass, const char* name, GCallb
 
     va_list args;
     va_start(args, paramCount);
-    Vector<GType> parameters;
-    if (paramCount) {
-        parameters.reserveInitialCapacity(paramCount);
-        for (unsigned i = 0; i < paramCount; ++i)
-            parameters.uncheckedAppend(va_arg(args, GType));
-    }
+    Vector<GType> parameters(paramCount, [&](size_t) -> GType {
+        return va_arg(args, GType);
+    });
     va_end(args);
 
     return jscClassCreateConstructor(jscClass, name ? name : priv->name.data(), callback, userData, destroyNotify, returnType, WTFMove(parameters)).leakRef();
@@ -647,12 +644,9 @@ JSCValue* jsc_class_add_constructorv(JSCClass* jscClass, const char* name, GCall
     if (!name)
         name = priv->name.data();
 
-    Vector<GType> parameters;
-    if (parametersCount) {
-        parameters.reserveInitialCapacity(parametersCount);
-        for (unsigned i = 0; i < parametersCount; ++i)
-            parameters.uncheckedAppend(parameterTypes[i]);
-    }
+    Vector<GType> parameters(parametersCount, [&](size_t i) -> GType {
+        return parameterTypes[i];
+    });
 
     return jscClassCreateConstructor(jscClass, name ? name : priv->name.data(), callback, userData, destroyNotify, returnType, WTFMove(parameters)).leakRef();
 }
@@ -699,7 +693,7 @@ static void jscClassAddMethod(JSCClass* jscClass, const char* name, GCallback ca
     GRefPtr<GClosure> closure = adoptGRef(g_cclosure_new(callback, userData, reinterpret_cast<GClosureNotify>(reinterpret_cast<GCallback>(destroyNotify))));
     JSC::JSGlobalObject* globalObject = toJS(priv->context);
     JSC::VM& vm = globalObject->vm();
-
+    JSC::JSLockHolder locker(vm);
     auto* functionObject = toRef(JSC::JSCCallbackFunction::create(vm, globalObject, String::fromUTF8(name),
         JSC::JSCCallbackFunction::Type::Method, jscClass, WTFMove(closure), returnType, WTFMove(parameters)));
     auto context = jscContextGetOrCreate(priv->context);
@@ -739,12 +733,9 @@ void jsc_class_add_method(JSCClass* jscClass, const char* name, GCallback callba
 
     va_list args;
     va_start(args, paramCount);
-    Vector<GType> parameters;
-    if (paramCount) {
-        parameters.reserveInitialCapacity(paramCount);
-        for (unsigned i = 0; i < paramCount; ++i)
-            parameters.uncheckedAppend(va_arg(args, GType));
-    }
+    Vector<GType> parameters(paramCount, [&](size_t) -> GType {
+            return va_arg(args, GType);
+    });
     va_end(args);
 
     jscClassAddMethod(jscClass, name, callback, userData, destroyNotify, returnType, WTFMove(parameters));
@@ -779,12 +770,9 @@ void jsc_class_add_methodv(JSCClass* jscClass, const char* name, GCallback callb
     g_return_if_fail(!parametersCount || parameterTypes);
     g_return_if_fail(jscClass->priv->context);
 
-    Vector<GType> parameters;
-    if (parametersCount) {
-        parameters.reserveInitialCapacity(parametersCount);
-        for (unsigned i = 0; i < parametersCount; ++i)
-            parameters.uncheckedAppend(parameterTypes[i]);
-    }
+    Vector<GType> parameters(parametersCount, [&](size_t i) -> GType {
+        return parameterTypes[i];
+    });
 
     jscClassAddMethod(jscClass, name, callback, userData, destroyNotify, returnType, WTFMove(parameters));
 }

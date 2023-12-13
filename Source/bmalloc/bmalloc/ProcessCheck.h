@@ -39,7 +39,7 @@ bool gigacageEnabledForProcess();
 inline bool gigacageEnabledForProcess() { return true; }
 #endif
 
-#if BPLATFORM(COCOA)
+#if BOS(DARWIN)
 bool shouldAllowMiniMode();
 #else
 inline bool shouldAllowMiniMode() { return true; }

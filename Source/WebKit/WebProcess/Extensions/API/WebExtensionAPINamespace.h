@@ -30,8 +30,12 @@
 #include "JSWebExtensionAPINamespace.h"
 #include "WebExtensionAPIAction.h"
 #include "WebExtensionAPIAlarms.h"
+#include "WebExtensionAPICommands.h"
+#include "WebExtensionAPIDeclarativeNetRequest.h"
 #include "WebExtensionAPIExtension.h"
 #include "WebExtensionAPILocalization.h"
+#include "WebExtensionAPIMenus.h"
+#include "WebExtensionAPINotifications.h"
 #include "WebExtensionAPIObject.h"
 #include "WebExtensionAPIPermissions.h"
 #include "WebExtensionAPIRuntime.h"
@@ -56,8 +60,13 @@ public:
     WebExtensionAPIAction& action();
     WebExtensionAPIAlarms& alarms();
     WebExtensionAPIAction& browserAction() { return action(); }
+    WebExtensionAPICommands& commands();
+    WebExtensionAPIMenus& contextMenus() { return menus(); }
+    WebExtensionAPIDeclarativeNetRequest& declarativeNetRequest();
     WebExtensionAPIExtension& extension();
     WebExtensionAPILocalization& i18n();
+    WebExtensionAPIMenus& menus();
+    WebExtensionAPINotifications& notifications();
     WebExtensionAPIAction& pageAction() { return action(); }
     WebExtensionAPIPermissions& permissions();
     WebExtensionAPIRuntime& runtime() final;
@@ -71,8 +80,12 @@ public:
 private:
     RefPtr<WebExtensionAPIAction> m_action;
     RefPtr<WebExtensionAPIAlarms> m_alarms;
+    RefPtr<WebExtensionAPICommands> m_commands;
+    RefPtr<WebExtensionAPIDeclarativeNetRequest> m_declarativeNetRequest;
     RefPtr<WebExtensionAPIExtension> m_extension;
     RefPtr<WebExtensionAPILocalization> m_i18n;
+    RefPtr<WebExtensionAPIMenus> m_menus;
+    RefPtr<WebExtensionAPINotifications> m_notifications;
     RefPtr<WebExtensionAPIPermissions> m_permissions;
     RefPtr<WebExtensionAPIRuntime> m_runtime;
     RefPtr<WebExtensionAPIScripting> m_scripting;

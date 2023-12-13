@@ -48,6 +48,7 @@ use File::stat;
 use List::Util;
 use POSIX;
 use Time::HiRes qw(usleep);
+use Text::ParseWords;
 use VCSUtils;
 use webkitperl::FeatureList qw(getFeatureOptionList);
 
@@ -63,6 +64,7 @@ BEGIN {
    @ISA         = qw(Exporter);
    @EXPORT      = qw(
        &XcodeCoverageSupportOptions
+       &XcodeExportCompileCommandsOptions
        &XcodeOptionString
        &XcodeOptionStringNoConfig
        &XcodeOptions
@@ -94,6 +96,7 @@ BEGIN {
        &configuration
        &configuredXcodeWorkspace
        &coverageIsEnabled
+       &fuzzilliIsEnabled
        &currentPerlPath
        &currentSVNRevision
        &debugMiniBrowser
@@ -159,7 +162,6 @@ BEGIN {
        &prependToEnvironmentVariableList
        &printHelpAndExitForRunAndDebugWebKitAppIfNeeded
        &productDir
-       &productDirForCMake
        &prohibitUnknownPort
        &relativeScriptsDir
        &removeCMakeCache
@@ -251,6 +253,7 @@ my $tsanIsEnabled;
 my $ubsanIsEnabled;
 my $libFuzzerIsEnabled;
 my $coverageIsEnabled;
+my $fuzzilliIsEnabled;
 my $forceOptimizationLevel;
 my $ltoMode;
 my $numberOfCPUs;
@@ -654,6 +657,18 @@ sub determineCoverageIsEnabled
     }
 }
 
+sub determineFuzzilliIsEnabled
+{
+    return if defined $fuzzilliIsEnabled;
+    determineBaseProductDir();
+
+    if (open Fuzzilli, "$baseProductDir/Fuzzilli") {
+        $fuzzilliIsEnabled = <Fuzzilli>;
+        close Fuzzilli;
+        chomp $fuzzilliIsEnabled;
+    }
+}
+
 sub determineLTOMode
 {
     return if defined $ltoMode;
@@ -1035,7 +1050,7 @@ sub determineConfigurationProductDir
         if (usesPerConfigurationBuildDirectory()) {
             $configurationProductDir = "$baseProductDir";
         } else {
-            if (shouldUseFlatpak() or shouldBuildForCrossTarget() or inCrossTargetEnvironment()) {
+            if (isGtk() or isWPE() or isJSCOnly() or shouldUseFlatpak() or shouldBuildForCrossTarget() or inCrossTargetEnvironment()) {
                 $configurationProductDir = "$baseProductDir/$portName/$configuration";
             } else {
                 $configurationProductDir = "$baseProductDir/$configuration";
@@ -1154,6 +1169,12 @@ sub coverageIsEnabled()
     return $coverageIsEnabled;
 }
 
+sub fuzzilliIsEnabled()
+{
+    determineFuzzilliIsEnabled();
+    return $fuzzilliIsEnabled;
+}
+
 sub forceOptimizationLevel()
 {
     determineForceOptimizationLevel();
@@ -1188,11 +1209,6 @@ sub determineGenerateDsym()
 {
     return if defined($generateDsym);
     $generateDsym = checkForArgumentAndRemoveFromARGV("--dsym");
-}
-
-sub hasIOSDevelopmentCertificate()
-{
-    return !exitStatus(system("security find-identity -p codesigning | grep '" . IOS_DEVELOPMENT_CERTIFICATE_NAME_PREFIX . "' > /dev/null 2>&1"));
 }
 
 sub argumentsForXcode()
@@ -1236,6 +1252,7 @@ sub XcodeOptions
     determineLibFuzzerIsEnabled();
     determineForceOptimizationLevel();
     determineCoverageIsEnabled();
+    determineFuzzilliIsEnabled();
     determineLTOMode();
     if (isAppleCocoaWebKit()) {
       determineXcodeSDK();
@@ -1253,6 +1270,7 @@ sub XcodeOptions
     push @options, ("ENABLE_ADDRESS_SANITIZER=YES") if $asanIsEnabled;
     push @options, ("ENABLE_THREAD_SANITIZER=YES") if $tsanIsEnabled;
     push @options, ("ENABLE_UNDEFINED_BEHAVIOR_SANITIZER=YES") if $ubsanIsEnabled;
+    push @options, ("ENABLE_FUZZILLI=YES") if $fuzzilliIsEnabled;
     push @options, ("ENABLE_LIBFUZZER=YES") if $libFuzzerIsEnabled;
     push @options, XcodeCoverageSupportOptions() if $coverageIsEnabled;
     push @options, "GCC_OPTIMIZATION_LEVEL=$forceOptimizationLevel" if $forceOptimizationLevel;
@@ -1281,15 +1299,6 @@ sub XcodeOptions
     die "Cannot enable both ASAN and TSAN at the same time\n" if $asanIsEnabled && $tsanIsEnabled;
     die "Cannot enable both (ASAN or TSAN) and Coverage at this time\n" if $coverageIsEnabled && ($asanIsEnabled || $tsanIsEnabled);
 
-    if (willUseIOSDeviceSDK() || willUseWatchDeviceSDK() || willUseAppleTVDeviceSDK()) {
-        if (hasIOSDevelopmentCertificate()) {
-            # FIXME: May match more than one installed development certificate.
-            push @options, "CODE_SIGN_IDENTITY=" . IOS_DEVELOPMENT_CERTIFICATE_NAME_PREFIX;
-        } else {
-            push @options, "CODE_SIGN_IDENTITY="; # No identity
-            push @options, "CODE_SIGNING_REQUIRED=NO";
-        }
-    }
     push @options, argumentsForXcode();
     return @options;
 }
@@ -1307,6 +1316,11 @@ sub XcodeOptionStringNoConfig
 sub XcodeCoverageSupportOptions()
 {
     return ("-xcconfig", sourceDir() . "/Tools/coverage/coverage.xcconfig");
+}
+
+sub XcodeExportCompileCommandsOptions()
+{
+    return ("OTHER_CFLAGS=\$(inherited) -gen-cdb-fragment-path \$(BUILT_PRODUCTS_DIR)/compile_commands", "GCC_PRECOMPILE_PREFIX_HEADER=NO", "CLANG_ENABLE_MODULE_DEBUGGING=NO", "COMPILER_INDEX_STORE_ENABLE=NO");
 }
 
 sub XcodeStaticAnalyzerOption()
@@ -2526,7 +2540,7 @@ sub shouldUseFlatpak()
 
 sub cmakeCachePath()
 {
-    return File::Spec->catdir(productDirForCMake(), "CMakeCache.txt");
+    return File::Spec->catdir(productDir(), "CMakeCache.txt");
 }
 
 sub shouldRemoveCMakeCache(@)
@@ -2535,9 +2549,10 @@ sub shouldRemoveCMakeCache(@)
     # are probably arguments specifying build targets. Changing those should
     # not trigger a reconfiguration of the build.
     my (@buildArgs) = grep(/^-/, sort(@_, @originalArgv));
+    push @buildArgs, parse_line('\s+', 0, $ENV{'BUILD_WEBKIT_ARGS'}) if ($ENV{'BUILD_WEBKIT_ARGS'});
 
     # We check this first, because we always want to create this file for a fresh build.
-    my $productDir = productDirForCMake();
+    my $productDir = productDir();
     my $optionsCache = File::Spec->catdir($productDir, "build-webkit-options.txt");
     my $joinedBuildArgs = join(" ", @buildArgs);
     if (isCachedArgumentfileOutOfDate($optionsCache, $joinedBuildArgs)) {
@@ -2643,11 +2658,11 @@ sub cmakeGeneratedBuildfile(@)
 {
     my ($willUseNinja) = @_;
     if ($willUseNinja) {
-        return File::Spec->catfile(productDirForCMake(), "build.ninja")
+        return File::Spec->catfile(productDir(), "build.ninja")
     } elsif (isAnyWindows()) {
-        return File::Spec->catfile(productDirForCMake(), "WebKit.sln")
+        return File::Spec->catfile(productDir(), "WebKit.sln")
     } else {
-        return File::Spec->catfile(productDirForCMake(), "Makefile")
+        return File::Spec->catfile(productDir(), "Makefile")
     }
 }
 
@@ -2656,7 +2671,7 @@ sub generateBuildSystemFromCMakeProject
     my ($prefixPath, @cmakeArgs) = @_;
     my $config = configuration();
     my $port = cmakeBasedPortName();
-    my $buildPath = productDirForCMake();
+    my $buildPath = productDir();
     File::Path::mkpath($buildPath) unless -d $buildPath;
     my $originalWorkingDirectory = getcwd();
     chdir($buildPath) or die;
@@ -2736,18 +2751,11 @@ sub generateBuildSystemFromCMakeProject
     return $returnCode;
 }
 
-sub productDirForCMake() {
-    if (shouldBuildForCrossTarget() or inCrossTargetEnvironment()) {
-        return productDir();
-    }
-    return File::Spec->catdir(baseProductDir(), configuration());
-}
-
 sub buildCMakeGeneratedProject($)
 {
     my (@makeArgs) = @_;
     my $config = configuration();
-    my $buildPath = productDirForCMake();
+    my $buildPath = productDir();
     if (! -d $buildPath) {
         die "Must call generateBuildSystemFromCMakeProject() before building CMake project.";
     }
@@ -2777,7 +2785,7 @@ sub buildCMakeGeneratedProject($)
 sub cleanCMakeGeneratedProject()
 {
     my $config = configuration();
-    my $buildPath = productDirForCMake();
+    my $buildPath = productDir();
     if (-d $buildPath) {
         return systemVerbose("cmake", "--build", $buildPath, "--config", $config, "--target", "clean");
     }

@@ -495,7 +495,7 @@ template<typename T, size_t inlineCapacity, typename OverflowHandler, size_t min
                 auto element = decoder.template decode<T>();
                 if (!element)
                     return std::nullopt;
-                vector.uncheckedAppend(WTFMove(*element));
+                vector.append(WTFMove(*element));
             }
             return vector;
         }
@@ -828,6 +828,7 @@ template<> struct ArgumentCoder<std::monostate> {
 };
 
 template<> struct ArgumentCoder<std::nullptr_t> {
+    template<typename Encoder>
     static void encode(Encoder&, const std::nullptr_t&) { }
     static std::optional<std::nullptr_t> decode(Decoder&) { return nullptr; }
 };

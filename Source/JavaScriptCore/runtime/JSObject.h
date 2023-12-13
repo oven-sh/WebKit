@@ -167,7 +167,8 @@ public:
     template<typename PropertyNameType> JSValue getIfPropertyExists(JSGlobalObject*, const PropertyNameType&);
     bool noSideEffectMayHaveNonIndexProperty(VM&, PropertyName);
 
-    template<typename Functor>
+    enum class SortMode { Default, Ascending };
+    template<SortMode mode = SortMode::Default, typename Functor>
     void forEachOwnIndexedProperty(JSGlobalObject*, const Functor&);
 
 private:
@@ -1068,10 +1069,10 @@ protected:
     void finishCreation(VM& vm)
     {
         Base::finishCreation(vm);
-        ASSERT(classInfo());
-        ASSERT(structure()->isObject());
-        ASSERT(structure()->hasPolyProto() || getPrototypeDirect().isNull() || Heap::heap(this) == Heap::heap(getPrototypeDirect()));
         ASSERT(jsDynamicCast<JSObject*>(this));
+        ASSERT(structure()->hasPolyProto() || getPrototypeDirect().isNull() || Heap::heap(this) == Heap::heap(getPrototypeDirect()));
+        ASSERT(structure()->isObject());
+        ASSERT(classInfo());
     }
 #endif
 

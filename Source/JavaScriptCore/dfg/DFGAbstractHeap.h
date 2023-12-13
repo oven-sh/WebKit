@@ -89,7 +89,7 @@ namespace JSC { namespace DFG {
     /* Use this for writes only, just to indicate that hoisting the node is invalid. This works because we don't hoist anything that has any side effects at all. */\
     macro(SideState)
 
-enum AbstractHeapKind : uint8_t {
+enum AbstractHeapKind {
 #define ABSTRACT_HEAP_DECLARATION(name) name,
     FOR_EACH_ABSTRACT_HEAP_KIND(ABSTRACT_HEAP_DECLARATION)
 #undef ABSTRACT_HEAP_DECLARATION
@@ -282,7 +282,7 @@ public:
         return WTF::IntHash<int64_t>::hash(m_value);
     }
     
-    friend bool operator==(AbstractHeap, AbstractHeap) = default;
+    friend bool operator==(const AbstractHeap&, const AbstractHeap&) = default;
     
     bool operator<(const AbstractHeap& other) const
     {

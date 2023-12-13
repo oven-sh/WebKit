@@ -41,7 +41,7 @@ using namespace WebCore;
 
 static inline rtc::SocketAddress prepareSocketAddress(const rtc::SocketAddress& address, bool disableNonLocalhostConnections)
 {
-    auto result = RTCNetwork::isolatedCopy(address);
+    auto result = RTC::Network::SocketAddress::isolatedCopy(address);
     if (disableNonLocalhostConnections)
         result.SetIP("127.0.0.1");
     return result;
@@ -148,6 +148,8 @@ void LibWebRTCSocketFactory::forSocketInGroup(ScriptExecutionContextIdentifier c
     }
 }
 
+ALLOW_DEPRECATED_DECLARATIONS_BEGIN
+// FIXME: https://bugs.webkit.org/show_bug.cgi?id=265791
 rtc::AsyncResolverInterface* LibWebRTCSocketFactory::createAsyncResolver()
 {
     auto resolver = makeUnique<LibWebRTCResolver>();
@@ -155,6 +157,7 @@ rtc::AsyncResolverInterface* LibWebRTCSocketFactory::createAsyncResolver()
     m_resolvers.set(resolverPointer->identifier(), WTFMove(resolver));
     return resolverPointer;
 }
+ALLOW_DEPRECATED_DECLARATIONS_END
 
 } // namespace WebKit
 

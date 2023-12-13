@@ -80,7 +80,6 @@ public:
 
     const LayerTreeContext& layerTreeContext() const { return m_layerTreeContext; }
     void setLayerFlushSchedulingEnabled(bool);
-    void setShouldNotifyAfterNextScheduledLayerFlush(bool);
 
     void scheduleLayerFlush();
     void cancelPendingLayerFlush();
@@ -100,9 +99,9 @@ public:
     void contentsSizeChanged(const WebCore::IntSize&);
     void didChangeViewportAttributes(WebCore::ViewportAttributes&&);
 
-    void setIsDiscardable(bool);
-
     void deviceOrPageScaleFactorChanged();
+
+    void didCompleteRenderingUpdateDisplay();
 
 #if !HAVE(DISPLAY_LINK)
     RefPtr<WebCore::DisplayRefreshMonitor> createDisplayRefreshMonitor(WebCore::PlatformDisplayID);
@@ -113,18 +112,20 @@ public:
     void adjustTransientZoom(double, WebCore::FloatPoint);
     void commitTransientZoom(double, WebCore::FloatPoint);
 #endif
+
+#if PLATFORM(WPE) && USE(GBM) && ENABLE(WPE_PLATFORM)
+    void preferredBufferFormatsDidChange();
+#endif
 private:
 #if USE(COORDINATED_GRAPHICS)
     void layerFlushTimerFired();
     void didChangeViewport();
-#if HAVE(DISPLAY_LINK)
-    void didRenderFrameTimerFired();
-#endif
+#if !HAVE(DISPLAY_LINK)
     void renderNextFrame(bool);
+#endif
 
     // CompositingCoordinator::Client
     void didFlushRootLayer(const WebCore::FloatRect& visibleContentRect) override;
-    void notifyFlushRequired() override { scheduleLayerFlush(); };
     void commitSceneState(const RefPtr<Nicosia::Scene>&) override;
     void updateScene() override;
 
@@ -153,37 +154,30 @@ private:
     void applyTransientZoomToLayers(double, WebCore::FloatPoint);
 #endif
 
-    enum class DiscardableSyncActions {
-        UpdateSize = 1 << 1,
-        UpdateViewport = 1 << 2,
-        UpdateScale = 1 << 3
-    };
 #endif // USE(COORDINATED_GRAPHICS)
 
     WebPage& m_webPage;
     LayerTreeContext m_layerTreeContext;
 #if USE(COORDINATED_GRAPHICS)
     bool m_layerFlushSchedulingEnabled { true };
-    bool m_notifyAfterScheduledLayerFlush { false };
     bool m_isSuspended { false };
+#if !HAVE(DISPLAY_LINK)
     bool m_isWaitingForRenderer { false };
     bool m_scheduledWhileWaitingForRenderer { false };
+#endif
     float m_lastPageScaleFactor { 1 };
     WebCore::IntPoint m_lastScrollPosition;
-    bool m_isDiscardable { false };
-    OptionSet<DiscardableSyncActions> m_discardableSyncActions;
     WebCore::GraphicsLayer* m_viewOverlayRootLayer { nullptr };
     std::unique_ptr<AcceleratedSurface> m_surface;
     RefPtr<ThreadedCompositor> m_compositor;
     SimpleViewportController m_viewportController;
     struct {
         CompletionHandler<void()> callback;
+#if !HAVE(DISPLAY_LINK)
         bool needsFreshFlush { false };
+#endif
     } m_forceRepaintAsync;
     RunLoop::Timer m_layerFlushTimer;
-#if HAVE(DISPLAY_LINK)
-    RunLoop::Timer m_didRenderFrameTimer;
-#endif
     CompositingCoordinator m_coordinator;
 #endif // USE(COORDINATED_GRAPHICS)
 #if !HAVE(DISPLAY_LINK)
@@ -205,7 +199,6 @@ inline LayerTreeHost::LayerTreeHost(WebPage& webPage, WebCore::PlatformDisplayID
 #endif
 inline LayerTreeHost::~LayerTreeHost() { }
 inline void LayerTreeHost::setLayerFlushSchedulingEnabled(bool) { }
-inline void LayerTreeHost::setShouldNotifyAfterNextScheduledLayerFlush(bool) { }
 inline void LayerTreeHost::scheduleLayerFlush() { }
 inline void LayerTreeHost::cancelPendingLayerFlush() { }
 inline void LayerTreeHost::setRootCompositingLayer(WebCore::GraphicsLayer*) { }
@@ -219,7 +212,6 @@ inline void LayerTreeHost::resumeRendering() { }
 inline WebCore::GraphicsLayerFactory* LayerTreeHost::graphicsLayerFactory() { return nullptr; }
 inline void LayerTreeHost::contentsSizeChanged(const WebCore::IntSize&) { }
 inline void LayerTreeHost::didChangeViewportAttributes(WebCore::ViewportAttributes&&) { }
-inline void LayerTreeHost::setIsDiscardable(bool) { }
 inline void LayerTreeHost::deviceOrPageScaleFactorChanged() { }
 #if PLATFORM(GTK)
 inline void LayerTreeHost::adjustTransientZoom(double, WebCore::FloatPoint) { }

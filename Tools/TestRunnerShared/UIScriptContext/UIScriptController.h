@@ -113,6 +113,7 @@ public:
 
     virtual void copyText(JSStringRef) { notImplemented(); }
     virtual void paste() { notImplemented(); }
+    virtual int64_t pasteboardChangeCount() const { return 0; }
 
     virtual void chooseMenuAction(JSStringRef, JSValueRef);
     virtual void dismissMenu();
@@ -122,8 +123,13 @@ public:
     virtual bool isWindowContentViewFirstResponder() const { notImplemented(); return false; }
     virtual bool isWebContentFirstResponder() const { notImplemented(); return false; }
 
+    virtual void setInlinePrediction(JSStringRef) { notImplemented(); }
+    virtual void acceptInlinePrediction() { notImplemented(); }
+
     virtual void removeViewFromWindow(JSValueRef) { notImplemented(); }
     virtual void addViewToWindow(JSValueRef) { notImplemented(); }
+
+    virtual void resizeWindowTo(unsigned /* width */, unsigned /* height */) { notImplemented(); }
 
     virtual void installTapGestureOnWindow(JSValueRef) { notImplemented(); }
 
@@ -391,6 +397,7 @@ public:
     // Image Analysis
 
     virtual uint64_t currentImageAnalysisRequestID() const { return 0; }
+    virtual void installFakeMachineReadableCodeResultsForImageAnalysis() { }
 
 protected:
     explicit UIScriptController(UIScriptContext&);

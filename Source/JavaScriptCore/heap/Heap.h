@@ -141,9 +141,8 @@ class Heap;
     v(stringObjectSpace, cellHeapCellType, StringObject) \
     v(structureChainSpace, cellHeapCellType, StructureChain) \
     v(structureRareDataSpace, destructibleCellHeapCellType, StructureRareData) \
-    v(symbolTableSpace, destructibleCellHeapCellType, SymbolTable) \
-    v(internalFieldTupleSpace, cellHeapCellType, InternalFieldTuple) \
-
+    v(symbolTableSpace, destructibleCellHeapCellType, SymbolTable)
+    
 #define FOR_EACH_JSC_STRUCTURE_ISO_SUBSPACE(v) \
     v(structureSpace, destructibleCellHeapCellType, Structure) \
     v(brandedStructureSpace, destructibleCellHeapCellType, BrandedStructure) \
@@ -328,8 +327,12 @@ public:
 
     JS_EXPORT_PRIVATE GCActivityCallback* fullActivityCallback();
     JS_EXPORT_PRIVATE GCActivityCallback* edenActivityCallback();
+
+    JS_EXPORT_PRIVATE void setFullActivityCallback(RefPtr<GCActivityCallback>&&);
+    JS_EXPORT_PRIVATE void setEdenActivityCallback(RefPtr<GCActivityCallback>&&);
+
     JS_EXPORT_PRIVATE void setGarbageCollectionTimerEnabled(bool);
-    JS_EXPORT_PRIVATE void scheduleOpportunisticFullCollectionIfNeeded();
+    JS_EXPORT_PRIVATE void scheduleOpportunisticFullCollection();
 
     JS_EXPORT_PRIVATE IncrementalSweeper& sweeper();
 
@@ -568,6 +571,8 @@ public:
     {
         m_possiblyAccessedStringsFromConcurrentThreads.append(WTFMove(string));
     }
+
+    bool isInPhase(CollectorPhase phase) const { return m_currentPhase == phase; }
 
 private:
     friend class AllocatingScope;
@@ -832,7 +837,7 @@ private:
 
     Vector<String> m_possiblyAccessedStringsFromConcurrentThreads;
     
-    RefPtr<FullGCActivityCallback> m_fullActivityCallback;
+    RefPtr<GCActivityCallback> m_fullActivityCallback;
     RefPtr<GCActivityCallback> m_edenActivityCallback;
     Ref<IncrementalSweeper> m_sweeper;
     Ref<StopIfNecessaryTimer> m_stopIfNecessaryTimer;

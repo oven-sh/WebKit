@@ -288,7 +288,7 @@ using WebCore::LogOverlayScrollbars;
         break;
     }
 
-    if (!_scrollbar->supportsUpdateOnSecondaryThread())
+    if (_scrollbar && !_scrollbar->supportsUpdateOnSecondaryThread())
         _scrollbar->invalidate();
 }
 
@@ -313,7 +313,7 @@ using WebCore::LogOverlayScrollbars;
 @end
 
 @interface WebScrollerImpDelegate : NSObject<NSAnimationDelegate, NSScrollerImpDelegate> {
-    WebCore::Scrollbar* _scrollbar;
+    WeakPtr<WebCore::Scrollbar> _scrollbar;
 
     RetainPtr<WebScrollbarPartAnimation> _knobAlphaAnimation;
     RetainPtr<WebScrollbarPartAnimation> _trackAlphaAnimation;
@@ -458,7 +458,7 @@ using WebCore::LogOverlayScrollbars;
             [self scrollbarsController]->setVisibleScrollerThumbRect({ });
     }
 
-    scrollbarPartAnimation = adoptNS([[WebScrollbarPartAnimation alloc] initWithScrollbar:_scrollbar
+    scrollbarPartAnimation = adoptNS([[WebScrollbarPartAnimation alloc] initWithScrollbar:_scrollbar.get()
                                                                        featureToAnimate:part == WebCore::ThumbPart ? ThumbAlpha : TrackAlpha
                                                                             animateFrom:part == WebCore::ThumbPart ? [scrollerPainter knobAlpha] : [scrollerPainter trackAlpha]
                                                                               animateTo:newAlpha
@@ -515,7 +515,7 @@ using WebCore::LogOverlayScrollbars;
         [scrollerImp setUsePresentationValue:NO];
 
     if (!_uiStateTransitionAnimation) {
-        _uiStateTransitionAnimation = adoptNS([[WebScrollbarPartAnimation alloc] initWithScrollbar:_scrollbar
+        _uiStateTransitionAnimation = adoptNS([[WebScrollbarPartAnimation alloc] initWithScrollbar:_scrollbar.get()
             featureToAnimate:UIStateTransition
             animateFrom:[scrollerImp uiStateTransitionProgress]
             animateTo:1.0
@@ -540,7 +540,7 @@ using WebCore::LogOverlayScrollbars;
     [scrollerImp setExpansionTransitionProgress:1 - [scrollerImp expansionTransitionProgress]];
 
     if (!_expansionTransitionAnimation) {
-        _expansionTransitionAnimation = adoptNS([[WebScrollbarPartAnimation alloc] initWithScrollbar:_scrollbar
+        _expansionTransitionAnimation = adoptNS([[WebScrollbarPartAnimation alloc] initWithScrollbar:_scrollbar.get()
             featureToAnimate:ExpansionTransition
             animateFrom:[scrollerImp expansionTransitionProgress]
             animateTo:1.0
@@ -755,7 +755,7 @@ void ScrollbarsControllerMac::didBeginScrollGesture()
     [m_scrollerImpPair beginScrollGesture];
 
     if (auto* monitor = wheelEventTestMonitor())
-        monitor->deferForReason(reinterpret_cast<WheelEventTestMonitor::ScrollableAreaIdentifier>(this), WheelEventTestMonitor::ContentScrollInProgress);
+        monitor->deferForReason(reinterpret_cast<WheelEventTestMonitor::ScrollableAreaIdentifier>(this), WheelEventTestMonitor::DeferReason::ContentScrollInProgress);
 
     ScrollbarsController::didBeginScrollGesture();
 }
@@ -770,7 +770,7 @@ void ScrollbarsControllerMac::didEndScrollGesture()
     [m_scrollerImpPair endScrollGesture];
 
     if (auto* monitor = wheelEventTestMonitor())
-        monitor->removeDeferralForReason(reinterpret_cast<WheelEventTestMonitor::ScrollableAreaIdentifier>(this), WheelEventTestMonitor::ContentScrollInProgress);
+        monitor->removeDeferralForReason(reinterpret_cast<WheelEventTestMonitor::ScrollableAreaIdentifier>(this), WheelEventTestMonitor::DeferReason::ContentScrollInProgress);
 
     ScrollbarsController::didEndScrollGesture();
 }
@@ -1023,7 +1023,7 @@ void ScrollbarsControllerMac::sendContentAreaScrolledTimerFired()
     m_contentAreaScrolledTimerScrollDelta = { };
 
     if (auto* monitor = wheelEventTestMonitor())
-        monitor->removeDeferralForReason(reinterpret_cast<WheelEventTestMonitor::ScrollableAreaIdentifier>(this), WheelEventTestMonitor::ContentScrollInProgress);
+        monitor->removeDeferralForReason(reinterpret_cast<WheelEventTestMonitor::ScrollableAreaIdentifier>(this), WheelEventTestMonitor::DeferReason::ContentScrollInProgress);
 }
 
 void ScrollbarsControllerMac::sendContentAreaScrolledSoon(const FloatSize& delta)
@@ -1034,7 +1034,7 @@ void ScrollbarsControllerMac::sendContentAreaScrolledSoon(const FloatSize& delta
         m_sendContentAreaScrolledTimer.startOneShot(0_s);
 
     if (auto* monitor = wheelEventTestMonitor())
-        monitor->deferForReason(reinterpret_cast<WheelEventTestMonitor::ScrollableAreaIdentifier>(this), WheelEventTestMonitor::ContentScrollInProgress);
+        monitor->deferForReason(reinterpret_cast<WheelEventTestMonitor::ScrollableAreaIdentifier>(this), WheelEventTestMonitor::DeferReason::ContentScrollInProgress);
 }
 
 void ScrollbarsControllerMac::sendContentAreaScrolled(const FloatSize& delta)

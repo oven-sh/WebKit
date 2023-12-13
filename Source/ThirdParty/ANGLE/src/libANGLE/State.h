@@ -15,6 +15,7 @@
 #include "common/Color.h"
 #include "common/angleutils.h"
 #include "common/bitset_utils.h"
+#include "libANGLE/ContextMutex.h"
 #include "libANGLE/Debug.h"
 #include "libANGLE/GLES1State.h"
 #include "libANGLE/Overlay.h"
@@ -33,8 +34,6 @@
 namespace egl
 {
 class ShareGroup;
-class ContextMutex;
-class SingleContextMutex;
 }  // namespace egl
 
 namespace gl
@@ -583,7 +582,7 @@ class PrivateState : angle::NonCopyable
     {
         mDirtyBits.set();
         mExtendedDirtyBits.set();
-        mDirtyCurrentValues.set();
+        mDirtyCurrentValues = mAllAttribsMask;
     }
 
     const state::ExtendedDirtyBits &getExtendedDirtyBits() const { return mExtendedDirtyBits; }
@@ -656,6 +655,9 @@ class PrivateState : angle::NonCopyable
     using VertexAttribVector = std::vector<VertexAttribCurrentValueData>;
     VertexAttribVector mVertexAttribCurrentValues;  // From glVertexAttrib
     ComponentTypeMask mCurrentValuesTypeMask;
+
+    // Mask of all attributes that are available to this context: [0, maxVertexAttributes)
+    AttributesMask mAllAttribsMask;
 
     // Texture and sampler bindings
     GLint mActiveSampler;  // Active texture unit selector - GL_TEXTURE0
@@ -740,8 +742,7 @@ class State : angle::NonCopyable
           egl::ShareGroup *shareGroup,
           TextureManager *shareTextures,
           SemaphoreManager *shareSemaphores,
-          egl::ContextMutex *sharedContextMutex,
-          egl::SingleContextMutex *singleContextMutex,
+          egl::ContextMutex *contextMutex,
           const OverlayType *overlay,
           const EGLenum clientType,
           const Version &clientVersion,
@@ -1505,10 +1506,7 @@ class State : angle::NonCopyable
     bool mIsDebugContext;
 
     egl::ShareGroup *mShareGroup;
-    egl::ContextMutex *const mSharedContextMutex;
-    egl::SingleContextMutex *const mSingleContextMutex;
-    std::atomic<egl::ContextMutex *> mContextMutex;  // Simple pointer without reference counting
-    bool mIsSharedContextMutexActive;
+    mutable egl::ContextMutex mContextMutex;
 
     // Resource managers.
     BufferManager *mBufferManager;

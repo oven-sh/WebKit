@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014, 2015 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,6 +31,7 @@
 #include "Strong.h"
 #include <wtf/Forward.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/text/WTFString.h>
 
 #if ENABLE(INSPECTOR_ALTERNATE_DISPATCHERS)
@@ -46,7 +47,6 @@ class JSGlobalObject;
 
 namespace Inspector {
 
-class InjectedScriptHost;
 class BackendDispatcher;
 class FrontendChannel;
 class InjectedScriptManager;
@@ -66,12 +66,9 @@ class JSGlobalObjectInspectorController final
 #endif
 {
     WTF_MAKE_NONCOPYABLE(JSGlobalObjectInspectorController);
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(JSGlobalObjectInspectorController);
 public:
     JSGlobalObjectInspectorController(JSC::JSGlobalObject&);
-#if USE(BUN_JSC_ADDITIONS)
-    JSGlobalObjectInspectorController(JSC::JSGlobalObject&, Ref<InjectedScriptHost>&&);
-#endif
     ~JSGlobalObjectInspectorController() final;
 
     void connectFrontend(FrontendChannel&, bool isAutomaticInspection, bool immediatelyPause);

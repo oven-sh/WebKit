@@ -36,7 +36,6 @@
 #include <wtf/ForbidHeapAllocation.h>
 #include <wtf/MathExtras.h>
 #include <wtf/text/StringView.h>
-#include <wtf/ForkExtras.h>
 
 #if OS(DARWIN)
 #include <mach/vm_param.h>
@@ -260,17 +259,11 @@ public:
 
     bool is8Bit() const;
 
-    // --- ADDED ---
-    inline bool equal(JSGlobalObject*, const char* ptr, size_t len) const;
-    inline void value(jsstring_iterator* iterator) const;
-    // --- ADDED ---
-
 protected:
     friend class JSValue;
     friend class JSCell;
 
     JS_EXPORT_PRIVATE bool equalSlowCase(JSGlobalObject*, JSString* other) const;
-    JS_EXPORT_PRIVATE bool equalSlowCase(JSGlobalObject*, const char* ptr, size_t len) const;
     bool isSubstring() const;
 
     uintptr_t fiberConcurrently() const { return m_fiber; }
@@ -287,8 +280,6 @@ private:
     friend JSString* jsString(VM&, const String&);
     friend JSString* jsString(VM&, String&&);
     friend JSString* jsString(VM&, StringView);
-    friend JSString* jsString(VM&, const String&, GCDeferralContext*);
-    friend JSString* jsString(VM&, String&&, GCDeferralContext*);
     friend JSString* jsString(JSGlobalObject*, JSString*, JSString*);
     friend JSString* jsString(JSGlobalObject*, const String&, JSString*);
     friend JSString* jsString(JSGlobalObject*, JSString*, const String&);
@@ -722,11 +713,6 @@ private:
     friend JSString* jsString(JSGlobalObject*, const String&, const String&, const String&);
     friend JSString* jsSubstringOfResolved(VM&, GCDeferralContext*, JSString*, unsigned, unsigned);
     friend JSString* jsSubstring(VM&, JSGlobalObject*, JSString*, unsigned, unsigned);
-
-
-    JS_EXPORT_PRIVATE void iterRope(jsstring_iterator*) const;
-    NEVER_INLINE void iterRopeSlowCase(jsstring_iterator*) const;
-    void iterRopeInternalNoSubstring(jsstring_iterator*) const;
     friend JSString* jsAtomString(JSGlobalObject*, VM&, JSString*);
     friend JSString* jsAtomString(JSGlobalObject*, VM&, JSString*, JSString*);
     friend JSString* jsAtomString(JSGlobalObject*, VM&, JSString*, JSString*, JSString*);
@@ -889,22 +875,6 @@ inline const String& JSString::value(JSGlobalObject* globalObject) const
     return valueInternal();
 }
 
-inline void JSString::value(jsstring_iterator* iterator) const
-{
-      if (isRope()) {
-          static_cast<const JSRopeString*>(this)->iterRope(iterator);
-          return;
-      }
-
-
-    auto internal = valueInternal().impl();
-    if (this->is8Bit()) {
-        iterator->append8(iterator, (void*)internal->characters8(), internal->length());
-    } else {
-        iterator->append16(iterator, (void*)internal->characters16(), internal->length());
-    }
-}
-
 inline const String& JSString::tryGetValue(bool allocationAllowed) const
 {
     if (allocationAllowed) {
@@ -951,30 +921,6 @@ inline JSString* jsString(VM& vm, String&& s)
             return vm.smallStrings.singleCharacterString(c);
     }
     return JSString::create(vm, s.releaseImpl().releaseNonNull());
-}
-
-inline JSString* jsString(VM& vm, const String& s, GCDeferralContext* deferralContext)
-{
-    int size = s.length();
-    if (!size)
-        return vm.smallStrings.emptyString();
-    if (size == 1) {
-        if (auto c = s.characterAt(0); c <= maxSingleCharacterString)
-            return vm.smallStrings.singleCharacterString(c);
-    }
-    return JSString::create(vm, deferralContext, *s.impl());
-}
-
-inline JSString* jsString(VM& vm, String&& s, GCDeferralContext* deferralContext)
-{
-    int size = s.length();
-    if (!size)
-        return vm.smallStrings.emptyString();
-    if (size == 1) {
-        if (auto c = s.characterAt(0); c <= maxSingleCharacterString)
-            return vm.smallStrings.singleCharacterString(c);
-    }
-    return JSString::create(vm, deferralContext, s.releaseImpl().releaseNonNull());
 }
 
 ALWAYS_INLINE JSString* jsString(VM& vm, const AtomString& s)

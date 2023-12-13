@@ -265,6 +265,9 @@ static bool validateBytecodeCachePath(NSURL* cachePath, NSError** error)
 
 - (JSC::SourceCode)sourceCode
 {
+    JSC::VM& vm = *toJS([m_virtualMachine JSContextGroupRef]);
+    JSC::JSLockHolder locker(vm);
+
     TextPosition startPosition { };
     String filename = String { [[self sourceURL] absoluteString] };
     URL url = URL({ }, filename);
@@ -278,7 +281,7 @@ static bool validateBytecodeCachePath(NSURL* cachePath, NSError** error)
 - (JSC::JSSourceCode*)jsSourceCode
 {
     JSC::VM& vm = *toJS([m_virtualMachine JSContextGroupRef]);
-
+    JSC::JSLockHolder locker(vm);
     JSC::JSSourceCode* jsSourceCode = JSC::JSSourceCode::create(vm, [self sourceCode]);
     return jsSourceCode;
 }

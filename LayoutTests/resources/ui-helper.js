@@ -602,6 +602,22 @@ window.UIHelper = class UIHelper {
         });
     }
 
+    static async setInlinePrediction(text)
+    {
+        if (!this.isWebKit2())
+            return Promise.resolve();
+
+        return new Promise(resolve => testRunner.runUIScript(`uiController.setInlinePrediction(\`${text}\`)`, resolve));
+    }
+
+    static async acceptInlinePrediction()
+    {
+        if (!this.isWebKit2())
+            return Promise.resolve();
+
+        return new Promise(resolve => testRunner.runUIScript(`uiController.acceptInlinePrediction()`, resolve));
+    }
+
     static async activateAndWaitForInputSessionAt(x, y)
     {
         if (!this.isWebKit2() || !this.isIOSFamily())
@@ -661,6 +677,14 @@ window.UIHelper = class UIHelper {
                     uiController.didDismissContextMenuCallback = clearCallbacksAndScriptComplete;
                 })()`, resolve);
         });
+    }
+
+    static resizeWindowTo(width, height)
+    {
+        if (!this.isWebKit2())
+            return Promise.resolve();
+
+        return new Promise(resolve => testRunner.runUIScript(`uiController.resizeWindowTo(${width}, ${height})`, resolve));
     }
 
     static activateElementAndWaitForInputSession(element)
@@ -1072,10 +1096,23 @@ window.UIHelper = class UIHelper {
         return new Promise(resolve => {
             testRunner.runUIScript(`
             (function() {
-                uiController.didShowContextMenuCallback = function() {
+                if (!uiController.isShowingContextMenu) {
+                    uiController.didShowContextMenuCallback = function() {
+                        uiController.uiScriptComplete(JSON.stringify(uiController.contentsOfUserInterfaceItem('selectMenu')));
+                    };
+                } else {
                     uiController.uiScriptComplete(JSON.stringify(uiController.contentsOfUserInterfaceItem('selectMenu')));
-                };
+                }
             })();`, result => resolve(JSON.parse(result).selectMenu));
+        });
+    }
+
+    static contextMenuItems()
+    {
+        return new Promise(resolve => {
+            testRunner.runUIScript(`(() => {
+                uiController.uiScriptComplete(JSON.stringify(uiController.contentsOfUserInterfaceItem('contextMenu')))
+            })()`, result => resolve(result ? JSON.parse(result).contextMenu : null));
         });
     }
 
@@ -1842,6 +1879,12 @@ window.UIHelper = class UIHelper {
         return new Promise(resolve => testRunner.runUIScript(`uiController.paste()`, resolve));
     }
 
+    static async pasteboardChangeCount() {
+        return new Promise(resolve => testRunner.runUIScript(`uiController.pasteboardChangeCount`, (result) => {
+            resolve(parseInt(result))
+        }));
+    }
+
     static async setContinuousSpellCheckingEnabled(enabled) {
         return new Promise(resolve => {
             testRunner.runUIScript(`uiController.setContinuousSpellCheckingEnabled(${enabled})`, resolve);
@@ -1921,6 +1964,16 @@ window.UIHelper = class UIHelper {
 
         return new Promise(resolve => {
             testRunner.runUIScript("uiController.uiScriptComplete(uiController.currentImageAnalysisRequestID)", result => resolve(result));
+        });
+    }
+
+    static installFakeMachineReadableCodeResultsForImageAnalysis()
+    {
+        if (!this.isWebKit2())
+            return Promise.resolve();
+
+        return new Promise(resolve => {
+            testRunner.runUIScript("uiController.installFakeMachineReadableCodeResultsForImageAnalysis()", resolve);
         });
     }
 

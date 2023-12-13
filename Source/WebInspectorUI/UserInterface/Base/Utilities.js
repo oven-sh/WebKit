@@ -23,21 +23,21 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-emDash = "\u2014";
-enDash = "\u2013";
-figureDash = "\u2012";
-ellipsis = "\u2026";
-zeroWidthSpace = "\u200b";
-multiplicationSign = "\u00d7";
+var emDash = "\u2014";
+var enDash = "\u2013";
+var figureDash = "\u2012";
+var ellipsis = "\u2026";
+var zeroWidthSpace = "\u200b";
+var multiplicationSign = "\u00d7";
 
-xor = function xor(a, b)
+function xor(a, b)
 {
     if (a)
         return b ? false : a;
     return b || false;
 }
 
-nullish = function nullish(value)
+function nullish(value)
 {
     return value === null || value === undefined;
 }
@@ -1538,20 +1538,20 @@ Object.defineProperty(Uint32Array, "isLittleEndian",
     }
 });
 
-isEmptyObject = function isEmptyObject(object)
+function isEmptyObject(object)
 {
     for (var property in object)
         return false;
     return true;
 }
 
-isEnterKey = function isEnterKey(event)
+function isEnterKey(event)
 {
     // Check if this is an IME event.
     return event.keyCode !== 229 && event.keyIdentifier === "Enter";
 }
 
-resolveDotsInPath = function resolveDotsInPath(path)
+function resolveDotsInPath(path)
 {
     if (!path)
         return path;
@@ -1585,7 +1585,7 @@ resolveDotsInPath = function resolveDotsInPath(path)
     return result.join("/");
 }
 
-parseMIMEType = function parseMIMEType(fullMimeType)
+function parseMIMEType(fullMimeType)
 {
     if (!fullMimeType)
         return {type: fullMimeType, boundary: null, encoding: null};
@@ -1611,7 +1611,7 @@ parseMIMEType = function parseMIMEType(fullMimeType)
     return {type, boundary: boundary || null, encoding: encoding || null};
 }
 
-simpleGlobStringToRegExp = function simpleGlobStringToRegExp(globString, regExpFlags)
+function simpleGlobStringToRegExp(globString, regExpFlags)
 {
     // Only supports "*" globs.
 
@@ -1757,41 +1757,41 @@ Object.defineProperty(Promise, "delay",
     }
 });
 
-appendWebInspectorSourceURL = function appendWebInspectorSourceURL(string)
+function appendWebInspectorSourceURL(string)
 {
     if (string.includes("//# sourceURL"))
         return string;
     return "\n//# sourceURL=__WebInspectorInternal__\n" + string;
 }
 
-appendWebInspectorConsoleEvaluationSourceURL = function appendWebInspectorConsoleEvaluationSourceURL(string)
+function appendWebInspectorConsoleEvaluationSourceURL(string)
 {
     if (string.includes("//# sourceURL"))
         return string;
     return "\n//# sourceURL=__WebInspectorConsoleEvaluation__\n" + string;
 }
 
-isWebInspectorBootstrapScript = function isWebInspectorBootstrapScript(url)
+function isWebInspectorBootstrapScript(url)
 {
     return url === WI.NetworkManager.bootstrapScriptURL;
 }
 
-isWebInspectorInternalScript = function isWebInspectorInternalScript(url)
+function isWebInspectorInternalScript(url)
 {
     return url === "__WebInspectorInternal__";
 }
 
-isWebInspectorConsoleEvaluationScript = function isWebInspectorConsoleEvaluationScript(url)
+function isWebInspectorConsoleEvaluationScript(url)
 {
     return url === "__WebInspectorConsoleEvaluation__";
 }
 
-isWebKitInjectedScript = function isWebKitInjectedScript(url)
+function isWebKitInjectedScript(url)
 {
     return url && url.startsWith("__InjectedScript_") && url.endsWith(".js");
 }
 
-isWebKitInternalScript = function isWebKitInternalScript(url)
+function isWebKitInternalScript(url)
 {
     if (isWebInspectorConsoleEvaluationScript(url))
         return false;
@@ -1802,12 +1802,12 @@ isWebKitInternalScript = function isWebKitInternalScript(url)
     return url && url.startsWith("__Web") && url.endsWith("__");
 }
 
-isFunctionStringNativeCode = function isFunctionStringNativeCode(str)
+function isFunctionStringNativeCode(str)
 {
     return str.endsWith("{\n    [native code]\n}");
 }
 
-whitespaceRatio = function whitespaceRatio(content, start, end)
+function whitespaceRatio(content, start, end)
 {
     let whitespaceScore = 0;
     let size = end - start;
@@ -1826,7 +1826,7 @@ whitespaceRatio = function whitespaceRatio(content, start, end)
     return ratio;
 }
 
-isTextLikelyMinified = function isTextLikelyMinified(content)
+function isTextLikelyMinified(content)
 {
     const autoFormatMaxCharactersToCheck = 2500;
     const autoFormatWhitespaceRatio = 0.2;
@@ -1847,12 +1847,12 @@ isTextLikelyMinified = function isTextLikelyMinified(content)
     return false;
 }
 
-doubleQuotedString = function doubleQuotedString(str)
+function doubleQuotedString(str)
 {
     return JSON.stringify(str);
 }
 
-insertionIndexForObjectInListSortedByFunction = function insertionIndexForObjectInListSortedByFunction(object, list, comparator, insertionIndexAfter)
+function insertionIndexForObjectInListSortedByFunction(object, list, comparator, insertionIndexAfter)
 {
     if (insertionIndexAfter) {
         return list.upperBound(object, comparator);
@@ -1861,9 +1861,26 @@ insertionIndexForObjectInListSortedByFunction = function insertionIndexForObject
     }
 }
 
-insertObjectIntoSortedArray = function insertObjectIntoSortedArray(object, array, comparator)
+function insertObjectIntoSortedArray(object, array, comparator)
 {
     array.splice(insertionIndexForObjectInListSortedByFunction(object, array, comparator), 0, object);
+}
+
+async function retryUntil(predicate, {delay, retries} = {})
+{
+    retries ??= 100;
+    delay ??= 100;
+
+    for (let i = 0; i < retries; ++i) {
+        let result = predicate();
+        if (result)
+            return result;
+
+        await Promise.delay(delay);
+    }
+
+    console.assert(false, "retryUntil exceeded the maximum number of retries.", predicate, retries);
+    return null;
 }
 
 WI.setReentrantCheck = function(object, key)

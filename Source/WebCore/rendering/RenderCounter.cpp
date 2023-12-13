@@ -49,7 +49,7 @@ using namespace HTMLNames;
 WTF_MAKE_ISO_ALLOCATED_IMPL(RenderCounter);
 
 using CounterMap = HashMap<AtomString, Ref<CounterNode>>;
-using CounterMaps = WeakHashMap<RenderElement, std::unique_ptr<CounterMap>>;
+using CounterMaps = SingleThreadWeakHashMap<RenderElement, std::unique_ptr<CounterMap>>;
 
 static CounterNode* makeCounterNode(RenderElement&, const AtomString& identifier, bool alwaysCreateCounter);
 
@@ -435,6 +435,7 @@ RenderCounter::RenderCounter(Document& document, const CounterContent& counter)
     : RenderText(Type::Counter, document, emptyString())
     , m_counter(counter)
 {
+    ASSERT(isRenderCounter());
     view().addCounterNeedingUpdate(*this);
 }
 
@@ -585,6 +586,9 @@ void RenderCounter::rendererStyleChangedSlowCase(RenderElement& renderer, const 
                 RenderCounter::destroyCounterNodes(renderer);
         }
     } else {
+        if (renderer.hasCounterNodeMap())
+            RenderCounter::destroyCounterNodes(renderer);
+
         for (auto& key : newStyle.counterDirectives().map.keys()) {
             // We must create this node here, because the added node may be a node with no display such as
             // as those created by the increment or reset directives and the re-layout that will happen will

@@ -44,11 +44,12 @@
 #include <wtf/NeverDestroyed.h>
 #include <wtf/NumberOfCores.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/TranslatedProcess.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/threads/Signals.h>
 
-#if PLATFORM(COCOA)
+#if OS(DARWIN)
 #include <wtf/darwin/OSLogPrintStream.h>
 #endif
 
@@ -72,10 +73,12 @@ namespace OptionsHelper {
 // VM run time. For now, the only field it contains is a copy of Options defaults
 // which are only used to provide more info for Options dumps.
 struct Metadata {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(Metadata);
 public:
     OptionsStorage defaults;
 };
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(Metadata);
 
 static LazyNeverDestroyed<std::unique_ptr<Metadata>> g_metadata;
 static LazyNeverDestroyed<WTF::BitSet<NumberOfOptions>> g_optionWasOverridden;
@@ -297,7 +300,7 @@ std::optional<OptionsStorage::OSLogType> parse(const char* string)
     return result;
 }
 
-#if PLATFORM(COCOA)
+#if OS(DARWIN)
 static os_log_type_t asDarwinOSLogType(OSLogType type)
 {
     switch (type) {
@@ -584,6 +587,29 @@ static void overrideDefaults()
         Options::thresholdForOMGOptimizeAfterWarmUp() = 1500;
         Options::thresholdForOMGOptimizeSoon() = 100;
     }
+
+#if ASAN_ENABLED
+    // This is a heuristic because ASAN builds are memory hogs in terms of stack frame usage.
+    // So, we need a much larger ReservedZoneSize to allow stack overflow handlers to execute.
+    Options::reservedZoneSize() = 3 * Options::reservedZoneSize();
+#endif
+}
+
+bool Options::setAllJITCodeValidations(const char* valueStr)
+{
+    auto value = parse<OptionsStorage::Bool>(valueStr);
+    if (!value)
+        return false;
+    setAllJITCodeValidations(value.value());
+    return true;
+}
+
+void Options::setAllJITCodeValidations(bool value)
+{
+    Options::validateDFGClobberize() = value;
+    Options::validateDFGExceptionHandling() = value;
+    Options::validateDoesGC() = value;
+    Options::useJITAsserts() = value;
 }
 
 static inline void disableAllJITOptions()
@@ -600,10 +626,10 @@ static inline void disableAllJITOptions()
     Options::useJITCage() = false;
     Options::useConcurrentJIT() = false;
 
-    Options::useWebAssembly() = false;
+    if (!OptionsHelper::wasOverridden(Options::useWebAssemblyID))
+        Options::useWebAssembly() = false;
 
     Options::usePollingTraps() = true;
-    Options::useLLInt() = true;
 
     Options::dumpDisassembly() = false;
     Options::asyncDisassembly() = false;
@@ -653,9 +679,6 @@ void Options::notifyOptionsChanged()
     if (thresholdForGlobalLexicalBindingEpoch == 0 || thresholdForGlobalLexicalBindingEpoch == 1)
         Options::thresholdForGlobalLexicalBindingEpoch() = UINT_MAX;
 
-#if !defined(NDEBUG)
-    Options::validateDFGExceptionHandling() = true;
-#endif
 #if !ENABLE(JIT)
     Options::useJIT() = false;
 #endif
@@ -842,7 +865,7 @@ void Options::notifyOptionsChanged()
         FOR_EACH_JSC_EXPERIMENTAL_OPTION(DISABLE_TIERS);
     }
 
-#if PLATFORM(COCOA)
+#if OS(DARWIN)
     if (useOSLogOptionHasChanged) {
         initializeDatafileToUseOSLog();
         useOSLogOptionHasChanged = false;
@@ -1341,6 +1364,23 @@ SUPPRESS_ASAN bool canUseJITCage()
 #else
 bool canUseJITCage() { return false; }
 #endif
+
+bool canUseHandlerIC()
+{
+#if CPU(X86_64)
+#if OS(WINDOWS)
+    return false;
+#else
+    return true;
+#endif
+#elif CPU(ARM64)
+    return !isIOS();
+#elif CPU(RISCV64)
+    return true;
+#else
+    return false;
+#endif
+}
 
 bool canUseWebAssemblyFastMemory()
 {

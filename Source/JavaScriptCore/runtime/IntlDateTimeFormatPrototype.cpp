@@ -98,10 +98,8 @@ double IntlDateTimeFormat::handleDateTimeValue(JSGlobalObject* globalObject, JSV
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (x.isUndefined()) {
-        auto dateNowValue = dateNowImpl(globalObject);
-        RELEASE_AND_RETURN(scope, dateNowValue.toNumber(globalObject));
-    }
+    if (x.isUndefined())
+        RELEASE_AND_RETURN(scope, dateNowImpl().toNumber(globalObject));
 
     // FIXME:
     //  - Add all of the other Temporal types

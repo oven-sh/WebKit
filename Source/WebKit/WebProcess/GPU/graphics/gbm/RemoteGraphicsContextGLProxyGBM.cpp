@@ -40,6 +40,7 @@
 #include <WebCore/DMABufObject.h>
 #include <WebCore/GraphicsLayerContentsDisplayDelegate.h>
 #include <WebCore/NicosiaContentLayerTextureMapperImpl.h>
+#include <WebCore/TextureMapperFlags.h>
 #include <WebCore/TextureMapperPlatformLayerProxyDMABuf.h>
 
 namespace WebKit {
@@ -88,9 +89,9 @@ void NicosiaDisplayDelegate::swapBuffersIfNeeded()
     if (!!m_pending.handle) {
         Locker locker { proxy.lock() };
 
-        WebCore::TextureMapperGL::Flags flags = WebCore::TextureMapperGL::ShouldFlipTexture;
+        OptionSet<WebCore::TextureMapperFlags> flags = WebCore::TextureMapperFlags::ShouldFlipTexture;
         if (!m_isOpaque)
-            flags |= WebCore::TextureMapperGL::ShouldBlend;
+            flags.add(WebCore::TextureMapperFlags::ShouldBlend);
 
         downcast<WebCore::TextureMapperPlatformLayerProxyDMABuf>(proxy).pushDMABuf(WTFMove(m_pending),
             [](auto&& object) { return object; }, flags);
@@ -127,14 +128,13 @@ void RemoteGraphicsContextGLProxyGBM::prepareForDisplay()
         return;
 
     auto sendResult = sendSync(Messages::RemoteGraphicsContextGL::PrepareForDisplay());
-    if (!sendResult) {
+    if (!sendResult.succeeded()) {
         markContextLost();
         return;
     }
 
     auto& [dmabufObject] = sendResult.reply();
     m_layerContentsDisplayDelegate->present(WTFMove(dmabufObject));
-    markLayerComposited();
 }
 
 Ref<RemoteGraphicsContextGLProxy> RemoteGraphicsContextGLProxy::platformCreate(IPC::Connection& connection, Ref<IPC::StreamClientConnection> streamConnection, const WebCore::GraphicsContextGLAttributes& attributes, Ref<RemoteVideoFrameObjectHeapProxy>&& videoFrameObjectHeapProxy)

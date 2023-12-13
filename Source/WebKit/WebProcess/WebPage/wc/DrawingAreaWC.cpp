@@ -51,7 +51,7 @@ using namespace WebCore;
 
 DrawingAreaWC::DrawingAreaWC(WebPage& webPage, const WebPageCreationParameters& parameters)
     : DrawingArea(DrawingAreaType::WC, parameters.drawingAreaIdentifier, webPage)
-    , m_remoteWCLayerTreeHostProxy(makeUnique<RemoteWCLayerTreeHostProxy>(webPage, parameters.usesOffscreenRendering))
+    , m_remoteWCLayerTreeHostProxy(makeUniqueWithoutRefCountedCheck<RemoteWCLayerTreeHostProxy>(webPage, parameters.usesOffscreenRendering))
     , m_layerFactory(*this)
     , m_updateRenderingTimer(*this, &DrawingAreaWC::updateRendering)
     , m_commitQueue(WorkQueue::create("DrawingAreaWC CommitQueue"_s))
@@ -210,20 +210,6 @@ void DrawingAreaWC::triggerRenderingUpdate()
     m_updateRenderingTimer.startOneShot(0_s);
 }
 
-static void flushLayerImageBuffers(WCUpdateInfo& info)
-{
-    for (auto& layerInfo : info.changedLayers) {
-        if (layerInfo.changes & WCLayerChange::Background) {
-            for (auto& tileUpdate : layerInfo.tileUpdate) {
-                if (auto image = tileUpdate.backingStore.imageBuffer()) {
-                    if (auto flusher = image->createFlusher())
-                        flusher->flush();
-                }
-            }
-        }
-    }
-}
-
 bool DrawingAreaWC::isCompositingMode()
 {
     auto& mainWebFrame = m_webPage->mainWebFrame();
@@ -290,23 +276,16 @@ void DrawingAreaWC::sendUpdateAC()
         if (rootLayer.viewOverlayRootLayer)
             rootLayer.viewOverlayRootLayer->flushCompositingState(visibleRect);
 
-        m_commitQueue->dispatch([this, weakThis = WeakPtr(*this), stateID = m_backingStoreStateID, updateInfo = std::exchange(m_updateInfo, { }), willCallDisplayDidRefresh]() mutable {
-            flushLayerImageBuffers(updateInfo);
-            RunLoop::main().dispatch([this, weakThis = WTFMove(weakThis), stateID, updateInfo = WTFMove(updateInfo), willCallDisplayDidRefresh]() mutable {
-                if (!weakThis)
-                    return;
-                m_remoteWCLayerTreeHostProxy->update(WTFMove(updateInfo), [this, weakThis = WTFMove(weakThis), stateID, willCallDisplayDidRefresh](std::optional<UpdateInfo> updateInfo) {
-                    if (!weakThis)
-                        return;
-                    if (updateInfo && stateID == m_backingStoreStateID) {
-                        ASSERT(willCallDisplayDidRefresh);
-                        send(Messages::DrawingAreaProxy::Update(m_backingStoreStateID, WTFMove(*updateInfo)));
-                        return;
-                    }
-                    if (willCallDisplayDidRefresh)
-                        displayDidRefresh();
-                });
-            });
+        m_remoteWCLayerTreeHostProxy->update(std::exchange(m_updateInfo, { }), [this, weakThis = WeakPtr(*this), stateID = m_backingStoreStateID, willCallDisplayDidRefresh](std::optional<UpdateInfo> updateInfo) {
+            if (!weakThis)
+                return;
+            if (updateInfo && stateID == m_backingStoreStateID) {
+                ASSERT(willCallDisplayDidRefresh);
+                send(Messages::DrawingAreaProxy::Update(m_backingStoreStateID, WTFMove(*updateInfo)));
+                return;
+            }
+            if (willCallDisplayDidRefresh)
+                displayDidRefresh();
         });
     }
 }
@@ -366,30 +345,15 @@ void DrawingAreaWC::sendUpdateNonAC()
     graphicsContext.translate(-bounds.x(), -bounds.y());
     for (const auto& rect : rects)
         webPage->drawRect(image->context(), rect);
-    image->flushDrawingContextAsync();
+    image->flushDrawingContext();
 
-    m_commitQueue->dispatch([this, weakThis = WeakPtr(*this), stateID = m_backingStoreStateID, updateInfo = WTFMove(updateInfo), image = WTFMove(image)]() mutable {
-        if (auto flusher = image->createFlusher())
-            flusher->flush();
-        RunLoop::main().dispatch([this, weakThis = WTFMove(weakThis), stateID, updateInfo = WTFMove(updateInfo), image = WTFMove(image)]() mutable {
-            if (!weakThis)
-                return;
-            if (stateID != m_backingStoreStateID) {
-                displayDidRefresh();
-                return;
-            }
+    auto* sharing = image->toBackendSharing();
+    if (is<ImageBufferBackendHandleSharing>(sharing)) {
+        if (auto handle = downcast<ImageBufferBackendHandleSharing>(*sharing).createBackendHandle())
+            updateInfo.bitmapHandle = std::get<ShareableBitmap::Handle>(WTFMove(*handle));
+    }
 
-            if (auto* backend = image->ensureBackendCreated()) {
-                auto* sharing = backend->toBackendSharing();
-                if (is<ImageBufferBackendHandleSharing>(sharing)) {
-                    if (auto handle = downcast<ImageBufferBackendHandleSharing>(*sharing).createBackendHandle())
-                        updateInfo.bitmapHandle = std::get<ShareableBitmap::Handle>(WTFMove(*handle));
-                }
-            }
-
-            send(Messages::DrawingAreaProxy::Update(stateID, WTFMove(updateInfo)));
-        });
-    });
+    send(Messages::DrawingAreaProxy::Update(m_backingStoreStateID, WTFMove(updateInfo)));
 }
 
 void DrawingAreaWC::graphicsLayerAdded(GraphicsLayerWC& layer)

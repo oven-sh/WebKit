@@ -1,6 +1,6 @@
 /*
  *  Copyright (C) 2007 Eric Seidel <eric@webkit.org>
- *  Copyright (C) 2007-2022 Apple Inc. All rights reserved.
+ *  Copyright (C) 2007-2023 Apple Inc. All rights reserved.
  *
  *  This library is free software; you can redistribute it and/or
  *  modify it under the terms of the GNU Library General Public
@@ -28,9 +28,6 @@
 #include "StructureCache.h"
 #include "Watchpoint.h"
 #include "WeakGCSet.h"
-#if USE(BUN_JSC_ADDITIONS)
-#include "InternalFieldTuple.h"
-#endif
 #include <wtf/FixedVector.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/WeakPtr.h>
@@ -261,7 +258,6 @@ public:
     LazyProperty<JSGlobalObject, JSFunction> m_evalFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_promiseResolveFunction;
     LazyProperty<JSGlobalObject, JSFunction> m_numberProtoToStringFunction;
-    LazyProperty<JSGlobalObject, JSFunction> m_typedArrayProtoSort;
     WriteBarrier<JSFunction> m_objectProtoValueOfFunction;
     WriteBarrier<JSFunction> m_functionProtoHasInstanceSymbolFunction;
     WriteBarrier<JSObject> m_regExpProtoSymbolReplace;
@@ -305,10 +301,6 @@ public:
     WriteBarrierStructureID m_clonedArgumentsStructure;
 
     WriteBarrierStructureID m_objectStructureForObjectConstructor;
-
-#if USE(BUN_JSC_ADDITIONS)
-    WriteBarrierStructureID m_internalFieldTupleStructure;
-#endif
 
     // Lists the actual structures used for having these particular indexing shapes.
     WriteBarrierStructureID m_originalArrayStructureForIndexingShape[NumberOfArrayIndexingModes];
@@ -409,11 +401,6 @@ public:
     String m_name;
 
     Strong<JSObject> m_unhandledRejectionCallback;
-
-#if USE(BUN_JSC_ADDITIONS)
-    bool m_isAsyncContextTrackingEnabled { false };
-    WriteBarrier<InternalFieldTuple> m_asyncContextData;
-#endif
 
     Debugger* m_debugger;
 
@@ -558,16 +545,6 @@ public:
     RuntimeFlags m_runtimeFlags;
     WeakPtr<ConsoleClient> m_consoleClient;
     std::optional<unsigned> m_stackTraceLimit;
-    
-    // Added for "bun test"
-    double overridenDateNow { -1 };
-
-    double jsDateNow() const {
-        if (overridenDateNow > -1)
-            return overridenDateNow;
-        
-        return WTF::jsCurrentTime();
-    }
 
     template<typename T>
     struct WeakCustomGetterOrSetterHash {
@@ -578,11 +555,14 @@ public:
         static constexpr bool safeToCompareToEmptyOrDeleted = false;
     };
 
-    WeakGCSet<JSCustomGetterFunction, WeakCustomGetterOrSetterHash<JSCustomGetterFunction>> m_customGetterFunctionSet;
-    WeakGCSet<JSCustomSetterFunction, WeakCustomGetterOrSetterHash<JSCustomSetterFunction>> m_customSetterFunctionSet;
+    using WeakGCSetJSCustomGetterFunction = WeakGCSet<JSCustomGetterFunction, WeakCustomGetterOrSetterHash<JSCustomGetterFunction>>;
+    using WeakGCSetJSCustomSetterFunction = WeakGCSet<JSCustomSetterFunction, WeakCustomGetterOrSetterHash<JSCustomSetterFunction>>;
 
-    WeakGCSet<JSCustomGetterFunction, WeakCustomGetterOrSetterHash<JSCustomGetterFunction>>& customGetterFunctionSet() { return m_customGetterFunctionSet; }
-    WeakGCSet<JSCustomSetterFunction, WeakCustomGetterOrSetterHash<JSCustomSetterFunction>>& customSetterFunctionSet() { return m_customSetterFunctionSet; }
+    WeakGCSetJSCustomGetterFunction m_customGetterFunctionSet;
+    WeakGCSetJSCustomSetterFunction m_customSetterFunctionSet;
+
+    WeakGCSetJSCustomGetterFunction& customGetterFunctionSet() { return m_customGetterFunctionSet; }
+    WeakGCSetJSCustomSetterFunction& customSetterFunctionSet() { return m_customSetterFunctionSet; }
 
     Ref<ImportMap> m_importMap;
 
@@ -609,11 +589,6 @@ public:
     JS_EXPORT_PRIVATE static JSGlobalObject* createWithCustomMethodTable(VM&, Structure*, const GlobalObjectMethodTable*);
 
     DECLARE_EXPORT_INFO;
-
-#if USE(BUN_JSC_ADDITIONS)
-    bool isAsyncContextTrackingEnabled() const { return m_isAsyncContextTrackingEnabled; }
-    void setAsyncContextTrackingEnabled(bool isEnabled) { m_isAsyncContextTrackingEnabled = isEnabled; }
-#endif
 
     bool hasDebugger() const { return m_debugger; }
     bool hasInteractiveDebugger() const;
@@ -704,7 +679,6 @@ public:
     JSFunction* numberProtoToStringFunction() const { return m_numberProtoToStringFunction.getInitializedOnMainThread(this); }
     JSFunction* functionProtoHasInstanceSymbolFunction() const { return m_functionProtoHasInstanceSymbolFunction.get(); }
     JSFunction* regExpProtoExecFunction() const;
-    JSFunction* typedArrayProtoSort() const { return m_typedArrayProtoSort.get(this); }
     JSFunction* stringProtoSubstringFunction() const;
     JSFunction* performProxyObjectHasFunction() const;
     JSFunction* performProxyObjectGetFunction() const;
@@ -880,10 +854,6 @@ public:
     Structure* plainDateTimeStructure() { return m_plainDateTimeStructure.get(this); }
     Structure* plainTimeStructure() { return m_plainTimeStructure.get(this); }
     Structure* timeZoneStructure() { return m_timeZoneStructure.get(this); }
-
-#if USE(BUN_JSC_ADDITIONS)
-    Structure* internalFieldTupleStructure() const { return m_internalFieldTupleStructure.get(); }
-#endif
 
     JS_EXPORT_PRIVATE void setInspectable(bool);
     JS_EXPORT_PRIVATE bool inspectable() const;

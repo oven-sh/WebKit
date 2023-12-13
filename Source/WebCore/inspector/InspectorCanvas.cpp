@@ -39,7 +39,6 @@
 #include "Document.h"
 #include "Element.h"
 #include "FloatPoint.h"
-#include "GPUCanvasContext.h"
 #include "Gradient.h"
 #include "HTMLCanvasElement.h"
 #include "HTMLImageElement.h"
@@ -773,7 +772,7 @@ void InspectorCanvas::finalizeFrame()
 {
     appendActionSnapshotIfNeeded();
 
-    if (m_frames && m_frames->length() && !std::isnan(m_currentFrameStartTime)) {
+    if (m_frames && m_frames->length() && !m_currentFrameStartTime.isNaN()) {
         auto currentFrame = static_reference_cast<Protocol::Recording::Frame>(m_frames->get(m_frames->length() - 1));
         currentFrame->setDuration((MonotonicTime::now() - m_currentFrameStartTime).milliseconds());
 
@@ -879,22 +878,39 @@ static RefPtr<Inspector::Protocol::Canvas::ContextAttributes> buildObjectForCanv
 Ref<Protocol::Canvas::Canvas> InspectorCanvas::buildObjectForCanvas(bool captureBacktrace)
 {
     auto contextType = [&] {
-        if (is<CanvasRenderingContext2D>(m_context))
-            return Protocol::Canvas::ContextType::Canvas2D;
+        bool isOffscreen = false;
 #if ENABLE(OFFSCREEN_CANVAS)
-        if (is<OffscreenCanvasRenderingContext2D>(m_context))
+        if (is<OffscreenCanvas>(m_context->canvasBase()))
+            isOffscreen = true;
+#endif
+
+        if (is<CanvasRenderingContext2D>(m_context)) {
+            ASSERT(!isOffscreen);
+            return Protocol::Canvas::ContextType::Canvas2D;
+        }
+#if ENABLE(OFFSCREEN_CANVAS)
+        if (is<OffscreenCanvasRenderingContext2D>(m_context)) {
+            ASSERT(isOffscreen);
             return Protocol::Canvas::ContextType::OffscreenCanvas2D;
+        }
 #endif
-        if (is<ImageBitmapRenderingContext>(m_context))
+        if (is<ImageBitmapRenderingContext>(m_context)) {
+            if (isOffscreen)
+                return Protocol::Canvas::ContextType::OffscreenBitmapRenderer;
             return Protocol::Canvas::ContextType::BitmapRenderer;
+        }
 #if ENABLE(WEBGL)
-        if (is<WebGLRenderingContext>(m_context))
+        if (is<WebGLRenderingContext>(m_context)) {
+            if (isOffscreen)
+                return Protocol::Canvas::ContextType::OffscreenWebGL;
             return Protocol::Canvas::ContextType::WebGL;
-        if (is<WebGL2RenderingContext>(m_context))
+        }
+        if (is<WebGL2RenderingContext>(m_context)) {
+            if (isOffscreen)
+                return Protocol::Canvas::ContextType::OffscreenWebGL2;
             return Protocol::Canvas::ContextType::WebGL2;
+        }
 #endif
-        if (is<GPUCanvasContext>(m_context))
-            return Protocol::Canvas::ContextType::WebGPU;
 
         ASSERT_NOT_REACHED();
         return Protocol::Canvas::ContextType::Canvas2D;
@@ -939,22 +955,30 @@ Ref<Protocol::Recording::Recording> InspectorCanvas::releaseObjectForRecording()
 
     // FIXME: <https://webkit.org/b/201651> Web Inspector: Canvas: support canvas recordings for WebGPUDevice
 
+    bool isOffscreen = false;
+#if ENABLE(OFFSCREEN_CANVAS)
+    if (is<OffscreenCanvas>(m_context->canvasBase()))
+        isOffscreen = true;
+#endif
+
     Protocol::Recording::Type type;
-    if (is<CanvasRenderingContext2D>(m_context))
+    if (is<CanvasRenderingContext2D>(m_context)) {
+        ASSERT(!isOffscreen);
         type = Protocol::Recording::Type::Canvas2D;
 #if ENABLE(OFFSCREEN_CANVAS)
-    else if (is<OffscreenCanvasRenderingContext2D>(m_context))
+    } else if (is<OffscreenCanvasRenderingContext2D>(m_context)) {
+        ASSERT(isOffscreen);
         type = Protocol::Recording::Type::OffscreenCanvas2D;
 #endif
-    else if (is<ImageBitmapRenderingContext>(m_context))
-        type = Protocol::Recording::Type::CanvasBitmapRenderer;
+    } else if (is<ImageBitmapRenderingContext>(m_context)) {
+        type = isOffscreen ? Protocol::Recording::Type::OffscreenCanvasBitmapRenderer : Protocol::Recording::Type::CanvasBitmapRenderer;
 #if ENABLE(WEBGL)
-    else if (is<WebGLRenderingContext>(m_context))
-        type = Protocol::Recording::Type::CanvasWebGL;
-    else if (is<WebGL2RenderingContext>(m_context))
-        type = Protocol::Recording::Type::CanvasWebGL2;
+    } else if (is<WebGLRenderingContext>(m_context)) {
+        type = isOffscreen ? Protocol::Recording::Type::OffscreenCanvasWebGL : Protocol::Recording::Type::CanvasWebGL;
+    } else if (is<WebGL2RenderingContext>(m_context)) {
+        type = isOffscreen ? Protocol::Recording::Type::OffscreenCanvasWebGL2 : Protocol::Recording::Type::CanvasWebGL2;
 #endif
-    else {
+    } else {
         ASSERT_NOT_REACHED();
         type = Protocol::Recording::Type::Canvas2D;
     }
@@ -976,35 +1000,13 @@ Ref<Protocol::Recording::Recording> InspectorCanvas::releaseObjectForRecording()
 
 Protocol::ErrorStringOr<String> InspectorCanvas::getContentAsDataURL(CanvasRenderingContext& context)
 {
-#if ENABLE(WEBGL)
-    if (is<WebGLRenderingContextBase>(context))
-        downcast<WebGLRenderingContextBase>(context).setPreventBufferClearForInspector(true);
-
-    auto resetPreventBufferClearForInspector = makeScopeExit([&] {
-        if (is<WebGLRenderingContextBase>(context))
-            downcast<WebGLRenderingContextBase>(context).setPreventBufferClearForInspector(false);
-    });
-#endif
-    if (auto* canvasElement = dynamicDowncast<HTMLCanvasElement>(context.canvasBase())) {
-        auto result = canvasElement->toDataURL("image/png"_s);
-        if (result.hasException())
-            return makeUnexpected(result.releaseException().releaseMessage());
-        return result.releaseReturnValue().string;
-    }
-#if ENABLE(OFFSCREEN_CANVAS)
-    if (auto* offscreenCanvas = dynamicDowncast<OffscreenCanvas>(context.canvasBase())) {
-        if (!offscreenCanvas->originClean())
-            return makeUnexpected("Canvas is origin tainted."_s);
-
-        if (offscreenCanvas->hasCreatedImageBuffer()) {
-            if (auto* buffer = offscreenCanvas->buffer())
-                return buffer->toDataURL("image/png"_s);
-        }
-        return emptyString();
-    }
-#endif
-    ASSERT_NOT_REACHED();
-    return makeUnexpected(""_s);
+    if (context.compositingResultsNeedUpdating())
+        context.drawBufferToCanvas(CanvasRenderingContext::SurfaceBuffer::DrawingBuffer);
+    else
+        context.drawBufferToCanvas(CanvasRenderingContext::SurfaceBuffer::DisplayBuffer);
+    if (auto* buffer = context.canvasBase().buffer())
+        return buffer->toDataURL("image/png"_s);
+    return emptyString();
 }
 
 void InspectorCanvas::appendActionSnapshotIfNeeded()

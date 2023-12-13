@@ -35,7 +35,6 @@
 #include "Document.h"
 #include "ElementAncestorIteratorInlines.h"
 #include "ElementTraversal.h"
-#include "FragmentScriptingPermission.h"
 #include "HTMLAnchorElement.h"
 #include "HTMLBRElement.h"
 #include "HTMLBodyElement.h"
@@ -53,6 +52,7 @@
 #include "HTMLSpanElement.h"
 #include "HTMLUListElement.h"
 #include "NodeName.h"
+#include "ParserContentPolicy.h"
 #include "ParsingUtilities.h"
 #include "QualifiedName.h"
 #include "Settings.h"
@@ -60,6 +60,7 @@
 #include <wtf/CheckedRef.h>
 #include <wtf/Vector.h>
 #include <wtf/text/AtomString.h>
+#include <wtf/text/FastCharacterComparison.h>
 #include <wtf/text/StringParsingBuffer.h>
 
 namespace WebCore {
@@ -497,7 +498,7 @@ private:
     // separate buffer.
     String scanEscapedText()
     {
-        m_ucharBuffer.resize(0);
+        m_ucharBuffer.shrink(0);
         while (m_parsingBuffer.hasCharactersRemaining() && *m_parsingBuffer != '<') {
             if (*m_parsingBuffer == '&') {
                 scanHTMLCharacterReference(m_ucharBuffer);
@@ -527,7 +528,7 @@ private:
 
         if (m_parsingBuffer.atEnd() || !isCharAfterTagNameOrAttribute(*m_parsingBuffer)) {
             // Try parsing a case-insensitive tagName.
-            m_charBuffer.resize(0);
+            m_charBuffer.shrink(0);
             m_parsingBuffer.setPosition(start);
             while (m_parsingBuffer.hasCharactersRemaining()) {
                 auto c = *m_parsingBuffer;
@@ -541,9 +542,9 @@ private:
             if (m_parsingBuffer.atEnd() || !isCharAfterTagNameOrAttribute(*m_parsingBuffer))
                 return didFail(HTMLFastPathResult::FailedParsingTagName, ElementName::Unknown);
             skipWhile<isASCIIWhitespace>(m_parsingBuffer);
-            return findHTMLElementName({ m_charBuffer.data(), m_charBuffer.size() });
+            return findHTMLElementName(std::span { m_charBuffer.data(), m_charBuffer.size() });
         }
-        auto tagName = findHTMLElementName({ start, static_cast<size_t>(m_parsingBuffer.position() - start) });
+        auto tagName = findHTMLElementName(std::span { start, static_cast<size_t>(m_parsingBuffer.position() - start) });
         skipWhile<isASCIIWhitespace>(m_parsingBuffer);
         return tagName;
     }
@@ -563,7 +564,7 @@ private:
             // At this point name does not contain lowercase. It may contain upper-case,
             // which requires mapping. Assume it does.
             m_parsingBuffer.setPosition(start);
-            m_charBuffer.resize(0);
+            m_charBuffer.shrink(0);
             // isValidAttributeNameChar() returns false if end of input is reached.
             do {
                 auto c = m_parsingBuffer.consume();
@@ -577,13 +578,13 @@ private:
 
         if (attributeName.empty())
             return nullQName();
-        if (attributeName.size() > 2 && attributeName[0] == 'o' && attributeName[1] == 'n') {
+        if (attributeName.size() > 2 && compareCharacters(attributeName.data(), 'o', 'n')) {
             // These attributes likely contain script that may be executed at random
             // points, which could cause problems if parsing via the fast path
             // fails. For example, an image's onload event.
             return nullQName();
         }
-        if (attributeName.size() == 2 && attributeName[0] == 'i' && attributeName[1] == 's')
+        if (attributeName.size() == 2 && compareCharacters(attributeName.data(), 'i', 's'))
             return nullQName();
         return HTMLNameCache::makeAttributeQualifiedName(attributeName);
     }
@@ -622,7 +623,7 @@ private:
     AtomString scanEscapedAttributeValue()
     {
         skipWhile<isASCIIWhitespace>(m_parsingBuffer);
-        m_ucharBuffer.resize(0);
+        m_ucharBuffer.shrink(0);
         if (UNLIKELY(!m_parsingBuffer.hasCharactersRemaining() || !isQuoteCharacter(*m_parsingBuffer)))
             return didFail(HTMLFastPathResult::FailedParsingUnquotedEscapedAttributeValue, emptyAtom());
 
@@ -709,8 +710,8 @@ private:
 
     void parseAttributes(HTMLElement& parent)
     {
-        m_attributeBuffer.resize(0);
-        m_attributeNames.resize(0);
+        m_attributeBuffer.shrink(0);
+        m_attributeNames.shrink(0);
 
         bool hasDuplicateAttributes = false;
         while (true) {
@@ -894,7 +895,7 @@ static bool tryFastParsingHTMLFragmentImpl(const std::span<const CharacterType>&
     return parser.parse(contextElement);
 }
 
-bool tryFastParsingHTMLFragment(const String& source, Document& document, ContainerNode& destinationParent, Element& contextElement, OptionSet<ParserContentPolicy> policy)
+bool tryFastParsingHTMLFragment(StringView source, Document& document, ContainerNode& destinationParent, Element& contextElement, OptionSet<ParserContentPolicy> policy)
 {
     if (!canUseFastPath(contextElement, policy))
         return false;

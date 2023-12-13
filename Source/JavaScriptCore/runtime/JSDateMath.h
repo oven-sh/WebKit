@@ -47,6 +47,7 @@
 #include <wtf/DateMath.h>
 #include <wtf/GregorianDateTime.h>
 #include <wtf/SaturatedArithmetic.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace JSC {
 
@@ -56,7 +57,7 @@ class VM;
 
 static constexpr double minECMAScriptTime = -8.64E15;
 
-#if PLATFORM(COCOA) || USE(BUN_JSC_ADDITIONS)
+#if PLATFORM(COCOA)
 extern JS_EXPORT_PRIVATE std::atomic<uint64_t> lastTimeZoneID;
 #endif
 
@@ -78,7 +79,7 @@ struct LocalTimeOffsetCache {
 };
 
 class DateCache {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(DateCache);
     WTF_MAKE_NONCOPYABLE(DateCache);
 public:
     DateCache();
@@ -86,7 +87,7 @@ public:
 
     bool hasTimeZoneChange()
     {
-#if PLATFORM(COCOA) || USE(BUN_JSC_ADDITIONS)
+#if PLATFORM(COCOA)
         return m_cachedTimezoneID != lastTimeZoneID;
 #else
         return true; // always force a time zone check.
@@ -95,7 +96,7 @@ public:
 
     void resetIfNecessary()
     {
-#if PLATFORM(COCOA) || USE(BUN_JSC_ADDITIONS)
+#if PLATFORM(COCOA)
         if (LIKELY(!hasTimeZoneChange()))
             return;
         m_cachedTimezoneID = lastTimeZoneID;
@@ -114,11 +115,7 @@ public:
     double localTimeToMS(double milliseconds, WTF::TimeType);
     JS_EXPORT_PRIVATE double parseDate(JSGlobalObject*, VM&, const WTF::String&);
 
-#if USE(BUN_JSC_ADDITIONS)
-    static void timeZoneChanged() { ++lastTimeZoneID; }
-#else
     static void timeZoneChanged();
-#endif
 
 private:
     class DSTCache {

@@ -768,6 +768,8 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case ConstructForwardVarargs:
     case CallDirectEval:
     case CallWasm:
+    case CallCustomAccessorGetter:
+    case CallCustomAccessorSetter:
     case ToPrimitive:
     case ToPropertyKey:
     case InByVal:
@@ -1346,30 +1348,19 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
             return;
         }
         DOMJIT::Effect effect = snippet->effect;
-        if (effect.domReads == DOMJIT::HeapRange::top())
-            read(World);
-        else {
-            if (effect.domReads)
-                read(AbstractHeap(DOMState, effect.domReads.rawRepresentation()));
-            for (unsigned i = 0; i < 4; ++i) {
-                if (effect.reads[i] == InvalidAbstractHeap)
-                    break;
-                read(effect.reads[i]);
-            }
+        if (effect.reads) {
+            if (effect.reads == DOMJIT::HeapRange::top())
+                read(World);
+            else
+                read(AbstractHeap(DOMState, effect.reads.rawRepresentation()));
         }
-        if (effect.domWrites == DOMJIT::HeapRange::top()) {
-            if (Options::validateDFGClobberize())
-                clobberTopFunctor();
-             write(Heap);
-        }
-        else {
-            if (effect.domWrites) 
-                write(AbstractHeap(DOMState, effect.domWrites.rawRepresentation()));
-            for (unsigned i = 0; i < 4; ++i) {
-                if (effect.writes[i] == InvalidAbstractHeap)
-                    break;
-                write(effect.writes[i]);
-            }
+        if (effect.writes) {
+            if (effect.writes == DOMJIT::HeapRange::top()) {
+                if (Options::validateDFGClobberize())
+                    clobberTopFunctor();
+                write(Heap);
+            } else
+                write(AbstractHeap(DOMState, effect.writes.rawRepresentation()));
         }
         if (effect.def != DOMJIT::HeapRange::top()) {
             DOMJIT::HeapRange range = effect.def;
@@ -1387,34 +1378,21 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case CallDOM: {
         const DOMJIT::Signature* signature = node->signature();
         DOMJIT::Effect effect = signature->effect;
-        if (effect.domReads == DOMJIT::HeapRange::top())
-            read(World);
-        else {
-            if (effect.domReads)
-                read(AbstractHeap(DOMState, effect.domReads.rawRepresentation()));
-            for (unsigned i = 0; i < 4; ++i) {
-                if (effect.reads[i] == InvalidAbstractHeap)
-                    break;
-                read(effect.reads[i]);
-            }
+        if (effect.reads) {
+            if (effect.reads == DOMJIT::HeapRange::top())
+                read(World);
+            else
+                read(AbstractHeap(DOMState, effect.reads.rawRepresentation()));
         }
-        if (effect.domWrites == DOMJIT::HeapRange::top()) {
-            if (Options::validateDFGClobberize())
-                clobberTopFunctor();
-             write(Heap);
+        if (effect.writes) {
+            if (effect.writes == DOMJIT::HeapRange::top()) {
+                if (Options::validateDFGClobberize())
+                    clobberTopFunctor();
+                write(Heap);
+            } else
+                write(AbstractHeap(DOMState, effect.writes.rawRepresentation()));
         }
-        else {
-            if (effect.domWrites) 
-                write(AbstractHeap(DOMState, effect.domWrites.rawRepresentation()));
-            for (unsigned i = 0; i < 4; ++i) {
-                if (effect.writes[i] == InvalidAbstractHeap)
-                    break;
-                write(effect.writes[i]);
-            }
-        }
-#ifndef BUN_SKIP_FAILING_ASSERTIONS
         ASSERT_WITH_MESSAGE(effect.def == DOMJIT::HeapRange::top(), "Currently, we do not accept any def for CallDOM.");
-#endif
         return;
     }
 
@@ -1500,7 +1478,17 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         unsigned identifierNumber = node->storageAccessData().identifierNumber;
         AbstractHeap heap(NamedProperties, identifierNumber);
         read(heap);
-        def(HeapLocation(NamedPropertyLoc, heap, node->child2()), LazyNode(node));
+
+        // Since LICM might break the uniqueness assumption of HeapLocation for
+        // *byOffset nodes. Then, the HeapLocation constructor with an extra state
+        // is introduced and applied in this phase in order to resolve the potential
+        // HeapLocation collisions for *byteOffset nodes after LICM phase. Note
+        // that the constructor with an extra state should be used only after LICM
+        // since it might affect performance.
+        if (graph.m_planStage >= PlanStage::LICMAndLater)
+            def(HeapLocation(NamedPropertyLoc, heap, node->child2(), &node->storageAccessData()), LazyNode(node));
+        else
+            def(HeapLocation(NamedPropertyLoc, heap, node->child2()), LazyNode(node));
         return;
     }
 
@@ -1509,7 +1497,10 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         read(JSObject_butterfly);
         AbstractHeap heap(NamedProperties, node->multiGetByOffsetData().identifierNumber);
         read(heap);
-        def(HeapLocation(NamedPropertyLoc, heap, node->child1()), LazyNode(node));
+        if (graph.m_planStage >= PlanStage::LICMAndLater)
+            def(HeapLocation(NamedPropertyLoc, heap, node->child1(), &node->multiGetByOffsetData()), LazyNode(node));
+        else
+            def(HeapLocation(NamedPropertyLoc, heap, node->child1()), LazyNode(node));
         return;
     }
         
@@ -1522,7 +1513,10 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
             write(JSCell_structureID);
         if (node->multiPutByOffsetData().reallocatesStorage())
             write(JSObject_butterfly);
-        def(HeapLocation(NamedPropertyLoc, heap, node->child1()), LazyNode(node->child2().node()));
+        if (graph.m_planStage >= PlanStage::LICMAndLater)
+            def(HeapLocation(NamedPropertyLoc, heap, node->child1(), &node->multiPutByOffsetData()), LazyNode(node->child2().node()));
+        else
+            def(HeapLocation(NamedPropertyLoc, heap, node->child1()), LazyNode(node->child2().node()));
         return;
     }
 
@@ -1544,7 +1538,10 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         unsigned identifierNumber = node->storageAccessData().identifierNumber;
         AbstractHeap heap(NamedProperties, identifierNumber);
         write(heap);
-        def(HeapLocation(NamedPropertyLoc, heap, node->child2()), LazyNode(node->child3().node()));
+        if (graph.m_planStage >= PlanStage::LICMAndLater)
+            def(HeapLocation(NamedPropertyLoc, heap, node->child2(), &node->storageAccessData()), LazyNode(node->child3().node()));
+        else
+            def(HeapLocation(NamedPropertyLoc, heap, node->child2()), LazyNode(node->child3().node()));
         return;
     }
         

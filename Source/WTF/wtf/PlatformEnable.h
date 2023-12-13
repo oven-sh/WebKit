@@ -32,6 +32,7 @@
 #error "Please #include <wtf/Platform.h> instead of this file directly."
 #endif
 
+
 #define ENABLE(WTF_FEATURE) (defined ENABLE_##WTF_FEATURE && ENABLE_##WTF_FEATURE)
 
 /* Use this file to list _all_ ENABLE() macros. Define the macros to be one of the following values:
@@ -54,6 +55,7 @@
  * Get the list of features enabled by default for a PLATFORM(XXX): gcc -E -dM -I. -DWTF_PLATFORM_XXX "wtf/Platform.h" | grep "ENABLE_\w\+ 1" | cut -d' ' -f2 | sort
  */
 
+
 /* FIXME: This should be renamed to ENABLE_ASSERTS for consistency and so it can be used as ENABLE(ASSERTS). */
 /* ASSERT_ENABLED should be true if we want the current compilation unit to
    do debug assertion checks unconditionally (e.g. treat a debug ASSERT
@@ -67,11 +69,14 @@
 #endif
 #endif
 
+
 /* ==== Platform additions: additions to PlatformEnable.h from outside the main repository ==== */
 
 #if USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/AdditionalFeatureDefines.h>)
 #include <WebKitAdditions/AdditionalFeatureDefines.h>
 #endif
+
+
 
 /* ==== Platform specific defaults ==== */
 
@@ -127,10 +132,6 @@
 #define ENABLE_ALTERNATE_WEBM_PLAYER 0
 #endif
 
-#if !defined(ENABLE_APNG)
-#define ENABLE_APNG 1
-#endif
-
 #if !defined(ENABLE_APP_HIGHLIGHTS)
 #define ENABLE_APP_HIGHLIGHTS 0
 #endif
@@ -155,10 +156,6 @@
 #define ENABLE_BADGING 1
 #endif
 
-#if !defined(ENABLE_CHANNEL_MESSAGING)
-#define ENABLE_CHANNEL_MESSAGING 1
-#endif
-
 #if !defined(ENABLE_CONTENT_CHANGE_OBSERVER)
 #define ENABLE_CONTENT_CHANGE_OBSERVER 0
 #endif
@@ -175,16 +172,8 @@
 #define ENABLE_CONTEXT_MENU_EVENT 1
 #endif
 
-#if !defined(ENABLE_CSS_BOX_DECORATION_BREAK)
-#define ENABLE_CSS_BOX_DECORATION_BREAK 1
-#endif
-
 #if !defined(ENABLE_CSS_COMPOSITING)
 #define ENABLE_CSS_COMPOSITING 0
-#endif
-
-#if !defined(ENABLE_CSS_CONIC_GRADIENTS)
-#define ENABLE_CSS_CONIC_GRADIENTS 0
 #endif
 
 #if !defined(ENABLE_CSS_TRANSFORM_STYLE_OPTIMIZED_3D)
@@ -237,10 +226,6 @@
 #define ENABLE_DESTINATION_COLOR_SPACE_LINEAR_SRGB 0
 #endif
 
-#if !defined(ENABLE_DOWNLOAD_ATTRIBUTE)
-#define ENABLE_DOWNLOAD_ATTRIBUTE 1
-#endif
-
 #if !defined(ENABLE_DRAG_SUPPORT)
 #define ENABLE_DRAG_SUPPORT 1
 #endif
@@ -251,14 +236,6 @@
 
 #if !defined(ENABLE_FILE_REPLACEMENT)
 #define ENABLE_FILE_REPLACEMENT 0
-#endif
-
-#if !defined(ENABLE_FILE_SHARE)
-#define ENABLE_FILE_SHARE 1
-#endif
-
-#if !defined(ENABLE_FILTERS_LEVEL_2)
-#define ENABLE_FILTERS_LEVEL_2 0
 #endif
 
 #if !defined(ENABLE_FTPDIR)
@@ -335,10 +312,6 @@
 
 #if !defined(ENABLE_IOS_TOUCH_EVENTS)
 #define ENABLE_IOS_TOUCH_EVENTS 0
-#endif
-
-#if !defined(ENABLE_IOS_FORM_CONTROL_REFRESH)
-#define ENABLE_IOS_FORM_CONTROL_REFRESH 0
 #endif
 
 #if !defined(ENABLE_IPC_TESTING_API)
@@ -432,10 +405,6 @@
 #define ENABLE_MOUSE_FORCE_EVENTS 1
 #endif
 
-#if !defined(ENABLE_NETSCAPE_PLUGIN_METADATA_CACHE)
-#define ENABLE_NETSCAPE_PLUGIN_METADATA_CACHE 0
-#endif
-
 #if !defined(ENABLE_NOTIFICATION_EVENT)
 #define ENABLE_NOTIFICATION_EVENT 0
 #endif
@@ -507,10 +476,6 @@
 #define ENABLE_PREVIEW_CONVERTER 0
 #endif
 
-#if !defined(ENABLE_PRIMARY_SNAPSHOTTED_PLUGIN_HEURISTIC)
-#define ENABLE_PRIMARY_SNAPSHOTTED_PLUGIN_HEURISTIC 0
-#endif
-
 #if !defined(ENABLE_REMOTE_INSPECTOR)
 #define ENABLE_REMOTE_INSPECTOR 0
 #endif
@@ -521,10 +486,6 @@
 
 #if !defined(ENABLE_RESOURCE_USAGE)
 #define ENABLE_RESOURCE_USAGE 0
-#endif
-
-#if !defined(ENABLE_RUBBER_BANDING)
-#define ENABLE_RUBBER_BANDING 0
 #endif
 
 #if !defined(ENABLE_SCROLLING_THREAD)
@@ -544,10 +505,6 @@
 
 #if !defined(ENABLE_SEPARATED_WX_HEAP)
 #define ENABLE_SEPARATED_WX_HEAP 0
-#endif
-
-#if !defined(ENABLE_SERVICE_WORKER)
-#define ENABLE_SERVICE_WORKER 1
 #endif
 
 #if !defined(ENABLE_SPEECH_SYNTHESIS)
@@ -662,14 +619,15 @@
 #define ENABLE_UNPREFIXED_BACKDROP_FILTER 0
 #endif
 
+
 /* FIXME: This section of the file has not been cleaned up yet and needs major work. */
 
 /* FIXME: JSC_OBJC_API_ENABLED does not match the normal ENABLE naming convention. */
-// #if !PLATFORM(COCOA)
-// #if !defined(JSC_OBJC_API_ENABLED)
+#if !PLATFORM(COCOA)
+#if !defined(JSC_OBJC_API_ENABLED)
 #define JSC_OBJC_API_ENABLED 0
-// #endif
-// #endif
+#endif
+#endif
 
 /* The JIT is enabled by default on all x86-64 & ARM64 platforms. */
 #if !defined(ENABLE_JIT) && (CPU(X86_64) || (CPU(ARM64) && CPU(ADDRESS64)))
@@ -932,7 +890,7 @@
 #endif
 
 /* CSS Selector JIT Compiler */
-#if !defined(ENABLE_CSS_SELECTOR_JIT) && ((CPU(X86_64) || CPU(ARM64) || (CPU(ARM_THUMB2) && OS(DARWIN))) && ENABLE(JIT) && (OS(DARWIN) || PLATFORM(GTK) || PLATFORM(WPE)))
+#if !defined(ENABLE_CSS_SELECTOR_JIT) && ((CPU(X86_64) || CPU(ARM64) || (CPU(ARM_THUMB2) && OS(DARWIN))) && ENABLE(JIT) && (OS(DARWIN) || OS(WINDOWS) || PLATFORM(GTK) || PLATFORM(WPE)))
 #define ENABLE_CSS_SELECTOR_JIT 1
 #endif
 
@@ -1010,8 +968,8 @@
 #error "ENABLE(MEDIA_RECORDER) requires ENABLE(MEDIA_STREAM)"
 #endif
 
-#if ENABLE(NOTIFICATION_EVENT) && (!ENABLE(SERVICE_WORKER) || !ENABLE(NOTIFICATIONS))
-#error "ENABLE(NOTIFICATION_EVENT) requires ENABLE(SERVICE_WORKER) and ENABLE(NOTIFICATIONS)"
+#if ENABLE(NOTIFICATION_EVENT) && !ENABLE(NOTIFICATIONS)
+#error "ENABLE(NOTIFICATION_EVENT) requires ENABLE(NOTIFICATIONS)"
 #endif
 
 #if USE(CG)
@@ -1036,4 +994,16 @@
 
 #if !defined(ENABLE_WEBPROCESS_CACHE)
 #define ENABLE_WEBPROCESS_CACHE 0
+#endif
+
+#if !defined(ENABLE_FEATURE_DEFAULT_VALIDATION) \
+    && (PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 140000)
+// FIXME: Check feature flag default values on other platforms once it's
+// possible to make feature status conditional.
+#define ENABLE_FEATURE_DEFAULT_VALIDATION 1
+#endif
+
+#if !defined(ENABLE_EXTENSION_CAPABILITIES) \
+    && USE(EXTENSIONKIT)
+#define ENABLE_EXTENSION_CAPABILITIES 1
 #endif

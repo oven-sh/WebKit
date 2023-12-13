@@ -32,11 +32,10 @@ JSFormatter = class JSFormatter
     constructor(sourceText, sourceType, builder, indentString = "    ")
     {
         this._success = false;
-        const parseFn = sourceType === "module" ? esprima.parseModule : esprima.parse;
 
         let tree = (function() {
             try {
-                return parseFn(sourceText, {attachComment: true, range: true, tokens: true, sourceType, ecmaVersion: "latest"});
+                return esprima.parse(sourceText, {attachComment: true, range: true, tokens: true, sourceType});
             } catch(error) {
                 console.error(`Failed to parse source text of type "${sourceType}".`, error);
                 return null;

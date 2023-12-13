@@ -120,9 +120,7 @@ public:
     CompactPropertyTableEntry(UniquedStringImpl* key, PropertyOffset offset, unsigned attributes)
         : m_data(key, ((offset << 8) | attributes))
     {
-        #ifndef BUN_SKIP_FAILING_ASSERTIONS
         ASSERT(this->attributes() == attributes);
-        #endif
         ASSERT(this->offset() == offset);
     }
 
@@ -134,17 +132,13 @@ public:
     void setOffset(PropertyOffset offset)
     {
         m_data.setType((m_data.type() & 0x00ffU) | (offset << 8));
-        #ifndef BUN_SKIP_FAILING_ASSERTIONS
         ASSERT(this->offset() == offset);
-        #endif
     }
     uint8_t attributes() const { return m_data.type(); }
     void setAttributes(uint8_t attributes)
     {
         m_data.setType((m_data.type() & 0xff00U) | attributes);
-        #ifndef BUN_SKIP_FAILING_ASSERTIONS
         ASSERT(this->attributes() == attributes);
-        #endif
     }
 
 private:
@@ -160,9 +154,7 @@ public:
         , m_offset(offset)
         , m_attributes(attributes)
     {
-        #ifndef BUN_SKIP_FAILING_ASSERTIONS
         ASSERT(this->attributes() == attributes);
-        #endif
     }
 
     PropertyTableEntry(const CompactPropertyTableEntry& entry)

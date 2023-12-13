@@ -39,11 +39,6 @@ macro(find_package package)
     # Create targets that are present in later versions of CMake or are referenced above
     if ("${package}" STREQUAL "ICU")
         if (ICU_FOUND AND NOT TARGET ICU::data)
-            # set(ICU_IMPORT_TYPE UNKNOWN)
-            # if (USE_BUN_JSC_ADDITIONS)
-            #     set(ICU_IMPORT_TYPE STATIC)
-            # endif ()
-
             add_library(ICU::data UNKNOWN IMPORTED)
             set_target_properties(ICU::data PROPERTIES
                 IMPORTED_LOCATION "${ICU_DATA_LIBRARY}"

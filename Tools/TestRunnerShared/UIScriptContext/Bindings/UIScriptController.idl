@@ -296,6 +296,7 @@ interface UIScriptController {
 
     undefined copyText(DOMString text);
     undefined paste();
+    readonly attribute long long pasteboardChangeCount;
 
     readonly attribute double contentOffsetX;
     readonly attribute double contentOffsetY;
@@ -364,6 +365,8 @@ interface UIScriptController {
     undefined removeViewFromWindow(object callback);
     undefined addViewToWindow(object callback);
 
+    undefined resizeWindowTo(unsigned long width, unsigned long height);
+
     undefined installTapGestureOnWindow(object callback);
 
     undefined overridePreference(DOMString preference, DOMString value);
@@ -395,4 +398,8 @@ interface UIScriptController {
     readonly attribute unsigned long countOfUpdatesWithLayerChanges;
 
     readonly attribute unsigned long long currentImageAnalysisRequestID;
+    undefined installFakeMachineReadableCodeResultsForImageAnalysis();
+
+    undefined setInlinePrediction(DOMString completion);
+    undefined acceptInlinePrediction();
 };

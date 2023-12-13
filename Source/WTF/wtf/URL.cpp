@@ -202,10 +202,10 @@ static String decodeEscapeSequencesFromParsedURL(StringView input)
     percentDecoded.reserveInitialCapacity(length);
     for (unsigned i = 0; i < length; ) {
         if (auto decodedCharacter = decodeEscapeSequence(input, i, length)) {
-            percentDecoded.uncheckedAppend(*decodedCharacter);
+            percentDecoded.append(*decodedCharacter);
             i += 3;
         } else {
-            percentDecoded.uncheckedAppend(input[i]);
+            percentDecoded.append(input[i]);
             ++i;
         }
     }
@@ -214,36 +214,6 @@ static String decodeEscapeSequencesFromParsedURL(StringView input)
     // FIXME: This returns a null string when we encounter an invalid UTF-8 sequence. Is that OK?
     return String::fromUTF8(percentDecoded.data(), percentDecoded.size());
 }
-
-#if OS(WINDOWS)
-// This decodes url escape sequences and also converts / into \ for the Windows
-// port of URL::fileSystemPath(). It is done here to avoid a second copy when url
-// escapes AND slashes are present in the file. The check to skip copying is not
-// done as every valid absolute file path on Windows will include a slash.
-static String decodeEscapeSequencesFromParsedURLForWindowsPath(StringView input)
-{
-    ASSERT(input.containsOnlyASCII());
-
-    auto length = input.length();
-
-    // FIXME: This 100 is arbitrary. Should make a histogram of how this function is actually used to choose a better value.
-    Vector<LChar, 100> percentDecoded;
-    percentDecoded.reserveInitialCapacity(length);
-    for (unsigned i = 1; i < length; ) {
-        if (auto decodedCharacter = decodeEscapeSequence(input, i, length)) {
-            percentDecoded.uncheckedAppend(*decodedCharacter);
-            i += 3;
-        } else {
-            percentDecoded.uncheckedAppend(UNLIKELY(input[i]) == '/' ? '\\' : input[i]);
-            ++i;
-        }
-    }
-
-    // FIXME: Is UTF-8 always the correct encoding?
-    // FIXME: This returns a null string when we encounter an invalid UTF-8 sequence. Is that OK?
-    return String::fromUTF8(percentDecoded.data(), percentDecoded.size());
-}
-#endif // OS(WINDOWS)
 
 String URL::user() const
 {
@@ -306,16 +276,12 @@ String URL::fileSystemPath() const
     if (!protocolIsFile())
         return { };
 
-#if OS(WINDOWS)
-    // UNC paths look like '\\server\share\etc', but in a URL they look like 'file://server/share/etc'.
-    auto unc_host = host();
-    if (UNLIKELY(unc_host.length() > 0)) {
-        return makeString("\\\\"_s, unc_host, "\\"_s, decodeEscapeSequencesFromParsedURLForWindowsPath(path()));
-    }
-    return decodeEscapeSequencesFromParsedURLForWindowsPath(path());
-#else
-    return decodeEscapeSequencesFromParsedURL(path());
+    auto result = decodeEscapeSequencesFromParsedURL(path());
+#if PLATFORM(WIN)
+    if (result.startsWith('/'))
+        result = result.substring(1);
 #endif
+    return result;
 }
 
 #endif
@@ -1133,25 +1099,8 @@ URL URL::fakeURLWithRelativePart(StringView relativePart)
     return URL(makeString("webkit-fake-url://"_s, UUID::createVersion4(), '/', relativePart));
 }
 
-#if OS(WINDOWS)
-template <typename CharacterType>
-ALWAYS_INLINE bool isUNCLikePathImpl(CharacterType data) {
-    return (data[0] == '\\' || data[0] == '/') && (data[1] == '\\' || data[1] == '/');
-}
-ALWAYS_INLINE bool isUNCLikePath(StringView path)
-{
-    return path.length() > 2 && (path.is8Bit() ? isUNCLikePathImpl(path.characters8()) : isUNCLikePathImpl(path.characters16()));
-}
-#endif // OS(WINDOWS)
-
 URL URL::fileURLWithFileSystemPath(StringView path)
 {
-#if OS(WINDOWS)
-    // Handle UNC paths on Windows. should result in file://server/share
-    if (isUNCLikePath(path)) {
-        return URL(makeString("file://"_s, escapePathWithoutCopying(path.substring(2))));
-    }
-#endif
     return URL(makeString(
         "file://"_s,
         path.startsWith('/') ? ""_s : "/"_s,

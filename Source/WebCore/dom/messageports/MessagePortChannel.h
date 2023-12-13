@@ -29,6 +29,7 @@
 #include "MessagePortIdentifier.h"
 #include "MessageWithMessagePorts.h"
 #include "ProcessIdentifier.h"
+#include <wtf/CheckedRef.h>
 #include <wtf/HashSet.h>
 #include <wtf/RefCounted.h>
 #include <wtf/text/WTFString.h>
@@ -37,11 +38,11 @@ namespace WebCore {
 
 class MessagePortChannelRegistry;
 
-class MessagePortChannel : public RefCounted<MessagePortChannel> {
+class MessagePortChannel : public RefCounted<MessagePortChannel>, public CanMakeCheckedPtr {
 public:
     static Ref<MessagePortChannel> create(MessagePortChannelRegistry&, const MessagePortIdentifier& port1, const MessagePortIdentifier& port2);
 
-    ~MessagePortChannel();
+    WEBCORE_EXPORT ~MessagePortChannel();
 
     const MessagePortIdentifier& port1() const { return m_ports[0]; }
     const MessagePortIdentifier& port2() const { return m_ports[1]; }
@@ -75,7 +76,7 @@ private:
     RefPtr<MessagePortChannel> m_pendingMessageProtectors[2];
     uint64_t m_messageBatchesInFlight { 0 };
 
-    MessagePortChannelRegistry& m_registry;
+    CheckedRef<MessagePortChannelRegistry> m_registry;
 };
 
 } // namespace WebCore

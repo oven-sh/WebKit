@@ -25,6 +25,7 @@
 #pragma once
 
 #include "CompositeOperation.h"
+#include "KeyframeInterpolation.h"
 #include "RenderStyle.h"
 #include "WebAnimationTypes.h"
 #include <wtf/Vector.h>
@@ -42,20 +43,24 @@ namespace Style {
 class Resolver;
 }
 
-class KeyframeValue {
+class KeyframeValue final : public KeyframeInterpolation::Keyframe {
 public:
-    KeyframeValue(double key, std::unique_ptr<RenderStyle> style)
-        : m_key(key)
+    KeyframeValue(double offset, std::unique_ptr<RenderStyle> style)
+        : m_offset(offset)
         , m_style(WTFMove(style))
     {
     }
 
-    void addProperty(const AnimatableProperty&);
-    bool containsProperty(const AnimatableProperty&) const;
-    const HashSet<AnimatableProperty>& properties() const { return m_properties; }
+    // KeyframeInterpolation::Keyframe
+    double offset() const final { return m_offset; }
+    std::optional<CompositeOperation> compositeOperation() const final { return m_compositeOperation; }
+    bool animatesProperty(KeyframeInterpolation::Property) const final;
+    bool isKeyframeValue() const final { return true; }
 
-    double key() const { return m_key; }
-    void setKey(double key) { m_key = key; }
+    void addProperty(const AnimatableCSSProperty&);
+    const HashSet<AnimatableCSSProperty>& properties() const { return m_properties; }
+
+    void setOffset(double offset) { m_offset = offset; }
 
     const RenderStyle* style() const { return m_style.get(); }
     void setStyle(std::unique_ptr<RenderStyle> style) { m_style = WTFMove(style); }
@@ -63,15 +68,14 @@ public:
     TimingFunction* timingFunction() const { return m_timingFunction.get(); }
     void setTimingFunction(const RefPtr<TimingFunction>& timingFunction) { m_timingFunction = timingFunction; }
 
-    std::optional<CompositeOperation> compositeOperation() const { return m_compositeOperation; }
     void setCompositeOperation(std::optional<CompositeOperation> op) { m_compositeOperation = op; }
 
     bool containsDirectionAwareProperty() const { return m_containsDirectionAwareProperty; }
     void setContainsDirectionAwareProperty(bool containsDirectionAwareProperty) { m_containsDirectionAwareProperty = containsDirectionAwareProperty; }
 
 private:
-    double m_key;
-    HashSet<AnimatableProperty> m_properties; // The properties specified in this keyframe.
+    double m_offset;
+    HashSet<AnimatableCSSProperty> m_properties; // The properties specified in this keyframe.
     std::unique_ptr<RenderStyle> m_style;
     RefPtr<TimingFunction> m_timingFunction;
     std::optional<CompositeOperation> m_compositeOperation;
@@ -93,11 +97,11 @@ public:
     
     void insert(KeyframeValue&&);
     
-    void addProperty(const AnimatableProperty&);
-    bool containsProperty(const AnimatableProperty&) const;
-    const HashSet<AnimatableProperty>& properties() const { return m_properties; }
+    void addProperty(const AnimatableCSSProperty&);
+    bool containsProperty(const AnimatableCSSProperty&) const;
+    const HashSet<AnimatableCSSProperty>& properties() const { return m_properties; }
 
-    bool containsAnimatableProperty() const;
+    bool containsAnimatableCSSProperty() const;
     bool containsDirectionAwareProperty() const;
 
     void clear();
@@ -117,18 +121,20 @@ public:
     bool hasCSSVariableReferences() const;
     bool hasColorSetToCurrentColor() const;
     bool hasPropertySetToCurrentColor() const;
-    const HashSet<AnimatableProperty>& propertiesSetToInherit() const;
+    const HashSet<AnimatableCSSProperty>& propertiesSetToInherit() const;
 
     void updatePropertiesMetadata(const StyleProperties&);
 
 private:
     AtomString m_animationName;
     Vector<KeyframeValue> m_keyframes; // Kept sorted by key.
-    HashSet<AnimatableProperty> m_properties; // The properties being animated.
+    HashSet<AnimatableCSSProperty> m_properties; // The properties being animated.
     bool m_usesRelativeFontWeight { false };
     bool m_containsCSSVariableReferences { false };
-    HashSet<AnimatableProperty> m_propertiesSetToInherit;
-    HashSet<AnimatableProperty> m_propertiesSetToCurrentColor;
+    HashSet<AnimatableCSSProperty> m_propertiesSetToInherit;
+    HashSet<AnimatableCSSProperty> m_propertiesSetToCurrentColor;
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_KEYFRAME_INTERPOLATION_KEYFRAME(KeyframeValue, isKeyframeValue());

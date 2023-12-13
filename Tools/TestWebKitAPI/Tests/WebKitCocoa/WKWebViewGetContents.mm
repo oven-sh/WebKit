@@ -28,8 +28,13 @@
 #import "PlatformUtilities.h"
 #import "Test.h"
 #import "TestNavigationDelegate.h"
+#import "TestProtocol.h"
+#import "TestResourceLoadDelegate.h"
 #import "TestWKWebView.h"
 #import "UIKitSPIForTesting.h"
+#import <WebCore/ColorCocoa.h>
+#import <WebKit/NSAttributedStringPrivate.h>
+#import <WebKit/_WKResourceLoadInfo.h>
 #import <pal/spi/cocoa/NSAttributedStringSPI.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
 
@@ -269,17 +274,85 @@ TEST(WKWebView, AttributedStringFromTable)
 {
     auto webView = adoptNS([TestWKWebView new]);
     [webView synchronouslyLoadHTMLString:@"<html>"
+        "  <head>"
+        "  <style>"
+        "  .background {"
+        "      background-color: red;"
+        "  }"
+        "  .border {"
+        "      border: 2px solid red;"
+        "  }"
+        "  </style>"
+        "  </head>"
         "  <body>"
         "    <table>"
         "      <tbody>"
-        "        <tr><td>One</td><td>Two</td></tr>"
-        "        <tr><td>Three</td><td>Four</td></tr>"
+        "        <tr><td class='background'>One</td><td class='background'>Two</td></tr>"
+        "        <tr><td class='background'>Three</td><td class='background'>Four</td></tr>"
         "      </tbody>"
         "    </table>"
         "    <table>"
         "      <tbody>"
-        "        <tr><td>Five</td><td>Six</td></tr>"
-        "        <tr><td>Seven</td><td>Eight</td></tr>"
+        "        <tr><td class='border'>Five</td><td class='border'>Six</td></tr>"
+        "        <tr><td class='border'>Seven</td><td class='border'>Eight</td></tr>"
+        "      </tbody>"
+        "    </table>"
+        "  </body>"
+        "</html>"];
+
+    __block Vector<std::pair<NSString *, NSTextTableBlock *>> allTableCells;
+    RetainPtr string = [webView _contentsAsAttributedString];
+    [string enumerateAttributesInRange:NSMakeRange(0, [string length]) options:0 usingBlock:^(NSDictionary<NSAttributedStringKey, id> *attributes, NSRange range, BOOL *) {
+        auto trimmedSubstring = [[[string string] substringWithRange:range] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        auto textBlocks = [attributes[NSParagraphStyleAttributeName] textBlocks];
+        EXPECT_EQ(textBlocks.count, 1U);
+        EXPECT_TRUE([textBlocks[0] isKindOfClass:NSClassFromString(@"NSTextTableBlock")]);
+        allTableCells.append({ trimmedSubstring, static_cast<NSTextTableBlock *>(textBlocks[0]) });
+    }];
+
+    auto checkCellAtIndex = ^(size_t index, NSString *expectedText, NSInteger expectedColumn, NSInteger expectedRow, NSTextTable *expectedTable,
+        CGFloat expectedBorderWidth, WebCore::CocoaColor *expectedBackgroundColor) {
+        auto [text, cell] = allTableCells[index];
+        EXPECT_WK_STREQ(expectedText, text);
+        EXPECT_EQ(cell.startingColumn, expectedColumn);
+        EXPECT_EQ(cell.startingRow, expectedRow);
+        EXPECT_EQ(cell.columnSpan, static_cast<NSInteger>(1));
+        EXPECT_EQ(cell.rowSpan, static_cast<NSInteger>(1));
+        EXPECT_EQ(cell.table, expectedTable);
+#if PLATFORM(IOS_FAMILY)
+        auto leftEdge = CGRectMinXEdge;
+#else
+        auto leftEdge = NSRectEdgeMinX;
+#endif
+        EXPECT_EQ([cell widthForLayer:NSTextBlockBorder edge:leftEdge], expectedBorderWidth);
+        EXPECT_TRUE([cell backgroundColor] == expectedBackgroundColor || [[cell backgroundColor] isEqual:expectedBackgroundColor]);
+    };
+
+    EXPECT_EQ(allTableCells.size(), 8U);
+    auto firstTable = allTableCells.first().second.table;
+    auto secondTable = allTableCells.last().second.table;
+
+    checkCellAtIndex(0, @"One", 0, 0, firstTable, 0, [WebCore::CocoaColor redColor]);
+    checkCellAtIndex(1, @"Two", 1, 0, firstTable, 0, [WebCore::CocoaColor redColor]);
+    checkCellAtIndex(2, @"Three", 0, 1, firstTable, 0, [WebCore::CocoaColor redColor]);
+    checkCellAtIndex(3, @"Four", 1, 1, firstTable, 0, [WebCore::CocoaColor redColor]);
+    checkCellAtIndex(4, @"Five", 0, 0, secondTable, 2., nil);
+    checkCellAtIndex(5, @"Six", 1, 0, secondTable, 2., nil);
+    checkCellAtIndex(6, @"Seven", 0, 1, secondTable, 2., nil);
+    checkCellAtIndex(7, @"Eight", 1, 1, secondTable, 2., nil);
+}
+
+TEST(WKWebView, AttributedStringWithLinksInTableCell)
+{
+    auto webView = adoptNS([TestWKWebView new]);
+    [webView synchronouslyLoadHTMLString:@"<html>"
+        "  <body>"
+        "    <table>"
+        "      <tbody>"
+        "        <tr>"
+        "          <td><a href='https://webkit.org'>WebKit</a> One</td>"
+        "          <td><a href='https://apple.com'>Apple</a> Two</td>"
+        "        </tr>"
         "      </tbody>"
         "    </table>"
         "  </body>"
@@ -305,18 +378,16 @@ TEST(WKWebView, AttributedStringFromTable)
         EXPECT_EQ(cell.table, expectedTable);
     };
 
-    EXPECT_EQ(allTableCells.size(), 8U);
-    auto firstTable = allTableCells.first().second.table;
-    auto secondTable = allTableCells.last().second.table;
+    EXPECT_EQ(allTableCells.size(), 4U);
+    auto table = allTableCells.first().second.table;
+    checkCellAtIndex(0, @"WebKit", 0, 0, table);
+    checkCellAtIndex(1, @"One", 0, 0, table);
+    checkCellAtIndex(2, @"Apple", 1, 0, table);
+    checkCellAtIndex(3, @"Two", 1, 0, table);
 
-    checkCellAtIndex(0, @"One", 0, 0, firstTable);
-    checkCellAtIndex(1, @"Two", 1, 0, firstTable);
-    checkCellAtIndex(2, @"Three", 0, 1, firstTable);
-    checkCellAtIndex(3, @"Four", 1, 1, firstTable);
-    checkCellAtIndex(4, @"Five", 0, 0, secondTable);
-    checkCellAtIndex(5, @"Six", 1, 0, secondTable);
-    checkCellAtIndex(6, @"Seven", 0, 1, secondTable);
-    checkCellAtIndex(7, @"Eight", 1, 1, secondTable);
+    EXPECT_EQ(allTableCells[0].second, allTableCells[1].second);
+    EXPECT_FALSE(allTableCells[1].second == allTableCells[2].second);
+    EXPECT_EQ(allTableCells[2].second, allTableCells[3].second);
 }
 
 TEST(WKWebView, AttributedStringFromList)
@@ -360,4 +431,42 @@ TEST(WKWebView, AttributedStringFromList)
     checkListAtIndex(5, @"Three", secondList);
     checkListAtIndex(6, @"•", secondList);
     checkListAtIndex(7, @"Four", secondList);
+}
+
+TEST(WKWebView, DoNotAllowNetworkLoads)
+{
+    [TestProtocol registerWithScheme:@"https"];
+
+    NSString *markup = @""
+        "<body>"
+        "<strong>Hello</strong>"
+        "<img src='https://webkit.org/nonexistent-image.png'>"
+        "</body>";
+
+    __block bool attemptedImageLoad = false;
+    auto resourceLoadDelegate = adoptNS([TestResourceLoadDelegate new]);
+    [resourceLoadDelegate setDidSendRequest:^(WKWebView *, _WKResourceLoadInfo *info, NSURLRequest *) {
+        if (info.resourceType == _WKResourceLoadInfoResourceTypeImage)
+            attemptedImageLoad = true;
+    }];
+
+    __block bool done = false;
+    __block RetainPtr<NSAttributedString> resultString;
+    __block RetainPtr<NSError> resultError;
+    [NSAttributedString _loadFromHTMLWithOptions:@{ _WKAllowNetworkLoadsOption : @NO } contentLoader:^(WKWebView *webView) {
+        webView._resourceLoadDelegate = resourceLoadDelegate.get();
+        return [webView loadHTMLString:markup baseURL:nil];
+    } completionHandler:^(NSAttributedString *string, NSDictionary *, NSError *error) {
+        resultString = string;
+        resultError = error;
+        done = true;
+    }];
+    TestWebKitAPI::Util::run(&done);
+
+    EXPECT_NULL(resultError);
+
+    auto helloRange = [[resultString string] rangeOfString:@"Hello"];
+    EXPECT_EQ(helloRange.location, 0U);
+    EXPECT_EQ(helloRange.length, 5U);
+    EXPECT_FALSE(attemptedImageLoad);
 }

@@ -122,13 +122,14 @@ InlineContentBreaker::Result InlineContentBreaker::processOverflowingContent(con
 
     ASSERT(continuousContent.logicalWidth() > lineStatus.availableWidth);
     auto checkForTrailingContentFit = [&]() -> std::optional<InlineContentBreaker::Result> {
-        if (continuousContent.hasTrimmableContent()) {
+        if (continuousContent.isFullyTrimmable()) {
+            // fully trimmable content stays on the current line (and gets fully trimmed).
+            return InlineContentBreaker::Result { Result::Action::Keep };
+        }
+        if (continuousContent.hasTrimmableSpace()) {
             // Check if the content fits if we trimmed it.
-            if (continuousContent.isFullyTrimmable() || isWhitespaceOnlyContent(continuousContent)) {
-                // If this new content is fully trimmable (including when it is enclosed by an inline box with overflowing decoration)
-                // it should not be wrapped to the next line (as it either fits/or gets fully trimmed).
+            if (isWhitespaceOnlyContent(continuousContent))
                 return InlineContentBreaker::Result { Result::Action::Keep };
-            }
             auto spaceRequired = continuousContent.logicalWidth() - continuousContent.trailingTrimmableWidth();
             if (lineStatus.hasFullyTrimmableTrailingContent)
                 spaceRequired -= continuousContent.leadingTrimmableWidth();
@@ -136,9 +137,9 @@ InlineContentBreaker::Result InlineContentBreaker::processOverflowingContent(con
                 return InlineContentBreaker::Result { Result::Action::Keep };
         }
 
-        if (continuousContent.hasHangingContent()) {
-            if (continuousContent.isHangingContent())
-                return InlineContentBreaker::Result { Result::Action::Keep };
+        if (continuousContent.isHangingContent())
+            return InlineContentBreaker::Result { Result::Action::Keep };
+        if (continuousContent.hasHangingSpace()) {
             auto spaceRequired = continuousContent.logicalWidth() - continuousContent.hangingContentWidth();
             if (spaceRequired <= lineStatus.availableWidth)
                 return InlineContentBreaker::Result { Result::Action::Keep };
@@ -258,6 +259,8 @@ std::optional<InlineContentBreaker::Result> InlineContentBreaker::simplifiedMini
         return Result { Result::Action::Keep, IsEndOfLine::No };
 
     if (!lineStatus.hasContent) {
+        if (leadingInlineTextItem.isEmpty())
+            return Result { Result::Action::Keep, IsEndOfLine::No };
         auto breakBehavior = wordBreakBehavior(style, { });
         if (breakBehavior.isEmpty())
             return Result { Result::Action::Keep, IsEndOfLine::No };
@@ -299,7 +302,6 @@ static std::optional<size_t> findTrailingRunIndexBeforeBreakableRun(const Inline
 
 static bool isBreakableRun(const InlineContentBreaker::ContinuousContent::Run& run)
 {
-    ASSERT(run.inlineItem.isText() || run.inlineItem.isInlineBoxStart() || run.inlineItem.isInlineBoxEnd() || run.inlineItem.isOpaque() || run.inlineItem.layoutBox().isImage() || run.inlineItem.layoutBox().isListMarkerBox());
     if (!run.inlineItem.isText()) {
         // Can't break horizontal spacing -> e.g. <span style="padding-right: 100px;">textcontent</span>, if the [inline box end] is the overflown inline item
         // we need to check if there's another inline item beyond the [inline box end] to split.
@@ -309,7 +311,7 @@ static bool isBreakableRun(const InlineContentBreaker::ContinuousContent::Run& r
     return TextUtil::isWrappingAllowed(run.style);
 }
 
-static inline bool canBreakBefore(UChar32 character, LineBreak lineBreak)
+static inline bool canBreakBefore(char32_t character, LineBreak lineBreak)
 {
     // FIXME: This should include all the cases from https://unicode.org/reports/tr14
     // Use a breaking matrix similar to lineBreakTable in BreakLines.cpp
@@ -820,6 +822,7 @@ void InlineContentBreaker::ContinuousContent::resetTrailingTrimmableContent()
     if (!m_leadingTrimmableWidth)
         m_leadingTrimmableWidth = m_trailingTrimmableWidth;
     m_trailingTrimmableWidth = { };
+    m_isFullyTrimmable = false;
 }
 
 void InlineContentBreaker::ContinuousContent::append(const InlineItem& inlineItem, const RenderStyle& style, InlineLayoutUnit logicalWidth)
@@ -855,6 +858,7 @@ void InlineContentBreaker::ContinuousContent::appendTextContent(const InlineText
         return;
     }
 
+    m_isFullyTrimmable = m_isFullyTrimmable || m_runs.isEmpty();
     ASSERT(*trimmableWidth <= logicalWidth);
     auto isLeadingTrimmable = trimmableWidth && (!this->logicalWidth() || isFullyTrimmable());
     appendToRunList(inlineTextItem, style, logicalWidth);
@@ -872,9 +876,11 @@ void InlineContentBreaker::ContinuousContent::reset()
     m_leadingTrimmableWidth = { };
     m_trailingTrimmableWidth = { };
     m_hangingContentWidth = { };
+    m_minimumRequiredWidth = { };
     m_runs.clear();
     m_hasTextContent = false;
     m_isTextOnlyContent = true;
+    m_isFullyTrimmable = false;
 }
 
 }

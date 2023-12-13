@@ -74,7 +74,7 @@ static bool parseScript(VM& vm, const SourceCode& source, ParserError& error)
 {
     return !!JSC::parse<JSC::ProgramNode>(
         vm, source, Identifier(), ImplementationVisibility::Public, JSParserBuiltinMode::NotBuiltin,
-        JSParserStrictMode::NotStrict, JSParserScriptMode::Classic, SourceParseMode::ProgramMode, SuperBinding::NotNeeded,
+        JSParserStrictMode::NotStrict, JSParserScriptMode::Classic, SourceParseMode::ProgramMode, FunctionMode::None, SuperBinding::NotNeeded,
         error);
 }
 
@@ -144,7 +144,7 @@ JSValueRef JSScriptEvaluate(JSContextRef context, JSScriptRef script, JSValueRef
 {
     JSGlobalObject* globalObject = toJS(context);
     VM& vm = globalObject->vm();
-
+    JSLockHolder locker(vm);
     if (&script->vm() != &vm) {
         RELEASE_ASSERT_NOT_REACHED();
         return nullptr;

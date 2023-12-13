@@ -104,6 +104,7 @@ function newRegistryEntry(key)
     };
 }
 
+@visibility=PrivateRecursive
 function ensureRegistered(key)
 {
     // https://whatwg.github.io/loader/#ensure-registered
@@ -146,6 +147,7 @@ function fulfillFetch(entry, source)
 
 // Loader.
 
+@visibility=PrivateRecursive
 function requestFetch(entry, parameters, fetcher)
 {
     // https://whatwg.github.io/loader/#request-fetch
@@ -183,6 +185,7 @@ function requestFetch(entry, parameters, fetcher)
     return fetchPromise;
 }
 
+@visibility=PrivateRecursive
 function requestInstantiate(entry, parameters, fetcher)
 {
     // https://whatwg.github.io/loader/#request-instantiate
@@ -194,38 +197,7 @@ function requestInstantiate(entry, parameters, fetcher)
         return entry.instantiate;
 
     var instantiatePromise = (async () => {
-        var sourcePossiblyPromise = this.requestFetch(entry, parameters, fetcher);
-        var source;
-
-        // Support CommonJS modules by synchronously importing the module when possible.
-        if (@isPromise(sourcePossiblyPromise)) {
-            const state =
-              @getPromiseInternalField(sourcePossiblyPromise, @promiseFieldFlags) &
-              @promiseStateMask;
-            if (state === @promiseStateFulfilled) {
-              source = @getPromiseInternalField(
-                sourcePossiblyPromise,
-                @promiseFieldReactionsOrResult
-              );
-            } else if (state === @promiseStateRejected) {
-              @putPromiseInternalField(
-                sourcePossiblyPromise,
-                @promiseFieldFlags,
-                @getPromiseInternalField(sourcePossiblyPromise, @promiseFieldFlags) |
-                  @promiseFlagsIsHandled
-              );
-              throw @getPromiseInternalField(
-                sourcePossiblyPromise,
-                @promiseFieldReactionsOrResult
-              );
-            } else {
-              source = await sourcePossiblyPromise;
-            }
-          } else {
-            source = sourcePossiblyPromise;
-          }          
-            
-
+        var source = await this.requestFetch(entry, parameters, fetcher);
         // https://html.spec.whatwg.org/#fetch-a-single-module-script
         // Now fetching request succeeds. Then even if instantiation fails, we should cache it.
         // Instantiation won't be retried.
@@ -234,37 +206,7 @@ function requestInstantiate(entry, parameters, fetcher)
         entry.instantiate = instantiatePromise;
 
         var key = entry.key;
-        var parseModuleRequest = this.parseModule(key, source);
-        var moduleRecord;
-
-        // Support CommonJS modules by synchronously importing the module when possible.
-        if (@isPromise(parseModuleRequest)) {
-            const state =
-              @getPromiseInternalField(parseModuleRequest, @promiseFieldFlags) &
-              @promiseStateMask;
-            if (state === @promiseStateFulfilled) {
-              moduleRecord = @getPromiseInternalField(
-                parseModuleRequest,
-                @promiseFieldReactionsOrResult
-              );
-            } else if (state === @promiseStateRejected) {
-              @putPromiseInternalField(
-                parseModuleRequest,
-                @promiseFieldFlags,
-                @getPromiseInternalField(parseModuleRequest, @promiseFieldFlags) |
-                  @promiseFlagsIsHandled
-              );
-              throw @getPromiseInternalField(
-                parseModuleRequest,
-                @promiseFieldReactionsOrResult
-              );
-            } else {
-              moduleRecord = await parseModuleRequest;
-            }
-          } else {
-            moduleRecord = parseModuleRequest;
-          } 
-          
+        var moduleRecord = await this.parseModule(key, source);
         var dependenciesMap = moduleRecord.dependenciesMap;
         var requestedModules = this.requestedModules(moduleRecord);
         var dependencies = @newArrayWithSize(requestedModules.length);
@@ -314,6 +256,7 @@ function cacheSatisfyAndReturn(entry, depEntries, satisfyingEntries)
     return entry;
 }
 
+@visibility=PrivateRecursive
 function requestSatisfy(entry, parameters, fetcher, visited)
 {
     // If the root's requestSatisfyUtil is fulfilled, then all reachable entries by the root
@@ -411,6 +354,7 @@ function requestSatisfy(entry, parameters, fetcher, visited)
     });
 }
 
+@visibility=PrivateRecursive
 function requestSatisfyUtil(entry, parameters, fetcher, visited, satisfyingEntries)
 {
     // https://html.spec.whatwg.org/#internal-module-script-graph-fetching-procedure
@@ -495,6 +439,7 @@ function requestSatisfyUtil(entry, parameters, fetcher, visited, satisfyingEntri
 
 // Linking semantics.
 
+@visibility=PrivateRecursive
 function link(entry, fetcher)
 {
     // https://html.spec.whatwg.org/#fetch-the-descendants-of-and-instantiate-a-module-script
@@ -531,6 +476,7 @@ function link(entry, fetcher)
 
 // Module semantics.
 
+@visibility=PrivateRecursive
 function moduleEvaluation(entry, fetcher)
 {
     // http://www.ecma-international.org/ecma-262/6.0/#sec-moduleevaluation
@@ -556,6 +502,7 @@ function moduleEvaluation(entry, fetcher)
         return this.asyncModuleEvaluation(entry, fetcher, dependencies);
 }
 
+@visibility=PrivateRecursive
 async function asyncModuleEvaluation(entry, fetcher, dependencies)
 {
     "use strict";
@@ -581,6 +528,7 @@ async function asyncModuleEvaluation(entry, fetcher, dependencies)
 
 // APIs to control the module loader.
 
+@visibility=PrivateRecursive
 function provideFetch(key, value)
 {
     "use strict";
@@ -592,6 +540,7 @@ function provideFetch(key, value)
     @fulfillFetch(entry, value);
 }
 
+@visibility=PrivateRecursive
 async function loadModule(key, parameters, fetcher)
 {
     "use strict";
@@ -603,6 +552,7 @@ async function loadModule(key, parameters, fetcher)
     return entry.key;
 }
 
+@visibility=PrivateRecursive
 function linkAndEvaluateModule(key, fetcher)
 {
     "use strict";
@@ -612,35 +562,34 @@ function linkAndEvaluateModule(key, fetcher)
     return this.moduleEvaluation(entry, fetcher);
 }
 
+@visibility=PrivateRecursive
 async function loadAndEvaluateModule(moduleName, parameters, fetcher)
 {
     "use strict";
 
     var importMap = @importMapStatus();
-    var key = moduleName;
-    if (importMap) {
+    if (importMap)
         await importMap;
-        key = this.resolve(moduleName, @undefined, fetcher);
-    }
+    var key = this.resolve(moduleName, @undefined, fetcher);
     key = await this.loadModule(key, parameters, fetcher);
     return await this.linkAndEvaluateModule(key, fetcher);
 }
 
+@visibility=PrivateRecursive
 async function requestImportModule(moduleName, referrer, parameters, fetcher)
 {
     "use strict";
 
     var importMap = @importMapStatus();
-    var key = moduleName;
-    if (importMap) {
+    if (importMap)
         await importMap;
-        key = this.resolve(moduleName, referrer, fetcher);
-    }
+    var key = this.resolve(moduleName, referrer, fetcher);
     var entry = await this.requestSatisfy(this.ensureRegistered(key), parameters, fetcher, new @Set);
     await this.linkAndEvaluateModule(entry.key, fetcher);
     return this.getModuleNamespaceObject(entry.module);
 }
 
+@visibility=PrivateRecursive
 function dependencyKeysIfEvaluated(key)
 {
     "use strict";

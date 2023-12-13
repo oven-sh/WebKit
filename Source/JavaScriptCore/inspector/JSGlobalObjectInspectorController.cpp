@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -49,6 +49,7 @@
 #include "ScriptCallStackFactory.h"
 #include <wtf/StackTrace.h>
 #include <wtf/Stopwatch.h>
+#include <wtf/TZoneMallocInlines.h>
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JSGlobalObjectDebuggable.h"
@@ -59,25 +60,7 @@ namespace Inspector {
 
 using namespace JSC;
 
-#if USE(BUN_JSC_ADDITIONS)
-JSGlobalObjectInspectorController::JSGlobalObjectInspectorController(JSGlobalObject& globalObject, Ref<InjectedScriptHost>&& host)
-    : m_globalObject(globalObject)
-    , m_injectedScriptManager(makeUnique<InjectedScriptManager>(*this, WTFMove(host)))
-    , m_executionStopwatch(Stopwatch::create())
-    , m_frontendRouter(FrontendRouter::create())
-    , m_backendDispatcher(BackendDispatcher::create(m_frontendRouter.copyRef()))
-{
-    auto context = jsAgentContext();
-
-    auto consoleAgent = makeUnique<InspectorConsoleAgent>(context);
-    m_consoleAgent = consoleAgent.get();
-    m_agents.append(WTFMove(consoleAgent));
-
-    m_consoleClient = makeUnique<JSGlobalObjectConsoleClient>(m_consoleAgent);
-
-    m_executionStopwatch->start();
-}
-#endif
+WTF_MAKE_TZONE_ALLOCATED_IMPL(JSGlobalObjectInspectorController);
 
 JSGlobalObjectInspectorController::JSGlobalObjectInspectorController(JSGlobalObject& globalObject)
     : m_globalObject(globalObject)
@@ -194,13 +177,8 @@ void JSGlobalObjectInspectorController::appendAPIBacktrace(ScriptCallStack& call
 void JSGlobalObjectInspectorController::reportAPIException(JSGlobalObject* globalObject, Exception* exception)
 {
     VM& vm = globalObject->vm();
-#if ENABLE(REMOTE_INSPECTOR)
-    if (vm.isTerminationException(exception) || !m_didCreateLazyAgents || !m_globalObject.inspectorDebuggable().inspectable())
+    if (vm.isTerminationException(exception))
         return;
-#else
-    if (vm.isTerminationException(exception) || !m_didCreateLazyAgents)
-        return;
-#endif
 
     auto scope = DECLARE_CATCH_SCOPE(vm);
     ErrorHandlingScope errorScope(vm);

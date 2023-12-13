@@ -102,7 +102,7 @@ private:
 };
 
 class OffscreenCanvas final : public ActiveDOMObject, public RefCounted<OffscreenCanvas>, public CanvasBase, public EventTarget {
-    WTF_MAKE_ISO_ALLOCATED(OffscreenCanvas);
+    WTF_MAKE_ISO_ALLOCATED_EXPORT(OffscreenCanvas, WEBCORE_EXPORT);
 public:
 
     struct ImageEncodeOptions {
@@ -123,7 +123,7 @@ public:
     static Ref<OffscreenCanvas> create(ScriptExecutionContext&, unsigned width, unsigned height);
     static Ref<OffscreenCanvas> create(ScriptExecutionContext&, std::unique_ptr<DetachedOffscreenCanvas>&&);
     static Ref<OffscreenCanvas> create(ScriptExecutionContext&, HTMLCanvasElement&);
-    virtual ~OffscreenCanvas();
+    WEBCORE_EXPORT virtual ~OffscreenCanvas();
 
     unsigned width() const final;
     unsigned height() const final;
@@ -175,12 +175,6 @@ private:
     void derefCanvasBase() final { deref(); }
 
     void setSize(const IntSize&) final;
-
-#if ENABLE(WEBGL)
-    void createContextWebGL(RenderingContextType, WebGLContextAttributes&& = { });
-#endif
-
-    GPUCanvasContext* createContextWebGPU(RenderingContextType, GPU*);
 
     void createImageBuffer() const final;
     std::unique_ptr<SerializedImageBuffer> takeImageBuffer() const;

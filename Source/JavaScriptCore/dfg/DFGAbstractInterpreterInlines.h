@@ -3808,10 +3808,8 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
                     // This thing won't give us a variant that involves prototypes. If it did, we'd
                     // have more work to do here.
                     DFG_ASSERT(m_graph, node, status[i].conditionSet().isEmpty());
-
-                    result.merge(
-                        m_graph.inferredValueForProperty(
-                            value, status[i].offset(), m_state.structureClobberState()));
+                    const auto& variant = status[i];
+                    result.merge(m_graph.inferredValueForProperty(value, *m_graph.addStructureSet(variant.structureSet()), variant.offset(), m_state.structureClobberState()));
                 }
             
                 m_state.setShouldTryConstantFolding(true);
@@ -4030,7 +4028,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     case CallDOMGetter: {
         CallDOMGetterData* callDOMGetterData = node->callDOMGetterData();
         DOMJIT::CallDOMGetterSnippet* snippet = callDOMGetterData->snippet;
-        if (!snippet || snippet->effect.isTop())
+        if (!snippet || snippet->effect.writes)
             clobberWorld();
         if (callDOMGetterData->domJIT)
             setTypeForNode(node, callDOMGetterData->domJIT->resultType());
@@ -4040,7 +4038,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     }
     case CallDOM: {
         const DOMJIT::Signature* signature = node->signature();
-        if (signature->effect.isTop())
+        if (signature->effect.writes)
             clobberWorld();
         setTypeForNode(node, signature->result);
         break;
@@ -4864,6 +4862,8 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     case DirectCall:
     case DirectConstruct:
     case DirectTailCallInlinedCaller:
+    case CallCustomAccessorGetter:
+    case CallCustomAccessorSetter:
         clobberWorld();
         makeHeapTopForNode(node);
         break;

@@ -477,7 +477,7 @@ JSCValue* jsc_value_new_array(JSCContext* context, GType firstItemType, ...)
 
     auto* jsContext = jscContextGetJSContext(context);
     JSC::JSGlobalObject* globalObject = toJS(jsContext);
-
+    JSC::JSLockHolder locker(globalObject);
 
     JSValueRef exception = nullptr;
     auto* jsArray = JSObjectMakeArray(jsContext, 0, nullptr, &exception);
@@ -883,7 +883,7 @@ static GRefPtr<JSCValue> jscValueCallFunction(JSCValue* value, JSObjectRef funct
     JSCValuePrivate* priv = value->priv;
     auto* jsContext = jscContextGetJSContext(priv->context.get());
     JSC::JSGlobalObject* globalObject = toJS(jsContext);
-
+    JSC::JSLockHolder locker(globalObject);
 
     JSValueRef exception = nullptr;
     Vector<JSValueRef> arguments;
@@ -1001,12 +1001,9 @@ JSCValue* jsc_value_object_invoke_methodv(JSCValue* value, const char* name, uns
     if (jscContextHandleExceptionIfNeeded(priv->context.get(), exception))
         return jsc_value_new_undefined(priv->context.get());
 
-    Vector<JSValueRef> arguments;
-    if (parametersCount) {
-        arguments.reserveInitialCapacity(parametersCount);
-        for (unsigned i = 0; i < parametersCount; ++i)
-            arguments.uncheckedAppend(jscValueGetJSValue(parameters[i]));
-    }
+    Vector<JSValueRef> arguments(parametersCount, [&](size_t i) {
+        return jscValueGetJSValue(parameters[i]);
+    });
 
     auto result = jsObjectCall(jsContext, function, JSC::JSCCallbackFunction::Type::Method, object, arguments, &exception);
     if (jscContextHandleExceptionIfNeeded(priv->context.get(), exception))
@@ -1047,7 +1044,7 @@ void jsc_value_object_define_property_data(JSCValue* value, const char* property
     auto* jsContext = jscContextGetJSContext(priv->context.get());
     JSC::JSGlobalObject* globalObject = toJS(jsContext);
     JSC::VM& vm = globalObject->vm();
-
+    JSC::JSLockHolder locker(vm);
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     JSC::JSValue jsValue = toJS(globalObject, priv->jsValue);
@@ -1080,7 +1077,7 @@ static void jscValueObjectDefinePropertyAccessor(JSCValue* value, const char* pr
     auto* jsContext = jscContextGetJSContext(priv->context.get());
     JSC::JSGlobalObject* globalObject = toJS(jsContext);
     JSC::VM& vm = globalObject->vm();
-
+    JSC::JSLockHolder locker(vm);
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     JSC::JSValue jsValue = toJS(globalObject, priv->jsValue);
@@ -1170,7 +1167,7 @@ static GRefPtr<JSCValue> jscValueFunctionCreate(JSCContext* context, const char*
         closure = adoptGRef(g_cclosure_new(callback, userData, reinterpret_cast<GClosureNotify>(reinterpret_cast<GCallback>(destroyNotify))));
     JSC::JSGlobalObject* globalObject = toJS(jscContextGetJSContext(context));
     JSC::VM& vm = globalObject->vm();
-
+    JSC::JSLockHolder locker(vm);
     auto* functionObject = toRef(JSC::JSCCallbackFunction::create(vm, globalObject, name ? String::fromUTF8(name) : "anonymous"_s,
         JSC::JSCCallbackFunction::Type::Function, nullptr, WTFMove(closure), returnType, WTFMove(parameters)));
     return jscContextGetOrCreateValue(context, functionObject);
@@ -1206,12 +1203,9 @@ JSCValue* jsc_value_new_function(JSCContext* context, const char* name, GCallbac
 
     va_list args;
     va_start(args, paramCount);
-    Vector<GType> parameters;
-    if (paramCount) {
-        parameters.reserveInitialCapacity(paramCount);
-        for (unsigned i = 0; i < paramCount; ++i)
-            parameters.uncheckedAppend(va_arg(args, GType));
-    }
+    Vector<GType> parameters(paramCount, [&](size_t) -> GType {
+        return va_arg(args, GType);
+    });
     va_end(args);
 
     return jscValueFunctionCreate(context, name, callback, userData, destroyNotify, returnType, WTFMove(parameters)).leakRef();
@@ -1246,12 +1240,9 @@ JSCValue* jsc_value_new_functionv(JSCContext* context, const char* name, GCallba
     g_return_val_if_fail(callback, nullptr);
     g_return_val_if_fail(!parametersCount || parameterTypes, nullptr);
 
-    Vector<GType> parameters;
-    if (parametersCount) {
-        parameters.reserveInitialCapacity(parametersCount);
-        for (unsigned i = 0; i < parametersCount; ++i)
-            parameters.uncheckedAppend(parameterTypes[i]);
-    }
+    Vector<GType> parameters(parametersCount, [&](size_t i) -> GType {
+        return parameterTypes[i];
+    });
 
     return jscValueFunctionCreate(context, name, callback, userData, destroyNotify, returnType, WTFMove(parameters)).leakRef();
 }
@@ -1363,12 +1354,9 @@ JSCValue* jsc_value_function_callv(JSCValue* value, unsigned parametersCount, JS
     if (jscContextHandleExceptionIfNeeded(priv->context.get(), exception))
         return jsc_value_new_undefined(priv->context.get());
 
-    Vector<JSValueRef> arguments;
-    if (parametersCount) {
-        arguments.reserveInitialCapacity(parametersCount);
-        for (unsigned i = 0; i < parametersCount; ++i)
-            arguments.uncheckedAppend(jscValueGetJSValue(parameters[i]));
-    }
+    Vector<JSValueRef> arguments(parametersCount, [&](size_t i) {
+        return jscValueGetJSValue(parameters[i]);
+    });
 
     auto result = jsObjectCall(jsContext, function, JSC::JSCCallbackFunction::Type::Function, nullptr, arguments, &exception);
     if (jscContextHandleExceptionIfNeeded(priv->context.get(), exception))
@@ -1449,12 +1437,9 @@ JSCValue* jsc_value_constructor_callv(JSCValue* value, unsigned parametersCount,
     if (jscContextHandleExceptionIfNeeded(priv->context.get(), exception))
         return jsc_value_new_undefined(priv->context.get());
 
-    Vector<JSValueRef> arguments;
-    if (parametersCount) {
-        arguments.reserveInitialCapacity(parametersCount);
-        for (unsigned i = 0; i < parametersCount; ++i)
-            arguments.uncheckedAppend(jscValueGetJSValue(parameters[i]));
-    }
+    Vector<JSValueRef> arguments(parametersCount, [&](size_t i) {
+        return jscValueGetJSValue(parameters[i]);
+    });
 
     auto result = jsObjectCall(jsContext, function, JSC::JSCCallbackFunction::Type::Constructor, nullptr, arguments, &exception);
     if (jscContextHandleExceptionIfNeeded(priv->context.get(), exception))
@@ -2080,7 +2065,7 @@ JSCValue* jsc_value_new_from_json(JSCContext* context, const char* json)
 
     auto* jsContext = jscContextGetJSContext(context);
     JSC::JSGlobalObject* globalObject = toJS(jsContext);
-
+    JSC::JSLockHolder locker(globalObject);
 
     JSValueRef exception = nullptr;
     JSC::JSValue jsValue;

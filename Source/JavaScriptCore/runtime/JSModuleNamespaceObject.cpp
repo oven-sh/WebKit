@@ -29,7 +29,6 @@
 #include "AbstractModuleRecord.h"
 #include "JSCInlines.h"
 #include "JSModuleEnvironment.h"
-#include "JSModuleRecord.h"
 
 namespace JSC {
 
@@ -54,7 +53,7 @@ void JSModuleNamespaceObject::finishCreation(JSGlobalObject* globalObject, Abstr
     //     The list is ordered as if an Array of those String values had been sorted using Array.prototype.sort using SortCompare as comparator.
     //
     // Sort the exported names by the code point order.
-    std::sort(resolutions.begin(), resolutions.end(), [](const auto& lhs, const auto& rhs) {
+    std::sort(resolutions.begin(), resolutions.end(), [] (const auto& lhs, const auto& rhs) {
         return codePointCompare(lhs.first.impl(), rhs.first.impl()) < 0;
     });
 
@@ -192,17 +191,10 @@ bool JSModuleNamespaceObject::getOwnPropertySlotByIndex(JSObject* cell, JSGlobal
     return thisObject->getOwnPropertySlotCommon(globalObject, Identifier::from(vm, propertyName), slot);
 }
 
-bool JSModuleNamespaceObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName, JSValue, PutPropertySlot& slot)
+bool JSModuleNamespaceObject::put(JSCell*, JSGlobalObject* globalObject, PropertyName, JSValue, PutPropertySlot& slot)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-#if USE(BUN_JSC_ADDITIONS)
-    auto* thisObject = jsCast<JSModuleNamespaceObject*>(cell);
-    if (thisObject->m_isOverridingValue) {
-        return true;
-    }
-#endif
 
     // http://www.ecma-international.org/ecma-262/6.0/#sec-module-namespace-exotic-objects-set-p-v-receiver
     if (slot.isStrictMode())
@@ -277,12 +269,6 @@ bool JSModuleNamespaceObject::defineOwnProperty(JSObject* cell, JSGlobalObject* 
     bool isCurrentDefined = thisObject->getOwnPropertyDescriptor(globalObject, propertyName, current);
     RETURN_IF_EXCEPTION(scope, false);
 
-#if USE(BUN_JSC_ADDITIONS)
-    if (thisObject->m_isOverridingValue) {
-        return true;
-    }
-#endif
-
     // 3. If current is undefined, return false.
     if (!isCurrentDefined) {
         if (shouldThrow)
@@ -332,66 +318,5 @@ bool JSModuleNamespaceObject::defineOwnProperty(JSObject* cell, JSGlobalObject* 
     // 9. Return true.
     return true;
 }
-
-#if USE(BUN_JSC_ADDITIONS)
-
-void JSModuleNamespaceObject::overrideExports(JSGlobalObject* globalObject, const WTF::Function<bool(JSGlobalObject* globalObject, const Identifier& exportName, JSC::JSValue& result)>& iter)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    for (auto& pair : m_exports) {
-        JSValue value = jsUndefined();
-        const Identifier& name = pair.value.localName;
-
-        if (iter(globalObject, name, value)) {
-            auto* moduleNamespaceObject = pair.value.moduleRecord->getModuleNamespace(globalObject);
-            RETURN_IF_EXCEPTION(scope, void());
-            auto* moduleEnvironment = pair.value.moduleRecord->moduleEnvironment();
-            bool putResult = false;
-            moduleNamespaceObject->m_isOverridingValue = true;
-            symbolTablePutTouchWatchpointSet(moduleEnvironment, globalObject, name, value, false, true, putResult);
-            JSC::PutPropertySlot putter = JSC::PutPropertySlot(moduleNamespaceObject, false);
-            moduleNamespaceObject->put(moduleNamespaceObject, globalObject, name, value, putter);
-            moduleNamespaceObject->m_isOverridingValue = false;
-        }
-    }
-}
-
-bool JSModuleNamespaceObject::overrideExportValue(JSGlobalObject* globalObject, PropertyName name, JSValue value)
-{
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::Identifier identifier = Identifier::fromUid(vm, name.uid());
-    auto resolution = moduleRecord()->resolveExport(globalObject, identifier);
-
-    // FIXME: figure out how to do this
-    // Support setting a default export value when it wasn't already exported.
-    // if (resolution.type == AbstractModuleRecord::Resolution::Type::Error && name == "default"_s) {
-    //     resolution.type = AbstractModuleRecord::Resolution::Type::Resolved;
-    //     resolution.localName = identifier;
-    //     resolution.moduleRecord = moduleRecord();
-    // }
-
-    if (resolution.type != AbstractModuleRecord::Resolution::Type::Resolved) {
-        return false;
-    }
-
-    auto* record = resolution.moduleRecord;
-    auto* moduleNamespaceObject = record->getModuleNamespace(globalObject);
-    RETURN_IF_EXCEPTION(scope, false);
-
-    JSModuleEnvironment* moduleEnvironment = record->moduleEnvironment();
-
-    bool putResult = false;
-    moduleNamespaceObject->m_isOverridingValue = true;
-    symbolTablePutTouchWatchpointSet(moduleEnvironment, globalObject, resolution.localName, value, false, true, putResult);
-    JSC::PutPropertySlot putter = JSC::PutPropertySlot(moduleNamespaceObject, false);
-    putResult = moduleNamespaceObject->put(moduleNamespaceObject, globalObject, name, value, putter);
-    moduleNamespaceObject->m_isOverridingValue = false;
-    return putResult;
-}
-
-#endif
 
 } // namespace JSC

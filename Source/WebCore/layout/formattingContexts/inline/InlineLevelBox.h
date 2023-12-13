@@ -124,7 +124,8 @@ private:
     friend class LineBox;
     friend class LineBoxBuilder;
     friend class LineBoxVerticalAligner;
-    friend class InlineFormattingGeometry;
+    friend class InlineFormattingUtils;
+    friend class RubyFormattingContext;
 
     const InlineRect& logicalRect() const { return m_logicalRect; }
     InlineLayoutUnit logicalTop() const { return m_logicalRect.top(); }
@@ -165,7 +166,7 @@ private:
         const Length& lineHeight;
         TextBoxEdge textBoxEdge;
         TextBoxTrim textBoxTrim;
-        WTF::OptionSet<LineBoxContain> lineBoxContain;
+        OptionSet<LineBoxContain> lineBoxContain;
         InlineLayoutUnit primaryFontSize { 0 };
         VerticalAlignment verticalAlignment { };
     };

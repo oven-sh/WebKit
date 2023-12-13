@@ -35,8 +35,8 @@
 #include "CachedSVGDocument.h"
 #include "CachedSVGDocumentReference.h"
 #include "FilterTargetSwitcher.h"
+#include "LegacyRenderSVGResourceFilter.h"
 #include "Logging.h"
-#include "RenderSVGResourceFilter.h"
 #include "RenderStyleInlines.h"
 #include <wtf/NeverDestroyed.h>
 
@@ -92,14 +92,14 @@ void RenderLayerFilters::updateReferenceFilterClients(const FilterOperations& op
             m_externalSVGReferences.append(cachedSVGDocument);
         } else {
             // Reference is internal; add layer as a client so we can trigger filter repaint on SVG attribute change.
-            auto* filterElement = m_layer.renderer().document().getElementById(referenceOperation.fragment());
+            RefPtr filterElement = m_layer.renderer().document().getElementById(referenceOperation.fragment());
             if (!filterElement)
                 continue;
-            auto* renderer = filterElement->renderer();
-            if (!is<RenderSVGResourceFilter>(renderer))
+            CheckedPtr renderer = dynamicDowncast<LegacyRenderSVGResourceFilter>(filterElement->renderer());
+            if (!renderer)
                 continue;
-            downcast<RenderSVGResourceFilter>(*renderer).addClientRenderLayer(m_layer);
-            m_internalSVGReferences.append(filterElement);
+            renderer->addClientRenderLayer(m_layer);
+            m_internalSVGReferences.append(WTFMove(filterElement));
         }
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2023 Apple Inc. All rights reserved.
  * Copyright (C) 2014 Saam Barati. <saambarati1@gmail.com>
  *
  * Redistribution and use in source and binary forms, with or without
@@ -28,8 +28,11 @@
 #include "ControlFlowProfiler.h"
 
 #include "VM.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace JSC {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ControlFlowProfiler);
 
 ControlFlowProfiler::ControlFlowProfiler()
     : m_dummyBasicBlock(BasicBlockLocation(-1, -1))
@@ -64,33 +67,6 @@ void ControlFlowProfiler::dumpData() const
         for (const BasicBlockLocation* block : iter->value.values())
             block->dumpData();
     }
-}
-
-Vector<BasicBlockRange> ControlFlowProfiler::getBasicBlocksForSourceIDWithoutFunctionRange(SourceID sourceID, VM&) const
-{
-    Vector<BasicBlockRange> result(0);
-    auto bucketFindResult = m_sourceIDBuckets.find(sourceID);
-    if (bucketFindResult == m_sourceIDBuckets.end())
-        return result;
-
-    const BlockLocationCache& cache = bucketFindResult->value;
-    for (const BasicBlockLocation* block : cache.values()) {
-        bool hasExecuted = block->hasExecuted();
-        size_t executionCount = block->executionCount();
-
-        const Vector<BasicBlockLocation::Gap>& blockRanges = block->getExecutedRanges();
-        result.reserveCapacity(result.size() + blockRanges.size());
-        for (BasicBlockLocation::Gap gap : blockRanges) {
-            BasicBlockRange range;
-            range.m_hasExecuted = hasExecuted;
-            range.m_executionCount = executionCount;
-            range.m_startOffset = gap.first;
-            range.m_endOffset = gap.second;
-            result.append(range);
-        }
-    }
-
-    return result;
 }
 
 Vector<BasicBlockRange> ControlFlowProfiler::getBasicBlocksForSourceID(SourceID sourceID, VM& vm) const

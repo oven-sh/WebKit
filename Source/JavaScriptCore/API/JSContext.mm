@@ -120,42 +120,41 @@
 
 - (JSValue *)evaluateJSScript:(JSScript *)script
 {
-    return nil;
-    // JSC::JSGlobalObject* globalObject = toJS(m_context);
-    // JSC::VM& vm = globalObject->vm();
+    JSC::JSGlobalObject* globalObject = toJS(m_context);
+    JSC::VM& vm = globalObject->vm();
+    JSC::JSLockHolder locker(vm);
 
+    if (script.type == kJSScriptTypeProgram) {
+        JSValueRef exceptionValue = nullptr;
+        JSC::SourceCode sourceCode = [script sourceCode];
+        JSValueRef result = JSEvaluateScriptInternal(locker, m_context, nullptr, sourceCode, &exceptionValue);
 
-    // if (script.type == kJSScriptTypeProgram) {
-    //     JSValueRef exceptionValue = nullptr;
-    //     JSC::SourceCode sourceCode = [script sourceCode];
-    //     JSValueRef result = JSEvaluateScriptInternal(locker, m_context, nullptr, sourceCode, &exceptionValue);
+        if (exceptionValue)
+            return [self valueFromNotifyException:exceptionValue];
+        return [JSValue valueWithJSValueRef:result inContext:self];
+    }
 
-    //     if (exceptionValue)
-    //         return [self valueFromNotifyException:exceptionValue];
-    //     return [JSValue valueWithJSValueRef:result inContext:self];
-    // }
+    auto* apiGlobalObject = JSC::jsDynamicCast<JSC::JSAPIGlobalObject*>(globalObject);
+    if (!apiGlobalObject)
+        return [JSValue valueWithNewPromiseRejectedWithReason:[JSValue valueWithNewErrorFromMessage:@"Context does not support module loading" inContext:self] inContext:self];
 
-    // auto* apiGlobalObject = JSC::jsDynamicCast<JSC::JSAPIGlobalObject*>(globalObject);
-    // if (!apiGlobalObject)
-    //     return [JSValue valueWithNewPromiseRejectedWithReason:[JSValue valueWithNewErrorFromMessage:@"Context does not support module loading" inContext:self] inContext:self];
-
-    // auto scope = DECLARE_CATCH_SCOPE(vm);
-    // JSC::JSValue result = apiGlobalObject->loadAndEvaluateJSScriptModule(locker, script);
-    // if (scope.exception()) {
-    //     JSValueRef exceptionValue = toRef(apiGlobalObject, scope.exception()->value());
-    //     scope.clearException();
-    //     // FIXME: We should not clearException if it is the TerminationException.
-    //     // https://bugs.webkit.org/show_bug.cgi?id=220821
-    //     return [JSValue valueWithNewPromiseRejectedWithReason:[JSValue valueWithJSValueRef:exceptionValue inContext:self] inContext:self];
-    // }
-    // return [JSValue valueWithJSValueRef:toRef(vm, result) inContext:self];
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    JSC::JSValue result = apiGlobalObject->loadAndEvaluateJSScriptModule(locker, script);
+    if (scope.exception()) {
+        JSValueRef exceptionValue = toRef(apiGlobalObject, scope.exception()->value());
+        scope.clearException();
+        // FIXME: We should not clearException if it is the TerminationException.
+        // https://bugs.webkit.org/show_bug.cgi?id=220821
+        return [JSValue valueWithNewPromiseRejectedWithReason:[JSValue valueWithJSValueRef:exceptionValue inContext:self] inContext:self];
+    }
+    return [JSValue valueWithJSValueRef:toRef(vm, result) inContext:self];
 }
 
 - (JSValue *)dependencyIdentifiersForModuleJSScript:(JSScript *)script
 {
     JSC::JSGlobalObject* globalObject = toJS(m_context);
     JSC::VM& vm = globalObject->vm();
-
+    JSC::JSLockHolder locker(vm);
 
     if (script.type != kJSScriptTypeModule) {
         self.exceptionHandler(self, [JSValue valueWithNewErrorFromMessage:@"script is not a module" inContext:self]);
@@ -180,6 +179,9 @@
 - (void)_setITMLDebuggableType
 {
     JSC::JSGlobalObject* globalObject = toJS(m_context);
+    JSC::VM& vm = globalObject->vm();
+    JSC::JSLockHolder locker(vm);
+
     globalObject->setIsITML();
 }
 
@@ -187,7 +189,7 @@
 {
     JSC::JSGlobalObject* globalObject = toJS(m_context);
     JSC::VM& vm = globalObject->vm();
-
+    JSC::JSLockHolder locker(vm);
     if (value)
         m_exception.set(vm, toJS(JSValueToObject(m_context, valueInternalValue(value), 0)));
     else
@@ -397,7 +399,7 @@
 
 - (JSValue *)wrapperForObjCObject:(id)object
 {
-
+    JSC::JSLockHolder locker(toJS(m_context));
     return [[self wrapperMap] jsWrapperForObject:object inContext:self];
 }
 
@@ -408,7 +410,7 @@
 
 - (JSValue *)wrapperForJSObject:(JSValueRef)value
 {
-
+    JSC::JSLockHolder locker(toJS(m_context));
     return [[self wrapperMap] objcWrapperForJSValueRef:value inContext:self];
 }
 

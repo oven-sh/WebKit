@@ -79,7 +79,7 @@ public:
     ~Device();
 
     Ref<BindGroup> createBindGroup(const WGPUBindGroupDescriptor&);
-    Ref<BindGroupLayout> createBindGroupLayout(const WGPUBindGroupLayoutDescriptor&);
+    Ref<BindGroupLayout> createBindGroupLayout(const WGPUBindGroupLayoutDescriptor&, bool isGeneratedLayout = false);
     Ref<Buffer> createBuffer(const WGPUBufferDescriptor&);
     Ref<CommandEncoder> createCommandEncoder(const WGPUCommandEncoderDescriptor&);
     Ref<ComputePipeline> createComputePipeline(const WGPUComputePipelineDescriptor&);
@@ -100,9 +100,10 @@ public:
     size_t enumerateFeatures(WGPUFeatureName* features);
     bool getLimits(WGPUSupportedLimits&);
     Queue& getQueue();
-    bool hasFeature(WGPUFeatureName);
+    bool hasFeature(WGPUFeatureName) const;
     bool popErrorScope(CompletionHandler<void(WGPUErrorType, String&&)>&& callback);
     void pushErrorScope(WGPUErrorFilter);
+    void setDeviceLostCallback(Function<void(WGPUDeviceLostReason, String&&)>&&);
     void setUncapturedErrorCallback(Function<void(WGPUErrorType, String&&)>&&);
     void setLabel(String&&);
 
@@ -126,6 +127,9 @@ public:
     uint32_t maxBuffersForComputeStage() const;
     uint32_t vertexBufferIndexForBindGroup(uint32_t groupIndex) const;
 
+    static bool isStencilOnlyFormat(MTLPixelFormat);
+    bool shouldStopCaptureAfterSubmit();
+
 private:
     Device(id<MTLDevice>, id<MTLCommandQueue> defaultQueue, HardwareCapabilities&&, Adapter&);
     Device(Adapter&);
@@ -134,7 +138,7 @@ private:
     ErrorScope* currentErrorScope(WGPUErrorFilter);
     bool validatePopErrorScope() const;
     id<MTLBuffer> safeCreateBuffer(NSUInteger length, MTLStorageMode, MTLCPUCacheMode = MTLCPUCacheModeDefaultCache, MTLHazardTrackingMode = MTLHazardTrackingModeDefault) const;
-    bool validateCreateTexture(const WGPUTextureDescriptor&, const Vector<WGPUTextureFormat>& viewFormats);
+    NSString *errorValidatingTextureCreation(const WGPUTextureDescriptor&, const Vector<WGPUTextureFormat>& viewFormats);
     bool validateCreateIOSurfaceBackedTexture(const WGPUTextureDescriptor&, const Vector<WGPUTextureFormat>& viewFormats, IOSurfaceRef backing);
 
     bool validateRenderPipeline(const WGPURenderPipelineDescriptor&);

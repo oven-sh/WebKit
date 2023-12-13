@@ -107,9 +107,9 @@ JSFunction::JSFunction(VM& vm, NativeExecutable* executable, JSGlobalObject* glo
 #if ASSERT_ENABLED
 void JSFunction::finishCreation(VM& vm)
 {
-    ASSERT(type() == JSFunctionType);
     Base::finishCreation(vm);
     ASSERT(jsDynamicCast<JSFunction*>(this));
+    ASSERT(type() == JSFunctionType);
     // JSCell::{getCallData,getConstructData} relies on the following conditions.
     ASSERT(methodTable()->getConstructData == &JSFunction::getConstructData);
     ASSERT(methodTable()->getCallData == &JSFunction::getCallData);
@@ -598,14 +598,6 @@ JSFunction::PropertyStatus JSFunction::reifyName(VM& vm, JSGlobalObject* globalO
     ASSERT(!isHostFunction());
     unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
     const Identifier& propID = vm.propertyNames->name;
-
-    if (globalObject->needsSiteSpecificQuirks()) {
-        auto illegalCharMatcher = [] (UChar ch) -> bool {
-            return ch == ' ' || ch == '|';
-        };
-        if (name.find(illegalCharMatcher) != notFound)
-            name = String();
-    }
 
     if (jsExecutable()->isGetter())
         name = makeNameWithOutOfMemoryCheck(globalObject, throwScope, "Getter ", "get ", name);

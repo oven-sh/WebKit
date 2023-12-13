@@ -36,6 +36,7 @@
 #include "HTMLButtonElement.h"
 #include "HTMLFormElement.h"
 #include "HTMLInputElement.h"
+#include "InvokeEvent.h"
 #include "LocalFrame.h"
 #include "LocalFrameView.h"
 #include "PopoverData.h"
@@ -90,8 +91,7 @@ String HTMLFormControlElement::formMethod() const
     auto& formMethodAttr = attributeWithoutSynchronization(formmethodAttr);
     if (formMethodAttr.isNull())
         return emptyString();
-    bool dialogElementEnabled = document().settings().dialogElementEnabled();
-    return FormSubmission::Attributes::methodString(FormSubmission::Attributes::parseMethodType(formMethodAttr, dialogElementEnabled), dialogElementEnabled);
+    return FormSubmission::Attributes::methodString(FormSubmission::Attributes::parseMethodType(formMethodAttr));
 }
 
 void HTMLFormControlElement::setFormMethod(const AtomString& value)
@@ -307,7 +307,8 @@ void HTMLFormControlElement::setAutocomplete(const AtomString& value)
 
 AutofillMantle HTMLFormControlElement::autofillMantle() const
 {
-    return is<HTMLInputElement>(*this) && downcast<HTMLInputElement>(this)->isInputTypeHidden() ? AutofillMantle::Anchor : AutofillMantle::Expectation;
+    auto* input = dynamicDowncast<HTMLInputElement>(this);
+    return input && input->isInputTypeHidden() ? AutofillMantle::Anchor : AutofillMantle::Expectation;
 }
 
 AutofillData HTMLFormControlElement::autofillData() const
@@ -343,7 +344,7 @@ static const AtomString& hideAtom()
 }
 
 // https://html.spec.whatwg.org/#popover-target-element
-HTMLElement* HTMLFormControlElement::popoverTargetElement() const
+RefPtr<HTMLElement> HTMLFormControlElement::popoverTargetElement() const
 {
     auto canInvokePopovers = [](const HTMLFormControlElement& element) -> bool {
         if (!element.document().settings().popoverAttributeEnabled() || element.document().quirks().shouldDisablePopoverAttributeQuirk())
@@ -362,7 +363,7 @@ HTMLElement* HTMLFormControlElement::popoverTargetElement() const
     if (form() && isSubmitButton())
         return nullptr;
 
-    auto* element = dynamicDowncast<HTMLElement>(getElementAttribute(popovertargetAttr));
+    RefPtr element = dynamicDowncast<HTMLElement>(getElementAttribute(popovertargetAttr));
     if (element && element->popoverState() != PopoverState::None)
         return element;
     return nullptr;
@@ -404,6 +405,58 @@ void HTMLFormControlElement::handlePopoverTargetAction() const
         target->hidePopover();
     else if (shouldShow)
         target->showPopover(this);
+}
+
+RefPtr<HTMLElement> HTMLFormControlElement::invokeTargetElement() const
+{
+    auto canInvoke = [](const HTMLFormControlElement& element) -> bool {
+        if (!element.document().settings().invokerAttributesEnabled())
+            return false;
+        if (auto* inputElement = dynamicDowncast<HTMLInputElement>(element))
+            return inputElement->isTextButton() || inputElement->isImageButton();
+        return is<HTMLButtonElement>(element);
+    };
+
+    if (!canInvoke(*this))
+        return nullptr;
+
+    return dynamicDowncast<HTMLElement>(getElementAttribute(invoketargetAttr));
+}
+
+const AtomString& HTMLFormControlElement::invokeAction() const
+{
+    const AtomString& value = attributeWithoutSynchronization(HTMLNames::invokeactionAttr);
+
+    if (!value || value.isNull() || value.isEmpty())
+        return autoAtom();
+    return value;
+}
+
+void HTMLFormControlElement::setInvokeAction(const AtomString& value)
+{
+    setAttributeWithoutSynchronization(HTMLNames::invokeactionAttr, value);
+}
+
+void HTMLFormControlElement::handleInvokeAction()
+{
+    RefPtr invokee = invokeTargetElement();
+    if (!invokee)
+        return;
+
+    auto action = invokeAction();
+
+    InvokeEvent::Init init;
+    init.bubbles = false;
+    init.cancelable = true;
+    init.composed = true;
+    init.invoker = this;
+    init.action = action;
+    Ref<InvokeEvent> event = InvokeEvent::create(eventNames().invokeEvent, init,
+        InvokeEvent::IsTrusted::Yes);
+    invokee->dispatchEvent(event);
+
+    if (!event->defaultPrevented())
+        invokee->handleInvokeInternal(action);
 }
 
 // FIXME: We should remove the quirk once <rdar://problem/47334655> is fixed.

@@ -478,7 +478,8 @@ static const char *GetOperatorString(TOperator op,
         case TOperator::EOpCosh:
             return "metal::cosh";
         case TOperator::EOpTanh:
-            return "metal::tanh";
+            return resultType.getPrecision() == TPrecision::EbpHigh ? "metal::precise::tanh"
+                                                                    : "metal::tanh";
         case TOperator::EOpAsinh:
             return "metal::asinh";
         case TOperator::EOpAcosh:
@@ -488,7 +489,7 @@ static const char *GetOperatorString(TOperator op,
         case TOperator::EOpFma:
             return "metal::fma";
         case TOperator::EOpPow:
-            return "metal::pow";
+            return "metal::powr";  // GLSL's pow excludes negative x
         case TOperator::EOpExp:
             return "metal::exp";
         case TOperator::EOpExp2:
@@ -520,8 +521,10 @@ static const char *GetOperatorString(TOperator op,
         case TOperator::EOpSaturate:
             return "metal::saturate";  // TODO fast vs precise namespace
         case TOperator::EOpMix:
-            if (argType2 && argType2->getBasicType() == EbtBool)
+            if (!argType1->isScalar() && argType2 && argType2->getBasicType() == EbtBool)
+            {
                 return "ANGLE_mix_bool";
+            }
             return "metal::mix";
         case TOperator::EOpStep:
             return "metal::step";
@@ -1669,7 +1672,7 @@ bool GenMetalTraverser::visitSwizzle(Visit, TIntermSwizzle *swizzleNode)
         DebugSink::EscapedSink escapedOut(mOut.escape());
         TInfoSinkBase &out = escapedOut.get();
 #else
-        TInfoSinkBase &out        = mOut;
+        TInfoSinkBase &out = mOut;
 #endif
         swizzleNode->writeOffsetsAsXYZW(&out);
     }

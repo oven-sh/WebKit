@@ -34,7 +34,6 @@
 #include "WebGPUBufferBindingType.h"
 #include "WebGPUCompareFunction.h"
 #include "WebGPUCompilationMessageType.h"
-#include "WebGPUComputePassTimestampLocation.h"
 #include "WebGPUCullMode.h"
 #include "WebGPUErrorFilter.h"
 #include "WebGPUFeatureName.h"
@@ -45,7 +44,6 @@
 #include "WebGPUPowerPreference.h"
 #include "WebGPUPrimitiveTopology.h"
 #include "WebGPUQueryType.h"
-#include "WebGPURenderPassTimestampLocation.h"
 #include "WebGPUSamplerBindingType.h"
 #include "WebGPUStencilOperation.h"
 #include "WebGPUStorageTextureAccess.h"
@@ -167,16 +165,6 @@ WGPUCompilationMessageType ConvertToBackingContext::convertToBacking(Compilation
     }
 }
 
-WGPUComputePassTimestampLocation ConvertToBackingContext::convertToBacking(ComputePassTimestampLocation computePassTimestampLocation)
-{
-    switch (computePassTimestampLocation) {
-    case ComputePassTimestampLocation::Beginning:
-        return WGPUComputePassTimestampLocation_Beginning;
-    case ComputePassTimestampLocation::End:
-        return WGPUComputePassTimestampLocation_End;
-    }
-}
-
 WGPUCullMode ConvertToBackingContext::convertToBacking(CullMode cullMode)
 {
     switch (cullMode) {
@@ -205,7 +193,7 @@ WGPUFeatureName ConvertToBackingContext::convertToBacking(FeatureName featureNam
 {
     switch (featureName) {
     case FeatureName::DepthClipControl:
-        return static_cast<WGPUFeatureName>(WGPUFeatureName_DepthClipControl);
+        return WGPUFeatureName_DepthClipControl;
     case FeatureName::Depth32floatStencil8:
         return WGPUFeatureName_Depth32FloatStencil8;
     case FeatureName::TextureCompressionBc:
@@ -217,13 +205,15 @@ WGPUFeatureName ConvertToBackingContext::convertToBacking(FeatureName featureNam
     case FeatureName::TimestampQuery:
         return WGPUFeatureName_TimestampQuery;
     case FeatureName::IndirectFirstInstance:
-        return static_cast<WGPUFeatureName>(WGPUFeatureName_IndirectFirstInstance);
+        return WGPUFeatureName_IndirectFirstInstance;
     case FeatureName::Bgra8unormStorage:
-        return static_cast<WGPUFeatureName>(WGPUFeatureName_BGRA8UnormStorage);
+        return WGPUFeatureName_BGRA8UnormStorage;
     case FeatureName::ShaderF16:
-        return static_cast<WGPUFeatureName>(WGPUFeatureName_ShaderF16);
+        return WGPUFeatureName_ShaderF16;
     case FeatureName::Rg11b10ufloatRenderable:
-        return static_cast<WGPUFeatureName>(WGPUFeatureName_RG11B10UfloatRenderable);
+        return WGPUFeatureName_RG11B10UfloatRenderable;
+    case FeatureName::Float32Filterable:
+        return WGPUFeatureName_Float32Filterable;
     }
 }
 
@@ -310,16 +300,6 @@ WGPUQueryType ConvertToBackingContext::convertToBacking(QueryType queryType)
         return WGPUQueryType_Occlusion;
     case QueryType::Timestamp:
         return WGPUQueryType_Timestamp;
-    }
-}
-
-WGPURenderPassTimestampLocation ConvertToBackingContext::convertToBacking(RenderPassTimestampLocation renderPassTimestampLocation)
-{
-    switch (renderPassTimestampLocation) {
-    case RenderPassTimestampLocation::Beginning:
-        return WGPURenderPassTimestampLocation_Beginning;
-    case RenderPassTimestampLocation::End:
-        return WGPURenderPassTimestampLocation_End;
     }
 }
 
@@ -692,6 +672,8 @@ WGPUVertexFormat ConvertToBackingContext::convertToBacking(VertexFormat vertexFo
         return WGPUVertexFormat_Sint32x3;
     case VertexFormat::Sint32x4:
         return WGPUVertexFormat_Sint32x4;
+    case VertexFormat::Unorm10_10_10_2:
+        return WGPUVertexFormat_Unorm10_10_10_2;
     }
 }
 

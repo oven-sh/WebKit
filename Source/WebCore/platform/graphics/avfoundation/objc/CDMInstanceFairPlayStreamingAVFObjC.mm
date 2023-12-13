@@ -60,6 +60,13 @@ static const NSInteger SecurityLevelError = -42811;
 @interface WebCoreFPSContentKeySessionDelegate : NSObject <AVContentKeySessionDelegate>
 @end
 
+#if HAVE(AVCONTENTKEY_EXTERNALCONTENTPROTECTIONSTATUS)
+// FIXME (118150407): Remove staging code once -[AVContentKey externalContentProtectionStatus] is available in SDKs used by WebKit builders
+@interface AVContentKey (Staging_113213892)
+@property (readonly) AVExternalContentProtectionStatus externalContentProtectionStatus;
+@end
+#endif
+
 @implementation WebCoreFPSContentKeySessionDelegate {
     WeakPtr<WebCore::AVContentKeySessionDelegateClient> _parent;
 }
@@ -114,7 +121,7 @@ static const NSInteger SecurityLevelError = -42811;
     Vector<RetainPtr<AVContentKeyRequest>> requests;
     requests.reserveInitialCapacity(keyRequests.count);
     [keyRequests enumerateObjectsUsingBlock:[&](AVContentKeyRequest* request, NSUInteger, BOOL*) {
-        requests.uncheckedAppend(request);
+        requests.append(request);
     }];
     _parent->didProvideRequests(WTFMove(requests));
 }
@@ -161,6 +168,17 @@ static const NSInteger SecurityLevelError = -42811;
 }
 #endif
 
+#if HAVE(AVCONTENTKEY_EXTERNALCONTENTPROTECTIONSTATUS)
+- (void)contentKeySession:(AVContentKeySession *)session externalProtectionStatusDidChangeForContentKey:(AVContentKey *)contentKey
+{
+    UNUSED_PARAM(session);
+    if (_parent)
+        _parent->externalProtectionStatusDidChangeForContentKey(contentKey);
+}
+#endif
+
+// FIXME (118150407): Once -[AVContentKey externalContentProtectionStatus] is available in SDKs used by WebKit builders,
+// only implement this optional delegate method when !HAVE(AVCONTENTKEY_EXTERNALCONTENTPROTECTIONSTATUS)
 - (void)contentKeySession:(AVContentKeySession *)session externalProtectionStatusDidChangeForContentKeyRequest:(AVContentKeyRequest *)keyRequest
 {
     UNUSED_PARAM(session);
@@ -569,6 +587,17 @@ void CDMInstanceFairPlayStreamingAVFObjC::outputObscuredDueToInsufficientExterna
     }
 }
 
+void CDMInstanceFairPlayStreamingAVFObjC::externalProtectionStatusDidChangeForContentKey(AVContentKey *key)
+{
+    if (auto* session = sessionForKey(key)) {
+        session->externalProtectionStatusDidChangeForContentKey(key);
+        return;
+    }
+
+    ERROR_LOG(LOGIDENTIFIER, "- no responsible session; dropping");
+    ASSERT_NOT_REACHED();
+}
+
 void CDMInstanceFairPlayStreamingAVFObjC::externalProtectionStatusDidChangeForContentKeyRequest(AVContentKeyRequest* request)
 {
     if (auto* session = sessionForRequest(request)) {
@@ -576,8 +605,8 @@ void CDMInstanceFairPlayStreamingAVFObjC::externalProtectionStatusDidChangeForCo
         return;
     }
 
-    ASSERT_NOT_REACHED();
     ERROR_LOG(LOGIDENTIFIER, "- no responsible session; dropping");
+    ASSERT_NOT_REACHED();
 }
 
 CDMInstanceSessionFairPlayStreamingAVFObjC* CDMInstanceFairPlayStreamingAVFObjC::sessionForKeyIDs(const Keys& keyIDs) const
@@ -594,6 +623,18 @@ CDMInstanceSessionFairPlayStreamingAVFObjC* CDMInstanceFairPlayStreamingAVFObjC:
         }))
         return sessionInterface.get();
     }
+    return nullptr;
+}
+
+CDMInstanceSessionFairPlayStreamingAVFObjC* CDMInstanceFairPlayStreamingAVFObjC::sessionForKey(AVContentKey *key) const
+{
+    auto index = m_sessions.findIf([&] (auto session) {
+        return session && session->hasKey(key);
+    });
+
+    if (index != notFound)
+        return m_sessions[index].get();
+
     return nullptr;
 }
 
@@ -628,8 +669,19 @@ bool CDMInstanceFairPlayStreamingAVFObjC::isAnyKeyUsable(const Keys& keys) const
             continue;
 
         for (auto& keyStatusPair : sessionInterface->keyStatuses()) {
-            if (keyStatusPair.second != CDMInstanceSession::KeyStatus::Usable)
+            switch (keyStatusPair.second) {
+            case CDMInstanceSession::KeyStatus::Expired:
+            case CDMInstanceSession::KeyStatus::Released:
+            case CDMInstanceSession::KeyStatus::InternalError:
+                // Key is unusable.
                 continue;
+            case CDMInstanceSession::KeyStatus::Usable:
+            case CDMInstanceSession::KeyStatus::OutputRestricted:
+            case CDMInstanceSession::KeyStatus::OutputDownscaled:
+            case CDMInstanceSession::KeyStatus::StatusPending:
+                // Key is (potentially) usable.
+                break;
+            }
 
             if (keys.findIf([&] (auto& key) {
                 return key.get() == keyStatusPair.first.get();
@@ -809,6 +861,7 @@ void CDMInstanceSessionFairPlayStreamingAVFObjC::updateLicense(const String&, Li
             callback(false, std::nullopt, std::nullopt, std::nullopt, Failed);
             return;
         }
+        m_renewingRequest = m_requests.last();
         ALWAYS_LOG(LOGIDENTIFIER, "\"renew\", processing renewal");
         auto session = m_session ? m_session.get() : m_instance->contentKeySession();
         [session renewExpiringResponseDataForContentKeyRequest:request];
@@ -1076,9 +1129,9 @@ void CDMInstanceSessionFairPlayStreamingAVFObjC::storeRecordOfKeyUsage(const Str
     // no-op; key usage data is stored automatically.
 }
 
-void CDMInstanceSessionFairPlayStreamingAVFObjC::displayChanged(PlatformDisplayID displayID)
+void CDMInstanceSessionFairPlayStreamingAVFObjC::displayChanged(PlatformDisplayID)
 {
-    updateProtectionStatusForDisplayID(displayID);
+    updateProtectionStatus();
 }
 
 void CDMInstanceSessionFairPlayStreamingAVFObjC::setClient(WeakPtr<CDMInstanceSessionClient>&& client)
@@ -1279,7 +1332,23 @@ void CDMInstanceSessionFairPlayStreamingAVFObjC::didProvideRenewingRequest(AVCon
 
     // The assumption here is that AVContentKeyRequest will only ever notify us of a renewing request as a result of calling
     // -renewExpiringResponseDataForContentKeyRequest: with an existing request.
-    ASSERT(m_requests.contains(m_currentRequest));
+    if (!m_renewingRequest
+        || m_renewingRequest->requests.size() != 1
+        || !m_renewingRequest->requests[0]
+        || ![[m_renewingRequest->requests[0] identifier] isEqual:request.identifier])
+    {
+        ASSERT_NOT_REACHED();
+        return;
+    }
+
+    auto renewingIndex = m_requests.find(*m_renewingRequest);
+    if (renewingIndex == notFound) {
+        ASSERT_NOT_REACHED();
+        return;
+    }
+
+    m_requests[renewingIndex] = *m_currentRequest;
+    m_renewingRequest = std::nullopt;
 
     RetainPtr<NSData> appIdentifier;
     if (auto* certificate = m_instance->serverCertificate())
@@ -1397,13 +1466,28 @@ AVContentKeyRequest* CDMInstanceSessionFairPlayStreamingAVFObjC::lastKeyRequest(
     return lastRequest.requests.last().get();
 }
 
-bool CDMInstanceSessionFairPlayStreamingAVFObjC::hasRequest(AVContentKeyRequest* keyRequest) const
+Vector<RetainPtr<AVContentKey>> CDMInstanceSessionFairPlayStreamingAVFObjC::contentKeys() const
 {
-    for (auto& request : m_requests) {
-        if (request.requests.contains(keyRequest))
-            return true;
-    }
-    return false;
+    return compactMap(contentKeyRequests(), [](auto&& request) {
+        return RetainPtr { [request contentKey] };
+    });
+}
+
+Vector<RetainPtr<AVContentKeyRequest>> CDMInstanceSessionFairPlayStreamingAVFObjC::contentKeyRequests() const
+{
+    return flatMap(m_requests, [](auto&& request) {
+        return request.requests;
+    });
+}
+
+bool CDMInstanceSessionFairPlayStreamingAVFObjC::hasKey(AVContentKey *key) const
+{
+    return contentKeys().contains(key);
+}
+
+bool CDMInstanceSessionFairPlayStreamingAVFObjC::hasRequest(AVContentKeyRequest *keyRequest) const
+{
+    return contentKeyRequests().contains(keyRequest);
 }
 
 bool CDMInstanceSessionFairPlayStreamingAVFObjC::shouldRetryRequestForReason(AVContentKeyRequest *, NSString *)
@@ -1451,26 +1535,21 @@ static auto requestStatusToCDMStatus(AVContentKeyRequestStatus status)
     }
 }
 
-void CDMInstanceSessionFairPlayStreamingAVFObjC::updateKeyStatuses(std::optional<PlatformDisplayID> displayID)
+void CDMInstanceSessionFairPlayStreamingAVFObjC::updateKeyStatuses()
 {
     KeyStatusVector keyStatuses;
 
-    if (!displayID && m_client)
-        displayID = m_client->displayID();
+    for (auto& request : contentKeyRequests()) {
+        auto keyIDs = keyIDsForRequest(request.get());
+        auto status = requestStatusToCDMStatus([request status]);
+        if ([request error].code == SecurityLevelError)
+            status = CDMKeyStatus::OutputRestricted;
 
-    for (auto& request : m_requests) {
-        for (auto& oneRequest : request.requests) {
-            auto keyIDs = keyIDsForRequest(oneRequest.get());
-            auto status = requestStatusToCDMStatus(oneRequest.get().status);
-            if (oneRequest.get().error.code == SecurityLevelError)
-                status = CDMKeyStatus::OutputRestricted;
+        if (auto protectionStatus = protectionStatusForRequest(request.get()))
+            status = *protectionStatus;
 
-            if (auto protectionStatus = protectionStatusForDisplayID(oneRequest.get(), *displayID))
-                status = *protectionStatus;
-
-            for (auto& keyID : keyIDs)
-                keyStatuses.append({ WTFMove(keyID), status });
-        }
+        for (auto& keyID : keyIDs)
+            keyStatuses.append({ WTFMove(keyID), status });
     }
 
     m_keyStatuses = WTFMove(keyStatuses);
@@ -1480,12 +1559,9 @@ void CDMInstanceSessionFairPlayStreamingAVFObjC::updateKeyStatuses(std::optional
 
 auto CDMInstanceSessionFairPlayStreamingAVFObjC::copyKeyStatuses() const -> KeyStatusVector
 {
-    KeyStatusVector copiedKeyStatuses;
-    copiedKeyStatuses.reserveInitialCapacity(m_keyStatuses.size());
-    for (auto& status : m_keyStatuses)
-        copiedKeyStatuses.uncheckedAppend({ status.first.copyRef(), status.second });
-    return copiedKeyStatuses;
-
+    return WTF::map(m_keyStatuses, [](auto& status) {
+        return std::pair<Ref<SharedBuffer>, KeyStatus> { status.first.copyRef(), status.second };
+    });
 }
 
 void CDMInstanceSessionFairPlayStreamingAVFObjC::outputObscuredDueToInsufficientExternalProtectionChanged(bool obscured)
@@ -1502,25 +1578,49 @@ void CDMInstanceSessionFairPlayStreamingAVFObjC::outputObscuredDueToInsufficient
         m_client->updateKeyStatuses(copyKeyStatuses());
 }
 
-void CDMInstanceSessionFairPlayStreamingAVFObjC::externalProtectionStatusDidChangeForContentKeyRequest(AVContentKeyRequest*)
+void CDMInstanceSessionFairPlayStreamingAVFObjC::externalProtectionStatusDidChangeForContentKey(AVContentKey *)
 {
-    if (!m_client)
-        return;
-
-    updateProtectionStatusForDisplayID(m_client->displayID());
+    updateProtectionStatus();
 }
 
-std::optional<CDMKeyStatus> CDMInstanceSessionFairPlayStreamingAVFObjC::protectionStatusForDisplayID(AVContentKeyRequest *request, std::optional<PlatformDisplayID>) const
+void CDMInstanceSessionFairPlayStreamingAVFObjC::externalProtectionStatusDidChangeForContentKeyRequest(AVContentKeyRequest *)
+{
+    updateProtectionStatus();
+}
+
+#if HAVE(AVCONTENTKEYREQUEST_PENDING_PROTECTION_STATUS)
+static std::optional<CDMKeyStatus> keyStatusForContentProtectionStatus(AVExternalContentProtectionStatus status)
+{
+    switch (status) {
+    case AVExternalContentProtectionStatusPending:
+        return CDMKeyStatus::StatusPending;
+    case AVExternalContentProtectionStatusSufficient:
+        return CDMKeyStatus::Usable;
+    case AVExternalContentProtectionStatusInsufficient:
+        return CDMKeyStatus::OutputRestricted;
+    }
+
+    ASSERT_NOT_REACHED();
+    return std::nullopt;
+}
+#endif
+
+std::optional<CDMKeyStatus> CDMInstanceSessionFairPlayStreamingAVFObjC::protectionStatusForRequest(AVContentKeyRequest *request) const
 {
 #if HAVE(AVCONTENTKEYREQUEST_PENDING_PROTECTION_STATUS)
-    if ([request respondsToSelector:@selector(externalContentProtectionStatus)]) {
-        switch ([request externalContentProtectionStatus]) {
-        case AVExternalContentProtectionStatusPending: return CDMKeyStatus::StatusPending;
-        case AVExternalContentProtectionStatusSufficient: return CDMKeyStatus::Usable;
-        case AVExternalContentProtectionStatusInsufficient: return CDMKeyStatus::OutputRestricted;
-        }
-    }
+
+#if HAVE(AVCONTENTKEY_EXTERNALCONTENTPROTECTIONSTATUS) && HAVE(AVCONTENTKEYSPECIFIER)
+    AVContentKey *contentKey = request.contentKey;
+    if (!contentKey)
+        return std::nullopt;
+
+    // FIXME (118150407): Remove staging code once -[AVContentKey externalContentProtectionStatus] is available in SDKs used by WebKit builders
+    if (MediaSessionManagerCocoa::sampleBufferContentKeySessionSupportEnabled() && [contentKey respondsToSelector:@selector(externalContentProtectionStatus)])
+        return keyStatusForContentProtectionStatus([contentKey externalContentProtectionStatus]);
 #endif
+
+    return keyStatusForContentProtectionStatus([request externalContentProtectionStatus]);
+#else
 
 #if HAVE(AVCONTENTKEYSESSIONWILLOUTPUTBEOBSCURED)
     // FIXME: AVFoundation requires a connection to the WindowServer in order to query the HDCP status of individual
@@ -1549,15 +1649,16 @@ std::optional<CDMKeyStatus> CDMInstanceSessionFairPlayStreamingAVFObjC::protecti
         return CDMKeyStatus::OutputRestricted;
 
     return std::nullopt;
+#endif // !HAVE(AVCONTENTKEYREQUEST_PENDING_PROTECTION_STATUS)
 };
 
 
-void CDMInstanceSessionFairPlayStreamingAVFObjC::updateProtectionStatusForDisplayID(PlatformDisplayID displayID)
+void CDMInstanceSessionFairPlayStreamingAVFObjC::updateProtectionStatus()
 {
     if (m_requests.isEmpty())
         return;
 
-    updateKeyStatuses(displayID);
+    updateKeyStatuses();
 
     if (m_client)
         m_client->updateKeyStatuses(copyKeyStatuses());
@@ -1613,11 +1714,7 @@ bool CDMInstanceSessionFairPlayStreamingAVFObjC::isLicenseTypeSupported(LicenseT
 
 Vector<RetainPtr<AVContentKey>> CDMInstanceSessionFairPlayStreamingAVFObjC::contentKeyGroupDataSourceKeys() const
 {
-    return flatMap(m_requests, [](auto& request) {
-        return compactMap(request.requests, [](auto& request) {
-            return RetainPtr { [request contentKey] };
-        });
-    });
+    return contentKeys();
 }
 
 #if !RELEASE_LOG_DISABLED

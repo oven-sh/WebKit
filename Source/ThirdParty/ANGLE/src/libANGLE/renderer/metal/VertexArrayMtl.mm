@@ -466,13 +466,11 @@ angle::Result VertexArrayMtl::setupDraw(const gl::Context *glContext,
                 uint32_t bufferIdx    = mtl::kVboBindingIndexStart + v;
                 uint32_t bufferOffset = static_cast<uint32_t>(mCurrentArrayBufferOffsets[v]);
 
-                const angle::Format &angleFormat =
-                    mCurrentArrayBufferFormats[v]->actualAngleFormat();
                 desc.attributes[v].format = mCurrentArrayBufferFormats[v]->metalFormat;
 
                 desc.attributes[v].bufferIndex = bufferIdx;
                 desc.attributes[v].offset      = 0;
-                ASSERT((bufferOffset % angleFormat.pixelBytes) == 0);
+                ASSERT((bufferOffset % mtl::kVertexAttribBufferStrideAlignment) == 0);
 
                 ASSERT(bufferIdx < mtl::kMaxVertexAttribs);
                 if (binding.getDivisor() == 0)
@@ -677,7 +675,6 @@ angle::Result VertexArrayMtl::syncDirtyAttrib(const gl::Context *glContext,
             mContentsObservers->enableForBuffer(bufferGL, static_cast<uint32_t>(attribIndex));
             bool needConversion =
                 format.actualFormatId != format.intendedFormatId ||
-                (binding.getOffset() % format.actualAngleFormat().pixelBytes) != 0 ||
                 (binding.getOffset() % mtl::kVertexAttribBufferStrideAlignment) != 0 ||
                 (binding.getStride() < format.actualAngleFormat().pixelBytes) ||
                 (binding.getStride() % mtl::kVertexAttribBufferStrideAlignment) != 0;
@@ -1020,14 +1017,6 @@ angle::Result VertexArrayMtl::convertVertexBuffer(const gl::Context *glContext,
 
     bool canExpandComponentsOnGPU = convertedFormat.actualSameGLType;
 
-    if (contextMtl->getRenderCommandEncoder() &&
-        !contextMtl->getDisplay()->getFeatures().hasCheapRenderPass.enabled &&
-        !contextMtl->getDisplay()->getFeatures().hasExplicitMemBarrier.enabled)
-    {
-        // Cannot use GPU to convert when we are in a middle of a render pass.
-        canConvertToFloatOnGPU = canExpandComponentsOnGPU = false;
-    }
-
     conversion->data.releaseInFlightBuffers(contextMtl);
     conversion->data.updateAlignment(contextMtl, convertedAngleFormat.pixelBytes);
 
@@ -1136,36 +1125,18 @@ angle::Result VertexArrayMtl::convertVertexBufferGPU(const gl::Context *glContex
 
     params.vertexCount = static_cast<uint32_t>(numVertices);
 
-    mtl::RenderUtils &utils                  = contextMtl->getDisplay()->getUtils();
-    mtl::RenderCommandEncoder *renderEncoder = contextMtl->getRenderCommandEncoder();
-    if (renderEncoder && contextMtl->getDisplay()->getFeatures().hasExplicitMemBarrier.enabled)
+    mtl::RenderUtils &utils = contextMtl->getDisplay()->getUtils();
+
+    // Compute based buffer conversion.
+    if (!isExpandingComponents)
     {
-        // If we are in the middle of a render pass, use vertex shader based buffer conversion to
-        // avoid breaking the render pass.
-        if (!isExpandingComponents)
-        {
-            ANGLE_TRY(utils.convertVertexFormatToFloatVS(
-                glContext, renderEncoder, convertedFormat.intendedAngleFormat(), params));
-        }
-        else
-        {
-            ANGLE_TRY(utils.expandVertexFormatComponentsVS(
-                glContext, renderEncoder, convertedFormat.intendedAngleFormat(), params));
-        }
+        ANGLE_TRY(utils.convertVertexFormatToFloatCS(
+            contextMtl, convertedFormat.intendedAngleFormat(), params));
     }
     else
     {
-        // Compute based buffer conversion.
-        if (!isExpandingComponents)
-        {
-            ANGLE_TRY(utils.convertVertexFormatToFloatCS(
-                contextMtl, convertedFormat.intendedAngleFormat(), params));
-        }
-        else
-        {
-            ANGLE_TRY(utils.expandVertexFormatComponentsCS(
-                contextMtl, convertedFormat.intendedAngleFormat(), params));
-        }
+        ANGLE_TRY(utils.expandVertexFormatComponentsCS(
+            contextMtl, convertedFormat.intendedAngleFormat(), params));
     }
 
     ANGLE_TRY(conversion->data.commit(contextMtl));

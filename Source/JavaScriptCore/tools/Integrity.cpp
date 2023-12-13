@@ -36,7 +36,7 @@
 #include "VMInspectorInlines.h"
 #include <wtf/DataLog.h>
 
-#if PLATFORM(COCOA)
+#if OS(DARWIN)
 #include <wtf/darwin/OSLogPrintStream.h>
 #endif
 
@@ -49,7 +49,7 @@ static constexpr bool verbose = false;
 
 PrintStream& logFile()
 {
-#if PLATFORM(COCOA)
+#if OS(DARWIN)
     static PrintStream* s_file;
     static std::once_flag once;
     std::call_once(once, [] {

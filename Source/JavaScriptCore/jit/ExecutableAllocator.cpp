@@ -41,6 +41,7 @@
 #include <wtf/RedBlackTree.h>
 #include <wtf/Scope.h>
 #include <wtf/SystemTracing.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/WorkQueue.h>
 
 #if ENABLE(LIBPAS_JIT_HEAP)
@@ -83,9 +84,16 @@ extern "C" {
 }
 #endif
 
+#if USE(INLINE_JIT_PERMISSIONS_API)
+#include <wtf/darwin/WeakLinking.h>
+WTF_WEAK_LINK_FORCE_IMPORT(se_memory_inline_jit_restrict_with_witness_supported);
+#endif
+
 namespace JSC {
 
 using namespace WTF;
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ExecutableAllocator);
 
 #if OS(DARWIN) && CPU(ARM64)
 // We already rely on page size being CeilingOnPageSize elsewhere (e.g. MarkedBlock).
@@ -349,11 +357,7 @@ static ALWAYS_INLINE void initializeSeparatedWXHeaps(void* stubBase, size_t stub
 #endif
 }
 
-#else // OS(DARWIN) && HAVE(REMAP_JIT)
-static ALWAYS_INLINE void initializeSeparatedWXHeaps(void*, size_t, void*, size_t)
-{
-}
-#endif
+#endif // OS(DARWIN) && HAVE(REMAP_JIT)
 
 struct JITReservation {
     PageReservation pageReservation;
@@ -416,8 +420,9 @@ static ALWAYS_INLINE JITReservation initializeJITPageReservation()
         bool fastJITPermissionsIsSupported = false;
 #if OS(DARWIN) && CPU(ARM64)
 #if USE(INLINE_JIT_PERMISSIONS_API)
-        fastJITPermissionsIsSupported = !!se_memory_inline_jit_restrict_with_witness_supported();
-#elif CPU(ARM64)
+        fastJITPermissionsIsSupported = (se_memory_inline_jit_restrict_with_witness_supported != nullptr)
+            && !!se_memory_inline_jit_restrict_with_witness_supported();
+#elif USE(PTHREAD_JIT_PERMISSIONS_API)
         fastJITPermissionsIsSupported = !!pthread_jit_write_protect_supported_np();
 #elif USE(APPLE_INTERNAL_SDK)
         fastJITPermissionsIsSupported = !!os_thread_self_restrict_rwx_is_supported();
@@ -452,7 +457,7 @@ static ALWAYS_INLINE JITReservation initializeJITPageReservation()
 }
 
 class FixedVMPoolExecutableAllocator final {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(FixedVMPoolExecutableAllocator);
 
 #if ENABLE(JUMP_ISLANDS)
     class Islands;
@@ -764,7 +769,7 @@ private:
                 RELEASE_ASSERT(Assembler::canEmitJump(bitwise_cast<void*>(jumpLocation), target));
 
                 MacroAssembler jit;
-                auto nearTailCall = jit.nearTailCall();
+                jit.nearTailCallThunk(CodeLocationLabel<NoPtrTag>(target));
                 LinkBuffer linkBuffer(jit, CodePtr<NoPtrTag>(currentIsland), islandSizeInBytes, LinkBuffer::Profile::JumpIsland, JITCompilationMustSucceed, false);
                 RELEASE_ASSERT(linkBuffer.isValid());
 
@@ -776,7 +781,6 @@ private:
                 // has a jump linked to this island hasn't finalized yet, they're guaranteed to finalize there code and run an isb.
                 linkBuffer.setIsJumpIsland();
 
-                linkBuffer.link(nearTailCall, CodeLocationLabel<NoPtrTag>(target));
                 FINALIZE_CODE(linkBuffer, NoPtrTag, "Jump Island: %lu", jumpLocation);
             };
 
@@ -1018,7 +1022,7 @@ private:
 
 #if ENABLE(JUMP_ISLANDS)
     class Islands : public RedBlackTree<Islands, void*>::Node {
-        WTF_MAKE_FAST_ALLOCATED;
+        WTF_MAKE_TZONE_ALLOCATED(Islands);
     public:
         void* key() { return jumpSourceLocation.dataLocation(); }
         CodeLocationLabel<ExecutableMemoryPtrTag> jumpSourceLocation;
@@ -1040,6 +1044,9 @@ private:
     std::atomic<size_t> m_bytesAllocated { 0 };
 #endif
 };
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(FixedVMPoolExecutableAllocator);
+WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(FixedVMPoolExecutableAllocatorIslands, FixedVMPoolExecutableAllocator::Islands);
 
 // Keep this pointer in a mutable global variable to help Leaks find it.
 // But we do not use this pointer.

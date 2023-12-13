@@ -201,7 +201,7 @@ WI.RuntimeManager = class RuntimeManager extends WI.Object
 
         // Do not transform if the original code parses just fine.
         try {
-            esprima.parse(originalExpression, {ecmaVersion: "latest"});
+            esprima.parse(originalExpression);
             return originalExpression;
         } catch { }
 

@@ -34,19 +34,16 @@ namespace WebGPU {
 
 Ref<PipelineLayout> Device::createPipelineLayout(const WGPUPipelineLayoutDescriptor& descriptor)
 {
-    if (descriptor.nextInChain)
+    if (descriptor.nextInChain || !isValid())
         return PipelineLayout::createInvalid(*this);
 
     std::optional<Vector<Ref<BindGroupLayout>>> optionalBindGroupLayouts = std::nullopt;
     if (descriptor.bindGroupLayouts) {
-        Vector<Ref<BindGroupLayout>> bindGroupLayouts;
-        bindGroupLayouts.reserveInitialCapacity(descriptor.bindGroupLayoutCount);
-        for (uint32_t i = 0; i < descriptor.bindGroupLayoutCount; ++i) {
+        Vector<Ref<BindGroupLayout>> bindGroupLayouts(descriptor.bindGroupLayoutCount, [&](size_t i) {
             auto* bindGroupLayout = descriptor.bindGroupLayouts[i];
-            bindGroupLayouts.uncheckedAppend(WebGPU::fromAPI(bindGroupLayout));
-        }
-
-        optionalBindGroupLayouts = bindGroupLayouts;
+            return Ref<BindGroupLayout> { WebGPU::fromAPI(bindGroupLayout) };
+        });
+        optionalBindGroupLayouts = WTFMove(bindGroupLayouts);
     }
 
     return PipelineLayout::create(WTFMove(optionalBindGroupLayouts), *this);
@@ -56,7 +53,7 @@ static void addInitialOffset(uint32_t initialOffset, uint32_t offset, uint32_t g
 {
     if (initialOffset != offset) {
         offsets.add(groupIndex, Vector<uint32_t>((offset - initialOffset) / sizeof(uint32_t)));
-        dynamicOffets.add(groupIndex, initialOffset);
+        dynamicOffets.add(groupIndex, initialOffset / sizeof(uint32_t));
     }
 }
 

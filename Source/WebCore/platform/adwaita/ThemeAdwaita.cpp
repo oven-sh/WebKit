@@ -50,7 +50,6 @@ static const unsigned arrowSize = 16;
 static constexpr auto arrowColorLight = SRGBA<uint8_t> { 46, 52, 54 };
 static constexpr auto arrowColorDark = SRGBA<uint8_t> { 238, 238, 236 };
 static const int buttonFocusOffset = -2;
-static const unsigned buttonPadding = 5;
 static const int buttonBorderSize = 1; // Keep in sync with menuListButtonBorderSize in RenderThemeAdwaita.
 static const double disabledOpacity = 0.5;
 
@@ -277,7 +276,7 @@ LengthBox ThemeAdwaita::controlBorder(StyleAppearance appearance, const FontCasc
     return Theme::controlBorder(appearance, font, zoomedBox, zoomFactor);
 }
 
-void ThemeAdwaita::paint(StyleAppearance appearance, ControlStates& states, GraphicsContext& context, const FloatRect& zoomedRect, float, ScrollView*, float, float, bool, bool useDarkAppearance, const Color& effectiveAccentColor)
+void ThemeAdwaita::paint(StyleAppearance appearance, ControlStates& states, GraphicsContext& context, const FloatRect& zoomedRect, bool useDarkAppearance, const Color& effectiveAccentColor)
 {
     switch (appearance) {
     case StyleAppearance::Checkbox:
@@ -596,11 +595,6 @@ Color ThemeAdwaita::accentColor()
     return m_accentColor;
 }
 
-bool ThemeAdwaita::userPrefersReducedMotion() const
-{
-    return m_prefersReducedMotion;
-}
-
 bool ThemeAdwaita::userPrefersContrast() const
 {
 #if !USE(GTK4)
@@ -608,6 +602,11 @@ bool ThemeAdwaita::userPrefersContrast() const
 #else
     return false;
 #endif
+}
+
+bool ThemeAdwaita::userPrefersReducedMotion() const
+{
+    return m_prefersReducedMotion;
 }
 
 } // namespace WebCore

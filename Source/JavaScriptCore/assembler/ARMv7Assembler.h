@@ -459,12 +459,13 @@ public:
             return *this;
         }
         intptr_t from() const { return data.realTypes.m_from; }
-        void setFrom(intptr_t from) { data.realTypes.m_from = from; }
-        intptr_t to() const { return data.realTypes.m_to; }
+        void setFrom(const ARMv7Assembler*, intptr_t from) { data.realTypes.m_from = from; }
+        intptr_t to(const ARMv7Assembler*) const { return data.realTypes.m_to; }
         JumpType type() const { return data.realTypes.m_type; }
         JumpLinkType linkType() const { return data.realTypes.m_linkType; }
         void setLinkType(JumpLinkType linkType) { ASSERT(data.realTypes.m_linkType == LinkInvalid); data.realTypes.m_linkType = linkType; }
         Condition condition() const { return data.realTypes.m_condition; }
+        bool isThunk() const { return false; }
     private:
         union {
             struct RealTypes {
@@ -571,6 +572,7 @@ private:
         OP_BKPT             = 0xBE00,
         OP_IT               = 0xBF00,
         OP_NOP_T1           = 0xBF00,
+        OP_UDF              = 0xDE00
     } OpcodeID;
 
     typedef enum {
@@ -1006,6 +1008,11 @@ public:
     void bkpt(uint8_t imm = 0)
     {
         m_formatter.oneWordOp8Imm8(OP_BKPT, imm);
+    }
+
+    void udf(uint8_t imm = 0)
+    {
+        m_formatter.oneWordOp8Imm8(OP_UDF, imm);
     }
 
     static bool isBkpt(void* address)
@@ -2756,7 +2763,13 @@ public:
         cacheFlush(ptr - 2, sizeof(uint16_t) * 2);
 #endif
     }
-    
+
+    static void replaceWithNops(void* instructionStart, size_t memoryToFillWithNopsInBytes)
+    {
+        fillNops<performJITMemcpy>(instructionStart, memoryToFillWithNopsInBytes);
+        cacheFlush(instructionStart, memoryToFillWithNopsInBytes);
+    }
+
     static ptrdiff_t maxJumpReplacementSize()
     {
 #if OS(LINUX)

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2013, 2015 Apple Inc. All rights reserved.
+ * Copyright (C) 2013-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,6 +29,7 @@
 
 #include "RemoteInspectionTarget.h"
 #include <wtf/Noncopyable.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace Inspector {
 class FrontendChannel;
@@ -39,12 +40,12 @@ namespace JSC {
 
 class JSGlobalObject;
 
-class JSGlobalObjectDebuggable : public Inspector::RemoteInspectionTarget {
-    WTF_MAKE_FAST_ALLOCATED;
+class JSGlobalObjectDebuggable final : public Inspector::RemoteInspectionTarget {
+    WTF_MAKE_TZONE_ALLOCATED(JSGlobalObjectDebuggable);
     WTF_MAKE_NONCOPYABLE(JSGlobalObjectDebuggable);
 public:
     JSGlobalObjectDebuggable(JSGlobalObject&);
-    ~JSGlobalObjectDebuggable() { }
+    ~JSGlobalObjectDebuggable() final { }
 
     Inspector::RemoteControllableTarget::Type type() const final { return m_type; }
     void setIsITML() { m_type = Inspector::RemoteControllableTarget::Type::ITML; }
@@ -57,7 +58,7 @@ public:
     void dispatchMessageFromRemote(String&& message) final;
 
     bool automaticInspectionAllowed() const final { return true; }
-    void pauseWaitingForAutomaticInspection();
+    void pauseWaitingForAutomaticInspection() final;
 
 private:
     JSGlobalObject& m_globalObject;

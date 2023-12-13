@@ -58,7 +58,7 @@ bool KeyframeList::operator==(const KeyframeList& o) const
 
     auto it2 = o.m_keyframes.begin();
     for (auto it1 = m_keyframes.begin(); it1 != m_keyframes.end(); ++it1, ++it2) {
-        if (it1->key() != it2->key())
+        if (it1->offset() != it2->offset())
             return false;
         if (*it1->style() != *it2->style())
             return false;
@@ -69,13 +69,13 @@ bool KeyframeList::operator==(const KeyframeList& o) const
 
 void KeyframeList::insert(KeyframeValue&& keyframe)
 {
-    if (keyframe.key() < 0 || keyframe.key() > 1)
+    if (keyframe.offset() < 0 || keyframe.offset() > 1)
         return;
 
     bool inserted = false;
     size_t i = 0;
     for (; i < m_keyframes.size(); ++i) {
-        if (m_keyframes[i].key() > keyframe.key()) {
+        if (m_keyframes[i].offset() > keyframe.offset()) {
             // insert before
             m_keyframes.insert(i, WTFMove(keyframe));
             inserted = true;
@@ -93,13 +93,13 @@ void KeyframeList::insert(KeyframeValue&& keyframe)
 
 bool KeyframeList::hasImplicitKeyframes() const
 {
-    return size() && (m_keyframes[0].key() || m_keyframes[size() - 1].key() != 1);
+    return size() && (m_keyframes[0].offset() || m_keyframes[size() - 1].offset() != 1);
 }
 
 void KeyframeList::copyKeyframes(KeyframeList& other)
 {
     for (auto& keyframe : other) {
-        KeyframeValue keyframeValue(keyframe.key(), RenderStyle::clonePtr(*keyframe.style()));
+        KeyframeValue keyframeValue(keyframe.offset(), RenderStyle::clonePtr(*keyframe.style()));
         for (auto propertyId : keyframe.properties())
             keyframeValue.addProperty(propertyId);
         keyframeValue.setTimingFunction(keyframe.timingFunction());
@@ -171,7 +171,7 @@ void KeyframeList::fillImplicitKeyframes(const KeyframeEffect& effect, const Ren
     };
 
     for (auto& keyframe : m_keyframes) {
-        if (!keyframe.key()) {
+        if (!keyframe.offset()) {
             for (auto property : keyframe.properties())
                 zeroKeyframeImplicitProperties.remove(property);
             if (!implicitZeroKeyframe && isSuitableKeyframeForImplicitValues(keyframe))
@@ -179,7 +179,7 @@ void KeyframeList::fillImplicitKeyframes(const KeyframeEffect& effect, const Ren
         }
     }
 
-    auto addImplicitKeyframe = [&](double key, const HashSet<AnimatableProperty>& implicitProperties, const StyleRuleKeyframe& keyframeRule, KeyframeValue* existingImplicitKeyframeValue) {
+    auto addImplicitKeyframe = [&](double key, const HashSet<AnimatableCSSProperty>& implicitProperties, const StyleRuleKeyframe& keyframeRule, KeyframeValue* existingImplicitKeyframeValue) {
         // If we're provided an existing implicit keyframe, we need to add all the styles for the implicit properties.
         if (existingImplicitKeyframeValue) {
             ASSERT(existingImplicitKeyframeValue->style());
@@ -208,7 +208,7 @@ void KeyframeList::fillImplicitKeyframes(const KeyframeEffect& effect, const Ren
         addImplicitKeyframe(0, zeroKeyframeImplicitProperties, zeroPercentKeyframe(), implicitZeroKeyframe);
 
     for (auto& keyframe : m_keyframes) {
-        if (keyframe.key() == 1) {
+        if (keyframe.offset() == 1) {
             for (auto property : keyframe.properties())
                 oneKeyframeImplicitProperties.remove(property);
             if (!implicitOneKeyframe && isSuitableKeyframeForImplicitValues(keyframe))
@@ -220,7 +220,7 @@ void KeyframeList::fillImplicitKeyframes(const KeyframeEffect& effect, const Ren
         addImplicitKeyframe(1, oneKeyframeImplicitProperties, hundredPercentKeyframe(), implicitOneKeyframe);
 }
 
-bool KeyframeList::containsAnimatableProperty() const
+bool KeyframeList::containsAnimatableCSSProperty() const
 {
     for (auto property : m_properties) {
         if (CSSPropertyAnimation::isPropertyAnimatable(property))
@@ -247,13 +247,13 @@ bool KeyframeList::usesContainerUnits() const
     return false;
 }
 
-void KeyframeList::addProperty(const AnimatableProperty& property)
+void KeyframeList::addProperty(const AnimatableCSSProperty& property)
 {
     ASSERT(!std::holds_alternative<CSSPropertyID>(property) || std::get<CSSPropertyID>(property) != CSSPropertyCustom);
     m_properties.add(property);
 }
 
-bool KeyframeList::containsProperty(const AnimatableProperty& property) const
+bool KeyframeList::containsProperty(const AnimatableCSSProperty& property) const
 {
     return m_properties.contains(property);
 }
@@ -278,7 +278,7 @@ bool KeyframeList::hasPropertySetToCurrentColor() const
     return !m_propertiesSetToCurrentColor.isEmpty();
 }
 
-const HashSet<AnimatableProperty>& KeyframeList::propertiesSetToInherit() const
+const HashSet<AnimatableCSSProperty>& KeyframeList::propertiesSetToInherit() const
 {
     return m_propertiesSetToInherit;
 }
@@ -310,15 +310,20 @@ void KeyframeList::updatePropertiesMetadata(const StyleProperties& properties)
     }
 }
 
-void KeyframeValue::addProperty(const AnimatableProperty& property)
+void KeyframeValue::addProperty(const AnimatableCSSProperty& property)
 {
     ASSERT(!std::holds_alternative<CSSPropertyID>(property) || std::get<CSSPropertyID>(property) != CSSPropertyCustom);
     m_properties.add(property);
 }
 
-bool KeyframeValue::containsProperty(const AnimatableProperty& property) const
+bool KeyframeValue::animatesProperty(KeyframeInterpolation::Property property) const
 {
-    return m_properties.contains(property);
+    return WTF::switchOn(property, [&](AnimatableCSSProperty& animatableCSSProperty) {
+        return m_properties.contains(animatableCSSProperty);
+    }, [] (auto&) {
+        ASSERT_NOT_REACHED();
+        return false;
+    });
 }
 
 } // namespace WebCore

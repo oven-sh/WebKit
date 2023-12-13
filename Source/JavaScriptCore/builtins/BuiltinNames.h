@@ -31,6 +31,7 @@
 #include "JSCBuiltins.h"
 #include <wtf/RobinHoodHashMap.h>
 #include <wtf/RobinHoodHashSet.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace JSC {
 
@@ -72,9 +73,7 @@ namespace JSC {
     macro(Map) \
     macro(throwTypeErrorFunction) \
     macro(typedArrayLength) \
-    macro(typedArrayClone) \
     macro(typedArrayContentType) \
-    macro(typedArraySort) \
     macro(typedArrayGetOriginalConstructor) \
     macro(BuiltinLog) \
     macro(BuiltinDescribe) \
@@ -129,7 +128,6 @@ namespace JSC {
     macro(isSharedTypedArrayView) \
     macro(isResizableOrGrowableSharedTypedArrayView) \
     macro(isDetached) \
-    macro(typedArrayDefaultComparator) \
     macro(typedArrayFromFast) \
     macro(isBoundFunction) \
     macro(hasInstanceBoundFunction) \
@@ -198,6 +196,7 @@ namespace JSC {
     macro(sentinelString) \
     macro(createRemoteFunction) \
     macro(isRemoteFunction) \
+    macro(arrayFromFast) \
     macro(arraySort) \
     macro(jsonParse) \
     macro(jsonStringify) \
@@ -210,7 +209,7 @@ namespace JSC {
     macro(hasOwn) \
     macro(indexOf) \
     macro(pop) \
-    macro(asyncContext) \
+
 
 namespace Symbols {
 #define DECLARE_BUILTIN_STATIC_SYMBOLS(name) extern JS_EXPORT_PRIVATE SymbolImpl::StaticSymbolImpl name##Symbol;
@@ -227,7 +226,8 @@ extern JS_EXPORT_PRIVATE SymbolImpl::StaticSymbolImpl polyProtoPrivateName;
 }
 
 class BuiltinNames {
-    WTF_MAKE_NONCOPYABLE(BuiltinNames); WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_NONCOPYABLE(BuiltinNames);
+    WTF_MAKE_TZONE_ALLOCATED(BuiltinNames);
     
 public:
     using PrivateNameSet = MemoryCompactLookupOnlyRobinHoodHashSet<String>;
@@ -283,7 +283,6 @@ inline SymbolImpl* BuiltinNames::lookUpWellKnownSymbol(const Identifier& ident) 
 inline void BuiltinNames::checkPublicToPrivateMapConsistency(UniquedStringImpl* privateName)
 {
 #if ASSERT_ENABLED
-#ifndef BUN_SKIP_FAILING_ASSERTIONS
     for (const auto& key : m_privateNameSet)
         ASSERT(String(privateName) != key);
     ASSERT(privateName->isSymbol());
@@ -291,20 +290,12 @@ inline void BuiltinNames::checkPublicToPrivateMapConsistency(UniquedStringImpl* 
 #else
     UNUSED_PARAM(privateName);
 #endif
-#else
-    UNUSED_PARAM(privateName);
-#endif
 }
 
 inline void BuiltinNames::appendExternalName(const Identifier& publicName, const Identifier& privateName)
 {
-    #ifndef BUN_SKIP_FAILING_ASSERTIONS
     ASSERT_UNUSED(publicName, String(publicName.impl()) == String(privateName.impl()));
-    #else
-    UNUSED_PARAM(privateName);
-    #endif
     checkPublicToPrivateMapConsistency(privateName.impl());
-    
     m_privateNameSet.add(privateName.impl());
 }
 

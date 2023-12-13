@@ -38,8 +38,6 @@ set(bmalloc_SOURCES
     bmalloc/Scavenger.cpp
     bmalloc/bmalloc.cpp
 
-    bmalloc/uv_get_constrained_memory.cpp
-
     libpas/src/libpas/bmalloc_heap.c
     libpas/src/libpas/bmalloc_heap_config.c
     libpas/src/libpas/bmalloc_type.c
@@ -194,6 +192,7 @@ set(bmalloc_PUBLIC_HEADERS
     bmalloc/Algorithm.h
     bmalloc/AllIsoHeaps.h
     bmalloc/AllIsoHeapsInlines.h
+    bmalloc/AllocationCounts.h
     bmalloc/Allocator.h
     bmalloc/AvailableMemory.h
     bmalloc/BAssert.h

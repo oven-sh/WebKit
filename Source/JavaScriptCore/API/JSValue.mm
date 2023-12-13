@@ -504,6 +504,10 @@ inline Expected<Result, JSValueRef> performPropertyOperation(NSStringFunction st
 
 - (JSValue *)callWithArguments:(NSArray *)argumentArray
 {
+    JSC::JSGlobalObject* globalObject = toJS([_context JSGlobalContextRef]);
+    JSC::VM& vm = globalObject->vm();
+    JSC::JSLockHolder locker(vm);
+
     NSUInteger argumentCount = [argumentArray count];
     JSC::MarkedJSValueRefArray arguments([_context JSGlobalContextRef], argumentCount);
     for (unsigned i = 0; i < argumentCount; ++i)
@@ -523,6 +527,10 @@ inline Expected<Result, JSValueRef> performPropertyOperation(NSStringFunction st
 
 - (JSValue *)constructWithArguments:(NSArray *)argumentArray
 {
+    JSC::JSGlobalObject* globalObject = toJS([_context JSGlobalContextRef]);
+    JSC::VM& vm = globalObject->vm();
+    JSC::JSLockHolder locker(vm);
+
     NSUInteger argumentCount = [argumentArray count];
     JSC::MarkedJSValueRefArray arguments([_context JSGlobalContextRef], argumentCount);
     for (unsigned i = 0; i < argumentCount; ++i)
@@ -542,6 +550,10 @@ inline Expected<Result, JSValueRef> performPropertyOperation(NSStringFunction st
 
 - (JSValue *)invokeMethod:(NSString *)method withArguments:(NSArray *)arguments
 {
+    JSC::JSGlobalObject* globalObject = toJS([_context JSGlobalContextRef]);
+    JSC::VM& vm = globalObject->vm();
+    JSC::JSLockHolder locker(vm);
+
     NSUInteger argumentCount = [arguments count];
     JSC::MarkedJSValueRefArray argumentArray([_context JSGlobalContextRef], argumentCount);
     for (unsigned i = 0; i < argumentCount; ++i)
@@ -666,13 +678,13 @@ inline Expected<Result, JSValueRef> performPropertyOperation(NSStringFunction st
 
 inline bool isDate(JSObjectRef object, JSGlobalContextRef context)
 {
-    UNUSED_PARAM(context);
+    JSC::JSLockHolder locker(toJS(context));
     return toJS(object)->inherits<JSC::DateInstance>();
 }
 
 inline bool isArray(JSObjectRef object, JSGlobalContextRef context)
 {
-    UNUSED_PARAM(context);
+    JSC::JSLockHolder locker(toJS(context));
     return toJS(object)->inherits<JSC::JSArray>();
 }
 
@@ -789,7 +801,7 @@ static JSContainerConvertor::Task valueToObjectWithoutCopy(JSGlobalContextRef co
 static id containerValueToObject(JSGlobalContextRef context, JSContainerConvertor::Task task)
 {
     ASSERT(task.type != ContainerNone);
-
+    JSC::JSLockHolder locker(toJS(context));
     JSContainerConvertor convertor(context);
     convertor.add(task);
     ASSERT(!convertor.isWorkListEmpty());
@@ -814,7 +826,7 @@ static id containerValueToObject(JSGlobalContextRef context, JSContainerConverto
             ASSERT([current.objc isKindOfClass:[NSMutableDictionary class]]);
             NSMutableDictionary *dictionary = (NSMutableDictionary *)current.objc;
 
-
+            JSC::JSLockHolder locker(toJS(context));
 
             JSPropertyNameArrayRef propertyNameArray = JSObjectCopyPropertyNames(context, js);
             size_t length = JSPropertyNameArrayGetCount(propertyNameArray);
@@ -896,7 +908,7 @@ id valueToArray(JSGlobalContextRef context, JSValueRef value, JSValueRef* except
     if (JSValueIsObject(context, value))
         return containerValueToObject(context, { value, [NSMutableArray array], ContainerArray});
 
-
+    JSC::JSLockHolder locker(toJS(context));
     if (!(JSValueIsNull(context, value) || JSValueIsUndefined(context, value))) {
         JSC::JSObject* exceptionObject = JSC::createTypeError(toJS(context), "Cannot convert primitive to NSArray"_s);
         *exception = toRef(exceptionObject);
@@ -918,7 +930,7 @@ id valueToDictionary(JSGlobalContextRef context, JSValueRef value, JSValueRef* e
     if (JSValueIsObject(context, value))
         return containerValueToObject(context, { value, [NSMutableDictionary dictionary], ContainerDictionary});
 
-
+    JSC::JSLockHolder locker(toJS(context));
     if (!(JSValueIsNull(context, value) || JSValueIsUndefined(context, value))) {
         JSC::JSObject* exceptionObject = JSC::createTypeError(toJS(context), "Cannot convert primitive to NSDictionary"_s);
         *exception = toRef(exceptionObject);
@@ -1048,7 +1060,7 @@ JSValueRef objectToValue(JSContext *context, id object)
     if (task.type == ContainerNone)
         return audit(task.js);
 
-
+    JSC::JSLockHolder locker(toJS(contextRef));
     ObjcContainerConvertor convertor(context);
     convertor.add(task);
     ASSERT(!convertor.isWorkListEmpty());

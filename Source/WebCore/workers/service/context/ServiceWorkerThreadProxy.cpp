@@ -26,8 +26,6 @@
 #include "config.h"
 #include "ServiceWorkerThreadProxy.h"
 
-#if ENABLE(SERVICE_WORKER)
-
 #include "BadgeClient.h"
 #include "CacheStorageProvider.h"
 #include "DocumentLoader.h"
@@ -40,6 +38,7 @@
 #include "Logging.h"
 #include "MessageWithMessagePorts.h"
 #include "NotificationData.h"
+#include "NotificationPayload.h"
 #include "PlatformStrategies.h"
 #include "ScriptExecutionContextIdentifier.h"
 #include "ServiceWorkerClientData.h"
@@ -335,8 +334,12 @@ void ServiceWorkerThreadProxy::fireMessageEvent(MessageWithMessagePorts&& messag
 
 void ServiceWorkerThreadProxy::fireInstallEvent()
 {
-    ASSERT(isMainThread());
-    thread().willPostTaskToFireInstallEvent();
+    ASSERT(!isMainThread());
+
+    callOnMainRunLoop([protectedThis = Ref { *this }] {
+        protectedThis->thread().willPostTaskToFireInstallEvent();
+    });
+
     thread().runLoop().postTask([this, protectedThis = Ref { *this }](auto&) mutable {
         thread().queueTaskToFireInstallEvent();
     });
@@ -344,9 +347,13 @@ void ServiceWorkerThreadProxy::fireInstallEvent()
 
 void ServiceWorkerThreadProxy::fireActivateEvent()
 {
-    ASSERT(isMainThread());
-    thread().willPostTaskToFireActivateEvent();
-    thread().runLoop().postTask([this, protectedThis = Ref { *this }](auto&) mutable {
+    ASSERT(!isMainThread());
+
+    callOnMainRunLoop([protectedThis = Ref { *this }] {
+        protectedThis->thread().willPostTaskToFireActivateEvent();
+    });
+
+    thread().runLoop().postTask([this, protectedThis = Ref { *this }](auto&) {
         thread().queueTaskToFireActivateEvent();
     });
 }
@@ -485,10 +492,12 @@ void ServiceWorkerThreadProxy::setAppBadge(std::optional<uint64_t> badge)
 void ServiceWorkerThreadProxy::setInspectable(bool inspectable)
 {
     ASSERT(isMainThread());
+#if ENABLE(REMOTE_INSPECTOR)
     m_page->setInspectable(inspectable);
     m_remoteDebuggable->setInspectable(inspectable);
+#else
+    UNUSED_PARAM(inspectable);
+#endif // ENABLE(REMOTE_INSPECTOR)
 }
 
 } // namespace WebCore
-
-#endif // ENABLE(SERVICE_WORKER)

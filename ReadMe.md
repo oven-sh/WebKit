@@ -1,26 +1,3 @@
-# WebKit with patches
-
-This is a build of WebKit with some extra patches used by [bun](https://bun.sh)
-
-The changes to WebKit are as follows:
-
-- `bmalloc::api::availableMemory()` accounts for cgroups 1 & 2 memory limits
-- `JSC::ErrorInstance` has a `captureStackTrace` function which lets you update the internally-stored `Vector<StackTrace>`
-- `JSC::JSGlobalObject` has a `double overridenDateNow` field which lets you override the timestamp used for `Date.now()` and `new Date()`
-- `JSC::VM` has a `onComputeErrorInfo` callback which lets the embedder customize how `Error.prototype.stack` strings are formatted (Bun uses this to make them match V8's behavior, for Node.js compatibility)
-- More things are exported
-- Typed Arrays can be passed through DOMJIT
-- ExternalStringImpl has an extra pointer field
-- `OptionsList::showPrivateScriptsInStackTraces()` enables ImplementationVisibilty::Private functions showing up in stack traces
-- Many of the locks in the C API are removed. Locking is handled internally by the bundler.
-- `JSString` iterator that exposes the pointer of each nested `JSRopeString`'s underlying buffer to a callback without flattening/allocating an entirely new string. This is useful for native code piping strings from JavaScript to elsewhere, or manually allocating strings outside of `WTF::String`. `console.log` or server-side rendering (when not using streams) are examples.
-- `ExternalStringImpl` now supports static strings. This is somewhat of a hack; the better solution for this case is a script that generates all the static strings at compile time using `NeverDestroyed<StaticStringImpl>`, however need to figure out a way to do that well from Zig.
-- `OptionsList::useV8DateParser` enables v8's date parser.
-
-Still need to figure out how to get the remote inspector to work.
-
----
-
 # WebKit
 
 WebKit is a cross-platform web browser engine. On iOS and macOS, it powers Safari, Mail, iBooks, and many other applications. For more information about WebKit, see the [WebKit project website](https://webkit.org/).
@@ -66,7 +43,7 @@ For performance testing, and other purposes, use `--release` instead.
 
 You can open `WebKit.xcworkspace` to build and debug WebKit within Xcode.
 
-If you don't use a custom build location in Xcode preferences, you have to update the workspace settings to use `WebKitBuild` directory. In menu bar, choose File > Workspace Settings, then click the Advanced button, select "Custom", "Relative to Workspace", and enter `WebKitBuild` for both Products and Intermediates.
+If you don't use a custom build location in Xcode preferences, you have to update the workspace settings to use `WebKitBuild` directory.  In menu bar, choose File > Workspace Settings, then click the Advanced button, select "Custom", "Relative to Workspace", and enter `WebKitBuild` for both Products and Intermediates.
 
 ### Embedded Builds
 
@@ -85,14 +62,13 @@ Tools/Scripts/build-webkit --debug --<platform>-simulator
 ```
 
 or embedded devices:
-
 ```
 Tools/Scripts/build-webkit --debug --<platform>-device
 ```
 
 where `platform` is `ios`, `tvos` or `watchos`.
 
-### Building the GTK+ Port
+### Building the GTK Port
 
 For production builds:
 
@@ -110,7 +86,7 @@ Tools/Scripts/update-webkitgtk-libs
 Tools/Scripts/build-webkit --gtk --debug
 ```
 
-For more information on building WebKitGTK+, see the [wiki page](https://trac.webkit.org/wiki/BuildingGtk).
+For more information on building WebKitGTK, see the [wiki page](https://trac.webkit.org/wiki/BuildingGtk).
 
 ### Building the WPE Port
 
@@ -175,3 +151,4 @@ Pass one of `--gtk`, `--jsc-only`, or `--wpe` to indicate the port to use.
 ## Contribute
 
 Congratulations! You’re up and running. Now you can begin coding in WebKit and contribute your fixes and new features to the project. For details on submitting your code to the project, read [Contributing Code](https://webkit.org/contributing-code/).
+

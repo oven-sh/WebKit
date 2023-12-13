@@ -30,6 +30,7 @@
 #include "config.h"
 #include "Interpreter.h"
 
+#include "AbortReason.h"
 #include "AbstractModuleRecord.h"
 #include "ArgList.h"
 #include "BatchedTransitionOptimizer.h"
@@ -405,7 +406,7 @@ public:
         , m_results(results)
         , m_framesToSkip(framesToSkip)
     {
-        m_results.reserveInitialCapacity(capacity);
+        m_results.grow(capacity);
     }
 
     IterationStatus operator()(StackVisitor& visitor) const
@@ -418,38 +419,34 @@ public:
         if (visitor->isImplementationVisibilityPrivate())
             return IterationStatus::Continue;
 
-        if (m_results.size() < m_results.capacity()) {
+        if (m_frameCountInResults < m_results.size()) {
             if (visitor->isNativeCalleeFrame()) {
                 auto* nativeCallee = visitor->callee().asNativeCallee();
                 switch (nativeCallee->category()) {
                 case NativeCallee::Category::Wasm: {
-                    m_results.uncheckedAppend(StackFrame(visitor->wasmFunctionIndexOrName()));
+                    m_results[m_frameCountInResults++] = StackFrame(visitor->wasmFunctionIndexOrName());
                     break;
                 }
                 case NativeCallee::Category::InlineCache: {
                     break;
                 }
                 }
-#if USE(ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS)
-            } else if (!!visitor->codeBlock()) {
-#else
-            } else if (!!visitor->codeBlock() && !visitor->codeBlock()->unlinkedCodeBlock()->isBuiltinFunction()) {
-#endif
-                m_results.uncheckedAppend(
-                    StackFrame(m_vm, m_owner, visitor->callee().asCell(), visitor->codeBlock(), visitor->bytecodeIndex()));
-            } else {
-                m_results.uncheckedAppend(
-                    StackFrame(m_vm, m_owner, visitor->callee().asCell()));
-            }
+            } else if (!!visitor->codeBlock() && !visitor->codeBlock()->unlinkedCodeBlock()->isBuiltinFunction())
+                m_results[m_frameCountInResults++] = StackFrame(m_vm, m_owner, visitor->callee().asCell(), visitor->codeBlock(), visitor->bytecodeIndex());
+            else
+                m_results[m_frameCountInResults++] = StackFrame(m_vm, m_owner, visitor->callee().asCell());
             return IterationStatus::Continue;
         }
         return IterationStatus::Done;
     }
 
+    size_t frameCountInResults() const { return m_frameCountInResults; }
+
 private:
     VM& m_vm;
     JSCell* m_owner;
     Vector<StackFrame>& m_results;
+    mutable size_t m_frameCountInResults { 0 };
     mutable size_t m_framesToSkip;
 };
 
@@ -490,7 +487,7 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
 
     GetStackTraceFunctor functor(vm, owner, results, skippedFrames, visitedFrames);
     StackVisitor::visit(callFrame, vm, functor);
-    ASSERT(results.size() == results.capacity());
+    ASSERT(functor.frameCountInResults() == results.size());
 }
 
 String Interpreter::stackTraceAsString(VM& vm, const Vector<StackFrame>& stackTrace)
@@ -585,7 +582,11 @@ CatchInfo::CatchInfo(const Wasm::HandlerInfo* handler, const Wasm::Callee* calle
         m_catchPCForInterpreter = { static_cast<WasmInstruction*>(nullptr) };
         if (callee->compilationMode() == Wasm::CompilationMode::LLIntMode)
             m_catchPCForInterpreter = { static_cast<const Wasm::LLIntCallee*>(callee)->instructions().at(handler->m_target).ptr() };
-        else {
+        else if (callee->compilationMode() == Wasm::CompilationMode::IPIntMode) {
+            m_catchPCForInterpreter = handler->m_target;
+            m_catchMetadataPCForInterpreter = handler->m_targetMetadata;
+            m_tryDepthForThrow = handler->m_tryDepth;
+        } else {
 #if USE(JSVALUE64) && ENABLE(JIT)
             m_nativeCode = Wasm::Thunks::singleton().stub(Wasm::catchInWasmThunkGenerator).template retagged<ExceptionHandlerPtrTag>().code();
             m_nativeCodeForDispatchAndCatch = handler->m_nativeCode;
@@ -862,6 +863,13 @@ void Interpreter::notifyDebuggerOfExceptionToBeThrown(VM& vm, JSGlobalObject* gl
     exception->setDidNotifyInspectorOfThrow();
 }
 
+NEVER_INLINE JSValue Interpreter::checkVMEntryPermission()
+{
+    if (Options::crashOnDisallowedVMEntry() || g_jscConfig.vmEntryDisallowed)
+        CRASH_WITH_EXTRA_SECURITY_IMPLICATION_AND_INFO(VMEntryDisallowed, "VM entry disallowed"_s);
+    return jsUndefined();
+}
+
 JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, JSObject* thisObj)
 {
     VM& vm = this->vm();
@@ -885,6 +893,9 @@ JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, J
 
     if (UNLIKELY(!vm.isSafeToRecurseSoft()))
         return throwStackOverflowError(globalObject, throwScope);
+
+    if (UNLIKELY(vm.disallowVMEntryCount))
+        return checkVMEntryPermission();
 
     // First check if the "program" is actually just a JSON object. If so,
     // we'll handle the JSON object here. Else, we'll handle real JS code
@@ -1132,6 +1143,9 @@ ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, c
     if (UNLIKELY(!vm.isSafeToRecurseSoft() || args.size() > maxArguments))
         return throwStackOverflowError(globalObject, scope);
 
+    if (UNLIKELY(vm.disallowVMEntryCount))
+        return checkVMEntryPermission();
+
     if (UNLIKELY(vm.traps().needHandling(VMTraps::NonDebuggerAsyncEvents))) {
         if (vm.hasExceptionsAfterHandlingTraps())
             return scope.exception();
@@ -1220,6 +1234,11 @@ JSObject* Interpreter::executeConstruct(JSObject* constructor, const CallData& c
         return nullptr;
     }
 
+    if (UNLIKELY(vm.disallowVMEntryCount)) {
+        checkVMEntryPermission();
+        return globalObject->globalThis();
+    }
+
     if (UNLIKELY(vm.traps().needHandling(VMTraps::NonDebuggerAsyncEvents))) {
         if (vm.hasExceptionsAfterHandlingTraps())
             return nullptr;
@@ -1261,7 +1280,7 @@ JSObject* Interpreter::executeConstruct(JSObject* constructor, const CallData& c
     return asObject(JSValue::decode(result));
 }
 
-void Interpreter::prepareForCachedCall(CachedCall& cachedCall, JSFunction* function, int argumentCountIncludingThis, const ArgList& args)
+CodeBlock* Interpreter::prepareForCachedCall(CachedCall& cachedCall, JSFunction* function)
 {
     VM& vm = this->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -1270,13 +1289,14 @@ void Interpreter::prepareForCachedCall(CachedCall& cachedCall, JSFunction* funct
     // Compile the callee:
     CodeBlock* newCodeBlock;
     cachedCall.functionExecutable()->prepareForExecution<FunctionExecutable>(vm, function, cachedCall.scope(), CodeForCall, newCodeBlock);
-    RETURN_IF_EXCEPTION(throwScope, void());
+    RETURN_IF_EXCEPTION(throwScope, { });
 
     ASSERT(newCodeBlock);
     newCodeBlock->m_shouldAlwaysBeInlined = false;
 
     cachedCall.m_addressForCall = newCodeBlock->jitCode()->addressForCall();
-    cachedCall.m_protoCallFrame.init(newCodeBlock, function->globalObject(), function, jsUndefined(), argumentCountIncludingThis, args.data());
+    newCodeBlock->linkIncomingCall(nullptr, &cachedCall);
+    return newCodeBlock;
 }
 
 JSValue Interpreter::executeEval(EvalExecutable* eval, JSValue thisValue, JSScope* scope)
@@ -1297,6 +1317,9 @@ JSValue Interpreter::executeEval(EvalExecutable* eval, JSValue thisValue, JSScop
     VMEntryScope entryScope(vm, globalObject);
     if (UNLIKELY(!vm.isSafeToRecurseSoft()))
         return throwStackOverflowError(globalObject, throwScope);
+
+    if (UNLIKELY(vm.disallowVMEntryCount))
+        return checkVMEntryPermission();
 
     unsigned numVariables = eval->numVariables();
     unsigned numTopLevelFunctionDecls = eval->numTopLevelFunctionDecls();
@@ -1485,6 +1508,9 @@ JSValue Interpreter::executeModuleProgram(JSModuleRecord* record, ModuleProgramE
     VMEntryScope entryScope(vm, scope->globalObject());
     if (UNLIKELY(!vm.isSafeToRecurseSoft()))
         return throwStackOverflowError(globalObject, throwScope);
+
+    if (UNLIKELY(vm.disallowVMEntryCount))
+        return checkVMEntryPermission();
 
     if (UNLIKELY(vm.traps().needHandling(VMTraps::NonDebuggerAsyncEvents))) {
         if (vm.hasExceptionsAfterHandlingTraps())

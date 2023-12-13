@@ -388,6 +388,8 @@ void LibWebRTCProvider::setUseDTLS10(bool useDTLS10)
     m_factory->SetOptions(options);
 }
 
+ALLOW_DEPRECATED_DECLARATIONS_BEGIN
+// FIXME: https://bugs.webkit.org/show_bug.cgi?id=265791
 rtc::scoped_refptr<webrtc::PeerConnectionInterface> LibWebRTCProvider::createPeerConnection(webrtc::PeerConnectionObserver& observer, rtc::NetworkManager& networkManager, rtc::PacketSocketFactory& packetSocketFactory, webrtc::PeerConnectionInterface::RTCConfiguration&& configuration, std::unique_ptr<webrtc::AsyncResolverFactory>&& asyncResolveFactory)
 {
     auto& factoryAndThreads = getStaticFactoryAndThreads(m_useNetworkThreadWithSocketServer);
@@ -414,6 +416,7 @@ rtc::scoped_refptr<webrtc::PeerConnectionInterface> LibWebRTCProvider::createPee
 
     return peerConnectionOrError.MoveValue();
 }
+ALLOW_DEPRECATED_DECLARATIONS_END
 
 void LibWebRTCProvider::prepareCertificateGenerator(Function<void(rtc::RTCCertificateGenerator&)>&& callback)
 {
@@ -452,8 +455,7 @@ static inline RTCRtpCapabilities toRTCRtpCapabilities(const webrtc::RtpCapabilit
 {
     RTCRtpCapabilities capabilities;
 
-    capabilities.codecs.reserveInitialCapacity(rtpCapabilities.codecs.size());
-    for (auto& codec : rtpCapabilities.codecs) {
+    capabilities.codecs = WTF::map(rtpCapabilities.codecs, [](auto& codec) {
         StringBuilder sdpFmtpLineBuilder;
         bool hasParameter = false;
         for (auto& parameter : codec.parameters) {
@@ -463,12 +465,13 @@ static inline RTCRtpCapabilities toRTCRtpCapabilities(const webrtc::RtpCapabilit
         String sdpFmtpLine;
         if (sdpFmtpLineBuilder.length())
             sdpFmtpLine = sdpFmtpLineBuilder.toString();
-        capabilities.codecs.uncheckedAppend(RTCRtpCodecCapability { fromStdString(codec.mime_type()), static_cast<uint32_t>(codec.clock_rate ? *codec.clock_rate : 0), toChannels(codec.num_channels), WTFMove(sdpFmtpLine) });
-    }
+        return RTCRtpCodecCapability { fromStdString(codec.mime_type()), static_cast<uint32_t>(codec.clock_rate ? *codec.clock_rate : 0), toChannels(codec.num_channels), WTFMove(sdpFmtpLine) };
 
-    capabilities.headerExtensions.reserveInitialCapacity(rtpCapabilities.header_extensions.size());
-    for (auto& header : rtpCapabilities.header_extensions)
-        capabilities.headerExtensions.uncheckedAppend(RTCRtpCapabilities::HeaderExtensionCapability { fromStdString(header.uri) });
+    });
+
+    capabilities.headerExtensions = WTF::map(rtpCapabilities.header_extensions, [](auto& header) {
+        return RTCRtpCapabilities::HeaderExtensionCapability { fromStdString(header.uri) };
+    });
 
     return capabilities;
 }

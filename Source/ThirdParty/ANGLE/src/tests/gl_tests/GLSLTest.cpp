@@ -9055,6 +9055,45 @@ void main() {
     EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
 }
 
+// Test a fuzzer-discovered bug with the VectorizeVectorScalarArithmetic transformation.
+TEST_P(GLSLTest, VectorScalarArithmeticWithSideEffectInLoop)
+{
+    // The VectorizeVectorScalarArithmetic transformation was generating invalid code in the past
+    // (notice how sbcd references i outside the for loop.  The loop condition doesn't look right
+    // either):
+    //
+    //     #version 450
+    //     void main(){
+    //     (gl_Position = vec4(0.0, 0.0, 0.0, 0.0));
+    //     mat3 _utmp = mat3(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+    //     vec3 _ures = vec3(0.0, 0.0, 0.0);
+    //     vec3 sbcd = vec3(_ures[_ui]);
+    //     for (int _ui = 0; (_ures[((_utmp[_ui] += (((sbcd *= _ures[_ui]), (_ures[_ui] = sbcd.x)),
+    //     sbcd)), _ui)], (_ui < 7)); )
+    //     {
+    //     }
+    //     }
+
+    constexpr char kVS[] = R"(
+void main()
+{
+    mat3 tmp;
+    vec3 res;
+    for(int i; res[tmp[i]+=res[i]*=res[i],i],i<7;);
+})";
+
+    GLuint shader = glCreateShader(GL_VERTEX_SHADER);
+
+    const char *sourceArray[1] = {kVS};
+    GLint lengths[1]           = {static_cast<GLint>(sizeof(kVS) - 1)};
+    glShaderSource(shader, 1, sourceArray, lengths);
+    glCompileShader(shader);
+
+    GLint compileResult;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &compileResult);
+    EXPECT_NE(compileResult, 0);
+}
+
 // Test that a varying with a flat qualifier that is used as an operand of a folded ternary operator
 // is handled correctly.
 TEST_P(GLSLTest_ES3, FlatVaryingUsedInFoldedTernary)
@@ -9611,8 +9650,7 @@ TEST_P(GLSLTest_ES31, ExceedCombinedShaderOutputResourcesInVSAndFS)
                     "}\n";
 
     std::ostringstream fragmentStream;
-    fragmentStream << "#version 310 es\n"
-                   << "precision highp float;\n";
+    fragmentStream << "#version 310 es\n" << "precision highp float;\n";
     for (int i = 0; i < fragmentSSBOs; ++i)
     {
         fragmentStream << "layout(shared, binding = " << i << ") buffer blockName" << i
@@ -16255,6 +16293,74 @@ void main() {
     ASSERT_GL_NO_ERROR();
 }
 
+// Test coverage of some matrix/scalar ops which Metal translation was missing.
+TEST_P(GLSLTest, MatrixScalarOps)
+{
+    constexpr char kFS[] = R"(precision highp float;
+void main() {
+    float scalar = 0.5;
+    mat3 matrix = mat3(vec3(0.1), vec3(0.1), vec3(0.1));
+
+    mat3 m0 = scalar / matrix;
+    mat3 m1 = scalar * matrix;
+    mat3 m2 = scalar + matrix;
+    mat3 m3 = scalar - matrix;
+
+    gl_FragColor = vec4(m0[0][0], m1[0][0], m2[0][0], m3[0][0]);
+}
+)";
+
+    ANGLE_GL_PROGRAM(testProgram, essl1_shaders::vs::Simple(), kFS);
+    ASSERT_GL_NO_ERROR();
+
+    drawQuad(testProgram, essl1_shaders::PositionAttrib(), 0.5f, 1.0f, true);
+    EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor(255, 13, 153, 102), 1.0);
+    ASSERT_GL_NO_ERROR();
+}
+
+// Test coverage of some matrix ops which Metal translation was missing.
+TEST_P(GLSLTest, MatrixNegate)
+{
+    constexpr char kFS[] = R"(precision highp float;
+void main() {
+    mat3 matrix = mat3(vec3(-0.1), vec3(-0.1), vec3(-0.1));
+
+    mat3 m0 = -matrix;
+
+    gl_FragColor = vec4(m0[0][0], 0, 0, 1);
+}
+)";
+
+    ANGLE_GL_PROGRAM(testProgram, essl1_shaders::vs::Simple(), kFS);
+    ASSERT_GL_NO_ERROR();
+
+    drawQuad(testProgram, essl1_shaders::PositionAttrib(), 0.5f, 1.0f, true);
+    EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor(26, 0, 0, 255), 1.0);
+    ASSERT_GL_NO_ERROR();
+}
+
+// Test coverage of the mix(float, float, bool) overload which was missing in Metal translation
+TEST_P(GLSLTest_ES3, MixFloatFloatBool)
+{
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+out vec4 fragColor;
+void main() {
+    vec4 testData = vec4(0.0, 1.0, 0.5, 0.25);
+    float scalar = mix(testData.x, testData.y, testData.x < 0.5);
+    vec2 vector = mix(testData.xy, testData.xw, bvec2(testData.x < 0.5, testData.y < 0.5));
+    fragColor = vec4(scalar, vector.x, vector.y, 1);
+}
+)";
+
+    ANGLE_GL_PROGRAM(testProgram, essl3_shaders::vs::Simple(), kFS);
+    ASSERT_GL_NO_ERROR();
+
+    drawQuad(testProgram, essl3_shaders::PositionAttrib(), 0.5f, 1.0f, true);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor(255, 0, 255, 255));
+    ASSERT_GL_NO_ERROR();
+}
+
 // Test that aliasing function inout parameters work when more than one param is aliased.
 TEST_P(GLSLTest, AliasingFunctionInOutParamsMultiple)
 {
@@ -18124,14 +18230,36 @@ void main()
     EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
 }
 
+// Test that the ScalarizeVecAndMatConstructorArgs workaround works correctly with constructors that
+// have no precision.  Regression test for a bug where the generated helper has no precision
+// specified on the parameters and return value.
+TEST_P(GLSLTest, ScalarizeVectorWorkaroundVsPrecisionlessConstructor)
+{
+    constexpr char kFS[] = R"(precision highp float;
+void main() {
+    bool b1 = true;
+    float f1 = dot(vec4(b1 ? 1.0 : 0.0, 0.0, 0.0, 0.0), vec4(1.0));
+    gl_FragColor = vec4(f1,0.0,0.0, 1.0);
+})";
+
+    ANGLE_GL_PROGRAM(program, essl1_shaders::vs::Simple(), kFS);
+    drawQuad(program, essl1_shaders::PositionAttrib(), 0.5f);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+}
+
 }  // anonymous namespace
 
-ANGLE_INSTANTIATE_TEST_ES2_AND_ES3(GLSLTest);
+ANGLE_INSTANTIATE_TEST_ES2_AND_ES3_AND(
+    GLSLTest,
+    ES3_OPENGL().enable(Feature::ScalarizeVecAndMatConstructorArgs),
+    ES3_OPENGLES().enable(Feature::ScalarizeVecAndMatConstructorArgs));
 
 ANGLE_INSTANTIATE_TEST_ES2_AND_ES3(GLSLTestNoValidation);
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(GLSLTest_ES3);
-ANGLE_INSTANTIATE_TEST_ES3(GLSLTest_ES3);
+ANGLE_INSTANTIATE_TEST_ES3_AND(GLSLTest_ES3,
+                               ES3_OPENGL().enable(Feature::ScalarizeVecAndMatConstructorArgs),
+                               ES3_OPENGLES().enable(Feature::ScalarizeVecAndMatConstructorArgs));
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(GLSLTestLoops);
 ANGLE_INSTANTIATE_TEST_ES3(GLSLTestLoops);

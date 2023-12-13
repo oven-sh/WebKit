@@ -77,10 +77,29 @@
 #include <wtf/BitVector.h>
 #include <wtf/Box.h>
 #include <wtf/MathExtras.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace JSC { namespace DFG {
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(SpeculativeJIT);
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(FPRTemporary);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(GPRTemporary);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(JSValueRegsFlushedCallResult);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(JSValueRegsTemporary);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(SpeculateInt32Operand);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(SpeculateStrictInt32Operand);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(SpeculateInt52Operand);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(SpeculateStrictInt52Operand);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(SpeculateWhicheverInt52Operand);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(SpeculateDoubleOperand);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(SpeculateCellOperand);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(SpeculateBooleanOperand);
+#if USE(BIGINT32)
+WTF_MAKE_TZONE_ALLOCATED_IMPL(SpeculateBigInt32Operand);
+#endif
+WTF_MAKE_TZONE_ALLOCATED_IMPL(JSValueOperand);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(StorageOperand);
 
 SpeculativeJIT::SpeculativeJIT(Graph& dfg)
     : Base(dfg)
@@ -207,7 +226,6 @@ void SpeculativeJIT::compileFunction()
     // determine the correct number of arguments have been passed, or have already checked).
     // In cases where an arity check is necessary, we enter here.
     // FIXME: change this from a cti call to a DFG style operation (normal C calling conventions).
-    Call callArityFixup;
     Label arityCheck;
     bool requiresArityFixup = m_codeBlock->numParameters() != 1;
     if (requiresArityFixup) {
@@ -222,7 +240,7 @@ void SpeculativeJIT::compileFunction()
 
         emitStoreCodeOrigin(CodeOrigin(BytecodeIndex(0)));
         move(GPRInfo::regT0, GPRInfo::argumentGPR0);
-        callArityFixup = nearCall();
+        nearCallThunk(CodeLocationLabel { vm().getCTIStub(CommonJITThunkID::ArityFixup).retaggedCode<NoPtrTag>() });
         jump(fromArityCheck);
     } else
         arityCheck = entryLabel;
@@ -260,9 +278,6 @@ void SpeculativeJIT::compileFunction()
     }
     link(*linkBuffer);
     linkOSREntries(*linkBuffer);
-
-    if (requiresArityFixup)
-        linkBuffer->link(callArityFixup, vm().getCTIStub(arityFixupGenerator).code());
 
     disassemble(*linkBuffer);
 
@@ -308,7 +323,7 @@ void SpeculativeJIT::exceptionCheck()
         // We assume here that this is called after callOpeartion()/appendCall() is called.
         appendExceptionHandlingOSRExit(this, ExceptionCheck, streamIndex, opCatchOrigin, exceptionHandler, m_jitCode->common.codeOrigins->lastCallSite(), hadException);
     } else
-        m_exceptionChecks.append(emitExceptionCheck(vm()));
+        emitExceptionCheck(vm()).linkThunk(CodeLocationLabel(vm().getCTIStub(CommonJITThunkID::HandleException).retaggedCode<NoPtrTag>()), this);
 }
 
 CallSiteIndex SpeculativeJIT::recordCallSiteAndGenerateExceptionHandlingOSRExitIfNeeded(const CodeOrigin& callSiteCodeOrigin, unsigned eventStreamIndex)
@@ -1424,7 +1439,7 @@ void SpeculativeJIT::compileDeleteById(Node* node)
 #if USE(JSVALUE64)
         std::unique_ptr<SlowPathGenerator> slowPath;
         if (m_graph.m_plan.isUnlinked()) {
-            gen.generateDFGDataICFastPath(*this, stubInfoConstant.index(), stubInfoGPR);
+            gen.generateDFGDataICFastPath(*this, stubInfoConstant, stubInfoGPR);
             ASSERT(!gen.stubInfo());
             slowPath = slowPathICCall(
                 slowCases, this, stubInfoConstant, stubInfoGPR, Address(stubInfoGPR, StructureStubInfo::offsetOfSlowOperation()), operation,
@@ -1506,7 +1521,7 @@ void SpeculativeJIT::compileDeleteByVal(Node* node)
 #if USE(JSVALUE64)
         std::unique_ptr<SlowPathGenerator> slowPath;
         if (m_graph.m_plan.isUnlinked()) {
-            gen.generateDFGDataICFastPath(*this, stubInfoConstant.index(), stubInfoGPR);
+            gen.generateDFGDataICFastPath(*this, stubInfoConstant, stubInfoGPR);
             ASSERT(!gen.stubInfo());
             slowPath = slowPathICCall(
                 slowCases, this, stubInfoConstant, stubInfoGPR, Address(stubInfoGPR, StructureStubInfo::offsetOfSlowOperation()), operation,
@@ -1582,7 +1597,7 @@ void SpeculativeJIT::compileInById(Node* node)
 
     std::unique_ptr<SlowPathGenerator> slowPath;
     if (m_graph.m_plan.isUnlinked()) {
-        gen.generateDFGDataICFastPath(*this, stubInfoConstant.index(), JSValueRegs::payloadOnly(baseGPR), resultRegs, stubInfoGPR, scratchGPR);
+        gen.generateDFGDataICFastPath(*this, stubInfoConstant, JSValueRegs::payloadOnly(baseGPR), resultRegs, stubInfoGPR, scratchGPR);
         ASSERT(!gen.stubInfo());
         slowPath = slowPathICCall(
             slowCases, this, stubInfoConstant, stubInfoGPR, Address(stubInfoGPR, StructureStubInfo::offsetOfSlowOperation()), operationInByIdOptimize,
@@ -1634,7 +1649,7 @@ void SpeculativeJIT::compileInByVal(Node* node)
 
     std::unique_ptr<SlowPathGenerator> slowPath;
     if (m_graph.m_plan.isUnlinked()) {
-        gen.generateDFGDataICFastPath(*this, stubInfoConstant.index(), stubInfoGPR);
+        gen.generateDFGDataICFastPath(*this, stubInfoConstant, stubInfoGPR);
         ASSERT(!gen.stubInfo());
         slowPath = slowPathICCall(
             slowCases, this, stubInfoConstant, stubInfoGPR, Address(stubInfoGPR, StructureStubInfo::offsetOfSlowOperation()), operationInByValOptimize,
@@ -1692,7 +1707,7 @@ void SpeculativeJIT::compileHasPrivate(Node* node, AccessType type)
 
     std::unique_ptr<SlowPathGenerator> slowPath;
     if (m_graph.m_plan.isUnlinked()) {
-        gen.generateDFGDataICFastPath(*this, stubInfoConstant.index(), stubInfoGPR);
+        gen.generateDFGDataICFastPath(*this, stubInfoConstant, stubInfoGPR);
         ASSERT(!gen.stubInfo());
         slowPath = slowPathICCall(
             slowCases, this, stubInfoConstant, stubInfoGPR, Address(stubInfoGPR, StructureStubInfo::offsetOfSlowOperation()), type == AccessType::HasPrivateName ? operationHasPrivateNameOptimize : operationHasPrivateBrandOptimize,
@@ -3013,7 +3028,7 @@ void SpeculativeJIT::compilePutByVal(Node* node)
         std::unique_ptr<SlowPathGenerator> slowPath;
         auto operation = isDirect ? (ecmaMode.isStrict() ? operationDirectPutByValStrictOptimize : operationDirectPutByValSloppyOptimize) : (ecmaMode.isStrict() ? operationPutByValStrictOptimize : operationPutByValSloppyOptimize);
         if (m_graph.m_plan.isUnlinked()) {
-            gen.generateDFGDataICFastPath(*this, stubInfoConstant.index(), stubInfoGPR);
+            gen.generateDFGDataICFastPath(*this, stubInfoConstant, stubInfoGPR);
             ASSERT(!gen.stubInfo());
             slowPath = slowPathICCall(
                 slowCases, this, stubInfoConstant, stubInfoGPR, Address(stubInfoGPR, StructureStubInfo::offsetOfSlowOperation()), operation,
@@ -4473,7 +4488,7 @@ void SpeculativeJIT::compileGetPrivateNameByVal(Node* node, JSValueRegs baseRegs
 
     auto makeSlowPathICCall = [&](auto base, auto stubInfoConstant) {
         if (m_graph.m_plan.isUnlinked()) {
-            gen.generateDFGDataICFastPath(*this, stubInfoConstant.index(), stubInfoGPR);
+            gen.generateDFGDataICFastPath(*this, stubInfoConstant, stubInfoGPR);
             return slowPathICCall(
                 slowCases, this, stubInfoConstant, stubInfoGPR, Address(stubInfoGPR, StructureStubInfo::offsetOfSlowOperation()), operationGetPrivateNameOptimize,
                 result.regs(), base, CellValue(propertyRegs.payloadGPR()), LinkableConstant::globalObject(*this, node), stubInfoGPR);
@@ -4660,7 +4675,7 @@ void SpeculativeJIT::compilePutPrivateName(Node* node)
     std::unique_ptr<SlowPathGenerator> slowPath;
     auto operation = node->privateFieldPutKind().isDefine() ? operationPutByValDefinePrivateFieldOptimize : operationPutByValSetPrivateFieldOptimize;
     if (m_graph.m_plan.isUnlinked()) {
-        gen.generateDFGDataICFastPath(*this, stubInfoConstant.index(), stubInfoGPR);
+        gen.generateDFGDataICFastPath(*this, stubInfoConstant, stubInfoGPR);
         ASSERT(!gen.stubInfo());
         slowPath = slowPathICCall(
             slowCases, this, stubInfoConstant, stubInfoGPR, Address(stubInfoGPR, StructureStubInfo::offsetOfSlowOperation()), operation,
@@ -4741,7 +4756,7 @@ void SpeculativeJIT::compileCheckPrivateBrand(Node* node)
 
     std::unique_ptr<SlowPathGenerator> slowPath;
     if (m_graph.m_plan.isUnlinked()) {
-        gen.generateDFGDataICFastPath(*this, stubInfoConstant.index(), stubInfoGPR);
+        gen.generateDFGDataICFastPath(*this, stubInfoConstant, stubInfoGPR);
         ASSERT(!gen.stubInfo());
         slowPath = slowPathICCall(
             slowCases, this, stubInfoConstant, stubInfoGPR, Address(stubInfoGPR, StructureStubInfo::offsetOfSlowOperation()), operationCheckPrivateBrandOptimize, NoResult,
@@ -4793,7 +4808,7 @@ void SpeculativeJIT::compileSetPrivateBrand(Node* node)
 
     std::unique_ptr<SlowPathGenerator> slowPath;
     if (m_graph.m_plan.isUnlinked()) {
-        gen.generateDFGDataICFastPath(*this, stubInfoConstant.index(), stubInfoGPR);
+        gen.generateDFGDataICFastPath(*this, stubInfoConstant, stubInfoGPR);
         ASSERT(!gen.stubInfo());
         slowPath = slowPathICCall(
             slowCases, this, stubInfoConstant, stubInfoGPR, Address(stubInfoGPR, StructureStubInfo::offsetOfSlowOperation()), operationSetPrivateBrandOptimize, NoResult,
@@ -4997,7 +5012,7 @@ void SpeculativeJIT::compileInstanceOfForCells(Node* node, JSValueRegs valueRegs
 
     std::unique_ptr<SlowPathGenerator> slowPath;
     if (m_graph.m_plan.isUnlinked()) {
-        gen.generateDFGDataICFastPath(*this, stubInfoConstant.index(), stubInfoGPR);
+        gen.generateDFGDataICFastPath(*this, stubInfoConstant, stubInfoGPR);
         ASSERT(!gen.stubInfo());
         slowPath = slowPathICCall(slowCases, this, stubInfoConstant, stubInfoGPR, Address(stubInfoGPR, StructureStubInfo::offsetOfSlowOperation()), operationInstanceOfOptimize, resultGPR, valueRegs, prototypeRegs, LinkableConstant::globalObject(*this, node), stubInfoGPR);
     } else {
@@ -11318,7 +11333,7 @@ void SpeculativeJIT::compileCallDOM(Node* node)
 
     // FIXME: We should have a way to call functions with the vector of registers.
     // https://bugs.webkit.org/show_bug.cgi?id=163099
-    using OperandVariant = std::variant<SpeculateCellOperand, SpeculateInt32Operand, SpeculateBooleanOperand, SpeculateStrictInt52Operand>;
+    using OperandVariant = std::variant<SpeculateCellOperand, SpeculateInt32Operand, SpeculateBooleanOperand>;
     Vector<OperandVariant, JSC_DOMJIT_SIGNATURE_MAX_ARGUMENTS_INCLUDING_THIS> operands;
     Vector<GPRReg, JSC_DOMJIT_SIGNATURE_MAX_ARGUMENTS_INCLUDING_THIS> regs;
 
@@ -11342,81 +11357,11 @@ void SpeculativeJIT::compileCallDOM(Node* node)
         operands.append(OperandVariant(std::in_place_type<SpeculateInt32Operand>, WTFMove(operand)));
     };
 
-    auto appendAnyIntAsDouble = [&](Edge& edge) {
-        SpeculateStrictInt52Operand operand(this, edge);
-        regs.append(operand.gpr());
-        operands.append(OperandVariant(std::in_place_type<SpeculateStrictInt52Operand>, WTFMove(operand)));
-    };
     auto appendBoolean = [&](Edge& edge) {
         SpeculateBooleanOperand operand(this, edge);
         regs.append(operand.gpr());
         operands.append(OperandVariant(std::in_place_type<SpeculateBooleanOperand>, WTFMove(operand)));
     };
-
-    auto appendInt8Array = [&](Edge& edge) {
-        SpeculateCellOperand operand(this, edge);
-        GPRReg gpr = operand.gpr();
-        regs.append(gpr);
-        speculateCellTypeWithoutTypeFiltering(edge, gpr, JSType::Int8ArrayType);
-        operands.append(OperandVariant(std::in_place_type<SpeculateCellOperand>, WTFMove(operand)));
-    };
-    auto appendInt16Array = [&](Edge& edge) {
-        SpeculateCellOperand operand(this, edge);
-        GPRReg gpr = operand.gpr();
-        regs.append(gpr);
-        speculateCellTypeWithoutTypeFiltering(edge, gpr, JSType::Int16ArrayType);
-        operands.append(OperandVariant(std::in_place_type<SpeculateCellOperand>, WTFMove(operand)));
-    };
-    auto appendInt32Array = [&](Edge& edge) {
-        SpeculateCellOperand operand(this, edge);
-        GPRReg gpr = operand.gpr();
-        regs.append(gpr);
-        speculateCellTypeWithoutTypeFiltering(edge, gpr, JSType::Int32ArrayType);
-        operands.append(OperandVariant(std::in_place_type<SpeculateCellOperand>, WTFMove(operand)));
-    };
-    auto appendUint8Array = [&](Edge& edge) {
-        SpeculateCellOperand operand(this, edge);
-        GPRReg gpr = operand.gpr();
-        regs.append(gpr);
-        speculateCellTypeWithoutTypeFiltering(edge, gpr, JSType::Uint8ArrayType);
-        operands.append(OperandVariant(std::in_place_type<SpeculateCellOperand>, WTFMove(operand)));
-    };
-    auto appendUint8ClampedArray = [&](Edge& edge) {
-        SpeculateCellOperand operand(this, edge);
-        GPRReg gpr = operand.gpr();
-        regs.append(gpr);
-        speculateCellTypeWithoutTypeFiltering(edge, gpr, JSType::Uint8ClampedArrayType);
-        operands.append(OperandVariant(std::in_place_type<SpeculateCellOperand>, WTFMove(operand)));
-    };
-    auto appendUint16Array = [&](Edge& edge) {
-        SpeculateCellOperand operand(this, edge);
-        GPRReg gpr = operand.gpr();
-        regs.append(gpr);
-        speculateCellTypeWithoutTypeFiltering(edge, gpr, JSType::Uint16ArrayType);
-        operands.append(OperandVariant(std::in_place_type<SpeculateCellOperand>, WTFMove(operand)));
-    };
-    auto appendUint32Array = [&](Edge& edge) {
-        SpeculateCellOperand operand(this, edge);
-        GPRReg gpr = operand.gpr();
-        regs.append(gpr);
-        speculateCellTypeWithoutTypeFiltering(edge, gpr, JSType::Uint32ArrayType);
-        operands.append(OperandVariant(std::in_place_type<SpeculateCellOperand>, WTFMove(operand)));
-    };
-    auto appendFloat32Array = [&](Edge& edge) {
-        SpeculateCellOperand operand(this, edge);
-        GPRReg gpr = operand.gpr();
-        regs.append(gpr);
-        speculateCellTypeWithoutTypeFiltering(edge, gpr, JSType::Float32ArrayType);
-        operands.append(OperandVariant(std::in_place_type<SpeculateCellOperand>, WTFMove(operand)));
-    };
-    auto appendFloat64Array = [&](Edge& edge) {
-        SpeculateCellOperand operand(this, edge);
-        GPRReg gpr = operand.gpr();
-        regs.append(gpr);
-        speculateCellTypeWithoutTypeFiltering(edge, gpr, JSType::Float64ArrayType);
-        operands.append(OperandVariant(std::in_place_type<SpeculateCellOperand>, WTFMove(operand)));
-    };
-    
 
     unsigned index = 0;
     m_graph.doToChildren(node, [&](Edge edge) {
@@ -11432,39 +11377,6 @@ void SpeculativeJIT::compileCallDOM(Node* node)
                 break;
             case SpecBoolean:
                 appendBoolean(edge);
-                break;
-            case SpecInt8Array: 
-                appendInt8Array(edge);
-                break;
-            case SpecInt16Array: 
-                appendInt16Array(edge);
-                break;
-            case SpecInt32Array: 
-                appendInt32Array(edge);
-                break;
-            case SpecUint8Array: 
-                appendUint8Array(edge);
-                break;
-            case SpecUint8ClampedArray: 
-                appendUint8ClampedArray(edge);
-                break;
-            case SpecUint16Array: 
-                appendUint16Array(edge);
-                break;
-            case SpecUint32Array: 
-                appendUint32Array(edge);
-                break;
-            case SpecFloat32Array: 
-                appendFloat32Array(edge);
-                break;
-            case SpecFloat64Array: 
-                appendFloat64Array(edge);
-                break;
-            case SpecAnyIntAsDouble:
-            case SpecNonInt32AsInt52:
-            case SpecInt32AsInt52:
-            case SpecInt52Any:
-                appendAnyIntAsDouble(edge);
                 break;
             default:
                 RELEASE_ASSERT_NOT_REACHED();
@@ -11629,6 +11541,71 @@ void SpeculativeJIT::compileCheckJSCast(Node* node)
         speculationCheck(BadType, JSValueSource::unboxedCell(baseGPR), node->child1(), jump());
         failureCases.link(this);
     }
+    noResult(node);
+}
+
+void SpeculativeJIT::compileCallCustomAccessorGetter(Node* node)
+{
+    auto getter = node->customAccessor();
+    UniquedStringImpl* uid = node->cacheableIdentifier().uid();
+
+    JSValueOperand base(this, node->child1());
+
+    JSValueRegs baseRegs = base.jsValueRegs();
+
+    flushRegisters();
+
+    storePtr(GPRInfo::callFrameRegister, &vm().topCallFrame);
+    emitStoreCodeOrigin(m_currentNode->origin.semantic);
+
+    JSValueRegsFlushedCallResult result(this);
+    JSValueRegs resultRegs = result.regs();
+
+    if (Options::useJITCage())
+        setupArguments<GetValueFuncWithPtr>(LinkableConstant::globalObject(*this, node), baseRegs, TrustedImmPtr(uid), TrustedImmPtr(getter.taggedPtr()));
+    else
+        setupArguments<GetValueFunc>(LinkableConstant::globalObject(*this, node), baseRegs, TrustedImmPtr(uid));
+
+    if (Options::useJITCage())
+        appendCall(vmEntryCustomGetter);
+    else {
+        CodePtr<OperationPtrTag> bypassedFunction(WTF::tagNativeCodePtrImpl<OperationPtrTag>(WTF::untagNativeCodePtrImpl<CustomAccessorPtrTag>(getter.taggedPtr())));
+        appendOperationCall(bypassedFunction);
+    }
+    setupResults(resultRegs);
+
+    exceptionCheck();
+    jsValueResult(resultRegs, node);
+}
+
+void SpeculativeJIT::compileCallCustomAccessorSetter(Node* node)
+{
+    auto setter = node->customAccessor();
+    UniquedStringImpl* uid = node->cacheableIdentifier().uid();
+
+    JSValueOperand base(this, node->child1());
+    JSValueOperand value(this, node->child2());
+
+    JSValueRegs baseRegs = base.jsValueRegs();
+    JSValueRegs valueRegs = value.jsValueRegs();
+
+    flushRegisters();
+
+    storePtr(GPRInfo::callFrameRegister, &vm().topCallFrame);
+    emitStoreCodeOrigin(m_currentNode->origin.semantic);
+
+    if (Options::useJITCage())
+        setupArguments<PutValueFuncWithPtr>(LinkableConstant::globalObject(*this, node), baseRegs, valueRegs, TrustedImmPtr(uid), TrustedImmPtr(setter.taggedPtr()));
+    else
+        setupArguments<PutValueFunc>(LinkableConstant::globalObject(*this, node), baseRegs, valueRegs, TrustedImmPtr(uid));
+
+    if (Options::useJITCage())
+        appendCall(vmEntryCustomSetter);
+    else {
+        CodePtr<OperationPtrTag> bypassedFunction(WTF::tagNativeCodePtrImpl<OperationPtrTag>(WTF::untagNativeCodePtrImpl<CustomAccessorPtrTag>(setter.taggedPtr())));
+        appendOperationCall(bypassedFunction);
+    }
+    exceptionCheck();
     noResult(node);
 }
 
@@ -16755,7 +16732,7 @@ void SpeculativeJIT::cachedPutById(Node* node, CodeOrigin codeOrigin, GPRReg bas
     std::unique_ptr<SlowPathGenerator> slowPath;
     auto* operation = appropriatePutByIdOptimizeFunction(accessType);
     if (m_graph.m_plan.isUnlinked()) {
-        gen.generateDFGDataICFastPath(*this, stubInfoConstant.index(), JSValueRegs::payloadOnly(baseGPR), valueRegs, stubInfoGPR, scratchGPR, scratch2GPR);
+        gen.generateDFGDataICFastPath(*this, stubInfoConstant, JSValueRegs::payloadOnly(baseGPR), valueRegs, stubInfoGPR, scratchGPR, scratch2GPR);
         ASSERT(!gen.stubInfo());
         slowPath = slowPathICCall(slowCases, this, stubInfoConstant, stubInfoGPR, Address(stubInfoGPR, StructureStubInfo::offsetOfSlowOperation()), operation, NoResult, valueRegs, CellValue(baseGPR), LinkableConstant::globalObject(*this, node), stubInfoGPR);
     } else {

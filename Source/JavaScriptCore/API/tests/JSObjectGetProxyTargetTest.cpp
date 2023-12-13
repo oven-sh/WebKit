@@ -101,3 +101,4 @@ int testJSObjectGetProxyTarget()
     printf("JSObjectGetProxyTargetTest: %s\n", overallResult ? "PASS" : "FAIL");
     return !overallResult;
 }
+

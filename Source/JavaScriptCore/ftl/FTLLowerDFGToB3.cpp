@@ -1454,6 +1454,12 @@ private:
         case CallWasm:
             compileCallWasm();
             break;
+        case CallCustomAccessorGetter:
+            compileCallCustomAccessorGetter();
+            break;
+        case CallCustomAccessorSetter:
+            compileCallCustomAccessorSetter();
+            break;
         case VarargsLength:
             compileVarargsLength();
             break;
@@ -11420,7 +11426,10 @@ IGNORE_CLANG_WARNINGS_END
                     
                     auto* callLinkInfo = state->addCallLinkInfo(semanticNodeOrigin);
                     callLinkInfo->setUpCall(CallLinkInfo::DirectTailCall, InvalidGPRReg);
-                    
+                    callLinkInfo->setExecutableDuringCompilation(executable);
+                    if (numAllocatedArgs > numPassedArgs)
+                        callLinkInfo->setDirectCallMaxArgumentCountIncludingThis(numAllocatedArgs);
+
                     CCallHelpers::Label mainPath = jit.label();
                     jit.store32(
                         CCallHelpers::TrustedImm32(callSiteIndex.bits()),
@@ -11438,10 +11447,7 @@ IGNORE_CLANG_WARNINGS_END
                         semanticNodeOrigin, exceptions.get(), operationLinkDirectCall,
                         InvalidGPRReg, CCallHelpers::TrustedImmPtr(callLinkInfo), calleeGPR).call();
                     jit.jump().linkTo(mainPath, &jit);
-                    callLinkInfo->setExecutableDuringCompilation(executable);
-                    if (numAllocatedArgs > numPassedArgs)
-                        callLinkInfo->setDirectCallMaxArgumentCountIncludingThis(numAllocatedArgs);
-                    
+
                     jit.addLinkTask([=] (LinkBuffer& linkBuffer) {
                         callLinkInfo->setCodeLocations(
                             linkBuffer.locationOf<JSInternalPtrTag>(slowPath),
@@ -11454,6 +11460,10 @@ IGNORE_CLANG_WARNINGS_END
                 callLinkInfo->setUpCall(
                     isConstruct ? CallLinkInfo::DirectConstruct : CallLinkInfo::DirectCall, InvalidGPRReg);
 
+                callLinkInfo->setExecutableDuringCompilation(executable);
+                if (numAllocatedArgs > numPassedArgs)
+                    callLinkInfo->setDirectCallMaxArgumentCountIncludingThis(numAllocatedArgs);
+
                 CCallHelpers::Label mainPath = jit.label();
                 jit.store32(
                     CCallHelpers::TrustedImm32(callSiteIndex.bits()),
@@ -11462,10 +11472,6 @@ IGNORE_CLANG_WARNINGS_END
                 jit.addPtr(
                     CCallHelpers::TrustedImm32(-params.proc().frameSize()),
                     GPRInfo::callFrameRegister, CCallHelpers::stackPointerRegister);
-                
-                callLinkInfo->setExecutableDuringCompilation(executable);
-                if (numAllocatedArgs > numPassedArgs)
-                    callLinkInfo->setDirectCallMaxArgumentCountIncludingThis(numAllocatedArgs);
                 
                 params.addLatePath(
                     [=] (CCallHelpers& jit) {
@@ -12576,6 +12582,38 @@ IGNORE_CLANG_WARNINGS_END
                 RELEASE_ASSERT_NOT_REACHED();
                 break;
             }
+        }
+    }
+
+    void compileCallCustomAccessorGetter()
+    {
+        // The following function is not an operation: we directly call a custom accessor getter.
+        // Since the getter does not have code setting topCallFrame, As is the same to IC, we should set topCallFrame in caller side.
+        JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
+        m_out.storePtr(m_callFrame, m_out.absolute(&vm().topCallFrame));
+        auto getter = m_node->customAccessor();
+        auto* uid = m_node->cacheableIdentifier().uid();
+        if (Options::useJITCage())
+            setJSValue(vmCall(Int64, vmEntryCustomGetter, weakPointer(globalObject), lowJSValue(m_node->child1()), m_out.constIntPtr(uid), m_out.constIntPtr(getter.taggedPtr())));
+        else {
+            CodePtr<OperationPtrTag> bypassedFunction(WTF::tagNativeCodePtrImpl<OperationPtrTag>(WTF::untagNativeCodePtrImpl<CustomAccessorPtrTag>(getter.taggedPtr())));
+            setJSValue(vmCall(Int64, bypassedFunction, weakPointer(globalObject), lowJSValue(m_node->child1()), m_out.constIntPtr(uid)));
+        }
+    }
+
+    void compileCallCustomAccessorSetter()
+    {
+        // The following function is not an operation: we directly call a custom accessor setter.
+        // Since the setter does not have code setting topCallFrame, As is the same to IC, we should set topCallFrame in caller side.
+        JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
+        m_out.storePtr(m_callFrame, m_out.absolute(&vm().topCallFrame));
+        auto setter = m_node->customAccessor();
+        auto* uid = m_node->cacheableIdentifier().uid();
+        if (Options::useJITCage())
+            vmCall(Void, vmEntryCustomSetter, weakPointer(globalObject), lowJSValue(m_node->child1()), lowJSValue(m_node->child2()), m_out.constIntPtr(uid), m_out.constIntPtr(setter.taggedPtr()));
+        else {
+            CodePtr<OperationPtrTag> bypassedFunction(WTF::tagNativeCodePtrImpl<OperationPtrTag>(WTF::untagNativeCodePtrImpl<CustomAccessorPtrTag>(setter.taggedPtr())));
+            vmCall(Void, bypassedFunction, weakPointer(globalObject), lowJSValue(m_node->child1()), lowJSValue(m_node->child2()), m_out.constIntPtr(uid));
         }
     }
 
@@ -17497,67 +17535,6 @@ IGNORE_CLANG_WARNINGS_END
                 case SpecBoolean:
                     operands.append(lowBoolean(edge));
                     break;
-                case SpecInt8Array: {
-                    LValue cell = lowCell(edge);
-                    FTL_TYPE_CHECK(jsValueValue(cell), edge, SpecInt8Array, isNotType(cell, Int8ArrayType));
-                    operands.append(cell);
-                    break;
-                }
-                case SpecInt16Array: {
-                    LValue cell = lowCell(edge);
-                    FTL_TYPE_CHECK(jsValueValue(cell), edge, SpecInt16Array, isNotType(cell, Int16ArrayType));
-                    operands.append(cell);
-                    break;
-                }
-                case SpecInt32Array: {
-                    LValue cell = lowCell(edge);
-                    FTL_TYPE_CHECK(jsValueValue(cell), edge, SpecInt32Array, isNotType(cell, Int32ArrayType));
-                    operands.append(cell);
-                    break;
-                }
-                case SpecUint8Array: {
-                    LValue cell = lowCell(edge);
-                    FTL_TYPE_CHECK(jsValueValue(cell), edge, SpecUint8Array, isNotType(cell, Uint8ArrayType));
-                    operands.append(cell);
-                    break;
-                }
-                case SpecUint8ClampedArray: {
-                    LValue cell = lowCell(edge);
-                    FTL_TYPE_CHECK(jsValueValue(cell), edge, SpecUint8ClampedArray, isNotType(cell, Uint8ClampedArrayType));
-                    operands.append(cell);
-                    break;
-                }
-                case SpecUint16Array: {
-                    LValue cell = lowCell(edge);
-                    FTL_TYPE_CHECK(jsValueValue(cell), edge, SpecUint16Array, isNotType(cell, Uint16ArrayType));
-                    operands.append(cell);
-                    break;
-                }
-                case SpecUint32Array: {
-                    LValue cell = lowCell(edge);
-                    FTL_TYPE_CHECK(jsValueValue(cell), edge, SpecUint32Array, isNotType(cell, Uint32ArrayType));
-                    operands.append(cell);
-                    break;
-                }
-                case SpecFloat32Array: {
-                    LValue cell = lowCell(edge);
-                    FTL_TYPE_CHECK(jsValueValue(cell), edge, SpecFloat32Array, isNotType(cell, Float32ArrayType));
-                    operands.append(cell);
-                    break;
-                }
-                case SpecFloat64Array: {
-                    LValue cell = lowCell(edge);
-                    FTL_TYPE_CHECK(jsValueValue(cell), edge, SpecFloat64Array, isNotType(cell, Float64ArrayType));
-                    operands.append(cell);
-                    break;
-                }
-                case SpecAnyIntAsDouble:
-                case SpecInt52Any:
-                case SpecInt32AsInt52:
-                case SpecNonInt32AsInt52: {
-                    operands.append(lowStrictInt52(edge));
-                    break;
-                }
                 default:
                     RELEASE_ASSERT_NOT_REACHED();
                     break;
@@ -18143,7 +18120,7 @@ IGNORE_CLANG_WARNINGS_END
         LValue base = lowDateObject(m_node->child1());
         LValue arg = lowDouble(m_node->child2());
         LValue time = m_out.add(m_out.doubleTrunc(arg), m_out.constDouble(0));
-        LValue result = m_out.select(m_out.doubleGreaterThan(m_out.doubleAbs(arg), m_out.constDouble(WTF::maxECMAScriptTime)), m_out.constDouble(PNaN), time);
+        LValue result = m_out.select(m_out.doubleGreaterThanOrUnordered(m_out.doubleAbs(arg), m_out.constDouble(WTF::maxECMAScriptTime)), m_out.constDouble(PNaN), time);
         m_out.storeDouble(result, base, m_heaps.DateInstance_internalNumber);
         setDouble(result);
     }
@@ -20342,22 +20319,16 @@ IGNORE_CLANG_WARNINGS_END
                         patchableJump.m_jump.link(&jit);
                         unsigned index = state->jitCode->lazySlowPaths.size();
                         state->jitCode->lazySlowPaths.append(nullptr);
-                        jit.pushToSaveImmediateWithoutTouchingRegisters(
-                            CCallHelpers::TrustedImm32(index));
-                        CCallHelpers::Jump generatorJump = jit.jump();
+                        jit.pushToSaveImmediateWithoutTouchingRegisters(CCallHelpers::TrustedImm32(index));
+                        jit.jumpThunk(CodeLocationLabel<JITThunkPtrTag>(state->graph.m_vm.getCTIStub(lazySlowPathGenerationThunkGenerator).code()));
 
                         // Note that so long as we're here, we don't really know if our late path
                         // runs before or after any other late paths that we might depend on, like
                         // the exception thunk.
 
                         RefPtr<JITCode> jitCode = state->jitCode;
-                        VM* vm = &state->graph.m_vm;
-
                         jit.addLinkTask(
                             [=] (LinkBuffer& linkBuffer) {
-                                linkBuffer.link(generatorJump,
-                                    CodeLocationLabel<JITThunkPtrTag>(vm->getCTIStub(lazySlowPathGenerationThunkGenerator).code()));
-                                
                                 std::unique_ptr<LazySlowPath> lazySlowPath = makeUnique<LazySlowPath>();
 
                                 auto linkedPatchableJump = CodeLocationJump<JSInternalPtrTag>(linkBuffer.locationOf<JSInternalPtrTag>(patchableJump));

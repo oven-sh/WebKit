@@ -760,33 +760,30 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
     {
         ConcurrentJSLocker locker(m_lock);
         ASSERT(!m_jitData);
-        auto baselineJITData = BaselineJITData::create(jitCode->m_constantPool.size(), this);
-        baselineJITData->m_stubInfos = FixedVector<StructureStubInfo>(jitCode->m_unlinkedStubInfos.size());
+        auto baselineJITData = BaselineJITData::create(jitCode->m_unlinkedStubInfos.size(), jitCode->m_constantPool.size(), this);
         for (auto& unlinkedCallLinkInfo : jitCode->m_unlinkedCalls) {
             CallLinkInfo* callLinkInfo = getCallLinkInfoForBytecodeIndex(locker, unlinkedCallLinkInfo.bytecodeIndex);
             ASSERT(callLinkInfo);
             static_cast<BaselineCallLinkInfo*>(callLinkInfo)->setCodeLocations(unlinkedCallLinkInfo.doneLocation);
         }
 
+        for (unsigned index = 0; index < jitCode->m_unlinkedStubInfos.size(); ++index) {
+            BaselineUnlinkedStructureStubInfo& unlinkedStubInfo = jitCode->m_unlinkedStubInfos[index];
+            auto& stubInfo = baselineJITData->stubInfo(index);
+            stubInfo.initializeFromUnlinkedStructureStubInfo(vm(), unlinkedStubInfo);
+        }
+
         for (size_t i = 0; i < jitCode->m_constantPool.size(); ++i) {
             auto entry = jitCode->m_constantPool.at(i);
             switch (entry.type()) {
-            case JITConstantPool::Type::StructureStubInfo: {
-                unsigned index = bitwise_cast<uintptr_t>(entry.pointer());
-                BaselineUnlinkedStructureStubInfo& unlinkedStubInfo = jitCode->m_unlinkedStubInfos[index];
-                StructureStubInfo& stubInfo = baselineJITData->m_stubInfos[index];
-                stubInfo.initializeFromUnlinkedStructureStubInfo(vm(), unlinkedStubInfo);
-                baselineJITData->at(i) = &stubInfo;
-                break;
-            }
             case JITConstantPool::Type::FunctionDecl: {
                 unsigned index = bitwise_cast<uintptr_t>(entry.pointer());
-                baselineJITData->at(i) = functionDecl(index);
+                baselineJITData->trailingSpan()[i] = functionDecl(index);
                 break;
             }
             case JITConstantPool::Type::FunctionExpr: {
                 unsigned index = bitwise_cast<uintptr_t>(entry.pointer());
-                baselineJITData->at(i) = functionExpr(index);
+                baselineJITData->trailingSpan()[i] = functionExpr(index);
                 break;
             }
             }
@@ -815,12 +812,6 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
 CodeBlock::~CodeBlock()
 {
     VM& vm = *m_vm;
-
-    // We use unvalidatedGet because get() has a validation assertion that rejects access.
-    // This assertion is correct since destruction order of cells is not guaranteed, and member cells could already be destroyed.
-    // But for CodeBlock, we are ensuring the order: CodeBlock gets destroyed before UnlinkedCodeBlock gets destroyed.
-    // So, we can access member UnlinkedCodeBlock safely here. We bypass the assertion by using unvalidatedGet.
-    UnlinkedCodeBlock* unlinkedCodeBlock = m_unlinkedCode.unvalidatedGet();
 
     if (JITCode::isBaselineCode(jitType())) {
         if (m_metadata) {
@@ -851,13 +842,16 @@ CodeBlock::~CodeBlock()
     if (JITCode::isOptimizingJIT(jitType()))
         jitCode()->dfgCommon()->clearWatchpoints();
 #endif
-    vm.heap.codeBlockSet().remove(this);
-    
+
     if (UNLIKELY(vm.m_perBytecodeProfiler))
         vm.m_perBytecodeProfiler->notifyDestruction(this);
 
-    if (!vm.heap.isShuttingDown() && unlinkedCodeBlock->didOptimize() == TriState::Indeterminate)
-        unlinkedCodeBlock->setDidOptimize(TriState::False);
+    if (LIKELY(!vm.heap.isShuttingDown())) {
+        if (m_metadata) {
+            if (m_metadata->unlinkedMetadata().didOptimize() == TriState::Indeterminate)
+                m_metadata->unlinkedMetadata().setDidOptimize(TriState::False);
+        }
+    }
 
 #if ENABLE(VERBOSE_VALUE_PROFILE)
     dumpValueProfiles();
@@ -988,7 +982,7 @@ void CodeBlock::setAlternative(VM& vm, CodeBlock* alternative)
 void CodeBlock::setNumParameters(unsigned newValue, bool allocateArgumentValueProfiles)
 {
     m_numParameters = newValue;
-    m_argumentValueProfiles = FixedVector<ValueProfile>((Options::useJIT() && allocateArgumentValueProfiles) ? newValue : 0);
+    m_argumentValueProfiles = FixedVector<ArgumentValueProfile>((Options::useJIT() && allocateArgumentValueProfiles) ? newValue : 0);
 }
 
 CodeBlock* CodeBlock::specialOSREntryBlockOrNull()
@@ -1027,16 +1021,18 @@ inline void CodeBlock::forEachStructureStubInfo(Func func)
                 return;
         }
         if (auto* jitData = dfgJITData()) {
-            for (auto& stubInfo : jitData->stubInfos())
+            for (auto& stubInfo : jitData->stubInfos()) {
                 if (func(stubInfo) == IterationStatus::Done)
                     return;
+            }
         }
 #endif
     } else {
         if (auto* jitData = baselineJITData()) {
-            for (auto& stubInfo : jitData->m_stubInfos)
+            for (auto& stubInfo : jitData->stubInfos()) {
                 if (func(stubInfo) == IterationStatus::Done)
                     return;
+            }
         }
     }
 #endif // ENABLE(JIT)
@@ -1626,7 +1622,7 @@ void CodeBlock::finalizeUnconditionally(VM& vm, CollectionScope)
         if (!VM::useUnlinkedCodeBlockJettisoning())
             return;
         JITCode* jitCode = m_jitCode.get();
-        double count = 0;
+        float count = 0;
         bool alwaysActive = false;
         switch (JITCode::jitTypeFor(jitCode)) {
         case JITType::None:
@@ -1785,7 +1781,7 @@ void CodeBlock::resetBaselineJITData()
         // these *infos, but when we have an OSR exit linked to this CodeBlock, we won't downgrade
         // to LLInt.
 
-        for (auto& stubInfo : jitData->m_stubInfos) {
+        for (auto& stubInfo : jitData->stubInfos()) {
             stubInfo.aboutToDie();
             stubInfo.deref();
         }
@@ -2052,16 +2048,16 @@ unsigned CodeBlock::lineNumberForBytecodeIndex(BytecodeIndex bytecodeIndex)
 
 unsigned CodeBlock::columnNumberForBytecodeIndex(BytecodeIndex bytecodeIndex)
 {
-    int divot;
-    int startOffset;
-    int endOffset;
+    unsigned divot;
+    unsigned startOffset;
+    unsigned endOffset;
     unsigned line;
     unsigned column;
     expressionRangeForBytecodeIndex(bytecodeIndex, divot, startOffset, endOffset, line, column);
     return column;
 }
 
-void CodeBlock::expressionRangeForBytecodeIndex(BytecodeIndex bytecodeIndex, int& divot, int& startOffset, int& endOffset, unsigned& line, unsigned& column) const
+void CodeBlock::expressionRangeForBytecodeIndex(BytecodeIndex bytecodeIndex, unsigned& divot, unsigned& startOffset, unsigned& endOffset, unsigned& line, unsigned& column) const
 {
     m_unlinkedCode->expressionRangeForBytecodeIndex(bytecodeIndex, divot, startOffset, endOffset, line, column);
     divot += sourceOffset();
@@ -2074,7 +2070,7 @@ bool CodeBlock::hasOpDebugForLineAndColumn(unsigned line, std::optional<unsigned
     const auto& instructionStream = instructions();
     for (const auto& it : instructionStream) {
         if (it->is<OpDebug>()) {
-            int unused;
+            unsigned unused;
             unsigned opDebugLine;
             unsigned opDebugColumn;
             expressionRangeForBytecodeIndex(it.index(), unused, unused, unused, opDebugLine, opDebugColumn);
@@ -2097,17 +2093,10 @@ void CodeBlock::shrinkToFit(const ConcurrentJSLocker&, ShrinkMode shrinkMode)
 #endif
 }
 
-#if ENABLE(JIT)
-void CodeBlock::linkIncomingPolymorphicCall(CallFrame* callerFrame, PolymorphicCallNode* incoming)
+void CodeBlock::linkIncomingCall(CallFrame* callerFrame, CallLinkInfoBase* incoming)
 {
-    noticeIncomingCall(callerFrame);
-    m_incomingPolymorphicCalls.push(incoming);
-}
-#endif // ENABLE(JIT)
-
-void CodeBlock::linkIncomingCall(CallFrame* callerFrame, CallLinkInfo* incoming)
-{
-    noticeIncomingCall(callerFrame);
+    if (callerFrame)
+        noticeIncomingCall(callerFrame);
     m_incomingCalls.push(incoming);
 }
 
@@ -2115,10 +2104,6 @@ void CodeBlock::unlinkIncomingCalls()
 {
     while (!m_incomingCalls.isEmpty())
         m_incomingCalls.begin()->unlink(vm());
-#if ENABLE(JIT)
-    while (!m_incomingPolymorphicCalls.isEmpty())
-        m_incomingPolymorphicCalls.begin()->unlink(vm());
-#endif
 }
 
 CodeBlock* CodeBlock::newReplacement()
@@ -2837,11 +2822,12 @@ void CodeBlock::updateAllNonLazyValueProfilePredictionsAndCountLiveness(const Co
     unsigned index = 0;
     UnlinkedCodeBlock* unlinkedCodeBlock = this->unlinkedCodeBlock();
     bool isBuiltinFunction = unlinkedCodeBlock->isBuiltinFunction();
-    forEachValueProfile([&](ValueProfile& profile, bool isArgument) {
+    forEachValueProfile([&](auto& profile, bool isArgument) {
         unsigned numSamples = profile.totalNumberOfSamples();
-        static_assert(ValueProfile::numberOfBuckets == 1);
-        if (numSamples > ValueProfile::numberOfBuckets)
-            numSamples = ValueProfile::numberOfBuckets; // We don't want profiles that are extremely hot to be given more weight.
+        using Profile = std::remove_reference_t<decltype(profile)>;
+        static_assert(Profile::numberOfBuckets == 1);
+        if (numSamples > Profile::numberOfBuckets)
+            numSamples = Profile::numberOfBuckets; // We don't want profiles that are extremely hot to be given more weight.
         numberOfSamplesInProfiles += numSamples;
         if (isArgument) {
             profile.computeUpdatedPrediction(locker);
@@ -2877,17 +2863,19 @@ void CodeBlock::updateAllNonLazyValueProfilePredictions(const ConcurrentJSLocker
 
 void CodeBlock::updateAllLazyValueProfilePredictions(const ConcurrentJSLocker& locker)
 {
+#if USE(JSVALUE32_64)
+    // JSVALUE64 does not need a lock.
     ASSERT(m_lock.isLocked());
+#endif
 #if ENABLE(DFG_JIT)
-    lazyOperandValueProfiles(locker).computeUpdatedPredictions(locker);
+    lazyValueProfiles().computeUpdatedPredictions(locker, this);
 #else
     UNUSED_PARAM(locker);
 #endif
 }
 
-void CodeBlock::updateAllArrayProfilePredictions(const ConcurrentJSLocker& locker)
+void CodeBlock::updateAllArrayProfilePredictions()
 {
-    ASSERT(m_lock.isLocked());
     if (!m_metadata)
         return;
 
@@ -2895,7 +2883,7 @@ void CodeBlock::updateAllArrayProfilePredictions(const ConcurrentJSLocker& locke
     UnlinkedCodeBlock* unlinkedCodeBlock = this->unlinkedCodeBlock();
     bool isBuiltinFunction = unlinkedCodeBlock->isBuiltinFunction();
     auto process = [&] (ArrayProfile& profile) {
-        profile.computeUpdatedPrediction(locker, this);
+        profile.computeUpdatedPrediction(this);
         if (!isBuiltinFunction)
             unlinkedCodeBlock->unlinkedArrayProfile(index).update(profile);
         ++index;
@@ -2931,13 +2919,13 @@ void CodeBlock::updateAllArrayAllocationProfilePredictions()
 
 void CodeBlock::updateAllPredictions()
 {
-    updateAllNonLazyValueProfilePredictions(ConcurrentJSLocker(valueProfileLock()));
-    updateAllArrayAllocationProfilePredictions();
     {
-        ConcurrentJSLocker locker(m_lock);
+        ConcurrentJSLocker locker(valueProfileLock());
+        updateAllNonLazyValueProfilePredictions(locker);
         updateAllLazyValueProfilePredictions(locker);
-        updateAllArrayProfilePredictions(locker);
     }
+    updateAllArrayAllocationProfilePredictions();
+    updateAllArrayProfilePredictions();
 }
 
 bool CodeBlock::shouldOptimizeNowFromBaseline()
@@ -2950,14 +2938,12 @@ bool CodeBlock::shouldOptimizeNowFromBaseline()
     unsigned numberOfLiveNonArgumentValueProfiles;
     unsigned numberOfSamplesInProfiles;
     {
-        updateAllNonLazyValueProfilePredictionsAndCountLiveness(ConcurrentJSLocker(valueProfileLock()), numberOfLiveNonArgumentValueProfiles, numberOfSamplesInProfiles);
-        updateAllArrayAllocationProfilePredictions();
-        {
-            ConcurrentJSLocker locker(m_lock);
-            updateAllArrayProfilePredictions(locker);
-            updateAllLazyValueProfilePredictions(locker);
-        }
+        ConcurrentJSLocker locker(valueProfileLock());
+        updateAllNonLazyValueProfilePredictionsAndCountLiveness(locker, numberOfLiveNonArgumentValueProfiles, numberOfSamplesInProfiles);
+        updateAllLazyValueProfilePredictions(locker);
     }
+    updateAllArrayAllocationProfilePredictions();
+    updateAllArrayProfilePredictions();
 
     double livenessRate = 1.0;
     if (numberOfNonArgumentValueProfiles())
@@ -3062,7 +3048,7 @@ void CodeBlock::notifyLexicalBindingUpdate()
 void CodeBlock::dumpValueProfiles()
 {
     dataLog("ValueProfile for ", *this, ":\n");
-    forEachValueProfile([](ValueProfile& profile, bool isArgument) {
+    forEachValueProfile([](auto& profile, bool isArgument) {
         if (isArgument)
             dataLogF("   arg: ");
         else
@@ -3184,10 +3170,13 @@ ValueProfile* CodeBlock::tryGetValueProfileForBytecodeIndex(BytecodeIndex byteco
     }
 }
 
-SpeculatedType CodeBlock::valueProfilePredictionForBytecodeIndex(const ConcurrentJSLocker& locker, BytecodeIndex bytecodeIndex)
+SpeculatedType CodeBlock::valueProfilePredictionForBytecodeIndex(const ConcurrentJSLocker& locker, BytecodeIndex bytecodeIndex, JSValue* specFailValue)
 {
-    if (ValueProfile* valueProfile = tryGetValueProfileForBytecodeIndex(bytecodeIndex))
+    if (ValueProfile* valueProfile = tryGetValueProfileForBytecodeIndex(bytecodeIndex)) {
+        if (specFailValue)
+            valueProfile->computeUpdatedPredictionForExtraValue(locker, *specFailValue);
         return valueProfile->computeUpdatedPrediction(locker);
+    }
     return SpecNone;
 }
 

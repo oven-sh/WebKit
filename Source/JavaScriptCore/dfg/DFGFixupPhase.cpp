@@ -3136,6 +3136,8 @@ private:
         case GetWebAssemblyInstanceExports:
         case NewBoundFunction:
         case MakeAtomString:
+        case CallCustomAccessorGetter:
+        case CallCustomAccessorSetter:
             break;
 #else // not ASSERT_ENABLED
         default:
@@ -4322,7 +4324,7 @@ private:
             ConcurrentJSLocker locker(profiledBlock->m_lock);
             ArrayProfile* arrayProfile = profiledBlock->getArrayProfile(locker, node->origin.semantic.bytecodeIndex());
             if (arrayProfile) {
-                arrayProfile->computeUpdatedPrediction(locker, profiledBlock);
+                arrayProfile->computeUpdatedPrediction(profiledBlock);
                 arrayMode = ArrayMode::fromObserved(locker, arrayProfile, Array::Read, false);
                 if (arrayMode.type() == Array::Unprofiled) {
                     // For normal array operations, it makes sense to treat Unprofiled
@@ -4470,70 +4472,17 @@ private:
                 } else {
                     switch (signature->arguments[index - 2]) {
                     case SpecString:
-                        if (!edge->shouldSpeculateNotString())
+                        if (edge->shouldSpeculateNotString())
                             shouldConvertToCallDOM = false;
                         break;
                     case SpecInt32Only:
-                        if (!edge->shouldSpeculateNotInt32())
+                        if (edge->shouldSpeculateNotInt32())
                             shouldConvertToCallDOM = false;
                         break;
                     case SpecBoolean:
-                        if (!edge->shouldSpeculateNotBoolean())
+                        if (edge->shouldSpeculateNotBoolean())
                             shouldConvertToCallDOM = false;
                         break;
-                    case SpecInt8Array: {
-                        if (edge->shouldSpeculateInt8Array())
-                            shouldConvertToCallDOM = false;
-                        break;
-                    }
-                    case SpecInt16Array: {
-                        if (edge->shouldSpeculateInt16Array())
-                            shouldConvertToCallDOM = false;
-                        break;
-                    }
-                    case SpecInt32Array: {
-                        if (edge->shouldSpeculateInt32Array())
-                            shouldConvertToCallDOM = false;
-                        break;
-                    }
-                    case SpecUint8Array: {
-                        if (edge->shouldSpeculateUint8Array())
-                            shouldConvertToCallDOM = false;
-                        break;
-                    }
-                    case SpecUint8ClampedArray: {
-                        if (edge->shouldSpeculateUint8ClampedArray())
-                            shouldConvertToCallDOM = false;
-                        break;
-                    }
-                    case SpecUint16Array: {
-                        if (edge->shouldSpeculateUint16Array())
-                            shouldConvertToCallDOM = false;
-                        break;
-                    }
-                    case SpecUint32Array: {
-                        if (edge->shouldSpeculateUint32Array())
-                            shouldConvertToCallDOM = false;
-                        break;
-                    }
-                    case SpecFloat32Array: {
-                        if (edge->shouldSpeculateFloat32Array())
-                            shouldConvertToCallDOM = false;
-                        break;
-                    }
-                    case SpecFloat64Array: {
-                        if (edge->shouldSpeculateFloat64Array())
-                            shouldConvertToCallDOM = false;
-                        break;
-                    }
-                    case SpecInt52Any:
-                    case SpecInt32AsInt52:
-                    case SpecNonInt32AsInt52:
-                    case SpecAnyIntAsDouble: {
-                        if (edge->shouldSpeculateInt52())
-                            shouldConvertToCallDOM = false;
-                        break;
-                    }
                     default:
                         RELEASE_ASSERT_NOT_REACHED();
                         break;
@@ -4575,24 +4524,6 @@ private:
             case SpecBoolean:
                 fixEdge<BooleanUse>(edge);
                 break;
-            case SpecAnyIntAsDouble:
-            case SpecNonInt32AsInt52:
-            case SpecInt32AsInt52:
-            case SpecInt52Any:
-                fixEdge<Int52RepUse>(edge);
-                break;
-            case SpecInt8Array:
-            case SpecInt16Array: 
-            case SpecInt32Array: 
-            case SpecUint8Array: 
-            case SpecUint8ClampedArray: 
-            case SpecUint16Array: 
-            case SpecUint32Array: 
-            case SpecFloat32Array: 
-            case SpecFloat64Array: {
-                fixEdge<CellUse>(edge);
-                break;
-            }
             default:
                 RELEASE_ASSERT_NOT_REACHED();
                 break;

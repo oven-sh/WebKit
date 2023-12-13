@@ -165,6 +165,7 @@ enum class WebCore::WebGPU::VertexFormat : uint8_t {
     Sint32x2,
     Sint32x3,
     Sint32x4,
+    Unorm10_10_10_2,
 };
 
 header: <WebCore/WebGPUShaderStage.h>
@@ -182,12 +183,6 @@ header: <WebCore/WebGPUShaderStage.h>
 };
 
 using WebCore::WebGPU::ShaderStageFlags = OptionSet<WebCore::WebGPU::ShaderStage>;
-
-header: <WebCore/WebGPURenderPassTimestampLocation.h>
-enum class WebCore::WebGPU::RenderPassTimestampLocation : uint8_t {
-    Beginning,
-    End,
-};
 
 header: <WebCore/WebGPUCompilationMessageType.h>
 enum class WebCore::WebGPU::CompilationMessageType : uint8_t {
@@ -212,12 +207,6 @@ header: <WebCore/WebGPUDeviceLostReason.h>
 enum class WebCore::WebGPU::DeviceLostReason : uint8_t {
     Destroyed,
     Unknown,
-};
-
-header: <WebCore/WebGPUComputePassTimestampLocation.h>
-enum class WebCore::WebGPU::ComputePassTimestampLocation : uint8_t {
-    Beginning,
-    End,
 };
 
 header: <WebCore/WebGPUAddressMode.h>

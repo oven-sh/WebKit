@@ -1,7 +1,4 @@
-<<<<<<< HEAD
 //@ skip if $memoryLimited
-=======
->>>>>>> cfce27496e61 ([JSC] Use memchr in WTF::find for long strings)
 function bench(string, func)
 {
     for (var i = 0; i < 1000; ++i)

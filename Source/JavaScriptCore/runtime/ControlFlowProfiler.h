@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014-2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2023 Apple Inc. All rights reserved.
  * Copyright (C) 2014 Saam Barati. <saambarati1@gmail.com>
  *
  * Redistribution and use in source and binary forms, with or without
@@ -29,6 +29,7 @@
 #include "BasicBlockLocation.h"
 #include "SourceID.h"
 #include <wtf/HashMap.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace JSC {
 
@@ -88,14 +89,13 @@ struct BasicBlockRange {
 };
 
 class ControlFlowProfiler {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED(ControlFlowProfiler);
 public:
     ControlFlowProfiler();
     ~ControlFlowProfiler();
     BasicBlockLocation* getBasicBlockLocation(SourceID, int startOffset, int endOffset);
     JS_EXPORT_PRIVATE void dumpData() const;
-    JS_EXPORT_PRIVATE Vector<BasicBlockRange> getBasicBlocksForSourceID(SourceID, VM&) const;
-    JS_EXPORT_PRIVATE Vector<BasicBlockRange> getBasicBlocksForSourceIDWithoutFunctionRange(SourceID, VM&) const;
+    Vector<BasicBlockRange> getBasicBlocksForSourceID(SourceID, VM&) const;
     BasicBlockLocation* dummyBasicBlock() { return &m_dummyBasicBlock; }
     JS_EXPORT_PRIVATE bool hasBasicBlockAtTextOffsetBeenExecuted(int, SourceID, VM&); // This function exists for testing.
     JS_EXPORT_PRIVATE size_t basicBlockExecutionCountAtTextOffset(int, SourceID, VM&); // This function exists for testing.

@@ -207,6 +207,7 @@
 #import <WebCore/ProgressTracker.h>
 #import <WebCore/Range.h>
 #import <WebCore/RemoteFrameClient.h>
+#import <WebCore/RemoteUserInputEventData.h>
 #import <WebCore/RenderStyleInlines.h>
 #import <WebCore/RenderTheme.h>
 #import <WebCore/RenderView.h>
@@ -1561,7 +1562,7 @@ static void WebKitInitializeGamepadProviderIfNecessary()
     WebCore::provideNotification(_private->page, new WebNotificationClient(self));
 #endif
 #if ENABLE(ENCRYPTED_MEDIA)
-    WebCore::provideMediaKeySystemTo(*_private->page, *new WebMediaKeySystemClient());
+    WebCore::provideMediaKeySystemTo(*_private->page, WebMediaKeySystemClient::singleton());
 #endif
 
 #if ENABLE(REMOTE_INSPECTOR)
@@ -1978,23 +1979,35 @@ static void WebKitInitializeGamepadProviderIfNecessary()
 
 - (uint64_t)_enteredDataInteraction:(id <UIDropSession>)session client:(CGPoint)clientPosition global:(CGPoint)globalPosition operation:(uint64_t)operation
 {
+    RefPtr localMainFrame = [self _mainCoreFrame];
+    if (!localMainFrame)
+        return 0;
+
     WebThreadLock();
     auto dragData = [self dragDataForSession:session client:clientPosition global:globalPosition operation:operation];
-    return kit(_private->page->dragController().dragEntered(WTFMove(dragData)));
+    return kit(std::get<std::optional<WebCore::DragOperation>>(_private->page->dragController().dragEnteredOrUpdated(*localMainFrame, WTFMove(dragData))));
 }
 
 - (uint64_t)_updatedDataInteraction:(id <UIDropSession>)session client:(CGPoint)clientPosition global:(CGPoint)globalPosition operation:(uint64_t)operation
 {
+    RefPtr localMainFrame = [self _mainCoreFrame];
+    if (!localMainFrame)
+        return 0;
+
     WebThreadLock();
     auto dragData = [self dragDataForSession:session client:clientPosition global:globalPosition operation:operation];
-    return kit(_private->page->dragController().dragUpdated(WTFMove(dragData)));
+    return kit(std::get<std::optional<WebCore::DragOperation>>(_private->page->dragController().dragEnteredOrUpdated(*localMainFrame, WTFMove(dragData))));
 }
 
 - (void)_exitedDataInteraction:(id <UIDropSession>)session client:(CGPoint)clientPosition global:(CGPoint)globalPosition operation:(uint64_t)operation
 {
+    RefPtr localMainFrame = [self _mainCoreFrame];
+    if (!localMainFrame)
+        return;
+
     WebThreadLock();
     auto dragData = [self dragDataForSession:session client:clientPosition global:globalPosition operation:operation];
-    _private->page->dragController().dragExited(WTFMove(dragData));
+    _private->page->dragController().dragExited(*localMainFrame, WTFMove(dragData));
 }
 
 - (void)_performDataInteraction:(id <UIDropSession>)session client:(CGPoint)clientPosition global:(CGPoint)globalPosition operation:(uint64_t)operation
@@ -4274,7 +4287,7 @@ IGNORE_WARNINGS_END
     if (!world)
         return;
 
-    auto styleSheet = makeUnique<WebCore::UserStyleSheet>(source, url, makeVector<String>(includeMatchPatternStrings), makeVector<String>(excludeMatchPatternStrings), injectedFrames == WebInjectInAllFrames ? WebCore::UserContentInjectedFrames::InjectInAllFrames : WebCore::UserContentInjectedFrames::InjectInTopFrameOnly, WebCore::UserStyleUserLevel);
+    auto styleSheet = makeUnique<WebCore::UserStyleSheet>(source, url, makeVector<String>(includeMatchPatternStrings), makeVector<String>(excludeMatchPatternStrings), injectedFrames == WebInjectInAllFrames ? WebCore::UserContentInjectedFrames::InjectInAllFrames : WebCore::UserContentInjectedFrames::InjectInTopFrameOnly, WebCore::UserStyleLevel::User);
     viewGroup->userContentController().addUserStyleSheet(*core(world), WTFMove(styleSheet), WebCore::InjectInExistingDocuments);
 }
 
@@ -4461,19 +4474,19 @@ IGNORE_WARNINGS_END
     auto pagination = page->pagination();
     switch (paginationMode) {
     case WebPaginationModeUnpaginated:
-        pagination.mode = WebCore::Unpaginated;
+        pagination.mode = WebCore::PaginationMode::Unpaginated;
         break;
     case WebPaginationModeLeftToRight:
-        pagination.mode = WebCore::LeftToRightPaginated;
+        pagination.mode = WebCore::PaginationMode::LeftToRightPaginated;
         break;
     case WebPaginationModeRightToLeft:
-        pagination.mode = WebCore::RightToLeftPaginated;
+        pagination.mode = WebCore::PaginationMode::RightToLeftPaginated;
         break;
     case WebPaginationModeTopToBottom:
-        pagination.mode = WebCore::TopToBottomPaginated;
+        pagination.mode = WebCore::PaginationMode::TopToBottomPaginated;
         break;
     case WebPaginationModeBottomToTop:
-        pagination.mode = WebCore::BottomToTopPaginated;
+        pagination.mode = WebCore::PaginationMode::BottomToTopPaginated;
         break;
     default:
         return;
@@ -4489,15 +4502,15 @@ IGNORE_WARNINGS_END
         return WebPaginationModeUnpaginated;
 
     switch (page->pagination().mode) {
-    case WebCore::Unpaginated:
+    case WebCore::PaginationMode::Unpaginated:
         return WebPaginationModeUnpaginated;
-    case WebCore::LeftToRightPaginated:
+    case WebCore::PaginationMode::LeftToRightPaginated:
         return WebPaginationModeLeftToRight;
-    case WebCore::RightToLeftPaginated:
+    case WebCore::PaginationMode::RightToLeftPaginated:
         return WebPaginationModeRightToLeft;
-    case WebCore::TopToBottomPaginated:
+    case WebCore::PaginationMode::TopToBottomPaginated:
         return WebPaginationModeTopToBottom;
-    case WebCore::BottomToTopPaginated:
+    case WebCore::PaginationMode::BottomToTopPaginated:
         return WebPaginationModeBottomToTop;
     }
 
@@ -6316,11 +6329,15 @@ static NSString * const backingPropertyOldScaleFactorKey = @"NSBackingPropertyOl
 
 - (NSDragOperation)draggingEntered:(id <NSDraggingInfo>)draggingInfo
 {
+    RefPtr localMainFrame = [self _mainCoreFrame];
+    if (!localMainFrame)
+        return NSDragOperationNone;
+
     WebCore::IntPoint client([draggingInfo draggingLocation]);
     WebCore::IntPoint global(WebCore::globalPoint([draggingInfo draggingLocation], [self window]));
 
     WebCore::DragData dragData(draggingInfo, client, global, coreDragOperationMask([draggingInfo draggingSourceOperationMask]), [self _applicationFlagsForDrag:draggingInfo], [self actionMaskForDraggingInfo:draggingInfo]);
-    return kit(core(self)->dragController().dragEntered(WTFMove(dragData)));
+    return kit(std::get<std::optional<WebCore::DragOperation>>(core(self)->dragController().dragEnteredOrUpdated(*localMainFrame, WTFMove(dragData))));
 }
 
 - (NSDragOperation)draggingUpdated:(id <NSDraggingInfo>)draggingInfo
@@ -6329,11 +6346,15 @@ static NSString * const backingPropertyOldScaleFactorKey = @"NSBackingPropertyOl
     if (!page)
         return NSDragOperationNone;
 
+    RefPtr localMainFrame = dynamicDowncast<WebCore::LocalFrame>(page->mainFrame());
+    if (!localMainFrame)
+        return NSDragOperationNone;
+
     WebCore::IntPoint client([draggingInfo draggingLocation]);
     WebCore::IntPoint global(WebCore::globalPoint([draggingInfo draggingLocation], [self window]));
 
     WebCore::DragData dragData(draggingInfo, client, global, coreDragOperationMask([draggingInfo draggingSourceOperationMask]), [self _applicationFlagsForDrag:draggingInfo], [self actionMaskForDraggingInfo:draggingInfo]);
-    return kit(page->dragController().dragUpdated(WTFMove(dragData)));
+    return kit(std::get<std::optional<WebCore::DragOperation>>(page->dragController().dragEnteredOrUpdated(*localMainFrame, WTFMove(dragData))));
 }
 
 - (void)draggingExited:(id <NSDraggingInfo>)draggingInfo
@@ -6342,10 +6363,14 @@ static NSString * const backingPropertyOldScaleFactorKey = @"NSBackingPropertyOl
     if (!page)
         return;
 
+    RefPtr localMainFrame = dynamicDowncast<WebCore::LocalFrame>(page->mainFrame());
+    if (!localMainFrame)
+        return;
+
     WebCore::IntPoint client([draggingInfo draggingLocation]);
     WebCore::IntPoint global(WebCore::globalPoint([draggingInfo draggingLocation], [self window]));
     WebCore::DragData dragData(draggingInfo, client, global, coreDragOperationMask([draggingInfo draggingSourceOperationMask]), [self _applicationFlagsForDrag:draggingInfo]);
-    page->dragController().dragExited(WTFMove(dragData));
+    page->dragController().dragExited(*localMainFrame, WTFMove(dragData));
 }
 
 - (BOOL)prepareForDragOperation:(id <NSDraggingInfo>)draggingInfo

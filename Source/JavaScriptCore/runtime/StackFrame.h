@@ -43,14 +43,10 @@ public:
     StackFrame(VM&, JSCell* owner, JSCell* callee);
     StackFrame(VM&, JSCell* owner, JSCell* callee, CodeBlock*, BytecodeIndex);
     StackFrame(Wasm::IndexOrName);
-
-    // @forkChanges
-    JSCell * callee() const { return m_callee.get(); }
-    CodeBlock * codeBlock() const { return m_codeBlock.get(); }
-    bool isWasmFrame() const { return m_isWasmFrame; }
-    const Wasm::IndexOrName& wasmFunctionIndexOrName() const { return m_wasmFunctionIndexOrName; }
+    StackFrame() = default;
 
     bool hasLineAndColumnInfo() const { return !!m_codeBlock; }
+    CodeBlock* codeBlock() const { return m_codeBlock.get(); }
 
     void computeLineAndColumn(unsigned& line, unsigned& column) const;
     String functionName(VM&) const;
@@ -60,7 +56,7 @@ public:
     String toString(VM&) const;
 
     bool hasBytecodeIndex() const { return m_bytecodeIndex && !m_isWasmFrame; }
-    BytecodeIndex bytecodeIndex() const
+    BytecodeIndex bytecodeIndex()
     {
         ASSERT(hasBytecodeIndex());
         return m_bytecodeIndex;

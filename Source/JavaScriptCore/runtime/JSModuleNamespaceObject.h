@@ -64,11 +64,6 @@ public:
 
     DECLARE_EXPORT_INFO;
 
-#if USE(BUN_JSC_ADDITIONS)
-    bool overrideExportValue(JSGlobalObject*, PropertyName, JSValue);
-    void overrideExports(JSGlobalObject* globalObject, const WTF::Function<bool(JSGlobalObject* globalObject, const Identifier& exportName, JSC::JSValue &result)>& iter);
-#endif
-
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
     AbstractModuleRecord* moduleRecord() { return m_moduleRecord.get(); }
@@ -89,9 +84,6 @@ private:
     ExportMap m_exports;
     FixedVector<Identifier> m_names;
     WriteBarrier<AbstractModuleRecord> m_moduleRecord;
-#if USE(BUN_JSC_ADDITIONS)
-    bool m_isOverridingValue = false;
-#endif
 
     friend size_t cellSize(JSCell*);
 };

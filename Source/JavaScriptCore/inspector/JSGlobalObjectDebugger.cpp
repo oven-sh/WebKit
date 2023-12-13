@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014-2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2014-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,10 +29,13 @@
 #include "JSGlobalObject.h"
 #include "JSLock.h"
 #include <wtf/RunLoop.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace Inspector {
 
 using namespace JSC;
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(JSGlobalObjectDebugger);
 
 JSGlobalObjectDebugger::JSGlobalObjectDebugger(JSGlobalObject& globalObject)
     : Debugger(globalObject.vm())
@@ -59,11 +62,6 @@ void JSGlobalObjectDebugger::detachDebugger(bool isBeingDestroyed)
 void JSGlobalObjectDebugger::runEventLoopWhilePaused()
 {
     JSC::Debugger::runEventLoopWhilePaused();
-    auto callback = runWhilePausedCallback;
-    if (callback) {
-        callback(m_globalObject, m_doneProcessingDebuggerEvents);
-        return;
-    }
 
     // Drop all locks so another thread can work in the VM while we are nested.
     JSC::JSLock::DropAllLocks dropAllLocks(&m_globalObject.vm());
