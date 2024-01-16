@@ -639,7 +639,7 @@ const GlobalObjectMethodTable* JSGlobalObject::baseGlobalObjectMethodTable()
   TypeError             JSGlobalObject::m_typeErrorStructure         DontEnum|ClassStructure
   URIError              JSGlobalObject::m_URIErrorStructure          DontEnum|ClassStructure
   AggregateError        JSGlobalObject::m_aggregateErrorStructure    DontEnum|ClassStructure
-  SuppressedError       JSGlobalObject::m_suppressedErrorStructure    DontEnum|ClassStructure
+  SuppressedError       JSGlobalObject::m_suppressedErrorStructure   DontEnum|ClassStructure
   Proxy                 createProxyProperty                          DontEnum|PropertyCallback
   Reflect               createReflectProperty                        DontEnum|PropertyCallback
   JSON                  createJSONProperty                           DontEnum|PropertyCallback
