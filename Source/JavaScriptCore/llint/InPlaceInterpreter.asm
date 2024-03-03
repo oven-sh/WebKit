@@ -812,7 +812,8 @@ macro ipintCatchCommon()
     # 1 << 4 == StackValueSize
     lshiftq 4, t0
     addq IPIntCalleeSaveSpaceStackAligned, t0
-    subp cfr, t0, sp
+    subp cfr, t0, t0
+    move t0, sp
 end
 
 global _ipint_catch_entry

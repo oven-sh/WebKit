@@ -381,7 +381,8 @@ if ARMv7
     subp cfr, ws1, ws1
     move ws1, sp
 else
-    subp cfr, ws1, sp
+    subp cfr, ws1, ws1
+    move ws1, sp
 end
 end
 
@@ -1012,7 +1013,8 @@ if ARMv7
             subp cfr, ws1, ws1
             move ws1, sp
 else
-            subp cfr, ws1, sp
+            subp cfr, ws1, ws1
+            move ws1, sp
 end
 
             wgetu(ctx, m_numberOfStackArgs, ws1)
@@ -1169,7 +1171,8 @@ if ARMv7
             subp cfr, ws1, ws1
             move ws1, sp
 else
-            subp cfr, ws1, sp
+            subp cfr, ws1, ws1
+            move ws1, sp
 end
 
             storeWasmInstance(targetWasmInstance)
