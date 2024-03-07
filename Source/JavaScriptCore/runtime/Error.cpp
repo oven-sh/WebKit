@@ -104,8 +104,10 @@ JSObject* createError(JSGlobalObject* globalObject, ErrorTypeWithExtension error
         return createURIError(globalObject, message);
     case ErrorTypeWithExtension::AggregateError:
         break;
+#if USE(BUN_JSC_ADDITIONS)
     case ErrorTypeWithExtension::SuppressedError:
         break;
+#endif
     case ErrorTypeWithExtension::OutOfMemoryError:
         return createOutOfMemoryError(globalObject, message);
     }

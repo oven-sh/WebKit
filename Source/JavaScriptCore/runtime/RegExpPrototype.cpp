@@ -79,6 +79,9 @@ void RegExpPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
     JSC_BUILTIN_FUNCTION_WITHOUT_TRANSITION(vm.propertyNames->searchSymbol, regExpPrototypeSearchCodeGenerator, static_cast<unsigned>(PropertyAttribute::DontEnum));
     JSC_BUILTIN_FUNCTION_WITHOUT_TRANSITION(vm.propertyNames->splitSymbol, regExpPrototypeSplitCodeGenerator, static_cast<unsigned>(PropertyAttribute::DontEnum));
     JSC_BUILTIN_FUNCTION_WITHOUT_TRANSITION(vm.propertyNames->test, regExpPrototypeTestCodeGenerator, static_cast<unsigned>(PropertyAttribute::DontEnum));
+#if USE(BUN_JSC_ADDITIONS)
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 // ------------------------------ Functions ---------------------------

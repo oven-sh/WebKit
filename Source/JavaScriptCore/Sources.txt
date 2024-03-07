@@ -1228,6 +1228,7 @@ yarr/YarrTZoneImpls.cpp
 // Derived Sources
 yarr/YarrCanonicalizeUnicode.cpp
 
+// BUN_JSC_ADDITION Sources
 runtime/InternalFieldTuple.cpp
 runtime/SuppressedError.cpp
 runtime/SuppressedErrorConstructor.cpp

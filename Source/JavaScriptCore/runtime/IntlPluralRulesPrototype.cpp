@@ -79,6 +79,10 @@ void IntlPluralRulesPrototype::finishCreation(VM& vm, JSGlobalObject* globalObje
 #if HAVE(ICU_U_NUMBER_RANGE_FORMATTER)
     JSC_NATIVE_FUNCTION_WITHOUT_TRANSITION(vm.propertyNames->selectRange, intlPluralRulesPrototypeFuncSelectRange, static_cast<unsigned>(PropertyAttribute::DontEnum), 2, ImplementationVisibility::Public);
 #endif
+#if USE(BUN_JSC_ADDITIONS)
+    reifyAllStaticProperties(globalObject);
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(intlPluralRulesPrototypeFuncSelect, (JSGlobalObject* globalObject, CallFrame* callFrame))

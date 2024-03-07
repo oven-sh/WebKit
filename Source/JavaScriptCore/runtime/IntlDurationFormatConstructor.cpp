@@ -75,6 +75,10 @@ void IntlDurationFormatConstructor::finishCreation(VM& vm, IntlDurationFormatPro
     Base::finishCreation(vm, 0, "DurationFormat"_s, PropertyAdditionMode::WithoutStructureTransition);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, durationFormatPrototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     durationFormatPrototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, this, static_cast<unsigned>(PropertyAttribute::DontEnum));
+#if USE(BUN_JSC_ADDITIONS)
+    reifyAllStaticProperties(this->structure()->globalObject());
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 // https://tc39.es/proposal-intl-duration-format/#sec-Intl.DurationFormat

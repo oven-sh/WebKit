@@ -28,7 +28,6 @@
 #include "ArrayAllocationProfile.h"
 #include "ArrayConstructor.h"
 #include "ArrayPrototype.h"
-#include "ErrorType.h"
 #include "JSClassRef.h"
 #include "JSCustomGetterFunction.h"
 #include "JSCustomSetterFunction.h"
@@ -428,8 +427,10 @@ inline Structure* JSGlobalObject::errorStructure(ErrorType errorType) const
         return m_URIErrorStructure.get(this);
     case ErrorType::AggregateError:
         return m_aggregateErrorStructure.get(this);
+#if USE(BUN_JSC_ADDITIONS)
     case ErrorType::SuppressedError:
         return m_suppressedErrorStructure.get(this);
+#endif
     }
     ASSERT_NOT_REACHED();
     return nullptr;

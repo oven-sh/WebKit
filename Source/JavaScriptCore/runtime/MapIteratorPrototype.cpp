@@ -40,6 +40,9 @@ void MapIteratorPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
 
     JSC_BUILTIN_FUNCTION_WITHOUT_TRANSITION(vm.propertyNames->next, mapIteratorPrototypeNextCodeGenerator, static_cast<unsigned>(PropertyAttribute::DontEnum));
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+#if USE(BUN_JSC_ADDITIONS)
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 }

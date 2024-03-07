@@ -54,6 +54,9 @@ void SuppressedErrorConstructor::finishCreation(VM& vm, SuppressedErrorPrototype
     ASSERT(inherits(info()));
 
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
+#if USE(BUN_JSC_ADDITIONS)
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(callSuppressedErrorConstructor, (JSGlobalObject* globalObject, CallFrame* callFrame))

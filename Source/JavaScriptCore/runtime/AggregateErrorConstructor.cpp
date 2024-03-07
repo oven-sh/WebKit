@@ -54,6 +54,9 @@ void AggregateErrorConstructor::finishCreation(VM& vm, AggregateErrorPrototype* 
     ASSERT(inherits(info()));
 
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
+#if USE(BUN_JSC_ADDITIONS)
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(callAggregateErrorConstructor, (JSGlobalObject* globalObject, CallFrame* callFrame))

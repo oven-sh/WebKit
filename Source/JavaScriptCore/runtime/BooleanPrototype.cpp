@@ -51,12 +51,16 @@ BooleanPrototype::BooleanPrototype(VM& vm, Structure* structure)
 {
 }
 
-void BooleanPrototype::finishCreation(VM& vm, JSGlobalObject*)
+void BooleanPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
     setInternalValue(vm, jsBoolean(false));
 
     ASSERT(inherits(info()));
+#if USE(BUN_JSC_ADDITIONS)
+    reifyAllStaticProperties(globalObject);
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 // ------------------------------ Functions ---------------------------

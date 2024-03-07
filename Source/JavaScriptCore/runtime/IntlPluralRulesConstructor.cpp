@@ -77,6 +77,10 @@ void IntlPluralRulesConstructor::finishCreation(VM& vm, IntlPluralRulesPrototype
     Base::finishCreation(vm, 0, "PluralRules"_s, PropertyAdditionMode::WithoutStructureTransition);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, pluralRulesPrototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     pluralRulesPrototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, this, static_cast<unsigned>(PropertyAttribute::DontEnum));
+#if USE(BUN_JSC_ADDITIONS)
+    reifyAllStaticProperties(this->structure()->globalObject());
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(constructIntlPluralRules, (JSGlobalObject* globalObject, CallFrame* callFrame))

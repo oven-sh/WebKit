@@ -89,6 +89,10 @@ void IntlDateTimeFormatPrototype::finishCreation(VM& vm, JSGlobalObject* globalO
     UNUSED_PARAM(&intlDateTimeFormatPrototypeFuncFormatRangeToParts);
 #endif
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+#if USE(BUN_JSC_ADDITIONS)
+    reifyAllStaticProperties(globalObject);
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 // HandleDateTimeValue ( dateTimeFormat, x )

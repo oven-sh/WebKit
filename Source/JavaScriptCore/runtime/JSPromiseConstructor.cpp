@@ -91,6 +91,10 @@ void JSPromiseConstructor::addOwnInternalSlots(VM& vm, JSGlobalObject* globalObj
 {
     JSC_BUILTIN_FUNCTION_WITHOUT_TRANSITION(vm.propertyNames->builtinNames().resolvePrivateName(), promiseConstructorResolveCodeGenerator, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     JSC_BUILTIN_FUNCTION_WITHOUT_TRANSITION(vm.propertyNames->builtinNames().rejectPrivateName(), promiseConstructorRejectCodeGenerator, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+#if USE(BUN_JSC_ADDITIONS)
+    reifyAllStaticProperties(globalObject);
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 } // namespace JSC

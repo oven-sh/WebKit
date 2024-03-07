@@ -124,6 +124,29 @@ StringPrototype::StringPrototype(VM& vm, Structure* structure)
 {
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+    ALWAYS_INLINE JSC_DEFINE_CUSTOM_GETTER(stringCustomLengthGetter, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName))
+    {
+        VM& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        JSValue thisJSValue = JSValue::decode(thisValue);
+        // Inline `!checkObjectCoercible(thisJSValue)` because its not accessible here.
+        if (!thisJSValue.isString() && 
+                (thisJSValue.isUndefinedOrNull() || 
+                    (thisJSValue.isObject() && asObject(thisJSValue)->isEnvironment()))) {
+            return throwVMTypeError(globalObject, scope);
+        }
+        JSString* string = thisJSValue.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        int length = string->length();
+        RELEASE_ASSERT(length >= 0);
+        scope.release();
+        return JSValue::encode(jsNumber(length));
+    }
+#endif
+
 void StringPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm, jsEmptyString(vm));
@@ -174,6 +197,12 @@ void StringPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
     }
 
     // The constructor will be added later, after StringConstructor has been built
+#if USE(BUN_JSC_ADDITIONS)
+    // Don't reifyAllStaticProperties here because it causes the 
+    // absenceStringPrototype.isWatchable(PropertyCondition::EnsureWatchability) 
+    // assert in JSGlobalObject.cpp to fail.
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 StringPrototype* StringPrototype::create(VM& vm, JSGlobalObject* globalObject, Structure* structure)

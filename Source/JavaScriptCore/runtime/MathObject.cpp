@@ -121,6 +121,9 @@ void MathObject::finishCreation(VM& vm, JSGlobalObject* globalObject)
     putDirectNativeFunctionWithoutTransition(vm, globalObject, Identifier::fromString(vm, "tanh"_s), 1, mathProtoFuncTanh, ImplementationVisibility::Public, TanhIntrinsic, static_cast<unsigned>(PropertyAttribute::DontEnum));
     putDirectNativeFunctionWithoutTransition(vm, globalObject, Identifier::fromString(vm, "trunc"_s), 1, mathProtoFuncTrunc, ImplementationVisibility::Public, TruncIntrinsic, static_cast<unsigned>(PropertyAttribute::DontEnum));
     putDirectNativeFunctionWithoutTransition(vm, globalObject, Identifier::fromString(vm, "imul"_s), 2, mathProtoFuncIMul, ImplementationVisibility::Public, IMulIntrinsic, static_cast<unsigned>(PropertyAttribute::DontEnum));
+#if USE(BUN_JSC_ADDITIONS)
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 // ------------------------------ Functions --------------------------------

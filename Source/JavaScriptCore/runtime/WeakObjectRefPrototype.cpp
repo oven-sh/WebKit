@@ -44,6 +44,9 @@ void WeakObjectRefPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject
     JSC_NATIVE_FUNCTION_WITHOUT_TRANSITION(vm.propertyNames->deref, protoFuncWeakRefDeref, static_cast<unsigned>(PropertyAttribute::DontEnum), 0, ImplementationVisibility::Public);
 
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+#if USE(BUN_JSC_ADDITIONS)
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 ALWAYS_INLINE static JSWeakObjectRef* getWeakRef(JSGlobalObject* globalObject, JSValue value)

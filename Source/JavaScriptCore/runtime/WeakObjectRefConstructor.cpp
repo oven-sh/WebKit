@@ -39,6 +39,9 @@ void WeakObjectRefConstructor::finishCreation(VM& vm, WeakObjectRefPrototype* pr
 {
     Base::finishCreation(vm, 1, "WeakRef"_s, PropertyAdditionMode::WithoutStructureTransition);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+#if USE(BUN_JSC_ADDITIONS)
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 static JSC_DECLARE_HOST_FUNCTION(callWeakRef);

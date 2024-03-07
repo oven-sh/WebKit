@@ -45,6 +45,7 @@ namespace JSC {
 
 
 #define JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
+    BUN_JSC_COMMON_PRIVATE_IDENTIFIERS(macro) \
     JSC_COMMON_BYTECODE_INTRINSIC_FUNCTIONS_EACH_NAME(macro) \
     JSC_COMMON_BYTECODE_INTRINSIC_CONSTANTS_EACH_NAME(macro) \
     macro(add) \
@@ -210,7 +211,7 @@ namespace JSC {
     macro(hasOwn) \
     macro(indexOf) \
     macro(pop) \
-    macro(asyncContext) \
+
 
 namespace Symbols {
 #define DECLARE_BUILTIN_STATIC_SYMBOLS(name) extern JS_EXPORT_PRIVATE SymbolImpl::StaticSymbolImpl name##Symbol;

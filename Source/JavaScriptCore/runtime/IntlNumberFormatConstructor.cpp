@@ -76,6 +76,10 @@ void IntlNumberFormatConstructor::finishCreation(VM& vm, IntlNumberFormatPrototy
 {
     Base::finishCreation(vm, 0, "NumberFormat"_s, PropertyAdditionMode::WithoutStructureTransition);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, numberFormatPrototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+#if USE(BUN_JSC_ADDITIONS)
+    reifyAllStaticProperties(this->structure()->globalObject());
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(constructIntlNumberFormat, (JSGlobalObject* globalObject, CallFrame* callFrame))

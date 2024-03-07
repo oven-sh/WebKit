@@ -62,6 +62,9 @@ void IntlLocaleConstructor::finishCreation(VM& vm, IntlLocalePrototype* localePr
     Base::finishCreation(vm, 1, "Locale"_s, PropertyAdditionMode::WithoutStructureTransition);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, localePrototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     localePrototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, this, static_cast<unsigned>(PropertyAttribute::DontEnum));
+#if USE(BUN_JSC_ADDITIONS)
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 // https://tc39.es/ecma402/#sec-Intl.Locale

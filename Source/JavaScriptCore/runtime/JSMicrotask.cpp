@@ -39,7 +39,29 @@ namespace JSC {
 
 class JSMicrotask final : public Microtask {
 public:
+#if USE(BUN_JSC_ADDITIONS)
+    // Adds support for passing a fifth `asyncContextData` microtask argument 
+    // by way of @enqueueJob in builtins/PromiseOperations.js
+    static constexpr unsigned maxArguments = 5;
+
+    JSMicrotask(VM& vm, JSValue job, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3, JSValue argument4)
+    {
+        m_job.set(vm, job);
+        if (argument0 && !argument0.isUndefined())
+            m_arguments[0].set(vm, argument0);
+        if (argument1 && !argument1.isUndefined())
+            m_arguments[1].set(vm, argument1);
+        if (argument2 && !argument2.isUndefined())
+            m_arguments[2].set(vm, argument2);
+        if (argument3 && !argument3.isUndefined())
+            m_arguments[3].set(vm, argument3);
+        if (argument4 && !argument4.isUndefined())
+            m_arguments[4].set(vm, argument4);
+    }
+#else
     static constexpr unsigned maxArguments = 4;
+#endif
+
     JSMicrotask(VM& vm, JSValue job, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3)
     {
         m_job.set(vm, job);
@@ -60,13 +82,35 @@ private:
     Strong<Unknown> m_arguments[maxArguments];
 };
 
+#if USE(BUN_JSC_ADDITIONS)
+Ref<Microtask> createJSMicrotask(VM& vm, JSValue job, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3, JSValue argument4)
+{
+    return adoptRef(*new JSMicrotask(vm, job, argument0, argument1, argument2, argument3, argument4));
+}
+
+Ref<Microtask> createJSMicrotask(VM& vm, JSValue job, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3)
+{
+    return adoptRef(*new JSMicrotask(vm, job, argument0, argument1, argument2, argument3, jsUndefined()));
+}
+#else
 Ref<Microtask> createJSMicrotask(VM& vm, JSValue job, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3)
 {
     return adoptRef(*new JSMicrotask(vm, job, argument0, argument1, argument2, argument3));
 }
+#endif
 
+#if USE(BUN_JSC_ADDITIONS)
 void runJSMicrotask(JSGlobalObject* globalObject, MicrotaskIdentifier identifier, JSValue job, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3)
 {
+    runJSMicrotask(globalObject, identifier, job, argument0, argument1, argument2, argument3, jsUndefined());
+}
+
+void runJSMicrotask(JSGlobalObject* globalObject, MicrotaskIdentifier identifier, JSValue job, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3, JSValue argument4)
+{
+#else
+void runJSMicrotask(JSGlobalObject* globalObject, MicrotaskIdentifier identifier, JSValue job, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3)
+{
+#endif
     VM& vm = globalObject->vm();
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
@@ -78,6 +122,9 @@ void runJSMicrotask(JSGlobalObject* globalObject, MicrotaskIdentifier identifier
     handlerArguments.append(!argument1 ? jsUndefined() : argument1);
     handlerArguments.append(!argument2 ? jsUndefined() : argument2);
     handlerArguments.append(!argument3 ? jsUndefined() : argument3);
+#if USE(BUN_JSC_ADDITIONS)
+    handlerArguments.append(!argument4 ? jsUndefined() : argument4);
+#endif
     if (UNLIKELY(handlerArguments.hasOverflowed()))
         return;
 
@@ -91,9 +138,16 @@ void runJSMicrotask(JSGlobalObject* globalObject, MicrotaskIdentifier identifier
         globalObject->debugger()->didRunMicrotask(globalObject, identifier);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void JSMicrotask::run(JSGlobalObject* globalObject)
+{
+    runJSMicrotask(globalObject, identifier(), m_job.get(), m_arguments[0].get(), m_arguments[1].get(), m_arguments[2].get(), m_arguments[3].get(), m_arguments[4].get());
+}
+#else
 void JSMicrotask::run(JSGlobalObject* globalObject)
 {
     runJSMicrotask(globalObject, identifier(), m_job.get(), m_arguments[0].get(), m_arguments[1].get(), m_arguments[2].get(), m_arguments[3].get());
 }
+#endif
 
 } // namespace JSC

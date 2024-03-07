@@ -31,19 +31,14 @@
 #include "JSGlobalObject.h"
 
 #include "AggregateError.h"
-#include "SuppressedError.h"
-#include "InternalFieldTuple.h"
 #include "AggregateErrorConstructorInlines.h"
-#include "SuppressedErrorConstructorInlines.h"
 #include "AggregateErrorPrototypeInlines.h"
-#include "SuppressedErrorPrototypeInlines.h"
 #include "ArrayConstructorInlines.h"
 #include "ArrayIteratorPrototypeInlines.h"
 #include "ArrayPrototypeInlines.h"
 #include "AsyncFromSyncIteratorPrototypeInlines.h"
 #include "AsyncFunctionConstructorInlines.h"
 #include "AsyncFunctionPrototypeInlines.h"
-// >>>>>>> upstream/main
 #include "AsyncGeneratorFunctionConstructor.h"
 #include "AsyncGeneratorFunctionPrototypeInlines.h"
 #include "AsyncGeneratorPrototypeInlines.h"
@@ -291,6 +286,13 @@
 #ifdef JSC_GLIB_API_ENABLED
 #include "JSCCallbackFunction.h"
 #include "JSCWrapperMap.h"
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
+#include "InternalFieldTuple.h"
+#include "SuppressedError.h"
+#include "SuppressedErrorConstructorInlines.h"
+#include "SuppressedErrorPrototypeInlines.h"
 #endif
 
 namespace JSC {
@@ -639,7 +641,7 @@ const GlobalObjectMethodTable* JSGlobalObject::baseGlobalObjectMethodTable()
   TypeError             JSGlobalObject::m_typeErrorStructure         DontEnum|ClassStructure
   URIError              JSGlobalObject::m_URIErrorStructure          DontEnum|ClassStructure
   AggregateError        JSGlobalObject::m_aggregateErrorStructure    DontEnum|ClassStructure
-  SuppressedError       JSGlobalObject::m_suppressedErrorStructure   DontEnum|ClassStructure
+  SuppressedError       JSGlobalObject::m_suppressedErrorStructure   DontEnum|ClassStructure     #if(USE(BUN_JSC_ADDITIONS))
   Proxy                 createProxyProperty                          DontEnum|PropertyCallback
   Reflect               createReflectProperty                        DontEnum|PropertyCallback
   JSON                  createJSONProperty                           DontEnum|PropertyCallback
@@ -677,8 +679,15 @@ JSC_DEFINE_HOST_FUNCTION(enqueueJob, (JSGlobalObject* globalObject, CallFrame* c
     JSValue argument1 = callFrame->argument(2);
     JSValue argument2 = callFrame->argument(3);
     JSValue argument3 = callFrame->argument(4);
+#if USE(BUN_JSC_ADDITIONS)
+    // Adds support for passing a fifth `asyncContextData` param to @enqueueJob 
+    // in builtins/PromiseOperations.js
+    JSValue argument4 = callFrame->argument(5);
 
+    globalObject->queueMicrotask(job, argument0, argument1, argument2, argument3, argument4);
+#else
     globalObject->queueMicrotask(job, argument0, argument1, argument2, argument3);
+#endif
 
     return encodedJSUndefined();
 }
@@ -773,12 +782,14 @@ void JSGlobalObject::initializeAggregateErrorConstructor(LazyClassStructure::Ini
     init.setConstructor(AggregateErrorConstructor::create(init.vm, AggregateErrorConstructor::createStructure(init.vm, this, m_errorStructure.constructor(this)), jsCast<AggregateErrorPrototype*>(init.prototype)));
 }
 
+#if USE(BUN_JSC_ADDITIONS)
 void JSGlobalObject::initializeSuppressedErrorConstructor(LazyClassStructure::Initializer& init)
 {
     init.setPrototype(SuppressedErrorPrototype::create(init.vm, SuppressedErrorPrototype::createStructure(init.vm, this, m_errorStructure.prototype(this))));
     init.setStructure(ErrorInstance::createStructure(init.vm, this, init.prototype));
     init.setConstructor(SuppressedErrorConstructor::create(init.vm, SuppressedErrorConstructor::createStructure(init.vm, this, m_errorStructure.constructor(this)), jsCast<SuppressedErrorPrototype*>(init.prototype)));
 }
+#endif
 
 SUPPRESS_ASAN inline void JSGlobalObject::initStaticGlobals(VM& vm)
 {
@@ -919,6 +930,10 @@ void JSGlobalObject::init(VM& vm)
             JSTypedArrayViewConstructor* constructor = JSTypedArrayViewConstructor::create(init.vm, init.owner, JSTypedArrayViewConstructor::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get()), prototype, init.owner->m_speciesGetterSetter.get());
             prototype->putDirectWithoutTransition(init.vm, init.vm.propertyNames->constructor, constructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
             init.set(constructor);
+#if USE(BUN_JSC_ADDITIONS)
+            prototype->putPrivateAliasWithoutTransition(init.vm, init.vm.propertyNames->constructor);
+            constructor->putPrivateAliasWithoutTransition(init.vm, init.vm.propertyNames->prototype);
+#endif
         });
     
 #define INIT_TYPED_ARRAY_LATER(type) \
@@ -946,6 +961,10 @@ void JSGlobalObject::init(VM& vm)
             init.setStructure(JSDataView::createStructure(init.vm, init.global, init.prototype));
             init.setConstructor(JSDataViewConstructor::create(init.vm, init.global, JSDataViewConstructor::createStructure(init.vm, init.global, init.global->m_functionPrototype.get()), init.prototype, "DataView"_s));
             init.global->typedArrayStructure(TypeDataView, /* isResizableOrGrowableShared */ true); /* Initialize resizable Structure too */
+#if USE(BUN_JSC_ADDITIONS)
+            init.prototype->putPrivateAliasWithoutTransition(init.vm, init.vm.propertyNames->constructor);
+            init.constructor->putPrivateAliasWithoutTransition(init.vm, init.vm.propertyNames->prototype);
+#endif
         });
     m_resizableOrGrowableSharedTypedArrayDataViewStructure.initLater(
         [] (const Initializer<Structure>& init) {
@@ -1197,10 +1216,6 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         [] (LazyClassStructure::Initializer& init) {
             init.global->initializeAggregateErrorConstructor(init);
         });
-    m_suppressedErrorStructure.initLater(
-        [] (LazyClassStructure::Initializer& init) {
-            init.global->initializeSuppressedErrorConstructor(init);
-        });
 
     m_generatorFunctionPrototype.set(vm, this, GeneratorFunctionPrototype::create(vm, GeneratorFunctionPrototype::createStructure(vm, this, m_functionPrototype.get())));
     GeneratorFunctionConstructor* generatorFunctionConstructor = GeneratorFunctionConstructor::create(vm, GeneratorFunctionConstructor::createStructure(vm, this, functionConstructor), m_generatorFunctionPrototype.get());
@@ -1230,7 +1245,6 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     m_arrayPrototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, arrayConstructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
     m_regExpPrototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, regExpConstructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
     m_shadowRealmPrototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, shadowRealmConstructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
-    
     putDirectWithoutTransition(vm, vm.propertyNames->Object, objectConstructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
     putDirectWithoutTransition(vm, vm.propertyNames->Function, functionConstructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
     putDirectWithoutTransition(vm, vm.propertyNames->Array, arrayConstructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
@@ -1710,22 +1724,6 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         init.set(init.vm.emptyPropertyNameEnumerator());
     });
 
-#if USE(BUN_JSC_ADDITIONS)
-    // Link Time Constant would be faster, but it seems OpGetInternalField does not expect having a linkTimeConstant,
-    // so `@getInternalField(@asyncContext, 0)` will crash. If we can read/write to the internal field from JS in a better way, that could improve perf.
-    // m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::asyncContext)].initLater([](const Initializer<JSCell>& init) {
-    //     auto* globalObject = jsCast<JSGlobalObject*>(init.owner);
-    //     init.set(AsyncContext::create(init.vm, AsyncContext::createStructure(init.vm, globalObject, globalObject->objectPrototype())));
-    // });
-    m_internalFieldTupleStructure.set(vm, this, InternalFieldTuple::createStructure(vm, this));
-
-    InternalFieldTuple* asyncContext = InternalFieldTuple::create(vm, internalFieldTupleStructure(), jsUndefined(), jsUndefined());
-    putDirectWithoutTransition(
-        vm, vm.propertyNames->builtinNames().asyncContextPrivateName(),
-        asyncContext, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-    m_asyncContextData.set(vm, this, asyncContext);
-#endif
-
     if (Options::exposeProfilersOnGlobalObject()) {
 #if ENABLE(SAMPLING_PROFILER)
         putDirectWithoutTransition(vm, Identifier::fromString(vm, "__enableSamplingProfiler"_s), JSFunction::create(vm, this, 1, "enableSamplingProfiler"_s, enableSamplingProfiler, ImplementationVisibility::Public), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
@@ -1863,6 +1861,182 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     }
 
     fixupPrototypeChainWithObjectPrototype(vm);
+
+#if USE(BUN_JSC_ADDITIONS)
+    m_asyncContextTuple.initLater([](const Initializer<InternalFieldTuple>& init) {
+            init.set(InternalFieldTuple::create(init.vm, init.owner->internalFieldTupleStructure(), jsUndefined(), jsUndefined()));
+        });
+    m_internalFieldTupleStructure.initLater([](const Initializer<Structure>& init) {
+            init.set(InternalFieldTuple::createStructure(init.vm, init.owner));
+        });
+    m_suppressedErrorStructure.initLater([] (LazyClassStructure::Initializer& init) {
+            init.global->initializeSuppressedErrorConstructor(init);
+        });
+
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::asyncContextTuple)].initLater([] (const Initializer<JSCell>& init) {
+        init.set(init.owner->asyncContextTuple());
+    });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::console)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(createConsoleProperty(init.vm, init.owner).asCell());
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::decodeURI)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 1, "decodeURI"_s, globalFuncDecodeURI, ImplementationVisibility::Private));
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::decodeURIComponent)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 1, "decodeURIComponent"_s, globalFuncDecodeURIComponent, ImplementationVisibility::Private));
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::encodeURI)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 1, "encodeURI"_s, globalFuncEncodeURI, ImplementationVisibility::Private));
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::encodeURIComponent)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 1, "encodeURIComponent"_s, globalFuncEncodeURIComponent, ImplementationVisibility::Private));
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::escape)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 1, "escape"_s, globalFuncEscape, ImplementationVisibility::Private));
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::eval)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(init.owner->m_evalFunction.get(init.owner));
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::globalThis)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(init.owner->m_globalThis.get());
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::isFinite)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(JSFunction::create(init.vm, globalObjectIsFiniteCodeGenerator(init.vm), init.owner));
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::isNaN)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 1, "isNaN"_s, globalFuncIsNaN, ImplementationVisibility::Private));
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::parseFloat)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(init.owner->m_parseFloatFunction.get(init.owner));
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::parseInt)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(init.owner->m_parseIntFunction.get(init.owner));
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::unescape)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 1, "unescape"_s, globalFuncUnescape, ImplementationVisibility::Private));
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::Atomics)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(createAtomicsProperty(init.vm, init.owner).asCell());
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::BigInt)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(init.owner->m_bigIntConstructor.get());
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::Boolean)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(init.owner->booleanObjectConstructor());
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::DataView)].initLater([](const Initializer<JSCell>& init) {
+            init.set(init.owner->typedArrayConstructor(TypedArrayType::TypeDataView));
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::Date)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(init.owner->dateConstructor());
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::Error)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(init.owner->errorConstructor());
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::EvalError)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(init.owner->m_evalErrorStructure.constructor(init.owner));
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::FinalizationRegistry)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(init.owner->m_finalizationRegistryConstructor.get());
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::Function)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(init.owner->m_functionConstructor.get());
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::JSON)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(createJSONProperty(init.vm, init.owner).asCell());
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::Math)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(createMathProperty(init.vm, init.owner).asCell());
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::Number)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(init.owner->numberObjectConstructor());
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::Proxy)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(createProxyProperty(init.vm, init.owner).asCell());
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::RangeError)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(init.owner->m_rangeErrorStructure.constructor(init.owner));
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::ReferenceError)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(init.owner->m_referenceErrorStructure.constructor(init.owner));
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::Reflect)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(createReflectProperty(init.vm, init.owner).asCell());
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::SuppressedError)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(init.owner->m_suppressedErrorStructure.constructor(init.owner));
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::Symbol)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(init.owner->symbolObjectConstructor());
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::SyntaxError)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(init.owner->m_syntaxErrorStructure.constructor(init.owner));
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::TypeError)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(init.owner->m_typeErrorStructure.constructor(init.owner));
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::URIError)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(init.owner->m_URIErrorStructure.constructor(init.owner));
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::WeakMap)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(init.owner->weakMapConstructor());
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::WeakRef)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(init.owner->m_weakObjectRefConstructor.get());
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::WeakSet)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(init.owner->weakSetConstructor());
+        });
+
+    m_asyncFunctionPrototype->putPrivateAliasWithoutTransition(vm, vm.propertyNames->constructor);
+    asyncFunctionConstructor->putPrivateAliasWithoutTransition(vm, vm.propertyNames->prototype);
+
+    m_asyncGeneratorPrototype->putPrivateAliasWithoutTransition(vm, vm.propertyNames->constructor);
+    m_asyncGeneratorFunctionPrototype->putPrivateAliasWithoutTransition(vm, vm.propertyNames->prototype);
+
+    m_asyncGeneratorFunctionPrototype->putPrivateAliasWithoutTransition(vm, vm.propertyNames->constructor);
+    asyncGeneratorFunctionConstructor->putPrivateAliasWithoutTransition(vm, vm.propertyNames->prototype);
+
+    m_generatorFunctionPrototype->putPrivateAliasWithoutTransition(vm, vm.propertyNames->constructor);
+    generatorFunctionConstructor->putPrivateAliasWithoutTransition(vm, vm.propertyNames->prototype);
+
+    m_generatorPrototype->putPrivateAliasWithoutTransition(vm, vm.propertyNames->constructor);
+    m_generatorFunctionPrototype->putPrivateAliasWithoutTransition(vm, vm.propertyNames->prototype);
+
+    m_arrayPrototype->putPrivateAliasWithoutTransition(vm, vm.propertyNames->constructor);
+    arrayConstructor->putPrivateAliasWithoutTransition(vm, vm.propertyNames->prototype);
+
+    m_functionPrototype->putPrivateAliasWithoutTransition(vm, vm.propertyNames->constructor);
+    functionConstructor->putPrivateAliasWithoutTransition(vm, vm.propertyNames->prototype);
+
+    m_objectPrototype->putPrivateAliasWithoutTransition(vm, vm.propertyNames->underscoreProto);
+    m_objectPrototype->putPrivateAliasWithoutTransition(vm, vm.propertyNames->constructor);
+    objectConstructor->putPrivateAliasWithoutTransition(vm, vm.propertyNames->prototype);
+
+    m_regExpPrototype->putPrivateAliasWithoutTransition(vm, vm.propertyNames->constructor);
+    regExpConstructor->putPrivateAliasWithoutTransition(vm, vm.propertyNames->prototype);
+
+    m_shadowRealmPrototype->putPrivateAliasWithoutTransition(vm, vm.propertyNames->constructor);
+    shadowRealmConstructor->putPrivateAliasWithoutTransition(vm, vm.propertyNames->prototype);
+
+    // Call m_stringPrototype->reifyAllStaticProperties(this) here because it is AFTER the
+    // absenceStringPrototype.isWatchable(PropertyCondition::EnsureWatchability) 
+    // assert above.
+    m_stringPrototype->reifyAllStaticProperties(this);
+    m_stringPrototype->putAllPrivateAliasesWithoutTransition(vm);
+    stringConstructor->putPrivateAliasWithoutTransition(vm, vm.propertyNames->prototype);
+
+#define BUN_SET_CTOR_AND_SYNC_PRIVATE_ALIASES(capitalName, lowerName, properName, instanceType, jsName, prototypeBase, featureFlag) \
+    if (featureFlag) { \
+        m_ ## lowerName ## Constructor.set(vm, this, lowerName##Constructor);  \
+        m_## lowerName ##Prototype->putPrivateAliasWithoutTransition(vm, vm.propertyNames->constructor); \
+        lowerName##Constructor->putPrivateAliasWithoutTransition(vm, vm.propertyNames->prototype); \
+    }
+
+    FOR_EACH_SIMPLE_BUILTIN_TYPE_WITH_CONSTRUCTOR(BUN_SET_CTOR_AND_SYNC_PRIVATE_ALIASES)
+
+#undef BUN_SET_CTOR_AND_SYNC_PRIVATE_ALIASES
+#endif
 
     if (UNLIKELY(Options::alwaysHaveABadTime()))
         this->haveABadTime(vm);
@@ -2443,12 +2617,6 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
 
     visitor.append(thisObject->m_globalThis);
-
-#if USE(BUN_JSC_ADDITIONS)
-    visitor.append(thisObject->m_asyncContextData);
-    visitor.append(thisObject->m_internalFieldTupleStructure);
-#endif
-
     visitor.append(thisObject->m_globalLexicalEnvironment);
     visitor.append(thisObject->m_globalScopeExtension);
     visitor.append(thisObject->m_globalCallee);
@@ -2461,15 +2629,16 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_typeErrorStructure.visit(visitor);
     thisObject->m_URIErrorStructure.visit(visitor);
     thisObject->m_aggregateErrorStructure.visit(visitor);
-    thisObject->m_suppressedErrorStructure.visit(visitor);
     visitor.append(thisObject->m_arrayConstructor);
     visitor.append(thisObject->m_shadowRealmConstructor);
     visitor.append(thisObject->m_regExpConstructor);
     visitor.append(thisObject->m_objectConstructor);
     visitor.append(thisObject->m_functionConstructor);
+#if !USE(BUN_JSC_ADDITIONS)
     visitor.append(thisObject->m_promiseConstructor);
     visitor.append(thisObject->m_internalPromiseConstructor);
     visitor.append(thisObject->m_stringConstructor);
+#endif
 
     thisObject->m_defaultCollator.visit(visitor);
     thisObject->m_defaultNumberFormat.visit(visitor);
@@ -2594,6 +2763,19 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     for (auto& property : thisObject->m_linkTimeConstants)
         property.visit(visitor);
+
+#if USE(BUN_JSC_ADDITIONS)
+#define BUN_VISIT_SIMPLE_TYPE_CONSTRUCTOR(CapitalName, lowerName, properName, instanceType, jsName, prototypeBase, featureFlag) if (featureFlag) \
+        visitor.append(thisObject->m_ ## lowerName ## Constructor);
+
+    FOR_EACH_SIMPLE_BUILTIN_TYPE_WITH_CONSTRUCTOR(BUN_VISIT_SIMPLE_TYPE_CONSTRUCTOR)
+
+#undef BUN_VISIT_SIMPLE_TYPE_CONSTRUCTOR
+
+    thisObject->m_asyncContextTuple.visit(visitor);
+    thisObject->m_internalFieldTupleStructure.visit(visitor);
+    thisObject->m_suppressedErrorStructure.visit(visitor);
+#endif
 
 #define VISIT_SIMPLE_TYPE_PROTOTYPE(CapitalName, lowerName, properName, instanceType, jsName, prototypeBase, featureFlag) if (featureFlag) \
         visitor.append(thisObject->m_ ## lowerName ## Prototype); \
@@ -3143,6 +3325,27 @@ void JSGlobalObject::queueMicrotask(Ref<Microtask>&& task)
         m_debugger->didQueueMicrotask(this, taskRef.identifier());
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void JSGlobalObject::queueMicrotask(JSValue job, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3)
+{
+    queueMicrotask(job, argument0, argument1, argument2, argument3, jsUndefined());
+}
+
+// Adds support for passing a fifth `asyncContextData` microtask argument 
+// by way of @enqueueJob in builtins/PromiseOperations.js
+void JSGlobalObject::queueMicrotask(JSValue job, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3, JSValue argument4)
+{
+    if (globalObjectMethodTable()->queueMicrotaskToEventLoop) {
+        queueMicrotask(createJSMicrotask(vm(), job, argument0, argument1, argument2, argument3, argument4));
+        return;
+    }
+
+    auto microtaskIdentifier = MicrotaskIdentifier::generate();
+    vm().queueMicrotask(QueuedTask { microtaskIdentifier, job, argument0, argument1, argument2, argument3, argument4 });
+    if (UNLIKELY(m_debugger))
+        m_debugger->didQueueMicrotask(this, microtaskIdentifier);
+}
+#else
 void JSGlobalObject::queueMicrotask(JSValue job, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3)
 {
     if (globalObjectMethodTable()->queueMicrotaskToEventLoop) {
@@ -3155,6 +3358,7 @@ void JSGlobalObject::queueMicrotask(JSValue job, JSValue argument0, JSValue argu
     if (UNLIKELY(m_debugger))
         m_debugger->didQueueMicrotask(this, microtaskIdentifier);
 }
+#endif
 
 void JSGlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject*, Exception* exception)
 {
@@ -3238,6 +3442,9 @@ void JSGlobalObject::finishCreation(VM& vm)
     structure()->setGlobalObject(vm, this);
     m_runtimeFlags = m_globalObjectMethodTable->javaScriptRuntimeFlags(this);
     init(vm);
+#if USE(BUN_JSC_ADDITIONS)
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
     setGlobalThis(vm, JSGlobalProxy::create(vm, JSGlobalProxy::createStructure(vm, this, getPrototypeDirect()), this));
     ASSERT(type() == GlobalObjectType);
 }
@@ -3250,6 +3457,10 @@ void JSGlobalObject::finishCreation(VM& vm, JSObject* thisValue)
     m_runtimeFlags = m_globalObjectMethodTable->javaScriptRuntimeFlags(this);
     init(vm);
     setGlobalThis(vm, thisValue);
+#if USE(BUN_JSC_ADDITIONS)
+    thisValue->reifyAllStaticProperties(thisValue->structure()->globalObject());
+    thisValue->putAllPrivateAliasesWithoutTransition(vm);
+#endif
     ASSERT(type() == GlobalObjectType);
 }
 
