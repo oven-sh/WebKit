@@ -54,6 +54,10 @@ void MapConstructor::finishCreation(VM& vm, MapPrototype* mapPrototype, GetterSe
 
     if (Options::useArrayGroupMethod())
         JSC_BUILTIN_FUNCTION_WITHOUT_TRANSITION(vm.propertyNames->builtinNames().groupByPublicName(), mapConstructorGroupByCodeGenerator, static_cast<unsigned>(PropertyAttribute::DontEnum));
+#if USE(BUN_JSC_ADDITIONS)
+    reifyAllStaticProperties(globalObject);
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 static JSC_DECLARE_HOST_FUNCTION(callMap);

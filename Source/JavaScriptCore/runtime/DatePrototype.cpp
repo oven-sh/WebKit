@@ -292,6 +292,10 @@ void DatePrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
         putDirectWithoutTransition(vm, toTemporalInstantName, toTemporalInstantFunction, static_cast<unsigned>(PropertyAttribute::DontEnum));
     }
     // The constructor will be added later, after DateConstructor has been built.
+#if USE(BUN_JSC_ADDITIONS)
+    reifyAllStaticProperties(globalObject);
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 // Functions

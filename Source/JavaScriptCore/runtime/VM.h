@@ -178,6 +178,25 @@ class QueuedTask {
     WTF_MAKE_TZONE_ALLOCATED(QueuedTask);
     friend class MicrotaskQueue;
 public:
+#if USE(BUN_JSC_ADDITIONS)
+    // Adds support for passing a fifth `asyncContextData` microtask argument 
+    // by way of @enqueueJob in builtins/PromiseOperations.js
+    static constexpr unsigned maxArguments = 5;
+
+    QueuedTask(MicrotaskIdentifier identifier, JSValue job, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3, JSValue argument4)
+        : m_identifier(identifier)
+        , m_job(job)
+        , m_arguments { argument0, argument1, argument2, argument3, argument4 }
+    {
+    }
+
+    QueuedTask(MicrotaskIdentifier identifier, JSValue job, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3)
+        : m_identifier(identifier)
+        , m_job(job)
+        , m_arguments { argument0, argument1, argument2, argument3, jsUndefined() }
+    {
+    }
+#else
     static constexpr unsigned maxArguments = 4;
 
     QueuedTask(MicrotaskIdentifier identifier, JSValue job, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3)
@@ -186,6 +205,7 @@ public:
         , m_arguments { argument0, argument1, argument2, argument3 }
     {
     }
+#endif
 
     void run();
 

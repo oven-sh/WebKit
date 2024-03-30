@@ -177,7 +177,11 @@ void PropertyDescriptor::setDescriptor(JSValue value, unsigned attributes)
 void PropertyDescriptor::setAccessorDescriptor(unsigned attributes)
 {
     ASSERT(attributes & PropertyAttribute::Accessor);
+// Skipping this assertion allows for retrieving private symbol values, 
+// e.g. TypedArrayPrototype.@__lookupGetter(@@buffer).
+#if !USE(BUN_JSC_ADDITIONS) 
     ASSERT(!(attributes & PropertyAttribute::CustomAccessorOrValue));
+#endif
     attributes &= ~PropertyAttribute::ReadOnly; // FIXME: we should be able to ASSERT this!
 
     m_attributes = attributes;

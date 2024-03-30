@@ -27,6 +27,10 @@
 
 #include "JSObject.h"
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "JSCInlines.h"
+#endif
+
 namespace JSC {
 
 class AsyncFromSyncIteratorPrototype final : public JSNonFinalObject {
@@ -49,7 +53,15 @@ public:
 
 private:
     AsyncFromSyncIteratorPrototype(VM&, Structure*);
-    DECLARE_DEFAULT_FINISH_CREATION;
+    ALWAYS_INLINE void finishCreation(JSC::VM& vm) 
+    { 
+        Base::finishCreation(vm);
+        ASSERT(inherits(info())); 
+#if USE(BUN_JSC_ADDITIONS)
+    reifyAllStaticProperties(this->structure()->globalObject());
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
+    }
 };
     
 } // namespace JSC

@@ -58,6 +58,9 @@ void FunctionPrototype::finishCreation(VM& vm, const String& name)
 {
     Base::finishCreation(vm, 0, name, PropertyAdditionMode::WithoutStructureTransition);
     ASSERT(inherits(info()));
+#if USE(BUN_JSC_ADDITIONS)
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 void FunctionPrototype::addFunctionProperties(VM& vm, JSGlobalObject* globalObject, JSFunction** callFunction, JSFunction** applyFunction, JSFunction** hasInstanceSymbolFunction)

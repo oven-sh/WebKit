@@ -76,6 +76,10 @@ void JSPromisePrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
 void JSPromisePrototype::addOwnInternalSlots(VM& vm, JSGlobalObject* globalObject)
 {
     putDirectWithoutTransition(vm, vm.propertyNames->builtinNames().thenPrivateName(), globalObject->promiseProtoThenFunction(), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+#if USE(BUN_JSC_ADDITIONS)
+    reifyAllStaticProperties(globalObject);
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 } // namespace JSC

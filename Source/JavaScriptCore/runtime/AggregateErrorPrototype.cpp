@@ -42,6 +42,9 @@ void AggregateErrorPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm, errorTypeName(ErrorType::AggregateError));
     ASSERT(inherits(info()));
+#if USE(BUN_JSC_ADDITIONS)
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 } // namespace JSC

@@ -57,6 +57,10 @@ void ErrorPrototypeBase::finishCreation(VM& vm, const String& name)
     ASSERT(inherits(info()));
     putDirectWithoutTransition(vm, vm.propertyNames->name, jsString(vm, name), static_cast<unsigned>(PropertyAttribute::DontEnum));
     putDirectWithoutTransition(vm, vm.propertyNames->message, jsEmptyString(vm), static_cast<unsigned>(PropertyAttribute::DontEnum));
+#if USE(BUN_JSC_ADDITIONS)
+    reifyAllStaticProperties(this->structure()->globalObject());
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 ErrorPrototype::ErrorPrototype(VM& vm, Structure* structure)

@@ -1412,13 +1412,19 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
 
     jit/Width.h
     runtime/ClonedArguments.h
-    runtime/InternalFieldTuple.h
-    runtime/SuppressedError.h
 
     runtime/JSModuleEnvironment.h
     runtime/JSModuleEnvironmentInlines.h
 )
 
+if(USE_BUN_JSC_ADDITIONS)
+    list(APPEND JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
+        runtime/InternalFieldTuple.h
+        runtime/SuppressedError.h
+        runtime/SuppressedErrorConstructor.h
+        runtime/SuppressedErrorPrototype.h
+    )
+endif()
 if(USE_INSPECTOR_SOCKET_SERVER)
     list(APPEND JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
         API/JSRemoteInspectorServer.h

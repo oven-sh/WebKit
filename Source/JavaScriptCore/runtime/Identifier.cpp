@@ -25,6 +25,10 @@
 #include "NumericStrings.h"
 #include <wtf/Assertions.h>
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "BuiltinNames.h"
+#endif
+
 namespace JSC {
 
 Ref<AtomStringImpl> Identifier::add8(VM& vm, const UChar* s, int length)
@@ -68,6 +72,18 @@ void Identifier::dump(PrintStream& out) const
     } else
         out.print("<null identifier>");
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+bool Identifier::isWellKnownSymbol(VM& vm) const
+{   
+    UniquedStringImpl * uid = impl();
+    return (
+        uid->isSymbol() && 
+        !static_cast<SymbolImpl*>(uid)->isPrivate() && 
+        vm.propertyNames->builtinNames().lookUpWellKnownSymbol(uid->substring(strlen("Symbol."))) != nullptr
+    );
+}
+#endif
 
 #ifndef NDEBUG
 

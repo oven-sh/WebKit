@@ -39,6 +39,9 @@ void WeakMapConstructor::finishCreation(VM& vm, WeakMapPrototype* prototype)
 {
     Base::finishCreation(vm, 0, "WeakMap"_s, PropertyAdditionMode::WithoutStructureTransition);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+#if USE(BUN_JSC_ADDITIONS)
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 static JSC_DECLARE_HOST_FUNCTION(callWeakMap);

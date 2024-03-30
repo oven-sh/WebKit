@@ -63,6 +63,10 @@ void StringConstructor::finishCreation(VM& vm, StringPrototype* stringPrototype)
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, stringPrototype, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
     putDirectWithoutTransition(vm, vm.propertyNames->length, jsNumber(1), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
     putDirectWithoutTransition(vm, vm.propertyNames->name, jsString(vm, vm.propertyNames->String.string()), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
+#if USE(BUN_JSC_ADDITIONS)
+    reifyAllStaticProperties(this->structure()->globalObject());
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 StringConstructor* StringConstructor::create(VM& vm, Structure* structure, StringPrototype* stringPrototype, GetterSetter*)

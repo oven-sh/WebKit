@@ -47,6 +47,9 @@ void ShadowRealmConstructor::finishCreation(VM& vm, ShadowRealmPrototype* shadow
 {
     Base::finishCreation(vm, 0, vm.propertyNames->ShadowRealm.string(), PropertyAdditionMode::WithoutStructureTransition);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, shadowRealmPrototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+#if USE(BUN_JSC_ADDITIONS)
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(constructWithShadowRealmConstructor, (JSGlobalObject* globalObject, CallFrame*))

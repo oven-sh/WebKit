@@ -66,6 +66,9 @@ void BooleanConstructor::finishCreation(VM& vm, BooleanPrototype* booleanPrototy
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, booleanPrototype, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
     putDirectWithoutTransition(vm, vm.propertyNames->length, jsNumber(1), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
     putDirectWithoutTransition(vm, vm.propertyNames->name, jsString(vm, vm.propertyNames->Boolean.string()), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
+#if USE(BUN_JSC_ADDITIONS)
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 BooleanConstructor* BooleanConstructor::create(VM& vm, Structure* structure, BooleanPrototype* booleanPrototype, GetterSetter*)

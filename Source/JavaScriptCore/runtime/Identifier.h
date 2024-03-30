@@ -142,6 +142,9 @@ public:
     bool isEmpty() const { return m_string.isEmpty(); }
     bool isSymbol() const { return !isNull() && impl()->isSymbol(); }
     bool isPrivateName() const { return isSymbol() && static_cast<const SymbolImpl*>(impl())->isPrivate(); }
+#if USE(BUN_JSC_ADDITIONS)
+    bool isWellKnownSymbol(VM& vm) const;
+#endif
 
     friend bool operator==(const Identifier&, const Identifier&);
     friend bool operator==(const Identifier&, const LChar*);

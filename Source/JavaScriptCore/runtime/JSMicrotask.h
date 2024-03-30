@@ -36,4 +36,11 @@ class JSArray;
 JS_EXPORT_PRIVATE Ref<Microtask> createJSMicrotask(VM&, JSValue job, JSValue, JSValue, JSValue, JSValue);
 JS_EXPORT_PRIVATE void runJSMicrotask(JSGlobalObject*, MicrotaskIdentifier, JSValue job, JSValue, JSValue, JSValue, JSValue);
 
+#if USE(BUN_JSC_ADDITIONS)
+JS_EXPORT_PRIVATE Ref<Microtask> createJSMicrotask(VM&, JSValue job, JSValue, JSValue, JSValue, JSValue, JSValue);
+// Adds support for passing a fifth `asyncContextData` microtask argument 
+// by way of @enqueueJob in builtins/PromiseOperations.js
+JS_EXPORT_PRIVATE void runJSMicrotask(JSGlobalObject*, MicrotaskIdentifier, JSValue job, JSValue, JSValue, JSValue, JSValue, JSValue);
+#endif
+
 } // namespace JSC

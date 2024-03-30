@@ -33,6 +33,7 @@ class CodeBlock;
 class JSGlobalObject;
 
 #define JSC_FOREACH_LINK_TIME_CONSTANTS(v) \
+    BUN_JSC_LINK_TIME_CONSTANTS(v) \
     JSC_FOREACH_BUILTIN_LINK_TIME_CONSTANT(v) \
     v(throwTypeErrorFunction, nullptr) \
     v(importModule, nullptr) \

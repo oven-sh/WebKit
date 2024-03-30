@@ -60,6 +60,9 @@ void AsyncFunctionConstructor::finishCreation(VM& vm, AsyncFunctionPrototype* pr
 {
     Base::finishCreation(vm, 1, "AsyncFunction"_s, PropertyAdditionMode::WithoutStructureTransition);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+#if USE(BUN_JSC_ADDITIONS)
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 } // namespace JSC

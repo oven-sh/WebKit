@@ -69,6 +69,10 @@ void IntlSegmentIteratorPrototype::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+#if USE(BUN_JSC_ADDITIONS)
+    reifyAllStaticProperties(this->structure()->globalObject());
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 // https://tc39.es/proposal-intl-segmenter/#sec-%segmentiteratorprototype%.next

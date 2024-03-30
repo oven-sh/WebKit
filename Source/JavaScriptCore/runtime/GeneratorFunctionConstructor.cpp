@@ -60,6 +60,9 @@ void GeneratorFunctionConstructor::finishCreation(VM& vm, GeneratorFunctionProto
 {
     Base::finishCreation(vm, 1, "GeneratorFunction"_s, PropertyAdditionMode::WithoutStructureTransition);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, generatorFunctionPrototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+#if USE(BUN_JSC_ADDITIONS)
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 } // namespace JSC

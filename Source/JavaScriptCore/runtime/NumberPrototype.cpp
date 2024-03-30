@@ -77,6 +77,9 @@ void NumberPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
     setInternalValue(vm, jsNumber(0));
     putDirectWithoutTransition(vm, vm.propertyNames->toString, globalObject->numberProtoToStringFunction(), static_cast<unsigned>(PropertyAttribute::DontEnum));
     ASSERT(inherits(info()));
+#if USE(BUN_JSC_ADDITIONS)
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
     globalObject->installNumberPrototypeWatchpoint(this);
 }
 

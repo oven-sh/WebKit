@@ -1535,6 +1535,7 @@ static ProxyObject::Field proxyInternalFieldIndex(BytecodeIntrinsicNode* node)
     return ProxyObject::Field::Target;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
 RegisterID* BytecodeIntrinsicNode::emit_intrinsic_getInternalField(BytecodeGenerator& generator, RegisterID* dst)
 {
     ArgumentListNode* node = m_args->m_listNode;
@@ -1546,6 +1547,7 @@ RegisterID* BytecodeIntrinsicNode::emit_intrinsic_getInternalField(BytecodeGener
 
     return generator.emitGetInternalField(generator.finalDestination(dst), base.get(), index);
 }
+#endif
 
 RegisterID* BytecodeIntrinsicNode::emit_intrinsic_getPromiseInternalField(BytecodeGenerator& generator, RegisterID* dst)
 {
@@ -1746,6 +1748,7 @@ RegisterID* BytecodeIntrinsicNode::emit_intrinsic_putByValDirect(BytecodeGenerat
     return generator.move(dst, generator.emitDirectPutByVal(base.get(), index.get(), value.get()));
 }
 
+#if USE(BUN_JSC_ADDITIONS)
 RegisterID* BytecodeIntrinsicNode::emit_intrinsic_putInternalField(BytecodeGenerator& generator, RegisterID* dst)
 {
     ArgumentListNode* node = m_args->m_listNode;
@@ -1760,6 +1763,7 @@ RegisterID* BytecodeIntrinsicNode::emit_intrinsic_putInternalField(BytecodeGener
 
     return generator.move(dst, generator.emitPutInternalField(base.get(), index, value.get()));
 }
+#endif
 
 RegisterID* BytecodeIntrinsicNode::emit_intrinsic_putPromiseInternalField(BytecodeGenerator& generator, RegisterID* dst)
 {

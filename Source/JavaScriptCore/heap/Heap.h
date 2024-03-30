@@ -112,7 +112,16 @@ namespace GCClient {
 class Heap;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+#define BUN_JSC_COMMON_ISO_SUBSPACES(v) \
+    v(internalFieldTupleSpace, cellHeapCellType, InternalFieldTuple) \
+
+#else
+#define BUN_JSC_COMMON_ISO_SUBSPACES(v)
+#endif
+
 #define FOR_EACH_JSC_COMMON_ISO_SUBSPACE(v) \
+    BUN_JSC_COMMON_ISO_SUBSPACES(v) \
     v(arraySpace, cellHeapCellType, JSArray) \
     v(bigIntSpace, cellHeapCellType, JSBigInt) \
     v(calleeSpace, cellHeapCellType, JSCallee) \
@@ -142,7 +151,6 @@ class Heap;
     v(structureChainSpace, cellHeapCellType, StructureChain) \
     v(structureRareDataSpace, destructibleCellHeapCellType, StructureRareData) \
     v(symbolTableSpace, destructibleCellHeapCellType, SymbolTable) \
-    v(internalFieldTupleSpace, cellHeapCellType, InternalFieldTuple) \
 
 #define FOR_EACH_JSC_STRUCTURE_ISO_SUBSPACE(v) \
     v(structureSpace, destructibleCellHeapCellType, Structure) \
