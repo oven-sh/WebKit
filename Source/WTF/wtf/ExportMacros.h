@@ -47,7 +47,7 @@
 #define WTF_INTERNAL
 #endif
 
-#if USE(DECLSPEC_ATTRIBUTE)
+#if USE(DECLSPEC_ATTRIBUTE) && !USE(BUN_JSC_ADDITIONS)
 #define WTF_EXPORT_DECLARATION __declspec(dllexport)
 #define WTF_IMPORT_DECLARATION __declspec(dllimport)
 #elif USE(VISIBILITY_ATTRIBUTE)

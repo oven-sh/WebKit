@@ -75,6 +75,10 @@ void IntlListFormatConstructor::finishCreation(VM& vm, IntlListFormatPrototype* 
     Base::finishCreation(vm, 0, "ListFormat"_s, PropertyAdditionMode::WithoutStructureTransition);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, listFormatPrototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     listFormatPrototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, this, static_cast<unsigned>(PropertyAttribute::DontEnum));
+#if USE(BUN_JSC_ADDITIONS)
+    reifyAllStaticProperties(this->structure()->globalObject());
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 // https://tc39.es/proposal-intl-list-format/#sec-Intl.ListFormat

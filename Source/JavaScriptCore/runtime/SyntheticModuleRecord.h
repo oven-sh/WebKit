@@ -58,11 +58,17 @@ public:
     Synchronousness link(JSGlobalObject*, JSValue scriptFetcher);
     JS_EXPORT_PRIVATE JSValue evaluate(JSGlobalObject*);
 
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, const MarkedArgumentBuffer& exportValues);
+#endif
+
 private:
     SyntheticModuleRecord(VM&, Structure*, const Identifier& moduleKey);
 
     static SyntheticModuleRecord* tryCreateDefaultExportSyntheticModule(JSGlobalObject*, const Identifier& moduleKey, JSValue);
+#if !USE(BUN_JSC_ADDITIONS)
     static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, const MarkedArgumentBuffer& exportValues);
+#endif
 
     void finishCreation(JSGlobalObject*, VM&);
 

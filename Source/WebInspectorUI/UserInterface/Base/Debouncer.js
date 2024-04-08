@@ -41,6 +41,9 @@
 //
 // When the wrapped function is actually called, it will be given the most recent set of arguments.
 
+/* #if USE(BUN_JSC_ADDITIONS) */
+Debouncer =
+/* #endif */
 class Debouncer
 {
     constructor(callback)

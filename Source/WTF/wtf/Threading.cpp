@@ -506,7 +506,7 @@ void initialize()
 #if PLATFORM(COCOA)
         initializeLibraryPathDiagnostics();
 #endif
-#if USE(WINDOWS_EVENT_LOOP)
+#if USE(WINDOWS_EVENT_LOOP) && !USE(BUN_JSC_ADDITIONS)
         RunLoop::registerRunLoopMessageWindowClass();
 #endif
     });

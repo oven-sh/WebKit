@@ -147,7 +147,11 @@ void JSWebAssembly::webAssemblyModuleValidateAsync(JSGlobalObject* globalObject,
     Vector<Strong<JSCell>> dependencies;
     dependencies.append(Strong<JSCell>(vm, globalObject));
 
+#if !USE(BUN_JSC_ADDITIONS)
     auto ticket = vm.deferredWorkTimer->addPendingWork(vm, promise, WTFMove(dependencies));
+#else
+    auto ticket = vm.deferredWorkTimer->addPendingWork(vm, promise, WTFMove(dependencies), DeferredWorkTimer::WorkKind::WebAssembly);
+#endif
     Wasm::Module::validateAsync(vm, WTFMove(source), createSharedTask<Wasm::Module::CallbackType>([ticket, promise, globalObject, &vm] (Wasm::Module::ValidationResult&& result) mutable {
         vm.deferredWorkTimer->scheduleWorkSoon(ticket, [promise, globalObject, result = WTFMove(result), &vm](DeferredWorkTimer::Ticket) mutable {
             auto scope = DECLARE_THROW_SCOPE(vm);
@@ -186,7 +190,11 @@ static void instantiate(VM& vm, JSGlobalObject* globalObject, JSPromise* promise
     dependencies.append(Strong<JSCell>(vm, promise));
 
     scope.release();
+#if !USE(BUN_JSC_ADDITIONS)
     auto ticket = vm.deferredWorkTimer->addPendingWork(vm, instance, WTFMove(dependencies));
+#else
+    auto ticket = vm.deferredWorkTimer->addPendingWork(vm, instance, WTFMove(dependencies), DeferredWorkTimer::WorkKind::WebAssembly);
+#endif
     // Note: This completion task may or may not get called immediately.
     module->module().compileAsync(vm, instance->memoryMode(), createSharedTask<Wasm::CalleeGroup::CallbackType>([ticket, promise, instance, module, resolveKind, creationMode, &vm] (Ref<Wasm::CalleeGroup>&& refCalleeGroup) mutable {
         RefPtr<Wasm::CalleeGroup> calleeGroup = WTFMove(refCalleeGroup);
@@ -238,7 +246,11 @@ static void compileAndInstantiate(VM& vm, JSGlobalObject* globalObject, JSPromis
     Vector<Strong<JSCell>> dependencies;
     dependencies.append(Strong<JSCell>(vm, importObject));
     dependencies.append(Strong<JSCell>(vm, moduleKeyCell));
+#if !USE(BUN_JSC_ADDITIONS)
     auto ticket = vm.deferredWorkTimer->addPendingWork(vm, promise, WTFMove(dependencies));
+#else
+    auto ticket = vm.deferredWorkTimer->addPendingWork(vm, promise, WTFMove(dependencies), DeferredWorkTimer::WorkKind::WebAssembly);
+#endif
     Wasm::Module::validateAsync(vm, WTFMove(source), createSharedTask<Wasm::Module::CallbackType>([ticket, promise, importObject, moduleKeyCell, globalObject, resolveKind, creationMode, &vm] (Wasm::Module::ValidationResult&& result) mutable {
         vm.deferredWorkTimer->scheduleWorkSoon(ticket, [promise, importObject, moduleKeyCell, globalObject, result = WTFMove(result), resolveKind, creationMode, &vm](DeferredWorkTimer::Ticket) mutable {
             auto scope = DECLARE_THROW_SCOPE(vm);

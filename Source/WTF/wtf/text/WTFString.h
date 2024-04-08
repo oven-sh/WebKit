@@ -27,6 +27,10 @@
 #include <wtf/text/IntegerToStringConversion.h>
 #include <wtf/text/StringImpl.h>
 
+#if USE(BUN_JSC_ADDITIONS)
+#include <wtf/text/ExternalStringImpl.h>
+#endif
+
 #ifdef __OBJC__
 #include <objc/objc.h>
 #endif
@@ -76,6 +80,12 @@ public:
     String(StaticStringImpl&);
     String(StaticStringImpl*);
 
+#if USE(BUN_JSC_ADDITIONS)
+    String(ExternalStringImpl&);
+    String(ExternalStringImpl*);
+    String(Ref<ExternalStringImpl>&&);
+    String(RefPtr<ExternalStringImpl>&&);
+#endif
     // Construct a string from a constant string literal.
     String(ASCIILiteral);
 
@@ -499,6 +509,28 @@ inline Expected<std::invoke_result_t<Func, std::span<const char>>, UTF8Conversio
     }
     return m_impl->tryGetUTF8(function, mode);
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+inline String::String(ExternalStringImpl& string)
+    : m_impl(&string)
+{
+}
+
+inline String::String(ExternalStringImpl* string)
+    : m_impl(string)
+{
+}
+
+inline String::String(Ref<ExternalStringImpl>&& string)
+    : m_impl(WTFMove(string))
+{
+}
+
+inline String::String(RefPtr<ExternalStringImpl>&& string)
+    : m_impl(WTFMove(string))
+{
+}
+#endif
 
 #if USE(FOUNDATION) && defined(__OBJC__)
 

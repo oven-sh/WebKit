@@ -42,6 +42,10 @@
 #include <wtf/text/UTF8ConversionError.h>
 #include <wtf/unicode/UTF8Conversion.h>
 
+#if USE(BUN_JSC_ADDITIONS)
+#include <wtf/Bun_Extras.h>
+#endif
+
 #if USE(CF)
 typedef const struct __CFString * CFStringRef;
 #endif
@@ -504,6 +508,10 @@ public:
     WTF_EXPORT_PRIVATE Ref<StringImpl> replace(unsigned start, unsigned length, StringView);
 
     WTF_EXPORT_PRIVATE std::optional<UCharDirection> defaultWritingDirection();
+
+#if USE(BUN_JSC_ADDITIONS)
+    template<typename SourceCharacterType> static void iterCharacters(jsstring_iterator* iter, unsigned start, const SourceCharacterType* source, unsigned numCharacters);
+#endif
 
 #if USE(CF)
     RetainPtr<CFStringRef> createCFString();
@@ -1162,6 +1170,20 @@ inline void StringImpl::deref()
     }
     m_refCount = tempRefCount;
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+template<typename SourceCharacterType>
+inline void StringImpl::iterCharacters(jsstring_iterator* iter, unsigned start, const SourceCharacterType* source, unsigned numCharacters)
+{
+    static_assert(std::is_same_v<SourceCharacterType, LChar> || std::is_same_v<SourceCharacterType, UChar>);
+
+    if constexpr (std::is_same_v<SourceCharacterType, LChar>) {
+       iter->write8(iter, (const void*) source, numCharacters, start);
+    } else {
+       iter->write16(iter, (const void*) source, numCharacters, start);
+    }
+}
+#endif
 
 inline UChar StringImpl::at(unsigned i) const
 {

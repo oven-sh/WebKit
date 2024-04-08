@@ -3863,6 +3863,11 @@ JSC_DEFINE_JIT_OPERATION(operationGetDynamicVar, EncodedJSValue, (JSGlobalObject
     Identifier ident = Identifier::fromUid(vm, impl);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(scope->getPropertySlot(globalObject, ident, [&] (bool found, PropertySlot& slot) -> JSValue {
         if (!found) {
+#if USE(BUN_JSC_ADDITIONS)
+            // Adds support for passing symbols to methods, e.g. object.@__lookupGetter(@@iterator).
+            if (ident.isPrivateName() || ident.isWellKnownSymbol(vm))
+                return identifierToJSValue(vm, ident);
+#endif
             GetPutInfo getPutInfo(getPutInfoBits);
             if (getPutInfo.resolveMode() == ThrowIfNotFound)
                 throwException(globalObject, throwScope, createUndefinedVariableError(globalObject, ident));

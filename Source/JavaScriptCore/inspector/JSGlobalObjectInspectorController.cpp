@@ -62,6 +62,26 @@ using namespace JSC;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(JSGlobalObjectInspectorController);
 
+#if USE(BUN_JSC_ADDITIONS)
+JSGlobalObjectInspectorController::JSGlobalObjectInspectorController(JSGlobalObject& globalObject, Ref<InjectedScriptHost>&& host)
+    : m_globalObject(globalObject)
+    , m_injectedScriptManager(makeUnique<InjectedScriptManager>(*this, WTFMove(host)))
+    , m_executionStopwatch(Stopwatch::create())
+    , m_frontendRouter(FrontendRouter::create())
+    , m_backendDispatcher(BackendDispatcher::create(m_frontendRouter.copyRef()))
+{
+    auto context = jsAgentContext();
+
+    auto consoleAgent = makeUnique<InspectorConsoleAgent>(context);
+    m_consoleAgent = consoleAgent.get();
+    m_agents.append(WTFMove(consoleAgent));
+
+    m_consoleClient = makeUnique<JSGlobalObjectConsoleClient>(m_consoleAgent);
+
+    m_executionStopwatch->start();
+}
+#endif
+
 JSGlobalObjectInspectorController::JSGlobalObjectInspectorController(JSGlobalObject& globalObject)
     : m_globalObject(globalObject)
     , m_injectedScriptManager(makeUnique<InjectedScriptManager>(*this, InjectedScriptHost::create()))
@@ -177,8 +197,13 @@ void JSGlobalObjectInspectorController::appendAPIBacktrace(ScriptCallStack& call
 void JSGlobalObjectInspectorController::reportAPIException(JSGlobalObject* globalObject, Exception* exception)
 {
     VM& vm = globalObject->vm();
-    if (vm.isTerminationException(exception))
+#if ENABLE(REMOTE_INSPECTOR)
+    if (vm.isTerminationException(exception) || !m_didCreateLazyAgents || !m_globalObject.inspectorDebuggable().inspectable())
         return;
+#else
+    if (vm.isTerminationException(exception) || !m_didCreateLazyAgents)
+        return;
+#endif
 
     auto scope = DECLARE_CATCH_SCOPE(vm);
     ErrorHandlingScope errorScope(vm);

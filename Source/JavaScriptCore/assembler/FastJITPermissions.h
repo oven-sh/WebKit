@@ -55,7 +55,7 @@ static ALWAYS_INLINE void threadSelfRestrictRWXToRX()
     be_memory_inline_jit_restrict_rwx_to_rx_with_witness();
 }
 
-#elif USE(PTHREAD_JIT_PERMISSIONS_API)
+#elif (USE(BUN_JSC_ADDITIONS) ? CPU(ARM64) : USE(PTHREAD_JIT_PERMISSIONS_API))
 #include <pthread.h>
 
 static ALWAYS_INLINE bool threadSelfRestrictSupported()

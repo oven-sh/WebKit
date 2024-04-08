@@ -93,6 +93,19 @@ public:
     bool isCatchableFromWasm() const { return m_catchableFromWasm; }
 #endif
 
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE void captureStackTrace(VM &vm, JSC::JSGlobalObject* globalObject, size_t framesToSkip = 0, bool append = false);
+
+    const String& sourceURL() const { return m_sourceURL; }
+    void setSourceURL(String sourceURL) { m_sourceURL = sourceURL; } 
+
+    unsigned line() const { return m_lineColumn.line; }
+    void setLine(unsigned line) { m_lineColumn.line = line; }
+
+    unsigned column() const { return m_lineColumn.column; }
+    void setColumn(unsigned column) { m_lineColumn.column = column; }
+#endif
+
     JS_EXPORT_PRIVATE String sanitizedToString(JSGlobalObject*);
     JS_EXPORT_PRIVATE String sanitizedMessageString(JSGlobalObject*);
     JS_EXPORT_PRIVATE String sanitizedNameString(JSGlobalObject*);
@@ -118,6 +131,9 @@ protected:
     static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
 
     void computeErrorInfo(VM&);
+#if USE(BUN_JSC_ADDITIONS)
+    void computeErrorInfo(VM&, bool allocationAllowed);
+#endif
 
     SourceAppender m_sourceAppender { nullptr };
     std::unique_ptr<Vector<StackFrame>> m_stackTrace;

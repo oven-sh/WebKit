@@ -119,6 +119,7 @@
     return [JSValue valueWithJSValueRef:result inContext:self];
 }
 
+#if !USE(BUN_JSC_ADDITIONS)
 - (JSValue *)evaluateJSScript:(JSScript *)script
 {
     JSC::JSGlobalObject* globalObject = toJS(m_context);
@@ -150,12 +151,20 @@
     }
     return [JSValue valueWithJSValueRef:toRef(vm, result) inContext:self];
 }
+#else
+- (JSValue *)evaluateJSScript:(JSScript *)script
+{
+    return nil;
+}
+#endif
 
 - (JSValue *)dependencyIdentifiersForModuleJSScript:(JSScript *)script
 {
     JSC::JSGlobalObject* globalObject = toJS(m_context);
     JSC::VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(vm);
+#endif
 
     if (script.type != kJSScriptTypeModule) {
         self.exceptionHandler(self, [JSValue valueWithNewErrorFromMessage:@"script is not a module" inContext:self]);
@@ -180,8 +189,10 @@
 - (void)_setITMLDebuggableType
 {
     JSC::JSGlobalObject* globalObject = toJS(m_context);
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::VM& vm = globalObject->vm();
     JSC::JSLockHolder locker(vm);
+#endif
 
     globalObject->setIsITML();
 }
@@ -190,7 +201,9 @@
 {
     JSC::JSGlobalObject* globalObject = toJS(m_context);
     JSC::VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(vm);
+#endif
     if (value)
         m_exception.set(vm, toJS(JSValueToObject(m_context, valueInternalValue(value), 0)));
     else
@@ -400,7 +413,9 @@
 
 - (JSValue *)wrapperForObjCObject:(id)object
 {
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(toJS(m_context));
+#endif
     return [[self wrapperMap] jsWrapperForObject:object inContext:self];
 }
 
@@ -411,7 +426,9 @@
 
 - (JSValue *)wrapperForJSObject:(JSValueRef)value
 {
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(toJS(m_context));
+#endif
     return [[self wrapperMap] objcWrapperForJSValueRef:value inContext:self];
 }
 

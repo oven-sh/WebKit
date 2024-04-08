@@ -52,7 +52,11 @@ if (!window.InspectorFrontendHost) {
         get debuggableInfo()
         {
             return {
-                debuggableType: "web-page",
+/* #if !USE(BUN_JSC_ADDITIONS) */
+                // debuggableType: "web-page",
+/* #else */
+                debuggableType: "javascript",
+/* #endif */
                 targetPlatformName: undefined,
                 targetBuildVersion: undefined,
                 targetProductVersion: undefined,
@@ -91,16 +95,45 @@ if (!window.InspectorFrontendHost) {
         {
             const queryParams = parseQueryString(window.location.search.substring(1));
             let url = "ws" in queryParams ? "ws://" + queryParams.ws : null;
-            if (!url)
+            if (!url) {
+/* #if USE(BUN_JSC_ADDITIONS) */
+                url = location.hash.slice(1);
+                if (url && !url.startsWith("ws://")) {
+                    url = "ws://" + url;
+                }
+            }
+            if (!url) {
+                if (typeof window.onFailToLoad === "function") {
+                    window.onFailToLoad(null);
+                }
+/* #endif */
                 return;
+            }
 
-            const socket = new WebSocket(url);
+/* #if !USE(BUN_JSC_ADDITIONS) */
+            // const socket = new WebSocket(url);
+/* #else */
+            try {
+                var socket = new WebSocket(url);
+            } catch (e) {
+                if (typeof window.onFailToLoad === "function") {
+                    window.onFailToLoad(e, url);
+                    return;
+                }
+                throw new Error(`Could not connect to "${url}"`, {cause: e});
+            }
+/* #endif */
             socket.addEventListener("message", message => InspectorBackend.dispatch(message.data));
             socket.addEventListener("error", console.error);
             socket.addEventListener("open", () => { this._socket = socket; });
             socket.addEventListener("close", () => {
                 this._socket = null;
-                window.close();
+/* #if !USE(BUN_JSC_ADDITIONS) */
+                // window.close();
+/* #else */
+                document.body.style.filter = "grayscale(100%)";
+                console.trace("WebSocket connection has closed");
+/* #endif */
             });
         }
 
@@ -385,7 +418,11 @@ if (!window.InspectorFrontendHost) {
 
         engineeringSettingsAllowed()
         {
-            return false;
+/* #if !USE(BUN_JSC_ADDITIONS) */
+            // return false;
+/* #else */
+            return true;
+/* #endif */
         }
 
         // Private

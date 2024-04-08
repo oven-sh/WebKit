@@ -19,6 +19,22 @@ if (WIN32)
         win/ThreadingWin.cpp
         win/Win32Handle.cpp
     )
+
+    if (USE_BUN_JSC_ADDITIONS)
+        list(APPEND WTF_SOURCES
+            win/Win32Handle.cpp
+        )
+        if (WTF_CPU_X86_64 AND MSVC)
+            add_custom_command(
+                OUTPUT ${WTF_DERIVED_SOURCES_DIR}/AsmStubsMSVC64.obj
+                MAIN_DEPENDENCY ${WTF_DIR}/wtf/win/AsmStubsMSVC64.asm
+                COMMAND ml64 -nologo -c -Fo ${WTF_DERIVED_SOURCES_DIR}/AsmStubsMSVC64.obj ${WTF_DIR}/wtf/win/AsmStubsMSVC64.asm
+                VERBATIM)
+
+            list(APPEND WTF_SOURCES ${WTF_DERIVED_SOURCES_DIR}/AsmStubsMSVC64.obj)
+        endif ()
+    endif ()
+
     list(APPEND WTF_PUBLIC_HEADERS
         text/win/WCharStringExtras.h
 
@@ -110,6 +126,10 @@ elseif (CMAKE_SYSTEM_NAME MATCHES "Linux")
         linux/ProcessMemoryFootprint.h
         linux/CurrentProcessMemoryStatus.h
     )
+    if (USE_BUN_JSC_ADDITIONS)
+        # Necessary for Ubuntu
+        list(APPEND WTF_LIBRARIES stdc++fs)
+    endif ()
 elseif (CMAKE_SYSTEM_NAME MATCHES "FreeBSD")
     list(APPEND WTF_SOURCES
         generic/MemoryFootprintGeneric.cpp

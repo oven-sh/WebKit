@@ -1233,3 +1233,10 @@ yarr/YarrTZoneImpls.cpp
 
 // Derived Sources
 yarr/YarrCanonicalizeUnicode.cpp
+
+// BUN_JSC_ADDITION Sources
+runtime/Bun_InternalFieldTuple.cpp
+runtime/Bun_SuppressedError.cpp
+runtime/Bun_SuppressedErrorConstructor.cpp
+runtime/Bun_SuppressedErrorPrototype.cpp
+runtime/Bun_JSDateMath-v8.cpp

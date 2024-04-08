@@ -155,7 +155,7 @@ void DeferredWorkTimer::runRunLoop()
         RunLoop::run();
 }
 
-DeferredWorkTimer::Ticket DeferredWorkTimer::addPendingWork(VM& vm, JSObject* target, Vector<Strong<JSCell>>&& dependencies)
+DeferredWorkTimer::Ticket DeferredWorkTimer::addPendingWork(VM& vm, JSObject* target, Vector<Strong<JSCell>>&& dependencies, WorkKind workKind)
 {
     ASSERT(vm.currentThreadIsHoldingAPILock() || (Thread::mayBeGCThread() && vm.heap.worldIsStopped()));
     for (unsigned i = 0; i < dependencies.size(); ++i)
@@ -169,8 +169,13 @@ DeferredWorkTimer::Ticket DeferredWorkTimer::addPendingWork(VM& vm, JSObject* ta
     Ticket ticket = ticketData.get();
 
     dataLogLnIf(DeferredWorkTimerInternal::verbose, "Adding new pending ticket: ", RawPointer(ticket));
-    auto result = m_pendingTickets.add(WTFMove(ticketData));
-    RELEASE_ASSERT(result.isNewEntry);
+    if (onAddPendingWork) {
+        onAddPendingWork(WTFMove(ticketData), workKind);
+    } else {
+        auto result = m_pendingTickets.add(WTFMove(ticketData));
+        RELEASE_ASSERT(result.isNewEntry);
+    }
+    
 
     return ticket;
 }
@@ -195,6 +200,11 @@ bool DeferredWorkTimer::hasDependancyInPendingWork(Ticket ticket, JSCell* depend
 
 void DeferredWorkTimer::scheduleWorkSoon(Ticket ticket, Task&& task)
 {
+    if (onScheduleWorkSoon) {
+        onScheduleWorkSoon(ticket, WTFMove(task));
+        return;
+    }
+
     Locker locker { m_taskLock };
     m_tasks.append(std::make_tuple(ticket, WTFMove(task)));
     if (!isScheduled() && !m_currentlyRunningTask)
@@ -211,6 +221,10 @@ bool DeferredWorkTimer::cancelPendingWork(Ticket ticket)
         dataLogLnIf(DeferredWorkTimerInternal::verbose, "Canceling ticket: ", RawPointer(ticket));
         ticket->cancel();
         result = true;
+    }
+
+     if (onCancelPendingWork) {
+        onCancelPendingWork(ticket);
     }
 
     return result;

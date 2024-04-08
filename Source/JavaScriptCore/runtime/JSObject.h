@@ -744,6 +744,11 @@ public:
     JS_EXPORT_PRIVATE bool putDirectCustomAccessor(VM&, PropertyName, JSValue, unsigned attributes);
     void putDirectCustomGetterSetterWithoutTransition(VM&, PropertyName, JSValue, unsigned attributes);
 
+#if USE(BUN_JSC_ADDITIONS)
+    bool putPrivateAliasWithoutTransition(VM& vm, UniquedStringImpl* uid);
+    bool putPrivateAliasWithoutTransition(VM& vm, PropertyName propertyName);
+    void putAllPrivateAliasesWithoutTransition(VM& vm);
+#endif
     bool putGetter(JSGlobalObject*, PropertyName, JSValue, unsigned attributes);
     bool putSetter(JSGlobalObject*, PropertyName, JSValue, unsigned attributes);
 

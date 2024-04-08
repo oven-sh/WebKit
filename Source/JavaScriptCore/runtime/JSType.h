@@ -22,6 +22,9 @@
 
 namespace JSC {
 
+#define BUN_JS_TYPES(macro) \
+    macro(InternalFieldTupleType, SpecCellOther) \
+
 // macro(JSType, DirectSpeculatedType)
 #define FOR_EACH_JS_TYPE(macro) \
     /* The CellType value must come before any JSType that is a JSCell. */ \
@@ -128,12 +131,12 @@ namespace JSC {
     macro(WebAssemblyModuleType, SpecObjectOther) \
     macro(WebAssemblyInstanceType, SpecObjectOther) \
     macro(WebAssemblyGCObjectType, SpecObjectOther) \
+    BUN_JS_TYPES(macro) \
     /* Start StringObjectType types. */ \
     macro(StringObjectType, SpecStringObject) \
     /* We do not want to accept String.prototype in StringObjectUse, so that we do not include it as SpecStringObject. */ \
     macro(DerivedStringObjectType, SpecObjectOther) \
     /* End StringObjectType types. */ \
-
 
 enum JSType : uint8_t {
 #define JSC_DEFINE_JS_TYPE(type, speculatedType) type,

@@ -1342,7 +1342,82 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     yarr/YarrUnicodeProperties.h
 )
 
-if (USE_INSPECTOR_SOCKET_SERVER)
+if(USE_BUN_JSC_ADDITIONS)
+    list(APPEND JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
+        API/JSWeakValue.h
+        bytecode/AccessCase.h
+        bytecode/AdaptiveInferredPropertyValueWatchpointBase.h
+        bytecode/FunctionCodeBlock.h
+        bytecode/InlineCacheCompiler.h
+        bytecode/ObjectPropertyConditionSet.h
+        bytecode/Opcode.h
+        bytecode/Operands.h
+        bytecode/OperandsInlines.h
+        bytecode/PolyProtoAccessChain.h
+        bytecode/Repatch.h
+        bytecode/StructureStubInfo.h
+        bytecode/StructureStubClearingWatchpoint.h
+        bytecode/StubInfoSummary.h
+        bytecode/UnlinkedFunctionCodeBlock.h
+        dfg/DFGAbstractHeap.h
+        domjit/DOMJITHeapRange.h
+        inspector/JSGlobalObjectDebugger.h
+        inspector/JSGlobalObjectInspectorController.h
+        jit/JIT.h
+        jit/JITAddGenerator.h
+        jit/JITBitBinaryOpGenerator.h
+        jit/JITDisassembler.h
+        jit/JITInlineCacheGenerator.h
+        jit/JITMathIC.h
+        jit/JITMathICInlineResult.h
+        jit/JITMulGenerator.h
+        jit/JITNegGenerator.h
+        jit/JITRightShiftGenerator.h
+        jit/JITSubGenerator.h
+        jit/JSInterfaceJIT.h
+        jit/SnippetOperand.h
+        jit/Width.h
+        llint/LLIntData.h
+        llint/LLIntOpcode.h
+        parser/ModuleScopeData.h
+        parser/Parser.h
+        runtime/AggregateError.h
+        runtime/AsyncFunctionPrototype.h
+        runtime/Bun_CommonIdentifiers.h
+        runtime/Bun_InternalFieldTuple.h
+        runtime/Bun_SuppressedError.h
+        runtime/Bun_SuppressedErrorConstructor.h
+        runtime/Bun_SuppressedErrorConstructorInlines.h
+        runtime/Bun_SuppressedErrorPrototype.h
+        runtime/Bun_SuppressedErrorPrototypeInlines.h
+        runtime/ClonedArguments.h
+        runtime/CodeCache.h
+        runtime/CommonSlowPaths.h
+        runtime/DateConstructor.h
+        runtime/DirectArguments.h
+        runtime/ErrorConstructor.h
+        runtime/ErrorInstanceInlines.h
+        runtime/GeneratorFunctionPrototype.h
+        runtime/GenericArguments.h
+        runtime/JSGlobalObjectDebuggable.h
+        runtime/JSInternalFieldObjectImplInlines.h
+        runtime/JSLexicalEnvironment.h
+        runtime/JSModuleEnvironment.h
+        runtime/JSModuleEnvironmentInlines.h
+        runtime/JSModuleNamespaceObject.h
+        runtime/JSModuleNamespaceObjectInlines.h
+        runtime/JSTypedArrayViewPrototype.h
+        runtime/JSTypedArrayPrototypes.h
+        runtime/LazyClassStructureInlines.h
+        runtime/LazyPropertyInlines.h
+        runtime/SamplingProfiler.h
+        runtime/ScopedArguments.h
+        runtime/WeakMapImpl.h
+        runtime/WeakMapImplInlines.h
+    )
+endif()
+
+if(USE_INSPECTOR_SOCKET_SERVER)
     list(APPEND JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
         API/JSRemoteInspectorServer.h
     )
@@ -1442,12 +1517,21 @@ set(JavaScriptCore_INSPECTOR_DOMAINS
     ${JAVASCRIPTCORE_DIR}/inspector/protocol/Worker.json
 )
 
-add_custom_command(
-    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/CombinedDomains.json
-    MAIN_DEPENDENCY ${JavaScriptCore_SCRIPTS_DIR}/generate-combined-inspector-json.py
-    DEPENDS ${JavaScriptCore_INSPECTOR_DOMAINS}
-    COMMAND ${PYTHON_EXECUTABLE} ${JavaScriptCore_SCRIPTS_DIR}/generate-combined-inspector-json.py ${JavaScriptCore_INSPECTOR_DOMAINS} "${FEATURE_DEFINES_WITH_SPACE_SEPARATOR}" > ${JavaScriptCore_DERIVED_SOURCES_DIR}/CombinedDomains.json
-    VERBATIM)
+if (NOT USE_BUN_JSC_ADDITIONS)
+    add_custom_command(
+        OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/CombinedDomains.json
+        MAIN_DEPENDENCY ${JavaScriptCore_SCRIPTS_DIR}/generate-combined-inspector-json.py
+        DEPENDS ${JavaScriptCore_INSPECTOR_DOMAINS}
+        COMMAND ${PYTHON_EXECUTABLE} ${JavaScriptCore_SCRIPTS_DIR}/generate-combined-inspector-json.py ${JavaScriptCore_INSPECTOR_DOMAINS} "${FEATURE_DEFINES_WITH_SPACE_SEPARATOR}" ${JavaScriptCore_DERIVED_SOURCES_DIR}/CombinedDomains.json
+        VERBATIM)
+else ()
+    add_custom_command(
+        OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/CombinedDomains.json
+        MAIN_DEPENDENCY ${JavaScriptCore_SCRIPTS_DIR}/generate-combined-inspector-json.py
+        DEPENDS ${JavaScriptCore_INSPECTOR_DOMAINS}
+        COMMAND ${PYTHON_EXECUTABLE} ${JavaScriptCore_SCRIPTS_DIR}/generate-combined-inspector-json.py ${JavaScriptCore_INSPECTOR_DOMAINS} "${FEATURE_DEFINES_WITH_SPACE_SEPARATOR}" ${JavaScriptCore_DERIVED_SOURCES_DIR}/CombinedDomains.json
+        VERBATIM)
+endif ()
 
 # Inspector Backend Dispatchers, Frontend Dispatchers, Type Builders
 file(MAKE_DIRECTORY ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector)

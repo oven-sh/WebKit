@@ -38,6 +38,10 @@ public:
     JSGlobalObjectDebugger(JSC::JSGlobalObject&);
     ~JSGlobalObjectDebugger() final { }
 
+#if USE(BUN_JSC_ADDITIONS)
+    using RunWhilePausedCallback = void (*)(JSC::JSGlobalObject&, bool&);
+    RunWhilePausedCallback runWhilePausedCallback { nullptr };
+#endif
     JSC::JSGlobalObject& globalObject() const { return m_globalObject; }
 
     static RunLoopMode runLoopMode();

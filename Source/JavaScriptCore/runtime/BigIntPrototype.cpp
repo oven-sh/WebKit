@@ -65,11 +65,15 @@ BigIntPrototype::BigIntPrototype(VM& vm, Structure* structure)
 {
 }
 
-void BigIntPrototype::finishCreation(VM& vm, JSGlobalObject*)
+void BigIntPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+#if USE(BUN_JSC_ADDITIONS)
+    reifyAllStaticProperties(globalObject);
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 // ------------------------------ Functions ---------------------------

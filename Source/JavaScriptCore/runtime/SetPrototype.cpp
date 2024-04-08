@@ -100,6 +100,9 @@ void SetPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
         JSC_BUILTIN_FUNCTION_WITHOUT_TRANSITION(vm.propertyNames->builtinNames().isDisjointFromPublicName(), setPrototypeIsDisjointFromCodeGenerator, static_cast<unsigned>(PropertyAttribute::DontEnum));
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
     globalObject->installSetPrototypeWatchpoint(this);
 }
 

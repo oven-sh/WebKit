@@ -161,7 +161,9 @@ JSGlobalContextRef JSGlobalContextRetain(JSGlobalContextRef ctx)
 {
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
 
     gcProtect(globalObject);
     vm.ref();
@@ -172,7 +174,9 @@ void JSGlobalContextRelease(JSGlobalContextRef ctx)
 {
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
 
     bool protectCountIsZero = vm.heap.unprotect(globalObject);
     if (protectCountIsZero)
@@ -187,8 +191,10 @@ JSObjectRef JSContextGetGlobalObject(JSContextRef ctx)
         return nullptr;
     }
     JSGlobalObject* globalObject = toJS(ctx);
+#if !USE(BUN_JSC_ADDITIONS)
     VM& vm = globalObject->vm();
     JSLockHolder locker(vm);
+#endif
 
     return toRef(jsCast<JSObject*>(JSValue(globalObject).toThis(globalObject, ECMAMode::sloppy())));
 }
@@ -210,7 +216,9 @@ JSGlobalContextRef JSContextGetGlobalContext(JSContextRef ctx)
         return nullptr;
     }
     JSGlobalObject* globalObject = toJS(ctx);
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(globalObject);
+#endif
 
     return toGlobalRef(globalObject);
 }
@@ -223,8 +231,10 @@ JSStringRef JSGlobalContextCopyName(JSGlobalContextRef ctx)
     }
 
     JSGlobalObject* globalObject = toJS(ctx);
+#if !USE(BUN_JSC_ADDITIONS)
     VM& vm = globalObject->vm();
     JSLockHolder locker(vm);
+#endif
 
     String name = globalObject->name();
     if (name.isNull())
@@ -241,8 +251,10 @@ void JSGlobalContextSetName(JSGlobalContextRef ctx, JSStringRef name)
     }
 
     JSGlobalObject* globalObject = toJS(ctx);
+#if !USE(BUN_JSC_ADDITIONS)
     VM& vm = globalObject->vm();
     JSLockHolder locker(vm);
+#endif
 
     globalObject->setName(name ? name->string() : String());
 }
@@ -255,8 +267,10 @@ bool JSGlobalContextIsInspectable(JSGlobalContextRef ctx)
     }
 
     JSGlobalObject* globalObject = toJS(ctx);
+#if !USE(BUN_JSC_ADDITIONS)
     VM& vm = globalObject->vm();
     JSLockHolder lock(vm);
+#endif
 
     return globalObject->inspectable();
 }
@@ -284,7 +298,9 @@ void JSGlobalContextSetUnhandledRejectionCallback(JSGlobalContextRef ctx, JSObje
 
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
 
     JSObject* object = toJS(function);
     if (!object->isCallable()) {

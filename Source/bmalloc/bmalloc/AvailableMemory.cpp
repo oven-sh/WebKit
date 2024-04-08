@@ -50,6 +50,9 @@
 #if BOS(LINUX)
 #include <algorithm>
 #include <fcntl.h>
+#if USE(BUN_JSC_ADDITIONS)
+#include "Bun_uv_get_constrained_memory.h"
+#endif
 #elif BOS(FREEBSD)
 #include "VMAllocate.h"
 #include <sys/sysctl.h>
@@ -162,6 +165,17 @@ static size_t computeAvailableMemory()
     // (for example) and we have code that depends on those boundaries.
     return ((sizeAccordingToKernel + multiple - 1) / multiple) * multiple;
 #elif BOS(FREEBSD) || BOS(LINUX)
+    #if USE(BUN_JSC_ADDITIONS) && BOS(LINUX)
+        uint64_t constrainedMemory = uv_get_constrained_memory();
+        struct sysinfo info;
+        if (!sysinfo(&info)) {
+            uint64_t total = info.totalram * info.mem_unit;
+            if (constrainedMemory > 0 && constrainedMemory < total)
+                return constrainedMemory;
+            return total;
+        }
+        return availableMemoryGuess;
+    #endif
     struct sysinfo info;
     if (!sysinfo(&info))
         return info.totalram * info.mem_unit;

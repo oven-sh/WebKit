@@ -91,13 +91,15 @@ function newPromiseCapability(constructor)
     if (constructor === @Promise) {
         var promise = @newPromise();
         var capturedPromise = promise;
-        function @resolve(resolution) {
-            return @resolvePromiseWithFirstResolvingFunctionCallCheck(capturedPromise, resolution);
-        }
-        function @reject(reason) {
-            return @rejectPromiseWithFirstResolvingFunctionCallCheck(capturedPromise, reason);
-        }
-        return { resolve: @resolve, reject: @reject, promise };
+        return { 
+            resolve: function @resolve(resolution) {
+                return @resolvePromiseWithFirstResolvingFunctionCallCheck(capturedPromise, resolution);
+            },
+            reject: function @reject(reason) {
+                return @rejectPromiseWithFirstResolvingFunctionCallCheck(capturedPromise, reason);
+            },
+            promise
+        };
     }
 
     return @newPromiseCapabilitySlow(constructor);
@@ -202,7 +204,17 @@ function resolvePromise(promise, resolution)
     if (!@isCallable(then))
         return @fulfillPromise(promise, resolution);
 
-    @enqueueJob(@promiseResolveThenableJob, resolution, then, @createResolvingFunctions(promise));
+/* #if USE(BUN_JSC_ADDITIONS) */
+    var asyncContextData = @getInternalField(@asyncContextTuple, 0);
+    if (!asyncContextData) {
+/* #endif */
+        @enqueueJob(@promiseResolveThenableJob, resolution, then, @createResolvingFunctions(promise), @undefined);
+/* #if USE(BUN_JSC_ADDITIONS) */
+    } else {
+        // With BUN_JSC_ADDITIONS @enqueueJob supports accepting a fifth `asyncContextData` microtask argument.
+        @enqueueJob(@promiseResolveThenableJobWithAsyncContextData, resolution, then, @createResolvingFunctions(promise), @undefined, asyncContextData);
+    }
+/* #endif */
 }
 
 // Keep in sync with JSPromise::rejectedPromise.
@@ -352,7 +364,16 @@ function resolveWithoutPromise(resolution, onFulfilled, onRejected, context)
     }
 
     // Wrap onFulfilled and onRejected with @createResolvingFunctionsWithoutPromise to ensure that each function will be called at most once.
-    @enqueueJob(@promiseResolveThenableJob, resolution, then, @createResolvingFunctionsWithoutPromise(onFulfilled, onRejected, context));
+/* #if USE(BUN_JSC_ADDITIONS) */
+    var asyncContextData = @getInternalField(@asyncContextTuple, 0);
+    if (!asyncContextData) {
+/* #endif */
+        @enqueueJob(@promiseResolveThenableJob, resolution, then, @createResolvingFunctionsWithoutPromise(onFulfilled, onRejected, context));
+/* #if USE(BUN_JSC_ADDITIONS) */
+    } else {
+        @enqueueJob(@promiseResolveThenableJobWithAsyncContextData, resolution, then, @createResolvingFunctionsWithoutPromise(onFulfilled, onRejected, context), asyncContextData);
+    }
+/* #endif */
 }
 
 // This function has strong guarantee that each handler function (onFulfilled and onRejected) will be called at most once.
@@ -361,7 +382,15 @@ function rejectWithoutPromise(reason, onFulfilled, onRejected, context)
 {
     "use strict";
 
-    @enqueueJob(@promiseReactionJobWithoutPromise, onRejected, reason, context);
+/* #if USE(BUN_JSC_ADDITIONS) */
+    var asyncContextData = @getInternalField(@asyncContextTuple, 0);
+    if (!asyncContextData) {
+/* #endif */
+        @enqueueJob(@promiseReactionJobWithoutPromise, onRejected, reason, context);
+/* #if USE(BUN_JSC_ADDITIONS) */
+    } else {
+        @enqueueJob(@promiseReactionJobWithoutPromiseWithAsyncContextData, onRejected, reason, context, asyncContextData);
+    }
 }
 
 // This function has strong guarantee that each handler function (onFulfilled and onRejected) will be called at most once.
@@ -370,7 +399,15 @@ function fulfillWithoutPromise(value, onFulfilled, onRejected, context)
 {
     "use strict";
 
-    @enqueueJob(@promiseReactionJobWithoutPromise, onFulfilled, value, context);
+/* #if USE(BUN_JSC_ADDITIONS) */
+    var asyncContextData = @getInternalField(@asyncContextTuple, 0);
+    if (!asyncContextData) {
+/* #endif */
+        @enqueueJob(@promiseReactionJobWithoutPromise, onFulfilled, value, context);
+/* #if USE(BUN_JSC_ADDITIONS) */
+    } else {
+        @enqueueJob(@promiseReactionJobWithoutPromiseWithAsyncContextData, onFulfilled, value, context, asyncContextData);
+    }
 }
 
 // This function has strong guarantee that each handler function (onFulfilled and onRejected) will be called at most once.
@@ -487,16 +524,34 @@ function promiseResolveThenableJobFast(thenable, promiseToResolve)
     // we need to call this constructor.
     var constructor = @speciesConstructor(thenable, @Promise);
     if (constructor !== @Promise && constructor !== @InternalPromise) {
-        @promiseResolveThenableJobWithDerivedPromise(thenable, constructor, @createResolvingFunctions(promiseToResolve));
+/* #if USE(BUN_JSC_ADDITIONS) */
+        var asyncContextData = @getInternalField(@asyncContextTuple, 0);
+        if (!asyncContextData) {
+/* #endif */
+            @promiseResolveThenableJobWithDerivedPromise(thenable, constructor, @createResolvingFunctions(promiseToResolve));
+/* #if USE(BUN_JSC_ADDITIONS) */
+        } else {
+            @promiseResolveThenableJobWithDerivedPromiseWithAsyncContextData(thenable, constructor, @createResolvingFunctions(promiseToResolve), asyncContextData);
+        }
+/* #endif */
         return;
     }
 
     var flags = @getPromiseInternalField(thenable, @promiseFieldFlags);
     var state = flags & @promiseStateMask;
     var reactionsOrResult = @getPromiseInternalField(thenable, @promiseFieldReactionsOrResult);
-    if (state === @promiseStatePending)
-        @pushNewPromiseReaction(thenable, reactionsOrResult, promiseToResolve, @undefined, @undefined);
-    else {
+    if (state === @promiseStatePending) {
+/* #if USE(BUN_JSC_ADDITIONS) */
+        var asyncContextData = @getInternalField(@asyncContextTuple, 0);
+        if (!asyncContextData) {
+/* #endif */
+            @pushNewPromiseReaction(thenable, reactionsOrResult, promiseToResolve, @undefined, @undefined);
+/* #if USE(BUN_JSC_ADDITIONS) */
+        } else {
+            @pushNewPromiseReactionWithAsyncContextData(thenable, reactionsOrResult, promiseToResolve, @undefined, @undefined, asyncContextData);
+        }
+/* #endif */
+    } else {
         if (state === @promiseStateRejected && !(flags & @promiseFlagsIsHandled))
             @hostPromiseRejectionTracker(thenable, @promiseRejectionHandle);
         @enqueueJob(@promiseReactionJob, promiseToResolve, @undefined, reactionsOrResult, state);
@@ -515,15 +570,34 @@ function promiseResolveThenableJobWithoutPromiseFast(thenable, onFulfilled, onRe
     // we need to call this constructor.
     var constructor = @speciesConstructor(thenable, @Promise);
     if (constructor !== @Promise && constructor !== @InternalPromise) {
-        @promiseResolveThenableJobWithDerivedPromise(thenable, constructor, @createResolvingFunctionsWithoutPromise(onFulfilled, onRejected, context));
+/* #if USE(BUN_JSC_ADDITIONS) */
+        var asyncContextData = @getInternalField(@asyncContextTuple, 0);
+        if (!asyncContextData) {
+/* #endif */
+            @promiseResolveThenableJobWithDerivedPromise(thenable, constructor, @createResolvingFunctionsWithoutPromise(onFulfilled, onRejected, context));
+/* #if USE(BUN_JSC_ADDITIONS) */
+        } else {
+            @promiseResolveThenableJobWithDerivedPromiseWithAsyncContextData(thenable, constructor, @createResolvingFunctionsWithoutPromise(onFulfilled, onRejected, context), asyncContextData);
+        }
+/* #endif */
         return;
     }
 
     var flags = @getPromiseInternalField(thenable, @promiseFieldFlags);
     var state = flags & @promiseStateMask;
     var reactionsOrResult = @getPromiseInternalField(thenable, @promiseFieldReactionsOrResult);
-    if (state === @promiseStatePending)
-        @pushNewPromiseReaction(thenable, reactionsOrResult, @undefined, onFulfilled, onRejected, context);
+    if (state === @promiseStatePending) {
+        /* #if USE(BUN_JSC_ADDITIONS) */
+        var asyncContextData = @getInternalField(@asyncContextTuple, 0);
+        if (!asyncContextData) {
+/* #endif */
+            @pushNewPromiseReaction(thenable, reactionsOrResult, @undefined, onFulfilled, onRejected, context);
+/* #if USE(BUN_JSC_ADDITIONS) */
+        } else {
+            @pushNewPromiseReactionWithAsyncContextData(thenable, reactionsOrResult, @undefined, onFulfilled, onRejected, context, asyncContextData);
+        }
+/* #endif */
+    }
     else {
         if (state === @promiseStateRejected) {
             if (!(flags & @promiseFlagsIsHandled))
@@ -591,8 +665,20 @@ function performPromiseThen(promise, onFulfilled, onRejected, promiseOrCapabilit
     var reactionsOrResult = @getPromiseInternalField(promise, @promiseFieldReactionsOrResult);
     var flags = @getPromiseInternalField(promise, @promiseFieldFlags);
     var state = flags & @promiseStateMask;
-    if (state === @promiseStatePending)
-        @pushNewPromiseReaction(promise, reactionsOrResult, promiseOrCapability, onFulfilled, onRejected, context);
+/* #if USE(BUN_JSC_ADDITIONS) */
+    var asyncContextData = @getInternalField(@asyncContextTuple, 0);
+/* #endif */
+    if (state === @promiseStatePending) {
+/* #if USE(BUN_JSC_ADDITIONS) */
+        if (!asyncContextData) {
+/* #endif */
+            @pushNewPromiseReaction(promise, reactionsOrResult, promiseOrCapability, onFulfilled, onRejected, context);
+/* #if USE(BUN_JSC_ADDITIONS) */
+        } else {
+            @pushNewPromiseReactionWithAsyncContextData(promise, reactionsOrResult, promiseOrCapability, onFulfilled, onRejected, context, asyncContextData);
+        }
+/* #endif */
+    }
     else {
         var handler;
 
@@ -602,7 +688,149 @@ function performPromiseThen(promise, onFulfilled, onRejected, promiseOrCapabilit
                 @hostPromiseRejectionTracker(promise, @promiseRejectionHandle);
         } else
             handler = onFulfilled;
-        @enqueueJob(@promiseReactionJob, promiseOrCapability, handler, reactionsOrResult, context);
+/* #if USE(BUN_JSC_ADDITIONS) */
+        if (!asyncContextData) {
+/* #endif */
+            @enqueueJob(@promiseReactionJob, promiseOrCapability, handler, reactionsOrResult, context);
+/* #if USE(BUN_JSC_ADDITIONS) */
+        } else {
+            // With BUN_JSC_ADDITIONS @enqueueJob supports accepting a fifth `asyncContextData` microtask argument.
+            @enqueueJob(@promiseReactionJobWithAsyncContextData, promiseOrCapability, handler, reactionsOrResult, context, asyncContextData);
+        }
+/* #endif */
     }
     @putPromiseInternalField(promise, @promiseFieldFlags, @getPromiseInternalField(promise, @promiseFieldFlags) | @promiseFlagsIsHandled);
 }
+
+/* #if USE(BUN_JSC_ADDITIONS) */
+@linkTimeConstant
+function pushNewPromiseReactionWithAsyncContextData(thenable, existingReactions, promiseOrCapability, onFulfilled, onRejected, context, asyncContextData)
+{
+    "use strict";
+
+    if (!existingReactions) {
+        existingReactions = {
+            @promiseOrCapability: promiseOrCapability,
+            @onFulfilled: onFulfilled,
+            @onRejected: onRejected,
+            @context: asyncStorageOrGeneratorContext,
+            @asyncContextData: asyncContextData,
+            @outOfLineReactionCounts: 0,
+        };
+        @putPromiseInternalField(thenable, @promiseFieldReactionsOrResult, existingReactions);
+    } else {
+        var outOfLineReactionCounts = existingReactions.@outOfLineReactionCounts;
+        @putByValDirect(existingReactions, outOfLineReactionCounts++, promiseOrCapability);
+        @putByValDirect(existingReactions, outOfLineReactionCounts++, onFulfilled);
+        @putByValDirect(existingReactions, outOfLineReactionCounts++, onRejected);
+        @putByValDirect(existingReactions, outOfLineReactionCounts++, context);
+        @putByValDirect(existingReactions, outOfLineReactionCounts++, asyncContextData);
+        existingReactions.@outOfLineReactionCounts = outOfLineReactionCounts;
+    }
+}
+
+@linkTimeConstant
+function promiseReactionJobWithAsyncContextData(promiseOrCapability, handler, argument, contextOrState, asyncContextData)
+{
+    // Promise Reaction has four types.
+    // 1. @promiseOrCapability is PromiseCapability, and having handlers.
+    //     The most generic one.
+    // 2. @promiseOrCapability is Promise, and having handlers.
+    //     We just have promise.
+    // 3. @promiseOrCapability is Promise, and not having handlers.
+    //     It only has promise. Just resolving it with the value. contextOrState is undefined, so it delivers state instead.
+    // 4. Only having @onFulfilled and @onRejected
+    //     It does not have promise capability. Just handlers are passed.
+    "use strict";
+
+    // Case (3).
+    if (@isUndefinedOrNull(handler)) {
+        @promiseReactionJob(promiseOrCapability, handler, argument, contextOrState);
+        return;
+    }
+    // Case (4).
+    if (!promiseOrCapability) {
+        @promiseReactionJobWithoutPromiseWithAsyncContextData(handler, argument, contextOrState, asyncContextData);
+        return;
+    }
+    var oldAsyncContextData;
+    if (asyncContextData) {
+        oldAsyncContextData = @getInternalField(@asyncContextTuple, 0);
+        @putInternalField(@asyncContextTuple, 0, asyncContextData);
+    }
+    // Case (1), or (2).
+    try {
+        var result = (contextOrState) ? handler(argument, contextOrState) : handler(argument);
+    } catch (error) {
+        if (asyncContextData) {
+            @putInternalField(@asyncContextTuple, 0, oldAsyncContextData);
+        }
+        if (@isPromise(promiseOrCapability)) {
+            @rejectPromise(promiseOrCapability, error);
+            return;
+        }
+        promiseOrCapability.reject.@call(@undefined, error);
+        return;
+    }
+
+    if (@isPromise(promiseOrCapability)) {
+        @resolvePromise(promiseOrCapability, result);
+        if (asyncContextData) {
+            @putInternalField(@asyncContextTuple, 0, oldAsyncContextData);
+        }
+        return;
+    }
+    promiseOrCapability.resolve.@call(@undefined, result);
+    if (asyncContextData) {
+        @putInternalField(@asyncContextTuple, 0, oldAsyncContextData);
+    }
+}
+
+@linkTimeConstant
+function promiseReactionJobWithoutPromiseWithAsyncContextData(handler, argument, context, asyncContextData)
+{
+    "use strict";
+
+    var oldAsyncContextData = @getInternalField(@asyncContextTuple, 0);
+    @putInternalField(@asyncContextTuple, 0, asyncContextData);
+    @promiseReactionJobWithoutPromise(handler, argument, context);
+    @putInternalField(@asyncContextTuple, 0, oldAsyncContextData);
+}
+
+@linkTimeConstant
+function promiseResolveThenableJobWithAsyncContextData(thenable, then, resolvingFunctions, asyncContextData)
+{
+    "use strict";
+
+    var oldAsyncContextData = @getInternalField(@asyncContextTuple, 0);
+    @putInternalField(@asyncContextTuple, 0, asyncContextData);
+
+    try {
+        const result = then.@call(thenable, resolvingFunctions.resolve, resolvingFunctions.reject);
+        @putInternalField(@asyncContextTuple, 0, oldAsyncContextData);
+        return result;
+    } catch (error) {
+        @putInternalField(@asyncContextTuple, 0, oldAsyncContextData);
+        return resolvingFunctions.reject.@call(@undefined, error);
+    }
+}
+
+@linkTimeConstant
+function promiseResolveThenableJobWithDerivedPromiseWithAsyncContextData(thenable, constructor, resolvingFunctions, asyncContextData)
+{
+    "use strict";
+
+    var oldAsyncContextData = @getInternalField(@asyncContextTuple, 0);
+    @putInternalField(@asyncContextTuple, 0, asyncContextData);
+
+    try {
+        var promiseCapability = @newPromiseCapabilitySlow(constructor);
+        @performPromiseThen(thenable, resolvingFunctions.resolve, resolvingFunctions.reject, promiseCapability, @undefined);
+        @putInternalField(@asyncContextTuple, 0, oldAsyncContextData);
+        return promiseCapability.promise;
+    } catch (error) {
+        @putInternalField(@asyncContextTuple, 0, oldAsyncContextData);
+        return resolvingFunctions.reject.@call(@undefined, error);
+    }
+}
+/* #endif */

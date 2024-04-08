@@ -32,8 +32,9 @@ WI.ScriptSyntaxTree = class ScriptSyntaxTree
         this._script = script;
 
         try {
-            let sourceType = this._script.sourceType === WI.Script.SourceType.Module ? "module" : "script";
-            let esprimaSyntaxTree = esprima.parse(sourceText, {loc: true, range: true, sourceType});
+            const sourceType = this._script.sourceType === WI.Script.SourceType.Module ? "module" : "script";
+            const parseFn = sourceType === "module" ? esprima.parseModule : esprima.parse;
+            const esprimaSyntaxTree = parseFn(sourceText, {loc: true, range: true, sourceType, ecmaVersion: "latest"});
             this._syntaxTree = this._createInternalSyntaxTree(esprimaSyntaxTree);
             this._parsedSuccessfully = true;
         } catch (error) {

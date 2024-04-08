@@ -29,7 +29,16 @@
 
 namespace JSC {
 
+#if USE(BUN_JSC_ADDITIONS)
+#define BUN_JSC_ERROR_TYPES(macro) \
+    macro(SuppressedError) \
+
+#else
+#define BUN_JSC_ERROR_TYPES(macro)
+#endif
+
 #define JSC_ERROR_TYPES(macro) \
+    BUN_JSC_ERROR_TYPES(macro) \
     macro(Error) \
     macro(EvalError) \
     macro(RangeError) \

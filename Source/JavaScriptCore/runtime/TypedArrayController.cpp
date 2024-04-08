@@ -28,8 +28,10 @@
 
 namespace JSC {
 
+#if !USE(BUN_JSC_ADDITIONS)
 TypedArrayController::TypedArrayController() { }
 TypedArrayController::~TypedArrayController() { }
+#endif
 
 } // namespace JSC
 

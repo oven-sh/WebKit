@@ -530,7 +530,11 @@ bool StackVisitor::Frame::isImplementationVisibilityPrivate() const
 
     case ImplementationVisibility::Private:
     case ImplementationVisibility::PrivateRecursive:
+#if !USE(BUN_JSC_ADDITIONS)
         return true;
+#else
+        return !Options::showPrivateScriptsInStackTraces();
+#endif
     }
 
     ASSERT_NOT_REACHED();

@@ -194,7 +194,15 @@ ALWAYS_INLINE void* tryAllocateCellHelper(VM& vm, size_t size, GCDeferralContext
             return nullptr;
     }
 #if ENABLE(GC_VALIDATION)
+#if !USE(BUN_JSC_ADDITIONS)
     ASSERT(!vm.isInitializingObject());
+#else
+    ASSERT_WITH_MESSAGE(
+        !vm.isInitializingObject(),
+        "Allocating JSCell while initializing an object is not allowed. Currently initializing '%s'\n"
+        "This means you either forgot `Base::finishCreation(...)` or you are actually allocating.",
+        vm.initializingObjectClass()->className.characters());
+#endif // !USE(BUN_JSC_ADDITIONS)
     vm.setInitializingObjectClass(T::info());
 #endif
     result->clearStructure();

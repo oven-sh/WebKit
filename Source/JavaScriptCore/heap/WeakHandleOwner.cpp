@@ -28,6 +28,7 @@
 
 namespace JSC {
 
+#if !USE(BUN_JSC_ADDITIONS)
 class SlotVisitor;
 template<typename T> class Handle;
 
@@ -43,5 +44,6 @@ bool WeakHandleOwner::isReachableFromOpaqueRoots(Handle<Unknown>, void*, Abstrac
 void WeakHandleOwner::finalize(Handle<Unknown>, void*)
 {
 }
+#endif
 
 } // namespace JSC

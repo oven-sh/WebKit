@@ -106,6 +106,37 @@ String appendSourceToErrorMessage(CodeBlock* codeBlock, BytecodeIndex bytecodeIn
     return appender(message, codeBlock->source().provider()->getRange(start, stop), type, ErrorInstance::FoundApproximateSource);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void ErrorInstance::captureStackTrace(VM& vm, JSGlobalObject* globalObject, size_t framesToSkip, bool append)
+{
+    {
+        Locker locker { cellLock() };
+
+        size_t limit = globalObject->stackTraceLimit().value();
+        std::unique_ptr<Vector<StackFrame>> stackTrace = makeUnique<Vector<StackFrame>>();
+        vm.interpreter.getStackTrace(this, *stackTrace, framesToSkip, limit);
+
+        if (!m_stackTrace || !append) {
+            m_stackTrace = WTFMove(stackTrace);
+            vm.writeBarrier(this);
+            return;
+        }
+
+        if (m_stackTrace) {
+            size_t remaining = limit - std::min(stackTrace->size(), limit);
+            remaining = std::min(remaining, m_stackTrace->size());
+            if (remaining > 0) {
+                ASSERT(m_stackTrace->size() >= remaining);
+                stackTrace->append(std::span { m_stackTrace->data(), remaining } );
+            }
+        }
+
+        m_stackTrace = WTFMove(stackTrace);
+    }
+    vm.writeBarrier(this);
+}
+#endif
+
 void ErrorInstance::finishCreation(VM& vm, const String& message, JSValue cause, SourceAppender appender, RuntimeType type, bool useCurrentFrame)
 {
     Base::finishCreation(vm);
@@ -254,6 +285,37 @@ void ErrorInstance::finalizeUnconditionally(VM& vm, CollectionScope)
     }
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void ErrorInstance::computeErrorInfo(VM& vm)
+{
+    computeErrorInfo(vm, false);
+}
+
+void ErrorInstance::computeErrorInfo(VM& vm, bool allocationAllowed)
+{
+    ASSERT(!m_errorInfoMaterialized);
+    // Here we use DeferGCForAWhile instead of DeferGC since GC's Heap::runEndPhase can trigger this function. In
+    // that case, DeferGC's destructor might trigger another GC cycle which is unexpected.
+    DeferGCForAWhile deferGC(vm);
+
+    if (m_stackTrace && !m_stackTrace->isEmpty()) {
+        auto& fn = vm.onComputeErrorInfo();
+        if (fn && allocationAllowed) {
+            // This function may call `globalObject` or potentially even execute arbitrary JS code.
+            // We cannot guarantee the lifetime of this stack trace to continue to be valid.
+            // We have to move it out of the ErrorInstance.
+            WTF::Vector<StackFrame> stackTrace = WTFMove(*m_stackTrace.get());
+            m_stackString = fn(vm, stackTrace, m_lineColumn.line, m_lineColumn.column, m_sourceURL, allocationAllowed ? this : nullptr);
+        } else if (fn && !allocationAllowed) {
+            m_stackString = fn(vm, *m_stackTrace.get(), m_lineColumn.line, m_lineColumn.column, m_sourceURL, nullptr);
+        } else {
+            getLineColumnAndSource(vm, m_stackTrace.get(), m_lineColumn, m_sourceURL);
+            m_stackString = Interpreter::stackTraceAsString(vm, *m_stackTrace.get());
+        }
+        m_stackTrace = nullptr;
+    }
+}
+#else
 void ErrorInstance::computeErrorInfo(VM& vm)
 {
     ASSERT(!m_errorInfoMaterialized);
@@ -267,13 +329,18 @@ void ErrorInstance::computeErrorInfo(VM& vm)
         m_stackTrace = nullptr;
     }
 }
+#endif
 
 bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
 {
     if (m_errorInfoMaterialized)
         return false;
 
+#if !USE(BUN_JSC_ADDITIONS)
     computeErrorInfo(vm);
+#else
+    computeErrorInfo(vm, true);
+#endif
 
     if (!m_stackString.isNull()) {
         auto attributes = static_cast<unsigned>(PropertyAttribute::DontEnum);

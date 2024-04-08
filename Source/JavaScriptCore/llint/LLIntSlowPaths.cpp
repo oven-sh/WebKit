@@ -2274,6 +2274,11 @@ LLINT_SLOW_PATH_DECL(slow_path_get_from_scope)
 
     LLINT_RETURN(scope->getPropertySlot(globalObject, ident, [&] (bool found, PropertySlot& slot) -> JSValue {
         if (!found) {
+#if USE(BUN_JSC_ADDITIONS)
+            // Adds support for passing symbols to methods, e.g. object.@__lookupGetter(@@iterator).
+            if (ident.isPrivateName() || ident.isWellKnownSymbol(vm))
+                return identifierToJSValue(vm, ident);
+#endif
             if (metadata.m_getPutInfo.resolveMode() == ThrowIfNotFound)
                 return throwException(globalObject, throwScope, createUndefinedVariableError(globalObject, ident));
             return jsUndefined();

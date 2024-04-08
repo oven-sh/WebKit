@@ -343,6 +343,7 @@ Expected<typename Parser<LexerType>::ParseInnerResult, String> Parser<LexerType>
         features |= ArgumentsFeature;
 
 #if ASSERT_ENABLED
+#ifndef BUN_SKIP_FAILING_ASSERTIONS
     if (m_parsingBuiltin && isProgramParseMode(parseMode)) {
         VariableEnvironment& lexicalVariables = scope->lexicalVariables();
         const HashSet<UniquedStringImpl*>& closedVariableCandidates = scope->closedVariableCandidates();
@@ -355,6 +356,7 @@ Expected<typename Parser<LexerType>::ParseInnerResult, String> Parser<LexerType>
             }
         }
     }
+#endif
 #endif // ASSERT_ENABLED
 
     return ParseInnerResult { parameters, sourceElements, scope->takeFunctionDeclarations(), scope->takeDeclaredVariables(), scope->takeLexicalEnvironment(), features, context.numConstants() };

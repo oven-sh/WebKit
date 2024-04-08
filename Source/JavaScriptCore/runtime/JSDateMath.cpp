@@ -71,6 +71,9 @@
 
 #include "config.h"
 #include "JSDateMath.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "Bun_JSDateMath-v8.h"
+#endif
 
 #include "ExceptionHelpers.h"
 #include "VM.h"
@@ -105,7 +108,7 @@ namespace JSDateMathInternal {
 static constexpr bool verbose = false;
 }
 
-#if PLATFORM(COCOA)
+#if PLATFORM(COCOA) || USE(BUN_JSC_ADDITIONS)
 std::atomic<uint64_t> lastTimeZoneID { 1 };
 #endif
 
@@ -451,20 +454,45 @@ double DateCache::parseDate(JSGlobalObject* globalObject, VM& vm, const String& 
         return std::numeric_limits<double>::quiet_NaN();
     }
 
+#if !USE(BUN_JSC_ADDITIONS)
     auto parseDateImpl = [this] (const char* dateString) {
         bool isLocalTime;
         double value = WTF::parseES5DateFromNullTerminatedCharacters(dateString, isLocalTime);
         if (std::isnan(value))
             value = WTF::parseDateFromNullTerminatedCharacters(dateString, isLocalTime);
+        if (isLocalTime && std::isfinite(value))
+            value -= localTimeOffset(static_cast<int64_t>(value), WTF::LocalTime).offset;
 
+        return value;
+    };  
+#else
+    auto parseDateImpl = [this](const char* dateString, size_t size) {
+        if (Options::useV8DateParser()) {
+            bool local = false;
+            double value = v8::ParseDateTimeString(dateString, size, local);
+            if (local)
+                value -= localTimeOffset(static_cast<int64_t>(value), WTF::LocalTime).offset;
+            return v8::TimeClip(value);
+        }
+        bool isLocalTime;
+        double value = 0.0f;
+        value = WTF::parseES5DateFromNullTerminatedCharacters(dateString, isLocalTime);
+        if (std::isnan(value)) {
+            value = WTF::parseDateFromNullTerminatedCharacters(dateString, isLocalTime);
+        }
         if (isLocalTime && std::isfinite(value))
             value -= localTimeOffset(static_cast<int64_t>(value), WTF::LocalTime).offset;
 
         return value;
     };
+#endif
 
     auto dateUTF8 = expectedString.value();
+#if !USE(BUN_JSC_ADDITIONS)
     double value = parseDateImpl(dateUTF8.data());
+#else
+    double value = parseDateImpl(dateUTF8.data(), dateUTF8.length());
+#endif
     m_cachedDateString = date;
     m_cachedDateStringValue = value;
     return value;

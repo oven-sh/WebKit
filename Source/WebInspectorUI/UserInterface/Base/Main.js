@@ -232,9 +232,18 @@ WI.contentLoaded = function()
     window.addEventListener("contextmenu", WI._contextMenuRequested);
 
     // Add platform style classes so the UI can be tweaked per-platform.
-    document.body.classList.add(WI.Platform.name + "-platform");
-    if (WI.Platform.version.name)
-        document.body.classList.add(WI.Platform.version.name);
+/* #if !USE(BUN_JSC_ADDITIONS) */
+    // document.body.classList.add(WI.Platform.name + "-platform");
+    // if (WI.Platform.version.name)
+    //     document.body.classList.add(WI.Platform.version.name);
+/* #else */
+    // But if it's a mac, only do it for Safari
+    if (WI.Platform.name !== "mac" || navigator.vendor?.includes?.("Apple")) {
+        document.body.classList.add(WI.Platform.name + "-platform");
+        if (WI.Platform.version.name)
+            document.body.classList.add(WI.Platform.version.name);
+    }
+/* #endif */
 
     document.body.classList.add(WI.sharedApp.debuggableType);
     document.body.setAttribute("dir", WI.resolvedLayoutDirection());

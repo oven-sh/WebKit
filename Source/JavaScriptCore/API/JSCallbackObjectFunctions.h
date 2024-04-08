@@ -131,7 +131,9 @@ void JSCallbackObject<Parent>::init(JSGlobalObject* globalObject)
     
     // initialize from base to derived
     for (int i = static_cast<int>(initRoutines.size()) - 1; i >= 0; i--) {
+#if !USE(BUN_JSC_ADDITIONS)
         JSLock::DropAllLocks dropAllLocks(globalObject);
+#endif
         JSObjectInitializeCallback initialize = initRoutines[i];
         initialize(toRef(globalObject), toRef(jsCast<JSObject*>(this)));
     }
@@ -157,7 +159,9 @@ bool JSCallbackObject<Parent>::getOwnPropertySlot(JSObject* object, JSGlobalObje
             if (JSObjectHasPropertyCallback hasProperty = jsClass->hasProperty) {
                 if (!propertyNameRef)
                     propertyNameRef = OpaqueJSString::tryCreate(name);
+#if !USE(BUN_JSC_ADDITIONS)
                 JSLock::DropAllLocks dropAllLocks(globalObject);
+#endif
                 if (hasProperty(ctx, thisRef, propertyNameRef.get())) {
                     slot.setCustom(thisObject, attributes, getCallbackGetter());
                     return true;
@@ -168,7 +172,9 @@ bool JSCallbackObject<Parent>::getOwnPropertySlot(JSObject* object, JSGlobalObje
                 JSValueRef exception = nullptr;
                 JSValueRef value;
                 {
+#if !USE(BUN_JSC_ADDITIONS)
                     JSLock::DropAllLocks dropAllLocks(globalObject);
+#endif
                     value = getProperty(ctx, thisRef, propertyNameRef.get(), &exception);
                 }
                 if (exception) {
@@ -282,7 +288,9 @@ bool JSCallbackObject<Parent>::put(JSCell* cell, JSGlobalObject* globalObject, P
                 JSValueRef exception = nullptr;
                 bool result;
                 {
+#if !USE(BUN_JSC_ADDITIONS)
                     JSLock::DropAllLocks dropAllLocks(globalObject);
+#endif
                     result = setProperty(ctx, thisRef, propertyNameRef.get(), valueRef, &exception);
                 }
                 if (exception)
@@ -299,7 +307,9 @@ bool JSCallbackObject<Parent>::put(JSCell* cell, JSGlobalObject* globalObject, P
                         JSValueRef exception = nullptr;
                         bool result;
                         {
+#if !USE(BUN_JSC_ADDITIONS)
                             JSLock::DropAllLocks dropAllLocks(globalObject);
+#endif
                             result = setProperty(ctx, thisRef, entry->propertyNameRef.get(), valueRef, &exception);
                         }
                         if (exception)
@@ -349,7 +359,9 @@ bool JSCallbackObject<Parent>::putByIndex(JSCell* cell, JSGlobalObject* globalOb
             JSValueRef exception = nullptr;
             bool result;
             {
+#if !USE(BUN_JSC_ADDITIONS)
                 JSLock::DropAllLocks dropAllLocks(globalObject);
+#endif
                 result = setProperty(ctx, thisRef, propertyNameRef.get(), valueRef, &exception);
             }
             if (exception)
@@ -366,7 +378,9 @@ bool JSCallbackObject<Parent>::putByIndex(JSCell* cell, JSGlobalObject* globalOb
                     JSValueRef exception = nullptr;
                     bool result;
                     {
+#if !USE(BUN_JSC_ADDITIONS)
                         JSLock::DropAllLocks dropAllLocks(globalObject);
+#endif
                         result = setProperty(ctx, thisRef, entry->propertyNameRef.get(), valueRef, &exception);
                     }
                     if (exception)
@@ -408,7 +422,9 @@ bool JSCallbackObject<Parent>::deleteProperty(JSCell* cell, JSGlobalObject* glob
                 JSValueRef exception = nullptr;
                 bool result;
                 {
+#if !USE(BUN_JSC_ADDITIONS)
                     JSLock::DropAllLocks dropAllLocks(globalObject);
+#endif
                     result = deleteProperty(ctx, thisRef, propertyNameRef.get(), &exception);
                 }
                 if (exception)
@@ -484,7 +500,9 @@ EncodedJSValue JSCallbackObject<Parent>::constructImpl(JSGlobalObject* globalObj
             JSValueRef exception = nullptr;
             JSObject* result;
             {
+#if !USE(BUN_JSC_ADDITIONS)
                 JSLock::DropAllLocks dropAllLocks(globalObject);
+#endif
                 result = toJS(callAsConstructor(execRef, constructorRef, argumentCount, arguments.data(), &exception));
             }
             if (exception) {
@@ -515,7 +533,10 @@ bool JSCallbackObject<Parent>::customHasInstance(JSObject* object, JSGlobalObjec
             JSValueRef exception = nullptr;
             bool result;
             {
+#if !USE(BUN_JSC_ADDITIONS)
                 JSLock::DropAllLocks dropAllLocks(globalObject);
+#endif
+                // https://www.mail-archive.com/webkit-dev@lists.webkit.org/msg28769.html
                 result = hasInstance(execRef, thisRef, valueRef, &exception);
             }
             if (exception)
@@ -562,7 +583,9 @@ EncodedJSValue JSCallbackObject<Parent>::callImpl(JSGlobalObject* globalObject, 
             JSValueRef exception = nullptr;
             JSValue result;
             {
+#if !USE(BUN_JSC_ADDITIONS)
                 JSLock::DropAllLocks dropAllLocks(globalObject);
+#endif
                 result = toJS(globalObject, callAsFunction(execRef, functionRef, thisObjRef, argumentCount, arguments.data(), &exception));
             }
             if (exception) {
@@ -587,7 +610,10 @@ void JSCallbackObject<Parent>::getOwnSpecialPropertyNames(JSObject* object, JSGl
     
     for (JSClassRef jsClass = thisObject->classRef(); jsClass; jsClass = jsClass->parentClass) {
         if (JSObjectGetPropertyNamesCallback getPropertyNames = jsClass->getPropertyNames) {
+#if !USE(BUN_JSC_ADDITIONS)
+            // TODO: For Bun should we keep the lock here?
             JSLock::DropAllLocks dropAllLocks(globalObject);
+#endif
             getPropertyNames(execRef, thisRef, toRef(&propertyNames));
         }
         
@@ -657,7 +683,9 @@ JSValue JSCallbackObject<Parent>::getStaticValue(JSGlobalObject* globalObject, P
                         JSValueRef exception = nullptr;
                         JSValueRef value;
                         {
+#if !USE(BUN_JSC_ADDITIONS)
                             JSLock::DropAllLocks dropAllLocks(globalObject);
+#endif
                             value = getProperty(toRef(globalObject), thisRef, entry->propertyNameRef.get(), &exception);
                         }
                         if (exception) {
@@ -727,7 +755,9 @@ EncodedJSValue JSCallbackObject<Parent>::callbackGetterImpl(JSGlobalObject* glob
                 JSValueRef exception = nullptr;
                 JSValueRef value;
                 {
+#if !USE(BUN_JSC_ADDITIONS)
                     JSLock::DropAllLocks dropAllLocks(globalObject);
+#endif
                     value = getProperty(toRef(globalObject), thisRef, propertyNameRef.get(), &exception);
                 }
                 if (exception) {

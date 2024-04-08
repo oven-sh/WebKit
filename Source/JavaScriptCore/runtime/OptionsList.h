@@ -80,7 +80,17 @@ bool canUseHandlerIC();
 // On instantiation of the first VM instance, the Options will be write protected
 // and cannot be modified thereafter.
 
+#if USE(BUN_JSC_ADDITIONS)
+#define BUN_JSC_OPTIONS(v) \
+    v(Bool, useV8DateParser, false, Normal, nullptr) \
+    v(Bool, showPrivateScriptsInStackTraces, false, Normal, "Show private scripts in stack traces.") \
+
+#else
+#define BUN_JSC_OPTIONS(v)
+#endif
+
 #define FOR_EACH_JSC_OPTION(v)                                          \
+    BUN_JSC_OPTIONS(v) \
     v(Bool, useKernTCSM, defaultTCSMValue(), Normal, "Note: this needs to go before other options since they depend on this value.") \
     v(Bool, validateOptions, false, Normal, "crashes if mis-typed JSC options were passed to the VM") \
     v(Unsigned, dumpOptions, 0, Normal, "dumps JSC options (0 = None, 1 = Overridden only, 2 = All, 3 = Verbose)") \

@@ -597,10 +597,8 @@
 /* FIXME: This section of the file has not been cleaned up yet and needs major work. */
 
 /* FIXME: JSC_OBJC_API_ENABLED does not match the normal ENABLE naming convention. */
-#if !PLATFORM(COCOA)
-#if !defined(JSC_OBJC_API_ENABLED)
+#if (!PLATFORM(COCOA) && !defined(JSC_OBJC_API_ENABLED)) || USE(BUN_JSC_ADDITIONS)
 #define JSC_OBJC_API_ENABLED 0
-#endif
 #endif
 
 /* wyhash-based StringHasher */

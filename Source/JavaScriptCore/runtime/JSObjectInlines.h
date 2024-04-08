@@ -38,6 +38,11 @@
 #include "StructureInlines.h"
 #include "TypedArrayType.h"
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "BuiltinNames.h"
+#include "GetterSetter.h"
+#endif
+
 namespace JSC {
 
 inline Structure* JSObject::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
@@ -324,12 +329,73 @@ ALWAYS_INLINE bool JSObject::putInlineFast(JSGlobalObject* globalObject, Propert
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-
     auto error = putDirectInternal<PutModePut>(vm, propertyName, value, 0, slot);
     if (!error.isNull())
         return typeError(globalObject, scope, slot.isStrictMode(), error);
     return true;
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// This method is used to put private aliases of properties whose names are defined
+// in oven-sh/WebKit/Source/JavaScriptCore/runtime/CommonIdentifiers.h BUN_JSC_COMMON_PRIVATE_IDENTIFIERS and
+// in oven-sh/bun/src/js/builtins/Bun_BuiltinNames.h BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME.
+ALWAYS_INLINE bool JSObject::putPrivateAliasWithoutTransition(VM& vm, UniquedStringImpl* uid)
+{
+    const String key = static_cast<const String>(uid);
+    const String symbolShortName = uid->isSymbol() && !static_cast<SymbolImpl*>(uid)->isPrivate() ? uid->substring(strlen("Symbol.")) : emptyString();
+
+    SymbolImpl* wellKnownSymbol = symbolShortName.length() ? vm.propertyNames->builtinNames().lookUpWellKnownSymbol(symbolShortName) : nullptr;
+    SymbolImpl* symbol = vm.propertyNames->builtinNames().lookUpPrivateName(wellKnownSymbol ? makeString("$"_s, symbolShortName) : key);
+    if (symbol == nullptr)
+        return false;
+
+    const JSC::Identifier privateIdent = JSC::Identifier::fromUid(*symbol);
+    if (this->hasOwnProperty(this->structure()->globalObject(), privateIdent))
+        return false;
+
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue value = this->getDirect(vm, wellKnownSymbol ? JSC::Identifier::fromUid(vm, uid) : JSC::Identifier::fromString(vm, key));
+    if (UNLIKELY(value.isCustomGetterSetter())) {
+        this->putDirectCustomGetterSetterWithoutTransition(vm, privateIdent, value, PropertyAttribute::CustomAccessorOrValue | PropertyAttribute::ReadOnly);
+    } else if (UNLIKELY(value.isGetterSetter())) {
+        this->putDirectNonIndexAccessorWithoutTransition(vm, privateIdent, static_cast<GetterSetter*>(value.asCell()), PropertyAttribute::Accessor | PropertyAttribute::ReadOnly);
+    } else {
+        this->putDirectWithoutTransition(vm, privateIdent, value, static_cast<unsigned>(PropertyAttribute::ReadOnly));
+    }
+    RETURN_IF_EXCEPTION(scope, false);
+    return true;
+}
+
+ALWAYS_INLINE bool JSObject::putPrivateAliasWithoutTransition(VM& vm, PropertyName propertyName)
+{
+    return this->putPrivateAliasWithoutTransition(vm, propertyName.uid());
+}
+
+// This method iterates over an object's properties putting private aliases for
+// relevant properties. When necessary developer is responsible for reifying
+// properties by way of object->reifyAllStaticProperties(globalObject) OR
+// reifyStaticProperties(vm, JSExampleClass::info(), JSExampleTableValues, *this);
+// BEFORE this method.
+ALWAYS_INLINE void JSObject::putAllPrivateAliasesWithoutTransition(VM& vm)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Vector<RefPtr<UniquedStringImpl>, 16> keys;
+    this->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) ALWAYS_INLINE_LAMBDA {
+        UniquedStringImpl* key = entry.key();
+        if (LIKELY(!key->isSymbol() || !static_cast<SymbolImpl*>(key)->isPrivate())) {
+            keys.append(key);
+        }
+        return true;
+    });
+    RETURN_IF_EXCEPTION(scope, void());
+
+    RefPtr<UniquedStringImpl>* keysArray = keys.data();
+    for (size_t i = 0; i < keys.size(); ++i) {
+        this->putPrivateAliasWithoutTransition(vm, keysArray[i].get());
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
+#endif
 
 // https://tc39.es/ecma262/#sec-createdataproperty
 ALWAYS_INLINE bool JSObject::createDataProperty(JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, bool shouldThrow)

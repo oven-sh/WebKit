@@ -39,7 +39,17 @@ class BytecodeIntrinsicNode;
 class RegisterID;
 enum class LinkTimeConstant : int32_t;
 
+#if USE(BUN_JSC_ADDITIONS)
+#define BUN_JSC_COMMON_BYTECODE_INTRINSIC_FUNCTIONS(macro) \
+    macro(getInternalField) \
+    macro(putInternalField) \
+
+#else
+#define BUN_JSC_COMMON_BYTECODE_INTRINSIC_FUNCTIONS(macro)
+#endif
+
 #define JSC_COMMON_BYTECODE_INTRINSIC_FUNCTIONS_EACH_NAME(macro) \
+    BUN_JSC_COMMON_BYTECODE_INTRINSIC_FUNCTIONS(macro) \
     macro(argument) \
     macro(argumentCount) \
     macro(arrayPush) \

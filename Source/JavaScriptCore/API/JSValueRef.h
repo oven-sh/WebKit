@@ -30,7 +30,15 @@
 #include <JavaScriptCore/WebKitAvailability.h>
 
 #ifndef __cplusplus
+#if USE(BUN_JSC_ADDITIONS)
+#include <stddef.h>
+#else
 #include <stdbool.h>
+#endif
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
+#include <wtf/Bun_Extras.h>
 #endif
 
 /*!

@@ -73,6 +73,29 @@ ArrayPrototype::ArrayPrototype(VM& vm, Structure* structure)
 {
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+ALWAYS_INLINE JSC_DEFINE_CUSTOM_GETTER(arrayCustomLengthGetter, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* thisObject = JSValue::decode(thisValue).toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    scope.release();
+    return JSValue::encode(jsNumber(toLength(globalObject, thisObject)));
+}
+
+ALWAYS_INLINE JSC_DEFINE_CUSTOM_SETTER(arrayCustomLengthSetter, (JSGlobalObject* globalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* thisObject = JSValue::decode(thisValue).toObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    scope.release();
+    setLength(globalObject, vm, thisObject, JSValue::decode(encodedValue).toLength(globalObject));
+    return true;
+}
+#endif
+
 void ArrayPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
@@ -130,6 +153,10 @@ void ArrayPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
 
     JSObject* unscopables = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     unscopables->convertToDictionary(vm);
+#if USE(BUN_JSC_ADDITIONS)
+    Vector<RefPtr<UniquedStringImpl>, 16> unscopableNameImpls;
+    Vector<EncodedJSValue, 16> unscopableValues;
+#endif
     const Identifier* const unscopableNames[] = {
         &vm.propertyNames->builtinNames().atPublicName(),
         &vm.propertyNames->builtinNames().copyWithinPublicName(),
@@ -151,8 +178,22 @@ void ArrayPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
     for (const auto* unscopableName : unscopableNames) {
         if (unscopableName)
             unscopables->putDirect(vm, *unscopableName, jsBoolean(true));
+#if USE(BUN_JSC_ADDITIONS)
+        if (unscopableName) {
+            unscopableNameImpls.append(unscopableName->impl());
+            unscopableValues.append(JSValue::encode(jsBoolean(true)));
+        }
+#endif
     }
     putDirectWithoutTransition(vm, vm.propertyNames->unscopablesSymbol, unscopables, PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
+#if USE(BUN_JSC_ADDITIONS)
+    JSObject* privateUnscopables = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    privateUnscopables->putOwnDataPropertyBatching(vm, unscopableNameImpls.data(), unscopableValues.data(), unscopableValues.size());
+    privateUnscopables->convertToDictionary(vm);
+    putDirectWithoutTransition(vm, vm.propertyNames->builtinNames().$unscopablesPrivateName(), privateUnscopables, static_cast<unsigned>(PropertyAttribute::ReadOnly));
+    putDirectCustomGetterSetterWithoutTransition(vm, vm.propertyNames->builtinNames().lengthPrivateName(), CustomGetterSetter::create(vm, arrayCustomLengthGetter, arrayCustomLengthSetter), PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor);
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 // ------------------------------ Array Functions ----------------------------

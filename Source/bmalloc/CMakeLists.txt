@@ -190,6 +190,12 @@ set(bmalloc_SOURCES
     libpas/src/libpas/thingy_heap_config.c
 )
 
+if (USE_BUN_JSC_ADDITIONS)
+    list(APPEND bmalloc_SOURCES
+        bmalloc/Bun_uv_get_constrained_memory.cpp
+    )
+endif ()
+
 set(bmalloc_PUBLIC_HEADERS
     bmalloc/Algorithm.h
     bmalloc/AllIsoHeaps.h

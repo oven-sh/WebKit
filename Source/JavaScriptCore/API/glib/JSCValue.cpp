@@ -477,7 +477,9 @@ JSCValue* jsc_value_new_array(JSCContext* context, GType firstItemType, ...)
 
     auto* jsContext = jscContextGetJSContext(context);
     JSC::JSGlobalObject* globalObject = toJS(jsContext);
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(globalObject);
+#endif
 
     JSValueRef exception = nullptr;
     auto* jsArray = JSObjectMakeArray(jsContext, 0, nullptr, &exception);
@@ -883,7 +885,9 @@ static GRefPtr<JSCValue> jscValueCallFunction(JSCValue* value, JSObjectRef funct
     JSCValuePrivate* priv = value->priv;
     auto* jsContext = jscContextGetJSContext(priv->context.get());
     JSC::JSGlobalObject* globalObject = toJS(jsContext);
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(globalObject);
+#endif
 
     JSValueRef exception = nullptr;
     Vector<JSValueRef> arguments;
@@ -1044,7 +1048,9 @@ void jsc_value_object_define_property_data(JSCValue* value, const char* property
     auto* jsContext = jscContextGetJSContext(priv->context.get());
     JSC::JSGlobalObject* globalObject = toJS(jsContext);
     JSC::VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(vm);
+#endif
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     JSC::JSValue jsValue = toJS(globalObject, priv->jsValue);
@@ -1077,7 +1083,9 @@ static void jscValueObjectDefinePropertyAccessor(JSCValue* value, const char* pr
     auto* jsContext = jscContextGetJSContext(priv->context.get());
     JSC::JSGlobalObject* globalObject = toJS(jsContext);
     JSC::VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(vm);
+#endif
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     JSC::JSValue jsValue = toJS(globalObject, priv->jsValue);
@@ -1167,7 +1175,9 @@ static GRefPtr<JSCValue> jscValueFunctionCreate(JSCContext* context, const char*
         closure = adoptGRef(g_cclosure_new(callback, userData, reinterpret_cast<GClosureNotify>(reinterpret_cast<GCallback>(destroyNotify))));
     JSC::JSGlobalObject* globalObject = toJS(jscContextGetJSContext(context));
     JSC::VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(vm);
+#endif
     auto* functionObject = toRef(JSC::JSCCallbackFunction::create(vm, globalObject, name ? String::fromUTF8(name) : "anonymous"_s,
         JSC::JSCCallbackFunction::Type::Function, nullptr, WTFMove(closure), returnType, WTFMove(parameters)));
     return jscContextGetOrCreateValue(context, functionObject);
@@ -2065,7 +2075,9 @@ JSCValue* jsc_value_new_from_json(JSCContext* context, const char* json)
 
     auto* jsContext = jscContextGetJSContext(context);
     JSC::JSGlobalObject* globalObject = toJS(jsContext);
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(globalObject);
+#endif
 
     JSValueRef exception = nullptr;
     JSC::JSValue jsValue;

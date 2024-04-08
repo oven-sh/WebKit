@@ -38,12 +38,33 @@ public:
         JavaScript,
         WebAssembly,
         JSON,
+#if USE(BUN_JSC_ADDITIONS)
+        HostDefined,
+#endif
     };
 
     ScriptFetchParameters(Type type)
         : m_type(type)
     {
+#if USE(BUN_JSC_ADDITIONS)
+        ASSERT_WITH_MESSAGE(type != Type::HostDefined, "HostDefined type requires a hostDefinedImportType");
+#endif
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    ScriptFetchParameters(const String& hostDefinedImportType)
+        : m_type(Type::HostDefined), m_hostDefinedImportType(hostDefinedImportType)
+    {
+
+    }
+
+    const String& hostDefinedImportType() const { return m_hostDefinedImportType; }
+
+    static Ref<ScriptFetchParameters> create(const String& hostDefinedImportType)
+    {
+        return adoptRef(*new ScriptFetchParameters(hostDefinedImportType));
+    }
+#endif
 
     virtual ~ScriptFetchParameters() = default;
 
@@ -63,11 +84,18 @@ public:
             return Type::JSON;
         if (string == "webassembly"_s)
             return Type::WebAssembly;
+#if USE(BUN_JSC_ADDITIONS)
+        if (!string.isEmpty())
+            return Type::HostDefined;
+#endif
         return std::nullopt;
     }
 
 private:
     Type m_type { Type::None };
+#if USE(BUN_JSC_ADDITIONS)
+    String m_hostDefinedImportType = String();
+#endif
 };
 
 } // namespace JSC

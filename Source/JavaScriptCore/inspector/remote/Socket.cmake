@@ -24,6 +24,14 @@ list(APPEND JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     inspector/remote/socket/RemoteInspectorSocketEndpoint.h
 )
 
+if (USE_BUN_JSC_ADDITIONS)
+    list(APPEND JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
+        inspector/augmentable/AlternateDispatchableAgent.h
+        inspector/augmentable/AugmentableInspectorController.h
+        inspector/augmentable/AugmentableInspectorControllerClient.h
+    )
+endif ()
+
 if (UNIX)
     list(APPEND JavaScriptCore_SOURCES inspector/remote/socket/posix/RemoteInspectorSocketPOSIX.cpp)
 else ()

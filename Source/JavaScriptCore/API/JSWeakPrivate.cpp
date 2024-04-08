@@ -44,22 +44,34 @@ struct OpaqueJSWeak : ThreadSafeRefCounted<OpaqueJSWeak> {
 
 JSWeakRef JSWeakCreate(JSContextGroupRef contextGroup, JSObjectRef objectRef)
 {
+#if !USE(BUN_JSC_ADDITIONS)
     VM* vm = toJS(contextGroup);
     JSLockHolder locker(vm);
+#else
+    UNUSED_PARAM(contextGroup);
+#endif
     return new OpaqueJSWeak(toJS(objectRef));
 }
 
 void JSWeakRetain(JSContextGroupRef contextGroup, JSWeakRef weakRef)
 {
+#if !USE(BUN_JSC_ADDITIONS)
     VM* vm = toJS(contextGroup);
     JSLockHolder locker(vm);
+#else
+    UNUSED_PARAM(contextGroup);
+#endif
     weakRef->ref();
 }
 
 void JSWeakRelease(JSContextGroupRef contextGroup, JSWeakRef weakRef)
 {
+#if !USE(BUN_JSC_ADDITIONS)
     VM* vm = toJS(contextGroup);
     JSLockHolder locker(vm);
+#else
+    UNUSED_PARAM(contextGroup);
+#endif
     weakRef->deref();
 }
 

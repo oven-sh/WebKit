@@ -60,6 +60,12 @@ struct OpaqueJSString : public ThreadSafeRefCounted<OpaqueJSString> {
     const LChar* characters8() { return m_string.characters8(); }
     const UChar* characters16() { return m_string.characters16(); }
     unsigned length() { return m_string.length(); }
+#if USE(BUN_JSC_ADDITIONS)
+    bool isEmpty() { return m_string.isEmpty(); }
+    bool isExternal() { return m_string.impl()->isExternal(); }
+    bool isStatic() { return m_string.impl()->isStatic(); }
+    JS_EXPORT_PRIVATE String rawString() const;
+#endif
 
     const UChar* characters();
 
@@ -77,7 +83,11 @@ private:
     }
 
     OpaqueJSString(const String& string)
+#if !USE(BUN_JSC_ADDITIONS)
         : m_string(string.isolatedCopy())
+#else
+        : m_string(string)
+#endif
         , m_characters(m_string.impl() && m_string.is8Bit() ? nullptr : const_cast<UChar*>(m_string.characters16()))
     {
     }

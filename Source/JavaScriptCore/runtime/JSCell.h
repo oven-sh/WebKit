@@ -146,7 +146,7 @@ public:
     // Locker locker { cell->cellLock() };
     JSCellLock& cellLock() const { return *reinterpret_cast<JSCellLock*>(const_cast<JSCell*>(this)); }
     
-    JSType type() const;
+    JS_EXPORT_PRIVATE JSType type() const;
     IndexingType indexingTypeAndMisc() const;
     IndexingType indexingMode() const;
     IndexingType indexingType() const;
@@ -207,6 +207,8 @@ public:
     JS_EXPORT_PRIVATE static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName);
     static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned propertyName);
 
+    JS_EXPORT_PRIVATE static JSValue toThis(JSCell*, JSGlobalObject*, ECMAMode);
+
     static bool canUseFastGetOwnProperty(const Structure&);
     JSValue fastGetOwnProperty(VM&, Structure&, PropertyName);
 
@@ -265,18 +267,18 @@ protected:
     void finishCreation(VM&, Structure*, CreatingEarlyCellTag);
 
     // Dummy implementations of override-able static functions for classes to put in their MethodTable
-    static NO_RETURN_DUE_TO_CRASH void getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArray&, DontEnumPropertiesMode);
-    static NO_RETURN_DUE_TO_CRASH void getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArray&, DontEnumPropertiesMode);
+    JS_EXPORT_PRIVATE static NO_RETURN_DUE_TO_CRASH void getOwnPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArray&, DontEnumPropertiesMode);
+    JS_EXPORT_PRIVATE static NO_RETURN_DUE_TO_CRASH void getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArray&, DontEnumPropertiesMode);
 
-    static NO_RETURN_DUE_TO_CRASH bool preventExtensions(JSObject*, JSGlobalObject*);
-    static NO_RETURN_DUE_TO_CRASH bool isExtensible(JSObject*, JSGlobalObject*);
-    static NO_RETURN_DUE_TO_CRASH bool setPrototype(JSObject*, JSGlobalObject*, JSValue, bool);
-    static NO_RETURN_DUE_TO_CRASH JSValue getPrototype(JSObject*, JSGlobalObject*);
+    JS_EXPORT_PRIVATE static NO_RETURN_DUE_TO_CRASH bool preventExtensions(JSObject*, JSGlobalObject*);
+    JS_EXPORT_PRIVATE static NO_RETURN_DUE_TO_CRASH bool isExtensible(JSObject*, JSGlobalObject*);
+    JS_EXPORT_PRIVATE static NO_RETURN_DUE_TO_CRASH bool setPrototype(JSObject*, JSGlobalObject*, JSValue, bool);
+    JS_EXPORT_PRIVATE static NO_RETURN_DUE_TO_CRASH JSValue getPrototype(JSObject*, JSGlobalObject*);
 
     JS_EXPORT_PRIVATE static bool customHasInstance(JSObject*, JSGlobalObject*, JSValue);
-    static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
-    static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
-    static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned propertyName, PropertySlot&);
+    JS_EXPORT_PRIVATE static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
+    JS_EXPORT_PRIVATE static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
+    JS_EXPORT_PRIVATE static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned propertyName, PropertySlot&);
 
 private:
     friend class LLIntOffsetsExtractor;

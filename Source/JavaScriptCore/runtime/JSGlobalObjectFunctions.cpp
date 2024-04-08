@@ -48,6 +48,10 @@
 #include <wtf/dtoa.h>
 #include <wtf/text/StringBuilder.h>
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "ObjectConstructorInlines.h"
+#endif
+
 namespace JSC {
 
 const ASCIILiteral ObjectProtoCalledOnNullOrUndefinedError { "Object.prototype.__proto__ called on null or undefined"_s };

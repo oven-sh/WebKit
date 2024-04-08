@@ -41,6 +41,10 @@
 #define JS_GLOBAL_OBJECT_ADDITIONS_4
 #endif
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "Bun_InternalFieldTuple.h"
+#endif
+
 struct OpaqueJSClass;
 struct OpaqueJSClassContextData;
 struct OpaqueJSWeakObjectMap;
@@ -218,9 +222,11 @@ public:
     WriteBarrier<ShadowRealmConstructor> m_shadowRealmConstructor;
     WriteBarrier<RegExpConstructor> m_regExpConstructor;
     WriteBarrier<FunctionConstructor> m_functionConstructor;
+#if !USE(BUN_JSC_ADDITIONS)
     WriteBarrier<JSPromiseConstructor> m_promiseConstructor;
     WriteBarrier<JSInternalPromiseConstructor> m_internalPromiseConstructor;
     WriteBarrier<StringConstructor> m_stringConstructor;
+#endif
 
     LazyProperty<JSGlobalObject, IntlCollator> m_defaultCollator;
     LazyProperty<JSGlobalObject, IntlNumberFormat> m_defaultNumberFormat;
@@ -992,6 +998,11 @@ public:
 
     JS_EXPORT_PRIVATE void queueMicrotask(Ref<Microtask>&&);
     JS_EXPORT_PRIVATE void queueMicrotask(JSValue job, JSValue, JSValue, JSValue, JSValue);
+#if USE(BUN_JSC_ADDITIONS)
+    // Adds support for passing a fifth `asyncContextData` microtask argument 
+    // by way of @enqueueJob in builtins/PromiseOperations.js
+    JS_EXPORT_PRIVATE void queueMicrotask(JSValue job, JSValue, JSValue, JSValue, JSValue, JSValue);
+#endif
 
     static void reportViolationForUnsafeEval(const JSGlobalObject*, JSString*) { }
 
@@ -1045,6 +1056,29 @@ public:
 #ifdef JSC_GLIB_API_ENABLED
     WrapperMap* wrapperMap() const { return m_wrapperMap.get(); }
     void setWrapperMap(std::unique_ptr<WrapperMap>&&);
+#endif
+#if USE(BUN_JSC_ADDITIONS)
+#define BUN_DEFINE_CTOR(capitalName, lowerName, properName, instanceType, jsName, prototypeBase, featureFlag) \
+        WriteBarrier<capitalName ## Constructor> m_ ## lowerName ## Constructor;
+
+    // Using FOR_EACH_SIMPLE_BUILTIN_TYPE here instead of FOR_EACH_SIMPLE_BUILTIN_TYPE_WITH_CONSTRUCTOR
+    // allows for a simpler "#if !USE(BUN_JSC_ADDITIONS)" exclusion of m_promiseConstructor, m_internalPromiseConstructor, 
+    // and m_stringConstructor because they are grouped together in the code.
+    FOR_EACH_SIMPLE_BUILTIN_TYPE(BUN_DEFINE_CTOR)
+
+#undef BUN_DEFINE_CTOR
+    // Added for "bun test"
+    double overridenDateNow { -1 };
+
+    bool m_isAsyncContextTrackingEnabled { false };
+    LazyProperty<JSGlobalObject, InternalFieldTuple> m_asyncContextTuple;
+    LazyProperty<JSGlobalObject, Structure> m_internalFieldTupleStructure;
+    LazyClassStructure m_suppressedErrorStructure;
+
+    InternalFieldTuple* asyncContextTuple() const { return m_asyncContextTuple.get(this); }
+    Structure* internalFieldTupleStructure() const { return m_internalFieldTupleStructure.get(this); }
+    bool isAsyncContextTrackingEnabled() const { return m_isAsyncContextTrackingEnabled; }
+    void setAsyncContextTrackingEnabled(bool isEnabled) { m_isAsyncContextTrackingEnabled = isEnabled; }
 #endif
 
     void installArraySpeciesWatchpoint();
@@ -1101,6 +1135,9 @@ private:
 
     JS_EXPORT_PRIVATE static void clearRareData(JSCell*);
 
+#if USE(BUN_JSC_ADDITIONS)
+    void initializeSuppressedErrorConstructor(LazyClassStructure::Initializer&);
+#endif
 #if JSC_OBJC_API_ENABLED
     RetainPtr<JSWrapperMap> m_wrapperMap;
 #endif

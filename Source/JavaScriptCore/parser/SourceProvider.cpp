@@ -40,9 +40,11 @@ SourceProvider::SourceProvider(const SourceOrigin& sourceOrigin, String&& source
 {
 }
 
+#if !USE(BUN_JSC_ADDITIONS)
 SourceProvider::~SourceProvider()
 {
 }
+#endif
 
 void SourceProvider::getID()
 {

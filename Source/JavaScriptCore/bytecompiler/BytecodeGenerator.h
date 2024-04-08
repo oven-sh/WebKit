@@ -540,6 +540,11 @@ namespace JSC {
 
         RegisterID* emitNode(ExpressionNode* n)
         {
+#if USE(BUN_JSC_ADDITIONS)
+            // Adds support for passing byteCodeIntrinsics and linkTimeConstants as function arguments. 
+            ExpressionNode* expr = n->isArgumentList() ? static_cast<ArgumentListNode*>(n)->m_expr : nullptr;
+            if (expr && expr->isLinkTimeConstant()) return moveLinkTimeConstant(newTemporary(), static_cast<BytecodeIntrinsicNode*>(expr)->linkTimeConstant());
+#endif
             return emitNode(nullptr, n);
         }
 

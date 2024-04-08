@@ -100,6 +100,7 @@ static constexpr bool verbose = false;
 #else
 static constexpr bool verbose = true;
 #endif
+
 } // namespace DFGByteCodeParserInternal
 
 #define VERBOSE_LOG(...) do { \

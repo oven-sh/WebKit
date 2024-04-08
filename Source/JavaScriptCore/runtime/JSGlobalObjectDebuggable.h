@@ -40,12 +40,20 @@ namespace JSC {
 
 class JSGlobalObject;
 
+#if !USE(BUN_JSC_ADDITIONS)
 class JSGlobalObjectDebuggable final : public Inspector::RemoteInspectionTarget {
+#else
+class JSGlobalObjectDebuggable : public Inspector::RemoteInspectionTarget {
+#endif
     WTF_MAKE_TZONE_ALLOCATED(JSGlobalObjectDebuggable);
     WTF_MAKE_NONCOPYABLE(JSGlobalObjectDebuggable);
 public:
     JSGlobalObjectDebuggable(JSGlobalObject&);
+#if !USE(BUN_JSC_ADDITIONS)
     ~JSGlobalObjectDebuggable() final { }
+#else
+    ~JSGlobalObjectDebuggable() { }
+#endif
 
     Inspector::RemoteControllableTarget::Type type() const final { return m_type; }
     void setIsITML() { m_type = Inspector::RemoteControllableTarget::Type::ITML; }
@@ -58,7 +66,11 @@ public:
     void dispatchMessageFromRemote(String&& message) final;
 
     bool automaticInspectionAllowed() const final { return true; }
+#if !USE(BUN_JSC_ADDITIONS)
     void pauseWaitingForAutomaticInspection() final;
+#else
+    void pauseWaitingForAutomaticInspection();
+#endif
 
 private:
     JSGlobalObject& m_globalObject;

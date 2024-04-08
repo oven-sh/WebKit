@@ -44,7 +44,7 @@
 
 /* Export macro support. Detects the attributes available for shared library symbol export
    decorations. */
-#if OS(WINDOWS) || (COMPILER_HAS_CLANG_DECLSPEC(dllimport) && COMPILER_HAS_CLANG_DECLSPEC(dllexport))
+#if (OS(WINDOWS) || (COMPILER_HAS_CLANG_DECLSPEC(dllimport) && COMPILER_HAS_CLANG_DECLSPEC(dllexport))) && !USE(BUN_JSC_ADDITIONS)
 #define USE_DECLSPEC_ATTRIBUTE 1
 #elif defined(__GNUC__)
 #define USE_VISIBILITY_ATTRIBUTE 1
@@ -263,7 +263,7 @@
 #define USE_UICONTEXTMENU 1
 #endif
 
-#if PLATFORM(IOS_FAMILY) || (!USE(SYSTEM_MALLOC) && (OS(LINUX) && (PLATFORM(GTK) || PLATFORM(WPE))))
+#if PLATFORM(IOS_FAMILY) || (!USE(SYSTEM_MALLOC) && (OS(LINUX) && (PLATFORM(GTK) || PLATFORM(WPE) || USE(BUN_JSC_ADDITIONS))))
 #define USE_BMALLOC_MEMORY_FOOTPRINT_API 1
 #endif
 

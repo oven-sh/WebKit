@@ -38,6 +38,9 @@ namespace WTF {
 void printInternal(PrintStream& out, JSC::JSType type)
 {
     switch (type) {
+#if USE(BUN_JSC_ADDITIONS)
+    CASE(InternalFieldTupleType)
+#endif
     CASE(CellType)
     CASE(StructureType)
     CASE(StringType)

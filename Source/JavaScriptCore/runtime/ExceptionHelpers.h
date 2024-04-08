@@ -46,13 +46,22 @@ JS_EXPORT_PRIVATE JSObject* createError(JSGlobalObject*, JSValue, const String&,
 JS_EXPORT_PRIVATE JSObject* createStackOverflowError(JSGlobalObject*);
 JSObject* createUndefinedVariableError(JSGlobalObject*, const Identifier&);
 JSObject* createTDZError(JSGlobalObject*);
+#if !USE(BUN_JSC_ADDITIONS)
 JSObject* createNotAnObjectError(JSGlobalObject*, JSValue);
+#else
+JS_EXPORT_PRIVATE JSObject* createNotAnObjectError(JSGlobalObject*, JSValue);
+#endif
 JSObject* createInvalidFunctionApplyParameterError(JSGlobalObject*, JSValue);
 JSObject* createInvalidInParameterError(JSGlobalObject*, JSValue);
 JSObject* createInvalidInstanceofParameterErrorNotFunction(JSGlobalObject*, JSValue);
 JSObject* createInvalidInstanceofParameterErrorHasInstanceValueNotFunction(JSGlobalObject*, JSValue);
+#if !USE(BUN_JSC_ADDITIONS)
 JSObject* createNotAConstructorError(JSGlobalObject*, JSValue);
 JSObject* createNotAFunctionError(JSGlobalObject*, JSValue);
+#else
+JS_EXPORT_PRIVATE JSObject* createNotAConstructorError(JSGlobalObject*, JSValue);
+JS_EXPORT_PRIVATE JSObject* createNotAFunctionError(JSGlobalObject*, JSValue);
+#endif
 JSObject* createInvalidPrototypeError(JSGlobalObject*, JSValue);
 JSObject* createErrorForDuplicateGlobalVariableDeclaration(JSGlobalObject*, UniquedStringImpl*);
 JSObject* createErrorForInvalidGlobalFunctionDeclaration(JSGlobalObject*, const Identifier&);

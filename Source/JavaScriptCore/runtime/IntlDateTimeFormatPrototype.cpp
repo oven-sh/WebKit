@@ -89,6 +89,10 @@ void IntlDateTimeFormatPrototype::finishCreation(VM& vm, JSGlobalObject* globalO
     UNUSED_PARAM(&intlDateTimeFormatPrototypeFuncFormatRangeToParts);
 #endif
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+#if USE(BUN_JSC_ADDITIONS)
+    reifyAllStaticProperties(globalObject);
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 // HandleDateTimeValue ( dateTimeFormat, x )
@@ -99,7 +103,11 @@ double IntlDateTimeFormat::handleDateTimeValue(JSGlobalObject* globalObject, JSV
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (x.isUndefined())
+#if !USE(BUN_JSC_ADDITIONS)
         RELEASE_AND_RETURN(scope, dateNowImpl().toNumber(globalObject));
+#else
+        RELEASE_AND_RETURN(scope, dateNowImpl(globalObject).toNumber(globalObject));
+#endif
 
     // FIXME:
     //  - Add all of the other Temporal types

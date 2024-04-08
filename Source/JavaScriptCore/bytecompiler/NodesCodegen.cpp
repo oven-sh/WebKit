@@ -1583,6 +1583,35 @@ static ProxyObject::Field proxyInternalFieldIndex(BytecodeIntrinsicNode* node)
     return ProxyObject::Field::Target;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+RegisterID* BytecodeIntrinsicNode::emit_intrinsic_getInternalField(BytecodeGenerator& generator, RegisterID* dst)
+{
+    ArgumentListNode* node = m_args->m_listNode;
+    RefPtr<RegisterID> base = generator.emitNode(node);
+    node = node->m_next;
+    RELEASE_ASSERT(node->m_expr->isNumber());
+    unsigned index = static_cast<unsigned>(static_cast<IntegerNode*>(node->m_expr)->value());
+    ASSERT(!node->m_next);
+
+    return generator.emitGetInternalField(generator.finalDestination(dst), base.get(), index);
+}
+
+RegisterID* BytecodeIntrinsicNode::emit_intrinsic_putInternalField(BytecodeGenerator& generator, RegisterID* dst)
+{
+    ArgumentListNode* node = m_args->m_listNode;
+    RefPtr<RegisterID> base = generator.emitNode(node);
+    node = node->m_next;
+    RELEASE_ASSERT(node->m_expr->isNumber());
+    unsigned index = static_cast<unsigned>(static_cast<IntegerNode*>(node->m_expr)->value());
+    node = node->m_next;
+    RefPtr<RegisterID> value = generator.emitNode(node);
+
+    ASSERT(!node->m_next);
+
+    return generator.move(dst, generator.emitPutInternalField(base.get(), index, value.get()));
+}
+#endif
+
 RegisterID* BytecodeIntrinsicNode::emit_intrinsic_getPromiseInternalField(BytecodeGenerator& generator, RegisterID* dst)
 {
     ArgumentListNode* node = m_args->m_listNode;

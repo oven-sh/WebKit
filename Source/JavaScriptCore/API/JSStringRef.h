@@ -141,6 +141,19 @@ JS_EXPORT bool JSStringIsEqual(JSStringRef a, JSStringRef b);
 */
 JS_EXPORT bool JSStringIsEqualToUTF8CString(JSStringRef a, const char* b);
 
+#if USE(BUN_JSC_ADDITIONS)
+typedef void (*ExternalStringFinalizer)(void* finalize_ptr, void* buffer, size_t bufferSize);
+
+JS_EXPORT JSStringRef JSStringCreate(const char* string, size_t length);
+JS_EXPORT JSStringRef JSStringCreateExternal(const char* string, size_t length, void* finalize_ptr, const ExternalStringFinalizer finalizer);
+JS_EXPORT JSStringRef JSStringCreateStatic(const char* string, size_t length);
+JS_EXPORT char JSStringEncoding(JSStringRef string);
+JS_EXPORT const char* JSStringGetCharacters8Ptr(JSStringRef string);
+JS_EXPORT bool JSStringIsEqualToString(JSStringRef a, const char* b, size_t length);
+JS_EXPORT bool JSStringIsExternal(JSStringRef string);
+JS_EXPORT bool JSStringIsStatic(JSStringRef string);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

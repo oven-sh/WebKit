@@ -58,11 +58,21 @@ public:
     String toString(VM&) const;
 
     bool hasBytecodeIndex() const { return m_bytecodeIndex && !m_isWasmFrame; }
+#if !USE(BUN_JSC_ADDITIONS)
     BytecodeIndex bytecodeIndex()
+#else
+    BytecodeIndex bytecodeIndex() const
+#endif
     {
         ASSERT(hasBytecodeIndex());
         return m_bytecodeIndex;
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    JSCell * callee() const { return m_callee.get(); }
+    bool isWasmFrame() const { return m_isWasmFrame; }
+    const Wasm::IndexOrName& wasmFunctionIndexOrName() const { return m_wasmFunctionIndexOrName; }
+#endif
 
     template<typename Visitor>
     void visitAggregate(Visitor& visitor)

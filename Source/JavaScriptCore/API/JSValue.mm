@@ -504,9 +504,11 @@ inline Expected<Result, JSValueRef> performPropertyOperation(NSStringFunction st
 
 - (JSValue *)callWithArguments:(NSArray *)argumentArray
 {
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSGlobalObject* globalObject = toJS([_context JSGlobalContextRef]);
     JSC::VM& vm = globalObject->vm();
     JSC::JSLockHolder locker(vm);
+#endif
 
     NSUInteger argumentCount = [argumentArray count];
     JSC::MarkedJSValueRefArray arguments([_context JSGlobalContextRef], argumentCount);
@@ -527,9 +529,11 @@ inline Expected<Result, JSValueRef> performPropertyOperation(NSStringFunction st
 
 - (JSValue *)constructWithArguments:(NSArray *)argumentArray
 {
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSGlobalObject* globalObject = toJS([_context JSGlobalContextRef]);
     JSC::VM& vm = globalObject->vm();
     JSC::JSLockHolder locker(vm);
+#endif
 
     NSUInteger argumentCount = [argumentArray count];
     JSC::MarkedJSValueRefArray arguments([_context JSGlobalContextRef], argumentCount);
@@ -550,9 +554,11 @@ inline Expected<Result, JSValueRef> performPropertyOperation(NSStringFunction st
 
 - (JSValue *)invokeMethod:(NSString *)method withArguments:(NSArray *)arguments
 {
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSGlobalObject* globalObject = toJS([_context JSGlobalContextRef]);
     JSC::VM& vm = globalObject->vm();
     JSC::JSLockHolder locker(vm);
+#endif
 
     NSUInteger argumentCount = [arguments count];
     JSC::MarkedJSValueRefArray argumentArray([_context JSGlobalContextRef], argumentCount);
@@ -678,13 +684,21 @@ inline Expected<Result, JSValueRef> performPropertyOperation(NSStringFunction st
 
 inline bool isDate(JSObjectRef object, JSGlobalContextRef context)
 {
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(toJS(context));
+#else
+    UNUSED_PARAM(context);
+#endif
     return toJS(object)->inherits<JSC::DateInstance>();
 }
 
 inline bool isArray(JSObjectRef object, JSGlobalContextRef context)
 {
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(toJS(context));
+#else
+    UNUSED_PARAM(context);
+#endif
     return toJS(object)->inherits<JSC::JSArray>();
 }
 
@@ -801,7 +815,9 @@ static JSContainerConvertor::Task valueToObjectWithoutCopy(JSGlobalContextRef co
 static id containerValueToObject(JSGlobalContextRef context, JSContainerConvertor::Task task)
 {
     ASSERT(task.type != ContainerNone);
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(toJS(context));
+#endif
     JSContainerConvertor convertor(context);
     convertor.add(task);
     ASSERT(!convertor.isWorkListEmpty());
@@ -826,7 +842,9 @@ static id containerValueToObject(JSGlobalContextRef context, JSContainerConverto
             ASSERT([current.objc isKindOfClass:[NSMutableDictionary class]]);
             NSMutableDictionary *dictionary = (NSMutableDictionary *)current.objc;
 
+#if !USE(BUN_JSC_ADDITIONS)
             JSC::JSLockHolder locker(toJS(context));
+#endif
 
             JSPropertyNameArrayRef propertyNameArray = JSObjectCopyPropertyNames(context, js);
             size_t length = JSPropertyNameArrayGetCount(propertyNameArray);
@@ -908,7 +926,9 @@ id valueToArray(JSGlobalContextRef context, JSValueRef value, JSValueRef* except
     if (JSValueIsObject(context, value))
         return containerValueToObject(context, { value, [NSMutableArray array], ContainerArray});
 
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(toJS(context));
+#endif
     if (!(JSValueIsNull(context, value) || JSValueIsUndefined(context, value))) {
         JSC::JSObject* exceptionObject = JSC::createTypeError(toJS(context), "Cannot convert primitive to NSArray"_s);
         *exception = toRef(exceptionObject);
@@ -930,7 +950,9 @@ id valueToDictionary(JSGlobalContextRef context, JSValueRef value, JSValueRef* e
     if (JSValueIsObject(context, value))
         return containerValueToObject(context, { value, [NSMutableDictionary dictionary], ContainerDictionary});
 
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(toJS(context));
+#endif
     if (!(JSValueIsNull(context, value) || JSValueIsUndefined(context, value))) {
         JSC::JSObject* exceptionObject = JSC::createTypeError(toJS(context), "Cannot convert primitive to NSDictionary"_s);
         *exception = toRef(exceptionObject);
@@ -1060,7 +1082,9 @@ JSValueRef objectToValue(JSContext *context, id object)
     if (task.type == ContainerNone)
         return audit(task.js);
 
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(toJS(contextRef));
+#endif
     ObjcContainerConvertor convertor(context);
     convertor.add(task);
     ASSERT(!convertor.isWorkListEmpty());

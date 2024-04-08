@@ -39,7 +39,9 @@ bool gigacageEnabledForProcess();
 inline bool gigacageEnabledForProcess() { return true; }
 #endif
 
-#if BOS(DARWIN)
+// USE_BUN_JSC_ADDITIONS is not defined at this point or we'd use it here:
+// #if ((defined USE_BUN_JSC_ADDITIONS && USE_BUN_JSC_ADDITIONS) ? BPLATFORM(COCOA) : BOS(DARWIN))
+#if BPLATFORM(COCOA)
 bool shouldAllowMiniMode();
 #else
 inline bool shouldAllowMiniMode() { return true; }

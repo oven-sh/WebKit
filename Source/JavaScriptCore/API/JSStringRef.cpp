@@ -59,10 +59,79 @@ JSStringRef JSStringCreateWithUTF8CString(const char* string)
     return &OpaqueJSString::create().leakRef();
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+JSStringRef JSStringCreate(const char* string, size_t length)
+{
+    JSC::initialize();
+    return &OpaqueJSString::create((reinterpret_cast<const LChar*>(string)), length).leakRef();
+}
+
+JSStringRef JSStringCreateExternal(const char* string, size_t length, void* finalize_ptr, const ExternalStringFinalizer finalizer)
+{
+    JSC::initialize();
+
+    Ref<ExternalStringImpl> impl = ExternalStringImpl::create(reinterpret_cast<const LChar*>(string), length, finalize_ptr, [finalizer](void * finalize_ptr, void * buffer, unsigned bufferSize) -> void {
+        if (finalizer != nullptr) finalizer(finalize_ptr, buffer, bufferSize);
+	});
+    String str = *new String(impl.get());
+    return OpaqueJSString::tryCreate(str).leakRef();
+}
+
+JSStringRef JSStringCreateStatic(const char* string, size_t length)
+{
+    JSC::initialize();
+
+    Ref<ExternalStringImpl> impl = ExternalStringImpl::createStatic(reinterpret_cast<const LChar*>(string), length);
+    String str = *new String(impl.get());
+    return OpaqueJSString::tryCreate(str).leakRef();
+}
+
+const char* JSStringGetCharacters8Ptr(JSStringRef string)
+{
+    if (!string)
+        return nullptr;
+    return reinterpret_cast<const char*>(string->characters8());
+}
+
+char JSStringEncoding(JSStringRef string)
+{
+    if (!string || string->isEmpty()) {
+        return 0;
+    }
+
+    return string->is8Bit() ? 8 : 16;
+}
+
+bool JSStringIsEqualToString(JSStringRef a, const char* b, size_t length)
+{
+    if (a->is8Bit()) {
+        return length == a->length() && a->rawString() == StringView(WTF::span8(b));
+    } else {
+        return length == a->length() && a->rawString() == StringView(WTF::span8(b));
+    }
+}
+
+bool JSStringIsExternal(JSStringRef string)
+{
+    return string->isExternal();
+}
+
+bool JSStringIsStatic(JSStringRef string)
+{
+    return string->isStatic();
+}
+#endif
+
 JSStringRef JSStringCreateWithCharactersNoCopy(const JSChar* chars, size_t numChars)
 {
     JSC::initialize();
+#if !USE(BUN_JSC_ADDITIONS)
     return OpaqueJSString::tryCreate(StringImpl::createWithoutCopying(reinterpret_cast<const UChar*>(chars), numChars)).leakRef();
+#else
+    Ref<ExternalStringImpl> impl = ExternalStringImpl::createStatic(reinterpret_cast<const UChar*>(chars), numChars);
+    String str = *new String(impl.get());
+    return OpaqueJSString::tryCreate(str).leakRef();
+#endif
 }
 
 JSStringRef JSStringRetain(JSStringRef string)

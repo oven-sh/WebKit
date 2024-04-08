@@ -132,7 +132,9 @@ static GRefPtr<JSCContext> jscContextForObject(JSC::JSObject* jsObject)
 
 static JSValueRef getProperty(JSContextRef callerContext, JSObjectRef object, JSStringRef propertyName, JSValueRef* exception)
 {
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(toJS(callerContext));
+#endif
     auto* jsObject = toJS(object);
     if (!isWrappedObject(jsObject))
         return nullptr;
@@ -159,7 +161,9 @@ static JSValueRef getProperty(JSContextRef callerContext, JSObjectRef object, JS
 
 static bool setProperty(JSContextRef callerContext, JSObjectRef object, JSStringRef propertyName, JSValueRef value, JSValueRef* exception)
 {
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(toJS(callerContext));
+#endif
     auto* jsObject = toJS(object);
     if (!isWrappedObject(jsObject))
         return false;
@@ -189,7 +193,9 @@ static bool setProperty(JSContextRef callerContext, JSObjectRef object, JSString
 
 static bool hasProperty(JSContextRef callerContext, JSObjectRef object, JSStringRef propertyName)
 {
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(toJS(callerContext));
+#endif
     auto* jsObject = toJS(object);
     if (!isWrappedObject(jsObject))
         return false;
@@ -215,7 +221,9 @@ static bool hasProperty(JSContextRef callerContext, JSObjectRef object, JSString
 
 static bool deleteProperty(JSContextRef callerContext, JSObjectRef object, JSStringRef propertyName, JSValueRef* exception)
 {
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(toJS(callerContext));
+#endif
     auto* jsObject = toJS(object);
     if (!isWrappedObject(jsObject))
         return false;
@@ -242,7 +250,9 @@ static bool deleteProperty(JSContextRef callerContext, JSObjectRef object, JSStr
 
 static void getPropertyNames(JSContextRef callerContext, JSObjectRef object, JSPropertyNameAccumulatorRef propertyNames)
 {
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(toJS(callerContext));
+#endif
     auto* jsObject = toJS(object);
     if (!isWrappedObject(jsObject))
         return;
@@ -550,7 +560,9 @@ static GRefPtr<JSCValue> jscClassCreateConstructor(JSCClass* jscClass, const cha
     JSCClassPrivate* priv = jscClass->priv;
     JSC::JSGlobalObject* globalObject = toJS(priv->context);
     JSC::VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(vm);
+#endif
     auto* functionObject = JSC::JSCCallbackFunction::create(vm, globalObject, String::fromUTF8(name),
         JSC::JSCCallbackFunction::Type::Constructor, jscClass, WTFMove(closure), returnType, WTFMove(parameters));
     auto context = jscContextGetOrCreate(priv->context);
@@ -693,7 +705,9 @@ static void jscClassAddMethod(JSCClass* jscClass, const char* name, GCallback ca
     GRefPtr<GClosure> closure = adoptGRef(g_cclosure_new(callback, userData, reinterpret_cast<GClosureNotify>(reinterpret_cast<GCallback>(destroyNotify))));
     JSC::JSGlobalObject* globalObject = toJS(priv->context);
     JSC::VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(vm);
+#endif
     auto* functionObject = toRef(JSC::JSCCallbackFunction::create(vm, globalObject, String::fromUTF8(name),
         JSC::JSCCallbackFunction::Type::Method, jscClass, WTFMove(closure), returnType, WTFMove(parameters)));
     auto context = jscContextGetOrCreate(priv->context);

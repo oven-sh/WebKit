@@ -63,6 +63,13 @@ void JSGlobalObjectDebugger::runEventLoopWhilePaused()
 {
     JSC::Debugger::runEventLoopWhilePaused();
 
+#if USE(BUN_JSC_ADDITIONS)
+    RunWhilePausedCallback callback = runWhilePausedCallback;
+    if (callback) {
+        callback(m_globalObject, m_doneProcessingDebuggerEvents);
+        return;
+    }
+#endif
     // Drop all locks so another thread can work in the VM while we are nested.
     JSC::JSLock::DropAllLocks dropAllLocks(&m_globalObject.vm());
 

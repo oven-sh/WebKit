@@ -436,7 +436,11 @@ public:
                     break;
                 }
                 }
+#if USE(BUN_JSC_ADDITIONS) && USE(ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS)
+            } else if (!!visitor->codeBlock())
+#else
             } else if (!!visitor->codeBlock() && !visitor->codeBlock()->unlinkedCodeBlock()->isBuiltinFunction())
+#endif
                 m_results[m_frameCountInResults++] = StackFrame(m_vm, m_owner, visitor->callee().asCell(), visitor->codeBlock(), visitor->bytecodeIndex());
             else
                 m_results[m_frameCountInResults++] = StackFrame(m_vm, m_owner, visitor->callee().asCell());

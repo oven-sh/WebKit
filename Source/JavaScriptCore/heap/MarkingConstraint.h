@@ -52,6 +52,7 @@ public:
     
     JS_EXPORT_PRIVATE virtual ~MarkingConstraint();
     
+#if !USE(BUN_JSC_ADDITIONS)
     unsigned index() const { return m_index; }
     
     const char* abbreviatedName() const { return m_abbreviatedName.data(); }
@@ -77,15 +78,51 @@ public:
     
     ConstraintConcurrency concurrency() const { return m_concurrency; }
     ConstraintParallelism parallelism() const { return m_parallelism; }
+#else
+    JS_EXPORT_PRIVATE unsigned index() const { return m_index; }
+    
+    JS_EXPORT_PRIVATE const char* abbreviatedName() const { return m_abbreviatedName.data(); }
+    JS_EXPORT_PRIVATE const char* name() const { return m_name.data(); }
+    
+    JS_EXPORT_PRIVATE void resetStats();
+    
+    JS_EXPORT_PRIVATE size_t lastVisitCount() const { return m_lastVisitCount; }
+    
+    // The following functions are only used by the real GC via the MarkingConstraintSolver.
+    // Hence, we only need the SlotVisitor version.
+    JS_EXPORT_PRIVATE void execute(SlotVisitor&);
+
+    JS_EXPORT_PRIVATE virtual double quickWorkEstimate(SlotVisitor&);
+    
+    JS_EXPORT_PRIVATE double workEstimate(SlotVisitor&);
+    
+    JS_EXPORT_PRIVATE void prepareToExecute(const AbstractLocker& constraintSolvingLocker, SlotVisitor&);
+    
+    JS_EXPORT_PRIVATE void doParallelWork(SlotVisitor&, SharedTask<void(SlotVisitor&)>&);
+    
+    JS_EXPORT_PRIVATE ConstraintVolatility volatility() const { return m_volatility; }
+    
+    JS_EXPORT_PRIVATE ConstraintConcurrency concurrency() const { return m_concurrency; }
+    JS_EXPORT_PRIVATE ConstraintParallelism parallelism() const { return m_parallelism; }
+#endif
 
 protected:
+#if !USE(BUN_JSC_ADDITIONS)
     virtual void executeImpl(AbstractSlotVisitor&) = 0;
     virtual void executeImpl(SlotVisitor&) = 0;
+#else
+    JS_EXPORT_PRIVATE virtual void executeImpl(AbstractSlotVisitor&) = 0;
+    JS_EXPORT_PRIVATE virtual void executeImpl(SlotVisitor&) = 0;
+#endif
     JS_EXPORT_PRIVATE virtual void prepareToExecuteImpl(const AbstractLocker& constraintSolvingLocker, AbstractSlotVisitor&);
 
     // This function is only used by the verifier GC via Heap::verifyGC().
     // Hence, we only need the AbstractSlotVisitor version.
+#if !USE(BUN_JSC_ADDITIONS)
     void executeSynchronously(AbstractSlotVisitor&);
+#else
+    JS_EXPORT_PRIVATE void executeSynchronously(AbstractSlotVisitor&);
+#endif
 
 private:
     friend class MarkingConstraintSet; // So it can set m_index.

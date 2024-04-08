@@ -219,6 +219,10 @@ namespace JSC {
         virtual bool isPrivateIdentifier() const { return false; }
         virtual bool isArgumentsLengthAccess(VM&) const { return false; }
         virtual bool isArguments(VM&) const { return false; }
+#if USE(BUN_JSC_ADDITIONS)
+        virtual bool isArgumentList() const { return false; }
+        virtual bool isLinkTimeConstant() const { return false; }
+#endif
 
         virtual void emitBytecodeInConditionContext(BytecodeGenerator&, Label&, Label&, FallThroughMode);
 
@@ -955,6 +959,9 @@ namespace JSC {
 
         ArgumentListNode* m_next { nullptr };
         ExpressionNode* m_expr;
+#if USE(BUN_JSC_ADDITIONS)
+        bool isArgumentList() const final { return true; }
+#endif
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
@@ -1080,6 +1087,10 @@ namespace JSC {
         BytecodeIntrinsicNode(Type, const JSTokenLocation&, BytecodeIntrinsicRegistry::Entry, const Identifier&, ArgumentsNode*, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
 
         bool isBytecodeIntrinsicNode() const final { return true; }
+#if USE(BUN_JSC_ADDITIONS)
+        ALWAYS_INLINE bool isLinkTimeConstant() const final { return m_entry.type() == BytecodeIntrinsicRegistry::Type::LinkTimeConstant; }
+        LinkTimeConstant linkTimeConstant() const { return m_entry.linkTimeConstant(); }
+#endif
 
         Type type() const { return m_type; }
         BytecodeIntrinsicRegistry::Entry entry() const { return m_entry; }

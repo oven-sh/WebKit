@@ -23,13 +23,25 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-var emDash = "\u2014";
-var enDash = "\u2013";
-var figureDash = "\u2012";
-var ellipsis = "\u2026";
-var zeroWidthSpace = "\u200b";
-var multiplicationSign = "\u00d7";
+/* #if !USE(BUN_JSC_ADDITIONS) */
+// var emDash = "\u2014";
+// var enDash = "\u2013";
+// var figureDash = "\u2012";
+// var ellipsis = "\u2026";
+// var zeroWidthSpace = "\u200b";
+// var multiplicationSign = "\u00d7";
+/* #else */
+emDash = "\u2014";
+enDash = "\u2013";
+figureDash = "\u2012";
+ellipsis = "\u2026";
+zeroWidthSpace = "\u200b";
+multiplicationSign = "\u00d7";
+/* #endif */
 
+/* #if USE(BUN_JSC_ADDITIONS) */
+xor =
+/* #endif */
 function xor(a, b)
 {
     if (a)
@@ -37,6 +49,9 @@ function xor(a, b)
     return b || false;
 }
 
+/* #if USE(BUN_JSC_ADDITIONS) */
+nullish =
+/* #endif */
 function nullish(value)
 {
     return value === null || value === undefined;
@@ -1538,6 +1553,9 @@ Object.defineProperty(Uint32Array, "isLittleEndian",
     }
 });
 
+/* #if USE(BUN_JSC_ADDITIONS) */
+isEmptyObject =
+/* #endif */
 function isEmptyObject(object)
 {
     for (var property in object)
@@ -1545,12 +1563,18 @@ function isEmptyObject(object)
     return true;
 }
 
+/* #if USE(BUN_JSC_ADDITIONS) */
+isEnterKey =
+/* #endif */
 function isEnterKey(event)
 {
     // Check if this is an IME event.
     return event.keyCode !== 229 && event.keyIdentifier === "Enter";
 }
 
+/* #if USE(BUN_JSC_ADDITIONS) */
+resolveDotsInPath = 
+/* #endif */
 function resolveDotsInPath(path)
 {
     if (!path)
@@ -1585,6 +1609,9 @@ function resolveDotsInPath(path)
     return result.join("/");
 }
 
+/* #if USE(BUN_JSC_ADDITIONS) */
+parseMIMEType = 
+/* #endif */
 function parseMIMEType(fullMimeType)
 {
     if (!fullMimeType)
@@ -1611,6 +1638,9 @@ function parseMIMEType(fullMimeType)
     return {type, boundary: boundary || null, encoding: encoding || null};
 }
 
+/* #if USE(BUN_JSC_ADDITIONS) */
+simpleGlobStringToRegExp = 
+/* #endif */
 function simpleGlobStringToRegExp(globString, regExpFlags)
 {
     // Only supports "*" globs.
@@ -1757,6 +1787,9 @@ Object.defineProperty(Promise, "delay",
     }
 });
 
+/* #if USE(BUN_JSC_ADDITIONS) */
+appendWebInspectorSourceURL = 
+/* #endif */
 function appendWebInspectorSourceURL(string)
 {
     if (string.includes("//# sourceURL"))
@@ -1764,6 +1797,9 @@ function appendWebInspectorSourceURL(string)
     return "\n//# sourceURL=__WebInspectorInternal__\n" + string;
 }
 
+/* #if USE(BUN_JSC_ADDITIONS) */
+appendWebInspectorConsoleEvaluationSourceURL =
+/* #endif */
 function appendWebInspectorConsoleEvaluationSourceURL(string)
 {
     if (string.includes("//# sourceURL"))
@@ -1771,26 +1807,41 @@ function appendWebInspectorConsoleEvaluationSourceURL(string)
     return "\n//# sourceURL=__WebInspectorConsoleEvaluation__\n" + string;
 }
 
+/* #if USE(BUN_JSC_ADDITIONS) */
+isWebInspectorBootstrapScript =
+/* #endif */
 function isWebInspectorBootstrapScript(url)
 {
     return url === WI.NetworkManager.bootstrapScriptURL;
 }
 
+/* #if USE(BUN_JSC_ADDITIONS) */
+isWebInspectorInternalScript =
+/* #endif */
 function isWebInspectorInternalScript(url)
 {
     return url === "__WebInspectorInternal__";
 }
 
+/* #if USE(BUN_JSC_ADDITIONS) */
+isWebInspectorConsoleEvaluationScript =
+/* #endif */
 function isWebInspectorConsoleEvaluationScript(url)
 {
     return url === "__WebInspectorConsoleEvaluation__";
 }
 
+/* #if USE(BUN_JSC_ADDITIONS) */
+isWebKitInjectedScript =
+/* #endif */
 function isWebKitInjectedScript(url)
 {
     return url && url.startsWith("__InjectedScript_") && url.endsWith(".js");
 }
 
+/* #if USE(BUN_JSC_ADDITIONS) */
+isWebKitInternalScript =
+/* #endif */
 function isWebKitInternalScript(url)
 {
     if (isWebInspectorConsoleEvaluationScript(url))
@@ -1802,11 +1853,17 @@ function isWebKitInternalScript(url)
     return url && url.startsWith("__Web") && url.endsWith("__");
 }
 
+/* #if USE(BUN_JSC_ADDITIONS) */
+isFunctionStringNativeCode =
+/* #endif */
 function isFunctionStringNativeCode(str)
 {
     return str.endsWith("{\n    [native code]\n}");
 }
 
+/* #if USE(BUN_JSC_ADDITIONS) */
+whitespaceRatio =
+/* #endif */
 function whitespaceRatio(content, start, end)
 {
     let whitespaceScore = 0;
@@ -1826,6 +1883,9 @@ function whitespaceRatio(content, start, end)
     return ratio;
 }
 
+/* #if USE(BUN_JSC_ADDITIONS) */
+isTextLikelyMinified = 
+/* #endif */
 function isTextLikelyMinified(content)
 {
     const autoFormatMaxCharactersToCheck = 2500;
@@ -1847,11 +1907,17 @@ function isTextLikelyMinified(content)
     return false;
 }
 
+/* #if USE(BUN_JSC_ADDITIONS) */
+doubleQuotedString =
+/* #endif */
 function doubleQuotedString(str)
 {
     return JSON.stringify(str);
 }
 
+/* #if USE(BUN_JSC_ADDITIONS) */
+insertionIndexForObjectInListSortedByFunction =
+/* #endif */
 function insertionIndexForObjectInListSortedByFunction(object, list, comparator, insertionIndexAfter)
 {
     if (insertionIndexAfter) {
@@ -1861,6 +1927,9 @@ function insertionIndexForObjectInListSortedByFunction(object, list, comparator,
     }
 }
 
+/* #if USE(BUN_JSC_ADDITIONS) */
+insertObjectIntoSortedArray =
+/* #endif */
 function insertObjectIntoSortedArray(object, array, comparator)
 {
     array.splice(insertionIndexForObjectInListSortedByFunction(object, array, comparator), 0, object);

@@ -95,7 +95,12 @@ public:
     ~ControlFlowProfiler();
     BasicBlockLocation* getBasicBlockLocation(SourceID, int startOffset, int endOffset);
     JS_EXPORT_PRIVATE void dumpData() const;
+#if !USE(BUN_JSC_ADDITIONS)
     Vector<BasicBlockRange> getBasicBlocksForSourceID(SourceID, VM&) const;
+#else
+    JS_EXPORT_PRIVATE Vector<BasicBlockRange> getBasicBlocksForSourceID(SourceID, VM&) const;
+    JS_EXPORT_PRIVATE Vector<BasicBlockRange> getBasicBlocksForSourceIDWithoutFunctionRange(SourceID, VM&) const;
+#endif
     BasicBlockLocation* dummyBasicBlock() { return &m_dummyBasicBlock; }
     JS_EXPORT_PRIVATE bool hasBasicBlockAtTextOffsetBeenExecuted(int, SourceID, VM&); // This function exists for testing.
     JS_EXPORT_PRIVATE size_t basicBlockExecutionCountAtTextOffset(int, SourceID, VM&); // This function exists for testing.

@@ -102,6 +102,10 @@
 #include "JSCGLibWrapperObject.h"
 #endif
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "Bun_InternalFieldTuple.h"
+#endif
+
 namespace JSC {
 
 namespace {
@@ -1945,8 +1949,10 @@ void Heap::stopIfNecessarySlow()
 
     while (stopIfNecessarySlow(m_worldState.load())) { }
     
+#if !USE(BUN_JSC_ADDITIONS)
     RELEASE_ASSERT(m_worldState.load() & hasAccessBit);
     RELEASE_ASSERT(!(m_worldState.load() & stoppedBit));
+#endif
     
     handleNeedFinalize();
     m_mutatorDidRun = true;
@@ -1957,8 +1963,10 @@ bool Heap::stopIfNecessarySlow(unsigned oldState)
     if constexpr (validateDFGDoesGC)
         vm().verifyCanGC();
 
+#if !USE(BUN_JSC_ADDITIONS)
     RELEASE_ASSERT(oldState & hasAccessBit);
     RELEASE_ASSERT(!(oldState & stoppedBit));
+#endif
     
     // It's possible for us to wake up with finalization already requested but the world not yet
     // resumed. If that happens, we can't run finalization yet.
@@ -2146,8 +2154,10 @@ void Heap::relinquishConn()
 
 NEVER_INLINE bool Heap::handleNeedFinalize(unsigned oldState)
 {
+#if !USE(BUN_JSC_ADDITIONS)
     RELEASE_ASSERT(oldState & hasAccessBit);
     RELEASE_ASSERT(!(oldState & stoppedBit));
+#endif
     
     if (!(oldState & needFinalizeBit))
         return false;

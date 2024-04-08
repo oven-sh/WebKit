@@ -49,7 +49,11 @@ public:
 
     Waiter(JSPromise* promise)
         : m_vm(&promise->vm())
+#if USE(BUN_JSC_ADDITIONS)
+        , m_ticket(m_vm->deferredWorkTimer->addPendingWork(*m_vm, promise, { }, DeferredWorkTimer::WorkKind::Atomics))
+#else
         , m_ticket(m_vm->deferredWorkTimer->addPendingWork(*m_vm, promise, { }))
+#endif
         , m_isAsync(true)
     {
     }

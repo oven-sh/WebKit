@@ -23,6 +23,9 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+/* #if USE(BUN_JSC_ADDITIONS) */
+removeURLFragment =
+/* #endif */
 function removeURLFragment(url)
 {
     var hashIndex = url.indexOf("#");
@@ -31,6 +34,9 @@ function removeURLFragment(url)
     return url;
 }
 
+/* #if USE(BUN_JSC_ADDITIONS) */
+relativePath =
+/* #endif */
 function relativePath(path, basePath)
 {
     console.assert(path.charAt(0) === "/");
@@ -55,6 +61,9 @@ function relativePath(path, basePath)
     return finalComponents.join("/");
 }
 
+/* #if USE(BUN_JSC_ADDITIONS) */
+parseSecurityOrigin =
+/* #endif */
 function parseSecurityOrigin(securityOrigin)
 {
     securityOrigin = securityOrigin ? securityOrigin.trim() : "";
@@ -70,6 +79,9 @@ function parseSecurityOrigin(securityOrigin)
     return {scheme, host, port};
 }
 
+/* #if USE(BUN_JSC_ADDITIONS) */
+parseDataURL =
+/* #endif */
 function parseDataURL(url)
 {
     if (!url.startsWith("data:"))
@@ -89,6 +101,9 @@ function parseDataURL(url)
     return {scheme, mimeType, charset, base64, data};
 }
 
+/* #if USE(BUN_JSC_ADDITIONS) */
+parseURL =
+/* #endif */
 function parseURL(url)
 {
     let result = {
@@ -162,6 +177,9 @@ function parseURL(url)
     return result;
 }
 
+/* #if USE(BUN_JSC_ADDITIONS) */
+absoluteURL =
+/* #endif */
 function absoluteURL(partialURL, baseURL)
 {
     partialURL = partialURL ? partialURL.trim() : "";
@@ -214,6 +232,9 @@ function absoluteURL(partialURL, baseURL)
     return baseURLPrefix + resolveDotsInPath(basePath + partialURL);
 }
 
+/* #if USE(BUN_JSC_ADDITIONS) */
+parseQueryString =
+/* #endif */
 function parseQueryString(queryString, arrayResult)
 {
     if (!queryString)

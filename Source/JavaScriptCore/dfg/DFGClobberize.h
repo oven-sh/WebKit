@@ -1362,6 +1362,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
             return;
         }
         DOMJIT::Effect effect = snippet->effect;
+#if !USE(BUN_JSC_ADDITIONS)
         if (effect.reads) {
             if (effect.reads == DOMJIT::HeapRange::top())
                 read(World);
@@ -1376,6 +1377,33 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
             } else
                 write(AbstractHeap(DOMState, effect.writes.rawRepresentation()));
         }
+#else
+        if (effect.domReads == DOMJIT::HeapRange::top())
+            read(World);
+        else {
+            if (effect.domReads)
+                read(AbstractHeap(DOMState, effect.domReads.rawRepresentation()));
+            for (unsigned i = 0; i < 4; ++i) {
+                if (effect.reads[i] == InvalidAbstractHeap)
+                    break;
+                read(effect.reads[i]);
+            }
+        }
+        if (effect.domWrites == DOMJIT::HeapRange::top()) {
+            if (Options::validateDFGClobberize())
+                clobberTopFunctor();
+             write(Heap);
+        }
+        else {
+            if (effect.domWrites) 
+                write(AbstractHeap(DOMState, effect.domWrites.rawRepresentation()));
+            for (unsigned i = 0; i < 4; ++i) {
+                if (effect.writes[i] == InvalidAbstractHeap)
+                    break;
+                write(effect.writes[i]);
+            }
+        }
+#endif
         if (effect.def != DOMJIT::HeapRange::top()) {
             DOMJIT::HeapRange range = effect.def;
             if (range == DOMJIT::HeapRange::none())
@@ -1392,6 +1420,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case CallDOM: {
         const DOMJIT::Signature* signature = node->signature();
         DOMJIT::Effect effect = signature->effect;
+#if !USE(BUN_JSC_ADDITIONS)
         if (effect.reads) {
             if (effect.reads == DOMJIT::HeapRange::top())
                 read(World);
@@ -1406,7 +1435,36 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
             } else
                 write(AbstractHeap(DOMState, effect.writes.rawRepresentation()));
         }
+#else
+        if (effect.domReads == DOMJIT::HeapRange::top())
+            read(World);
+        else {
+            if (effect.domReads)
+                read(AbstractHeap(DOMState, effect.domReads.rawRepresentation()));
+            for (unsigned i = 0; i < 4; ++i) {
+                if (effect.reads[i] == InvalidAbstractHeap)
+                    break;
+                read(effect.reads[i]);
+            }
+        }
+        if (effect.domWrites == DOMJIT::HeapRange::top()) {
+            if (Options::validateDFGClobberize())
+                clobberTopFunctor();
+             write(Heap);
+        }
+        else {
+            if (effect.domWrites) 
+                write(AbstractHeap(DOMState, effect.domWrites.rawRepresentation()));
+            for (unsigned i = 0; i < 4; ++i) {
+                if (effect.writes[i] == InvalidAbstractHeap)
+                    break;
+                write(effect.writes[i]);
+            }
+        }
+#endif
+#ifndef BUN_SKIP_FAILING_ASSERTIONS
         ASSERT_WITH_MESSAGE(effect.def == DOMJIT::HeapRange::top(), "Currently, we do not accept any def for CallDOM.");
+#endif
         return;
     }
 

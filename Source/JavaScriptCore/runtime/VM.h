@@ -181,6 +181,25 @@ class QueuedTask {
     WTF_MAKE_TZONE_ALLOCATED(QueuedTask);
     friend class MicrotaskQueue;
 public:
+#if USE(BUN_JSC_ADDITIONS)
+    // Adds support for passing a fifth `asyncContextData` microtask argument 
+    // by way of @enqueueJob in builtins/PromiseOperations.js
+    static constexpr unsigned maxArguments = 5;
+
+    QueuedTask(MicrotaskIdentifier identifier, JSValue job, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3, JSValue argument4)
+        : m_identifier(identifier)
+        , m_job(job)
+        , m_arguments { argument0, argument1, argument2, argument3, argument4 }
+    {
+    }
+
+    QueuedTask(MicrotaskIdentifier identifier, JSValue job, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3)
+        : m_identifier(identifier)
+        , m_job(job)
+        , m_arguments { argument0, argument1, argument2, argument3, jsUndefined() }
+    {
+    }
+#else
     static constexpr unsigned maxArguments = 4;
 
     QueuedTask(MicrotaskIdentifier identifier, JSValue job, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3)
@@ -189,6 +208,7 @@ public:
         , m_arguments { argument0, argument1, argument2, argument3 }
     {
     }
+#endif
 
     void run();
 
@@ -875,6 +895,9 @@ public:
 #if ENABLE(GC_VALIDATION)
     bool isInitializingObject() const; 
     void setInitializingObjectClass(const ClassInfo*);
+#if USE(BUN_JSC_ADDITIONS)
+    const ClassInfo* initializingObjectClass() const; 
+#endif // USE(BUN_JSC_ADDITIONS)
 #endif
 
     bool currentThreadIsHoldingAPILock() const { return m_apiLock->currentThreadIsHoldingLock(); }
@@ -911,6 +934,7 @@ public:
     bool enableControlFlowProfiler();
     bool disableControlFlowProfiler();
 
+    void queueMicrotask(QueuedTask&&);
     class JS_EXPORT_PRIVATE DrainMicrotaskDelayScope {
     public:
         explicit DrainMicrotaskDelayScope(VM&);
@@ -929,9 +953,9 @@ public:
     };
 
     DrainMicrotaskDelayScope drainMicrotaskDelayScope() { return DrainMicrotaskDelayScope { *this }; }
-    void queueMicrotask(QueuedTask&&);
     JS_EXPORT_PRIVATE void drainMicrotasks();
     void setOnEachMicrotaskTick(WTF::Function<void(VM&)>&& func) { m_onEachMicrotaskTick = WTFMove(func); }
+    
     void finalizeSynchronousJSExecution()
     {
         ASSERT(currentThreadIsHoldingAPILock());
@@ -1015,6 +1039,11 @@ public:
 
     Ref<Waiter> syncWaiter();
 
+#if USE(BUN_JSC_ADDITIONS)
+    WTF::Function<String(VM&, Vector<StackFrame>& stackTrace, unsigned &line, unsigned &column, String& sourceURL, JSC::JSObject*)>& onComputeErrorInfo() { return m_onComputeErrorInfo; }
+    void setOnComputeErrorInfo(WTF::Function<String(VM&, Vector<StackFrame>& stackTrace, unsigned &line, unsigned &column, String& sourceURL, JSC::JSObject*)>&& func) { m_onComputeErrorInfo = WTFMove(func); }
+#endif
+
 #if ENABLE(WEBASSEMBLY)
     void registerWasmInstance(Wasm::Instance&);
 #endif
@@ -1026,6 +1055,10 @@ private:
     VM(VMType, HeapType, WTF::RunLoop* = nullptr, bool* success = nullptr);
     static VM*& sharedInstanceInternal();
     void createNativeThunk();
+
+#if USE(BUN_JSC_ADDITIONS)
+    WTF::Function<String(VM&, Vector<StackFrame>& stackTrace, unsigned &line, unsigned &column, String& sourceURL, JSC::JSObject*)> m_onComputeErrorInfo;
+#endif
 
     JS_EXPORT_PRIVATE JSCell* sentinelSetBucketSlow();
     JS_EXPORT_PRIVATE JSCell* sentinelMapBucketSlow();
@@ -1181,6 +1214,12 @@ inline void VM::setInitializingObjectClass(const ClassInfo* initializingObjectCl
 {
     m_initializingObjectClass = initializingObjectClass;
 }
+#if USE(BUN_JSC_ADDITIONS)
+inline const ClassInfo* VM::initializingObjectClass() const
+{
+    return m_initializingObjectClass;
+}
+#endif // USE(BUN_JSC_ADDITIONS)
 #endif
 
 inline Heap* WeakSet::heap() const

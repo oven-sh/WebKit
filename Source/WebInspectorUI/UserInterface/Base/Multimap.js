@@ -23,6 +23,9 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+/* #if USE(BUN_JSC_ADDITIONS) */
+Multimap =
+/* #endif */
 class Multimap
 {
     constructor(items = [])

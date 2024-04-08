@@ -77,6 +77,10 @@ void IntlRelativeTimeFormatConstructor::finishCreation(VM& vm, IntlRelativeTimeF
     Base::finishCreation(vm, 0, "RelativeTimeFormat"_s, PropertyAdditionMode::WithoutStructureTransition);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, relativeTimeFormatPrototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     relativeTimeFormatPrototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, this, static_cast<unsigned>(PropertyAttribute::DontEnum));
+#if USE(BUN_JSC_ADDITIONS)
+    reifyAllStaticProperties(this->structure()->globalObject());
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 // https://tc39.es/ecma402/#sec-Intl.RelativeTimeFormat

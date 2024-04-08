@@ -190,7 +190,7 @@ String createVersion4UUIDStringWeak()
 
 String bootSessionUUIDString()
 {
-#if OS(DARWIN)
+#if OS(DARWIN) && !USE(BUN_JSC_ADDITIONS)
     static LazyNeverDestroyed<String> bootSessionUUID;
     static std::once_flag onceKey;
     std::call_once(onceKey, [] {

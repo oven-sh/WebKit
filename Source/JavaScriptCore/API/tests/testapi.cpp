@@ -662,8 +662,10 @@ void TestAPI::topCallFrameAccess()
 void TestAPI::markedJSValueArrayAndGC()
 {
     auto testMarkedJSValueArray = [&] (unsigned count) {
+#if !USE(BUN_JSC_ADDITIONS)
         auto* globalObject = toJS(context);
         JSC::JSLockHolder locker(globalObject->vm());
+#endif
         JSC::MarkedJSValueRefArray values(context, count);
         for (unsigned index = 0; index < count; ++index) {
             JSValueRef string = JSValueMakeString(context, APIString(makeString("Prefix"_s, index)));

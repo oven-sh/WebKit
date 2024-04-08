@@ -26,6 +26,9 @@
 #pragma once
 
 #include "DOMJITHeapRange.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "DFGAbstractHeap.h"
+#endif
 
 namespace JSC { namespace DOMJIT {
 
@@ -61,6 +64,7 @@ struct Effect {
         return { readRange, writeRange, def };
     }
 
+#if !USE(BUN_JSC_ADDITIONS)
     constexpr bool mustGenerate() const
     {
         return !!writes;
@@ -68,7 +72,44 @@ struct Effect {
 
     HeapRange reads { HeapRange::top() };
     HeapRange writes { HeapRange::top() };
+#else
+    constexpr bool mustGenerate() const
+    {
+        return !!domWrites;
+    }
+
+    constexpr static Effect forReadKinds(DFG::AbstractHeapKind read1 = DFG::InvalidAbstractHeap, DFG::AbstractHeapKind read2 = DFG::InvalidAbstractHeap, DFG::AbstractHeapKind read3 = DFG::InvalidAbstractHeap, DFG::AbstractHeapKind read4 = DFG::InvalidAbstractHeap)
+    {
+        return { HeapRange::none(), HeapRange::none(), HeapRange::none(), { read1, read2, read3, read4 } };
+    }
+
+    constexpr static Effect forWriteKinds(DFG::AbstractHeapKind write1 = DFG::InvalidAbstractHeap, DFG::AbstractHeapKind write2 = DFG::InvalidAbstractHeap, DFG::AbstractHeapKind write3 = DFG::InvalidAbstractHeap, DFG::AbstractHeapKind write4 = DFG::InvalidAbstractHeap)
+    {
+        return { HeapRange::none(), HeapRange::none(), HeapRange::none(), {}, { write1, write2, write3, write4 } };
+    }
+
+    constexpr static Effect forReadWriteKinds(const DFG::AbstractHeapKind reads[4], const DFG::AbstractHeapKind writes[4])
+    {
+        return { HeapRange::none(), HeapRange::none(), HeapRange::none(), { reads[0], reads[1], reads[2], reads[3] }, { writes[0], writes[1], writes[2], writes[3] } };
+    }
+
+    constexpr bool isTop() const
+    {
+        return domWrites == HeapRange::top() ||
+            writes[0] == DFG::Heap ||
+            writes[1] == DFG::Heap ||
+            writes[2] == DFG::Heap ||
+            writes[3] == DFG::Heap;
+    }
+
+    HeapRange domReads { HeapRange::top() };
+    HeapRange domWrites { HeapRange::top() };
+#endif
     HeapRange def { HeapRange::top() };
+#if USE(BUN_JSC_ADDITIONS)
+    DFG::AbstractHeapKind reads[4] { DFG::InvalidAbstractHeap };
+    DFG::AbstractHeapKind writes[4] { DFG::InvalidAbstractHeap };
+#endif
 };
 
 } }

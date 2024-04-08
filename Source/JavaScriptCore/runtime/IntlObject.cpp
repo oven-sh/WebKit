@@ -248,7 +248,7 @@ IntlObject* IntlObject::create(VM& vm, JSGlobalObject* globalObject, Structure* 
     return object;
 }
 
-void IntlObject::finishCreation(VM& vm, JSGlobalObject*)
+void IntlObject::finishCreation(VM& vm, JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
@@ -260,6 +260,10 @@ void IntlObject::finishCreation(VM& vm, JSGlobalObject*)
 #else
     UNUSED_PARAM(&createDurationFormatConstructor);
     UNUSED_PARAM(&createListFormatConstructor);
+#endif
+#if USE(BUN_JSC_ADDITIONS)
+    reifyAllStaticProperties(globalObject);
+    putAllPrivateAliasesWithoutTransition(vm);
 #endif
 }
 

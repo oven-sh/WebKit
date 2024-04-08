@@ -1315,7 +1315,11 @@ void VM::callPromiseRejectionCallback(Strong<JSPromise>& promise)
 
 void VM::didExhaustMicrotaskQueue()
 {
+#if !USE(BUN_JSC_ADDITIONS)
     do {
+#else
+    while (!m_aboutToBeNotifiedRejectedPromises.isEmpty()) {
+#endif
         auto unhandledRejections = WTFMove(m_aboutToBeNotifiedRejectedPromises);
         for (auto& promise : unhandledRejections) {
             if (promise->isHandled(*this))
@@ -1325,7 +1329,11 @@ void VM::didExhaustMicrotaskQueue()
             if (UNLIKELY(hasPendingTerminationException()))
                 return;
         }
+#if !USE(BUN_JSC_ADDITIONS)
     } while (!m_aboutToBeNotifiedRejectedPromises.isEmpty());
+#else
+    }
+#endif
 }
 
 void VM::promiseRejected(JSPromise* promise)
@@ -1360,11 +1368,17 @@ void VM::drainMicrotasks()
 
 void sanitizeStackForVM(VM& vm)
 {
+#if USE(BUN_JSC_ADDITIONS)
     auto& thread = Thread::current();
     auto& stack = thread.stack();
+#endif
     if (!vm.currentThreadIsHoldingAPILock())
         return; // vm.lastStackTop() may not be set up correctly if JSLock is not held.
 
+#if !USE(BUN_JSC_ADDITIONS)
+    auto& thread = Thread::current();
+    auto& stack = thread.stack();
+#endif
     logSanitizeStack(vm);
 
     RELEASE_ASSERT(stack.contains(vm.lastStackTop()), 0xaa10, vm.lastStackTop(), stack.origin(), stack.end());

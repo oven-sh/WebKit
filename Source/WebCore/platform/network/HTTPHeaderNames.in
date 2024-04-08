@@ -117,6 +117,9 @@ X-SourceMap
 X-XSS-Protection
 X-Temp-Tablet
 
+// Bun additions
+Strict-Transport-Security
+
 // These headers are specific to GStreamer.
 Icy-MetaInt
 Icy-Metadata

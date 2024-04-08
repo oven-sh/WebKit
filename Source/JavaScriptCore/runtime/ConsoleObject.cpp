@@ -118,6 +118,9 @@ void ConsoleObject::finishCreation(VM& vm, JSGlobalObject* globalObject)
     JSC_NATIVE_FUNCTION_WITHOUT_TRANSITION("screenshot"_s, consoleProtoFuncScreenshot, static_cast<unsigned>(PropertyAttribute::None), 0, ImplementationVisibility::Public);
 
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+#if USE(BUN_JSC_ADDITIONS)
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 static String valueToStringWithUndefinedOrNullCheck(JSGlobalObject* globalObject, JSValue value)

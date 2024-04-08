@@ -30,13 +30,32 @@
 namespace JSC {
 
 class AbstractSlotVisitor;
+#if !USE(BUN_JSC_ADDITIONS)
+class SlotVisitor;
+template<typename T> class Handle;
+#endif
 
 class JS_EXPORT_PRIVATE WeakHandleOwner {
 public:
+#if !USE(BUN_JSC_ADDITIONS)
     virtual ~WeakHandleOwner();
     // reason will only be non-null when generating a debug GC heap snapshot.
     virtual bool isReachableFromOpaqueRoots(Handle<Unknown>, void* context, AbstractSlotVisitor&, char const** reason = nullptr);
     virtual void finalize(Handle<Unknown>, void* context);
+#else
+    virtual ~WeakHandleOwner()
+    {
+    }
+
+    virtual bool isReachableFromOpaqueRoots(Handle<Unknown>, void*, AbstractSlotVisitor&, const char**)
+    {
+        return false;
+    }
+
+    virtual void finalize(Handle<Unknown>, void*)
+    {
+    }
+#endif
 };
 
 } // namespace JSC

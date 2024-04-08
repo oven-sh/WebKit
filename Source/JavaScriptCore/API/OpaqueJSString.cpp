@@ -67,6 +67,13 @@ String OpaqueJSString::string() const
     return m_string.isolatedCopy();
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+String OpaqueJSString::rawString() const
+{
+    return m_string;
+}
+#endif
+
 Identifier OpaqueJSString::identifier(VM* vm) const
 {
     if (m_string.isNull())

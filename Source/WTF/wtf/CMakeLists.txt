@@ -453,6 +453,12 @@ set(WTF_PUBLIC_HEADERS
     unicode/icu/ICUHelpers.h
 )
 
+if (USE_BUN_JSC_ADDITIONS)
+    list(APPEND WTF_PUBLIC_HEADERS
+        Bun_Extras.h
+    )
+endif ()
+
 set(WTF_SOURCES
     ASCIICType.cpp
     ApproximateTime.cpp

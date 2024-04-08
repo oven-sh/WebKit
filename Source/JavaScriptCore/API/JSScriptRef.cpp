@@ -143,7 +143,9 @@ JSValueRef JSScriptEvaluate(JSContextRef context, JSScriptRef script, JSValueRef
 {
     JSGlobalObject* globalObject = toJS(context);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
     if (&script->vm() != &vm) {
         RELEASE_ASSERT_NOT_REACHED();
         return nullptr;

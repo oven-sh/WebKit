@@ -60,6 +60,9 @@ void AsyncGeneratorFunctionConstructor::finishCreation(VM& vm, AsyncGeneratorFun
 {
     Base::finishCreation(vm, 1, "AsyncGeneratorFunction"_s, PropertyAdditionMode::WithoutStructureTransition);
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+#if USE(BUN_JSC_ADDITIONS)
+    putAllPrivateAliasesWithoutTransition(vm);
+#endif
 }
 
 } // namespace JSC

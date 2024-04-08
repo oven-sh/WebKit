@@ -27,6 +27,12 @@
 
 #include <wtf/RefCounted.h>
 
+#if USE(BUN_JSC_ADDITIONS)
+#ifndef JS_EXPORT
+#include "JSBase.h"
+#endif
+#endif
+
 namespace JSC {
 
 class ArrayBuffer;
@@ -34,6 +40,7 @@ class CallFrame;
 class JSArrayBuffer;
 class JSGlobalObject;
 
+#if !USE(BUN_JSC_ADDITIONS)
 class TypedArrayController : public RefCounted<TypedArrayController> {
 public:
     JS_EXPORT_PRIVATE TypedArrayController();
@@ -43,5 +50,16 @@ public:
     virtual void registerWrapper(JSGlobalObject*, ArrayBuffer*, JSArrayBuffer*) = 0;
     virtual bool isAtomicsWaitAllowedOnCurrentThread() = 0;
 };
+#else
+class JS_EXPORT TypedArrayController : public RefCounted<TypedArrayController> {
+public:
+    JS_EXPORT TypedArrayController() { }
+    virtual ~TypedArrayController() { }
+
+    JS_EXPORT virtual JSArrayBuffer* toJS(JSGlobalObject*, JSGlobalObject*, ArrayBuffer*) = 0;
+    JS_EXPORT virtual void registerWrapper(JSGlobalObject*, ArrayBuffer*, JSArrayBuffer*) = 0;
+    JS_EXPORT virtual bool isAtomicsWaitAllowedOnCurrentThread() = 0;
+};
+#endif
 
 } // namespace JSC

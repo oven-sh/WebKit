@@ -201,6 +201,10 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebIn
     set(GCC_OFFLINEASM_SOURCE_MAP_DEFAULT ON)
 endif ()
 
+if (USE_BUN_JSC_ADDITIONS)
+    set(GCC_OFFLINEASM_SOURCE_MAP_DEFAULT ON)
+endif ()
+
 option(GCC_OFFLINEASM_SOURCE_MAP
   "Produce debug line information for offlineasm-generated code"
   ${GCC_OFFLINEASM_SOURCE_MAP_DEFAULT})

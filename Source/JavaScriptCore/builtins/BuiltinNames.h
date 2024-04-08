@@ -45,6 +45,7 @@ namespace JSC {
 
 
 #define JSC_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(macro) \
+    BUN_JSC_COMMON_PRIVATE_IDENTIFIERS(macro) \
     JSC_COMMON_BYTECODE_INTRINSIC_FUNCTIONS_EACH_NAME(macro) \
     JSC_COMMON_BYTECODE_INTRINSIC_CONSTANTS_EACH_NAME(macro) \
     macro(add) \
@@ -286,6 +287,7 @@ inline SymbolImpl* BuiltinNames::lookUpWellKnownSymbol(const Identifier& ident) 
 inline void BuiltinNames::checkPublicToPrivateMapConsistency(UniquedStringImpl* privateName)
 {
 #if ASSERT_ENABLED
+#ifndef BUN_SKIP_FAILING_ASSERTIONS
     for (const auto& key : m_privateNameSet)
         ASSERT(String(privateName) != key);
     ASSERT(privateName->isSymbol());
@@ -293,11 +295,18 @@ inline void BuiltinNames::checkPublicToPrivateMapConsistency(UniquedStringImpl* 
 #else
     UNUSED_PARAM(privateName);
 #endif
+#else
+    UNUSED_PARAM(privateName);
+#endif
 }
 
 inline void BuiltinNames::appendExternalName(const Identifier& publicName, const Identifier& privateName)
 {
+#ifndef BUN_SKIP_FAILING_ASSERTIONS
     ASSERT_UNUSED(publicName, String(publicName.impl()) == String(privateName.impl()));
+#else
+    UNUSED_PARAM(publicName);
+#endif
     checkPublicToPrivateMapConsistency(privateName.impl());
     m_privateNameSet.add(privateName.impl());
 }

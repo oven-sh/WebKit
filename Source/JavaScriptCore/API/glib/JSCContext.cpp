@@ -275,7 +275,9 @@ JSValueRef jscContextGArrayToJSArray(JSCContext* context, GPtrArray* gArray, JSV
 {
     JSCContextPrivate* priv = context->priv;
     JSC::JSGlobalObject* globalObject = toJS(priv->jsContext.get());
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(globalObject);
+#endif
 
     auto* jsArray = JSObjectMakeArray(priv->jsContext.get(), 0, nullptr, exception);
     if (*exception)
@@ -308,7 +310,9 @@ static GRefPtr<GPtrArray> jscContextJSArrayToGArray(JSCContext* context, JSValue
 {
     JSCContextPrivate* priv = context->priv;
     JSC::JSGlobalObject* globalObject = toJS(priv->jsContext.get());
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(globalObject);
+#endif
 
     if (JSValueIsNull(priv->jsContext.get(), jsArray))
         return nullptr;
@@ -347,7 +351,9 @@ GUniquePtr<char*> jscContextJSArrayToGStrv(JSCContext* context, JSValueRef jsArr
 {
     JSCContextPrivate* priv = context->priv;
     JSC::JSGlobalObject* globalObject = toJS(priv->jsContext.get());
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(globalObject);
+#endif
 
     if (JSValueIsNull(priv->jsContext.get(), jsArray))
         return nullptr;
@@ -392,7 +398,9 @@ JSValueRef jscContextGValueToJSValue(JSCContext* context, const GValue* value, J
 {
     JSCContextPrivate* priv = context->priv;
     JSC::JSGlobalObject* globalObject = toJS(priv->jsContext.get());
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(globalObject);
+#endif
 
     switch (g_type_fundamental(G_VALUE_TYPE(value))) {
     case G_TYPE_BOOLEAN:
@@ -474,7 +482,9 @@ void jscContextJSValueToGValue(JSCContext* context, JSValueRef jsValue, GType ty
 {
     JSCContextPrivate* priv = context->priv;
     JSC::JSGlobalObject* globalObject = toJS(priv->jsContext.get());
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(globalObject);
+#endif
 
     g_value_init(value, type);
     auto fundamentalType = g_type_fundamental(G_VALUE_TYPE(value));
@@ -910,7 +920,9 @@ JSCValue* jsc_context_evaluate_in_object(JSCContext* context, const char* code, 
         instance ? jscClassCreateContextWithJSWrapper(objectClass, context, instance) : JSGlobalContextCreateInGroup(jscVirtualMachineGetContextGroup(context->priv->vm.get()), nullptr));
     JSC::JSGlobalObject* globalObject = toJS(objectContext.get());
     JSC::VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(globalObject);
+#endif
     globalObject->setGlobalScopeExtension(JSC::JSWithScope::create(vm, globalObject, globalObject->globalScope(), toJS(JSContextGetGlobalObject(context->priv->jsContext.get()))));
     JSValueRef exception = nullptr;
     JSValueRef result = evaluateScriptInContext(objectContext.get(), String::fromUTF8(std::span(code, length < 0 ? strlen(code) : length)), uri, lineNumber, &exception);
@@ -970,7 +982,9 @@ JSCCheckSyntaxResult jsc_context_check_syntax(JSCContext* context, const char* c
     auto* jsContext = context->priv->jsContext.get();
     JSC::JSGlobalObject* globalObject = toJS(jsContext);
     JSC::VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSC::JSLockHolder locker(vm);
+#endif
 
     URL sourceURL = uri ? URL(String::fromLatin1(uri)) : URL();
     JSC::SourceCode source = JSC::makeSource(String::fromUTF8(std::span(code, length < 0 ? strlen(code) : length)), JSC::SourceOrigin { sourceURL }, JSC::SourceTaintedOrigin::Untainted,

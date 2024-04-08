@@ -84,7 +84,9 @@ JSObjectRef JSObjectMake(JSContextRef ctx, JSClassRef jsClass, void* data)
     }
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
 
     if (!jsClass)
         return toRef(constructEmptyObject(globalObject));
@@ -104,7 +106,9 @@ JSObjectRef JSObjectMakeFunctionWithCallback(JSContextRef ctx, JSStringRef name,
     }
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
     return toRef(JSCallbackFunction::create(vm, globalObject, callAsFunction, name ? name->string() : "anonymous"_s));
 }
 
@@ -116,7 +120,9 @@ JSObjectRef JSObjectMakeConstructor(JSContextRef ctx, JSClassRef jsClass, JSObje
     }
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
 
     JSValue jsPrototype = jsClass ? jsClass->prototype(globalObject) : nullptr;
     if (!jsPrototype)
@@ -135,7 +141,9 @@ JSObjectRef JSObjectMakeFunction(JSContextRef ctx, JSStringRef name, unsigned pa
     }
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     startingLineNumber = std::max(1, startingLineNumber);
@@ -143,9 +151,15 @@ JSObjectRef JSObjectMakeFunction(JSContextRef ctx, JSStringRef name, unsigned pa
     
     MarkedArgumentBuffer args;
     args.ensureCapacity(parameterCount + 1);
+#if !USE(BUN_JSC_ADDITIONS)
     for (unsigned i = 0; i < parameterCount; i++)
         args.append(jsString(vm, parameterNames[i]->string()));
     args.append(jsString(vm, body->string()));
+#else
+    for (unsigned i = 0; i < parameterCount; i++)
+        args.append(parameterNames[i]->isExternal() ? jsOwnedString(vm, parameterNames[i]->string()) : jsString(vm, parameterNames[i]->string()));
+    args.append(body->isExternal() ? jsOwnedString(vm, body->string()) : jsString(vm, body->string()));
+#endif
     if (UNLIKELY(args.hasOverflowed())) {
         auto throwScope = DECLARE_THROW_SCOPE(vm);
         throwOutOfMemoryError(globalObject, throwScope);
@@ -168,7 +182,9 @@ JSObjectRef JSObjectMakeArray(JSContextRef ctx, size_t argumentCount, const JSVa
     }
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     JSObject* result;
@@ -202,7 +218,9 @@ JSObjectRef JSObjectMakeDate(JSContextRef ctx, size_t argumentCount, const JSVal
     }
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     MarkedArgumentBuffer argList;
@@ -231,7 +249,9 @@ JSObjectRef JSObjectMakeError(JSContextRef ctx, size_t argumentCount, const JSVa
     }
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     JSValue message = argumentCount ? toJS(globalObject, arguments[0]) : jsUndefined();
@@ -253,7 +273,9 @@ JSObjectRef JSObjectMakeRegExp(JSContextRef ctx, size_t argumentCount, const JSV
     }
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     MarkedArgumentBuffer argList;
@@ -283,7 +305,9 @@ JSObjectRef JSObjectMakeDeferredPromise(JSContextRef ctx, JSObjectRef* resolve, 
 
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(globalObject);
+#endif
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     JSPromise::DeferredData data = JSPromise::createDeferredData(globalObject, globalObject->promiseConstructor());
@@ -304,7 +328,9 @@ JSValueRef JSObjectGetPrototype(JSContextRef ctx, JSObjectRef object)
         return nullptr;
     }
     JSGlobalObject* globalObject = toJS(ctx);
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(globalObject);
+#endif
 
     JSObject* jsObject = toJS(object); 
     return toRef(globalObject, jsObject->getPrototypeDirect());
@@ -318,7 +344,9 @@ void JSObjectSetPrototype(JSContextRef ctx, JSObjectRef object, JSValueRef value
     }
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     JSObject* jsObject = toJS(object);
@@ -335,7 +363,9 @@ bool JSObjectHasProperty(JSContextRef ctx, JSObjectRef object, JSStringRef prope
     }
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
 
     JSObject* jsObject = toJS(object);
     
@@ -350,7 +380,9 @@ JSValueRef JSObjectGetProperty(JSContextRef ctx, JSObjectRef object, JSStringRef
     }
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     JSObject* jsObject = toJS(object);
@@ -369,7 +401,9 @@ void JSObjectSetProperty(JSContextRef ctx, JSObjectRef object, JSStringRef prope
     }
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     JSObject* jsObject = toJS(object);
@@ -397,7 +431,9 @@ bool JSObjectHasPropertyForKey(JSContextRef ctx, JSObjectRef object, JSValueRef 
     }
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     JSObject* jsObject = toJS(object);
@@ -419,7 +455,9 @@ JSValueRef JSObjectGetPropertyForKey(JSContextRef ctx, JSObjectRef object, JSVal
     }
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     JSObject* jsObject = toJS(object);
@@ -441,7 +479,9 @@ void JSObjectSetPropertyForKey(JSContextRef ctx, JSObjectRef object, JSValueRef 
     }
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     JSObject* jsObject = toJS(object);
@@ -472,7 +512,9 @@ bool JSObjectDeletePropertyForKey(JSContextRef ctx, JSObjectRef object, JSValueR
     }
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     JSObject* jsObject = toJS(object);
@@ -494,7 +536,9 @@ JSValueRef JSObjectGetPropertyAtIndex(JSContextRef ctx, JSObjectRef object, unsi
     }
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     JSObject* jsObject = toJS(object);
@@ -514,7 +558,9 @@ void JSObjectSetPropertyAtIndex(JSContextRef ctx, JSObjectRef object, unsigned p
     }
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     JSObject* jsObject = toJS(object);
@@ -532,7 +578,9 @@ bool JSObjectDeleteProperty(JSContextRef ctx, JSObjectRef object, JSStringRef pr
     }
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     JSObject* jsObject = toJS(object);
@@ -613,7 +661,9 @@ JSValueRef JSObjectGetPrivateProperty(JSContextRef ctx, JSObjectRef object, JSSt
 {
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
     JSObject* jsObject = toJS(object);
     JSValue result;
     Identifier name(propertyName->identifier(&vm));
@@ -638,7 +688,9 @@ bool JSObjectSetPrivateProperty(JSContextRef ctx, JSObjectRef object, JSStringRe
 {
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
     JSObject* jsObject = toJS(object);
     JSValue jsValue = value ? toJS(globalObject, value) : JSValue();
     Identifier name(propertyName->identifier(&vm));
@@ -668,7 +720,9 @@ bool JSObjectDeletePrivateProperty(JSContextRef ctx, JSObjectRef object, JSStrin
 {
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
     JSObject* jsObject = toJS(object);
     Identifier name(propertyName->identifier(&vm));
 
@@ -695,11 +749,16 @@ bool JSObjectDeletePrivateProperty(JSContextRef ctx, JSObjectRef object, JSStrin
 
 bool JSObjectIsFunction(JSContextRef ctx, JSObjectRef object)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    UNUSED_PARAM(ctx);
+#endif
     if (!object)
         return false;
+#if !USE(BUN_JSC_ADDITIONS)
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
     JSLockHolder locker(vm);
+#endif
     JSCell* cell = toJS(object);
     return cell->isCallable();
 }
@@ -708,7 +767,9 @@ JSValueRef JSObjectCallAsFunction(JSContextRef ctx, JSObjectRef object, JSObject
 {
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     if (!object)
@@ -743,9 +804,13 @@ JSValueRef JSObjectCallAsFunction(JSContextRef ctx, JSObjectRef object, JSObject
 
 bool JSObjectIsConstructor(JSContextRef ctx, JSObjectRef object)
 {
+#if !USE(BUN_JSC_ADDITIONS)
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
     JSLockHolder locker(vm);
+#else
+    UNUSED_PARAM(ctx);
+#endif
     if (!object)
         return false;
     return toJS(object)->isConstructor();
@@ -755,7 +820,9 @@ JSObjectRef JSObjectCallAsConstructor(JSContextRef ctx, JSObjectRef object, size
 {
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
     auto scope = DECLARE_CATCH_SCOPE(vm);
 
     if (!object)
@@ -806,7 +873,9 @@ JSPropertyNameArrayRef JSObjectCopyPropertyNames(JSContextRef ctx, JSObjectRef o
         return nullptr;
     }
     JSGlobalObject* globalObject = toJS(ctx);
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(globalObject);
+#endif
 
     VM& vm = globalObject->vm();
 
@@ -850,7 +919,9 @@ void JSPropertyNameAccumulatorAddName(JSPropertyNameAccumulatorRef array, JSStri
 {
     PropertyNameArray* propertyNames = toJS(array);
     VM& vm = propertyNames->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
     propertyNames->add(propertyName->identifier(&vm));
 }
 
@@ -859,8 +930,10 @@ JSObjectRef JSObjectGetProxyTarget(JSObjectRef objectRef)
     JSObject* object = toJS(objectRef);
     if (!object)
         return nullptr;
+#if !USE(BUN_JSC_ADDITIONS)
     VM& vm = object->vm();
     JSLockHolder locker(vm);
+#endif
     JSObject* result = nullptr;
     if (JSGlobalProxy* proxy = jsDynamicCast<JSGlobalProxy*>(object))
         result = proxy->target();

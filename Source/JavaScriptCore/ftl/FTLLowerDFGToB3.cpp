@@ -17883,6 +17883,69 @@ IGNORE_CLANG_WARNINGS_END
                 case SpecBoolean:
                     operands.append(lowBoolean(edge));
                     break;
+#if USE(BUN_JSC_ADDITIONS)
+                case SpecInt8Array: {
+                    LValue cell = lowCell(edge);
+                    FTL_TYPE_CHECK(jsValueValue(cell), edge, SpecInt8Array, isNotType(cell, Int8ArrayType));
+                    operands.append(cell);
+                    break;
+                }
+                case SpecInt16Array: {
+                    LValue cell = lowCell(edge);
+                    FTL_TYPE_CHECK(jsValueValue(cell), edge, SpecInt16Array, isNotType(cell, Int16ArrayType));
+                    operands.append(cell);
+                    break;
+                }
+                case SpecInt32Array: {
+                    LValue cell = lowCell(edge);
+                    FTL_TYPE_CHECK(jsValueValue(cell), edge, SpecInt32Array, isNotType(cell, Int32ArrayType));
+                    operands.append(cell);
+                    break;
+                }
+                case SpecUint8Array: {
+                    LValue cell = lowCell(edge);
+                    FTL_TYPE_CHECK(jsValueValue(cell), edge, SpecUint8Array, isNotType(cell, Uint8ArrayType));
+                    operands.append(cell);
+                    break;
+                }
+                case SpecUint8ClampedArray: {
+                    LValue cell = lowCell(edge);
+                    FTL_TYPE_CHECK(jsValueValue(cell), edge, SpecUint8ClampedArray, isNotType(cell, Uint8ClampedArrayType));
+                    operands.append(cell);
+                    break;
+                }
+                case SpecUint16Array: {
+                    LValue cell = lowCell(edge);
+                    FTL_TYPE_CHECK(jsValueValue(cell), edge, SpecUint16Array, isNotType(cell, Uint16ArrayType));
+                    operands.append(cell);
+                    break;
+                }
+                case SpecUint32Array: {
+                    LValue cell = lowCell(edge);
+                    FTL_TYPE_CHECK(jsValueValue(cell), edge, SpecUint32Array, isNotType(cell, Uint32ArrayType));
+                    operands.append(cell);
+                    break;
+                }
+                case SpecFloat32Array: {
+                    LValue cell = lowCell(edge);
+                    FTL_TYPE_CHECK(jsValueValue(cell), edge, SpecFloat32Array, isNotType(cell, Float32ArrayType));
+                    operands.append(cell);
+                    break;
+                }
+                case SpecFloat64Array: {
+                    LValue cell = lowCell(edge);
+                    FTL_TYPE_CHECK(jsValueValue(cell), edge, SpecFloat64Array, isNotType(cell, Float64ArrayType));
+                    operands.append(cell);
+                    break;
+                }
+                case SpecAnyIntAsDouble:
+                case SpecInt52Any:
+                case SpecInt32AsInt52:
+                case SpecNonInt32AsInt52: {
+                    operands.append(lowStrictInt52(edge));
+                    break;
+                }
+#endif
                 default:
                     RELEASE_ASSERT_NOT_REACHED();
                     break;

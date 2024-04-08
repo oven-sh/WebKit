@@ -71,6 +71,15 @@ ALWAYS_INLINE bool JSString::equalInline(JSGlobalObject* globalObject, JSString*
     return WTF::equal(str1, str2, length);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+bool JSString::equal(JSGlobalObject* globalObject, const char* ptr, size_t len) const
+{
+    if (isRope())
+        return equalSlowCase(globalObject, ptr, len);
+    return WTF::equal(valueInternal().impl(), (reinterpret_cast<const LChar*>(ptr)), len);
+}
+#endif
+
 template<typename StringType>
 inline JSValue jsMakeNontrivialString(VM& vm, StringType&& string)
 {

@@ -79,6 +79,7 @@ JSValueRef JSEvaluateScript(JSContextRef ctx, JSStringRef script, JSObjectRef th
         ASSERT_NOT_REACHED();
         return nullptr;
     }
+    // For Bun we keep the lock here.
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
     JSLockHolder locker(vm);
@@ -99,7 +100,9 @@ bool JSCheckScriptSyntax(JSContextRef ctx, JSStringRef script, JSStringRef sourc
     }
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
 
     startingLineNumber = std::max(1, startingLineNumber);
 
@@ -134,7 +137,9 @@ void JSGarbageCollect(JSContextRef ctx)
 
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
 
     vm.heap.reportAbandonedObjectGraph();
 }
@@ -147,7 +152,9 @@ void JSReportExtraMemoryCost(JSContextRef ctx, size_t size)
     }
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
 
     vm.heap.deprecatedReportExtraMemory(size);
 }
@@ -162,7 +169,9 @@ void JSSynchronousGarbageCollectForDebugging(JSContextRef ctx)
 
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
     vm.heap.collectNow(Sync, CollectionScope::Full);
 }
 
@@ -173,7 +182,9 @@ void JSSynchronousEdenCollectForDebugging(JSContextRef ctx)
 
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
     vm.heap.collectSync(CollectionScope::Eden);
 }
 
@@ -202,7 +213,9 @@ JSObjectRef JSGetMemoryUsageStatistics(JSContextRef ctx)
 
     JSGlobalObject* globalObject = toJS(ctx);
     VM& vm = globalObject->vm();
+#if !USE(BUN_JSC_ADDITIONS)
     JSLockHolder locker(vm);
+#endif
 
     auto typeCounts = vm.heap.objectTypeCounts();
     JSObject* objectTypeCounts = constructEmptyObject(globalObject);
