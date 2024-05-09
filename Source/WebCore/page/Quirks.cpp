@@ -221,20 +221,6 @@ bool Quirks::hasBrokenEncryptedMediaAPISupportQuirk() const
 #endif
 }
 
-// youtube.com https://bugs.webkit.org/show_bug.cgi?id=200609
-bool Quirks::shouldDisableContentChangeObserverTouchEventAdjustment() const
-{
-    if (!needsQuirks())
-        return false;
-
-    auto& topDocument = m_document->topDocument();
-    auto* topDocumentLoader = topDocument.loader();
-    if (!topDocumentLoader || !topDocumentLoader->allowContentChangeObserverQuirk())
-        return false;
-
-    return isDomain("youtube.com"_s);
-}
-
 // covid.cdc.gov https://bugs.webkit.org/show_bug.cgi?id=223620
 bool Quirks::shouldTooltipPreventFromProceedingWithClick(const Element& element) const
 {
@@ -243,7 +229,9 @@ bool Quirks::shouldTooltipPreventFromProceedingWithClick(const Element& element)
 
     if (!isDomain("covid.cdc.gov"_s))
         return false;
-    return element.hasClass() && element.classNames().contains("tooltip"_s);
+
+    static MainThreadNeverDestroyed<const AtomString> tooltipClass("tooltip"_s);
+    return element.hasClassName(tooltipClass.get());
 }
 
 // google.com https://bugs.webkit.org/show_bug.cgi?id=223700
@@ -955,7 +943,7 @@ bool Quirks::shouldBypassBackForwardCache() const
                 static MainThreadNeverDestroyed<const AtomString> signInId("signIn"_s);
                 static MainThreadNeverDestroyed<const AtomString> loadingClass("loading"_s);
                 RefPtr signinButton = document->getElementById(signInId.get());
-                return signinButton && signinButton->classNames().contains(loadingClass.get());
+                return signinButton && signinButton->hasClassName(loadingClass.get());
             }
         }
     }
@@ -968,7 +956,7 @@ bool Quirks::shouldBypassBackForwardCache() const
     static MainThreadNeverDestroyed<const AtomString> googleDocsOverlayDivClass("docs-homescreen-freeze-el-full"_s);
     auto* firstChildInBody = document->body() ? document->body()->firstChild() : nullptr;
     if (RefPtr div = dynamicDowncast<HTMLDivElement>(firstChildInBody)) {
-        if (div->hasClass() && div->classNames().contains(googleDocsOverlayDivClass))
+        if (div->hasClassName(googleDocsOverlayDivClass))
             return true;
     }
 
@@ -1134,14 +1122,14 @@ bool Quirks::isMicrosoftTeamsRedirectURL(const URL& url)
 
 static bool elementHasClassInClosestAncestors(const Element& element, const AtomString& className, unsigned distance)
 {
-    if (element.hasClass() && element.classNames().contains(className))
+    if (element.hasClassName(className))
         return true;
 
     unsigned currentDistance = 0;
     RefPtr ancestor = dynamicDowncast<Element>(element.parentNode());
     while (ancestor && currentDistance < distance) {
         ++currentDistance;
-        if (ancestor->hasClass() && ancestor->classNames().contains(className))
+        if (ancestor->hasClassName(className))
             return true;
 
         ancestor = dynamicDowncast<Element>(ancestor->parentNode());
@@ -1721,7 +1709,7 @@ bool Quirks::shouldDisableNavigatorStandaloneQuirk() const
 // FIXME: find the reference radars and/or bugs.webkit.org issues on why these were added in the first place.
 // FIXME: There is no check currently on needsQuirks(), this needs to be fixed so it makes it easier
 // to deactivate them for testing.
-bool Quirks::needsIpadMiniUserAgent(const URL& url)
+bool Quirks::needsIPadMiniUserAgent(const URL& url)
 {
     auto host = url.host();
 
@@ -1801,6 +1789,16 @@ bool Quirks::needsIpadMiniUserAgent(const URL& url)
     return false;
 }
 
+bool Quirks::needsIPhoneUserAgent(const URL& url)
+{
+#if PLATFORM(IOS_FAMILY)
+    if (url.host() == "shopee.sg"_s && url.path() == "/payment/account-linking/landing"_s)
+        return true;
+#else
+    UNUSED_PARAM(url);
+#endif
+    return false;
+}
 
 bool Quirks::shouldIgnorePlaysInlineRequirementQuirk() const
 {
@@ -1862,6 +1860,24 @@ bool Quirks::needsRelaxedCorsMixedContentCheckQuirk() const
         m_needsRelaxedCorsMixedContentCheckQuirk = true;
 
     return *m_needsRelaxedCorsMixedContentCheckQuirk;
+}
+
+// rdar://127398734
+bool Quirks::needsLaxSameSiteCookieQuirk() const
+{
+    if (!needsQuirks())
+        return false;
+
+    if (m_needsLaxSameSiteCookieQuirk)
+        return *m_needsLaxSameSiteCookieQuirk;
+
+    m_needsLaxSameSiteCookieQuirk = false;
+
+    auto url = m_document->url();
+    if (url.protocolIs("https"_s) && url.host() == "www.bing.com"_s)
+        m_needsLaxSameSiteCookieQuirk = true;
+
+    return *m_needsLaxSameSiteCookieQuirk;
 }
 
 }

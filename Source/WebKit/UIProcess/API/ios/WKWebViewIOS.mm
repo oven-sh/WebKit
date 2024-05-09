@@ -336,13 +336,6 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     return [_contentView isBackground];
 }
 
-ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-- (WKBrowsingContextController *)browsingContextController
-{
-    return [_contentView browsingContextController];
-}
-ALLOW_DEPRECATED_DECLARATIONS_END
-
 - (BOOL)becomeFirstResponder
 {
 #if PLATFORM(VISION)
@@ -3928,17 +3921,6 @@ static bool isLockdownModeWarningNeeded()
 - (BOOL)_allowsViewportShrinkToFit
 {
     return _allowsViewportShrinkToFit;
-}
-
-- (BOOL)_isDisplayingPDF
-{
-    for (auto& type : WebCore::MIMETypeRegistry::pdfMIMETypes()) {
-        Class providerClass = [[self _contentProviderRegistry] providerForMIMEType:@(type.characters())];
-        if ([_customContentView isKindOfClass:providerClass])
-            return YES;
-    }
-
-    return NO;
 }
 
 - (NSData *)_dataForDisplayedPDF

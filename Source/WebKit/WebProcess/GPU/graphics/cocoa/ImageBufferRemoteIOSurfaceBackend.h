@@ -50,9 +50,8 @@ public:
     {
     }
 
-    static constexpr bool isOriginAtBottomLeftCorner = true;
-    static constexpr bool canMapBackingStore = false;
     static constexpr WebCore::RenderingMode renderingMode = WebCore::RenderingMode::Accelerated;
+    bool canMapBackingStore() const final;
 
     WebCore::GraphicsContext& context() final;
     std::optional<ImageBufferBackendHandle> createBackendHandle(WebCore::SharedMemory::Protection = WebCore::SharedMemory::Protection::ReadWrite) const final;
@@ -64,8 +63,6 @@ private:
 
     void getPixelBuffer(const WebCore::IntRect&, WebCore::PixelBuffer&) final;
     void putPixelBuffer(const WebCore::PixelBuffer&, const WebCore::IntRect& srcRect, const WebCore::IntPoint& destPoint, WebCore::AlphaPremultiplication destFormat) final;
-
-    bool originAtBottomLeftCorner() const final { return isOriginAtBottomLeftCorner; }
 
     unsigned bytesPerRow() const final;
 

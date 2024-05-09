@@ -31,7 +31,6 @@
 #include <WebCore/ProcessIdentifier.h>
 #include <WebCore/RemoteFrameClient.h>
 #include <WebCore/SecurityOriginData.h>
-#include <wtf/Scope.h>
 
 namespace WebKit {
 
@@ -40,7 +39,6 @@ public:
     explicit WebRemoteFrameClient(Ref<WebFrame>&&, ScopeExit<Function<void()>>&& frameInvalidator);
     ~WebRemoteFrameClient();
 
-    ScopeExit<Function<void()>> takeFrameInvalidator() { return WTFMove(m_frameInvalidator); }
     void applyWebsitePolicies(WebsitePoliciesData&&) final;
 
 private:
@@ -49,7 +47,7 @@ private:
     void postMessageToRemote(WebCore::FrameIdentifier source, const String& sourceOrigin, WebCore::FrameIdentifier target, std::optional<WebCore::SecurityOriginData> targetOrigin, const WebCore::MessageWithMessagePorts&) final;
     void changeLocation(WebCore::FrameLoadRequest&&) final;
     String renderTreeAsText(size_t baseIndent, OptionSet<WebCore::RenderAsTextFlag>) final;
-    void bindRemoteAccessibilityFrames(int processIdentifier, WebCore::FrameIdentifier, std::span<const uint8_t>, CompletionHandler<void(std::span<const uint8_t>, int)>&&) final;
+    void bindRemoteAccessibilityFrames(int processIdentifier, WebCore::FrameIdentifier, Vector<uint8_t>&&, CompletionHandler<void(Vector<uint8_t>, int)>&&) final;
     void unbindRemoteAccessibilityFrames(int) final;
     void updateRemoteFrameAccessibilityOffset(WebCore::FrameIdentifier, WebCore::IntPoint) final;
 
@@ -59,7 +57,6 @@ private:
     void documentURLForConsoleLog(CompletionHandler<void(const URL&)>&&) final;
     void dispatchDecidePolicyForNavigationAction(const WebCore::NavigationAction&, const WebCore::ResourceRequest&, const WebCore::ResourceResponse& redirectResponse, WebCore::FormState*, const String& clientRedirectSourceForHistory, uint64_t navigationID, std::optional<WebCore::HitTestResult>&&, bool hasOpener, WebCore::SandboxFlags, WebCore::PolicyDecisionMode, WebCore::FramePolicyFunction&&) final;
 
-    ScopeExit<Function<void()>> m_frameInvalidator;
 };
 
 }

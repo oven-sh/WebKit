@@ -3937,28 +3937,71 @@ ExceptionOr<void> Document::write(Document* entryDocument, SegmentedString&& tex
     return { };
 }
 
-ExceptionOr<void> Document::write(Document* entryDocument, FixedVector<String>&& strings)
+ExceptionOr<void> Document::write(Document* entryDocument, FixedVector<std::variant<RefPtr<TrustedHTML>, String>>&& strings)
 {
     if (!isHTMLDocument() || m_throwOnDynamicMarkupInsertionCount)
         return Exception { ExceptionCode::InvalidStateError };
 
+    auto isTrusted = true;
     SegmentedString text;
-    for (auto& string : strings)
-        text.append(WTFMove(string));
+    for (auto& entry : strings) {
+        text.append(
+            WTF::switchOn(
+                WTFMove(entry),
+                [&isTrusted](const String& string) -> String {
+                    isTrusted = false;
+                    return string;
+                },
+                [](const RefPtr<TrustedHTML>& html) -> String {
+                    return html->toString();
+                }
+            )
+        );
+    }
+
+    if (!isTrusted) {
+        auto stringValueHolder = trustedTypeCompliantString(TrustedType::TrustedHTML, *scriptExecutionContext(), text.toString(), "Document write"_s);
+        if (stringValueHolder.hasException())
+            return stringValueHolder.releaseException();
+        text.clear();
+        text.append(stringValueHolder.releaseReturnValue());
+    }
 
     return write(entryDocument, WTFMove(text));
 }
 
-ExceptionOr<void> Document::writeln(Document* entryDocument, FixedVector<String>&& strings)
+ExceptionOr<void> Document::writeln(Document* entryDocument, FixedVector<std::variant<RefPtr<TrustedHTML>, String>>&& strings)
 {
     if (!isHTMLDocument() || m_throwOnDynamicMarkupInsertionCount)
         return Exception { ExceptionCode::InvalidStateError };
 
+    auto isTrusted = true;
     SegmentedString text;
-    for (auto& string : strings)
-        text.append(WTFMove(string));
+    for (auto& entry : strings) {
+        text.append(
+            WTF::switchOn(
+                WTFMove(entry),
+                [&isTrusted](const String& string) -> String {
+                    isTrusted = false;
+                    return string;
+                },
+                [](const RefPtr<TrustedHTML>& html) -> String {
+                    return html->toString();
+                }
+            )
+        );
+    }
+
+    if (!isTrusted) {
+        auto stringValueHolder = trustedTypeCompliantString(TrustedType::TrustedHTML, *scriptExecutionContext(), text.toString(), "Document writeln"_s);
+        if (stringValueHolder.hasException())
+            return stringValueHolder.releaseException();
+        text.clear();
+        text.append(stringValueHolder.releaseReturnValue());
+    }
 
     text.append("\n"_s);
+
     return write(entryDocument, WTFMove(text));
 }
 
@@ -5251,6 +5294,12 @@ void Document::updateIsPlayingMedia()
     if (captureStateChanged)
         mediaStreamCaptureStateChanged();
 #endif
+}
+
+void Document::visibilityAdjustmentStateDidChange()
+{
+    for (auto& audioProducer : m_audioProducers)
+        audioProducer.visibilityAdjustmentStateDidChange();
 }
 
 void Document::pageMutedStateDidChange()
@@ -6667,7 +6716,7 @@ void Document::setBackForwardCacheState(BackForwardCacheState state)
             if (page && m_frame->isMainFrame()) {
                 frameView->resetScrollbarsAndClearContentsSize();
                 if (RefPtr scrollingCoordinator = page->scrollingCoordinator())
-                    scrollingCoordinator->clearAllNodes();
+                    scrollingCoordinator->clearAllNodes(m_frame->rootFrame().frameID());
             }
         }
 
@@ -8450,6 +8499,10 @@ Element* eventTargetElementForDocument(Document* document)
 {
     if (!document)
         return nullptr;
+#if ENABLE(FULLSCREEN_API)
+    if (CheckedPtr fullscreenManager = document->fullscreenManagerIfExists(); fullscreenManager && fullscreenManager->isFullscreen() && is<HTMLVideoElement>(fullscreenManager->currentFullscreenElement()))
+        return fullscreenManager->currentFullscreenElement();
+#endif
     Element* element = document->focusedElement();
     if (!element) {
         if (auto* pluginDocument = dynamicDowncast<PluginDocument>(*document))
@@ -10500,6 +10553,13 @@ void Document::updateContentRelevancyForScrollIfNeeded(const Element& scrollAnch
 ViewTransition* Document::activeViewTransition() const
 {
     return m_activeViewTransition.get();
+}
+
+bool Document::activeViewTransitionCapturedDocumentElement() const
+{
+    if (m_activeViewTransition)
+        return m_activeViewTransition->documentElementIsCaptured();
+    return false;
 }
 
 void Document::setActiveViewTransition(RefPtr<ViewTransition>&& viewTransition)

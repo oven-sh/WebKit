@@ -77,6 +77,8 @@ public:
 
     std::optional<WebCore::SimpleRange> contextRangeForSessionWithUUID(const WTF::UUID&) const;
 
+    void removeTransparentMarkersForSession(const WTF::UUID&, WebCore::SimpleRange&);
+
 private:
     std::optional<std::tuple<WebCore::Node&, WebCore::DocumentMarker&>> findReplacementMarkerContainingRange(const WebCore::SimpleRange&) const;
     std::optional<std::tuple<WebCore::Node&, WebCore::DocumentMarker&>> findReplacementMarkerByUUID(const WebCore::SimpleRange& outerRange, const WTF::UUID& replacementUUID) const;
@@ -87,6 +89,9 @@ private:
 
     void textReplacementSessionPerformEditActionForPlainText(WebCore::Document&, const WTF::UUID&, WebTextReplacementData::EditAction);
     void textReplacementSessionPerformEditActionForRichText(WebCore::Document&, const WTF::UUID&, WebTextReplacementData::EditAction);
+
+    template<WebUnifiedTextReplacementType Type>
+    void didEndTextReplacementSession(const WTF::UUID&, bool accepted);
 
     RefPtr<WebCore::Document> document() const;
 

@@ -315,7 +315,7 @@ public:
     double toIntegerOrInfinity(JSGlobalObject*) const;
     int32_t toInt32(JSGlobalObject*) const;
     uint32_t toUInt32(JSGlobalObject*) const;
-    uint32_t toIndex(JSGlobalObject*, const char* errorName) const;
+    uint32_t toIndex(JSGlobalObject*, ASCIILiteral errorName) const;
     size_t toTypedArrayIndex(JSGlobalObject*, ASCIILiteral) const;
     uint64_t toLength(JSGlobalObject*) const;
 
@@ -704,7 +704,6 @@ bool isThisValueAltered(const PutPropertySlot&, JSObject* baseObject);
 // See section 7.2.9: https://tc39.github.io/ecma262/#sec-samevalue
 bool sameValue(JSGlobalObject*, JSValue a, JSValue b);
 
-#if COMPILER(GCC_COMPATIBLE)
 ALWAYS_INLINE void ensureStillAliveHere(JSValue value)
 {
 #if USE(JSVALUE64)
@@ -713,9 +712,6 @@ ALWAYS_INLINE void ensureStillAliveHere(JSValue value)
     asm volatile ("" : : "g"(value.payload()) : "memory");
 #endif
 }
-#else
-JS_EXPORT_PRIVATE void ensureStillAliveHere(JSValue);
-#endif
 
 // Use EnsureStillAliveScope when you have a data structure that includes GC pointers, and you need
 // to remove it from the DOM and then use it in the same scope. For example, a 'once' event listener

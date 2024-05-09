@@ -42,6 +42,7 @@
 #include <WebCore/NicosiaContentLayer.h>
 #include <WebCore/NicosiaImageBacking.h>
 #include <WebCore/Page.h>
+#include <WebCore/PlatformDisplay.h>
 #include <wtf/MemoryPressureHandler.h>
 #include <wtf/NumberOfCores.h>
 #include <wtf/SetForScope.h>
@@ -216,7 +217,7 @@ bool CompositingCoordinator::flushPendingLayerChanges(OptionSet<FinalizeRenderin
     }
 #if HAVE(DISPLAY_LINK)
     else
-        m_client.updateScene();
+        m_client.commitSceneState(nullptr);
 #endif
 
     m_page.didUpdateRendering();

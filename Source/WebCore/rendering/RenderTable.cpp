@@ -272,8 +272,8 @@ void RenderTable::updateLogicalWidth()
     LayoutUnit containerWidthInInlineDirection = hasPerpendicularContainingBlock ? perpendicularContainingBlockLogicalHeight() : availableLogicalWidth;
 
     Length styleLogicalWidth = style().logicalWidth();
-    if (hasOverridingLogicalWidth())
-        setLogicalWidth(overridingLogicalWidth());
+    if (auto overridingLogicalWidth = this->overridingLogicalWidth())
+        setLogicalWidth(*overridingLogicalWidth);
     else if ((styleLogicalWidth.isSpecified() && styleLogicalWidth.isPositive()) || styleLogicalWidth.isIntrinsic())
         setLogicalWidth(convertStyleLogicalWidthToComputedWidth(styleLogicalWidth, containerWidthInInlineDirection));
     else {
@@ -526,8 +526,8 @@ void RenderTable::layout()
         if (logicalHeightLength.isIntrinsic() || (logicalHeightLength.isSpecified() && logicalHeightLength.isPositive()))
             computedLogicalHeight = convertStyleLogicalHeightToComputedHeight(logicalHeightLength);
 
-        if (hasOverridingLogicalHeight())
-            computedLogicalHeight = std::max(computedLogicalHeight, overridingLogicalHeight() - borderAndPaddingAfter - sumCaptionsLogicalHeight());
+        if (auto overridingLogicalHeight = this->overridingLogicalHeight())
+            computedLogicalHeight = std::max(computedLogicalHeight, *overridingLogicalHeight - borderAndPaddingAfter - sumCaptionsLogicalHeight());
 
         Length logicalMaxHeightLength = style().logicalMaxHeight();
         if (logicalMaxHeightLength.isFillAvailable() || (logicalMaxHeightLength.isSpecified() && !logicalMaxHeightLength.isNegative()
@@ -553,7 +553,12 @@ void RenderTable::layout()
             // Completely empty tables (with no sections or anything) should at least honor their
             // overriding or specified height in strict mode, but this value will not be cached.
             shouldCacheIntrinsicContentLogicalHeightForFlexItem = false;
-            setLogicalHeight(hasOverridingLogicalHeight() ? overridingLogicalHeight() - borderAndPaddingAfter : logicalHeight() + computedLogicalHeight);
+            auto tableLogicalHeight = [&] {
+                if (auto overridingLogicalHeight = this->overridingLogicalHeight())
+                    return *overridingLogicalHeight - borderAndPaddingAfter;
+                return logicalHeight() + computedLogicalHeight;
+            };
+            setLogicalHeight(tableLogicalHeight());
         }
 
         LayoutUnit sectionLogicalLeft = style().isLeftToRightDirection() ? borderStart() : borderEnd();
@@ -889,9 +894,9 @@ void RenderTable::computePreferredLogicalWidths()
     for (unsigned i = 0; i < m_captions.size(); i++)
         m_minPreferredLogicalWidth = std::max(m_minPreferredLogicalWidth, m_captions[i]->minPreferredLogicalWidth());
 
-    if (hasOverridingLogicalWidth()) {
-        m_minPreferredLogicalWidth = std::max(m_minPreferredLogicalWidth, overridingLogicalWidth());
-        m_maxPreferredLogicalWidth = std::max(m_maxPreferredLogicalWidth, overridingLogicalWidth());
+    if (auto overridingLogicalWidth = this->overridingLogicalWidth()) {
+        m_minPreferredLogicalWidth = std::max(m_minPreferredLogicalWidth, *overridingLogicalWidth);
+        m_maxPreferredLogicalWidth = std::max(m_maxPreferredLogicalWidth, *overridingLogicalWidth);
     }
 
     auto& styleToUse = style();

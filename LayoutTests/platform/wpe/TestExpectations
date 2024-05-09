@@ -803,7 +803,6 @@ webkit.org/b/210413 http/wpt/css/css-highlight-api/highlight-text-decorations.ht
 
 webkit.org/b/212082 imported/w3c/web-platform-tests/mathml/presentation-markup/operators/mo-form-minus-plus.html [ ImageOnlyFailure ]
 
-webkit.org/b/207711 imported/blink/storage/indexeddb/blob-valid-after-deletion.html [ Failure Pass ]
 webkit.org/b/212158 imported/blink/fast/text/international/repaint-glyph-bounds.html [ ImageOnlyFailure Pass ]
 
 webkit.org/b/213230 css3/images/cross-fade-svg-with-opacity.html [ ImageOnlyFailure Pass ]
@@ -1481,6 +1480,9 @@ webkit.org/b/236926 webrtc/vp8-then-h264-gpu-process-crash.html [ Timeout Pass ]
 ############ end of test failures related to GPU Process on by default
 
 media/media-source/media-source-rendering-update-count.html [ Skip ]
+
+# Failing with skia
+compositing/patterns/direct-pattern-compositing-size.html [ ImageOnlyFailure ]
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # UNSORTED Expectations. When in doubt, put it here.

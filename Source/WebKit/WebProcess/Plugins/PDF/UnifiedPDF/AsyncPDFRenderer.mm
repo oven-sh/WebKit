@@ -149,7 +149,7 @@ RefPtr<WebCore::ImageBuffer> AsyncPDFRenderer::previewImageForPage(PDFDocumentLa
     return m_pagePreviews.get(pageIndex);
 }
 
-bool AsyncPDFRenderer::renderInfoIsValidForTile(const TileForGrid& tileInfo, const TileRenderInfo& renderInfo) const
+bool AsyncPDFRenderer::renderInfoIsValidForTile(const TileForGrid& tileInfo, const TileRenderInfo& renderInfo, CheckContentVersion checkContentVersion) const
 {
     ASSERT(isMainRunLoop());
     if (!m_pdfContentsLayer)
@@ -161,7 +161,11 @@ bool AsyncPDFRenderer::renderInfoIsValidForTile(const TileForGrid& tileInfo, con
 
     auto currentTileRect = tiledBacking->rectForTile(tileInfo.tileIndex);
     auto currentRenderInfo = renderInfoForTile(tileInfo, currentTileRect);
-    return renderInfo.equivalentForPainting(currentRenderInfo);
+
+    if (checkContentVersion == CheckContentVersion::Yes)
+        return renderInfo.equivalentForPainting(currentRenderInfo);
+
+    return renderInfo.equivalentForPaintingIgnoringContentVersion(currentRenderInfo);
 }
 
 void AsyncPDFRenderer::willRepaintTile(TileGridIndex gridIndex, TileIndex tileIndex, const FloatRect& tileRect, const FloatRect& tileDirtyRect)
@@ -177,7 +181,8 @@ void AsyncPDFRenderer::willRepaintTile(TileGridIndex gridIndex, TileIndex tileIn
         if (renderInfo.tileRect != tileRect)
             return false;
 
-        return renderInfoIsValidForTile(tileInfo, renderInfo);
+        // It's OK to paint tiles with a stale content version (e.g. old state of a checkbox). We'll paint the new tile whne we get it.
+        return renderInfoIsValidForTile(tileInfo, renderInfo, CheckContentVersion::No);
     };
 
     LOG_WITH_STREAM(PDFAsyncRendering, stream << "AsyncPDFRenderer::willRepaintTile " << tileInfo << " rect " << tileRect << " (dirty rect " << tileDirtyRect << ") - already queued "
@@ -460,6 +465,9 @@ void AsyncPDFRenderer::paintPDFPageIntoBuffer(RetainPtr<PDFDocument>&& pdfDocume
     context.translate(destinationRect.minXMaxYCorner());
     context.scale({ 1, -1 });
 
+    CGContextSetShouldSubpixelQuantizeFonts(context.platformContext(), false);
+    CGContextSetAllowsFontSubpixelPositioning(context.platformContext(), true);
+
     LOG_WITH_STREAM(PDFAsyncRendering, stream << "AsyncPDFRenderer::paintPDFPageIntoBuffer - painting page " << pageIndex);
     [pdfPage drawWithBox:kPDFDisplayBoxCropBox toContext:context.platformContext()];
 }
@@ -517,7 +525,7 @@ void AsyncPDFRenderer::didCompleteTileRender(RefPtr<WebCore::ImageBuffer>&& imag
     if (!imageBuffer)
         return;
 
-    // Tiling may have changed since we started the tile paint; check that it's still valid.
+    // State may have changed since we started the tile paint; check that it's still valid.
     if (!renderInfoIsValidForTile(tileInfo, renderInfo))
         return;
 
@@ -585,7 +593,7 @@ void AsyncPDFRenderer::paintPagePreview(GraphicsContext& context, const FloatRec
     LOG_WITH_STREAM(PDFAsyncRendering, stream << "AsyncPDFRenderer::paintPagePreview for page " << pageIndex  << " - buffer " << imageBuffer);
 
     if (imageBuffer)
-        context.drawImageBuffer(*imageBuffer, pageBoundsInPaintingCoordinates);
+        context.drawImageBuffer(*imageBuffer, pageBoundsInPaintingCoordinates, pageBoundsInPaintingCoordinates);
 }
 
 void AsyncPDFRenderer::invalidateTilesForPaintingRect(float pageScaleFactor, const FloatRect& paintingRect)

@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2004-2023 Apple Inc. All rights reserved.
- * Copyright (C) 2015 Google Inc. All rights reserved.
+ * Copyright (C) 2004-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2018 Google Inc. All rights reserved.
  * Copyright (C) 2005 Alexey Proskuryakov.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -853,6 +853,8 @@ bool shouldEmitNewlinesBeforeAndAfterNode(Node& node)
     // a newline both before and after the element.
     CheckedPtr renderer = node.renderer();
     if (!renderer) {
+        if (hasDisplayContents(node))
+            return false;
         RefPtr element = dynamicDowncast<HTMLElement>(node);
         return element && (hasHeaderTag(*element)
             || element->hasTagName(blockquoteTag)
@@ -916,23 +918,14 @@ static bool shouldEmitNewlineBeforeNode(Node& node)
 
 static bool shouldEmitExtraNewlineForNode(Node& node)
 {
-    // When there is a significant collapsed bottom margin, emit an extra
-    // newline for a more realistic result. We end up getting the right
-    // result even without margin collapsing. For example: <div><p>text</p></div>
-    // will work right even if both the <div> and the <p> have bottom margins.
+    // https://html.spec.whatwg.org/multipage/dom.html#the-innertext-idl-attribute
+    // Append two required linebreaks after a <p> element.
 
     CheckedPtr renderBox = dynamicDowncast<RenderBox>(node.renderer());
     if (!renderBox || !renderBox->height())
         return false;
 
-    // NOTE: We only do this for a select set of nodes, and WinIE appears not to do this at all.
-    RefPtr element = dynamicDowncast<HTMLElement>(node);
-    if (!element || (!hasHeaderTag(*element) && !is<HTMLParagraphElement>(*element)))
-        return false;
-
-    auto bottomMargin = renderBox->collapsedMarginAfter();
-    auto fontSize = renderBox->style().fontDescription().computedSize();
-    return bottomMargin * 2 >= fontSize;
+    return node.hasTagName(pTag);
 }
 
 static int collapsedSpaceLength(RenderText& renderer, int textEnd)

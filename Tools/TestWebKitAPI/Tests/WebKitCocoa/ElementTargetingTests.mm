@@ -456,7 +456,10 @@ TEST(ElementTargeting, ReplacedRendererSizeIgnoresPageScaleAndZoom)
     [webView _setPageZoomFactor:2];
     [webView _setPageScale:1.5 withOrigin:CGPointZero];
 #else
-    [[webView scrollView] setZoomScale:3 animated:NO];
+    RetainPtr scrollView = [webView scrollView];
+    [scrollView setZoomScale:3 animated:NO];
+    [scrollView setContentOffset:CGPointZero];
+    [webView waitForNextVisibleContentRectUpdate];
 #endif
     [webView waitForNextPresentationUpdate];
     RetainPtr targetAfterScaling = [[webView targetedElementInfoAt:CGPointMake(100, 100)] firstObject];
@@ -475,6 +478,27 @@ TEST(ElementTargeting, RequestTargetedElementsBySearchableText)
 
     RetainPtr targetFromSearchText = [[webView targetedElementInfoWithText:searchableText] firstObject];
     EXPECT_TRUE([targetFromSearchText isSameElement:targetFromHitTest.get()]);
+}
+
+TEST(ElementTargeting, AdjustVisibilityAfterRecreatingElement)
+{
+    auto webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 800, 600)]);
+
+    RetainPtr delegate = adoptNS([TestUIDelegate new]);
+    [webView setUIDelegate:delegate.get()];
+    [webView synchronouslyLoadTestPageNamed:@"element-targeting-7"];
+
+    RetainPtr firstTarget = [[webView targetedElementInfoAt:CGPointMake(100, 100)] firstObject];
+    [webView adjustVisibilityForTargets:@[ firstTarget.get() ]];
+
+    __block bool didAdjustment = false;
+    [delegate setWebViewDidAdjustVisibilityWithSelectors:^(WKWebView *, NSArray<NSString *> *selectors) {
+        didAdjustment = true;
+    }];
+
+    [webView objectByEvaluatingJavaScript:@"recreateContainer()"];
+
+    Util::run(&didAdjustment);
 }
 
 } // namespace TestWebKitAPI

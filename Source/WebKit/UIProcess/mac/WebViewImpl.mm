@@ -49,7 +49,6 @@
 #import "RemoteLayerTreeDrawingAreaProxyMac.h"
 #import "RemoteObjectRegistry.h"
 #import "RemoteObjectRegistryMessages.h"
-#import "StringUtilities.h"
 #import "TextChecker.h"
 #import "TextCheckerState.h"
 #import "TiledCoreAnimationDrawingAreaProxy.h"
@@ -3767,7 +3766,7 @@ void WebViewImpl::sendToolTipMouseEntered()
 
 NSString *WebViewImpl::stringForToolTip(NSToolTipTag tag)
 {
-    return nsStringFromWebCoreString(m_page->toolTip());
+    return m_page->toolTip();
 }
 
 void WebViewImpl::toolTipChanged(const String& oldToolTip, const String& newToolTip)
@@ -3913,16 +3912,6 @@ _WKRemoteObjectRegistry *WebViewImpl::remoteObjectRegistry()
 
     return m_remoteObjectRegistry.get();
 }
-
-ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-WKBrowsingContextController *WebViewImpl::browsingContextController()
-{
-    if (!m_browsingContextController)
-        m_browsingContextController = adoptNS([[WKBrowsingContextController alloc] _initWithPageRef:toAPI(m_page.ptr())]);
-
-    return m_browsingContextController.get();
-}
-ALLOW_DEPRECATED_DECLARATIONS_END
 
 #if ENABLE(DRAG_SUPPORT)
 void WebViewImpl::draggedImage(NSImage *, CGPoint endPoint, NSDragOperation operation)
@@ -5292,18 +5281,12 @@ void WebViewImpl::setMarkedText(id string, NSRange selectedRange, NSRange replac
 #if HAVE(INLINE_PREDICTIONS)
 bool WebViewImpl::allowsInlinePredictions() const
 {
-    const EditorState& editorState = m_page->editorState();
+    auto& editorState = m_page->editorState();
 
     if (editorState.hasPostLayoutData() && editorState.postLayoutData->canEnableWritingSuggestions)
         return NSSpellChecker.isAutomaticInlineCompletionEnabled;
 
-    if (!editorState.isContentEditable)
-        return false;
-
-    if (!inlinePredictionsEnabled() && !m_page->preferences().inlinePredictionsInAllEditableElementsEnabled())
-        return false;
-
-    return NSSpellChecker.isAutomaticInlineCompletionEnabled;
+    return editorState.isContentEditable && inlinePredictionsEnabled() && NSSpellChecker.isAutomaticInlineCompletionEnabled;
 }
 
 void WebViewImpl::showInlinePredictionsForCandidate(NSTextCheckingResult *candidate, NSRange absoluteSelectedRange, NSRange oldRelativeSelectedRange)

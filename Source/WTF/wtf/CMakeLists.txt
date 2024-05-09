@@ -247,6 +247,7 @@ set(WTF_PUBLIC_HEADERS
     RobinHoodHashTable.h
     RunLoop.h
     SHA1.h
+    SIMDHelpers.h
     SafeStrerror.h
     SaturatedArithmetic.h
     SchedulePair.h
@@ -264,6 +265,7 @@ set(WTF_PUBLIC_HEADERS
     SinglyLinkedList.h
     SinglyLinkedListWithTail.h
     SixCharacterHash.h
+    SmallMap.h
     SmallSet.h
     SoftLinking.h
     SortedArrayMap.h
@@ -356,22 +358,6 @@ set(WTF_PUBLIC_HEADERS
     WorkerPool.h
     dtoa.h
 
-    cf/CFURLExtras.h
-    cf/TypeCastsCF.h
-    cf/VectorCF.h
-
-    cocoa/CrashReporter.h
-    cocoa/Entitlements.h
-    cocoa/NSURLExtras.h
-    cocoa/RuntimeApplicationChecksCocoa.h
-    cocoa/SoftLinking.h
-    cocoa/TollFreeBridging.h
-    cocoa/TypeCastsCocoa.h
-    cocoa/VectorCocoa.h
-
-    darwin/OSLogPrintStream.h
-    darwin/WeakLinking.h
-
     dragonbox/dragonbox.h
     dragonbox/dragonbox_to_chars.h
     dragonbox/ieee754_format.h
@@ -407,49 +393,13 @@ set(WTF_PUBLIC_HEADERS
     fast_float/parse_number.h
     fast_float/simple_decimal_conversion.h
 
-    glib/ChassisType.h
-    glib/GMutexLocker.h
-    glib/GRefPtr.h
-    glib/GSocketMonitor.h
-    glib/GThreadSafeWeakPtr.h
-    glib/GTypedefs.h
-    glib/GUniquePtr.h
-    glib/GWeakPtr.h
-    glib/RunLoopSourcePriority.h
-    glib/Sandbox.h
-    glib/SocketConnection.h
-    glib/WTFGType.h
-
-    linux/CurrentProcessMemoryStatus.h
-    linux/ProcessMemoryFootprint.h
-    linux/RealTimeThreads.h
-
     persistence/PersistentCoders.h
     persistence/PersistentDecoder.h
     persistence/PersistentEncoder.h
 
-    spi/cf/CFBundleSPI.h
-    spi/cf/CFStringSPI.h
-
-    spi/cocoa/CFXPCBridgeSPI.h
-    spi/cocoa/CrashReporterClientSPI.h
-    spi/cocoa/IOSurfaceSPI.h
-    spi/cocoa/MachVMSPI.h
-    spi/cocoa/NSLocaleSPI.h
-    spi/cocoa/NSObjCRuntimeSPI.h
-    spi/cocoa/SecuritySPI.h
-    spi/cocoa/objcSPI.h
-
-    spi/darwin/AbortWithReasonSPI.h
-    spi/darwin/CodeSignSPI.h
-    spi/darwin/DataVaultSPI.h
-    spi/darwin/OSVariantSPI.h
-    spi/darwin/ProcessMemoryFootprint.h
-    spi/darwin/SandboxSPI.h
-    spi/darwin/XPCSPI.h
-    spi/darwin/dyldSPI.h
-
-    spi/mac/MetadataSPI.h
+    simde/simde.h
+    simde/arm/neon.h
+    simde/arm/sve.h
 
     text/ASCIIFastPath.h
     text/ASCIILiteral.h
@@ -498,15 +448,10 @@ set(WTF_PUBLIC_HEADERS
     text/UniquedStringImpl.h
     text/WTFString.h
 
-    text/cf/StringConcatenateCF.h
-    text/cf/TextBreakIteratorCF.h
-
     text/icu/TextBreakIteratorICU.h
     text/icu/UTextProvider.h
     text/icu/UTextProviderLatin1.h
     text/icu/UTextProviderUTF16.h
-
-    text/win/WCharStringExtras.h
 
     threads/BinarySemaphore.h
     threads/Signals.h
@@ -676,15 +621,11 @@ set(WTF_SOURCES
     unicode/icu/ICUHelpers.cpp
 )
 
-if (APPLE)
+if(APPLE)
     list(APPEND WTF_SOURCES
         darwin/OSLogPrintStream.mm
     )
-endif ()
-
-if (MSVC AND WTF_CPU_X86_64)
-    list(APPEND WTF_SOURCES win/AsmStubsMSVC64.asm)
-endif ()
+endif()
 
 set(WTF_PRIVATE_INCLUDE_DIRECTORIES
     "${CMAKE_BINARY_DIR}"
@@ -707,19 +648,19 @@ set(WTF_LIBRARIES
     ICU::uc
 )
 
-if (NOT USE_SYSTEM_MALLOC)
+if(NOT USE_SYSTEM_MALLOC)
     set(WTF_FRAMEWORKS bmalloc)
-endif ()
+endif()
 
-if (ATOMICS_REQUIRE_LIBATOMIC)
+if(ATOMICS_REQUIRE_LIBATOMIC)
     list(APPEND WTF_LIBRARIES atomic)
-endif ()
+endif()
 
-if (COMPILER_IS_GCC_OR_CLANG)
-    if (HAVE_STD_EXPERIMENTAL_FILESYSTEM)
+if(COMPILER_IS_GCC_OR_CLANG)
+    if(HAVE_STD_EXPERIMENTAL_FILESYSTEM)
         list(APPEND WTF_LIBRARIES stdc++fs)
-    endif ()
-endif ()
+    endif()
+endif()
 
 set(WTF_INTERFACE_LIBRARIES WTF)
 set(WTF_INTERFACE_INCLUDE_DIRECTORIES ${WTF_FRAMEWORK_HEADERS_DIR})
@@ -735,10 +676,10 @@ WEBKIT_COPY_FILES(WTF_CopyHeaders
 
 WEBKIT_FRAMEWORK(WTF)
 
-if (MSVC)
+if(MSVC)
     set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} /SUBSYSTEM:WINDOWS")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /SUBSYSTEM:WINDOWS")
-endif ()
+endif()
 
 file(MAKE_DIRECTORY ${WTF_SCRIPTS_DIR})
 

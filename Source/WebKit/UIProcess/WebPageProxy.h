@@ -26,6 +26,7 @@
 #pragma once
 
 #include "APIObject.h"
+#include "IdentifierTypes.h"
 #include "MessageReceiver.h"
 #include "MessageSender.h"
 #include <WebCore/FrameIdentifier.h>
@@ -572,7 +573,7 @@ public:
 
     Identifier identifier() const;
     WebCore::PageIdentifier webPageID() const;
-    WebCore::PageIdentifier webPageIDInProcessForDomain(const WebCore::RegistrableDomain&) const;
+    WebCore::PageIdentifier webPageIDInProcess(const WebProcessProxy&) const;
 
     PAL::SessionID sessionID() const;
 
@@ -1443,7 +1444,7 @@ public:
     void runJavaScriptInMainFrame(WebCore::RunJavaScriptParameters&&, CompletionHandler<void(Expected<RefPtr<API::SerializedScriptValue>, WebCore::ExceptionDetails>&&)>&&);
     void runJavaScriptInFrameInScriptWorld(WebCore::RunJavaScriptParameters&&, std::optional<WebCore::FrameIdentifier>, API::ContentWorld&, CompletionHandler<void(Expected<RefPtr<API::SerializedScriptValue>, WebCore::ExceptionDetails>&&)>&&);
     void getAccessibilityTreeData(CompletionHandler<void(API::Data*)>&&);
-    void forceRepaint(CompletionHandler<void()>&&);
+    void updateRenderingWithForcedRepaint(CompletionHandler<void()>&&);
 
     float headerHeightForPrinting(WebFrameProxy&);
     float footerHeightForPrinting(WebFrameProxy&);
@@ -1921,6 +1922,7 @@ public:
     bool updateEditorState(const EditorState& newEditorState, ShouldMergeVisualEditorState = ShouldMergeVisualEditorState::Default);
     void scheduleFullEditorStateUpdate();
     void dispatchDidUpdateEditorState();
+    void clearEditorStateAfterPageTransition(EditorStateIdentifier);
 
     void requestStorageAccessConfirm(const WebCore::RegistrableDomain& subFrameDomain, const WebCore::RegistrableDomain& topFrameDomain, WebCore::FrameIdentifier, std::optional<WebCore::OrganizationStorageAccessPromptQuirk>&&, CompletionHandler<void(bool)>&&);
     void didCommitCrossSiteLoadWithDataTransferFromPrevalentResource();
@@ -2125,7 +2127,7 @@ public:
     void clearServiceWorkerEntitlementOverride(CompletionHandler<void()>&&);
         
 #if PLATFORM(COCOA)
-    void grantAccessToCurrentPasteboardData(const String& pasteboardName);
+    void grantAccessToCurrentPasteboardData(const String& pasteboardName, std::optional<WebCore::FrameIdentifier> = std::nullopt);
 #endif
 
 #if PLATFORM(MAC)
@@ -2341,7 +2343,6 @@ public:
 
     void generateTestReport(const String& message, const String& group);
 
-    void frameCreated(WebCore::FrameIdentifier, WebFrameProxy&);
     void didDestroyFrame(IPC::Connection&, WebCore::FrameIdentifier);
     void disconnectFramesFromPage();
 
@@ -2673,7 +2674,7 @@ private:
 #endif
 
     void requestDOMPasteAccess(WebCore::DOMPasteAccessCategory, const WebCore::IntRect&, const String&, CompletionHandler<void(WebCore::DOMPasteAccessResponse)>&&);
-    void willPerformPasteCommand(WebCore::DOMPasteAccessCategory);
+    void willPerformPasteCommand(WebCore::DOMPasteAccessCategory, std::optional<WebCore::FrameIdentifier> = std::nullopt);
 
     // Back/Forward list management
     void backForwardAddItem(BackForwardListItemState&&);
@@ -3040,7 +3041,7 @@ private:
     void postMessageToRemote(WebCore::FrameIdentifier source, const String& sourceOrigin, WebCore::FrameIdentifier target, std::optional<WebCore::SecurityOriginData> targetOrigin, const WebCore::MessageWithMessagePorts&);
     void renderTreeAsTextForTesting(WebCore::FrameIdentifier, size_t baseIndent, OptionSet<WebCore::RenderAsTextFlag>, CompletionHandler<void(String&&)>&&);
     void frameTextForTesting(WebCore::FrameIdentifier, CompletionHandler<void(String&&)>&&);
-    void bindRemoteAccessibilityFrames(int processIdentifier, WebCore::FrameIdentifier, std::span<const uint8_t> dataToken, CompletionHandler<void(std::span<const uint8_t>, int)>&&);
+    void bindRemoteAccessibilityFrames(int processIdentifier, WebCore::FrameIdentifier, Vector<uint8_t>&& dataToken, CompletionHandler<void(Vector<uint8_t>, int)>&&);
     void updateRemoteFrameAccessibilityOffset(WebCore::FrameIdentifier, WebCore::IntPoint);
     void documentURLForConsoleLog(WebCore::FrameIdentifier, CompletionHandler<void(const URL&)>&&);
 
@@ -3533,6 +3534,8 @@ private:
     bool m_canUseCredentialStorage { true };
 
     size_t m_suspendMediaPlaybackCounter { 0 };
+
+    size_t m_deferredMouseEvents { 0 };
 
     bool m_lastNavigationWasAppInitiated { true };
     bool m_isRunningModalJavaScriptDialog { false };

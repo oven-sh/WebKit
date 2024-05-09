@@ -95,6 +95,7 @@ public:
 #if ENABLE(UNIFIED_TEXT_REPLACEMENT)
         UnifiedTextReplacement = 1 << 16,
 #endif
+        TransparentContent = 1 << 17,
     };
 
     static constexpr OptionSet<Type> allMarkers();
@@ -125,6 +126,10 @@ public:
     };
 #endif
 
+    struct TransparentContentData {
+        WTF::UUID uuid;
+    };
+
     using Data = std::variant<
         String
         , DictationData // DictationAlternatives
@@ -139,6 +144,7 @@ public:
 #if ENABLE(UNIFIED_TEXT_REPLACEMENT)
         , UnifiedTextReplacementData // UnifiedTextReplacement
 #endif
+        , TransparentContentData // TransparentContent
     >;
 
     DocumentMarker(Type, OffsetRange, Data&& = { });
@@ -192,6 +198,7 @@ constexpr auto DocumentMarker::allMarkers() -> OptionSet<Type>
 #if ENABLE(UNIFIED_TEXT_REPLACEMENT)
         Type::UnifiedTextReplacement,
 #endif
+        Type::TransparentContent,
     };
 }
 

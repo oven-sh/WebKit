@@ -1845,8 +1845,11 @@ inline OptionSet<WebKit::FindOptions> toFindOptions(WKFindConfiguration *configu
 - (void)createWebArchiveDataWithCompletionHandler:(void (^)(NSData *, NSError *))completionHandler
 {
     THROW_IF_SUSPENDED;
-    _page->getWebArchiveOfFrame(_page->mainFrame(), [completionHandler = makeBlockPtr(completionHandler)](API::Data* data) {
-        completionHandler(wrapper(data), nil);
+    _page->getWebArchiveOfFrame(nullptr, [completionHandler = makeBlockPtr(completionHandler)](API::Data* data) {
+        if (data)
+            completionHandler(wrapper(data), nil);
+        else
+            completionHandler(nil, [NSError errorWithDomain:WKErrorDomain code:WKErrorUnknown userInfo:nil]);
     });
 }
 
@@ -2870,7 +2873,7 @@ static void convertAndAddHighlight(Vector<Ref<WebCore::SharedMemory>>& buffers, 
 - (WKNavigation *)_loadData:(NSData *)data MIMEType:(NSString *)MIMEType characterEncodingName:(NSString *)characterEncodingName baseURL:(NSURL *)baseURL userData:(id)userData
 {
     THROW_IF_SUSPENDED;
-    return wrapper(_page->loadData(span(data), MIMEType, characterEncodingName, baseURL.absoluteString, WebKit::ObjCObjectGraph::create(userData).ptr())).autorelease();
+    return wrapper(_page->loadData(span(data), MIMEType, characterEncodingName, baseURL.absoluteString, [userData isKindOfClass:NSData.class] ? API::Data::createWithoutCopying((NSData *)userData).ptr() : nullptr)).autorelease();
 }
 
 - (WKNavigation *)_loadRequest:(NSURLRequest *)request shouldOpenExternalURLs:(BOOL)shouldOpenExternalURLs
@@ -3944,6 +3947,21 @@ static inline OptionSet<WebKit::FindOptions> toFindOptions(_WKFindOptions wkFind
         _page->setFormClient(makeUnique<FormClient>(self));
     else
         _page->setFormClient(nullptr);
+}
+
+- (BOOL)_isDisplayingPDF
+{
+#if PLATFORM(MAC)
+    if (RefPtr mainFrame = _page->mainFrame())
+        return mainFrame->isDisplayingPDFDocument();
+#else
+    for (auto& type : WebCore::MIMETypeRegistry::pdfMIMETypes()) {
+        Class providerClass = [[self _contentProviderRegistry] providerForMIMEType:@(type.characters())];
+        if ([_customContentView isKindOfClass:providerClass])
+            return YES;
+    }
+#endif
+    return NO;
 }
 
 - (BOOL)_isDisplayingStandaloneImageDocument

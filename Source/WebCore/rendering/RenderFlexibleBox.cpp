@@ -209,13 +209,11 @@ public:
     {
         ASSERT(!size || (axis != Axis::Both));
         if (axis == Axis::Both || axis == Axis::Inline) {
-            if (box.hasOverridingLogicalWidth())
-                m_overridingWidth = box.overridingLogicalWidth();
+            m_overridingWidth = box.overridingLogicalWidth();
             SET_OR_CLEAR_OVERRIDING_SIZE(m_box, Width, size);
         }
         if (axis == Axis::Both || axis == Axis::Block) {
-            if (box.hasOverridingLogicalHeight())
-                m_overridingHeight = box.overridingLogicalHeight();
+            m_overridingHeight = box.overridingLogicalHeight();
             SET_OR_CLEAR_OVERRIDING_SIZE(m_box, Height, size);
         }
     }
@@ -372,9 +370,6 @@ void RenderFlexibleBox::styleDidChange(StyleDifference diff, const RenderStyle* 
 
     auto oldStyleAlignItemsIsStretch = oldStyle->resolvedAlignItems(selfAlignmentNormalBehavior()).position() == ItemPosition::Stretch;
     for (auto& flexItem : childrenOfType<RenderBox>(*this)) {
-        if (flexItem.needsPreferredWidthsRecalculation())
-            flexItem.setPreferredLogicalWidthsDirty(true, MarkingBehavior::MarkOnlyThis);
-
         // Flex items that were previously stretching need to be relayed out so we
         // can compute new available cross axis space. This is only necessary for
         // stretching since other alignment values don't change the size of the
@@ -1617,13 +1612,12 @@ std::pair<LayoutUnit, LayoutUnit> RenderFlexibleBox::computeFlexItemMinMaxSizes(
     return { 0_lu, maxExtent.value_or(LayoutUnit::max()) };
 }
     
-bool RenderFlexibleBox::useChildOverridingCrossSizeForPercentageResolution(const RenderBox& child)
+std::optional<LayoutUnit> RenderFlexibleBox::usedChildOverridingCrossSizeForPercentageResolution(const RenderBox& child)
 {
     ASSERT(mainAxisIsChildInlineAxis(child));
     if (alignmentForChild(child) != ItemPosition::Stretch)
-        return false;
-
-    return child.hasOverridingLogicalHeight();
+        return { };
+    return child.overridingLogicalHeight();
 }
 
 // This method is only called whenever a descendant of a flex item wants to resolve a percentage in its
@@ -1632,28 +1626,28 @@ bool RenderFlexibleBox::useChildOverridingCrossSizeForPercentageResolution(const
 // are some exceptions though that are implemented here, like the case of fully inflexible items with
 // definite flex-basis, or whenever the flex container has a definite main size. See
 // https://drafts.csswg.org/css-flexbox/#definite-sizes for additional details.
-bool RenderFlexibleBox::useChildOverridingMainSizeForPercentageResolution(const RenderBox& child)
+std::optional<LayoutUnit> RenderFlexibleBox::usedChildOverridingMainSizeForPercentageResolution(const RenderBox& child)
 {
     ASSERT(!mainAxisIsChildInlineAxis(child));
 
     // The main size of a fully inflexible item with a definite flex basis is, by definition, definite.
     if (child.style().flexGrow() == 0.0 && child.style().flexShrink() == 0.0 && childMainSizeIsDefinite(child, flexBasisForChild(child)))
-        return child.hasOverridingLogicalHeight();
+        return child.overridingLogicalHeight();
 
     // This function implements section 9.8. Definite and Indefinite Sizes, case 2) of the flexbox spec.
     // If the flex container has a definite main size the flex item post-flexing main size is also treated
     // as definite. We make up a percentage to check whether we have a definite size.
     if (!canComputePercentageFlexBasis(child, Length(0, LengthType::Percent), UpdatePercentageHeightDescendants::Yes))
-        return false;
+        return { };
 
-    return child.hasOverridingLogicalHeight();
+    return child.overridingLogicalHeight();
 }
 
-bool RenderFlexibleBox::useChildOverridingLogicalHeightForPercentageResolution(const RenderBox& child)
+std::optional<LayoutUnit> RenderFlexibleBox::usedChildOverridingLogicalHeightForPercentageResolution(const RenderBox& child)
 {
     if (mainAxisIsChildInlineAxis(child))
-        return useChildOverridingCrossSizeForPercentageResolution(child);
-    return useChildOverridingMainSizeForPercentageResolution(child);
+        return usedChildOverridingCrossSizeForPercentageResolution(child);
+    return usedChildOverridingMainSizeForPercentageResolution(child);
 }
 
 LayoutUnit RenderFlexibleBox::adjustChildSizeForAspectRatioCrossAxisMinAndMax(const RenderBox& child, LayoutUnit childSize)
@@ -1709,6 +1703,9 @@ FlexItem RenderFlexibleBox::constructFlexItem(RenderBox& child, bool relayoutChi
     if (childHadLayout && child.hasTrimmedMargin(std::optional<MarginTrimType> { }))
         child.clearTrimmedMarginsMarkings();
     
+    if (child.needsPreferredWidthsRecalculation())
+        child.setPreferredLogicalWidthsDirty(true, MarkingBehavior::MarkOnlyThis);
+
     LayoutUnit borderAndPadding = isHorizontalFlow() ? child.horizontalBorderAndPaddingExtent() : child.verticalBorderAndPaddingExtent();
     LayoutUnit childInnerFlexBaseSize = computeFlexBaseSizeForChild(child, borderAndPadding, relayoutChildren);
     LayoutUnit margin = isHorizontalFlow() ? child.horizontalMarginExtent() : child.verticalMarginExtent();
@@ -2526,7 +2523,7 @@ void RenderFlexibleBox::applyStretchAlignmentToChild(RenderBox& child, LayoutUni
             // So, redo it here.
             childNeedsRelayout = true;
         }
-        if (childNeedsRelayout || !child.hasOverridingLogicalHeight())
+        if (childNeedsRelayout || !child.overridingLogicalHeight())
             child.setOverridingLogicalHeight(desiredLogicalHeight);
         if (childNeedsRelayout) {
             SetForScope resetChildLogicalHeight(m_shouldResetChildLogicalHeightBeforeLayout, true);

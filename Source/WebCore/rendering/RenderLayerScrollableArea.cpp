@@ -847,14 +847,7 @@ bool RenderLayerScrollableArea::canShowNonOverlayScrollbars() const
 
 void RenderLayerScrollableArea::createScrollbarsController()
 {
-    if (usesAsyncScrolling()) {
-        if (auto scrollbarController = m_layer.page().chrome().client().createScrollbarsController(m_layer.page(), *this)) {
-            setScrollbarsController(WTFMove(scrollbarController));
-            return;
-        }
-    }
-
-    ScrollableArea::createScrollbarsController();
+    m_layer.page().chrome().client().ensureScrollbarsController(m_layer.page(), *this);
 }
 
 static inline RenderElement* rendererForScrollbar(RenderLayerModelObject& renderer)
@@ -2047,6 +2040,11 @@ void RenderLayerScrollableArea::invalidateScrollAnchoringElement()
 {
     if (m_scrollAnchoringController)
         m_scrollAnchoringController->invalidateAnchorElement();
+}
+
+FrameIdentifier RenderLayerScrollableArea::rootFrameID() const
+{
+    return m_layer.renderer().frame().rootFrame().frameID();
 }
 
 

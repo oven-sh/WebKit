@@ -962,7 +962,7 @@ bool RenderLayerCompositor::updateCompositingLayers(CompositingUpdateType update
             scrollingTreeState.parentNodeID = frameHostingNodeForFrame(m_renderView.frame());
 
         auto* scrollingCoordinator = this->scrollingCoordinator();
-        bool hadSubscrollers = scrollingCoordinator ? scrollingCoordinator->hasSubscrollers() : false;
+        bool hadSubscrollers = scrollingCoordinator ? scrollingCoordinator->hasSubscrollers(m_renderView.frame().rootFrame().frameID()) : false;
 
         UpdateBackingTraversalState traversalState;
         Vector<Ref<GraphicsLayer>> childList;
@@ -980,7 +980,7 @@ bool RenderLayerCompositor::updateCompositingLayers(CompositingUpdateType update
         else if (m_rootContentsLayer)
             m_rootContentsLayer->setChildren(WTFMove(childList));
 
-        if (scrollingCoordinator && scrollingCoordinator->hasSubscrollers() != hadSubscrollers)
+        if (scrollingCoordinator && scrollingCoordinator->hasSubscrollers(m_renderView.frame().rootFrame().frameID()) != hadSubscrollers)
             invalidateEventRegionForAllFrames();
 
         resolveScrollingTreeRelationships();
@@ -1420,9 +1420,14 @@ void RenderLayerCompositor::collectViewTransitionNewContentLayers(RenderLayer& l
     if (!capturedRenderer || !capturedRenderer->hasLayer())
         return;
 
+    if (capturedRenderer->isDocumentElementRenderer()) {
+        capturedRenderer = &capturedRenderer->view();
+        ASSERT(capturedRenderer->hasLayer());
+    }
+
     auto& modelObject = downcast<RenderLayerModelObject>(*capturedRenderer);
     if (RenderLayerBacking* backing = modelObject.layer()->backing())
-        childList.append(*backing->childForSuperlayers());
+        childList.append(*backing->childForSuperlayersExcludingViewTransitions());
 }
 
 void RenderLayerCompositor::updateBackingAndHierarchy(RenderLayer& layer, Vector<Ref<GraphicsLayer>>& childLayersOfEnclosingLayer, UpdateBackingTraversalState& traversalState, ScrollingTreeState& scrollingTreeState, OptionSet<UpdateLevel> updateLevel)
@@ -1561,7 +1566,13 @@ void RenderLayerCompositor::updateBackingAndHierarchy(RenderLayer& layer, Vector
             }
         }
 
-        if (!layer.renderer().capturedInViewTransition())
+        // Layers that are captured in a view transition get manually parented to their pseudo in collectViewTransitionNewContentLayers.
+        // The view transition root (when the document element is captured) gets parented in RenderLayerBacking::childForSuperlayers.
+        bool skipAddToEnclosing = layer.renderer().capturedInViewTransition() && !layer.renderer().isDocumentElementRenderer();
+        if (layer.renderer().isViewTransitionRoot() && layer.renderer().document().activeViewTransitionCapturedDocumentElement())
+            skipAddToEnclosing = true;
+
+        if (!skipAddToEnclosing)
             childLayersOfEnclosingLayer.append(*layerBacking->childForSuperlayers());
 
         if (layerBacking->hasAncestorClippingLayers() && layerBacking->ancestorClippingStack()->hasAnyScrollingLayers())
@@ -2705,7 +2716,7 @@ auto RenderLayerCompositor::attachWidgetContentLayersIfNecessary(RenderWidget& r
 
             if (auto pluginScrollingNodeID = renderEmbeddedObject->scrollingNodeID()) {
                 if (isVisible) {
-                    scrollingCoordinator->insertNode(ScrollingNodeType::PluginScrolling, pluginScrollingNodeID, pluginHostingNodeID, 0);
+                    scrollingCoordinator->insertNode(m_renderView.frameView().frame().rootFrame().frameID(), ScrollingNodeType::PluginScrolling, pluginScrollingNodeID, pluginHostingNodeID, 0);
                     renderEmbeddedObject->didAttachScrollingNode();
                 } else
                     scrollingCoordinator->unparentNode(pluginScrollingNodeID);
@@ -2730,7 +2741,7 @@ auto RenderLayerCompositor::attachWidgetContentLayersIfNecessary(RenderWidget& r
         auto* contentsRenderView = frameContentsRenderView(renderer);
         if (auto frameRootScrollingNodeID = contentsRenderView->frameView().scrollingNodeID()) {
             if (isVisible)
-                scrollingCoordinator->insertNode(ScrollingNodeType::Subframe, frameRootScrollingNodeID, frameHostingNodeID, 0);
+                scrollingCoordinator->insertNode(m_renderView.frameView().frame().rootFrame().frameID(), ScrollingNodeType::Subframe, frameRootScrollingNodeID, frameHostingNodeID, 0);
             else
                 scrollingCoordinator->unparentNode(frameRootScrollingNodeID);
         }
@@ -4981,9 +4992,9 @@ ScrollingNodeID RenderLayerCompositor::registerScrollingNodeID(ScrollingCoordina
         nodeID = scrollingCoordinator.uniqueScrollingNodeID();
 
     if (nodeType == ScrollingNodeType::Subframe && !treeState.parentNodeID)
-        nodeID = scrollingCoordinator.createNode(nodeType, nodeID);
+        nodeID = scrollingCoordinator.createNode(m_renderView.frameView().frame().rootFrame().frameID(), nodeType, nodeID);
     else {
-        auto newNodeID = scrollingCoordinator.insertNode(nodeType, nodeID, treeState.parentNodeID.value_or(ScrollingNodeID { }), treeState.nextChildIndex);
+        auto newNodeID = scrollingCoordinator.insertNode(m_renderView.frameView().frame().rootFrame().frameID(), nodeType, nodeID, treeState.parentNodeID.value_or(ScrollingNodeID { }), treeState.nextChildIndex);
         if (newNodeID != nodeID) {
             // We'll get a new nodeID if the type changed (and not if the node is new).
             scrollingCoordinator.unparentChildrenAndDestroyNode(nodeID);
@@ -5292,6 +5303,8 @@ ScrollingNodeID RenderLayerCompositor::updateScrollingNodeForScrollingRole(Rende
             if (auto* scrollableArea = layer.scrollableArea())
                 scrollingCoordinator->setScrollingNodeScrollableAreaGeometry(newNodeID, *scrollableArea);
         }
+        if (auto* scrollableArea = layer.scrollableArea())
+            page().chrome().client().ensureScrollbarsController(page(), *scrollableArea);
     }
 
     return newNodeID;

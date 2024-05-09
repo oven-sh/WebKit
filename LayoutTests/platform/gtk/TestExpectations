@@ -1687,7 +1687,6 @@ webkit.org/b/207711 [ Debug ] http/tests/multipart/multipart-async-image.html [ 
 webkit.org/b/207711 [ Debug ] imported/w3c/web-platform-tests/encoding/legacy-mb-korean/euc-kr/euckr-decode-cseuckr.html [ Timeout ]
 webkit.org/b/207711 [ Debug ] imported/w3c/web-platform-tests/encoding/legacy-mb-korean/euc-kr/euckr-decode-iso-ir-149.html [ Timeout ]
 webkit.org/b/207711 [ Debug ] imported/w3c/web-platform-tests/web-animations/timing-model/animations/update-playback-rate-fast.html [ Timeout ]
-webkit.org/b/207711 imported/blink/storage/indexeddb/blob-valid-after-deletion.html [ Failure Pass Timeout ]
 
 webkit.org/b/210796 http/tests/resourceLoadStatistics/clear-in-memory-and-persistent-store-one-hour.html [ Skip ] # Timeout
 
@@ -2196,6 +2195,9 @@ imported/w3c/web-platform-tests/css/css-pseudo/selection-background-painting-ord
 # Failing preload tests
 imported/w3c/web-platform-tests/preload/preload-time-to-fetch.https.html [ Failure ]
 
+# Failing with skia only with swrast
+webkit.org/b/273396 platform/gtk/fonts/webkit-font-smoothing.html [ ImageOnlyFailure ]
+
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of non-crashing, non-flaky tests failing
 #////////////////////////////////////////////////////////////////////////////////////////
@@ -2494,3 +2496,5 @@ http/tests/security/svg-image-with-cached-remote-image.html [ ImageOnlyFailure ]
 fast/scrolling/gtk/repeated-mouse-wheel-smooth.html [ Timeout ]
 compositing/repaint/copy-forward-dirty-region.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-view-transitions/new-content-scaling.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-view-transitions/web-animations-api.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-view-transitions/massive-element-on-top-of-viewport-partially-onscreen-new.html [ ImageOnlyFailure ]

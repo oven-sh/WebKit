@@ -713,6 +713,8 @@ typedef (FetchRequest or FetchResponse) FetchObject;
     boolean scrollbarUsingDarkAppearance(optional Node? node = null);
     DOMString horizontalScrollbarState(optional Node? node = null);
     DOMString verticalScrollbarState(optional Node? node = null);
+    
+    DOMString scrollbarsControllerTypeForNode(optional Node? node = null);
 
     DOMString scrollingStateTreeAsText();
     DOMString scrollingTreeAsText();
@@ -1348,4 +1350,6 @@ typedef (FetchRequest or FetchResponse) FetchObject;
     undefined setPDFDisplayModeForTesting(Element element, DOMString mode);
 
     readonly attribute DOMString defaultSpatialTrackingLabel;
+
+    boolean isEffectivelyMuted(HTMLMediaElement element);
 };
