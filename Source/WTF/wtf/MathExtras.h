@@ -71,7 +71,7 @@ constexpr double sqrtOfTwoDouble = M_SQRT2;
 constexpr float sqrtOfTwoFloat = static_cast<float>(M_SQRT2);
 #endif
 
-#if COMPILER(MSVC)
+#if OS(WINDOWS)
 
 // Work around a bug in Win, where atan2(+-infinity, +-infinity) yields NaN instead of specific values.
 extern "C" inline double wtf_atan2(double x, double y)
@@ -98,7 +98,7 @@ extern "C" inline double wtf_atan2(double x, double y)
 
 #define atan2(x, y) wtf_atan2(x, y)
 
-#endif // COMPILER(MSVC)
+#endif // OS(WINDOWS)
 
 constexpr double radiansPerDegreeDouble = piDouble / 180.0;
 constexpr double degreesPerRadianDouble = 180.0 / piDouble;
@@ -367,37 +367,6 @@ template<typename T> constexpr bool isGreaterThan(const T& a, const T& b) { retu
 template<typename T> constexpr bool isGreaterThanEqual(const T& a, const T& b) { return a >= b; }
 template<typename T> constexpr bool isInRange(const T& a, const T& min, const T& max) { return a >= min && a <= max; }
 
-#ifndef UINT64_C
-#if COMPILER(MSVC)
-#define UINT64_C(c) c ## ui64
-#else
-#define UINT64_C(c) c ## ull
-#endif
-#endif
-
-#if COMPILER(MINGW64) && (!defined(__MINGW64_VERSION_RC) || __MINGW64_VERSION_RC < 1)
-inline double wtf_pow(double x, double y)
-{
-    // MinGW-w64 has a custom implementation for pow.
-    // This handles certain special cases that are different.
-    if ((x == 0.0 || std::isinf(x)) && std::isfinite(y)) {
-        double f;
-        if (modf(y, &f) != 0.0)
-            return ((x == 0.0) ^ (y > 0.0)) ? std::numeric_limits<double>::infinity() : 0.0;
-    }
-
-    if (x == 2.0) {
-        int yInt = static_cast<int>(y);
-        if (y == yInt)
-            return ldexp(1.0, yInt);
-    }
-
-    return pow(x, y);
-}
-#define pow(x, y) wtf_pow(x, y)
-#endif // COMPILER(MINGW64) && (!defined(__MINGW64_VERSION_RC) || __MINGW64_VERSION_RC < 1)
-
-
 // decompose 'number' to its sign, exponent, and mantissa components.
 // The result is interpreted as:
 //     (sign ? -1 : 1) * pow(2, exponent) * (mantissa / (1 << 52))
@@ -643,24 +612,10 @@ inline unsigned clz(T value)
     using UT = typename std::make_unsigned<T>::type;
     UT uValue = value;
 
-#if COMPILER(GCC_COMPATIBLE)
     constexpr unsigned bitSize64 = sizeof(uint64_t) * CHAR_BIT;
     if (uValue)
         return __builtin_clzll(uValue) - (bitSize64 - bitSize);
     return bitSize;
-#elif COMPILER(MSVC) && !CPU(X86)
-    // Visual Studio 2008 or upper have __lzcnt, but we can't detect Intel AVX at compile time.
-    // So we use bit-scan-reverse operation to calculate clz.
-    // _BitScanReverse64 is defined in X86_64 and ARM in MSVC supported environments.
-    unsigned long ret = 0;
-    if (_BitScanReverse64(&ret, uValue))
-        return bitSize - 1 - ret;
-    return bitSize;
-#else
-    UNUSED_PARAM(bitSize);
-    UNUSED_PARAM(uValue);
-    return clzConstexpr(value);
-#endif
 }
 
 template <typename T>
@@ -690,20 +645,9 @@ inline unsigned ctz(T value)
     using UT = typename std::make_unsigned<T>::type;
     UT uValue = value;
 
-#if COMPILER(GCC_COMPATIBLE)
     if (uValue)
         return __builtin_ctzll(uValue);
     return bitSize;
-#elif COMPILER(MSVC) && !CPU(X86)
-    unsigned long ret = 0;
-    if (_BitScanForward64(&ret, uValue))
-        return ret;
-    return bitSize;
-#else
-    UNUSED_PARAM(bitSize);
-    UNUSED_PARAM(uValue);
-    return ctzConstexpr(value);
-#endif
 }
 
 template<typename T>
@@ -738,7 +682,7 @@ constexpr unsigned getMSBSetConstexpr(T t)
 
 inline uint32_t reverseBits32(uint32_t value)
 {
-#if COMPILER(GCC_COMPATIBLE) && CPU(ARM64)
+#if CPU(ARM64)
     uint32_t result;
     asm ("rbit %w0, %w1"
         : "=r"(result)

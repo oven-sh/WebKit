@@ -1358,8 +1358,6 @@ public:
             GPRInfo::regT13,
             GPRInfo::regT14,
             GPRInfo::regT15,
-#elif CPU(X86_64) && OS(WINDOWS)
-            // No additional registers.
 #elif CPU(X86_64)
             GPRInfo::regT6,
             GPRInfo::regT7,
@@ -1646,13 +1644,12 @@ public:
 #endif
     }
     
-    void callExceptionFuzz(VM&);
+    void callExceptionFuzz(VM&, GPRReg exceptionReg);
     
     enum ExceptionCheckKind { NormalExceptionCheck, InvertedExceptionCheck };
     enum ExceptionJumpWidth { NormalJumpWidth, FarJumpWidth };
-    JS_EXPORT_PRIVATE Jump emitExceptionCheck(
-        VM&, ExceptionCheckKind = NormalExceptionCheck, ExceptionJumpWidth = NormalJumpWidth);
-    JS_EXPORT_PRIVATE Jump emitNonPatchableExceptionCheck(VM&);
+    JS_EXPORT_PRIVATE Jump emitExceptionCheck(VM&, ExceptionCheckKind = NormalExceptionCheck, ExceptionJumpWidth = NormalJumpWidth, GPRReg exceptionReg = InvalidGPRReg);
+    JS_EXPORT_PRIVATE Jump emitNonPatchableExceptionCheck(VM&, GPRReg exceptionReg = InvalidGPRReg);
     Jump emitJumpIfException(VM&);
 
 #if ENABLE(SAMPLING_COUNTERS)
@@ -2101,7 +2098,7 @@ public:
     }
 
 #if ENABLE(WEBASSEMBLY)
-#if CPU(ARM64) || CPU(X86_64) || CPU(RISCV64)
+#if CPU(ARM64) || CPU(X86_64) || CPU(RISCV64) || CPU(ARM_THUMB2)
     JumpList checkWasmStackOverflow(GPRReg instanceGPR, TrustedImm32, GPRReg framePointerGPR);
 #endif
 #endif

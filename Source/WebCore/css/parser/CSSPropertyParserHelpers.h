@@ -64,6 +64,8 @@ RefPtr<CSSPrimitiveValue> consumeFontWeightNumber(CSSParserTokenRange&);
 
 RefPtr<CSSPrimitiveValue> consumeCustomIdent(CSSParserTokenRange&, bool shouldLowercase = false);
 RefPtr<CSSPrimitiveValue> consumeDashedIdent(CSSParserTokenRange&, bool shouldLowercase = false);
+
+StringView consumeStringRaw(CSSParserTokenRange&);
 RefPtr<CSSPrimitiveValue> consumeString(CSSParserTokenRange&);
 
 StringView consumeURLRaw(CSSParserTokenRange&);
@@ -106,8 +108,8 @@ struct FontStyleRaw {
     std::optional<AngleRaw> angle;
 };
 using FontWeightRaw = std::variant<CSSValueID, double>;
-using FontSizeRaw = std::variant<CSSValueID, CSSPropertyParserHelpers::LengthOrPercentRaw>;
-using LineHeightRaw = std::variant<CSSValueID, double, CSSPropertyParserHelpers::LengthOrPercentRaw>;
+using FontSizeRaw = std::variant<CSSValueID, LengthOrPercentRaw>;
+using LineHeightRaw = std::variant<CSSValueID, double, LengthOrPercentRaw>;
 using FontFamilyRaw = std::variant<CSSValueID, AtomString>;
 
 struct FontRaw {
@@ -166,7 +168,8 @@ RefPtr<CSSValue> consumeTextIndent(CSSParserTokenRange&, CSSParserMode);
 RefPtr<CSSValue> consumeTextTransform(CSSParserTokenRange&);
 RefPtr<CSSValue> consumeMarginSide(CSSParserTokenRange&, CSSPropertyID currentShorthand, CSSParserMode);
 RefPtr<CSSValue> consumeMarginTrim(CSSParserTokenRange&);
-RefPtr<CSSValue> consumeSide(CSSParserTokenRange&, CSSPropertyID currentShorthand, CSSParserMode);
+RefPtr<CSSValue> consumeSide(CSSParserTokenRange&, CSSPropertyID currentShorthand, const CSSParserContext&);
+RefPtr<CSSValue> consumeInsetLogicalStartEnd(CSSParserTokenRange&, const CSSParserContext&);
 RefPtr<CSSValue> consumeClip(CSSParserTokenRange&, CSSParserMode);
 RefPtr<CSSValue> consumeTouchAction(CSSParserTokenRange&);
 RefPtr<CSSValue> consumeKeyframesName(CSSParserTokenRange&, const CSSParserContext&);
@@ -254,6 +257,7 @@ RefPtr<CSSValue> consumeAnimationTimelineScroll(CSSParserTokenRange&);
 RefPtr<CSSValue> consumeAnimationTimelineView(CSSParserTokenRange&, const CSSParserContext&);
 RefPtr<CSSValue> consumeViewTimelineInsetListItem(CSSParserTokenRange&, const CSSParserContext&);
 RefPtr<CSSValue> consumeViewTimelineInset(CSSParserTokenRange&, const CSSParserContext&);
+RefPtr<CSSPrimitiveValue> consumeAnchor(CSSParserTokenRange&, CSSParserMode);
 
 RefPtr<CSSValue> consumeDeclarationValue(CSSParserTokenRange&, const CSSParserContext&);
 

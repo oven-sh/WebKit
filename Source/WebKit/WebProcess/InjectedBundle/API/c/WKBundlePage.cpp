@@ -373,16 +373,6 @@ WKStringRef WKBundlePageCopyRenderTreeExternalRepresentationForPrinting(WKBundle
     return WebKit::toCopiedAPI(WebKit::toImpl(pageRef)->renderTreeExternalRepresentationForPrinting());
 }
 
-void WKBundlePageExecuteEditingCommand(WKBundlePageRef pageRef, WKStringRef name, WKStringRef argument)
-{
-    WebKit::toImpl(pageRef)->executeEditingCommand(WebKit::toWTFString(name), WebKit::toWTFString(argument));
-}
-
-bool WKBundlePageIsEditingCommandEnabled(WKBundlePageRef pageRef, WKStringRef name)
-{
-    return WebKit::toImpl(pageRef)->isEditingCommandEnabled(WebKit::toWTFString(name));
-}
-
 void WKBundlePageClearMainFrameName(WKBundlePageRef pageRef)
 {
     WebKit::toImpl(pageRef)->clearMainFrameName();
@@ -566,18 +556,6 @@ void WKBundlePageForceRepaint(WKBundlePageRef page)
 void WKBundlePageFlushPendingEditorStateUpdate(WKBundlePageRef page)
 {
     WebKit::toImpl(page)->flushPendingEditorStateUpdate();
-}
-
-void WKBundlePageSimulateMouseDown(WKBundlePageRef, int, WKPoint, int, WKEventModifiers, double)
-{
-}
-
-void WKBundlePageSimulateMouseUp(WKBundlePageRef, int, WKPoint, int, WKEventModifiers, double)
-{
-}
-
-void WKBundlePageSimulateMouseMotion(WKBundlePageRef, WKPoint, double)
-{
 }
 
 uint64_t WKBundlePageGetRenderTreeSize(WKBundlePageRef pageRef)

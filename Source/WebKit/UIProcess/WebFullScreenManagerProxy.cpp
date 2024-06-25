@@ -29,6 +29,7 @@
 #if ENABLE(FULLSCREEN_API)
 
 #include "APIFullscreenClient.h"
+#include "APIPageConfiguration.h"
 #include "MessageSenderInlines.h"
 #include "WebAutomationSession.h"
 #include "WebFullScreenManagerMessages.h"
@@ -60,12 +61,12 @@ WebFullScreenManagerProxy::WebFullScreenManagerProxy(WebPageProxy& page, WebFull
     , m_logIdentifier(page.logIdentifier())
 #endif
 {
-    m_page.process().addMessageReceiver(Messages::WebFullScreenManagerProxy::messageReceiverName(), m_page.webPageID(), *this);
+    m_page.legacyMainFrameProcess().addMessageReceiver(Messages::WebFullScreenManagerProxy::messageReceiverName(), m_page.webPageID(), *this);
 }
 
 WebFullScreenManagerProxy::~WebFullScreenManagerProxy()
 {
-    m_page.process().removeMessageReceiver(Messages::WebFullScreenManagerProxy::messageReceiverName(), m_page.webPageID());
+    m_page.legacyMainFrameProcess().removeMessageReceiver(Messages::WebFullScreenManagerProxy::messageReceiverName(), m_page.webPageID());
     m_client.closeFullScreenManager();
     callCloseCompletionHandlers();
 }
@@ -86,7 +87,7 @@ void WebFullScreenManagerProxy::didEnterFullScreen()
     m_page.send(Messages::WebFullScreenManager::DidEnterFullScreen());
 
     if (m_page.isControlledByAutomation()) {
-        if (WebAutomationSession* automationSession = m_page.process().processPool().automationSession())
+        if (WebAutomationSession* automationSession = m_page.configuration().processPool().automationSession())
             automationSession->didEnterFullScreenForPage(m_page);
     }
 }
@@ -120,7 +121,7 @@ void WebFullScreenManagerProxy::didExitFullScreen()
     m_page.send(Messages::WebFullScreenManager::DidExitFullScreen());
     
     if (m_page.isControlledByAutomation()) {
-        if (WebAutomationSession* automationSession = m_page.process().processPool().automationSession())
+        if (WebAutomationSession* automationSession = m_page.configuration().processPool().automationSession())
             automationSession->didExitFullScreenForPage(m_page);
     }
     callCloseCompletionHandlers();
@@ -131,10 +132,10 @@ void WebFullScreenManagerProxy::setAnimatingFullScreen(bool animating)
     m_page.send(Messages::WebFullScreenManager::SetAnimatingFullScreen(animating));
 }
 
-void WebFullScreenManagerProxy::requestRestoreFullScreen()
+void WebFullScreenManagerProxy::requestRestoreFullScreen(CompletionHandler<void(bool)>&& completionHandler)
 {
     ALWAYS_LOG(LOGIDENTIFIER);
-    m_page.send(Messages::WebFullScreenManager::RequestRestoreFullScreen());
+    m_page.sendWithAsyncReply(Messages::WebFullScreenManager::RequestRestoreFullScreen(), WTFMove(completionHandler));
 }
 
 void WebFullScreenManagerProxy::requestExitFullScreen()
@@ -204,8 +205,8 @@ void WebFullScreenManagerProxy::enterFullScreen(bool blocksReturnToFullscreenFro
 #endif // QUICKLOOK_FULLSCREEN
 #endif
 
-    auto videoDimensions = mediaDetails.videoDimensions;
-    m_client.enterFullScreen(videoDimensions);
+    auto mediaDimensions = mediaDetails.mediaDimensions;
+    m_client.enterFullScreen(mediaDimensions);
 #else
     UNUSED_PARAM(mediaDetails);
     m_client.enterFullScreen();
@@ -231,7 +232,7 @@ void WebFullScreenManagerProxy::prepareQuickLookImageURL(CompletionHandler<void(
         auto [filePath, fileHandle] = FileSystem::openTemporaryFile("QuickLook"_s, suffix);
         ASSERT(FileSystem::isHandleValid(fileHandle));
 
-        size_t byteCount = FileSystem::writeToFile(fileHandle, buffer->data(), buffer->size());
+        size_t byteCount = FileSystem::writeToFile(fileHandle, buffer->span());
         ASSERT_UNUSED(byteCount, byteCount == buffer->size());
         FileSystem::closeFile(fileHandle);
 

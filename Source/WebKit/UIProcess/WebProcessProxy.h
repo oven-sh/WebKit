@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2010-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -40,13 +40,13 @@
 #include "SpeechRecognitionServer.h"
 #include "UserContentControllerIdentifier.h"
 #include "VisibleWebPageCounter.h"
-#include "WebConnectionToWebProcess.h"
 #include "WebPageProxyIdentifier.h"
 #include <WebCore/CrossOriginMode.h>
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/MediaProducer.h>
 #include <WebCore/PageIdentifier.h>
 #include <WebCore/ProcessIdentifier.h>
+#include <WebCore/ProcessIdentity.h>
 #include <WebCore/RegistrableDomain.h>
 #include <WebCore/SharedStringHash.h>
 #include <pal/SessionID.h>
@@ -91,7 +91,10 @@ class ResourceRequest;
 struct NotificationData;
 struct PluginInfo;
 struct PrewarmInformation;
+struct WebProcessCreationParameters;
 class SecurityOriginData;
+struct WrappedCryptoKey;
+
 enum class PermissionName : uint8_t;
 enum class ThirdPartyCookieBlockingMode : uint8_t;
 using FramesPerSecond = unsigned;
@@ -106,7 +109,6 @@ namespace WebKit {
 
 class AudioSessionRoutingArbitratorProxy;
 class ModelProcessProxy;
-class ObjCObjectGraph;
 class PageClient;
 class ProvisionalPageProxy;
 class RemotePageProxy;
@@ -176,8 +178,7 @@ public:
     static void forWebPagesWithOrigin(PAL::SessionID, const WebCore::SecurityOriginData&, const Function<void(WebPageProxy&)>&);
     static Vector<std::pair<WebCore::ProcessIdentifier, WebCore::RegistrableDomain>> allowedFirstPartiesForCookies();
 
-    WebConnection* webConnection() const { return m_webConnection.get(); }
-    RefPtr<WebConnection> protectedWebConnection() const { return m_webConnection; }
+    void initializeWebProcess(WebProcessCreationParameters&&);
 
     unsigned suspendedPageCount() const { return m_suspendedPages.computeSize(); }
     void addSuspendedPageProxy(SuspendedPageProxy&);
@@ -310,11 +311,6 @@ public:
 
     RefPtr<API::Object> transformHandlesToObjects(API::Object*);
     static RefPtr<API::Object> transformObjectsToHandles(API::Object*);
-
-#if PLATFORM(COCOA)
-    RefPtr<ObjCObjectGraph> transformHandlesToObjects(ObjCObjectGraph&);
-    static RefPtr<ObjCObjectGraph> transformObjectsToHandles(ObjCObjectGraph&);
-#endif
 
     void windowServerConnectionStateChanged();
 
@@ -486,7 +482,7 @@ public:
 #endif
     void getNotifications(const URL&, const String&, CompletionHandler<void(Vector<WebCore::NotificationData>&&)>&&);
     void wrapCryptoKey(const Vector<uint8_t>&, CompletionHandler<void(std::optional<Vector<uint8_t>>&&)>&&);
-    void unwrapCryptoKey(const Vector<uint8_t>&, CompletionHandler<void(std::optional<Vector<uint8_t>>&&)>&&);
+    void unwrapCryptoKey(const struct WebCore::WrappedCryptoKey&, CompletionHandler<void(std::optional<Vector<uint8_t>>&&)>&&);
 
     void setAppBadge(std::optional<WebPageProxyIdentifier>, const WebCore::SecurityOriginData&, std::optional<uint64_t> badge);
     void setClientBadge(WebPageProxyIdentifier, const WebCore::SecurityOriginData&, std::optional<uint64_t> badge);
@@ -519,7 +515,9 @@ public:
     Seconds totalBackgroundTime() const;
     Seconds totalSuspendedTime() const;
 
-protected:
+private:
+    Type type() const final { return Type::WebContent; }
+
     WebProcessProxy(WebProcessPool&, WebsiteDataStore*, IsPrewarmed, WebCore::CrossOriginMode, LockdownMode);
 
     // AuxiliaryProcessProxy
@@ -544,7 +542,6 @@ protected:
 
     void validateFreezerStatus();
 
-private:
     std::optional<Vector<uint8_t>> getWebCryptoMasterKey();
     using WebProcessProxyMap = HashMap<WebCore::ProcessIdentifier, CheckedRef<WebProcessProxy>>;
     static WebProcessProxyMap& allProcessMap();
@@ -574,7 +571,8 @@ private:
     void getNetworkProcessConnection(CompletionHandler<void(NetworkProcessConnectionInfo&&)>&&);
 
 #if ENABLE(GPU_PROCESS)
-    void createGPUProcessConnection(IPC::Connection::Handle&&, WebKit::GPUProcessConnectionParameters&&);
+    void createGPUProcessConnection(IPC::Connection::Handle&&);
+    void gpuProcessConnectionDidBecomeUnresponsive();
 #endif
 
 #if ENABLE(MODEL_PROCESS)
@@ -590,7 +588,6 @@ private:
     void processDidTerminateOrFailedToLaunch(ProcessTerminationReason);
 
     // IPC::Connection::Client
-    friend class WebConnectionToWebProcess;
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
     bool didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&) override;
     void didClose(IPC::Connection&) final;
@@ -673,7 +670,6 @@ private:
 
     BackgroundProcessResponsivenessTimer m_backgroundResponsivenessTimer;
     
-    RefPtr<WebConnectionToWebProcess> m_webConnection;
     WeakOrStrongPtr<WebProcessPool> m_processPool; // Pre-warmed and cached processes do not hold a strong reference to their pool.
 
     bool m_mayHaveUniversalFileReadSandboxExtension; // True if a read extension for "/" was ever granted - we don't track whether WebProcess still has it.
@@ -791,8 +787,13 @@ private:
     Seconds m_totalForegroundTime;
     Seconds m_totalBackgroundTime;
     Seconds m_totalSuspendedTime;
+    WebCore::ProcessIdentity m_processIdentity;
 };
 
 WTF::TextStream& operator<<(WTF::TextStream&, const WebProcessProxy&);
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::WebProcessProxy)
+static bool isType(const WebKit::AuxiliaryProcessProxy& process) { return process.type() == WebKit::AuxiliaryProcessProxy::Type::WebContent; }
+SPECIALIZE_TYPE_TRAITS_END()

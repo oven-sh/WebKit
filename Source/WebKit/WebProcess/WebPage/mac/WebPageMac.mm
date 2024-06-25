@@ -202,7 +202,7 @@ void WebPage::getPlatformEditorState(LocalFrame& frame, EditorState& result) con
 
     auto quads = RenderObject::absoluteTextQuads(*selectedRange);
     if (!quads.isEmpty())
-        postLayoutData.selectionBoundingRect = frame.view()->contentsToWindow(quads[0].enclosingBoundingBox());
+        postLayoutData.selectionBoundingRect = frame.view()->contentsToWindow(enclosingIntRect(unitedBoundingBoxes(quads)));
     else if (selection.isCaret()) {
         // Quads will be empty at the start of a paragraph.
         postLayoutData.selectionBoundingRect = frame.view()->contentsToWindow(frame.selection().absoluteCaretBounds());
@@ -365,7 +365,7 @@ void WebPage::attributedSubstringForCharacterRangeAsync(const EditingRange& edit
         return;
     }
 
-    auto attributedString = editingAttributedString(*range, IncludeImages::No).nsAttributedString();
+    auto attributedString = editingAttributedString(*range, { }).nsAttributedString();
 
     // WebCore::editingAttributedStringFromRange() insists on inserting a trailing
     // whitespace at the end of the string which breaks the ATOK input method.  <rdar://problem/5400551>
@@ -930,7 +930,14 @@ void WebPage::performImmediateActionHitTestAtLocation(WebCore::FrameIdentifier f
         if (RefPtr pluginView = static_cast<PluginView*>(embedOrObject->pluginWidget())) {
             if (pluginView->performImmediateActionHitTestAtLocation(locationInViewCoordinates, immediateActionResult)) {
                 // FIXME (144030): Focus does not seem to get set to the PDF when invoking the menu.
-                if (RefPtr pluginDocument = dynamicDowncast<PluginDocument>(element->document()))
+                RefPtr pluginDocument = dynamicDowncast<PluginDocument>(element->document());
+                auto shouldFocusPluginDocument = [&pluginDocument, &immediateActionResult] {
+                    if (!pluginDocument)
+                        return false;
+                    return !immediateActionResult.isActivePDFAnnotation;
+                }();
+
+                if (shouldFocusPluginDocument)
                     pluginDocument->setFocusedElement(element.get());
             }
         }

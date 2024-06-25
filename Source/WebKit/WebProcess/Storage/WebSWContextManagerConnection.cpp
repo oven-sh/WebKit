@@ -55,7 +55,9 @@
 #include "WebSWServerToContextConnectionMessages.h"
 #include "WebServiceWorkerFetchTaskClient.h"
 #include "WebSocketProvider.h"
+#include "WebStorageProvider.h"
 #include "WebUserContentController.h"
+#include "WebWorkerClient.h"
 #include <WebCore/EditorClient.h>
 #include <WebCore/EmptyClients.h>
 #include <WebCore/MessageWithMessagePorts.h>
@@ -150,11 +152,11 @@ void WebSWContextManagerConnection::updateAppInitiatedValue(ServiceWorkerIdentif
         serviceWorkerThreadProxy->setLastNavigationWasAppInitiated(lastNavigationWasAppInitiated == WebCore::LastNavigationWasAppInitiated::Yes);
 }
 
-void WebSWContextManagerConnection::installServiceWorker(ServiceWorkerContextData&& contextData, ServiceWorkerData&& workerData, String&& userAgent, WorkerThreadMode workerThreadMode, ServiceWorkerIsInspectable inspectable)
+void WebSWContextManagerConnection::installServiceWorker(ServiceWorkerContextData&& contextData, ServiceWorkerData&& workerData, String&& userAgent, WorkerThreadMode workerThreadMode, ServiceWorkerIsInspectable inspectable, OptionSet<AdvancedPrivacyProtections> advancedPrivacyProtections)
 {
     assertIsCurrent(m_queue.get());
 
-    callOnMainRunLoopAndWait([this, protectedThis = Ref { *this }, contextData = WTFMove(contextData).isolatedCopy(), workerData = WTFMove(workerData).isolatedCopy(), userAgent = WTFMove(userAgent).isolatedCopy(), workerThreadMode, inspectable]() mutable {
+    callOnMainRunLoopAndWait([this, protectedThis = Ref { *this }, contextData = WTFMove(contextData).isolatedCopy(), workerData = WTFMove(workerData).isolatedCopy(), userAgent = WTFMove(userAgent).isolatedCopy(), workerThreadMode, inspectable, advancedPrivacyProtections]() mutable {
         auto pageConfiguration = pageConfigurationWithEmptyClients(m_pageID, WebProcess::singleton().sessionID());
         pageConfiguration.badgeClient = WebBadgeClient::create();
         pageConfiguration.databaseProvider = WebDatabaseProvider::getOrCreate(m_pageGroupID);
@@ -166,6 +168,8 @@ void WebSWContextManagerConnection::installServiceWorker(ServiceWorkerContextDat
 #if ENABLE(WEB_RTC)
         pageConfiguration.webRTCProvider = makeUniqueRef<RemoteWorkerLibWebRTCProvider>();
 #endif
+        pageConfiguration.storageProvider = makeUniqueRef<WebStorageProvider>(WebProcess::singleton().mediaKeysStorageDirectory(), WebProcess::singleton().mediaKeysStorageSalt());
+
         if (auto* serviceWorkerPage = m_serviceWorkerPageIdentifier ? Page::serviceWorkerPage(*m_serviceWorkerPageIdentifier) : nullptr)
             pageConfiguration.corsDisablingPatterns = serviceWorkerPage->corsDisablingPatterns();
 
@@ -193,7 +197,7 @@ void WebSWContextManagerConnection::installServiceWorker(ServiceWorkerContextDat
         if (WebProcess::singleton().isLockdownModeEnabled())
             WebPage::adjustSettingsForLockdownMode(page->settings(), m_preferencesStore ? &m_preferencesStore.value() : nullptr);
 
-        page->setupForRemoteWorker(contextData.scriptURL, contextData.registration.key.topOrigin(), contextData.referrerPolicy);
+        page->setupForRemoteWorker(contextData.scriptURL, contextData.registration.key.topOrigin(), contextData.referrerPolicy, advancedPrivacyProtections);
 #if ENABLE(REMOTE_INSPECTOR)
         page->setInspectable(inspectable == ServiceWorkerIsInspectable::Yes);
 #endif // ENABLE(REMOTE_INSPECTOR)
@@ -203,7 +207,10 @@ void WebSWContextManagerConnection::installServiceWorker(ServiceWorkerContextDat
         notificationClient = makeUnique<WebNotificationClient>(nullptr);
 #endif
 
-        auto serviceWorkerThreadProxy = ServiceWorkerThreadProxy::create(WTFMove(page), WTFMove(contextData), WTFMove(workerData), WTFMove(effectiveUserAgent), workerThreadMode, WebProcess::singleton().cacheStorageProvider(), WTFMove(notificationClient));
+        auto serviceWorkerThreadProxy = ServiceWorkerThreadProxy::create(Ref { page }, WTFMove(contextData), WTFMove(workerData), WTFMove(effectiveUserAgent), workerThreadMode, WebProcess::singleton().cacheStorageProvider(), WTFMove(notificationClient));
+
+        auto workerClient = WebWorkerClient::create(WTFMove(page), serviceWorkerThreadProxy->thread());
+        serviceWorkerThreadProxy->thread().setWorkerClient(workerClient.moveToUniquePtr());
 
         if (lastNavigationWasAppInitiated)
             serviceWorkerThreadProxy->setLastNavigationWasAppInitiated(lastNavigationWasAppInitiated == WebCore::LastNavigationWasAppInitiated::Yes);

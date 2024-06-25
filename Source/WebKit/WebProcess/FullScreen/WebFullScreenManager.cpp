@@ -225,45 +225,47 @@ void WebFullScreenManager::enterFullScreenForElement(WebCore::Element* element, 
 #if PLATFORM(VISION) && ENABLE(QUICKLOOK_FULLSCREEN)
     CheckedPtr renderImage = dynamicDowncast<RenderImage>(element->renderer());
     if (renderImage) {
-        auto getImageResourceHandle = [&]() -> std::optional<SharedMemory::Handle> {
-            if (!renderImage->cachedImage() || renderImage->cachedImage()->errorOccurred())
-                return std::nullopt;
+        auto getImageMediaDetails = [&]() -> FullScreenMediaDetails {
+            if (!renderImage)
+                return { };
 
-            auto* image = renderImage->cachedImage()->image();
+            auto* cachedImage = renderImage->cachedImage();
+            if (!cachedImage || cachedImage->errorOccurred())
+                return { };
+
+            RefPtr image = cachedImage->image();
             if (!image || !image->shouldUseQuickLookForFullscreen())
-                return std::nullopt;
+                return { };
 
-            auto* buffer = renderImage->cachedImage()->resourceBuffer();
+            auto* buffer = cachedImage->resourceBuffer();
             if (!buffer)
-                return std::nullopt;
+                return { };
+
+            auto imageSize = image->size();
+
+            auto mimeType = image->mimeType();
+            if (!MIMETypeRegistry::isSupportedImageMIMEType(mimeType))
+                mimeType = MIMETypeRegistry::mimeTypeForExtension(image->filenameExtension());
+            if (!MIMETypeRegistry::isSupportedImageMIMEType(mimeType))
+                mimeType = MIMETypeRegistry::mimeTypeForPath(cachedImage->url().string());
+            if (!MIMETypeRegistry::isSupportedImageMIMEType(mimeType))
+                return { };
 
             auto sharedMemoryBuffer = SharedMemory::copyBuffer(*buffer);
             if (!sharedMemoryBuffer)
-                return std::nullopt;
+                return { };
 
-            return sharedMemoryBuffer->createHandle(SharedMemory::Protection::ReadOnly);
+            auto imageResourceHandle = sharedMemoryBuffer->createHandle(SharedMemory::Protection::ReadOnly);
+
+            return {
+                FullScreenMediaDetails::Type::Image,
+                imageSize,
+                mimeType,
+                imageResourceHandle
+            };
         };
 
-        auto mimeType = emptyString();
-        if (auto* cachedImage = renderImage->cachedImage()) {
-            if (RefPtr image = cachedImage->image()) {
-                mimeType = image->mimeType();
-
-                if (!MIMETypeRegistry::isSupportedImageMIMEType(mimeType))
-                    mimeType = MIMETypeRegistry::mimeTypeForExtension(image->filenameExtension());
-            }
-            if (!MIMETypeRegistry::isSupportedImageMIMEType(mimeType))
-                mimeType = MIMETypeRegistry::mimeTypeForPath(cachedImage->url().string());
-        }
-
-        if (MIMETypeRegistry::isSupportedImageMIMEType(mimeType)) {
-            mediaDetails = {
-                FullScreenMediaDetails::Type::Image,
-                { },
-                mimeType,
-                getImageResourceHandle()
-            };
-        }
+        mediaDetails = getImageMediaDetails();
     }
 #endif
 
@@ -470,7 +472,7 @@ void WebFullScreenManager::setAnimatingFullScreen(bool animating)
     m_element->document().fullscreenManager().setAnimatingFullscreen(animating);
 }
 
-void WebFullScreenManager::requestRestoreFullScreen()
+void WebFullScreenManager::requestRestoreFullScreen(CompletionHandler<void(bool)>&& completionHandler)
 {
     ASSERT(!m_element);
     if (m_element)
@@ -484,7 +486,7 @@ void WebFullScreenManager::requestRestoreFullScreen()
 
     ALWAYS_LOG(LOGIDENTIFIER, "<", element->tagName(), " id=\"", element->getIdAttribute(), "\">");
     WebCore::UserGestureIndicator gestureIndicator(WebCore::IsProcessingUserGesture::Yes, &element->document());
-    element->document().fullscreenManager().requestFullscreenForElement(*element, nullptr, WebCore::FullscreenManager::ExemptIFrameAllowFullscreenRequirement);
+    element->document().fullscreenManager().requestFullscreenForElement(*element, nullptr, WebCore::FullscreenManager::ExemptIFrameAllowFullscreenRequirement, WTFMove(completionHandler));
 }
 
 void WebFullScreenManager::requestExitFullScreen()

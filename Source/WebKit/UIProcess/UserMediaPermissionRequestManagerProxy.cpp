@@ -20,6 +20,7 @@
 #include "config.h"
 #include "UserMediaPermissionRequestManagerProxy.h"
 
+#include "APIPageConfiguration.h"
 #include "APISecurityOrigin.h"
 #include "APIUIClient.h"
 #include "DeviceIdHashSaltStorage.h"
@@ -112,7 +113,7 @@ UserMediaPermissionRequestManagerProxy::~UserMediaPermissionRequestManagerProxy(
 {
     protectedPage()->sendWithAsyncReply(Messages::WebPage::StopMediaCapture { MediaProducerMediaCaptureKind::EveryKind }, [] { });
 #if ENABLE(MEDIA_STREAM)
-    UserMediaProcessManager::singleton().revokeSandboxExtensionsIfNeeded(page().protectedProcess());
+    UserMediaProcessManager::singleton().revokeSandboxExtensionsIfNeeded(page().protectedLegacyMainFrameProcess());
     proxies().remove(*this);
 #endif
     invalidatePendingRequests();
@@ -318,7 +319,7 @@ void UserMediaPermissionRequestManagerProxy::finishGrantingRequest(UserMediaPerm
         Vector<SandboxExtension::Handle> handles;
 #if PLATFORM(COCOA)
         if (!m_hasCreatedSandboxExtensionForTCCD && doesPageNeedTCCD(page)) {
-            handles = SandboxExtension::createHandlesForMachLookup({ "com.apple.tccd"_s }, page->process().auditToken(), SandboxExtension::MachBootstrapOptions::EnableMachBootstrap);
+            handles = SandboxExtension::createHandlesForMachLookup({ "com.apple.tccd"_s }, page->legacyMainFrameProcess().auditToken(), SandboxExtension::MachBootstrapOptions::EnableMachBootstrap);
             m_hasCreatedSandboxExtensionForTCCD = true;
         }
 #endif
@@ -327,7 +328,7 @@ void UserMediaPermissionRequestManagerProxy::finishGrantingRequest(UserMediaPerm
             if (!weakThis)
                 return;
             if (!--m_hasPendingCapture)
-                UserMediaProcessManager::singleton().revokeSandboxExtensionsIfNeeded(this->page().protectedProcess());
+                UserMediaProcessManager::singleton().revokeSandboxExtensionsIfNeeded(this->page().protectedLegacyMainFrameProcess());
         });
 
         processNextUserMediaRequestIfNeeded();
@@ -678,7 +679,7 @@ void UserMediaPermissionRequestManagerProxy::processUserMediaPermissionValidRequ
     }
 
     if (page->isControlledByAutomation()) {
-        if (WebAutomationSession* automationSession = page->process().processPool().automationSession()) {
+        if (WebAutomationSession* automationSession = page->configuration().processPool().automationSession()) {
             ALWAYS_LOG(LOGIDENTIFIER, currentUserMediaRequest->userMediaID().toUInt64(), ", page controlled by automation");
             if (automationSession->shouldAllowGetUserMediaForPage(page))
                 grantRequest(*currentUserMediaRequest);
@@ -1008,7 +1009,7 @@ void UserMediaPermissionRequestManagerProxy::syncWithWebCorePrefs() const
 
 #if ENABLE(GPU_PROCESS)
     if (page->preferences().captureAudioInGPUProcessEnabled() || page->preferences().captureVideoInGPUProcessEnabled())
-        page->process().protectedProcessPool()->ensureProtectedGPUProcess()->setUseMockCaptureDevices(mockDevicesEnabled);
+        page->legacyMainFrameProcess().protectedProcessPool()->ensureProtectedGPUProcess()->setUseMockCaptureDevices(mockDevicesEnabled);
 #endif
 
 #if HAVE(SC_CONTENT_SHARING_PICKER)
@@ -1016,7 +1017,7 @@ void UserMediaPermissionRequestManagerProxy::syncWithWebCorePrefs() const
 
 #if ENABLE(GPU_PROCESS)
     if (useSharingPicker)
-        page->process().protectedProcessPool()->ensureProtectedGPUProcess()->setUseSCContentSharingPicker(useSharingPicker);
+        page->legacyMainFrameProcess().protectedProcessPool()->ensureProtectedGPUProcess()->setUseSCContentSharingPicker(useSharingPicker);
 #endif
 
     PlatformMediaSessionManager::setUseSCContentSharingPicker(useSharingPicker);
@@ -1036,7 +1037,7 @@ void UserMediaPermissionRequestManagerProxy::captureStateChanged(MediaProducerMe
 
 #if ENABLE(MEDIA_STREAM)
     if (!m_hasPendingCapture)
-        UserMediaProcessManager::singleton().revokeSandboxExtensionsIfNeeded(page->protectedProcess());
+        UserMediaProcessManager::singleton().revokeSandboxExtensionsIfNeeded(page->protectedLegacyMainFrameProcess());
 
     if (m_captureState == (newState & activeCaptureMask))
         return;

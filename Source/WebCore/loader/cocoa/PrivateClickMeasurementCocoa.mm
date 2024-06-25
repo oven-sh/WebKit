@@ -26,6 +26,8 @@
 #import "config.h"
 #import "PrivateClickMeasurement.h"
 
+#import <wtf/cocoa/SpanCocoa.h>
+
 #import <pal/cocoa/CryptoKitPrivateSoftLink.h>
 
 namespace WebCore {
@@ -50,7 +52,7 @@ std::optional<String> PrivateClickMeasurement::calculateAndUpdateUnlinkableToken
     {
         auto serverPublicKeyData = base64URLDecode(serverPublicKeyBase64URL);
         if (!serverPublicKeyData)
-            return makeString("Could not decode the ", contextForLogMessage, "'s public key data.");
+            return makeString("Could not decode the "_s, contextForLogMessage, "'s public key data."_s);
         auto serverPublicKey = adoptNS([[NSData alloc] initWithBytes:serverPublicKeyData->data() length:serverPublicKeyData->size()]);
 
         NSError* nsError = 0;
@@ -58,7 +60,7 @@ std::optional<String> PrivateClickMeasurement::calculateAndUpdateUnlinkableToken
         if (nsError)
             return nsError.localizedDescription;
         if (!unlinkableToken.blinder)
-            return makeString("Did not get a ", contextForLogMessage, " unlinkable token blinder.");
+            return makeString("Did not get a "_s, contextForLogMessage, " unlinkable token blinder."_s);
     }
 
     NSError* nsError = 0;
@@ -66,9 +68,9 @@ std::optional<String> PrivateClickMeasurement::calculateAndUpdateUnlinkableToken
     if (nsError)
         return nsError.localizedDescription;
     if (!unlinkableToken.waitingToken)
-        return makeString("Did not get a ", contextForLogMessage, " unlinkable token waiting token.");
+        return makeString("Did not get a "_s, contextForLogMessage, " unlinkable token waiting token."_s);
 
-    unlinkableToken.valueBase64URL = base64URLEncodeToString([unlinkableToken.waitingToken blindedMessage].bytes, [unlinkableToken.waitingToken blindedMessage].length);
+    unlinkableToken.valueBase64URL = base64URLEncodeToString(span([unlinkableToken.waitingToken blindedMessage]));
     return std::nullopt;
 #else
     UNUSED_PARAM(serverPublicKeyBase64URL);
@@ -101,12 +103,12 @@ std::optional<String> PrivateClickMeasurement::calculateAndUpdateSecretToken(con
 {
 #if HAVE(RSA_BSSA)
     if (!unlinkableToken.waitingToken)
-        return makeString("Did not find a ", contextForLogMessage, " unlinkable token waiting token.");
+        return makeString("Did not find a "_s, contextForLogMessage, " unlinkable token waiting token."_s);
 
     {
         auto serverResponseData = base64URLDecode(serverResponseBase64URL);
         if (!serverResponseData)
-            return makeString("Could not decode ", contextForLogMessage, " response data.");
+            return makeString("Could not decode "_s, contextForLogMessage, " response data."_s);
         auto serverResponse = adoptNS([[NSData alloc] initWithBytes:serverResponseData->data() length:serverResponseData->size()]);
 
         NSError* nsError = 0;
@@ -114,12 +116,12 @@ std::optional<String> PrivateClickMeasurement::calculateAndUpdateSecretToken(con
         if (nsError)
             return nsError.localizedDescription;
         if (!unlinkableToken.readyToken)
-            return makeString("Did not get a ", contextForLogMessage, " unlinkable token ready token.");
+            return makeString("Did not get a "_s, contextForLogMessage, " unlinkable token ready token."_s);
     }
 
-    secretToken.tokenBase64URL = base64URLEncodeToString([unlinkableToken.readyToken tokenContent].bytes, [unlinkableToken.readyToken tokenContent].length);
-    secretToken.keyIDBase64URL = base64URLEncodeToString([unlinkableToken.readyToken keyId].bytes, [unlinkableToken.readyToken keyId].length);
-    secretToken.signatureBase64URL = base64URLEncodeToString([unlinkableToken.readyToken signature].bytes, [unlinkableToken.readyToken signature].length);
+    secretToken.tokenBase64URL = base64URLEncodeToString(span([unlinkableToken.readyToken tokenContent]));
+    secretToken.keyIDBase64URL = base64URLEncodeToString(span([unlinkableToken.readyToken keyId]));
+    secretToken.signatureBase64URL = base64URLEncodeToString(span([unlinkableToken.readyToken signature]));
 
     return std::nullopt;
 #else

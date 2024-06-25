@@ -1469,6 +1469,29 @@ ANGLE_EXPORT void GL_APIENTRY GL_MaxShaderCompilerThreadsKHR(GLuint count);
 
 // GL_KHR_robust_buffer_access_behavior
 
+// GL_KHR_robustness
+ANGLE_EXPORT GLenum GL_APIENTRY GL_GetGraphicsResetStatusKHR();
+ANGLE_EXPORT void GL_APIENTRY GL_GetnUniformfvKHR(GLuint program,
+                                                  GLint location,
+                                                  GLsizei bufSize,
+                                                  GLfloat *params);
+ANGLE_EXPORT void GL_APIENTRY GL_GetnUniformivKHR(GLuint program,
+                                                  GLint location,
+                                                  GLsizei bufSize,
+                                                  GLint *params);
+ANGLE_EXPORT void GL_APIENTRY GL_GetnUniformuivKHR(GLuint program,
+                                                   GLint location,
+                                                   GLsizei bufSize,
+                                                   GLuint *params);
+ANGLE_EXPORT void GL_APIENTRY GL_ReadnPixelsKHR(GLint x,
+                                                GLint y,
+                                                GLsizei width,
+                                                GLsizei height,
+                                                GLenum format,
+                                                GLenum type,
+                                                GLsizei bufSize,
+                                                void *data);
+
 // GL_KHR_texture_compression_astc_hdr
 
 // GL_KHR_texture_compression_astc_ldr
@@ -1658,6 +1681,8 @@ ANGLE_EXPORT void GL_APIENTRY GL_ProgramBinaryOES(GLuint program,
                                                   const void *binary,
                                                   GLint length);
 
+// GL_OES_gpu_shader5
+
 // GL_OES_mapbuffer
 ANGLE_EXPORT void GL_APIENTRY GL_GetBufferPointervOES(GLenum target, GLenum pname, void **params);
 ANGLE_EXPORT void *GL_APIENTRY GL_MapBufferOES(GLenum target, GLenum access);
@@ -1713,6 +1738,9 @@ ANGLE_EXPORT void GL_APIENTRY GL_MinSampleShadingOES(GLfloat value);
 // GL_OES_standard_derivatives
 
 // GL_OES_surfaceless_context
+
+// GL_OES_tessellation_shader
+ANGLE_EXPORT void GL_APIENTRY GL_PatchParameteriOES(GLenum pname, GLint value);
 
 // GL_OES_texture_3D
 ANGLE_EXPORT void GL_APIENTRY GL_CompressedTexImage3DOES(GLenum target,

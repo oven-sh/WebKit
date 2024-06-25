@@ -86,10 +86,10 @@ bool GraphicsContextGLANGLE::initialize()
     if (!platformInitializeContext())
         return false;
 
-    String extensionsString = String::fromLatin1(reinterpret_cast<const char*>(GL_GetString(GL_EXTENSIONS)));
+    String extensionsString = String::fromLatin1(byteCast<char>(GL_GetString(GL_EXTENSIONS)));
     for (auto& extension : extensionsString.split(' '))
         m_availableExtensions.add(extension);
-    extensionsString = String::fromLatin1(reinterpret_cast<const char*>(GL_GetString(GL_REQUESTABLE_EXTENSIONS_ANGLE)));
+    extensionsString = String::fromLatin1(byteCast<char>(GL_GetString(GL_REQUESTABLE_EXTENSIONS_ANGLE)));
     for (auto& extension : extensionsString.split(' '))
         m_requestableExtensions.add(extension);
 
@@ -162,6 +162,21 @@ bool GraphicsContextGLANGLE::initialize()
         ASSERT(m_displayObj);
         usedDisplays().add(m_displayObj);
     }
+
+    if (supportsExtension("GL_KHR_debug"_s)) {
+        ensureExtensionEnabled("GL_KHR_debug"_s);
+        GL_Enable(DEBUG_OUTPUT);
+        GL_Enable(DEBUG_OUTPUT_SYNCHRONOUS);
+        GL_DebugMessageControlKHR(DONT_CARE, DONT_CARE, DONT_CARE, 0, nullptr, 0);
+        GL_DebugMessageControlKHR(DEBUG_SOURCE_API, DONT_CARE, DONT_CARE, 0, nullptr, 1);
+        auto debugMessageCallback = [](GCGLenum, GCGLenum type, GCGLenum id, GCGLenum severity, GCGLsizei length, const GCGLchar* message, const void* context) {
+            auto* gl = reinterpret_cast<const GraphicsContextGLANGLE*>(context);
+            if (gl->m_client)
+                gl->m_client->addDebugMessage(type, id, severity, String { std::span { message, static_cast<size_t>(length) } });
+        };
+        GL_DebugMessageCallbackKHR(debugMessageCallback, this);
+    }
+
     ASSERT(GL_GetError() == NO_ERROR);
 
     return true;
@@ -880,16 +895,31 @@ void GraphicsContextGLANGLE::bufferSubData(GCGLenum target, GCGLintptr offset, s
     GL_BufferSubData(target, offset, data.size(), data.data());
 }
 
+bool GraphicsContextGLANGLE::getBufferSubDataImpl(GCGLenum target, GCGLintptr offset, std::span<uint8_t> data)
+{
+    void* ptr = GL_MapBufferRange(target, offset, data.size(), GraphicsContextGL::MAP_READ_BIT);
+    if (!ptr)
+        return false;
+    memcpy(data.data(), ptr, data.size());
+    if (!GL_UnmapBuffer(target))
+        addError(GCGLErrorCode::InvalidOperation);
+    return true;
+}
+
 void GraphicsContextGLANGLE::getBufferSubData(GCGLenum target, GCGLintptr offset, std::span<uint8_t> data)
 {
     if (!makeContextCurrent())
         return;
-    void* ptr = GL_MapBufferRange(target, offset, data.size(), GraphicsContextGL::MAP_READ_BIT);
-    if (!ptr)
-        return;
-    memcpy(data.data(), ptr, data.size());
-    if (!GL_UnmapBuffer(target))
-        addError(GCGLErrorCode::InvalidOperation);
+
+    getBufferSubDataImpl(target, offset, data);
+}
+
+bool GraphicsContextGLANGLE::getBufferSubDataWithStatus(GCGLenum target, GCGLintptr offset, std::span<uint8_t> data)
+{
+    if (!makeContextCurrent())
+        return false;
+
+    return getBufferSubDataImpl(target, offset, data);
 }
 
 void GraphicsContextGLANGLE::copyBufferSubData(GCGLenum readTarget, GCGLenum writeTarget, GCGLintptr readOffset, GCGLintptr writeOffset, GCGLsizeiptr size)
@@ -1353,7 +1383,7 @@ String GraphicsContextGLANGLE::getString(GCGLenum name)
     if (!makeContextCurrent())
         return String();
 
-    return String::fromLatin1(reinterpret_cast<const char*>(GL_GetString(name)));
+    return String::fromLatin1(byteCast<char>(GL_GetString(name)));
 }
 
 void GraphicsContextGLANGLE::hint(GCGLenum target, GCGLenum mode)
@@ -2629,7 +2659,8 @@ void GraphicsContextGLANGLE::clearBufferiv(GCGLenum buffer, GCGLint drawbuffer, 
 {
     if (!makeContextCurrent())
         return;
-
+    if (!validateClearBufferv(buffer, values.size()))
+        return;
     GL_ClearBufferiv(buffer, drawbuffer, values.data());
     checkGPUStatus();
 }
@@ -2638,7 +2669,8 @@ void GraphicsContextGLANGLE::clearBufferuiv(GCGLenum buffer, GCGLint drawbuffer,
 {
     if (!makeContextCurrent())
         return;
-
+    if (!validateClearBufferv(buffer, values.size()))
+        return;
     GL_ClearBufferuiv(buffer, drawbuffer, values.data());
     checkGPUStatus();
 }
@@ -2647,7 +2679,8 @@ void GraphicsContextGLANGLE::clearBufferfv(GCGLenum buffer, GCGLint drawbuffer, 
 {
     if (!makeContextCurrent())
         return;
-
+    if (!validateClearBufferv(buffer, values.size()))
+        return;
     GL_ClearBufferfv(buffer, drawbuffer, values.data());
     checkGPUStatus();
 }
@@ -3336,6 +3369,26 @@ void GraphicsContextGLANGLE::requestExtension(const String& name)
         m_webglColorBufferFloatRGB = true;
 }
 
+bool GraphicsContextGLANGLE::validateClearBufferv(GCGLenum buffer, size_t valuesSize)
+{
+    // ClearBuffersfv, iv, uiv are missing ANGLE Robust* entry-point. Make the call act similar way as other
+    // calls that validate buffer sizes by validating it here.
+    switch (buffer) {
+    case GraphicsContextGL::COLOR:
+        if (valuesSize == 4)
+            return true;
+        break;
+    case GraphicsContextGL::DEPTH:
+    case GraphicsContextGL::STENCIL:
+        if (valuesSize == 1)
+            return true;
+        break;
+    default:
+        break;
+    }
+    addError(GCGLErrorCode::InvalidOperation);
+    return false;
+}
 }
 
 #endif // ENABLE(WEBGL)

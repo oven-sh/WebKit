@@ -135,6 +135,7 @@ namespace JSC {
         bool isReadOnly() const { return m_attributes & PropertyAttribute::ReadOnly; }
         bool isSpecial() const { return m_kind != NormalVariable; }
         bool isConst() const { return isReadOnly() && m_isLexicallyScoped; }
+        bool isLexicallyScoped() const { return m_isLexicallyScoped; }
         void setIsReadOnly() { m_attributes |= PropertyAttribute::ReadOnly; }
 
         void dump(PrintStream&) const;
@@ -736,7 +737,7 @@ namespace JSC {
         void emitTDZCheck(RegisterID* target);
         void emitTDZCheck(RegisterID* target, const Variable&);
         bool needsTDZCheck(const Variable&);
-        void emitTDZCheckIfNecessary(const Variable&, RegisterID* target, RegisterID* scope);
+        void emitTDZCheckIfNecessary(const Variable&, RegisterID* target, RegisterID* scope, const JSTextPosition* start = nullptr, const JSTextPosition* end = nullptr);
         void liftTDZCheckIfPossible(const Variable&);
         RegisterID* emitNewObject(RegisterID* dst);
         RegisterID* emitNewPromise(RegisterID* dst, bool isInternalPromise);

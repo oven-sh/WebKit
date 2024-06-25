@@ -191,7 +191,7 @@ public:
 #if PLATFORM(IOS_FAMILY)
     RetainPtr<CFDictionaryRef> connectionProperties(ResourceLoader*);
 #endif
-    void receivedMainResourceError(const ResourceError&);
+    void receivedMainResourceError(const ResourceError&, LoadWillContinueInAnotherProcess);
 
     bool willLoadMediaElementURL(URL&, Node&);
 
@@ -223,7 +223,7 @@ public:
     void loadedResourceFromMemoryCache(CachedResource&, ResourceRequest& newRequest, ResourceError&);
     void tellClientAboutPastMemoryCacheLoads();
 
-    void checkLoadComplete();
+    void checkLoadComplete(LoadWillContinueInAnotherProcess = LoadWillContinueInAnotherProcess::No);
     WEBCORE_EXPORT void detachFromParent();
     void detachViewsAndDocumentLoader();
 
@@ -388,13 +388,13 @@ private:
 
     void continueLoadAfterNavigationPolicy(const ResourceRequest&, FormState*, NavigationPolicyDecision, AllowNavigationToInvalidURL);
     void continueLoadAfterNewWindowPolicy(const ResourceRequest&, FormState*, const AtomString& frameName, const NavigationAction&, ShouldContinuePolicyCheck, AllowNavigationToInvalidURL, NewFrameOpenerPolicy);
-    void continueFragmentScrollAfterNavigationPolicy(const ResourceRequest&, const SecurityOrigin* requesterOrigin, bool shouldContinue);
+    void continueFragmentScrollAfterNavigationPolicy(const ResourceRequest&, const SecurityOrigin* requesterOrigin, bool shouldContinue, NavigationHistoryBehavior);
 
     bool shouldPerformFragmentNavigation(bool isFormSubmission, const String& httpMethod, FrameLoadType, const URL&);
     void scrollToFragmentWithParentBoundary(const URL&, bool isNewNavigation = true);
 
     void dispatchDidFailProvisionalLoad(DocumentLoader& provisionalDocumentLoader, const ResourceError&, WillInternallyHandleFailure);
-    void checkLoadCompleteForThisFrame();
+    void checkLoadCompleteForThisFrame(LoadWillContinueInAnotherProcess);
     void handleLoadFailureRecovery(DocumentLoader&, const ResourceError&, bool);
 
     void setDocumentLoader(RefPtr<DocumentLoader>&&);
@@ -425,7 +425,7 @@ private:
     WEBCORE_EXPORT void detachChildren();
     void closeAndRemoveChild(LocalFrame&);
 
-    void loadInSameDocument(URL, RefPtr<SerializedScriptValue> stateObject, const SecurityOrigin* requesterOrigin, bool isNewNavigation);
+    void loadInSameDocument(URL, RefPtr<SerializedScriptValue> stateObject, const SecurityOrigin* requesterOrigin, bool isNewNavigation, NavigationHistoryBehavior historyHandling = NavigationHistoryBehavior::Auto);
 
     void prepareForLoadStart();
     void provisionalLoadStarted();
@@ -455,6 +455,9 @@ private:
     bool hasOpenedFrames() const;
 
     void updateNavigationAPIEntries();
+    void updateRequestAndAddExtraFields(Frame&, ResourceRequest&, IsMainResource, FrameLoadType, ShouldUpdateAppInitiatedValue, IsServiceWorkerNavigationLoad, WillOpenInNewWindow, Document*);
+
+    bool dispatchNavigateEvent(const URL& newURL, FrameLoadType, const NavigationAction&, NavigationHistoryBehavior, bool isSameDocument, FormState* = nullptr);
 
     WeakRef<LocalFrame> m_frame;
     UniqueRef<LocalFrameLoaderClient> m_client;

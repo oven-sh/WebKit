@@ -97,11 +97,11 @@
 static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 {
     auto rectToString = [] (auto rect) {
-        return makeString("[x: ", rect.origin.x, " y: ", rect.origin.x, " width: ", rect.size.width, " height: ", rect.size.height, "]");
+        return makeString("[x: "_s, rect.origin.x, " y: "_s, rect.origin.x, " width: "_s, rect.size.width, " height: "_s, rect.size.height, ']');
     };
 
     auto pointToString = [] (auto point) {
-        return makeString("[x: ", point.x, " y: ", point.x, "]");
+        return makeString("[x: "_s, point.x, " y: "_s, point.x, ']');
     };
 
 #if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
@@ -344,7 +344,7 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
         completionHandler();
         return;
     }
-    _page->process().sendPrepareToSuspend(WebKit::IsSuspensionImminent::No, 0.0, [completionHandler = makeBlockPtr(completionHandler)] {
+    _page->legacyMainFrameProcess().sendPrepareToSuspend(WebKit::IsSuspensionImminent::No, 0.0, [completionHandler = makeBlockPtr(completionHandler)] {
         completionHandler();
     });
 }
@@ -352,13 +352,13 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 - (void)_processWillSuspendImminentlyForTesting
 {
     if (_page)
-        _page->process().sendPrepareToSuspend(WebKit::IsSuspensionImminent::Yes, 0.0, [] { });
+        _page->legacyMainFrameProcess().sendPrepareToSuspend(WebKit::IsSuspensionImminent::Yes, 0.0, [] { });
 }
 
 - (void)_processDidResumeForTesting
 {
     if (_page)
-        _page->process().sendProcessDidResume(WebKit::AuxiliaryProcessProxy::ResumeReason::ForegroundActivity);
+        _page->legacyMainFrameProcess().sendProcessDidResume(WebKit::AuxiliaryProcessProxy::ResumeReason::ForegroundActivity);
 }
 
 - (void)_setThrottleStateForTesting:(int)value
@@ -366,17 +366,17 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
     if (!_page)
         return;
 
-    _page->process().setThrottleStateForTesting(static_cast<WebKit::ProcessThrottleState>(value));
+    _page->legacyMainFrameProcess().setThrottleStateForTesting(static_cast<WebKit::ProcessThrottleState>(value));
 }
 
 - (BOOL)_hasServiceWorkerBackgroundActivityForTesting
 {
-    return _page ? _page->process().processPool().hasServiceWorkerBackgroundActivityForTesting() : false;
+    return _page ? _page->configuration().processPool().hasServiceWorkerBackgroundActivityForTesting() : false;
 }
 
 - (BOOL)_hasServiceWorkerForegroundActivityForTesting
 {
-    return _page ? _page->process().processPool().hasServiceWorkerForegroundActivityForTesting() : false;
+    return _page ? _page->configuration().processPool().hasServiceWorkerForegroundActivityForTesting() : false;
 }
 
 - (void)_denyNextUserMediaRequest
@@ -461,7 +461,7 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 - (WKWebViewAudioRoutingArbitrationStatus)_audioRoutingArbitrationStatus
 {
 #if ENABLE(ROUTING_ARBITRATION)
-    switch (_page->process().audioSessionRoutingArbitrator().arbitrationStatus()) {
+    switch (_page->legacyMainFrameProcess().audioSessionRoutingArbitrator().arbitrationStatus()) {
     case WebKit::AudioSessionRoutingArbitratorProxy::ArbitrationStatus::None: return WKWebViewAudioRoutingArbitrationStatusNone;
     case WebKit::AudioSessionRoutingArbitratorProxy::ArbitrationStatus::Pending: return WKWebViewAudioRoutingArbitrationStatusPending;
     case WebKit::AudioSessionRoutingArbitratorProxy::ArbitrationStatus::Active: return WKWebViewAudioRoutingArbitrationStatusActive;
@@ -475,7 +475,7 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 - (double)_audioRoutingArbitrationUpdateTime
 {
 #if ENABLE(ROUTING_ARBITRATION)
-    return _page->process().audioSessionRoutingArbitrator().arbitrationUpdateTime().secondsSinceEpoch().seconds();
+    return _page->legacyMainFrameProcess().audioSessionRoutingArbitrator().arbitrationUpdateTime().secondsSinceEpoch().seconds();
 #else
     return 0;
 #endif
@@ -612,7 +612,7 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 
 - (void)_gpuToWebProcessConnectionCountForTesting:(void(^)(NSUInteger))completionHandler
 {
-    RefPtr gpuProcess = _page->process().processPool().gpuProcess();
+    RefPtr gpuProcess = _page->configuration().processPool().gpuProcess();
     if (!gpuProcess) {
         completionHandler(0);
         return;

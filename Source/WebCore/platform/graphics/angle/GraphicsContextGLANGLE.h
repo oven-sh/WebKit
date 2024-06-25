@@ -352,6 +352,9 @@ public:
 
     virtual void withBufferAsNativeImage(SurfaceBuffer, Function<void(NativeImage&)>);
 
+    // Returns the span of valid data read on success.
+    bool getBufferSubDataWithStatus(GCGLenum target, GCGLintptr offset, std::span<uint8_t> data);
+
     // Reads pixels from positive pixel coordinates with tight packing.
     // Returns columns, rows of executed read on success.
     std::optional<IntSize> readPixelsWithStatus(IntRect, GCGLenum format, GCGLenum type, std::span<uint8_t> data);
@@ -383,6 +386,7 @@ protected:
     void validateDepthStencil(ASCIILiteral packedDepthStencilExtension);
     void validateAttributes();
 
+    bool getBufferSubDataImpl(GCGLenum target, GCGLintptr offset, std::span<uint8_t> data);
     std::optional<IntSize> readPixelsImpl(IntRect, GCGLenum format, GCGLenum type, GCGLsizei bufSize, uint8_t* data, bool readingToPixelBufferObject);
 
     // Did the most recent drawing operation leave the GPU in an acceptable state?
@@ -410,6 +414,7 @@ protected:
     // Only for non-WebGL 2.0 contexts.
     GCGLenum adjustWebGL1TextureInternalFormat(GCGLenum internalformat, GCGLenum format, GCGLenum type);
     void setPackParameters(GCGLint alignment, GCGLint rowLength);
+    bool validateClearBufferv(GCGLenum buffer, size_t valuesSize);
 
     HashSet<String> m_availableExtensions;
     HashSet<String> m_requestableExtensions;

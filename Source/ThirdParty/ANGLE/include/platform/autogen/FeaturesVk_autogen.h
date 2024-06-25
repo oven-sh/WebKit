@@ -23,7 +23,7 @@ struct FeaturesVk : FeatureSetBase
     FeatureInfo appendAliasedMemoryDecorations = {
         "appendAliasedMemoryDecorations",
         FeatureCategory::VulkanWorkarounds,
-        "Append aliased memory decoration to ssbo and image in SpirV if they are not declared with restrict memory qualifier in GLSL",
+        "Append aliased memory decoration to ssbo and image in SPIR-V if they are not declared with restrict memory qualifier in GLSL",
         &members, "b/266235549"
     };
 
@@ -259,13 +259,6 @@ struct FeaturesVk : FeatureSetBase
         &members, "http://anglebug.com/7551"
     };
 
-    FeatureInfo supportsMultisampledRenderToSingleSampledGOOGLEX = {
-        "supportsMultisampledRenderToSingleSampledGOOGLEX",
-        FeatureCategory::VulkanFeatures,
-        "VkDevice supports the VK_GOOGLEX_multisampled_render_to_single_sampled extension",
-        &members, "http://anglebug.com/4836"
-    };
-
     FeatureInfo supportsMultisampledRenderToSingleSampled = {
         "supportsMultisampledRenderToSingleSampled",
         FeatureCategory::VulkanFeatures,
@@ -388,7 +381,7 @@ struct FeaturesVk : FeatureSetBase
     FeatureInfo varyingsRequireMatchingPrecisionInSpirv = {
         "varyingsRequireMatchingPrecisionInSpirv",
         FeatureCategory::VulkanWorkarounds,
-        "Add additional SPIRV instructions to make sure precision "
+        "Add additional SPIR-V instructions to make sure precision "
         "between shader stages match with each other",
         &members, "http://anglebug.com/7488"
     };
@@ -509,13 +502,6 @@ struct FeaturesVk : FeatureSetBase
         FeatureCategory::VulkanWorkarounds,
         "Expose EXT_multisampled_render_to_texture",
         &members, "http://anglebug.com/4937"
-    };
-
-    FeatureInfo deferFlushUntilEndRenderPass = {
-        "deferFlushUntilEndRenderPass",
-        FeatureCategory::VulkanWorkarounds,
-        "Allow glFlush to be deferred until renderpass ends",
-        &members, "https://issuetracker.google.com/issues/166475273"
     };
 
     FeatureInfo waitIdleBeforeSwapchainRecreation = {
@@ -803,6 +789,13 @@ struct FeaturesVk : FeatureSetBase
         FeatureCategory::VulkanAppWorkarounds,
         "Force submit updates to immutable textures",
         &members, "http://anglebug.com/6929"
+    };
+
+    FeatureInfo supportsSPIRV14 = {
+        "supportsSPIRV14",
+        FeatureCategory::VulkanFeatures,
+        "VkDevice supports VK_KHR_spirv_1_4 extension",
+        &members, "http://anglebug.com/342316794"
     };
 
     FeatureInfo retainSPIRVDebugInfo = {
@@ -1151,6 +1144,13 @@ struct FeaturesVk : FeatureSetBase
         &members, "https://anglebug.com/7899"
     };
 
+    FeatureInfo supportsSurfaceMaintenance1 = {
+        "supportsSurfaceMaintenance1",
+        FeatureCategory::VulkanFeatures,
+        "VkDevice supports the VK_EXT_surface_maintenance1 extension",
+        &members, "https://anglebug.com/7847"
+    };
+
     FeatureInfo supportsSwapchainMaintenance1 = {
         "supportsSwapchainMaintenance1",
         FeatureCategory::VulkanFeatures,
@@ -1336,6 +1336,14 @@ struct FeaturesVk : FeatureSetBase
         &members, "http://anglebug.com/8658"
     };
 
+    FeatureInfo limitMaxStorageBufferSize = {
+        "limitMaxStorageBufferSize",
+        FeatureCategory::VulkanWorkarounds,
+        "On some drivers, a storage buffer max size limit is exposed that is incompatible with "
+        "older hardware",
+        &members, "http://anglebug.com/345244067"
+    };
+
     FeatureInfo clDumpVkSpirv = {
         "clDumpVkSpirv",
         FeatureCategory::VulkanFeatures,
@@ -1366,13 +1374,88 @@ struct FeaturesVk : FeatureSetBase
         &members, "http://anglebug.com/8549"
     };
 
-    FeatureInfo combineAllShadersInPipelineLibrary = {
-        "combineAllShadersInPipelineLibrary",
+    FeatureInfo supports8BitStorageBuffer = {
+        "supports8BitStorageBuffer",
         FeatureCategory::VulkanFeatures,
-        "For Vulkan ICDs that support VK_EXT_graphics_pipeline_library the shaders subset of the pipeline"
-        "can either be combined into a single pipeline or can be decoupled into separate pipelines. This feature"
-        "is enabled when the former is the case.",
-        &members, "http://anglebug.com/8601"
+        "VkDevice supports the VK_KHR_8bit_storage extension and has the storageBuffer8BitAccess feature",
+        &members, "http://anglebug.com/8676"
+    };
+
+    FeatureInfo supports8BitUniformAndStorageBuffer = {
+        "supports8BitUniformAndStorageBuffer",
+        FeatureCategory::VulkanFeatures,
+        "VkDevice supports the VK_KHR_8bit_storage extension and has the uniformAndStorageBuffer8BitAccess feature",
+        &members, "http://anglebug.com/8676"
+    };
+
+    FeatureInfo supports8BitPushConstant = {
+        "supports8BitPushConstant",
+        FeatureCategory::VulkanFeatures,
+        "VkDevice supports the VK_KHR_8bit_storage extension and has the storagePushConstant8 feature",
+        &members, "http://anglebug.com/8676"
+    };
+
+    FeatureInfo supports16BitStorageBuffer = {
+        "supports16BitStorageBuffer",
+        FeatureCategory::VulkanFeatures,
+        "VkDevice supports the VK_KHR_16bit_storage extension and has the storageBuffer16BitAccess feature",
+        &members, "http://anglebug.com/8676"
+    };
+
+    FeatureInfo supports16BitUniformAndStorageBuffer = {
+        "supports16BitUniformAndStorageBuffer",
+        FeatureCategory::VulkanFeatures,
+        "VkDevice supports the VK_KHR_16bit_storage extension and has the uniformAndStorageBuffer16BitAccess feature",
+        &members, "http://anglebug.com/8676"
+    };
+
+    FeatureInfo supports16BitPushConstant = {
+        "supports16BitPushConstant",
+        FeatureCategory::VulkanFeatures,
+        "VkDevice supports the VK_KHR_16bit_storage extension and has the storagePushConstant16 feature",
+        &members, "http://anglebug.com/8676"
+    };
+
+    FeatureInfo supports16BitInputOutput = {
+        "supports16BitInputOutput",
+        FeatureCategory::VulkanFeatures,
+        "VkDevice supports the VK_KHR_16bit_storage extension and has the storageInputOutput16 feature",
+        &members, "http://anglebug.com/8676"
+    };
+
+    FeatureInfo useVkEventForImageBarrier = {
+        "useVkEventForImageBarrier",
+        FeatureCategory::VulkanFeatures,
+        "Uses VkEvent instead of VkCmdPipelineBarrier for image barriers",
+        &members, "https://issuetracker.google.com/336844257"
+    };
+
+    FeatureInfo supportsSynchronization2 = {
+        "supportsSynchronization2",
+        FeatureCategory::VulkanFeatures,
+        "VkDevice supports VK_KHR_synchronization2 extension",
+        &members, "https://issuetracker.google.com/336844257"
+    };
+
+    FeatureInfo supportsDynamicRendering = {
+        "supportsDynamicRendering",
+        FeatureCategory::VulkanFeatures,
+        "VkDevice supports VK_KHR_dynamic_rendering extension",
+        &members, "http://anglebug.com/42267038"
+    };
+
+    FeatureInfo supportsDynamicRenderingLocalRead = {
+        "supportsDynamicRenderingLocalRead",
+        FeatureCategory::VulkanFeatures,
+        "VkDevice supports VK_KHR_dynamic_rendering_local_read extension",
+        &members, "http://anglebug.com/42267038"
+    };
+
+    FeatureInfo preferDynamicRendering = {
+        "preferDynamicRendering",
+        FeatureCategory::VulkanFeatures,
+        "Whether dynamic rendering should be used instead of render pass objects",
+        &members, "http://anglebug.com/42267038"
     };
 
 };

@@ -146,9 +146,11 @@ static FragmentAndResources createFragmentInternal(LocalFrame& frame, NSAttribut
 
     NSArray *subresources = nil;
     NSString *fragmentString = [string _htmlDocumentFragmentString:NSMakeRange(0, [string length]) documentAttributes:attributesForAttributedStringConversion(!fragmentCreationOptions.contains(FragmentCreationOptions::NoInterchangeNewlines)) subresources:&subresources];
+
     auto fragment = DocumentFragment::create(document);
     auto dummyBodyToForceInBodyInsertionMode = HTMLBodyElement::create(document);
-    fragment->parseHTML(fragmentString, dummyBodyToForceInBodyInsertionMode, { });
+    auto markup = fragmentCreationOptions.contains(FragmentCreationOptions::SanitizeMarkup) ? sanitizeMarkup(fragmentString) : String(fragmentString);
+    fragment->parseHTML(markup, dummyBodyToForceInBodyInsertionMode, { });
 
     result.fragment = WTFMove(fragment);
     for (WebArchiveResourceFromNSAttributedString *resource in subresources)
@@ -376,6 +378,16 @@ static void replaceRichContentWithAttachments(LocalFrame& frame, DocumentFragmen
         RefPtr parent { originalElement->parentNode() };
         if (!parent)
             continue;
+
+        // If the filename begins with this sentinel value, this means that an existing attachment should be used.
+        // See `HTMLConverter.mm` for more details.
+        if (info.fileName.startsWith(WebContentReader::placeholderAttachmentFilenamePrefix)) {
+            RefPtr document = frame.document();
+            if (RefPtr existingAttachment = document->attachmentForIdentifier({ info.data->span() })) {
+                parent->replaceChild(*existingAttachment.get(), WTFMove(originalElement));
+                continue;
+            }
+        }
 
         auto attachment = HTMLAttachmentElement::create(HTMLNames::attachmentTag, fragment.document());
         if (supportsClientSideAttachmentData(frame)) {

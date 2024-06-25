@@ -78,6 +78,8 @@ bool canUseForPreferredWidthComputation(const RenderBlockFlow& blockContainer)
             continue;
         if (is<RenderInline>(renderer))
             continue;
+        if (is<RenderListMarker>(renderer))
+            continue;
         if (renderer.isInFlow() && renderer.style().isHorizontalWritingMode() && renderer.style().logicalWidth().isFixed()) {
             auto isNonSupportedFixedWidthContent = [&] {
                 // FIXME: Implement this image special in line builder.
@@ -130,8 +132,14 @@ bool shouldInvalidateLineLayoutPathAfterChangeFor(const RenderBlockFlow& rootBlo
     auto isBidiContent = [&] {
         if (lineLayout.contentNeedsVisualReordering())
             return true;
-        if (auto* textRenderer = dynamicDowncast<RenderText>(renderer))
-            return Layout::TextUtil::containsStrongDirectionalityText(textRenderer->text());
+        if (auto* textRenderer = dynamicDowncast<RenderText>(renderer)) {
+            auto hasStrongDirectionalityContent = textRenderer->hasStrongDirectionalityContent();
+            if (!hasStrongDirectionalityContent) {
+                hasStrongDirectionalityContent = Layout::TextUtil::containsStrongDirectionalityText(textRenderer->text());
+                const_cast<RenderText*>(textRenderer)->setHasStrongDirectionalityContent(*hasStrongDirectionalityContent);
+            }
+            return *hasStrongDirectionalityContent;
+        }
         if (is<RenderInline>(renderer)) {
             auto& style = renderer.style();
             return !style.isLeftToRightDirection() || (style.rtlOrdering() == Order::Logical && style.unicodeBidi() != UnicodeBidi::Normal);

@@ -225,7 +225,7 @@ static uint64_t uv__get_cgroup_constrained_memory(char buf[1024])
 }
 
 // TODO: should we cache this? can we?
-uint64_t uv_get_constrained_memory()
+extern "C" uint64_t uv_get_constrained_memory()
 {
     char buf[1024];
 
@@ -237,7 +237,7 @@ uint64_t uv_get_constrained_memory()
 
 #else
 
-uint64_t uv_get_constrained_memory()
+extern "C" uint64_t uv_get_constrained_memory()
 {
     return 0;
 }

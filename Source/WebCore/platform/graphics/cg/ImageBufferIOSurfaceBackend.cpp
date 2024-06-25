@@ -68,18 +68,13 @@ size_t ImageBufferIOSurfaceBackend::calculateMemoryCost(const Parameters& parame
     return ImageBufferBackend::calculateMemoryCost(parameters.backendSize, calculateBytesPerRow(parameters.backendSize));
 }
 
-size_t ImageBufferIOSurfaceBackend::calculateExternalMemoryCost(const Parameters& parameters)
-{
-    return calculateMemoryCost(parameters);
-}
-
 std::unique_ptr<ImageBufferIOSurfaceBackend> ImageBufferIOSurfaceBackend::create(const Parameters& parameters, const ImageBufferCreationContext& creationContext)
 {
     IntSize backendSize = calculateSafeBackendSize(parameters);
     if (backendSize.isEmpty())
         return nullptr;
 
-    auto surface = IOSurface::create(creationContext.surfacePool, backendSize, parameters.colorSpace, IOSurface::Name::ImageBuffer, IOSurface::formatForPixelFormat(parameters.pixelFormat));
+    auto surface = IOSurface::create(creationContext.surfacePool, backendSize, parameters.colorSpace, IOSurface::Name::ImageBuffer, convertToIOSurfaceFormat(parameters.pixelFormat));
     if (!surface)
         return nullptr;
 

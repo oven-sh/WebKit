@@ -52,18 +52,22 @@ namespace WTF::FileSystemImpl {
 
 static std::filesystem::path toStdFileSystemPath(StringView path)
 {
-#if HAVE(MISSING_STD_FILESYSTEM_PATH_CONSTRUCTOR)
+#if HAVE(MISSING_U8STRING)
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     return std::filesystem::u8path(path.utf8().data());
 ALLOW_DEPRECATED_DECLARATIONS_END
 #else
-    return { std::u8string(reinterpret_cast<const char8_t*>(path.utf8().data())) };
+    return { std::u8string(byteCast<char8_t>(path.utf8().data())) };
 #endif
 }
 
 static String fromStdFileSystemPath(const std::filesystem::path& path)
 {
+#if HAVE(MISSING_U8STRING)
+    return String::fromUTF8(span8(path.u8string().c_str()));
+#else
     return String::fromUTF8(span(path.u8string()));
+#endif
 }
 
 #endif // HAVE(STD_FILESYSTEM) || HAVE(STD_EXPERIMENTAL_FILESYSTEM)
@@ -268,7 +272,7 @@ bool appendFileContentsToFileHandle(const String& path, PlatformFileHandle& targ
         if (readBytes < 0)
             return false;
 
-        if (writeToFile(target, buffer.data(), readBytes) != readBytes)
+        if (writeToFile(target, buffer.span().first(readBytes)) != readBytes)
             return false;
 
         if (readBytes < bufferSize)
@@ -520,7 +524,7 @@ std::optional<Salt> readOrMakeSalt(const String& path)
     if (!FileSystem::isHandleValid(file))
         return { };
 
-    bool success = static_cast<std::size_t>(FileSystem::writeToFile(file, salt.data(), salt.size())) == salt.size();
+    bool success = static_cast<std::size_t>(FileSystem::writeToFile(file, salt)) == salt.size();
     FileSystem::closeFile(file);
     if (!success)
         return { };
@@ -573,7 +577,7 @@ int overwriteEntireFile(const String& path, std::span<const uint8_t> span)
     if (!FileSystem::isHandleValid(fileHandle))
         return -1;
 
-    return FileSystem::writeToFile(fileHandle, span.data(), span.size());
+    return FileSystem::writeToFile(fileHandle, span);
 }
 
 void deleteAllFilesModifiedSince(const String& directory, WallTime time)

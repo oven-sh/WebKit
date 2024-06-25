@@ -26,7 +26,7 @@
 
 // Version number for shader translation API.
 // It is incremented every time the API changes.
-#define ANGLE_SH_VERSION 350
+#define ANGLE_SH_VERSION 354
 
 enum ShShaderSpec
 {
@@ -448,6 +448,9 @@ struct ShCompileOptions
     // Workaround for a driver bug with the use of the OpSelect SPIR-V instruction.
     uint64_t avoidOpSelectWithMismatchingRelaxedPrecision : 1;
 
+    // Whether SPIR-V 1.4 can be emitted.  If not set, SPIR-V 1.3 is emitted.
+    uint64_t emitSPIRV14 : 1;
+
     ShCompileOptionsMetal metal;
     ShPixelLocalStorageOptions pls;
 };
@@ -503,6 +506,7 @@ struct ShBuiltInResources
     int OES_shader_io_blocks;
     int EXT_shader_io_blocks;
     int EXT_gpu_shader5;
+    int OES_gpu_shader5;
     int EXT_shader_non_constant_global_initializers;
     int OES_texture_storage_multisample_2d_array;
     int OES_texture_3D;
@@ -519,6 +523,7 @@ struct ShBuiltInResources
     int OES_shader_multisample_interpolation;
     int OES_shader_image_atomic;
     int EXT_tessellation_shader;
+    int OES_tessellation_shader;
     int OES_texture_buffer;
     int EXT_texture_buffer;
     int OES_sample_variables;
@@ -566,6 +571,9 @@ struct ShBuiltInResources
 
     // The maximum complexity an expression can be when limitExpressionComplexity is turned on.
     int MaxExpressionComplexity;
+
+    // The maximum depth of certain nestable statements (while, switch);
+    int MaxStatementDepth;
 
     // The maximum depth a call stack can be.
     int MaxCallStackDepth;

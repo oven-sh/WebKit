@@ -757,8 +757,8 @@ void Heap::finalizeUnconditionalFinalizers()
         finalizeMarkedUnconditionalFinalizers<JSFinalizationRegistry>(*m_finalizationRegistrySpace, collectionScope);
 
 #if ENABLE(WEBASSEMBLY)
-    if (m_webAssemblyModuleSpace)
-        finalizeMarkedUnconditionalFinalizers<JSWebAssemblyModule>(*m_webAssemblyModuleSpace, collectionScope);
+    if (m_webAssemblyInstanceSpace)
+        finalizeMarkedUnconditionalFinalizers<JSWebAssemblyInstance>(*m_webAssemblyInstanceSpace, collectionScope);
 #endif
 }
 
@@ -970,7 +970,8 @@ size_t Heap::extraMemorySize()
     checkedTotal += m_arrayBuffers.size();
     size_t total = UNLIKELY(checkedTotal.hasOverflowed()) ? std::numeric_limits<size_t>::max() : checkedTotal.value();
 
-    ASSERT(m_objectSpace.capacity() >= m_objectSpace.size());
+    // It would be nice to have `ASSERT(m_objectSpace.capacity() >= m_objectSpace.size());` here but `m_objectSpace.size()`
+    // requires having heap access which thread might not. Specifically, we might be called from the resource usage thread.
     return std::min(total, std::numeric_limits<size_t>::max() - m_objectSpace.capacity());
 }
 
@@ -1080,10 +1081,10 @@ void Heap::deleteAllCodeBlocks(DeleteAllCodeEffort effort)
         // points into a CodeBlock that could be dead. The IC will still succeed because
         // it uses a callee check, but then it will call into dead code.
         HeapIterationScope heapIterationScope(*this);
-        if (m_webAssemblyModuleSpace) {
-            m_webAssemblyModuleSpace->forEachLiveCell([&] (HeapCell* cell, HeapCell::Kind kind) {
+        if (m_webAssemblyInstanceSpace) {
+            m_webAssemblyInstanceSpace->forEachLiveCell([&] (HeapCell* cell, HeapCell::Kind kind) {
                 ASSERT_UNUSED(kind, kind == HeapCell::JSCell);
-                static_cast<JSWebAssemblyModule*>(cell)->clearJSCallICs(vm);
+                static_cast<JSWebAssemblyInstance*>(cell)->clearJSCallICs(vm);
             });
         }
     }

@@ -676,6 +676,127 @@ bool ValidateBlendBarrierKHR(const Context *context, angle::EntryPoint entryPoin
     return true;
 }
 
+bool ValidateGetGraphicsResetStatusKHR(const Context *context, angle::EntryPoint entryPoint)
+{
+    if (context->getClientVersion() < ES_2_0)
+    {
+        ANGLE_VALIDATION_ERROR(GL_INVALID_OPERATION, kES2Required);
+        return false;
+    }
+
+    if (!context->getExtensions().robustnessKHR)
+    {
+        ANGLE_VALIDATION_ERROR(GL_INVALID_OPERATION, kExtensionNotEnabled);
+        return false;
+    }
+
+    return true;
+}
+
+bool ValidateGetnUniformfvKHR(const Context *context,
+                              angle::EntryPoint entryPoint,
+                              ShaderProgramID programPacked,
+                              UniformLocation locationPacked,
+                              GLsizei bufSize,
+                              const GLfloat *params)
+{
+    if (context->getClientVersion() < ES_2_0)
+    {
+        ANGLE_VALIDATION_ERROR(GL_INVALID_OPERATION, kES2Required);
+        return false;
+    }
+
+    if (!context->getExtensions().robustnessKHR)
+    {
+        ANGLE_VALIDATION_ERROR(GL_INVALID_OPERATION, kExtensionNotEnabled);
+        return false;
+    }
+
+    return ValidateSizedGetUniform(context, entryPoint, programPacked, locationPacked, bufSize,
+                                   nullptr);
+}
+
+bool ValidateGetnUniformivKHR(const Context *context,
+                              angle::EntryPoint entryPoint,
+                              ShaderProgramID programPacked,
+                              UniformLocation locationPacked,
+                              GLsizei bufSize,
+                              const GLint *params)
+{
+    if (context->getClientVersion() < ES_2_0)
+    {
+        ANGLE_VALIDATION_ERROR(GL_INVALID_OPERATION, kES2Required);
+        return false;
+    }
+
+    if (!context->getExtensions().robustnessKHR)
+    {
+        ANGLE_VALIDATION_ERROR(GL_INVALID_OPERATION, kExtensionNotEnabled);
+        return false;
+    }
+
+    return ValidateSizedGetUniform(context, entryPoint, programPacked, locationPacked, bufSize,
+                                   nullptr);
+}
+
+bool ValidateGetnUniformuivKHR(const Context *context,
+                               angle::EntryPoint entryPoint,
+                               ShaderProgramID programPacked,
+                               UniformLocation locationPacked,
+                               GLsizei bufSize,
+                               const GLuint *params)
+{
+    // Based on the spec, if ES 3.0 or later is not supported, all references to GetnUniformuiv
+    // should be removed.
+    if (context->getClientVersion() < ES_3_0)
+    {
+        ANGLE_VALIDATION_ERROR(GL_INVALID_OPERATION, kES3Required);
+        return false;
+    }
+
+    if (!context->getExtensions().robustnessKHR)
+    {
+        ANGLE_VALIDATION_ERROR(GL_INVALID_OPERATION, kExtensionNotEnabled);
+        return false;
+    }
+
+    return ValidateSizedGetUniform(context, entryPoint, programPacked, locationPacked, bufSize,
+                                   nullptr);
+}
+
+bool ValidateReadnPixelsKHR(const Context *context,
+                            angle::EntryPoint entryPoint,
+                            GLint x,
+                            GLint y,
+                            GLsizei width,
+                            GLsizei height,
+                            GLenum format,
+                            GLenum type,
+                            GLsizei bufSize,
+                            const void *data)
+{
+    if (context->getClientVersion() < ES_2_0)
+    {
+        ANGLE_VALIDATION_ERROR(GL_INVALID_OPERATION, kES2Required);
+        return false;
+    }
+
+    if (!context->getExtensions().robustnessKHR)
+    {
+        ANGLE_VALIDATION_ERROR(GL_INVALID_OPERATION, kExtensionNotEnabled);
+        return false;
+    }
+
+    if (bufSize < 0)
+    {
+        ANGLE_VALIDATION_ERROR(GL_INVALID_VALUE, kNegativeBufferSize);
+        return false;
+    }
+
+    return ValidateReadPixelsBase(context, entryPoint, x, y, width, height, format, type, bufSize,
+                                  nullptr, nullptr, nullptr, data);
+}
+
 bool ValidateBlendEquationSeparateiEXT(const PrivateState &state,
                                        ErrorSet *errors,
                                        angle::EntryPoint entryPoint,
@@ -1026,7 +1147,7 @@ bool ValidateCopyImageSubDataOES(const Context *context,
                                  GLsizei srcHeight,
                                  GLsizei srcDepth)
 {
-    if (!context->getExtensions().copyImageEXT)
+    if (!context->getExtensions().copyImageOES)
     {
         ANGLE_VALIDATION_ERROR(GL_INVALID_OPERATION, kExtensionNotEnabled);
         return false;
@@ -1902,8 +2023,8 @@ bool ValidatePLSTextureType(const Context *context,
                             Texture *tex,
                             size_t *textureDepth)
 {
-    // INVALID_OPERATION is generated if <backingtexture> is nonzero and not of type TEXTURE_2D,
-    // TEXTURE_2D_ARRAY, or TEXTURE_3D.
+    // INVALID_OPERATION is generated if <backingtexture> is nonzero
+    // and not of type TEXTURE_2D or TEXTURE_2D_ARRAY.
     switch (tex->getType())
     {
         case TextureType::_2D:
@@ -1911,9 +2032,6 @@ bool ValidatePLSTextureType(const Context *context,
             return true;
         case TextureType::_2DArray:
             *textureDepth = tex->getDepth(TextureTarget::_2DArray, 0);
-            return true;
-        case TextureType::_3D:
-            *textureDepth = tex->getDepth(TextureTarget::_3D, 0);
             return true;
         default:
             ANGLE_VALIDATION_ERROR(GL_INVALID_OPERATION, kPLSInvalidTextureType);
@@ -2079,8 +2197,8 @@ bool ValidateFramebufferTexturePixelLocalStorageANGLE(const Context *context,
             return false;
         }
 
-        // INVALID_ENUM is generated if <backingtexture> is nonzero and not of type GL_TEXTURE_2D,
-        // GL_TEXTURE_CUBE_MAP, GL_TEXTURE_2D_ARRAY, or GL_TEXTURE_3D.
+        // INVALID_OPERATION is generated if <backingtexture> is nonzero
+        // and not of type GL_TEXTURE_2D or GL_TEXTURE_2D_ARRAY.
         size_t textureDepth;
         if (!ValidatePLSTextureType(context, entryPoint, tex, &textureDepth))
         {
@@ -2562,30 +2680,26 @@ bool ValidatePatchParameteriEXT(const PrivateState &state,
 {
     if (!state.getExtensions().tessellationShaderEXT)
     {
-        errors->validationError(entryPoint, GL_INVALID_OPERATION,
-                                kTessellationShaderExtensionNotEnabled);
+        errors->validationError(entryPoint, GL_INVALID_OPERATION, kTessellationShaderEXTNotEnabled);
         return false;
     }
 
-    if (pname != GL_PATCH_VERTICES)
+    return ValidatePatchParameteriBase(state, errors, entryPoint, pname, value);
+}
+
+bool ValidatePatchParameteriOES(const PrivateState &state,
+                                ErrorSet *errors,
+                                angle::EntryPoint entryPoint,
+                                GLenum pname,
+                                GLint value)
+{
+    if (!state.getExtensions().tessellationShaderOES)
     {
-        errors->validationError(entryPoint, GL_INVALID_ENUM, kInvalidPname);
+        errors->validationError(entryPoint, GL_INVALID_OPERATION, kTessellationShaderOESNotEnabled);
         return false;
     }
 
-    if (value <= 0)
-    {
-        errors->validationError(entryPoint, GL_INVALID_VALUE, kInvalidValueNonPositive);
-        return false;
-    }
-
-    if (value > state.getCaps().maxPatchVertices)
-    {
-        errors->validationError(entryPoint, GL_INVALID_VALUE, kInvalidValueExceedsMaxPatchSize);
-        return false;
-    }
-
-    return true;
+    return ValidatePatchParameteriBase(state, errors, entryPoint, pname, value);
 }
 
 bool ValidateTexStorageMemFlags2DANGLE(const Context *context,

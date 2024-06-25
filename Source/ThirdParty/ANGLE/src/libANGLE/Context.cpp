@@ -664,7 +664,21 @@ Context::Context(egl::Display *display,
 egl::Error Context::initialize()
 {
     if (!mImplementation)
+    {
         return egl::Error(EGL_NOT_INITIALIZED, "native context creation failed");
+    }
+
+    // If the final context version created (with backwards compatibility possibly added in),
+    // generate an error if it's higher than the maximum supported version for the display. This
+    // validation is always done even with EGL validation disabled because it's not possible to
+    // detect ahead of time if an ES 3.1 context is supported (no ES_31_BIT) or if
+    // KHR_no_config_context is used.
+    if (getClientType() == EGL_OPENGL_ES_API &&
+        getClientVersion() > getDisplay()->getMaxSupportedESVersion())
+    {
+        return egl::Error(EGL_BAD_ATTRIBUTE, "Requested version is not supported");
+    }
+
     return egl::NoError();
 }
 
@@ -850,7 +864,7 @@ egl::Error Context::onDestroy(const egl::Display *display)
     mDefaultFramebuffer->onDestroy(this);
     mDefaultFramebuffer.reset();
 
-    for (auto fence : mFenceNVMap)
+    for (auto fence : UnsafeResourceMapIter(mFenceNVMap))
     {
         if (fence.second)
         {
@@ -860,7 +874,7 @@ egl::Error Context::onDestroy(const egl::Display *display)
     }
     mFenceNVMap.clear();
 
-    for (auto query : mQueryMap)
+    for (auto query : UnsafeResourceMapIter(mQueryMap))
     {
         if (query.second != nullptr)
         {
@@ -869,7 +883,7 @@ egl::Error Context::onDestroy(const egl::Display *display)
     }
     mQueryMap.clear();
 
-    for (auto vertexArray : mVertexArrayMap)
+    for (auto vertexArray : UnsafeResourceMapIter(mVertexArrayMap))
     {
         if (vertexArray.second)
         {
@@ -878,7 +892,7 @@ egl::Error Context::onDestroy(const egl::Display *display)
     }
     mVertexArrayMap.clear();
 
-    for (auto transformFeedback : mTransformFeedbackMap)
+    for (auto transformFeedback : UnsafeResourceMapIter(mTransformFeedbackMap))
     {
         if (transformFeedback.second != nullptr)
         {
@@ -1784,6 +1798,13 @@ void Context::getFloatvImpl(GLenum pname, GLfloat *params) const
         case GL_SMOOTH_LINE_WIDTH_RANGE:
             params[0] = mState.getCaps().minSmoothLineWidth;
             params[1] = mState.getCaps().maxSmoothLineWidth;
+            break;
+        case GL_MULTISAMPLE_LINE_WIDTH_RANGE:
+            params[0] = mState.getCaps().minMultisampleLineWidth;
+            params[1] = mState.getCaps().maxMultisampleLineWidth;
+            break;
+        case GL_MULTISAMPLE_LINE_WIDTH_GRANULARITY:
+            *params = mState.getCaps().lineWidthGranularity;
             break;
         case GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT:
             ASSERT(mState.getExtensions().textureFilterAnisotropicEXT);
@@ -3618,7 +3639,8 @@ void Context::beginTransformFeedback(PrimitiveMode primitiveMode)
 
 bool Context::hasActiveTransformFeedback(ShaderProgramID program) const
 {
-    for (auto pair : mTransformFeedbackMap)
+    // Note: transform feedback objects are private to context and so the map doesn't need locking
+    for (auto pair : UnsafeResourceMapIter(mTransformFeedbackMap))
     {
         if (pair.second != nullptr && pair.second->hasBoundProgram(program))
         {
@@ -3733,11 +3755,13 @@ Extensions Context::generateSupportedExtensions() const
         supportedExtensions.geometryShaderEXT       = false;
         supportedExtensions.geometryShaderOES       = false;
         supportedExtensions.gpuShader5EXT           = false;
+        supportedExtensions.gpuShader5OES           = false;
         supportedExtensions.primitiveBoundingBoxEXT = false;
         supportedExtensions.shaderImageAtomicOES    = false;
         supportedExtensions.shaderIoBlocksEXT       = false;
         supportedExtensions.shaderIoBlocksOES       = false;
         supportedExtensions.tessellationShaderEXT   = false;
+        supportedExtensions.tessellationShaderOES   = false;
         supportedExtensions.textureBufferEXT        = false;
         supportedExtensions.textureBufferOES        = false;
 
@@ -4047,7 +4071,7 @@ void Context::initCaps()
     ANGLE_LIMIT_CAP(caps->maxTransformFeedbackSeparateComponents,
                     IMPLEMENTATION_MAX_TRANSFORM_FEEDBACK_SEPARATE_COMPONENTS);
 
-    if (getClientVersion() < ES_3_2 && !extensions->tessellationShaderEXT)
+    if (getClientVersion() < ES_3_2 && !extensions->tessellationShaderAny())
     {
         ANGLE_LIMIT_CAP(caps->maxCombinedTextureImageUnits,
                         IMPLEMENTATION_MAX_ES31_ACTIVE_TEXTURES);
@@ -4498,7 +4522,8 @@ void Context::updateCaps()
                                       (mState.isWebGL() || mState.hasRobustAccess()));
 
     // Cache this in the VertexArrays. They need to check it in state change notifications.
-    for (auto vaoIter : mVertexArrayMap)
+    // Note: vertex array objects are private to context and so the map doesn't need locking
+    for (auto vaoIter : UnsafeResourceMapIter(mVertexArrayMap))
     {
         VertexArray *vao = vaoIter.second;
         vao->setBufferAccessValidationEnabled(mBufferAccessValidationEnabled);
@@ -9626,7 +9651,7 @@ egl::Error Context::releaseExternalContext()
     return egl::NoError();
 }
 
-std::mutex &Context::getProgramCacheMutex() const
+angle::SimpleMutex &Context::getProgramCacheMutex() const
 {
     return mDisplay->getProgramCacheMutex();
 }
@@ -9634,7 +9659,7 @@ std::mutex &Context::getProgramCacheMutex() const
 bool Context::supportsGeometryOrTesselation() const
 {
     return mState.getClientVersion() == ES_3_2 || mState.getExtensions().geometryShaderAny() ||
-           mState.getExtensions().tessellationShaderEXT;
+           mState.getExtensions().tessellationShaderAny();
 }
 
 void Context::dirtyAllState()
@@ -10408,7 +10433,8 @@ void StateCache::updateValidDrawModes(Context *context)
         // active and not paused, regardless of mode. Any primitive type may be used while transform
         // feedback is paused.
         if (!context->getExtensions().geometryShaderAny() &&
-            !context->getExtensions().tessellationShaderEXT && context->getClientVersion() < ES_3_2)
+            !context->getExtensions().tessellationShaderAny() &&
+            context->getClientVersion() < ES_3_2)
         {
             mCachedValidDrawModes.fill(false);
             mCachedValidDrawModes[curTransformFeedback->getPrimitiveMode()] = true;

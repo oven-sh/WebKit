@@ -232,8 +232,8 @@ public:
     bool preparingToPlay() const { return m_preparingToPlay; }
 
 #if !RELEASE_LOG_DISABLED
-    const Logger& logger() const final { return m_logger.get(); }
-    const void* logIdentifier() const override { return m_logIdentifier; }
+    const Logger& logger() const final;
+    const void* logIdentifier() const final;
     ASCIILiteral logClassName() const override { return "PlatformMediaSession"_s; }
     WTFLogChannel& logChannel() const final;
 #endif
@@ -251,30 +251,32 @@ public:
 
     MediaSessionIdentifier mediaSessionIdentifier() const { return m_mediaSessionIdentifier; }
 
+#if !RELEASE_LOG_DISABLED
+    virtual String description() const;
+#endif
+
 protected:
     PlatformMediaSession(PlatformMediaSessionManager&, PlatformMediaSessionClient&);
     PlatformMediaSessionClient& client() const { return m_client; }
 
 private:
     bool processClientWillPausePlayback(DelayCallingUpdateNowPlaying);
-    size_t interruptionCount() const { return m_interruptionStack.size(); }
+    size_t activeInterruptionCount() const;
 
     PlatformMediaSessionClient& m_client;
     MediaSessionIdentifier m_mediaSessionIdentifier;
     State m_state { State::Idle };
     State m_stateToRestore { State::Idle };
-    Vector<InterruptionType> m_interruptionStack;
-    int m_interruptionCount { 0 };
+    struct Interruption {
+        InterruptionType type { InterruptionType::NoInterruption };
+        bool ignored { false };
+    };
+    Vector<Interruption> m_interruptionStack;
     bool m_active { false };
     bool m_notifyingClient { false };
     bool m_isPlayingToWirelessPlaybackTarget { false };
     bool m_hasPlayedAudiblySinceLastInterruption { false };
     bool m_preparingToPlay { false };
-
-#if !RELEASE_LOG_DISABLED
-    Ref<const Logger> m_logger;
-    const void* m_logIdentifier;
-#endif
 
     friend class PlatformMediaSessionManager;
 };
@@ -328,6 +330,7 @@ public:
 
 #if !RELEASE_LOG_DISABLED
     virtual const Logger& logger() const = 0;
+    virtual const void* logIdentifier() const = 0;
 #endif
 
 protected:
@@ -336,6 +339,7 @@ protected:
 
 String convertEnumerationToString(PlatformMediaSession::State);
 String convertEnumerationToString(PlatformMediaSession::InterruptionType);
+String convertEnumerationToString(PlatformMediaSession::MediaType);
 WEBCORE_EXPORT String convertEnumerationToString(PlatformMediaSession::RemoteControlCommandType);
 
 } // namespace WebCore
@@ -366,6 +370,14 @@ struct LogArgument<WebCore::PlatformMediaSession::RemoteControlCommandType> {
     static String toString(const WebCore::PlatformMediaSession::RemoteControlCommandType command)
     {
         return convertEnumerationToString(command);
+    }
+};
+
+template <>
+struct LogArgument<WebCore::PlatformMediaSession::MediaType> {
+    static String toString(const WebCore::PlatformMediaSession::MediaType mediaType)
+    {
+        return convertEnumerationToString(mediaType);
     }
 };
 

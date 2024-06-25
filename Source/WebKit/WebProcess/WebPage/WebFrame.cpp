@@ -43,6 +43,7 @@
 #include "ProvisionalFrameCreationParameters.h"
 #include "WKAPICast.h"
 #include "WKBundleAPICast.h"
+#include "WebAutomationSession.h"
 #include "WebChromeClient.h"
 #include "WebContextMenu.h"
 #include "WebCoreArgumentCoders.h"
@@ -121,12 +122,8 @@ static uint64_t generateListenerID()
     return uniqueListenerID++;
 }
 
-// FIXME: Remove receivedMainFrameIdentifierFromUIProcess in favor of a more correct way of sending frame tree deltas to each process. <rdar://116201135>
-void WebFrame::initWithCoreMainFrame(WebPage& page, Frame& coreFrame, bool receivedMainFrameIdentifierFromUIProcess)
+void WebFrame::initWithCoreMainFrame(WebPage& page, Frame& coreFrame)
 {
-    if (!receivedMainFrameIdentifierFromUIProcess)
-        page.send(Messages::WebPageProxy::DidCreateMainFrame(frameID()));
-
     m_coreFrame = coreFrame;
     m_coreFrame->tree().setSpecifiedName(nullAtom());
     if (auto* localFrame = dynamicDowncast<LocalFrame>(coreFrame))
@@ -395,6 +392,8 @@ void WebFrame::loadDidCommitInAnotherProcess(std::optional<WebCore::LayerHosting
     if (corePage->focusController().focusedFrame() == localFrame.get())
         corePage->focusController().setFocusedFrame(newFrame.ptr(), FocusController::BroadcastFocusedFrame::No);
 
+    localFrame->loader().detachFromParent();
+
     if (ownerElement)
         ownerElement->scheduleInvalidateStyleAndLayerComposition();
 }
@@ -425,13 +424,14 @@ void WebFrame::createProvisionalFrame(ProvisionalFrameCreationParameters&& param
         setLayerHostingContextIdentifier(*parameters.layerHostingContextIdentifier);
 }
 
-void WebFrame::provisionalLoadFailed()
+void WebFrame::destroyProvisionalFrame()
 {
     if (RefPtr frame = std::exchange(m_provisionalFrame, nullptr)) {
         if (auto* client = toWebLocalFrameLoaderClient(frame->loader().client()))
             client->takeFrameInvalidator().release();
         if (RefPtr parent = frame->tree().parent())
             parent->tree().removeChild(*frame);
+        frame->loader().detachFromParent();
         frame->setView(nullptr);
     }
 }
@@ -456,6 +456,7 @@ void WebFrame::commitProvisionalFrame()
 
     RefPtr parent = remoteFrame->tree().parent();
     RefPtr ownerElement = remoteFrame->ownerElement();
+    auto* ownerRenderer = remoteFrame->ownerRenderer();
 
     if (parent)
         parent->tree().removeChild(*remoteFrame);
@@ -465,6 +466,10 @@ void WebFrame::commitProvisionalFrame()
     m_coreFrame = localFrame.get();
     remoteFrame->setView(nullptr);
     localFrame->tree().setSpecifiedName(remoteFrame->tree().specifiedName());
+
+    if (ownerRenderer)
+        ownerRenderer->setWidget(localFrame->view());
+
     localFrame->setOwnerElement(ownerElement.get());
     if (remoteFrame->isMainFrame())
         corePage->setMainFrame(*localFrame);
@@ -1178,7 +1183,7 @@ RetainPtr<CFDataRef> WebFrame::webArchiveData(FrameFilterFunction callback, void
 
 RefPtr<WebImage> WebFrame::createSelectionSnapshot() const
 {
-    auto snapshot = snapshotSelection(*coreLocalFrame(), { { WebCore::SnapshotFlags::ForceBlackText, WebCore::SnapshotFlags::Shareable }, PixelFormat::BGRA8, DestinationColorSpace::SRGB() });
+    auto snapshot = snapshotSelection(*coreLocalFrame(), { { WebCore::SnapshotFlags::ForceBlackText, WebCore::SnapshotFlags::Shareable }, ImageBufferPixelFormat::BGRA8, DestinationColorSpace::SRGB() });
     if (!snapshot)
         return nullptr;
 
@@ -1315,18 +1320,23 @@ WebCore::HandleUserInputEventResult WebFrame::handleMouseEvent(const WebMouseEve
             coreLocalFrame->eventHandler().invalidateClick();
         return coreLocalFrame->eventHandler().handleMouseReleaseEvent(platformMouseEvent);
 
-    case PlatformEvent::Type::MouseMoved:
+    case PlatformEvent::Type::MouseMoved: {
 #if PLATFORM(COCOA)
+        // FIXME <https://webkit.org/b/275500>: Find a way to properly ensure that automated events get delivered into an unfocused window.
+        bool isEventSynthesized = false;
+#if PLATFORM(MAC)
+        isEventSynthesized = platformMouseEvent.eventNumber() == WebAutomationSession::synthesizedMouseEventMagicEventNumber;
+#endif
         // We need to do a full, normal hit test during this mouse event if the page is active or if a mouse
         // button is currently pressed. It is possible that neither of those things will be true since on
         // Lion when legacy scrollbars are enabled, WebKit receives mouse events all the time. If it is one
         // of those cases where the page is not active and the mouse is not pressed, then we can fire a more
         // efficient scrollbars-only version of the event.
-        if (!(page()->corePage()->focusController().isActive() || (mouseEvent.button() != WebMouseEventButton::None)))
+        if (!isEventSynthesized && !page()->corePage()->focusController().isActive() && mouseEvent.button() == WebMouseEventButton::None)
             return coreLocalFrame->eventHandler().passMouseMovedEventToScrollbars(platformMouseEvent);
-#endif
+#endif // PLATFORM(COCOA)
         return coreLocalFrame->eventHandler().mouseMoved(platformMouseEvent);
-
+    }
     case PlatformEvent::Type::MouseForceChanged:
     case PlatformEvent::Type::MouseForceDown:
     case PlatformEvent::Type::MouseForceUp:

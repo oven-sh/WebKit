@@ -81,6 +81,7 @@ static void wpeViewDRMConstructed(GObject* object)
     wpe_view_resized(wpeView, mode->hdisplay / scale, mode->vdisplay / scale);
     wpe_view_scale_changed(wpeView, scale);
     wpe_view_state_changed(wpeView, WPE_VIEW_STATE_FULLSCREEN);
+    wpe_view_map(wpeView);
 
     priv->refreshDuration = Seconds(1 / (wpe_monitor_get_refresh_rate(monitor) / 1000.));
 
@@ -386,7 +387,7 @@ static gboolean wpeViewDRMRequestUpdate(WPEViewDRM* view, GError** error)
     return wpeViewDRMCommitLegacy(WPE_VIEW_DRM(view), *drmBuffer, error);
 }
 
-static gboolean wpeViewDRMRenderBuffer(WPEView* view, WPEBuffer* buffer, GError** error)
+static gboolean wpeViewDRMRenderBuffer(WPEView* view, WPEBuffer* buffer, const WPERectangle*, guint, GError** error)
 {
     auto* drmBuffer = static_cast<WPE::DRM::Buffer*>(wpe_buffer_get_user_data(buffer));
     if (!drmBuffer) {

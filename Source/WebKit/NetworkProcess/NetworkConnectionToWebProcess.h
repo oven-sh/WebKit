@@ -143,6 +143,7 @@ public:
     IPC::Connection& connection() { return m_connection.get(); }
     Ref<IPC::Connection> protectedConnection() { return m_connection; }
     NetworkProcess& networkProcess() { return m_networkProcess.get(); }
+    Ref<NetworkProcess> protectedNetworkProcess();
 
     bool isWebTransportEnabled() const { return m_preferencesForWebProcess.isWebTransportEnabled; }
     bool usesSingleWebProcess() const { return m_preferencesForWebProcess.usesSingleWebProcess; }
@@ -226,7 +227,7 @@ public:
     void installMockContentFilter(WebCore::MockContentFilterSettings&&);
 #endif
 #if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
-    void logOnBehalfOfWebContent(std::span<const uint8_t> logChannel, std::span<const uint8_t> logCategory, std::span<const uint8_t> logString, uint8_t logType, int32_t pid);
+    void logOnBehalfOfWebContent(std::span<const char> logChannelIncludingNullTerminator, std::span<const char> logCategoryIncludingNullTerminator, std::span<const char> logStringIncludingNullTerminator, uint8_t logType, int32_t pid);
 #endif
 
     void useRedirectionForCurrentNavigation(WebCore::ResourceLoaderIdentifier, WebCore::ResourceResponse&&);

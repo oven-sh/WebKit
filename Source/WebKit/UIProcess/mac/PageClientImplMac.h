@@ -113,6 +113,7 @@ private:
     void clearSafeBrowsingWarning() override;
     void clearSafeBrowsingWarningIfForMainFrameNavigation() override;
     bool hasSafeBrowsingWarning() const override;
+    void didClearEditorStateAfterPageTransition() final { }
     
     bool showShareSheet(const WebCore::ShareDataWithParsedURL&, WTF::CompletionHandler<void(bool)>&&) override;
         
@@ -200,6 +201,8 @@ private:
     void didCommitLayerTree(const RemoteLayerTreeTransaction&) override;
     void layerTreeCommitComplete() override;
 
+    void scrollingNodeScrollViewDidScroll(WebCore::ScrollingNodeID) override;
+
     void registerInsertionUndoGrouping() override;
 
     void createPDFHUD(PDFPluginIdentifier, const WebCore::IntRect&) override;
@@ -229,7 +232,10 @@ private:
     void willRecordNavigationSnapshot(WebBackForwardListItem&) override;
     void didRemoveNavigationGestureSnapshot() override;
 
-    void requestDOMPasteAccess(WebCore::DOMPasteAccessCategory, const WebCore::IntRect&, const String&, CompletionHandler<void(WebCore::DOMPasteAccessResponse)>&&) final;
+    void willBeginViewGesture() final;
+    void didEndViewGesture() final;
+
+    void requestDOMPasteAccess(WebCore::DOMPasteAccessCategory, WebCore::DOMPasteRequiresInteraction, const WebCore::IntRect&, const String&, CompletionHandler<void(WebCore::DOMPasteAccessResponse)>&&) final;
 
     void makeViewBlank(bool) final;
 
@@ -302,9 +308,9 @@ private:
     void handleContextMenuTranslation(const WebCore::TranslationContextMenuInfo&) override;
 #endif
 
-#if ENABLE(UNIFIED_TEXT_REPLACEMENT) && ENABLE(CONTEXT_MENUS)
-    bool canHandleSwapCharacters() const override;
-    void handleContextMenuSwapCharacters(WebCore::IntRect selectionBoundsInRootView) override;
+#if ENABLE(WRITING_TOOLS) && ENABLE(CONTEXT_MENUS)
+    bool canHandleContextMenuWritingTools() const override;
+    void handleContextMenuWritingTools(WebCore::IntRect selectionBoundsInRootView) override;
 #endif
 
 #if ENABLE(DATA_DETECTION)

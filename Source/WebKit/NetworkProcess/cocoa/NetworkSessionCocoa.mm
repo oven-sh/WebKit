@@ -55,6 +55,7 @@
 #import <WebCore/ResourceRequest.h>
 #import <WebCore/ResourceResponse.h>
 #import <WebCore/SharedBuffer.h>
+#import <WebCore/ThreadableWebSocketChannel.h>
 #import <WebCore/WebCoreURLResponse.h>
 #import <pal/spi/cf/CFNetworkSPI.h>
 #import <wtf/BlockPtr.h>
@@ -227,6 +228,8 @@ static String stringForTLSCipherSuite(tls_ciphersuite_t suite)
     case tls_ciphersuite_##cipher: \
         return "" #cipher ""_s
 
+// FIXME: rdar://128061442
+ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     switch (suite) {
         STRINGIFY_CIPHER(RSA_WITH_3DES_EDE_CBC_SHA);
         STRINGIFY_CIPHER(RSA_WITH_AES_128_CBC_SHA);
@@ -255,6 +258,7 @@ static String stringForTLSCipherSuite(tls_ciphersuite_t suite)
         STRINGIFY_CIPHER(AES_256_GCM_SHA384);
         STRINGIFY_CIPHER(CHACHA20_POLY1305_SHA256);
     }
+ALLOW_DEPRECATED_DECLARATIONS_END
 
     return { };
 
@@ -303,6 +307,8 @@ static String stringForSSLCipher(SSLCipherSuite cipher)
     case cipher: \
         return "" #cipher ""_s
 
+// FIXME: rdar://128061442
+ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     switch (cipher) {
     STRINGIFY_CIPHER(SSL_RSA_EXPORT_WITH_RC4_40_MD5);
     STRINGIFY_CIPHER(SSL_RSA_EXPORT_WITH_RC2_CBC_40_MD5);
@@ -474,6 +480,7 @@ static String stringForSSLCipher(SSLCipherSuite cipher)
         ASSERT_NOT_REACHED();
         return emptyString();
     }
+ALLOW_DEPRECATED_DECLARATIONS_END
 
 #undef STRINGIFY_CIPHER
 }
@@ -784,7 +791,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
             auto networkDataTask = [self existingTask:task];
             if (networkDataTask) {
                 NSURLProtectionSpace *protectionSpace = challenge.protectionSpace;
-                networkDataTask->didNegotiateModernTLS(URL { makeString(String(protectionSpace.protocol), "://", String(protectionSpace.host), ':', protectionSpace.port) });
+                networkDataTask->didNegotiateModernTLS(URL { makeString(String(protectionSpace.protocol), "://"_s, String(protectionSpace.host), ':', protectionSpace.port) });
             }
             auto decisionHandler = makeBlockPtr([weakSelf = WeakObjCPtr<WKNetworkSessionDelegate>(self), sessionCocoa = WeakPtr { sessionCocoa }, completionHandler = makeBlockPtr(completionHandler), taskIdentifier, networkDataTask = RefPtr { networkDataTask }, negotiatedLegacyTLS](NSURLAuthenticationChallenge *challenge, OSStatus trustResult) mutable {
                 auto strongSelf = weakSelf.get();
@@ -899,7 +906,11 @@ static NSDictionary<NSString *, id> *extractResolutionReport(NSError *error)
 
     if (auto networkDataTask = [self existingTask:task])
         networkDataTask->didCompleteWithError(error, networkDataTask->networkLoadMetrics());
-    else if (error) {
+    else if (auto* webSocketTask = [self existingWebSocketTask:task]) {
+        // Even if error is null here, it's an error to close a WebSocket without a close frame which should be received
+        // in URLSession:webSocketTask:didCloseWithCode:reason: but this can be hit in some TCP error cases like rdar://110487778
+        webSocketTask->didClose(WebCore::ThreadableWebSocketChannel::CloseEventCodeAbnormalClosure, emptyString());
+    } else if (error) {
         if (!_sessionWrapper)
             return;
         auto downloadID = _sessionWrapper->downloadMap.take(task.taskIdentifier);

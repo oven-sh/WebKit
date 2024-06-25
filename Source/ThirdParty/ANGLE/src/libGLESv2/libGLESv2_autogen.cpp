@@ -5230,6 +5230,45 @@ void GL_APIENTRY glMaxShaderCompilerThreadsKHR(GLuint count)
 
 // GL_KHR_robust_buffer_access_behavior
 
+// GL_KHR_robustness
+GLenum GL_APIENTRY glGetGraphicsResetStatusKHR()
+{
+    return GL_GetGraphicsResetStatusKHR();
+}
+
+void GL_APIENTRY glGetnUniformfvKHR(GLuint program,
+                                    GLint location,
+                                    GLsizei bufSize,
+                                    GLfloat *params)
+{
+    return GL_GetnUniformfvKHR(program, location, bufSize, params);
+}
+
+void GL_APIENTRY glGetnUniformivKHR(GLuint program, GLint location, GLsizei bufSize, GLint *params)
+{
+    return GL_GetnUniformivKHR(program, location, bufSize, params);
+}
+
+void GL_APIENTRY glGetnUniformuivKHR(GLuint program,
+                                     GLint location,
+                                     GLsizei bufSize,
+                                     GLuint *params)
+{
+    return GL_GetnUniformuivKHR(program, location, bufSize, params);
+}
+
+void GL_APIENTRY glReadnPixelsKHR(GLint x,
+                                  GLint y,
+                                  GLsizei width,
+                                  GLsizei height,
+                                  GLenum format,
+                                  GLenum type,
+                                  GLsizei bufSize,
+                                  void *data)
+{
+    return GL_ReadnPixelsKHR(x, y, width, height, format, type, bufSize, data);
+}
+
 // GL_KHR_texture_compression_astc_hdr
 
 // GL_KHR_texture_compression_astc_ldr
@@ -5599,6 +5638,8 @@ void GL_APIENTRY glProgramBinaryOES(GLuint program,
     return GL_ProgramBinaryOES(program, binaryFormat, binary, length);
 }
 
+// GL_OES_gpu_shader5
+
 // GL_OES_mapbuffer
 void GL_APIENTRY glGetBufferPointervOES(GLenum target, GLenum pname, void **params)
 {
@@ -5687,6 +5728,12 @@ void GL_APIENTRY glMinSampleShadingOES(GLfloat value)
 // GL_OES_standard_derivatives
 
 // GL_OES_surfaceless_context
+
+// GL_OES_tessellation_shader
+void GL_APIENTRY glPatchParameteriOES(GLenum pname, GLint value)
+{
+    return GL_PatchParameteriOES(pname, value);
+}
 
 // GL_OES_texture_3D
 void GL_APIENTRY glCompressedTexImage3DOES(GLenum target,

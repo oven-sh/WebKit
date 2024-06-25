@@ -25,6 +25,27 @@ list(APPEND WTF_SOURCES
     unix/UniStdExtrasUnix.cpp
 )
 
+list(APPEND WTF_PUBLIC_HEADERS
+    glib/ChassisType.h
+    glib/GMutexLocker.h
+    glib/GRefPtr.h
+    glib/GSocketMonitor.h
+    glib/GThreadSafeWeakPtr.h
+    glib/GTypedefs.h
+    glib/GUniquePtr.h
+    glib/GWeakPtr.h
+    glib/RunLoopSourcePriority.h
+    glib/Sandbox.h
+    glib/SocketConnection.h
+    glib/WTFGType.h
+
+    linux/CurrentProcessMemoryStatus.h
+    linux/ProcessMemoryFootprint.h
+    linux/RealTimeThreads.h
+
+    unix/UnixFileDescriptor.h
+)
+
 if (CMAKE_SYSTEM_NAME MATCHES "Linux")
     list(APPEND WTF_SOURCES
         linux/CurrentProcessMemoryStatus.cpp
@@ -66,5 +87,11 @@ list(APPEND WTF_SYSTEM_INCLUDE_DIRECTORIES
 if (USE_LIBBACKTRACE)
     list(APPEND WTF_LIBRARIES
         LIBBACKTRACE::LIBBACKTRACE
+    )
+endif ()
+
+if (USE_SYSPROF_CAPTURE)
+    list(APPEND WTF_LIBRARIES
+        SysProfCapture::SysProfCapture
     )
 endif ()

@@ -538,7 +538,11 @@ class GLSLTest_ES3 : public GLSLTest
 {};
 
 class GLSLTest_ES31 : public GLSLTest
-{};
+{
+  protected:
+    void testArrayOfArrayOfSamplerDynamicIndex(const APIExtensionVersion usedExtension);
+    void testTessellationTextureBufferAccess(const APIExtensionVersion usedExtension);
+};
 
 // Tests the "init output variables" ANGLE shader translator option.
 class GLSLTest_ES31_InitShaderVariables : public GLSLTest
@@ -3510,6 +3514,26 @@ TEST_P(GLSLTest_ES3, InitGlobalArrayWithArrayIndexing)
 
     GLuint program = CompileProgram(essl3_shaders::vs::Simple(), kFS);
     EXPECT_NE(0u, program);
+}
+
+// Test that constant global matrix array with an initializer compiles.
+TEST_P(GLSLTest_ES3, InitConstantMatrixArray)
+{
+    constexpr char kFS[] = R"(#version 300 es
+        precision highp float;
+        uniform int index;
+
+        const mat4 matrix = mat4(1.0);
+        const mat4 array[1] = mat4[1](matrix);
+        out vec4 my_FragColor;
+        void main() {
+            my_FragColor = vec4(array[index][1].rgb, 1.0);
+        })";
+
+    ANGLE_GL_PROGRAM(program, essl3_shaders::vs::Simple(), kFS);
+
+    drawQuad(program, essl3_shaders::PositionAttrib(), 0.5f);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
 }
 
 // Test that index-constant sampler array indexing is supported.
@@ -7338,64 +7362,91 @@ TEST_P(GLSLTest_ES31, VaryingIOBlockDeclaredAsInAndOut)
     ASSERT_GL_NO_ERROR();
 }
 
-// Test that texture buffers can be accessed in a tessellation stage
-// Triggers a bug in the Vulkan backend: http://anglebug.com/7135
-TEST_P(GLSLTest_ES31, TessellationTextureBufferAccess)
+void GLSLTest_ES31::testTessellationTextureBufferAccess(const APIExtensionVersion usedExtension)
 {
-    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_tessellation_shader"));
-    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_texture_buffer"));
+    ASSERT(usedExtension == APIExtensionVersion::EXT || usedExtension == APIExtensionVersion::OES);
 
+    // Vertex shader
     constexpr char kVS[] = R"(#version 310 es
-    precision highp float;
-    in vec4 inputAttribute;
+precision highp float;
+in vec4 inputAttribute;
 
-    void main()
+void main()
+{
+gl_Position = inputAttribute;
+})";
+
+    // Tessellation shaders
+    constexpr char kGLSLVersion[] = R"(#version 310 es
+)";
+    constexpr char kTessEXT[]     = R"(#extension GL_EXT_tessellation_shader : require
+)";
+    constexpr char kTessOES[]     = R"(#extension GL_OES_tessellation_shader : require
+)";
+    constexpr char kTexBufEXT[]   = R"(#extension GL_EXT_texture_buffer : require
+)";
+    constexpr char kTexBufOES[]   = R"(#extension GL_OES_texture_buffer : require
+)";
+
+    std::string tcs;
+    std::string tes;
+
+    tcs.append(kGLSLVersion);
+    tes.append(kGLSLVersion);
+
+    if (usedExtension == APIExtensionVersion::EXT)
     {
-        gl_Position = inputAttribute;
-    })";
-
-    constexpr char kTCS[] = R"(#version 310 es
-    #extension GL_EXT_tessellation_shader : require
-    precision mediump float;
-    layout(vertices = 2) out;
-
-    void main()
+        tcs.append(kTessEXT);
+        tes.append(kTessEXT);
+        tes.append(kTexBufEXT);
+    }
+    else
     {
-        gl_out[gl_InvocationID].gl_Position = gl_in[gl_InvocationID].gl_Position;
-        gl_TessLevelInner[0] = 1.0;
-        gl_TessLevelInner[1] = 1.0;
-        gl_TessLevelOuter[0] = 1.0;
-        gl_TessLevelOuter[1] = 1.0;
-        gl_TessLevelOuter[2] = 1.0;
-        gl_TessLevelOuter[3] = 1.0;
-    })";
+        tcs.append(kTessOES);
+        tes.append(kTessOES);
+        tes.append(kTexBufOES);
+    }
 
-    constexpr char kTES[] = R"(#version 310 es
-    #extension GL_EXT_tessellation_shader : require
-    #extension GL_OES_texture_buffer : require
-    precision mediump float;
-    layout (isolines, point_mode) in;
+    constexpr char kTCSBody[] = R"(precision mediump float;
+layout(vertices = 2) out;
 
-    uniform highp samplerBuffer tex;
+void main()
+{
+gl_out[gl_InvocationID].gl_Position = gl_in[gl_InvocationID].gl_Position;
+gl_TessLevelInner[0] = 1.0;
+gl_TessLevelInner[1] = 1.0;
+gl_TessLevelOuter[0] = 1.0;
+gl_TessLevelOuter[1] = 1.0;
+gl_TessLevelOuter[2] = 1.0;
+gl_TessLevelOuter[3] = 1.0;
+})";
+    tcs.append(kTCSBody);
 
-    out vec4 tex_color;
+    constexpr char kTESBody[] = R"(precision mediump float;
+layout (isolines, point_mode) in;
 
-    void main()
-    {
-        tex_color = texelFetch(tex, 0);
-        gl_Position = gl_in[0].gl_Position;
-    })";
+uniform highp samplerBuffer tex;
 
+out vec4 tex_color;
+
+void main()
+{
+tex_color = texelFetch(tex, 0);
+gl_Position = gl_in[0].gl_Position;
+})";
+    tes.append(kTESBody);
+
+    // Fragment shader
     constexpr char kFS[] = R"(#version 310 es
-    precision mediump float;
-    layout(location = 0) out mediump vec4 color;
+precision mediump float;
+layout(location = 0) out mediump vec4 color;
 
-    in vec4 tex_color;
+in vec4 tex_color;
 
-    void main()
-    {
-        color = tex_color;
-    })";
+void main()
+{
+color = tex_color;
+})";
 
     constexpr GLint kBufferSize = 32;
     GLubyte texData[]           = {0u, 255u, 0u, 255u};
@@ -7412,9 +7463,25 @@ TEST_P(GLSLTest_ES31, TessellationTextureBufferAccess)
     glClearColor(1.0, 0, 0, 1.0);
     glClear(GL_COLOR_BUFFER_BIT);
 
-    ANGLE_GL_PROGRAM_WITH_TESS(program, kVS, kTCS, kTES, kFS);
+    ANGLE_GL_PROGRAM_WITH_TESS(program, kVS, tcs.c_str(), tes.c_str(), kFS);
     drawPatches(program, "inputAttribute", 0.5f, 1.0f, GL_FALSE);
     ASSERT_GL_NO_ERROR();
+}
+
+// Test that texture buffers can be accessed in a tessellation stage (using EXT)
+TEST_P(GLSLTest_ES31, TessellationTextureBufferAccessEXT)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_tessellation_shader"));
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_texture_buffer"));
+    testTessellationTextureBufferAccess(APIExtensionVersion::EXT);
+}
+
+// Test that texture buffers can be accessed in a tessellation stage (using OES)
+TEST_P(GLSLTest_ES31, TessellationTextureBufferAccessOES)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_OES_tessellation_shader"));
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_OES_texture_buffer"));
+    testTessellationTextureBufferAccess(APIExtensionVersion::OES);
 }
 
 // Test that a varying struct that's not declared in the fragment shader links successfully.
@@ -9024,6 +9091,42 @@ void main()
 
     ANGLE_GL_PROGRAM(program, kVS, kFS);
     drawQuad(program, "inputAttribute", 0.5f);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
+}
+
+// Test that multi variables struct should not crash in separated struct expressions.
+TEST_P(GLSLTest_ES3, VaryingStructWithInlineDefinition2)
+{
+    constexpr char kVS[] = R"(#version 300 es
+in vec4 inputAttribute;
+flat out struct A
+{
+    int a;
+} z1, z2;
+void main()
+{
+    z1.a = 1;
+    z2.a = 2;
+    gl_Position = inputAttribute;
+})";
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+out vec4 my_FragColor;
+flat in struct A
+{
+    int a;
+} z1, z2;
+void main()
+{
+    bool success = (z1.a == 1 && z2.a == 2);
+    my_FragColor = vec4(1, 0, 0, 1);
+    if (success)
+    {
+        my_FragColor = vec4(0, 1, 0, 1);
+    }
+})";
+    ANGLE_GL_PROGRAM(program, kVS, kFS);
+    drawQuad(program.get(), "inputAttribute", 0.5f);
     EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
 }
 
@@ -12168,11 +12271,9 @@ void main(void)
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
 }
 
-// Test that array of array of samplers can be indexed correctly with dynamic indices.
-TEST_P(GLSLTest_ES31, ArrayOfArrayOfSamplerDynamicIndex)
+void GLSLTest_ES31::testArrayOfArrayOfSamplerDynamicIndex(const APIExtensionVersion usedExtension)
 {
-    // Skip if EXT_gpu_shader5 is not enabled.
-    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_gpu_shader5"));
+    ASSERT(usedExtension == APIExtensionVersion::EXT || usedExtension == APIExtensionVersion::OES);
 
     int maxTextureImageUnits = 0;
     glGetIntegerv(GL_MAX_COMPUTE_TEXTURE_IMAGE_UNITS, &maxTextureImageUnits);
@@ -12184,13 +12285,29 @@ TEST_P(GLSLTest_ES31, ArrayOfArrayOfSamplerDynamicIndex)
     // http://anglebug.com/5546
     ANGLE_SKIP_TEST_IF(IsWindows() && IsIntel() && IsOpenGL());
 
-    constexpr char kComputeShader[] = R"(#version 310 es
-#extension GL_EXT_gpu_shader5 : require
+    std::string computeShader;
+    constexpr char kGLSLVersion[]  = R"(#version 310 es
+)";
+    constexpr char kGPUShaderEXT[] = R"(#extension GL_EXT_gpu_shader5 : require
+)";
+    constexpr char kGPUShaderOES[] = R"(#extension GL_OES_gpu_shader5 : require
+)";
 
+    computeShader.append(kGLSLVersion);
+    if (usedExtension == APIExtensionVersion::EXT)
+    {
+        computeShader.append(kGPUShaderEXT);
+    }
+    else
+    {
+        computeShader.append(kGPUShaderOES);
+    }
+
+    constexpr char kComputeShaderBody[] = R"(
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
 layout(binding = 1, std430) buffer Output {
-  uint success;
+uint success;
 } outbuf;
 
 uniform sampler2D smplr[2][3][4];
@@ -12198,47 +12315,49 @@ layout(binding=0) uniform atomic_uint ac;
 
 bool sampler1DAndAtomicCounter(uvec4 sExpect, in sampler2D s[4], in atomic_uint a, uint aExpect)
 {
-    uvec4 sResult = uvec4(uint(texture(s[0], vec2(0.5, 0.5)).x * 255.0),
-                          uint(texture(s[1], vec2(0.5, 0.5)).x * 255.0),
-                          uint(texture(s[2], vec2(0.5, 0.5)).x * 255.0),
-                          uint(texture(s[3], vec2(0.5, 0.5)).x * 255.0));
-    uint aResult = atomicCounter(a);
+uvec4 sResult = uvec4(uint(texture(s[0], vec2(0.5, 0.5)).x * 255.0),
+                      uint(texture(s[1], vec2(0.5, 0.5)).x * 255.0),
+                      uint(texture(s[2], vec2(0.5, 0.5)).x * 255.0),
+                      uint(texture(s[3], vec2(0.5, 0.5)).x * 255.0));
+uint aResult = atomicCounter(a);
 
-    return sExpect == sResult && aExpect == aResult;
+return sExpect == sResult && aExpect == aResult;
 }
 
 bool sampler3DAndAtomicCounter(in sampler2D s[2][3][4], uint aInitial, in atomic_uint a)
 {
-    bool success = true;
-    // [0][0]
-    success = sampler1DAndAtomicCounter(uvec4(0, 8, 16, 24),
-                    s[atomicCounterIncrement(ac)][0], a, aInitial + 1u) && success;
-    // [1][0]
-    success = sampler1DAndAtomicCounter(uvec4(96, 104, 112, 120),
-                    s[atomicCounterIncrement(ac)][0], a, aInitial + 2u) && success;
-    // [0][1]
-    success = sampler1DAndAtomicCounter(uvec4(32, 40, 48, 56),
-                    s[0][atomicCounterIncrement(ac) - 1u], a, aInitial + 3u) && success;
-    // [0][2]
-    success = sampler1DAndAtomicCounter(uvec4(64, 72, 80, 88),
-                    s[0][atomicCounterIncrement(ac) - 1u], a, aInitial + 4u) && success;
-    // [1][1]
-    success = sampler1DAndAtomicCounter(uvec4(128, 136, 144, 152),
-                    s[1][atomicCounterIncrement(ac) - 3u], a, aInitial + 5u) && success;
-    // [1][2]
-    uint acValue = atomicCounterIncrement(ac);  // Returns 5
-    success = sampler1DAndAtomicCounter(uvec4(160, 168, 176, 184),
-                    s[acValue - 4u][atomicCounterIncrement(ac) - 4u], a, aInitial + 7u) && success;
+bool success = true;
+// [0][0]
+success = sampler1DAndAtomicCounter(uvec4(0, 8, 16, 24),
+                s[atomicCounterIncrement(ac)][0], a, aInitial + 1u) && success;
+// [1][0]
+success = sampler1DAndAtomicCounter(uvec4(96, 104, 112, 120),
+                s[atomicCounterIncrement(ac)][0], a, aInitial + 2u) && success;
+// [0][1]
+success = sampler1DAndAtomicCounter(uvec4(32, 40, 48, 56),
+                s[0][atomicCounterIncrement(ac) - 1u], a, aInitial + 3u) && success;
+// [0][2]
+success = sampler1DAndAtomicCounter(uvec4(64, 72, 80, 88),
+                s[0][atomicCounterIncrement(ac) - 1u], a, aInitial + 4u) && success;
+// [1][1]
+success = sampler1DAndAtomicCounter(uvec4(128, 136, 144, 152),
+                s[1][atomicCounterIncrement(ac) - 3u], a, aInitial + 5u) && success;
+// [1][2]
+uint acValue = atomicCounterIncrement(ac);  // Returns 5
+success = sampler1DAndAtomicCounter(uvec4(160, 168, 176, 184),
+                s[acValue - 4u][atomicCounterIncrement(ac) - 4u], a, aInitial + 7u) && success;
 
-    return success;
+return success;
 }
 
 void main(void)
 {
-    outbuf.success = uint(sampler3DAndAtomicCounter(smplr, 0u, ac));
+outbuf.success = uint(sampler3DAndAtomicCounter(smplr, 0u, ac));
 }
 )";
-    ANGLE_GL_COMPUTE_PROGRAM(program, kComputeShader);
+    computeShader.append(kComputeShaderBody);
+
+    ANGLE_GL_COMPUTE_PROGRAM(program, computeShader.c_str());
     EXPECT_GL_NO_ERROR();
 
     glUseProgram(program);
@@ -12302,6 +12421,22 @@ void main(void)
     EXPECT_EQ(ptr[0], 1u);
 
     glUnmapBuffer(GL_SHADER_STORAGE_BUFFER);
+}
+
+// Test that array of array of samplers can be indexed correctly with dynamic indices.
+TEST_P(GLSLTest_ES31, ArrayOfArrayOfSamplerDynamicIndexEXT)
+{
+    // Skip if EXT_gpu_shader5 is not enabled.
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_EXT_gpu_shader5"));
+    testArrayOfArrayOfSamplerDynamicIndex(APIExtensionVersion::EXT);
+}
+
+// Test that array of array of samplers can be indexed correctly with dynamic indices.
+TEST_P(GLSLTest_ES31, ArrayOfArrayOfSamplerDynamicIndexOES)
+{
+    // Skip if OES_gpu_shader5 is not enabled.
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_OES_gpu_shader5"));
+    testArrayOfArrayOfSamplerDynamicIndex(APIExtensionVersion::OES);
 }
 
 // Test that array of array of samplers can be indexed correctly with dynamic indices.  Uses
@@ -13388,6 +13523,219 @@ void main(){
                              static_cast<uint32_t>(ssbo140Expect.size())));
     EXPECT_TRUE(VerifyBuffer(ssboStd430, ssbo430Expect.data(),
                              static_cast<uint32_t>(ssbo430Expect.size())));
+}
+
+// Verify that ternary operator works when the operands are matrices used in different block
+// storage.
+TEST_P(GLSLTest_ES31, TernaryOnMatricesInDifferentBlockStorages)
+{
+    constexpr char kCS[] = R"(#version 310 es
+precision highp float;
+layout(local_size_x=1) in;
+
+layout(std140, column_major) uniform Ubo140c
+{
+    uint u;
+    layout(row_major) mat3x2 m;
+} ubo140cIn;
+
+layout(std430, row_major, binding = 0) buffer Ubo430r
+{
+    uint u;
+    layout(column_major) mat3x2 m;
+} ubo430rIn;
+
+layout(std140, column_major, binding = 1) buffer Ssbo140c
+{
+    uint u;
+    mat3x2 m;
+} ssbo140cIn;
+
+layout(std430, row_major, binding = 2) buffer Ssbo430r
+{
+    mat3x2 m1;
+    mat3x2 m2;
+} ssbo430rOut;
+
+void main(){
+    ssbo430rOut.m1 = ubo140cIn.u > ubo430rIn.u ? ubo140cIn.m : ubo430rIn.m;
+    ssbo430rOut.m2 = ssbo140cIn.u > ubo140cIn.u ? ssbo140cIn.m : ubo140cIn.m;
+
+    mat3x2 m = mat3x2(0);
+
+    ssbo430rOut.m1 = ubo140cIn.u == 0u ? m : ssbo430rOut.m1;
+})";
+
+    ANGLE_GL_COMPUTE_PROGRAM(program, kCS);
+    EXPECT_GL_NO_ERROR();
+
+    // Test data, laid out with padding (0) based on std140/std430 rules.
+    // clang-format off
+    const std::vector<float> ubo140cData = {
+        // u (uint)
+        1, 0, 0, 0,
+
+        // m (mat3x2, row-major)
+        5, 7, 9, 0,     6, 8, 10, 0,
+    };
+    const std::vector<float> ubo430rData = {
+        // u (uint)
+        135, 0,
+
+        // m (mat3x2, column-major)
+        139, 140,         141, 142,         143, 144,
+    };
+    const std::vector<float> ssbo140cData = {
+        // u (uint)
+        204, 0, 0, 0,
+
+        // m (mat3x2, column-major)
+        205, 206, 0, 0,  207, 208, 0, 0,  209, 210, 0, 0,
+    };
+    const std::vector<float> ssbo430rExpect = {
+        // m1 (mat3x2, row-major), copied from ubo430rIn.m
+        139, 141, 143, 0,  140, 142, 144, 0,
+
+        // m2 (mat3x2, row-major), copied from ssbo140cIn.m
+        205, 207, 209, 0,  206, 208, 210, 0,
+    };
+    const std::vector<float> zeros(ssbo430rExpect.size(), 0);
+    // clang-format on
+
+    GLBuffer uboStd140ColMajor, uboStd430RowMajor;
+    GLBuffer ssboStd140ColMajor, ssboStd430RowMajor;
+
+    InitBuffer(program, "Ubo140c", uboStd140ColMajor, 0, ubo140cData.data(),
+               static_cast<uint32_t>(ubo140cData.size()), true);
+    InitBuffer(program, "Ubo430r", uboStd430RowMajor, 0, ubo430rData.data(),
+               static_cast<uint32_t>(ubo430rData.size()), false);
+    InitBuffer(program, "Ssbo140c", ssboStd140ColMajor, 1, ssbo140cData.data(),
+               static_cast<uint32_t>(ssbo140cData.size()), false);
+    InitBuffer(program, "Ssbo430r", ssboStd430RowMajor, 2, zeros.data(),
+               static_cast<uint32_t>(ssbo430rExpect.size()), false);
+    EXPECT_GL_NO_ERROR();
+
+    glUseProgram(program);
+    glDispatchCompute(1, 1, 1);
+    EXPECT_GL_NO_ERROR();
+
+    EXPECT_TRUE(VerifyBuffer(ssboStd430RowMajor, ssbo430rExpect.data(),
+                             static_cast<uint32_t>(ssbo430rExpect.size())));
+}
+
+// Verify that ternary operator works when the operands are structs used in different block
+// storage.
+TEST_P(GLSLTest_ES31, TernaryOnStructsInDifferentBlockStorages)
+{
+    constexpr char kCS[] = R"(#version 310 es
+precision highp float;
+layout(local_size_x=1) in;
+
+struct S
+{
+    mat3x2 m[2];
+};
+
+layout(std140, column_major) uniform Ubo140c
+{
+    uint u;
+    layout(row_major) S s;
+} ubo140cIn;
+
+layout(std430, row_major, binding = 0) buffer Ubo430r
+{
+    uint u;
+    layout(column_major) S s;
+} ubo430rIn;
+
+layout(std140, column_major, binding = 1) buffer Ssbo140c
+{
+    uint u;
+    S s;
+} ssbo140cIn;
+
+layout(std430, row_major, binding = 2) buffer Ssbo430r
+{
+    S s1;
+    S s2;
+} ssbo430rOut;
+
+void main(){
+    ssbo430rOut.s1 = ubo140cIn.u > ubo430rIn.u ? ubo140cIn.s : ubo430rIn.s;
+    ssbo430rOut.s2 = ssbo140cIn.u > ubo140cIn.u ? ssbo140cIn.s : ubo140cIn.s;
+
+    S s;
+    s.m[0] = mat3x2(0);
+    s.m[1] = mat3x2(0);
+
+    ssbo430rOut.s1 = ubo140cIn.u == 0u ? s : ssbo430rOut.s1;
+})";
+
+    ANGLE_GL_COMPUTE_PROGRAM(program, kCS);
+    EXPECT_GL_NO_ERROR();
+
+    // Test data, laid out with padding (0) based on std140/std430 rules.
+    // clang-format off
+    const std::vector<float> ubo140cData = {
+        // u (uint)
+        1, 0, 0, 0,
+
+        // s.m[0] (mat3x2, row-major)
+        5, 7, 9, 0,     6, 8, 10, 0,
+        // s.m[1] (mat3x2, row-major)
+        25, 27, 29, 0,  26, 28, 30, 0,
+    };
+    const std::vector<float> ubo430rData = {
+        // u (uint)
+        135, 0,
+
+        // s.m[0] (mat3x2, column-major)
+        139, 140,         141, 142,         143, 144,
+        // s.m[1] (mat3x2, column-major)
+        189, 190,         191, 192,         193, 194,
+    };
+    const std::vector<float> ssbo140cData = {
+        // u (uint)
+        204, 0, 0, 0,
+
+        // s.m[0] (mat3x2, column-major)
+        205, 206, 0, 0,  207, 208, 0, 0,  209, 210, 0, 0,
+        // s.m[1] (mat3x2, column-major)
+        245, 246, 0, 0,  247, 248, 0, 0,  249, 250, 0, 0,
+    };
+    const std::vector<float> ssbo430rExpect = {
+        // s1.m[0] (mat3x2, row-major), copied from ubo430rIn.s.m[0]
+        139, 141, 143, 0,  140, 142, 144, 0,
+        // s1.m[1] (mat3x2, row-major), copied from ubo430rIn.s.m[0]
+        189, 191, 193, 0,  190, 192, 194, 0,
+
+        // s2.m[0] (mat3x2, row-major), copied from ssbo140cIn.m
+        205, 207, 209, 0,  206, 208, 210, 0,
+        // s2.m[1] (mat3x2, row-major), copied from ssbo140cIn.m
+        245, 247, 249, 0,  246, 248, 250, 0,
+    };
+    const std::vector<float> zeros(ssbo430rExpect.size(), 0);
+    // clang-format on
+
+    GLBuffer uboStd140ColMajor, uboStd430RowMajor;
+    GLBuffer ssboStd140ColMajor, ssboStd430RowMajor;
+
+    InitBuffer(program, "Ubo140c", uboStd140ColMajor, 0, ubo140cData.data(),
+               static_cast<uint32_t>(ubo140cData.size()), true);
+    InitBuffer(program, "Ubo430r", uboStd430RowMajor, 0, ubo430rData.data(),
+               static_cast<uint32_t>(ubo430rData.size()), false);
+    InitBuffer(program, "Ssbo140c", ssboStd140ColMajor, 1, ssbo140cData.data(),
+               static_cast<uint32_t>(ssbo140cData.size()), false);
+    InitBuffer(program, "Ssbo430r", ssboStd430RowMajor, 2, zeros.data(),
+               static_cast<uint32_t>(ssbo430rExpect.size()), false);
+    EXPECT_GL_NO_ERROR();
+
+    glUseProgram(program);
+    glDispatchCompute(1, 1, 1);
+    EXPECT_GL_NO_ERROR();
+
+    EXPECT_TRUE(VerifyBuffer(ssboStd430RowMajor, ssbo430rExpect.data(),
+                             static_cast<uint32_t>(ssbo430rExpect.size())));
 }
 
 // Verify that uint in interface block cast to bool works.
@@ -19231,6 +19579,52 @@ Foo foo(float bar)
     EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::green);
 }
 
+// Test that double underscores user defined name is allowed
+TEST_P(GLSLTest_ES3, DoubleUnderscoresName)
+{
+    constexpr char kFS[] = R"(#version 300 es
+precision mediump float;
+out vec4 oColor;
+uniform struct __Data {float red;} data;
+void main() {oColor=vec4(data.red,0,1,1);})";
+
+    ANGLE_GL_PROGRAM(program, essl3_shaders::vs::Simple(), kFS);
+    glUseProgram(program);
+    // populate uniform
+    GLint uniformLocation = glGetUniformLocation(program, "data.red");
+    EXPECT_NE(uniformLocation, -1);
+    glUniform1f(uniformLocation, 0);
+
+    drawQuad(program, essl3_shaders::PositionAttrib(), 0.5f);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::blue);
+    ASSERT_GL_NO_ERROR();
+}
+
+// Test that user defined name starts with "ANGLE" or "ANGLE_"
+TEST_P(GLSLTest_ES3, VariableNameStartsWithANGLE)
+{
+    constexpr char kFS[] = R"(#version 300 es
+precision mediump float;
+out vec4 oColor;
+uniform struct ANGLEData{float red;} data;
+uniform struct ANGLE_Data{float green;} _data;
+void main() {oColor=vec4(data.red,_data.green,1,1);})";
+
+    ANGLE_GL_PROGRAM(program, essl3_shaders::vs::Simple(), kFS);
+    glUseProgram(program);
+    // populate uniform
+    GLint uniformRedLocation   = glGetUniformLocation(program, "data.red");
+    GLint uniformGreenLocation = glGetUniformLocation(program, "_data.green");
+    EXPECT_NE(uniformRedLocation, -1);
+    EXPECT_NE(uniformGreenLocation, -1);
+    glUniform1f(uniformRedLocation, 0);
+    glUniform1f(uniformGreenLocation, 0);
+
+    drawQuad(program, essl3_shaders::PositionAttrib(), 0.5f);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::blue);
+    ASSERT_GL_NO_ERROR();
+}
+
 // Test that underscores in array names work with out arrays.
 TEST_P(GLSLTest_ES3, UnderscoresWorkWithOutArrays)
 {
@@ -19295,18 +19689,24 @@ void main()
 
 ANGLE_INSTANTIATE_TEST_ES2_AND_ES3_AND(
     GLSLTest,
+    ES3_OPENGL().enable(Feature::ForceInitShaderVariables),
     ES3_OPENGL().enable(Feature::ScalarizeVecAndMatConstructorArgs),
     ES3_OPENGLES().enable(Feature::ScalarizeVecAndMatConstructorArgs),
-    ES3_VULKAN().enable(Feature::AvoidOpSelectWithMismatchingRelaxedPrecision));
+    ES3_VULKAN().enable(Feature::AvoidOpSelectWithMismatchingRelaxedPrecision),
+    ES3_VULKAN().enable(Feature::ForceInitShaderVariables),
+    ES3_VULKAN().disable(Feature::SupportsSPIRV14));
 
 ANGLE_INSTANTIATE_TEST_ES2_AND_ES3(GLSLTestNoValidation);
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(GLSLTest_ES3);
 ANGLE_INSTANTIATE_TEST_ES3_AND(
     GLSLTest_ES3,
+    ES3_OPENGL().enable(Feature::ForceInitShaderVariables),
     ES3_OPENGL().enable(Feature::ScalarizeVecAndMatConstructorArgs),
     ES3_OPENGLES().enable(Feature::ScalarizeVecAndMatConstructorArgs),
-    ES3_VULKAN().enable(Feature::AvoidOpSelectWithMismatchingRelaxedPrecision));
+    ES3_VULKAN().enable(Feature::AvoidOpSelectWithMismatchingRelaxedPrecision),
+    ES3_VULKAN().enable(Feature::ForceInitShaderVariables),
+    ES3_VULKAN().disable(Feature::SupportsSPIRV14));
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(GLSLTestLoops);
 ANGLE_INSTANTIATE_TEST_ES3(GLSLTestLoops);
@@ -19317,8 +19717,12 @@ GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(WebGL2GLSLTest);
 ANGLE_INSTANTIATE_TEST_ES3(WebGL2GLSLTest);
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(GLSLTest_ES31);
-ANGLE_INSTANTIATE_TEST_ES31(GLSLTest_ES31);
+ANGLE_INSTANTIATE_TEST_ES31_AND(GLSLTest_ES31,
+                                ES31_VULKAN().enable(Feature::ForceInitShaderVariables),
+                                ES31_VULKAN().disable(Feature::SupportsSPIRV14));
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(GLSLTest_ES31_InitShaderVariables);
-ANGLE_INSTANTIATE_TEST(GLSLTest_ES31_InitShaderVariables,
-                       ES31_VULKAN().enable(Feature::ForceInitShaderVariables));
+ANGLE_INSTANTIATE_TEST(
+    GLSLTest_ES31_InitShaderVariables,
+    ES31_VULKAN().enable(Feature::ForceInitShaderVariables),
+    ES31_VULKAN().disable(Feature::SupportsSPIRV14).enable(Feature::ForceInitShaderVariables));

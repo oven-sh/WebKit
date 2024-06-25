@@ -1288,7 +1288,7 @@ void JIT::emit_op_switch_imm(const JSInstruction* currentInstruction)
     sub32(Imm32(unlinkedTable.m_min), jsRegT10.payloadGPR());
 
     addJump(branch32(AboveOrEqual, jsRegT10.payloadGPR(), Imm32(linkedTable.m_ctiOffsets.size())), defaultOffset);
-    move(TrustedImmPtr(linkedTable.m_ctiOffsets.data()), regT2);
+    move(TrustedImmPtr(linkedTable.m_ctiOffsets.mutableSpan().data()), regT2);
     loadPtr(BaseIndex(regT2, jsRegT10.payloadGPR(), ScalePtr), regT2);
     farJump(regT2, JSSwitchPtrTag);
 
@@ -1529,27 +1529,13 @@ MacroAssemblerCodeRef<JITThunkPtrTag> JIT::op_enter_handlerGenerator(VM& vm)
         jit.copyLLIntBaselineCalleeSavesFromFrameOrRegisterToEntryFrameCalleeSavesBuffer(vm.topEntryFrame);
         jit.prepareCallOperation(vm);
 
-#if OS(WINDOWS) && CPU(X86_64)
-        // On Windows, return values larger than 8 bytes are retuened via an implicit pointer passed as
-        // the first argument, and remaining arguments are shifted to the right. Make space for this.
-        static_assert(sizeof(UGPRPair) == 16, "Assumed by generated call site below");
-        jit.subPtr(MacroAssembler::TrustedImm32(16), MacroAssembler::stackPointerRegister);
-        jit.move(MacroAssembler::stackPointerRegister, JIT::argumentGPR0);
-        constexpr GPRReg vmPointerArgGPR { GPRInfo::argumentGPR1 };
-        constexpr GPRReg bytecodeIndexBitsArgGPR { GPRInfo::argumentGPR2 };
-#else
         constexpr GPRReg vmPointerArgGPR { GPRInfo::argumentGPR0 };
         constexpr GPRReg bytecodeIndexBitsArgGPR { GPRInfo::argumentGPR1 };
-#endif
+
         jit.move(TrustedImmPtr(&vm), vmPointerArgGPR);
         jit.move(TrustedImm32(0), bytecodeIndexBitsArgGPR);
 
         operationOptimizeCall = jit.call(OperationPtrTag);
-
-#if OS(WINDOWS) && CPU(X86_64)
-        jit.pop(GPRInfo::returnValueGPR); // targetPC
-        jit.pop(GPRInfo::returnValueGPR2); // dataBuffer (unused, but needs popping to restore stack)
-#endif
 
         skipOptimize.append(jit.branchTestPtr(Zero, returnValueGPR));
         jit.farJump(returnValueGPR, GPRInfo::callFrameRegister);

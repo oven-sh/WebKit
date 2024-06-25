@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2018 mce sys Ltd. All rights reserved.
+ * Copyright (C) 2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -57,7 +58,7 @@ ExternalStringImpl::ExternalStringImpl(std::span<const LChar> characters, void* 
 {
     ASSERT(m_free);
     m_freeCtx = ctx;
-    m_hashAndFlags = (m_hashAndFlags & ~s_hashMaskBufferOwnership) | BufferExternal;
+    m_hashAndFlags.storeRelaxed((m_hashAndFlags.loadRelaxed() & ~s_hashMaskBufferOwnership) | BufferExternal);
 }
 
 
@@ -67,7 +68,7 @@ ExternalStringImpl::ExternalStringImpl(std::span<const UChar> characters, void* 
 {
     ASSERT(m_free);
     m_freeCtx = ctx;
-    m_hashAndFlags = (m_hashAndFlags & ~s_hashMaskBufferOwnership) | BufferExternal;
+    m_hashAndFlags.storeRelaxed((m_hashAndFlags.loadRelaxed() & ~s_hashMaskBufferOwnership) | BufferExternal);
 }
 
 ExternalStringImpl::ExternalStringImpl(std::span<const LChar> characters, ExternalStringImplFreeFunction&& free)
@@ -76,8 +77,8 @@ ExternalStringImpl::ExternalStringImpl(std::span<const LChar> characters, Extern
 {
     ASSERT(m_free);
     m_freeCtx = nullptr;
-    m_hashAndFlags = (m_hashAndFlags & ~s_hashMaskBufferOwnership) | BufferExternal;
-    m_refCount |= s_refCountFlagIsStaticString;
+    m_refCount = s_refCountFlagIsStaticString;
+    m_hashAndFlags.storeRelaxed((m_hashAndFlags.loadRelaxed() & ~s_hashMaskBufferOwnership) | BufferExternal);
 }
 
 
@@ -87,8 +88,8 @@ ExternalStringImpl::ExternalStringImpl(std::span<const UChar> characters, Extern
 {
     ASSERT(m_free);
     m_freeCtx = nullptr;
-    m_hashAndFlags = (m_hashAndFlags & ~s_hashMaskBufferOwnership) | BufferExternal;
-    m_refCount |= s_refCountFlagIsStaticString;
+    m_refCount = s_refCountFlagIsStaticString;
+    m_hashAndFlags.storeRelaxed((m_hashAndFlags.loadRelaxed() & ~s_hashMaskBufferOwnership) | BufferExternal);
 }
 
 

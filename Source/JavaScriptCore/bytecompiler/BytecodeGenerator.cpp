@@ -3157,12 +3157,15 @@ bool BytecodeGenerator::needsTDZCheck(const Variable& variable)
     return false;
 }
 
-void BytecodeGenerator::emitTDZCheckIfNecessary(const Variable& variable, RegisterID* target, RegisterID* scope)
+void BytecodeGenerator::emitTDZCheckIfNecessary(const Variable& variable, RegisterID* target, RegisterID* scope, const JSTextPosition* start, const JSTextPosition* end) 
 {
     if (needsTDZCheck(variable)) {
-        if (target)
+        if (target) {
+            if (variable.isLocal() && variable.isLexicallyScoped() && start && end) {
+                emitExpressionInfo(*end, *start, *end);
+            }
             emitTDZCheck(target, variable);
-        else {
+        } else {
             RELEASE_ASSERT(!variable.isLocal() && scope);
             RefPtr<RegisterID> result = emitGetFromScope(newTemporary(), scope, variable, DoNotThrowIfNotFound);
             emitTDZCheck(result.get(), variable);

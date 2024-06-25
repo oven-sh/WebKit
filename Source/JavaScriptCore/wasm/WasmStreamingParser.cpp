@@ -87,7 +87,7 @@ static void dumpWasmSource(const Vector<uint8_t>& source)
         return;
     }
     dataLogLn("Dumping ", source.size(), " wasm source bytes to ", WTF::makeString(span(file), (count - 1), ".wasm"_s));
-    FileSystem::writeToFile(fileHandle, source.data(), source.size());
+    FileSystem::writeToFile(fileHandle, source.span());
     FileSystem::closeFile(fileHandle);
 }
 #endif
@@ -99,9 +99,9 @@ StreamingParser::StreamingParser(ModuleInformation& info, StreamingParserClient&
     dataLogLnIf(WasmStreamingParserInternal::verbose, "starting validation");
 
 #if ASSERT_ENABLED
-    dataLogLnIf(Options::dumpWasmSourceFileName(), "Wasm streaming parser created, capturing source.");
+    dataLogLnIf(!!Options::dumpWasmSourceFileName(), "Wasm streaming parser created, capturing source.");
 #else
-    dataLogLnIf(Options::dumpWasmSourceFileName(), "Wasm streaming parser created, but we can only dump source in debug builds.");
+    dataLogLnIf(!!Options::dumpWasmSourceFileName(), "Wasm streaming parser created, but we can only dump source in debug builds.");
 #endif
 }
 

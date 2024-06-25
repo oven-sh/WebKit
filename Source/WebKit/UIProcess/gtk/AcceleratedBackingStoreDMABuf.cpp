@@ -149,7 +149,7 @@ AcceleratedBackingStoreDMABuf::AcceleratedBackingStoreDMABuf(WebPageProxy& webPa
 AcceleratedBackingStoreDMABuf::~AcceleratedBackingStoreDMABuf()
 {
     if (m_surfaceID)
-        m_webPage.process().removeMessageReceiver(Messages::AcceleratedBackingStoreDMABuf::messageReceiverName(), m_surfaceID);
+        m_webPage.legacyMainFrameProcess().removeMessageReceiver(Messages::AcceleratedBackingStoreDMABuf::messageReceiverName(), m_surfaceID);
 
     if (m_gdkGLContext) {
         gdk_gl_context_make_current(m_gdkGLContext.get());
@@ -535,7 +535,7 @@ void AcceleratedBackingStoreDMABuf::didDestroyBuffer(uint64_t id)
     m_buffers.remove(id);
 }
 
-void AcceleratedBackingStoreDMABuf::frame(uint64_t bufferID)
+void AcceleratedBackingStoreDMABuf::frame(uint64_t bufferID, const std::optional<WebCore::Region>&)
 {
     ASSERT(!m_pendingBuffer);
     auto* buffer = m_buffers.get(bufferID);
@@ -544,19 +544,13 @@ void AcceleratedBackingStoreDMABuf::frame(uint64_t bufferID)
         return;
     }
 
-    if (buffer->type() == Buffer::Type::EglImage) {
-        ensureGLContext();
-        gdk_gl_context_make_current(m_gdkGLContext.get());
-    }
-    buffer->didUpdateContents();
-
     m_pendingBuffer = buffer;
     gtk_widget_queue_draw(m_webPage.viewWidget());
 }
 
 void AcceleratedBackingStoreDMABuf::frameDone()
 {
-    m_webPage.process().send(Messages::AcceleratedSurfaceDMABuf::FrameDone(), m_surfaceID);
+    m_webPage.legacyMainFrameProcess().send(Messages::AcceleratedSurfaceDMABuf::FrameDone(), m_surfaceID);
 }
 
 void AcceleratedBackingStoreDMABuf::unrealize()
@@ -603,22 +597,25 @@ void AcceleratedBackingStoreDMABuf::update(const LayerTreeContext& context)
         // avoid flickering.
         m_committedBuffer = nullptr;
         m_buffers.clear();
-        m_webPage.process().removeMessageReceiver(Messages::AcceleratedBackingStoreDMABuf::messageReceiverName(), m_surfaceID);
+        m_webPage.legacyMainFrameProcess().removeMessageReceiver(Messages::AcceleratedBackingStoreDMABuf::messageReceiverName(), m_surfaceID);
     }
 
     m_surfaceID = context.contextID;
     if (m_surfaceID)
-        m_webPage.process().addMessageReceiver(Messages::AcceleratedBackingStoreDMABuf::messageReceiverName(), m_surfaceID, *this);
+        m_webPage.legacyMainFrameProcess().addMessageReceiver(Messages::AcceleratedBackingStoreDMABuf::messageReceiverName(), m_surfaceID, *this);
 }
 
 bool AcceleratedBackingStoreDMABuf::prepareForRendering()
 {
-    if (m_gdkGLContext)
-        gdk_gl_context_make_current(m_gdkGLContext.get());
-
     if (m_pendingBuffer) {
+        if (m_pendingBuffer->type() == Buffer::Type::EglImage) {
+            ensureGLContext();
+            gdk_gl_context_make_current(m_gdkGLContext.get());
+        }
+        m_pendingBuffer->didUpdateContents();
+
         if (m_committedBuffer)
-            m_webPage.process().send(Messages::AcceleratedSurfaceDMABuf::ReleaseBuffer(m_committedBuffer->id()), m_surfaceID);
+            m_webPage.legacyMainFrameProcess().send(Messages::AcceleratedSurfaceDMABuf::ReleaseBuffer(m_committedBuffer->id()), m_surfaceID);
         m_committedBuffer = WTFMove(m_pendingBuffer);
     }
 

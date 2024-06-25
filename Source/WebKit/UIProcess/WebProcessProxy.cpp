@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2010-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -32,6 +32,7 @@
 #include "APIUIClient.h"
 #include "AuthenticatorManager.h"
 #include "DownloadProxyMap.h"
+#include "GPUProcessConnectionParameters.h"
 #include "GoToBackForwardItemParameters.h"
 #include "LoadParameters.h"
 #include "Logging.h"
@@ -109,7 +110,6 @@
 #include <wtf/text/WTFString.h>
 
 #if PLATFORM(COCOA)
-#include "ObjCObjectGraph.h"
 #include "UserMediaCaptureManagerProxy.h"
 #include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #endif
@@ -242,7 +242,7 @@ Vector<std::pair<WebCore::ProcessIdentifier, WebCore::RegistrableDomain>> WebPro
 {
     Vector<std::pair<WebCore::ProcessIdentifier, WebCore::RegistrableDomain>> result;
     for (Ref page : globalPages())
-        result.append(std::make_pair(page->process().coreProcessIdentifier(), RegistrableDomain(URL(page->currentURL()))));
+        result.append(std::make_pair(page->legacyMainFrameProcess().coreProcessIdentifier(), RegistrableDomain(URL(page->currentURL()))));
     return result;
 }
 
@@ -377,9 +377,6 @@ WebProcessProxy::~WebProcessProxy()
     for (auto& callback : isResponsiveCallbacks)
         callback(false);
 
-    if (RefPtr webConnection = m_webConnection)
-        webConnection->invalidate();
-
     while (m_numberOfTimesSuddenTerminationWasDisabled-- > 0)
         WebCore::enableSuddenTermination();
 
@@ -461,6 +458,14 @@ void WebProcessProxy::updateRegistrationWithDataStore()
         else
             dataStore->unregisterProcess(*this);
     }
+}
+
+void WebProcessProxy::initializeWebProcess(WebProcessCreationParameters&& parameters)
+{
+    sendWithAsyncReply(Messages::WebProcess::InitializeWebProcess(WTFMove(parameters)), [weakThis = WeakPtr { *this }] (ProcessIdentity processIdentity) {
+        if (RefPtr protectedThis = weakThis.get())
+            protectedThis->m_processIdentity = WTFMove(processIdentity);
+    }, 0);
 }
 
 void WebProcessProxy::initializePreferencesForGPUAndNetworkProcesses(const WebPageProxy& page)
@@ -587,9 +592,7 @@ void WebProcessProxy::platformGetLaunchOptions(ProcessLauncher::LaunchOptions& l
 bool WebProcessProxy::shouldSendPendingMessage(const PendingMessage& message)
 {
     if (message.encoder->messageName() == IPC::MessageName::WebPage_LoadRequestWaitingForProcessLaunch) {
-        auto buffer = message.encoder->buffer();
-        auto bufferSize = message.encoder->bufferSize();
-        auto decoder = IPC::Decoder::create({ buffer, bufferSize }, { });
+        auto decoder = IPC::Decoder::create(message.encoder->span(), { });
         ASSERT(decoder);
         if (!decoder)
             return false;
@@ -607,9 +610,7 @@ bool WebProcessProxy::shouldSendPendingMessage(const PendingMessage& message)
             ASSERT_NOT_REACHED();
         return false;
     } else if (message.encoder->messageName() == IPC::MessageName::WebPage_GoToBackForwardItemWaitingForProcessLaunch) {
-        auto buffer = message.encoder->buffer();
-        auto bufferSize = message.encoder->bufferSize();
-        auto decoder = IPC::Decoder::create({ buffer, bufferSize }, { });
+        auto decoder = IPC::Decoder::create(message.encoder->span(), { });
         ASSERT(decoder);
         if (!decoder)
             return false;
@@ -699,9 +700,6 @@ void WebProcessProxy::shutDown()
     }
 
     shutDownProcess();
-
-    if (RefPtr webConnection = std::exchange(m_webConnection, nullptr))
-        webConnection->invalidate();
 
     m_backgroundResponsivenessTimer.invalidate();
     m_audibleMediaActivity = std::nullopt;
@@ -1067,14 +1065,29 @@ void WebProcessProxy::getNetworkProcessConnection(CompletionHandler<void(Network
 
 #if ENABLE(GPU_PROCESS)
 
-void WebProcessProxy::createGPUProcessConnection(IPC::Connection::Handle&& connectionIdentifier, WebKit::GPUProcessConnectionParameters&& parameters)
+void WebProcessProxy::createGPUProcessConnection(IPC::Connection::Handle&& connectionIdentifier)
 {
+    WebKit::GPUProcessConnectionParameters parameters;
+#if HAVE(TASK_IDENTITY_TOKEN)
+    ASSERT(m_processIdentity);
+#endif
+    parameters.webProcessIdentity = m_processIdentity;
     auto& gpuPreferences = preferencesForGPUProcess();
     ASSERT(gpuPreferences);
     if (gpuPreferences)
         parameters.preferences = *gpuPreferences;
-
+#if ENABLE(IPC_TESTING_API)
+    parameters.ignoreInvalidMessageForTesting = ignoreInvalidMessageForTesting();
+#endif
+    parameters.isLockdownModeEnabled = lockdownMode() == WebProcessProxy::LockdownMode::Enabled;
     protectedProcessPool()->createGPUProcessConnection(*this, WTFMove(connectionIdentifier), WTFMove(parameters));
+}
+
+void WebProcessProxy::gpuProcessConnectionDidBecomeUnresponsive()
+{
+    WEBPROCESSPROXY_RELEASE_LOG_ERROR(Process, "gpuProcessConnectionDidBecomeUnresponsive");
+    if (RefPtr process = protectedProcessPool()->gpuProcess())
+        process->childConnectionDidBecomeUnresponsive();
 }
 
 void WebProcessProxy::gpuProcessDidFinishLaunching()
@@ -1190,9 +1203,6 @@ void WebProcessProxy::processDidTerminateOrFailedToLaunch(ProcessTerminationReas
     m_userMediaCaptureManagerProxy->clear();
 #endif
 
-    if (RefPtr webConnection = this->webConnection())
-        webConnection->didClose();
-
     auto pages = mainPages();
 
     Vector<WeakPtr<ProvisionalPageProxy>> provisionalPages;
@@ -1212,7 +1222,7 @@ void WebProcessProxy::processDidTerminateOrFailedToLaunch(ProcessTerminationReas
     // FIXME: Perhaps this should consider ProcessTerminationReasons ExceededMemoryLimit, ExceededCPULimit, Unresponsive as well.
     if (pages.size() == 1 && reason == ProcessTerminationReason::Crash) {
         auto& page = pages[0];
-        auto domain = PublicSuffixStore::singleton().topPrivatelyControlledDomain(URL({ }, page->currentURL()).host().toString());
+        auto domain = PublicSuffixStore::singleton().topPrivatelyControlledDomain(URL({ }, page->currentURL()).host());
         if (!domain.isEmpty())
             page->logDiagnosticMessageWithEnhancedPrivacy(WebCore::DiagnosticLoggingKeys::domainCausingCrashKey(), domain, WebCore::ShouldSample::No);
     }
@@ -1332,9 +1342,6 @@ void WebProcessProxy::didFinishLaunching(ProcessLauncher* launcher, IPC::Connect
     if (m_websiteDataStore)
         m_websiteDataStore->protectedNetworkProcess()->sendXPCEndpointToProcess(*this);
 #endif
-
-    RELEASE_ASSERT(!m_webConnection);
-    m_webConnection = WebConnectionToWebProcess::create(this);
 
     protectedProcessPool()->processDidFinishLaunching(*this);
     m_backgroundResponsivenessTimer.updateState();
@@ -1677,11 +1684,6 @@ RefPtr<API::Object> WebProcessProxy::transformHandlesToObjects(API::Object* obje
             case API::Object::Type::PageHandle:
                 return static_cast<const API::PageHandle&>(object).isAutoconverting();
 
-#if PLATFORM(COCOA)
-            case API::Object::Type::ObjCObjectGraph:
-#endif
-                return true;
-
             default:
                 return false;
             }
@@ -1698,10 +1700,6 @@ RefPtr<API::Object> WebProcessProxy::transformHandlesToObjects(API::Object* obje
                 ASSERT(static_cast<API::PageHandle&>(object).isAutoconverting());
                 return protectedProcess()->webPage(static_cast<API::PageHandle&>(object).pageProxyID());
 
-#if PLATFORM(COCOA)
-            case API::Object::Type::ObjCObjectGraph:
-                return protectedProcess()->transformHandlesToObjects(static_cast<ObjCObjectGraph&>(object));
-#endif
             default:
                 return &object;
             }
@@ -1724,9 +1722,6 @@ RefPtr<API::Object> WebProcessProxy::transformObjectsToHandles(API::Object* obje
             case API::Object::Type::Frame:
             case API::Object::Type::Page:
             case API::Object::Type::PageGroup:
-#if PLATFORM(COCOA)
-            case API::Object::Type::ObjCObjectGraph:
-#endif
                 return true;
 
             default:
@@ -1742,11 +1737,6 @@ RefPtr<API::Object> WebProcessProxy::transformObjectsToHandles(API::Object* obje
 
             case API::Object::Type::Page:
                 return API::PageHandle::createAutoconverting(static_cast<const WebPageProxy&>(object).identifier(), static_cast<const WebPageProxy&>(object).webPageID());
-
-#if PLATFORM(COCOA)
-            case API::Object::Type::ObjCObjectGraph:
-                return transformObjectsToHandles(static_cast<ObjCObjectGraph&>(object));
-#endif
 
             default:
                 return &object;
@@ -1841,7 +1831,7 @@ void WebProcessProxy::didDropLastAssertion()
 
 void WebProcessProxy::prepareToDropLastAssertion(CompletionHandler<void()>&& completionHandler)
 {
-#if ENABLE(WEBPROCESS_CACHE)
+#if !ENABLE(NON_VISIBLE_WEBPROCESS_MEMORY_CLEANUP_TIMER) && ENABLE(WEBPROCESS_CACHE)
     if (isInProcessCache() || !m_suspendedPages.isEmptyIgnoringNullReferences() || (canTerminateAuxiliaryProcess() && canBeAddedToWebProcessCache())) {
         // We avoid freeing caches if:
         //
@@ -2015,7 +2005,7 @@ void WebProcessProxy::didExceedMemoryFootprintThreshold(size_t footprint)
     bool hasAllowedToRunInTheBackgroundActivity = false;
 
     for (auto& page : this->pages()) {
-        auto pageDomain = PublicSuffixStore::singleton().topPrivatelyControlledDomain(URL({ }, page->currentURL()).host().toString());
+        auto pageDomain = PublicSuffixStore::singleton().topPrivatelyControlledDomain(URL({ }, page->currentURL()).host());
         if (domain.isEmpty())
             domain = WTFMove(pageDomain);
         else if (domain != pageDomain)
@@ -2579,12 +2569,11 @@ void WebProcessProxy::wrapCryptoKey(const Vector<uint8_t>& key, CompletionHandle
     completionHandler(std::nullopt);
 }
 
-void WebProcessProxy::unwrapCryptoKey(const Vector<uint8_t>& wrappedKey, CompletionHandler<void(std::optional<Vector<uint8_t>>&&)>&& completionHandler)
+void WebProcessProxy::unwrapCryptoKey(const struct WrappedCryptoKey& wrappedKey, CompletionHandler<void(std::optional<Vector<uint8_t>>&&)>&& completionHandler)
 {
     std::optional<Vector<uint8_t>> masterKey(getWebCryptoMasterKey());
     if (masterKey) {
-        Vector<uint8_t> key;
-        if (unwrapSerializedCryptoKey(*masterKey, wrappedKey, key)) {
+        if (auto key = WebCore::unwrapCryptoKey(*masterKey, wrappedKey)) {
             completionHandler(WTFMove(key));
             return;
         }

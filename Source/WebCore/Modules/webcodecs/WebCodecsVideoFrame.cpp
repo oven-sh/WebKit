@@ -225,8 +225,7 @@ ExceptionOr<Ref<WebCodecsVideoFrame>> WebCodecsVideoFrame::create(ScriptExecutio
         if (!canvas->width() || !canvas->height())
             return Exception { ExceptionCode::InvalidStateError,  "Input canvas has a bad size"_s };
 
-        canvas->makeRenderingResultsAvailable();
-        RefPtr imageBuffer = canvas->buffer();
+        RefPtr imageBuffer = canvas->makeRenderingResultsAvailable();
         if (!imageBuffer)
             return Exception { ExceptionCode::InvalidStateError,  "Input canvas has no image buffer"_s };
 
@@ -299,7 +298,7 @@ ExceptionOr<Ref<WebCodecsVideoFrame>> WebCodecsVideoFrame::create(ScriptExecutio
     
     auto layout = layoutOrException.releaseReturnValue();
     if (data.length() < layout.allocationSize)
-        return Exception { ExceptionCode::TypeError, makeString("Data is too small ", data.length(), " / ", layout.allocationSize) };
+        return Exception { ExceptionCode::TypeError, makeString("Data is too small "_s, data.length(), " / "_s, layout.allocationSize) };
 
     auto colorSpace = videoFramePickColorSpace(init.colorSpace, init.format);
     RefPtr<VideoFrame> videoFrame;

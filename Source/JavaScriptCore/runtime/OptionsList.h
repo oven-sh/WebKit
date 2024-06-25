@@ -480,6 +480,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, usePollingTraps, false, Normal, "use polling (instead of signalling) VM traps"_s) \
     \
     v(Bool, useMachForExceptions, true, Normal, "Use mach exceptions rather than signals to handle faults and pass thread messages. (This does nothing on platforms without mach)"_s) \
+    v(Bool, allowNonSPTagging, true, Normal, "allow use of the pacib instruction instead of just pacibsp (This can break lldb/posix signals as it puts live data below SP)"_s) \
     \
     v(Bool, useICStats, false, Normal, nullptr) \
     \
@@ -524,7 +525,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, verboseBBQJITInstructions, false, Normal, "Logs instruction information during BBQ JIT"_s) \
     v(Bool, useWasmLLInt, true, Normal, nullptr) \
     v(Bool, useBBQJIT, true, Normal, "allows the BBQ JIT to be used if true"_s) \
-    v(Bool, useOMGJIT, true, Normal, "allows the OMG JIT to be used if true"_s) \
+    v(Bool, useOMGJIT, !isARM_THUMB2(), Normal, "allows the OMG JIT to be used if true"_s) \
     v(Bool, useWasmLLIntPrologueOSR, true, Normal, "allows prologue OSR from Wasm LLInt if true"_s) \
     v(Bool, useWasmLLIntLoopOSR, true, Normal, "allows loop OSR from Wasm LLInt if true"_s) \
     v(Bool, useWasmLLIntEpilogueOSR, true, Normal, "allows epilogue OSR from Wasm LLInt if true"_s) \
@@ -581,7 +582,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useWasmIPIntEpilogueOSR, true, Normal, "Allow IPInt to tier up during function epilogues"_s) \
     v(Bool, wasmIPIntTiersUpToBBQ, true, Normal, "Allow IPInt to tier up to BBQ"_s) \
     v(Bool, wasmIPIntTiersUpToOMG, true, Normal, "Allow IPInt to tier up to OMG"_s) \
-    v(Bool, useIPIntWrappers, false, Normal, "Allow IPInt to replace JIT wasm wrappers"_s) \
+    v(Bool, useInterpretedJSEntryWrappers, false, Normal, "Allow some JS->Wasm wrappers to be replaced by jit-less versions."_s) \
     v(Bool, forceAllFunctionsToUseSIMD, false, Normal, "Force all functions to act conservatively w.r.t fp/vector registers for testing."_s) \
     \
     /* Feature Flags */\
@@ -601,6 +602,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useShadowRealm, false, Normal, "Expose the ShadowRealm object."_s) \
     v(Bool, useStringWellFormed, true, Normal, "Expose the String well-formed methods."_s) \
     v(Bool, useTemporal, false, Normal, "Expose the Temporal object."_s) \
+    v(Bool, useTrustedTypes, false, Normal, "Enable trusted types eval protection feature."_s) \
     v(Bool, useWebAssemblyThreading, true, Normal, "Allow instructions from the wasm threading spec."_s) \
     v(Bool, useWebAssemblyTypedFunctionReferences, true, Normal, "Allow function types from the wasm typed function references spec."_s) \
     v(Bool, useWebAssemblyGC, false, Normal, "Allow gc types from the wasm gc proposal."_s) \

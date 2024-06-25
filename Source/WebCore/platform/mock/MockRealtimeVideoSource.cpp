@@ -173,26 +173,26 @@ MockRealtimeVideoSource::~MockRealtimeVideoSource()
     allMockRealtimeVideoSource().remove(*this);
 }
 
-bool MockRealtimeVideoSource::supportsSizeFrameRateAndZoom(std::optional<int> width, std::optional<int> height, std::optional<double> frameRate, std::optional<double> zoom)
+bool MockRealtimeVideoSource::supportsSizeFrameRateAndZoom(const VideoPresetConstraints& constraints)
 {
     // FIXME: consider splitting mock display into another class so we don't have to do this silly dance
     // because of the RealtimeVideoSource inheritance.
     if (mockCamera())
-        return RealtimeVideoCaptureSource::supportsSizeFrameRateAndZoom(width, height, frameRate, zoom);
+        return RealtimeVideoCaptureSource::supportsSizeFrameRateAndZoom(constraints);
 
-    return RealtimeMediaSource::supportsSizeFrameRateAndZoom(width, height, frameRate, zoom);
+    return RealtimeMediaSource::supportsSizeFrameRateAndZoom(constraints);
 }
 
-void MockRealtimeVideoSource::setSizeFrameRateAndZoom(std::optional<int> width, std::optional<int> height, std::optional<double> frameRate, std::optional<double> zoom)
+void MockRealtimeVideoSource::setSizeFrameRateAndZoom(const VideoPresetConstraints& constraints)
 {
     // FIXME: consider splitting mock display into another class so we don't have to do this silly dance
     // because of the RealtimeVideoSource inheritance.
     if (mockCamera()) {
-        RealtimeVideoCaptureSource::setSizeFrameRateAndZoom(width, height, frameRate, zoom);
+        RealtimeVideoCaptureSource::setSizeFrameRateAndZoom(constraints);
         return;
     }
 
-    RealtimeMediaSource::setSizeFrameRateAndZoom(width, height, frameRate, zoom);
+    RealtimeMediaSource::setSizeFrameRateAndZoom(constraints);
 }
 
 void MockRealtimeVideoSource::generatePresets()
@@ -428,9 +428,8 @@ void MockRealtimeVideoSource::startProducingData()
 {
     ASSERT(!m_beingConfigured);
 
-#if ENABLE(EXTENSION_CAPABILITIES)
-    if (PlatformMediaSessionManager::mediaCapabilityGrantsEnabled())
-        ASSERT(!RealtimeMediaSourceCenter::singleton().currentMediaEnvironment().isEmpty() || !WTF::processHasEntitlement("com.apple.developer.web-browser-engine.rendering"_s));
+#if ENABLE(EXTENSION_CAPABILITIES) && !PLATFORM(IOS_FAMILY_SIMULATOR)
+    ASSERT(!RealtimeMediaSourceCenter::singleton().currentMediaEnvironment().isEmpty() || !WTF::processHasEntitlement("com.apple.developer.web-browser-engine.rendering"_s));
 #endif
 
     startCaptureTimer();
@@ -556,21 +555,21 @@ void MockRealtimeVideoSource::drawText(GraphicsContext& context)
     context.drawText(drawingState.timeFont(), TextRun(StringView(string)), timeLocation);
 
     FloatPoint statsLocation(captureSize.width() * .45, captureSize.height() * .75);
-    string = makeString("Requested frame rate: ", FormattedNumber::fixedWidth(frameRate(), 1), " fps");
+    string = makeString("Requested frame rate: "_s, FormattedNumber::fixedWidth(frameRate(), 1), " fps"_s);
     context.drawText(drawingState.statsFont(), TextRun(StringView(string)), statsLocation);
 
     statsLocation.move(0, drawingState.statsFontSize());
-    string = makeString("Observed frame rate: ", FormattedNumber::fixedWidth(observedFrameRate(), 1), " fps");
+    string = makeString("Observed frame rate: "_s, FormattedNumber::fixedWidth(observedFrameRate(), 1), " fps"_s);
     context.drawText(drawingState.statsFont(), TextRun(StringView(string)), statsLocation);
 
     auto size = this->size();
     statsLocation.move(0, drawingState.statsFontSize());
-    string = makeString("Size: ", size.width(), " x ", size.height());
+    string = makeString("Size: "_s, size.width(), " x "_s, size.height());
     context.drawText(drawingState.statsFont(), TextRun(StringView(string)), statsLocation);
 
     if (mockCamera()) {
         statsLocation.move(0, drawingState.statsFontSize());
-        string = makeString("Preset size: ", captureSize.width(), " x ", captureSize.height());
+        string = makeString("Preset size: "_s, captureSize.width(), " x "_s, captureSize.height());
         context.drawText(drawingState.statsFont(), TextRun(StringView(string)), statsLocation);
 
         ASCIILiteral camera;
@@ -678,7 +677,7 @@ ImageBuffer* MockRealtimeVideoSource::imageBufferInternal()
     if (m_imageBuffer)
         return m_imageBuffer.get();
 
-    m_imageBuffer = ImageBuffer::create(captureSize(), RenderingPurpose::Unspecified, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8);
+    m_imageBuffer = ImageBuffer::create(captureSize(), RenderingPurpose::Unspecified, 1, DestinationColorSpace::SRGB(), ImageBufferPixelFormat::BGRA8);
     if (!m_imageBuffer)
         return nullptr;
 

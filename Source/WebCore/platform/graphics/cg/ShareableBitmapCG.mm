@@ -35,6 +35,7 @@
 #include "PlatformScreen.h"
 #include <pal/spi/cg/CoreGraphicsSPI.h>
 #include <wtf/RetainPtr.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/spi/cocoa/IOSurfaceSPI.h>
 
 namespace WebCore {
@@ -131,7 +132,7 @@ RefPtr<ShareableBitmap> ShareableBitmap::createFromImagePixels(NativeImage& imag
     if (!pixels)
         return nullptr;
 
-    const auto* bytes = reinterpret_cast<const uint8_t*>(CFDataGetBytePtr(pixels.get()));
+    const auto* bytes = byteCast<uint8_t>(CFDataGetBytePtr(pixels.get()));
     CheckedUint32 sizeInBytes = CFDataGetLength(pixels.get());
     if (!bytes || !sizeInBytes || sizeInBytes.hasOverflowed())
         return nullptr;
@@ -151,7 +152,7 @@ RefPtr<ShareableBitmap> ShareableBitmap::createFromImagePixels(NativeImage& imag
     if (!sharedMemory)
         return nullptr;
 
-    memcpy(sharedMemory->data(), bytes, sizeInBytes);
+    memcpySpan(sharedMemory->mutableSpan(), std::span { bytes, static_cast<size_t>(sizeInBytes) });
 
     return adoptRef(new ShareableBitmap(configuration, sharedMemory.releaseNonNull()));
 }

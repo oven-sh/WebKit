@@ -150,7 +150,6 @@ MESSAGE_RECEIVERS = \
 	Shared/ApplePay/WebPaymentCoordinatorProxy \
 	Shared/Authentication/AuthenticationManager \
 	Shared/Notifications/NotificationManagerMessageHandler \
-	Shared/WebConnection \
 	Shared/IPCConnectionTester \
 	Shared/IPCStreamTester \
 	Shared/IPCStreamTesterProxy \
@@ -358,7 +357,7 @@ FRAMEWORK_FLAGS := $(addprefix -F, $(BUILT_PRODUCTS_DIR) $(FRAMEWORK_SEARCH_PATH
 HEADER_FLAGS := $(addprefix -I, $(BUILT_PRODUCTS_DIR) $(HEADER_SEARCH_PATHS) $(SYSTEM_HEADER_SEARCH_PATHS))
 EXTERNAL_FLAGS := -DRELEASE_WITHOUT_OPTIMIZATIONS $(addprefix -D, $(GCC_PREPROCESSOR_DEFINITIONS))
 
-platform_h_compiler_command = $(CC) -std=c++2a -x c++ $(1) $(SANITIZE_FLAGS) $(SDK_FLAGS) $(TARGET_TRIPLE_FLAGS) $(FRAMEWORK_FLAGS) $(HEADER_FLAGS) $(EXTERNAL_FLAGS) -include "wtf/Platform.h" /dev/null
+platform_h_compiler_command = $(CC) -std=c++2b -x c++ $(1) $(SANITIZE_FLAGS) $(SDK_FLAGS) $(TARGET_TRIPLE_FLAGS) $(FRAMEWORK_FLAGS) $(HEADER_FLAGS) $(EXTERNAL_FLAGS) -include "wtf/Platform.h" /dev/null
 
 FEATURE_AND_PLATFORM_FLAGS := $(shell $(call platform_h_compiler_command,-E -P -dM) | $(PERL) -ne "print if s/\#define ((?:HAVE_|USE_|ENABLE_|WTF_PLATFORM_)\w+) (1|0)/\1=\2/")
 FEATURE_AND_PLATFORM_DEFINES := $(patsubst %=1, %, $(filter %=1, $(FEATURE_AND_PLATFORM_FLAGS)))
@@ -495,7 +494,6 @@ SERIALIZATION_DESCRIPTION_FILES = \
 	GPUProcess/GPUProcessSessionParameters.serialization.in \
 	GPUProcess/graphics/PathSegment.serialization.in \
 	GPUProcess/graphics/RemoteGraphicsContextGLInitializationState.serialization.in \
-	GPUProcess/graphics/RemoteRenderingBackendCreationParameters.serialization.in \
 	GPUProcess/graphics/WebGPU/RemoteGPURequestAdapterResponse.serialization.in \
 	GPUProcess/media/AudioTrackPrivateRemoteConfiguration.serialization.in \
 	GPUProcess/media/InitializationSegmentInfo.serialization.in \
@@ -657,11 +655,11 @@ SERIALIZATION_DESCRIPTION_FILES = \
 	Shared/SessionState.serialization.in \
 	Shared/SyntheticEditingCommandType.serialization.in \
 	Shared/TextFlags.serialization.in \
+	Shared/TextAnimationType.serialization.in \
 	Shared/TextRecognitionResult.serialization.in \
 	Shared/TextRecognitionUpdateResult.serialization.in \
 	Shared/URLSchemeTaskParameters.serialization.in \
 	Shared/UndoOrRedo.serialization.in \
-	Shared/UnifiedTextReplacement.serialization.in \
 	Shared/UserContentControllerParameters.serialization.in \
 	Shared/UserData.serialization.in \
 	Shared/UserInterfaceIdiom.serialization.in \
@@ -899,8 +897,6 @@ all : module.private.modulemap
 
 ifeq ($(USE_INTERNAL_SDK),YES)
 WEBKIT_ADDITIONS_SWIFT_FILES = \
-	WKWebView+TextExtraction.swift \
-	TextStyleManager.swift \
 #
 
 $(WEBKIT_ADDITIONS_SWIFT_FILES): %.swift : %.swift.in

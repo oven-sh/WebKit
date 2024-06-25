@@ -73,10 +73,10 @@ void JIT::compileSetupFrame(const Op& bytecode)
         int firstVarArgOffset = bytecode.m_firstVarArg;
 
         {
-            constexpr GPRReg globalObjectGPR = preferredArgumentGPR<Z_JITOperation_GJZZ, 0>();
-            constexpr JSValueRegs argumentsJSR = preferredArgumentJSR<Z_JITOperation_GJZZ, 1>();
+            constexpr GPRReg globalObjectGPR = preferredArgumentGPR<S_JITOperation_GJZZ, 0>();
+            constexpr JSValueRegs argumentsJSR = preferredArgumentJSR<S_JITOperation_GJZZ, 1>();
 
-            Z_JITOperation_GJZZ sizeOperation;
+            S_JITOperation_GJZZ sizeOperation;
             if constexpr (opcodeID == op_tail_call_forward_arguments)
                 sizeOperation = operationSizeFrameForForwardArguments;
             else
@@ -202,7 +202,7 @@ bool JIT::compileTailCall(const Op&, BaselineUnlinkedCallLinkInfo*, unsigned)
 template<>
 bool JIT::compileTailCall(const OpTailCall& bytecode, BaselineUnlinkedCallLinkInfo* callLinkInfo, unsigned callLinkInfoIndex)
 {
-    auto [slowPaths, dispatchLabel] = CallLinkInfo::emitTailCallFastPath(*this, callLinkInfo, scopedLambda<void()>([&] {
+    CallLinkInfo::emitTailCallFastPath(*this, callLinkInfo, scopedLambda<void()>([&] {
         CallFrameShuffleData shuffleData = CallFrameShuffleData::createForBaselineOrLLIntTailCall(bytecode, m_unlinkedCodeBlock->numParameters());
         CallFrameShuffler shuffler { *this, shuffleData };
         shuffler.setCalleeJSValueRegs(BaselineJITRegisters::Call::calleeJSR);
@@ -210,7 +210,6 @@ bool JIT::compileTailCall(const OpTailCall& bytecode, BaselineUnlinkedCallLinkIn
         shuffler.lockGPR(BaselineJITRegisters::Call::callTargetGPR);
         shuffler.prepareForTailCall();
     }));
-    ASSERT(slowPaths.empty());
 
     auto doneLocation = label();
     m_callCompilationInfo[callLinkInfoIndex].doneLocation = doneLocation;
@@ -266,7 +265,7 @@ void JIT::compileOpCall(const JSInstruction* instruction)
         compileTailCall(bytecode, callLinkInfo, callLinkInfoIndex);
     else {
         if constexpr (Op::opcodeID == op_tail_call_varargs || Op::opcodeID == op_tail_call_forward_arguments) {
-            auto [slowPaths, dispatchLabel] = CallLinkInfo::emitTailCallFastPath(*this, callLinkInfo, scopedLambda<void()>([&] {
+            CallLinkInfo::emitTailCallFastPath(*this, callLinkInfo, scopedLambda<void()>([&] {
                 emitRestoreCalleeSaves();
                 prepareForTailCallSlow(RegisterSet {
                     BaselineJITRegisters::Call::calleeJSR.payloadGPR(),
@@ -277,12 +276,10 @@ void JIT::compileOpCall(const JSInstruction* instruction)
                     BaselineJITRegisters::Call::callTargetGPR,
                 });
             }));
-            ASSERT(slowPaths.empty());
             auto doneLocation = label();
             m_callCompilationInfo[callLinkInfoIndex].doneLocation = doneLocation;
         } else {
-            auto [slowPaths, dispatchLabel] = CallLinkInfo::emitFastPath(*this, callLinkInfo);
-            ASSERT(slowPaths.empty());
+            CallLinkInfo::emitFastPath(*this, callLinkInfo);
             auto doneLocation = label();
             m_callCompilationInfo[callLinkInfoIndex].doneLocation = doneLocation;
             if constexpr (Op::opcodeID != op_iterator_open && Op::opcodeID != op_iterator_next)
@@ -430,7 +427,7 @@ void JIT::emit_op_iterator_next(const JSInstruction* instruction)
     Jump genericCase = branchIfNotEmpty(nextJSR);
 
     JumpList doneCases;
-#if CPU(ARM64) || (CPU(X86_64) && !OS(WINDOWS))
+#if CPU(ARM64) || CPU(X86_64)
     loadGlobalObject(argumentGPR0);
     emitGetVirtualRegister(bytecode.m_iterator, argumentGPR1);
     emitGetVirtualRegister(bytecode.m_iterable, argumentGPR2);

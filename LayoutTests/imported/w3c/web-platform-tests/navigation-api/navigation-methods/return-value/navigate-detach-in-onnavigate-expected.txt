@@ -1,4 +1,5 @@
 
+Harness Error (TIMEOUT), message = null
 
-FAIL navigate() promise rejections when detaching an iframe inside onnavigate assert_array_equals: lengths differ, expected array ["committed", "finished"] length 2, got ["todo"] length 1
+TIMEOUT navigate() promise rejections when detaching an iframe inside onnavigate Test timed out
 

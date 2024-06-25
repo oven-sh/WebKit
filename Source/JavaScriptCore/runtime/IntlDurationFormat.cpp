@@ -56,6 +56,8 @@ namespace IntlDurationFormatInternal {
 static constexpr bool verbose = false;
 }
 
+static constexpr unsigned fractionalDigitsUndefinedValue = std::numeric_limits<unsigned>::max();
+
 const ClassInfo IntlDurationFormat::s_info = { "Object"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(IntlDurationFormat) };
 
 IntlDurationFormat* IntlDurationFormat::create(VM& vm, Structure* structure)
@@ -239,7 +241,7 @@ void IntlDurationFormat::initializeDurationFormat(JSGlobalObject* globalObject, 
         }
     }
 
-    m_fractionalDigits = intlNumberOption(globalObject, options, vm.propertyNames->fractionalDigits, 0, 9, 0);
+    m_fractionalDigits = intlNumberOption(globalObject, options, vm.propertyNames->fractionalDigits, 0, 9, fractionalDigitsUndefinedValue);
     RETURN_IF_EXCEPTION(scope, void());
 
 #if HAVE(ICU_U_LIST_FORMATTER)
@@ -320,6 +322,24 @@ struct Element {
     std::unique_ptr<UFormattedNumber, ICUDeleter<unumf_closeResult>> m_formattedNumber;
 };
 
+enum class DurationSignType : uint8_t {
+    Negative,
+    Positive,
+    Zero,
+};
+
+// https://tc39.es/proposal-intl-duration-format/#sec-durationsign
+static DurationSignType getDurationSign(ISO8601::Duration duration)
+{
+    for (auto value : duration) {
+        if (value < 0)
+            return DurationSignType::Negative;
+        if (value > 0)
+            return DurationSignType::Positive;
+    }
+    return DurationSignType::Zero;
+}
+
 static Vector<Element> collectElements(JSGlobalObject* globalObject, const IntlDurationFormat* durationFormat, ISO8601::Duration duration)
 {
     // https://tc39.es/proposal-intl-duration-format/#sec-partitiondurationformatpattern
@@ -328,8 +348,10 @@ static Vector<Element> collectElements(JSGlobalObject* globalObject, const IntlD
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     bool done = false;
+    bool needsSignDisplay = false;
     String separator;
     Vector<Element> elements;
+    std::optional<DurationSignType> durationSign;
     for (unsigned index = 0; index < numberOfTemporalUnits && !done; ++index) {
         TemporalUnit unit = static_cast<TemporalUnit>(index);
         auto unitData = durationFormat->units()[index];
@@ -363,8 +385,14 @@ static Vector<Element> collectElements(JSGlobalObject* globalObject, const IntlD
                 }
                 // https://github.com/unicode-org/icu/blob/master/docs/userguide/format_parse/numbers/skeletons.md#fraction-precision
                 skeletonBuilder.append(" ."_s);
-                for (unsigned i = 0; i < durationFormat->fractionalDigits(); ++i)
-                    skeletonBuilder.append('0');
+
+                unsigned fractionalDigits = durationFormat->fractionalDigits();
+                if (fractionalDigits == fractionalDigitsUndefinedValue)
+                    skeletonBuilder.append("#########"_s);
+                else {
+                    for (unsigned i = 0; i < fractionalDigits; ++i)
+                        skeletonBuilder.append('0');
+                }
                 done = true;
             }
             break;
@@ -397,6 +425,18 @@ static Vector<Element> collectElements(JSGlobalObject* globalObject, const IntlD
 
                 return String(WTFMove(buffer));
             };
+
+            // https://github.com/unicode-org/icu/blob/main/docs/userguide/format_parse/numbers/skeletons.md#sign-display
+            if (needsSignDisplay)
+                skeletonBuilder.append(" +_"_s);
+            else if (!value) {
+                if (!durationSign)
+                    durationSign = getDurationSign(duration);
+                if (durationSign == DurationSignType::Negative) {
+                    value = -0.0;
+                    needsSignDisplay = true;
+                }
+            }
 
             auto formatDouble = [&](const String& skeleton) -> std::unique_ptr<UFormattedNumber, ICUDeleter<unumf_closeResult>> {
                 auto scope = DECLARE_THROW_SCOPE(vm);
@@ -484,6 +524,8 @@ static Vector<Element> collectElements(JSGlobalObject* globalObject, const IntlD
                 break;
             }
             }
+            if (value)
+                needsSignDisplay = true;
         }
     }
 
@@ -720,7 +762,7 @@ JSObject* IntlDurationFormat::resolvedOptions(JSGlobalObject* globalObject) cons
         options->putDirect(vm, displayName(vm, unit), jsNontrivialString(vm, displayString(unitData.display())));
     }
 
-    options->putDirect(vm, vm.propertyNames->fractionalDigits, jsNumber(m_fractionalDigits));
+    options->putDirect(vm, vm.propertyNames->fractionalDigits, m_fractionalDigits == fractionalDigitsUndefinedValue ? jsUndefined() : jsNumber(m_fractionalDigits));
     options->putDirect(vm, vm.propertyNames->numberingSystem, jsString(vm, m_numberingSystem));
     return options;
 }

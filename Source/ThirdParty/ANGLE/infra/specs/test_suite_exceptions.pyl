@@ -18,10 +18,26 @@
         'args': [
           '--max-processes=1',
         ],
+        'swarming': {
+          'shards': 4,
+        },
       },
       'win10-x64-intel': {
         'args': [
           '--max-processes=1',
+        ],
+        'swarming': {
+          'shards': 4,
+        },
+      },
+    },
+  },
+  'angle_perftests': {
+    'modifications': {
+      'android-arm64-pixel6-perf': {
+        'args': [
+          # Custom temp throttling for perf tests on pixel6 b/345514719
+          '--custom-throttling-temp=38',
         ],
       },
     },
@@ -46,6 +62,26 @@
       # TODO: Implement on Android. http://anglebug.com/7777
       'android-arm64-pixel4',
     ],
+  },
+  'angle_trace_perf_native_tests': {
+    'modifications': {
+      'android-arm64-pixel6-perf': {
+        'args': [
+          # Custom temp throttling for perf tests on pixel6 b/345514719
+          '--custom-throttling-temp=38',
+        ],
+      },
+    },
+  },
+  'angle_trace_perf_vulkan_tests': {
+    'modifications': {
+      'android-arm64-pixel6-perf': {
+        'args': [
+          # Custom temp throttling for perf tests on pixel6 b/345514719
+          '--custom-throttling-temp=38',
+        ],
+      },
+    },
   },
   'angle_white_box_tests': {
     'modifications': {

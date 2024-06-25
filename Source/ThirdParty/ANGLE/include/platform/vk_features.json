@@ -11,7 +11,7 @@
             "name": "append_aliased_memory_decorations",
             "category": "Workarounds",
             "description": [
-                "Append aliased memory decoration to ssbo and image in SpirV if they are not declared with restrict memory qualifier in GLSL"
+                "Append aliased memory decoration to ssbo and image in SPIR-V if they are not declared with restrict memory qualifier in GLSL"
             ],
             "issue": "b/266235549"
         },
@@ -264,14 +264,6 @@
             "issue": "http://anglebug.com/7551"
         },
         {
-            "name": "supports_multisampled_render_to_single_sampled_GOOGLEX",
-            "category": "Features",
-            "description": [
-                "VkDevice supports the VK_GOOGLEX_multisampled_render_to_single_sampled extension"
-            ],
-            "issue": "http://anglebug.com/4836"
-        },
-        {
             "name": "supports_multisampled_render_to_single_sampled",
             "category": "Features",
             "description": [
@@ -407,7 +399,7 @@
             "name": "varyings_require_matching_precision_in_spirv",
             "category": "Workarounds",
             "description": [
-                "Add additional SPIRV instructions to make sure precision ",
+                "Add additional SPIR-V instructions to make sure precision ",
                 "between shader stages match with each other"
             ],
             "issue": "http://anglebug.com/7488"
@@ -545,14 +537,6 @@
                 "Expose EXT_multisampled_render_to_texture"
             ],
             "issue": "http://anglebug.com/4937"
-        },
-        {
-            "name": "defer_flush_until_end_render_pass",
-            "category": "Workarounds",
-            "description": [
-                "Allow glFlush to be deferred until renderpass ends"
-            ],
-            "issue": "https://issuetracker.google.com/issues/166475273"
         },
         {
             "name": "wait_idle_before_swapchain_recreation",
@@ -862,6 +846,14 @@
                 "Force submit updates to immutable textures"
             ],
             "issue": "http://anglebug.com/6929"
+        },
+        {
+            "name": "supports_SPIRV_1_4",
+            "category": "Features",
+            "description": [
+                "VkDevice supports VK_KHR_spirv_1_4 extension"
+            ],
+            "issue": "http://anglebug.com/342316794"
         },
         {
             "name": "retain_SPIRV_debug_info",
@@ -1253,6 +1245,14 @@
             "issue": "https://anglebug.com/7899"
         },
         {
+            "name": "supports_surface_maintenance1",
+            "category": "Features",
+            "description": [
+                "VkDevice supports the VK_EXT_surface_maintenance1 extension"
+            ],
+            "issue": "https://anglebug.com/7847"
+        },
+        {
             "name": "supports_swapchain_maintenance1",
             "category": "Features",
             "description": [
@@ -1457,6 +1457,15 @@
             "issue": "http://anglebug.com/8658"
         },
         {
+            "name": "limit_max_storage_buffer_size",
+            "category": "Workarounds",
+            "description": [
+                "On some drivers, a storage buffer max size limit is exposed that is incompatible with ",
+                "older hardware"
+            ],
+            "issue": "http://anglebug.com/345244067"
+        },
+        {
             "name": "cl_dump_vk_spirv",
             "category": "Features",
             "description": [
@@ -1490,14 +1499,100 @@
             "issue": "http://anglebug.com/8549"
         },
         {
-            "name": "combine_all_shaders_in_pipeline_library",
+            "name": "supports_8_bit_storage_buffer",
             "category": "Features",
             "description": [
-                "For Vulkan ICDs that support VK_EXT_graphics_pipeline_library the shaders subset of the pipeline",
-                "can either be combined into a single pipeline or can be decoupled into separate pipelines. This feature",
-                "is enabled when the former is the case."
+                "VkDevice supports the VK_KHR_8bit_storage extension and has the storageBuffer8BitAccess feature"
             ],
-            "issue": "http://anglebug.com/8601"
+            "issue": "http://anglebug.com/8676"
+        },
+        {
+            "name": "supports_8_bit_uniform_and_storage_buffer",
+            "category": "Features",
+            "description": [
+                "VkDevice supports the VK_KHR_8bit_storage extension and has the uniformAndStorageBuffer8BitAccess feature"
+            ],
+            "issue": "http://anglebug.com/8676"
+        },
+        {
+            "name": "supports_8_bit_push_constant",
+            "category": "Features",
+            "description": [
+                "VkDevice supports the VK_KHR_8bit_storage extension and has the storagePushConstant8 feature"
+            ],
+            "issue": "http://anglebug.com/8676"
+        },
+        {
+            "name": "supports_16_bit_storage_buffer",
+            "category": "Features",
+            "description": [
+                "VkDevice supports the VK_KHR_16bit_storage extension and has the storageBuffer16BitAccess feature"
+            ],
+            "issue": "http://anglebug.com/8676"
+        },
+        {
+            "name": "supports_16_bit_uniform_and_storage_buffer",
+            "category": "Features",
+            "description": [
+                "VkDevice supports the VK_KHR_16bit_storage extension and has the uniformAndStorageBuffer16BitAccess feature"
+            ],
+            "issue": "http://anglebug.com/8676"
+        },
+        {
+            "name": "supports_16_bit_push_constant",
+            "category": "Features",
+            "description": [
+                "VkDevice supports the VK_KHR_16bit_storage extension and has the storagePushConstant16 feature"
+            ],
+            "issue": "http://anglebug.com/8676"
+        },
+        {
+            "name": "supports_16_bit_input_output",
+            "category": "Features",
+            "description": [
+                "VkDevice supports the VK_KHR_16bit_storage extension and has the storageInputOutput16 feature"
+            ],
+            "issue": "http://anglebug.com/8676"
+        },
+        {
+            "name": "use_vkEvent_for_image_barrier",
+            "category": "Features",
+            "description": [
+                "Uses VkEvent instead of VkCmdPipelineBarrier for image barriers"
+            ],
+            "issue": "https://issuetracker.google.com/336844257"
+        },
+        {
+            "name": "supports_synchronization2",
+            "category": "Features",
+            "description": [
+                "VkDevice supports VK_KHR_synchronization2 extension"
+            ],
+            "issue": "https://issuetracker.google.com/336844257"
+        },
+        {
+            "name": "supports_dynamic_rendering",
+            "category": "Features",
+            "description": [
+                "VkDevice supports VK_KHR_dynamic_rendering extension"
+            ],
+            "issue": "http://anglebug.com/42267038"
+        },
+        {
+            "name": "supports_dynamic_rendering_local_read",
+            "category": "Features",
+            "description": [
+                "VkDevice supports VK_KHR_dynamic_rendering_local_read extension"
+            ],
+            "issue": "http://anglebug.com/42267038"
+        },
+        {
+            "name": "prefer_dynamic_rendering",
+            "category": "Features",
+            "description": [
+                "Whether dynamic rendering should be used instead of render pass objects"
+            ],
+            "issue": "http://anglebug.com/42267038"
         }
     ]
 }

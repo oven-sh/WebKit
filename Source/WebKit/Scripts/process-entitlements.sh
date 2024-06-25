@@ -197,25 +197,130 @@ function webcontent_sandbox_entitlements()
 
 function notify_entitlements()
 {
-    plistbuddy Add :com.apple.developer.web-browser-engine.restrict.notifyd bool YES
-    plistbuddy Add :com.apple.private.darwin-notification.introspect array
-    plistbuddy Add :com.apple.private.darwin-notification.introspect:0 string com.apple.CFPreferences._domainsChangedExternally
-    plistbuddy Add :com.apple.private.darwin-notification.introspect:1 string com.apple.WebKit.LibraryPathDiagnostics
-    plistbuddy Add :com.apple.private.darwin-notification.introspect:2 string com.apple.WebKit.deleteAllCode
-    plistbuddy Add :com.apple.private.darwin-notification.introspect:3 string com.apple.WebKit.fullGC
-    plistbuddy Add :com.apple.private.darwin-notification.introspect:4 string com.apple.accessibility.cache.enhance.text.legibility
-    plistbuddy Add :com.apple.private.darwin-notification.introspect:5 string com.apple.language.changed
-    plistbuddy Add :com.apple.private.darwin-notification.introspect:6 string com.apple.mediaaccessibility.captionAppearanceSettingsChanged
-    if [[ "${WK_PLATFORM_NAME}" != macosx ]]
+    if [[ "${WK_USE_RESTRICTED_ENTITLEMENTS}" == YES ]]
     then
-        plistbuddy Add :com.apple.private.darwin-notification.introspect:7 string com.apple.mobile.usermanagerd.foregrounduser_changed
-        plistbuddy Add :com.apple.private.darwin-notification.introspect:8 string com.apple.mobile.keybagd.user_changed
+        plistbuddy Add :com.apple.developer.web-browser-engine.restrict.notifyd bool YES
+        plistbuddy Add :com.apple.private.darwin-notification.introspect array
+
+        # Keep in sync with the list in WebProcessPool::registerNotificationObservers.
+        FORWARDED_NOTIFICATIONS=(
+            "_AXNotification_shouldPerformValidationsAtRuntime"
+            "_NS_ctasd"
+            "AppleDatePreferencesChangedNotification"
+            "AppleLanguagePreferencesChangedNotification"
+            "AppleNumberPreferencesChangedNotification"
+            "AppleTextBehaviorPreferencesChangedNotification"
+            "AppleTimePreferencesChangedNotification"
+            "LetterFeedbackEnabled.notification"
+            "PhoneticFeedbackEnabled.notification"
+            "QuickTypePredictionFeedbackEnabled.notification"
+            "com.apple.CFPreferences._domainsChangedExternally"
+            "com.apple.WebKit.LibraryPathDiagnostics"
+            "com.apple.WebKit.deleteAllCode"
+            "com.apple.WebKit.dumpGCHeap"
+            "com.apple.WebKit.dumpUntrackedMallocs"
+            "com.apple.WebKit.fullGC"
+            "com.apple.WebKit.logMemStats"
+            "com.apple.WebKit.logPageState"
+            "com.apple.WebKit.showAllDocuments"
+            "com.apple.WebKit.showBackForwardCache"
+            "com.apple.WebKit.showGraphicsLayerTree"
+            "com.apple.WebKit.showLayerTree"
+            "com.apple.WebKit.showLayoutTree"
+            "com.apple.WebKit.showMemoryCache"
+            "com.apple.WebKit.showPaintOrderTree"
+            "com.apple.WebKit.showRenderTree"
+            "com.apple.accessibility.defaultrouteforcall"
+            "com.apple.analyticsd.running"
+            "com.apple.coreaudio.list_components"
+            "com.apple.distnote.locale_changed"
+            "com.apple.language.changed"
+            "com.apple.mediaaccessibility.audibleMediaSettingsChanged"
+            "com.apple.mediaaccessibility.captionAppearanceSettingsChanged"
+            "com.apple.powerlog.state_changed"
+            "com.apple.system.logging.prefschanged"
+            "com.apple.system.lowpowermode"
+            "com.apple.system.networkd.settings"
+            "com.apple.system.timezone"
+            "com.apple.webinspectord.automatic_inspection_enabled"
+            "com.apple.webinspectord.available"
+            "com.apple.zoomwindow"
+            "org.WebKit.lowMemory"
+            "org.WebKit.lowMemory.begin"
+            "org.WebKit.lowMemory.end"
+            "org.WebKit.memoryWarning"
+            "org.WebKit.memoryWarning.begin"
+            "org.WebKit.memoryWarning.end"
+        )
+
+        # Keep in sync with the PLATFORM(MAC) list in WebProcessPool::registerNotificationObservers.
+        MACOS_FORWARDED_NOTIFICATIONS=(
+            "com.apple.sessionagent.screenLockUIIsHidden"
+            "com.apple.sessionagent.screenLockUIIsShowing"
+            "com.apple.sessionagent.screenLockUIIsShown"
+            "com.apple.sessionagent.shieldWindowIsShowing"
+            "com.apple.sessionagent.shieldWindowLowered"
+            "com.apple.sessionagent.shieldWindowRaised"
+            "com.apple.system.DirectoryService.InvalidateCache"
+            "com.apple.system.DirectoryService.InvalidateCache.group"
+            "com.apple.system.DirectoryService.InvalidateCache.host"
+            "com.apple.system.DirectoryService.InvalidateCache.service"
+            "com.apple.system.DirectoryService.InvalidateCache.user"
+        )
+
+        # Keep in sync with the !PLATFORM(MAC) list in WebProcessPool::registerNotificationObservers.
+        EMBEDDED_FORWARDED_NOTIFICATIONS=(
+            "com.apple.mobile.usermanagerd.foregrounduser_changed"
+            "com.apple.mobile.keybagd.lock_status"
+            "com.apple.mobile.keybagd.user_changed"
+        )
+
+        # WebContent registers for these notifications but they are only posted in-process.
+        NON_FORWARDED_NOTIFICATIONS=(
+            "com.apple.accessibility.cache.app.ax"
+            "com.apple.accessibility.cache.ast"
+            "com.apple.accessibility.cache.automation.localized.lookup"
+            "com.apple.accessibility.cache.ax"
+            "com.apple.accessibility.cache.enhance.background.contrast"
+            "com.apple.accessibility.cache.enhance.text.legibility"
+            "com.apple.accessibility.cache.enhance.text.legibilitycom.apple.WebKit.WebContent"
+            "com.apple.accessibility.cache.guided.access"
+            "com.apple.accessibility.cache.guided.access.via.mdm"
+            "com.apple.accessibility.cache.hearing.aid.paired"
+            "com.apple.accessibility.cache.invert.colors"
+            "com.apple.accessibility.cache.invert.colorscom.apple.WebKit.WebContent"
+            "com.apple.accessibility.cache.loc.caption.mode.enabled"
+            "com.apple.accessibility.cache.reduce.motion"
+            "com.apple.accessibility.cache.reduce.motioncom.apple.WebKit.WebContent"
+            "com.apple.accessibility.cache.speech.settings.disabled.by.mc"
+            "com.apple.accessibility.cache.switch.control"
+            "com.apple.accessibility.cache.vot"
+            "com.apple.accessibility.cache.zoom"
+        )
+
+        for NOTIFICATION in ${FORWARDED_NOTIFICATIONS[*]}; do
+            plistbuddy Add :com.apple.private.darwin-notification.introspect:$NOTIFICATION_INDEX string "$NOTIFICATION"
+            NOTIFICATION_INDEX=$((NOTIFICATION_INDEX + 1))
+        done
+
+        if [[ "${WK_PLATFORM_NAME}" == macosx ]]
+        then
+            for NOTIFICATION in ${MACOS_FORWARDED_NOTIFICATIONS[*]}; do
+                plistbuddy Add :com.apple.private.darwin-notification.introspect:$NOTIFICATION_INDEX string "$NOTIFICATION"
+                NOTIFICATION_INDEX=$((NOTIFICATION_INDEX + 1))
+            done
+        else
+            for NOTIFICATION in ${EMBEDDED_FORWARDED_NOTIFICATIONS[*]}; do
+                plistbuddy Add :com.apple.private.darwin-notification.introspect:$NOTIFICATION_INDEX string "$NOTIFICATION"
+                NOTIFICATION_INDEX=$((NOTIFICATION_INDEX + 1))
+            done
+        fi
+
+        for NOTIFICATION in ${NON_FORWARDED_NOTIFICATIONS[*]}; do
+            plistbuddy Add :com.apple.private.darwin-notification.introspect:$NOTIFICATION_INDEX string "$NOTIFICATION"
+            NOTIFICATION_INDEX=$((NOTIFICATION_INDEX + 1))
+        done
     fi
-    plistbuddy Add :com.apple.private.darwin-notification.introspect:9 string com.apple.powerlog.state_changed
-    plistbuddy Add :com.apple.private.darwin-notification.introspect:10 string com.apple.system.logging.prefschanged
-    plistbuddy Add :com.apple.private.darwin-notification.introspect:11 string com.apple.system.lowpowermode
-    plistbuddy Add :com.apple.private.darwin-notification.introspect:12 string com.apple.system.timezone
-    plistbuddy Add :com.apple.private.darwin-notification.introspect:13 string com.apple.zoomwindow
 }
 
 function mac_process_webcontent_shared_entitlements()
@@ -240,11 +345,6 @@ function mac_process_webcontent_shared_entitlements()
             plistbuddy Add :com.apple.runningboard.assertions.webkit bool YES
         fi
 
-        if (( "${TARGET_MAC_OS_X_VERSION_MAJOR}" > 140000 ))
-        then
-            notify_entitlements
-        fi
-
         if [[ "${WK_WEBCONTENT_SERVICE_NEEDS_XPC_DOMAIN_EXTENSION_ENTITLEMENT}" == YES ]]
         then
             plistbuddy Add :com.apple.private.xpc.domain-extension bool YES
@@ -254,6 +354,11 @@ function mac_process_webcontent_shared_entitlements()
     if [[ "${WK_XPC_SERVICE_VARIANT}" == Development ]]
     then
         plistbuddy Add :com.apple.security.cs.disable-library-validation bool YES
+    fi
+
+    if (( "${TARGET_MAC_OS_X_VERSION_MAJOR}" > 140000 ))
+    then
+        notify_entitlements
     fi
 }
 
@@ -600,7 +705,8 @@ then
     fi
 elif [[ "${WK_PLATFORM_NAME}" == iphoneos ||
         "${WK_PLATFORM_NAME}" == appletvos ||
-        "${WK_PLATFORM_NAME}" == watchos ]]
+        "${WK_PLATFORM_NAME}" == watchos ||
+        "${WK_PLATFORM_NAME}" == xros ]]
 then
     if [[ "${PRODUCT_NAME}" == com.apple.WebKit.WebContent.Development ]]; then true
     elif [[ "${PRODUCT_NAME}" == com.apple.WebKit.WebContent ]]; then ios_family_process_webcontent_entitlements

@@ -1,5 +1,8 @@
 set_property(DIRECTORY . PROPERTY FOLDER "WPEPlatform")
 
+set(WPE_PLATFORM_MODULE_DIR ${LIB_INSTALL_DIR}/wpe-platform-${WPE_API_VERSION}/modules)
+add_definitions(-DWPE_PLATFORM_MODULE_DIR="${WPE_PLATFORM_MODULE_DIR}")
+
 file(MAKE_DIRECTORY ${WPEPlatform_DERIVED_SOURCES_DIR}/wpe)
 
 configure_file(wpe-platform.pc.in ${CMAKE_BINARY_DIR}/wpe-platform-${WPE_API_VERSION}.pc @ONLY)
@@ -13,10 +16,13 @@ set(WPEPlatform_SOURCES
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEBufferDMABuf.cpp
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEBufferDMABufFormats.cpp
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEBufferSHM.cpp
+    ${WEBKIT_DIR}/WPEPlatform/wpe/WPEColor.cpp
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPECursorTheme.cpp
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEDisplay.cpp
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEEGLError.cpp
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEExtensions.cpp
+    ${WEBKIT_DIR}/WPEPlatform/wpe/WPEInputMethodContext.cpp
+    ${WEBKIT_DIR}/WPEPlatform/wpe/WPEInputMethodContextNone.cpp
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEKeyUnicode.cpp
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEKeymap.cpp
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEKeymapXKB.cpp
@@ -33,9 +39,11 @@ set(WPEPlatform_INSTALLED_HEADERS
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEBufferDMABuf.h
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEBufferDMABufFormats.h
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEBufferSHM.h
+    ${WEBKIT_DIR}/WPEPlatform/wpe/WPEColor.h
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEDefines.h
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEDisplay.h
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEEGLError.h
+    ${WEBKIT_DIR}/WPEPlatform/wpe/WPEInputMethodContext.h
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEKeyUnicode.h
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEKeymap.h
     ${WEBKIT_DIR}/WPEPlatform/wpe/WPEKeymapXKB.h

@@ -43,22 +43,19 @@
 
 namespace WebCore {
 
-static inline bool operator==(const StyleGradientImageStop& a, const StyleGradientImageStop& b)
-{
-    return a.color == b.color
-        && compareCSSValuePtr(a.position, b.position);
-}
-
-static bool stopsAreCacheable(const Vector<StyleGradientImage::Stop>& stops)
+template<typename Stops>
+static bool stopsAreCacheable(const Stops& stops)
 {
     for (auto& stop : stops) {
-        // FIXME: Do we need handle calc() here?
-        if (stop.position && stop.position->isFontRelativeLength())
-            return false;
         if (stop.color && stop.color->containsCurrentColor())
             return false;
     }
     return true;
+}
+
+static bool stopsAreCacheable(const StyleGradientImage::Data& data)
+{
+    return WTF::switchOn(data, [](auto& data) { return stopsAreCacheable(data.stops); } );
 }
 
 static Color resolveColorStopColor(const std::optional<StyleColor>& styleColor, const RenderStyle& style, bool hasColorFilter)
@@ -71,12 +68,47 @@ static Color resolveColorStopColor(const std::optional<StyleColor>& styleColor, 
     return style.colorResolvingCurrentColor(*styleColor);
 }
 
-StyleGradientImage::StyleGradientImage(Data&& data, CSSGradientColorInterpolationMethod colorInterpolationMethod, Vector<StyleGradientImageStop>&& stops)
+static std::optional<float> resolveColorStopPosition(const StyleGradientImageLengthStop& stop, float gradientLength)
+{
+    if (!stop.position)
+        return std::nullopt;
+
+    if (stop.position->isPercent())
+        return stop.position->percent() / 100.0;
+
+    if (gradientLength <= 0)
+        return 0;
+
+    if (stop.position->isFixed())
+        return stop.position->value() / gradientLength;
+
+    if (stop.position->isCalculated())
+        return stop.position->calculationValue().evaluate(gradientLength) / gradientLength;
+
+    ASSERT_NOT_REACHED();
+    return 0;
+}
+
+static std::optional<float> resolveColorStopPosition(const StyleGradientImageAngularStop& stop, float)
+{
+    return WTF::switchOn(stop.position,
+        [](std::monostate) -> std::optional<float> {
+            return std::nullopt;
+        },
+        [](AngleRaw angle) -> std::optional<float> {
+            return CSSPrimitiveValue::computeDegrees(angle.type, angle.value) / 360.0;
+        },
+        [](PercentRaw percent) -> std::optional<float> {
+            return percent.value / 100.0;
+        }
+    );
+}
+
+StyleGradientImage::StyleGradientImage(Data&& data, CSSGradientColorInterpolationMethod colorInterpolationMethod)
     : StyleGeneratedImage { Type::GradientImage, StyleGradientImage::isFixedSize }
     , m_data { WTFMove(data) }
     , m_colorInterpolationMethod { colorInterpolationMethod }
-    , m_stops { WTFMove(stops) }
-    , m_knownCacheableBarringFilter { stopsAreCacheable(m_stops) }
+    , m_knownCacheableBarringFilter { stopsAreCacheable(m_data) }
 {
 }
 
@@ -91,8 +123,7 @@ bool StyleGradientImage::operator==(const StyleImage& other) const
 bool StyleGradientImage::equals(const StyleGradientImage& other) const
 {
     return m_colorInterpolationMethod == other.m_colorInterpolationMethod
-        && m_data == other.m_data
-        && m_stops == other.m_stops;
+        && m_data == other.m_data;
 }
 
 static inline RefPtr<CSSPrimitiveValue> computedStyleValueForColorStopColor(const std::optional<StyleColor>& color, const RenderStyle& style)
@@ -102,33 +133,80 @@ static inline RefPtr<CSSPrimitiveValue> computedStyleValueForColorStopColor(cons
     return ComputedStyleExtractor::currentColorOrValidColor(style, *color);
 }
 
+static inline RefPtr<CSSPrimitiveValue> computedStyleValueForColorStopPosition(const StyleGradientImageLengthStop& stop, const RenderStyle& style)
+{
+    if (!stop.position)
+        return nullptr;
+    return ComputedStyleExtractor::zoomAdjustedPixelValueForLength(*stop.position, style);
+}
+
+static inline RefPtr<CSSPrimitiveValue> computedStyleValueForColorStopPositionDeprecated(const StyleGradientImageLengthStop& stop)
+{
+    if (!stop.position)
+        return nullptr;
+    return CSSPrimitiveValue::create(*stop.position);
+}
+
+static inline RefPtr<CSSPrimitiveValue> computedStyleValueForColorStopPosition(const StyleGradientImageAngularStop& stop, const RenderStyle&)
+{
+    return WTF::switchOn(stop.position,
+        [](std::monostate) -> RefPtr<CSSPrimitiveValue> {
+            return nullptr;
+        },
+        [](AngleRaw angle) -> RefPtr<CSSPrimitiveValue> {
+            return CSSPrimitiveValue::create(angle.value, angle.type);
+        },
+        [](PercentRaw percent) -> RefPtr<CSSPrimitiveValue> {
+            return CSSPrimitiveValue::create(percent.value, CSSUnitType::CSS_PERCENTAGE);
+        }
+    );
+}
+
+template<typename Stops>
+static CSSGradientColorStopList computeStyleStopsList(const RenderStyle& style, const Stops& stops)
+{
+    return stops.template map<CSSGradientColorStopList>([&](auto& stop) -> CSSGradientColorStop {
+        return {
+            computedStyleValueForColorStopColor(stop.color, style),
+            computedStyleValueForColorStopPosition(stop, style)
+        };
+    });
+}
+
+template<typename Stops>
+static CSSGradientColorStopList computeStyleStopsListDeprecated(const RenderStyle& style, const Stops& stops)
+{
+    return stops.template map<CSSGradientColorStopList>([&](auto& stop) -> CSSGradientColorStop {
+        return {
+            computedStyleValueForColorStopColor(stop.color, style),
+            computedStyleValueForColorStopPositionDeprecated(stop)
+        };
+    });
+}
+
 Ref<CSSValue> StyleGradientImage::computedStyleValue(const RenderStyle& style) const
 {
-    auto cssStopList = m_stops.map<CSSGradientColorStopList>([&](auto& stop) -> CSSGradientColorStop {
-        return { computedStyleValueForColorStopColor(stop.color, style), stop.position };
-    });
-
     return WTF::switchOn(m_data,
         [&] (const LinearData& data) -> Ref<CSSValue> {
-            return CSSLinearGradientValue::create(data.data, data.repeating, m_colorInterpolationMethod, WTFMove(cssStopList));
+            return CSSLinearGradientValue::create(data.data, data.repeating, m_colorInterpolationMethod, computeStyleStopsList(style, data.stops));
         },
         [&] (const PrefixedLinearData& data) -> Ref<CSSValue> {
-            return CSSPrefixedLinearGradientValue::create(data.data, data.repeating, m_colorInterpolationMethod, WTFMove(cssStopList));
+            return CSSPrefixedLinearGradientValue::create(data.data, data.repeating, m_colorInterpolationMethod, computeStyleStopsList(style, data.stops));
         },
         [&] (const DeprecatedLinearData& data) -> Ref<CSSValue> {
-            return CSSDeprecatedLinearGradientValue::create(data.data, m_colorInterpolationMethod, WTFMove(cssStopList));
+            return CSSDeprecatedLinearGradientValue::create(data.data, m_colorInterpolationMethod, computeStyleStopsListDeprecated(style, data.stops));
         },
         [&] (const RadialData& data) -> Ref<CSSValue> {
-            return CSSRadialGradientValue::create(data.data, data.repeating, m_colorInterpolationMethod, WTFMove(cssStopList));
+            return CSSRadialGradientValue::create(data.data, data.repeating, m_colorInterpolationMethod, computeStyleStopsList(style, data.stops));
         },
         [&] (const PrefixedRadialData& data) -> Ref<CSSValue> {
-            return CSSPrefixedRadialGradientValue::create(data.data, data.repeating, m_colorInterpolationMethod, WTFMove(cssStopList));
+            return CSSPrefixedRadialGradientValue::create(data.data, data.repeating, m_colorInterpolationMethod, computeStyleStopsList(style, data.stops));
         },
         [&] (const DeprecatedRadialData& data) -> Ref<CSSValue> {
-            return CSSDeprecatedRadialGradientValue::create(data.data, m_colorInterpolationMethod, WTFMove(cssStopList) );
+            return CSSDeprecatedRadialGradientValue::create(data.data, m_colorInterpolationMethod, computeStyleStopsListDeprecated(style, data.stops) );
         },
         [&] (const ConicData& data) -> Ref<CSSValue> {
-            return CSSConicGradientValue::create(data.data, data.repeating, m_colorInterpolationMethod, WTFMove(cssStopList));
+            return CSSConicGradientValue::create(data.data, data.repeating, m_colorInterpolationMethod, computeStyleStopsList(style, data.stops));
         }
     );
 }
@@ -172,15 +250,21 @@ RefPtr<Image> StyleGradientImage::image(const RenderElement* renderer, const Flo
     return newImage;
 }
 
-bool StyleGradientImage::knownToBeOpaque(const RenderElement& renderer) const
+template<typename Stops>
+static bool knownToBeOpaque(const RenderElement& renderer, const Stops& stops)
 {
     auto& style = renderer.style();
     bool hasColorFilter = style.hasAppleColorFilter();
-    for (auto& stop : m_stops) {
+    for (auto& stop : stops) {
         if (!resolveColorStopColor(stop.color, style, hasColorFilter).isOpaque())
             return false;
     }
     return true;
+}
+
+bool StyleGradientImage::knownToBeOpaque(const RenderElement& renderer) const
+{
+    return WTF::switchOn(m_data, [&](auto& data) { return WebCore::knownToBeOpaque(renderer, data.stops); } );
 }
 
 FloatSize StyleGradientImage::fixedSize(const RenderElement&) const
@@ -379,60 +463,43 @@ public:
 
 } // anonymous namespace
 
-template<typename GradientAdapter>
-GradientColorStops StyleGradientImage::computeStopsForDeprecatedVariants(GradientAdapter&, const CSSToLengthConversionData&, const RenderStyle& style) const
+template<typename GradientAdapter, typename Stops>
+GradientColorStops StyleGradientImage::computeStopsForDeprecatedVariants(GradientAdapter&, const Stops& styleStops, const RenderStyle& style) const
 {
     bool hasColorFilter = style.hasAppleColorFilter();
-    auto result = m_stops.map<GradientColorStops::StopVector>([&] (auto& stop) -> GradientColorStop {
+    auto result = styleStops.template map<GradientColorStops::StopVector>([&](auto& stop) -> GradientColorStop {
         return {
-            // FIXME: Use doubleValueDividingBy100IfPercentage? Or float version?
-            stop.position->isPercentage() ? stop.position->floatValue(CSSUnitType::CSS_PERCENTAGE) / 100 : stop.position->floatValue(CSSUnitType::CSS_NUMBER),
+            stop.position->isPercent() ? stop.position->percent() / 100.0f : stop.position->value(),
             resolveColorStopColor(stop.color, style, hasColorFilter)
         };
     });
 
-    std::stable_sort(result.begin(), result.end(), [] (const auto& a, const auto& b) {
+    std::ranges::stable_sort(result, [](const auto& a, const auto& b) {
         return a.offset < b.offset;
     });
 
     return GradientColorStops::Sorted { WTFMove(result) };
 }
 
-template<typename GradientAdapter>
-GradientColorStops StyleGradientImage::computeStops(GradientAdapter& gradientAdapter, const CSSToLengthConversionData& conversionData, const RenderStyle& style, float maxLengthForRepeat, CSSGradientRepeat repeating) const
+template<typename GradientAdapter, typename Stops>
+GradientColorStops StyleGradientImage::computeStops(GradientAdapter& gradientAdapter, const Stops& styleStops, const RenderStyle& style, float maxLengthForRepeat, CSSGradientRepeat repeating) const
 {
     bool hasColorFilter = style.hasAppleColorFilter();
 
-    size_t numberOfStops = m_stops.size();
+    size_t numberOfStops = styleStops.size();
     Vector<ResolvedGradientStop> stops(numberOfStops);
 
     float gradientLength = gradientAdapter.gradientLength();
 
     for (size_t i = 0; i < numberOfStops; ++i) {
-        auto& stop = m_stops[i];
+        auto& stop = styleStops[i];
 
         stops[i].color = resolveColorStopColor(stop.color, style, hasColorFilter);
 
-        if (stop.position) {
-            auto& positionValue = *stop.position;
-            if (positionValue.isPercentage())
-                stops[i].offset = positionValue.floatValue(CSSUnitType::CSS_PERCENTAGE) / 100;
-            else if (positionValue.isLength() || positionValue.isViewportPercentageLength() || positionValue.isCalculatedPercentageWithLength()) {
-                float length;
-                if (positionValue.isLength())
-                    length = positionValue.computeLength<float>(conversionData) * style.usedZoom();
-                else {
-                    Ref<CalculationValue> calculationValue { positionValue.cssCalcValue()->createCalculationValue(conversionData) };
-                    length = calculationValue->evaluate(gradientLength);
-                }
-                stops[i].offset = (gradientLength > 0) ? length / gradientLength : 0;
-            } else if (positionValue.isAngle())
-                stops[i].offset = positionValue.floatValue(CSSUnitType::CSS_DEG) / 360;
-            else {
-                ASSERT_NOT_REACHED();
-                stops[i].offset = 0;
-            }
-        } else {
+        auto offset = resolveColorStopPosition(stop, gradientLength);
+        if (offset)
+            stops[i].offset = *offset;
+        else {
             // If the first color-stop does not have a position, its position defaults to 0%.
             // If the last color-stop does not have a position, its position defaults to 100%.
             if (!i)
@@ -568,57 +635,110 @@ GradientColorStops StyleGradientImage::computeStops(GradientAdapter& gradientAda
     // We can't just push this logic down into the platform-specific Gradient code,
     // because we have to know the extent of the gradient, and possible move the end points.
     if (repeating == CSSGradientRepeat::Repeating && numberOfStops > 1) {
+        float maxExtent = gradientAdapter.maxExtent(maxLengthForRepeat, gradientLength);
         // If the difference in the positions of the first and last color-stops is 0,
         // the gradient defines a solid-color image with the color of the last color-stop in the rule.
         float gradientRange = *stops.last().offset - *stops.first().offset;
+        if (maxExtent > 1)
+            gradientRange /= maxExtent;
         if (!gradientRange) {
             stops.first().offset = 0;
             stops.first().color = stops.last().color;
             stops.shrink(1);
             numberOfStops = 1;
+        } else if (std::abs(gradientRange) < (float(1) / (2 << 15))) {
+            // If the gradient range is too small, the subsequent replication of stops
+            // across the complete [0, maxExtent] range can challenging to complete both
+            // because of potentially-expensive initial traversal across the [0, first-offset]
+            // and [last-offset, maxExtent] ranges as well as likely exorbitant memory consumption
+            // needed for all such generated stops. In case of such a gradient range the initial
+            // Vector of stops remains unchanged, and additional stops for the purpose of the
+            // repeating nature of the gradient are not computed.
         } else {
-            float maxExtent = gradientAdapter.maxExtent(maxLengthForRepeat, gradientLength);
+            // Since the gradient range is deemed big enough, the amount of necessary stops is
+            // calculated for both the [0, first-offset] and the [last-offset, maxExtent] ranges.
+            CheckedSize numberOfGeneratedStopsBeforeFirst;
+            CheckedSize numberOfGeneratedStopsAfterLast;
 
-            size_t originalNumberOfStops = numberOfStops;
-            size_t originalFirstStopIndex = 0;
-
-            // Work backwards from the first, adding stops until we get one before 0.
-            float firstOffset = *stops[0].offset;
-            if (firstOffset > 0) {
-                float currOffset = firstOffset;
-                size_t srcStopOrdinal = originalNumberOfStops - 1;
+            if (*stops.first().offset > 0) {
+                float currOffset = *stops.first().offset;
+                size_t srcStopOrdinal = numberOfStops - 1;
 
                 while (true) {
-                    auto newStop = stops[originalFirstStopIndex + srcStopOrdinal];
-                    newStop.offset = currOffset;
-                    stops.insert(0, newStop);
-                    ++originalFirstStopIndex;
+                    ++numberOfGeneratedStopsBeforeFirst;
                     if (currOffset < 0)
                         break;
 
                     if (srcStopOrdinal)
-                        currOffset -= *stops[originalFirstStopIndex + srcStopOrdinal].offset - *stops[originalFirstStopIndex + srcStopOrdinal - 1].offset;
-                    srcStopOrdinal = (srcStopOrdinal + originalNumberOfStops - 1) % originalNumberOfStops;
+                        currOffset -= *stops[srcStopOrdinal].offset - *stops[srcStopOrdinal - 1].offset;
+                    srcStopOrdinal = (srcStopOrdinal + numberOfStops - 1) % numberOfStops;
                 }
             }
 
-            // Work forwards from the end, adding stops until we get one after 1.
-            float lastOffset = *stops[stops.size() - 1].offset;
-            if (lastOffset < maxExtent) {
-                float currOffset = lastOffset;
+            if (*stops.last().offset < maxExtent) {
+                float currOffset = *stops.last().offset;
                 size_t srcStopOrdinal = 0;
 
                 while (true) {
-                    size_t srcStopIndex = originalFirstStopIndex + srcStopOrdinal;
-                    auto newStop = stops[srcStopIndex];
-                    newStop.offset = currOffset;
-                    stops.append(newStop);
+                    ++numberOfGeneratedStopsAfterLast;
                     if (currOffset > maxExtent)
                         break;
-                    if (srcStopOrdinal < originalNumberOfStops - 1)
-                        currOffset += *stops[srcStopIndex + 1].offset - *stops[srcStopIndex].offset;
-                    srcStopOrdinal = (srcStopOrdinal + 1) % originalNumberOfStops;
+
+                    if (srcStopOrdinal < numberOfStops - 1)
+                        currOffset += *stops[srcStopOrdinal + 1].offset - *stops[srcStopOrdinal].offset;
+                    srcStopOrdinal = (srcStopOrdinal + 1) % numberOfStops;
                 }
+            }
+
+            // With the number of stops necessary for the repeating gradient now known, we can impose
+            // some reasonable limit to prevent generation of memory-expensive amounts of gradient stops.
+            CheckedSize checkedNumberOfGeneratedStops = CheckedSize(numberOfStops) + numberOfGeneratedStopsBeforeFirst + numberOfGeneratedStopsAfterLast;
+            if (checkedNumberOfGeneratedStops.hasOverflowed() || checkedNumberOfGeneratedStops.value() > (2 << 15)) {
+                // More than 65536 gradient stops are expected. Let's fall back to the initially-provided
+                // Vector of stops, effectively meaning the repetition of stops is not applied.
+            } else {
+                // An affordable amount of gradient stops is determined. A separate Vector object is constructed
+                // accordingly, first generating the repeated stops in the [0, first-offset] range, then adding
+                // the original stops, and finally generating the repeated stops in the [last-offset, maxExtent]
+                // range. The resulting Vector is then moved in to replace the original stops.
+                Vector<ResolvedGradientStop> generatedStops;
+                generatedStops.reserveInitialCapacity(checkedNumberOfGeneratedStops.value());
+
+                if (numberOfGeneratedStopsBeforeFirst > 0) {
+                    float currOffset = *stops.first().offset;
+                    size_t srcStopOrdinal = numberOfStops - 1;
+
+                    for (size_t i = 0; i < numberOfGeneratedStopsBeforeFirst; ++i) {
+                        auto newStop = stops[srcStopOrdinal];
+                        newStop.offset = currOffset;
+                        generatedStops.append(newStop);
+
+                        if (srcStopOrdinal)
+                            currOffset -= *stops[srcStopOrdinal].offset - *stops[srcStopOrdinal - 1].offset;
+                        srcStopOrdinal = (srcStopOrdinal + numberOfStops - 1) % numberOfStops;
+                    }
+
+                    generatedStops.reverse();
+                }
+
+                generatedStops.appendVector(stops);
+
+                if (numberOfGeneratedStopsAfterLast > 0) {
+                    float currOffset = *stops.last().offset;
+                    size_t srcStopOrdinal = 0;
+
+                    for (size_t i = 0; i < numberOfGeneratedStopsAfterLast; ++i) {
+                        auto newStop = stops[srcStopOrdinal];
+                        newStop.offset = currOffset;
+                        generatedStops.append(newStop);
+
+                        if (srcStopOrdinal < numberOfStops - 1)
+                            currOffset += *stops[srcStopOrdinal + 1].offset - *stops[srcStopOrdinal].offset;
+                        srcStopOrdinal = (srcStopOrdinal + 1) % numberOfStops;
+                    }
+                }
+
+                stops = WTFMove(generatedStops);
             }
         }
     }
@@ -628,7 +748,7 @@ GradientColorStops StyleGradientImage::computeStops(GradientAdapter& gradientAda
         gradientAdapter.normalizeStopsAndEndpointsOutsideRange(stops, m_colorInterpolationMethod.method);
     
     return GradientColorStops::Sorted {
-        stops.map<GradientColorStops::StopVector>([] (auto& stop) -> GradientColorStop {
+        stops.template map<GradientColorStops::StopVector>([](auto& stop) -> GradientColorStop {
             return { *stop.offset, stop.color };
         })
     };
@@ -907,7 +1027,7 @@ Ref<Gradient> StyleGradientImage::createGradient(const LinearData& linear, const
 
     Gradient::LinearData data { firstPoint, secondPoint };
     LinearGradientAdapter adapter { data };
-    auto stops = computeStops(adapter, conversionData, style, 1, linear.repeating);
+    auto stops = computeStops(adapter, linear.stops, style, 1, linear.repeating);
 
     return Gradient::create(WTFMove(data), m_colorInterpolationMethod.method, GradientSpreadMethod::Pad, WTFMove(stops));
 }
@@ -975,7 +1095,7 @@ Ref<Gradient> StyleGradientImage::createGradient(const PrefixedLinearData& linea
 
     Gradient::LinearData data { firstPoint, secondPoint };
     LinearGradientAdapter adapter { data };
-    auto stops = computeStops(adapter, conversionData, style, 1, linear.repeating);
+    auto stops = computeStops(adapter, linear.stops, style, 1, linear.repeating);
 
     return Gradient::create(WTFMove(data), m_colorInterpolationMethod.method, GradientSpreadMethod::Pad, WTFMove(stops));
 }
@@ -997,7 +1117,7 @@ Ref<Gradient> StyleGradientImage::createGradient(const DeprecatedLinearData& lin
 
     Gradient::LinearData data { firstPoint, secondPoint };
     LinearGradientAdapter adapter { data };
-    auto stops = computeStopsForDeprecatedVariants(adapter, conversionData, style);
+    auto stops = computeStopsForDeprecatedVariants(adapter, linear.stops, style);
 
     return Gradient::create(WTFMove(data), m_colorInterpolationMethod.method, GradientSpreadMethod::Pad, WTFMove(stops));
 }
@@ -1152,7 +1272,7 @@ Ref<Gradient> StyleGradientImage::createGradient(const RadialData& radial, const
     float maxExtent = radial.repeating == CSSGradientRepeat::Repeating ? distanceToFarthestCorner(data.point1, size).distance : 0;
 
     RadialGradientAdapter adapter { data };
-    auto stops = computeStops(adapter, conversionData, style, maxExtent, radial.repeating);
+    auto stops = computeStops(adapter, radial.stops, style, maxExtent, radial.repeating);
 
     return Gradient::create(WTFMove(data), m_colorInterpolationMethod.method, GradientSpreadMethod::Pad, WTFMove(stops));
 }
@@ -1270,7 +1390,7 @@ Ref<Gradient> StyleGradientImage::createGradient(const PrefixedRadialData& radia
     float maxExtent = radial.repeating == CSSGradientRepeat::Repeating ? distanceToFarthestCorner(data.point1, size).distance : 0;
 
     RadialGradientAdapter adapter { data };
-    auto stops = computeStops(adapter, conversionData, style, maxExtent, radial.repeating);
+    auto stops = computeStops(adapter, radial.stops, style, maxExtent, radial.repeating);
 
     return Gradient::create(WTFMove(data), m_colorInterpolationMethod.method, GradientSpreadMethod::Pad, WTFMove(stops));
 }
@@ -1296,7 +1416,7 @@ Ref<Gradient> StyleGradientImage::createGradient(const DeprecatedRadialData& rad
 
     Gradient::RadialData data { firstPoint, secondPoint, firstRadius, secondRadius, aspectRatio };
     RadialGradientAdapter adapter { data };
-    auto stops = computeStopsForDeprecatedVariants(adapter, conversionData, style);
+    auto stops = computeStopsForDeprecatedVariants(adapter, radial.stops, style);
 
     return Gradient::create(WTFMove(data), m_colorInterpolationMethod.method, GradientSpreadMethod::Pad, WTFMove(stops));
 }
@@ -1318,7 +1438,7 @@ Ref<Gradient> StyleGradientImage::createGradient(const ConicData& conic, const R
 
     Gradient::ConicData data { centerPoint, angleRadians };
     ConicGradientAdapter adapter;
-    auto stops = computeStops(adapter, conversionData, style, 1, conic.repeating);
+    auto stops = computeStops(adapter, conic.stops, style, 1, conic.repeating);
 
     return Gradient::create(WTFMove(data), m_colorInterpolationMethod.method, GradientSpreadMethod::Pad, WTFMove(stops));
 }

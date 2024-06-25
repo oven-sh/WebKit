@@ -53,6 +53,11 @@ PlaybackSessionModelContext::PlaybackSessionModelContext(PlaybackSessionManagerP
 {
 }
 
+PlaybackSessionModelContext::~PlaybackSessionModelContext()
+{
+    invalidate();
+}
+
 void PlaybackSessionModelContext::addClient(PlaybackSessionModelClient& client)
 {
     ASSERT(!m_clients.contains(client));
@@ -73,9 +78,22 @@ void PlaybackSessionModelContext::sendRemoteCommand(WebCore::PlatformMediaSessio
 
 void PlaybackSessionModelContext::setVideoReceiverEndpoint(const WebCore::VideoReceiverEndpoint& endpoint)
 {
+#if ENABLE(LINEAR_MEDIA_PLAYER)
+    if (m_videoReceiverEndpoint.get() == endpoint.get())
+        return;
+
     ALWAYS_LOG_IF_POSSIBLE(LOGIDENTIFIER);
-    if (m_manager)
+
+    if (m_manager && m_videoReceiverEndpoint)
+        m_manager->uncacheVideoReceiverEndpoint(m_contextId);
+
+    m_videoReceiverEndpoint = endpoint;
+
+    if (m_manager && m_videoReceiverEndpoint)
         m_manager->setVideoReceiverEndpoint(m_contextId, endpoint);
+#else
+    UNUSED_PARAM(endpoint);
+#endif
 }
 
 #if HAVE(SPATIAL_TRACKING_LABEL)
@@ -96,6 +114,16 @@ void PlaybackSessionModelContext::removeNowPlayingMetadataObserver(const WebCore
 {
     if (m_manager)
         m_manager->removeNowPlayingMetadataObserver(m_contextId, nowPlayingInfo);
+}
+
+void PlaybackSessionModelContext::setSoundStageSize(WebCore::AudioSessionSoundStageSize size)
+{
+    if (m_soundStageSize == size)
+        return;
+
+    m_soundStageSize = size;
+    if (m_manager)
+        m_manager->setSoundStageSize(m_contextId, size);
 }
 
 void PlaybackSessionModelContext::play()
@@ -416,6 +444,28 @@ void PlaybackSessionModelContext::isInWindowFullscreenActiveChanged(bool active)
         client.isInWindowFullscreenActiveChanged(active);
 }
 
+#if ENABLE(LINEAR_MEDIA_PLAYER)
+void PlaybackSessionModelContext::supportsLinearMediaPlayerChanged(bool supportsLinearMediaPlayer)
+{
+    if (m_supportsLinearMediaPlayer == supportsLinearMediaPlayer)
+        return;
+
+    ALWAYS_LOG_IF_POSSIBLE(LOGIDENTIFIER, supportsLinearMediaPlayer);
+    m_supportsLinearMediaPlayer = supportsLinearMediaPlayer;
+
+    for (auto& client : m_clients)
+        client.supportsLinearMediaPlayerChanged(supportsLinearMediaPlayer);
+
+    if (RefPtr manager = m_manager.get())
+        manager->updateVideoControlsManager(m_contextId);
+}
+#endif
+
+void PlaybackSessionModelContext::invalidate()
+{
+    setVideoReceiverEndpoint(nullptr);
+}
+
 #if !RELEASE_LOG_DISABLED
 const Logger* PlaybackSessionModelContext::loggerPtr() const
 {
@@ -443,7 +493,7 @@ PlaybackSessionManagerProxy::PlaybackSessionManagerProxy(WebPageProxy& page)
 #endif
 {
     ALWAYS_LOG(LOGIDENTIFIER);
-    m_page->process().addMessageReceiver(Messages::PlaybackSessionManagerProxy::messageReceiverName(), m_page->webPageID(), *this);
+    m_page->legacyMainFrameProcess().addMessageReceiver(Messages::PlaybackSessionManagerProxy::messageReceiverName(), m_page->webPageID(), *this);
 }
 
 PlaybackSessionManagerProxy::~PlaybackSessionManagerProxy()
@@ -457,14 +507,16 @@ PlaybackSessionManagerProxy::~PlaybackSessionManagerProxy()
 void PlaybackSessionManagerProxy::invalidate()
 {
     ALWAYS_LOG(LOGIDENTIFIER);
-    m_page->process().removeMessageReceiver(Messages::PlaybackSessionManagerProxy::messageReceiverName(), m_page->webPageID());
+    m_page->legacyMainFrameProcess().removeMessageReceiver(Messages::PlaybackSessionManagerProxy::messageReceiverName(), m_page->webPageID());
     m_page = nullptr;
 
     auto contextMap = WTFMove(m_contextMap);
     m_clientCounts.clear();
 
-    for (auto& [model, interface] : contextMap.values())
+    for (auto& [model, interface] : contextMap.values()) {
+        model->invalidate();
         interface->invalidate();
+    }
 }
 
 PlaybackSessionManagerProxy::ModelInterfaceTuple PlaybackSessionManagerProxy::createModelAndInterface(PlaybackSessionContextIdentifier contextId)
@@ -645,6 +697,13 @@ void PlaybackSessionManagerProxy::isInWindowFullscreenActiveChanged(PlaybackSess
     ensureModel(contextId).isInWindowFullscreenActiveChanged(active);
 }
 
+#if ENABLE(LINEAR_MEDIA_PLAYER)
+void PlaybackSessionManagerProxy::supportsLinearMediaPlayerChanged(PlaybackSessionContextIdentifier contextId, bool supportsLinearMediaPlayer)
+{
+    ensureModel(contextId).supportsLinearMediaPlayerChanged(supportsLinearMediaPlayer);
+}
+#endif
+
 void PlaybackSessionManagerProxy::handleControlledElementIDResponse(PlaybackSessionContextIdentifier contextId, String identifier) const
 {
 #if PLATFORM(MAC)
@@ -779,13 +838,28 @@ void PlaybackSessionManagerProxy::sendRemoteCommand(PlaybackSessionContextIdenti
 void PlaybackSessionManagerProxy::setVideoReceiverEndpoint(PlaybackSessionContextIdentifier contextId, const WebCore::VideoReceiverEndpoint& endpoint)
 {
 #if ENABLE(LINEAR_MEDIA_PLAYER)
-    auto interface = controlsManagerInterface();
-    if (!interface || !interface->playerIdentifier())
+    auto it = m_contextMap.find(contextId);
+    if (it == m_contextMap.end()) {
+        ALWAYS_LOG(LOGIDENTIFIER, "no context, ", contextId.loggingString());
         return;
+    }
 
+    RefPtr interface = std::get<1>(it->value);
+    if (!interface) {
+        ERROR_LOG(LOGIDENTIFIER, "no interface or model, ", contextId.loggingString());
+        ASSERT_NOT_REACHED("Should never have null values in context map");
+        return;
+    }
+
+    if (!interface->playerIdentifier()) {
+        ALWAYS_LOG(LOGIDENTIFIER, "no player identifier");
+        return;
+    }
+
+    ALWAYS_LOG(LOGIDENTIFIER);
     WebCore::MediaPlayerIdentifier playerIdentifier = *interface->playerIdentifier();
 
-    Ref process = m_page->protectedProcess();
+    Ref process = m_page->protectedLegacyMainFrameProcess();
     WebCore::ProcessIdentifier processIdentifier = process->coreProcessIdentifier();
 
     Ref gpuProcess = process->processPool().ensureProtectedGPUProcess();
@@ -797,11 +871,33 @@ void PlaybackSessionManagerProxy::setVideoReceiverEndpoint(PlaybackSessionContex
     if (!xpcConnection)
         return;
 
-    VideoReceiverEndpointMessage endpointMessage(WTFMove(processIdentifier), WTFMove(playerIdentifier), endpoint);
+    VideoReceiverEndpointMessage endpointMessage(WTFMove(processIdentifier), contextId, WTFMove(playerIdentifier), endpoint);
     xpc_connection_send_message(xpcConnection.get(), endpointMessage.encode().get());
 #else
     UNUSED_PARAM(contextId);
     UNUSED_PARAM(endpoint);
+#endif
+}
+
+void PlaybackSessionManagerProxy::uncacheVideoReceiverEndpoint(PlaybackSessionContextIdentifier contextId)
+{
+#if ENABLE(LINEAR_MEDIA_PLAYER)
+    Ref process = m_page->protectedLegacyMainFrameProcess();
+    WebCore::ProcessIdentifier processIdentifier = process->coreProcessIdentifier();
+
+    Ref gpuProcess = process->processPool().ensureProtectedGPUProcess();
+    RefPtr connection = gpuProcess->protectedConnection();
+    if (!connection)
+        return;
+
+    OSObjectPtr xpcConnection = connection->xpcConnection();
+    if (!xpcConnection)
+        return;
+
+    VideoReceiverEndpointMessage endpointMessage(WTFMove(processIdentifier), contextId, { WTF::HashTableDeletedValue }, nullptr);
+    xpc_connection_send_message(xpcConnection.get(), endpointMessage.encode().get());
+#else
+    UNUSED_PARAM(contextId);
 #endif
 }
 
@@ -823,6 +919,12 @@ void PlaybackSessionManagerProxy::removeNowPlayingMetadataObserver(PlaybackSessi
 {
     if (RefPtr page = m_page.get())
         page->removeNowPlayingMetadataObserver(nowPlayingInfo);
+}
+
+void PlaybackSessionManagerProxy::setSoundStageSize(PlaybackSessionContextIdentifier contextId, WebCore::AudioSessionSoundStageSize size)
+{
+    if (m_page)
+        m_page->send(Messages::PlaybackSessionManager::SetSoundStageSize(contextId, size));
 }
 
 bool PlaybackSessionManagerProxy::wirelessVideoPlaybackDisabled()
@@ -856,6 +958,17 @@ bool PlaybackSessionManagerProxy::isPaused(PlaybackSessionContextIdentifier iden
 
     Ref model = *std::get<0>(iterator->value);
     return !model->isPlaying() && !model->isStalled();
+}
+
+void PlaybackSessionManagerProxy::updateVideoControlsManager(PlaybackSessionContextIdentifier identifier)
+{
+    if (m_controlsManagerContextId != identifier)
+        return;
+
+    ALWAYS_LOG(LOGIDENTIFIER);
+
+    if (RefPtr page = m_page.get())
+        page->videoControlsManagerDidChange();
 }
 
 #if !RELEASE_LOG_DISABLED

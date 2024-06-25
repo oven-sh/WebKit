@@ -70,7 +70,7 @@ ServiceWorkerThreadProxy::ServiceWorkerThreadProxy(Ref<Page>&& page, ServiceWork
 #if ENABLE(REMOTE_INSPECTOR)
     , m_remoteDebuggable(makeUnique<ServiceWorkerDebuggable>(*this, contextData))
 #endif
-    , m_serviceWorkerThread(ServiceWorkerThread::create(WTFMove(contextData), WTFMove(workerData), WTFMove(userAgent), workerThreadMode, m_document->settingsValues(), *this, *this, *this, idbConnectionProxy(m_document), m_document->socketProvider(), WTFMove(notificationClient), m_page->sessionID(), m_document->noiseInjectionHashSalt()))
+    , m_serviceWorkerThread(ServiceWorkerThread::create(WTFMove(contextData), WTFMove(workerData), WTFMove(userAgent), workerThreadMode, m_document->settingsValues(), *this, *this, *this, idbConnectionProxy(m_document), m_document->socketProvider(), WTFMove(notificationClient), m_page->sessionID(), m_document->noiseInjectionHashSalt(), m_document->advancedPrivacyProtections()))
     , m_cacheStorageProvider(cacheStorageProvider)
     , m_inspectorProxy(*this)
 {
@@ -329,7 +329,7 @@ void ServiceWorkerThreadProxy::fireMessageEvent(MessageWithMessagePorts&& messag
         protectedThis->thread().willPostTaskToFireMessageEvent();
     });
 
-    thread().runLoop().postTask([this, protectedThis = Ref { *this }, message = WTFMove(message), sourceData = WTFMove(sourceData)](auto&) mutable {
+    thread().runLoop().postTask([this, protectedThis = Ref { *this }, message = WTFMove(message), sourceData = crossThreadCopy(WTFMove(sourceData))](auto&) mutable {
         thread().queueTaskToPostMessage(WTFMove(message), WTFMove(sourceData));
     });
 }
@@ -364,7 +364,7 @@ void ServiceWorkerThreadProxy::didSaveScriptsToDisk(ScriptBuffer&& script, HashM
 {
     ASSERT(!isMainThread());
 
-    thread().runLoop().postTask([script = WTFMove(script), importedScripts = WTFMove(importedScripts)](auto& context) mutable {
+    thread().runLoop().postTask([script = crossThreadCopy(WTFMove(script)), importedScripts = crossThreadCopy(WTFMove(importedScripts))](auto& context) mutable {
         downcast<ServiceWorkerGlobalScope>(context).didSaveScriptsToDisk(WTFMove(script), WTFMove(importedScripts));
     });
 }

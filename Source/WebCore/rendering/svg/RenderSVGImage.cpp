@@ -116,7 +116,7 @@ void RenderSVGImage::layout()
 {
     StackStats::LayoutCheckPoint layoutCheckPoint;
 
-    LayoutRepainter repainter(*this, checkForRepaintDuringLayout());
+    LayoutRepainter repainter(*this);
 
     updateImageViewport();
     setCurrentSVGLayoutRect(enclosingLayoutRect(m_objectBoundingBox));
@@ -326,7 +326,7 @@ void RenderSVGImage::repaintOrMarkForLayout(const IntRect* rect)
         layer()->contentChanged(ImageChanged);
 }
 
-void RenderSVGImage::notifyFinished(CachedResource& newImage, const NetworkLoadMetrics& metrics)
+void RenderSVGImage::notifyFinished(CachedResource& newImage, const NetworkLoadMetrics& metrics, LoadWillContinueInAnotherProcess loadWillContinueInAnotherProcess)
 {
     if (renderTreeBeingDestroyed())
         return;
@@ -340,7 +340,7 @@ void RenderSVGImage::notifyFinished(CachedResource& newImage, const NetworkLoadM
             layer()->contentChanged(ImageChanged);
     }
 
-    RenderSVGModelObject::notifyFinished(newImage, metrics);
+    RenderSVGModelObject::notifyFinished(newImage, metrics, loadWillContinueInAnotherProcess);
 }
 
 void RenderSVGImage::imageChanged(WrappedImagePtr newImage, const IntRect* rect)

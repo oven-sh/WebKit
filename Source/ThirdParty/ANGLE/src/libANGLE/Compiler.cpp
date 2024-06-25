@@ -37,7 +37,7 @@ Compiler::Compiler(rx::GLImplFactory *implFactory, const State &state, egl::Disp
            state.getClientMajorVersion() == 3 || state.getClientMajorVersion() == 4);
 
     {
-        std::lock_guard<std::mutex> lock(display->getDisplayGlobalMutex());
+        std::lock_guard<angle::SimpleMutex> lock(display->getDisplayGlobalMutex());
         if (gActiveCompilers == 0)
         {
             sh::Initialize();
@@ -69,6 +69,7 @@ Compiler::Compiler(rx::GLImplFactory *implFactory, const State &state, egl::Disp
         extensions.shaderNoperspectiveInterpolationNV;
     mResources.ARB_texture_rectangle = extensions.textureRectangleANGLE;
     mResources.EXT_gpu_shader5       = extensions.gpuShader5EXT;
+    mResources.OES_gpu_shader5       = extensions.gpuShader5OES;
     mResources.OES_shader_io_blocks  = extensions.shaderIoBlocksOES;
     mResources.EXT_shader_io_blocks  = extensions.shaderIoBlocksEXT;
     mResources.OES_texture_storage_multisample_2d_array =
@@ -240,6 +241,7 @@ Compiler::Compiler(rx::GLImplFactory *implFactory, const State &state, egl::Disp
 
     // Tessellation Shader constants
     mResources.EXT_tessellation_shader        = extensions.tessellationShaderEXT;
+    mResources.OES_tessellation_shader        = extensions.tessellationShaderOES;
     mResources.MaxTessControlInputComponents  = caps.maxTessControlInputComponents;
     mResources.MaxTessControlOutputComponents = caps.maxTessControlOutputComponents;
     mResources.MaxTessControlTextureImageUnits =
@@ -277,7 +279,7 @@ Compiler::~Compiler() = default;
 
 void Compiler::onDestroy(const Context *context)
 {
-    std::lock_guard<std::mutex> lock(context->getDisplay()->getDisplayGlobalMutex());
+    std::lock_guard<angle::SimpleMutex> lock(context->getDisplay()->getDisplayGlobalMutex());
     for (auto &pool : mPools)
     {
         for (ShCompilerInstance &instance : pool)

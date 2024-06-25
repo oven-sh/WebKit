@@ -183,7 +183,7 @@ WKTypeID WKPageGetTypeID()
 
 WKContextRef WKPageGetContext(WKPageRef pageRef)
 {
-    return toAPI(&toImpl(pageRef)->process().processPool());
+    return toAPI(&toImpl(pageRef)->configuration().processPool());
 }
 
 WKPageGroupRef WKPageGetPageGroup(WKPageRef pageRef)
@@ -529,14 +529,14 @@ void WKPageSetCustomTextEncodingName(WKPageRef pageRef, WKStringRef encodingName
 void WKPageTerminate(WKPageRef pageRef)
 {
     CRASH_IF_SUSPENDED;
-    Ref<WebProcessProxy> protectedProcessProxy(toImpl(pageRef)->process());
+    Ref<WebProcessProxy> protectedProcessProxy(toImpl(pageRef)->legacyMainFrameProcess());
     protectedProcessProxy->requestTermination(ProcessTerminationReason::RequestedByClient);
 }
 
 void WKPageResetProcessState(WKPageRef pageRef)
 {
     CRASH_IF_SUSPENDED;
-    Ref<WebProcessProxy> protectedProcessProxy(toImpl(pageRef)->process());
+    Ref<WebProcessProxy> protectedProcessProxy(toImpl(pageRef)->legacyMainFrameProcess());
     protectedProcessProxy->resetState();
 }
 
@@ -2265,7 +2265,7 @@ void WKPageSetPageNavigationClient(WKPageRef pageRef, const WKPageNavigationClie
             m_client.didReceiveServerRedirectForProvisionalNavigation(toAPI(&page), toAPI(navigation), toAPI(userData), m_client.base.clientInfo);
         }
 
-        void didFailProvisionalNavigationWithError(WebPageProxy& page, FrameInfoData&& frameInfo, API::Navigation* navigation, const WebCore::ResourceError& error, API::Object* userData) override
+        void didFailProvisionalNavigationWithError(WebPageProxy& page, FrameInfoData&& frameInfo, API::Navigation* navigation, const URL&, const WebCore::ResourceError& error, API::Object* userData) override
         {
             if (frameInfo.isMainFrame) {
                 if (m_client.didFailProvisionalNavigation)
@@ -2288,7 +2288,7 @@ void WKPageSetPageNavigationClient(WKPageRef pageRef, const WKPageNavigationClie
                 m_client.didFinishNavigation(toAPI(&page), toAPI(navigation), toAPI(userData), m_client.base.clientInfo);
         }
 
-        void didFailNavigationWithError(WebPageProxy& page, const FrameInfoData&, API::Navigation* navigation, const WebCore::ResourceError& error, API::Object* userData) override
+        void didFailNavigationWithError(WebPageProxy& page, const FrameInfoData&, API::Navigation* navigation, const URL&, const WebCore::ResourceError& error, API::Object* userData) override
         {
             if (m_client.didFailNavigation)
                 m_client.didFailNavigation(toAPI(&page), toAPI(navigation), toAPI(error), toAPI(userData), m_client.base.clientInfo);
@@ -2881,7 +2881,7 @@ WKArrayRef WKPageCopyRelatedPages(WKPageRef pageRef)
 {
     Vector<RefPtr<API::Object>> relatedPages;
 
-    for (Ref page : toImpl(pageRef)->process().pages()) {
+    for (Ref page : toImpl(pageRef)->legacyMainFrameProcess().pages()) {
         if (page.ptr() != toImpl(pageRef))
             relatedPages.append(WTFMove(page));
     }
@@ -3025,13 +3025,13 @@ void WKPageSetIgnoresViewportScaleLimits(WKPageRef pageRef, bool ignoresViewport
 
 ProcessID WKPageGetProcessIdentifier(WKPageRef page)
 {
-    return toImpl(page)->processID();
+    return toImpl(page)->legacyMainFrameProcessID();
 }
 
 ProcessID WKPageGetGPUProcessIdentifier(WKPageRef page)
 {
 #if ENABLE(GPU_PROCESS)
-    auto* gpuProcess = toImpl(page)->process().processPool().gpuProcess();
+    auto* gpuProcess = toImpl(page)->configuration().processPool().gpuProcess();
     if (!gpuProcess)
         return 0;
     return gpuProcess->processID();
@@ -3168,7 +3168,7 @@ void WKPageSetMockCaptureDevicesInterrupted(WKPageRef pageRef, bool isCameraInte
 {
     CRASH_IF_SUSPENDED;
 #if ENABLE(MEDIA_STREAM) && ENABLE(GPU_PROCESS)
-    auto& gpuProcess = toImpl(pageRef)->process().processPool().ensureGPUProcess();
+    auto& gpuProcess = toImpl(pageRef)->configuration().processPool().ensureGPUProcess();
     gpuProcess.setMockCaptureDevicesInterrupted(isCameraInterrupted, isMicrophoneInterrupted);
 #endif
 #if ENABLE(MEDIA_STREAM) && USE(GSTREAMER)
@@ -3183,7 +3183,7 @@ void WKPageTriggerMockCaptureConfigurationChange(WKPageRef pageRef, bool forMicr
     MockRealtimeMediaSourceCenter::singleton().triggerMockCaptureConfigurationChange(forMicrophone, forDisplay);
 
 #if ENABLE(GPU_PROCESS)
-    auto& gpuProcess = toImpl(pageRef)->process().processPool().ensureGPUProcess();
+    auto& gpuProcess = toImpl(pageRef)->configuration().processPool().ensureGPUProcess();
     gpuProcess.triggerMockCaptureConfigurationChange(forMicrophone, forDisplay);
 #endif // ENABLE(GPU_PROCESS)
 
@@ -3224,4 +3224,19 @@ void WKPageClearNotificationPermissionState(WKPageRef pageRef)
 #if ENABLE(NOTIFICATIONS)
     toImpl(pageRef)->clearNotificationPermissionState();
 #endif
+}
+
+void WKPageExecuteCommandForTesting(WKPageRef pageRef, WKStringRef command, WKStringRef value)
+{
+    toImpl(pageRef)->executeEditCommand(toImpl(command)->string(), toImpl(value)->string());
+}
+
+bool WKPageIsEditingCommandEnabledForTesting(WKPageRef pageRef, WKStringRef command)
+{
+    return toImpl(pageRef)->isEditingCommandEnabledForTesting(toImpl(command)->string());
+}
+
+void WKPageSetPermissionLevelForTesting(WKPageRef pageRef, WKStringRef origin, bool allowed)
+{
+    toImpl(pageRef)->setPermissionLevelForTesting(toImpl(origin)->string(), allowed);
 }

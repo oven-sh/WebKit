@@ -153,6 +153,7 @@
 #if PLATFORM(COCOA)
 #include <WebCore/VisibleSelection.h>
 #include <wtf/RetainPtr.h>
+
 OBJC_CLASS NSArray;
 OBJC_CLASS NSDictionary;
 OBJC_CLASS NSObject;
@@ -289,6 +290,7 @@ struct PromisedAttachmentInfo;
 struct RemoteUserInputEventData;
 struct RequestStorageAccessResult;
 struct RunJavaScriptParameters;
+struct TargetedElementAdjustment;
 struct TargetedElementInfo;
 struct TargetedElementRequest;
 struct TextCheckingResult;
@@ -312,13 +314,24 @@ namespace TextExtraction {
 struct Item;
 }
 
+namespace WritingTools {
+enum class EditAction : uint8_t;
+enum class ReplacementState : uint8_t;
+
+struct Context;
+struct Replacement;
+struct Session;
+
+using ReplacementID = WTF::UUID;
+using SessionID = WTF::UUID;
+}
+
 } // namespace WebCore
 
 namespace WebKit {
 
 class DrawingArea;
 class FindController;
-class UnifiedTextReplacementController;
 class GPUProcessConnection;
 class GamepadData;
 class GeolocationPermissionRequestManager;
@@ -337,6 +350,7 @@ class RemoteRenderingBackendProxy;
 class RemoteWebInspectorUI;
 class SharedMemoryHandle;
 class TextCheckingControllerProxy;
+class TextAnimationController;
 class UserMediaPermissionRequestManager;
 class ViewGestureGeometryCollector;
 class WebColorChooser;
@@ -382,8 +396,7 @@ enum class FindDecorationStyle : uint8_t;
 enum class NavigatingToAppBoundDomain : bool;
 enum class SyntheticEditingCommandType : uint8_t;
 enum class TextRecognitionUpdateResult : uint8_t;
-enum class WebTextReplacementDataEditAction : uint8_t;
-enum class WebTextReplacementDataState : uint8_t;
+enum class TextAnimationType : uint8_t;
 
 struct BackForwardListItemState;
 struct DataDetectionResult;
@@ -402,6 +415,7 @@ struct LoadParameters;
 struct PlatformFontInfo;
 struct PrintInfo;
 struct ProvisionalFrameCreationParameters;
+struct TextAnimationData;
 struct TextInputContext;
 struct UserMessage;
 struct WebAutocorrectionData;
@@ -409,7 +423,6 @@ struct WebAutocorrectionContext;
 struct WebFoundTextRange;
 struct WebPageCreationParameters;
 struct WebPreferencesStore;
-struct WebTextReplacementData;
 
 #if ENABLE(UI_SIDE_COMPOSITING)
 class VisibleContentRectUpdateInfo;
@@ -481,7 +494,7 @@ public:
 
 #if PLATFORM(COCOA)
     void willCommitLayerTree(RemoteLayerTreeTransaction&, WebCore::FrameIdentifier);
-    void didFlushLayerTreeAtTime(MonotonicTime);
+    void didFlushLayerTreeAtTime(MonotonicTime, bool flushSucceeded);
 #endif
 
     void layoutIfNeeded();
@@ -662,7 +675,7 @@ public:
     Ref<API::Array> trackedRepaintRects();
 
     void executeEditingCommand(const String& commandName, const String& argument);
-    bool isEditingCommandEnabled(const String& commandName);
+    void isEditingCommandEnabled(const String& commandName, CompletionHandler<void(bool)>&&);
     void clearMainFrameName();
     void sendClose();
 
@@ -1263,7 +1276,7 @@ public:
 #endif
 
 #if ENABLE(META_VIEWPORT)
-    void setViewportConfigurationViewLayoutSize(const WebCore::FloatSize&, double scaleFactor, double minimumEffectiveDeviceWidth);
+    void setViewportConfigurationViewLayoutSize(const WebCore::FloatSize&, double layoutSizeScaleFactorFromClient, double minimumEffectiveDeviceWidth);
     void setOverrideViewportArguments(const std::optional<WebCore::ViewportArguments>&);
     const WebCore::ViewportConfiguration& viewportConfiguration() const { return m_viewportConfiguration; }
 
@@ -1395,6 +1408,7 @@ public:
 
 #if ENABLE(GAMEPAD)
     void gamepadActivity(const Vector<std::optional<GamepadData>>&, WebCore::EventMakesGamepadsVisible);
+    void gamepadsRecentlyAccessed();
 #endif
 
 #if ENABLE(POINTER_LOCK)
@@ -1494,7 +1508,7 @@ public:
         return sendSync(std::forward<T>(message), Seconds::infinity(), sendSyncOptions);
     }
 
-    WebCore::DOMPasteAccessResponse requestDOMPasteAccess(WebCore::DOMPasteAccessCategory, const String& originIdentifier);
+    WebCore::DOMPasteAccessResponse requestDOMPasteAccess(WebCore::DOMPasteAccessCategory, WebCore::FrameIdentifier, const String& originIdentifier);
     WebCore::IntRect rectForElementAtInteractionLocation() const;
 
     const std::optional<WebCore::Color>& backgroundColor() const { return m_backgroundColor; }
@@ -1529,6 +1543,7 @@ public:
     void flushPendingIntrinsicContentSizeUpdate();
     void updateIntrinsicContentSizeIfNeeded(const WebCore::IntSize&);
 
+    void clearEditorStateAfterPageTransition();
     void scheduleFullEditorStateUpdate();
 
     bool userIsInteracting() const { return m_userIsInteracting; }
@@ -1600,8 +1615,8 @@ public:
     void handleContextMenuTranslation(const WebCore::TranslationContextMenuInfo&);
 #endif
 
-#if ENABLE(UNIFIED_TEXT_REPLACEMENT) && ENABLE(CONTEXT_MENUS)
-    void handleContextMenuSwapCharacters(WebCore::IntRect selectionBoundsInRootView);
+#if ENABLE(WRITING_TOOLS) && ENABLE(CONTEXT_MENUS)
+    void handleContextMenuWritingTools(WebCore::IntRect selectionBoundsInRootView);
 #endif
 
 #if ENABLE(MEDIA_CONTROLS_CONTEXT_MENUS) && USE(UICONTEXTMENU)
@@ -1632,7 +1647,7 @@ public:
     WebCore::HighlightRequestOriginatedInApp highlightRequestOriginatedInApp() const { return m_highlightRequestOriginatedInApp; }
     WebCore::HighlightVisibility appHighlightsVisiblility() const { return m_appHighlightsVisible; }
 
-    bool createAppHighlightInSelectedRange(WebCore::CreateNewGroupForHighlight, WebCore::HighlightRequestOriginatedInApp);
+    bool createAppHighlightInSelectedRange(WebCore::CreateNewGroupForHighlight, WebCore::HighlightRequestOriginatedInApp, CompletionHandler<void(WebCore::AppHighlight&&)>&&);
     void restoreAppHighlightsAndScrollToIndex(Vector<WebCore::SharedMemoryHandle>&&, const std::optional<unsigned> index);
     void setAppHighlightsVisibility(const WebCore::HighlightVisibility);
 #endif
@@ -1656,6 +1671,10 @@ public:
 
 #if ENABLE(TEXT_AUTOSIZING)
     void textAutosizingUsesIdempotentModeChanged();
+#endif
+
+#if ENABLE(META_VIEWPORT)
+    double baseViewportLayoutSizeScaleFactor() const { return m_baseViewportLayoutSizeScaleFactor; }
 #endif
 
 #if ENABLE(WEBXR) && !USE(OPENXR)
@@ -1731,24 +1750,35 @@ public:
     void setMediaEnvironment(const String&);
 #endif
 
-#if PLATFORM(COCOA)
-    std::optional<WebCore::SimpleRange> autocorrectionContextRange();
+#if ENABLE(WRITING_TOOLS)
+    void proofreadingSessionShowDetailsForSuggestionWithIDRelativeToRect(const WebCore::WritingTools::SessionID&, const WebCore::WritingTools::TextSuggestionID&, WebCore::IntRect);
+
+    void proofreadingSessionUpdateStateForSuggestionWithID(const WebCore::WritingTools::SessionID&, WebCore::WritingTools::TextSuggestionState, const WebCore::WritingTools::TextSuggestionID&);
 #endif
 
-#if ENABLE(UNIFIED_TEXT_REPLACEMENT)
-    void textReplacementSessionShowInformationForReplacementWithUUIDRelativeToRect(const WTF::UUID& sessionUUID, const WTF::UUID& replacementUUID, WebCore::IntRect);
+#if ENABLE(WRITING_TOOLS_UI)
+    void enableSourceTextAnimationAfterElementWithID(const String&, const WTF::UUID&);
+    void enableTextAnimationTypeForElementWithID(const String&, const WTF::UUID&);
 
-    void textReplacementSessionUpdateStateForReplacementWithUUID(const WTF::UUID& sessionUUID, WebTextReplacementDataState, const WTF::UUID& replacementUUID);
+    void addTextAnimationTypeForID(const WTF::UUID&, const WebKit::TextAnimationData&, const WebCore::TextIndicatorData&);
+    // FIXME: try and combine these two and/or clarify why both are needed.
+    // rdar://129882958 (Combine or clarify removeTextAnimationForID and cleanUpTextAnimationsForSessionID)
+    void removeTextAnimationForID(const WebCore::WritingTools::SessionID&);
+    void cleanUpTextAnimationsForSessionID(const WebCore::WritingTools::SessionID&);
 
-    void enableTextIndicatorStyleAfterElementWithID(const String&, const WTF::UUID&);
-    void enableTextIndicatorStyleForElementWithID(const String&, const WTF::UUID&);
-    void removeTextIndicatorStyleForID(const WTF::UUID&);
+    void addSourceTextAnimation(const WebCore::WritingTools::SessionID&, const WebCore::CharacterRange&);
+    void addDestinationTextAnimation(const WebCore::WritingTools::SessionID&, const WebCore::CharacterRange&);
+
+    void createTextIndicatorForRange(const WebCore::SimpleRange&, CompletionHandler<void(std::optional<WebCore::TextIndicatorData>&&)>&&);
+    void createTextIndicatorForTextAnimationID(const WTF::UUID&, CompletionHandler<void(std::optional<WebCore::TextIndicatorData>&&)>&&);
 #endif
 
     void startObservingNowPlayingMetadata();
     void stopObservingNowPlayingMetadata();
 
     void didAdjustVisibilityWithSelectors(Vector<String>&&);
+
+    void takeSnapshotForTargetedElement(WebCore::ElementIdentifier, WebCore::ScriptExecutionContextIdentifier, CompletionHandler<void(std::optional<WebCore::ShareableBitmapHandle>&&)>&&);
 
 private:
     WebPage(WebCore::PageIdentifier, WebPageCreationParameters&&);
@@ -1815,6 +1845,7 @@ private:
 #if ENABLE(TEXT_AUTOSIZING)
     void textAutoSizingAdjustmentTimerFired();
     void resetIdempotentTextAutosizingIfNeeded(double previousInitialScale);
+    void updateTextAutosizingEnablementFromInitialScale(double);
 #endif
     void resetTextAutosizing();
 
@@ -1862,6 +1893,7 @@ private:
     void tryClose(CompletionHandler<void(bool)>&&);
     void platformDidReceiveLoadParameters(const LoadParameters&);
     void createProvisionalFrame(ProvisionalFrameCreationParameters&&, WebCore::FrameIdentifier);
+    void destroyProvisionalFrame(WebCore::FrameIdentifier);
     void loadDidCommitInAnotherProcess(WebCore::FrameIdentifier, std::optional<WebCore::LayerHostingContextIdentifier>);
     void loadRequest(LoadParameters&&);
     [[noreturn]] void loadRequestWaitingForProcessLaunch(LoadParameters&&, URL&&, WebPageProxyIdentifier, bool);
@@ -1958,7 +1990,7 @@ private:
     void getSelectionOrContentsAsString(CompletionHandler<void(const String&)>&&);
     void getSelectionAsWebArchiveData(CompletionHandler<void(const std::optional<IPC::SharedBufferReference>&)>&&);
     void getSourceForFrame(WebCore::FrameIdentifier, CompletionHandler<void(const String&)>&&);
-    void getWebArchiveOfFrame(WebCore::FrameIdentifier, CompletionHandler<void(const std::optional<IPC::SharedBufferReference>&)>&&);
+    void getWebArchiveOfFrame(std::optional<WebCore::FrameIdentifier>, CompletionHandler<void(const std::optional<IPC::SharedBufferReference>&)>&&);
     void getWebArchiveOfFrameWithFileName(WebCore::FrameIdentifier, const Vector<WebCore::MarkupExclusionRule>&, const String& fileName, CompletionHandler<void(const std::optional<IPC::SharedBufferReference>&)>&&);
     void runJavaScript(WebFrame*, WebCore::RunJavaScriptParameters&&, ContentWorldIdentifier, CompletionHandler<void(std::span<const uint8_t>, const std::optional<WebCore::ExceptionDetails>&)>&&);
     void runJavaScriptInFrameInScriptWorld(WebCore::RunJavaScriptParameters&&, std::optional<WebCore::FrameIdentifier>, const std::pair<ContentWorldIdentifier, String>& worldData, CompletionHandler<void(std::span<const uint8_t>, const std::optional<WebCore::ExceptionDetails>&)>&&);
@@ -2233,32 +2265,28 @@ private:
 
     void frameWasFocusedInAnotherProcess(WebCore::FrameIdentifier);
 
-#if ENABLE(UNIFIED_TEXT_REPLACEMENT)
-    void willBeginTextReplacementSession(const WTF::UUID&, WebUnifiedTextReplacementType, CompletionHandler<void(const Vector<WebKit::WebUnifiedTextReplacementContextData>&)>&&);
+#if ENABLE(WRITING_TOOLS)
+    void willBeginWritingToolsSession(const std::optional<WebCore::WritingTools::Session>&, CompletionHandler<void(const Vector<WebCore::WritingTools::Context>&)>&&);
 
-    void didBeginTextReplacementSession(const WTF::UUID&, const Vector<WebKit::WebUnifiedTextReplacementContextData>&);
+    void didBeginWritingToolsSession(const WebCore::WritingTools::Session&, const Vector<WebCore::WritingTools::Context>&);
 
-    void textReplacementSessionDidReceiveReplacements(const WTF::UUID&, const Vector<WebKit::WebTextReplacementData>&, const WebKit::WebUnifiedTextReplacementContextData&, bool finished);
+    void proofreadingSessionDidReceiveSuggestions(const WebCore::WritingTools::Session&, const Vector<WebCore::WritingTools::TextSuggestion>&, const WebCore::WritingTools::Context&, bool finished);
 
-    void textReplacementSessionDidUpdateStateForReplacement(const WTF::UUID&, WebKit::WebTextReplacementDataState, const WebKit::WebTextReplacementData&, const WebKit::WebUnifiedTextReplacementContextData&);
+    void proofreadingSessionDidUpdateStateForSuggestion(const WebCore::WritingTools::Session&, WebCore::WritingTools::TextSuggestionState, const WebCore::WritingTools::TextSuggestion&, const WebCore::WritingTools::Context&);
 
-    void didEndTextReplacementSession(const WTF::UUID&, bool accepted);
+    void didEndWritingToolsSession(const WebCore::WritingTools::Session&, bool accepted);
 
-    void textReplacementSessionDidReceiveTextWithReplacementRange(const WTF::UUID&, const WebCore::AttributedString&, const WebCore::CharacterRange&, const WebKit::WebUnifiedTextReplacementContextData&);
+    void compositionSessionDidReceiveTextWithReplacementRange(const WebCore::WritingTools::Session&, const WebCore::AttributedString&, const WebCore::CharacterRange&, const WebCore::WritingTools::Context&, bool finished);
 
-    void textReplacementSessionDidReceiveEditAction(const WTF::UUID&, WebKit::WebTextReplacementDataEditAction);
+    void writingToolsSessionDidReceiveAction(const WebCore::WritingTools::Session&, WebCore::WritingTools::Action);
 
-    std::optional<WebCore::SimpleRange> getRangeforUUID(const WTF::UUID&);
-
-    void getTextIndicatorForID(const WTF::UUID&, CompletionHandler<void(std::optional<WebCore::TextIndicatorData>&&)>&&);
-
-    void updateTextIndicatorStyleVisibilityForID(const WTF::UUID, bool, CompletionHandler<void()>&&);
+    void updateUnderlyingTextVisibilityForTextAnimationID(const WTF::UUID&, bool, CompletionHandler<void()>&&);
 #endif
 
     void remotePostMessage(WebCore::FrameIdentifier source, const String& sourceOrigin, WebCore::FrameIdentifier target, std::optional<WebCore::SecurityOriginData>&& targetOrigin, const WebCore::MessageWithMessagePorts&);
     void renderTreeAsTextForTesting(WebCore::FrameIdentifier, size_t baseIndent, OptionSet<WebCore::RenderAsTextFlag>, CompletionHandler<void(String&&)>&&);
     void frameTextForTesting(WebCore::FrameIdentifier, CompletionHandler<void(String&&)>&&);
-    void bindRemoteAccessibilityFrames(int processIdentifier, WebCore::FrameIdentifier, std::span<const uint8_t>, CompletionHandler<void(std::span<const uint8_t>, int)>&&);
+    void bindRemoteAccessibilityFrames(int processIdentifier, WebCore::FrameIdentifier, Vector<uint8_t>, CompletionHandler<void(Vector<uint8_t>, int)>&&);
     void updateRemotePageAccessibilityOffset(WebCore::FrameIdentifier, WebCore::IntPoint);
 
     void requestTargetedElement(WebCore::TargetedElementRequest&&, CompletionHandler<void(Vector<WebCore::TargetedElementInfo>&&)>&&);
@@ -2276,7 +2304,7 @@ private:
 
 
     void resetVisibilityAdjustmentsForTargetedElements(const Vector<std::pair<WebCore::ElementIdentifier, WebCore::ScriptExecutionContextIdentifier>>&, CompletionHandler<void(bool)>&&);
-    void adjustVisibilityForTargetedElements(const Vector<std::pair<WebCore::ElementIdentifier, WebCore::ScriptExecutionContextIdentifier>>&, CompletionHandler<void(bool)>&&);
+    void adjustVisibilityForTargetedElements(Vector<WebCore::TargetedElementAdjustment>&&, CompletionHandler<void(bool)>&&);
     void numberOfVisibilityAdjustmentRects(CompletionHandler<void(uint64_t)>&&);
 
 #if HAVE(SPATIAL_TRACKING_LABEL)
@@ -2284,6 +2312,8 @@ private:
 #endif
 
     void frameNameWasChangedInAnotherProcess(WebCore::FrameIdentifier, const String& frameName);
+
+    void setPermissionLevelForTesting(const String& origin, bool allowed);
 
     WebCore::PageIdentifier m_identifier;
 
@@ -2574,6 +2604,7 @@ private:
 
 #if ENABLE(META_VIEWPORT)
     WebCore::ViewportConfiguration m_viewportConfiguration;
+    double m_baseViewportLayoutSizeScaleFactor { 1 };
     bool m_useTestingViewportConfiguration { false };
     bool m_forceAlwaysUserScalable { false };
 #endif
@@ -2802,9 +2833,8 @@ private:
     String m_mediaEnvironment;
 #endif
 
-#if ENABLE(UNIFIED_TEXT_REPLACEMENT)
-    UniqueRef<UnifiedTextReplacementController> m_unifiedTextReplacementController;
-    HashMap<WTF::UUID, Ref<WebCore::Range>> m_textIndicatorStyleEnablementRanges;
+#if ENABLE(WRITING_TOOLS_UI)
+    UniqueRef<TextAnimationController> m_textAnimationController;
 #endif
 
     std::unique_ptr<WebCore::NowPlayingMetadataObserver> m_nowPlayingMetadataObserver;

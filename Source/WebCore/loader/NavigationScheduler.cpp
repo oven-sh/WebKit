@@ -321,6 +321,9 @@ public:
         : ScheduledNavigation(0, submission->lockHistory(), lockBackForwardList, duringLoad, true, submission->state().sourceDocument().shouldOpenExternalURLsPolicyToPropagate())
         , m_submission(WTFMove(submission))
     {
+        Ref requestingDocument = m_submission->state().sourceDocument();
+        if (!requestingDocument->loadEventFinished() && !UserGestureIndicator::processingUserGesture())
+            m_navigationHistoryBehavior = NavigationHistoryBehavior::Replace;
     }
 
     void fire(Frame& frame) final
@@ -349,6 +352,10 @@ public:
         frameLoadRequest.setShouldOpenExternalURLsPolicy(shouldOpenExternalURLs());
         frameLoadRequest.disableShouldReplaceDocumentIfJavaScriptURL();
         submission->populateFrameLoadRequest(frameLoadRequest);
+        auto navigationHistoryBehavior = m_navigationHistoryBehavior;
+        if (localFrame->document() != requestingDocument.ptr())
+            navigationHistoryBehavior = NavigationHistoryBehavior::Push;
+        frameLoadRequest.setNavigationHistoryBehavior(navigationHistoryBehavior);
         localFrame->checkedLoader()->loadFrameRequest(WTFMove(frameLoadRequest), submission->protectedEvent().get(), submission->takeState());
     }
 
@@ -393,6 +400,7 @@ public:
 private:
     Ref<FormSubmission> m_submission;
     bool m_haveToldClient { false };
+    NavigationHistoryBehavior m_navigationHistoryBehavior { NavigationHistoryBehavior::Push };
 };
 
 class ScheduledPageBlock final : public ScheduledNavigation {
@@ -516,7 +524,7 @@ LockBackForwardList NavigationScheduler::mustLockBackForwardList(Frame& targetFr
     return LockBackForwardList::No;
 }
 
-void NavigationScheduler::scheduleLocationChange(Document& initiatingDocument, SecurityOrigin& securityOrigin, const URL& url, const String& referrer, LockHistory lockHistory, LockBackForwardList lockBackForwardList, CompletionHandler<void(ScheduleLocationChangeResult)>&& completionHandler)
+void NavigationScheduler::scheduleLocationChange(Document& initiatingDocument, SecurityOrigin& securityOrigin, const URL& url, const String& referrer, LockHistory lockHistory, LockBackForwardList lockBackForwardList, NavigationHistoryBehavior historyHandling, CompletionHandler<void(ScheduleLocationChangeResult)>&& completionHandler)
 {
     if (!shouldScheduleNavigation(url))
         return completionHandler(ScheduleLocationChangeResult::Stopped);
@@ -541,6 +549,7 @@ void NavigationScheduler::scheduleLocationChange(Document& initiatingDocument, S
         frameLoadRequest.setLockBackForwardList(lockBackForwardList);
         frameLoadRequest.disableNavigationToInvalidURL();
         frameLoadRequest.setShouldOpenExternalURLsPolicy(initiatingDocument.shouldOpenExternalURLsPolicyToPropagate());
+        frameLoadRequest.setNavigationHistoryBehavior(historyHandling);
         if (loader)
             loader->changeLocation(WTFMove(frameLoadRequest));
         return completionHandler(ScheduleLocationChangeResult::Completed);

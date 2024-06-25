@@ -144,33 +144,27 @@ static inline RTCRtpEncodingParameters toRTCEncodingParameters(const GstStructur
 {
     RTCRtpEncodingParameters parameters;
 
-    unsigned ssrc;
-    if (gst_structure_get_uint(rtcParameters, "ssrc", &ssrc))
-        parameters.ssrc = ssrc;
+    if (auto ssrc = gstStructureGet<unsigned>(rtcParameters, "ssrc"_s))
+        parameters.ssrc = *ssrc;
 
     gst_structure_get(rtcParameters, "active", G_TYPE_BOOLEAN, &(parameters.active), nullptr);
 
-    uint64_t maxBitrate;
-    if (gst_structure_get_uint64(rtcParameters, "max-bitrate", &maxBitrate))
-        parameters.maxBitrate = maxBitrate;
+    if (auto maxBitrate = gstStructureGet<uint64_t>(rtcParameters, "max-bitrate"_s))
+        parameters.maxBitrate = *maxBitrate;
 
-    uint64_t maxFramerate;
-    if (gst_structure_get_uint64(rtcParameters, "max-framerate", &maxFramerate))
-        parameters.maxFramerate = maxFramerate;
+    if (auto maxFramerate = gstStructureGet<uint64_t>(rtcParameters, "max-framerate"_s))
+        parameters.maxFramerate = *maxFramerate;
 
     parameters.rid = String::fromLatin1(gst_structure_get_string(rtcParameters, "rid"));
 
-    double scaleResolutionDownBy;
-    if (gst_structure_get_double(rtcParameters, "scale-resolution-down-by", &scaleResolutionDownBy))
-        parameters.scaleResolutionDownBy = scaleResolutionDownBy;
+    if (auto scaleResolutionDownBy = gstStructureGet<double>(rtcParameters, "scale-resolution-down-by"_s))
+        parameters.scaleResolutionDownBy = *scaleResolutionDownBy;
 
-    double bitratePriority;
-    if (gst_structure_get_double(rtcParameters, "bitrate-priority", &bitratePriority))
-        parameters.priority = fromWebRTCBitRatePriority(bitratePriority);
+    if (auto bitratePriority = gstStructureGet<double>(rtcParameters, "bitrate-priority"_s))
+        parameters.priority = fromWebRTCBitRatePriority(*bitratePriority);
 
-    int networkPriority;
-    if (gst_structure_get_int(rtcParameters, "network-priority", &networkPriority))
-        parameters.networkPriority = static_cast<RTCPriorityType>(networkPriority);
+    if (auto networkPriority = gstStructureGet<int>(rtcParameters, "network-priority"_s))
+        parameters.networkPriority = static_cast<RTCPriorityType>(*networkPriority);
 
     return parameters;
 }
@@ -181,7 +175,7 @@ RTCRtpSendParameters toRTCRtpSendParameters(const GstStructure* rtcParameters)
         return { };
 
     RTCRtpSendParameters parameters;
-    parameters.transactionId = makeString(gst_structure_get_string(rtcParameters, "transaction-id"));
+    parameters.transactionId = span(gst_structure_get_string(rtcParameters, "transaction-id"));
 
     auto* encodings = gst_structure_get_value(rtcParameters, "encodings");
     unsigned size = gst_value_list_get_size(encodings);
@@ -534,7 +528,7 @@ GRefPtr<GstCaps> capsFromRtpCapabilities(RefPtr<UniqueSSRCGenerator> ssrcGenerat
 
         if (!index) {
             for (unsigned i = 1; auto& extension : capabilities.headerExtensions)
-                gst_structure_set(codecStructure, makeString("extmap-", i++).ascii().data(), G_TYPE_STRING, extension.uri.ascii().data(), nullptr);
+                gst_structure_set(codecStructure, makeString("extmap-"_s, i++).ascii().data(), G_TYPE_STRING, extension.uri.ascii().data(), nullptr);
         }
         gst_caps_append_structure(caps.get(), codecStructure);
         index++;
@@ -599,7 +593,7 @@ GRefPtr<GstCaps> capsFromSDPMedia(const GstSDPMedia* media)
                 "a-sendonly", "a-recvonly", "a-end-of-candidates", nullptr);
 
             if (const char* name = gst_structure_get_string(structure, "encoding-name")) {
-                auto encodingName = makeString(name).convertToASCIIUppercase();
+                auto encodingName = String(span(name)).convertToASCIIUppercase();
                 gst_structure_set(structure, "encoding-name", G_TYPE_STRING, encodingName.ascii().data(), nullptr);
             }
 

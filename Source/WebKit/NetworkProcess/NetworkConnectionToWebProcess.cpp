@@ -202,6 +202,11 @@ NetworkConnectionToWebProcess::~NetworkConnectionToWebProcess()
     unregisterSharedWorkerConnection();
 }
 
+Ref<NetworkProcess> NetworkConnectionToWebProcess::protectedNetworkProcess()
+{
+    return networkProcess();
+}
+
 void NetworkConnectionToWebProcess::hasUploadStateChanged(bool hasUpload)
 {
     CONNECTION_RELEASE_LOG(Loading, "hasUploadStateChanged: (hasUpload=%d)", hasUpload);
@@ -1496,25 +1501,25 @@ void NetworkConnectionToWebProcess::installMockContentFilter(WebCore::MockConten
 #endif
 
 #if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
-void NetworkConnectionToWebProcess::logOnBehalfOfWebContent(std::span<const uint8_t> logSubsystem, std::span<const uint8_t> logCategory, std::span<const uint8_t> logString, uint8_t logType, int32_t pid)
+void NetworkConnectionToWebProcess::logOnBehalfOfWebContent(std::span<const char> logSubsystemIncludingNullTerminator, std::span<const char> logCategoryIncludingNullTerminator, std::span<const char> logStringIncludingNullTerminator, uint8_t logType, int32_t pid)
 {
-    auto isNullTerminated = [](std::span<const uint8_t> view) {
+    auto isNullTerminated = [](std::span<const char> view) {
         return view.data() && !view.empty() && view.back() == '\0';
     };
 
     bool isValidLogType = logType == OS_LOG_TYPE_DEFAULT || logType == OS_LOG_TYPE_INFO || logType == OS_LOG_TYPE_DEBUG || logType == OS_LOG_TYPE_ERROR || logType == OS_LOG_TYPE_FAULT;
-    MESSAGE_CHECK(isNullTerminated(logString) && isValidLogType);
+    MESSAGE_CHECK(isNullTerminated(logStringIncludingNullTerminator) && isValidLogType);
 
     // os_log_hook on sender side sends a null category and subsystem when logging to OS_LOG_DEFAULT.
     auto osLog = OSObjectPtr<os_log_t>();
-    if (isNullTerminated(logSubsystem) && isNullTerminated(logCategory)) {
-        auto subsystem = reinterpret_cast<const char*>(logSubsystem.data());
-        auto category = reinterpret_cast<const char*>(logCategory.data());
+    if (isNullTerminated(logSubsystemIncludingNullTerminator) && isNullTerminated(logCategoryIncludingNullTerminator)) {
+        auto subsystem = logSubsystemIncludingNullTerminator.data();
+        auto category = logCategoryIncludingNullTerminator.data();
         osLog = adoptOSObject(os_log_create(subsystem, category));
     }
 
     auto osLogPointer = osLog.get() ? osLog.get() : OS_LOG_DEFAULT;
-    auto logData = reinterpret_cast<const char*>(logString.data());
+    auto* logData = logStringIncludingNullTerminator.data();
 
 #if HAVE(OS_SIGNPOST)
     if (WTFSignpostHandleIndirectLog(osLogPointer, pid, logData))

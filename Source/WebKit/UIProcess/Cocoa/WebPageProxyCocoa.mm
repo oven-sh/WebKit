@@ -122,10 +122,10 @@ SOFT_LINK_PRIVATE_FRAMEWORK_OPTIONAL(AppleMediaServicesUI)
 SOFT_LINK_CLASS_OPTIONAL(AppleMediaServicesUI, AMSUIEngagementTask)
 #endif
 
-#define MESSAGE_CHECK(assertion) MESSAGE_CHECK_BASE(assertion, process().connection())
-#define MESSAGE_CHECK_COMPLETION(assertion, completion) MESSAGE_CHECK_COMPLETION_BASE(assertion, process().connection(), completion)
+#define MESSAGE_CHECK(assertion) MESSAGE_CHECK_BASE(assertion, legacyMainFrameProcess().connection())
+#define MESSAGE_CHECK_COMPLETION(assertion, completion) MESSAGE_CHECK_COMPLETION_BASE(assertion, legacyMainFrameProcess().connection(), completion)
 
-#define WEBPAGEPROXY_RELEASE_LOG(channel, fmt, ...) RELEASE_LOG(channel, "%p - [pageProxyID=%llu, webPageID=%llu, PID=%i] WebPageProxy::" fmt, this, identifier().toUInt64(), webPageID().toUInt64(), m_process->processID(), ##__VA_ARGS__)
+#define WEBPAGEPROXY_RELEASE_LOG(channel, fmt, ...) RELEASE_LOG(channel, "%p - [pageProxyID=%llu, webPageID=%llu, PID=%i] WebPageProxy::" fmt, this, identifier().toUInt64(), webPageID().toUInt64(), m_legacyMainFrameProcess->processID(), ##__VA_ARGS__)
 
 namespace WebKit {
 using namespace WebCore;
@@ -195,12 +195,17 @@ void WebPageProxy::loadRecentSearches(const String& name, CompletionHandler<void
     m_websiteDataStore->loadRecentSearches(name, WTFMove(completionHandler));
 }
 
-void WebPageProxy::grantAccessToCurrentPasteboardData(const String& pasteboardName)
+void WebPageProxy::grantAccessToCurrentPasteboardData(const String& pasteboardName, std::optional<FrameIdentifier> frameID)
 {
     if (!hasRunningProcess())
         return;
-
-    WebPasteboardProxy::singleton().grantAccessToCurrentData(m_process.get(), pasteboardName);
+    if (frameID) {
+        if (auto* frame = WebFrameProxy::webFrame(*frameID)) {
+            WebPasteboardProxy::singleton().grantAccessToCurrentData(frame->process(), pasteboardName);
+            return;
+        }
+    }
+    WebPasteboardProxy::singleton().grantAccessToCurrentData(m_legacyMainFrameProcess, pasteboardName);
 }
 
 void WebPageProxy::beginSafeBrowsingCheck(const URL& url, bool forMainFrameNavigation, WebFramePolicyListenerProxy& listener)
@@ -233,7 +238,7 @@ void WebPageProxy::beginSafeBrowsingCheck(const URL& url, bool forMainFrameNavig
 #if ENABLE(CONTENT_FILTERING)
 void WebPageProxy::contentFilterDidBlockLoadForFrame(const WebCore::ContentFilterUnblockHandler& unblockHandler, FrameIdentifier frameID)
 {
-    contentFilterDidBlockLoadForFrameShared(m_process.copyRef(), unblockHandler, frameID);
+    contentFilterDidBlockLoadForFrameShared(m_legacyMainFrameProcess.copyRef(), unblockHandler, frameID);
 }
 
 void WebPageProxy::contentFilterDidBlockLoadForFrameShared(Ref<WebProcessProxy>&& process, const WebCore::ContentFilterUnblockHandler& unblockHandler, FrameIdentifier frameID)
@@ -256,13 +261,13 @@ void WebPageProxy::createSandboxExtensionsIfNeeded(const Vector<String>& files, 
     if (files.size() == 1) {
         BOOL isDirectory;
         if ([[NSFileManager defaultManager] fileExistsAtPath:files[0] isDirectory:&isDirectory] && !isDirectory) {
-            ASSERT(process().connection() && process().connection()->getAuditToken());
-            if (process().connection() && process().connection()->getAuditToken()) {
-                if (auto handle = SandboxExtension::createHandleForReadByAuditToken("/"_s, *(process().connection()->getAuditToken())))
+            ASSERT(legacyMainFrameProcess().connection() && legacyMainFrameProcess().connection()->getAuditToken());
+            if (legacyMainFrameProcess().connection() && legacyMainFrameProcess().connection()->getAuditToken()) {
+                if (auto handle = SandboxExtension::createHandleForReadByAuditToken("/"_s, *(legacyMainFrameProcess().connection()->getAuditToken())))
                     fileReadHandle = WTFMove(*handle);
             } else if (auto handle = SandboxExtension::createHandle("/"_s, SandboxExtension::Type::ReadOnly))
                 fileReadHandle = WTFMove(*handle);
-            willAcquireUniversalFileReadSandboxExtension(m_process);
+            willAcquireUniversalFileReadSandboxExtension(m_legacyMainFrameProcess);
         }
     }
 
@@ -272,6 +277,11 @@ void WebPageProxy::createSandboxExtensionsIfNeeded(const Vector<String>& files, 
         if (auto handle = SandboxExtension::createHandle(file, SandboxExtension::Type::ReadOnly))
             fileUploadHandles.append(WTFMove(*handle));
     }
+}
+
+void WebPageProxy::scrollingNodeScrollViewDidScroll(ScrollingNodeID nodeID)
+{
+    protectedPageClient()->scrollingNodeScrollViewDidScroll(nodeID);
 }
 
 bool WebPageProxy::scrollingUpdatesDisabledForTesting()
@@ -287,27 +297,6 @@ void WebPageProxy::startDrag(const DragItem& dragItem, ShareableBitmap::Handle&&
 }
 
 #endif
-
-#if ENABLE(UNIFIED_TEXT_REPLACEMENT)
-
-void WebPageProxy::getTextIndicatorForID(WTF::UUID& uuid, CompletionHandler<void(std::optional<WebCore::TextIndicatorData>&&)>&& completionHandler)
-{
-    if (!hasRunningProcess())
-        return;
-
-    sendWithAsyncReply(Messages::WebPage::GetTextIndicatorForID(uuid), WTFMove(completionHandler));
-}
-
-void WebPageProxy::updateTextIndicatorStyleVisibilityForID(WTF::UUID& uuid, bool visible, CompletionHandler<void()>&& completionHandler)
-{
-    if (!hasRunningProcess())
-        return;
-
-    sendWithAsyncReply(Messages::WebPage::UpdateTextIndicatorStyleVisibilityForID(uuid, visible), WTFMove(completionHandler));
-}
-
-#endif // UNIFIED_TEXT_REPLACEMENT
-
 
 #if ENABLE(ATTACHMENT_ELEMENT)
 
@@ -332,9 +321,7 @@ void WebPageProxy::platformRegisterAttachment(Ref<API::Attachment>&& attachment,
 
 void WebPageProxy::platformCloneAttachment(Ref<API::Attachment>&& fromAttachment, Ref<API::Attachment>&& toAttachment)
 {
-    fromAttachment->doWithFileWrapper([&](NSFileWrapper *fileWrapper) {
-        toAttachment->setFileWrapper(fileWrapper);
-    });
+    fromAttachment->cloneFileWrapperTo(toAttachment);
 }
 
 static RefPtr<WebCore::ShareableBitmap> convertPlatformImageToBitmap(CocoaImage *image, const WebCore::FloatSize& fittingSize)
@@ -483,12 +470,12 @@ const String& WebPageProxy::Internals::paymentCoordinatorSourceApplicationSecond
 
 void WebPageProxy::Internals::paymentCoordinatorAddMessageReceiver(WebPaymentCoordinatorProxy&, IPC::ReceiverName receiverName, IPC::MessageReceiver& messageReceiver)
 {
-    page.process().addMessageReceiver(receiverName, webPageID, messageReceiver);
+    page.legacyMainFrameProcess().addMessageReceiver(receiverName, webPageID, messageReceiver);
 }
 
 void WebPageProxy::Internals::paymentCoordinatorRemoveMessageReceiver(WebPaymentCoordinatorProxy&, IPC::ReceiverName receiverName)
 {
-    page.process().removeMessageReceiver(receiverName, webPageID);
+    page.legacyMainFrameProcess().removeMessageReceiver(receiverName, webPageID);
 }
 
 #endif
@@ -752,7 +739,11 @@ void WebPageProxy::createAppHighlightInSelectedRange(WebCore::CreateNewGroupForH
 
     setUpHighlightsObserver();
 
-    send(Messages::WebPage::CreateAppHighlightInSelectedRange(createNewGroup, requestOriginatedInApp));
+    auto completionHandler = [this, protectedThis = Ref { *this }] (WebCore::AppHighlight&& highlight) {
+        MESSAGE_CHECK(!highlight.highlight->isEmpty());
+        protectedPageClient()->storeAppHighlight(highlight);
+    };
+    sendWithAsyncReply(Messages::WebPage::CreateAppHighlightInSelectedRange(createNewGroup, requestOriginatedInApp), WTFMove(completionHandler));
 }
 
 void WebPageProxy::restoreAppHighlightsAndScrollToIndex(const Vector<Ref<SharedMemory>>& highlights, const std::optional<unsigned> index)
@@ -870,19 +861,19 @@ void WebPageProxy::handleContextMenuTranslation(const TranslationContextMenuInfo
 
 #endif // HAVE(TRANSLATION_UI_SERVICES)
 
-#if ENABLE(UNIFIED_TEXT_REPLACEMENT)
+#if ENABLE(WRITING_TOOLS)
 
-bool WebPageProxy::canHandleSwapCharacters() const
+bool WebPageProxy::canHandleContextMenuWritingTools() const
 {
-    return protectedPageClient()->canHandleSwapCharacters();
+    return protectedPageClient()->canHandleContextMenuWritingTools();
 }
 
-void WebPageProxy::handleContextMenuSwapCharacters(WebCore::IntRect selectionBoundsInRootView)
+void WebPageProxy::handleContextMenuWritingTools(WebCore::IntRect selectionBoundsInRootView)
 {
-    protectedPageClient()->handleContextMenuSwapCharacters(selectionBoundsInRootView);
+    protectedPageClient()->handleContextMenuWritingTools(selectionBoundsInRootView);
 }
 
-#endif // ENABLE(UNIFIED_TEXT_REPLACEMENT)
+#endif // ENABLE(WRITING_TOOLS)
 
 #endif // ENABLE(CONTEXT_MENUS)
 
@@ -910,24 +901,24 @@ void WebPageProxy::lastNavigationWasAppInitiated(CompletionHandler<void(bool)>&&
 
 void WebPageProxy::grantAccessToAssetServices()
 {
-    auto handles = SandboxExtension::createHandlesForMachLookup({ "com.apple.mobileassetd.v2"_s }, process().auditToken(), SandboxExtension::MachBootstrapOptions::EnableMachBootstrap);
-    process().send(Messages::WebProcess::GrantAccessToAssetServices(WTFMove(handles)), 0);
+    auto handles = SandboxExtension::createHandlesForMachLookup({ "com.apple.mobileassetd.v2"_s }, legacyMainFrameProcess().auditToken(), SandboxExtension::MachBootstrapOptions::EnableMachBootstrap);
+    legacyMainFrameProcess().send(Messages::WebProcess::GrantAccessToAssetServices(WTFMove(handles)), 0);
 }
 
 void WebPageProxy::revokeAccessToAssetServices()
 {
-    process().send(Messages::WebProcess::RevokeAccessToAssetServices(), 0);
+    legacyMainFrameProcess().send(Messages::WebProcess::RevokeAccessToAssetServices(), 0);
 }
 
 void WebPageProxy::disableURLSchemeCheckInDataDetectors() const
 {
-    process().send(Messages::WebProcess::DisableURLSchemeCheckInDataDetectors(), 0);
+    legacyMainFrameProcess().send(Messages::WebProcess::DisableURLSchemeCheckInDataDetectors(), 0);
 }
 
 void WebPageProxy::switchFromStaticFontRegistryToUserFontRegistry()
 {
-    if (auto handles = process().fontdMachExtensionHandles())
-        process().send(Messages::WebProcess::SwitchFromStaticFontRegistryToUserFontRegistry(WTFMove(*handles)), 0);
+    if (auto handles = legacyMainFrameProcess().fontdMachExtensionHandles())
+        legacyMainFrameProcess().send(Messages::WebProcess::SwitchFromStaticFontRegistryToUserFontRegistry(WTFMove(*handles)), 0);
 }
 
 NSDictionary *WebPageProxy::contentsOfUserInterfaceItem(NSString *userInterfaceItem)
@@ -943,10 +934,10 @@ NSDictionary *WebPageProxy::contentsOfUserInterfaceItem(NSString *userInterfaceI
 #if PLATFORM(MAC)
 bool WebPageProxy::isQuarantinedAndNotUserApproved(const String& fileURLString)
 {
-    if (!fileURLString.endsWithIgnoringASCIICase(".webarchive"_s))
+    NSURL *fileURL = [NSURL URLWithString:fileURLString];
+    if ([fileURL.pathExtension caseInsensitiveCompare:@"webarchive"] != NSOrderedSame)
         return false;
 
-    NSURL *fileURL = [NSURL URLWithString:fileURLString];
     qtn_file_t qf = qtn_file_alloc();
 
     int quarantineError = qtn_file_init_with_path(qf, fileURL.path.fileSystemRepresentation);
@@ -1082,7 +1073,7 @@ void WebPageProxy::setMediaCapability(std::optional<MediaCapability>&& capabilit
 void WebPageProxy::deactivateMediaCapability(MediaCapability& capability)
 {
     WEBPAGEPROXY_RELEASE_LOG(ProcessCapabilities, "deactivateMediaCapability: deactivating (envID=%{public}s) for URL '%{sensitive}s'", capability.environmentIdentifier().utf8().data(), capability.webPageURL().string().utf8().data());
-    Ref processPool { protectedProcess()->protectedProcessPool() };
+    Ref processPool { protectedLegacyMainFrameProcess()->protectedProcessPool() };
     processPool->extensionCapabilityGranter().setMediaCapabilityActive(capability, false);
     processPool->extensionCapabilityGranter().revoke(capability);
 }
@@ -1114,7 +1105,7 @@ void WebPageProxy::updateMediaCapability()
         return;
     }
 
-    Ref processPool { protectedProcess()->protectedProcessPool() };
+    Ref processPool { protectedLegacyMainFrameProcess()->protectedProcessPool() };
 
     if (shouldActivateMediaCapability())
         processPool->extensionCapabilityGranter().setMediaCapabilityActive(*mediaCapability, true);
@@ -1156,70 +1147,135 @@ bool WebPageProxy::shouldDeactivateMediaCapability() const
 
 #endif // ENABLE(EXTENSION_CAPABILITIES)
 
-#if ENABLE(UNIFIED_TEXT_REPLACEMENT)
+#if ENABLE(WRITING_TOOLS)
 
-void WebPageProxy::willBeginTextReplacementSession(const WTF::UUID& uuid, WebUnifiedTextReplacementType type, CompletionHandler<void(const Vector<WebUnifiedTextReplacementContextData>&)>&& completionHandler)
+void WebPageProxy::setWritingToolsActive(bool active)
 {
-    sendWithAsyncReply(Messages::WebPage::WillBeginTextReplacementSession(uuid, type), WTFMove(completionHandler));
+    if (m_isWritingToolsActive == active)
+        return;
+
+    protectedPageClient()->writingToolsActiveWillChange();
+    m_isWritingToolsActive = active;
+    protectedPageClient()->writingToolsActiveDidChange();
 }
 
-void WebPageProxy::didBeginTextReplacementSession(const WTF::UUID& uuid, const Vector<WebKit::WebUnifiedTextReplacementContextData>& contexts)
+void WebPageProxy::willBeginWritingToolsSession(const std::optional<WebCore::WritingTools::Session>& session, CompletionHandler<void(const Vector<WebCore::WritingTools::Context>&)>&& completionHandler)
 {
-    send(Messages::WebPage::DidBeginTextReplacementSession(uuid, contexts));
+    sendWithAsyncReply(Messages::WebPage::WillBeginWritingToolsSession(session), WTFMove(completionHandler));
 }
 
-void WebPageProxy::textReplacementSessionDidReceiveReplacements(const WTF::UUID& uuid, const Vector<WebTextReplacementData>& replacements, const WebUnifiedTextReplacementContextData& context, bool finished)
+void WebPageProxy::didBeginWritingToolsSession(const WebCore::WritingTools::Session& session, const Vector<WebCore::WritingTools::Context>& contexts)
 {
-    send(Messages::WebPage::TextReplacementSessionDidReceiveReplacements(uuid, replacements, context, finished));
+    send(Messages::WebPage::DidBeginWritingToolsSession(session, contexts));
 }
 
-void WebPageProxy::textReplacementSessionDidUpdateStateForReplacement(const WTF::UUID& uuid, WebTextReplacementData::State state, const WebTextReplacementData& replacement, const WebUnifiedTextReplacementContextData& context)
+void WebPageProxy::proofreadingSessionDidReceiveSuggestions(const WebCore::WritingTools::Session& session, const Vector<WebCore::WritingTools::TextSuggestion>& suggestions, const WebCore::WritingTools::Context& context, bool finished)
 {
-    send(Messages::WebPage::TextReplacementSessionDidUpdateStateForReplacement(uuid, state, replacement, context));
+    send(Messages::WebPage::ProofreadingSessionDidReceiveSuggestions(session, suggestions, context, finished));
 }
 
-void WebPageProxy::didEndTextReplacementSession(const WTF::UUID& uuid, bool accepted)
+void WebPageProxy::proofreadingSessionDidUpdateStateForSuggestion(const WebCore::WritingTools::Session& session, WebCore::WritingTools::TextSuggestion::State state, const WebCore::WritingTools::TextSuggestion& suggestion, const WebCore::WritingTools::Context& context)
 {
-    send(Messages::WebPage::DidEndTextReplacementSession(uuid, accepted));
+    send(Messages::WebPage::ProofreadingSessionDidUpdateStateForSuggestion(session, state, suggestion, context));
 }
 
-void WebPageProxy::textReplacementSessionDidReceiveTextWithReplacementRange(const WTF::UUID& uuid, const WebCore::AttributedString& attributedText, const WebCore::CharacterRange& range, const WebUnifiedTextReplacementContextData& context)
+void WebPageProxy::didEndWritingToolsSession(const WebCore::WritingTools::Session& session, bool accepted)
 {
-    send(Messages::WebPage::TextReplacementSessionDidReceiveTextWithReplacementRange(uuid, attributedText, range, context));
+    send(Messages::WebPage::DidEndWritingToolsSession(session, accepted));
 }
 
-void WebPageProxy::textReplacementSessionDidReceiveEditAction(const WTF::UUID& uuid, WebTextReplacementData::EditAction action)
+void WebPageProxy::compositionSessionDidReceiveTextWithReplacementRange(const WebCore::WritingTools::Session& session, const WebCore::AttributedString& attributedText, const WebCore::CharacterRange& range, const WebCore::WritingTools::Context& context, bool finished)
 {
-    send(Messages::WebPage::TextReplacementSessionDidReceiveEditAction(uuid, action));
+    send(Messages::WebPage::CompositionSessionDidReceiveTextWithReplacementRange(session, attributedText, range, context, finished));
 }
 
-void WebPageProxy::textReplacementSessionShowInformationForReplacementWithUUIDRelativeToRect(const WTF::UUID& sessionUUID, const WTF::UUID& replacementUUID, WebCore::IntRect selectionBoundsInRootView)
+void WebPageProxy::writingToolsSessionDidReceiveAction(const WebCore::WritingTools::Session& session, WebCore::WritingTools::Action action)
 {
-    protectedPageClient()->textReplacementSessionShowInformationForReplacementWithUUIDRelativeToRect(sessionUUID, replacementUUID, selectionBoundsInRootView);
+    send(Messages::WebPage::WritingToolsSessionDidReceiveAction(session, action));
 }
 
-void WebPageProxy::textReplacementSessionUpdateStateForReplacementWithUUID(const WTF::UUID& sessionUUID, WebTextReplacementData::State state, const WTF::UUID& replacementUUID)
-{
-    protectedPageClient()->textReplacementSessionUpdateStateForReplacementWithUUID(sessionUUID, state, replacementUUID);
-}
+#endif // ENABLE(WRITING_TOOLS)
 
-void WebPageProxy::enableTextIndicatorStyleAfterElementWithID(const String& elementID, const WTF::UUID& uuid)
+#if ENABLE(WRITING_TOOLS_UI)
+
+void WebPageProxy::enableSourceTextAnimationAfterElementWithID(const String& elementID, const WTF::UUID& uuid)
 {
     if (!hasRunningProcess())
         return;
 
-    send(Messages::WebPage::EnableTextIndicatorStyleAfterElementWithID(elementID, uuid));
+    send(Messages::WebPage::enableSourceTextAnimationAfterElementWithID(elementID, uuid));
 }
 
-void WebPageProxy::enableTextIndicatorStyleForElementWithID(const String& elementID, const WTF::UUID& uuid)
+void WebPageProxy::enableTextAnimationTypeForElementWithID(const String& elementID, const WTF::UUID& uuid)
 {
     if (!hasRunningProcess())
         return;
 
-    send(Messages::WebPage::EnableTextIndicatorStyleForElementWithID(elementID, uuid));
+    send(Messages::WebPage::EnableTextAnimationTypeForElementWithID(elementID, uuid));
 }
 
-#endif
+void WebPageProxy::addTextAnimationTypeForID(const WTF::UUID& uuid, const TextAnimationData& styleData, const WebCore::TextIndicatorData& indicatorData)
+{
+    MESSAGE_CHECK(uuid.isValid());
+
+    internals().textIndicatorDataForChunk.add(uuid, indicatorData);
+
+    protectedPageClient()->addTextAnimationTypeForID(uuid, styleData);
+}
+
+void WebPageProxy::getTextIndicatorForID(const WTF::UUID& uuid, CompletionHandler<void(std::optional<WebCore::TextIndicatorData>&&)>&& completionHandler)
+{
+    if (!hasRunningProcess()) {
+        completionHandler(std::nullopt);
+        return;
+    }
+
+    auto textIndicatorData = internals().textIndicatorDataForChunk.getOptional(uuid);
+
+    if (textIndicatorData) {
+        completionHandler(*textIndicatorData);
+        return;
+    }
+
+    sendWithAsyncReply(Messages::WebPage::createTextIndicatorForTextAnimationID(uuid), WTFMove(completionHandler));
+}
+
+void WebPageProxy::updateUnderlyingTextVisibilityForTextAnimationID(const WTF::UUID& uuid, bool visible, CompletionHandler<void()>&& completionHandler)
+{
+    if (!hasRunningProcess()) {
+        completionHandler();
+        return;
+    }
+
+    sendWithAsyncReply(Messages::WebPage::updateUnderlyingTextVisibilityForTextAnimationID(uuid, visible), WTFMove(completionHandler));
+}
+
+void WebPageProxy::removeTextAnimationForID(const WTF::UUID& uuid)
+{
+    MESSAGE_CHECK(uuid.isValid());
+
+    protectedPageClient()->removeTextAnimationForID(uuid);
+}
+
+#endif // ENABLE(WRITING_TOOLS_UI)
+
+#if ENABLE(WRITING_TOOLS)
+
+void WebPageProxy::proofreadingSessionShowDetailsForSuggestionWithIDRelativeToRect(const WebCore::WritingTools::Session::ID& sessionID, const WebCore::WritingTools::TextSuggestion::ID& replacementID, WebCore::IntRect selectionBoundsInRootView)
+{
+    MESSAGE_CHECK(sessionID.isValid());
+
+    protectedPageClient()->proofreadingSessionShowDetailsForSuggestionWithIDRelativeToRect(sessionID, replacementID, selectionBoundsInRootView);
+}
+
+void WebPageProxy::proofreadingSessionUpdateStateForSuggestionWithID(const WebCore::WritingTools::Session::ID& sessionID, WebCore::WritingTools::TextSuggestion::State state, const WebCore::WritingTools::TextSuggestion::ID& replacementID)
+{
+    MESSAGE_CHECK(sessionID.isValid());
+
+    protectedPageClient()->proofreadingSessionUpdateStateForSuggestionWithID(sessionID, state, replacementID);
+}
+
+#endif // ENABLE(WRITING_TOOLS)
 
 } // namespace WebKit
 

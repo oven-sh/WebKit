@@ -47,7 +47,7 @@
 namespace WebKit {
 using namespace WebCore;
 
-#define MESSAGE_CHECK_WITH_RETURN_VALUE(assertion, returnValue) MESSAGE_CHECK_WITH_RETURN_VALUE_BASE(assertion, (webPageProxy().process().connection()), returnValue)
+#define MESSAGE_CHECK_WITH_RETURN_VALUE(assertion, returnValue) MESSAGE_CHECK_WITH_RETURN_VALUE_BASE(assertion, (webPageProxy().legacyMainFrameProcess().connection()), returnValue)
 
 RemoteScrollingCoordinatorProxy::RemoteScrollingCoordinatorProxy(WebPageProxy& webPageProxy)
     : m_webPageProxy(webPageProxy)
@@ -176,9 +176,7 @@ void RemoteScrollingCoordinatorProxy::scrollingTreeNodeDidScroll(ScrollingNodeID
     if (m_webPageProxy.scrollingUpdatesDisabledForTesting())
         return;
 
-#if PLATFORM(IOS_FAMILY)
     m_webPageProxy.scrollingNodeScrollViewDidScroll(scrolledNodeID);
-#endif
 
     if (m_scrollingTree->isHandlingProgrammaticScroll())
         return;
@@ -377,12 +375,14 @@ void RemoteScrollingCoordinatorProxy::receivedWheelEventWithPhases(PlatformWheel
 
 void RemoteScrollingCoordinatorProxy::deferWheelEventTestCompletionForReason(ScrollingNodeID nodeID, WheelEventTestMonitor::DeferReason reason)
 {
-    m_webPageProxy.send(Messages::RemoteScrollingCoordinator::StartDeferringScrollingTestCompletionForNode(nodeID, reason));
+    if (isMonitoringWheelEvents() && nodeID)
+        m_webPageProxy.send(Messages::RemoteScrollingCoordinator::StartDeferringScrollingTestCompletionForNode(nodeID, reason));
 }
 
 void RemoteScrollingCoordinatorProxy::removeWheelEventTestCompletionDeferralForReason(ScrollingNodeID nodeID, WheelEventTestMonitor::DeferReason reason)
 {
-    m_webPageProxy.send(Messages::RemoteScrollingCoordinator::StopDeferringScrollingTestCompletionForNode(nodeID, reason));
+    if (isMonitoringWheelEvents() && nodeID)
+        m_webPageProxy.send(Messages::RemoteScrollingCoordinator::StopDeferringScrollingTestCompletionForNode(nodeID, reason));
 }
 
 void RemoteScrollingCoordinatorProxy::viewWillStartLiveResize()
@@ -430,6 +430,13 @@ void RemoteScrollingCoordinatorProxy::scrollingTreeNodeScrollbarVisibilityDidCha
 void RemoteScrollingCoordinatorProxy::scrollingTreeNodeScrollbarMinimumThumbLengthDidChange(WebCore::ScrollingNodeID nodeID, ScrollbarOrientation orientation, int minimumThumbLength)
 {
     m_webPageProxy.sendToProcessContainingFrame(scrollingTree()->frameIDForScrollingNodeID(nodeID), Messages::RemoteScrollingCoordinator::ScrollingTreeNodeScrollbarMinimumThumbLengthDidChange(nodeID, orientation, minimumThumbLength));
+}
+
+bool RemoteScrollingCoordinatorProxy::isMonitoringWheelEvents()
+{
+    if (m_scrollingTree)
+        return m_scrollingTree->isMonitoringWheelEvents();
+    return false;
 }
 
 } // namespace WebKit

@@ -300,6 +300,8 @@ bool CSSCounterStyleDescriptors::areSymbolsValidForSystem(CSSCounterStyleDescrip
     case System::EthiopicNumeric:
     case System::Extends:
         return !symbols.size() && !additiveSymbols.size();
+    case System::DisclosureClosed:
+        return true;
     default:
         ASSERT_NOT_REACHED();
         return false;
@@ -433,6 +435,7 @@ String CSSCounterStyleDescriptors::systemCSSText() const
     case System::TraditionalChineseInformal:
     case System::TraditionalChineseFormal:
     case System::EthiopicNumeric:
+    case System::DisclosureClosed:
         return emptyString();
     }
     return emptyString();
@@ -486,7 +489,7 @@ String CSSCounterStyleDescriptors::rangesCSSText() const
 
 String CSSCounterStyleDescriptors::Pad::cssText() const
 {
-    return makeString(m_padMinimumLength, " ", m_padSymbol.cssText());
+    return makeString(m_padMinimumLength, ' ', m_padSymbol.cssText());
 }
 
 String CSSCounterStyleDescriptors::padCSSText() const

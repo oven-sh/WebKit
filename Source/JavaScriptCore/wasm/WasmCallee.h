@@ -175,7 +175,7 @@ private:
 };
 
 #define FOR_EACH_JS_TO_WASM_WRAPPER_METADATA_OPCODE(macro) \
-/* Load/Store accumulator; followed by (offset from cfr : int8_t) */ \
+/* Load/Store accumulator; followed by (offset from sp (load) or cfr (store): int8_t) */ \
 macro(0, LoadI32) \
 macro(1, LoadI64) \
 macro(2, LoadF32) \
@@ -376,7 +376,10 @@ public:
 
     void setReplacement(RefPtr<Wasm::Callee> callee)
     {
-        ASSERT(!m_replacementCallee);
+        // Note that we can compile the same function with multiple memory modes, which can cause the JS->Wasm stub generator to
+        // race. That's fine, both stubs should do the same thing.
+        if (m_replacementCallee)
+            return;
         ASSERT(callee);
         m_replacementCallee = WTFMove(callee);
     }
@@ -385,8 +388,8 @@ public:
     JS_EXPORT_PRIVATE RegisterAtOffsetList* calleeSaveRegistersImpl();
     std::tuple<void*, void*> rangeImpl() const { return { nullptr, nullptr }; }
 
-    static ptrdiff_t offsetOfWasmCallee() { return OBJECT_OFFSETOF(JSEntrypointInterpreterCallee, wasmCallee); }
-    static ptrdiff_t offsetOfWasmFunctionPrologue() { return OBJECT_OFFSETOF(JSEntrypointInterpreterCallee, wasmFunctionPrologue); }
+    static constexpr ptrdiff_t offsetOfWasmCallee() { return OBJECT_OFFSETOF(JSEntrypointInterpreterCallee, wasmCallee); }
+    static constexpr ptrdiff_t offsetOfWasmFunctionPrologue() { return OBJECT_OFFSETOF(JSEntrypointInterpreterCallee, wasmFunctionPrologue); }
     static constexpr ptrdiff_t offsetOfMetadataStorage() { return offsetOfData(); }
 
 private:
@@ -397,7 +400,7 @@ public:
     const intptr_t wasmCallee;
     // In the JIT case, we want to always call the llint prologue from a jit function.
     // In the no-jit case, we dont' care.
-    CodePtr<LLintToWasmEntryPtrTag> wasmFunctionPrologue;
+    CodePtr<LLIntToWasmEntryPtrTag> wasmFunctionPrologue;
     RefPtr<Wasm::Callee> m_replacementCallee { nullptr };
 };
 
@@ -406,10 +409,7 @@ class WasmToJSCallee final : public Callee {
 public:
     friend class Callee;
 
-    static Ref<WasmToJSCallee> create()
-    {
-        return adoptRef(*new WasmToJSCallee);
-    }
+    static WasmToJSCallee& singleton();
 
 private:
     WasmToJSCallee();

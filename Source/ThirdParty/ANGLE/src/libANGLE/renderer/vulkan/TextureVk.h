@@ -19,14 +19,6 @@
 namespace rx
 {
 
-enum class ImageMipLevels
-{
-    EnabledLevels                 = 0,
-    FullMipChainForGenerateMipmap = 1,
-
-    InvalidEnum = 2,
-};
-
 enum class TextureUpdateResult
 {
     ImageUnaffected,
@@ -534,8 +526,14 @@ class TextureVk : public TextureImpl, public angle::ObserverInterface
                               size_t offset,
                               const vk::Format &bufferVkFormat) const;
 
-    bool shouldUpdateBeStaged(gl::LevelIndex textureLevelIndexGL,
-                              angle::FormatID dstFormatID) const;
+    bool updateMustBeStaged(gl::LevelIndex textureLevelIndexGL, angle::FormatID dstFormatID) const;
+    bool updateMustBeFlushed(gl::LevelIndex textureLevelIndexGL, angle::FormatID dstFormatID) const;
+    bool shouldUpdateBeFlushed(gl::LevelIndex textureLevelIndexGL,
+                               angle::FormatID dstFormatID) const
+    {
+        return updateMustBeFlushed(textureLevelIndexGL, dstFormatID) ||
+               !updateMustBeStaged(textureLevelIndexGL, dstFormatID);
+    }
 
     // We monitor the staging buffer and set dirty bits if the staging buffer changes. Note that we
     // support changes in the staging buffer even outside the TextureVk class.

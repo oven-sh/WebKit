@@ -145,7 +145,17 @@
 
 /* FIXME: This name should be more specific if it is only for use with CallFrame* */
 /* Use __builtin_frame_address(1) to get CallFrame* */
-#if COMPILER(GCC_COMPATIBLE) && (CPU(ARM64) || CPU(X86_64))
+/*
+Disabled on Windows as __builtin_frame_address(1) is unavailable, and cannot be recreated with 
+__builtin_frame_address(0) due to how the stack frame is grown. __builtin_frame_address(0) points at
+the current frame, and if the current function spills registers to the stack it's pointing at
+the first of four home spaces. Without knowing the size of the stack frame the compiler reserves 
+we can't walk back up to find the RBP at function entry.
+Could be implemented on Windows with __builtin_stack_address() once implemented in clang, as that
+returns the stack pointer at the time of function entry.
+https://bugs.webkit.org/show_bug.cgi?id=275567
+*/
+#if CPU(ARM64) || (CPU(X86_64) && !OS(WINDOWS))
 #define USE_BUILTIN_FRAME_ADDRESS 1
 #endif
 
@@ -259,7 +269,7 @@
 #define USE_CFNETWORK_CONTENT_ENCODING_SNIFFING_OVERRIDE 1
 #endif
 
-#if PLATFORM(IOS) || PLATFORM(MACCATALYST) || PLATFORM(VISION)
+#if PLATFORM(IOS) || PLATFORM(MACCATALYST) || PLATFORM(VISION) || PLATFORM(APPLETV)
 #define USE_UICONTEXTMENU 1
 #endif
 
@@ -353,7 +363,12 @@
 #define USE_NSVIEW_SEMANTICCONTEXT 1
 #endif
 
-#if (PLATFORM(IOS) && __IPHONE_OS_VERSION_MIN_REQUIRED >= 170000) || PLATFORM(VISION)
+#if (PLATFORM(MAC) && __MAC_OS_X_VERSION_MIN_REQUIRED >= 140000)
+#define USE_NSPRESENTATIONSTATE 1
+#endif
+
+#if !defined(USE_MEDIAPARSERD) \
+    && (PLATFORM(IOS) && __IPHONE_OS_VERSION_MIN_REQUIRED >= 170000) || PLATFORM(VISION)
 #define USE_MEDIAPARSERD 1
 #endif
 

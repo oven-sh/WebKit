@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2007-2024 Apple Inc. All rights reserved.
  * Copyright (C) 2007 Justin Haygood (jhaygood@reaktix.com)
  *
  * Redistribution and use in source and binary forms, with or without
@@ -29,28 +29,25 @@
 #include <wtf/FastMalloc.h>
 #include <wtf/StdLibExtras.h>
 
-#if OS(WINDOWS)
-#if !COMPILER(GCC_COMPATIBLE)
-extern "C" void _ReadWriteBarrier(void);
-#pragma intrinsic(_ReadWriteBarrier)
-#endif
-#include <windows.h>
-#include <intrin.h>
-#endif
-
 namespace WTF {
 
 ALWAYS_INLINE bool hasFence(std::memory_order order)
 {
     return order != std::memory_order_relaxed;
 }
-    
+
+// This indicicates CPUs where the exchange<Op>(std::memory_order_relaxed) instructions do not cost
+// more than the non-atomic equivalent. This doesn't live in PlatformCPU.h because we haven't set up
+// our OS/PLATFORM macros at that point.
+#if (CPU(ARM64E) && OS(DARWIN)) || (CPU(ARM64) && PLATFORM(MAC))
+#define WTF_CPU_RELAXED_EXCHANGE_OPS_ARE_FREE 1
+#else
+#define WTF_CPU_RELAXED_EXCHANGE_OPS_ARE_FREE 0
+#endif
+
 // Atomic wraps around std::atomic with the sole purpose of making the compare_exchange
 // operations not alter the expected value. This is more in line with how we typically
 // use CAS in our code.
-//
-// Atomic is a struct without explicitly defined constructors so that it can be
-// initialized at compile time.
 
 template<typename T>
 struct Atomic {
@@ -248,11 +245,7 @@ inline T atomicExchange(T* location, T newValue, std::memory_order order = std::
 // to do things like register allocation and code motion over pure operations.
 inline void compilerFence()
 {
-#if OS(WINDOWS) && !COMPILER(GCC_COMPATIBLE)
-    _ReadWriteBarrier();
-#else
     asm volatile("" ::: "memory");
-#endif
 }
 
 #if CPU(ARM_THUMB2) || CPU(ARM64)
@@ -285,9 +278,7 @@ inline void crossModifyingCodeFence() { arm_isb(); }
 
 inline void x86_ortop()
 {
-#if OS(WINDOWS)
-    MemoryBarrier();
-#elif CPU(X86_64)
+#if CPU(X86_64)
     // This has acqrel semantics and is much cheaper than mfence. For exampe, in the JSC GC, using
     // mfence as a store-load fence was a 9% slow-down on Octane/splay while using this was neutral.
     asm volatile("lock; orl $0, (%%rsp)" ::: "memory");
@@ -298,17 +289,12 @@ inline void x86_ortop()
 
 inline void x86_cpuid()
 {
-#if OS(WINDOWS)
-    int info[4];
-    __cpuid(info, 0);
-#else
     intptr_t a = 0, b, c, d;
     asm volatile(
         "cpuid"
         : "+a"(a), "=b"(b), "=c"(c), "=d"(d)
         :
         : "memory");
-#endif
 }
 
 inline void loadLoadFence() { compilerFence(); }
@@ -337,9 +323,7 @@ inline void dependentLoadLoadFence() { loadLoadFence(); }
 template<typename T>
 T opaque(T pointer)
 {
-#if !OS(WINDOWS)
     asm volatile("" : "+r"(pointer) ::);
-#endif
     return pointer;
 }
 
@@ -511,6 +495,46 @@ ALWAYS_INLINE T& ensurePointer(Atomic<T*>& pointer, const Func& func)
         delete newValue;
     }
 }
+
+// Just a stub wrapper that looks like Atomic without doing any fencing. This is mostly for
+// templates where the data is sometimes Atomic and sometimes not.
+template<typename T>
+struct NonAtomic {
+    constexpr NonAtomic(T value) : m_value(value) { }
+
+    ALWAYS_INLINE T load(std::memory_order = std::memory_order_relaxed) const { return m_value; }
+    ALWAYS_INLINE T loadRelaxed() const { return m_value; }
+
+    ALWAYS_INLINE void store(T value, std::memory_order = std::memory_order_relaxed) { m_value = value; }
+    ALWAYS_INLINE void storeRelaxed(T value) { m_value = value; }
+
+    ALWAYS_INLINE T exchangeAdd(T value, std::memory_order = std::memory_order_relaxed)
+    {
+        T old = m_value;
+        m_value += value;
+        return old;
+    }
+    ALWAYS_INLINE T exchangeSub(T value, std::memory_order = std::memory_order_relaxed)
+    {
+        T old = m_value;
+        m_value -= value;
+        return old;
+    }
+    ALWAYS_INLINE T exchangeOr(T value, std::memory_order = std::memory_order_relaxed)
+    {
+        T old = m_value;
+        m_value |= value;
+        return old;
+    }
+    ALWAYS_INLINE T exchangeAnd(T value, std::memory_order = std::memory_order_relaxed)
+    {
+        T old = m_value;
+        m_value &= value;
+        return old;
+    }
+
+    T m_value;
+};
 
 } // namespace WTF
 

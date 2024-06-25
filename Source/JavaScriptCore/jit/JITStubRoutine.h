@@ -41,7 +41,8 @@ class GCAwareJITStubRoutineWithExceptionHandler;
 class PolymorphicAccessJITStubRoutine;
 class PolymorphicCallStubRoutine;
 class MarkingGCAwareJITStubRoutine;
-
+class CallLinkInfo;
+class ConcurrentJSLocker;
 class AccessCase;
 
 // This is a base-class for JIT stub routines, and also the class you want
@@ -126,6 +127,7 @@ public:
     }
     
     bool visitWeak(VM&);
+    CallLinkInfo* callLinkInfoAt(const ConcurrentJSLocker&, unsigned);
     void markRequiredObjects(AbstractSlotVisitor&);
     void markRequiredObjects(SlotVisitor&);
 
@@ -148,6 +150,7 @@ protected:
     // false, you will usually not do any clearing because the idea is that you will simply be
     // destroyed.
     ALWAYS_INLINE bool visitWeakImpl(VM&) { return true; }
+    ALWAYS_INLINE CallLinkInfo* callLinkInfoAtImpl(const ConcurrentJSLocker&, unsigned) { return nullptr; }
 
     template<typename Func>
     ALWAYS_INLINE void runWithDowncast(const Func& function);

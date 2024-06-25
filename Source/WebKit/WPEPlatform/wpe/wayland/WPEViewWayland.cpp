@@ -315,11 +315,9 @@ const struct xdg_toplevel_listener xdgToplevelListener = {
         }
 
         uint32_t pendingState = 0;
-        const auto* stateData = static_cast<uint32_t*>(states->data);
-        for (size_t i = 0; i < states->size; i++) {
-            uint32_t state = stateData[i];
-
-            switch (state) {
+        const char* end = static_cast<const char*>(states->data) + states->size;
+        for (uint32_t* state = static_cast<uint32_t*>(states->data); reinterpret_cast<const char*>(state) < end; ++state) {
+            switch (*state) {
             case XDG_TOPLEVEL_STATE_FULLSCREEN:
                 pendingState |= WPE_VIEW_STATE_FULLSCREEN;
                 break;
@@ -334,8 +332,9 @@ const struct xdg_toplevel_listener xdgToplevelListener = {
         view->priv->pendingState.state = static_cast<WPEViewState>(view->priv->pendingState.state | pendingState);
     },
     // close
-    [](void*, struct xdg_toplevel*)
+    [](void* data, struct xdg_toplevel*)
     {
+        wpe_view_closed(WPE_VIEW(data));
     },
 #ifdef XDG_TOPLEVEL_CONFIGURE_BOUNDS_SINCE_VERSION
     // configure_bounds
@@ -383,8 +382,10 @@ static const struct wl_surface_listener surfaceListener = {
         }
         view->priv->monitors.append(monitor);
         wpeViewWaylandUpdateScale(view);
-        if (monitorChanged)
+        if (monitorChanged) {
+            wpe_view_map(WPE_VIEW(view));
             g_object_notify(G_OBJECT(view), "monitor");
+        }
         g_signal_connect_object(monitor, "notify::scale", G_CALLBACK(+[](WPEViewWayland* view) {
             wpeViewWaylandUpdateScale(view);
         }), view, G_CONNECT_SWAPPED);
@@ -403,6 +404,8 @@ static const struct wl_surface_listener surfaceListener = {
         else
             view->priv->currentMonitor = nullptr;
         wpeViewWaylandUpdateScale(view);
+        if (!view->priv->currentMonitor)
+            wpe_view_unmap(WPE_VIEW(view));
         g_object_notify(G_OBJECT(view), "monitor");
         g_signal_handlers_disconnect_by_data(monitor, view);
     },
@@ -537,6 +540,7 @@ static void wpeViewWaylandConstructed(GObject* object)
     // Set the first monitor as the default one until enter monitor is emitted.
     if (wpe_display_get_n_monitors(WPE_DISPLAY(display))) {
         priv->currentMonitor = wpe_display_get_monitor(WPE_DISPLAY(display), 0);
+        wpe_view_map(view);
         auto scale = wpe_monitor_get_scale(priv->currentMonitor.get());
         if (wl_surface_get_version(priv->wlSurface) >= WL_SURFACE_SET_BUFFER_SCALE_SINCE_VERSION)
             wl_surface_set_buffer_scale(priv->wlSurface, scale);
@@ -725,7 +729,7 @@ const struct wl_callback_listener frameListener = {
     }
 };
 
-static gboolean wpeViewWaylandRenderBuffer(WPEView* view, WPEBuffer* buffer, GError** error)
+static gboolean wpeViewWaylandRenderBuffer(WPEView* view, WPEBuffer* buffer, const WPERectangle* damageRects, guint nDamageRects, GError** error)
 {
     auto* wlBuffer = createWaylandBuffer(view, buffer, error);
     if (!wlBuffer)
@@ -735,12 +739,11 @@ static gboolean wpeViewWaylandRenderBuffer(WPEView* view, WPEBuffer* buffer, GEr
     priv->buffer = buffer;
 
     auto* wlSurface = wpe_view_wayland_get_wl_surface(WPE_VIEW_WAYLAND(view));
+    auto* wlCompositor = wpe_display_wayland_get_wl_compositor(WPE_DISPLAY_WAYLAND(wpe_view_get_display(view)));
+
     if (priv->pendingOpaqueRegion.dirty) {
         struct wl_region* region = nullptr;
-
         if (!priv->pendingOpaqueRegion.rects.isEmpty()) {
-            auto* display = WPE_DISPLAY_WAYLAND(wpe_view_get_display(view));
-            auto* wlCompositor = wpe_display_wayland_get_wl_compositor(display);
             region = wl_compositor_create_region(wlCompositor);
             if (region) {
                 for (const auto& rect : priv->pendingOpaqueRegion.rects)
@@ -757,7 +760,13 @@ static gboolean wpeViewWaylandRenderBuffer(WPEView* view, WPEBuffer* buffer, GEr
     }
 
     wl_surface_attach(wlSurface, wlBuffer, 0, 0);
-    wl_surface_damage(wlSurface, 0, 0, wpe_view_get_width(view), wpe_view_get_height(view));
+    if (nDamageRects && LIKELY(wl_compositor_get_version(wlCompositor) >= 4)) {
+        ASSERT(damageRects);
+        for (unsigned i = 0; i < nDamageRects; ++i)
+            wl_surface_damage_buffer(wlSurface, damageRects[i].x, damageRects[i].y, damageRects[i].width, damageRects[i].height);
+    } else
+        wl_surface_damage(wlSurface, 0, 0, INT32_MAX, INT32_MAX);
+
     priv->frameCallback = wl_surface_frame(wlSurface);
     wl_callback_add_listener(priv->frameCallback, &frameListener, view);
     wl_surface_commit(wlSurface);
@@ -881,6 +890,12 @@ static void wpeViewWaylandSetOpaqueRectangles(WPEView* view, WPERectangle* rects
     priv->pendingOpaqueRegion.dirty = true;
 }
 
+static gboolean wpeViewWaylandCanBeMapped(WPEView* view)
+{
+    auto* priv = WPE_VIEW_WAYLAND(view)->priv;
+    return !!priv->currentMonitor.get();
+}
+
 static void wpe_view_wayland_class_init(WPEViewWaylandClass* viewWaylandClass)
 {
     GObjectClass* objectClass = G_OBJECT_CLASS(viewWaylandClass);
@@ -897,6 +912,7 @@ static void wpe_view_wayland_class_init(WPEViewWaylandClass* viewWaylandClass)
     viewClass->set_cursor_from_name = wpeViewWaylandSetCursorFromName;
     viewClass->set_cursor_from_bytes = wpeViewWaylandSetCursorFromBytes;
     viewClass->set_opaque_rectangles = wpeViewWaylandSetOpaqueRectangles;
+    viewClass->can_be_mapped = wpeViewWaylandCanBeMapped;
 }
 
 /**

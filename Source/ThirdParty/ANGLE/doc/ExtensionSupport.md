@@ -89,6 +89,7 @@ using data from registry_xml.py and gl.xml.
 | [GL_OES_geometry_shader](https://khronos.org/registry/OpenGL/extensions/OES/OES_geometry_shader.txt) | &#x2714; | &#x2714; | &#x2714; | &#x2714; |  |  | &#x2714; |
 | [GL_OES_get_program_binary](https://khronos.org/registry/OpenGL/extensions/OES/OES_get_program_binary.txt) | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; |
 | [GL_EXT_gpu_shader5](https://khronos.org/registry/OpenGL/extensions/EXT/EXT_gpu_shader5.txt) | &#x2714; | &#x2714; | &#x2714; | &#x2714; |  | &#x2714; | &#x2714; |
+| [GL_OES_gpu_shader5](https://khronos.org/registry/OpenGL/extensions/OES/OES_gpu_shader5.txt) |  |  |  |  |  |  |  |
 | [GL_ANGLE_instanced_arrays](https://khronos.org/registry/OpenGL/extensions/ANGLE/ANGLE_instanced_arrays.txt) | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; |
 | [GL_EXT_instanced_arrays](https://khronos.org/registry/OpenGL/extensions/EXT/EXT_instanced_arrays.txt) | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; |
 | [GL_OES_mapbuffer](https://khronos.org/registry/OpenGL/extensions/OES/OES_mapbuffer.txt) | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; |
@@ -124,6 +125,7 @@ using data from registry_xml.py and gl.xml.
 | [GL_OES_rgb8_rgba8](https://khronos.org/registry/OpenGL/extensions/OES/OES_rgb8_rgba8.txt) | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; |
 | [GL_KHR_robust_buffer_access_behavior](https://khronos.org/registry/OpenGL/extensions/KHR/KHR_robust_buffer_access_behavior.txt) |  |  |  |  |  |  |  |
 | [GL_EXT_robustness](https://khronos.org/registry/OpenGL/extensions/EXT/EXT_robustness.txt) | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; |
+| [GL_KHR_robustness](https://khronos.org/registry/OpenGL/extensions/KHR/KHR_robustness.txt) |  |  |  |  |  |  |  |
 | [GL_NV_robustness_video_memory_purge](https://khronos.org/registry/OpenGL/extensions/NV/NV_robustness_video_memory_purge.txt) |  |  |  |  |  |  |  |
 | [GL_OES_sample_shading](https://khronos.org/registry/OpenGL/extensions/OES/OES_sample_shading.txt) | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; |
 | [GL_OES_sample_variables](https://khronos.org/registry/OpenGL/extensions/OES/OES_sample_variables.txt) | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; |
@@ -148,6 +150,7 @@ using data from registry_xml.py and gl.xml.
 | [GL_OES_surfaceless_context](https://khronos.org/registry/OpenGL/extensions/OES/OES_surfaceless_context.txt) | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; |
 | [GL_ARB_sync](https://khronos.org/registry/OpenGL/extensions/ARB/ARB_sync.txt) |  |  |  |  |  |  |  |
 | [GL_EXT_tessellation_shader](https://khronos.org/registry/OpenGL/extensions/EXT/EXT_tessellation_shader.txt) | &#x2714; | &#x2714; | &#x2714; | &#x2714; |  |  | &#x2714; |
+| [GL_OES_tessellation_shader](https://khronos.org/registry/OpenGL/extensions/OES/OES_tessellation_shader.txt) |  |  |  |  |  |  |  |
 | [GL_OES_texture_3D](https://khronos.org/registry/OpenGL/extensions/OES/OES_texture_3D.txt) | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; | &#x2714; |
 | [GL_EXT_texture_border_clamp](https://khronos.org/registry/OpenGL/extensions/EXT/EXT_texture_border_clamp.txt) | &#x2714; | &#x2714; |  |  | &#x2714; |  | &#x2714; |
 | [GL_OES_texture_border_clamp](https://khronos.org/registry/OpenGL/extensions/OES/OES_texture_border_clamp.txt) | &#x2714; | &#x2714; |  |  | &#x2714; |  | &#x2714; |

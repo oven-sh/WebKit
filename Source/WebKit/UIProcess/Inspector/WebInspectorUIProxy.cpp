@@ -29,6 +29,7 @@
 
 #include "APIInspectorClient.h"
 #include "APINavigation.h"
+#include "APIPageConfiguration.h"
 #include "APIProcessPoolConfiguration.h"
 #include "APIUIClient.h"
 #include "InspectorBrowserAgent.h"
@@ -77,7 +78,7 @@ WebInspectorUIProxy::WebInspectorUIProxy(WebPageProxy& inspectedPage)
     , m_closeFrontendAfterInactivityTimer(RunLoop::main(), this, &WebInspectorUIProxy::closeFrontendAfterInactivityTimerFired)
 #endif
 {
-    m_inspectedPage->process().addMessageReceiver(Messages::WebInspectorUIProxy::messageReceiverName(), m_inspectedPage->webPageID(), *this);
+    m_inspectedPage->legacyMainFrameProcess().addMessageReceiver(Messages::WebInspectorUIProxy::messageReceiverName(), m_inspectedPage->webPageID(), *this);
 }
 
 WebInspectorUIProxy::~WebInspectorUIProxy()
@@ -221,7 +222,7 @@ void WebInspectorUIProxy::resetState()
 void WebInspectorUIProxy::reset()
 {
     if (m_inspectedPage) {
-        m_inspectedPage->process().removeMessageReceiver(Messages::WebInspectorUIProxy::messageReceiverName(), m_inspectedPage->webPageID());
+        m_inspectedPage->legacyMainFrameProcess().removeMessageReceiver(Messages::WebInspectorUIProxy::messageReceiverName(), m_inspectedPage->webPageID());
         m_inspectedPage = nullptr;
     }
 }
@@ -233,7 +234,7 @@ void WebInspectorUIProxy::updateForNewPageProcess(WebPageProxy& inspectedPage)
     m_inspectedPage = &inspectedPage;
     m_inspectedPageIdentifier = m_inspectedPage->identifier();
 
-    m_inspectedPage->process().addMessageReceiver(Messages::WebInspectorUIProxy::messageReceiverName(), m_inspectedPage->webPageID(), *this);
+    m_inspectedPage->legacyMainFrameProcess().addMessageReceiver(Messages::WebInspectorUIProxy::messageReceiverName(), m_inspectedPage->webPageID(), *this);
 
     if (m_inspectorPage)
         m_inspectorPage->send(Messages::WebInspectorUI::UpdateConnection());
@@ -427,7 +428,7 @@ void WebInspectorUIProxy::createFrontendPage()
     // Make sure the inspected page has a running WebProcess so we can inspect it.
     m_inspectedPage->launchInitialProcessIfNecessary();
 
-    m_inspectorPage->process().addMessageReceiver(Messages::WebInspectorUIProxy::messageReceiverName(), m_inspectedPageIdentifier, *this);
+    m_inspectorPage->legacyMainFrameProcess().addMessageReceiver(Messages::WebInspectorUIProxy::messageReceiverName(), m_inspectedPageIdentifier, *this);
 
 #if ENABLE(INSPECTOR_EXTENSIONS)
     m_extensionController = WebInspectorUIExtensionControllerProxy::create(*m_inspectorPage);
@@ -564,7 +565,7 @@ void WebInspectorUIProxy::closeFrontendPageAndWindow()
     untrackInspectorPage(inspectorPage.get());
 
     inspectorPage->send(Messages::WebInspectorUI::SetIsVisible(m_isVisible));
-    inspectorPage->process().removeMessageReceiver(Messages::WebInspectorUIProxy::messageReceiverName(), m_inspectedPageIdentifier);
+    inspectorPage->legacyMainFrameProcess().removeMessageReceiver(Messages::WebInspectorUIProxy::messageReceiverName(), m_inspectedPageIdentifier);
 
     if (auto inspectedPage = this->inspectedPage(); inspectedPage && m_isActiveFrontend)
         inspectedPage->inspectorController().disconnectFrontend(*this);
@@ -606,7 +607,7 @@ void WebInspectorUIProxy::frontendLoaded()
     if (!inspectedPage)
         return;
 
-    if (auto* automationSession = inspectedPage->process().processPool().automationSession())
+    if (auto* automationSession = inspectedPage->configuration().processPool().automationSession())
         automationSession->inspectorFrontendLoaded(*inspectedPage);
     
 #if ENABLE(INSPECTOR_EXTENSIONS)

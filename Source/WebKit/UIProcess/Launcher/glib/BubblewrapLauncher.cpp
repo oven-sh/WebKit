@@ -143,13 +143,13 @@ static String effectiveApplicationId()
     // and won't flood xdg-desktop-portal with new ids.
     if (auto executablePath = FileSystem::currentExecutablePath(); !executablePath.isNull()) {
         GUniquePtr<char> digest(g_compute_checksum_for_data(G_CHECKSUM_SHA256, reinterpret_cast<const uint8_t*>(executablePath.data()), executablePath.length()));
-        return makeString("org.webkit.app-", digest.get());
+        return makeString("org.webkit.app-"_s, span(digest.get()));
     }
 
     // If it is not possible to obtain the executable path, generate
     // a random identifier as a fallback.
     auto uuid = WTF::UUID::createVersion4Weak();
-    return makeString("org.webkit.app-", uuid.toString());
+    return makeString("org.webkit.app-"_s, uuid.toString());
 }
 
 static void createBwrapInfo(GSubprocessLauncher* launcher, Vector<CString>& args, const char* instanceID)
@@ -764,7 +764,6 @@ GRefPtr<GSubprocess> bubblewrapSpawn(GSubprocessLauncher* launcher, const Proces
 
     const char* runDir = g_get_user_runtime_dir();
     Vector<CString> sandboxArgs = {
-        "--die-with-parent",
         "--unshare-uts",
 
         // We assume /etc has safe permissions.

@@ -158,11 +158,13 @@ private:
 
     WebCore::UserInterfaceLayoutDirection userInterfaceLayoutDirection() override;
 
-    void requestDOMPasteAccess(WebCore::DOMPasteAccessCategory, const WebCore::IntRect&, const String&, CompletionHandler<void(WebCore::DOMPasteAccessResponse)>&&) override;
+    void requestDOMPasteAccess(WebCore::DOMPasteAccessCategory, WebCore::DOMPasteRequiresInteraction, const WebCore::IntRect&, const String&, CompletionHandler<void(WebCore::DOMPasteAccessResponse)>&&) override;
 
 #if USE(WPE_RENDERER)
     UnixFileDescriptor hostFileDescriptor() override;
 #endif
+
+    void didClearEditorStateAfterPageTransition() final { }
 
     PlayStationWebView& m_view;
 };

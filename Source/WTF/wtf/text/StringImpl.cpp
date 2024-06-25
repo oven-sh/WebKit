@@ -280,7 +280,7 @@ Ref<StringImpl> StringImpl::createStaticStringImpl(std::span<const LChar> charac
         return *empty();
     Ref<StringImpl> result = createInternal(characters);
     result->hash();
-    result->m_refCount |= s_refCountFlagIsStaticString;
+    result->m_refCount.exchangeOr(s_refCountFlagIsStaticString, std::memory_order_relaxed);
     return result;
 }
 
@@ -290,7 +290,7 @@ Ref<StringImpl> StringImpl::createStaticStringImpl(std::span<const UChar> charac
         return *empty();
     Ref<StringImpl> result = create8BitIfPossible(characters);
     result->hash();
-    result->m_refCount |= s_refCountFlagIsStaticString;
+    result->m_refCount.exchangeOr(s_refCountFlagIsStaticString, std::memory_order_relaxed);
     return result;
 }
 
@@ -998,8 +998,8 @@ ALWAYS_INLINE static bool equalInner(const StringImpl& string, unsigned start, s
     ASSERT(start + matchString.size() <= string.length());
 
     if (string.is8Bit())
-        return equal(string.span8().data() + start, spanReinterpretCast<const LChar>(matchString));
-    return equal(string.span16().data() + start, spanReinterpretCast<const LChar>(matchString));
+        return equal(string.span8().data() + start, byteCast<LChar>(matchString));
+    return equal(string.span16().data() + start, byteCast<LChar>(matchString));
 }
 
 ALWAYS_INLINE static bool equalInner(const StringImpl& string, unsigned start, StringView matchString)

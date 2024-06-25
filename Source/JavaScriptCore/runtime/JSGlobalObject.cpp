@@ -247,6 +247,7 @@
 #include "TemporalTimeZone.h"
 #include "TemporalTimeZonePrototype.h"
 #include "VMTrapsInlines.h"
+#include "WaiterListManager.h"
 #include "WasmCapabilities.h"
 #include "WeakMapConstructorInlines.h"
 #include "WeakMapPrototypeInlines.h"
@@ -280,8 +281,11 @@
 #include "WebAssemblyTablePrototype.h"
 #include "WebAssemblyTagConstructor.h"
 #include "WebAssemblyTagPrototype.h"
+#include "runtime/VM.h"
 #include <wtf/CryptographicallyRandomNumber.h>
+#include <wtf/FixedVector.h>
 #include <wtf/SystemTracing.h>
+#include <wtf/WeakHashSet.h>
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JSGlobalObjectDebuggable.h"
@@ -458,7 +462,7 @@ JSC_DEFINE_HOST_FUNCTION(dumpAndClearSamplingProfilerSamples, (JSGlobalObject* g
 
         CString utf8String = jsonData.utf8();
 
-        FileSystem::writeToFile(fileHandle, utf8String.data(), utf8String.length());
+        FileSystem::writeToFile(fileHandle, utf8String.span());
         FileSystem::closeFile(fileHandle);
         dataLogLn("Dumped sampling profiler samples to ", tempFilePath);
     }
@@ -521,6 +525,8 @@ JSC_DEFINE_HOST_FUNCTION(tracePointStop, (JSGlobalObject* globalObject, CallFram
     return JSValue::encode(jsUndefined());
 }
 
+std::atomic<unsigned> activeJSGlobalObjectSignpostIntervalCount { 0 };
+
 #if HAVE(OS_SIGNPOST)
 
 static String asSignpostString(JSGlobalObject* globalObject, JSValue v)
@@ -529,8 +535,6 @@ static String asSignpostString(JSGlobalObject* globalObject, JSValue v)
         return emptyString();
     return v.toWTFString(globalObject);
 }
-
-std::atomic<unsigned> activeJSGlobalObjectSignpostIntervalCount { 0 };
 
 JSC_DEFINE_HOST_FUNCTION(signpostStart, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
@@ -615,7 +619,9 @@ const GlobalObjectMethodTable* JSGlobalObject::baseGlobalObjectMethodTable()
         nullptr, // defaultLanguage
         nullptr, // compileStreaming
         nullptr, // instantiateStreaming
-        &deriveShadowRealmGlobalObject
+        &deriveShadowRealmGlobalObject,
+        &codeForEval,
+        &canCompileStrings,
     };
     return &table;
 };
@@ -667,7 +673,6 @@ const GlobalObjectMethodTable* JSGlobalObject::baseGlobalObjectMethodTable()
   Map                   JSGlobalObject::m_mapStructure               DontEnum|ClassStructure
   Number                JSGlobalObject::m_numberObjectStructure      DontEnum|ClassStructure
   Set                   JSGlobalObject::m_setStructure               DontEnum|ClassStructure
-  Symbol                JSGlobalObject::m_symbolObjectStructure      DontEnum|ClassStructure
   WeakMap               JSGlobalObject::m_weakMapStructure           DontEnum|ClassStructure
   WeakSet               JSGlobalObject::m_weakSetStructure           DontEnum|ClassStructure
 @end
@@ -711,6 +716,7 @@ JSGlobalObject::JSGlobalObject(VM& vm, Structure* structure, const GlobalObjectM
 
 JSGlobalObject::~JSGlobalObject()
 {
+    clearWeakTickets();
 #if ENABLE(REMOTE_INSPECTOR)
     m_inspectorController->globalObjectDestroyed();
 #endif
@@ -904,7 +910,6 @@ void JSGlobalObject::init(VM& vm)
         });
 
     m_functionProtoHasInstanceSymbolFunction.set(vm, this, hasInstanceSymbolFunction);
-
     m_nullGetterFunction.set(vm, this, NullGetterFunction::create(vm, NullGetterFunction::createStructure(vm, this, m_functionPrototype.get())));
     Structure* nullSetterFunctionStructure = NullSetterFunction::createStructure(vm, this, m_functionPrototype.get());
     m_nullSetterFunction.set(vm, this, NullSetterFunction::create(vm, nullSetterFunctionStructure, ECMAMode::sloppy()));
@@ -1458,6 +1463,9 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     GetterSetter* regExpProtoFlagsGetter = getGetterById(this, m_regExpPrototype.get(), vm.propertyNames->flags);
     catchScope.assertNoException();
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::regExpProtoFlagsGetter)].set(vm, this, regExpProtoFlagsGetter);
+    GetterSetter* regExpProtoHasIndicesGetter = getGetterById(this, m_regExpPrototype.get(), vm.propertyNames->hasIndices);
+    catchScope.assertNoException();
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::regExpProtoHasIndicesGetter)].set(vm, this, regExpProtoHasIndicesGetter);
     GetterSetter* regExpProtoGlobalGetter = getGetterById(this, m_regExpPrototype.get(), vm.propertyNames->global);
     catchScope.assertNoException();
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::regExpProtoGlobalGetter)].set(vm, this, regExpProtoGlobalGetter);
@@ -1476,6 +1484,9 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     GetterSetter* regExpProtoUnicodeGetter = getGetterById(this, m_regExpPrototype.get(), vm.propertyNames->unicode);
     catchScope.assertNoException();
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::regExpProtoUnicodeGetter)].set(vm, this, regExpProtoUnicodeGetter);
+    GetterSetter* regExpProtoDotAllGetter = getGetterById(this, m_regExpPrototype.get(), vm.propertyNames->dotAll);
+    catchScope.assertNoException();
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::regExpProtoDotAllGetter)].set(vm, this, regExpProtoDotAllGetter);
     GetterSetter* regExpProtoUnicodeSetsGetter = getGetterById(this, m_regExpPrototype.get(), vm.propertyNames->unicodeSets);
     catchScope.assertNoException();
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::regExpProtoUnicodeSetsGetter)].set(vm, this, regExpProtoUnicodeSetsGetter);
@@ -1753,6 +1764,11 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         asyncContext, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     m_asyncContextData.set(vm, this, asyncContext);
 #endif
+    m_performProxyObjectHasFunction.set(vm, this, jsCast<JSFunction*>(linkTimeConstant(LinkTimeConstant::performProxyObjectHas)));
+    m_performProxyObjectGetFunction.set(vm, this, jsCast<JSFunction*>(linkTimeConstant(LinkTimeConstant::performProxyObjectGet)));
+    m_performProxyObjectGetByValFunction.set(vm, this, jsCast<JSFunction*>(linkTimeConstant(LinkTimeConstant::performProxyObjectGetByVal)));
+    m_performProxyObjectSetStrictFunction.set(vm, this, jsCast<JSFunction*>(linkTimeConstant(LinkTimeConstant::performProxyObjectSetStrict)));
+    m_performProxyObjectSetSloppyFunction.set(vm, this, jsCast<JSFunction*>(linkTimeConstant(LinkTimeConstant::performProxyObjectSetSloppy)));
 
     if (Options::exposeProfilersOnGlobalObject()) {
 #if ENABLE(SAMPLING_PROFILER)
@@ -2535,6 +2551,11 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_objectProtoValueOfFunction);
     thisObject->m_numberProtoToStringFunction.visit(visitor);
     visitor.append(thisObject->m_functionProtoHasInstanceSymbolFunction);
+    visitor.append(thisObject->m_performProxyObjectHasFunction);
+    visitor.append(thisObject->m_performProxyObjectGetFunction);
+    visitor.append(thisObject->m_performProxyObjectGetByValFunction);
+    visitor.append(thisObject->m_performProxyObjectSetStrictFunction);
+    visitor.append(thisObject->m_performProxyObjectSetSloppyFunction);
     visitor.append(thisObject->m_regExpProtoSymbolReplace);
     thisObject->m_throwTypeErrorArgumentsCalleeGetterSetter.visit(visitor);
     thisObject->m_moduleLoader.visit(visitor);
@@ -2661,6 +2682,19 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_typedArrayProto.visit(visitor);
     thisObject->m_typedArraySuperConstructor.visit(visitor);
     thisObject->m_regExpGlobalData.visitAggregate(visitor);
+
+    {
+        if (thisObject->m_weakTickets) {
+            Locker locker { thisObject->cellLock() };
+            for (Ref<DeferredWorkTimer::TicketData> ticket : *thisObject->m_weakTickets) {
+                if (ticket->isCancelled())
+                    continue;
+                visitor.appendUnbarriered(ticket->scriptExecutionOwner());
+                for (auto& dependency : ticket->dependencies())
+                    visitor.append(dependency);
+            }
+        }
+    }
 }
 
 DEFINE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE, JSGlobalObject);
@@ -3295,5 +3329,26 @@ void JSGlobalObject::setWrapperMap(std::unique_ptr<WrapperMap>&& map)
     m_wrapperMap = WTFMove(map);
 }
 #endif
+
+void JSGlobalObject::addWeakTicket(DeferredWorkTimer::Ticket ticket)
+{
+    Locker locker { cellLock() };
+    if (!m_weakTickets) {
+        auto weakTickets = makeUnique<WeakHashSet<DeferredWorkTimer::TicketData>>();
+        WTF::storeStoreFence();
+        m_weakTickets = WTFMove(weakTickets);
+    }
+    m_weakTickets->add(*ticket);
+    vm().writeBarrier(this);
+}
+void JSGlobalObject::clearWeakTickets()
+{
+    if (!m_weakTickets)
+        return;
+
+    WaiterListManager::singleton().unregister(this);
+    // Clear the rest tickets safely.
+    vm().deferredWorkTimer->cancelPendingWorkSafe(this);
+}
 
 } // namespace JSC

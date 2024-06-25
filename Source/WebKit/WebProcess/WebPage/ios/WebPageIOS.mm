@@ -3876,23 +3876,38 @@ void WebPage::autofillLoginCredentials(const String& username, const String& pas
     }
 }
 
-void WebPage::setViewportConfigurationViewLayoutSize(const FloatSize& size, double scaleFactor, double minimumEffectiveDeviceWidth)
+void WebPage::setViewportConfigurationViewLayoutSize(const FloatSize& size, double layoutSizeScaleFactorFromClient, double minimumEffectiveDeviceWidth)
 {
-    LOG_WITH_STREAM(VisibleRects, stream << "WebPage " << m_identifier << " setViewportConfigurationViewLayoutSize " << size << " scaleFactor " << scaleFactor << " minimumEffectiveDeviceWidth " << minimumEffectiveDeviceWidth);
+    LOG_WITH_STREAM(VisibleRects, stream << "WebPage " << m_identifier << " setViewportConfigurationViewLayoutSize " << size << " layoutSizeScaleFactorFromClient " << layoutSizeScaleFactorFromClient << " minimumEffectiveDeviceWidth " << minimumEffectiveDeviceWidth);
 
     if (!m_viewportConfiguration.isKnownToLayOutWiderThanViewport())
         m_viewportConfiguration.setMinimumEffectiveDeviceWidthForShrinkToFit(0);
 
+    m_baseViewportLayoutSizeScaleFactor = [&] {
+        if (!m_page->settings().automaticallyAdjustsViewScaleUsingMinimumEffectiveDeviceWidth())
+            return 1.0;
+
+        if (!minimumEffectiveDeviceWidth)
+            return 1.0;
+
+        if (minimumEffectiveDeviceWidth >= size.width())
+            return 1.0;
+
+        return size.width() / minimumEffectiveDeviceWidth;
+    }();
+
+    double layoutSizeScaleFactor = layoutSizeScaleFactorFromClient * m_baseViewportLayoutSizeScaleFactor;
+
     auto previousLayoutSizeScaleFactor = m_viewportConfiguration.layoutSizeScaleFactor();
-    if (!m_viewportConfiguration.setViewLayoutSize(size, scaleFactor, minimumEffectiveDeviceWidth))
+    if (!m_viewportConfiguration.setViewLayoutSize(size, layoutSizeScaleFactor, minimumEffectiveDeviceWidth))
         return;
 
     auto zoomToInitialScale = ZoomToInitialScale::No;
     auto newInitialScale = m_viewportConfiguration.initialScale();
     auto currentPageScaleFactor = pageScaleFactor();
-    if (scaleFactor > previousLayoutSizeScaleFactor && newInitialScale > currentPageScaleFactor)
+    if (layoutSizeScaleFactor > previousLayoutSizeScaleFactor && newInitialScale > currentPageScaleFactor)
         zoomToInitialScale = ZoomToInitialScale::Yes;
-    else if (scaleFactor < previousLayoutSizeScaleFactor && newInitialScale < currentPageScaleFactor)
+    else if (layoutSizeScaleFactor < previousLayoutSizeScaleFactor && newInitialScale < currentPageScaleFactor)
         zoomToInitialScale = ZoomToInitialScale::Yes;
 
     viewportConfigurationChanged(zoomToInitialScale);
@@ -4179,6 +4194,19 @@ void WebPage::resetViewportDefaultConfiguration(WebFrame* frame, bool hasMobileD
 }
 
 #if ENABLE(TEXT_AUTOSIZING)
+
+void WebPage::updateTextAutosizingEnablementFromInitialScale(double initialScale)
+{
+    if (m_page->settings().textAutosizingEnabledAtLargeInitialScale())
+        return;
+
+    bool shouldEnable = initialScale <= 1;
+    if (shouldEnable == m_page->settings().textAutosizingEnabled())
+        return;
+
+    m_page->settings().setTextAutosizingEnabled(shouldEnable);
+}
+
 void WebPage::resetIdempotentTextAutosizingIfNeeded(double previousInitialScale)
 {
     if (!m_page->settings().textAutosizingEnabled() || !m_page->settings().textAutosizingUsesIdempotentMode())
@@ -4328,6 +4356,7 @@ void WebPage::viewportConfigurationChanged(ZoomToInitialScale zoomToInitialScale
     double previousInitialScaleIgnoringContentSize = m_page->initialScaleIgnoringContentSize();
     m_page->setInitialScaleIgnoringContentSize(initialScaleIgnoringContentSize);
     resetIdempotentTextAutosizingIfNeeded(previousInitialScaleIgnoringContentSize);
+    updateTextAutosizingEnablementFromInitialScale(initialScale);
 #endif
     if (setFixedLayoutSize(m_viewportConfiguration.layoutSize()))
         resetTextAutosizing();
@@ -4624,6 +4653,9 @@ void WebPage::updateVisibleContentRects(const VisibleContentRectUpdateInfo& visi
             scheduleFullEditorStateUpdate();
         }
 
+        frameView.layoutOrVisualViewportChanged();
+    } else if (visibleContentRectUpdateInfo.unobscuredContentRect() != visibleContentRectUpdateInfo.unobscuredContentRectRespectingInputViewBounds()) {
+        frameView.setVisualViewportOverrideRect(LayoutRect(visibleContentRectUpdateInfo.unobscuredContentRectRespectingInputViewBounds()));
         frameView.layoutOrVisualViewportChanged();
     }
 

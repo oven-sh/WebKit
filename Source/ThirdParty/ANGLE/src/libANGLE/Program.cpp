@@ -966,7 +966,7 @@ angle::Result Program::link(const Context *context, angle::JobResultExpectancy r
     // TODO: http://anglebug.com/4530: Enable program caching for separable programs
     if (cache && !isSeparable())
     {
-        std::lock_guard<std::mutex> cacheLock(context->getProgramCacheMutex());
+        std::lock_guard<angle::SimpleMutex> cacheLock(context->getProgramCacheMutex());
         egl::CacheGetResult result = egl::CacheGetResult::NotFound;
         ANGLE_TRY(cache->getProgram(context, this, &mProgramHash, &result));
 
@@ -1194,6 +1194,9 @@ bool Program::isBinaryReady(const Context *context)
 {
     if (mState.mExecutable->mPostLinkSubTasks.empty())
     {
+        // Ensure the program binary is cached, even if the backend waits for post-link tasks
+        // without the knowledge of the front-end.
+        cacheProgramBinaryIfNotAlready(context);
         return true;
     }
 
@@ -1263,19 +1266,17 @@ void Program::resolveLinkImpl(const Context *context)
     //
     if (!linkingState->linkingFromBinary && mState.mExecutable->mPostLinkSubTasks.empty())
     {
-        cacheProgramBinary(context);
+        cacheProgramBinaryIfNotAlready(context);
     }
 }
 
 void Program::waitForPostLinkTasks(const Context *context)
 {
-    if (!mState.mExecutable->mPostLinkSubTasks.empty())
-    {
-        mState.mExecutable->waitForPostLinkTasks(context);
-    }
+    // No-op if no tasks.
+    mState.mExecutable->waitForPostLinkTasks(context);
 
     // Now that the subtasks are done, cache the binary (this was deferred in resolveLinkImpl).
-    cacheProgramBinary(context);
+    cacheProgramBinaryIfNotAlready(context);
 }
 
 void Program::updateLinkedShaderStages()
@@ -2334,7 +2335,7 @@ void Program::postResolveLink(const Context *context)
     }
 }
 
-void Program::cacheProgramBinary(const Context *context)
+void Program::cacheProgramBinaryIfNotAlready(const Context *context)
 {
     // If program caching is disabled, we already consider the binary cached.
     ASSERT(!context->getFrontendFeatures().disableProgramCaching.enabled || mIsBinaryCached);
@@ -2349,7 +2350,7 @@ void Program::cacheProgramBinary(const Context *context)
     ASSERT(mState.mExecutable->mPostLinkSubTasks.empty());
 
     // Save to the program cache.
-    std::lock_guard<std::mutex> cacheLock(context->getProgramCacheMutex());
+    std::lock_guard<angle::SimpleMutex> cacheLock(context->getProgramCacheMutex());
     MemoryProgramCache *cache = context->getMemoryProgramCache();
     // TODO: http://anglebug.com/4530: Enable program caching for separable programs
     if (cache && !isSeparable() &&
