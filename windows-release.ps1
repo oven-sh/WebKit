@@ -115,14 +115,26 @@ if (!(Test-Path -Path $ICU_STATIC_ROOT)) {
     Push-Location $ICU_STATIC_ROOT/source
     try {
         Write-Host ":: Configuring ICU Build"
-        bash.exe ./runConfigureICU Cygwin/MSVC `
-            --enable-static `
-            --disable-shared `
-            --with-data-packaging=static `
-            --disable-samples `
-            --disable-tests `
-            --disable-debug `
-            --enable-release
+
+        if ($CMAKE_BUILD_TYPE == "Release") {
+            bash.exe ./runConfigureICU Cygwin/MSVC `
+                --enable-static `
+                --disable-shared `
+                --with-data-packaging=static `
+                --disable-samples `
+                --disable-tests `
+                --disable-debug `
+                --enable-release
+        } else if ($CMAKE_BUILD_TYPE == "Debug") {
+            bash.exe ./runConfigureICU Cygwin/MSVC `
+                --enable-static `
+                --disable-shared `
+                --with-data-packaging=static `
+                --disable-samples `
+                --disable-tests `
+                --disable-release `
+                --enable-debug
+        }
         if ($LASTEXITCODE -ne 0) { 
             Get-Content "config.log"
             throw "runConfigureICU failed with exit code $LASTEXITCODE"
