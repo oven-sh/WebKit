@@ -116,7 +116,7 @@ if (!(Test-Path -Path $ICU_STATIC_ROOT)) {
     try {
         Write-Host ":: Configuring ICU Build"
 
-        if ($CMAKE_BUILD_TYPE == "Release") {
+        if ($CMAKE_BUILD_TYPE -eq "Release") {
             bash.exe ./runConfigureICU Cygwin/MSVC `
                 --enable-static `
                 --disable-shared `
@@ -125,7 +125,7 @@ if (!(Test-Path -Path $ICU_STATIC_ROOT)) {
                 --disable-tests `
                 --disable-debug `
                 --enable-release
-        } elseif ($CMAKE_BUILD_TYPE == "Debug") {
+        } elseif ($CMAKE_BUILD_TYPE -eq "Debug") {
             bash.exe ./runConfigureICU Cygwin/MSVC `
                 --enable-static `
                 --disable-shared `
@@ -135,6 +135,7 @@ if (!(Test-Path -Path $ICU_STATIC_ROOT)) {
                 --disable-release `
                 --enable-debug
         }
+
         if ($LASTEXITCODE -ne 0) { 
             Get-Content "config.log"
             throw "runConfigureICU failed with exit code $LASTEXITCODE"
