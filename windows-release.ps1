@@ -116,25 +116,25 @@ if (!(Test-Path -Path $ICU_STATIC_ROOT)) {
     try {
         Write-Host ":: Configuring ICU Build"
 
-        if ($CMAKE_BUILD_TYPE -eq "Release") {
-            bash.exe ./runConfigureICU Cygwin/MSVC `
-                --enable-static `
-                --disable-shared `
-                --with-data-packaging=static `
-                --disable-samples `
-                --disable-tests `
-                --disable-debug `
-                --enable-release
-        } elseif ($CMAKE_BUILD_TYPE -eq "Debug") {
-            bash.exe ./runConfigureICU Cygwin/MSVC `
-                --enable-static `
-                --disable-shared `
-                --with-data-packaging=static `
-                --disable-samples `
-                --disable-tests `
-                --disable-release `
-                --enable-debug
-        }
+        # if ($CMAKE_BUILD_TYPE -eq "Release") {
+        bash.exe ./runConfigureICU Cygwin/MSVC `
+            --enable-static `
+            --disable-shared `
+            --with-data-packaging=static `
+            --disable-samples `
+            --disable-tests `
+            --disable-debug `
+            --enable-release
+        # } elseif ($CMAKE_BUILD_TYPE -eq "Debug") {
+        #     bash.exe ./runConfigureICU Cygwin/MSVC `
+        #         --enable-static `
+        #         --disable-shared `
+        #         --with-data-packaging=static `
+        #         --disable-samples `
+        #         --disable-tests `
+        #         --disable-release `
+        #         --enable-debug
+        # }
 
         if ($LASTEXITCODE -ne 0) { 
             Get-Content "config.log"
@@ -187,7 +187,7 @@ cmake -S . -B $WebKitBuild `
     -DENABLE_DFG_JIT=ON `
     -DENABLE_FTL_JIT=OFF `
     -DENABLE_SAMPLING_PROFILER=ON `
-    -DENABLE_WEBASSEMBLY=ON `
+    -DENABLE_WEBASSEMBLY=OFF `
     -DUSE_BUN_JSC_ADDITIONS=ON `
     -DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON `
     -DUSE_SYSTEM_MALLOC=ON `
