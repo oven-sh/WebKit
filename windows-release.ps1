@@ -125,7 +125,7 @@ if (!(Test-Path -Path $ICU_STATIC_ROOT)) {
                 --disable-tests `
                 --disable-debug `
                 --enable-release
-        } else if ($CMAKE_BUILD_TYPE == "Debug") {
+        } elseif ($CMAKE_BUILD_TYPE == "Debug") {
             bash.exe ./runConfigureICU Cygwin/MSVC `
                 --enable-static `
                 --disable-shared `
