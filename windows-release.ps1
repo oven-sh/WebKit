@@ -66,6 +66,9 @@ $WebKitBuild = if ($env:WEBKIT_BUILD_DIR) { $env:WEBKIT_BUILD_DIR } else { "WebK
 $CMAKE_BUILD_TYPE = if ($env:CMAKE_BUILD_TYPE) { $env:CMAKE_BUILD_TYPE } else { "Release" }
 $BUN_WEBKIT_VERSION = if ($env:BUN_WEBKIT_VERSION) { $env:BUN_WEBKIT_VERSION } else { $(git rev-parse HEAD) }
 
+$NoWebassembly = if ($env:NO_WEBASSEMBLY) { $env:NO_WEBASSEMBLY } else { $false }
+$WebAssemblyState = if ($NoWebassembly) { "OFF" } else { "ON" }
+
 # WebKit/JavaScriptCore requires being linked against the dynamic ICU library,
 # but we do not want Bun to ship with DLLs, so we build ICU statically and
 # link against that. This means we need both the static and dynamic build of
@@ -104,14 +107,14 @@ if (!(Test-Path -Path $ICU_STATIC_ROOT)) {
     
     # 1. fix build script to align with bun's compiler requirements
     #    a. replace references to `cl` with `clang-cl` from configure
-    #    b. TODO: use -MT instead of -MD to statically link the C runtime
+    #    b. use -MT instead of -MD to statically link the C runtime
+    #    c. enable debug build for Debug configuration
     $ConfigureFile = Get-Content "$ICU_STATIC_ROOT/source/runConfigureICU" -Raw
     $ConfigureFile = $ConfigureFile -replace "=cl", "=clang-cl"
     if ($CMAKE_BUILD_TYPE -eq "Debug") {
         $ConfigureFile = $ConfigureFile -replace "debug=0", "debug=1"
         $ConfigureFile = $ConfigureFile -replace "release=1", "release=0"
         $ConfigureFile = $ConfigureFile -replace "-MDd", "-MTd"
-        # $ConfigureFile = $ConfigureFile -replace "-DEBUG'", "-DEBUG /NODEFAULTLIB:libvcruntime.lib /NODEFAULTLIB:libucrt.lib ucrtd.lib vcruntimed.lib'"
     } else {
         $ConfigureFile = $ConfigureFile -replace "-MD'", "-MT'"
     }
@@ -121,12 +124,6 @@ if (!(Test-Path -Path $ICU_STATIC_ROOT)) {
     # 2. hack remove dllimport from platform.h
     $PlatformFile = Get-Content "$ICU_STATIC_ROOT/source/common/unicode/platform.h" -Raw
     Set-Content "$ICU_STATIC_ROOT/source/common/unicode/platform.h" ($PlatformFile -replace "__declspec\(dllimport\)", "")
-
-    # 3. add debug libs if in debug mode
-    # if ($CMAKE_BUILD_TYPE -eq "Debug") {
-    #     $CygwinConfig = Get-Content "$ICU_STATIC_ROOT/source/config/mh-cygwin-msvc" -Raw
-    #     Set-Content "$ICU_STATIC_ROOT/source/config/mh-cygwin-msvc" ($CygwinConfig -replace "advapi32.lib", "advapi32.lib /NODEFAULTLIB:libvcruntime.lib /NODEFAULTLIB:libucrt.lib ucrtd.lib vcruntimed.lib") -NoNewline -Encoding UTF8
-    # }
     
     Push-Location $ICU_STATIC_ROOT/source
     try {
@@ -203,7 +200,7 @@ cmake -S . -B $WebKitBuild `
     -DENABLE_DFG_JIT=ON `
     -DENABLE_FTL_JIT=OFF `
     -DENABLE_SAMPLING_PROFILER=ON `
-    -DENABLE_WEBASSEMBLY=OFF `
+    -DENABLE_WEBASSEMBLY=${WebAssemblyState} `
     -DUSE_BUN_JSC_ADDITIONS=ON `
     -DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON `
     -DUSE_SYSTEM_MALLOC=ON `

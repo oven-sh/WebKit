@@ -181,6 +181,7 @@ jobs:
           $env:WEBKIT_OUTPUT_DIR = "bun-webkit"
           $env:BUN_WEBKIT_VERSION = "${{ github.sha }}"
           $env:CMAKE_BUILD_TYPE = "${{matrix.build-type}}"
+          $env:NO_WEBASSEMBLY = "1"
           ./windows-release.ps1
       - uses: actions/upload-artifact@v3
         with:
