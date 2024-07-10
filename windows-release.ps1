@@ -113,10 +113,10 @@ if (!(Test-Path -Path $ICU_STATIC_ROOT)) {
     Set-Content "$ICU_STATIC_ROOT/source/common/unicode/platform.h" ($PlatformFile -replace "__declspec\(dllimport\)", "")
 
     # 3. add debug libs if in debug mode
-    # if ($CMAKE_BUILD_TYPE -eq "Debug") {
-    #     $CygwinConfig = Get-Content "$ICU_STATIC_ROOT/source/config/mh-cygwin-msvc" -Raw
-    #     Set-Content "$ICU_STATIC_ROOT/source/config/mh-cygwin-msvc" ($CygwinConfig -replace "advapi32.lib", "advapi32.lib ucrtd.lib vcruntimed.lib") -NoNewline -Encoding UTF8
-    # }
+    if ($CMAKE_BUILD_TYPE -eq "Debug") {
+        $CygwinConfig = Get-Content "$ICU_STATIC_ROOT/source/config/mh-cygwin-msvc" -Raw
+        Set-Content "$ICU_STATIC_ROOT/source/config/mh-cygwin-msvc" ($CygwinConfig -replace "advapi32.lib", "advapi32.lib /NODEFAULTLIB:libvcruntime.lib /NODEFAULTLIB:libucrt.lib ucrtd.lib vcruntimed.lib") -NoNewline -Encoding UTF8
+    }
     
     Push-Location $ICU_STATIC_ROOT/source
     try {
