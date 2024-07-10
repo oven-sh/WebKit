@@ -186,6 +186,14 @@ $env:PATH = $PathWithPerl
 $env:CFLAGS = "/Zi"
 $env:CXXFLAGS = "/Zi"
 
+$CmakeMsvcRuntimeLibrary = "MultiThreaded"
+if ($CMAKE_BUILD_TYPE -eq "Debug") {
+    $CmakeMsvcRuntimeLibrary = "MultiThreadedDebug"
+}
+
+$NoWebassembly = if ($env:NO_WEBASSEMBLY) { $env:NO_WEBASSEMBLY } else { $false }
+$WebAssemblyState = if ($NoWebassembly) { "OFF" } else { "ON" }
+
 cmake -S . -B $WebKitBuild `
     -DPORT="JSCOnly" `
     -DENABLE_STATIC_JSC=ON `
@@ -197,7 +205,7 @@ cmake -S . -B $WebKitBuild `
     -DENABLE_DFG_JIT=ON `
     -DENABLE_FTL_JIT=OFF `
     -DENABLE_SAMPLING_PROFILER=ON `
-    -DENABLE_WEBASSEMBLY=OFF `
+    "-DENABLE_WEBASSEMBLY=${WebAssemblyState}" `
     -DUSE_BUN_JSC_ADDITIONS=ON `
     -DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON `
     -DUSE_SYSTEM_MALLOC=ON `
@@ -211,7 +219,7 @@ cmake -S . -B $WebKitBuild `
     "-DCMAKE_C_FLAGS_DEBUG=/Zi /FS /O0 /Ob0 /MTd" `
     "-DCMAKE_CXX_FLAGS_DEBUG=/Zi /FS /O0 /Ob0 /MTd" `
     -DENABLE_REMOTE_INSPECTOR=ON `
-    -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
+    "-DCMAKE_MSVC_RUNTIME_LIBRARY=${CmakeMsvcRuntimeLibrary}" `
     -G Ninja
 # TODO: "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded" `
 if ($LASTEXITCODE -ne 0) { throw "cmake failed with exit code $LASTEXITCODE" }
