@@ -111,7 +111,7 @@ if (!(Test-Path -Path $ICU_STATIC_ROOT)) {
         $ConfigureFile = $ConfigureFile -replace "debug=0", "debug=1"
         $ConfigureFile = $ConfigureFile -replace "release=1", "release=0"
         $ConfigureFile = $ConfigureFile -replace "-MDd", "-MTd"
-        $ConfigureFile = $ConfigureFile -replace "-DEBUG'", "-DEBUG /NODEFAULTLIB:libvcruntime.lib /NODEFAULTLIB:libucrt.lib ucrtd.lib vcruntimed.lib'"
+        # $ConfigureFile = $ConfigureFile -replace "-DEBUG'", "-DEBUG /NODEFAULTLIB:libvcruntime.lib /NODEFAULTLIB:libucrt.lib ucrtd.lib vcruntimed.lib'"
     } else {
         $ConfigureFile = $ConfigureFile -replace "-MD'", "-MT'"
     }
