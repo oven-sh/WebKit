@@ -66,9 +66,6 @@ $WebKitBuild = if ($env:WEBKIT_BUILD_DIR) { $env:WEBKIT_BUILD_DIR } else { "WebK
 $CMAKE_BUILD_TYPE = if ($env:CMAKE_BUILD_TYPE) { $env:CMAKE_BUILD_TYPE } else { "Release" }
 $BUN_WEBKIT_VERSION = if ($env:BUN_WEBKIT_VERSION) { $env:BUN_WEBKIT_VERSION } else { $(git rev-parse HEAD) }
 
-$NoWebassembly = if ($env:NO_WEBASSEMBLY) { $env:NO_WEBASSEMBLY } else { $false }
-$WebAssemblyState = if ($NoWebassembly) { "OFF" } else { "ON" }
-
 # WebKit/JavaScriptCore requires being linked against the dynamic ICU library,
 # but we do not want Bun to ship with DLLs, so we build ICU statically and
 # link against that. This means we need both the static and dynamic build of
@@ -200,7 +197,7 @@ cmake -S . -B $WebKitBuild `
     -DENABLE_DFG_JIT=ON `
     -DENABLE_FTL_JIT=OFF `
     -DENABLE_SAMPLING_PROFILER=ON `
-    -DENABLE_WEBASSEMBLY=${WebAssemblyState} `
+    -DENABLE_WEBASSEMBLY=OFF `
     -DUSE_BUN_JSC_ADDITIONS=ON `
     -DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON `
     -DUSE_SYSTEM_MALLOC=ON `
