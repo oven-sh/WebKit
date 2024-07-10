@@ -171,7 +171,7 @@ jobs:
       - uses: KyleMayes/install-llvm-action@master
         with:
           version: "18.1.6"
-          forceUrl: "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.6/LLVM-18.1.6-win64.exe"
+          force-url: "https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.6/LLVM-18.1.6-win64.exe"
       - uses: cygwin/cygwin-install-action@006ad0b0946ca6d0a3ea2d4437677fa767392401
       - run: choco install -y ninja
       - uses: actions/checkout@v4
