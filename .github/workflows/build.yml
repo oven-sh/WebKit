@@ -155,10 +155,10 @@ jobs:
     strategy:
       matrix:
         include:
-          # - runner: self-hosted
-          #   build-type: Release
-          #   arch: amd64
-          #   suffix: ""
+          - runner: self-hosted
+            build-type: Release
+            arch: amd64
+            suffix: ""
           - runner: self-hosted
             build-type: Debug
             arch: amd64
