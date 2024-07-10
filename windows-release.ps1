@@ -106,17 +106,27 @@ if (!(Test-Path -Path $ICU_STATIC_ROOT)) {
     #    a. replace references to `cl` with `clang-cl` from configure
     #    b. TODO: use -MT instead of -MD to statically link the C runtime
     $ConfigureFile = Get-Content "$ICU_STATIC_ROOT/source/runConfigureICU" -Raw
-    Set-Content "$ICU_STATIC_ROOT/source/runConfigureICU" (((($ConfigureFile -replace "debug=0", "debug=1") -replace "release=1", "release=0") -replace "=cl", "=clang-cl") -replace "-MD", "-MT") -NoNewline -Encoding UTF8
+    $ConfigureFile = $ConfigureFile -replace "=cl", "=clang-cl"
+    if ($CMAKE_BUILD_TYPE -eq "Debug") {
+        $ConfigureFile = $ConfigureFile -replace "debug=0", "debug=1"
+        $ConfigureFile = $ConfigureFile -replace "release=1", "release=0"
+        $ConfigureFile = $ConfigureFile -replace "-MDd", "-MTd"
+        $ConfigureFile = $ConfigureFile -replace "-DEBUG'", "-DEBUG /NODEFAULTLIB:libvcruntime.lib /NODEFAULTLIB:libucrt.lib ucrtd.lib vcruntimed.lib'"
+    } else {
+        $ConfigureFile = $ConfigureFile -replace "-MD'", "-MT'"
+    }
+
+    Set-Content "$ICU_STATIC_ROOT/source/runConfigureICU" $ConfigureFile -NoNewline -Encoding UTF8
     # Set-Content "$ICU_STATIC_ROOT/source/runConfigureICU" (($ConfigureFile -replace "=cl", "=clang-cl")) -NoNewline -Encoding UTF8
     # 2. hack remove dllimport from platform.h
     $PlatformFile = Get-Content "$ICU_STATIC_ROOT/source/common/unicode/platform.h" -Raw
     Set-Content "$ICU_STATIC_ROOT/source/common/unicode/platform.h" ($PlatformFile -replace "__declspec\(dllimport\)", "")
 
     # 3. add debug libs if in debug mode
-    if ($CMAKE_BUILD_TYPE -eq "Debug") {
-        $CygwinConfig = Get-Content "$ICU_STATIC_ROOT/source/config/mh-cygwin-msvc" -Raw
-        Set-Content "$ICU_STATIC_ROOT/source/config/mh-cygwin-msvc" ($CygwinConfig -replace "advapi32.lib", "advapi32.lib /NODEFAULTLIB:libvcruntime.lib /NODEFAULTLIB:libucrt.lib ucrtd.lib vcruntimed.lib") -NoNewline -Encoding UTF8
-    }
+    # if ($CMAKE_BUILD_TYPE -eq "Debug") {
+    #     $CygwinConfig = Get-Content "$ICU_STATIC_ROOT/source/config/mh-cygwin-msvc" -Raw
+    #     Set-Content "$ICU_STATIC_ROOT/source/config/mh-cygwin-msvc" ($CygwinConfig -replace "advapi32.lib", "advapi32.lib /NODEFAULTLIB:libvcruntime.lib /NODEFAULTLIB:libucrt.lib ucrtd.lib vcruntimed.lib") -NoNewline -Encoding UTF8
+    # }
     
     Push-Location $ICU_STATIC_ROOT/source
     try {
