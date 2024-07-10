@@ -106,7 +106,7 @@ if (!(Test-Path -Path $ICU_STATIC_ROOT)) {
     #    a. replace references to `cl` with `clang-cl` from configure
     #    b. TODO: use -MT instead of -MD to statically link the C runtime
     $ConfigureFile = Get-Content "$ICU_STATIC_ROOT/source/runConfigureICU" -Raw
-    Set-Content "$ICU_STATIC_ROOT/source/runConfigureICU" ((($ConfigureFile -replace "DEBUG_LDFLAGS='-DEBUG'", "DEBUG_LDFLAGS='-DEBUG ucrtd.lib vcruntimed.lib'") -replace "=cl", "=clang-cl") -replace "-MD'", "-MT'") -NoNewline -Encoding UTF8
+    Set-Content "$ICU_STATIC_ROOT/source/runConfigureICU" ((($ConfigureFile -replace "-DEBUG'", "-DEBUG ucrtd.lib vcruntimed.lib'") -replace "=cl", "=clang-cl") -replace "-MD'", "-MT'") -NoNewline -Encoding UTF8
     # Set-Content "$ICU_STATIC_ROOT/source/runConfigureICU" (($ConfigureFile -replace "=cl", "=clang-cl")) -NoNewline -Encoding UTF8
     # 2. hack remove dllimport from platform.h
     $PlatformFile = Get-Content "$ICU_STATIC_ROOT/source/common/unicode/platform.h" -Raw
