@@ -106,8 +106,8 @@ if (!(Test-Path -Path $ICU_STATIC_ROOT)) {
     #    a. replace references to `cl` with `clang-cl` from configure
     #    b. TODO: use -MT instead of -MD to statically link the C runtime
     $ConfigureFile = Get-Content "$ICU_STATIC_ROOT/source/runConfigureICU" -Raw
-    # Set-Content "$ICU_STATIC_ROOT/source/runConfigureICU" (($ConfigureFile -replace "=cl", "=clang-cl") -replace "-MD'", "-MT'") -NoNewline -Encoding UTF8
-    Set-Content "$ICU_STATIC_ROOT/source/runConfigureICU" (($ConfigureFile -replace "=cl", "=clang-cl")) -NoNewline -Encoding UTF8
+    Set-Content "$ICU_STATIC_ROOT/source/runConfigureICU" (($ConfigureFile -replace "=cl", "=clang-cl") -replace "-MD'", "-MT'") -NoNewline -Encoding UTF8
+    # Set-Content "$ICU_STATIC_ROOT/source/runConfigureICU" (($ConfigureFile -replace "=cl", "=clang-cl")) -NoNewline -Encoding UTF8
     # 2. hack remove dllimport from platform.h
     $PlatformFile = Get-Content "$ICU_STATIC_ROOT/source/common/unicode/platform.h" -Raw
     Set-Content "$ICU_STATIC_ROOT/source/common/unicode/platform.h" ($PlatformFile -replace "__declspec\(dllimport\)", "")
@@ -116,25 +116,25 @@ if (!(Test-Path -Path $ICU_STATIC_ROOT)) {
     try {
         Write-Host ":: Configuring ICU Build"
 
-        # if ($CMAKE_BUILD_TYPE -eq "Release") {
-        bash.exe ./runConfigureICU Cygwin/MSVC `
-            --enable-static `
-            --disable-shared `
-            --with-data-packaging=static `
-            --disable-samples `
-            --disable-tests `
-            --disable-debug `
-            --enable-release
-        # } elseif ($CMAKE_BUILD_TYPE -eq "Debug") {
-        #     bash.exe ./runConfigureICU Cygwin/MSVC `
-        #         --enable-static `
-        #         --disable-shared `
-        #         --with-data-packaging=static `
-        #         --disable-samples `
-        #         --disable-tests `
-        #         --disable-release `
-        #         --enable-debug
-        # }
+        if ($CMAKE_BUILD_TYPE -eq "Release") {
+            bash.exe ./runConfigureICU Cygwin/MSVC `
+                --enable-static `
+                --disable-shared `
+                --with-data-packaging=static `
+                --disable-samples `
+                --disable-tests `
+                --disable-debug `
+                --enable-release
+        } elseif ($CMAKE_BUILD_TYPE -eq "Debug") {
+            bash.exe ./runConfigureICU Cygwin/MSVC `
+                --enable-static `
+                --disable-shared `
+                --with-data-packaging=static `
+                --disable-samples `
+                --disable-tests `
+                --disable-release `
+                --enable-debug
+        }
 
         if ($LASTEXITCODE -ne 0) { 
             Get-Content "config.log"
@@ -199,6 +199,7 @@ cmake -S . -B $WebKitBuild `
     "-DCMAKE_C_FLAGS_RELEASE=/Zi /O2 /Ob2 /DNDEBUG /MT" `
     "-DCMAKE_CXX_FLAGS_RELEASE=/Zi /O2 /Ob2 /DNDEBUG /MT" `
     -DENABLE_REMOTE_INSPECTOR=ON `
+    -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
     -G Ninja
 # TODO: "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded" `
 if ($LASTEXITCODE -ne 0) { throw "cmake failed with exit code $LASTEXITCODE" }
@@ -229,9 +230,11 @@ $null = mkdir -ErrorAction SilentlyContinue $output/include/wtf
 
 Copy-Item $WebKitBuild/cmakeconfig.h $output/include/cmakeconfig.h
 Copy-Item $WebKitBuild/lib64/JavaScriptCore.lib $output/lib/
-# Copy-Item $WebKitBuild/lib64/JavaScriptCore.pdb $output/lib/
 Copy-Item $WebKitBuild/lib64/WTF.lib $output/lib/
-# Copy-Item $WebKitBuild/lib64/WTF.pdb $output/lib/
+if ($CMAKE_BUILD_TYPE -eq "Debug") {
+    Copy-Item $WebKitBuild/lib64/JavaScriptCore.pdb $output/lib/
+    Copy-Item $WebKitBuild/lib64/WTF.pdb $output/lib/
+}
 
 Add-Content -Path $output/include/cmakeconfig.h -Value "`#define BUN_WEBKIT_VERSION `"$BUN_WEBKIT_VERSION`""
 
