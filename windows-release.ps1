@@ -214,6 +214,8 @@ cmake -S . -B $WebKitBuild `
     "-DCMAKE_CXX_COMPILER=clang-cl" `
     "-DCMAKE_C_FLAGS_RELEASE=/Zi /O2 /Ob2 /DNDEBUG /MT" `
     "-DCMAKE_CXX_FLAGS_RELEASE=/Zi /O2 /Ob2 /DNDEBUG /MT" `
+    "-DCMAKE_C_FLAGS_DEBUG=/Zi /FS /O0 /Ob0 /MTd" `
+    "-DCMAKE_CXX_FLAGS_DEBUG=/Zi /FS /O0 /Ob0 /MTd" `
     -DENABLE_REMOTE_INSPECTOR=ON `
     -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded `
     -G Ninja
@@ -247,10 +249,10 @@ $null = mkdir -ErrorAction SilentlyContinue $output/include/wtf
 Copy-Item $WebKitBuild/cmakeconfig.h $output/include/cmakeconfig.h
 Copy-Item $WebKitBuild/lib64/JavaScriptCore.lib $output/lib/
 Copy-Item $WebKitBuild/lib64/WTF.lib $output/lib/
-if ($CMAKE_BUILD_TYPE -eq "Debug") {
-    Copy-Item $WebKitBuild/lib64/JavaScriptCore.pdb $output/lib/
-    Copy-Item $WebKitBuild/lib64/WTF.pdb $output/lib/
-}
+# if ($CMAKE_BUILD_TYPE -eq "Debug") {
+#     Copy-Item $WebKitBuild/lib64/JavaScriptCore.pdb $output/lib/
+#     Copy-Item $WebKitBuild/lib64/WTF.pdb $output/lib/
+# }
 
 Add-Content -Path $output/include/cmakeconfig.h -Value "`#define BUN_WEBKIT_VERSION `"$BUN_WEBKIT_VERSION`""
 
