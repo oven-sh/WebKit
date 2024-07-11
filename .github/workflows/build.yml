@@ -32,7 +32,7 @@ jobs:
             package_json_arch: "arm64"
             CMAKE_BUILD_TYPE: Debug
           - runner: macos-13-large
-            lto_flag: -flto='full'
+            lto_flag: "-flto='full' -fwhole-program-vtables -fforce-emit-vtables"
             cpu: haswell
             label: bun-webkit-macos-amd64-lto
             brew_prefix: /usr/local/opt
@@ -46,7 +46,7 @@ jobs:
             package_json_arch: "x64"
             CMAKE_BUILD_TYPE: Release
           - runner: macos-13-xlarge
-            lto_flag: -flto='full'
+            lto_flag: "-flto='full' -fwhole-program-vtables -fforce-emit-vtables"
             cpu: native
             label: bun-webkit-macos-arm64-lto
             brew_prefix: /opt/homebrew/opt
@@ -60,7 +60,13 @@ jobs:
             package_json_arch: "arm64"
             CMAKE_BUILD_TYPE: Release
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !LayoutTests/
+            !JSTests/
       - name: PATH
         env:
           HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
@@ -107,7 +113,7 @@ jobs:
             os: linux-arm64
             package_json_arch: "arm64"
             CMAKE_BUILD_TYPE: "Debug"
-          - lto_flag: "-flto='full'"
+          - lto_flag: "-flto='full' -fwhole-program-vtables -fforce-emit-vtables"
             label: bun-webkit-linux-arm64-lto
             os: linux-arm64
             package_json_arch: "arm64"
@@ -117,7 +123,7 @@ jobs:
             os: linux-arm64
             package_json_arch: "arm64"
             CMAKE_BUILD_TYPE: "Release"
-          - lto_flag: "-flto='full'"
+          - lto_flag: "-flto='full' -fwhole-program-vtables -fforce-emit-vtables"
             label: bun-webkit-linux-amd64-lto
             os: big-ubuntu
             package_json_arch: "x64"
@@ -130,7 +136,13 @@ jobs:
 
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !LayoutTests/
+            !JSTests/
       - uses: docker/setup-buildx-action@v2
         id: buildx
         with:
@@ -178,6 +190,12 @@ jobs:
           Join-Path (Resolve-Path ~).Path "scoop\apps\llvm\current\bin" >> $Env:GITHUB_PATH
       - uses: cygwin/cygwin-install-action@006ad0b0946ca6d0a3ea2d4437677fa767392401
       - uses: actions/checkout@v4
+        with:
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !LayoutTests/
+            !JSTests/
       - name: Build WebKit
         run: |
           $env:Path = "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\;" + $env:Path
