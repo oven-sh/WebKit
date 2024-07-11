@@ -108,14 +108,14 @@ if (!(Test-Path -Path $ICU_STATIC_ROOT)) {
         $ConfigureFile = $ConfigureFile -replace "release=1", "release=0"
         $ConfigureFile = $ConfigureFile -replace "-MDd", "-MTd"
     } else {
-        $ConfigureFile = $ConfigureFile -replace "-MD'", "-MT'"
+        $ConfigureFile = $ConfigureFile -replace "-MD", "-MT"
     }
 
     Set-Content "$ICU_STATIC_ROOT/source/runConfigureICU" $ConfigureFile -NoNewline -Encoding UTF8
     # Set-Content "$ICU_STATIC_ROOT/source/runConfigureICU" (($ConfigureFile -replace "=cl", "=clang-cl")) -NoNewline -Encoding UTF8
     # 2. hack remove dllimport from platform.h
     $PlatformFile = Get-Content "$ICU_STATIC_ROOT/source/common/unicode/platform.h" -Raw
-    Set-Content "$ICU_STATIC_ROOT/source/common/unicode/platform.h" ($PlatformFile -replace "__declspec\(dllimport\)", "")
+    Set-Content "$ICU_STATIC_ROOT/source/common/unicode/platform.h" ($PlatformFile -replace "defined(U_STATIC_IMPLEMENTATION)", "1")
     
     Push-Location $ICU_STATIC_ROOT/source
     try {
