@@ -77,15 +77,10 @@ $BUN_WEBKIT_VERSION = if ($env:BUN_WEBKIT_VERSION) { $env:BUN_WEBKIT_VERSION } e
 # Note that Bun works fine when you use this dual library technique.
 # TODO: update to 75.1. It seems that additional CFLAGS need to be passed here.
 $ICU_SOURCE_URL = "https://github.com/unicode-org/icu/releases/download/release-73-2/icu4c-73_2-src.tgz"
-$ICU_SHARED_URL = "https://github.com/unicode-org/icu/releases/download/release-73-2/icu4c-73_2-Win64-MSVC2019.zip"
 
 $ICU_STATIC_ROOT = Join-Path $WebKitBuild "icu"
 $ICU_STATIC_LIBRARY = Join-Path $ICU_STATIC_ROOT "lib"
 $ICU_STATIC_INCLUDE_DIR = Join-Path $ICU_STATIC_ROOT "include"
-
-$ICU_SHARED_ROOT = Join-Path $WebKitBuild "icu-shared"
-$ICU_SHARED_LIBRARY = Join-Path $ICU_SHARED_ROOT "lib64"
-$ICU_SHARED_INCLUDE_DIR = Join-Path $ICU_SHARED_ROOT "include"
 
 $null = mkdir $WebKitBuild -ErrorAction SilentlyContinue
 
@@ -162,21 +157,6 @@ if (!(Test-Path -Path $ICU_STATIC_ROOT)) {
     Copy-Item -r $ICU_STATIC_ROOT/source/i18n/unicode/* $ICU_STATIC_INCLUDE_DIR/unicode
     $null = mkdir -Force $ICU_STATIC_LIBRARY
     Copy-Item -r $ICU_STATIC_ROOT/source/lib/* $ICU_STATIC_LIBRARY/
-}
-
-if (!(Test-Path -Path $ICU_SHARED_ROOT)) {
-    # Download and extract URL
-    Write-Host "Downloading shared library ICU from ${ICU_SHARED_URL}"
-    $icuZipPath = Join-Path $WebKitBuild "icu.zip"
-    if (!(Test-Path -Path $icuZipPath)) {
-        Invoke-WebRequest -Uri $ICU_SHARED_URL -OutFile $icuZipPath
-    }
-    
-    $null = New-Item -ItemType Directory -Path $ICU_SHARED_ROOT -Force
-    $null = Expand-Archive $icuZipPath $ICU_SHARED_ROOT
-    Get-ChildItem $ICU_SHARED_ROOT | Get-ChildItem
-    Expand-Archive (Get-ChildItem $ICU_SHARED_ROOT | Get-ChildItem).FullName $ICU_SHARED_ROOT
-
 }
 
 Write-Host ":: Configuring WebKit"
