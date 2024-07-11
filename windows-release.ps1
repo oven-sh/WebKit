@@ -108,7 +108,7 @@ if (!(Test-Path -Path $ICU_STATIC_ROOT)) {
         $ConfigureFile = $ConfigureFile -replace "release=1", "release=0"
         $ConfigureFile = $ConfigureFile -replace "-MDd", "-MTd"
     } else {
-        $ConfigureFile = $ConfigureFile -replace "-MD", "-MT"
+        $ConfigureFile = $ConfigureFile -replace "-MD'", "-MT /DU_STATIC_IMPLEMENTATION'"
     }
 
     Set-Content "$ICU_STATIC_ROOT/source/runConfigureICU" $ConfigureFile -NoNewline -Encoding UTF8
