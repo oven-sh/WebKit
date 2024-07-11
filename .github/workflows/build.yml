@@ -155,16 +155,16 @@ jobs:
     strategy:
       matrix:
         include:
-          - runner: self-hosted
+          - runner: windows
             build-type: Release
             arch: amd64
             suffix: ""
-          - runner: self-hosted
+          - runner: windows
             build-type: Debug
             arch: amd64
             suffix: -debug
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 180
+    timeout-minutes: 90
     steps:
       - name: Install Scoop
         run: |
