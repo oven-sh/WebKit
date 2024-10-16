@@ -345,14 +345,10 @@ static inline void pas_lock_lock(pas_lock* lock)
 static inline bool pas_lock_try_lock(pas_lock* lock)
 {
     int error;
-    bool unnamed;
-    unnamed = (lock->mutex == PTHREAD_MUTEX_INITIALIZER);
     error = pthread_mutex_trylock(&lock->mutex);
     PAS_ASSERT(!error || error == EBUSY);
     if (!error) {
         pas_race_test_did_try_lock(lock);
-        if (PAS_UNLIKELY(unnamed))
-            pas_lock_mutex_setname(lock);
     }
     return !error;
 }
