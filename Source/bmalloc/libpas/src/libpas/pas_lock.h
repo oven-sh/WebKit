@@ -337,13 +337,9 @@ static inline void pas_lock_mutex_setname(pas_lock* lock)
 
 static inline void pas_lock_lock(pas_lock* lock)
 {
-    bool unnamed;
-    unnamed = (lock->mutex == PTHREAD_MUTEX_INITIALIZER);
     pas_race_test_will_lock(lock);
     pthread_mutex_lock(&lock->mutex);
     pas_race_test_did_lock(lock);
-    if (PAS_UNLIKELY(unnamed))
-        pas_lock_mutex_setname(lock);
 }
 
 static inline bool pas_lock_try_lock(pas_lock* lock)
