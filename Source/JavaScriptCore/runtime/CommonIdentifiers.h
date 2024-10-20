@@ -71,6 +71,7 @@
     macro(__defineSetter__) \
     macro(__lookupGetter__) \
     macro(__lookupSetter__) \
+    macro(__esModule) \
     macro(add) \
     macro(additionalJettisonReason) \
     macro(alphabet) \

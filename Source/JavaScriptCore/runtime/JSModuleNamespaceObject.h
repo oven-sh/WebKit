@@ -73,6 +73,10 @@ public:
 
     AbstractModuleRecord* moduleRecord() { return m_moduleRecord.get(); }
 
+#if USE(BUN_JSC_ADDITIONS)
+    WTF::TriState m_hasESModuleMarker = WTF::TriState::Indeterminate;
+#endif
+
 private:
     JS_EXPORT_PRIVATE JSModuleNamespaceObject(VM&, Structure*);
     JS_EXPORT_PRIVATE void finishCreation(JSGlobalObject*, AbstractModuleRecord*, Vector<std::pair<Identifier, AbstractModuleRecord::Resolution>>&&, bool shouldPreventExtensions);

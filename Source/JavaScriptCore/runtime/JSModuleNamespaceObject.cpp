@@ -72,16 +72,7 @@ void JSModuleNamespaceObject::finishCreation(JSGlobalObject* globalObject, Abstr
         }
     }
 
-#if !USE(BUN_JSC_ADDITIONS)
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(vm, "Module"_s), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
-#else
-    // Spec diversion:
-    // Allow modifying the toStringTag of module namespace objects in Bun.
-    // This is used when assigning a CommonJS exports object to a namespace object.
-    // Some code expects [object Object] over [object Module].
-    putDirect(vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(vm, "Module"_s), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
-#endif
-
 
 #if USE(BUN_JSC_ADDITIONS)
     if (shouldPreventExtensions)
@@ -147,8 +138,15 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
     slot.setIsTaintedByOpaqueObject();
 
     auto iterator = m_exports.find(propertyName.uid());
-    if (iterator == m_exports.end())
+    if (iterator == m_exports.end()) {
+#if USE(BUN_JSC_ADDITIONS)
+        if (propertyName == vm.propertyNames->__esModule) {
+            return Base::getOwnPropertySlot(this, globalObject, propertyName, slot);
+        }
+#endif
         return false;
+    }
+
     ExportEntry& exportEntry = iterator->value;
 
     switch (slot.internalMethodType()) {
@@ -205,7 +203,7 @@ bool JSModuleNamespaceObject::getOwnPropertySlotByIndex(JSObject* cell, JSGlobal
     return thisObject->getOwnPropertySlotCommon(globalObject, Identifier::from(vm, propertyName), slot);
 }
 
-bool JSModuleNamespaceObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName, JSValue, PutPropertySlot& slot)
+bool JSModuleNamespaceObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -214,6 +212,8 @@ bool JSModuleNamespaceObject::put(JSCell* cell, JSGlobalObject* globalObject, Pr
     auto* thisObject = jsCast<JSModuleNamespaceObject*>(cell);
     if (thisObject->m_isOverridingValue) {
         return true;
+    } else if (UNLIKELY(propertyName == vm.propertyNames->__esModule && !thisObject->m_exports.contains(propertyName.uid()))) {
+        RELEASE_AND_RETURN(scope, Base::put(thisObject, globalObject, propertyName, value, slot));
     }
 #endif
 
@@ -293,6 +293,8 @@ bool JSModuleNamespaceObject::defineOwnProperty(JSObject* cell, JSGlobalObject* 
 #if USE(BUN_JSC_ADDITIONS)
     if (thisObject->m_isOverridingValue) {
         return true;
+    } else if (propertyName == vm.propertyNames->__esModule && !thisObject->m_exports.contains(propertyName.uid())) {
+        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(thisObject, globalObject, propertyName, descriptor, shouldThrow));
     }
 #endif
 
