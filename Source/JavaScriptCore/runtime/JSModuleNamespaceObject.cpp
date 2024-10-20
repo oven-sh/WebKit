@@ -72,7 +72,16 @@ void JSModuleNamespaceObject::finishCreation(JSGlobalObject* globalObject, Abstr
         }
     }
 
+#if !USE(BUN_JSC_ADDITIONS)
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(vm, "Module"_s), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+#else
+    // Spec diversion:
+    // Allow modifying the toStringTag of module namespace objects in Bun.
+    // This is used when assigning a CommonJS exports object to a namespace object.
+    // Some code expects [object Object] over [object Module].
+    putDirect(vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(vm, "Module"_s), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
+#endif
+
 
 #if USE(BUN_JSC_ADDITIONS)
     if (shouldPreventExtensions)
