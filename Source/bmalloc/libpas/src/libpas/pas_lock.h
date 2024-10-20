@@ -302,87 +302,6 @@ static inline void pas_lock_testing_assert_held(pas_lock* lock)
 
 PAS_END_EXTERN_C;
 
-#elif PAS_OS(LINUX) /* !PAS_USE_SPINLOCKS */
-
-#include <errno.h>
-#include <pthread.h>
-
-PAS_BEGIN_EXTERN_C;
-
-struct pas_lock;
-typedef struct pas_lock pas_lock;
-
-struct pas_lock {
-    pthread_mutex_t mutex;
-};
-
-#define PAS_LOCK_INITIALIZER ((pas_lock) { .mutex = PTHREAD_MUTEX_INITIALIZER })
-
-static inline void pas_lock_construct(pas_lock* lock)
-{
-    *lock = PAS_LOCK_INITIALIZER;
-}
-
-static inline void pas_lock_construct_disabled(pas_lock* lock)
-{
-    pthread_mutex_destroy(&lock->mutex);
-    pas_zero_memory(lock, sizeof(pas_lock));
-}
-
-static inline void pas_lock_mutex_setname(pas_lock* lock)
-{
-    // No-op on Linux
-    (void)lock;
-}
-
-static inline void pas_lock_lock(pas_lock* lock)
-{
-    bool unnamed;
-    unnamed = (lock->mutex == PTHREAD_MUTEX_INITIALIZER);
-    pas_race_test_will_lock(lock);
-    pthread_mutex_lock(&lock->mutex);
-    pas_race_test_did_lock(lock);
-    if (PAS_UNLIKELY(unnamed))
-        pas_lock_mutex_setname(lock);
-}
-
-static inline bool pas_lock_try_lock(pas_lock* lock)
-{
-    int error;
-    error = pthread_mutex_trylock(&lock->mutex);
-    PAS_ASSERT(!error || error == EBUSY);
-    if (!error) {
-        pas_race_test_did_try_lock(lock);
-    }
-    return !error;
-}
-
-static inline void pas_lock_unlock(pas_lock* lock)
-{
-    pas_race_test_will_unlock(lock);
-    pthread_mutex_unlock(&lock->mutex);
-}
-
-static inline bool pas_lock_test_held(pas_lock* lock)
-{
-    if (pthread_mutex_trylock(&lock->mutex))
-        return true;
-    pthread_mutex_unlock(&lock->mutex);
-    return false;
-}
-
-static inline void pas_lock_assert_held(pas_lock* lock)
-{
-    PAS_ASSERT(pas_lock_test_held(lock));
-}
-
-static inline void pas_lock_testing_assert_held(pas_lock* lock)
-{
-    PAS_TESTING_ASSERT(pas_lock_test_held(lock));
-}
-
-PAS_END_EXTERN_C;
-
 #else /* !PAS_USE_SPINLOCKS */
 #error "No pas_lock implementation found"
 #endif /* !PAS_USE_SPINLOCKS */
@@ -538,5 +457,4 @@ static PAS_ALWAYS_INLINE void pas_lock_switch_conditionally(pas_lock** held_lock
 PAS_END_EXTERN_C;
 
 #endif /* PAS_LOCK_H */
-
 
