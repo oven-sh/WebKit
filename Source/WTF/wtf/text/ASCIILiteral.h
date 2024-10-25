@@ -44,30 +44,26 @@ class PrintStream;
 
 class ASCIILiteral final {
 public:
-    constexpr operator const char*() const { return m_charactersWithNullTerminator.data(); }
+    constexpr operator const char *() const { return m_charactersWithNullTerminator.data(); }
 
-    static constexpr ASCIILiteral fromLiteralUnsafe(const char* string)
+    static constexpr ASCIILiteral fromLiteralUnsafe(const char *string)
     {
         ASSERT_UNDER_CONSTEXPR_CONTEXT(string);
         return ASCIILiteral { unsafeForgeSpan(string, std::char_traits<char>::length(string) + 1) };
     }
 
-    static constexpr ASCIILiteral fromLiteralUnsafe(std::span<const char> nullTerminatedString)
-    {
-        return ASCIILiteral { nullTerminatedString };
-    }
-
-    WTF_EXPORT_PRIVATE void dump(PrintStream& out) const;
+    WTF_EXPORT_PRIVATE void dump(PrintStream &out) const;
 
     ASCIILiteral() = default;
     constexpr ASCIILiteral(std::nullptr_t)
         : ASCIILiteral()
-    { }
+    {
+    }
 
     unsigned hash() const;
     constexpr bool isNull() const { return m_charactersWithNullTerminator.empty(); }
 
-    constexpr const char* characters() const { return m_charactersWithNullTerminator.data(); }
+    constexpr const char *characters() const { return m_charactersWithNullTerminator.data(); }
     constexpr size_t length() const { return !m_charactersWithNullTerminator.empty() ? m_charactersWithNullTerminator.size() - 1 : 0; }
     std::span<const LChar> span8() const { return byteCast<LChar>(m_charactersWithNullTerminator.first(length())); }
     std::span<const char> spanIncludingNullTerminator() const { return m_charactersWithNullTerminator; }
@@ -76,13 +72,13 @@ public:
     constexpr char operator[](size_t index) const { return m_charactersWithNullTerminator[index]; }
     constexpr char characterAt(size_t index) const { return m_charactersWithNullTerminator[index]; }
 
-#if defined(__OBJC__) && !USE(BUN_JSC_ADDITIONS)
+#ifdef __OBJC__
     // This function convert null strings to empty strings.
     WTF_EXPORT_PRIVATE RetainPtr<NSString> createNSString() const;
 #endif
 
     static ASCIILiteral deletedValue();
-    bool isDeletedValue() const { return characters() == reinterpret_cast<char*>(-1); }
+    bool isDeletedValue() const { return characters() == reinterpret_cast<char *>(-1); }
 
 private:
     constexpr explicit ASCIILiteral(std::span<const char> spanWithNullTerminator)
@@ -94,20 +90,10 @@ private:
 #endif
     }
 
-    constexpr explicit ASCIILiteral(std::span<const char> characters)
-        : m_charactersWithNullTerminator(characters)
-    {
-#if ASSERT_ENABLED
-    for (size_t i = 0; i < length(); ++i)
-        ASSERT_UNDER_CONSTEXPR_CONTEXT(isASCII(m_charactersWithNullTerminator[i]));
-#endif
-    }
-
-
     std::span<const char> m_charactersWithNullTerminator;
 };
 
-inline bool operator==(ASCIILiteral a, const char* b)
+inline bool operator==(ASCIILiteral a, const char *b)
 {
     if (!a || !b)
         return a.characters() == b;
@@ -131,31 +117,31 @@ inline unsigned ASCIILiteral::hash() const
 }
 
 struct ASCIILiteralHash {
-    static unsigned hash(const ASCIILiteral& literal) { return literal.hash(); }
-    static bool equal(const ASCIILiteral& a, const ASCIILiteral& b) { return a == b; }
+    static unsigned hash(const ASCIILiteral &literal) { return literal.hash(); }
+    static bool equal(const ASCIILiteral &a, const ASCIILiteral &b) { return a == b; }
     static constexpr bool safeToCompareToEmptyOrDeleted = false;
 };
 
 template<typename T> struct DefaultHash;
-template<> struct DefaultHash<ASCIILiteral> : ASCIILiteralHash { };
+template<> struct DefaultHash<ASCIILiteral> : ASCIILiteralHash {};
 
 inline ASCIILiteral ASCIILiteral::deletedValue()
 {
     ASCIILiteral result;
-    result.m_charactersWithNullTerminator = { reinterpret_cast<char*>(-1), static_cast<size_t>(0) };
+    result.m_charactersWithNullTerminator = { reinterpret_cast<char *>(-1), static_cast<size_t>(0) };
     return result;
 }
 
 inline namespace StringLiterals {
 
-constexpr ASCIILiteral operator""_s(const char* characters, size_t)
+constexpr ASCIILiteral operator""_s(const char *characters, size_t)
 {
     auto result = ASCIILiteral::fromLiteralUnsafe(characters);
     ASSERT_UNDER_CONSTEXPR_CONTEXT(result.characters() == characters);
     return result;
 }
 
-constexpr std::span<const LChar> operator""_span(const char* characters, size_t n)
+constexpr std::span<const LChar> operator""_span(const char *characters, size_t n)
 {
     auto span = byteCast<LChar>(unsafeForgeSpan(characters, n));
 #if ASSERT_ENABLED

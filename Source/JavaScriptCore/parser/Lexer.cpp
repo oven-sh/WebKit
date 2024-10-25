@@ -979,10 +979,10 @@ template <bool shouldCreateIdentifier> ALWAYS_INLINE JSTokenType Lexer<LChar>::p
             if (isWellKnownSymbol)
                 ident = &m_arena->makeIdentifier(m_vm, m_vm.propertyNames->builtinNames().lookUpWellKnownSymbol(identifierSpan));
             else {
-                if constexpr (ASSERT_ENABLED) {
+#if ASSERT_ENABLED
                     auto *symbol = m_vm.propertyNames->builtinNames().lookUpPrivateName(identifierSpan);
                     ASSERT_WITH_MESSAGE(symbol, "Private symbol not found: %s", identifierSpan.data());
-                }
+#endif
 
                 ident = &m_arena->makeIdentifier(m_vm, m_vm.propertyNames->builtinNames().lookUpPrivateName(identifierSpan));
             }
