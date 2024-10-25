@@ -77,14 +77,14 @@ RUN mkdir -p /output/lib /output/include /output/include/JavaScriptCore /output/
 # the exact version we need. Unfortunately, aarch64 is not pre-built so we have to build it from source.
 ADD https://github.com/unicode-org/icu/releases/download/release-75-1/icu4c-75_1-src.tgz /icu.tgz
 RUN --mount=type=tmpfs,target=/icu \ 
-    export CFLAGS="${DEFAULT_CFLAGS} $CFLAGS -O3 -std=c17 $LTO_FLAG" && \
-    export CXXFLAGS="${DEFAULT_CFLAGS} $CXXFLAGS -O3 -std=c++20 -fno-exceptions $LTO_FLAG -fno-c++-static-destructors " && \
+    export CFLAGS="${DEFAULT_CFLAGS} $CFLAGS -Os -std=c17 $LTO_FLAG" && \
+    export CXXFLAGS="${DEFAULT_CFLAGS} $CXXFLAGS -Os -DUCONFIG_NO_LEGACY_CONVERSION=1 -std=c++20 -fno-exceptions $LTO_FLAG -fno-c++-static-destructors " && \
     export LDFLAGS="-fuse-ld=lld " && \
     cd /icu && \
     tar -xf /icu.tgz --strip-components=1 && \
     rm /icu.tgz && \
     cd source && \
-    ./configure  --enable-static --disable-shared --with-data-packaging=static --disable-samples --disable-debug --disable-tests && \ 
+    ./configure --enable-static --disable-shared --disable-layoutex --disable-layout --with-data-packaging=static --disable-samples --disable-debug --disable-tests --disable-extras --disable-icuio && \ 
     make -j$(nproc) && \
     make install && cp -r /icu/source/lib/* /output/lib && cp -r /icu/source/i18n/unicode/* /icu/source/common/unicode/* /output/include/unicode
 
