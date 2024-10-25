@@ -28,7 +28,7 @@
 #if BUSE(TZONE)
 
 #include "BAssert.h"
-#include "mutex.h"
+#include "Mutex.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <strings.h>
