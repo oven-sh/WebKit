@@ -28,7 +28,7 @@
 #if BUSE(TZONE)
 
 #include "BAssert.h"
-#include <mutex.h>
+#include "mutex.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <strings.h>
@@ -64,15 +64,24 @@ extern TZoneLog& TZoneLog::singleton()
 BATTRIBUTE_PRINTF(2, 3)
 extern void TZoneLog::log(const char* format, ...)
 {
-    if (LogDestination::Off)
+    auto destination = singleton().m_logDest;
+    if (destination == LogDestination::Off)
         return;
 
     va_list argList;
     va_start(argList, format);
-    if (m_logDest == LogDestination::OSLog)
-        osLogWithLineBuffer(format, argList);
-    else if (m_logDest == LogDestination::Stderr)
+    switch (destination) {
+    case LogDestination::Stderr:
         vfprintf(stderr, format, argList);
+        break;
+#if BUSE(OS_LOG)
+    case LogDestination::OSLog:
+        osLogWithLineBuffer(format, argList);
+        break;
+#endif
+    default:
+        break;
+    }
     va_end(argList);
 }
 
