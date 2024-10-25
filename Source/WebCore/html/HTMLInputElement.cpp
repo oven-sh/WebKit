@@ -899,6 +899,15 @@ void HTMLInputElement::attributeChanged(const QualifiedName& name, const AtomStr
 #endif
         }
         break;
+#if ENABLE(INPUT_TYPE_COLOR)
+    case AttributeNames::alphaAttr:
+    case AttributeNames::colorspaceAttr:
+        if (isColorControl() && document().settings().inputTypeColorEnhancementsEnabled()) {
+            updateValueIfNeeded();
+            updateValidity();
+        }
+        break;
+#endif
     default:
         break;
     }
@@ -1142,6 +1151,8 @@ void HTMLInputElement::copyNonAttributePropertiesFromElement(const Element& sour
 
 String HTMLInputElement::value() const
 {
+    if (document().requiresScriptExecutionTelemetry(ScriptTelemetryCategory::FormControls))
+        return m_inputType->defaultValue();
     if (auto* fileInput = dynamicDowncast<FileInputType>(*m_inputType))
         return fileInput->firstElementPathForInputValue();
 
@@ -1564,6 +1575,30 @@ void HTMLInputElement::setShowAutoFillButton(AutoFillButtonType autoFillButtonTy
         cache->autofillTypeChanged(*this);
 }
 
+#if ENABLE(INPUT_TYPE_COLOR)
+bool HTMLInputElement::alpha()
+{
+    return document().settings().inputTypeColorEnhancementsEnabled() && hasAttributeWithoutSynchronization(alphaAttr);
+}
+
+String HTMLInputElement::colorSpace()
+{
+    if (!document().settings().inputTypeColorEnhancementsEnabled())
+        return nullString();
+
+    if (equalLettersIgnoringASCIICase(attributeWithoutSynchronization(colorspaceAttr), "display-p3"_s))
+        return "display-p3"_s;
+
+    return "limited-srgb"_s;
+}
+
+void HTMLInputElement::setColorSpace(const AtomString& value)
+{
+    ASSERT(document().settings().inputTypeColorEnhancementsEnabled());
+    setAttributeWithoutSynchronization(colorspaceAttr, value);
+}
+#endif // ENABLE(INPUT_TYPE_COLOR)
+
 FileList* HTMLInputElement::files()
 {
     if (auto* fileInputType = dynamicDowncast<FileInputType>(*m_inputType))
@@ -1816,7 +1851,7 @@ Color HTMLInputElement::valueAsColor() const
     if (auto* colorInputType = dynamicDowncast<ColorInputType>(*m_inputType))
         return colorInputType->valueAsColor();
 #endif
-    return Color::transparentBlack;
+    return Color::black;
 }
 
 void HTMLInputElement::selectColor(StringView color)
@@ -2272,13 +2307,14 @@ ExceptionOr<void> HTMLInputElement::setSelectionRangeForBindings(unsigned start,
 static Ref<StyleGradientImage> autoFillStrongPasswordMaskImage()
 {
     return StyleGradientImage::create(
-        Style::LinearGradient {
-            .repeating = Style::GradientRepeat::NonRepeating,
-            .colorInterpolationMethod = Style::GradientColorInterpolationMethod::legacyMethod(AlphaPremultiplication::Unpremultiplied),
-            .gradientLine = { Style::Angle { 90 } },
-            .stops = {
-                { Color::black,            Style::LengthPercentage { Style::Percentage { 50 } } },
-                { Color::transparentBlack, Style::LengthPercentage { Style::Percentage { 100 } } }
+        Style::FunctionNotation<CSSValueLinearGradient, Style::LinearGradient> {
+            .parameters = {
+                .colorInterpolationMethod = Style::GradientColorInterpolationMethod::legacyMethod(AlphaPremultiplication::Unpremultiplied),
+                .gradientLine = { Style::Angle<> { 90 } },
+                .stops = {
+                    { Color::black,            Style::LengthPercentage<> { Style::Percentage<> { 50 } } },
+                    { Color::transparentBlack, Style::LengthPercentage<> { Style::Percentage<> { 100 } } }
+                }
             }
         }
     );

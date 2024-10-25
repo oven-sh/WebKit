@@ -41,7 +41,7 @@ class ResourceResponse;
 class RangeResponseGenerator final
     : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<RangeResponseGenerator, WTF::DestructionThread::Main> {
 public:
-    static Ref<RangeResponseGenerator> create(RefCountedSerialFunctionDispatcher& dispatcher) { return adoptRef(*new RangeResponseGenerator(dispatcher)); }
+    static Ref<RangeResponseGenerator> create(GuaranteedSerialFunctionDispatcher& dispatcher) { return adoptRef(*new RangeResponseGenerator(dispatcher)); }
     ~RangeResponseGenerator();
 
     bool willSynthesizeRangeResponses(WebCoreNSURLSessionDataTask *, PlatformMediaResource&, const ResourceResponse&);
@@ -51,16 +51,16 @@ public:
 private:
     struct Data;
 
-    RangeResponseGenerator(WTF::RefCountedSerialFunctionDispatcher&);
-    HashMap<String, std::unique_ptr<Data>>& map();
+    RangeResponseGenerator(WTF::GuaranteedSerialFunctionDispatcher&);
+    UncheckedKeyHashMap<String, std::unique_ptr<Data>>& map();
 
     class MediaResourceClient;
     void giveResponseToTasksWithFinishedRanges(Data&);
     void giveResponseToTaskIfBytesInRangeReceived(WebCoreNSURLSessionDataTask *, const ParsedRequestRange&, std::optional<size_t> expectedContentLength, const Data&);
     static std::optional<size_t> expectedContentLengthFromData(const Data&);
 
-    HashMap<String, std::unique_ptr<Data>> m_map WTF_GUARDED_BY_CAPABILITY(m_targetDispatcher.get());
-    Ref<RefCountedSerialFunctionDispatcher> m_targetDispatcher;
+    UncheckedKeyHashMap<String, std::unique_ptr<Data>> m_map WTF_GUARDED_BY_CAPABILITY(m_targetDispatcher.get());
+    Ref<GuaranteedSerialFunctionDispatcher> m_targetDispatcher;
 };
 
 } // namespace WebCore

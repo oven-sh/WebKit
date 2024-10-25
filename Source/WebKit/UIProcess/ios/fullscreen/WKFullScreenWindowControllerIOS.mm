@@ -1115,6 +1115,20 @@ static constexpr NSString *kPrefersFullScreenDimmingKey = @"WebKitPrefersFullScr
     }];
 }
 
+#if ENABLE(QUICKLOOK_FULLSCREEN)
+- (void)updateImageSource
+{
+    RetainPtr<WKWebView> webView = self._webView;
+    auto* manager = self._manager;
+    if (!manager)
+        return;
+
+    manager->prepareQuickLookImageURL([strongSelf = retainPtr(self), self, window = retainPtr([webView window]), logIdentifier = OBJC_LOGIDENTIFIER](URL&& url) mutable {
+        [_previewWindowController updateImage:WTFMove(url)];
+    });
+}
+#endif
+
 - (void)beganEnterFullScreenWithInitialFrame:(CGRect)initialFrame finalFrame:(CGRect)finalFrame
 {
     if (_fullScreenState != WebKit::WaitingToEnterFullScreen) {
@@ -1181,7 +1195,10 @@ static constexpr NSString *kPrefersFullScreenDimmingKey = @"WebKitPrefersFullScr
 
 #if PLATFORM(VISION)
             if (WebKit::useSpatialFullScreenTransition()) {
-                CompletionHandler<void()> completionHandler = []() { };
+                CompletionHandler<void()> completionHandler = [protectedSelf = RetainPtr { self }]() {
+                    // We may have lost key status during the transition into fullscreen
+                    [protectedSelf->_window makeKeyAndVisible];
+                };
                 [self _performSpatialFullScreenTransition:YES completionHandler:WTFMove(completionHandler)];
             }
 #endif

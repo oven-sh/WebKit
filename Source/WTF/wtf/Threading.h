@@ -30,6 +30,10 @@
 
 #pragma once
 
+#include <wtf/Compiler.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 #include <mutex>
 #include <stdint.h>
 #include <wtf/Atomics.h>
@@ -51,6 +55,8 @@
 #include <wtf/Vector.h>
 #include <wtf/WordLock.h>
 #include <wtf/text/AtomStringTable.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #if USE(PTHREADS) && !OS(DARWIN)
 #include <signal.h>
@@ -382,7 +388,7 @@ protected:
     // Use WordLock since WordLock does not depend on ThreadSpecific and this "Thread".
     WordLock m_mutex;
     StackBounds m_stack { StackBounds::emptyBounds() };
-    HashMap<ThreadGroup*, std::weak_ptr<ThreadGroup>> m_threadGroupMap;
+    UncheckedKeyHashMap<ThreadGroup*, std::weak_ptr<ThreadGroup>> m_threadGroupMap;
     PlatformThreadHandle m_handle;
     uint32_t m_uid { ++s_uid };
 #if OS(WINDOWS)

@@ -50,7 +50,8 @@ class RemotePlayback final
 {
     WTF_MAKE_TZONE_OR_ISO_ALLOCATED(RemotePlayback);
 public:
-    DEFINE_VIRTUAL_REFCOUNTED;
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
 
     static Ref<RemotePlayback> create(HTMLMediaElement&);
     ~RemotePlayback();
@@ -106,7 +107,7 @@ private:
     WeakPtr<HTMLMediaElement> m_mediaElement;
     uint32_t m_nextId { 0 };
 
-    using CallbackMap = HashMap<int32_t, Ref<RemotePlaybackAvailabilityCallback>>;
+    using CallbackMap = UncheckedKeyHashMap<int32_t, Ref<RemotePlaybackAvailabilityCallback>>;
     CallbackMap m_callbackMap;
 
     using PromiseVector = Vector<Ref<DeferredPromise>>;

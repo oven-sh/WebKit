@@ -28,6 +28,7 @@
 #include <WebCore/CertificateInfo.h>
 #include <WebCore/NavigationIdentifier.h>
 #include <WebCore/SecurityOriginData.h>
+#include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
 #include <wtf/URL.h>
 #include <wtf/WeakHashSet.h>
 #include <wtf/text/WTFString.h>
@@ -36,11 +37,9 @@ namespace WebKit {
 
 class WebPageProxy;
 
-class PageLoadStateObserverBase : public CanMakeWeakPtr<PageLoadStateObserverBase> {
+class PageLoadStateObserverBase : public AbstractRefCountedAndCanMakeWeakPtr<PageLoadStateObserverBase> {
 public:
     virtual ~PageLoadStateObserverBase() = default;
-
-    DECLARE_VIRTUAL_REFCOUNTED;
 
     virtual void willChangeIsLoading() = 0;
     virtual void didChangeIsLoading() = 0;
@@ -135,24 +134,24 @@ public:
 
     void reset(const Transaction::Token&);
 
-    bool isLoading() const;
+    bool isLoading() const { return isLoading(m_committedState); }
     bool isProvisional() const { return m_committedState.state == State::Provisional; }
     bool isCommitted() const { return m_committedState.state == State::Committed; }
     bool isFinished() const { return m_committedState.state == State::Finished; }
 
-    bool hasUncommittedLoad() const;
+    bool hasUncommittedLoad() const { return isLoading(m_uncommittedState); }
 
     const String& provisionalURL() const { return m_committedState.provisionalURL; }
     const String& url() const { return m_committedState.url; }
     const WebCore::SecurityOriginData& origin() const { return m_committedState.origin; }
     const String& unreachableURL() const { return m_committedState.unreachableURL; }
 
-    String activeURL() const;
+    String activeURL() const { return activeURL(m_committedState); }
 
     bool hasOnlySecureContent() const;
     bool hasNegotiatedLegacyTLS() const;
     void negotiatedLegacyTLS(const Transaction::Token&);
-    bool wasPrivateRelayed() const;
+    bool wasPrivateRelayed() const { return m_committedState.wasPrivateRelayed; }
 
     double estimatedProgress() const;
     bool networkRequestsInProgress() const { return m_committedState.networkRequestsInProgress; }

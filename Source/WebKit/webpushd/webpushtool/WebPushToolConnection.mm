@@ -41,6 +41,8 @@
 #import <wtf/RetainPtr.h>
 #import <wtf/TZoneMallocInlines.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace WebPushTool {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Connection);
@@ -179,9 +181,8 @@ bool Connection::performSendWithAsyncReplyWithoutUsingIPCConnection(UniqueRef<IP
             return completionHandler(nullptr);
         }
 
-        size_t dataSize { 0 };
-        const uint8_t* data = static_cast<const uint8_t *>(xpc_dictionary_get_data(reply, WebKit::WebPushD::protocolEncodedMessageKey, &dataSize));
-        auto decoder = IPC::Decoder::create({ data, dataSize }, { });
+        auto data = xpc_dictionary_get_data_span(reply, WebKit::WebPushD::protocolEncodedMessageKey);
+        auto decoder = IPC::Decoder::create(data, { });
         ASSERT(decoder);
 
         completionHandler(decoder.get());
@@ -193,5 +194,6 @@ bool Connection::performSendWithAsyncReplyWithoutUsingIPCConnection(UniqueRef<IP
 
 } // namespace WebPushTool
 
-#endif // ENABLE(WEB_PUSH_NOTIFICATIONS)
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
+#endif // ENABLE(WEB_PUSH_NOTIFICATIONS)

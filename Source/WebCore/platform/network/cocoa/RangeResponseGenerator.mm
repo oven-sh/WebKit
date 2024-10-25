@@ -63,7 +63,7 @@ struct RangeResponseGeneratorDataTaskData : public CanMakeWeakPtr<RangeResponseG
 
 struct RangeResponseGenerator::Data {
     WTF_MAKE_STRUCT_FAST_ALLOCATED;
-    // The RangeResponseGenerator is used with a RefCountedSerialFunctionDispatcher which can do thread hoping over time.
+    // The RangeResponseGenerator is used with a GuaranteedSerialFunctionDispatcher which can do thread hoping over time.
     // The ResourceResponse contains WTF::Strings which must first be copied via isolatedCopy().
     Data(const ResourceResponse& response, PlatformMediaResource& resource)
         : originalResponse(ResourceResponse::fromCrossThreadData(response.crossThreadData()))
@@ -81,21 +81,21 @@ struct RangeResponseGenerator::Data {
             resource = nullptr;
         }
     }
-    HashMap<RetainPtr<WebCoreNSURLSessionDataTask>, std::unique_ptr<RangeResponseGeneratorDataTaskData>> taskData;
+    UncheckedKeyHashMap<RetainPtr<WebCoreNSURLSessionDataTask>, std::unique_ptr<RangeResponseGeneratorDataTaskData>> taskData;
     SharedBufferBuilder buffer;
     ResourceResponse originalResponse;
     enum class SuccessfullyFinishedLoading : bool { No, Yes } successfullyFinishedLoading { SuccessfullyFinishedLoading::No };
     RefPtr<PlatformMediaResource> resource;
 };
 
-RangeResponseGenerator::RangeResponseGenerator(RefCountedSerialFunctionDispatcher& targetDispatcher)
+RangeResponseGenerator::RangeResponseGenerator(GuaranteedSerialFunctionDispatcher& targetDispatcher)
     : m_targetDispatcher(targetDispatcher)
 {
 }
 
 RangeResponseGenerator::~RangeResponseGenerator() = default;
 
-HashMap<String, std::unique_ptr<RangeResponseGenerator::Data>>& RangeResponseGenerator::map()
+UncheckedKeyHashMap<String, std::unique_ptr<RangeResponseGenerator::Data>>& RangeResponseGenerator::map()
 {
     assertIsCurrent(m_targetDispatcher.get());
     IGNORE_CLANG_WARNINGS_BEGIN("thread-safety-reference-return")
@@ -125,7 +125,7 @@ static ResourceResponse synthesizedResponseForRange(const ResourceResponse& orig
 void RangeResponseGenerator::removeTask(WebCoreNSURLSessionDataTask *task)
 {
     auto url = task.originalRequest.URL;
-    // HashMap::get() crashes if a null String is passed.
+    // UncheckedKeyHashMap::get() crashes if a null String is passed.
     if (!url)
         return;
     auto* data = map().get(url.absoluteString);

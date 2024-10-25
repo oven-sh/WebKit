@@ -42,6 +42,8 @@
 #include <wtf/MachSendRight.h>
 #endif
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 #if PLATFORM(COCOA)
 OBJC_CLASS NSData;
 #endif
@@ -68,7 +70,11 @@ public:
 #endif
 
     SharedMemoryHandle(SharedMemoryHandle&&) = default;
+#if USE(UNIX_DOMAIN_SOCKETS)
+    explicit SharedMemoryHandle(const SharedMemoryHandle&);
+#else
     explicit SharedMemoryHandle(const SharedMemoryHandle&) = default;
+#endif
     WEBCORE_EXPORT SharedMemoryHandle(SharedMemoryHandle::Type&&, size_t);
 
     SharedMemoryHandle& operator=(SharedMemoryHandle&&) = default;
@@ -151,3 +157,5 @@ private:
 };
 
 } // namespace WebCore
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

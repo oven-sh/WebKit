@@ -47,6 +47,8 @@
 #import <pal/spi/mac/NSViewSPI.h>
 #import <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 _WKOverlayScrollbarStyle toAPIScrollbarStyle(std::optional<WebCore::ScrollbarOverlayStyle> coreScrollbarStyle)
 {
     if (!coreScrollbarStyle)
@@ -706,6 +708,19 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
 {
     _page->handleContextMenuKeyEvent();
 }
+
+#if ENABLE(WRITING_TOOLS)
+
+- (void)showWritingTools:(id)sender
+{
+    WTRequestedTool tool = (WTRequestedTool)[sender tag];
+    if (tool == -1)
+        tool = WTRequestedToolIndex;
+
+    _impl->showWritingTools(tool);
+}
+
+#endif
 
 #if ENABLE(DRAG_SUPPORT)
 ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
@@ -1812,5 +1827,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     return [[NSImage alloc] initWithCGImage:snapshot.get() size:NSZeroSize];
 }
 @end
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // PLATFORM(MAC)

@@ -759,7 +759,7 @@ sub determineLTOMode
     return if defined $ltoMode;
     determineBaseProductDir();
 
-    if (open LTO, "$baseProductDir/LTO") {
+    if (open LTO, File::Spec->catfile($baseProductDir, "LTO")) {
         $ltoMode = <LTO>;
         close LTO;
         chomp $ltoMode;
@@ -984,9 +984,11 @@ sub determineXcodeSDKPlatformName {
         $xcodeSDKPlatformNameExplanation ||= "via argument, `--simulator`";
         $simulatorIdiom = 'iPhone';
     }
-    if (checkForArgumentAndRemoveFromARGV("--ios-simulator")) {
+    if (checkForArgumentAndRemoveFromARGV("--iphone-simulator") ||
+        checkForArgumentAndRemoveFromARGV("--ios-simulator")) {
+        # `--ios-simulator` option checking is for compatible here.
         $xcodeSDKPlatformName ||= 'iphonesimulator';
-        $xcodeSDKPlatformNameExplanation ||= "via argument, `--ios-simulator`";
+        $xcodeSDKPlatformNameExplanation ||= "via argument, `--iphone-simulator`";
         $simulatorIdiom = 'iPhone';
     }
     if (checkForArgumentAndRemoveFromARGV("--ipad-simulator")) {
@@ -2999,9 +3001,10 @@ sub printHelpAndExitForRunAndDebugWebKitAppIfNeeded
     return unless checkForArgumentAndRemoveFromARGV("--help");
 
     print STDERR <<EOF;
-Usage: @{[basename($0)]} [options] [args ...]
+Usage: @{[basename($0)]} [options] <application-path>
   --help                            Show this help message
   --no-saved-state                  Launch the application without state restoration
+  --debug|release                   build configuration
 
 Options specific to macOS:
   -g|--guard-malloc                 Enable Guard Malloc

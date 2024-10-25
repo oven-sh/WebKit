@@ -1496,6 +1496,7 @@ op :js_to_wasm_wrapper_entry
 op :wasm_to_wasm_wrapper_entry
 op :wasm_to_js_wrapper_entry
 op :ipint_trampoline
+op :ipint_entry
 
 op :js_trampoline_op_call
 op :js_trampoline_op_call_ignore_result
@@ -1517,6 +1518,7 @@ op :wasm_trampoline_wasm_call_ref
 op :wasm_trampoline_wasm_tail_call
 op :wasm_trampoline_wasm_tail_call_indirect
 op :wasm_trampoline_wasm_tail_call_ref
+op :wasm_trampoline_wasm_ipint_call
 
 end_section :NativeHelpers
 
@@ -1575,6 +1577,7 @@ op :throw_from_fault_handler_trampoline_reg_instance
 op :call_return_location
 op :call_indirect_return_location
 op :call_ref_return_location
+op :ipint_call_return_location
 
 # FIXME: Wasm and JS LLInt should share common opcodes
 # https://bugs.webkit.org/show_bug.cgi?id=203656

@@ -36,10 +36,10 @@ namespace CSS {
 
 // MARK: - Common Types
 
-using DeprecatedGradientPosition = SpaceSeparatedTuple<PercentageOrNumber, PercentageOrNumber>;
+using DeprecatedGradientPosition = SpaceSeparatedArray<PercentageOrNumber, 2>;
 
-using Horizontal = std::variant<Left, Right>;
-using Vertical   = std::variant<Top, Bottom>;
+using Horizontal     = std::variant<Left, Right>;
+using Vertical       = std::variant<Top, Bottom>;
 
 using ClosestCorner  = Constant<CSSValueClosestCorner>;
 using ClosestSide    = Constant<CSSValueClosestSide>;
@@ -50,13 +50,6 @@ using Cover          = Constant<CSSValueCover>;
 
 using RadialGradientExtent         = std::variant<ClosestCorner, ClosestSide, FarthestCorner, FarthestSide>;
 using PrefixedRadialGradientExtent = std::variant<ClosestCorner, ClosestSide, FarthestCorner, FarthestSide, Contain, Cover>;
-
-// MARK: - Gradient Repeat Definitions.
-
-enum class GradientRepeat : bool { NonRepeating, Repeating };
-
-template<> struct ComputedStyleDependenciesCollector<GradientRepeat> { constexpr void operator()(ComputedStyleDependencies&, const GradientRepeat&) { } };
-template<> struct CSSValueChildrenVisitor<GradientRepeat> { constexpr IterationStatus operator()(const Function<IterationStatus(CSSValue&)>&, const GradientRepeat&) { return IterationStatus::Continue; } };
 
 // MARK: - Gradient Color Interpolation Definitions.
 
@@ -98,11 +91,11 @@ template<typename T> inline bool GradientColorStop<T>::operator==(const Gradient
     return compareCSSValuePtr(color, other.color) && position == other.position;
 }
 
-using GradientAngularColorStopPosition = std::optional<AnglePercentage>;
+using GradientAngularColorStopPosition = std::optional<AnglePercentage<>>;
 using GradientAngularColorStop = GradientColorStop<GradientAngularColorStopPosition>;
 using GradientAngularColorStopList = GradientColorStopList<GradientAngularColorStop>;
 
-using GradientLinearColorStopPosition = std::optional<LengthPercentage>;
+using GradientLinearColorStopPosition = std::optional<LengthPercentage<>>;
 using GradientLinearColorStop = GradientColorStop<GradientLinearColorStopPosition>;
 using GradientLinearColorStopList = GradientColorStopList<GradientLinearColorStop>;
 
@@ -125,9 +118,8 @@ template<> struct CSSValueChildrenVisitor<GradientDeprecatedColorStop> { Iterati
 // MARK: - LinearGradient
 
 struct LinearGradient {
-    using GradientLine = std::variant<Angle, Horizontal, Vertical, SpaceSeparatedTuple<Horizontal, Vertical>>;
+    using GradientLine = std::variant<Angle<>, Horizontal, Vertical, SpaceSeparatedTuple<Horizontal, Vertical>>;
 
-    GradientRepeat repeating;
     GradientColorInterpolationMethod colorInterpolationMethod;
     GradientLine gradientLine;
     GradientLinearColorStopList stops;
@@ -140,21 +132,18 @@ template<> struct Serialize<LinearGradient> { void operator()(StringBuilder&, co
 template<size_t I> const auto& get(const LinearGradient& gradient)
 {
     if constexpr (!I)
-        return gradient.repeating;
-    else if constexpr (I == 1)
         return gradient.colorInterpolationMethod;
-    else if constexpr (I == 2)
+    else if constexpr (I == 1)
         return gradient.gradientLine;
-    else if constexpr (I == 3)
+    else if constexpr (I == 2)
         return gradient.stops;
 }
 
 // MARK: - PrefixedLinearGradient
 
 struct PrefixedLinearGradient {
-    using GradientLine = std::variant<Angle, Horizontal, Vertical, SpaceSeparatedTuple<Horizontal, Vertical>>;
+    using GradientLine = std::variant<Angle<>, Horizontal, Vertical, SpaceSeparatedTuple<Horizontal, Vertical>>;
 
-    GradientRepeat repeating;
     GradientColorInterpolationMethod colorInterpolationMethod;
     GradientLine gradientLine;
     GradientLinearColorStopList stops;
@@ -167,19 +156,17 @@ template<> struct Serialize<PrefixedLinearGradient> { void operator()(StringBuil
 template<size_t I> const auto& get(const PrefixedLinearGradient& gradient)
 {
     if constexpr (!I)
-        return gradient.repeating;
-    else if constexpr (I == 1)
         return gradient.colorInterpolationMethod;
-    else if constexpr (I == 2)
+    else if constexpr (I == 1)
         return gradient.gradientLine;
-    else if constexpr (I == 3)
+    else if constexpr (I == 2)
         return gradient.stops;
 }
 
 // MARK: - DeprecatedLinearGradient
 
 struct DeprecatedLinearGradient {
-    using GradientLine = CommaSeparatedTuple<DeprecatedGradientPosition, DeprecatedGradientPosition>;
+    using GradientLine = CommaSeparatedArray<DeprecatedGradientPosition, 2>;
 
     GradientColorInterpolationMethod colorInterpolationMethod;
     GradientLine gradientLine;
@@ -205,20 +192,19 @@ template<size_t I> const auto& get(const DeprecatedLinearGradient& gradient)
 struct RadialGradient {
     using Extent = RadialGradientExtent;
     struct Ellipse {
-        using Size = SpaceSeparatedTuple<LengthPercentage, LengthPercentage>; // <length-percentage [0,∞]>, <length-percentage [0,∞]>
+        using Size = SpaceSeparatedArray<LengthPercentage<Nonnegative>, 2>;
         std::variant<Size, Extent> size;
         std::optional<Position> position;
         bool operator==(const Ellipse&) const = default;
     };
     struct Circle {
-        using Length = CSS::Length; // <length [0,∞]>
+        using Length = CSS::Length<Nonnegative>;
         std::variant<Length, Extent> size;
         std::optional<Position> position;
         bool operator==(const Circle&) const = default;
     };
     using GradientBox = std::variant<Ellipse, Circle>;
 
-    GradientRepeat repeating;
     GradientColorInterpolationMethod colorInterpolationMethod;
     GradientBox gradientBox;
     GradientLinearColorStopList stops;
@@ -249,12 +235,10 @@ template<size_t I> const auto& get(const RadialGradient::Circle& circle)
 template<size_t I> const auto& get(const RadialGradient& gradient)
 {
     if constexpr (!I)
-        return gradient.repeating;
-    else if constexpr (I == 1)
         return gradient.colorInterpolationMethod;
-    else if constexpr (I == 2)
+    else if constexpr (I == 1)
         return gradient.gradientBox;
-    else if constexpr (I == 3)
+    else if constexpr (I == 2)
         return gradient.stops;
 }
 
@@ -263,7 +247,7 @@ template<size_t I> const auto& get(const RadialGradient& gradient)
 struct PrefixedRadialGradient {
     using Extent = PrefixedRadialGradientExtent;
     struct Ellipse {
-        using Size = SpaceSeparatedTuple<LengthPercentage, LengthPercentage>; // <length-percentage [0,∞]>, <length-percentage [0,∞]>
+        using Size = SpaceSeparatedArray<LengthPercentage<Nonnegative>, 2>;
         std::optional<std::variant<Size, Extent>> size;
         std::optional<Position> position;
         bool operator==(const Ellipse&) const = default;
@@ -275,7 +259,6 @@ struct PrefixedRadialGradient {
     };
     using GradientBox = std::variant<Ellipse, Circle>;
 
-    GradientRepeat repeating;
     GradientColorInterpolationMethod colorInterpolationMethod;
     GradientBox gradientBox;
     GradientLinearColorStopList stops;
@@ -306,12 +289,10 @@ template<size_t I> const auto& get(const PrefixedRadialGradient::Circle& circle)
 template<size_t I> const auto& get(const PrefixedRadialGradient& gradient)
 {
     if constexpr (!I)
-        return gradient.repeating;
-    else if constexpr (I == 1)
         return gradient.colorInterpolationMethod;
-    else if constexpr (I == 2)
+    else if constexpr (I == 1)
         return gradient.gradientBox;
-    else if constexpr (I == 3)
+    else if constexpr (I == 2)
         return gradient.stops;
 }
 
@@ -320,9 +301,9 @@ template<size_t I> const auto& get(const PrefixedRadialGradient& gradient)
 struct DeprecatedRadialGradient {
     struct GradientBox {
         DeprecatedGradientPosition first;
-        Number firstRadius; // <number [0,∞]>
+        Number<Nonnegative> firstRadius;
         DeprecatedGradientPosition second;
-        Number secondRadius; // <number [0,∞]>
+        Number<Nonnegative> secondRadius;
 
         bool operator==(const GradientBox&) const = default;
     };
@@ -359,18 +340,16 @@ template<size_t I> const auto& get(const DeprecatedRadialGradient& gradient)
         return gradient.stops;
 }
 
-
 // MARK: - ConicGradient
 
 struct ConicGradient {
     struct GradientBox {
-        std::optional<Angle> angle;
+        std::optional<Angle<>> angle;
         std::optional<Position> position;
 
         bool operator==(const GradientBox&) const = default;
     };
 
-    GradientRepeat repeating;
     GradientColorInterpolationMethod colorInterpolationMethod;
     GradientBox gradientBox;
     GradientAngularColorStopList stops;
@@ -392,28 +371,48 @@ template<size_t I> const auto& get(const ConicGradient::GradientBox& gradientBox
 template<size_t I> const auto& get(const ConicGradient& gradient)
 {
     if constexpr (!I)
-        return gradient.repeating;
-    else if constexpr (I == 1)
         return gradient.colorInterpolationMethod;
-    else if constexpr (I == 2)
+    else if constexpr (I == 1)
         return gradient.gradientBox;
-    else if constexpr (I == 3)
+    else if constexpr (I == 2)
         return gradient.stops;
 }
+
+// MARK: - Gradient (variant)
+
+using Gradient = std::variant<
+    // Linear
+    FunctionNotation<CSSValueLinearGradient, LinearGradient>,
+    FunctionNotation<CSSValueRepeatingLinearGradient, LinearGradient>,
+    FunctionNotation<CSSValueWebkitLinearGradient, PrefixedLinearGradient>,
+    FunctionNotation<CSSValueWebkitRepeatingLinearGradient, PrefixedLinearGradient>,
+    FunctionNotation<CSSValueWebkitGradient, DeprecatedLinearGradient>,
+
+    // Radial
+    FunctionNotation<CSSValueRadialGradient, RadialGradient>,
+    FunctionNotation<CSSValueRepeatingRadialGradient, RadialGradient>,
+    FunctionNotation<CSSValueWebkitRadialGradient, PrefixedRadialGradient>,
+    FunctionNotation<CSSValueWebkitRepeatingRadialGradient, PrefixedRadialGradient>,
+    FunctionNotation<CSSValueWebkitGradient, DeprecatedRadialGradient>,
+
+    // Conic
+    FunctionNotation<CSSValueConicGradient, ConicGradient>,
+    FunctionNotation<CSSValueRepeatingConicGradient, ConicGradient>
+>;
 
 } // namespace CSS
 } // namespace WebCore
 
-CSS_TUPLE_LIKE_CONFORMANCE(LinearGradient, 4)
-CSS_TUPLE_LIKE_CONFORMANCE(PrefixedLinearGradient, 4)
+CSS_TUPLE_LIKE_CONFORMANCE(LinearGradient, 3)
+CSS_TUPLE_LIKE_CONFORMANCE(PrefixedLinearGradient, 3)
 CSS_TUPLE_LIKE_CONFORMANCE(DeprecatedLinearGradient, 3)
 CSS_TUPLE_LIKE_CONFORMANCE(RadialGradient::Ellipse, 2)
 CSS_TUPLE_LIKE_CONFORMANCE(RadialGradient::Circle, 2)
-CSS_TUPLE_LIKE_CONFORMANCE(RadialGradient, 4)
+CSS_TUPLE_LIKE_CONFORMANCE(RadialGradient, 3)
 CSS_TUPLE_LIKE_CONFORMANCE(PrefixedRadialGradient::Ellipse, 2)
 CSS_TUPLE_LIKE_CONFORMANCE(PrefixedRadialGradient::Circle, 2)
-CSS_TUPLE_LIKE_CONFORMANCE(PrefixedRadialGradient, 4)
+CSS_TUPLE_LIKE_CONFORMANCE(PrefixedRadialGradient, 3)
 CSS_TUPLE_LIKE_CONFORMANCE(DeprecatedRadialGradient::GradientBox, 4)
 CSS_TUPLE_LIKE_CONFORMANCE(DeprecatedRadialGradient, 3)
 CSS_TUPLE_LIKE_CONFORMANCE(ConicGradient::GradientBox, 2)
-CSS_TUPLE_LIKE_CONFORMANCE(ConicGradient, 4)
+CSS_TUPLE_LIKE_CONFORMANCE(ConicGradient, 3)

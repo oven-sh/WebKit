@@ -1088,9 +1088,9 @@ void WebProcessPool::lockdownModeStateChanged()
 {
     auto isNowEnabled = isLockdownModeEnabledBySystemIgnoringCaching();
     if (cachedLockdownModeEnabledGlobally() != isNowEnabled) {
-        lockdownModeObservers().forEach([](auto& observer) { observer.willChangeLockdownMode(); });
+        lockdownModeObservers().forEach([](Ref<LockdownModeObserver> observer) { observer->willChangeLockdownMode(); });
         cachedLockdownModeEnabledGlobally() = isNowEnabled;
-        lockdownModeObservers().forEach([](auto& observer) { observer.didChangeLockdownMode(); });
+        lockdownModeObservers().forEach([](Ref<LockdownModeObserver> observer) { observer->didChangeLockdownMode(); });
     }
 
     WEBPROCESSPOOL_RELEASE_LOG(Loading, "WebProcessPool::lockdownModeStateChanged() isNowEnabled=%d", isNowEnabled);
@@ -1306,7 +1306,7 @@ RefPtr<WebProcessProxy> WebProcessPool::webProcessForCapabilityGranter(const Ext
 
     auto index = processes().findIf([&](auto& process) {
         return process->pages().containsIf([&](auto& page) {
-            if (auto& mediaCapability = page->mediaCapability())
+            if (RefPtr mediaCapability = page->mediaCapability())
                 return mediaCapability->environmentIdentifier() == environmentIdentifier;
             return false;
         });

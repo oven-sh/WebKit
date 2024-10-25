@@ -286,10 +286,11 @@
 
 // 32-bit platforms use different calling conventions, so a MUST_TAIL_CALL function
 // written for 64-bit may fail to tail call on 32-bit.
+// It also doesn't work on ppc64le: https://github.com/llvm/llvm-project/issues/98859
 #if COMPILER(CLANG)
 #if __SIZEOF_POINTER__ == 8
 #if !defined(MUST_TAIL_CALL) && defined(__cplusplus) && defined(__has_cpp_attribute)
-#if __has_cpp_attribute(clang::musttail)
+#if __has_cpp_attribute(clang::musttail) && !defined(__powerpc__)
 #define MUST_TAIL_CALL [[clang::musttail]]
 #endif
 #endif
@@ -591,4 +592,40 @@
 #define WTF_UNREACHABLE(...) __assume(0)
 #else
 #define WTF_UNREACHABLE(...) __builtin_unreachable();
+#endif
+
+/* WTF_ALLOW_UNSAFE_BUFFER_USAGE */
+
+#if COMPILER(CLANG)
+#define WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN \
+    _Pragma("clang diagnostic push") \
+    _Pragma("clang diagnostic ignored \"-Wunsafe-buffer-usage\"")
+
+#define WTF_ALLOW_UNSAFE_BUFFER_USAGE_END \
+    _Pragma("clang diagnostic pop")
+#else
+#define WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+#define WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+#endif
+
+#ifndef __has_attribute
+#define __has_attribute(x) 0
+#endif
+
+#ifndef __has_cpp_attribute
+#define __has_cpp_attribute(x) 0
+#endif
+
+/* WTF_UNSAFE_BUFFER_USAGE */
+
+#if COMPILER(CLANG)
+#if __has_cpp_attribute(clang::unsafe_buffer_usage)
+#define WTF_UNSAFE_BUFFER_USAGE [[clang::unsafe_buffer_usage]]
+#elif __has_attribute(unsafe_buffer_usage)
+#define WTF_UNSAFE_BUFFER_USAGE __attribute__((__unsafe_buffer_usage__))
+#else
+#define WTF_UNSAFE_BUFFER_USAGE
+#endif
+#else
+#define WTF_UNSAFE_BUFFER_USAGE
 #endif

@@ -57,7 +57,7 @@ void AnimationEffect::setAnimation(WebAnimation* animation)
 }
 
 enum class IsComputed : bool { No, Yes };
-static std::variant<double, RefPtr<CSSNumericValue>, String> durationAPIValue(const CSSNumberishTime& duration, IsComputed isComputed)
+static std::variant<double, RefPtr<CSSNumericValue>, String> durationAPIValue(const WebAnimationTime& duration, IsComputed isComputed)
 {
     if (duration.percentage())
         return autoAtom();
@@ -94,7 +94,7 @@ EffectTiming AnimationEffect::getBindingsTiming() const
     return timing;
 }
 
-AnimationEffectTiming::ResolutionData AnimationEffect::resolutionData(std::optional<CSSNumberishTime> startTime) const
+AnimationEffectTiming::ResolutionData AnimationEffect::resolutionData(std::optional<WebAnimationTime> startTime) const
 {
     if (!m_animation)
         return { };
@@ -110,7 +110,7 @@ AnimationEffectTiming::ResolutionData AnimationEffect::resolutionData(std::optio
     };
 }
 
-BasicEffectTiming AnimationEffect::getBasicTiming(std::optional<CSSNumberishTime> startTime) const
+BasicEffectTiming AnimationEffect::getBasicTiming(std::optional<WebAnimationTime> startTime) const
 {
     return m_timing.getBasicTiming(resolutionData(startTime));
 }
@@ -122,7 +122,7 @@ ComputedEffectTiming AnimationEffect::getBindingsComputedTiming() const
     return getComputedTiming();
 }
 
-ComputedEffectTiming AnimationEffect::getComputedTiming(std::optional<CSSNumberishTime> startTime) const
+ComputedEffectTiming AnimationEffect::getComputedTiming(std::optional<WebAnimationTime> startTime) const
 {
     auto data = resolutionData(startTime);
     auto resolvedTiming = m_timing.resolve(data);
@@ -133,7 +133,7 @@ ComputedEffectTiming AnimationEffect::getComputedTiming(std::optional<CSSNumberi
     computedTiming.fill = m_timing.fill == FillMode::Auto ? FillMode::None : m_timing.fill;
     computedTiming.iterationStart = m_timing.iterationStart;
     computedTiming.iterations = m_timing.iterations;
-    computedTiming.duration = durationAPIValue(m_timing.iterationDuration, IsComputed::Yes);
+    computedTiming.duration = durationAPIValue(m_timing.intrinsicIterationDuration, IsComputed::Yes);
     computedTiming.direction = m_timing.direction;
     computedTiming.easing = m_timing.timingFunction->cssText();
     computedTiming.endTime = m_timing.endTime;
@@ -249,18 +249,26 @@ void AnimationEffect::normalizeSpecifiedTiming(std::variant<double, String> dura
         if (m_animation) {
             if (RefPtr timeline = m_animation->timeline()) {
                 if (timeline->duration())
-                    return CSSNumberishTime::fromPercentage(100);
+                    return WebAnimationTime::fromPercentage(100);
             }
         }
         if (auto* doubleValue = std::get_if<double>(&duration))
-            return CSSNumberishTime::fromMilliseconds(*doubleValue);
-        return CSSNumberishTime::fromMilliseconds(0);
+            return WebAnimationTime::fromMilliseconds(*doubleValue);
+        return WebAnimationTime::fromMilliseconds(0);
     }();
 }
 
 void AnimationEffect::updateStaticTimingProperties()
 {
-    m_timing.updateComputedProperties();
+    m_timing.updateComputedProperties([&]() {
+        if (RefPtr animation = m_animation.get()) {
+            if (RefPtr timeline = animation->timeline()) {
+                if (timeline->isProgressBased())
+                    return AnimationEffectTiming::IsProgressBased::Yes;
+            }
+        }
+        return AnimationEffectTiming::IsProgressBased::No;
+    }());
 }
 
 ExceptionOr<void> AnimationEffect::setIterationStart(double iterationStart)
@@ -383,14 +391,13 @@ Seconds AnimationEffect::timeToNextTick(const BasicEffectTiming& timing) const
 
 void AnimationEffect::animationTimelineDidChange(const AnimationTimeline*)
 {
-    if (!m_hasAutoDuration)
-        return;
-
-    if (auto percentage = iterationDuration().percentage())
-        normalizeSpecifiedTiming(*percentage);
-    else {
-        ASSERT(iterationDuration().time());
-        normalizeSpecifiedTiming(iterationDuration().time()->seconds());
+    if (m_hasAutoDuration) {
+        if (auto percentage = iterationDuration().percentage())
+            normalizeSpecifiedTiming(*percentage);
+        else {
+            ASSERT(iterationDuration().time());
+            normalizeSpecifiedTiming(iterationDuration().time()->seconds());
+        }
     }
 
     updateStaticTimingProperties();

@@ -1034,7 +1034,7 @@ paused
 //
 flat
 preserve-3d
-separated enable-if=ENABLE_CSS_TRANSFORM_STYLE_SEPARATED
+separated enable-if=HAVE_CORE_ANIMATION_SEPARATED_LAYERS
 
 //
 // CSS_PROP__WEBKIT_TRANSITION_TIMING_FUNCTION
@@ -1071,6 +1071,12 @@ nearest
 root
 self
 view
+// cover
+// contain
+entry
+exit
+entry-crossing
+exit-crossing
 
 //
 // CSS_PROP_ZOOM
@@ -1364,8 +1370,12 @@ ccw
 // small
 by
 close
-using
+with
 of
+// from
+// start
+// end
+origin
 
 // @font-face src
 format
@@ -1769,6 +1779,7 @@ false
 
 // text-spacing-trim
 space-all
+trim-all
 // text-autospace
 // normal
 no-autospace
@@ -1800,3 +1811,4 @@ width
 height
 self-block
 self-inline
+anchor-center

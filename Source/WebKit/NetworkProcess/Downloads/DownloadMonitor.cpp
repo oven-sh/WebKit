@@ -34,7 +34,7 @@
 
 namespace WebKit {
 
-constexpr uint64_t operator"" _kbps(unsigned long long kilobytesPerSecond)
+constexpr uint64_t operator""_kbps(unsigned long long kilobytesPerSecond)
 {
     return kilobytesPerSecond * 1024;
 }
@@ -44,21 +44,21 @@ struct ThroughputInterval {
     uint64_t bytesPerSecond;
 };
 
-static const ThroughputInterval throughputIntervals[] = {
-    { 1_min, 1_kbps },
-    { 5_min, 2_kbps },
-    { 10_min, 4_kbps },
-    { 15_min, 8_kbps },
-    { 20_min, 16_kbps },
-    { 25_min, 32_kbps },
-    { 30_min, 64_kbps },
-    { 45_min, 96_kbps },
-    { 60_min, 128_kbps }
+static constexpr std::array throughputIntervals = {
+    ThroughputInterval { 1_min, 1_kbps },
+    ThroughputInterval { 5_min, 2_kbps },
+    ThroughputInterval { 10_min, 4_kbps },
+    ThroughputInterval { 15_min, 8_kbps },
+    ThroughputInterval { 20_min, 16_kbps },
+    ThroughputInterval { 25_min, 32_kbps },
+    ThroughputInterval { 30_min, 64_kbps },
+    ThroughputInterval { 45_min, 96_kbps },
+    ThroughputInterval { 60_min, 128_kbps }
 };
 
 static Seconds timeUntilNextInterval(size_t currentInterval)
 {
-    RELEASE_ASSERT(currentInterval + 1 < std::size(throughputIntervals));
+    RELEASE_ASSERT(currentInterval + 1 < throughputIntervals.size());
     return throughputIntervals[currentInterval + 1].time - throughputIntervals[currentInterval].time;
 }
 

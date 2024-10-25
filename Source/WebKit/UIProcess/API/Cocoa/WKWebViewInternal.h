@@ -24,6 +24,7 @@
  */
 
 #import "PDFPluginIdentifier.h"
+#import "WKIntelligenceTextEffectCoordinator.h"
 #import "WKTextAnimationType.h"
 #import <WebKit/WKShareSheet.h>
 #import <WebKit/WKWebViewConfiguration.h>

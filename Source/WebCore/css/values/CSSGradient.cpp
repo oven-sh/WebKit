@@ -67,7 +67,7 @@ void Serialize<GradientLinearColorStop>::operator()(StringBuilder& builder, cons
 
 void Serialize<GradientDeprecatedColorStop>::operator()(StringBuilder& builder, const GradientDeprecatedColorStop& stop)
 {
-    auto appendRaw = [&](const auto& color, NumberRaw raw) {
+    auto appendRaw = [&](const auto& color, NumberRaw<> raw) {
         if (!raw.value)
             builder.append("from("_s, color->cssText(), ')');
         else if (raw.value == 1)
@@ -84,22 +84,22 @@ void Serialize<GradientDeprecatedColorStop>::operator()(StringBuilder& builder, 
     };
 
     WTF::switchOn(stop.position,
-        [&](const Number& number) {
+        [&](const Number<>& number) {
             return WTF::switchOn(number.value,
-                [&](NumberRaw raw) {
+                [&](NumberRaw<> raw) {
                     appendRaw(stop.color, raw);
                 },
-                [&](const UnevaluatedCalc<NumberRaw>& calc) {
+                [&](const UnevaluatedCalc<NumberRaw<>>& calc) {
                     appendCalc(calc);
                 }
             );
         },
-        [&](const Percentage& percentage) {
+        [&](const Percentage<>& percentage) {
             return WTF::switchOn(percentage.value,
-                [&](PercentageRaw raw) {
+                [&](PercentageRaw<> raw) {
                     appendRaw(stop.color, { raw.value / 100.0 });
                 },
-                [&](const UnevaluatedCalc<PercentageRaw>& calc) {
+                [&](const UnevaluatedCalc<PercentageRaw<>>& calc) {
                     appendCalc(calc);
                 }
             );
@@ -185,20 +185,19 @@ static bool appendColorInterpolationMethod(StringBuilder& builder, CSS::Gradient
 
 void Serialize<LinearGradient>::operator()(StringBuilder& builder, const LinearGradient& gradient)
 {
-    builder.append(gradient.repeating == GradientRepeat::Repeating ? "repeating-linear-gradient("_s : "linear-gradient("_s);
     bool wroteSomething = false;
 
     WTF::switchOn(gradient.gradientLine,
-        [&](const Angle& angle) {
+        [&](const Angle<>& angle) {
             WTF::switchOn(angle.value,
-                [&](const AngleRaw& angleRaw) {
+                [&](const AngleRaw<>& angleRaw) {
                     if (CSSPrimitiveValue::computeDegrees(angleRaw.type, angleRaw.value) == 180)
                         return;
 
                     serializationForCSS(builder, angleRaw);
                     wroteSomething = true;
                 },
-                [&](const UnevaluatedCalc<AngleRaw>& angleCalc) {
+                [&](const UnevaluatedCalc<AngleRaw<>>& angleCalc) {
                     serializationForCSS(builder, angleCalc);
                     wroteSomething = true;
                 }
@@ -231,26 +230,22 @@ void Serialize<LinearGradient>::operator()(StringBuilder& builder, const LinearG
         builder.append(", "_s);
 
     serializationForCSS(builder, gradient.stops);
-
-    builder.append(')');
 }
 
 // MARK: - PrefixedLinearGradient
 
 void Serialize<PrefixedLinearGradient>::operator()(StringBuilder& builder, const PrefixedLinearGradient& gradient)
 {
-    builder.append(gradient.repeating == GradientRepeat::Repeating ? "-webkit-repeating-linear-gradient("_s : "-webkit-linear-gradient("_s);
     serializationForCSS(builder, gradient.gradientLine);
     builder.append(", "_s);
     serializationForCSS(builder, gradient.stops);
-    builder.append(')');
 }
 
 // MARK: - DeprecatedLinearGradient
 
 void Serialize<DeprecatedLinearGradient>::operator()(StringBuilder& builder, const DeprecatedLinearGradient& gradient)
 {
-    builder.append("-webkit-gradient(linear, "_s);
+    builder.append("linear, "_s);
 
     serializationForCSS(builder, gradient.gradientLine);
 
@@ -258,8 +253,6 @@ void Serialize<DeprecatedLinearGradient>::operator()(StringBuilder& builder, con
         builder.append(", "_s);
         serializationForCSS(builder, gradient.stops);
     }
-
-    builder.append(')');
 }
 
 // MARK: - RadialGradient
@@ -269,7 +262,7 @@ void Serialize<RadialGradient::Ellipse>::operator()(StringBuilder& builder, cons
     auto lengthBefore = builder.length();
 
     WTF::switchOn(ellipse.size,
-        [&](const SpaceSeparatedTuple<LengthPercentage, LengthPercentage>& size) {
+        [&](const RadialGradient::Ellipse::Size& size) {
             serializationForCSS(builder, size);
         },
         [&](const RadialGradient::Extent& extent) {
@@ -293,7 +286,7 @@ void Serialize<RadialGradient::Ellipse>::operator()(StringBuilder& builder, cons
 void Serialize<RadialGradient::Circle>::operator()(StringBuilder& builder, const RadialGradient::Circle& circle)
 {
     WTF::switchOn(circle.size,
-        [&](const Length& length) {
+        [&](const RadialGradient::Circle::Length& length) {
             serializationForCSS(builder, length);
         },
         [&](const RadialGradient::Extent& extent) {
@@ -315,8 +308,6 @@ void Serialize<RadialGradient::Circle>::operator()(StringBuilder& builder, const
 
 void Serialize<RadialGradient>::operator()(StringBuilder& builder, const RadialGradient& gradient)
 {
-    builder.append(gradient.repeating == GradientRepeat::Repeating ? "repeating-radial-gradient("_s : "radial-gradient("_s);
-
     auto lengthBefore = builder.length();
     serializationForCSS(builder, gradient.gradientBox);
     bool wroteSomething = builder.length() != lengthBefore;
@@ -328,8 +319,6 @@ void Serialize<RadialGradient>::operator()(StringBuilder& builder, const RadialG
         builder.append(", "_s);
 
     serializationForCSS(builder, gradient.stops);
-
-    builder.append(')');
 }
 
 // MARK: - PrefixedRadialGradient
@@ -343,7 +332,7 @@ void Serialize<PrefixedRadialGradient::Ellipse>::operator()(StringBuilder& build
 
     if (ellipse.size) {
         WTF::switchOn(*ellipse.size,
-            [&](const SpaceSeparatedTuple<LengthPercentage, LengthPercentage>& size) {
+            [&](const PrefixedRadialGradient::Ellipse::Size& size) {
                 builder.append(", "_s);
                 serializationForCSS(builder, size);
             },
@@ -368,8 +357,6 @@ void Serialize<PrefixedRadialGradient::Circle>::operator()(StringBuilder& builde
 
 void Serialize<PrefixedRadialGradient>::operator()(StringBuilder& builder, const PrefixedRadialGradient& gradient)
 {
-    builder.append(gradient.repeating == GradientRepeat::Repeating ? "-webkit-repeating-radial-gradient("_s : "-webkit-radial-gradient("_s);
-
     auto lengthBefore = builder.length();
     serializationForCSS(builder, gradient.gradientBox);
     bool wroteSomething = builder.length() != lengthBefore;
@@ -378,8 +365,6 @@ void Serialize<PrefixedRadialGradient>::operator()(StringBuilder& builder, const
         builder.append(", "_s);
 
     serializationForCSS(builder, gradient.stops);
-
-    builder.append(')');
 }
 
 // MARK: - DeprecatedRadialGradient
@@ -397,7 +382,7 @@ void Serialize<DeprecatedRadialGradient::GradientBox>::operator()(StringBuilder&
 
 void Serialize<DeprecatedRadialGradient>::operator()(StringBuilder& builder, const DeprecatedRadialGradient& gradient)
 {
-    builder.append("-webkit-gradient(radial, "_s);
+    builder.append("radial, "_s);
 
     serializationForCSS(builder, gradient.gradientBox);
 
@@ -405,8 +390,6 @@ void Serialize<DeprecatedRadialGradient>::operator()(StringBuilder& builder, con
         builder.append(", "_s);
         serializationForCSS(builder, gradient.stops);
     }
-
-    builder.append(')');
 }
 
 // MARK: - ConicGradient
@@ -417,14 +400,14 @@ void Serialize<ConicGradient::GradientBox>::operator()(StringBuilder& builder, c
 
     if (gradientBox.angle) {
         WTF::switchOn(gradientBox.angle->value,
-            [&](const AngleRaw& angleRaw) {
+            [&](const AngleRaw<>& angleRaw) {
                 if (angleRaw.value) {
                     builder.append("from "_s);
                     serializationForCSS(builder, angleRaw);
                     wroteSomething = true;
                 }
             },
-            [&](const UnevaluatedCalc<AngleRaw>& angleCalc) {
+            [&](const UnevaluatedCalc<AngleRaw<>>& angleCalc) {
                 builder.append("from "_s);
                 serializationForCSS(builder, angleCalc);
                 wroteSomething = true;
@@ -442,8 +425,6 @@ void Serialize<ConicGradient::GradientBox>::operator()(StringBuilder& builder, c
 
 void Serialize<ConicGradient>::operator()(StringBuilder& builder, const ConicGradient& gradient)
 {
-    builder.append(gradient.repeating == GradientRepeat::Repeating ? "repeating-conic-gradient("_s : "conic-gradient("_s);
-
     auto lengthBefore = builder.length();
     serializationForCSS(builder, gradient.gradientBox);
     bool wroteSomething = builder.length() != lengthBefore;
@@ -455,8 +436,6 @@ void Serialize<ConicGradient>::operator()(StringBuilder& builder, const ConicGra
         builder.append(", "_s);
 
     serializationForCSS(builder, gradient.stops);
-
-    builder.append(')');
 }
 
 } // namespace CSS

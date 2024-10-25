@@ -45,6 +45,8 @@
 
 #import "PDFKitSoftLink.h"
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace WebKit {
 using namespace WebCore;
 
@@ -241,9 +243,8 @@ void PDFPluginStreamLoaderClient::didFail(NetscapePlugInStreamLoader* streamLoad
         return;
 
     if (loader->documentFinishedLoading()) {
-        auto identifier = loader->identifierForLoader(streamLoader);
-        if (identifier)
-            loader->removeOutstandingByteRangeRequest(identifier);
+        if (auto identifier = loader->identifierForLoader(streamLoader))
+            loader->removeOutstandingByteRangeRequest(*identifier);
     }
 
     loader->forgetStreamLoader(*streamLoader);
@@ -483,7 +484,7 @@ auto PDFIncrementalLoader::byteRangeRequestForStreamLoader(NetscapePlugInStreamL
     if (!identifier)
         return nullptr;
 
-    auto it = m_requestData->outstandingByteRangeRequests.find(identifier);
+    auto it = m_requestData->outstandingByteRangeRequests.find(*identifier);
     if (it == m_requestData->outstandingByteRangeRequests.end())
         return nullptr;
 
@@ -508,7 +509,7 @@ void PDFIncrementalLoader::forgetStreamLoader(NetscapePlugInStreamLoader& loader
     m_requestData->streamLoaderMap.remove(&loader);
 
 #if !LOG_DISABLED
-    incrementalLoaderLog(makeString("Forgot stream loader for range request "_s, identifier, ". There are now "_s, m_requestData->streamLoaderMap.size(), " stream loaders remaining"_s));
+    incrementalLoaderLog(makeString("Forgot stream loader for range request "_s, *identifier, ". There are now "_s, m_requestData->streamLoaderMap.size(), " stream loaders remaining"_s));
 #endif
 }
 
@@ -519,7 +520,7 @@ void PDFIncrementalLoader::cancelAndForgetStreamLoader(NetscapePlugInStreamLoade
     streamLoader.cancel(streamLoader.cancelledError());
 }
 
-ByteRangeRequestIdentifier PDFIncrementalLoader::identifierForLoader(WebCore::NetscapePlugInStreamLoader* loader)
+std::optional<ByteRangeRequestIdentifier> PDFIncrementalLoader::identifierForLoader(WebCore::NetscapePlugInStreamLoader* loader)
 {
     return m_requestData->streamLoaderMap.get(loader);
 }
@@ -864,5 +865,7 @@ void PDFIncrementalLoader::logState(TextStream& ts)
 #endif
 
 } // namespace WebKit
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(PDF_PLUGIN) && HAVE(INCREMENTAL_PDF_APIS)

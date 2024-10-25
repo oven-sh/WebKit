@@ -206,6 +206,18 @@ window.UIHelper = class UIHelper {
         });
     }
 
+    static roundToDevicePixel(value)
+    {
+        return Math.round(value * devicePixelRatio) / devicePixelRatio;
+    }
+
+    static roundRectToDevicePixel(rect)
+    {
+        return Object.fromEntries(Object.keys(rect).map(key => {
+            return [key, this.roundToDevicePixel(rect[key])];
+        }));
+    }
+
     static tapAt(x, y, modifiers=[])
     {
         console.assert(this.isIOSFamily());
@@ -1990,7 +2002,8 @@ window.UIHelper = class UIHelper {
 
     static async longPressElement(element)
     {
-        return this.longPressAtPoint(element.offsetLeft + element.offsetWidth / 2, element.offsetTop + element.offsetHeight / 2);
+        const { x, y } = this.midPointOfRect(element.getBoundingClientRect());
+        return this.longPressAtPoint(x, y);
     }
 
     static async longPressAtPoint(x, y)

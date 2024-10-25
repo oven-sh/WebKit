@@ -157,6 +157,11 @@ fast/history/page-cache-indexed-closed-db.html [ Pass ]
 
 fast/multicol/multicol-with-child-renderLayer-for-input.html [ Pass ]
 
+# Enhanced <input type=color>
+imported/w3c/web-platform-tests/html/semantics/forms/the-input-element/color-attributes.window.html [ Skip ]
+imported/w3c/web-platform-tests/html/semantics/forms/the-input-element/color.window.html [ Skip ]
+accessibility/color-well.html [ Skip ]
+
 # permessage-deflate WebSocket extension.
 http/tests/websocket/tests/hybi/imported/blink/permessage-deflate-comp-bit-onoff.html [ Pass ]
 http/tests/websocket/tests/hybi/imported/blink/permessage-deflate-parameter.html [ Pass ]
@@ -659,6 +664,8 @@ accessibility/menuitem-is-selected.html [ Skip ]
 accessibility/search-traversal-after-role-change.html [ Skip ]
 accessibility/table-search-traversal.html [ Skip ]
 accessibility/tree-update-with-dirty-layout.html [ Skip ]
+accessibility/tree-update-with-dynamically-ignored-inline-child-div.html [ Skip ]
+accessibility/tree-update-with-dynamically-ignored-tabindex-div.html [ Skip ]
 accessibility/dynamically-changing-iframe-remains-accessible.html [ Skip ]
 accessibility/ignore-modals-without-any-content.html [ Skip ]
 accessibility/iframe-tree-update-with-dirty-layout.html [ Skip ]
@@ -1146,6 +1153,8 @@ webkit.org/b/254522 media/video-volume.html [ Pass Failure ]
 webkit.org/b/254525 http/tests/media/video-throttled-load-metadata.html [ Pass Failure ]
 media/video-seek-to-current-time.html [ Pass Failure ]
 
+webkit.org/b/281489 http/wpt/mediarecorder/MediaRecorder-first-frame.html [ Failure ]
+webkit.org/b/281295 http/wpt/mediarecorder/MediaRecorder-requestData.html [ Failure ]
 webkit.org/b/213699 http/wpt/mediarecorder/mimeType.html [ Failure ]
 webkit.org/b/213699 http/wpt/mediarecorder/mute-tracks.html [ Failure Crash ]
 webkit.org/b/213699 http/wpt/mediarecorder/video-rotation.html [ Failure ]
@@ -2093,19 +2102,11 @@ webkit.org/b/221021 webanimations/combining-transform-animations-with-different-
 webkit.org/b/221021 webanimations/combining-transform-animations-with-different-acceleration-capabilities-5.html [ Skip ]
 webkit.org/b/221021 webanimations/combining-transform-animations-with-different-acceleration-capabilities.html [ Skip ]
 
-webkit.org/b/281041 [ Debug ] animations/animation-direction-reverse-hardware-opacity.html [ Crash ]
-webkit.org/b/281041 [ Debug ] compositing/backing/zero-opacity-invalidation.html [ Crash ]
-webkit.org/b/281041 [ Debug ] compositing/geometry/limit-layer-bounds-opacity-transition.html [ Crash ]
-webkit.org/b/281041 [ Debug ] imported/blink/compositing/squashing/animation-repaint-crash.html [ Crash ]
-webkit.org/b/281041 [ Debug ] imported/w3c/web-platform-tests/css/css-animations/animation-before-initial-box-construction-001.html [ Crash ]
-webkit.org/b/281041 [ Debug ] imported/w3c/web-platform-tests/css/css-view-transitions/mix-blend-mode-only-on-transition.html [ Crash ]
-webkit.org/b/281041 [ Debug ] imported/w3c/web-platform-tests/css/css-view-transitions/no-css-animation-while-render-blocked.html [ Crash ]
-webkit.org/b/281041 [ Debug ] imported/w3c/web-platform-tests/paint-timing/fcp-only/fcp-pseudo-element-opacity.html [ Crash ]
-webkit.org/b/281041 [ Debug ] imported/w3c/web-platform-tests/scroll-animations/css/animation-timeline-view-functional-notation.tentative.html [ Crash ]
-webkit.org/b/281041 [ Debug ] imported/w3c/web-platform-tests/web-animations/interfaces/Animation/style-change-events.html [ Crash ]
-webkit.org/b/281041 [ Debug ] media/no-fullscreen-when-hidden.html [ Crash ]
-webkit.org/b/281041 [ Debug ] transitions/interrupted-accelerated-transition.html [ Crash ]
-webkit.org/b/281041 [ Debug ] webanimations/opacity-animation.html [ Crash ]
+webkit.org/b/281211 [ Debug ] fast/mediastream/captureStream/canvas3d.html [ Crash ]
+webkit.org/b/281211 [ Debug ] fast/mediastream/video-mediastream-restricted-invisible-autoplay-user-click.html [ Crash ]
+webkit.org/b/281211 [ Debug ] http/wpt/mediastream/transfer-videotrackgenerator-track.html [ Crash ]
+webkit.org/b/281211 [ Debug ] imported/w3c/web-platform-tests/css/css-contain/content-visibility/content-visibility-animation-in-auto-subtree.html [ Crash ]
+webkit.org/b/281211 [ Debug ] imported/w3c/web-platform-tests/css/css-view-transitions/pseudo-with-classes-entry.html [ Crash ]
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of WebAnimations-related bugs
@@ -2242,7 +2243,7 @@ fast/mediastream/microphone-interruption-and-audio-session.html [ Skip ]
 webkit.org/b/261329 webrtc/video-clone-track.html [ Failure ]
 webrtc/clone-audio-track.html [ Pass Failure ]
 
-webkit.org/b/256758 fast/mediastream/captureStream/canvas3d.html [ Failure ]
+# webkit.org/b/256758 fast/mediastream/captureStream/canvas3d.html [ Failure ]
 
 webkit.org/b/194611 http/wpt/webrtc/getUserMedia-processSwapping.html [ Failure ]
 
@@ -2337,7 +2338,7 @@ webkit.org/b/235885 webrtc/video-stats.html [ Failure ]
 webkit.org/b/235885 webrtc/vp8-then-h264.html [ Failure Timeout Crash ]
 webkit.org/b/252878 fast/mediastream/mediastreamtrack-video-clone.html [ Failure ]
 webkit.org/b/252878 fast/mediastream/video-mediastream-restricted-invisible-autoplay-not-allowed.html [ Pass Timeout ]
-webkit.org/b/252878 fast/mediastream/video-mediastream-restricted-invisible-autoplay-user-click.html [ Pass Timeout ]
+# webkit.org/b/252878 fast/mediastream/video-mediastream-restricted-invisible-autoplay-user-click.html [ Pass Timeout ]
 webkit.org/b/252878 http/tests/webrtc/video-mediastream-invisible-autoplay-detached.html [ Pass Timeout ]
 webkit.org/b/187064 webrtc/video-addTrack.html [ Failure Pass Timeout ]
 webkit.org/b/187064 webrtc/video-rotation.html [ Failure Timeout ]
@@ -4084,7 +4085,7 @@ imported/w3c/web-platform-tests/css/css-view-transitions/modify-style-via-cssom.
 imported/w3c/web-platform-tests/css/css-view-transitions/no-painting-while-render-blocked.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-view-transitions/no-white-flash-before-activation.html [ Pass ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-view-transitions/input-targets-root-while-render-blocked.html [ ImageOnlyFailure ]
-# imported/w3c/web-platform-tests/css/css-view-transitions/no-css-animation-while-render-blocked.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-view-transitions/no-css-animation-while-render-blocked.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-view-transitions/no-raf-while-render-blocked.html [ ImageOnlyFailure ]
 
 imported/w3c/web-platform-tests/css/css-view-transitions/navigation/at-rule-opt-in-auto.html [ ImageOnlyFailure ]
@@ -4098,6 +4099,8 @@ imported/w3c/web-platform-tests/css/css-view-transitions/navigation/with-types/a
 imported/w3c/web-platform-tests/css/css-view-transitions/navigation/with-types/at-rule-opt-in-auto-with-types-no-cascade.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-view-transitions/navigation/with-types/at-rule-opt-in-auto-with-types.html [ ImageOnlyFailure ]
 imported/w3c/web-platform-tests/css/css-view-transitions/navigation/custom-scrollbar.html [ ImageOnlyFailure ]
+imported/w3c/web-platform-tests/css/css-view-transitions/navigation/auto-name-from-id.html [ ImageOnlyFailure ]
+http/wpt/css/css-view-transitions/navigation/old_vt_promises_bfcache.html [ Failure ]
 
 imported/w3c/web-platform-tests/svg/text/reftests/transform-dynamic-change.html [ ImageOnlyFailure ]
 

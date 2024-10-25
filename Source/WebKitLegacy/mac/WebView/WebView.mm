@@ -1517,7 +1517,7 @@ static WebCore::ApplicationCacheStorage& webApplicationCacheStorage()
         makeUniqueRef<WebProgressTrackerClient>(self),
         WebCore::PageConfiguration::LocalMainFrameCreationParameters {
             CompletionHandler<UniqueRef<WebCore::LocalFrameLoaderClient>(WebCore::LocalFrame&, WebCore::FrameLoader&)> { [] (auto&, auto& frameLoader) {
-                return makeUniqueRef<WebFrameLoaderClient>(frameLoader);
+                return makeUniqueRefWithoutRefCountedCheck<WebFrameLoaderClient>(frameLoader);
             } },
             WebCore::SandboxFlags { } // Set by updateSandboxFlags after instantiation.
         },
@@ -1665,7 +1665,7 @@ static WebCore::ApplicationCacheStorage& webApplicationCacheStorage()
         WebCore::ResourceHandle::forceContentSniffing();
 
     _private->page->setDeviceScaleFactor([self _deviceScaleFactor]);
-    _private->page->effectiveAppearanceDidChange(self._effectiveAppearanceIsDark, self._effectiveUserInterfaceLevelIsElevated);
+    _private->page->setUseColorAppearance(self._effectiveAppearanceIsDark, self._effectiveUserInterfaceLevelIsElevated);
 
     [WebViewVisualIdentificationOverlay installForWebViewIfNeeded:self kind:@"WebView" deprecated:YES];
 
@@ -1783,7 +1783,7 @@ static WebCore::ApplicationCacheStorage& webApplicationCacheStorage()
         makeUniqueRef<WebProgressTrackerClient>(self),
         WebCore::PageConfiguration::LocalMainFrameCreationParameters {
             CompletionHandler<UniqueRef<WebCore::LocalFrameLoaderClient>(WebCore::LocalFrame&, WebCore::FrameLoader&)> { [] (auto&, auto& frameLoader) {
-                return makeUniqueRef<WebFrameLoaderClient>(frameLoader);
+                return makeUniqueRefWithoutRefCountedCheck<WebFrameLoaderClient>(frameLoader);
             } },
             WebCore::SandboxFlags { } // Set by updateSandboxFlags after instantiation.
         },
@@ -2630,7 +2630,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 {
     if (!_private || !_private->page)
         return;
-    _private->page->effectiveAppearanceDidChange(useDarkAppearance, useElevatedUserInterfaceLevel);
+    _private->page->setUseColorAppearance(useDarkAppearance, useElevatedUserInterfaceLevel);
 }
 
 + (void)_setIconLoadingEnabled:(BOOL)enabled
@@ -4846,7 +4846,7 @@ IGNORE_WARNINGS_END
     if (!_private || !_private->page)
         return;
 
-    _private->page->effectiveAppearanceDidChange(self._effectiveAppearanceIsDark, self._effectiveUserInterfaceLevelIsElevated);
+    _private->page->setUseColorAppearance(self._effectiveAppearanceIsDark, self._effectiveUserInterfaceLevelIsElevated);
 }
 #endif
 

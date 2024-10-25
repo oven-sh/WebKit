@@ -27,7 +27,6 @@
 
 #include "CSSNumericValue.h"
 #include "ScrollTimeline.h"
-#include "TimelineRange.h"
 #include "ViewTimelineOptions.h"
 #include <wtf/Ref.h>
 #include <wtf/WeakPtr.h>
@@ -41,6 +40,8 @@ class BuilderState;
 class CSSViewValue;
 class Element;
 
+struct TimelineRange;
+
 struct ViewTimelineInsets {
     std::optional<Length> start;
     std::optional<Length> end;
@@ -51,20 +52,26 @@ class ViewTimeline final : public ScrollTimeline {
 public:
     static Ref<ViewTimeline> create(ViewTimelineOptions&& = { });
     static Ref<ViewTimeline> create(const AtomString&, ScrollAxis, ViewTimelineInsets&&);
-    static Ref<ViewTimeline> createFromCSSValue(Style::BuilderState&, const CSSViewValue&);
+    static Ref<ViewTimeline> createFromCSSValue(const Style::BuilderState&, const CSSViewValue&);
 
     Element* subject() const { return m_subject.get(); }
-    const CSSNumericValue& startOffset() const;
-    const CSSNumericValue& endOffset() const;
+    void setSubject(const Element*);
+
     const ViewTimelineInsets& insets() const { return m_insets; }
+    void setInsets(ViewTimelineInsets&& insets) { m_insets = WTFMove(insets); }
+
+    Ref<CSSNumericValue> startOffset();
+    Ref<CSSNumericValue> endOffset();
+
     AnimationTimeline::ShouldUpdateAnimationsAndSendEvents documentWillUpdateAnimationsAndSendEvents() override;
     AnimationTimelinesController* controller() const override;
 
-    RenderBox* sourceRenderer() const;
+    RenderBox* sourceScrollerRenderer() const;
     Element* source() const override;
+    TimelineRange defaultRange() const final;
 
 private:
-    ScrollTimeline::Data computeTimelineData(const TimelineRange& = { }) const override;
+    ScrollTimeline::Data computeTimelineData(const TimelineRange&) const final;
 
     explicit ViewTimeline(ViewTimelineOptions&& = { });
     explicit ViewTimeline(const AtomString&, ScrollAxis, ViewTimelineInsets&&);

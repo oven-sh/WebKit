@@ -52,6 +52,8 @@
 #include "ArgumentCodersUnix.h"
 #endif
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace IPC {
 
 template<typename T, size_t Extent> struct ArgumentCoder<std::span<T, Extent>> {
@@ -556,6 +558,49 @@ template<typename KeyArg, typename MappedArg, typename HashArg, typename KeyTrai
     }
 };
 
+template<typename KeyArg, typename MappedArg, typename HashArg, typename KeyTraitsArg, typename MappedTraitsArg, typename HashTableTraits> struct ArgumentCoder<UncheckedKeyHashMap<KeyArg, MappedArg, HashArg, KeyTraitsArg, MappedTraitsArg, HashTableTraits>> {
+    typedef UncheckedKeyHashMap<KeyArg, MappedArg, HashArg, KeyTraitsArg, MappedTraitsArg, HashTableTraits> HashMapType;
+
+    template<typename Encoder, typename T>
+    static void encode(Encoder& encoder, T&& hashMap)
+    {
+        static_assert(std::is_same_v<std::remove_cvref_t<T>, HashMapType>);
+
+        encoder << static_cast<unsigned>(hashMap.size());
+        for (auto&& entry : hashMap)
+            encoder << WTF::forward_like<T>(entry);
+    }
+
+    template<typename Decoder>
+    static std::optional<HashMapType> decode(Decoder& decoder)
+    {
+        auto hashMapSize = decoder.template decode<unsigned>();
+        if (!hashMapSize)
+            return std::nullopt;
+
+        HashMapType hashMap;
+        for (unsigned i = 0; i < *hashMapSize; ++i) {
+            auto key = decoder.template decode<KeyArg>();
+            if (UNLIKELY(!key))
+                return std::nullopt;
+
+            auto value = decoder.template decode<MappedArg>();
+            if (UNLIKELY(!value))
+                return std::nullopt;
+
+            if (UNLIKELY(!HashMapType::isValidKey(*key)))
+                return std::nullopt;
+
+            if (UNLIKELY(!hashMap.add(WTFMove(*key), WTFMove(*value)).isNewEntry)) {
+                // The hash map already has the specified key, bail.
+                return std::nullopt;
+            }
+        }
+
+        return hashMap;
+    }
+};
+
 template<typename KeyArg, typename HashArg, typename KeyTraitsArg, typename HashTableTraits> struct ArgumentCoder<HashSet<KeyArg, HashArg, KeyTraitsArg, HashTableTraits>> {
     typedef HashSet<KeyArg, HashArg, KeyTraitsArg, HashTableTraits> HashSetType;
 
@@ -811,3 +856,5 @@ template<typename T, typename Traits> struct ArgumentCoder<WTF::Markable<T, Trai
 };
 
 } // namespace IPC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

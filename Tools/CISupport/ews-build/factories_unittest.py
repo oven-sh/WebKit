@@ -171,7 +171,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
             'trigger-crash-log-submission',
             'set-build-summary'
         ],
-        'macOS-Sonoma-Debug-Build-EWS': [
+        'macOS-Sequoia-Debug-Build-EWS': [
             'configure-build',
             'check-change-relevance',
             'validate-change',
@@ -187,7 +187,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
             'validate-change',
             'compile-webkit'
         ],
-        'macOS-Sonoma-Debug-WK2-Tests-EWS': [
+        'macOS-Sequoia-Debug-WK2-Tests-EWS': [
             'configure-build',
             'validate-change',
             'configuration',
@@ -336,7 +336,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
             'trigger-crash-log-submission',
             'set-build-summary'
         ],
-        'visionOS-1-Build-EWS': [
+        'visionOS-2-Build-EWS': [
             'configure-build',
             'validate-change',
             'configuration',
@@ -351,7 +351,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
             'validate-change',
             'compile-webkit'
         ],
-        'visionOS-1-Simulator-Build-EWS': [
+        'visionOS-2-Simulator-Build-EWS': [
             'configure-build',
             'validate-change',
             'configuration',
@@ -366,7 +366,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
             'validate-change',
             'compile-webkit'
         ],
-        'visionOS-1-Simulator-WK2-Tests-EWS': [
+        'visionOS-2-Simulator-WK2-Tests-EWS': [
             'configure-build',
             'validate-change',
             'configuration',
@@ -389,7 +389,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
             'trigger-crash-log-submission',
             'set-build-summary'
         ],
-        'watchOS-10-Build-EWS': [
+        'watchOS-11-Build-EWS': [
             'configure-build',
             'validate-change',
             'configuration',
@@ -404,7 +404,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
             'validate-change',
             'compile-webkit'
         ],
-        'watchOS-10-Simulator-Build-EWS': [
+        'watchOS-11-Simulator-Build-EWS': [
             'configure-build',
             'validate-change',
             'configuration',
@@ -419,7 +419,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
             'validate-change',
             'compile-webkit'
         ],
-        'tvOS-17-Build-EWS': [
+        'tvOS-18-Build-EWS': [
             'configure-build',
             'validate-change',
             'configuration',
@@ -434,7 +434,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
             'validate-change',
             'compile-webkit'
         ],
-        'tvOS-17-Simulator-Build-EWS': [
+        'tvOS-18-Simulator-Build-EWS': [
             'configure-build',
             'validate-change',
             'configuration',

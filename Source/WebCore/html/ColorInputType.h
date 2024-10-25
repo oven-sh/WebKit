@@ -42,19 +42,21 @@ namespace WebCore {
 
 class ColorInputType final : public BaseClickableWithKeyInputType, private ColorChooserClient {
     WTF_MAKE_TZONE_ALLOCATED(ColorInputType);
-    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ColorInputType);
 public:
     static Ref<ColorInputType> create(HTMLInputElement& element)
     {
         return adoptRef(*new ColorInputType(element));
     }
 
-    Vector<Color> suggestedColors() const;
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
+    bool supportsAlpha() const final;
+    Vector<Color> suggestedColors() const final;
     Color valueAsColor() const;
     void selectColor(StringView);
 
     virtual ~ColorInputType();
-    bool typeMismatchFor(const String&) const final;
 
     void detach() final;
 
@@ -89,7 +91,7 @@ private:
     void updateColorSwatch();
     HTMLElement* shadowColorSwatch() const;
 
-    std::unique_ptr<ColorChooser> m_chooser;
+    RefPtr<ColorChooser> m_chooser;
 };
 
 } // namespace WebCore

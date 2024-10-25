@@ -62,6 +62,8 @@ public:
 
     void proofreadingSessionDidReceiveSuggestions(const WritingTools::Session&, const Vector<WritingTools::TextSuggestion>&, const WritingTools::Context&, bool finished);
 
+    void proofreadingSessionDidCompletePartialReplacement(const WritingTools::Session&, const Vector<WritingTools::TextSuggestion>&, const WritingTools::Context&, bool finished);
+
     void proofreadingSessionDidUpdateStateForSuggestion(const WritingTools::Session&, WritingTools::TextSuggestion::State, const WritingTools::TextSuggestion&, const WritingTools::Context&);
 
     void didEndWritingToolsSession(const WritingTools::Session&, bool accepted);
@@ -156,6 +158,9 @@ private:
 
     template<WritingTools::Session::Type Type>
     StateFromSessionType<Type>::Value* currentState();
+
+    template<WritingTools::Session::Type Type>
+    const StateFromSessionType<Type>::Value* currentState() const;
 
     std::optional<std::tuple<Node&, DocumentMarker&>> findTextSuggestionMarkerContainingRange(const SimpleRange&) const;
     std::optional<std::tuple<Node&, DocumentMarker&>> findTextSuggestionMarkerByID(const SimpleRange& outerRange, const WritingTools::TextSuggestion::ID&) const;

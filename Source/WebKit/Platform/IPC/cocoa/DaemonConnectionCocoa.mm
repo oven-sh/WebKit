@@ -32,6 +32,8 @@
 #import <wtf/BlockPtr.h>
 #import <wtf/RunLoop.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace WebKit {
 
 namespace Daemon {
@@ -109,9 +111,7 @@ void ConnectionToMachService<Traits>::sendWithReply(typename Traits::MessageType
             ASSERT_NOT_REACHED();
             return completionHandler({ });
         }
-        size_t dataSize { 0 };
-        const void* data = xpc_dictionary_get_data(reply, Traits::protocolEncodedMessageKey, &dataSize);
-        completionHandler(Vector(std::span { static_cast<const uint8_t*>(data), dataSize }));
+        completionHandler(xpc_dictionary_get_data_span(reply, Traits::protocolEncodedMessageKey));
     });
 }
 
@@ -124,3 +124,5 @@ template class ConnectionToMachService<WebPushD::ConnectionTraits>;
 } // namespace Daemon
 
 } // namespace WebKit
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

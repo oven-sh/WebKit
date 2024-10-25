@@ -40,7 +40,7 @@ namespace WebCore {
 constexpr Seconds voiceActivityThrottlingDuration = 5_s;
 
 BaseAudioSharedUnit::BaseAudioSharedUnit()
-    : m_sampleRate(AudioSession::sharedSession().sampleRate())
+    : m_sampleRate(AudioSession::protectedSharedSession()->sampleRate())
     , m_voiceActivityThrottleTimer([] { })
 {
     RealtimeMediaSourceCenter::singleton().addDevicesChangedObserver(*this);
@@ -184,6 +184,9 @@ void BaseAudioSharedUnit::devicesChanged()
 {
     Ref protectedThis { *this };
 
+    if (!hasAudioUnit())
+        return;
+
     auto devices = RealtimeMediaSourceCenter::singleton().audioCaptureFactory().audioCaptureDeviceManager().captureDevices();
     auto persistentID = this->persistentID();
     if (persistentID.isEmpty())
@@ -250,10 +253,6 @@ void BaseAudioSharedUnit::stopRunning()
 {
     stopInternal();
     cleanupAudioUnit();
-
-    auto callbacks = std::exchange(m_whenNotRunningCallbacks, { });
-    for (auto& callback : callbacks)
-        callback();
 }
 
 void BaseAudioSharedUnit::reconfigure()
@@ -333,15 +332,6 @@ void BaseAudioSharedUnit::audioSamplesAvailable(const MediaTime& time, const Pla
         if (client->isProducingData())
             client->audioSamplesAvailable(time, data, description, numberOfFrames);
     }
-}
-
-void BaseAudioSharedUnit::whenAudioCaptureUnitIsNotRunning(Function<void()>&& callback)
-{
-    if (!isProducingData()) {
-        callback();
-        return;
-    }
-    m_whenNotRunningCallbacks.append(WTFMove(callback));
 }
 
 void BaseAudioSharedUnit::handleNewCurrentMicrophoneDevice(CaptureDevice&& device)

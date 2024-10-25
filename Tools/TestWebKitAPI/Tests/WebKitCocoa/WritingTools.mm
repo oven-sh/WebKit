@@ -46,6 +46,8 @@
 #import <WebKit/WKWebViewPrivateForTesting.h>
 #import <WebKit/WebKit.h>
 #import <WebKit/_WKProcessPoolConfiguration.h>
+#import <WebKit/_WKTextPreview.h>
+#import <WebKitSwift/WKIntelligenceTextEffectCoordinator.h>
 #import <pal/spi/cocoa/WritingToolsSPI.h>
 #import <pal/spi/cocoa/WritingToolsUISPI.h>
 #import <wtf/RetainPtr.h>
@@ -63,6 +65,10 @@ asm(".linker_option \"-framework\", \"WritingTools\"");
 #endif
 
 #if PLATFORM(MAC)
+
+@interface WKWebView (Staging_136152077)
+- (void)showWritingTools:(id)sender;
+@end
 
 @interface NSMenu (Extras)
 - (NSMenuItem *)itemWithIdentifier:(NSString *)identifier;
@@ -558,6 +564,50 @@ TEST(WritingTools, ProofreadingShowOriginal)
     TestWebKitAPI::Util::run(&finished);
 }
 
+TEST(WritingTools, ProofreadingShowOriginalWithMultiwordSuggestions)
+{
+    RetainPtr session = adoptNS([[WTSession alloc] initWithType:WTSessionTypeProofreading textViewDelegate:nil]);
+
+    RetainPtr webView = adoptNS([[WritingToolsWKWebView alloc] initWithHTMLString:@"<body contenteditable><p id='first'>AI has become a significent part of our dailly lifes, influensing evrything from how we communicate to how we work.</p></body>"]);
+    [webView focusDocumentBodyAndSelectAll];
+
+    NSString *originalText = @"AI has become a significent part of our dailly lifes, influensing evrything from how we communicate to how we work.";
+    NSString *proofreadText = @"AI has become a significant part of our daily lives, influencing everything from how we communicate to how we work.";
+
+    __block bool finished = false;
+    __block RetainPtr<WTContext> context = nil;
+
+    [[webView writingToolsDelegate] willBeginWritingToolsSession:session.get() requestContexts:^(NSArray<WTContext *> *contexts) {
+        EXPECT_EQ(1UL, contexts.count);
+
+        EXPECT_WK_STREQ(originalText, contexts.firstObject.attributedText.string);
+
+        context = contexts.firstObject;
+        finished = true;
+    }];
+
+    TestWebKitAPI::Util::run(&finished);
+
+    RetainPtr suggestions = [NSMutableArray array];
+    [suggestions addObject:adoptNS([[WTTextSuggestion alloc] initWithOriginalRange:NSMakeRange(16, 11) replacement:@"significant"]).get()];
+    [suggestions addObject:adoptNS([[WTTextSuggestion alloc] initWithOriginalRange:NSMakeRange(40, 12) replacement:@"daily lives"]).get()];
+    [suggestions addObject:adoptNS([[WTTextSuggestion alloc] initWithOriginalRange:NSMakeRange(54, 21) replacement:@"influencing everything"]).get()];
+
+    [[webView writingToolsDelegate] proofreadingSession:session.get() didReceiveSuggestions:suggestions.get() processedRange:NSMakeRange(NSNotFound, 0) inContext:context.get() finished:YES];
+
+    TestWebKitAPI::Util::runFor(0.1_s);
+
+    [webView waitForNextPresentationUpdate];
+
+    EXPECT_WK_STREQ(proofreadText, [webView contentsAsString]);
+
+    [[webView writingToolsDelegate] writingToolsSession:session.get() didReceiveAction:WTActionShowOriginal];
+    EXPECT_WK_STREQ(originalText, [webView contentsAsString]);
+
+    [[webView writingToolsDelegate] writingToolsSession:session.get() didReceiveAction:WTActionShowRewritten];
+    EXPECT_WK_STREQ(proofreadText, [webView contentsAsString]);
+}
+
 TEST(WritingTools, ProofreadingRevert)
 {
     auto session = adoptNS([[WTSession alloc] initWithType:WTSessionTypeProofreading textViewDelegate:nil]);
@@ -700,7 +750,7 @@ TEST(WritingTools, ProofreadingWithImage)
     auto webView = adoptNS([[WritingToolsWKWebView alloc] initWithHTMLString:@"<body contenteditable><p>AAAA BBBB</p><img src='sunset-in-cupertino-200px.png'></img><p>CCCC DDDD</p></body>"]);
     [webView focusDocumentBodyAndSelectAll];
 
-    // FIXME: Figure out which one of these newline positions is correct, and fix the discrepency;
+    // FIXME: Figure out which one of these newline positions is correct, and fix the discrepancy;
     // this is just a consequence of testing equality using `_contentsAsAttributedString`.
     NSString *originalText = @"AAAA BBBB\n\n<replacement char>\nCCCC DDDD";
     NSString *proofreadText = @"XXXX BBBB\n<replacement char>\nZZZZ DDDD\n";
@@ -727,6 +777,47 @@ TEST(WritingTools, ProofreadingWithImage)
     }];
 
     TestWebKitAPI::Util::run(&finished);
+}
+
+TEST(WritingTools, ProofreadingWithLinks)
+{
+    RetainPtr session = adoptNS([[WTSession alloc] initWithType:WTSessionTypeProofreading textViewDelegate:nil]);
+
+    RetainPtr webView = adoptNS([[WritingToolsWKWebView alloc] initWithHTMLString:@"<body contenteditable>foo <a href='https://webkit.org/downloads'>bar</a> baz</body>"]);
+    [webView focusDocumentBodyAndSelectAll];
+
+    __block bool finished = false;
+
+    __block RetainPtr<NSAttributedString> attributedText;
+    [[webView writingToolsDelegate] willBeginWritingToolsSession:session.get() requestContexts:^(NSArray<WTContext *> *contexts) {
+        EXPECT_EQ(1UL, contexts.count);
+        attributedText = contexts.firstObject.attributedText;
+        finished = true;
+    }];
+    TestWebKitAPI::Util::run(&finished);
+
+    struct StringAndURL {
+        NSString *string { nil };
+        NSURL *url { nil };
+    };
+
+    auto whitespaceSet = NSCharacterSet.whitespaceAndNewlineCharacterSet;
+    __block Vector<StringAndURL, 3> substringsAndURLs;
+    [attributedText enumerateAttributesInRange:NSMakeRange(0, [attributedText length]) options:0 usingBlock:^(NSDictionary<NSAttributedStringKey, id> *attributes, NSRange range, BOOL *) {
+        substringsAndURLs.append({
+            [[[attributedText string] substringWithRange:range] stringByTrimmingCharactersInSet:whitespaceSet],
+            dynamic_objc_cast<NSURL>(attributes[NSLinkAttributeName])
+        });
+    }];
+
+    EXPECT_WK_STREQ("foo", substringsAndURLs[0].string);
+    EXPECT_NULL(substringsAndURLs[0].url);
+
+    EXPECT_WK_STREQ("bar", substringsAndURLs[1].string);
+    EXPECT_WK_STREQ("https://webkit.org/downloads", substringsAndURLs[1].url.absoluteString);
+
+    EXPECT_WK_STREQ("baz", substringsAndURLs[2].string);
+    EXPECT_NULL(substringsAndURLs[2].url);
 }
 
 TEST(WritingTools, ProofreadingWithAttemptedEditing)
@@ -968,6 +1059,44 @@ TEST(WritingTools, CompositionWithUndo)
 
         [webView _synchronouslyExecuteEditCommand:@"Redo" argument:@""];
         EXPECT_WK_STREQ(@"B", [webView contentsAsStringWithoutNBSP]);
+
+        finished = true;
+    }];
+
+    TestWebKitAPI::Util::run(&finished);
+}
+
+TEST(WritingTools, CompositionWithRestart)
+{
+    RetainPtr session = adoptNS([[WTSession alloc] initWithType:WTSessionTypeComposition textViewDelegate:nil]);
+
+    RetainPtr webView = adoptNS([[WritingToolsWKWebView alloc] initWithHTMLString:@"<body id='p' contenteditable><p id='first'>Hey do you wanna go see a movie this weekend - start</p></body>"]);
+    [webView focusDocumentBodyAndSelectAll];
+
+    __block bool finished = false;
+
+    [[webView writingToolsDelegate] willBeginWritingToolsSession:session.get() requestContexts:^(NSArray<WTContext *> *contexts) {
+        EXPECT_EQ(1UL, contexts.count);
+
+        EXPECT_WK_STREQ(@"Hey do you wanna go see a movie this weekend - start", contexts.firstObject.attributedText.string);
+
+        __auto_type rewrite = ^(NSString *rewrittenText) {
+            [[webView writingToolsDelegate] writingToolsSession:session.get() didReceiveAction:WTActionCompositionRestart];
+
+            RetainPtr attributedText = adoptNS([[NSAttributedString alloc] initWithString:rewrittenText]);
+
+            [[webView writingToolsDelegate] compositionSession:session.get() didReceiveText:attributedText.get() replacementRange:NSMakeRange(0, 52) inContext:contexts.firstObject finished:NO];
+            [[webView writingToolsDelegate] compositionSession:session.get() didReceiveText:attributedText.get() replacementRange:NSMakeRange(0, 52) inContext:contexts.firstObject finished:YES];
+
+            [webView waitForContentValue:rewrittenText];
+            EXPECT_WK_STREQ(rewrittenText, [webView contentsAsStringWithoutNBSP]);
+        };
+
+        rewrite(@"Would you like to see a movie? - first");
+
+        TestWebKitAPI::Util::runFor(0.5_s);
+
+        rewrite(@"I'm going to a film, would you like to join? - second");
 
         finished = true;
     }];
@@ -2771,9 +2900,11 @@ TEST(WritingTools, ShowAffordanceForMultipleLines)
 TEST(WritingTools, ShowPanelWithNoSelection)
 {
     __block bool done = false;
+    __block WTRequestedTool requestedTool = WTRequestedToolIndex;
     __block NSRect selectionRect = NSZeroRect;
 
-    InstanceMethodSwizzler swizzler(PAL::getWTWritingToolsClass(), @selector(showPanelForSelectionRect:ofView:forDelegate:), imp_implementationWithBlock(^(id object, NSRect rect, NSView *view, id delegate) {
+    InstanceMethodSwizzler swizzler(PAL::getWTWritingToolsClass(), @selector(showTool:forSelectionRect:ofView:forDelegate:), imp_implementationWithBlock(^(id object, WTRequestedTool tool, NSRect rect, NSView *view, id delegate) {
+        requestedTool = tool;
         selectionRect = rect;
         done = true;
     }));
@@ -2784,15 +2915,19 @@ TEST(WritingTools, ShowPanelWithNoSelection)
 
     TestWebKitAPI::Util::run(&done);
 
+    EXPECT_EQ(requestedTool, WTRequestedToolIndex);
+
     EXPECT_TRUE(NSIsEmptyRect(selectionRect));
 }
 
 TEST(WritingTools, ShowPanelWithCaretSelection)
 {
     __block bool done = false;
+    __block WTRequestedTool requestedTool = WTRequestedToolIndex;
     __block NSRect selectionRect = NSZeroRect;
 
-    InstanceMethodSwizzler swizzler(PAL::getWTWritingToolsClass(), @selector(showPanelForSelectionRect:ofView:forDelegate:), imp_implementationWithBlock(^(id object, NSRect rect, NSView *view, id delegate) {
+    InstanceMethodSwizzler swizzler(PAL::getWTWritingToolsClass(), @selector(showTool:forSelectionRect:ofView:forDelegate:), imp_implementationWithBlock(^(id object, WTRequestedTool tool, NSRect rect, NSView *view, id delegate) {
+        requestedTool = tool;
         selectionRect = rect;
         done = true;
     }));
@@ -2819,15 +2954,19 @@ TEST(WritingTools, ShowPanelWithCaretSelection)
 
     TestWebKitAPI::Util::run(&done);
 
+    EXPECT_EQ(requestedTool, WTRequestedToolIndex);
+
     EXPECT_TRUE(NSIsEmptyRect(selectionRect));
 }
 
 TEST(WritingTools, ShowPanelWithRangedSelection)
 {
     __block bool done = false;
+    __block WTRequestedTool requestedTool = WTRequestedToolIndex;
     __block NSRect selectionRect = NSZeroRect;
 
-    InstanceMethodSwizzler swizzler(PAL::getWTWritingToolsClass(), @selector(showPanelForSelectionRect:ofView:forDelegate:), imp_implementationWithBlock(^(id object, NSRect rect, NSView *view, id delegate) {
+    InstanceMethodSwizzler swizzler(PAL::getWTWritingToolsClass(), @selector(showTool:forSelectionRect:ofView:forDelegate:), imp_implementationWithBlock(^(id object, WTRequestedTool tool, NSRect rect, NSView *view, id delegate) {
+        requestedTool = tool;
         selectionRect = rect;
         done = true;
     }));
@@ -2838,6 +2977,62 @@ TEST(WritingTools, ShowPanelWithRangedSelection)
     [webView _showWritingTools];
 
     TestWebKitAPI::Util::run(&done);
+
+    EXPECT_EQ(requestedTool, WTRequestedToolIndex);
+
+    NSRect expectedRect = NSMakeRect(8, 8, 292, 18);
+    EXPECT_TRUE(NSEqualRects(expectedRect, selectionRect));
+}
+
+TEST(WritingTools, ShowToolWithRangedSelection)
+{
+    __block bool done = false;
+    __block WTRequestedTool requestedTool = WTRequestedToolIndex;
+    __block NSRect selectionRect = NSZeroRect;
+
+    InstanceMethodSwizzler swizzler(PAL::getWTWritingToolsClass(), @selector(showTool:forSelectionRect:ofView:forDelegate:), imp_implementationWithBlock(^(id object, WTRequestedTool tool, NSRect rect, NSView *view, id delegate) {
+        requestedTool = tool;
+        selectionRect = rect;
+        done = true;
+    }));
+
+    RetainPtr webView = adoptNS([[WritingToolsWKWebView alloc] initWithHTMLString:@"<body contenteditable><p id='text'>This is some content that should be rewritten.</p></body>" writingToolsBehavior:PlatformWritingToolsBehaviorComplete]);
+    [webView focusDocumentBodyAndSelectAll];
+
+    RetainPtr menuItem = adoptNS([[NSMenuItem alloc] initWithTitle:@"Test" action:nil keyEquivalent:@""]);
+    [menuItem setTag:WTRequestedToolRewriteFriendly];
+    [webView showWritingTools:menuItem.get()];
+
+    TestWebKitAPI::Util::run(&done);
+
+    EXPECT_EQ(requestedTool, WTRequestedToolRewriteFriendly);
+
+    NSRect expectedRect = NSMakeRect(8, 8, 292, 18);
+    EXPECT_TRUE(NSEqualRects(expectedRect, selectionRect));
+}
+
+TEST(WritingTools, ShowInvalidToolWithRangedSelection)
+{
+    __block bool done = false;
+    __block WTRequestedTool requestedTool = WTRequestedToolIndex;
+    __block NSRect selectionRect = NSZeroRect;
+
+    InstanceMethodSwizzler swizzler(PAL::getWTWritingToolsClass(), @selector(showTool:forSelectionRect:ofView:forDelegate:), imp_implementationWithBlock(^(id object, WTRequestedTool tool, NSRect rect, NSView *view, id delegate) {
+        requestedTool = tool;
+        selectionRect = rect;
+        done = true;
+    }));
+
+    RetainPtr webView = adoptNS([[WritingToolsWKWebView alloc] initWithHTMLString:@"<body contenteditable><p id='text'>This is some content that should be rewritten.</p></body>" writingToolsBehavior:PlatformWritingToolsBehaviorComplete]);
+    [webView focusDocumentBodyAndSelectAll];
+
+    RetainPtr menuItem = adoptNS([[NSMenuItem alloc] initWithTitle:@"Test" action:nil keyEquivalent:@""]);
+    [menuItem setTag:-1];
+    [webView showWritingTools:menuItem.get()];
+
+    TestWebKitAPI::Util::run(&done);
+
+    EXPECT_EQ(requestedTool, WTRequestedToolIndex);
 
     NSRect expectedRect = NSMakeRect(8, 8, 292, 18);
     EXPECT_TRUE(NSEqualRects(expectedRect, selectionRect));
@@ -3422,6 +3617,233 @@ TEST(WritingTools, CompositionWithOmittedTrailingWhitespaceContent)
     }];
 
     TestWebKitAPI::Util::run(&finished);
+}
+
+TEST(WritingTools, IntelligenceTextEffectCoordinatorDelegate_RectsForProofreadingSuggestionsInRange)
+{
+    RetainPtr session = adoptNS([[WTSession alloc] initWithType:WTSessionTypeProofreading textViewDelegate:nil]);
+
+    RetainPtr webView = adoptNS([[WritingToolsWKWebView alloc] initWithHTMLString:@"<body contenteditable><p id='first'>I don't thin so. I didn't quite here him.</p><p id='second'>Who's over they're. I could come their.</p></body>"]);
+    [webView focusDocumentBodyAndSelectAll];
+
+    NSString *originalText = @"I don't thin so. I didn't quite here him.\n\nWho's over they're. I could come their.";
+    NSString *proofreadText = @"I don't think so. I didn't quite hear him.\n\nWho's over there? I could come there.";
+
+    __block bool finished = false;
+    __block RetainPtr<WTContext> context = nil;
+
+    [[webView writingToolsDelegate] willBeginWritingToolsSession:session.get() requestContexts:^(NSArray<WTContext *> *contexts) {
+        EXPECT_EQ(1UL, contexts.count);
+
+        EXPECT_WK_STREQ(originalText, contexts.firstObject.attributedText.string);
+
+        context = contexts.firstObject;
+        finished = true;
+    }];
+
+    TestWebKitAPI::Util::run(&finished);
+    finished = false;
+
+    RetainPtr suggestions = [NSMutableArray array];
+    [suggestions addObject:adoptNS([[WTTextSuggestion alloc] initWithOriginalRange:NSMakeRange(8, 4) replacement:@"think"]).get()];
+    [suggestions addObject:adoptNS([[WTTextSuggestion alloc] initWithOriginalRange:NSMakeRange(32, 4) replacement:@"hear"]).get()];
+    [suggestions addObject:adoptNS([[WTTextSuggestion alloc] initWithOriginalRange:NSMakeRange(54, 8) replacement:@"there?"]).get()];
+    [suggestions addObject:adoptNS([[WTTextSuggestion alloc] initWithOriginalRange:NSMakeRange(76, 5) replacement:@"there"]).get()];
+
+    NSRange processedRange = NSMakeRange(0, 82);
+
+    [[webView writingToolsDelegate] proofreadingSession:session.get() didReceiveSuggestions:suggestions.get() processedRange:processedRange inContext:context.get() finished:YES];
+
+    [webView waitForNextPresentationUpdate];
+
+    EXPECT_WK_STREQ(proofreadText, [webView contentsAsString]);
+
+    __block RetainPtr<NSArray<NSValue *>> rectValues = nil;
+
+    id<WKIntelligenceTextEffectCoordinatorDelegate> coordinatorDelegate = (id<WKIntelligenceTextEffectCoordinatorDelegate>)webView.get();
+
+    // FIXME: Figure out how to use `WebKitSwiftSoftLink` within TestWebKitAPI so that an actual instance can be created.
+    WKIntelligenceTextEffectCoordinator *coordinator = nil;
+
+    NSRange subrange = NSMakeRange(18, 43); // "I didn't quite hear him.\n\nWho's over there?"
+
+    [coordinatorDelegate intelligenceTextEffectCoordinator:coordinator rectsForProofreadingSuggestionsInRange:subrange completion:^(NSArray<NSValue *> *values) {
+        rectValues = values;
+        finished = true;
+    }];
+
+    TestWebKitAPI::Util::run(&finished);
+    finished = false;
+
+    const Vector<WebCore::IntRect> expectedRects {
+        { { 196, 8 }, { 29, 18 } },
+        { { 84, 42 }, { 40, 18 } },
+    };
+
+    for (NSUInteger i = 0; i < [rectValues count]; i++) {
+        auto actualRect = [rectValues objectAtIndex:i].rectValue;
+        auto expectedRect = expectedRects[i];
+
+        EXPECT_EQ(actualRect.origin.x, expectedRect.x());
+        EXPECT_EQ(actualRect.origin.y, expectedRect.y());
+        EXPECT_EQ(actualRect.size.width, expectedRect.width());
+        EXPECT_EQ(actualRect.size.height, expectedRect.height());
+    }
+}
+
+TEST(WritingTools, IntelligenceTextEffectCoordinatorDelegate_UpdateTextVisibilityForRange)
+{
+    RetainPtr session = adoptNS([[WTSession alloc] initWithType:WTSessionTypeProofreading textViewDelegate:nil]);
+
+    RetainPtr webView = adoptNS([[WritingToolsWKWebView alloc] initWithHTMLString:@"<body contenteditable><p id='first'>I don't thin so. I didn't quite here him.</p><p id='second'>Who's over they're. I could come their.</p></body>"]);
+    [webView focusDocumentBodyAndSelectAll];
+
+    NSString *originalText = @"I don't thin so. I didn't quite here him.\n\nWho's over they're. I could come their.";
+
+    __block bool finished = false;
+    __block RetainPtr<WTContext> context = nil;
+
+    [[webView writingToolsDelegate] willBeginWritingToolsSession:session.get() requestContexts:^(NSArray<WTContext *> *contexts) {
+        EXPECT_EQ(1UL, contexts.count);
+
+        EXPECT_WK_STREQ(originalText, contexts.firstObject.attributedText.string);
+
+        context = contexts.firstObject;
+        finished = true;
+    }];
+
+    TestWebKitAPI::Util::run(&finished);
+    finished = false;
+
+    id<WKIntelligenceTextEffectCoordinatorDelegate> coordinatorDelegate = (id<WKIntelligenceTextEffectCoordinatorDelegate>)webView.get();
+    WKIntelligenceTextEffectCoordinator *coordinator = nil;
+
+    __auto_type moveSelectionToFirstNode = ^{
+        NSString *setSelectionJavaScript = @""
+        "(() => {"
+        "  const range = document.createRange();"
+        "  range.setStart(document.getElementById('first').childNodes[0], 0);"
+        "  range.setEnd(document.getElementById('first').childNodes[0], 0);"
+        "  "
+        "  var selection = window.getSelection();"
+        "  selection.removeAllRanges();"
+        "  selection.addRange(range);"
+        "})();";
+        [webView stringByEvaluatingJavaScript:setSelectionJavaScript];
+    };
+
+    __auto_type moveSelectionToSecondNode = ^{
+        NSString *setSelectionJavaScript = @""
+        "(() => {"
+        "  const range = document.createRange();"
+        "  range.setStart(document.getElementById('second').childNodes[0], 0);"
+        "  range.setEnd(document.getElementById('second').childNodes[0], 0);"
+        "  "
+        "  var selection = window.getSelection();"
+        "  selection.removeAllRanges();"
+        "  selection.addRange(range);"
+        "})();";
+        [webView stringByEvaluatingJavaScript:setSelectionJavaScript];
+    };
+
+    NSRange subrange = NSMakeRange(17, 45); // "I didn't quite here him.\n\nWho's over they're."
+
+    [coordinatorDelegate intelligenceTextEffectCoordinator:coordinator updateTextVisibilityForRange:subrange visible:NO completion:^{
+        finished = true;
+    }];
+
+    TestWebKitAPI::Util::run(&finished);
+    finished = false;
+
+    moveSelectionToFirstNode();
+    EXPECT_TRUE([[webView objectByEvaluatingJavaScript:@"internals.hasTransparentContentMarker(17, 24);"] boolValue]);
+
+    moveSelectionToSecondNode();
+    EXPECT_TRUE([[webView objectByEvaluatingJavaScript:@"internals.hasTransparentContentMarker(0, 19);"] boolValue]);
+
+    [coordinatorDelegate intelligenceTextEffectCoordinator:coordinator updateTextVisibilityForRange:subrange visible:YES completion:^{
+        finished = true;
+    }];
+
+    TestWebKitAPI::Util::run(&finished);
+    finished = false;
+
+    moveSelectionToFirstNode();
+    EXPECT_FALSE([[webView objectByEvaluatingJavaScript:@"internals.hasTransparentContentMarker(17, 24);"] boolValue]);
+
+    moveSelectionToSecondNode();
+    EXPECT_FALSE([[webView objectByEvaluatingJavaScript:@"internals.hasTransparentContentMarker(0, 19);"] boolValue]);
+}
+
+TEST(WritingTools, IntelligenceTextEffectCoordinatorDelegate_TextPreviewsForRange)
+{
+    RetainPtr session = adoptNS([[WTSession alloc] initWithType:WTSessionTypeProofreading textViewDelegate:nil]);
+
+    RetainPtr webView = adoptNS([[WritingToolsWKWebView alloc] initWithHTMLString:@"<body contenteditable><p id='first'>I don't thin so. I didn't quite here him.</p><p id='second'>Who's over they're. I could come their.</p></body>"]);
+    [webView focusDocumentBodyAndSelectAll];
+
+    NSString *originalText = @"I don't thin so. I didn't quite here him.\n\nWho's over they're. I could come their.";
+
+    __block bool finished = false;
+    __block RetainPtr<WTContext> context = nil;
+
+    [[webView writingToolsDelegate] willBeginWritingToolsSession:session.get() requestContexts:^(NSArray<WTContext *> *contexts) {
+        EXPECT_EQ(1UL, contexts.count);
+
+        EXPECT_WK_STREQ(originalText, contexts.firstObject.attributedText.string);
+
+        context = contexts.firstObject;
+        finished = true;
+    }];
+
+    TestWebKitAPI::Util::run(&finished);
+    finished = false;
+
+    NSRange subrange = NSMakeRange(17, 45); // "I didn't quite here him.\n\nWho's over they're."
+
+    id<WKIntelligenceTextEffectCoordinatorDelegate> coordinatorDelegate = (id<WKIntelligenceTextEffectCoordinatorDelegate>)webView.get();
+    WKIntelligenceTextEffectCoordinator *coordinator = nil;
+
+#if PLATFORM(MAC)
+    __block RetainPtr<NSArray<_WKTextPreview *>> previews;
+
+    [coordinatorDelegate intelligenceTextEffectCoordinator:coordinator textPreviewsForRange:subrange completion:^(NSArray<_WKTextPreview *> *result) {
+        previews = result;
+        finished = true;
+    }];
+
+    TestWebKitAPI::Util::run(&finished);
+    finished = false;
+
+    EXPECT_EQ([previews count], 2UL);
+
+    const Vector<WebCore::IntRect> expectedPresentationFrames {
+        { { 103, 8 }, { 147, 18 } },
+        { { 8, 42 }, { 124, 18 } },
+    };
+
+    for (NSUInteger i = 0; i < [previews count]; i++) {
+        auto actualRect = [previews objectAtIndex:i].presentationFrame;
+        auto expectedRect = expectedPresentationFrames[i];
+
+        EXPECT_EQ(actualRect.origin.x, expectedRect.x());
+        EXPECT_EQ(actualRect.origin.y, expectedRect.y());
+        EXPECT_EQ(actualRect.size.width, expectedRect.width());
+        EXPECT_EQ(actualRect.size.height, expectedRect.height());
+    }
+#else
+    __block RetainPtr<UITargetedPreview> preview;
+
+    [coordinatorDelegate intelligenceTextEffectCoordinator:coordinator textPreviewsForRange:subrange completion:^(UITargetedPreview *result) {
+        preview = result;
+        finished = true;
+    }];
+
+    TestWebKitAPI::Util::run(&finished);
+    finished = false;
+
+    ASSERT_NOT_NULL(preview.get());
+#endif
 }
 
 #endif

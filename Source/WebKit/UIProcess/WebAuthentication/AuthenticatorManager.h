@@ -42,15 +42,6 @@
 
 OBJC_CLASS LAContext;
 
-namespace WebKit {
-class AuthenticatorManager;
-}
-
-namespace WTF {
-template<typename T> struct IsDeprecatedWeakRefSmartPointerException;
-template<> struct IsDeprecatedWeakRefSmartPointerException<WebKit::AuthenticatorManager> : std::true_type { };
-}
-
 namespace API {
 class WebAuthenticationPanel;
 }
@@ -118,7 +109,7 @@ private:
     void cancelRequest() final;
 
     // Overriden by MockAuthenticatorManager.
-    virtual UniqueRef<AuthenticatorTransportService> createService(WebCore::AuthenticatorTransport, AuthenticatorTransportServiceObserver&) const;
+    virtual Ref<AuthenticatorTransportService> createService(WebCore::AuthenticatorTransport, AuthenticatorTransportServiceObserver&) const;
     // Overriden to return every exception for tests to confirm.
     virtual void respondReceivedInternal(Respond&&) { }
     virtual void filterTransports(TransportSet&) const;
@@ -134,9 +125,9 @@ private:
     WebAuthenticationRequestData m_pendingRequestData;
     Callback m_pendingCompletionHandler; // Should not be invoked directly, use invokePendingCompletionHandler.
     RunLoop::Timer m_requestTimeOutTimer;
-    std::unique_ptr<AuthenticatorPresenterCoordinator> m_presenter;
+    RefPtr<AuthenticatorPresenterCoordinator> m_presenter;
 
-    Vector<UniqueRef<AuthenticatorTransportService>> m_services;
+    Vector<Ref<AuthenticatorTransportService>> m_services;
     HashSet<Ref<Authenticator>> m_authenticators;
 
     Mode m_mode { Mode::Compatible };

@@ -257,6 +257,7 @@ fast/events/only-valid-drop-targets-receive-file-drop.html [ Skip ]
 fast/events/remove-target-with-shadow-in-drag.html [ Skip ]
 fast/events/selectstart-by-drag.html [ Skip ]
 fast/events/setDragImage-in-document-element-crash.html [ Skip ]
+fast/events/shift-drag-selection-on-link-triggers-drag-n-drop.html [ Skip ]
 fast/events/standalone-image-drag-to-editable.html [ Skip ]
 fast/forms/drag-into-textarea.html [ Skip ]
 fast/forms/drag-out-of-textarea.html [ Skip ]
@@ -367,6 +368,8 @@ fast/canvas/offscreen-scaling.html [ Skip ]
 fast/canvas/offscreen-toggle-display.html [ Skip ]
 fast/canvas/offscreen-visibility-change.html [ Skip ]
 fast/images/protected-image-queue.html [ Skip ]
+webgl/2.0.y/conformance/offscreencanvas/context-lost-restored.html [ Skip ]
+webgl/2.0.y/conformance/offscreencanvas/context-lost.html [ Skip ]
 webgl/offscreen-webgl-errors-to-console.html [ Skip ]
 webgl/webgl-worker.html [ Skip ]
 
@@ -1024,9 +1027,10 @@ webkit.org/b/53675 fast/animation/request-animation-frame-during-modal.html [ Sk
 
 webkit.org/b/191584 fast/animation/css-animation-resuming-when-visible-with-style-change.html [ Pass Timeout ]
 
-webkit.org/b/281041 [ Debug ] animations/animation-direction-reverse-hardware-opacity.html [ Skip ] # Crash
-webkit.org/b/281041 [ Debug ] animations/animation-followed-by-two-transitions.html [ Skip ] # Crash
-webkit.org/b/281041 [ Debug ] imported/w3c/web-platform-tests/scroll-animations/css/animation-timeline-view-functional-notation.tentative.html [ Skip ] # Crash
+imported/w3c/web-platform-tests/scroll-animations/scroll-timelines/layout-changes-on-percentage-based-timeline.html [ Pass ]
+
+imported/w3c/web-platform-tests/scroll-animations/scroll-timelines/setting-timeline.tentative.html [ Failure ]
+
 
 #//////////////////////////////////////////////////////////////////////////////////////////
 # Compositing
@@ -1062,6 +1066,7 @@ compositing/repaint/scroller-repaints-once.html [ Failure ]
 animations/no-style-recalc-during-accelerated-animation.html [ Pass Failure ]
 
 fast/css/view-transitions-nested-transparency-layers.html [ ImageOnlyFailure Pass ]
+http/wpt/css/css-view-transitions/navigation/old_vt_promises_bfcache.html [ Failure ]
 
 
 #//////////////////////////////////////////////////////////////////////////////////////////
@@ -1187,6 +1192,9 @@ css3/blending/blend-mode-clip-accelerated-blending-double.html [ Skip ] # ImageO
 css3/blending/blend-mode-clip-accelerated-blending-with-siblings.html [ Skip ] # ImageOnlyFailure
 css3/blending/blend-mode-clip-accelerated-transformed-blending.html [ Skip ] # ImageOnlyFailure
 css3/blending/blend-mode-clip-rect-accelerated-blending.html [ Skip ] # ImageOnlyFailure
+
+imported/w3c/web-platform-tests/css/css-anchor-position/anchor-scroll-composited-scrolling-006.html [ Pass ]
+imported/w3c/web-platform-tests/css/css-anchor-position/anchor-scroll-to-sticky-001.html [ Pass ]
 
 
 #//////////////////////////////////////////////////////////////////////////////////////////
@@ -1385,7 +1393,6 @@ fast/forms/color/color-setrangetext.html [ Skip ] # Failure
 fast/forms/color/input-appearance-color.html [ Skip ] # Failure
 fast/forms/color/input-color-onchange-event.html [ Skip ] # Failure
 fast/forms/color/input-color-readonly.html [ Skip ] # Failure
-fast/forms/color/input-value-sanitization-color.html [ Skip ] # Failure
 fast/forms/control-clip-overflow.html [ Skip ] # Failure
 fast/forms/control-clip.html [ Skip ] # Failure
 fast/forms/control-restrict-line-height.html [ Skip ] # Failure
@@ -4332,7 +4339,7 @@ http/tests/misc/embed-image-load-outlives-gc-without-crashing.html [ Pass Timeou
 
 fast/dom/no-scroll-when-command-click-fragment-URL.html [ Failure ]
 
-imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-inset-animation.html [ Pass Failure ]
+[ Release ] imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-inset-animation.html [ Pass Failure ]
 imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-lookup.html [ Pass Failure ]
 
 fast/text/simple-line-hyphens-with-text-align.html [ ImageOnlyFailure ]

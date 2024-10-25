@@ -1542,7 +1542,7 @@ static WebKit::AttributionOverrideTesting toAttributionOverrideTesting(_WKAttrib
 
 - (BOOL)_cssTransformStyleSeparatedEnabled
 {
-#if ENABLE(CSS_TRANSFORM_STYLE_SEPARATED)
+#if HAVE(CORE_ANIMATION_SEPARATED_LAYERS)
     return _pageConfiguration->cssTransformStyleSeparatedEnabled();
 #else
     return NO;
@@ -1550,26 +1550,12 @@ static WebKit::AttributionOverrideTesting toAttributionOverrideTesting(_WKAttrib
 }
 - (void)_setCSSTransformStyleSeparatedEnabled:(BOOL)enabled
 {
-#if ENABLE(CSS_TRANSFORM_STYLE_SEPARATED)
+#if HAVE(CORE_ANIMATION_SEPARATED_LAYERS)
     _pageConfiguration->setCSSTransformStyleSeparatedEnabled(enabled);
 #endif
 }
 
 #endif // PLATFORM(VISION)
-
-#if PLATFORM(MAC)
-
-- (NSTimeInterval)_webProcessSuspensionDelay
-{
-    return _pageConfiguration->webProcessSuspensionDelay().seconds();
-}
-
-- (void)_setWebProcessSuspensionDelay:(NSTimeInterval)delay
-{
-    _pageConfiguration->setWebProcessSuspensionDelay(Seconds(delay));
-}
-
-#endif
 
 @end
 

@@ -31,10 +31,13 @@
 #import <JavaScriptCore/JSCConfig.h>
 #import <WebCore/ProcessIdentifier.h>
 #import <signal.h>
+#import <wtf/StdLibExtras.h>
 #import <wtf/WTFProcess.h>
 #import <wtf/cocoa/Entitlements.h>
 #import <wtf/spi/darwin/SandboxSPI.h>
 #import <wtf/text/StringToIntegerConversion.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebKit {
 
@@ -86,13 +89,10 @@ bool XPCServiceInitializerDelegate::getClientBundleIdentifier(String& clientBund
 
 bool XPCServiceInitializerDelegate::getClientSDKAlignedBehaviors(SDKAlignedBehaviors& behaviors)
 {
-    size_t length = 0;
-    auto behaviorData = xpc_dictionary_get_data(m_initializerMessage, "client-sdk-aligned-behaviors", &length);
-    if (!length || !behaviorData)
+    auto behaviorData = xpc_dictionary_get_data_span(m_initializerMessage, "client-sdk-aligned-behaviors");
+    if (behaviorData.empty())
         return false;
-    RELEASE_ASSERT(length == behaviors.storageLengthInBytes());
-    memcpy(behaviors.storage(), behaviorData, length);
-
+    memcpySpan(behaviors.storageBytes(), behaviorData);
     return true;
 }
 
@@ -238,3 +238,5 @@ void XPCServiceExit()
 }
 
 } // namespace WebKit
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

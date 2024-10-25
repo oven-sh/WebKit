@@ -38,6 +38,10 @@ namespace WebGPU {
 static id<MTLComputePipelineState> createComputePipelineState(id<MTLDevice> device, id<MTLFunction> function, const PipelineLayout& pipelineLayout, const MTLSize& size, NSString *label)
 {
     auto computePipelineDescriptor = [MTLComputePipelineDescriptor new];
+#if ENABLE(WEBGPU_BY_DEFAULT)
+    computePipelineDescriptor.shaderValidation = MTLShaderValidationEnabled;
+#endif
+
     computePipelineDescriptor.computeFunction = function;
     computePipelineDescriptor.maxTotalThreadsPerThreadgroup = size.width * size.height * size.depth;
     for (size_t i = 0; i < pipelineLayout.numberOfBindGroupLayouts(); ++i)
@@ -77,17 +81,17 @@ std::pair<Ref<ComputePipeline>, NSString*> Device::createComputePipeline(const W
     if (descriptor.nextInChain || descriptor.compute.nextInChain)
         return returnInvalidComputePipeline(*this, isAsync);
 
-    ShaderModule& shaderModule = WebGPU::fromAPI(descriptor.compute.module);
+    ShaderModule& shaderModule = WebGPU::protectedFromAPI(descriptor.compute.module);
     if (!shaderModule.isValid() || &shaderModule.device() != this || !descriptor.layout)
         return returnInvalidComputePipeline(*this, isAsync);
 
-    PipelineLayout& pipelineLayout = WebGPU::fromAPI(descriptor.layout);
+    PipelineLayout& pipelineLayout = WebGPU::protectedFromAPI(descriptor.layout);
     auto& deviceLimits = limits();
     auto label = fromAPI(descriptor.label);
     auto entryPointName = descriptor.compute.entryPoint ? fromAPI(descriptor.compute.entryPoint) : shaderModule.defaultComputeEntryPoint();
     NSError *error;
     BufferBindingSizesForPipeline minimumBufferSizes;
-    auto libraryCreationResult = createLibrary(m_device, shaderModule, &pipelineLayout, entryPointName, label, descriptor.compute.constantCount, descriptor.compute.constants, minimumBufferSizes, &error);
+    auto libraryCreationResult = createLibrary(m_device, shaderModule, &pipelineLayout, entryPointName, label, descriptor.compute.constantsSpan(), minimumBufferSizes, &error);
     if (!libraryCreationResult || &pipelineLayout.device() != this)
         return returnInvalidComputePipeline(*this, isAsync, error.localizedDescription ?: @"Compute library failed creation");
 
@@ -183,11 +187,6 @@ void ComputePipeline::setLabel(String&&)
     // MTLComputePipelineState's labels are read-only.
 }
 
-PipelineLayout& ComputePipeline::pipelineLayout() const
-{
-    return m_pipelineLayout;
-}
-
 const BufferBindingSizesForBindGroup* ComputePipeline::minimumBufferSizes(uint32_t index) const
 {
     auto it = m_minimumBufferSizes.find(index);
@@ -210,10 +209,10 @@ void wgpuComputePipelineRelease(WGPUComputePipeline computePipeline)
 
 WGPUBindGroupLayout wgpuComputePipelineGetBindGroupLayout(WGPUComputePipeline computePipeline, uint32_t groupIndex)
 {
-    return WebGPU::releaseToAPI(WebGPU::fromAPI(computePipeline).getBindGroupLayout(groupIndex));
+    return WebGPU::releaseToAPI(WebGPU::protectedFromAPI(computePipeline)->getBindGroupLayout(groupIndex));
 }
 
 void wgpuComputePipelineSetLabel(WGPUComputePipeline computePipeline, const char* label)
 {
-    WebGPU::fromAPI(computePipeline).setLabel(WebGPU::fromAPI(label));
+    WebGPU::protectedFromAPI(computePipeline)->setLabel(WebGPU::fromAPI(label));
 }

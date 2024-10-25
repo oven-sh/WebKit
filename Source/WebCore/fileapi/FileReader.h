@@ -52,7 +52,8 @@ class Blob;
 class FileReader final : public RefCounted<FileReader>, public ActiveDOMObject, public EventTarget, private FileReaderLoaderClient {
     WTF_MAKE_TZONE_OR_ISO_ALLOCATED(FileReader);
 public:
-    DEFINE_VIRTUAL_REFCOUNTED;
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
 
     static Ref<FileReader> create(ScriptExecutionContext&);
 
@@ -108,7 +109,7 @@ private:
     std::unique_ptr<FileReaderLoader> m_loader;
     RefPtr<DOMException> m_error;
     MonotonicTime m_lastProgressNotificationTime { MonotonicTime::nan() };
-    HashMap<uint64_t, Function<void()>> m_pendingTasks;
+    UncheckedKeyHashMap<uint64_t, Function<void()>> m_pendingTasks;
 };
 
 } // namespace WebCore

@@ -666,6 +666,16 @@ ElementUpdate TreeResolver::createAnimatedElementUpdate(ResolvedStyle&& resolved
         if (oldStyle && (oldStyle->hasTransitions() || resolvedStyle.style->hasTransitions()))
             styleable.updateCSSTransitions(*oldStyle, *resolvedStyle.style, newStyleOriginatedAnimations);
 
+        if ((oldStyle && oldStyle->scrollTimelines().size()) || resolvedStyle.style->scrollTimelines().size()
+            || (oldStyle && oldStyle->scrollTimelineNames().size()) || resolvedStyle.style->scrollTimelineNames().size()) {
+            styleable.updateCSSScrollTimelines(oldStyle, *resolvedStyle.style);
+        }
+
+        if ((oldStyle && oldStyle->viewTimelines().size()) || resolvedStyle.style->viewTimelines().size()
+            || (oldStyle && oldStyle->viewTimelineNames().size()) || resolvedStyle.style->viewTimelineNames().size()) {
+            styleable.updateCSSViewTimelines(oldStyle, *resolvedStyle.style);
+        }
+
         // The order in which CSS Transitions and CSS Animations are updated matters since CSS Transitions define the after-change style
         // to use CSS Animations as defined in the previous style change event. As such, we update CSS Animations after CSS Transitions
         // such that when CSS Transitions are updated the CSS Animations data is the same as during the previous style change event.
@@ -968,7 +978,7 @@ auto TreeResolver::determineResolutionType(const Element& element, const RenderS
     case DescendantsToResolve::All:
         return ResolutionType::Full;
     case DescendantsToResolve::ChildrenWithExplicitInherit:
-        if (existingStyle && existingStyle->hasExplicitlyInheritedProperties())
+        if (!existingStyle || existingStyle->hasExplicitlyInheritedProperties())
             return ResolutionType::Full;
         return { };
     };
@@ -1203,7 +1213,7 @@ auto TreeResolver::updateStateForQueryContainer(Element& element, const RenderSt
 std::unique_ptr<Update> TreeResolver::resolve()
 {
     m_hasUnresolvedQueryContainers = false;
-    m_hasUnresolvedAnchorPositionedElements = false;
+    auto hadUnresolvedAnchorPositionedElements = std::exchange(m_hasUnresolvedAnchorPositionedElements, false);
 
     Element* documentElement = m_document->documentElement();
     if (!documentElement) {
@@ -1214,10 +1224,8 @@ std::unique_ptr<Update> TreeResolver::resolve()
     if (!documentElement->childNeedsStyleRecalc() && !documentElement->needsStyleRecalc())
         return WTFMove(m_update);
 
-    for (auto elementAndState : m_document->styleScope().anchorPositionedStates()) {
-        if (elementAndState.value->stage == AnchorPositionResolutionStage::Resolved)
-            elementAndState.value->stage = AnchorPositionResolutionStage::Positioned;
-    }
+    if (hadUnresolvedAnchorPositionedElements)
+        AnchorPositionEvaluator::updateAnchorPositioningStatesAfterInterleavedLayout(m_document);
 
     m_didSeePendingStylesheet = m_document->styleScope().hasPendingSheetsBeforeBody();
 
@@ -1255,6 +1263,20 @@ std::unique_ptr<Update> TreeResolver::resolve()
     Adjuster::propagateToDocumentElementAndInitialContainingBlock(*m_update, m_document);
 
     return WTFMove(m_update);
+}
+
+auto TreeResolver::updateAnchorPositioningState(Element& element, const RenderStyle* style) -> AnchorPositionedElementAction
+{
+    if (!style)
+        return AnchorPositionedElementAction::None;
+
+    auto* anchorPositionedState = m_document->styleScope().anchorPositionedStates().get(element);
+    if (!anchorPositionedState || anchorPositionedState->stage >= AnchorPositionResolutionStage::Resolved)
+        return AnchorPositionedElementAction::None;
+
+    m_hasUnresolvedAnchorPositionedElements = true;
+
+    return AnchorPositionedElementAction::SkipDescendants;
 }
 
 static Vector<Function<void ()>>& postResolutionCallbackQueue()
@@ -1327,52 +1349,6 @@ PostResolutionCallbackDisabler::~PostResolutionCallbackDisabler()
 bool postResolutionCallbacksAreSuspended()
 {
     return resolutionNestingDepth;
-}
-
-auto TreeResolver::updateAnchorPositioningState(Element& element, const RenderStyle* style) -> AnchorPositionedElementAction
-{
-    if (!style)
-        return AnchorPositionedElementAction::None;
-
-    bool isAnchor = generatesBox(*style) && !style->anchorNames().isEmpty();
-    auto* anchorPositionedState = m_document->styleScope().anchorPositionedStates().get(element);
-    if (!isAnchor && !anchorPositionedState)
-        return AnchorPositionedElementAction::None;
-
-    // Mark anchor as eligible target for anchor-positioned elements
-    if (isAnchor) {
-        bool isNewAnchor = m_document->styleScope().anchorElements().add(element).isNewEntry;
-
-        if (isNewAnchor) {
-            for (auto& anchorName : style->anchorNames()) {
-                m_document->styleScope().anchorsForAnchorName().ensure(anchorName, [&] {
-                    return Vector<WeakRef<Element, WeakPtrImplWithEventTargetData>> { };
-                }).iterator->value.append(element);
-            }
-        }
-    }
-
-    if (!anchorPositionedState || anchorPositionedState->stage == AnchorPositionResolutionStage::Resolved)
-        return AnchorPositionedElementAction::None;
-
-    m_hasUnresolvedAnchorPositionedElements = true;
-    if (anchorPositionedState->stage == AnchorPositionResolutionStage::Initial) {
-        // We are seeing this anchor-positioned element for the first time during
-        // style & layout interleaving. Wait until we have relevant render tree
-        // information before further processing this anchor-positioned element.
-        if (!style->positionAnchor().isNull())
-            anchorPositionedState->anchorNames.add(style->positionAnchor());
-        anchorPositionedState->stage = AnchorPositionResolutionStage::FinishedCollectingAnchorNames;
-        return AnchorPositionedElementAction::SkipDescendants;
-    }
-
-    // Now we should have render tree information. Let's find the
-    // appropriate anchors for this anchor-positioned element.
-    ASSERT(element.renderer());
-    if (anchorPositionedState->stage == AnchorPositionResolutionStage::FinishedCollectingAnchorNames)
-        AnchorPositionEvaluator::findAnchorsForAnchorPositionedElement(element);
-
-    return AnchorPositionedElementAction::SkipDescendants;
 }
 
 }

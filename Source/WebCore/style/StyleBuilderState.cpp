@@ -98,7 +98,7 @@ bool BuilderState::useSVGZoomRulesForLength() const
     return is<SVGElement>(element()) && !(is<SVGSVGElement>(*element()) && element()->parentNode());
 }
 
-RefPtr<StyleImage> BuilderState::createStyleImage(const CSSValue& value)
+RefPtr<StyleImage> BuilderState::createStyleImage(const CSSValue& value) const
 {
     if (auto* imageValue = dynamicDowncast<CSSImageValue>(value))
         return imageValue->createStyleImage(*this);
@@ -114,26 +114,14 @@ RefPtr<StyleImage> BuilderState::createStyleImage(const CSSValue& value)
         return crossfadeValue->createStyleImage(*this);
     if (auto* filterImageValue = dynamicDowncast<CSSFilterImageValue>(value))
         return filterImageValue->createStyleImage(*this);
-    if (auto* linearGradientValue = dynamicDowncast<CSSLinearGradientValue>(value))
-        return linearGradientValue->createStyleImage(*this);
-    if (auto* linearGradientValue = dynamicDowncast<CSSPrefixedLinearGradientValue>(value))
-        return linearGradientValue->createStyleImage(*this);
-    if (auto* linearGradientValue = dynamicDowncast<CSSDeprecatedLinearGradientValue>(value))
-        return linearGradientValue->createStyleImage(*this);
-    if (auto* radialGradientvalue = dynamicDowncast<CSSRadialGradientValue>(value))
-        return radialGradientvalue->createStyleImage(*this);
-    if (auto* radialGradientvalue = dynamicDowncast<CSSPrefixedRadialGradientValue>(value))
-        return radialGradientvalue->createStyleImage(*this);
-    if (auto* radialGradientvalue = dynamicDowncast<CSSDeprecatedRadialGradientValue>(value))
-        return radialGradientvalue->createStyleImage(*this);
-    if (auto conicGradientValue = dynamicDowncast<CSSConicGradientValue>(value))
-        return conicGradientValue->createStyleImage(*this);
+    if (auto* gradientValue = dynamicDowncast<CSSGradientValue>(value))
+        return gradientValue->createStyleImage(*this);
     if (auto* paintImageValue = dynamicDowncast<CSSPaintImageValue>(value))
         return paintImageValue->createStyleImage(*this);
     return nullptr;
 }
 
-FilterOperations BuilderState::createFilterOperations(const CSSValue& inValue)
+FilterOperations BuilderState::createFilterOperations(const CSSValue& inValue) const
 {
     return WebCore::Style::createFilterOperations(document(), m_style, m_cssToLengthConversionData, inValue);
 }
@@ -162,8 +150,8 @@ void BuilderState::adjustStyleForInterCharacterRuby()
         return;
 
     m_style.setTextAlign(TextAlignMode::Center);
-    if (m_style.isHorizontalWritingMode())
-        m_style.setWritingMode(WritingMode::VerticalLr);
+    if (!m_style.writingMode().isVerticalTypographic())
+        m_style.setWritingMode(StyleWritingMode::VerticalLr);
 }
 
 void BuilderState::updateFont()

@@ -112,8 +112,6 @@ bool PDFDiscretePresentationController::handleKeyboardEvent(const WebKeyboardEve
     if (handleKeyboardCommand(event))
         return true;
 
-    // FIXME: <https://webkit.org/b/276981> Need to check for scrollability first.
-
     if (handleKeyboardEventForPageNavigation(event))
         return true;
 #endif
@@ -129,28 +127,10 @@ bool PDFDiscretePresentationController::handleKeyboardCommand(const WebKeyboardE
 
 bool PDFDiscretePresentationController::handleKeyboardEventForPageNavigation(const WebKeyboardEvent& event)
 {
-//    if (m_isScrollingWithAnimationToPageExtent)
-//        return false;
-
     if (event.type() == WebEventType::KeyUp)
         return false;
 
     auto key = event.key();
-    if (key == "ArrowLeft"_s || key == "ArrowUp"_s || key == "PageUp"_s) {
-        if (!canGoToPreviousRow())
-            return false;
-
-        goToPreviousRow(Animated::No);
-        return true;
-    }
-
-    if (key == "ArrowRight"_s || key == "ArrowDown"_s || key == "PageDown"_s) {
-        if (!canGoToNextRow())
-            return false;
-
-        goToNextRow(Animated::No);
-        return true;
-    }
 
     if (key == "Home"_s) {
         if (!m_visibleRowIndex)
@@ -166,6 +146,39 @@ bool PDFDiscretePresentationController::handleKeyboardEventForPageNavigation(con
             return false;
 
         goToRowIndex(lastRowIndex, Animated::No);
+        return true;
+    }
+
+    auto maximumScrollPosition = m_plugin->maximumScrollPosition();
+
+    bool isHorizontallyScrollable = !!maximumScrollPosition.x();
+    bool isVerticallyScrollable = !!maximumScrollPosition.y();
+
+    if (key == "ArrowLeft"_s || key == "ArrowUp"_s || key == "PageUp"_s) {
+        if (key == "ArrowLeft"_s) {
+            if (isHorizontallyScrollable)
+                return false;
+        } else if (isVerticallyScrollable)
+            return false;
+
+        if (!canGoToPreviousRow())
+            return false;
+
+        goToPreviousRow(Animated::No);
+        return true;
+    }
+
+    if (key == "ArrowRight"_s || key == "ArrowDown"_s || key == "PageDown"_s) {
+        if (key == "ArrowRight"_s) {
+            if (isHorizontallyScrollable)
+                return false;
+        } else if (isVerticallyScrollable)
+            return false;
+
+        if (!canGoToNextRow())
+            return false;
+
+        goToNextRow(Animated::No);
         return true;
     }
 
@@ -939,20 +952,16 @@ PDFPageCoverage PDFDiscretePresentationController::pageCoverageForContentsRect(c
     }
 
     auto contentsRect = convertFromPaintingToContents(paintingRect, row->pages[0]);
-
-    auto drawingRect = IntRect { { }, m_plugin->documentSize() };
-    drawingRect.intersect(enclosingIntRect(contentsRect));
-
-    auto rectInPDFLayoutCoordinates = m_plugin->convertDown(UnifiedPDFPlugin::CoordinateSpace::Contents, UnifiedPDFPlugin::CoordinateSpace::PDFDocumentLayout, FloatRect { drawingRect });
+    auto paintRectInPDFLayoutCoordinates = m_plugin->convertDown(UnifiedPDFPlugin::CoordinateSpace::Contents, UnifiedPDFPlugin::CoordinateSpace::PDFDocumentLayout, contentsRect);
 
     auto pageCoverage = PDFPageCoverage { };
 
     auto addPageToCoverage = [&](PDFDocumentLayout::PageIndex pageIndex) {
         auto pageBounds = layoutBoundsForPageAtIndex(pageIndex);
-        if (!pageBounds.intersects(rectInPDFLayoutCoordinates))
+        if (!pageBounds.intersects(paintRectInPDFLayoutCoordinates))
             return;
 
-        pageCoverage.append(PerPageInfo { pageIndex, pageBounds });
+        pageCoverage.append(PerPageInfo { pageIndex, pageBounds, paintRectInPDFLayoutCoordinates });
     };
 
     for (auto pageIndex : row->pages)
@@ -1355,7 +1364,7 @@ void PDFDiscretePresentationController::setNeedsRepaintInDocumentRect(OptionSet<
 
     if (repaintRequirements.contains(RepaintRequirement::PDFContent)) {
         if (RefPtr asyncRenderer = asyncRendererIfExists())
-            asyncRenderer->pdfContentChangedInRect(row.contentsLayer.get(), m_plugin->nonNormalizedScaleFactor(), contentsRect, layoutRow);
+            asyncRenderer->pdfContentChangedInRect(row.contentsLayer.get(), contentsRect, layoutRow);
     }
 
 #if ENABLE(UNIFIED_PDF_SELECTION_LAYER)

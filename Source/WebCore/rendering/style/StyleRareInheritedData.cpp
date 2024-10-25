@@ -87,6 +87,7 @@ StyleRareInheritedData::StyleRareInheritedData()
     , indent(RenderStyle::initialTextIndent())
     , usedZoom(RenderStyle::initialZoom())
     , textUnderlineOffset(RenderStyle::initialTextUnderlineOffset())
+    , textBoxEdge(RenderStyle::initialTextBoxEdge())
     , lineFitEdge(RenderStyle::initialLineFitEdge())
     , miterLimit(RenderStyle::initialStrokeMiterLimit())
     , customProperties(StyleCustomPropertyData::create())
@@ -106,7 +107,6 @@ StyleRareInheritedData::StyleRareInheritedData()
     , textEmphasisFill(static_cast<unsigned>(TextEmphasisFill::Filled))
     , textEmphasisMark(static_cast<unsigned>(TextEmphasisMark::None))
     , textEmphasisPosition(static_cast<unsigned>(RenderStyle::initialTextEmphasisPosition().toRaw()))
-    , textOrientation(static_cast<unsigned>(TextOrientation::Mixed))
     , textIndentLine(static_cast<unsigned>(RenderStyle::initialTextIndentLine()))
     , textIndentType(static_cast<unsigned>(RenderStyle::initialTextIndentType()))
     , textUnderlinePosition(static_cast<unsigned>(RenderStyle::initialTextUnderlinePosition().toRaw()))
@@ -182,6 +182,7 @@ inline StyleRareInheritedData::StyleRareInheritedData(const StyleRareInheritedDa
     , indent(o.indent)
     , usedZoom(o.usedZoom)
     , textUnderlineOffset(o.textUnderlineOffset)
+    , textBoxEdge(o.textBoxEdge)
     , lineFitEdge(o.lineFitEdge)
     , miterLimit(o.miterLimit)
     , customProperties(o.customProperties)
@@ -202,7 +203,6 @@ inline StyleRareInheritedData::StyleRareInheritedData(const StyleRareInheritedDa
     , textEmphasisFill(o.textEmphasisFill)
     , textEmphasisMark(o.textEmphasisMark)
     , textEmphasisPosition(o.textEmphasisPosition)
-    , textOrientation(o.textOrientation)
     , textIndentLine(o.textIndentLine)
     , textIndentType(o.textIndentType)
     , textUnderlinePosition(o.textUnderlinePosition)
@@ -295,6 +295,7 @@ bool StyleRareInheritedData::operator==(const StyleRareInheritedData& o) const
         && indent == o.indent
         && usedZoom == o.usedZoom
         && textUnderlineOffset == o.textUnderlineOffset
+        && textBoxEdge == o.textBoxEdge
         && lineFitEdge == o.lineFitEdge
         && wordSpacing == o.wordSpacing
         && miterLimit == o.miterLimit
@@ -327,7 +328,6 @@ bool StyleRareInheritedData::operator==(const StyleRareInheritedData& o) const
         && textEmphasisFill == o.textEmphasisFill
         && textEmphasisMark == o.textEmphasisMark
         && textEmphasisPosition == o.textEmphasisPosition
-        && textOrientation == o.textOrientation
         && textIndentLine == o.textIndentLine
         && textIndentType == o.textIndentType
         && lineBoxContain == o.lineBoxContain

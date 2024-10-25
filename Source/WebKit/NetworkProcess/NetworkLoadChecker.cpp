@@ -370,6 +370,7 @@ bool NetworkLoadChecker::isAllowedByContentSecurityPolicy(const ResourceRequest&
     case FetchOptions::Destination::Audio:
     case FetchOptions::Destination::Document:
     case FetchOptions::Destination::Embed:
+    case FetchOptions::Destination::Environmentmap:
     case FetchOptions::Destination::Font:
     case FetchOptions::Destination::Image:
     case FetchOptions::Destination::Iframe:
@@ -558,6 +559,11 @@ void NetworkLoadChecker::storeRedirectionIfNeeded(const ResourceRequest& request
     if (!m_shouldCaptureExtraNetworkLoadMetrics)
         return;
     m_loadInformation.transactions.append(NetworkTransactionInformation { NetworkTransactionInformation::Type::Redirection, ResourceRequest { request }, ResourceResponse { response }, { } });
+}
+
+Ref<NetworkProcess> NetworkLoadChecker::protectedNetworkProcess()
+{
+    return m_networkProcess;
 }
 
 } // namespace WebKit

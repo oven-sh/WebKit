@@ -823,7 +823,7 @@ public:
 
 private:
     JSGlobalContextRef m_context;
-    HashMap<JSValueRef, __unsafe_unretained id> m_objectMap;
+    UncheckedKeyHashMap<JSValueRef, __unsafe_unretained id> m_objectMap;
     Vector<Task> m_worklist;
     Vector<JSC::Strong<JSC::Unknown>> m_jsValues;
 };
@@ -1068,7 +1068,7 @@ public:
 
 private:
     JSContext *m_context;
-    HashMap<__unsafe_unretained id, JSValueRef> m_objectMap;
+    UncheckedKeyHashMap<__unsafe_unretained id, JSValueRef> m_objectMap;
     Vector<Task> m_worklist;
     Vector<JSC::Strong<JSC::Unknown>> m_jsValues;
 };
@@ -1235,7 +1235,7 @@ struct StructTagHandler {
     SEL typeToValueSEL;
     SEL valueToTypeSEL;
 };
-typedef HashMap<String, StructTagHandler> StructHandlers;
+typedef UncheckedKeyHashMap<String, StructTagHandler> StructHandlers;
 
 static StructHandlers* createStructHandlerMap()
 {

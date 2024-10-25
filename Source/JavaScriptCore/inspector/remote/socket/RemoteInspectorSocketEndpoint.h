@@ -32,6 +32,7 @@
 #include <wtf/Function.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
+#include <wtf/TZoneMalloc.h>
 #include <wtf/Threading.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
@@ -39,7 +40,7 @@
 namespace Inspector {
 
 class RemoteInspectorSocketEndpoint {
-    WTF_MAKE_FAST_ALLOCATED;
+    WTF_MAKE_TZONE_ALLOCATED_EXPORT(RemoteInspectorSocketEndpoint, JS_EXPORT_PRIVATE);
 public:
     class Client {
     public:
@@ -84,7 +85,7 @@ public:
 
 protected:
     struct BaseConnection {
-        WTF_MAKE_STRUCT_FAST_ALLOCATED;
+        WTF_MAKE_STRUCT_TZONE_ALLOCATED(BaseConnection);
 
         BaseConnection(ConnectionID id)
             : id { id }
@@ -113,6 +114,7 @@ protected:
     };
 
     struct ClientConnection : public BaseConnection {
+        WTF_MAKE_STRUCT_TZONE_ALLOCATED(ClientConnection);
         ClientConnection(ConnectionID id, PlatformSocketType socket, Client& client)
             : BaseConnection(id)
             , client { client }
@@ -181,8 +183,8 @@ protected:
     int pollingTimeout();
 
     mutable Lock m_connectionsLock;
-    HashMap<ConnectionID, std::unique_ptr<ClientConnection>> m_clients WTF_GUARDED_BY_LOCK(m_connectionsLock);
-    HashMap<ConnectionID, std::unique_ptr<ListenerConnection>> m_listeners WTF_GUARDED_BY_LOCK(m_connectionsLock);
+    UncheckedKeyHashMap<ConnectionID, std::unique_ptr<ClientConnection>> m_clients WTF_GUARDED_BY_LOCK(m_connectionsLock);
+    UncheckedKeyHashMap<ConnectionID, std::unique_ptr<ListenerConnection>> m_listeners WTF_GUARDED_BY_LOCK(m_connectionsLock);
 
     PlatformSocketType m_wakeupSendSocket { INVALID_SOCKET_VALUE };
     PlatformSocketType m_wakeupReceiveSocket { INVALID_SOCKET_VALUE };

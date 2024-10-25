@@ -114,6 +114,7 @@ JSEXTDisjointTimerQueryWebGL2.cpp
 JSElement.cpp
 JSElementInternals.cpp
 JSEventSource.cpp
+JSEventTarget.cpp
 JSFetchEvent.cpp
 JSFetchRequest.cpp
 JSFetchRequestInit.cpp
@@ -227,6 +228,7 @@ JSMediaStreamAudioDestinationNode.cpp
 JSMediaStreamAudioSourceNode.cpp
 JSMediaStreamTrack.cpp
 JSMessageChannel.cpp
+JSMessageEvent.cpp
 JSMessagePort.cpp
 JSMouseEvent.cpp
 JSMutationEvent.cpp
@@ -388,7 +390,6 @@ JSValidityState.cpp
 JSVideoConfiguration.cpp
 JSVideoTrack.cpp
 JSVideoTrackList.cpp
-JSViewTimeline.cpp
 JSViewTransition.cpp
 JSVisualViewport.cpp
 JSWakeLockSentinel.cpp
@@ -459,6 +460,7 @@ Modules/WebGPU/Implementation/WebGPUXRBindingImpl.cpp
 Modules/airplay/WebMediaSessionManager.cpp
 Modules/applepay-ams-ui/ApplePayAMSUIPaymentHandler.cpp
 Modules/applepay/ApplePaySession.cpp
+Modules/applepay/ApplePaySetup.cpp
 Modules/applepay/PaymentCoordinator.cpp
 Modules/applepay/PaymentSession.cpp
 Modules/applepay/paymentrequest/ApplePayPaymentHandler.cpp
@@ -470,7 +472,6 @@ Modules/cache/DOMCache.cpp
 Modules/cache/DOMCacheStorage.cpp
 Modules/cache/RetrieveRecordsOptions.h
 Modules/cache/WindowOrWorkerGlobalScopeCaches.cpp
-Modules/cookie-store/CookieStore.cpp
 Modules/credentialmanagement/CredentialsContainer.cpp
 Modules/encryptedmedia/CDM.cpp
 Modules/encryptedmedia/MediaKeySession.cpp
@@ -743,8 +744,10 @@ animation/CustomEffect.cpp
 animation/DocumentTimeline.cpp
 animation/KeyframeEffect.cpp
 animation/KeyframeEffectStack.cpp
+animation/ScrollTimeline.cpp
 animation/StyleOriginatedAnimation.cpp
 animation/StyleOriginatedAnimationEvent.cpp
+animation/ViewTimeline.cpp
 animation/WebAnimation.cpp
 animation/WebAnimationUtilities.cpp
 bindings/js/CachedModuleScriptLoader.cpp
@@ -775,7 +778,6 @@ bindings/js/JSDOMConvertCallbacks.h
 bindings/js/JSDOMConvertDate.cpp
 bindings/js/JSDOMConvertEnumeration.h
 bindings/js/JSDOMConvertEventListener.h
-bindings/js/JSDOMConvertIndexedDB.h
 bindings/js/JSDOMConvertInterface.h
 bindings/js/JSDOMConvertScheduledAction.h
 bindings/js/JSDOMConvertStrings.h
@@ -906,6 +908,7 @@ css/CSSFontStyleRangeValue.cpp
 css/CSSFontStyleRangeValue.h
 css/CSSFontStyleWithAngleValue.cpp
 css/CSSFontValue.cpp
+css/CSSFontVariationValue.cpp
 css/CSSGradientValue.cpp
 css/CSSGridIntegerRepeatValue.cpp
 css/CSSGridLineValue.cpp
@@ -1215,6 +1218,7 @@ html/HTMLFormControlElement.cpp
 html/HTMLFormControlsCollection.cpp
 html/HTMLFormElement.cpp
 html/HTMLFrameElementBase.cpp
+html/HTMLFrameOwnerElement.cpp
 html/HTMLFrameSetElement.cpp
 html/HTMLIFrameElement.cpp
 html/HTMLImageElement.cpp
@@ -1643,7 +1647,6 @@ platform/graphics/ca/cocoa/PlatformCALayerContentsDelayedReleaser.mm
 platform/graphics/cg/GraphicsContextCG.cpp
 platform/graphics/cg/GraphicsContextGLCG.cpp
 platform/graphics/cg/ImageBufferIOSurfaceBackend.cpp
-platform/graphics/cg/ImageBufferUtilitiesCG.cpp
 platform/graphics/cg/PDFDocumentImage.cpp
 platform/graphics/cg/ShareableBitmapCG.mm
 platform/graphics/cocoa/CMUtilities.mm
@@ -1723,7 +1726,6 @@ platform/mediastream/cocoa/IncomingAudioMediaStreamTrackRendererUnit.cpp
 platform/mediastream/libwebrtc/LibWebRTCAudioModule.cpp
 platform/mediastream/mac/AVCaptureDeviceManager.mm
 platform/mediastream/mac/AVVideoCaptureSource.mm
-platform/mediastream/mac/CoreAudioCaptureSource.cpp
 platform/mediastream/mac/CoreAudioSharedUnit.cpp
 platform/mediastream/mac/MediaStreamTrackAudioSourceProviderCocoa.cpp
 platform/mediastream/mac/MockAudioSharedUnit.mm
@@ -1945,6 +1947,7 @@ style/StyleBuilderState.cpp
 style/StyleInvalidator.cpp
 style/StylePendingResources.cpp
 style/StyleResolveForDocument.cpp
+style/StyleResolveForFont.cpp
 style/StyleResolver.cpp
 style/StyleScope.cpp
 style/StyleScopeRuleSets.cpp
@@ -1956,7 +1959,6 @@ style/Styleable.cpp
 style/Styleable.h
 style/TransformOperationsBuilder.cpp
 style/UserAgentStyle.cpp
-style/values/StylePrimitiveNumericTypes+Conversions.cpp
 style/values/StylePrimitiveNumericTypes.h
 svg/SVGAElement.cpp
 svg/SVGAElement.h
@@ -2032,7 +2034,6 @@ svg/SVGTextPathElement.cpp
 svg/SVGTextPathElement.h
 svg/SVGTextPositioningElement.h
 svg/SVGToOTFFontConversion.cpp
-svg/SVGTransformValue.h
 svg/SVGURIReference.cpp
 svg/SVGURIReference.h
 svg/SVGUseElement.cpp
@@ -2098,7 +2099,6 @@ workers/service/ServiceWorkerRegistration.cpp
 workers/service/ServiceWorkerWindowClient.cpp
 workers/service/background-fetch/BackgroundFetch.cpp
 workers/service/background-fetch/BackgroundFetchEngine.cpp
-workers/service/background-fetch/BackgroundFetchManager.cpp
 workers/service/background-fetch/BackgroundFetchRegistration.cpp
 workers/service/background-fetch/ServiceWorkerRegistrationBackgroundFetchAPI.cpp
 workers/service/context/SWContextManager.cpp

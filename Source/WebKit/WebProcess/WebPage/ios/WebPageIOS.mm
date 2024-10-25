@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2012-2022 Apple Inc. All rights reserved.
+ * Copyright (C) 2012-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -92,6 +92,7 @@
 #import <WebCore/FontCache.h>
 #import <WebCore/FontCacheCoreText.h>
 #import <WebCore/GeometryUtilities.h>
+#import <WebCore/GraphicsLayer.h>
 #import <WebCore/HTMLAreaElement.h>
 #import <WebCore/HTMLAttachmentElement.h>
 #import <WebCore/HTMLBodyElement.h>
@@ -142,8 +143,7 @@
 #import <WebCore/RenderBoxInlines.h>
 #import <WebCore/RenderImage.h>
 #import <WebCore/RenderLayer.h>
-#import <WebCore/RenderLayerScrollableArea.h>
-#import <WebCore/RenderObjectInlines.h>
+#import <WebCore/RenderLayerBacking.h>
 #import <WebCore/RenderThemeIOS.h>
 #import <WebCore/RenderVideo.h>
 #import <WebCore/RenderView.h>
@@ -161,7 +161,6 @@
 #import <WebCore/VisibleUnits.h>
 #import <WebCore/WebEvent.h>
 #import <pal/system/ios/UserInterfaceIdiom.h>
-#import <wtf/IterationStatus.h>
 #import <wtf/MathExtras.h>
 #import <wtf/MemoryPressureHandler.h>
 #import <wtf/RuntimeApplicationChecks.h>
@@ -1656,7 +1655,7 @@ static std::pair<std::optional<SimpleRange>, SelectionWasFlipped> rangeForPointI
 
     if (!selectionFlippingEnabled) {
         auto node = selectionStart.deepEquivalent().containerNode();
-        if (node && node->renderStyle() && node->renderStyle()->isVerticalWritingMode()) {
+        if (node && node->renderStyle() && node->renderStyle()->writingMode().isVertical()) {
             if (baseIsStart) {
                 int startX = selectionStart.absoluteCaretBounds().center().x();
                 if (pointInDocument.x() > startX)
@@ -1894,6 +1893,32 @@ void WebPage::dispatchSyntheticMouseEventsForSelectionGesture(SelectionTouch tou
     }
 }
 
+void WebPage::clearSelectionAfterTappingSelectionHighlightIfNeeded(WebCore::FloatPoint location)
+{
+    RefPtr localMainFrame = dynamicDowncast<LocalFrame>(m_page->mainFrame());
+    if (!localMainFrame)
+        return;
+
+    auto result = localMainFrame->checkedEventHandler()->hitTestResultAtPoint(LayoutPoint { location }, {
+        HitTestRequest::Type::ReadOnly,
+        HitTestRequest::Type::AllowVisibleChildFrameContentOnly,
+        HitTestRequest::Type::IncludeAllElementsUnderPoint,
+        HitTestRequest::Type::CollectMultipleElements,
+    });
+
+    bool tappedVideo = false;
+    bool tappedLiveText = false;
+    for (Ref node : result.listBasedTestResult()) {
+        if (is<HTMLVideoElement>(node))
+            tappedVideo = true;
+        else if (ImageOverlay::isOverlayText(node))
+            tappedLiveText = true;
+    }
+
+    if (tappedVideo && !tappedLiveText)
+        clearSelection();
+}
+
 void WebPage::updateSelectionWithTouches(const IntPoint& point, SelectionTouch selectionTouch, bool baseIsStart, CompletionHandler<void(const WebCore::IntPoint&, SelectionTouch, OptionSet<SelectionFlags>)>&& completionHandler)
 {
     RefPtr frame = m_page->checkedFocusController()->focusedOrMainFrame();
@@ -2105,35 +2130,34 @@ void WebPage::moveSelectionByOffset(int32_t offset, CompletionHandler<void()>&& 
     
 void WebPage::startAutoscrollAtPosition(const WebCore::FloatPoint& positionInWindow)
 {
-    auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page->mainFrame());
-    if (!localMainFrame)
-        return;
-
-    if (m_focusedElement && m_focusedElement->renderer()) {
-        localMainFrame->eventHandler().startSelectionAutoscroll(m_focusedElement->renderer(), positionInWindow);
-        return;
-    }
-    
     RefPtr frame = m_page->checkedFocusController()->focusedOrMainFrame();
     if (!frame)
         return;
+
+    if (m_focusedElement && m_focusedElement->renderer()) {
+        frame->eventHandler().startSelectionAutoscroll(m_focusedElement->renderer(), positionInWindow);
+        return;
+    }
+
     auto& selection = frame->selection().selection();
     if (!selection.isRange())
         return;
+
     auto range = selection.toNormalizedRange();
     if (!range)
         return;
+
     auto* renderer = range->start.container->renderer();
     if (!renderer)
         return;
 
-    Ref(*localMainFrame)->eventHandler().startSelectionAutoscroll(renderer, positionInWindow);
+    frame->eventHandler().startSelectionAutoscroll(renderer, positionInWindow);
 }
     
 void WebPage::cancelAutoscroll()
 {
-    if (auto* localMainFrame = dynamicDowncast<LocalFrame>(m_page->mainFrame()))
-        localMainFrame->eventHandler().cancelSelectionAutoscroll();
+    if (RefPtr frame = m_page->checkedFocusController()->focusedOrMainFrame())
+        frame->eventHandler().cancelSelectionAutoscroll();
 }
 
 void WebPage::requestEvasionRectsAboveSelection(CompletionHandler<void(const Vector<FloatRect>&)>&& reply)
@@ -3690,7 +3714,7 @@ std::optional<FocusedElementInformation> WebPage::focusedElementInformation()
         bool inFixed = false;
         renderer->localToContainerPoint(FloatPoint(), nullptr, UseTransforms, &inFixed);
         information.insideFixedPosition = inFixed;
-        information.isRTL = renderer->style().direction() == TextDirection::RTL;
+        information.isRTL = renderer->writingMode().isBidiRTL();
 
 #if ENABLE(ASYNC_SCROLLING)
         if (auto* scrollingCoordinator = this->scrollingCoordinator())
@@ -3839,6 +3863,7 @@ std::optional<FocusedElementInformation> WebPage::focusedElementInformation()
         else if (element->isColorControl()) {
             information.elementType = InputType::Color;
             information.colorValue = element->valueAsColor();
+            information.supportsAlpha = element->alpha() ? WebKit::ColorControlSupportsAlpha::Yes : WebKit::ColorControlSupportsAlpha::No;
 #if ENABLE(DATALIST_ELEMENT)
             information.suggestedColors = element->suggestedColors();
 #endif
@@ -4164,12 +4189,6 @@ void WebPage::resetViewportDefaultConfiguration(WebFrame* frame, bool hasMobileD
         if (m_isInFullscreenMode == IsInFullscreenMode::Yes)
             return m_viewportConfiguration.nativeWebpageParameters();
 #endif
-
-#if ENABLE(PDF_PLUGIN)
-        if (mainFramePlugIn())
-            return m_viewportConfiguration.pluginDocumentParameters();
-#endif
-
         if (shouldIgnoreMetaViewport())
             return m_viewportConfiguration.nativeWebpageParameters();
         return ViewportConfiguration::webpageParameters();
@@ -4216,6 +4235,10 @@ void WebPage::resetViewportDefaultConfiguration(WebFrame* frame, bool hasMobileD
             m_viewportConfiguration.setDefaultConfiguration(ViewportConfiguration::imageDocumentParameters());
         else if (document->isTextDocument())
             m_viewportConfiguration.setDefaultConfiguration(ViewportConfiguration::textDocumentParameters());
+#if ENABLE(PDF_PLUGIN)
+        else if (m_page->settings().unifiedPDFEnabled() && document->isPluginDocument())
+            m_viewportConfiguration.setDefaultConfiguration(ViewportConfiguration::pluginDocumentParameters());
+#endif
         else
             configureWithParametersForStandardFrame = true;
     }
@@ -5560,61 +5583,7 @@ void WebPage::shouldDismissKeyboardAfterTapAtPoint(FloatPoint point, CompletionH
     completion(targetSize.width() >= minimumSizeForDismissal.width() && targetSize.height() >= minimumSizeForDismissal.height());
 }
 
-static CheckedPtr<RenderBox> enclosingScroller(RenderObject* renderer)
-{
-    if (!renderer)
-        return { };
-
-    auto containingRenderer = [](const RenderObject& renderer) -> CheckedPtr<RenderElement> {
-        if (CheckedPtr container = renderer.container())
-            return container;
-
-        if (RefPtr owner = renderer.protectedDocument()->ownerElement())
-            return owner->renderer();
-
-        return { };
-    };
-
-    CheckedPtr candidate = dynamicDowncast<RenderElement>(renderer) ?: renderer->container();
-    for (; candidate; candidate = containingRenderer(*candidate)) {
-        if (CheckedPtr renderBox = dynamicDowncast<RenderBox>(*candidate); renderBox && renderBox->canBeScrolledAndHasScrollableArea())
-            return renderBox.get();
-    }
-
-    return { };
-}
-
-static void forEachEnclosingScroller(const VisibleSelection& selection, Function<IterationStatus(const std::optional<ScrollingNodeID>&, const IntRect&)>&& callback)
-{
-    RefPtr ancestor = commonInclusiveAncestor(selection.start(), selection.end());
-    if (!ancestor)
-        return;
-
-    for (CheckedPtr scroller = enclosingScroller(ancestor->renderer()); scroller; scroller = enclosingScroller(scroller->container())) {
-        Ref view = scroller->checkedView()->frameView();
-        IntRect scrollerClipRectInContent;
-        std::optional<ScrollingNodeID> enclosingScrollingNodeID;
-        if (CheckedPtr renderView = dynamicDowncast<RenderView>(*scroller)) {
-            if (renderView->protectedDocument()->isTopDocument())
-                break;
-
-            scrollerClipRectInContent = view->visibleContentRect();
-            enclosingScrollingNodeID = view->scrollingNodeID();
-        } else if (CheckedPtr layer = scroller->layer()) {
-            CheckedPtr scrollableArea = layer->scrollableArea();
-            if (!scrollableArea)
-                continue;
-
-            scrollerClipRectInContent = scroller->absoluteBoundingBoxRect();
-            enclosingScrollingNodeID = scrollableArea->scrollingNodeID();
-        }
-
-        if (callback(WTFMove(enclosingScrollingNodeID), view->contentsToRootView(scrollerClipRectInContent)) == IterationStatus::Done)
-            break;
-    }
-}
-
-void WebPage::computeSelectionClipRectAndEnclosingScroller(EditorState& state, const VisibleSelection& selection, const IntRect& editableRootBounds) const
+void WebPage::computeEnclosingLayerID(EditorState& state, const VisibleSelection& selection) const
 {
     if (selection.isNoneOrOrphaned())
         return;
@@ -5622,47 +5591,47 @@ void WebPage::computeSelectionClipRectAndEnclosingScroller(EditorState& state, c
     if (!state.isContentEditable && selection.isCaret())
         return;
 
-    if (!m_selectionHonorsOverflowScrolling) {
-        state.visualData->selectionClipRect = editableRootBounds;
+    RefPtr startContainer = selection.start().containerNode();
+    if (!startContainer)
+        return;
+
+    RefPtr endContainer = selection.end().containerNode();
+    if (!endContainer)
+        return;
+
+    CheckedPtr startRenderer = startContainer->renderer();
+    if (!startRenderer)
+        return;
+
+    CheckedPtr endRenderer = startContainer->renderer();
+    if (!endRenderer)
+        return;
+
+    CheckedPtr startLayer = startRenderer->enclosingLayer();
+    if (!startLayer)
+        return;
+
+    CheckedPtr endLayer = endRenderer->enclosingLayer();
+    if (!endLayer)
+        return;
+
+    for (CheckedPtr layer = startLayer->commonAncestorWithLayer(*endLayer); layer; layer = layer->enclosingContainingBlockLayer(CrossFrameBoundaries::Yes)) {
+        if (!layer->isComposited())
+            continue;
+
+        auto* layerBacking = layer->backing();
+        RefPtr graphicsLayer = layerBacking->scrolledContentsLayer() ?: layerBacking->graphicsLayer();
+        if (!graphicsLayer)
+            continue;
+
+        auto identifier = graphicsLayer->primaryLayerID();
+        if (!identifier)
+            continue;
+
+        state.visualData->enclosingLayerID = WTFMove(identifier);
         return;
     }
-
-    std::optional<ScrollingNodeID> enclosingScrollingNodeID;
-    IntRect enclosingScrollingClipRect;
-    IntRect innerScrollingClipRect;
-    forEachEnclosingScroller(selection, [&](const std::optional<ScrollingNodeID>& scrollingNodeID, const IntRect& clipRectInRootView) {
-        if (scrollingNodeID) {
-            enclosingScrollingClipRect = clipRectInRootView;
-            enclosingScrollingNodeID = scrollingNodeID;
-            return IterationStatus::Done;
-        }
-
-        if (innerScrollingClipRect.isEmpty())
-            innerScrollingClipRect = clipRectInRootView;
-
-        return IterationStatus::Continue;
-    });
-
-    if (enclosingScrollingNodeID)
-        state.visualData->enclosingScrollingNodeID = { WTFMove(*enclosingScrollingNodeID) };
-
-    if (!innerScrollingClipRect.isEmpty()) {
-        // We need to clip the selection to the inner scroller, even if that scroller does not have a
-        // node in the scrolling tree. For example, this allows us to clip the selection in a scrollable
-        // single-line text form control, even if it's inside a larger scrollable area.
-        if (!editableRootBounds.isEmpty())
-            innerScrollingClipRect.unite(editableRootBounds);
-        state.visualData->selectionClipRect = WTFMove(innerScrollingClipRect);
-    }
 }
-
-#if ENABLE(PDF_PLUGIN)
-void WebPage::didInitializePlugin()
-{
-    resetViewportDefaultConfiguration(m_mainFrame.ptr());
-    viewportConfigurationChanged();
-}
-#endif
 
 } // namespace WebKit
 

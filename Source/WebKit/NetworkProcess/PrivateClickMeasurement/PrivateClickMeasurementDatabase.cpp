@@ -126,7 +126,7 @@ std::span<const ASCIILiteral> Database::sortedTables()
         "AttributedPrivateClickMeasurement"_s
     };
 
-    return { sortedTables.data(), sortedTables.size() };
+    return sortedTables;
 }
 
 void Database::interruptAllDatabases()

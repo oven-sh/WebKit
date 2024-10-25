@@ -1132,7 +1132,9 @@ static bool shouldForwardWheelEvent(WebKitWebViewBase* webViewBase, GdkEvent* ev
             if (length > 0)
                 length--;
             for (unsigned i = 0; i < length; i++) {
+                WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
                 auto oldTime = history.get()[i].time;
+                WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
                 webViewBase->priv->wheelEventsToPropagate.removeAllMatching([&oldTime] (GRefPtr<GdkEvent>& current) {
                     return gdk_event_get_time(current.get()) == oldTime;
                 });
@@ -2550,7 +2552,7 @@ void webkitWebViewBaseCreateWebPage(WebKitWebViewBase* webkitWebViewBase, Ref<AP
     // We attach this here, because changes in scale factor are passed directly to the page proxy.
     g_signal_connect(webkitWebViewBase, "notify::scale-factor", G_CALLBACK(deviceScaleFactorChanged), nullptr);
 
-    WebCore::SystemSettings::singleton().addObserver([&webkitWebViewBase](const SystemSettings::State& state) mutable {
+    SystemSettings::singleton().addObserver([webkitWebViewBase](const SystemSettings::State& state) mutable {
         if (state.xftDPI)
             refreshInternalScaling(webkitWebViewBase);
         if (state.themeName || state.darkMode)

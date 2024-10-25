@@ -1,10 +1,16 @@
+NetworkProcess/Classifier/ResourceLoadStatisticsStore.cpp
+NetworkProcess/NetworkLoad.cpp
 NetworkProcess/NetworkLoadScheduler.cpp
-NetworkProcess/NetworkSession.cpp
 NetworkProcess/PingLoad.h
+NetworkProcess/PrivateClickMeasurement/PrivateClickMeasurementDatabase.cpp
+NetworkProcess/cache/NetworkCache.cpp
 NetworkProcess/cache/NetworkCacheSpeculativeLoadManager.cpp
 NetworkProcess/cocoa/NetworkProcessCocoa.mm
 NetworkProcess/cocoa/NetworkSessionCocoa.mm
+NetworkProcess/storage/NetworkStorageManager.cpp
+NetworkProcess/storage/OriginStorageManager.cpp
 Platform/IPC/MessageSenderInlines.h
+Platform/cocoa/WKPaymentAuthorizationDelegate.mm
 Shared/API/APIArray.cpp
 Shared/API/APIObject.h
 Shared/API/c/cg/WKImageCG.cpp
@@ -41,6 +47,7 @@ UIProcess/Cocoa/UIDelegate.mm
 UIProcess/Gamepad/UIGamepadProvider.cpp
 UIProcess/Notifications/ServiceWorkerNotificationHandler.cpp
 UIProcess/Notifications/WebNotificationManagerProxy.cpp
+UIProcess/ProcessThrottler.cpp
 UIProcess/ProvisionalPageProxy.cpp
 UIProcess/RemoteLayerTree/RemoteLayerTreeHost.mm
 UIProcess/RemoteLayerTree/RemoteScrollingCoordinatorProxy.cpp
@@ -48,6 +55,7 @@ UIProcess/RemoteLayerTree/mac/RemoteScrollingCoordinatorProxyMac.mm
 UIProcess/RemoteLayerTree/mac/RemoteScrollingTreeMac.mm
 UIProcess/UserMediaPermissionRequestManagerProxy.cpp
 UIProcess/WebAuthentication/AuthenticatorManager.cpp
+UIProcess/WebAuthentication/Cocoa/NfcService.mm
 UIProcess/WebBackForwardCache.cpp
 UIProcess/WebBackForwardCacheEntry.cpp
 UIProcess/WebBackForwardList.cpp
@@ -129,7 +137,6 @@ WebProcess/WebPage/RemoteLayerTree/RemoteLayerTreeContext.mm
 WebProcess/WebPage/RemoteLayerTree/RemoteLayerTreeDrawingArea.mm
 WebProcess/WebPage/ViewGestureGeometryCollector.cpp
 WebProcess/WebPage/ViewUpdateDispatcher.cpp
-WebProcess/WebPage/WebCookieJar.cpp
 WebProcess/WebPage/WebFrame.cpp
 WebProcess/WebPage/WebPage.cpp
 WebProcess/WebPage/WebURLSchemeHandlerProxy.cpp
@@ -143,3 +150,4 @@ WebProcess/WebSleepDisablerClient.cpp
 WebProcess/WebStorage/StorageAreaMap.cpp
 WebProcess/cocoa/TextTrackRepresentationCocoa.mm
 WebProcess/cocoa/WebProcessCocoa.mm
+webpushd/PushService.mm

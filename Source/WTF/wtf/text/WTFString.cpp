@@ -241,15 +241,13 @@ String String::numberToStringFixedPrecision(double number, unsigned precision, T
 String String::number(float number)
 {
     NumberToStringBuffer buffer;
-    size_t length = numberToStringAndSize(number, buffer);
-    return String { std::span { buffer.data(), length } };
+    return String { numberToStringAndSize(number, buffer) };
 }
 
 String String::number(double number)
 {
     NumberToStringBuffer buffer;
-    size_t length = numberToStringAndSize(number, buffer);
-    return String { std::span { buffer.data(), length } };
+    return String { numberToStringAndSize(number, buffer) };
 }
 
 String String::numberToStringFixedWidth(double number, unsigned decimalPlaces)
@@ -474,7 +472,7 @@ String fromUTF8Impl(std::span<const char8_t> string)
         return emptyString();
 
     if (charactersAreAllASCII(string))
-        return StringImpl::create(spanReinterpretCast<const LChar>(string));
+        return StringImpl::create(byteCast<LChar>(string));
 
     Vector<UChar, 1024> buffer(string.size());
  
@@ -508,7 +506,7 @@ String String::fromUTF8WithLatin1Fallback(std::span<const char8_t> string)
     if (!utf8) {
         // Do this assertion before chopping the size_t down to unsigned.
         RELEASE_ASSERT(string.size() <= String::MaxLength);
-        return spanReinterpretCast<const LChar>(string);
+        return byteCast<LChar>(string);
     }
     return utf8;
 }

@@ -39,14 +39,19 @@ public:
     FlexFormattingUtils(const FlexFormattingContext&);
 
     static bool isMainAxisParallelWithInlineAxis(const ElementBox& flexContainer);
+    static bool isMainAxisParallelWithLeftRightAxis(const ElementBox& flexContainer);
+    static bool isInlineDirectionRTL(const ElementBox& flexContainer);
     static bool isMainReversedToContentDirection(const ElementBox& flexContainer);
     static bool areFlexLinesReversedInCrossAxis(const ElementBox& flexContainer);
 
-    static LayoutUnit rowGapValue(const ElementBox& flexContainer, LayoutUnit flexContainerContentBoxHeight);
-    static LayoutUnit columnGapValue(const ElementBox& flexContainer, LayoutUnit flexContainerContentBoxWidth);
+    // FIXME: These values should probably be computed by FlexFormattingContext and get passed in to FlexLayout.
+    static LayoutUnit mainAxisGapValue(const ElementBox& flexContainer, LayoutUnit flexContainerContentBoxWidth);
+    static LayoutUnit crossAxisGapValue(const ElementBox& flexContainer, LayoutUnit flexContainerContentBoxHeight);
 
-    LayoutUnit usedMinimumMainSize(const LogicalFlexItem&) const;
-    std::optional<LayoutUnit> usedMaxiumMainSize(const LogicalFlexItem&) const;
+    LayoutUnit usedMinimumSizeInMainAxis(const LogicalFlexItem&) const;
+    std::optional<LayoutUnit> usedMaximumSizeInMainAxis(const LogicalFlexItem&) const;
+    LayoutUnit usedMaxContentSizeInMainAxis(const LogicalFlexItem&) const;
+    LayoutUnit usedSizeInCrossAxis(const LogicalFlexItem&, LayoutUnit maxAxisConstraint) const;
 
 private:
     const FlexFormattingContext& formattingContext() const { return m_flexFormattingContext; }

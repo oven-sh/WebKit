@@ -551,7 +551,7 @@ static RefPtr<CSSValue> consumeAutoOrLengthPercentage(CSSParserTokenRange& range
 {
     if (range.peek().id() == CSSValueAuto)
         return consumeIdent(range);
-    return consumeLengthPercentage(range, context, ValueRange::All, unitless, UnitlessZeroQuirk::Allow, NegativePercentagePolicy::Forbid, anchorPolicy, anchorSizePolicy);
+    return consumeLengthPercentage(range, context, ValueRange::All, unitless, UnitlessZeroQuirk::Allow, anchorPolicy, anchorSizePolicy);
 }
 
 RefPtr<CSSValue> consumeMarginSide(CSSParserTokenRange& range, const CSSParserContext& context, CSSPropertyID currentShorthand)
@@ -1277,8 +1277,11 @@ static RefPtr<CSSPathValue> consumeBasicShapePath(CSSParserTokenRange& args, Opt
     return CSSPathValue::create(WTFMove(byteStream), rule);
 }
 
-static RefPtr<CSSValuePair> consumeCoordinatePair(CSSParserTokenRange& range, const CSSParserContext& context)
+static RefPtr<CSSValue> consumeShapeToCoordinates(CSSParserTokenRange& range, const CSSParserContext& context, CoordinateAffinity affinity)
 {
+    if (affinity == CoordinateAffinity::Absolute)
+        return consumePosition(range, context, UnitlessQuirk::Forbid, PositionSyntax::Position);
+
     auto xDimension = consumeLengthPercentage(range, context);
     if (!xDimension)
         return nullptr;
@@ -1290,6 +1293,55 @@ static RefPtr<CSSValuePair> consumeCoordinatePair(CSSParserTokenRange& range, co
     return CSSValuePair::createNoncoalescing(xDimension.releaseNonNull(), yDimension.releaseNonNull());
 }
 
+static std::optional<ControlPointValue> consumeShapeRelativeControlPoint(CSSParserTokenRange& range, const CSSParserContext& context)
+{
+    auto anchoringFromToken = [](CSSValueID token) -> std::optional<ControlPointAnchoring> {
+        switch (token) {
+        case CSSValueStart: return ControlPointAnchoring::FromStart;
+        case CSSValueEnd: return ControlPointAnchoring::FromEnd;
+        case CSSValueOrigin: return ControlPointAnchoring::FromOrigin;
+        default:
+            break;
+        }
+        return std::nullopt;
+    };
+
+    // Look for "from start" etc.
+    auto consumeAnchoring = [&]() -> std::optional<ControlPointAnchoring> {
+        if (range.peek().type() != IdentToken)
+            return std::nullopt;
+
+        auto maybeFromToken = range.peek().id();
+        if (maybeFromToken != CSSValueFrom)
+            return std::nullopt;
+
+        if (!consumeIdent(range))
+            return std::nullopt;
+
+        if (range.peek().type() != IdentToken)
+            return std::nullopt;
+
+        auto anchoring = anchoringFromToken(range.peek().id());
+        if (anchoring)
+            consumeIdent(range);
+
+        return anchoring;
+    };
+
+    auto xDimension = consumeLengthPercentage(range, context);
+    if (!xDimension)
+        return std::nullopt;
+
+    auto yDimension = consumeLengthPercentage(range, context);
+    if (!yDimension)
+        return std::nullopt;
+
+    auto anchoringValue = consumeAnchoring();
+
+    auto coordinates = CSSValuePair::createNoncoalescing(xDimension.releaseNonNull(), yDimension.releaseNonNull());
+    return ControlPointValue { WTFMove(coordinates), anchoringValue };
+}
+
 static RefPtr<CSSValue> consumeShapeCommand(CSSParserTokenRange& range, const CSSParserContext& context, OptionSet<PathParsingOption>)
 {
     if (range.peek().type() != IdentToken)
@@ -1299,7 +1351,7 @@ static RefPtr<CSSValue> consumeShapeCommand(CSSParserTokenRange& range, const CS
         if (range.peek().type() != IdentToken)
             return std::nullopt;
 
-        CSSValueID token = range.peek().id();
+        auto token = range.peek().id();
         if (token != CSSValueBy && token != CSSValueTo)
             return std::nullopt;
 
@@ -1309,6 +1361,22 @@ static RefPtr<CSSValue> consumeShapeCommand(CSSParserTokenRange& range, const CS
         return token == CSSValueBy ? CoordinateAffinity::Relative : CoordinateAffinity::Absolute;
     };
 
+    auto consumeControlPoint = [&](CoordinateAffinity affinity) -> std::optional<ControlPointValue> {
+        auto controlPoint = consumeShapeRelativeControlPoint(range, context);
+        if (controlPoint)
+            return controlPoint;
+
+        // Absolute control points allow <position>
+        if (affinity != CoordinateAffinity::Absolute)
+            return std::nullopt;
+
+        auto position = consumePosition(range, context, UnitlessQuirk::Forbid, PositionSyntax::Position);
+        if (!position)
+            return std::nullopt;
+
+        return ControlPointValue { position.releaseNonNull(), { } };
+    };
+
     auto atEndOfCommand = [&] () {
         return range.atEnd() || range.peek().type() == CommaToken;
     };
@@ -1316,95 +1384,125 @@ static RefPtr<CSSValue> consumeShapeCommand(CSSParserTokenRange& range, const CS
     auto id = range.consumeIncludingWhitespace().id();
     switch (id) {
     case CSSValueMove: {
-        // <move-command> = move <by-to> <coordinate-pair>
+        // <move-command> = move [ to <position> | by <coordinate-pair> ]
         auto affinityValue = consumeAffinity();
         if (!affinityValue)
             return nullptr;
 
-        auto toCoordinates = consumeCoordinatePair(range, context);
+        auto toCoordinates = consumeShapeToCoordinates(range, context, *affinityValue);
         if (!toCoordinates)
             return nullptr;
 
         return CSSShapeSegmentValue::createMove(*affinityValue, toCoordinates.releaseNonNull());
     }
     case CSSValueLine: {
-        // <line-command> = line <by-to> <coordinate-pair>
+        // <line-command> = line [ to <position> | by <coordinate-pair> ]
         auto affinityValue = consumeAffinity();
         if (!affinityValue)
             return nullptr;
 
-        auto toCoordinates = consumeCoordinatePair(range, context);
+        auto toCoordinates = consumeShapeToCoordinates(range, context, *affinityValue);
         if (!toCoordinates)
             return nullptr;
 
         return CSSShapeSegmentValue::createLine(*affinityValue, toCoordinates.releaseNonNull());
     }
-    case CSSValueHline:
-    case CSSValueVline: {
-        // <hv-line-command> = [hline | vline] <by-to> <length-percentage>
+    case CSSValueHline: {
+        // <horizontal-line-command> = hline [ to [ <length-percentage> | left | center | right | x-start | x-end ] | by <length-percentage> ]
         auto affinityValue = consumeAffinity();
         if (!affinityValue)
             return nullptr;
+
+        if (*affinityValue == CoordinateAffinity::Absolute) {
+            // FIXME: Add x-start, x-end when supported: webkit.org/b/282026
+            if (auto ident = consumeIdent<CSSValueLeft, CSSValueCenter, CSSValueRight /*, CSSValueXStart, CSSValueXEnd */>(range))
+                return CSSShapeSegmentValue::createHorizontalLine(*affinityValue, ident.releaseNonNull());
+        }
 
         auto length = consumeLengthPercentage(range, context);
         if (!length)
             return nullptr;
 
-        if (id == CSSValueHline)
-            return CSSShapeSegmentValue::createHorizontalLine(*affinityValue, length.releaseNonNull());
+        return CSSShapeSegmentValue::createHorizontalLine(*affinityValue, length.releaseNonNull());
+    }
+    case CSSValueVline: {
+        // <vertical-line-command> = vline [ to [ <length-percentage> | top | center | bottom | y-start | y-end ] | by <length-percentage> ]
+        auto affinityValue = consumeAffinity();
+        if (!affinityValue)
+            return nullptr;
+
+        if (*affinityValue == CoordinateAffinity::Absolute) {
+            // FIXME: Add y-start, y-end when supported: webkit.org/b/282026
+            if (auto ident = consumeIdent<CSSValueTop, CSSValueCenter, CSSValueBottom /*, CSSValueYStart, CSSValueYEnd */>(range))
+                return CSSShapeSegmentValue::createVerticalLine(*affinityValue, ident.releaseNonNull());
+        }
+
+        auto length = consumeLengthPercentage(range, context);
+        if (!length)
+            return nullptr;
 
         return CSSShapeSegmentValue::createVerticalLine(*affinityValue, length.releaseNonNull());
     }
     case CSSValueCurve: {
-        // <curve-command> = curve <by-to> <coordinate-pair> using <coordinate-pair>{1,2}
+        // <curve-command> = curve [ to <position> with <to-control-point> [ / <to-control-point> ]?
+        //                         | by <coordinate-pair> with <relative-control-point> [ / <relative-control-point> ]? ]
         auto affinityValue = consumeAffinity();
         if (!affinityValue)
             return nullptr;
 
-        auto toCoordinates = consumeCoordinatePair(range, context);
+        auto toCoordinates = consumeShapeToCoordinates(range, context, *affinityValue);
         if (!toCoordinates)
             return nullptr;
 
-        if (!consumeIdent<CSSValueUsing>(range))
+        if (!consumeIdent<CSSValueWith>(range))
             return nullptr;
 
-        auto controlPoint1 = consumeCoordinatePair(range, context);
+        auto controlPoint1 = consumeControlPoint(*affinityValue);
         if (!controlPoint1)
             return nullptr;
 
-        auto controlPoint2 = consumeCoordinatePair(range, context);
-        if (controlPoint2)
-            return CSSShapeSegmentValue::createCubicCurve(*affinityValue, toCoordinates.releaseNonNull(), controlPoint1.releaseNonNull(), controlPoint2.releaseNonNull());
+        if (consumeSlashIncludingWhitespace(range)) {
+            auto controlPoint2 = consumeControlPoint(*affinityValue);
+            if (controlPoint2)
+                return CSSShapeSegmentValue::createCubicCurve(*affinityValue, toCoordinates.releaseNonNull(), WTFMove(*controlPoint1), WTFMove(*controlPoint2));
 
-        return CSSShapeSegmentValue::createQuadraticCurve(*affinityValue, toCoordinates.releaseNonNull(), controlPoint1.releaseNonNull());
+            return nullptr;
+        }
+
+        return CSSShapeSegmentValue::createQuadraticCurve(*affinityValue, toCoordinates.releaseNonNull(), WTFMove(*controlPoint1));
     }
     case CSSValueSmooth: {
-        // <smooth-command> = smooth <by-to> <coordinate-pair> [using <coordinate-pair>]?
+        // <smooth-command> = smooth [ to <position> [ with <to-control-point> ]?
+        //                           | by <coordinate-pair> [ with <relative-control-point> ]? ]
         auto affinityValue = consumeAffinity();
         if (!affinityValue)
             return nullptr;
 
-        auto toCoordinates = consumeCoordinatePair(range, context);
+        auto toCoordinates = consumeShapeToCoordinates(range, context, *affinityValue);
         if (!toCoordinates)
             return nullptr;
 
-        if (consumeIdent<CSSValueUsing>(range)) {
-            auto controlPoint = consumeCoordinatePair(range, context);
+        if (consumeIdent<CSSValueWith>(range)) {
+            auto controlPoint = consumeControlPoint(*affinityValue);
             if (!controlPoint)
                 return nullptr;
 
-            return CSSShapeSegmentValue::createSmoothCubicCurve(*affinityValue, toCoordinates.releaseNonNull(), controlPoint.releaseNonNull());
+            return CSSShapeSegmentValue::createSmoothCubicCurve(*affinityValue, toCoordinates.releaseNonNull(), WTFMove(*controlPoint));
         }
 
         return CSSShapeSegmentValue::createSmoothQuadraticCurve(*affinityValue, toCoordinates.releaseNonNull());
     }
     case CSSValueArc: {
-        // arc <by-to> <coordinate-pair> of <length-percentage>{1,2} [ <arc-sweep> || <arc-size> || rotate <angle> ]?
+        // <arc-command> = arc [ to <position> | by <coordinate-pair> ]
+        //                                       && of <length-percentage>{1,2}
+        //                                       && <arc-sweep>?
+        //                                       && <arc-size>?
+        //                                       && [rotate <angle>]?
         auto affinityValue = consumeAffinity();
         if (!affinityValue)
             return nullptr;
 
-        auto toCoordinates = consumeCoordinatePair(range, context);
+        auto toCoordinates = consumeShapeToCoordinates(range, context, *affinityValue);
         if (!toCoordinates)
             return nullptr;
 
@@ -1480,7 +1578,7 @@ static RefPtr<CSSShapeValue> consumeBasicShapeShape(CSSParserTokenRange& range, 
     if (!consumeIdent<CSSValueFrom>(range))
         return nullptr;
 
-    auto fromCoordinates = consumeCoordinatePair(range, context);
+    auto fromCoordinates = consumePosition(range, context, UnitlessQuirk::Forbid, PositionSyntax::Position);
     if (!fromCoordinates)
         return nullptr;
 
@@ -2375,18 +2473,6 @@ RefPtr<CSSValue> consumeOffsetRotate(CSSParserTokenRange& range, const CSSParser
 RefPtr<CSSValue> consumeDeclarationValue(CSSParserTokenRange& range, const CSSParserContext& context)
 {
     return CSSVariableParser::parseDeclarationValue(nullAtom(), range.consumeAll(), context);
-}
-
-RefPtr<CSSValue> consumeTextSpacingTrim(CSSParserTokenRange& range, const CSSParserContext&)
-{
-    // auto | space-all |  trim-all | [ allow-end || space-first ]
-    // FIXME: add remaining values;
-    if (auto value = consumeIdent<CSSValueAuto, CSSValueSpaceAll>(range)) {
-        if (!range.atEnd())
-            return nullptr;
-        return value;
-    }
-    return nullptr;
 }
 
 RefPtr<CSSValue> consumeTextAutospace(CSSParserTokenRange& range, const CSSParserContext&)

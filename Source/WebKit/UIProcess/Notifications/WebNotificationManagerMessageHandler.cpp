@@ -29,7 +29,6 @@
 #include "Logging.h"
 #include "ServiceWorkerNotificationHandler.h"
 #include "WebPageProxy.h"
-#include "WebProcessProxy.h"
 #include <WebCore/NotificationData.h>
 #include <wtf/CompletionHandler.h>
 
@@ -102,24 +101,22 @@ void WebNotificationManagerMessageHandler::pageWasNotifiedOfNotificationPermissi
     protectedPage()->pageWillLikelyUseNotifications();
 }
 
-void WebNotificationManagerMessageHandler::requestPermission(WebCore::SecurityOriginData&&, CompletionHandler<void(bool)>&&)
+void WebNotificationManagerMessageHandler::requestPermission(WebCore::SecurityOriginData&&, CompletionHandler<void(bool)>&& completionHandler)
 {
-    RELEASE_ASSERT_NOT_REACHED();
+    ASSERT_NOT_REACHED();
+    completionHandler({ });
 }
 
-void WebNotificationManagerMessageHandler::getPermissionState(WebCore::SecurityOriginData&&, CompletionHandler<void(WebCore::PushPermissionState)>&&)
+void WebNotificationManagerMessageHandler::getPermissionState(WebCore::SecurityOriginData&&, CompletionHandler<void(WebCore::PushPermissionState)>&& completionHandler)
 {
-    RELEASE_ASSERT_NOT_REACHED();
+    ASSERT_NOT_REACHED();
+    completionHandler({ });
 }
 
-void WebNotificationManagerMessageHandler::getPermissionStateSync(WebCore::SecurityOriginData&&, CompletionHandler<void(WebCore::PushPermissionState)>&&)
+void WebNotificationManagerMessageHandler::getPermissionStateSync(WebCore::SecurityOriginData&&, CompletionHandler<void(WebCore::PushPermissionState)>&& completionHandler)
 {
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-std::optional<SharedPreferencesForWebProcess> WebNotificationManagerMessageHandler::sharedPreferencesForWebProcess(const IPC::Connection&) const
-{
-    return protectedPage()->protectedLegacyMainFrameProcess()->sharedPreferencesForWebProcess();
+    ASSERT_NOT_REACHED();
+    completionHandler({ });
 }
 
 } // namespace WebKit

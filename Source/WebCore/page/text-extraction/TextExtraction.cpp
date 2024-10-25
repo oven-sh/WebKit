@@ -62,7 +62,7 @@ static constexpr auto minOpacityToConsiderVisible = 0.05;
 
 using TextNodesAndText = Vector<std::pair<Ref<Text>, String>>;
 using TextAndSelectedRange = std::pair<String, std::optional<CharacterRange>>;
-using TextAndSelectedRangeMap = HashMap<RefPtr<Text>, TextAndSelectedRange>;
+using TextAndSelectedRangeMap = UncheckedKeyHashMap<RefPtr<Text>, TextAndSelectedRange>;
 
 static inline TextNodesAndText collectText(const SimpleRange& range)
 {
@@ -575,7 +575,7 @@ RenderedText extractRenderedText(Element& element)
         return { };
 
     RefPtr frameView = renderer->view().protectedFrameView();
-    auto direction = renderer->style().blockFlowDirection();
+    auto direction = renderer->writingMode().blockDirection();
     auto elementRectInDocument = frameView->absoluteToDocumentRect(renderer->absoluteBoundingBoxRect());
 
     Vector<TokenAndBlockOffset> allTokensAndOffsets;

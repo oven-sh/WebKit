@@ -34,6 +34,7 @@
 #include "UseDownloadPlaceholder.h"
 #include <WebCore/LocalFrameLoaderClient.h>
 #include <WebCore/NotImplemented.h>
+#include <wtf/AbstractRefCounted.h>
 #include <wtf/CheckedRef.h>
 #include <wtf/Forward.h>
 #include <wtf/HashMap.h>
@@ -70,10 +71,8 @@ class DownloadManager : public CanMakeCheckedPtr<DownloadManager> {
     WTF_MAKE_FAST_ALLOCATED;
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(DownloadManager);
 public:
-    class Client {
+    class Client : public AbstractRefCounted {
     public:
-        DECLARE_VIRTUAL_REFCOUNTED;
-
         virtual ~Client() { }
 
         // CheckedPtr interface
@@ -93,7 +92,7 @@ public:
     explicit DownloadManager(Client&);
     ~DownloadManager();
 
-    void startDownload(PAL::SessionID, DownloadID, const WebCore::ResourceRequest&, const std::optional<WebCore::SecurityOriginData>& topOrigin, std::optional<NavigatingToAppBoundDomain>, const String& suggestedName = { }, WebCore::FromDownloadAttribute = WebCore::FromDownloadAttribute::No);
+    void startDownload(PAL::SessionID, DownloadID, const WebCore::ResourceRequest&, const std::optional<WebCore::SecurityOriginData>& topOrigin, std::optional<NavigatingToAppBoundDomain>, const String& suggestedName = { }, WebCore::FromDownloadAttribute = WebCore::FromDownloadAttribute::No, std::optional<WebCore::FrameIdentifier> frameID = std::nullopt, std::optional<WebCore::PageIdentifier> = std::nullopt, std::optional<WebCore::ProcessIdentifier> = std::nullopt);
     void dataTaskBecameDownloadTask(DownloadID, std::unique_ptr<Download>&&);
     void convertNetworkLoadToDownload(DownloadID, Ref<NetworkLoad>&&, ResponseCompletionHandler&&,  Vector<RefPtr<WebCore::BlobDataFileReference>>&&, const WebCore::ResourceRequest&, const WebCore::ResourceResponse&);
     void downloadDestinationDecided(DownloadID, Ref<NetworkDataTask>&&);

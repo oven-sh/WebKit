@@ -599,6 +599,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     Modules/system-preview/ARKitBadgeSystemImage.h
 
     Modules/url-pattern/URLPattern.h
+    Modules/url-pattern/URLPatternCanonical.h
     Modules/url-pattern/URLPatternInit.h
     Modules/url-pattern/URLPatternOptions.h
     Modules/url-pattern/URLPatternResult.h
@@ -708,7 +709,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     animation/AnimationFrameRatePreset.h
     animation/AnimationTimeline.h
     animation/AnimationTimelinesController.h
-    animation/CSSNumberishTime.h
     animation/CSSPropertyBlendingClient.h
     animation/CustomAnimationOptions.h
     animation/CompositeOperation.h
@@ -725,9 +725,11 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     animation/ScrollTimeline.h
     animation/ScrollTimelineOptions.h
     animation/TimelineRange.h
+    animation/TimelineRangeOffset.h
     animation/TimelineScope.h
     animation/ViewTimeline.h
     animation/ViewTimelineOptions.h
+    animation/WebAnimationTime.h
     animation/WebAnimationTypes.h
 
     bindings/IDLTypes.h
@@ -1721,6 +1723,7 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     platform/AbortableTaskQueue.h
     platform/AudioSampleFormat.h
+    platform/BoxSides.h
     platform/CaretAnimator.h
     platform/CPUMonitor.h
     platform/ColorChooser.h
@@ -2395,7 +2398,6 @@ set(WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/text/TextCheckerClient.h
     platform/text/TextChecking.h
     platform/text/TextCheckingRequestIdentifier.h
-    platform/text/TextDirection.h
     platform/text/TextFlags.h
     platform/text/TextSpacing.h
     platform/text/UnicodeBidi.h

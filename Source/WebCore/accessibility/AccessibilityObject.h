@@ -67,7 +67,7 @@ class AccessibilityObject : public AXCoreObject, public CanMakeWeakPtr<Accessibi
 public:
     virtual ~AccessibilityObject();
 
-    AXID treeID() const final;
+    std::optional<AXID> treeID() const final;
     String dbg() const final;
 
     // After constructing an AccessibilityObject, it must be given a
@@ -153,7 +153,7 @@ public:
     AXCoreObject* headerContainer() override { return nullptr; }
     int axColumnCount() const override { return 0; }
     int axRowCount() const override { return 0; }
-    virtual Vector<Vector<AXID>> cellSlots() { return { }; }
+    virtual Vector<Vector<Markable<AXID>>> cellSlots() { return { }; }
 
     // Table cell support.
     bool isTableCell() const override { return false; }
@@ -225,7 +225,7 @@ public:
     FloatRect primaryScreenRect() const override;
 #endif
     FloatRect convertFrameToSpace(const FloatRect&, AccessibilityConversionSpace) const override;
-    HashMap<String, AXEditingStyleValueVariant> resolvedEditingStyles() const override;
+    UncheckedKeyHashMap<String, AXEditingStyleValueVariant> resolvedEditingStyles() const override;
     
     // In a multi-select list, many items can be selected but only one is active at a time.
     bool isSelectedOptionActive() const override { return false; }
@@ -991,7 +991,7 @@ AccessibilityObject* firstAccessibleObjectFromNode(const Node*, const Function<b
 
 namespace Accessibility {
 
-using PlatformRoleMap = HashMap<AccessibilityRole, String, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>>;
+using PlatformRoleMap = UncheckedKeyHashMap<AccessibilityRole, String, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>>;
 
 PlatformRoleMap createPlatformRoleMap();
 String roleToPlatformString(AccessibilityRole);

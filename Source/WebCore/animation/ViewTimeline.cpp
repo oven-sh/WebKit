@@ -38,7 +38,6 @@
 #include "CSSValuePool.h"
 #include "CSSViewValue.h"
 #include "Document.h"
-#include "DocumentInlines.h"
 #include "Element.h"
 #include "RenderBox.h"
 #include "ScrollAnchoringController.h"
@@ -56,7 +55,7 @@ Ref<ViewTimeline> ViewTimeline::create(const AtomString& name, ScrollAxis axis, 
     return adoptRef(*new ViewTimeline(name, axis, WTFMove(insets)));
 }
 
-Ref<ViewTimeline> ViewTimeline::createFromCSSValue(Style::BuilderState& builderState, const CSSViewValue& cssViewValue)
+Ref<ViewTimeline> ViewTimeline::createFromCSSValue(const Style::BuilderState& builderState, const CSSViewValue& cssViewValue)
 {
     auto axisValue = cssViewValue.axis();
     auto axis = axisValue ? fromCSSValueID<ScrollAxis>(axisValue->valueID()) : ScrollAxis::Block;
@@ -92,23 +91,7 @@ static std::optional<Length> lengthForInset(std::variant<RefPtr<CSSNumericValue>
     return { };
 }
 
-static Length lengthForInsetCSSValue(RefPtr<CSSPrimitiveValue> value)
-{
-    // TODO: Figure out how to make this work when provided calc value
-    if (!value || value->isCalculated())
-        return { };
-    if (value->valueID() == CSSValueAuto)
-        return { };
-    if (value->isPercentage())
-        return Length(value->resolveAsPercentageNoConversionDataRequired(), LengthType::Percent);
-    if (value->isPx())
-        return Length(value->resolveAsLengthNoConversionDataRequired(), LengthType::Fixed);
-
-    ASSERT_NOT_REACHED();
-    return { };
-}
-
-static ViewTimelineInsets insetsFromOptions(const std::variant<String, Vector<std::variant<RefPtr<CSSNumericValue>, RefPtr<CSSKeywordValue>>>> inset, CSSParserContext context)
+static ViewTimelineInsets insetsFromOptions(const std::variant<String, Vector<std::variant<RefPtr<CSSNumericValue>, RefPtr<CSSKeywordValue>>>> inset, RefPtr<Element> element)
 {
     if (auto* insetString = std::get_if<String>(&inset)) {
         if (insetString->isEmpty())
@@ -116,10 +99,17 @@ static ViewTimelineInsets insetsFromOptions(const std::variant<String, Vector<st
         CSSTokenizer tokenizer(*insetString);
         auto tokenRange = tokenizer.tokenRange();
         tokenRange.consumeWhitespace();
-        auto consumedInset = CSSPropertyParserHelpers::consumeViewTimelineInsetListItem(tokenRange, context);
-        if (auto insetPair = dynamicDowncast<CSSValuePair>(consumedInset))
-            return { lengthForInsetCSSValue(dynamicDowncast<CSSPrimitiveValue>(insetPair->protectedFirst())), lengthForInsetCSSValue(dynamicDowncast<CSSPrimitiveValue>(insetPair->protectedSecond())) };
-        return { lengthForInsetCSSValue(dynamicDowncast<CSSPrimitiveValue>(consumedInset)), std::nullopt };
+        auto consumedInset = CSSPropertyParserHelpers::consumeViewTimelineInsetListItem(tokenRange, element->protectedDocument()->cssParserContext());
+        if (auto insetPair = dynamicDowncast<CSSValuePair>(consumedInset)) {
+            return {
+                SingleTimelineRange::lengthForCSSValue(dynamicDowncast<CSSPrimitiveValue>(insetPair->protectedFirst()), element),
+                SingleTimelineRange::lengthForCSSValue(dynamicDowncast<CSSPrimitiveValue>(insetPair->protectedSecond()), element)
+            };
+        }
+        return {
+            SingleTimelineRange::lengthForCSSValue(dynamicDowncast<CSSPrimitiveValue>(consumedInset), element),
+            std::nullopt
+        };
     }
     auto insetList = std::get<Vector<std::variant<RefPtr<CSSNumericValue>, RefPtr<CSSKeywordValue>>>>(inset);
 
@@ -137,7 +127,7 @@ ViewTimeline::ViewTimeline(ViewTimelineOptions&& options)
     if (m_subject) {
         auto document = m_subject->protectedDocument();
         document->ensureTimelinesController().addTimeline(*this);
-        m_insets = insetsFromOptions(options.inset, document->cssParserContext());
+        m_insets = insetsFromOptions(options.inset, RefPtr { m_subject.get() });
     }
 }
 
@@ -145,6 +135,27 @@ ViewTimeline::ViewTimeline(const AtomString& name, ScrollAxis axis, ViewTimeline
     : ScrollTimeline(name, axis)
     , m_insets(WTFMove(insets))
 {
+}
+
+void ViewTimeline::setSubject(const Element* subject)
+{
+    if (subject == m_subject)
+        return;
+
+    RefPtr previousSubject = m_subject.get();
+    m_subject = subject;
+    RefPtr newSubject = m_subject.get();
+
+    if (previousSubject && newSubject && &previousSubject->document() == &newSubject->document())
+        return;
+
+    if (previousSubject) {
+        if (CheckedPtr timelinesController = previousSubject->protectedDocument()->timelinesController())
+            timelinesController->removeTimeline(*this);
+    }
+
+    if (newSubject)
+        newSubject->protectedDocument()->ensureTimelinesController().addTimeline(*this);
 }
 
 void ViewTimeline::dump(TextStream& ts) const
@@ -185,7 +196,7 @@ Ref<CSSValue> ViewTimeline::toCSSValue(const RenderStyle& style) const
 AnimationTimelinesController* ViewTimeline::controller() const
 {
     if (m_subject)
-        return &m_subject->protectedDocument()->ensureTimelinesController();
+        return &m_subject->document().ensureTimelinesController();
     return nullptr;
 }
 
@@ -196,14 +207,19 @@ AnimationTimeline::ShouldUpdateAnimationsAndSendEvents ViewTimeline::documentWil
     return AnimationTimeline::ShouldUpdateAnimationsAndSendEvents::No;
 }
 
+TimelineRange ViewTimeline::defaultRange() const
+{
+    return TimelineRange::defaultForViewTimeline();
+}
+
 Element* ViewTimeline::source() const
 {
-    if (auto* sourceRender = sourceRenderer())
+    if (auto* sourceRender = sourceScrollerRenderer())
         return sourceRender->element();
     return nullptr;
 }
 
-RenderBox* ViewTimeline::sourceRenderer() const
+RenderBox* ViewTimeline::sourceScrollerRenderer() const
 {
     if (!m_subject)
         return nullptr;
@@ -228,7 +244,7 @@ ScrollTimeline::Data ViewTimeline::computeTimelineData(const TimelineRange& rang
     if (!subjectRenderBox)
         return { };
 
-    auto* sourceScrollableArea = scrollableAreaForSourceRenderer(sourceRenderer(), document);
+    auto* sourceScrollableArea = scrollableAreaForSourceRenderer(sourceScrollerRenderer(), document);
     if (!sourceScrollableArea)
         return { };
 
@@ -240,13 +256,12 @@ ScrollTimeline::Data ViewTimeline::computeTimelineData(const TimelineRange& rang
     //   cover range
     // - range is the scroll offset corresponding to the end of the cover range minus the scroll offset
     //   corresponding to the start of the cover range
-    // TODO: investigate best way to compute subjectOffset, as offsetTop uses offsetParent(), not the containing scroller
-    // TODO: view timeline progress calculation: (currentScrollOffset - coverRangeStart) / (coverRangeEnd - coverRangeStart)
 
     float currentScrollOffset = axis() == ScrollAxis::Block ? sourceScrollableArea->scrollPosition().y() : sourceScrollableArea->scrollPosition().x();
     float scrollContainerSize = axis() == ScrollAxis::Block ? sourceScrollableArea->visibleHeight() : sourceScrollableArea->visibleWidth();
 
-    float subjectOffset = axis() == ScrollAxis::Block ? subjectRenderBox->offsetTop() : subjectRenderBox->offsetLeft();
+    auto subjectOffsetFromSource = subjectRenderBox->localToContainerPoint(FloatPoint(), sourceScrollerRenderer());
+    float subjectOffset = axis() == ScrollAxis::Block ? subjectOffsetFromSource.y() : subjectOffsetFromSource.x();
 
     float subjectSize = axis() == ScrollAxis::Block ? subjectRenderBox->borderBoxRect().height() : subjectRenderBox->borderBoxRect().width();
 
@@ -265,10 +280,11 @@ ScrollTimeline::Data ViewTimeline::computeTimelineData(const TimelineRange& rang
         case SingleTimelineRange::Name::ExitCrossing:
         case SingleTimelineRange::Name::Exit:
             return subjectOffset;
-        default:
-            ASSERT_NOT_REACHED();
+        case SingleTimelineRange::Name::Omitted:
             return 0.f;
         }
+        ASSERT_NOT_REACHED();
+        return 0.f;
     };
     auto computeRangeEnd = [&]() {
         switch (range.end.name) {
@@ -282,27 +298,34 @@ ScrollTimeline::Data ViewTimeline::computeTimelineData(const TimelineRange& rang
         case SingleTimelineRange::Name::Entry:
         case SingleTimelineRange::Name::EntryCrossing:
             return subjectOffset - scrollContainerSize - subjectSize;
-        default:
-            ASSERT_NOT_REACHED();
+        case SingleTimelineRange::Name::Omitted:
             return 0.f;
         }
+        ASSERT_NOT_REACHED();
+        return 0.f;
     };
 
     auto rangeStart = computeRangeStart() + insetEnd.value();
     auto rangeEnd = computeRangeEnd() - insetStart.value();
 
-    return { currentScrollOffset, rangeStart + ScrollTimeline::floatValueForOffset(range.start.offset, rangeEnd - rangeStart), rangeEnd - ScrollTimeline::floatValueForOffset(range.end.offset, rangeEnd - rangeStart) };
+    return {
+        currentScrollOffset,
+        rangeStart + ScrollTimeline::floatValueForOffset(range.start.offset, rangeEnd - rangeStart),
+        rangeStart + ScrollTimeline::floatValueForOffset(range.end.offset, rangeEnd - rangeStart)
+    };
 }
 
-const CSSNumericValue& ViewTimeline::startOffset() const
+Ref<CSSNumericValue> ViewTimeline::startOffset()
 {
-    auto data = computeTimelineData();
+    auto range = defaultRange();
+    auto data = computeTimelineData(range);
     return CSSNumericFactory::px(data.rangeStart);
 }
 
-const CSSNumericValue& ViewTimeline::endOffset() const
+Ref<CSSNumericValue> ViewTimeline::endOffset()
 {
-    auto data = computeTimelineData();
+    auto range = defaultRange();
+    auto data = computeTimelineData(range);
     return CSSNumericFactory::px(data.rangeEnd);
 }
 

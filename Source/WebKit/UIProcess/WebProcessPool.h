@@ -599,6 +599,20 @@ public:
     bool webProcessStateUpdatesForPageClientEnabled() const { return m_webProcessStateUpdatesForPageClientEnabled; }
     void setWebProcessStateUpdatesForPageClientEnabled(bool enabled) { m_webProcessStateUpdatesForPageClientEnabled = enabled; }
 
+#if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
+    void observeScriptTelemetryUpdatesIfNeeded();
+#endif
+
+#if ENABLE(WEB_PROCESS_SUSPENSION_DELAY)
+    void memoryPressureStatusChangedForProcess(WebProcessProxy&, SystemMemoryPressureStatus);
+    void checkMemoryPressureStatus();
+
+    static Seconds defaultWebProcessSuspensionDelay();
+    Seconds webProcessSuspensionDelay() const;
+    void updateWebProcessSuspensionDelay();
+    void updateWebProcessSuspensionDelayWithPacing(WeakHashSet<WebProcessProxy>&&);
+#endif
+
 private:
     enum class NeedsGlobalStaticInitialization : bool { No, Yes };
     void platformInitialize(NeedsGlobalStaticInitialization);
@@ -935,6 +949,11 @@ private:
 #endif
 
     bool m_webProcessStateUpdatesForPageClientEnabled { false };
+
+#if PLATFORM(MAC)
+    ApproximateTime m_lastCriticalMemoryPressureStatusTime;
+    RunLoop::Timer m_checkMemoryPressureStatusTimer;
+#endif
 };
 
 template<typename T>
@@ -975,6 +994,11 @@ inline WebProcessPool& WebProcessProxy::processPool() const
 {
     ASSERT(m_processPool);
     return *m_processPool.get();
+}
+
+inline Ref<WebProcessPool> WebProcessProxy::protectedProcessPool() const
+{
+    return processPool();
 }
 
 } // namespace WebKit

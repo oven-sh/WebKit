@@ -70,7 +70,7 @@ public:
     void popDebugGroup();
     void pushDebugGroup(String&& groupLabel);
 
-    void setBindGroup(uint32_t groupIndex, const BindGroup&, uint32_t dynamicOffsetCount, const uint32_t* dynamicOffsets);
+    void setBindGroup(uint32_t groupIndex, const BindGroup&, std::span<const uint32_t> dynamicOffsets);
     void setPipeline(const ComputePipeline&);
     void setLabel(String&&);
 
@@ -88,6 +88,9 @@ private:
     void makeInvalid(NSString* = nil);
     void executePreDispatchCommands(const Buffer* = nullptr);
     id<MTLBuffer> runPredispatchIndirectCallValidation(const Buffer&, uint64_t);
+
+    Ref<CommandEncoder> protectedParentEncoder() { return m_parentEncoder; }
+    Ref<Device> protectedDevice() const { return m_device; }
 
     id<MTLComputeCommandEncoder> m_computeCommandEncoder { nil };
 

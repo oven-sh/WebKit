@@ -104,8 +104,8 @@ String WebAutomationSession::Debuggable::name() const
 {
     String name;
     callOnMainRunLoopAndWait([this, protectedThis = Ref { *this }, &name] {
-        if (m_session)
-            name = m_session->name().isolatedCopy();
+        if (RefPtr session = m_session.get())
+            name = session->name().isolatedCopy();
     });
     return name;
 }
@@ -113,24 +113,24 @@ String WebAutomationSession::Debuggable::name() const
 void WebAutomationSession::Debuggable::dispatchMessageFromRemote(String&& message)
 {
     callOnMainRunLoopAndWait([this, protectedThis = Ref { *this }, message = WTFMove(message).isolatedCopy()]() mutable {
-        if (m_session)
-            m_session->dispatchMessageFromRemote(WTFMove(message));
+        if (RefPtr session = m_session.get())
+            session->dispatchMessageFromRemote(WTFMove(message));
     });
 }
 
 void WebAutomationSession::Debuggable::connect(Inspector::FrontendChannel& channel, bool isAutomaticConnection, bool immediatelyPause)
 {
     callOnMainRunLoopAndWait([this, protectedThis = Ref { *this }, &channel, isAutomaticConnection, immediatelyPause] {
-        if (m_session)
-            m_session->connect(channel, isAutomaticConnection, immediatelyPause);
+        if (RefPtr session = m_session.get())
+            session->connect(channel, isAutomaticConnection, immediatelyPause);
     });
 }
 
 void WebAutomationSession::Debuggable::disconnect(Inspector::FrontendChannel& channel)
 {
     callOnMainRunLoopAndWait([this, protectedThis = Ref { *this }, &channel] {
-        if (m_session)
-            m_session->disconnect(channel);
+        if (RefPtr session = m_session.get())
+            session->disconnect(channel);
     });
 }
 #endif // ENABLE(REMOTE_INSPECTOR)
@@ -156,7 +156,7 @@ WebAutomationSession::~WebAutomationSession()
     ASSERT(!m_client);
     ASSERT(!m_processPool);
 #if ENABLE(REMOTE_INSPECTOR)
-    m_debuggable->sessionDestroyed();
+    protectedDebuggable()->sessionDestroyed();
 #endif
 }
 
@@ -199,7 +199,7 @@ void WebAutomationSession::connect(Inspector::FrontendChannel& channel, bool isA
     m_remoteChannel = &channel;
     protectedFrontendRouter()->connectFrontend(channel);
 
-    m_debuggable->setIsPaired(true);
+    protectedDebuggable()->setIsPaired(true);
 }
 
 void WebAutomationSession::disconnect(Inspector::FrontendChannel& channel)
@@ -210,7 +210,7 @@ void WebAutomationSession::disconnect(Inspector::FrontendChannel& channel)
 
 void WebAutomationSession::init()
 {
-    m_debuggable->init();
+    protectedDebuggable()->init();
 }
 
 bool WebAutomationSession::isPaired() const
@@ -254,7 +254,7 @@ void WebAutomationSession::terminate()
         protectedFrontendRouter()->disconnectFrontend(*channel);
     }
 
-    m_debuggable->setIsPaired(false);
+    protectedDebuggable()->setIsPaired(false);
 #endif
 
     if (m_client)
@@ -451,8 +451,10 @@ Inspector::Protocol::ErrorStringOr<void> WebAutomationSession::closeBrowsingCont
 
 Inspector::Protocol::ErrorStringOr<void> WebAutomationSession::deleteSession()
 {
+#if ENABLE(REMOTE_INSPECTOR)
     if (!isPaired())
         SYNC_FAIL_WITH_PREDEFINED_ERROR(InternalError);
+#endif
 
     terminate();
     return { };
@@ -1645,8 +1647,8 @@ Inspector::Protocol::ErrorStringOr<Ref<JSON::ArrayOf<Inspector::Protocol::Automa
 
 Inspector::Protocol::ErrorStringOr<void> WebAutomationSession::setSessionPermissions(Ref<JSON::Array>&& permissions)
 {
-    for (auto it = permissions->begin(); it != permissions->end(); ++it) {
-        auto permission = it->get().asObject();
+    for (auto& value : permissions.get()) {
+        auto permission = value->asObject();
         if (!permission)
             SYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS(InvalidParameter, "The parameter 'permissions' is invalid."_s);
 
@@ -2014,8 +2016,8 @@ void WebAutomationSession::performMouseInteraction(const Inspector::Protocol::Au
     auto floatY = static_cast<float>(*y);
 
     OptionSet<WebEventModifier> keyModifiers;
-    for (auto it = keyModifierStrings->begin(); it != keyModifierStrings->end(); ++it) {
-        auto modifierString = it->get().asString();
+    for (auto& value : keyModifierStrings.get()) {
+        auto modifierString = value->asString();
         if (!modifierString)
             ASYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS(InvalidParameter, "The parameter 'modifiers' is invalid."_s);
 
@@ -2350,8 +2352,8 @@ void WebAutomationSession::performInteractionSequence(const Inspector::Protocol:
             if (auto pressedVirtualKeysArray = stateObject->getArray("pressedVirtualKeys"_s)) {
                 VirtualKeyMap pressedVirtualKeys;
 
-                for (auto it = pressedVirtualKeysArray->begin(); it != pressedVirtualKeysArray->end(); ++it) {
-                    auto pressedVirtualKeyString = (*it)->asString();
+                for (auto& value : *pressedVirtualKeysArray) {
+                    auto pressedVirtualKeyString = value->asString();
                     if (!pressedVirtualKeyString)
                         ASYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS(InvalidParameter, "Encountered a non-string virtual key value."_s);
 
@@ -2553,6 +2555,11 @@ Ref<Inspector::FrontendRouter> WebAutomationSession::protectedFrontendRouter() c
 Ref<Inspector::BackendDispatcher> WebAutomationSession::protectedBackendDispatcher() const
 {
     return m_backendDispatcher;
+}
+
+Ref<WebAutomationSession::Debuggable> WebAutomationSession::protectedDebuggable() const
+{
+    return m_debuggable;
 }
 
 #if !PLATFORM(COCOA) && !USE(CAIRO) && !USE(SKIA)

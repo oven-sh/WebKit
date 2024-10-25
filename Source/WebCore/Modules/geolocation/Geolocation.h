@@ -56,7 +56,8 @@ class Geolocation final : public ScriptWrappable, public RefCounted<Geolocation>
     WTF_MAKE_TZONE_OR_ISO_ALLOCATED_EXPORT(Geolocation, WEBCORE_EXPORT);
     friend class GeoNotifier;
 public:
-    DEFINE_VIRTUAL_REFCOUNTED;
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
 
     static Ref<Geolocation> create(Navigator&);
     WEBCORE_EXPORT ~Geolocation();
@@ -110,8 +111,8 @@ private:
         bool isEmpty() const;
         void getNotifiersVector(GeoNotifierVector&) const;
     private:
-        typedef HashMap<int, RefPtr<GeoNotifier>> IdToNotifierMap;
-        typedef HashMap<RefPtr<GeoNotifier>, int> NotifierToIdMap;
+        typedef UncheckedKeyHashMap<int, RefPtr<GeoNotifier>> IdToNotifierMap;
+        typedef UncheckedKeyHashMap<RefPtr<GeoNotifier>, int> NotifierToIdMap;
         IdToNotifierMap m_idToNotifierMap;
         NotifierToIdMap m_notifierToIdMap;
     };

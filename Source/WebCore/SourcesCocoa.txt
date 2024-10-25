@@ -118,6 +118,8 @@ Modules/applepay/paymentrequest/ApplePayPaymentHandler.cpp
 Modules/applepay-ams-ui/ApplePayAMSUIPaymentHandler.cpp
 Modules/async-clipboard/ios/ClipboardImageReaderIOS.mm
 Modules/async-clipboard/mac/ClipboardImageReaderMac.mm
+Modules/compression/cocoa/CompressionStreamEncoderCocoa.mm
+Modules/compression/cocoa/DecompressionStreamDecoderCocoa.mm
 Modules/mediastream/RTCRtpSFrameTransformerCocoa.cpp
 Modules/model-element/scenekit/SceneKitModel.mm
 Modules/model-element/scenekit/SceneKitModelLoader.mm
@@ -626,8 +628,10 @@ platform/mac/WebCoreObjCExtras.mm
 platform/mac/WebPlaybackControlsManager.mm
 platform/mac/WidgetMac.mm
 platform/mediarecorder/MediaRecorderPrivateAVFImpl.cpp
+platform/mediarecorder/MediaRecorderPrivateWriter.cpp
 platform/mediarecorder/cocoa/AudioSampleBufferCompressor.mm
 platform/mediarecorder/cocoa/MediaRecorderPrivateWriterCocoa.mm
+platform/mediarecorder/cocoa/MediaRecorderPrivateWriterWebM.mm
 platform/mediarecorder/cocoa/VideoSampleBufferCompressor.mm
 platform/mediastream/cocoa/AudioMediaStreamTrackRendererCocoa.cpp
 platform/mediastream/cocoa/AudioMediaStreamTrackRendererInternalUnit.cpp

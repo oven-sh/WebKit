@@ -77,6 +77,10 @@ class GStreamerAudioCaptureDeviceManager final : public GStreamerCaptureDeviceMa
 public:
     static GStreamerAudioCaptureDeviceManager& singleton();
     CaptureDevice::DeviceType deviceType() final { return CaptureDevice::DeviceType::Microphone; }
+
+    // ref() and deref() do nothing because this object is a singleton.
+    void ref() const final { }
+    void deref() const final { }
 };
 
 class GStreamerVideoCaptureDeviceManager final : public GStreamerCaptureDeviceManager {
@@ -84,6 +88,10 @@ class GStreamerVideoCaptureDeviceManager final : public GStreamerCaptureDeviceMa
 public:
     static GStreamerVideoCaptureDeviceManager& singleton();
     CaptureDevice::DeviceType deviceType() final { return CaptureDevice::DeviceType::Camera; }
+
+    // ref() and deref() do nothing because this object is a singleton.
+    void ref() const final { }
+    void deref() const final { }
 };
 
 class GStreamerDisplayCaptureDeviceManager final : public DisplayCaptureManager {
@@ -132,7 +140,7 @@ private:
         NodeAndFD nodeAndFd;
         String path;
     };
-    HashMap<String, std::unique_ptr<Session>> m_sessions;
+    UncheckedKeyHashMap<String, std::unique_ptr<Session>> m_sessions;
 
     GRefPtr<GDBusProxy> m_proxy;
     ResponseCallback m_currentResponseCallback;

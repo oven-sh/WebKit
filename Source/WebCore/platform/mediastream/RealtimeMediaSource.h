@@ -47,6 +47,7 @@
 #include "RealtimeMediaSourceFactory.h"
 #include "RealtimeMediaSourceIdentifier.h"
 #include "VideoFrameTimeMetadata.h"
+#include <wtf/AbstractRefCounted.h>
 #include <wtf/CheckedPtr.h>
 #include <wtf/CompletionHandler.h>
 #include <wtf/Forward.h>
@@ -112,9 +113,9 @@ public:
     virtual void hasStartedProducingData() { }
 };
 
-class WEBCORE_EXPORT RealtimeMediaSource
+class WEBCORE_EXPORT RealtimeMediaSource : public AbstractRefCounted
 #if !RELEASE_LOG_DISABLED
-    : public LoggerHelper
+    , public LoggerHelper
 #endif
 {
 public:
@@ -142,8 +143,6 @@ public:
         virtual GUniquePtr<GstStructure> queryAdditionalStats() { return nullptr; }
 #endif
     };
-
-    DECLARE_VIRTUAL_REFCOUNTED;
 
     virtual ~RealtimeMediaSource();
 
@@ -385,7 +384,7 @@ private:
     HashSet<CheckedPtr<AudioSampleObserver>> m_audioSampleObservers WTF_GUARDED_BY_LOCK(m_audioSampleObserversLock);
 
     mutable Lock m_videoFrameObserversLock;
-    HashMap<VideoFrameObserver*, std::unique_ptr<VideoFrameAdaptor>> m_videoFrameObservers WTF_GUARDED_BY_LOCK(m_videoFrameObserversLock);
+    UncheckedKeyHashMap<VideoFrameObserver*, std::unique_ptr<VideoFrameAdaptor>> m_videoFrameObservers WTF_GUARDED_BY_LOCK(m_videoFrameObserversLock);
 
     CaptureDevice m_device;
 

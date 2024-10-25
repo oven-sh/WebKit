@@ -34,7 +34,9 @@
 #include "LocalDOMWindow.h"
 #include "Logging.h"
 #include "Page.h"
+#include "ScrollTimeline.h"
 #include "Settings.h"
+#include "ViewTimeline.h"
 #include "WebAnimation.h"
 #include "WebAnimationTypes.h"
 #include <JavaScriptCore/VM.h>
@@ -306,6 +308,82 @@ void AnimationTimelinesController::maybeClearCachedCurrentTime()
     // JS frame or throughout updating animations in WebCore.
     if (!m_isSuspended && !m_waitingOnVMIdle && !m_currentTimeClearingTaskCancellationGroup.hasPendingTask())
         m_cachedCurrentTime = std::nullopt;
+}
+
+Vector<Ref<ScrollTimeline>>& AnimationTimelinesController::timelinesForName(const AtomString& name)
+{
+    return m_nameToTimelineMap.ensure(name, [] {
+        return Vector<Ref<ScrollTimeline>> { };
+    }).iterator->value;
+}
+
+void AnimationTimelinesController::registerNamedScrollTimeline(const AtomString& name, const Element& source, ScrollAxis axis)
+{
+    auto& timelines = timelinesForName(name);
+
+    auto existingTimelineIndex = timelines.findIf([&](auto& timeline) {
+        return !is<ViewTimeline>(timeline) && timeline->source() == &source;
+    });
+
+    if (existingTimelineIndex != notFound) {
+        Ref existingScrollTimeline = timelines[existingTimelineIndex].get();
+        existingScrollTimeline->setAxis(axis);
+    } else {
+        auto newScrollTimeline = ScrollTimeline::create(name, axis);
+        newScrollTimeline->setSource(&source);
+        timelines.append(WTFMove(newScrollTimeline));
+    }
+}
+
+void AnimationTimelinesController::registerNamedViewTimeline(const AtomString& name, const Element& subject, ScrollAxis axis, ViewTimelineInsets&& insets)
+{
+    auto& timelines = timelinesForName(name);
+
+    auto existingTimelineIndex = timelines.findIf([&](auto& timeline) {
+        if (RefPtr viewTimeline = dynamicDowncast<ViewTimeline>(timeline))
+            return viewTimeline->subject() == &subject;
+        return false;
+    });
+
+    if (existingTimelineIndex != notFound) {
+        Ref existingViewTimeline = downcast<ViewTimeline>(timelines[existingTimelineIndex].get());
+        existingViewTimeline->setAxis(axis);
+        existingViewTimeline->setInsets(WTFMove(insets));
+    } else {
+        auto newViewTimeline = ViewTimeline::create(name, axis, WTFMove(insets));
+        newViewTimeline->setSubject(&subject);
+        timelines.append(WTFMove(newViewTimeline));
+    }
+}
+
+void AnimationTimelinesController::unregisterNamedTimeline(const AtomString& name, const Element& element)
+{
+    auto it = m_nameToTimelineMap.find(name);
+    if (it == m_nameToTimelineMap.end())
+        return;
+
+    auto& timelines = it->value;
+    timelines.removeFirstMatching([&] (auto& entry) {
+        if (RefPtr viewTimeline = dynamicDowncast<ViewTimeline>(entry))
+            return viewTimeline->subject() == &element;
+        return entry->source() == &element;
+    });
+    if (timelines.isEmpty())
+        m_nameToTimelineMap.remove(it);
+}
+
+AnimationTimeline* AnimationTimelinesController::timelineForName(const AtomString& name, const Element&) const
+{
+    auto it = m_nameToTimelineMap.find(name);
+    if (it == m_nameToTimelineMap.end())
+        return nullptr;
+
+    auto& timelines = it->value;
+
+    // FIXME: Use tree order to determine the corresponding timeline
+    if (timelines.isEmpty())
+        return nullptr;
+    return timelines.first().ptr();
 }
 
 } // namespace WebCore

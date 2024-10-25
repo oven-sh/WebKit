@@ -50,7 +50,6 @@ class TZoneHeapManager {
         TypesRegistered
     };
 
-    static constexpr bool verbose = false;
     static const unsigned typeNameLen = 12;
 
     typedef uint64_t SHA256ResultAsUnsigned[CC_SHA256_DIGEST_LENGTH / sizeof(uint64_t)];
@@ -71,7 +70,9 @@ class TZoneHeapManager {
 
     struct TZoneTypeBuckets {
         unsigned numberOfBuckets;
+        unsigned numberOfTypesThisSizeClass;
         unsigned usedBucketBitmap;
+        Vector<unsigned> bucketUseCounts;
         TZoneBucket buckets[0];
     };
 
@@ -153,7 +154,7 @@ public:
     }
 
     BEXPORT pas_heap_ref* heapRefForTZoneType(bmalloc_type* classType);
-    BEXPORT void dumpRegisterdTypes();
+    BEXPORT void dumpRegisteredTypes();
 
 private:
     BEXPORT static void ensureSingleton();
@@ -164,52 +165,17 @@ private:
 
     BINLINE Mutex& mutex() { return m_mutex; }
 
-    BINLINE unsigned bucketCountForSizeClass(SizeAndAlign typeSizeAlign)
-    {
-        if (typeSizeAlign.size() > 128)
-            return 4;
+    inline unsigned bucketCountForSizeClass(SizeAndAlign typeSizeAlign);
 
-        return 8;
-    }
-
-    BINLINE unsigned tzoneBucketForKey(UniqueLockHolder&, bmalloc_type* type, unsigned bucketCountForSize)
-    {
-        SHA256ResultAsUnsigned sha256Result;
-
-        m_tzoneKey.className = type->name;
-        m_tzoneKey.sizeOfType = type->size;
-        m_tzoneKey.alignmentOfType = type->alignment;
-
-        if (verbose) {
-            TZONE_LOG_DEBUG("Choosing Bucket name: %p  size: %u  align: %u  ", m_tzoneKey.className, m_tzoneKey.sizeOfType, m_tzoneKey.alignmentOfType);
-            TZONE_LOG_DEBUG(" seed { ");
-            for (unsigned i = 0; i < CC_SHA1_DIGEST_LENGTH; ++i)
-                TZONE_LOG_DEBUG("%02x",  m_tzoneKey.seed[i]);
-            TZONE_LOG_DEBUG(" }\n");
-        }
-
-        (void)CC_SHA256(&m_tzoneKey, sizeof(TZoneHeapRandomizeKey), (unsigned char*)&sha256Result);
-
-        if (verbose) {
-            TZONE_LOG_DEBUG("Result: {");
-            for (unsigned i = 0; i < 4; ++i)
-                TZONE_LOG_DEBUG(" %02llx",  sha256Result[i]);
-            TZONE_LOG_DEBUG(" }  bucket: %llu\n", sha256Result[3] % bucketCountForSize);
-        }
-
-        return sha256Result[3] % bucketCountForSize;
-    }
-
+    inline unsigned tzoneBucketForKey(UniqueLockHolder&, bmalloc_type*, unsigned bucketCountForSize);
     TZoneTypeBuckets* populateBucketsForSizeClass(UniqueLockHolder&, SizeAndAlign);
 
     BEXPORT static TZoneHeapManager* theTZoneHeapManager;
 
     TZoneHeapManager::State m_state;
     Mutex m_mutex;
-    unsigned largestSizeClassCount { 0 };
     TZoneHeapRandomizeKey m_tzoneKey;
-    SizeAndAlign m_largestSizeClass;
-    Map<SizeAndAlign, unsigned, SizeAndAlign> m_typeCountBySizeAndAlignment;
+    unsigned largestBucketCount { 0 };
     Vector<SizeAndAlign> m_typeSizes;
     Map<SizeAndAlign, TZoneTypeBuckets*, SizeAndAlign> m_heapRefsBySizeAndAlignment;
 };

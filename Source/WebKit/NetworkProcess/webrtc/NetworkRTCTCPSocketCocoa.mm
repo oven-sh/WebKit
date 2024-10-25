@@ -36,6 +36,8 @@
 #include <pal/spi/cocoa/NetworkSPI.h>
 #include <wtf/BlockPtr.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/WeakObjCPtr.h>
+#include <wtf/cocoa/SpanCocoa.h>
 
 ALLOW_COMMA_BEGIN
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
@@ -72,10 +74,10 @@ static inline void processIncomingData(RetainPtr<nw_connection_t>&& nwConnection
     auto nwConnectionReference = nwConnection.get();
     nw_connection_receive(nwConnectionReference, 1, std::numeric_limits<uint32_t>::max(), makeBlockPtr([nwConnection = WTFMove(nwConnection), processData = WTFMove(processData), buffer = WTFMove(buffer)](dispatch_data_t content, nw_content_context_t context, bool isComplete, nw_error_t error) mutable {
         if (content) {
-            dispatch_data_apply(content, makeBlockPtr([&](dispatch_data_t, size_t, const void* data, size_t size) {
-                buffer.append(std::span { static_cast<const uint8_t*>(data), size });
+            dispatch_data_apply_span(content, [&](std::span<const uint8_t> data) {
+                buffer.append(data);
                 return true;
-            }).get());
+            });
             buffer = processData(WTFMove(buffer));
         }
         if (isComplete && context && nw_content_context_get_is_final(context))
@@ -115,20 +117,21 @@ NetworkRTCTCPSocketCocoa::NetworkRTCTCPSocketCocoa(LibWebRTCSocketIdentifier ide
     m_nwConnection = createNWConnection(rtcProvider, hostName.c_str(), String::number(remoteAddress.port()).utf8().data(), isTLS, attributedBundleIdentifier, isFirstParty, isRelayDisabled, domain);
 
     nw_connection_set_queue(m_nwConnection.get(), tcpSocketQueue());
-    nw_connection_set_state_changed_handler(m_nwConnection.get(), makeBlockPtr([weakThis = WeakPtr { *this }, identifier = m_identifier, rtcProvider = Ref { rtcProvider }, connection = m_connection.copyRef()](nw_connection_state_t state, _Nullable nw_error_t error) {
+    nw_connection_set_state_changed_handler(m_nwConnection.get(), makeBlockPtr([weakNWConnection = WeakObjCPtr { m_nwConnection.get() }, identifier = m_identifier, rtcProvider = Ref { rtcProvider }, connection = m_connection.copyRef()](nw_connection_state_t state, _Nullable nw_error_t error) {
         switch (state) {
         case nw_connection_state_invalid:
         case nw_connection_state_waiting:
         case nw_connection_state_preparing:
             return;
         case nw_connection_state_ready:
-            rtcProvider->callOnRTCNetworkThread([weakThis, connection, identifier] {
-                if (!weakThis)
+            rtcProvider->callOnRTCNetworkThread([weakNWConnection, connection, identifier] {
+                RetainPtr nwConnection = weakNWConnection.get();
+                if (!nwConnection)
                     return;
-                auto path = adoptNS(nw_connection_copy_current_path(weakThis->m_nwConnection.get()));
-                auto interface = adoptNS(nw_path_copy_interface(path.get()));
-                if (auto* name = nw_interface_get_name(interface.get()))
-                    connection->send(Messages::LibWebRTCNetwork::SignalUsedInterface(identifier, String::fromUTF8(name)), 0);
+                RetainPtr path = adoptNS(nw_connection_copy_current_path(nwConnection.get()));
+                RetainPtr interface = adoptNS(nw_path_copy_interface(path.get()));
+                if (auto name = String::fromUTF8(nw_interface_get_name(interface.get())); !name.isNull())
+                    connection->send(Messages::LibWebRTCNetwork::SignalUsedInterface(identifier, WTFMove(name)), 0);
             });
             connection->send(Messages::LibWebRTCNetwork::SignalConnect(identifier), 0);
             return;

@@ -1,7 +1,6 @@
 CommandLineAPIModuleSourceBuiltins.h
 Modules/WebGPU/GPUPresentationContextDescriptor.h
 Modules/encryptedmedia/MediaKeyStatusMap.h
-Modules/encryptedmedia/legacy/WebKitMediaKeySession.h
 Modules/fetch/FetchBodyOwner.h
 Modules/mediasource/SourceBuffer.h
 Modules/mediastream/RTCPeerConnection.h
@@ -11,9 +10,9 @@ Modules/permissions/NavigatorPermissions.h
 Modules/push-api/PushManager.h
 Modules/push-api/ServiceWorkerRegistrationPushAPI.h
 Modules/screen-wake-lock/NavigatorScreenWakeLock.h
-Modules/screen-wake-lock/WakeLockManager.h
 Modules/storage/StorageManager.cpp
 Modules/webaudio/AudioNodeInput.h
+Modules/webaudio/AudioNodeOutput.h
 Modules/webaudio/AudioWorkletNode.h
 Modules/webaudio/AudioWorkletProcessor.h
 Modules/webdatabase/DatabaseTask.h
@@ -151,7 +150,6 @@ style/StyleSharingResolver.cpp
 style/Styleable.h
 svg/properties/SVGAnimatedProperty.h
 svg/properties/SVGPropertyOwnerRegistry.h
-testing/MockPaymentCoordinator.h
 workers/WorkerAnimationController.h
 workers/WorkerConsoleClient.h
 workers/WorkerMessagingProxy.h

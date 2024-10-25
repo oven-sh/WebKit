@@ -34,6 +34,7 @@
 #import <WebCore/PushMessageCrypto.h>
 #import <WebCore/SecurityOrigin.h>
 #import <notify.h>
+#import <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
 #import <wtf/BlockPtr.h>
 #import <wtf/CallbackAggregator.h>
 #import <wtf/OSObjectPtr.h>
@@ -210,7 +211,7 @@ static PushSubscriptionData makePushSubscriptionFromRecord(PushRecord&& record)
     };
 }
 
-class PushServiceRequest : public CanMakeWeakPtr<PushServiceRequest> {
+class PushServiceRequest : public AbstractRefCountedAndCanMakeWeakPtr<PushServiceRequest> {
 public:
     virtual ~PushServiceRequest() = default;
 
@@ -220,8 +221,6 @@ public:
     const String& scope() const { return m_scope; };
 
     virtual void start() = 0;
-    virtual void ref() const = 0;
-    virtual void deref() const = 0;
 
     String key() const { return makePushTopic(m_identifier, m_scope); }
 
@@ -524,7 +523,7 @@ void UnsubscribeRequest::startInternal()
             return;
         }
         
-        protectedThis->protectedDatabase()->removeRecordByIdentifier(result->identifier, [weakThis = WTFMove(weakThis), serverVAPIDPublicKey = result->serverVAPIDPublicKey](bool removed) mutable {
+        protectedThis->protectedDatabase()->removeRecordByIdentifier(*result->identifier, [weakThis = WTFMove(weakThis), serverVAPIDPublicKey = result->serverVAPIDPublicKey](bool removed) mutable {
             RefPtr protectedThis = weakThis.get();
             if (!protectedThis)
                 return;

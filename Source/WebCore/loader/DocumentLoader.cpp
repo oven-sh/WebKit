@@ -160,9 +160,9 @@ static void setAllDefersLoading(const ResourceLoaderMap& loaders, bool defers)
         loader->setDefersLoading(defers);
 }
 
-static HashMap<ScriptExecutionContextIdentifier, DocumentLoader*>& scriptExecutionContextIdentifierToLoaderMap()
+static UncheckedKeyHashMap<ScriptExecutionContextIdentifier, DocumentLoader*>& scriptExecutionContextIdentifierToLoaderMap()
 {
-    static NeverDestroyed<HashMap<ScriptExecutionContextIdentifier, DocumentLoader*>> map;
+    static NeverDestroyed<UncheckedKeyHashMap<ScriptExecutionContextIdentifier, DocumentLoader*>> map;
     return map.get();
 }
 
@@ -2490,7 +2490,7 @@ ShouldOpenExternalURLsPolicy DocumentLoader::shouldOpenExternalURLsPolicyToPropa
 }
 
 // https://www.w3.org/TR/css-view-transitions-2/#navigation-can-trigger-a-cross-document-view-transition
-bool DocumentLoader::navigationCanTriggerCrossDocumentViewTransition(Document& oldDocument)
+bool DocumentLoader::navigationCanTriggerCrossDocumentViewTransition(Document& oldDocument, bool fromBackForwardCache)
 {
     // FIXME: Consider adding implementation-defined navigation experience step.
 
@@ -2504,7 +2504,7 @@ bool DocumentLoader::navigationCanTriggerCrossDocumentViewTransition(Document& o
     if (!newOrigin->isSameOriginAs(oldDocument.securityOrigin()))
         return false;
 
-    if (const auto* metrics = response().deprecatedNetworkLoadMetricsOrNull()) {
+    if (const auto* metrics = response().deprecatedNetworkLoadMetricsOrNull(); metrics && !fromBackForwardCache) {
         if (metrics->crossOriginRedirect())
             return false;
     }
@@ -2664,9 +2664,9 @@ void DocumentLoader::setHTTPSByDefaultMode(HTTPSByDefaultMode mode)
 {
     if (mode == HTTPSByDefaultMode::Disabled) {
         if (m_advancedPrivacyProtections.contains(AdvancedPrivacyProtections::HTTPSOnly))
-            m_httpsByDefaultMode = HTTPSByDefaultMode::UpgradeAndFailClosed;
+            m_httpsByDefaultMode = HTTPSByDefaultMode::UpgradeWithUserMediatedFallback;
         else if (m_advancedPrivacyProtections.contains(AdvancedPrivacyProtections::HTTPSFirst))
-            m_httpsByDefaultMode = HTTPSByDefaultMode::UpgradeWithHTTPFallback;
+            m_httpsByDefaultMode = HTTPSByDefaultMode::UpgradeWithAutomaticFallback;
     } else
         m_httpsByDefaultMode = mode;
 }

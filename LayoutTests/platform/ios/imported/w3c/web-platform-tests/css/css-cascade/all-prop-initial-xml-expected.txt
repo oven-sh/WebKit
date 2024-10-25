@@ -16,6 +16,8 @@ PASS animation-fill-mode
 PASS animation-iteration-count
 PASS animation-name
 PASS animation-play-state
+PASS animation-range-end
+PASS animation-range-start
 PASS animation-timeline
 PASS animation-timing-function
 PASS appearance
@@ -187,7 +189,6 @@ PASS left
 PASS letter-spacing
 PASS lighting-color
 PASS line-break
-PASS line-fit-edge
 PASS line-height
 PASS list-style-image
 PASS list-style-position
@@ -415,7 +416,6 @@ PASS -webkit-mask-position-y
 PASS -webkit-nbsp-mode
 PASS -webkit-overflow-scrolling
 PASS -webkit-rtl-ordering
-PASS -webkit-ruby-position
 PASS -webkit-text-fill-color
 PASS -webkit-text-security
 PASS -webkit-text-stroke-color

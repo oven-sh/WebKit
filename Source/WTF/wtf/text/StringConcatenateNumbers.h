@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017-2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2017-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -24,6 +24,8 @@
  */
 
 #pragma once
+
+#include <wtf/Compiler.h>
 
 #include <wtf/dtoa.h>
 #include <wtf/text/IntegerToStringConversion.h>
@@ -71,7 +73,7 @@ class StringTypeAdapter<FloatingPoint, typename std::enable_if_t<std::is_floatin
 public:
     StringTypeAdapter(FloatingPoint number)
     {
-        m_length = numberToStringAndSize(number, m_buffer);
+        m_length = numberToStringAndSize(number, m_buffer).size();
     }
 
     unsigned length() const { return m_length; }
@@ -79,7 +81,7 @@ public:
     template<typename CharacterType> void writeTo(CharacterType* destination) const { StringImpl::copyCharacters(destination, span()); }
 
 private:
-    std::span<const LChar> span() const { return spanReinterpretCast<const LChar>(std::span { m_buffer }).first(m_length); }
+    std::span<const LChar> span() const { return byteCast<LChar>(std::span { m_buffer }).first(m_length); }
 
     NumberToStringBuffer m_buffer;
     unsigned m_length;
@@ -91,22 +93,20 @@ public:
     static FormattedNumber fixedPrecision(double number, unsigned significantFigures = 6, TrailingZerosPolicy trailingZerosTruncatingPolicy = TrailingZerosPolicy::Truncate)
     {
         FormattedNumber numberFormatter;
-        numberToFixedPrecisionString(number, significantFigures, numberFormatter.m_buffer, trailingZerosTruncatingPolicy == TrailingZerosPolicy::Truncate);
-        numberFormatter.m_length = std::strlen(&numberFormatter.m_buffer[0]);
+        numberFormatter.m_length = numberToFixedPrecisionString(number, significantFigures, numberFormatter.m_buffer, trailingZerosTruncatingPolicy == TrailingZerosPolicy::Truncate).size();
         return numberFormatter;
     }
 
     static FormattedNumber fixedWidth(double number, unsigned decimalPlaces)
     {
         FormattedNumber numberFormatter;
-        numberToFixedWidthString(number, decimalPlaces, numberFormatter.m_buffer);
-        numberFormatter.m_length = std::strlen(&numberFormatter.m_buffer[0]);
+        numberFormatter.m_length = numberToFixedWidthString(number, decimalPlaces, numberFormatter.m_buffer).size();
         return numberFormatter;
     }
 
     unsigned length() const { return m_length; }
     const LChar* buffer() const { return byteCast<LChar>(&m_buffer[0]); }
-    std::span<const LChar> span() const { return spanReinterpretCast<const LChar>(std::span { m_buffer }).first(m_length); }
+    std::span<const LChar> span() const { return byteCast<LChar>(std::span { m_buffer }).first(m_length); }
 
 private:
     NumberToStringBuffer m_buffer;
@@ -134,14 +134,13 @@ public:
     static FormattedCSSNumber create(double number)
     {
         FormattedCSSNumber numberFormatter;
-        numberToCSSString(number, numberFormatter.m_buffer);
-        numberFormatter.m_length = std::strlen(&numberFormatter.m_buffer[0]);
+        numberFormatter.m_length = numberToCSSString(number, numberFormatter.m_buffer).size();
         return numberFormatter;
     } 
 
     unsigned length() const { return m_length; }
     const LChar* buffer() const { return byteCast<LChar>(&m_buffer[0]); }
-    std::span<const LChar> span() const { return spanReinterpretCast<const LChar>(std::span { m_buffer }).first(m_length); }
+    std::span<const LChar> span() const { return byteCast<LChar>(std::span { m_buffer }).first(m_length); }
 
 private:
     NumberToCSSStringBuffer m_buffer;

@@ -77,9 +77,7 @@ void BufferImpl::getMappedRange(Size64 offset, std::optional<Size64> size, Funct
 {
     auto usedSize = getMappedSize(m_backing.get(), size, offset);
 
-    // FIXME: Check the casts.
-    auto* pointer = wgpuBufferGetMappedRange(m_backing.get(), static_cast<size_t>(offset), static_cast<size_t>(usedSize));
-    // FIXME: Check the type narrowing.
+    auto pointer = wgpuBufferGetMappedRange(m_backing.get(), static_cast<size_t>(offset), static_cast<size_t>(usedSize)).data();
     auto bufferSize = wgpuBufferGetInitialSize(m_backing.get());
     size_t actualSize = pointer ? static_cast<size_t>(bufferSize) : 0;
     size_t actualOffset = pointer ? static_cast<size_t>(offset) : 0;
@@ -91,9 +89,7 @@ std::span<uint8_t> BufferImpl::getBufferContents()
     if (!m_backing.get())
         return { };
 
-    auto* pointer = wgpuBufferGetBufferContents(m_backing.get());
-    auto bufferSize = wgpuBufferGetCurrentSize(m_backing.get());
-    return { static_cast<uint8_t*>(pointer), static_cast<size_t>(bufferSize) };
+    return wgpuBufferGetBufferContents(m_backing.get());
 }
 
 #if ENABLE(WEBGPU_SWIFT)

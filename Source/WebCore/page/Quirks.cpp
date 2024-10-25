@@ -95,10 +95,10 @@ static inline OptionSet<AutoplayQuirk> allowedAutoplayQuirks(Document& document)
     return loader->allowedAutoplayQuirks();
 }
 
-static HashMap<RegistrableDomain, String>& updatableStorageAccessUserAgentStringQuirks()
+static UncheckedKeyHashMap<RegistrableDomain, String>& updatableStorageAccessUserAgentStringQuirks()
 {
     // FIXME: Make this a member of Quirks.
-    static MainThreadNeverDestroyed<HashMap<RegistrableDomain, String>> map;
+    static MainThreadNeverDestroyed<UncheckedKeyHashMap<RegistrableDomain, String>> map;
     return map.get();
 }
 
@@ -327,13 +327,15 @@ bool Quirks::needsYouTubeMouseOutQuirk() const
 }
 
 // mail.google.com rdar://128360054
-// FIXME (rdar://130624461): Remove this quirk once Gmail adopts the `writingsuggestions` attribute.
+// safe.menlosecurity.com rdar://135114489
+// FIXME (rdar://130624461): Remove this quirk for mail.google.com once Gmail adopts the `writingsuggestions` attribute.
+// FIXME (rdar://138585709): Remove this quirk for safe.menlosecurity.com once investigation into text corruption on the site is completed and the issue is resolved.
 bool Quirks::shouldDisableWritingSuggestionsByDefault() const
 {
     if (!needsQuirks())
         return false;
     auto& url = m_document->topDocument().url();
-    return url.host() == "mail.google.com"_s;
+    return url.host() == "mail.google.com"_s || url.host() == "safe.menlosecurity.com"_s;
 }
 
 void Quirks::updateStorageAccessUserAgentStringQuirks(HashMap<RegistrableDomain, String>&& userAgentStringQuirks)
@@ -395,11 +397,12 @@ bool Quirks::shouldDisableElementFullscreenQuirk() const
 #endif
 }
 
-#if ENABLE(TOUCH_EVENTS)
 bool Quirks::isAmazon() const
 {
     return PublicSuffixStore::singleton().topPrivatelyControlledDomain(m_document->topDocument().url().host()).startsWith("amazon."_s);
 }
+
+#if ENABLE(TOUCH_EVENTS)
 
 bool Quirks::isGoogleMaps() const
 {
@@ -639,16 +642,33 @@ bool Quirks::needsYouTubeOverflowScrollQuirk() const
 #endif
 }
 
+// amazon.com rdar://128962002
+bool Quirks::needsPrimeVideoUserSelectNoneQuirk() const
+{
+#if PLATFORM(MAC)
+    if (!needsQuirks())
+        return false;
+
+    if (!m_needsPrimeVideoUserSelectNoneQuirk)
+        m_needsPrimeVideoUserSelectNoneQuirk = isAmazon();
+
+    return *m_needsPrimeVideoUserSelectNoneQuirk;
+#else
+    return false;
+#endif
+}
+
 // youtube.com rdar://135886305
-bool Quirks::needsYouTubeDarkModeQuirk() const
+// NOTE: Also remove `BuilderConverter::convertScrollbarWidth` and related code when removing this quirk.
+bool Quirks::needsScrollbarWidthThinDisabledQuirk() const
 {
     if (!needsQuirks())
         return false;
 
-    if (!m_needsYouTubeDarkModeQuirk)
-        m_needsYouTubeDarkModeQuirk = isDomain("youtube.com"_s);
+    if (!m_needsScrollbarWidthThinDisabledQuirk)
+        m_needsScrollbarWidthThinDisabledQuirk = isDomain("youtube.com"_s);
 
-    return *m_needsYouTubeDarkModeQuirk;
+    return *m_needsScrollbarWidthThinDisabledQuirk;
 }
 
 // gizmodo.com rdar://102227302
@@ -855,6 +875,7 @@ bool Quirks::needsPreloadAutoQuirk() const
 
 // vimeo.com rdar://56996057
 // docs.google.com rdar://59893415
+// bing.com rdar://133223599
 bool Quirks::shouldBypassBackForwardCache() const
 {
     if (!needsQuirks())
@@ -872,6 +893,13 @@ bool Quirks::shouldBypassBackForwardCache() const
     if (topURL.protocolIs("https"_s) && host == "vimeo.com"_s) {
         if (auto* documentLoader = document->frame() ? document->frame()->loader().documentLoader() : nullptr)
             return documentLoader->response().cacheControlContainsNoStore();
+    }
+
+    // Spinner issue from image search for bing.com.
+    if (registrableDomain == "bing.com"_s) {
+        static MainThreadNeverDestroyed<const AtomString> imageSearchDialogID("sb_sbidialog"_s);
+        if (RefPtr element = document->getElementById(imageSearchDialogID.get()))
+            return element->renderer();
     }
 
     // Login issue on bankofamerica.com (rdar://104938789).
@@ -1837,5 +1865,28 @@ String Quirks::scriptToEvaluateBeforeRunningScriptFromURL(const URL& scriptURL)
 #endif
     return { };
 }
+
+bool Quirks::shouldHideCoarsePointerCharacteristics() const
+{
+#if ENABLE(DESKTOP_CONTENT_MODE_QUIRKS)
+    if (!needsQuirks())
+        return false;
+
+    auto topDomain = RegistrableDomain(m_document->topDocument().url()).string();
+    if (topDomain == "disneyplus.com"_s)
+        return true;
+#endif
+
+    return false;
+}
+
+#if ENABLE(TOUCH_EVENTS)
+
+bool Quirks::shouldOmitTouchEventDOMAttributesForDesktopWebsite(const URL& requestURL)
+{
+    return requestURL.host() == "secure.chase.com"_s;
+}
+
+#endif
 
 }

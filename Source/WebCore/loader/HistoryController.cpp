@@ -256,7 +256,7 @@ void HistoryController::restoreDocumentState()
     RefPtr currentItem = m_currentItem;
     if (!currentItem)
         return;
-    if (frame->loader().requestedHistoryItem() != currentItem.get())
+    if (!frame->loader().requestedHistoryItem() || (frame->loader().requestedHistoryItem()->identifier() != currentItem->identifier()))
         return;
     RefPtr documentLoader = frame->loader().documentLoader();
     if (documentLoader->isClientRedirect())
@@ -338,7 +338,7 @@ void HistoryController::goToItem(HistoryItem& targetItem, FrameLoadType type, Sh
     // as opposed to happening for some/one of the page commits that might happen soon
     CheckedRef backForward = page->backForward();
     RefPtr currentItem = backForward->currentItem(m_frame->frameID());
-    backForward->setCurrentItem(targetItem);
+    backForward->setProvisionalItem(targetItem);
 
     // First set the provisional item of any frames that are not actually navigating.
     // This must be done before trying to navigate the desired frame, because some
@@ -790,9 +790,6 @@ Ref<HistoryItem> HistoryController::createItemTree(HistoryItemClient& client, Lo
         for (RefPtr child = m_frame->tree().firstLocalDescendant(); child; child = child->tree().nextLocalSibling())
             item->addChildItem(child->checkedHistory()->createItemTree(client, targetFrame, clipAtTarget));
     }
-    // FIXME: Eliminate the isTargetItem flag in favor of itemSequenceNumber.
-    if (m_frame.ptr() == &targetFrame)
-        item->setIsTargetItem(true);
     return item;
 }
 
@@ -858,7 +855,7 @@ bool HistoryController::itemsAreClones(HistoryItem& item1, HistoryItem* item2) c
     // new document and should not consider them clones.
     // (See http://webkit.org/b/35532 for details.)
     return item2
-        && &item1 != item2
+        && item1.identifier() != item2->identifier()
         && item1.itemSequenceNumber() == item2->itemSequenceNumber();
 }
 
@@ -901,14 +898,12 @@ void HistoryController::updateCurrentItem()
         return;
 
     if (currentItem->url() != documentLoader->url()) {
-        // We ended up on a completely different URL this time, so the HistoryItem
-        // needs to be re-initialized.  Preserve the isTargetItem flag as it is a
-        // property of how this HistoryItem was originally created and is not
-        // dependent on the document.
-        bool isTargetItem = currentItem->isTargetItem();
+        auto uuidIdentifier = currentItem->uuidIdentifier();
+        bool sameOrigin = SecurityOrigin::create(currentItem->url())->isSameOriginAs(SecurityOrigin::create(documentLoader->url()));
         currentItem->reset();
         initializeItem(*currentItem, documentLoader);
-        currentItem->setIsTargetItem(isTargetItem);
+        if (sameOrigin)
+            currentItem->setUUIDIdentifier(uuidIdentifier);
     } else {
         // Even if the final URL didn't change, the form data may have changed.
         currentItem->setFormInfoFromRequest(documentLoader->request());
@@ -973,6 +968,7 @@ void HistoryController::replaceState(RefPtr<SerializedScriptValue>&& stateObject
     currentItem->setStateObject(WTFMove(stateObject));
     currentItem->setFormData(nullptr);
     currentItem->setFormContentType(String());
+    currentItem->notifyChanged();
 
     RefPtr frame = dynamicDowncast<LocalFrame>(m_frame.ptr());
     if (!frame)

@@ -31,7 +31,6 @@
 #include "CSSScrollValue.h"
 #include "CSSValuePool.h"
 #include "Document.h"
-#include "DocumentInlines.h"
 #include "Element.h"
 #include "RenderLayerScrollableArea.h"
 #include "RenderView.h"
@@ -80,7 +79,7 @@ Ref<ScrollTimeline> ScrollTimeline::createFromCSSValue(const CSSScrollValue& css
 // the duration has a fixed upper bound. In this case, the timeline is a
 // progress-based timeline, and its timeline duration is 100%.
 ScrollTimeline::ScrollTimeline(ScrollTimelineOptions&& options)
-    : AnimationTimeline(CSSNumberishTime::fromPercentage(100))
+    : AnimationTimeline(WebAnimationTime::fromPercentage(100))
     , m_source(WTFMove(options.source))
     , m_axis(options.axis)
 {
@@ -100,6 +99,27 @@ ScrollTimeline::ScrollTimeline(Scroller scroller, ScrollAxis axis)
 {
     m_axis = axis;
     m_scroller = scroller;
+}
+
+void ScrollTimeline::setSource(const Element* source)
+{
+    if (source == m_source)
+        return;
+
+    RefPtr previousSource = m_source.get();
+    m_source = source;
+    RefPtr newSource = m_source.get();
+
+    if (previousSource && newSource && &previousSource->document() == &newSource->document())
+        return;
+
+    if (previousSource) {
+        if (CheckedPtr timelinesController = previousSource->protectedDocument()->timelinesController())
+            timelinesController->removeTimeline(*this);
+    }
+
+    if (newSource)
+        newSource->protectedDocument()->ensureTimelinesController().addTimeline(*this);
 }
 
 void ScrollTimeline::dump(TextStream& ts) const
@@ -139,7 +159,7 @@ Ref<CSSValue> ScrollTimeline::toCSSValue(const RenderStyle&) const
 AnimationTimelinesController* ScrollTimeline::controller() const
 {
     if (m_source)
-        return &m_source->protectedDocument()->ensureTimelinesController();
+        return &m_source->document().ensureTimelinesController();
     return nullptr;
 }
 
@@ -159,7 +179,7 @@ ScrollableArea* ScrollTimeline::scrollableAreaForSourceRenderer(RenderElement* r
     if (renderer->element() == document->documentElement())
         return &renderer->view().frameView();
 
-    return (renderBox->canBeScrolledAndHasScrollableArea() && renderBox->hasLayer()) ? renderBox->layer()->scrollableArea() : nullptr;
+    return renderBox->hasLayer() ? renderBox->layer()->scrollableArea() : nullptr;
 }
 
 float ScrollTimeline::floatValueForOffset(const Length& offset, float maxValue)
@@ -169,10 +189,15 @@ float ScrollTimeline::floatValueForOffset(const Length& offset, float maxValue)
     return floatValueForLength(offset, maxValue);
 }
 
+TimelineRange ScrollTimeline::defaultRange() const
+{
+    return TimelineRange::defaultForScrollTimeline();
+}
+
 ScrollTimeline::Data ScrollTimeline::computeTimelineData(const TimelineRange& range) const
 {
-    ASSERT(range.start.name == SingleTimelineRange::Name::Normal || range.start.name == SingleTimelineRange::Name::Omitted);
-    ASSERT(range.end.name == SingleTimelineRange::Name::Normal || range.end.name == SingleTimelineRange::Name::Omitted);
+    if ((range.start.name != SingleTimelineRange::Name::Normal && range.start.name != SingleTimelineRange::Name::Omitted) || (range.end.name != SingleTimelineRange::Name::Normal && range.end.name != SingleTimelineRange::Name::Omitted))
+        return { };
 
     if (!m_source)
         return { };
@@ -184,21 +209,27 @@ ScrollTimeline::Data ScrollTimeline::computeTimelineData(const TimelineRange& ra
     float maxScrollOffset = axis() == ScrollAxis::Block ? sourceScrollableArea->maximumScrollOffset().y() : sourceScrollableArea->maximumScrollOffset().x();
     float scrollOffset = axis() == ScrollAxis::Block ? sourceScrollableArea->scrollOffset().y() : sourceScrollableArea->scrollOffset().x();
 
-    return { scrollOffset, floatValueForOffset(range.start.offset, maxScrollOffset), maxScrollOffset - floatValueForOffset(range.end.offset, maxScrollOffset) };
+    // Chrome appears to clip the current time of a scroll timeline in the [0-100] range.
+    // We match this behavior for compatibility reasons, see https://github.com/w3c/csswg-drafts/issues/11033.
+    if (maxScrollOffset > 0)
+        scrollOffset = std::clamp(scrollOffset, 0.f, maxScrollOffset);
+
+    return { scrollOffset, floatValueForOffset(range.start.offset, maxScrollOffset), floatValueForOffset(range.end.offset, maxScrollOffset) };
 }
 
-std::optional<CSSNumberishTime> ScrollTimeline::currentTime()
+std::optional<WebAnimationTime> ScrollTimeline::currentTime(const TimelineRange& timelineRange)
 {
     // https://drafts.csswg.org/scroll-animations-1/#scroll-timeline-progress
     // Progress (the current time) for a scroll progress timeline is calculated as:
     // scroll offset ÷ (scrollable overflow size − scroll container size)
-    auto data = computeTimelineData();
+    auto timelineRangeOrDefault = timelineRange.isDefault() ? defaultRange() : timelineRange;
+    auto data = computeTimelineData(timelineRangeOrDefault);
     auto range = data.rangeEnd - data.rangeStart;
     if (!range)
         return std::nullopt;
     auto distance = data.scrollOffset - data.rangeStart;
     auto progress = distance / range;
-    return CSSNumberishTime::fromPercentage(progress * 100);
+    return WebAnimationTime::fromPercentage(progress * 100);
 }
 
 } // namespace WebCore

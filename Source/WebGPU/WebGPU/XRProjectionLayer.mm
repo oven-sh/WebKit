@@ -81,7 +81,7 @@ size_t XRProjectionLayer::reusableTextureIndex() const
 
 void XRProjectionLayer::startFrame(size_t frameIndex, WTF::MachSendRight&& colorBuffer, WTF::MachSendRight&& depthBuffer, WTF::MachSendRight&& completionSyncEvent, size_t reusableTextureIndex)
 {
-#if !PLATFORM(IOS_FAMILY_SIMULATOR)
+#if !PLATFORM(IOS_FAMILY_SIMULATOR) && !PLATFORM(WATCHOS)
     id<MTLDevice> device = m_device->device();
     m_reusableTextureIndex = reusableTextureIndex;
     NSNumber* textureKey = @(reusableTextureIndex);
@@ -136,5 +136,5 @@ void wgpuXRProjectionLayerRelease(WGPUXRProjectionLayer projectionLayer)
 
 void wgpuXRProjectionLayerStartFrame(WGPUXRProjectionLayer layer, size_t frameIndex, WTF::MachSendRight&& colorBuffer, WTF::MachSendRight&& depthBuffer, WTF::MachSendRight&& completionSyncEvent, size_t reusableTextureIndex)
 {
-    WebGPU::fromAPI(layer).startFrame(frameIndex, WTFMove(colorBuffer), WTFMove(depthBuffer), WTFMove(completionSyncEvent), reusableTextureIndex);
+    WebGPU::protectedFromAPI(layer)->startFrame(frameIndex, WTFMove(colorBuffer), WTFMove(depthBuffer), WTFMove(completionSyncEvent), reusableTextureIndex);
 }

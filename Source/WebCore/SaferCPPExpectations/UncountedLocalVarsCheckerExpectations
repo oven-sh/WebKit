@@ -404,7 +404,6 @@ Modules/async-clipboard/Clipboard.cpp
 Modules/async-clipboard/ClipboardItemBindingsDataSource.cpp
 Modules/cache/DOMCache.cpp
 Modules/cache/DOMCacheStorage.cpp
-Modules/cookie-store/CookieStore.cpp
 Modules/encryptedmedia/CDM.cpp
 Modules/encryptedmedia/MediaKeySystemRequest.cpp
 Modules/fetch/FetchBody.cpp
@@ -633,6 +632,7 @@ bindings/js/JSLocationCustom.cpp
 bindings/js/JSMediaListCustom.h
 bindings/js/JSMessagePortCustom.cpp
 bindings/js/JSMicrotaskCallback.h
+bindings/js/JSNavigateEventCustom.cpp
 bindings/js/JSNodeCustom.cpp
 bindings/js/JSNodeIteratorCustom.cpp
 bindings/js/JSObservableArray.cpp
@@ -718,7 +718,6 @@ css/StyleRuleImport.cpp
 css/StyleSheetContents.cpp
 css/parser/CSSParserImpl.cpp
 css/query/ContainerQueryFeatures.cpp
-css/query/GenericMediaQueryEvaluator.cpp
 css/query/MediaQueryFeatures.cpp
 css/typedom/CSSNumericValue.cpp
 css/typedom/CSSStyleValueFactory.cpp
@@ -781,6 +780,7 @@ dom/ScriptedAnimationController.cpp
 dom/SelectorQuery.cpp
 dom/ShadowRoot.cpp
 dom/SimpleRange.cpp
+dom/SimulatedClick.cpp
 dom/SlotAssignment.cpp
 dom/SpaceSplitString.cpp
 dom/StaticRange.cpp
@@ -864,7 +864,6 @@ html/HTMLOptionElement.cpp
 html/HTMLPictureElement.cpp
 html/HTMLSelectElement.cpp
 html/HTMLSlotElement.cpp
-html/HTMLSourceElement.cpp
 html/HTMLStyleElement.cpp
 html/HTMLSummaryElement.cpp
 html/HTMLTableElement.cpp
@@ -897,7 +896,6 @@ html/canvas/EXTDisjointTimerQueryWebGL2.cpp
 html/canvas/EXTPolygonOffsetClamp.cpp
 html/canvas/GPUBasedCanvasRenderingContext.cpp
 html/canvas/GPUCanvasContextCocoa.mm
-html/canvas/ImageBitmapRenderingContext.cpp
 html/canvas/OESDrawBuffersIndexed.cpp
 html/canvas/OESVertexArrayObject.cpp
 html/canvas/OffscreenCanvasRenderingContext2D.cpp
@@ -977,11 +975,11 @@ layout/formattingContexts/inline/text/TextUtil.cpp
 layout/integration/inline/LayoutIntegrationLineLayout.cpp
 layout/layouttree/LayoutTreeBuilder.cpp
 loader/ApplicationManifestLoader.cpp
-loader/CookieJar.cpp
 loader/DocumentLoader.cpp
 loader/FrameLoader.cpp
 loader/HistoryController.cpp
 loader/MixedContentChecker.cpp
+loader/NavigationAction.cpp
 loader/NavigationScheduler.cpp
 loader/ThreadableLoader.cpp
 loader/WorkerThreadableLoader.cpp
@@ -1026,7 +1024,6 @@ page/OpportunisticTaskScheduler.cpp
 page/Page.cpp
 page/PageColorSampler.cpp
 page/PageConsoleClient.cpp
-page/PageDebuggable.cpp
 page/PageGroup.cpp
 page/PageGroupLoadDeferrer.cpp
 page/PageOverlayController.cpp
@@ -1071,7 +1068,6 @@ page/mac/ServicesOverlayController.mm
 page/scrolling/AsyncScrollingCoordinator.cpp
 page/scrolling/ScrollAnchoringController.cpp
 page/scrolling/ScrollingCoordinator.cpp
-page/scrolling/ScrollingStateStickyNode.cpp
 page/scrolling/ScrollingTree.cpp
 page/scrolling/ScrollingTreeFixedNode.cpp
 page/scrolling/ScrollingTreeOverflowScrollProxyNode.cpp
@@ -1144,17 +1140,20 @@ platform/graphics/filters/FilterOperations.cpp
 platform/graphics/filters/software/FEBlendSoftwareApplier.cpp
 platform/graphics/filters/software/FEColorMatrixSoftwareApplier.cpp
 platform/graphics/filters/software/FEComponentTransferSoftwareApplier.cpp
+platform/graphics/filters/software/FECompositeSoftwareApplier.cpp
 platform/graphics/filters/software/FECompositeSoftwareArithmeticApplier.cpp
 platform/graphics/filters/software/FEConvolveMatrixSoftwareApplier.cpp
 platform/graphics/filters/software/FEDisplacementMapSoftwareApplier.cpp
 platform/graphics/filters/software/FEDropShadowSoftwareApplier.cpp
 platform/graphics/filters/software/FEGaussianBlurSoftwareApplier.cpp
 platform/graphics/filters/software/FEImageSoftwareApplier.cpp
+platform/graphics/filters/software/FELightingSoftwareApplier.cpp
 platform/graphics/filters/software/FEMorphologySoftwareApplier.cpp
 platform/graphics/filters/software/FEOffsetSoftwareApplier.cpp
 platform/graphics/filters/software/FETileSoftwareApplier.cpp
 platform/graphics/filters/software/FETurbulenceSoftwareApplier.cpp
 platform/graphics/filters/software/SourceAlphaSoftwareApplier.cpp
+platform/graphics/filters/software/SourceGraphicSoftwareApplier.cpp
 platform/graphics/mac/controls/ImageControlsButtonMac.mm
 platform/graphics/mac/controls/MeterMac.mm
 platform/graphics/mac/controls/ProgressBarMac.mm
@@ -1170,7 +1169,6 @@ platform/mock/MockRealtimeMediaSourceCenter.cpp
 platform/mock/MockRealtimeVideoSource.cpp
 platform/network/BlobRegistryImpl.cpp
 platform/network/FormData.cpp
-platform/network/cocoa/ResourceRequestCocoa.mm
 platform/text/BidiContext.cpp
 platform/text/BidiResolver.h
 plugins/DOMPluginArray.cpp
@@ -1330,7 +1328,6 @@ testing/Internals.mm
 testing/LegacyMockCDM.cpp
 testing/MockCDMFactory.cpp
 testing/MockPageOverlayClient.cpp
-testing/MockPaymentCoordinator.cpp
 testing/ServiceWorkerInternals.cpp
 testing/js/WebCoreTestSupport.cpp
 workers/AbstractWorker.cpp

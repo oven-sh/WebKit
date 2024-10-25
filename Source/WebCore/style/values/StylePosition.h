@@ -37,24 +37,19 @@ using Bottom = CSS::Bottom;
 using Center = CSS::Center;
 
 struct Position  {
-    Position(LengthPercentage&& horizontal, LengthPercentage&& vertical)
-        : value { std::make_tuple(WTFMove(horizontal), WTFMove(vertical)) }
+    Position(LengthPercentage<>&& horizontal, LengthPercentage<>&& vertical)
+        : value { WTFMove(horizontal), WTFMove(vertical) }
     {
     }
 
-    Position(const LengthPercentage& horizontal, const LengthPercentage& vertical)
-        : value { std::make_tuple(horizontal, vertical) }
-    {
-    }
-
-    Position(SpaceSeparatedTuple<LengthPercentage, LengthPercentage>&& tuple)
-        : value { WTFMove(tuple) }
+    Position(SpaceSeparatedArray<LengthPercentage<>, 2>&& array)
+        : value { WTFMove(array) }
     {
     }
 
     bool operator==(const Position&) const = default;
 
-    SpaceSeparatedTuple<LengthPercentage, LengthPercentage> value;
+    SpaceSeparatedArray<LengthPercentage<>, 2> value;
 };
 
 template<size_t I> const auto& get(const Position& position)
@@ -63,7 +58,7 @@ template<size_t I> const auto& get(const Position& position)
 }
 
 template<> struct ToCSS<Position> { auto operator()(const Position&, const RenderStyle&) -> CSS::Position; };
-template<> struct ToStyle<CSS::Position> { auto operator()(const CSS::Position&, BuilderState&, const CSSCalcSymbolTable&) -> Position; };
+template<> struct ToStyle<CSS::Position> { auto operator()(const CSS::Position&, const BuilderState&, const CSSCalcSymbolTable&) -> Position; };
 
 } // namespace Style
 } // namespace WebCore

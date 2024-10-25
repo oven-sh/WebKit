@@ -58,6 +58,7 @@
 #include "ImageBuffer.h"
 #include "ImageData.h"
 #include "OffscreenCanvas.h"
+#include "PaintRenderingContext2D.h"
 #include "Path2D.h"
 #include "PixelBufferConversion.h"
 #include "RenderElement.h"
@@ -225,12 +226,13 @@ static TextBaseline fromCanvasTextBaseline(CanvasTextBaseline canvasTextBaseline
     return TopTextBaseline;
 }
 
-CanvasRenderingContext2DBase::CanvasRenderingContext2DBase(CanvasBase& canvas, CanvasRenderingContext2DSettings&& settings, bool usesCSSCompatibilityParseMode)
-    : CanvasRenderingContext(canvas)
+CanvasRenderingContext2DBase::CanvasRenderingContext2DBase(CanvasBase& canvas, CanvasRenderingContext::Type type, CanvasRenderingContext2DSettings&& settings, bool usesCSSCompatibilityParseMode)
+    : CanvasRenderingContext(canvas, type)
     , m_stateStack(1)
     , m_usesCSSCompatibilityParseMode(usesCSSCompatibilityParseMode)
     , m_settings(WTFMove(settings))
 {
+    ASSERT(is2dBase());
 }
 
 void CanvasRenderingContext2DBase::unwindStateStack()
@@ -267,11 +269,6 @@ bool CanvasRenderingContext2DBase::isSurfaceBufferTransparentBlack(SurfaceBuffer
 }
 
 #if USE(SKIA)
-bool CanvasRenderingContext2DBase::delegatesDisplay() const
-{
-    return isAccelerated();
-}
-
 RefPtr<GraphicsLayerContentsDisplayDelegate> CanvasRenderingContext2DBase::layerContentsDisplayDelegate()
 {
     if (auto buffer = canvasBase().buffer())
@@ -2390,6 +2387,8 @@ const Vector<CanvasRenderingContext2DBase::State, 1>& CanvasRenderingContext2DBa
 
 GraphicsContext* CanvasRenderingContext2DBase::drawingContext() const
 {
+    if (auto* paintContext = dynamicDowncast<PaintRenderingContext2D>(*this))
+        return paintContext->ensureDrawingContext();
     if (auto* buffer = canvasBase().buffer())
         return &buffer->context();
     return nullptr;

@@ -126,7 +126,7 @@ void Navigation::initializeForNewWindow(std::optional<NavigationNavigationType> 
         bool shouldProcessPreviousNavigationEntries = [&]() {
             if (!previousNavigation->m_entries.size())
                 return false;
-            if (navigationType != NavigationNavigationType::Reload && navigationType != NavigationNavigationType::Push)
+            if (navigationType == NavigationNavigationType::Traverse)
                 return false;
             if (!frame()->document()->protectedSecurityOrigin()->isSameOriginAs(previousWindow->document()->protectedSecurityOrigin()))
                 return false;
@@ -208,7 +208,7 @@ void Navigation::updateForActivation(HistoryItem* previousItem, std::optional<Na
 }
 
 // https://html.spec.whatwg.org/multipage/browsing-the-web.html#fire-the-pageswap-event
-RefPtr<NavigationActivation> Navigation::createForPageswapEvent(HistoryItem* newItem, DocumentLoader* documentLoader)
+RefPtr<NavigationActivation> Navigation::createForPageswapEvent(HistoryItem* newItem, DocumentLoader* documentLoader, bool fromBackForwardCache)
 {
     auto type = documentLoader->triggeringAction().navigationAPIType();
     if (!type || !frame())
@@ -216,7 +216,7 @@ RefPtr<NavigationActivation> Navigation::createForPageswapEvent(HistoryItem* new
 
     // Skip cross-origin requests, or if any cross-origin redirects have been made.
     bool isSameOrigin = SecurityOrigin::create(documentLoader->documentURL())->isSameOriginAs(window()->protectedDocument()->securityOrigin());
-    if (!isSameOrigin || !documentLoader->request().isSameSite())
+    if (!isSameOrigin || (!documentLoader->request().isSameSite() && !fromBackForwardCache))
         return nullptr;
 
     RefPtr<NavigationHistoryEntry> oldEntry;
@@ -429,6 +429,13 @@ Navigation::Result Navigation::performTraversal(const String& key, Navigation::O
 {
     if (!window()->protectedDocument()->isFullyActive() || window()->document()->unloadCounter())
         return createErrorResult(WTFMove(committed), WTFMove(finished), ExceptionCode::InvalidStateError, "Invalid state"_s);
+
+    auto entry = findEntryByKey(key);
+    if (!entry)
+        createErrorResult(WTFMove(committed), WTFMove(finished), ExceptionCode::AbortError, "Navigation aborted"_s);
+
+    if (!frame()->isMainFrame() && !window()->protectedDocument()->canNavigate(&frame()->page()->mainFrame()))
+        return createErrorResult(WTFMove(committed), WTFMove(finished), ExceptionCode::SecurityError, "Invalid state"_s);
 
     RefPtr current = currentEntry();
     if (current->key() == key) {
@@ -724,7 +731,7 @@ void Navigation::abortOngoingNavigation(NavigateEvent& event)
         rejectFinishedPromise(m_ongoingAPIMethodTracker.get(), exception, domException);
 
     if (m_transition) {
-        m_transition->rejectPromise(exception);
+        m_transition->rejectPromise(exception, domException);
         m_transition = nullptr;
     }
 }
@@ -950,6 +957,7 @@ bool Navigation::innerDispatchNavigateEvent(NavigationNavigationType navigationT
                 }
             }
             auto exception = Exception(ExceptionCode::UnknownError, errorMessage);
+            auto domException = createDOMException(*protectedScriptExecutionContext()->globalObject(), exception.isolatedCopy());
 
             dispatchEvent(ErrorEvent::create(eventNames().navigateerrorEvent, errorMessage, errorInformation.sourceURL, errorInformation.line, errorInformation.column, { protectedScriptExecutionContext()->globalObject()->vm(), result }));
 
@@ -957,7 +965,7 @@ bool Navigation::innerDispatchNavigateEvent(NavigationNavigationType navigationT
                 apiMethodTracker->finishedPromise->reject<IDLAny>(result, RejectAsHandled::Yes);
 
             if (RefPtr transition = std::exchange(m_transition, nullptr))
-                transition->rejectPromise(exception);
+                transition->rejectPromise(exception, domException);
         });
 
         // If a new event has been dispatched in our event handler then we were aborted above.

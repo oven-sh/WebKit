@@ -100,7 +100,7 @@ struct _WebKitCookieManagerPrivate {
     RefPtr<CookieStoreObserver> m_observer;
 };
 
-static guint signals[LAST_SIGNAL] = { 0, };
+static std::array<unsigned, LAST_SIGNAL> signals;
 
 WEBKIT_DEFINE_FINAL_TYPE(WebKitCookieManager, webkit_cookie_manager, G_TYPE_OBJECT, GObject)
 

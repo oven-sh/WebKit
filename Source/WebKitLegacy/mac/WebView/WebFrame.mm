@@ -315,7 +315,7 @@ WebView *getWebView(WebFrame *webFrame)
         effectiveSandboxFlags.add(parentLocalFrame->effectiveSandboxFlags());
 
     auto coreFrame = WebCore::LocalFrame::createSubframe(page, [frame] (auto&, auto& frameLoader) {
-        return makeUniqueRef<WebFrameLoaderClient>(frameLoader, frame.get());
+        return makeUniqueRefWithoutRefCountedCheck<WebFrameLoaderClient>(frameLoader, frame.get());
     }, WebCore::FrameIdentifier::generate(), effectiveSandboxFlags, ownerElement);
     frame->_private->coreFrame = coreFrame.ptr();
 
@@ -2238,8 +2238,8 @@ ALLOW_DEPRECATED_DECLARATIONS_END
         return @[];
 
     const auto& documentRect = root->documentRect();
-    float printWidth = root->style().isHorizontalWritingMode() ? static_cast<float>(documentRect.width()) / printScaleFactor : pageSize.width;
-    float printHeight = root->style().isHorizontalWritingMode() ? pageSize.height : static_cast<float>(documentRect.height()) / printScaleFactor;
+    float printWidth = root->writingMode().isHorizontal() ? static_cast<float>(documentRect.width()) / printScaleFactor : pageSize.width;
+    float printHeight = root->writingMode().isHorizontal() ? pageSize.height : static_cast<float>(documentRect.height()) / printScaleFactor;
 
     WebCore::PrintContext printContext(_private->coreFrame);
     printContext.computePageRectsWithPageSize(WebCore::FloatSize(printWidth, printHeight), true);

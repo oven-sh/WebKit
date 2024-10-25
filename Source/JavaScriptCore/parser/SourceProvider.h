@@ -28,6 +28,10 @@
 
 #pragma once
 
+#include <wtf/Compiler.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 #include "CachedBytecode.h"
 #include "CodeSpecializationKind.h"
 #include "SourceOrigin.h"
@@ -36,6 +40,8 @@
 #include <wtf/text/TextPosition.h>
 #include <wtf/text/WTFString.h>
 #include "ArgList.h"
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 namespace JSC {
 

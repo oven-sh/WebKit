@@ -392,8 +392,9 @@ enum class WebCore::StorageBlockingPolicy : uint8_t {
 
 enum class WebCore::HTTPSByDefaultMode : uint8_t {
     Disabled,
-    UpgradeWithHTTPFallback,
-    UpgradeAndFailClosed
+    UpgradeWithAutomaticFallback,
+    UpgradeWithUserMediatedFallback
+    UpgradeAndNoFallback
 };
 
 #if HAVE(TRANSLATION_UI_SERVICES) && ENABLE(CONTEXT_MENUS)
@@ -1514,7 +1515,7 @@ struct WebCore::PermissionDescriptor {
 }
 
 struct WebCore::PushSubscriptionData {
-    WebCore::PushSubscriptionIdentifier identifier;
+    Markable<WebCore::PushSubscriptionIdentifier> identifier;
     String endpoint;
     std::optional<WebCore::EpochTimeStamp> expirationTime;
     Vector<uint8_t> serverVAPIDPublicKey;
@@ -3361,6 +3362,7 @@ enum class WebCore::FetchOptionsDestination : uint8_t {
     Audioworklet,
     Document,
     Embed,
+    Environmentmap,
     Font,
     Image,
     Iframe,
@@ -6309,7 +6311,7 @@ struct WebCore::AcceleratedEffectValues {
     WebCore::FilterOperations backdropFilter;
 }
 
-class WebCore::CSSNumberishTime {
+class WebCore::WebAnimationTime {
     std::optional<Seconds> time();
     std::optional<double> percentage();
 };
@@ -6322,9 +6324,10 @@ struct WebCore::AnimationEffectTiming {
     double iterations;
     Seconds delay;
     Seconds endDelay;
-    WebCore::CSSNumberishTime iterationDuration;
-    WebCore::CSSNumberishTime activeDuration;
-    WebCore::CSSNumberishTime endTime;
+    WebCore::WebAnimationTime iterationDuration;
+    WebCore::WebAnimationTime intrinsicIterationDuration;
+    WebCore::WebAnimationTime activeDuration;
+    WebCore::WebAnimationTime endTime;
 };
 
 header: <WebCore/AcceleratedEffect.h>
@@ -7156,7 +7159,7 @@ struct WebCore::NowPlayingInfo {
     double currentTime;
     double rate;
     bool supportsSeeking;
-    WebCore::MediaUniqueIdentifier uniqueIdentifier;
+    Markable<WebCore::MediaUniqueIdentifier> uniqueIdentifier;
     bool isPlaying;
     bool allowsNowPlayingControlsVisibility;
     bool isVideo;
@@ -7582,6 +7585,7 @@ enum class WebCore::InspectorClientDeveloperPreference : uint8_t {
     PrivateClickMeasurementDebugModeEnabled,
     ITPDebugModeEnabled,
     MockCaptureDevicesEnabled,
+    NeedsSiteSpecificQuirks,
 };
 
 [AdditionalEncoder=StreamConnectionEncoder, RefCounted] class WebCore::SystemImage subclasses {
@@ -7969,6 +7973,8 @@ header: <WebCore/TextAttachmentForSerialization.h>
 [CustomHeader] struct WebCore::MultiRepresentationHEICAttachmentData {
     String identifier;
     String description;
+    String credit;
+    String digitalSourceType;
     Vector<WebCore::MultiRepresentationHEICAttachmentSingleImage> images;
     [NotSerialized] RetainPtr<CFDataRef> data;
 }
@@ -8434,6 +8440,7 @@ enum class WebCore::ShouldRequireExplicitConsentForGamepadAccess : bool;
 enum class WebCore::WillInternallyHandleFailure : bool
 enum class WebCore::ApplyTrackingPrevention : bool
 enum class WebCore::ShouldSample : bool
+enum class WebCore::FromDownloadAttribute : bool
 
 [Nested] struct WebCore::Allowlist::AllowAllOrigins {
 };
@@ -8481,6 +8488,15 @@ class WebCore::PermissionsPolicy {
 };
 using WebCore::PermissionsPolicy::InheritedPolicy = HashSet<WebCore::PermissionsPolicy::Feature, IntHash<WebCore::PermissionsPolicy::Feature>, WTF::StrongEnumHashTraits<WebCore::PermissionsPolicy::Feature>>;
 using WebCore::OwnerPermissionsPolicyData::PolicyDirective = HashMap<WebCore::PermissionsPolicy::Feature, WebCore::Allowlist, IntHash<WebCore::PermissionsPolicy::Feature>, WTF::StrongEnumHashTraits<WebCore::PermissionsPolicy::Feature>>;
+
+#if PLATFORM(COCOA)
+header: <WebCore/ImageUtilities.h>
+[CustomHeader] enum class WebCore::ImageDecodingError : uint8_t {
+    Internal,
+    BadData,
+    UnsupportedType
+};
+#endif
 
 header: <WebCore/ImageBufferResourceLimits.h>
 struct WebCore::ImageBufferResourceLimits {

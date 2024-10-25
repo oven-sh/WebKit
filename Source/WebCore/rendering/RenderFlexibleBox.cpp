@@ -133,7 +133,7 @@ void RenderFlexibleBox::computeIntrinsicLogicalWidths(LayoutUnit& minLogicalWidt
         ++numItemsWithNormalLayout;
 
         // Pre-layout orthogonal children in order to get a valid value for the preferred width.
-        if (style().isHorizontalWritingMode() != flexItem->style().isHorizontalWritingMode())
+        if (writingMode().isOrthogonal(flexItem->writingMode()))
             flexItem->layoutIfNeeded();
 
         LayoutUnit margin = marginIntrinsicLogicalWidthForChild(*flexItem);
@@ -409,7 +409,7 @@ void RenderFlexibleBox::layoutBlock(bool relayoutChildren, LayoutUnit)
     LayoutUnit previousHeight = logicalHeight();
     setLogicalHeight(borderAndPaddingLogicalHeight() + scrollbarLogicalHeight());
     {
-        LayoutStateMaintainer statePusher(*this, locationOffset(), isTransformed() || hasReflection() || style().isFlippedBlocksWritingMode());
+        LayoutStateMaintainer statePusher(*this, locationOffset(), isTransformed() || hasReflection() || writingMode().isBlockFlipped());
 
         preparePaginationBeforeBlockLayout(relayoutChildren);
 
@@ -539,8 +539,8 @@ bool RenderFlexibleBox::isHorizontalFlow() const
 bool RenderFlexibleBox::isLeftToRightFlow() const
 {
     if (isColumnFlow())
-        return style().blockFlowDirection() == FlowDirection::TopToBottom || style().blockFlowDirection() == FlowDirection::LeftToRight;
-    return style().isLeftToRightDirection() ^ (style().flexDirection() == FlexDirection::RowReverse);
+        return writingMode().blockDirection() == FlowDirection::TopToBottom || writingMode().blockDirection() == FlowDirection::LeftToRight;
+    return writingMode().isBidiLTR() ^ (style().flexDirection() == FlexDirection::RowReverse);
 }
 
 bool RenderFlexibleBox::isMultiline() const
@@ -738,20 +738,9 @@ std::optional<LayoutUnit> RenderFlexibleBox::computeMainAxisExtentForFlexItem(Re
 
 FlowDirection RenderFlexibleBox::transformedBlockFlowDirection() const
 {
-    auto blockFlowDirection = style().blockFlowDirection();
     if (!isColumnFlow())
-        return blockFlowDirection;
-    
-    switch (blockFlowDirection) {
-    case FlowDirection::TopToBottom:
-    case FlowDirection::BottomToTop:
-        return style().isLeftToRightDirection() ? FlowDirection::LeftToRight : FlowDirection::RightToLeft;
-    case FlowDirection::LeftToRight:
-    case FlowDirection::RightToLeft:
-        return style().isLeftToRightDirection() ? FlowDirection::TopToBottom : FlowDirection::BottomToTop;
-    }
-    ASSERT_NOT_REACHED();
-    return FlowDirection::TopToBottom;
+        return writingMode().blockDirection();
+    return writingMode().inlineDirection();
 }
 
 LayoutUnit RenderFlexibleBox::flowAwareBorderStart() const
@@ -1271,19 +1260,11 @@ void RenderFlexibleBox::performFlexLayout(bool relayoutChildren)
     if (layoutUsingFlexFormattingContext())
         return;
 
-    FlexLineStates lineStates;
-    LayoutUnit sumFlexBaseSize;
-    double totalFlexGrow;
-    double totalFlexShrink;
-    double totalWeightedFlexShrink;
-    LayoutUnit sumHypotheticalMainSize;
-    
     // Set up our master list of flex items. All of the rest of the algorithm
     // should work off this list of a subset.
-    // TODO(cbiesinger): That second part is not yet true.
+    // FIXME: That second part is not yet true.
     FlexLayoutItems allItems;
-    m_orderIterator.first();
-    for (RenderBox* flexItem = m_orderIterator.currentChild(); flexItem; flexItem = m_orderIterator.next()) {
+    for (auto* flexItem = m_orderIterator.first(); flexItem; flexItem = m_orderIterator.next()) {
         if (m_orderIterator.shouldSkipChild(*flexItem)) {
             // Out-of-flow children are not flex items, so we skip them here.
             if (flexItem->isOutOfFlowPositioned())
@@ -1294,7 +1275,23 @@ void RenderFlexibleBox::performFlexLayout(bool relayoutChildren)
         // constructFlexItem() might set the override containing block height so any value cached for definiteness might be incorrect.
         resetHasDefiniteHeight();
     }
-    
+
+    if (allItems.isEmpty()) {
+        if (hasLineIfEmpty()) {
+            auto minHeight = borderAndPaddingLogicalHeight() + lineHeight(true, isHorizontalWritingMode() ? HorizontalLine : VerticalLine, PositionOfInteriorLineBoxes) + scrollbarLogicalHeight();
+            if (height() < minHeight)
+                setLogicalHeight(minHeight);
+        }
+        updateLogicalHeight();
+        return;
+    }
+
+    FlexLineStates lineStates;
+    LayoutUnit sumFlexBaseSize;
+    double totalFlexGrow;
+    double totalFlexShrink;
+    double totalWeightedFlexShrink;
+    LayoutUnit sumHypotheticalMainSize;
     const LayoutUnit lineBreakLength = mainAxisContentExtent(LayoutUnit::max());
     LayoutUnit gapBetweenItems = computeGap(GapType::BetweenItems);
     LayoutUnit gapBetweenLines = computeGap(GapType::BetweenLines);
@@ -1454,13 +1451,13 @@ bool RenderFlexibleBox::updateAutoMarginsInCrossAxis(RenderBox& flexItem, Layout
         return true;
     }
     bool shouldAdjustTopOrLeft = true;
-    if (isColumnFlow() && !flexItem.style().isLeftToRightDirection()) {
+    if (isColumnFlow() && flexItem.writingMode().isInlineFlipped()) {
         // For column flows, only make this adjustment if topOrLeft corresponds to
         // the "before" margin, so that flipForRightToLeftColumn will do the right
         // thing.
         shouldAdjustTopOrLeft = false;
     }
-    if (!isColumnFlow() && flexItem.style().isFlippedBlocksWritingMode()) {
+    if (!isColumnFlow() && flexItem.writingMode().isBlockFlipped()) {
         // If we are a flipped writing mode, we need to adjust the opposite side.
         // This is only needed for row flows because this only affects the
         // block-direction axis.
@@ -1502,7 +1499,7 @@ LayoutUnit RenderFlexibleBox::marginBoxAscentForFlexItem(const RenderBox& flexIt
     if (!ascent)
         return synthesizedBaseline(flexItem, style(), direction, BorderBox) + flowAwareMarginBeforeForFlexItem(flexItem);
 
-    if (flexItem.isWritingModeRoot() && style().isFlippedBlocksWritingMode() != flexItem.style().isFlippedBlocksWritingMode() && !flexItem.isHorizontalWritingMode()) {
+    if (!flexItem.writingMode().isBlockMatchingAny(writingMode())) {
         // Baseline from flex item with opposite block direction needs to be resolved as if flex item had the same block direction.
         //  _____________________________ <- flex box top/left (e.g. writing-mode: vertical-rl)
         // |        __________________   |
@@ -1889,6 +1886,8 @@ static LayoutUnit alignmentOffset(LayoutUnit availableFreeSpace, ItemPosition po
     case ItemPosition::Baseline:
     case ItemPosition::LastBaseline: 
         return maxAscent.value_or(0_lu) - ascent.value_or(0_lu);
+    case ItemPosition::AnchorCenter:
+        return 0; // TODO: Implement - see https://bugs.webkit.org/show_bug.cgi?id=275451.
     }
     return 0;
 }
@@ -1936,14 +1935,14 @@ bool RenderFlexibleBox::setStaticPositionForPositionedLayout(const RenderBox& fl
 {
     bool positionChanged = false;
     auto* layer = flexItem.layer();
-    if (flexItem.style().hasStaticInlinePosition(style().isHorizontalWritingMode())) {
+    if (flexItem.style().hasStaticInlinePosition(writingMode().isHorizontal())) {
         LayoutUnit inlinePosition = staticInlinePositionForPositionedFlexItem(flexItem);
         if (layer->staticInlinePosition() != inlinePosition) {
             layer->setStaticInlinePosition(inlinePosition);
             positionChanged = true;
         }
     }
-    if (flexItem.style().hasStaticBlockPosition(style().isHorizontalWritingMode())) {
+    if (flexItem.style().hasStaticBlockPosition(writingMode().isHorizontal())) {
         LayoutUnit blockPosition = staticBlockPositionForPositionedFlexItem(flexItem);
         if (layer->staticBlockPosition() != blockPosition) {
             layer->setStaticBlockPosition(blockPosition);
@@ -1990,14 +1989,14 @@ void RenderFlexibleBox::prepareFlexItemForPositionedLayout(RenderBox& flexItem)
     LayoutUnit staticInlinePosition = flowAwareBorderStart() + flowAwarePaddingStart();
     if (layer->staticInlinePosition() != staticInlinePosition) {
         layer->setStaticInlinePosition(staticInlinePosition);
-        if (flexItem.style().hasStaticInlinePosition(style().isHorizontalWritingMode()))
+        if (flexItem.style().hasStaticInlinePosition(writingMode().isHorizontal()))
             flexItem.setChildNeedsLayout(MarkOnlyThis);
     }
 
     LayoutUnit staticBlockPosition = flowAwareBorderBefore() + flowAwarePaddingBefore();
     if (layer->staticBlockPosition() != staticBlockPosition) {
         layer->setStaticBlockPosition(staticBlockPosition);
-        if (flexItem.style().hasStaticBlockPosition(style().isHorizontalWritingMode()))
+        if (flexItem.style().hasStaticBlockPosition(writingMode().isHorizontal()))
             flexItem.setChildNeedsLayout(MarkOnlyThis);
     }
 }
@@ -2024,23 +2023,11 @@ ItemPosition RenderFlexibleBox::alignmentForFlexItem(const RenderBox& flexItem) 
         return ItemPosition::FlexEnd;
 
     if (align == ItemPosition::SelfStart || align == ItemPosition::SelfEnd) {
-        // self-start corresponds to flex-start (and self-end to flex-end) in the majority of the cases
-        // for orthogonal layouts except when the container is flipped blocks writing mode (vrl/hbt) and
-        // the child is ltr or the other way around. For example:
-        // 1) htb ltr child inside a vrl container: self-start corresponds to flex-end
-        // 2) htb rtl child inside a vlr container: self-end corresponds to flex-start
-        bool isOrthogonal = style().isHorizontalWritingMode() != flexItem.style().isHorizontalWritingMode();
-        if (isOrthogonal && (style().isFlippedBlocksWritingMode() == flexItem.style().isLeftToRightDirection()))
-            return align == ItemPosition::SelfStart ? ItemPosition::FlexEnd : ItemPosition::FlexStart;
-
-        if (!isOrthogonal) {
-            if (style().isFlippedLinesWritingMode() != flexItem.style().isFlippedLinesWritingMode())
-                return align == ItemPosition::SelfStart ? ItemPosition::FlexEnd : ItemPosition::FlexStart;
-            if (style().isLeftToRightDirection() != flexItem.style().isLeftToRightDirection())
-                return align == ItemPosition::SelfStart ? ItemPosition::FlexEnd : ItemPosition::FlexStart;
-        }
-
-        return align == ItemPosition::SelfStart ? ItemPosition::FlexStart : ItemPosition::FlexEnd;
+        bool hasSameDirection = isHorizontalFlow()
+            ? writingMode().isAnyTopToBottom() == flexItem.writingMode().isAnyTopToBottom()
+            : writingMode().isAnyLeftToRight() == flexItem.writingMode().isAnyLeftToRight();
+        return hasSameDirection == (align == ItemPosition::SelfStart)
+            ? ItemPosition::FlexStart : ItemPosition::FlexEnd;
     }
 
     if (style().flexWrap() == FlexWrap::Reverse) {
@@ -2083,7 +2070,7 @@ bool RenderFlexibleBox::needToStretchFlexItemLogicalHeight(const RenderBox& flex
     if (alignmentForFlexItem(flexItem) != ItemPosition::Stretch)
         return false;
 
-    if (isHorizontalFlow() != flexItem.style().isHorizontalWritingMode())
+    if (isHorizontalFlow() != flexItem.isHorizontalWritingMode())
         return false;
 
     // Aspect ratio is properly handled by RenderReplaced during layout.
@@ -2234,7 +2221,7 @@ void RenderFlexibleBox::layoutAndPlaceFlexItems(LayoutUnit& crossAxisOffset, Fle
         setOverridingMainSizeForFlexItem(flexItem, flexLayoutItem.flexedContentSize);
         // The flexed content size and the override size include the scrollbar
         // width, so we need to compare to the size including the scrollbar.
-        // TODO(cbiesinger): Should it include the scrollbar?
+        // FIXME: Should it include the scrollbar?
         if (flexLayoutItem.flexedContentSize != mainAxisContentExtentForFlexItemIncludingScrollbar(flexItem))
             flexItem.setChildNeedsLayout(MarkOnlyThis);
         else {
@@ -2484,9 +2471,12 @@ void RenderFlexibleBox::performBaselineAlignment(LineState& lineState)
         // If the box’s own writing mode is vertical, assume horizontal-tb.
         // If the box’s own writing mode is horizontal, assume vertical-lr if
         // direction is ltr and vertical-rl if direction is rtl.
+        WritingMode hypotheticalWritingMode;
         if (!flexItem.isHorizontalWritingMode())
-            return WritingMode::HorizontalTb;
-        return style().direction() == TextDirection::LTR ? WritingMode::VerticalLr : WritingMode::VerticalRl;
+            return hypotheticalWritingMode;
+        else
+            hypotheticalWritingMode.setWritingMode(writingMode().isBidiLTR() ? StyleWritingMode::VerticalLr : StyleWritingMode::VerticalRl);
+        return hypotheticalWritingMode;
     };
 
     auto shouldAdjustItemTowardsCrossAxisEnd = [&](const FlowDirection& flexItemBlockFlowDirection, ItemPosition alignment) {
@@ -2516,7 +2506,7 @@ void RenderFlexibleBox::performBaselineAlignment(LineState& lineState)
             auto offset = alignmentOffset(availableAlignmentSpaceForFlexItem(lineCrossAxisExtent, flexItem), position, marginBoxAscentForFlexItem(flexItem), baselineSharingGroup.maxAscent(), containerHasWrapReverse);
             adjustAlignmentForFlexItem(flexItem, offset);
 
-            if (shouldAdjustItemTowardsCrossAxisEnd(writingModeToBlockFlowDirection(flexItemWritingModeForBaselineAlignment(flexItem)), position))
+            if (shouldAdjustItemTowardsCrossAxisEnd(flexItemWritingModeForBaselineAlignment(flexItem).blockDirection(), position))
                 minMarginAfterBaseline = std::min(minMarginAfterBaseline, availableAlignmentSpaceForFlexItem(lineCrossAxisExtent, flexItem) - offset);
         }
         // css-align-3 9.3 part 3:
@@ -2525,7 +2515,7 @@ void RenderFlexibleBox::performBaselineAlignment(LineState& lineState)
         // of its items as resolved to physical directions.
         if (minMarginAfterBaseline) {
             for (auto& flexItem : baselineSharingGroup) {
-                if (shouldAdjustItemTowardsCrossAxisEnd(writingModeToBlockFlowDirection(flexItemWritingModeForBaselineAlignment(flexItem)), alignmentForFlexItem(flexItem)) && !hasAutoMarginsInCrossAxis(flexItem))
+                if (shouldAdjustItemTowardsCrossAxisEnd(flexItemWritingModeForBaselineAlignment(flexItem).blockDirection(), alignmentForFlexItem(flexItem)) && !hasAutoMarginsInCrossAxis(flexItem))
                     adjustAlignmentForFlexItem(flexItem, minMarginAfterBaseline);
             }
         }
@@ -2580,7 +2570,7 @@ void RenderFlexibleBox::applyStretchAlignmentToFlexItem(RenderBox& flexItem, Lay
 
 void RenderFlexibleBox::flipForRightToLeftColumn(const FlexLineStates& lineStates)
 {
-    if (style().isLeftToRightDirection() || !isColumnFlow())
+    if (writingMode().isLogicalLeftInlineStart() || !isColumnFlow())
         return;
     
     LayoutUnit crossExtent = crossAxisExtent();
@@ -2616,12 +2606,13 @@ void RenderFlexibleBox::flipForWrapReverse(const FlexLineStates& lineStates, Lay
 
 std::optional<TextDirection> RenderFlexibleBox::leftRightAxisDirectionFromStyle(const RenderStyle& style)
 {
-    if (!style.isColumnFlexDirection())
-        return style.direction();
+    if (!style.isColumnFlexDirection()) // Prioritize text direction.
+        return style.writingMode().bidiDirection();
 
-    if (!style.isHorizontalWritingMode()) {
-        return (style.blockFlowDirection() == FlowDirection::LeftToRight)
-            ? TextDirection::LTR : TextDirection::RTL;
+    if (style.writingMode().isVertical()) { // Fall back to block direction if possible.
+        return style.writingMode().isBlockLeftToRight()
+            ? TextDirection::LTR
+            : TextDirection::RTL;
     }
 
     return std::nullopt;
@@ -2634,13 +2625,13 @@ LayoutOptionalOutsets RenderFlexibleBox::allowedLayoutOverflow() const
     bool isColumnar = style().isColumnFlexDirection();
     if (isHorizontalWritingMode()) {
         allowance.top() = isColumnar ? m_justifyContentStartOverflow : m_alignContentStartOverflow;
-        if (style().isLeftToRightDirection())
+        if (writingMode().isInlineLeftToRight())
             allowance.left() = isColumnar ? m_alignContentStartOverflow : m_justifyContentStartOverflow;
         else
             allowance.right() = isColumnar ? m_alignContentStartOverflow : m_justifyContentStartOverflow;
     } else {
         allowance.left() = isColumnar ? m_justifyContentStartOverflow : m_alignContentStartOverflow;
-        if (style().isLeftToRightDirection())
+        if (writingMode().isInlineTopToBottom())
             allowance.top() = isColumnar ? m_alignContentStartOverflow : m_justifyContentStartOverflow;
         else
             allowance.bottom() = isColumnar ? m_alignContentStartOverflow : m_justifyContentStartOverflow;
@@ -2663,12 +2654,15 @@ LayoutUnit RenderFlexibleBox::computeGap(RenderFlexibleBox::GapType gapType) con
 
 bool RenderFlexibleBox::layoutUsingFlexFormattingContext()
 {
+    if (!firstInFlowChild())
+        return false;
+
     m_hasFlexFormattingContextLayout = LayoutIntegration::canUseForFlexLayout(*this);
     if (!m_hasFlexFormattingContextLayout)
         return false;
 
     auto flexLayout = LayoutIntegration::FlexLayout { *this };
-    flexLayout.updateFormattingContexGeometries(containingBlock() ? containingBlock()->availableLogicalWidth() : LayoutUnit());
+    flexLayout.updateFormattingContexGeometries();
 
     flexLayout.layout();
     setLogicalHeight(std::max(logicalHeight(), borderAndPaddingLogicalHeight() + flexLayout.contentBoxLogicalHeight()));

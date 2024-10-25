@@ -133,6 +133,8 @@ private:
     String serializeTextBox() const;
     String serializeTextWrap() const;
     String serializeWhiteSpace() const;
+    String serializeAnimationRange() const;
+    String serializeSingleAnimationRange(const CSSValue&, SingleTimelineRange::Type, CSSValueID = CSSValueInvalid) const;
 
     StylePropertyShorthand m_shorthand;
     RefPtr<CSSValue> m_longhandValues[maxShorthandLength];
@@ -419,6 +421,8 @@ String ShorthandSerializer::serialize()
     case CSSPropertyScrollTimeline:
     case CSSPropertyViewTimeline:
         return serializeCoordinatingListPropertyGroup();
+    case CSSPropertyAnimationRange:
+        return serializeAnimationRange();
     default:
         ASSERT_NOT_REACHED();
         return String();
@@ -1313,6 +1317,62 @@ String ShorthandSerializer::serializeTextWrap() const
         return nameString(style);
 
     return makeString(nameLiteral(mode), ' ', nameLiteral(style));
+}
+
+String ShorthandSerializer::serializeSingleAnimationRange(const CSSValue& value, SingleTimelineRange::Type type, CSSValueID startValueID) const
+{
+    if (RefPtr pair = dynamicDowncast<CSSValuePair>(value)) {
+        bool isSameNameAsStart = pair->first().valueID() == startValueID;
+        bool isStartValue = type == SingleTimelineRange::Type::Start;
+        bool isDefaultValue = SingleTimelineRange::isDefault(downcast<CSSPrimitiveValue>(pair->second()), SingleTimelineRange::Type::Start);
+        if (isDefaultValue && (isStartValue || !isSameNameAsStart))
+            return nameLiteral(pair->first().valueID());
+        return pair->cssText();
+    }
+    if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value)) {
+        if (SingleTimelineRange::isOffsetValue(*primitiveValue))
+            return primitiveValue->cssText();
+        bool isNormal = primitiveValue->valueID() == CSSValueNormal;
+        bool isSameNameAsStart = primitiveValue->valueID() == startValueID;
+        bool isStartValue = type == SingleTimelineRange::Type::Start;
+        if (isStartValue || (!isNormal && !isSameNameAsStart))
+            return nameLiteral(primitiveValue->valueID());
+    }
+    return emptyString();
+}
+
+String ShorthandSerializer::serializeAnimationRange() const
+{
+    StringBuilder builder;
+    auto& startValue = longhandValue(0);
+    auto& endValue = longhandValue(1);
+    auto* startList = dynamicDowncast<CSSValueList>(startValue);
+    auto* endList = dynamicDowncast<CSSValueList>(endValue);
+    if (startList && endList) {
+        ASSERT(startList->size() == endList->size());
+        for (unsigned i = 0; i < startList->size(); i++) {
+            auto start = startList->item(i);
+            RefPtr startPair = dynamicDowncast<CSSValuePair>(start);
+            auto startID = startPair ? startPair->first().valueID() : start->valueID();
+
+            auto serializedStart = serializeSingleAnimationRange(*start, SingleTimelineRange::Type::Start);
+            auto serializedEnd = serializeSingleAnimationRange(*endList->item(i), SingleTimelineRange::Type::End, startID);
+            builder.append(
+                serializedEnd.isEmpty() ? serializedStart : makeString(serializedStart, ' ', serializedEnd),
+                (i < startList->size() - 1) ? ", "_s : emptyString()
+            );
+        }
+        return builder.toString();
+    }
+
+    RefPtr startPair = dynamicDowncast<CSSValuePair>(startValue);
+    auto startID = startPair ? startPair->first().valueID() : startValue.valueID();
+
+    auto serializedStart = serializeSingleAnimationRange(startValue, SingleTimelineRange::Type::Start);
+    auto serializedEnd = serializeSingleAnimationRange(endValue, SingleTimelineRange::Type::End, startID);
+    if (serializedEnd.isEmpty())
+        return serializedStart;
+    return makeString(serializedStart, ' ', serializedEnd);
 }
 
 String ShorthandSerializer::serializeWhiteSpace() const

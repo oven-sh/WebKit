@@ -355,6 +355,7 @@
             ],
             "codegen-properties": {
                 "custom": "Value",
+                "getter": "writingMode().computedTextDirection",
                 "high-priority": true,
                 "parser-grammar": "<<values>>"
             },
@@ -670,7 +671,7 @@
             }
         },
         "text-box-edge": {
-            "inherited": false,
+            "inherited": true,
             "values": [
                 "auto",
                 "text",
@@ -1132,6 +1133,7 @@
             ],
             "codegen-properties": {
                 "custom": "Value",
+                "getter": "writingMode().computedTextOrientation",
                 "high-priority": true,
                 "parser-grammar": "<<values>>"
             },
@@ -1182,7 +1184,8 @@
             "inherited": true,
             "values": [
                 "auto",
-                "space-all"
+                "space-all",
+                "trim-all"
             ],
             "codegen-properties": {
                 "settings-flag": "cssTextSpacingTrimEnabled",
@@ -1190,9 +1193,7 @@
                 "high-priority": true,
                 "sink-priority": true,
                 "converter": "TextSpacingTrim",
-                "parser-function": "consumeTextSpacingTrim",
-                "parser-grammar-unused": "auto | space-all | trim-all | [ allow-end || space-first ]",
-                "parser-grammar-unused-reason": "Needs support for '||' groups."
+                "parser-grammar": "space-all | trim-all | auto"
             },
             "status": "in development",
             "specification": {
@@ -1275,6 +1276,7 @@
                 ],
                 "custom": "Value",
                 "comment": "This is top priority because vi/vb units (depending on writing-mode) may be used by other properties",
+                "getter": "writingMode().computedWritingMode",
                 "top-priority": true,
                 "parser-grammar": "<<values>>"
             },
@@ -1555,6 +1557,51 @@
             "specification": {
                 "category": "css-animations",
                 "url": "https://www.w3.org/TR/css3-animations/#animation-play-state-property"
+            }
+        },
+        "animation-range": {
+            "animatable": true,
+            "codegen-properties": {
+                "longhands": [
+                    "animation-range-start",
+                    "animation-range-end"
+                ],
+                "separator": ",",
+                "settings-flag": "scrollDrivenAnimationsEnabled"
+            },
+            "specification": {
+                "category": "scroll-animations",
+                "url": "https://drafts.csswg.org/scroll-animations-1/#animation-range"
+            }
+        },
+        "animation-range-start": {
+            "animatable": true,
+            "codegen-properties": {
+                "separator": ",",
+                "name-for-methods": "RangeStart",
+                "parser-function": "consumeAnimationRangeStart",
+                "parser-grammar-unused": "[ normal | <length-percentage> | [ <custom-ident> || <length-percentage>?] ]#",
+                "parser-grammar-unused-reason": "Needs support for '||' groups.",
+                "settings-flag": "scrollDrivenAnimationsEnabled"
+            },
+            "specification": {
+                "category": "scroll-animations",
+                "url": "https://drafts.csswg.org/scroll-animations-1/#propdef-animation-range-start"
+            }
+        },
+        "animation-range-end": {
+            "animatable": true,
+            "codegen-properties": {
+                "separator": ",",
+                "name-for-methods": "RangeEnd",
+                "parser-function": "consumeAnimationRangeEnd",
+                "parser-grammar-unused": "[ normal | <length-percentage> | [ <custom-ident> || <length-percentage>? ] ]#",
+                "parser-grammar-unused-reason": "Needs support for '||' groups.",
+                "settings-flag": "scrollDrivenAnimationsEnabled"
+            },
+            "specification": {
+                "category": "scroll-animations",
+                "url": "https://drafts.csswg.org/scroll-animations-1/#propdef-animation-range-end"
             }
         },
         "animation-timeline": {
@@ -3863,7 +3910,7 @@
             ],
             "codegen-properties": {
                 "converter": "TextEdge",
-                "settings-flag": "cssTextBoxTrimEnabled",
+                "settings-flag": "cssLineFitEdgeEnabled",
                 "parser-function": "consumeLineFitEdge",
                 "parser-grammar-unused": "leading | [ [ text | cap | ex | ideographic | ideographic-ink ] [ text | alphabetic | ideographic | ideographic-ink ]? ]",
                 "parser-grammar-unused-reason": "Needs support for 'groups' and 'optional'."
@@ -7246,7 +7293,11 @@
                 "start",
                 "end",
                 "self-start",
-                "self-end"
+                "self-end",
+                {
+                    "value": "anchor-center",
+                    "settings-flag": "cssAnchorPositioningEnabled"
+                }
             ],
             "codegen-properties": {
                 "aliases": [
@@ -7255,7 +7306,7 @@
                 "initial": "initialDefaultAlignment",
                 "converter": "SelfOrDefaultAlignmentData",
                 "parser-function": "consumeAlignItems",
-                "parser-grammar-unused": "normal | stretch | <baseline-position> | [ <overflow-position>? <self-position> ]",
+                "parser-grammar-unused": "normal | stretch | <baseline-position> | [ <overflow-position>? <self-position> ] | anchor-center",
                 "parser-grammar-unused-reason": "Needs support for ordered groups, '&&' groups and optionals.",
                 "comment": "Alternate definition in css-flexbox - flex-start | flex-end | center | baseline | stretch"
             },
@@ -7281,7 +7332,11 @@
                 "start",
                 "end",
                 "self-start",
-                "self-end"
+                "self-end",
+                {
+                    "value": "anchor-center",
+                    "settings-flag": "cssAnchorPositioningEnabled"
+                }
             ],
             "codegen-properties": {
                 "aliases": [
@@ -7290,7 +7345,7 @@
                 "initial": "initialSelfAlignment",
                 "converter": "SelfOrDefaultAlignmentData",
                 "parser-function": "consumeAlignSelf",
-                "parser-grammar-unused": "auto | normal | stretch | <baseline-position> | [ <overflow-position>? <self-position> ]",
+                "parser-grammar-unused": "auto | normal | stretch | <baseline-position> | [ <overflow-position>? <self-position> ] | anchor-center",
                 "parser-grammar-unused-reason": "Needs support for ordered groups, '&&' groups and optionals.",
                 "comment": "Alternate definition in css-flexbox - auto | flex-start | flex-end | center | baseline | stretch"
             },
@@ -7482,7 +7537,7 @@
                 "initial": "initialSelfAlignment",
                 "converter": "SelfOrDefaultAlignmentData",
                 "parser-function": "consumeJustifySelf",
-                "parser-grammar-unused": "auto | normal | stretch | <baseline-position> | [ <overflow-position>? [ <self-position> | left | right ] ]",
+                "parser-grammar-unused": "auto | normal | stretch | <baseline-position> | [ <overflow-position>? [ <self-position> | left | right ] ] | anchor-center",
                 "parser-grammar-unused-reason": "Needs support for ordered groups, '&&' groups and optionals."
             },
             "specification": {
@@ -7497,7 +7552,7 @@
                 ],
                 "converter": "SelfOrDefaultAlignmentData",
                 "parser-function": "consumeJustifyItems",
-                "parser-grammar-unused": "[ normal | stretch | <baseline-position> | [ <overflow-position>? [ <self-position> | left | right ] ] | legacy | legacy ] && [ left | right | center ]",
+                "parser-grammar-unused": "[ normal | stretch | anchor-center | <baseline-position> | [ <overflow-position>? [ <self-position> | left | right ] ] | legacy | legacy ] && [ left | right | center | anchor-center ]",
                 "parser-grammar-unused-reason": "Needs support for ordered groups, '&&' groups and optionals."
             },
             "specification": {
@@ -7978,7 +8033,7 @@
             "codegen-properties": {
                 "converter": "MarqueeSpeed",
                 "internal-only": true,
-                "parser-grammar": "<time [0,inf] unitless-allowed>"
+                "parser-grammar": "<time [0,inf]>"
             },
             "status": "non-standard"
         },
@@ -8659,7 +8714,7 @@
                     "value": "separated",
                     "status": "non-standard",
                     "settings-flag": "cssTransformStyleSeparatedEnabled",
-                    "enable-if": "ENABLE_CSS_TRANSFORM_STYLE_SEPARATED"
+                    "enable-if": "HAVE_CORE_ANIMATION_SEPARATED_LAYERS"
                 }
             ],
             "codegen-properties": {
@@ -9205,6 +9260,7 @@
         },
         "scrollbar-width": {
             "codegen-properties": {
+                "converter": "ScrollbarWidth",
                 "parser-grammar": "auto | thin | none",
                 "settings-flag": "cssScrollbarWidthEnabled"
             },

@@ -86,7 +86,7 @@ extern void TZoneLog::log(const char* format, ...)
 }
 
 #if BUSE(OS_LOG)
-BATTRIBUTE_PRINTF(3, 0)
+BATTRIBUTE_PRINTF(2, 0)
 void TZoneLog::osLogWithLineBuffer(const char* format, va_list list)
 {
     if (!format)

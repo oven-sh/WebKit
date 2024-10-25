@@ -53,6 +53,9 @@ class BaseAudioSharedUnit : public RefCounted<BaseAudioSharedUnit>, public Realt
 public:
     virtual ~BaseAudioSharedUnit();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
     void startProducingData();
     void stopProducingData();
     void reconfigure();
@@ -86,7 +89,6 @@ public:
     virtual LongCapabilityRange sampleRateCapacities() const = 0;
     virtual int actualSampleRate() const { return sampleRate(); }
 
-    void whenAudioCaptureUnitIsNotRunning(Function<void()>&&);
     bool isRenderingAudio() const { return m_isRenderingAudio; }
     bool hasClients() const { return !m_clients.isEmptyIgnoringNullReferences(); }
 
@@ -162,7 +164,6 @@ private:
 
     bool m_isCapturingWithDefaultMicrophone { false };
     bool m_isProducingMicrophoneSamples { true };
-    Vector<Function<void()>> m_whenNotRunningCallbacks;
     Function<void()> m_voiceActivityCallback;
     Timer m_voiceActivityThrottleTimer;
 };

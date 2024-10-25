@@ -75,7 +75,7 @@ MediaSourcePrivate::MediaSourcePrivate(MediaSourcePrivateClient& client)
 {
 }
 
-MediaSourcePrivate::MediaSourcePrivate(MediaSourcePrivateClient& client, RefCountedSerialFunctionDispatcher& dispatcher)
+MediaSourcePrivate::MediaSourcePrivate(MediaSourcePrivateClient& client, GuaranteedSerialFunctionDispatcher& dispatcher)
     : m_readyState(MediaSourceReadyState::Closed)
     , m_dispatcher(dispatcher)
     , m_client(client)
@@ -280,11 +280,12 @@ void MediaSourcePrivate::setCDMSession(LegacyCDMSession* session)
 
 void MediaSourcePrivate::ensureOnDispatcher(Function<void()>&& function) const
 {
-    if (m_dispatcher->isCurrent()) {
+    Ref dispatcher = m_dispatcher;
+    if (dispatcher->isCurrent()) {
         function();
         return;
     }
-    m_dispatcher->dispatch(WTFMove(function));
+    dispatcher->dispatch(WTFMove(function));
 }
 
 MediaTime MediaSourcePrivate::currentTime() const

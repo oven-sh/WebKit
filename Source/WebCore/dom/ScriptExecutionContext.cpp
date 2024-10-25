@@ -96,9 +96,9 @@ using namespace Inspector;
 static std::atomic<CrossOriginMode> globalCrossOriginMode { CrossOriginMode::Shared };
 
 static Lock allScriptExecutionContextsMapLock;
-static HashMap<ScriptExecutionContextIdentifier, ScriptExecutionContext*>& allScriptExecutionContextsMap() WTF_REQUIRES_LOCK(allScriptExecutionContextsMapLock)
+static UncheckedKeyHashMap<ScriptExecutionContextIdentifier, ScriptExecutionContext*>& allScriptExecutionContextsMap() WTF_REQUIRES_LOCK(allScriptExecutionContextsMapLock)
 {
-    static NeverDestroyed<HashMap<ScriptExecutionContextIdentifier, ScriptExecutionContext*>> contexts;
+    static NeverDestroyed<UncheckedKeyHashMap<ScriptExecutionContextIdentifier, ScriptExecutionContext*>> contexts;
     ASSERT(allScriptExecutionContextsMapLock.isLocked());
     return contexts;
 }
@@ -399,7 +399,6 @@ void ScriptExecutionContext::stopActiveDOMObjects()
         activeDOMObject.stop();
         return ShouldContinue::Yes;
     });
-    m_deferredPromises.clear();
 
     m_nativePromiseRequests.forEach([] (auto& request) {
         request.disconnect();
@@ -845,16 +844,6 @@ CompletionHandler<void()> ScriptExecutionContext::takeNotificationCallback(Notif
     return m_notificationCallbacks.take(identifier);
 }
 
-void ScriptExecutionContext::addDeferredPromise(Ref<DeferredPromise>&& promise)
-{
-    m_deferredPromises.add(WTFMove(promise));
-}
-
-RefPtr<DeferredPromise> ScriptExecutionContext::takeDeferredPromise(DeferredPromise* promise)
-{
-    return m_deferredPromises.take(promise);
-}
-
 CheckedRef<EventLoopTaskGroup> ScriptExecutionContext::checkedEventLoop()
 {
     return eventLoop();
@@ -890,15 +879,13 @@ void ScriptExecutionContext::deref()
     }
 }
 
+// ScriptExecutionContextDispatcher is not guaranteeing dispatching on its own for workers.
+// Together with ScriptExecutionContext::enqueueTaskWhenSettled, it meets NativePromise dispatcher contract.
+// FIXME: We should investigate how to guarantee task dispatching to workers.
 class ScriptExecutionContextDispatcher final
-    : public ThreadSafeRefCounted<ScriptExecutionContextDispatcher>
-    , public RefCountedSerialFunctionDispatcher {
+    : public GuaranteedSerialFunctionDispatcher {
 public:
     static Ref<ScriptExecutionContextDispatcher> create(ScriptExecutionContext& context) { return adoptRef(*new ScriptExecutionContextDispatcher(context)); }
-
-    // RefCountedSerialFunctionDispatcher
-    void ref() const final { ThreadSafeRefCounted::ref(); }
-    void deref() const final { ThreadSafeRefCounted::deref(); }
 
 private:
     explicit ScriptExecutionContextDispatcher(ScriptExecutionContext& context)
@@ -907,7 +894,7 @@ private:
     {
     }
 
-    // RefCountedSerialFunctionDispatcher
+    // GuaranteedSerialFunctionDispatcher
     void dispatch(Function<void()>&& callback) final
     {
         if (m_threadId == 1) {
@@ -922,7 +909,7 @@ private:
     const uint32_t m_threadId { 1 };
 };
 
-RefCountedSerialFunctionDispatcher& ScriptExecutionContext::nativePromiseDispatcher()
+GuaranteedSerialFunctionDispatcher& ScriptExecutionContext::nativePromiseDispatcher()
 {
     if (!m_nativePromiseDispatcher)
         m_nativePromiseDispatcher = ScriptExecutionContextDispatcher::create(*this);
@@ -931,11 +918,14 @@ RefCountedSerialFunctionDispatcher& ScriptExecutionContext::nativePromiseDispatc
 
 bool ScriptExecutionContext::requiresScriptExecutionTelemetry(ScriptTelemetryCategory category)
 {
-    Ref vm = this->vm();
+    RefPtr vm = vmIfExists();
+    if (!vm)
+        return false;
+
     if (!vm->topCallFrame)
         return false;
 
-    auto [taintedness, taintedURL] = JSC::sourceTaintedOriginFromStack(vm, vm->topCallFrame);
+    auto [taintedness, taintedURL] = JSC::sourceTaintedOriginFromStack(*vm, vm->topCallFrame);
     switch (taintedness) {
     case JSC::SourceTaintedOrigin::Untainted:
     case JSC::SourceTaintedOrigin::IndirectlyTaintedByHistory:

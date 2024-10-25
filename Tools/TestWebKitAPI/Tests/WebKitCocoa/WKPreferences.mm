@@ -26,6 +26,8 @@
 #import "config.h"
 
 #import "DeprecatedGlobalValues.h"
+#import "PlatformUtilities.h"
+#import "Test.h"
 #import <WebKit/WKFoundation.h>
 #import <WebKit/WKPreferencesPrivate.h>
 
@@ -139,4 +141,11 @@ TEST(WKPreferencesPrivate, DisableRichJavaScriptFeatures)
     }];
     result = (NSString *)[getNextMessage() body];
     EXPECT_WK_STREQ(@"Shape Detection Disabled", result.get());
+
+    [webView evaluateJavaScript:@"log(window.screen && screen.orientation ? 'Screen Orientation Enabled' : 'Screen Orientation Disabled');" completionHandler:^(id, NSError *error) {
+        EXPECT_NULL(error);
+    }];
+    result = (NSString *)[getNextMessage() body];
+    EXPECT_WK_STREQ(@"Screen Orientation Disabled", result.get());
+
 }

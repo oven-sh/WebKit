@@ -49,6 +49,7 @@ class Element;
 class WeakPtrImplWithEventTargetData;
 class GraphicsLayer;
 class HTMLVideoElement;
+class RenderImage;
 }
 
 namespace WebKit {
@@ -66,6 +67,9 @@ public:
 
     bool supportsFullScreenForElement(const WebCore::Element&, bool withKeyboard);
     void enterFullScreenForElement(WebCore::Element*, WebCore::HTMLMediaElementEnums::VideoFullscreenMode);
+#if ENABLE(QUICKLOOK_FULLSCREEN)
+    void updateImageSource(WebCore::Element&);
+#endif // ENABLE(QUICKLOOK_FULLSCREEN)
     void exitFullScreenForElement(WebCore::Element*);
 
     void willEnterFullScreen(WebCore::HTMLMediaElementEnums::VideoFullscreenMode = WebCore::HTMLMediaElementEnums::VideoFullscreenModeStandard);
@@ -100,6 +104,11 @@ protected:
     Ref<WebPage> m_page;
     RefPtr<WebCore::Element> m_element;
     WeakPtr<WebCore::Element, WebCore::WeakPtrImplWithEventTargetData> m_elementToRestore;
+#if ENABLE(QUICKLOOK_FULLSCREEN)
+    WebCore::FloatSize m_oldSize;
+    double m_scaleFactor { 1 };
+    double m_minEffectiveWidth { 0 };
+#endif
 #if ENABLE(VIDEO)
     RefPtr<WebCore::HTMLVideoElement> m_pipStandbyElement;
 #endif
@@ -136,6 +145,8 @@ private:
 #endif // ENABLE(VIDEO)
 
 #if ENABLE(QUICKLOOK_FULLSCREEN)
+    enum class IsUpdating : bool { No, Yes };
+    FullScreenMediaDetails getImageMediaDetails(CheckedPtr<WebCore::RenderImage>, IsUpdating);
     bool m_willUseQuickLookForFullscreen { false };
 #endif
 

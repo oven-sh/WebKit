@@ -69,7 +69,6 @@ WK_OBJECT_DEALLOC_IMPL_ON_MAIN_THREAD(WKWebExtension, WebExtension, _webExtensio
 {
     NSParameterAssert([resourceBaseURL isKindOfClass:NSURL.class]);
     NSParameterAssert(resourceBaseURL.isFileURL);
-    NSParameterAssert(resourceBaseURL.hasDirectoryPath);
 
     // FIXME: <https://webkit.org/b/276194> Make the WebExtension class load data on a background thread.
     // Use an async dispatch in the meantime to prevent clients from expecting synchronous results.
@@ -119,7 +118,6 @@ WK_OBJECT_DEALLOC_IMPL_ON_MAIN_THREAD(WKWebExtension, WebExtension, _webExtensio
     if (resourceBaseURL) {
         NSParameterAssert([resourceBaseURL isKindOfClass:NSURL.class]);
         NSParameterAssert(resourceBaseURL.isFileURL);
-        NSParameterAssert(resourceBaseURL.hasDirectoryPath);
     }
 
     if (error)
@@ -154,7 +152,7 @@ WK_OBJECT_DEALLOC_IMPL_ON_MAIN_THREAD(WKWebExtension, WebExtension, _webExtensio
     if (!(self = [super init]))
         return nil;
 
-    API::Object::constructInWrapper<WebKit::WebExtension>(self, manifest, resources);
+    API::Object::constructInWrapper<WebKit::WebExtension>(self, manifest, WebKit::toDataMap(resources));
 
     return self;
 }
@@ -166,7 +164,7 @@ WK_OBJECT_DEALLOC_IMPL_ON_MAIN_THREAD(WKWebExtension, WebExtension, _webExtensio
     if (!(self = [super init]))
         return nil;
 
-    API::Object::constructInWrapper<WebKit::WebExtension>(self, resources);
+    API::Object::constructInWrapper<WebKit::WebExtension>(self, WebKit::toDataMap(resources));
 
     return self;
 }
@@ -188,7 +186,9 @@ WK_OBJECT_DEALLOC_IMPL_ON_MAIN_THREAD(WKWebExtension, WebExtension, _webExtensio
 
 - (NSLocale *)defaultLocale
 {
-    return self._protectedWebExtension->defaultLocale();
+    if (auto *defaultLocale = nsStringNilIfEmpty(self._protectedWebExtension->defaultLocale()))
+        return [NSLocale localeWithLocaleIdentifier:defaultLocale];
+    return nil;
 }
 
 - (NSString *)displayName

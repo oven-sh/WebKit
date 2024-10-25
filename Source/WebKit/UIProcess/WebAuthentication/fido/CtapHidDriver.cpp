@@ -35,20 +35,22 @@
 #include <wtf/WeakRandomNumber.h>
 #include <wtf/text/Base64.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace WebKit {
 using namespace fido;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(CtapHidDriverWorker);
 
-CtapHidDriverWorker::CtapHidDriverWorker(UniqueRef<HidConnection>&& connection)
+CtapHidDriverWorker::CtapHidDriverWorker(Ref<HidConnection>&& connection)
     : m_connection(WTFMove(connection))
 {
-    m_connection->initialize();
+    protectedConnection()->initialize();
 }
 
 CtapHidDriverWorker::~CtapHidDriverWorker()
 {
-    m_connection->terminate();
+    protectedConnection()->terminate();
 }
 
 void CtapHidDriverWorker::transact(fido::FidoHidMessage&& requestMessage, MessageCallback&& callback)
@@ -60,8 +62,9 @@ void CtapHidDriverWorker::transact(fido::FidoHidMessage&& requestMessage, Messag
     m_callback = WTFMove(callback);
 
     // HidConnection could hold data from other applications, and thereofore invalidate it before each transaction.
-    m_connection->invalidateCache();
-    m_connection->send(m_requestMessage->popNextPacket(), [weakThis = WeakPtr { *this }](HidConnection::DataSent sent) mutable {
+    Ref connection = m_connection;
+    connection->invalidateCache();
+    connection->send(m_requestMessage->popNextPacket(), [weakThis = WeakPtr { *this }](HidConnection::DataSent sent) mutable {
         ASSERT(RunLoop::isMain());
         if (!weakThis)
             return;
@@ -81,7 +84,7 @@ void CtapHidDriverWorker::write(HidConnection::DataSent sent)
 
     if (!m_requestMessage->numPackets()) {
         m_state = State::Read;
-        m_connection->registerDataReceivedCallback([weakThis = WeakPtr { *this }](Vector<uint8_t>&& data) mutable {
+        protectedConnection()->registerDataReceivedCallback([weakThis = WeakPtr { *this }](Vector<uint8_t>&& data) mutable {
             ASSERT(RunLoop::isMain());
             if (!weakThis)
                 return;
@@ -90,7 +93,7 @@ void CtapHidDriverWorker::write(HidConnection::DataSent sent)
         return;
     }
 
-    m_connection->send(m_requestMessage->popNextPacket(), [weakThis = WeakPtr { *this }](HidConnection::DataSent sent) mutable {
+    protectedConnection()->send(m_requestMessage->popNextPacket(), [weakThis = WeakPtr { *this }](HidConnection::DataSent sent) mutable {
         ASSERT(RunLoop::isMain());
         if (!weakThis)
             return;
@@ -142,7 +145,7 @@ void CtapHidDriverWorker::returnMessage()
 
 void CtapHidDriverWorker::reset()
 {
-    m_connection->unregisterDataReceivedCallback();
+    protectedConnection()->unregisterDataReceivedCallback();
     m_callback = nullptr;
     m_responseMessage = std::nullopt;
     m_requestMessage = std::nullopt;
@@ -154,12 +157,18 @@ void CtapHidDriverWorker::reset()
 void CtapHidDriverWorker::cancel(fido::FidoHidMessage&& requestMessage)
 {
     reset();
-    m_connection->invalidateCache();
+    Ref connection = m_connection;
+    connection->invalidateCache();
     ASSERT(requestMessage.numPackets() == 1);
-    m_connection->sendSync(requestMessage.popNextPacket());
+    connection->sendSync(requestMessage.popNextPacket());
 }
 
-CtapHidDriver::CtapHidDriver(UniqueRef<HidConnection>&& connection)
+Ref<CtapHidDriver> CtapHidDriver::create(Ref<HidConnection>&& connection)
+{
+    return adoptRef(*new CtapHidDriver(WTFMove(connection)));
+}
+
+CtapHidDriver::CtapHidDriver(Ref<HidConnection>&& connection)
     : CtapDriver(WebCore::AuthenticatorTransport::Usb)
     , m_worker(makeUniqueRef<CtapHidDriverWorker>(WTFMove(connection)))
     , m_nonce(kHidInitNonceLength)
@@ -270,5 +279,7 @@ void CtapHidDriver::cancel()
 }
 
 } // namespace WebKit
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEB_AUTHN)

@@ -116,10 +116,10 @@ public:
     LayoutUnit outerBorderStart() const { return m_outerBorderStart; }
     LayoutUnit outerBorderEnd() const { return m_outerBorderEnd; }
 
-    inline LayoutUnit outerBorderLeft(const RenderStyle* styleForCellFlow) const;
-    inline LayoutUnit outerBorderRight(const RenderStyle* styleForCellFlow) const;
-    inline LayoutUnit outerBorderTop(const RenderStyle* styleForCellFlow) const;
-    inline LayoutUnit outerBorderBottom(const RenderStyle* styleForCellFlow) const;
+    inline LayoutUnit outerBorderLeft(const WritingMode) const;
+    inline LayoutUnit outerBorderRight(const WritingMode) const;
+    inline LayoutUnit outerBorderTop(const WritingMode) const;
+    inline LayoutUnit outerBorderBottom(const WritingMode) const;
 
     unsigned numRows() const;
     unsigned numColumns() const;
@@ -234,7 +234,7 @@ private:
 
     // This map holds the collapsed border values for cells with collapsed borders.
     // It is held at RenderTableSection level to spare memory consumption by table cells.
-    HashMap<std::pair<const RenderTableCell*, int>, CollapsedBorderValue > m_cellsCollapsedBorders;
+    UncheckedKeyHashMap<std::pair<const RenderTableCell*, int>, CollapsedBorderValue > m_cellsCollapsedBorders;
 
     bool m_forceSlowPaintPathWithOverflowingCell { false };
     bool m_hasMultipleCellLevels { false };

@@ -35,7 +35,6 @@
 #include "ExceptionOr.h"
 #include "IDLTypes.h"
 #include "Styleable.h"
-#include "TimelineRangeOffset.h"
 #include "WebAnimationTypes.h"
 #include <wtf/Forward.h>
 #include <wtf/Markable.h>
@@ -61,7 +60,8 @@ struct ResolutionContext;
 class WebAnimation : public RefCounted<WebAnimation>, public EventTarget, public ActiveDOMObject {
     WTF_MAKE_TZONE_OR_ISO_ALLOCATED(WebAnimation);
 public:
-    DEFINE_VIRTUAL_REFCOUNTED;
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
 
     static Ref<WebAnimation> create(Document&, AnimationEffect*);
     static Ref<WebAnimation> create(Document&, AnimationEffect*, AnimationTimeline*);
@@ -82,11 +82,14 @@ public:
     virtual void setBindingsEffect(RefPtr<AnimationEffect>&&);
     AnimationEffect* effect() const { return m_effect.get(); }
     void setEffect(RefPtr<AnimationEffect>&&);
+
+    virtual AnimationTimeline* bindingsTimeline() const { return timeline(); }
+    virtual void setBindingsTimeline(RefPtr<AnimationTimeline>&&);
     AnimationTimeline* timeline() const { return m_timeline.get(); }
     virtual void setTimeline(RefPtr<AnimationTimeline>&&);
 
-    std::optional<CSSNumberishTime> currentTime(std::optional<CSSNumberishTime> = std::nullopt) const;
-    ExceptionOr<void> setCurrentTime(std::optional<CSSNumberishTime>);
+    std::optional<WebAnimationTime> currentTime(std::optional<WebAnimationTime> = std::nullopt) const;
+    ExceptionOr<void> setCurrentTime(std::optional<WebAnimationTime>);
 
     double playbackRate() const { return m_playbackRate + 0; }
     void setPlaybackRate(double);
@@ -117,12 +120,12 @@ public:
     void persist();
     ExceptionOr<void> commitStyles();
 
-    virtual std::optional<CSSNumberishTime> bindingsStartTime() const { return startTime(); }
-    virtual ExceptionOr<void> setBindingsStartTime(const std::optional<CSSNumberishTime>&);
-    std::optional<CSSNumberishTime> startTime() const { return m_startTime; }
-    void setStartTime(std::optional<CSSNumberishTime>);
-    virtual std::optional<CSSNumberishTime> bindingsCurrentTime() const { return currentTime(); };
-    virtual ExceptionOr<void> setBindingsCurrentTime(const std::optional<CSSNumberishTime>&);
+    virtual std::optional<WebAnimationTime> bindingsStartTime() const { return startTime(); }
+    virtual ExceptionOr<void> setBindingsStartTime(const std::optional<WebAnimationTime>&);
+    std::optional<WebAnimationTime> startTime() const { return m_startTime; }
+    void setStartTime(std::optional<WebAnimationTime>);
+    virtual std::optional<WebAnimationTime> bindingsCurrentTime() const { return currentTime(); };
+    virtual ExceptionOr<void> setBindingsCurrentTime(const std::optional<WebAnimationTime>&);
     std::optional<double> progress() const;
     virtual PlayState bindingsPlayState() const { return playState(); }
     virtual ReplaceState bindingsReplaceState() const { return replaceState(); }
@@ -131,16 +134,16 @@ public:
     virtual FinishedPromise& bindingsFinished() { return finished(); }
     virtual ExceptionOr<void> bindingsPlay() { return play(); }
     virtual ExceptionOr<void> bindingsPause() { return pause(); }
-    std::optional<CSSNumberishTime> holdTime() const { return m_holdTime; }
+    std::optional<WebAnimationTime> holdTime() const { return m_holdTime; }
 
     virtual std::variant<FramesPerSecond, AnimationFrameRatePreset> bindingsFrameRate() const { return m_bindingsFrameRate; }
     virtual void setBindingsFrameRate(std::variant<FramesPerSecond, AnimationFrameRatePreset>&&);
     std::optional<FramesPerSecond> frameRate() const { return m_effectiveFrameRate; }
 
-    TimelineRangeValue rangeStart() const { return m_rangeStart; }
-    TimelineRangeValue rangeEnd() const { return m_rangeEnd; }
-    void setRangeStart(TimelineRangeValue&& rangeStart) { m_rangeStart = WTFMove(rangeStart); }
-    void setRangeEnd(TimelineRangeValue&& rangeEnd) { m_rangeEnd = WTFMove(rangeEnd); }
+    TimelineRangeValue rangeStart() const { return m_timelineRange.start.serialize(); }
+    TimelineRangeValue rangeEnd() const { return m_timelineRange.end.serialize();; }
+    void setRangeStart(TimelineRangeValue&&);
+    void setRangeEnd(TimelineRangeValue&&);
 
     bool needsTick() const;
     virtual void tick();
@@ -160,7 +163,7 @@ public:
     bool isSuspended() const { return m_isSuspended; }
     bool isReplaceable() const;
     void remove();
-    void enqueueAnimationPlaybackEvent(const AtomString&, std::optional<CSSNumberishTime> currentTime, std::optional<CSSNumberishTime> scheduledTime);
+    void enqueueAnimationPlaybackEvent(const AtomString&, std::optional<WebAnimationTime> currentTime, std::optional<WebAnimationTime> scheduledTime);
 
     uint64_t globalPosition() const { return m_globalPosition; }
     void setGlobalPosition(uint64_t globalPosition) { m_globalPosition = globalPosition; }
@@ -179,7 +182,7 @@ protected:
     void initialize();
     void enqueueAnimationEvent(Ref<AnimationEventBase>&&);
     virtual void animationDidFinish();
-    CSSNumberishTime zeroTime() const;
+    WebAnimationTime zeroTime() const;
 
 private:
     enum class DidSeek : bool { No, Yes };
@@ -190,11 +193,11 @@ private:
 
     void timingDidChange(DidSeek, SynchronouslyNotify, Silently = Silently::No);
     void updateFinishedState(DidSeek, SynchronouslyNotify);
-    CSSNumberishTime effectEndTime() const;
+    WebAnimationTime effectEndTime() const;
     WebAnimation& readyPromiseResolve();
     WebAnimation& finishedPromiseResolve();
-    std::optional<CSSNumberishTime> currentTime(RespectHoldTime, std::optional<CSSNumberishTime> = std::nullopt) const;
-    ExceptionOr<void> silentlySetCurrentTime(std::optional<CSSNumberishTime>);
+    std::optional<WebAnimationTime> currentTime(RespectHoldTime, std::optional<WebAnimationTime> = std::nullopt) const;
+    ExceptionOr<void> silentlySetCurrentTime(std::optional<WebAnimationTime>);
     void finishNotificationSteps();
     bool hasPendingPauseTask() const { return m_timeToRunPendingPauseTask != TimeToRunPendingTask::NotScheduled; }
     bool hasPendingPlayTask() const { return m_timeToRunPendingPlayTask != TimeToRunPendingTask::NotScheduled; }
@@ -209,7 +212,8 @@ private:
     double effectivePlaybackRate() const;
     void applyPendingPlaybackRate();
     void setEffectiveFrameRate(std::optional<FramesPerSecond>);
-    CSSNumberishTime timeEpsilon() const;
+    void autoAlignStartTime();
+    bool isTimeValid(const std::optional<WebAnimationTime>&) const;
 
     // ActiveDOMObject.
     void suspend(ReasonForSuspension) final;
@@ -226,9 +230,9 @@ private:
     RefPtr<AnimationTimeline> m_timeline;
     UniqueRef<ReadyPromise> m_readyPromise;
     UniqueRef<FinishedPromise> m_finishedPromise;
-    std::optional<CSSNumberishTime> m_previousCurrentTime;
-    std::optional<CSSNumberishTime> m_startTime;
-    std::optional<CSSNumberishTime> m_holdTime;
+    std::optional<WebAnimationTime> m_previousCurrentTime;
+    std::optional<WebAnimationTime> m_startTime;
+    std::optional<WebAnimationTime> m_holdTime;
     MarkableDouble m_pendingPlaybackRate;
     double m_playbackRate { 1 };
     std::variant<FramesPerSecond, AnimationFrameRatePreset> m_bindingsFrameRate { AnimationFrameRatePreset::Auto };
@@ -247,8 +251,7 @@ private:
     TimeToRunPendingTask m_timeToRunPendingPauseTask { TimeToRunPendingTask::NotScheduled };
     ReplaceState m_replaceState { ReplaceState::Active };
     uint64_t m_globalPosition { 0 };
-    TimelineRangeValue m_rangeStart { "normal"_s };
-    TimelineRangeValue m_rangeEnd { "normal"_s };
+    TimelineRange m_timelineRange;
 };
 
 } // namespace WebCore

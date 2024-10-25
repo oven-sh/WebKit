@@ -137,9 +137,6 @@ struct WebPageCreationParameters {
     
     String userAgent { };
 
-    bool itemStatesWereRestoredByAPIRequest { false };
-    Vector<Ref<FrameState>> itemStates { };
-
     VisitedLinkTableIdentifier visitedLinkTableID;
     bool canRunBeforeUnloadConfirmPanel { false };
     bool canRunModal { false };
@@ -325,6 +322,7 @@ struct WebPageCreationParameters {
 
     std::optional<RemotePageParameters> remotePageParameters { };
     WebCore::FrameIdentifier mainFrameIdentifier;
+    String openedMainFrameName;
     std::optional<WebCore::FrameIdentifier> mainFrameOpenerIdentifier { };
     WebCore::SandboxFlags initialSandboxFlags;
     std::optional<WebCore::WindowFeatures> windowFeatures { };

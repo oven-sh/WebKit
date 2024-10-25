@@ -147,7 +147,7 @@ private:
     };
 
     unsigned m_nextAvailableHandle;
-    HashMap<unsigned, Entry> m_map;
+    UncheckedKeyHashMap<unsigned, Entry> m_map;
 };
 
 inline CalculationValueMap::Entry::Entry(Ref<CalculationValue>&& value)
@@ -366,7 +366,7 @@ static Length makeLength(Calculation::Child&& root)
     // FIXME: Value range should be passed in.
 
     // NOTE: category is always `LengthPercentage` as late resolved `Length` values defined by percentages is the only reason calculation value is needed by `Length`.
-    return Length(CalculationValue::create(Calculation::Tree { .root = WTFMove(root), .category = Calculation::Category::LengthPercentage, .range = ValueRange::All }));
+    return Length(CalculationValue::create(Calculation::Tree { .root = WTFMove(root), .category = Calculation::Category::LengthPercentage, .range = Calculation::All }));
 }
 
 Length convertTo100PercentMinusLength(const Length& length)

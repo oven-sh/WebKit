@@ -42,7 +42,9 @@
 #include "RefPtrCairo.h"
 #elif USE(SKIA)
 #include <hb.h>
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <skia/core/SkFont.h>
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif
 
 #if ENABLE(MATHML) && USE(HARFBUZZ)
@@ -431,7 +433,7 @@ private:
     TextRenderingMode m_textRenderingMode { TextRenderingMode::AutoTextRendering };
 
     // This is conceptually const, but we can't make it actually const,
-    // because FontPlatformData is used as a key in a HashMap.
+    // because FontPlatformData is used as a key in a UncheckedKeyHashMap.
     RefPtr<const FontCustomPlatformData> m_customPlatformData;
 
     bool m_syntheticBold { false };

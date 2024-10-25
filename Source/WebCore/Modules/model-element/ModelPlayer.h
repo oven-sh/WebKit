@@ -44,6 +44,7 @@ namespace WebCore {
 
 class Color;
 class Model;
+class SharedBuffer;
 class TransformationMatrix;
 
 class WEBCORE_EXPORT ModelPlayer : public RefCounted<ModelPlayer> {
@@ -94,6 +95,7 @@ public:
     virtual void setPaused(bool, CompletionHandler<void(bool succeeded)>&&);
     virtual Seconds currentTime() const;
     virtual void setCurrentTime(Seconds, CompletionHandler<void()>&&);
+    virtual void setEnvironmentMap(Ref<SharedBuffer>&& data);
 #endif
 };
 

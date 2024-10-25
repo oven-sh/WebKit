@@ -30,7 +30,7 @@
 
 namespace WebGPU {
 
-std::optional<LibraryCreationResult> createLibrary(id<MTLDevice> device, const ShaderModule& shaderModule, PipelineLayout* pipelineLayout, const String& entryPoint, NSString *label, uint32_t constantCount, const WGPUConstantEntry* constants, BufferBindingSizesForPipeline& mininumBufferSizes, NSError **error)
+std::optional<LibraryCreationResult> createLibrary(id<MTLDevice> device, const ShaderModule& shaderModule, PipelineLayout* pipelineLayout, const String& entryPoint, NSString *label, std::span<const WGPUConstantEntry> constants, BufferBindingSizesForPipeline& mininumBufferSizes, NSError **error)
 {
     HashMap<String, WGSL::ConstantValue> wgslConstantValues;
 
@@ -67,8 +67,7 @@ std::optional<LibraryCreationResult> createLibrary(id<MTLDevice> device, const S
 
     const auto& entryPointInformation = iterator->value;
 
-    for (uint32_t i = 0; i < constantCount; ++i) {
-        const auto& entry = constants[i];
+    for (const auto entry : constants) {
         auto keyEntry = fromAPI(entry.key);
         auto indexIterator = entryPointInformation.specializationConstants.find(keyEntry);
         if (indexIterator == entryPointInformation.specializationConstants.end())
@@ -201,7 +200,10 @@ NSString* errorValidatingBindGroup(const BindGroup& bindGroup, const BufferBindi
 
             if (bufferSize && buffer->get()) {
                 auto dynamicOffset = bindGroup.dynamicOffset(bindingIndex, dynamicOffsets);
-                auto totalOffset = resource.entryOffset + dynamicOffset;
+                auto checkedTotalOffset = checkedSum<uint64_t>(resource.entryOffset, dynamicOffset);
+                if (checkedTotalOffset.hasOverflowed())
+                    return [NSString stringWithFormat:@"resourceOffset(%llu) + dynamicOffset(%u) overflows uint64_t", resource.entryOffset, dynamicOffset];
+                auto totalOffset = checkedTotalOffset.value();
                 auto mtlBufferLength = buffer->get()->buffer().length;
                 if (totalOffset > mtlBufferLength || (mtlBufferLength - totalOffset) < bufferSize || bufferSize > resource.entrySize)
                     return [NSString stringWithFormat:@"buffer length(%zu) minus offset(%llu), (resourceOffset(%llu) + dynamicOffset(%u)), is less than required bufferSize(%llu)", mtlBufferLength, totalOffset, resource.entryOffset, dynamicOffset, bufferSize];

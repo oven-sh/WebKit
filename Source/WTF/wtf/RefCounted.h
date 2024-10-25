@@ -20,10 +20,16 @@
 
 #pragma once
 
+#include <wtf/Compiler.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 #include <wtf/Assertions.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/MainThread.h>
 #include <wtf/Noncopyable.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 namespace WTF {
 
@@ -32,14 +38,6 @@ namespace WTF {
 #else
 #define CHECK_REF_COUNTED_LIFECYCLE 0
 #endif
-
-#define DECLARE_VIRTUAL_REFCOUNTED \
-    virtual void ref() const = 0; \
-    virtual void deref() const = 0;
-
-#define DEFINE_VIRTUAL_REFCOUNTED \
-    void ref() const final { RefCounted::ref(); } \
-    void deref() const final { RefCounted::deref(); }
 
 // This base class holds the non-template methods and attributes.
 // The RefCounted class inherits from it reducing the template bloat

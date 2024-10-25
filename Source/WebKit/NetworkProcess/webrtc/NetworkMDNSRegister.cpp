@@ -88,7 +88,7 @@ void NetworkMDNSRegister::closeAndForgetService(DNSServiceRef service)
 }
 
 struct PendingRegistrationRequestIdentifierType { };
-using PendingRegistrationRequestIdentifier = LegacyNullableObjectIdentifier<PendingRegistrationRequestIdentifierType>;
+using PendingRegistrationRequestIdentifier = ObjectIdentifier<PendingRegistrationRequestIdentifierType>;
 static HashMap<PendingRegistrationRequestIdentifier, std::unique_ptr<PendingRegistrationRequest>>& pendingRegistrationRequestMap()
 {
     static NeverDestroyed<HashMap<PendingRegistrationRequestIdentifier, std::unique_ptr<PendingRegistrationRequest>>> map;

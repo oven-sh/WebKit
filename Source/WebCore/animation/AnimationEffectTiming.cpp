@@ -30,22 +30,28 @@
 
 namespace WebCore {
 
-void AnimationEffectTiming::updateComputedProperties()
+void AnimationEffectTiming::updateComputedProperties(IsProgressBased isProgressBased)
 {
+    // https://drafts.csswg.org/web-animations-2/#intrinsic-iteration-duration
+    if (isProgressBased == IsProgressBased::Yes && iterations)
+        intrinsicIterationDuration = WebAnimationTime::fromPercentage(100) / iterations;
+    else
+        intrinsicIterationDuration = iterationDuration;
+
     // 3.8.2. Calculating the active duration
     // https://drafts.csswg.org/web-animations-1/#calculating-the-active-duration
 
     // The active duration is calculated as follows:
     // active duration = iteration duration × iteration count
     // If either the iteration duration or iteration count are zero, the active duration is zero.
-    if (iterationDuration.isZero() || !iterations)
+    if (intrinsicIterationDuration.isZero() || !iterations)
         activeDuration = 0_s;
     else
-        activeDuration = iterationDuration * iterations;
+        activeDuration = intrinsicIterationDuration * iterations;
 
     // 3.5.3 The active interval
     // https://drafts.csswg.org/web-animations-1/#end-time
-    if (iterationDuration.percentage())
+    if (intrinsicIterationDuration.percentage())
         endTime = activeDuration;
     else {
         // The end time of an animation effect is the result of evaluating max(start delay + active duration + end delay, 0).
@@ -85,11 +91,11 @@ BasicEffectTiming AnimationEffectTiming::getBasicTiming(const ResolutionData& da
             if (!data.playbackRate)
                 return false;
             // Let effective start time be the animation’s start time if resolved, or zero otherwise.
-            auto effectiveStartTime = data.startTime.value_or(CSSNumberishTime::fromPercentage(0));
+            auto effectiveStartTime = data.startTime.value_or(WebAnimationTime::fromPercentage(0));
             // Set unlimited current time based on the first matching condition:
             // - start time is resolved: (timeline time - start time) × playback rate
             // - Otherwise: animation's current time
-            ASSERT(data.timelineTime);
+            ASSERT_IMPLIES(data.startTime, data.timelineTime);
             auto unlimitedCurrentTime = data.startTime ? (*data.timelineTime - *data.startTime) * data.playbackRate : *data.localTime;
             // Let effective timeline time be unlimited current time / animation’s playback rate + effective start time
             auto effectiveTimelineTime = unlimitedCurrentTime / data.playbackRate + effectiveStartTime;
@@ -101,7 +107,7 @@ BasicEffectTiming AnimationEffectTiming::getBasicTiming(const ResolutionData& da
 
         auto animationIsBackwards = data.playbackRate < 0;
 
-        auto beforeActiveBoundaryTime = [&]() -> CSSNumberishTime {
+        auto beforeActiveBoundaryTime = [&]() -> WebAnimationTime {
             if (auto endTimeSeconds = endTime.time())
                 return { std::max(std::min(delay, *endTimeSeconds), 0_s) };
             return endTime.matchingZero();
@@ -115,7 +121,7 @@ BasicEffectTiming AnimationEffectTiming::getBasicTiming(const ResolutionData& da
         if (localTime->approximatelyLessThan(beforeActiveBoundaryTime) || (animationIsBackwards && localTime->approximatelyEqualTo(beforeActiveBoundaryTime) && !atProgressTimelineBoundary()))
             return AnimationEffectPhase::Before;
 
-        auto activeAfterBoundaryTime = [&]() -> CSSNumberishTime {
+        auto activeAfterBoundaryTime = [&]() -> WebAnimationTime {
             if (endTime.percentage())
                 return std::max(std::min(activeDuration, endTime), activeDuration.matchingZero());
             ASSERT(endTime.time());
@@ -137,7 +143,7 @@ BasicEffectTiming AnimationEffectTiming::getBasicTiming(const ResolutionData& da
         return AnimationEffectPhase::Active;
     }();
 
-    auto activeTime = [this, localTime, phase]() -> std::optional<CSSNumberishTime> {
+    auto activeTime = [this, localTime, phase]() -> std::optional<WebAnimationTime> {
         // 3.8.3.1. Calculating the active time
         // https://drafts.csswg.org/web-animations-1/#calculating-the-active-time
 
@@ -213,10 +219,10 @@ ResolvedEffectTiming AnimationEffectTiming::resolve(const ResolutionData& data) 
         auto overallProgress = [&]() {
             // If the iteration duration is zero, if the animation effect is in the before phase, let overall progress be zero,
             // otherwise, let it be equal to the iteration count.
-            if (iterationDuration.isZero())
+            if (intrinsicIterationDuration.isZero())
                 return phase == AnimationEffectPhase::Before ? 0 : iterations;
             // Otherwise, let overall progress be the result of calculating active time / iteration duration.
-            return *activeTime / iterationDuration;
+            return *activeTime / intrinsicIterationDuration;
         }();
 
         // 3. Return the result of calculating overall progress + iteration start.
@@ -333,7 +339,7 @@ ResolvedEffectTiming AnimationEffectTiming::resolve(const ResolutionData& data) 
         if (!directedProgress)
             return { std::nullopt, before };
 
-        if (!iterationDuration.isZero()) {
+        if (!intrinsicIterationDuration.isZero()) {
             // 2. Calculate the value of the before flag as follows:
             // 1. Determine the current direction using the procedure defined in §3.9.1 Calculating the directed progress.
             // 2. If the current direction is forwards, let going forwards be true, otherwise it is false.
@@ -346,7 +352,7 @@ ResolvedEffectTiming AnimationEffectTiming::resolve(const ResolutionData& data) 
             // 3. Return the result of evaluating the animation effect’s timing function passing directed progress as the
             //    input progress value and before flag as the before flag.
             auto transformProgressDuration = [&]() {
-                if (auto time = iterationDuration.time())
+                if (auto time = intrinsicIterationDuration.time())
                     return time->seconds();
                 return 1.0;
             };

@@ -163,6 +163,9 @@ WebsiteDataStore::WebsiteDataStore(Ref<WebsiteDataStoreConfiguration>&& configur
 #if ENABLE(WEB_AUTHN)
     , m_authenticatorManager(AuthenticatorManager::create())
 #endif
+#if ENABLE(DEVICE_ORIENTATION)
+    , m_deviceOrientationAndMotionAccessController(*this)
+#endif
     , m_client(makeUniqueRef<WebsiteDataStoreClient>())
     , m_webLockRegistry(WebCore::LocalWebLockRegistry::create())
 {
@@ -2114,9 +2117,14 @@ VirtualAuthenticatorManager& WebsiteDataStore::virtualAuthenticatorManager()
     return downcast<VirtualAuthenticatorManager>(m_authenticatorManager.get());
 }
 
+Ref<AuthenticatorManager> WebsiteDataStore::protectedAuthenticatorManager()
+{
+    return authenticatorManager();
+}
+
 Ref<VirtualAuthenticatorManager> WebsiteDataStore::protectedVirtualAuthenticatorManager()
 {
-return virtualAuthenticatorManager();
+    return virtualAuthenticatorManager();
 }
 #endif
 

@@ -64,7 +64,7 @@ template<typename TargetType> TargetType fromCSSValue(const CSSValue& value)
 
 class TypeDeducingCSSValueMapper {
 public:
-    TypeDeducingCSSValueMapper(Style::BuilderState& builderState, const CSSValue& value)
+    TypeDeducingCSSValueMapper(const Style::BuilderState& builderState, const CSSValue& value)
         : m_builderState { builderState }
         , m_value { value }
     {
@@ -113,11 +113,11 @@ private:
         return value;
     }
 
-    Style::BuilderState& m_builderState;
+    const Style::BuilderState& m_builderState;
     const CSSValue& m_value;
 };
 
-inline TypeDeducingCSSValueMapper fromCSSValueDeducingType(Style::BuilderState& builderState, const CSSValue& value)
+inline TypeDeducingCSSValueMapper fromCSSValueDeducingType(const Style::BuilderState& builderState, const CSSValue& value)
 {
     return { builderState, value };
 }
@@ -1447,27 +1447,27 @@ template<> constexpr TextDirection fromCSSValueID(CSSValueID valueID)
     return TextDirection::LTR;
 }
 
-constexpr CSSValueID toCSSValueID(WritingMode e)
+constexpr CSSValueID toCSSValueID(StyleWritingMode e)
 {
     switch (e) {
-    case WritingMode::HorizontalTb:
+    case StyleWritingMode::HorizontalTb:
         return CSSValueHorizontalTb;
-    case WritingMode::VerticalRl:
+    case StyleWritingMode::VerticalRl:
         return CSSValueVerticalRl;
-    case WritingMode::VerticalLr:
+    case StyleWritingMode::VerticalLr:
         return CSSValueVerticalLr;
-    case WritingMode::SidewaysRl:
+    case StyleWritingMode::SidewaysRl:
         return CSSValueSidewaysRl;
-    case WritingMode::SidewaysLr:
+    case StyleWritingMode::SidewaysLr:
         return CSSValueSidewaysLr;
-    case WritingMode::HorizontalBt:
+    case StyleWritingMode::HorizontalBt:
         return CSSValueHorizontalBt;
     }
     ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
     return CSSValueInvalid;
 }
 
-template<> constexpr WritingMode fromCSSValueID(CSSValueID valueID)
+template<> constexpr StyleWritingMode fromCSSValueID(CSSValueID valueID)
 {
     switch (valueID) {
     case CSSValueHorizontalTb:
@@ -1475,24 +1475,24 @@ template<> constexpr WritingMode fromCSSValueID(CSSValueID valueID)
     case CSSValueLrTb:
     case CSSValueRl:
     case CSSValueRlTb:
-        return WritingMode::HorizontalTb;
+        return StyleWritingMode::HorizontalTb;
     case CSSValueVerticalRl:
     case CSSValueTb:
     case CSSValueTbRl:
-        return WritingMode::VerticalRl;
+        return StyleWritingMode::VerticalRl;
     case CSSValueVerticalLr:
-        return WritingMode::VerticalLr;
+        return StyleWritingMode::VerticalLr;
     case CSSValueSidewaysLr:
-        return WritingMode::SidewaysLr;
+        return StyleWritingMode::SidewaysLr;
     case CSSValueSidewaysRl:
-        return WritingMode::SidewaysRl;
+        return StyleWritingMode::SidewaysRl;
     case CSSValueHorizontalBt:
-        return WritingMode::HorizontalBt;
+        return StyleWritingMode::HorizontalBt;
     default:
         break;
     }
     ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-    return WritingMode::HorizontalTb;
+    return StyleWritingMode::HorizontalTb;
 }
 
 constexpr CSSValueID toCSSValueID(TextCombine e)
@@ -1991,7 +1991,7 @@ constexpr CSSValueID toCSSValueID(TransformStyle3D e)
         return CSSValueFlat;
     case TransformStyle3D::Preserve3D:
         return CSSValuePreserve3d;
-#if ENABLE(CSS_TRANSFORM_STYLE_SEPARATED)
+#if HAVE(CORE_ANIMATION_SEPARATED_LAYERS)
     case TransformStyle3D::Separated:
         return CSSValueSeparated;
 #endif
@@ -2007,7 +2007,7 @@ template<> constexpr TransformStyle3D fromCSSValueID(CSSValueID valueID)
         return TransformStyle3D::Flat;
     case CSSValuePreserve3d:
         return TransformStyle3D::Preserve3D;
-#if ENABLE(CSS_TRANSFORM_STYLE_SEPARATED)
+#if HAVE(CORE_ANIMATION_SEPARATED_LAYERS)
     case CSSValueSeparated:
         return TransformStyle3D::Separated;
 #endif
@@ -2193,7 +2193,7 @@ template<> constexpr CSSBoxType fromCSSValueID(CSSValueID valueID)
 #define TYPE ItemPosition
 #define FOR_EACH(CASE) CASE(Legacy) CASE(Auto) CASE(Normal) CASE(Stretch) CASE(Baseline) \
     CASE(LastBaseline) CASE(Center) CASE(Start) CASE(End) CASE(SelfStart) CASE(SelfEnd) \
-    CASE(FlexStart) CASE(FlexEnd) CASE(Left) CASE(Right)
+    CASE(FlexStart) CASE(FlexEnd) CASE(Left) CASE(Right) CASE(AnchorCenter)
 DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 #undef TYPE
 #undef FOR_EACH

@@ -25,6 +25,10 @@
 
 #pragma once
 
+#include <wtf/Compiler.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 #include "AXGeometryManager.h"
 #include "AXIsolatedTree.h"
 #include "AXTextMarker.h"
@@ -41,6 +45,8 @@
 #include <wtf/WeakHashMap.h>
 #include <wtf/WeakHashSet.h>
 #include <wtf/text/MakeString.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 OBJC_CLASS NSMutableArray;
 
@@ -113,7 +119,7 @@ private:
         AccessibilityObjectInclusion ignored;
     };
 
-    HashMap<AXID, CachedAXObjectAttributes> m_idMapping;
+    UncheckedKeyHashMap<AXID, CachedAXObjectAttributes> m_idMapping;
 };
 
 struct VisiblePositionIndex {
@@ -316,7 +322,7 @@ public:
     void remove(RenderObject*);
     void remove(Node&);
     void remove(Widget*);
-    void remove(AXID);
+    void remove(std::optional<AXID>);
 
 #if !PLATFORM(COCOA) && !USE(ATSPI)
     void detachWrapper(AXCoreObject*, AccessibilityDetachmentType);
@@ -374,7 +380,7 @@ public:
         AtomString oldValue;
         AtomString newValue;
     };
-    using DeferredCollection = std::variant<HashMap<Element*, String>
+    using DeferredCollection = std::variant<UncheckedKeyHashMap<Element*, String>
         , HashSet<AXID>
         , ListHashSet<Node*>
         , ListHashSet<Ref<AccessibilityObject>>
@@ -434,7 +440,7 @@ public:
 
     AccessibilityObject* objectForID(const AXID id) const { return m_objects.get(id); }
     template<typename U> Vector<RefPtr<AXCoreObject>> objectsForIDs(const U&) const;
-    Node* nodeForID(const AXID) const;
+    Node* nodeForID(std::optional<AXID>) const;
 
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
     void onPaint(const RenderObject&, IntRect&&) const;
@@ -542,6 +548,14 @@ public:
     Document& document() const { return const_cast<Document&>(m_document.get()); }
     Ref<Document> protectedDocument() const;
     constexpr const std::optional<PageIdentifier>& pageID() const { return m_pageID; }
+
+#if !ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE) && ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+    void objectBecameIgnored(AXID axID)
+    {
+        if (RefPtr tree = AXIsolatedTree::treeForPageID(m_pageID))
+            tree->objectBecameIgnored(axID);
+    }
+#endif // !ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
 
 #if PLATFORM(MAC)
     static void setShouldRepostNotificationsForTests(bool);
@@ -736,7 +750,7 @@ private:
     void updateRelationsForTree(ContainerNode&);
     void relationsNeedUpdate(bool);
     void dirtyIsolatedTreeRelations();
-    HashMap<AXID, AXRelations> relations();
+    UncheckedKeyHashMap<AXID, AXRelations> relations();
     const HashSet<AXID>& relationTargetIDs();
     bool isDescendantOfRelatedNode(Node&);
 
@@ -750,12 +764,12 @@ private:
     WeakRef<Document, WeakPtrImplWithEventTargetData> m_document;
     const std::optional<PageIdentifier> m_pageID; // constant for object's lifetime.
     OptionSet<ActivityState> m_pageActivityState;
-    HashMap<AXID, Ref<AccessibilityObject>> m_objects;
+    UncheckedKeyHashMap<AXID, Ref<AccessibilityObject>> m_objects;
 
     // The pointers in these mapping HashMaps should never be dereferenced.
-    HashMap<SingleThreadWeakRef<RenderObject>, AXID> m_renderObjectMapping;
-    HashMap<SingleThreadWeakRef<Widget>, AXID> m_widgetObjectMapping;
-    HashMap<WeakRef<Node, WeakPtrImplWithEventTargetData>, AXID> m_nodeObjectMapping;
+    UncheckedKeyHashMap<SingleThreadWeakRef<RenderObject>, AXID> m_renderObjectMapping;
+    UncheckedKeyHashMap<SingleThreadWeakRef<Widget>, AXID> m_widgetObjectMapping;
+    UncheckedKeyHashMap<WeakRef<Node, WeakPtrImplWithEventTargetData>, AXID> m_nodeObjectMapping;
 
     std::unique_ptr<AXComputedObjectAttributeCache> m_computedObjectAttributeCache;
 
@@ -816,7 +830,7 @@ private:
     bool m_deferredRegenerateIsolatedTree { false };
     Ref<AXGeometryManager> m_geometryManager;
     DeferrableOneShotTimer m_selectedTextRangeTimer;
-    AXID m_lastDebouncedTextRangeObject;
+    Markable<AXID> m_lastDebouncedTextRangeObject;
 
     Timer m_updateTreeSnapshotTimer;
 #endif
@@ -827,17 +841,17 @@ private:
     unsigned m_cacheUpdateDeferredCount { 0 };
 
     // Relationships between objects.
-    HashMap<AXID, AXRelations> m_relations;
+    UncheckedKeyHashMap<AXID, AXRelations> m_relations;
     bool m_relationsNeedUpdate { true };
     HashSet<AXID> m_relationTargets;
-    HashMap<AXID, AXRelations> m_recentlyRemovedRelations;
+    UncheckedKeyHashMap<AXID, AXRelations> m_recentlyRemovedRelations;
 
 #if USE(ATSPI)
     ListHashSet<RefPtr<AXCoreObject>> m_deferredParentChangedList;
 #endif
 
 #if PLATFORM(MAC)
-    AXID m_lastTextFieldAXID;
+    Markable<AXID> m_lastTextFieldAXID;
     VisibleSelection m_lastSelection;
 #endif
 };
@@ -854,12 +868,12 @@ inline Vector<RefPtr<AXCoreObject>> AXObjectCache::objectsForIDs(const U& axIDs)
     });
 }
 
-inline Node* AXObjectCache::nodeForID(const AXID axID) const
+inline Node* AXObjectCache::nodeForID(std::optional<AXID> axID) const
 {
-    if (!axID.isValid())
+    if (!axID)
         return nullptr;
 
-    auto* object = m_objects.get(axID);
+    auto* object = m_objects.get(*axID);
     return object ? object->node() : nullptr;
 }
 

@@ -105,8 +105,10 @@ Modules/cache/DOMCache.cpp
 Modules/cache/DOMCacheEngine.cpp
 Modules/cache/DOMCacheStorage.cpp
 Modules/cache/WindowOrWorkerGlobalScopeCaches.cpp
+Modules/compression/CompressionStream.cpp
 Modules/compression/CompressionStreamEncoder.cpp
 Modules/compression/DecompressionStreamDecoder.cpp
+Modules/compression/ZStream.cpp
 Modules/contact-picker/ContactsManager.cpp
 Modules/contact-picker/NavigatorContacts.cpp
 Modules/cookie-consent/NavigatorCookieConsent.cpp
@@ -369,6 +371,7 @@ Modules/streams/ReadableStreamSource.cpp
 Modules/streams/TransformStream.cpp
 Modules/streams/WritableStream.cpp
 Modules/url-pattern/URLPattern.cpp
+Modules/url-pattern/URLPatternCanonical.cpp
 Modules/web-locks/WebLock.cpp
 Modules/web-locks/WebLockManager.cpp
 Modules/web-locks/WebLockRegistry.cpp
@@ -591,7 +594,6 @@ animation/AnimationTimeline.cpp
 animation/BlendingKeyframes.cpp
 animation/CSSAnimation.cpp
 animation/CSSAnimationEvent.cpp
-animation/CSSNumberishTime.cpp
 animation/CSSPropertyAnimation.cpp
 animation/CSSTransition.cpp
 animation/CSSTransitionEvent.cpp
@@ -608,8 +610,10 @@ animation/ScrollAxis.cpp
 animation/ScrollTimeline.cpp
 animation/StyleOriginatedAnimation.cpp
 animation/StyleOriginatedAnimationEvent.cpp
+animation/TimelineRange.cpp
 animation/ViewTimeline.cpp
 animation/WebAnimation.cpp
+animation/WebAnimationTime.cpp
 animation/WebAnimationUtilities.cpp
 bindings/js/CachedModuleScriptLoader.cpp
 bindings/js/CachedScriptFetcher.cpp
@@ -1122,6 +1126,7 @@ css/values/CSSPosition.cpp
 css/values/CSSPrimitiveNumericTypes+ComputedStyleDependencies.cpp
 css/values/CSSPrimitiveNumericTypes+Serialization.cpp
 css/values/CSSPrimitiveNumericTypes+SymbolReplacement.cpp
+css/values/CSSPrimitiveNumericTypes.cpp
 css/values/CSSUnevaluatedCalc.cpp
 cssjit/SelectorCompiler.cpp
 dom/AbortController.cpp
@@ -1221,11 +1226,13 @@ dom/InlineClassicScript.cpp
 dom/InlineStyleSheetOwner.cpp
 dom/InputEvent.cpp
 dom/InternalObserver.cpp
-dom/InternalObserverFromScript.cpp
+dom/InternalObserverDrop.cpp
 dom/InternalObserverFilter.cpp
+dom/InternalObserverFirst.cpp
+dom/InternalObserverFromScript.cpp
+dom/InternalObserverLast.cpp
 dom/InternalObserverMap.cpp
 dom/InternalObserverTake.cpp
-dom/InternalObserverDrop.cpp
 dom/KeyboardEvent.cpp
 dom/LiveNodeList.cpp
 dom/LoadableClassicScript.cpp
@@ -2048,6 +2055,7 @@ page/FrameTree.cpp
 page/History.cpp
 page/ImageAnalysisQueue.cpp
 page/ImageOverlayController.cpp
+page/IntelligenceTextEffectsSupport.cpp
 page/InteractionRegion.cpp
 page/IntersectionObserver.cpp
 page/IntersectionObserverEntry.cpp
@@ -3055,7 +3063,6 @@ style/TransformOperationsBuilder.cpp
 style/UserAgentStyle.cpp
 style/values/StyleGradient.cpp
 style/values/StylePosition.cpp
-style/values/StylePrimitiveNumericTypes.cpp
 style/values/StylePrimitiveNumericTypes+Conversions.cpp
 svg/DocumentSVG.cpp
 svg/SVGAElement.cpp

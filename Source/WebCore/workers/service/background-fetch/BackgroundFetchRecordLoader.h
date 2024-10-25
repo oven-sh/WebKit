@@ -26,8 +26,7 @@
 #pragma once
 
 #include <span>
-#include <wtf/RefCounted.h>
-#include <wtf/WeakPtr.h>
+#include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
 
 namespace WebCore {
 
@@ -35,10 +34,8 @@ class ResourceError;
 class ResourceResponse;
 class SharedBuffer;
 
-class BackgroundFetchRecordLoaderClient : public CanMakeWeakPtr<BackgroundFetchRecordLoaderClient> {
+class BackgroundFetchRecordLoaderClient : public AbstractRefCountedAndCanMakeWeakPtr<BackgroundFetchRecordLoaderClient> {
 public:
-    DECLARE_VIRTUAL_REFCOUNTED;
-
     virtual ~BackgroundFetchRecordLoaderClient() = default;
 
     virtual void didSendData(uint64_t) = 0;
@@ -47,10 +44,8 @@ public:
     virtual void didFinish(const ResourceError&) = 0;
 };
 
-class BackgroundFetchRecordLoader {
+class BackgroundFetchRecordLoader : public AbstractRefCounted {
 public:
-    DECLARE_VIRTUAL_REFCOUNTED;
-
     virtual ~BackgroundFetchRecordLoader() = default;
 
     virtual void abort() = 0;

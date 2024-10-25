@@ -25,10 +25,11 @@
 
 #pragma once
 
-#include "CSSNumberishTime.h"
 #include "CSSPropertyNames.h"
 #include "CSSValue.h"
 #include "EventTarget.h"
+#include "TimelineRangeOffset.h"
+#include "WebAnimationTime.h"
 #include <wtf/BitSet.h>
 #include <wtf/HashMap.h>
 #include <wtf/ListHashSet.h>
@@ -47,8 +48,6 @@ class CSSKeywordValue;
 class CSSTransition;
 class StyleOriginatedAnimation;
 class WebAnimation;
-
-struct TimelineRangeOffset;
 
 struct WebAnimationsMarkableDoubleTraits {
     static bool isEmptyValue(double value)
@@ -79,7 +78,7 @@ using AnimationEvents = Vector<Ref<AnimationEventBase>>;
 using CSSAnimationCollection = ListHashSet<Ref<CSSAnimation>>;
 
 using AnimatableCSSProperty = std::variant<CSSPropertyID, AtomString>;
-using AnimatableCSSPropertyToTransitionMap = HashMap<AnimatableCSSProperty, Ref<CSSTransition>>;
+using AnimatableCSSPropertyToTransitionMap = UncheckedKeyHashMap<AnimatableCSSProperty, Ref<CSSTransition>>;
 
 enum class AcceleratedEffectProperty : uint16_t {
     Invalid = 1 << 0,

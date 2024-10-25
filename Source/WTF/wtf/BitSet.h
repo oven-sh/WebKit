@@ -26,8 +26,11 @@
 #include <wtf/MathExtras.h>
 #include <wtf/PrintStream.h>
 #include <wtf/StdIntExtras.h>
+#include <wtf/StdLibExtras.h>
 #include <string.h>
 #include <type_traits>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WTF {
 
@@ -140,6 +143,9 @@ public:
     const WordType* storage() const { return bits.data(); }
 
     constexpr size_t storageLengthInBytes() { return sizeof(bits); }
+
+    std::span<uint8_t> storageBytes() { return unsafeForgeSpan(reinterpret_cast<uint8_t*>(storage()), storageLengthInBytes()); }
+    std::span<const uint8_t> storageBytes() const { return unsafeForgeSpan(reinterpret_cast<const uint8_t*>(storage()), storageLengthInBytes()); }
 
 private:
     void cleanseLastWord();
@@ -528,3 +534,5 @@ inline void BitSet<bitSetSize, WordType>::dump(PrintStream& out) const
 } // namespace WTF
 
 // We can't do "using WTF::BitSet;" here because there is a function in the macOS SDK named BitSet() already.
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

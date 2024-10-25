@@ -24,6 +24,10 @@
 // This file would be called String.h, but that conflicts with <string.h>
 // on systems without case-sensitive file systems.
 
+#include <wtf/Compiler.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 #include <wtf/text/IntegerToStringConversion.h>
 #include <wtf/text/StringImpl.h>
 #include <wtf/text/ExternalStringImpl.h>
@@ -586,13 +590,13 @@ inline namespace StringLiterals {
 #ifndef __swift__
 // Swift will import this as global and then all literals will be WTF.String
 // instead of Swift.String
-inline String operator"" _str(const char* characters, size_t)
+inline String operator""_str(const char* characters, size_t)
 {
     return ASCIILiteral::fromLiteralUnsafe(characters);
 }
 
 // FIXME: rdar://136156228
-inline String operator"" _str(const UChar* characters, size_t length)
+inline String operator""_str(const UChar* characters, size_t length)
 {
     return String({ characters, length });
 }
@@ -618,3 +622,5 @@ using WTF::reverseFind;
 using WTF::codePointCompareLessThan;
 
 #include <wtf/text/AtomString.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -52,7 +52,7 @@ public:
     explicit Observable(Ref<SubscriberCallback>);
 
     void subscribe(ScriptExecutionContext&, std::optional<ObserverUnion>, SubscribeOptions);
-    void subscribeInternal(ScriptExecutionContext&, Ref<InternalObserver>, SubscribeOptions);
+    void subscribeInternal(ScriptExecutionContext&, Ref<InternalObserver>&&, const SubscribeOptions&);
 
     Ref<Observable> map(ScriptExecutionContext&, MapperCallback&);
 
@@ -61,6 +61,11 @@ public:
     Ref<Observable> take(ScriptExecutionContext&, uint64_t);
 
     Ref<Observable> drop(ScriptExecutionContext&, uint64_t);
+
+    // Promise-returning operators.
+
+    void first(ScriptExecutionContext&, const SubscribeOptions&, Ref<DeferredPromise>&&);
+    void last(ScriptExecutionContext&, const SubscribeOptions&, Ref<DeferredPromise>&&);
 
 private:
     Ref<SubscriberCallback> m_subscriberCallback;

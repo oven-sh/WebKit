@@ -52,6 +52,7 @@
 #include "TranslateTransformOperation.h"
 #include "ViewTimeline.h"
 #include "ViewTransitionName.h"
+#include "WebAnimationTypes.h"
 #include "WillChangeData.h"
 #include <memory>
 #include <wtf/DataRef.h>
@@ -202,8 +203,6 @@ public:
 
     Vector<AtomString> anchorNames;
     AtomString positionAnchor;
-
-    TextEdge textBoxEdge;
 
     std::optional<Length> blockStepSize;
     unsigned blockStepInsert : 1; // BlockStepInsert

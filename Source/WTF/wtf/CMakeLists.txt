@@ -1,4 +1,6 @@
 set(WTF_PUBLIC_HEADERS
+    AbstractRefCounted.h
+    AbstractRefCountedAndCanMakeWeakPtr.h
     ASCIICType.h
     AccessibleAddress.h
     AggregateLogger.h
@@ -113,6 +115,7 @@ set(WTF_PUBLIC_HEADERS
     HexNumber.h
     Identified.h
     Indenter.h
+    IndexedRange.h
     IndexKeyType.h
     IndexMap.h
     IndexSet.h

@@ -388,7 +388,7 @@ static void assertProtocolIsGood(StringView protocol)
 
 static Lock defaultPortForProtocolMapForTestingLock;
 
-using DefaultPortForProtocolMapForTesting = HashMap<String, uint16_t>;
+using DefaultPortForProtocolMapForTesting = UncheckedKeyHashMap<String, uint16_t>;
 static DefaultPortForProtocolMapForTesting*& defaultPortForProtocolMapForTesting() WTF_REQUIRES_LOCK(defaultPortForProtocolMapForTestingLock)
 {
     static DefaultPortForProtocolMapForTesting* defaultPortForProtocolMap;
