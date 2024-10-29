@@ -225,32 +225,32 @@ jobs:
       matrix:
         include:
           - lto_flag: ""
-            label: bun-webkit-linux-amd64-debug
+            label: bun-webkit-linux-amd64-musl-debug
             os: big-ubuntu
             package_json_arch: "x64"
             CMAKE_BUILD_TYPE: "Debug"
           - lto_flag: ""
-            label: bun-webkit-linux-arm64-debug
+            label: bun-webkit-linux-arm64-musl-debug
             os: linux-arm64-gh
             package_json_arch: "arm64"
             CMAKE_BUILD_TYPE: "Debug"
           - lto_flag: "-flto=full -fwhole-program-vtables -fforce-emit-vtables"
-            label: bun-webkit-linux-arm64-lto
+            label: bun-webkit-linux-arm64-musl-lto
             os: linux-arm64-gh
             package_json_arch: "arm64"
             CMAKE_BUILD_TYPE: "Release"
           - lto_flag: ""
-            label: bun-webkit-linux-arm64
+            label: bun-webkit-linux-arm64-musl
             os: linux-arm64-gh
             package_json_arch: "arm64"
             CMAKE_BUILD_TYPE: "Release"
           - lto_flag: "-flto=full  -fwhole-program-vtables -fforce-emit-vtables"
-            label: bun-webkit-linux-amd64-lto
+            label: bun-webkit-linux-amd64-musl-lto
             os: big-ubuntu
             package_json_arch: "x64"
             CMAKE_BUILD_TYPE: "Release"
           - lto_flag: ""
-            label: bun-webkit-linux-amd64
+            label: bun-webkit-linux-amd64-musl
             os: big-ubuntu
             package_json_arch: "x64"
             CMAKE_BUILD_TYPE: "Release"
