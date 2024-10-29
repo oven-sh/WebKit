@@ -297,7 +297,7 @@ jobs:
       contents: write
     runs-on: ubuntu-latest
     timeout-minutes: 90
-    if: github.ref == 'refs/heads/master'
+    if: github.ref == 'refs/heads/main'
     needs:
       - linux
       - macos
@@ -400,18 +400,18 @@ jobs:
             ${{runner.temp}}/bun-webkit-linux-amd64-debug.tar.gz
             ${{runner.temp}}/bun-webkit-linux-arm64-debug.tar.gz
             ${{runner.temp}}/bun-webkit-linux-amd64-musl-debug.tar.gz
-            ${{runner.temp}}/bun-webkit-linux-amd64-musl-debug.tar.gz
+            ${{runner.temp}}/bun-webkit-linux-arm64-musl-debug.tar.gz
             ${{runner.temp}}/bun-webkit-macos-arm64-debug.tar.gz
             ${{runner.temp}}/bun-webkit-macos-amd64-debug.tar.gz
             ${{runner.temp}}/bun-webkit-linux-amd64.tar.gz
             ${{runner.temp}}/bun-webkit-linux-arm64.tar.gz
             ${{runner.temp}}/bun-webkit-linux-amd64-musl.tar.gz
-            ${{runner.temp}}/bun-webkit-linux-amd64-musl.tar.gz
+            ${{runner.temp}}/bun-webkit-linux-arm64-musl.tar.gz
             ${{runner.temp}}/bun-webkit-macos-arm64.tar.gz
             ${{runner.temp}}/bun-webkit-macos-amd64.tar.gz
             ${{runner.temp}}/bun-webkit-linux-amd64-lto.tar.gz
             ${{runner.temp}}/bun-webkit-linux-arm64-lto.tar.gz
             ${{runner.temp}}/bun-webkit-linux-amd64-musl-lto.tar.gz
-            ${{runner.temp}}/bun-webkit-linux-amd64-musl-lto.tar.gz
+            ${{runner.temp}}/bun-webkit-linux-arm64-musl-lto.tar.gz
             ${{runner.temp}}/bun-webkit-windows-amd64.tar.gz
             ${{runner.temp}}/bun-webkit-windows-amd64-debug.tar.gz
