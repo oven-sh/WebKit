@@ -345,21 +345,44 @@ jobs:
         with:
           name: bun-webkit-windows-amd64-debug
           path: ${{runner.temp}}/bun-webkit-windows-amd64-debug
+      - uses: actions/download-artifact@v3
+        with:
+          name: bun-webkit-linux-amd64-musl
+          path: ${{runner.temp}}/bun-webkit-linux-amd64-musl
+      - uses: actions/download-artifact@v3
+        with:
+          name: bun-webkit-linux-arm64-musl
+          path: ${{runner.temp}}/bun-webkit-linux-arm64-musl
+      - uses: actions/download-artifact@v3
+        with:
+          name: bun-webkit-linux-amd64-musl-debug
+          path: ${{runner.temp}}/bun-webkit-linux-amd64-musl-debug
+      - uses: actions/download-artifact@v3
+        with:
+          name: bun-webkit-linux-arm64-musl-debug
+          path: ${{runner.temp}}/bun-webkit-linux-arm64-musl-debug
 
       - name: Rename files
         run: |
           mv ${{runner.temp}}/bun-webkit-linux-amd64/bun-webkit.tar.gz ${{runner.temp}}/bun-webkit-linux-amd64.tar.gz
           mv ${{runner.temp}}/bun-webkit-linux-arm64/bun-webkit.tar.gz ${{runner.temp}}/bun-webkit-linux-arm64.tar.gz
+          mv ${{runner.temp}}/bun-webkit-linux-amd64-musl/bun-webkit.tar.gz ${{runner.temp}}/bun-webkit-linux-amd64-musl.tar.gz
+          mv ${{runner.temp}}/bun-webkit-linux-arm64-musl/bun-webkit.tar.gz ${{runner.temp}}/bun-webkit-linux-arm64-musl.tar.gz
           mv ${{runner.temp}}/bun-webkit-macos-arm64/bun-webkit.tar.gz ${{runner.temp}}/bun-webkit-macos-arm64.tar.gz
           mv ${{runner.temp}}/bun-webkit-macos-amd64/bun-webkit.tar.gz ${{runner.temp}}/bun-webkit-macos-amd64.tar.gz
           mv ${{runner.temp}}/bun-webkit-linux-amd64-debug/bun-webkit.tar.gz ${{runner.temp}}/bun-webkit-linux-amd64-debug.tar.gz
           mv ${{runner.temp}}/bun-webkit-linux-arm64-debug/bun-webkit.tar.gz ${{runner.temp}}/bun-webkit-linux-arm64-debug.tar.gz
+          mv ${{runner.temp}}/bun-webkit-linux-amd64-musl-debug/bun-webkit.tar.gz ${{runner.temp}}/bun-webkit-linux-amd64-musl-debug.tar.gz
+          mv ${{runner.temp}}/bun-webkit-linux-arm64-musl-debug/bun-webkit.tar.gz ${{runner.temp}}/bun-webkit-linux-arm64-musl-debug.tar.gz
           mv ${{runner.temp}}/bun-webkit-macos-arm64-debug/bun-webkit.tar.gz ${{runner.temp}}/bun-webkit-macos-arm64-debug.tar.gz
           mv ${{runner.temp}}/bun-webkit-macos-amd64-debug/bun-webkit.tar.gz ${{runner.temp}}/bun-webkit-macos-amd64-debug.tar.gz
           mv ${{runner.temp}}/bun-webkit-linux-amd64-lto/bun-webkit.tar.gz ${{runner.temp}}/bun-webkit-linux-amd64-lto.tar.gz
           mv ${{runner.temp}}/bun-webkit-linux-arm64-lto/bun-webkit.tar.gz ${{runner.temp}}/bun-webkit-linux-arm64-lto.tar.gz
+          mv ${{runner.temp}}/bun-webkit-linux-amd64-musl-lto/bun-webkit.tar.gz ${{runner.temp}}/bun-webkit-linux-amd64-musl-lto.tar.gz
+          mv ${{runner.temp}}/bun-webkit-linux-arm64-musl-lto/bun-webkit.tar.gz ${{runner.temp}}/bun-webkit-linux-arm64-musl-lto.tar.gz
           mv ${{runner.temp}}/bun-webkit-windows-amd64/bun-webkit.tar.gz ${{runner.temp}}/bun-webkit-windows-amd64.tar.gz
           mv ${{runner.temp}}/bun-webkit-windows-amd64-debug/bun-webkit.tar.gz ${{runner.temp}}/bun-webkit-windows-amd64-debug.tar.gz
+
       - name: Release
         uses: softprops/action-gh-release@v1
         id: release
@@ -369,13 +392,19 @@ jobs:
           files: |
             ${{runner.temp}}/bun-webkit-linux-amd64-debug.tar.gz
             ${{runner.temp}}/bun-webkit-linux-arm64-debug.tar.gz
+            ${{runner.temp}}/bun-webkit-linux-amd64-musl-debug.tar.gz
+            ${{runner.temp}}/bun-webkit-linux-amd64-musl-debug.tar.gz
             ${{runner.temp}}/bun-webkit-macos-arm64-debug.tar.gz
             ${{runner.temp}}/bun-webkit-macos-amd64-debug.tar.gz
             ${{runner.temp}}/bun-webkit-linux-amd64.tar.gz
             ${{runner.temp}}/bun-webkit-linux-arm64.tar.gz
+            ${{runner.temp}}/bun-webkit-linux-amd64-musl.tar.gz
+            ${{runner.temp}}/bun-webkit-linux-amd64-musl.tar.gz
             ${{runner.temp}}/bun-webkit-macos-arm64.tar.gz
             ${{runner.temp}}/bun-webkit-macos-amd64.tar.gz
             ${{runner.temp}}/bun-webkit-linux-amd64-lto.tar.gz
             ${{runner.temp}}/bun-webkit-linux-arm64-lto.tar.gz
+            ${{runner.temp}}/bun-webkit-linux-amd64-musl-lto.tar.gz
+            ${{runner.temp}}/bun-webkit-linux-amd64-musl-lto.tar.gz
             ${{runner.temp}}/bun-webkit-windows-amd64.tar.gz
             ${{runner.temp}}/bun-webkit-windows-amd64-debug.tar.gz
