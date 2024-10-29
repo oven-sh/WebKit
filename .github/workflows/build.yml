@@ -21,7 +21,6 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
-      fail-fast: false
       matrix:
         include:
           - runner: macos-13-large
@@ -115,7 +114,6 @@ jobs:
     name: Linux
     runs-on: ${{matrix.os}}
     strategy:
-      fail-fast: false
       matrix:
         include:
           - lto_flag: ""
@@ -180,7 +178,6 @@ jobs:
 
   windows:
     strategy:
-      fail-fast: false
       matrix:
         include:
           - runner: windows
@@ -228,7 +225,6 @@ jobs:
     name: Linux
     runs-on: ${{matrix.os}}
     strategy:
-      fail-fast: false
       matrix:
         include:
           - lto_flag: ""
