@@ -44,7 +44,6 @@ ARG DEFAULT_CFLAGS
 
 RUN apk add --no-cache cpio curl icu-dev tar
 
-WORKDIR /icu-src
 ADD https://github.com/unicode-org/icu/releases/download/release-75-1/icu4c-75_1-src.tgz /icu.tgz
 RUN --mount=type=tmpfs,target=/icu \
     export CFLAGS="${DEFAULT_CFLAGS} $CFLAGS -O3 -std=c17 $LTO_FLAG" && \
@@ -54,7 +53,7 @@ RUN --mount=type=tmpfs,target=/icu \
     tar -xf /icu.tgz --strip-components=1 && \
     rm /icu.tgz && \
     cd source && \
-    ./configure  --enable-static --disable-shared --with-data-packaging=static --disable-samples --disable-debug --disable-tests --prefix=/icu && \
+    ./configure  --enable-static --disable-shared --with-data-packaging=static --disable-samples --disable-debug --disable-tests && \
     make -j$(nproc) && \
     make install && cp -r /icu/source/lib/* /output/lib && cp -r /icu/source/i18n/unicode/* /icu/source/common/unicode/* /output/include/unicode
 
@@ -76,7 +75,7 @@ ENV WEBKIT_OUT_DIR=/webkitbuild
 COPY . /webkit
 WORKDIR /webkit
 
-COPY --from=build_icu /icu /icu
+COPY --from=build_icu /output /icu
 
 RUN --mount=type=tmpfs,target=/webkitbuild \
     export CFLAGS="${DEFAULT_CFLAGS} $CFLAGS $LTO_FLAG -ffile-prefix-map=/webkit/Source=src/bun.js/WebKit/Source  -ffile-prefix-map=/webkitbuild/=. " && \
