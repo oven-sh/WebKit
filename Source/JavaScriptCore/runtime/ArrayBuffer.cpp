@@ -414,7 +414,6 @@ bool ArrayBuffer::transferTo(VM& vm, ArrayBufferContents& result)
 // We allow detaching wasm memory ArrayBuffers even though they are locked.
 void ArrayBuffer::detach(VM& vm)
 {
-    ASSERT(isWasmMemory());
     auto unused = m_contents.detach();
     notifyDetaching(vm);
 }
