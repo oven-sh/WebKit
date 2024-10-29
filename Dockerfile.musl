@@ -120,4 +120,4 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
 
 FROM scratch as artifact
 
-COPY --from=base /output /
+COPY --from=build_webkit /output /
