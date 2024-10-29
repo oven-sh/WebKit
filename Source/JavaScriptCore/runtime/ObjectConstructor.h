@@ -160,6 +160,7 @@ JS_EXPORT_PRIVATE JSObject* objectConstructorSeal(JSGlobalObject*, JSObject*);
 JSValue objectConstructorGetOwnPropertyDescriptor(JSGlobalObject*, JSObject*, const Identifier&);
 JSValue objectConstructorGetOwnPropertyDescriptors(JSGlobalObject*, JSObject*);
 JSArray* ownPropertyKeys(JSGlobalObject*, JSObject*, PropertyNameMode, DontEnumPropertiesMode);
+JSArray* allPropertyKeys(JSGlobalObject*, JSObject*, PropertyNameMode, DontEnumPropertiesMode);
 bool toPropertyDescriptor(JSGlobalObject*, JSValue, PropertyDescriptor&);
 void objectAssignGeneric(JSGlobalObject*, VM&, JSObject* target, JSObject* source);
 JSValue objectValues(VM&, JSGlobalObject*, JSValue);
