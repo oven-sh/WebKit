@@ -21,11 +21,17 @@ ENV CXX=clang++-18
 ENV CC=clang-18
 ENV LDFLAGS='-L/usr/include -L/usr/include/llvm18'
 ENV CXXFLAGS="-I/usr/include -I/usr/include/llvm18"
-ENV PATH="/usr/bin:/usr/local/bin:/zig/bin:$PATH"
+ENV PATH="/usr/bin:/usr/local/bin:/zig/bin:/usr/lib/llvm18/bin:$PATH"
 ENV CPU=${CPU}
 ENV MARCH_FLAG=${MARCH_FLAG}
 ENV WEBKIT_OUT_DIR=/webkitbuild
 RUN mkdir -p /output/lib /output/include /output/include/JavaScriptCore /output/include/wtf /output/include/bmalloc /output/include/unicode
+
+ENV AR llvm-ar
+ENV RANLIB llvm-ranlib
+ENV LD lld
+ENV LTO_FLAG="${LTO_FLAG}"
+ENV WEBKIT_RELEASE_TYPE="${WEBKIT_RELEASE_TYPE}"
 
 FROM base as build_icu
 
@@ -39,14 +45,18 @@ ARG DEFAULT_CFLAGS
 RUN apk add --no-cache cpio curl icu-dev tar
 
 WORKDIR /icu-src
-RUN --mount=type=tmpfs,target=/icu-src; curl -L https://github.com/unicode-org/icu/releases/download/release-75-1/icu4c-75_1-src.tgz > icu4c-75_1-src.tgz && \
-    tar -xzf icu4c-75_1-src.tgz && \
-    rm icu4c-75_1-src.tgz && \
-    cd icu/source && \
-    ./configure --enable-static --disable-shared && \
+ADD https://github.com/unicode-org/icu/releases/download/release-75-1/icu4c-75_1-src.tgz /icu.tgz
+RUN --mount=type=tmpfs,target=/icu \
+    export CFLAGS="${DEFAULT_CFLAGS} $CFLAGS -O3 -std=c17 $LTO_FLAG" && \
+    export CXXFLAGS="${DEFAULT_CFLAGS} $CXXFLAGS -O3 -std=c++20 -fno-exceptions $LTO_FLAG -fno-c++-static-destructors " && \
+    export LDFLAGS="-fuse-ld=lld " && \
+    cd /icu && \
+    tar -xf /icu.tgz --strip-components=1 && \
+    rm /icu.tgz && \
+    cd source && \
+    ./configure  --enable-static --disable-shared --with-data-packaging=static --disable-samples --disable-debug --disable-tests && \
     make -j$(nproc) && \
-    mkdir -p /icu && \
-    cp -r lib/*.a /icu
+    make install && cp -r /icu/source/lib/* /output/lib && cp -r /icu/source/i18n/unicode/* /icu/source/common/unicode/* /output/include/unicode
 
 FROM base as build_webkit
 
@@ -59,7 +69,7 @@ ARG DEFAULT_CFLAGS
 
 RUN apk add --no-cache cpio curl file gnupg icu-dev ninja ruby unzip rsync perl python3 openssl-dev openssl linux-headers
 
-ENV WEBKIT_OUT_DIR=/webkit
+ENV WEBKIT_OUT_DIR=/webkitbuild
 # These are unnecessary on musl
 # ENV CFLAGS="$CFLAGS -ffat-lto-objects"
 # ENV CXXFLAGS="$CXXFLAGS -ffat-lto-objects"
@@ -77,7 +87,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -DPORT="JSCOnly" \
     -DENABLE_STATIC_JSC=ON \
     -DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON \
-    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_BUILD_TYPE=${WEBKIT_RELEASE_TYPE} \
     -DUSE_THIN_ARCHIVES=OFF \
     -DUSE_BUN_JSC_ADDITIONS=ON \
     -DENABLE_FTL_JIT=ON \
@@ -94,7 +104,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     -G Ninja \
     /webkit && \
     cd /webkitbuild && \
-    cmake --build /webkitbuild --config Release --target "jsc" && \
+    cmake --build /webkitbuild --config ${WEBKIT_RELEASE_TYPE} --target "jsc" && \
     cp -r $WEBKIT_OUT_DIR/lib/*.a /output/lib && \
     cp $WEBKIT_OUT_DIR/*.h /output/include && \
     cp -r $WEBKIT_OUT_DIR/bin /output/bin && \
@@ -108,7 +118,6 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     cp /webkit/Source/JavaScriptCore/create_hash_table /output/Source/JavaScriptCore && \
     echo "";
 
-FROM alpine:edge as artifact
+FROM scratch as artifact
 
-COPY --from=build_webkit /webkit /webkit
-COPY --from=build_icu /icu/*.a /webkit/lib
+COPY --from=base /output /
