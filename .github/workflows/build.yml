@@ -368,6 +368,14 @@ jobs:
         with:
           name: bun-webkit-linux-arm64-musl-debug
           path: ${{runner.temp}}/bun-webkit-linux-arm64-musl-debug
+      - uses: actions/download-artifact@v3
+         with:
+           name: bun-webkit-linux-amd64-musl-debug
+           path: ${{runner.temp}}/bun-webkit-linux-amd64-musl-lto
+       - uses: actions/download-artifact@v3
+         with:
+           name: bun-webkit-linux-arm64-musl-debug
+           path: ${{runner.temp}}/bun-webkit-linux-arm64-musl-lto
 
       - name: Rename files
         run: |
