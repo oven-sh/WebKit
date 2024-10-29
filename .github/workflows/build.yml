@@ -356,8 +356,8 @@ jobs:
           mv ${{runner.temp}}/bun-webkit-linux-arm64-debug/bun-webkit.tar.gz  ${{runner.temp}}/bun-webkit-linux-arm64-debug.tar.gz
           mv ${{runner.temp}}/bun-webkit-macos-arm64-debug/bun-webkit.tar.gz ${{runner.temp}}/bun-webkit-macos-arm64-debug.tar.gz
           mv ${{runner.temp}}/bun-webkit-macos-amd64-debug/bun-webkit.tar.gz  ${{runner.temp}}/bun-webkit-macos-amd64-debug.tar.gz
-          mv ${{runner.temp}}/bun-webkit-linux-arm64-lto/bun-webkit.tar.gz ${{runner.temp}}/bun-webkit-linux-arm64-lto.tar.gz
           mv ${{runner.temp}}/bun-webkit-linux-amd64-lto/bun-webkit.tar.gz ${{runner.temp}}/bun-webkit-linux-amd64-lto.tar.gz
+          mv ${{runner.temp}}/bun-webkit-linux-arm64-lto/bun-webkit.tar.gz ${{runner.temp}}/bun-webkit-linux-arm64-lto.tar.gz
           mv ${{runner.temp}}/bun-webkit-windows-amd64/bun-webkit.tar.gz ${{runner.temp}}/bun-webkit-windows-amd64.tar.gz
           mv ${{runner.temp}}/bun-webkit-windows-amd64-debug/bun-webkit.tar.gz ${{runner.temp}}/bun-webkit-windows-amd64-debug.tar.gz
       - name: Release
