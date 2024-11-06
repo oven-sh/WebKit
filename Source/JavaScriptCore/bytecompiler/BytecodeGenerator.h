@@ -606,7 +606,7 @@ namespace JSC {
             if (!divot || !divotStart || !divotEnd)
                 return;
 
-            if (m_isBuiltinFunction)
+            if (isPrivateBuiltinFunction())
                 return;
 
             unsigned sourceOffset = m_scopeNode->source().startOffset();
@@ -1072,7 +1072,7 @@ namespace JSC {
 
         bool shouldBeConcernedWithCompletionValue() const { return !m_defaultAllowCallIgnoreResultOptimization; }
 
-        bool shouldEmitDebugHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::Debugger) && !m_isBuiltinFunction; }
+        bool shouldEmitDebugHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::Debugger) && !isPrivateBuiltinFunction(); }
         bool shouldEmitTypeProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::TypeProfiler); }
         bool shouldEmitControlFlowProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::ControlFlowProfiler); }
         
@@ -1082,6 +1082,11 @@ namespace JSC {
         SourceParseMode parseMode() const { return m_codeBlock->parseMode(); }
         
         bool isBuiltinFunction() const { return m_isBuiltinFunction; }
+#if USE(BUN_JSC_ADDITIONS)
+        bool isPrivateBuiltinFunction() const { return m_isPrivateBuiltinFunction; }
+#else
+        bool isPrivateBuiltinFunction() const { return isBuiltinFunction(); }
+#endif
 
         OpcodeID lastOpcodeID() const { return m_lastOpcodeID; }
         
@@ -1397,6 +1402,9 @@ namespace JSC {
         bool m_usesExceptions { false };
         bool m_expressionTooDeep { false };
         bool m_isBuiltinFunction { false };
+#if USE(BUN_JSC_ADDITIONS)
+        bool m_isPrivateBuiltinFunction { false };
+#endif
         bool m_usesSloppyEval { false };
         bool m_allowTailCallOptimization { false };
         bool m_allowCallIgnoreResultOptimization { false };

@@ -172,7 +172,11 @@ JSString* FunctionExecutable::toStringSlow(JSGlobalObject* globalObject)
         return cache(::JSC::asString(value));
     };
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (isPrivateBuiltinFunction())
+#else
     if (isBuiltinFunction())
+#endif
         return cacheIfNoException(jsMakeNontrivialString(globalObject, "function "_s, name().string(), "() {\n    [native code]\n}"_s));
 
     if (isClass())
