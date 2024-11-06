@@ -606,9 +606,10 @@ namespace JSC {
             if (!divot || !divotStart || !divotEnd)
                 return;
 
+#if !ASSERT_ENABLED
             if (isPrivateBuiltinFunction())
                 return;
-
+#endif
             unsigned sourceOffset = m_scopeNode->source().startOffset();
             unsigned firstLine = m_scopeNode->source().firstLine().oneBasedInt();
 
