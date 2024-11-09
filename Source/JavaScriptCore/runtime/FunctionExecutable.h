@@ -131,6 +131,7 @@ public:
     FunctionMode functionMode() { return m_unlinkedExecutable->functionMode(); }
     ImplementationVisibility implementationVisibility() const { return m_unlinkedExecutable->implementationVisibility(); }
     bool isBuiltinFunction() const { return m_unlinkedExecutable->isBuiltinFunction(); }
+    bool isPrivateBuiltinFunction() const { return isBuiltinFunction() && (!m_source.provider() || !m_source.provider()->sourceURL()); }
     ConstructAbility constructAbility() const { return m_unlinkedExecutable->constructAbility(); }
     InlineAttribute inlineAttribute() const { return m_unlinkedExecutable->inlineAttribute(); }
     bool isClass() const { return m_unlinkedExecutable->isClass(); }

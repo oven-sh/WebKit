@@ -23,119 +23,100 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-class IterableWeakSet
-{
-    constructor(items = [])
-    {
-        this._wrappers = new Set;
-        this._wrapperForItem = new WeakMap;
+globalThis.IterableWeakSet = class IterableWeakSet {
+  constructor(items = []) {
+    this._wrappers = new Set();
+    this._wrapperForItem = new WeakMap();
 
-        for (let item of items)
-            this.add(item);
+    for (let item of items) this.add(item);
+  }
+
+  // Public
+
+  get size() {
+    let size = 0;
+    for (let wrapper of this._wrappers) {
+      if (wrapper.deref()) ++size;
+    }
+    return size;
+  }
+
+  has(item) {
+    let result = this._wrapperForItem.has(item);
+    console.assert(Array.from(this._wrappers).some(wrapper => wrapper.deref() === item) === result, this, item);
+    return result;
+  }
+
+  add(item) {
+    console.assert(typeof item === "object", item);
+    console.assert(item !== null, item);
+
+    if (this.has(item)) return;
+
+    let wrapper = new WeakRef(item);
+    this._wrappers.add(wrapper);
+    this._wrapperForItem.set(item, wrapper);
+    this._finalizationRegistry.register(item, { weakThis: new WeakRef(this), wrapper }, wrapper);
+  }
+
+  delete(item) {
+    return !!this.take(item);
+  }
+
+  take(item) {
+    let wrapper = this._wrapperForItem.get(item);
+    if (!wrapper) return undefined;
+
+    let itemDeleted = this._wrapperForItem.delete(item);
+    console.assert(itemDeleted, this, item);
+
+    let wrapperDeleted = this._wrappers.delete(wrapper);
+    console.assert(wrapperDeleted, this, item);
+
+    this._finalizationRegistry.unregister(wrapper);
+
+    console.assert(wrapper.deref() === item, this, item);
+    return item;
+  }
+
+  clear() {
+    for (let wrapper of this._wrappers) {
+      this._wrapperForItem.delete(wrapper);
+      this._finalizationRegistry.unregister(wrapper);
     }
 
-    // Public
+    this._wrappers.clear();
+  }
 
-    get size()
-    {
-        let size = 0;
-        for (let wrapper of this._wrappers) {
-            if (wrapper.deref())
-                ++size;
-        }
-        return size;
+  keys() {
+    return this.values();
+  }
+
+  *values() {
+    for (let wrapper of this._wrappers) {
+      let item = wrapper.deref();
+      console.assert(!item === !this._wrapperForItem.has(item), this, item);
+      if (item) yield item;
     }
+  }
 
-    has(item)
-    {
-        let result = this._wrapperForItem.has(item);
-        console.assert(Array.from(this._wrappers).some((wrapper) => wrapper.deref() === item) === result, this, item);
-        return result;
-    }
+  [Symbol.iterator]() {
+    return this.values();
+  }
 
-    add(item)
-    {
-        console.assert(typeof item === "object", item);
-        console.assert(item !== null, item);
+  copy() {
+    return new IterableWeakSet(this.toJSON());
+  }
 
-        if (this.has(item))
-            return;
+  toJSON() {
+    return Array.from(this);
+  }
 
-        let wrapper = new WeakRef(item);
-        this._wrappers.add(wrapper);
-        this._wrapperForItem.set(item, wrapper);
-        this._finalizationRegistry.register(item, {weakThis: new WeakRef(this), wrapper}, wrapper);
-    }
+  // Private
 
-    delete(item)
-    {
-        return !!this.take(item);
-    }
-
-    take(item)
-    {
-        let wrapper = this._wrapperForItem.get(item);
-        if (!wrapper)
-            return undefined;
-
-        let itemDeleted = this._wrapperForItem.delete(item);
-        console.assert(itemDeleted, this, item);
-
-        let wrapperDeleted = this._wrappers.delete(wrapper);
-        console.assert(wrapperDeleted, this, item);
-
-        this._finalizationRegistry.unregister(wrapper);
-
-        console.assert(wrapper.deref() === item, this, item);
-        return item;
-    }
-
-    clear()
-    {
-        for (let wrapper of this._wrappers) {
-            this._wrapperForItem.delete(wrapper);
-            this._finalizationRegistry.unregister(wrapper);
-        }
-
-        this._wrappers.clear();
-    }
-
-    keys()
-    {
-        return this.values();
-    }
-
-    *values()
-    {
-        for (let wrapper of this._wrappers) {
-            let item = wrapper.deref();
-            console.assert(!item === !this._wrapperForItem.has(item), this, item);
-            if (item)
-                yield item;
-        }
-    }
-
-    [Symbol.iterator]()
-    {
-        return this.values();
-    }
-
-    copy()
-    {
-        return new IterableWeakSet(this.toJSON());
-    }
-
-    toJSON()
-    {
-        return Array.from(this);
-    }
-
-    // Private
-
-    get _finalizationRegistry()
-    {
-        return IterableWeakSet._finalizationRegistry ??= new FinalizationRegistry(function(heldValue) {
-            heldValue.weakThis.deref()?._wrappers.delete(heldValue.wrapper);
-        });
-    }
-}
+  get _finalizationRegistry() {
+    return (IterableWeakSet._finalizationRegistry ??= new FinalizationRegistry(function (heldValue) {
+      heldValue.weakThis.deref()?._wrappers.delete(heldValue.wrapper);
+    }));
+  }
+};

@@ -617,7 +617,7 @@ Object.defineProperty(MouseEvent.prototype, "commandOrControlKey",
         return WI.Platform.name === "mac" ? this.metaKey : this.ctrlKey;
     }
 });
-
+globalThis.Float16Array ??= class Float16Array extends Float32Array {};
 Object.defineProperty(Array, "isTypedArray",
 {
     value(array)

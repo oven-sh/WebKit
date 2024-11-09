@@ -441,6 +441,9 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, FunctionNode* functionNode, Unlinke
     , m_ecmaMode(ECMAMode::fromBool(functionNode->isStrictMode()))
     , m_derivedContextType(codeBlock->derivedContextType())
 {
+#if USE(BUN_JSC_ADDITIONS)
+    m_isPrivateBuiltinFunction = m_isBuiltinFunction && (!m_scopeNode->source().provider() || !m_scopeNode->source().provider()->sourceURL());
+#endif
     ECMAMode ecmaMode = m_ecmaMode;
     pushPrivateAccessNames(parentPrivateNameEnvironment);
 
