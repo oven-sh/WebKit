@@ -1240,7 +1240,8 @@ static CachedPropertyNamesKind inferCachedPropertyNamesKind(PropertyNameMode pro
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-JSArray* ownPropertyKeys(JSGlobalObject* globalObject, JSObject* object, PropertyNameMode propertyNameMode, DontEnumPropertiesMode dontEnumPropertiesMode)
+template <bool Inherit>
+static JSArray* getPropertyKeys(JSGlobalObject* globalObject, JSObject* object, PropertyNameMode propertyNameMode, DontEnumPropertiesMode dontEnumPropertiesMode)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1262,7 +1263,11 @@ JSArray* ownPropertyKeys(JSGlobalObject* globalObject, JSObject* object, Propert
     }
 
     PropertyNameArray properties(vm, propertyNameMode, PrivateSymbolMode::Exclude);
-    object->methodTable()->getOwnPropertyNames(object, globalObject, properties, dontEnumPropertiesMode);
+    if constexpr (Inherit) {
+        object->getPropertyNames(globalObject, properties, dontEnumPropertiesMode);
+    } else {
+        object->methodTable()->getOwnPropertyNames(object, globalObject, properties, dontEnumPropertiesMode);
+    }
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     size_t numProperties = properties.size();
@@ -1347,6 +1352,16 @@ JSArray* ownPropertyKeys(JSGlobalObject* globalObject, JSObject* object, Propert
     }
 
     return keys;
+}
+
+JSArray* ownPropertyKeys(JSGlobalObject* globalObject, JSObject* object, PropertyNameMode propertyNameMode, DontEnumPropertiesMode dontEnumPropertiesMode)
+{
+    return getPropertyKeys<false>(globalObject, object, propertyNameMode, dontEnumPropertiesMode);
+}
+
+JSArray* allPropertyKeys(JSGlobalObject* globalObject, JSObject* object, PropertyNameMode propertyNameMode, DontEnumPropertiesMode dontEnumPropertiesMode)
+{
+    return getPropertyKeys<true>(globalObject, object, propertyNameMode, dontEnumPropertiesMode);
 }
 
 JSObject* constructObjectFromPropertyDescriptorSlow(JSGlobalObject* globalObject, const PropertyDescriptor& descriptor)
