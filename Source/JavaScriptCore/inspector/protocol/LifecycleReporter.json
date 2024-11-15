@@ -12,6 +12,14 @@
     {
       "name": "disable",
       "description": "Disables LifecycleReporter domain events."
+    },
+    {
+      "name": "preventExit",
+      "description": "Prevents the process from exiting."
+    },
+    {
+      "name": "stopPreventingExit",
+      "description": "Does not prevent the process from exiting."
     }
   ],
   "events": [
