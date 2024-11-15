@@ -1,0 +1,27 @@
+{
+  "domain": "LifecycleReporter",
+  "description": "LifecycleReporter domain allows reporting of lifecycle events.",
+  "debuggableTypes": ["itml", "javascript"],
+  "targetTypes": ["itml", "javascript"],
+  "types": [],
+  "commands": [
+    {
+      "name": "enable",
+      "description": "Enables LifecycleReporter domain events."
+    },
+    {
+      "name": "disable",
+      "description": "Disables LifecycleReporter domain events."
+    }
+  ],
+  "events": [
+    {
+      "name": "reload",
+      "parameters": []
+    },
+    {
+      "name": "error",
+      "parameters": [{ "name": "message", "$ref": "Console.ConsoleMessage", "description": "Source of the error" }]
+    }
+  ]
+}

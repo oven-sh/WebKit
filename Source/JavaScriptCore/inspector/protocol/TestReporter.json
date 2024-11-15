@@ -1,0 +1,58 @@
+{
+  "domain": "TestReporter",
+  "description": "TestReporter domain allows reporting of lifecycle events.",
+  "debuggableTypes": ["itml", "javascript"],
+  "targetTypes": ["itml", "javascript"],
+  "types": [
+    {
+      "id": "TestStatus",
+      "type": "string",
+      "enum": ["pass", "fail", "timeout", "skip", "todo"]
+    }
+  ],
+  "commands": [
+    {
+      "name": "enable",
+      "description": "Enables TestReporter domain events."
+    },
+    {
+      "name": "disable",
+      "description": "Disables TestReporter domain events."
+    }
+  ],
+  "events": [
+    {
+      "name": "found",
+      "parameters": [
+        { "name": "id", "type": "integer", "description": "Unique identifier of the test that was found." },
+        {
+          "name": "scriptId",
+          "$ref": "Debugger.ScriptId",
+          "description": "Unique identifier of the script that started the test."
+        },
+        {
+          "name": "line",
+          "type": "integer",
+          "description": "Line number in the script that started the test."
+        },
+        { "name": "name", "type": "string", "description": "Name of the test that started.", "optional": true }
+      ]
+    },
+    {
+      "name": "start",
+      "parameters": [{ "name": "id", "type": "integer", "description": "Unique identifier of the test that started." }]
+    },
+    {
+      "name": "end",
+      "parameters": [
+        { "name": "id", "type": "integer", "description": "Unique identifier of the test that ended." },
+        { "name": "status", "$ref": "TestStatus", "description": "Status of the test that ended." },
+        {
+          "name": "elapsed",
+          "type": "number",
+          "description": "Elapsed time in milliseconds since the test started."
+        }
+      ]
+    }
+  ]
+}
