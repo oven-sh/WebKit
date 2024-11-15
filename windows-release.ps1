@@ -278,6 +278,15 @@ Copy-Item -r $WebKitBuild/WTF/Headers/wtf/* $output/include/wtf/
 Copy-Item -r $ICU_STATIC_INCLUDE_DIR/* $output/include/
 Copy-Item -r $ICU_STATIC_LIBRARY/* $output/lib/
 
+$packageJsonContent = @{
+    name       = $env:PACKAGE_JSON_LABEL
+    version    = "0.0.1-$env:GITHUB_SHA"
+    os         = @("windows")
+    cpu        = @($env:PACKAGE_JSON_ARCH)
+    repository = "https://github.com/$($env:GITHUB_REPOSITORY)"
+} | ConvertTo-Json -Depth 2
+Out-File -FilePath $output/package.json -InputObject $packageJsonContent
+
 tar -cz -f "${output}.tar.gz" "${output}"
 if ($LASTEXITCODE -ne 0) { throw "tar failed with exit code $LASTEXITCODE" }
 
