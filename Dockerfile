@@ -106,8 +106,8 @@ ENV MARCH_FLAG=${MARCH_FLAG}
 
 
 RUN --mount=type=tmpfs,target=/webkitbuild \
-    export CFLAGS="${DEFAULT_CFLAGS} $CFLAGS $LTO_FLAG -ffile-prefix-map=/webkit/Source=src/bun.js/WebKit/Source  -ffile-prefix-map=/webkitbuild/=. " && \
-    export CXXFLAGS="${DEFAULT_CFLAGS} $CXXFLAGS $LTO_FLAG -fno-c++-static-destructors -ffile-prefix-map=/webkit/Source=src/bun.js/WebKit/Source -ffile-prefix-map=/webkitbuild/=. " && \
+    export CFLAGS="${DEFAULT_CFLAGS} $CFLAGS $LTO_FLAG -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source  -ffile-prefix-map=/webkitbuild/=. " && \
+    export CXXFLAGS="${DEFAULT_CFLAGS} $CXXFLAGS $LTO_FLAG -fno-c++-static-destructors -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=. " && \
     export LDFLAGS="-fuse-ld=lld $LDFLAGS " && \
     cd /webkitbuild && \
     cmake \
@@ -136,8 +136,8 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     cp $WEBKIT_OUT_DIR/*.h /output/include && \
     cp -r $WEBKIT_OUT_DIR/bin /output/bin && \
     cp $WEBKIT_OUT_DIR/*.json /output && \
-    find $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/ -name "*.h" -exec cp {} /output/include/JavaScriptCore/ \; && \
-    find $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/ -name "*.json" -exec cp {} /output/ \; && \
+    find $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/ -name "*.h" -exec sh -c 'cp "$1" "/output/include/JavaScriptCore/$(basename "$1")"' sh {} \; && \
+    find $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/ -name "*.json" -exec sh -c 'cp "$1" "/output/$(basename "$1")"' sh {} \; && \
     find $WEBKIT_OUT_DIR/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} /output/include/JavaScriptCore/ \; && \
     find $WEBKIT_OUT_DIR/JavaScriptCore/PrivateHeaders/JavaScriptCore/ -name "*.h" -exec cp {} /output/include/JavaScriptCore/ \; && \
     cp -r $WEBKIT_OUT_DIR/WTF/Headers/wtf/ /output/include && \

@@ -40,8 +40,8 @@ cmake \
     -DENABLE_FTL_JIT=ON \
     -DCMAKE_C_COMPILER="$CMAKE_C_COMPILER" \
     -DCMAKE_CXX_COMPILER="$CMAKE_CXX_COMPILER" \
-    -DCMAKE_C_FLAGS="$CMAKE_C_FLAGS -ffile-prefix-map=$THIS_DIR/Source=src/bun.js/WebKit/Source " \
-    -DCMAKE_CXX_FLAGS="$CMAKE_CXX_FLAGS -ffile-prefix-map=$THIS_DIR/Source=src/bun.js/WebKit/Source " \
+    -DCMAKE_C_FLAGS="$CMAKE_C_FLAGS -ffile-prefix-map=$THIS_DIR/Source=vendor/WebKit/Source " \
+    -DCMAKE_CXX_FLAGS="$CMAKE_CXX_FLAGS -ffile-prefix-map=$THIS_DIR/Source=vendor/WebKit/Source " \
     -DENABLE_MALLOC_HEAP_BREAKDOWN=$ENABLE_MALLOC_HEAP_BREAKDOWN \
     -DUSE_BUN_JSC_ADDITIONS=ON \
     -DCMAKE_AR="$AR" \
@@ -64,10 +64,14 @@ cp -r $RUNNER_TEMP/webkit-release/ICU/Headers/* $RUNNER_TEMP/bun-webkit/include
 if [ -e $RUNNER_TEMP/webkit-release/bmalloc ]; then
     cp -r $RUNNER_TEMP/webkit-release/bmalloc/Headers/bmalloc $RUNNER_TEMP/bun-webkit/include
 fi
-cp $RUNNER_TEMP/webkit-release/JavaScriptCore/Headers/JavaScriptCore/* $RUNNER_TEMP/bun-webkit/include/JavaScriptCore
-cp $RUNNER_TEMP/webkit-release/JavaScriptCore/DerivedSources/**.h $RUNNER_TEMP/bun-webkit/include/JavaScriptCore
-cp $RUNNER_TEMP/webkit-release/JavaScriptCore/DerivedSources/**.json $RUNNER_TEMP/bun-webkit
-cp $RUNNER_TEMP/webkit-release/JavaScriptCore/PrivateHeaders/JavaScriptCore/* $RUNNER_TEMP/bun-webkit/include/JavaScriptCore
+
+# Copy all the header files in the JavaScriptCore directory to the bun-webkit include/JavaScriptCore directory.
+cp -f $RUNNER_TEMP/webkit-release/JavaScriptCore/Headers/JavaScriptCore/* \
+      $RUNNER_TEMP/webkit-release/JavaScriptCore/PrivateHeaders/JavaScriptCore/* \
+      $RUNNER_TEMP/webkit-release/JavaScriptCore/DerivedSources/*.h \
+      $RUNNER_TEMP/webkit-release/JavaScriptCore/DerivedSources/*/*.h \
+      $RUNNER_TEMP/bun-webkit/include/JavaScriptCore/
+
 mkdir -p $RUNNER_TEMP/bun-webkit/Source/JavaScriptCore
 cp -r $THIS_DIR/Source/JavaScriptCore/Scripts $RUNNER_TEMP/bun-webkit/Source/JavaScriptCore
 cp $THIS_DIR/Source/JavaScriptCore/create_hash_table $RUNNER_TEMP/bun-webkit/Source/JavaScriptCore
