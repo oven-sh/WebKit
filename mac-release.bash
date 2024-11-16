@@ -65,6 +65,8 @@ if [ -e $RUNNER_TEMP/webkit-release/bmalloc ]; then
     cp -r $RUNNER_TEMP/webkit-release/bmalloc/Headers/bmalloc $RUNNER_TEMP/bun-webkit/include
 fi
 cp $RUNNER_TEMP/webkit-release/JavaScriptCore/Headers/JavaScriptCore/* $RUNNER_TEMP/bun-webkit/include/JavaScriptCore
+cp $RUNNER_TEMP/webkit-release/JavaScriptCore/DerivedSources/**.h $RUNNER_TEMP/bun-webkit/include/JavaScriptCore
+cp $RUNNER_TEMP/webkit-release/JavaScriptCore/DerivedSources/**.json $RUNNER_TEMP/bun-webkit
 cp $RUNNER_TEMP/webkit-release/JavaScriptCore/PrivateHeaders/JavaScriptCore/* $RUNNER_TEMP/bun-webkit/include/JavaScriptCore
 mkdir -p $RUNNER_TEMP/bun-webkit/Source/JavaScriptCore
 cp -r $THIS_DIR/Source/JavaScriptCore/Scripts $RUNNER_TEMP/bun-webkit/Source/JavaScriptCore

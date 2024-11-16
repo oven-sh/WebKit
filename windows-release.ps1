@@ -267,6 +267,12 @@ Add-Content -Path $output/include/cmakeconfig.h -Value "`#define BUN_WEBKIT_VERS
 Copy-Item -r -Force $WebKitBuild/JavaScriptCore/DerivedSources/* $output/include/JavaScriptCore
 Copy-Item -r -Force $WebKitBuild/JavaScriptCore/Headers/JavaScriptCore/* $output/include/JavaScriptCore/
 Copy-Item -r -Force $WebKitBuild/JavaScriptCore/PrivateHeaders/JavaScriptCore/* $output/include/JavaScriptCore/
+# Recursively copy all the .h files in DerivedSources to the root of include/JavaScriptCore, preserving the basename only.
+Copy-Item -r -Force $WebKitBuild/JavaScriptCore/DerivedSources/*.h $output/include/JavaScriptCore/
+Copy-Item -r -Force $WebKitBuild/JavaScriptCore/DerivedSources/*/*.h $output/include/JavaScriptCore/
+
+# Recursively copy all the .json files in DerivedSources to the root of the output directory, preserving the basename only.
+Copy-Item -r -Force $WebKitBuild/JavaScriptCore/DerivedSources/*.json $output/
 
 Copy-Item -r $WebKitBuild/WTF/DerivedSources/* $output/include/wtf/
 Copy-Item -r $WebKitBuild/WTF/Headers/wtf/* $output/include/wtf/
