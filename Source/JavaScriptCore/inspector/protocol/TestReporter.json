@@ -1,6 +1,6 @@
 {
   "domain": "TestReporter",
-  "description": "TestReporter domain allows reporting of lifecycle events.",
+  "description": "TestReporter domain allows reporting of test-related events.",
   "debuggableTypes": ["itml", "javascript"],
   "targetTypes": ["itml", "javascript"],
   "types": [
@@ -28,7 +28,14 @@
         {
           "name": "scriptId",
           "$ref": "Debugger.ScriptId",
-          "description": "Unique identifier of the script that started the test."
+          "description": "Unique identifier of the script the test is in. Available when the debugger is attached.",
+          "optional": true
+        },
+        {
+          "name": "url",
+          "type": "string",
+          "description": "url of the script the test is in. Available when the debugger is not attached.",
+          "optional": true
         },
         {
           "name": "line",
@@ -49,7 +56,7 @@
         { "name": "status", "$ref": "TestStatus", "description": "Status of the test that ended." },
         {
           "name": "elapsed",
-          "type": "number",
+          "type": "integer",
           "description": "Elapsed time in milliseconds since the test started."
         }
       ]

@@ -49,6 +49,7 @@ class ScriptArguments;
 JS_EXPORT_PRIVATE Ref<ScriptCallStack> createScriptCallStack(JSC::JSGlobalObject*, size_t maxStackSize = ScriptCallStack::maxCallStackSizeToCapture);
 JS_EXPORT_PRIVATE Ref<ScriptCallStack> createScriptCallStackForConsole(JSC::JSGlobalObject*, size_t maxStackSize = ScriptCallStack::maxCallStackSizeToCapture);
 JS_EXPORT_PRIVATE Ref<ScriptCallStack> createScriptCallStackFromException(JSC::JSGlobalObject*, JSC::Exception*, size_t maxStackSize = ScriptCallStack::maxCallStackSizeToCapture);
+JS_EXPORT_PRIVATE Ref<ScriptCallStack> createScriptCallStackFromStackTrace(JSC::JSGlobalObject*, std::span<const JSC::StackFrame>, JSC::JSValue value, size_t maxStackSize = ScriptCallStack::maxCallStackSizeToCapture);
 JS_EXPORT_PRIVATE Ref<ScriptArguments> createScriptArguments(JSC::JSGlobalObject*, JSC::CallFrame*, unsigned skipArgumentCount);
 
 } // namespace Inspector

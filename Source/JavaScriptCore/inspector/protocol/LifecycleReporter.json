@@ -29,7 +29,13 @@
     },
     {
       "name": "error",
-      "parameters": [{ "name": "message", "$ref": "Console.ConsoleMessage", "description": "Source of the error" }]
+      "parameters": [
+        { "name": "message", "type": "string", "description": "string associated with the error" },
+        { "name": "name", "type": "string", "description": "If an Error instance, the error.name property" },
+        { "name": "urls", "type": "array", "description": "Array of URLs associated with the error", "items": { "type": "string" } },
+        { "name": "lineColumns", "type": "array", "description": "Line, column pairs associated with the error. Already sourcemapped.", "items": { "type": "integer" } },
+        { "name": "sourceLines", "type": "array", "description": "Source code preview associated with the error for up to 5 lines before the error, relative to the first non-internal stack frame.", "items": { "type": "string" } }
+      ]
     }
   ]
 }

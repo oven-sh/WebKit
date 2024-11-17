@@ -42,6 +42,7 @@
 #include "ScriptArguments.h"
 #include "ScriptCallFrame.h"
 #include "ScriptExecutable.h"
+#include <span>
 #include <wtf/text/WTFString.h>
 
 namespace Inspector {
@@ -168,11 +169,10 @@ static bool extractSourceInformationFromException(JSC::JSGlobalObject* globalObj
     return result;
 }
 
-Ref<ScriptCallStack> createScriptCallStackFromException(JSC::JSGlobalObject* globalObject, JSC::Exception* exception, size_t maxStackSize)
+Ref<ScriptCallStack> createScriptCallStackFromStackTrace(JSC::JSGlobalObject* globalObject, std::span<const JSC::StackFrame> stackTrace, JSC::JSValue value, size_t maxStackSize)
 {
+    auto& vm = globalObject->vm();
     Vector<ScriptCallFrame> frames;
-    auto& stackTrace = exception->stack();
-    VM& vm = globalObject->vm();
     for (size_t i = 0; i < stackTrace.size() && i < maxStackSize; i++) {
         auto lineColumn = stackTrace[i].computeLineAndColumn();
         String functionName = stackTrace[i].functionName(vm);
@@ -180,8 +180,8 @@ Ref<ScriptCallStack> createScriptCallStackFromException(JSC::JSGlobalObject* glo
     }
 
     // Fallback to getting at least the line and sourceURL from the exception object if it has values and the exceptionStack doesn't.
-    if (exception->value().isObject()) {
-        JSObject* exceptionObject = exception->value().toObject(globalObject);
+    if (value.isObject()) {
+        JSObject* exceptionObject = value.toObject(globalObject);
         ASSERT(exceptionObject);
         LineColumn lineColumn;
         String exceptionSourceURL;
@@ -208,6 +208,12 @@ Ref<ScriptCallStack> createScriptCallStackFromException(JSC::JSGlobalObject* glo
             parentStackTrace = debuggerAgent->currentParentStackTrace();
     }
     return ScriptCallStack::create(WTFMove(frames), stackTrace.size() > maxStackSize, parentStackTrace);
+}
+
+Ref<ScriptCallStack> createScriptCallStackFromException(JSC::JSGlobalObject* globalObject, JSC::Exception* exception, size_t maxStackSize)
+{
+    const auto stackTrace = exception->stack();
+    return createScriptCallStackFromStackTrace(globalObject, { stackTrace.begin(), stackTrace.end() }, exception->value(), maxStackSize);
 }
 
 Ref<ScriptArguments> createScriptArguments(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, unsigned skipArgumentCount)
