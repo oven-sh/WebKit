@@ -367,7 +367,7 @@ public:
 
     static uintptr_t avoidRecordingCount()
     {
-        return bitwise_cast<uintptr_t>(threadSpecificGet(avoidRecordingCountKey));
+        return std::bit_cast<uintptr_t>(threadSpecificGet(avoidRecordingCountKey));
     }
 };
 
@@ -378,12 +378,12 @@ AvoidRecordingScope::AvoidRecordingScope()
         // The value stored in TLS is initially 0.
         threadSpecificKeyCreate(&avoidRecordingCountKey, [](void*) { });
     });
-    threadSpecificSet(avoidRecordingCountKey, bitwise_cast<void*>(avoidRecordingCount() + 1));
+    threadSpecificSet(avoidRecordingCountKey, std::bit_cast<void*>(avoidRecordingCount() + 1));
 }
 
 AvoidRecordingScope::~AvoidRecordingScope()
 {
-    threadSpecificSet(avoidRecordingCountKey, bitwise_cast<void*>(avoidRecordingCount() - 1));
+    threadSpecificSet(avoidRecordingCountKey, std::bit_cast<void*>(avoidRecordingCount() - 1));
 }
 
 class MallocCallTracker {
@@ -411,7 +411,7 @@ private:
     };
 
     Lock m_lock;
-    UncheckedKeyHashMap<void*, std::unique_ptr<MallocSiteData>> m_addressMallocSiteData WTF_GUARDED_BY_LOCK(m_lock);
+    HashMap<void*, std::unique_ptr<MallocSiteData>> m_addressMallocSiteData WTF_GUARDED_BY_LOCK(m_lock);
 };
 
 MallocCallTracker& MallocCallTracker::singleton()
@@ -494,7 +494,7 @@ void MallocCallTracker::dumpStats()
         size_t totalUntrackedSize = 0;
         size_t totalUntrackedCount = 0;
 
-        UncheckedKeyHashMap<unsigned, std::unique_ptr<MallocSiteTotals>> callSiteToMallocData;
+        HashMap<unsigned, std::unique_ptr<MallocSiteTotals>> callSiteToMallocData;
         for (const auto& it : m_addressMallocSiteData) {
             auto result = callSiteToMallocData.ensure(it.value->stack.hash(), [] () {
                 // Intentionally using std::make_unique not to use FastMalloc for data structure tracking FastMalloc.
@@ -531,7 +531,7 @@ void MallocCallTracker::dumpStats()
             // FIXME: Add a way to remove some entries in StackShot in a programable way.
             // https://bugs.webkit.org/show_bug.cgi?id=205701
             const size_t framesToSkip = 6;
-            WTFPrintBacktrace(mallocDataForStack->siteData[0]->stack.array() + framesToSkip, mallocDataForStack->siteData[0]->stack.size() - framesToSkip);
+            WTFPrintBacktrace(mallocDataForStack->siteData[0]->stack.span().subspan(framesToSkip));
             WTFLogAlways("\n");
         }
     }

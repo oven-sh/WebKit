@@ -50,7 +50,6 @@
 #include "compiler/translator/tree_ops/RescopeGlobalVariables.h"
 #include "compiler/translator/tree_ops/RewritePixelLocalStorage.h"
 #include "compiler/translator/tree_ops/SeparateDeclarations.h"
-#include "compiler/translator/tree_ops/SeparateStructFromFunctionDeclarations.h"
 #include "compiler/translator/tree_ops/SimplifyLoopConditions.h"
 #include "compiler/translator/tree_ops/SplitSequenceOperator.h"
 #include "compiler/translator/tree_ops/glsl/RegenerateStructNames.h"
@@ -374,7 +373,6 @@ TCompiler::TCompiler(sh::GLenum type, ShShaderSpec spec, ShShaderOutput output)
       mTessEvaluationShaderInputPointType(EtetUndefined),
       mHasAnyPreciseType(false),
       mAdvancedBlendEquations(0),
-      mHasPixelLocalStorageUniforms(false),
       mUsesDerivatives(false),
       mCompileOptions{}
 {}
@@ -602,8 +600,17 @@ void TCompiler::setASTMetadata(const TParseContext &parseContext)
 
     if (mShaderType == GL_FRAGMENT_SHADER)
     {
-        mAdvancedBlendEquations       = parseContext.getAdvancedBlendEquations();
-        mHasPixelLocalStorageUniforms = !parseContext.pixelLocalStorageBindings().empty();
+        mAdvancedBlendEquations = parseContext.getAdvancedBlendEquations();
+        const std::map<int, ShPixelLocalStorageFormat> &plsFormats =
+            parseContext.pixelLocalStorageFormats();
+        // std::map keys are in sorted order, so the PLS uniform with the largest binding will be at
+        // rbegin().
+        mPixelLocalStorageFormats.resize(plsFormats.empty() ? 0 : plsFormats.rbegin()->first + 1,
+                                         ShPixelLocalStorageFormat::NotPLS);
+        for (auto [binding, format] : parseContext.pixelLocalStorageFormats())
+        {
+            mPixelLocalStorageFormats[binding] = format;
+        }
     }
     if (mShaderType == GL_GEOMETRY_SHADER_EXT)
     {
@@ -874,11 +881,6 @@ bool TCompiler::checkAndSimplifyAST(TIntermBlock *root,
         return false;
     }
 
-    if (!SeparateStructFromFunctionDeclarations(*this, *root))
-    {
-        return false;
-    }
-
     // Create the function DAG and check there is no recursion
     if (!initCallDag(root))
     {
@@ -1024,20 +1026,30 @@ bool TCompiler::checkAndSimplifyAST(TIntermBlock *root,
         }
     }
 
-    // Split multi declarations and remove calls to array length().
-    // Note that SimplifyLoopConditions needs to be run before any other AST transformations
-    // that may need to generate new statements from loop conditions or loop expressions.
-    if (!SimplifyLoopConditions(this, root,
-                                IntermNodePatternMatcher::kMultiDeclaration |
-                                    IntermNodePatternMatcher::kArrayLengthMethod,
-                                &getSymbolTable()))
+    if (compileOptions.simplifyLoopConditions)
     {
-        return false;
+        if (!SimplifyLoopConditions(this, root, &getSymbolTable()))
+        {
+            return false;
+        }
+    }
+    else
+    {
+        // Split multi declarations and remove calls to array length().
+        // Note that SimplifyLoopConditions needs to be run before any other AST transformations
+        // that may need to generate new statements from loop conditions or loop expressions.
+        if (!SimplifyLoopConditions(this, root,
+                                    IntermNodePatternMatcher::kMultiDeclaration |
+                                        IntermNodePatternMatcher::kArrayLengthMethod,
+                                    &getSymbolTable()))
+        {
+            return false;
+        }
     }
 
     // Note that separate declarations need to be run before other AST transformations that
     // generate new statements from expressions.
-    if (!SeparateDeclarations(*this, *root))
+    if (!SeparateDeclarations(*this, *root, mCompileOptions.separateCompoundStructDeclarations))
     {
         return false;
     }

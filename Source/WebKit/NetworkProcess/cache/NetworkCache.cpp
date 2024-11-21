@@ -111,17 +111,21 @@ Cache::Cache(NetworkProcess& networkProcess, const String& storageDirectory, Ref
 {
 #if ENABLE(NETWORK_CACHE_SPECULATIVE_REVALIDATION)
     if (options.contains(CacheOption::SpeculativeRevalidation)) {
-        m_lowPowerModeNotifier = makeUnique<WebCore::LowPowerModeNotifier>([this](bool isLowPowerModeEnabled) {
+        m_lowPowerModeNotifier = makeUnique<WebCore::LowPowerModeNotifier>([weakThis = WeakPtr { *this }](bool isLowPowerModeEnabled) {
             ASSERT(WTF::RunLoop::isMain());
+            RefPtr protectedThis = weakThis.get();
+            if (!protectedThis)
+                return;
+
             if (isLowPowerModeEnabled)
-                m_speculativeLoadManager = nullptr;
+                protectedThis->m_speculativeLoadManager = nullptr;
             else {
-                ASSERT(!m_speculativeLoadManager);
-                m_speculativeLoadManager = makeUnique<SpeculativeLoadManager>(*this, m_storage.get());
+                ASSERT(!protectedThis->m_speculativeLoadManager);
+                protectedThis->m_speculativeLoadManager = makeUnique<SpeculativeLoadManager>(*protectedThis, protectedThis->protectedStorage());
             }
         });
         if (!m_lowPowerModeNotifier->isLowPowerModeEnabled())
-            m_speculativeLoadManager = makeUnique<SpeculativeLoadManager>(*this, m_storage.get());
+            m_speculativeLoadManager = makeUnique<SpeculativeLoadManager>(*this, protectedStorage());
     }
 #endif
 
@@ -427,15 +431,15 @@ void Cache::retrieve(const WebCore::ResourceRequest& request, std::optional<Glob
     m_storage->retrieve(storageKey, priority, [this, protectedThis = Ref { *this }, request, completionHandler = WTFMove(completionHandler), info = WTFMove(info), storageKey, networkProcess = Ref { networkProcess() }, sessionID = m_sessionID, frameID, isNavigatingToAppBoundDomain, allowPrivacyProxy, advancedPrivacyProtections](auto record, auto timings) mutable {
         info.storageTimings = timings;
 
-        if (!record) {
+        if (record.isNull()) {
             LOG(NetworkCache, "(NetworkProcess) not found in storage");
             completeRetrieve(WTFMove(completionHandler), nullptr, info);
             return false;
         }
 
-        ASSERT(record->key == storageKey);
+        ASSERT(record.key == storageKey);
 
-        auto entry = Entry::decodeStorageRecord(*record);
+        auto entry = Entry::decodeStorageRecord(record);
 
         auto useDecision = entry ? makeUseDecision(networkProcess, sessionID, *entry, request) : UseDecision::NoDueToDecodeFailure;
         switch (useDecision) {

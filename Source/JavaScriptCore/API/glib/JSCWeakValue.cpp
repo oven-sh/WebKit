@@ -59,7 +59,9 @@ struct _JSCWeakValuePrivate {
     JSC::JSWeakValue weakValueRef;
 };
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib port
 static guint signals[LAST_SIGNAL] = { 0, };
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 WEBKIT_DEFINE_FINAL_TYPE(JSCWeakValue, jsc_weak_value, G_TYPE_OBJECT, GObject)
 
@@ -76,7 +78,9 @@ public:
     {
         auto* weakValue = JSC_WEAK_VALUE(context);
         jscWeakValueClear(weakValue);
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib port
         g_signal_emit(weakValue, signals[CLEARED], 0, nullptr);
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     }
 };
 
@@ -91,6 +95,7 @@ static void jscWeakValueInitialize(JSCWeakValue* weakValue, JSCValue* value)
     JSCWeakValuePrivate* priv = weakValue->priv;
     auto* jsContext = jscContextGetJSContext(jsc_value_get_context(value));
     JSC::JSGlobalObject* globalObject = toJS(jsContext);
+    JSC::JSLockHolder locker(globalObject->vm());
     auto& owner = weakValueHandleOwner();
     JSC::Weak<JSC::JSGlobalObject> weak(globalObject, &owner, weakValue);
     priv->globalObject.swap(weak);

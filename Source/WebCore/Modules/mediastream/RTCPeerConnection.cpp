@@ -76,6 +76,8 @@
 #include "LibWebRTCProvider.h"
 #endif
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace WebCore {
 
 using namespace PeerConnection;
@@ -98,10 +100,10 @@ ExceptionOr<Ref<RTCPeerConnection>> RTCPeerConnection::create(Document& document
         return exception.releaseException();
 
     if (!peerConnection->isClosed()) {
-        if (auto* page = document.page()) {
+        if (RefPtr page = document.protectedPage()) {
             peerConnection->registerToController(page->rtcController());
 #if USE(LIBWEBRTC) && (!LOG_DISABLED || !RELEASE_LOG_DISABLED)
-            if (!page->sessionID().isEphemeral()) {
+            if (page->isAlwaysOnLoggingAllowed()) {
                 WTFLogLevel level = LogWebRTC.level;
                 if (level != WTFLogLevel::Debug && document.settings().webRTCMediaPipelineAdditionalLoggingEnabled())
                     level = WTFLogLevel::Info;
@@ -1216,5 +1218,7 @@ void RTCPeerConnection::stopGatheringStatLogs()
 }
 
 } // namespace WebCore
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEB_RTC)

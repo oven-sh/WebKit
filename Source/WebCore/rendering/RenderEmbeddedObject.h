@@ -26,6 +26,7 @@
 
 namespace WebCore {
 
+class LayoutSize;
 class MouseEvent;
 class TextRun;
 
@@ -68,6 +69,10 @@ public:
     void willAttachScrollingNode();
     void didAttachScrollingNode();
 
+    bool paintsContent() const final;
+
+    void setHasShadowContent() { m_hasShadowContent = true; }
+
 private:
     void paintReplaced(PaintInfo&, const LayoutPoint&) final;
     void paint(PaintInfo&, const LayoutPoint&) final;
@@ -92,6 +97,8 @@ private:
     void getReplacementTextGeometry(const LayoutPoint& accumulatedOffset, FloatRect& contentRect, FloatRect& indicatorRect, FloatRect& replacementTextRect, FloatRect& arrowRect, FontCascade&, TextRun&, float& textWidth) const;
     LayoutRect getReplacementTextGeometry(const LayoutPoint& accumulatedOffset) const;
 
+    bool canHaveChildren() const override { return m_hasShadowContent; }
+
     bool m_isPluginUnavailable;
     enum class UnavailablePluginIndicatorState { Uninitialized, Hidden, Visible };
     UnavailablePluginIndicatorState m_isUnavailablePluginIndicatorState { UnavailablePluginIndicatorState::Uninitialized };
@@ -100,6 +107,7 @@ private:
     bool m_unavailablePluginIndicatorIsPressed;
     bool m_mouseDownWasInUnavailablePluginIndicator;
     String m_unavailabilityDescription;
+    bool m_hasShadowContent { false };
 };
 
 } // namespace WebCore

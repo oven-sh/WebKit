@@ -880,7 +880,7 @@ void RenderElement::styleWillChange(StyleDifference diff, const RenderStyle& new
         if (visibilityChanged || inertChanged) {
             Ref document = this->document();
             if (CheckedPtr cache = document->existingAXObjectCache())
-                cache->childrenChanged(checkedParent().get(), this);
+                cache->onInertOrVisibilityChange(*this);
         }
 
         // Keep layer hierarchy visibility bits up to date if visibility or skipped content state changes.
@@ -889,7 +889,7 @@ void RenderElement::styleWillChange(StyleDifference diff, const RenderStyle& new
         if (wasVisible != willBeVisible) {
             if (CheckedPtr layer = enclosingLayer()) {
                 if (willBeVisible) {
-                    if (m_style.hasSkippedContent() && isSkippedContentRoot())
+                    if (m_style.hasSkippedContent() && isSkippedContentRoot(*this))
                         layer->dirtyVisibleContentStatus();
                     else
                         layer->setHasVisibleContent();
@@ -2527,11 +2527,6 @@ void RenderElement::markRendererDirtyAfterTopLayerChange(RenderElement* renderer
     renderBox->setNeedsLayout();
 }
 
-bool RenderElement::isSkippedContentRoot() const
-{
-    return WebCore::isSkippedContentRoot(style(), element()) && !view().frameView().layoutContext().needsSkippedContentLayout();
-}
-
 bool RenderElement::hasEligibleContainmentForSizeQuery() const
 {
     switch (style().containerType()) {
@@ -2557,7 +2552,7 @@ void RenderElement::layoutIfNeeded()
 {
     if (!needsLayout())
         return;
-    if (isSkippedContentForLayout()) {
+    if (layoutContext().isSkippedContentForLayout(*this)) {
         clearNeedsLayoutForSkippedContent();
         return;
     }

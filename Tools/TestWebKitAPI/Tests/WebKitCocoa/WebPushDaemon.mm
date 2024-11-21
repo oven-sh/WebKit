@@ -131,6 +131,8 @@ static bool alertReceived = false;
 
 namespace TestWebKitAPI {
 
+static bool done;
+
 static RetainPtr<NSURL> testWebPushDaemonLocation()
 {
     return [currentExecutableDirectory() URLByAppendingPathComponent:@"webpushd" isDirectory:NO];
@@ -1117,7 +1119,7 @@ public:
 
     void captureAllMessages()
     {
-        [m_testMessageHandler setWildcardMessageHandler:^(NSString *message){
+        [m_testMessageHandler setDidReceiveScriptMessage:^(NSString *message) {
             m_mostRecentMessage = message;
         }];
     }

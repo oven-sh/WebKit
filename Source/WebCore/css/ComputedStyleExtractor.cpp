@@ -25,9 +25,10 @@
 #include "config.h"
 #include "ComputedStyleExtractor.h"
 
-#include "BasicShapeConversion.h"
+#include "CSSBasicShapeValue.h"
 #include "CSSBorderImage.h"
 #include "CSSBorderImageSliceValue.h"
+#include "CSSColorSchemeValue.h"
 #include "CSSCounterValue.h"
 #include "CSSFontFeatureValue.h"
 #include "CSSFontStyleWithAngleValue.h"
@@ -39,6 +40,7 @@
 #include "CSSGridIntegerRepeatValue.h"
 #include "CSSGridLineNamesValue.h"
 #include "CSSGridTemplateAreasValue.h"
+#include "CSSPathValue.h"
 #include "CSSPrimitiveValueMappings.h"
 #include "CSSProperty.h"
 #include "CSSPropertyAnimation.h"
@@ -80,6 +82,9 @@
 #include "ScaleTransformOperation.h"
 #include "ScrollTimeline.h"
 #include "SkewTransformOperation.h"
+#include "StyleColorScheme.h"
+#include "StylePathData.h"
+#include "StylePrimitiveNumericTypes+Conversions.h"
 #include "StylePropertyShorthand.h"
 #include "StylePropertyShorthandFunctions.h"
 #include "StyleReflection.h"
@@ -91,6 +96,8 @@
 #include "TranslateTransformOperation.h"
 #include "ViewTimeline.h"
 #include "WebAnimationUtilities.h"
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebCore {
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ComputedStyleExtractor);
@@ -584,7 +591,7 @@ static RefPtr<CSSValue> positionOffsetValue(const RenderStyle& style, CSSPropert
             if (isVerticalProperty == containingBlock->isHorizontalWritingMode()) {
                 containingBlockSize = box->isOutOfFlowPositioned()
                     ? box->containingBlockLogicalHeightForPositioned(*containingBlock, false)
-                    : box->containingBlockLogicalHeightForContent(ExcludeMarginBorderPadding);
+                    : box->containingBlockLogicalHeightForContent(AvailableLogicalHeightType::ExcludeMarginBorderPadding);
             } else {
                 containingBlockSize = box->isOutOfFlowPositioned()
                     ? box->containingBlockLogicalWidthForPositioned(*containingBlock, nullptr, false)
@@ -994,7 +1001,10 @@ static Ref<CSSValue> computedTranslate(RenderObject* renderer, const RenderStyle
         return CSSValueList::createSpaceSeparated(value(translate->x()), value(translate->y()), value(translate->z()));
     if (includeLength(translate->y()))
         return CSSValueList::createSpaceSeparated(value(translate->x()), value(translate->y()));
-    return CSSValueList::createSpaceSeparated(value(translate->x()));
+    if (!translate->x().isUndefined() && !translate->x().isEmptyValue())
+        return CSSValueList::createSpaceSeparated(value(translate->x()));
+
+    return CSSPrimitiveValue::create(CSSValueNone);
 }
 
 static Ref<CSSValue> computedScale(RenderObject* renderer, const RenderStyle& style)
@@ -2029,33 +2039,29 @@ static Ref<CSSValue> valueForPositionOrAutoOrNormal(const RenderStyle& style, co
     return valueForPosition(style, position);
 }
 
-static CSSValueID valueIDForRaySize(RayPathOperation::Size size)
-{
-    switch (size) {
-    case RayPathOperation::Size::ClosestCorner:
-        return CSSValueClosestCorner;
-    case RayPathOperation::Size::ClosestSide:
-        return CSSValueClosestSide;
-    case RayPathOperation::Size::FarthestCorner:
-        return CSSValueFarthestCorner;
-    case RayPathOperation::Size::FarthestSide:
-        return CSSValueFarthestSide;
-    case RayPathOperation::Size::Sides:
-        return CSSValueSides;
-    }
-
-    ASSERT_NOT_REACHED();
-    return CSSValueInvalid;
-}
-
-static Ref<CSSValue> valueForSVGPath(const BasicShapePath* path)
+static Ref<CSSValue> valueForD(const RenderStyle& style, const StylePathData* path)
 {
     if (!path)
         return CSSPrimitiveValue::create(CSSValueNone);
-    return valueForSVGPath(*path, SVGPathConversion::ForceAbsolute);
+    Ref protectedPath = *path;
+    return CSSPathValue::create(Style::overrideToCSS(protectedPath->path(), style, Style::PathConversion::ForceAbsolute));
 }
 
-static Ref<CSSValue> valueForPathOperation(const RenderStyle& style, const PathOperation* operation, SVGPathConversion conversion = SVGPathConversion::None)
+static Ref<CSSValue> valueForBasicShape(const RenderStyle& style, const Style::BasicShape& basicShape, Style::PathConversion conversion)
+{
+    return CSSBasicShapeValue::create(
+        WTF::switchOn(basicShape,
+            [&](const auto& shape) {
+                return CSS::BasicShape { Style::toCSS(shape, style) };
+            },
+            [&](const Style::PathFunction& path) {
+                return CSS::BasicShape { Style::overrideToCSS(path, style, conversion) };
+            }
+        )
+    );
+}
+
+static Ref<CSSValue> valueForPathOperation(const RenderStyle& style, const PathOperation* operation, Style::PathConversion conversion = Style::PathConversion::None)
 {
     if (!operation)
         return CSSPrimitiveValue::create(CSSValueNone);
@@ -2067,8 +2073,8 @@ static Ref<CSSValue> valueForPathOperation(const RenderStyle& style, const PathO
     case PathOperation::Type::Shape: {
         auto& shapeOperation = uncheckedDowncast<ShapePathOperation>(*operation);
         if (shapeOperation.referenceBox() == CSSBoxType::BoxMissing)
-            return CSSValueList::createSpaceSeparated(valueForBasicShape(style, shapeOperation.basicShape(), conversion));
-        return CSSValueList::createSpaceSeparated(valueForBasicShape(style, shapeOperation.basicShape(), conversion),
+            return CSSValueList::createSpaceSeparated(valueForBasicShape(style, shapeOperation.shape(), conversion));
+        return CSSValueList::createSpaceSeparated(valueForBasicShape(style, shapeOperation.shape(), conversion),
             createConvertingToCSSValueID(shapeOperation.referenceBox()));
     }
 
@@ -2077,9 +2083,7 @@ static Ref<CSSValue> valueForPathOperation(const RenderStyle& style, const PathO
 
     case PathOperation::Type::Ray: {
         auto& ray = uncheckedDowncast<RayPathOperation>(*operation);
-        auto angle = CSSPrimitiveValue::create(ray.angle(), CSSUnitType::CSS_DEG);
-        RefPtr<CSSValuePair> position = ray.position().x.isAuto() ? nullptr : RefPtr { CSSValuePair::createNoncoalescing(Ref { ComputedStyleExtractor::zoomAdjustedPixelValueForLength(ray.position().x, style) }, Ref { ComputedStyleExtractor::zoomAdjustedPixelValueForLength(ray.position().y, style) }) };
-        return CSSRayValue::create(WTFMove(angle), valueIDForRaySize(ray.size()), ray.isContaining(), WTFMove(position), ray.referenceBox());
+        return CSSRayValue::create(Style::toCSS(ray.ray(), style), ray.referenceBox());
     }
     }
 
@@ -3032,8 +3036,8 @@ static Ref<CSSValue> shapePropertyValue(const RenderStyle& style, const ShapeVal
     ASSERT(shapeValue->type() == ShapeValue::Type::Shape);
 
     if (shapeValue->cssBox() == CSSBoxType::BoxMissing)
-        return CSSValueList::createSpaceSeparated(valueForBasicShape(style, *shapeValue->shape()));
-    return CSSValueList::createSpaceSeparated(valueForBasicShape(style, *shapeValue->shape()),
+        return CSSValueList::createSpaceSeparated(valueForBasicShape(style, *shapeValue->shape(), Style::PathConversion::None));
+    return CSSValueList::createSpaceSeparated(valueForBasicShape(style, *shapeValue->shape(), Style::PathConversion::None),
         createConvertingToCSSValueID(shapeValue->cssBox()));
 }
 
@@ -3113,7 +3117,7 @@ static Ref<CSSValue> valueForOffsetShorthand(const RenderStyle& style)
     bool nonInitialRotate = style.offsetRotate() != style.initialOffsetRotate();
 
     if (style.offsetPath() || nonInitialDistance || nonInitialRotate)
-        innerList.append(valueForPathOperation(style, style.offsetPath(), SVGPathConversion::ForceAbsolute));
+        innerList.append(valueForPathOperation(style, style.offsetPath(), Style::PathConversion::ForceAbsolute));
 
     if (nonInitialDistance)
         innerList.append(CSSPrimitiveValue::create(style.offsetDistance(), style));
@@ -3197,16 +3201,15 @@ static Ref<CSSValue> valueForScrollTimelineName(const Vector<AtomString>& names)
     return CSSValueList::createCommaSeparated(WTFMove(list));
 }
 
-static Ref<CSSValue> valueForAnchorName(const Vector<AtomString>& names)
+static Ref<CSSValue> valueForAnchorName(const Vector<Style::ScopedName>& scopedNames)
 {
-    if (names.isEmpty())
+    if (scopedNames.isEmpty())
         return CSSPrimitiveValue::create(CSSValueNone);
 
     CSSValueListBuilder list;
-    for (auto& name : names) {
-        ASSERT(!name.isNull());
-        list.append(CSSPrimitiveValue::createCustomIdent(name));
-    }
+    for (auto& scopedName : scopedNames)
+        list.append(valueForScopedName(scopedName));
+
     return CSSValueList::createCommaSeparated(WTFMove(list));
 }
 
@@ -4092,7 +4095,7 @@ RefPtr<CSSValue> ComputedStyleExtractor::valueForPropertyInStyle(const RenderSty
     case CSSPropertyOffsetPath:
         // The computed value of offset-path must only contain absolute draw commands.
         // https://github.com/w3c/fxtf-drafts/issues/225#issuecomment-334322738
-        return valueForPathOperation(style, style.offsetPath(), SVGPathConversion::ForceAbsolute);
+        return valueForPathOperation(style, style.offsetPath(), Style::PathConversion::ForceAbsolute);
     case CSSPropertyOffsetDistance:
         return CSSPrimitiveValue::create(style.offsetDistance(), style);
     case CSSPropertyOffsetPosition:
@@ -4834,21 +4837,8 @@ RefPtr<CSSValue> ComputedStyleExtractor::valueForPropertyInStyle(const RenderSty
 #endif
 
 #if ENABLE(DARK_MODE_CSS)
-    case CSSPropertyColorScheme: {
-        auto colorScheme = style.colorScheme();
-        if (colorScheme.isNormal())
-            return CSSPrimitiveValue::create(CSSValueNormal);
-
-        CSSValueListBuilder list;
-        if (colorScheme.contains(ColorScheme::Light))
-            list.append(CSSPrimitiveValue::create(CSSValueLight));
-        if (colorScheme.contains(ColorScheme::Dark))
-            list.append(CSSPrimitiveValue::create(CSSValueDark));
-        if (!colorScheme.allowsTransformations())
-            list.append(CSSPrimitiveValue::create(CSSValueOnly));
-        ASSERT(!list.isEmpty());
-        return CSSValueList::createSpaceSeparated(WTFMove(list));
-    }
+    case CSSPropertyColorScheme:
+        return CSSColorSchemeValue::create(Style::toCSS(style.colorScheme(), style));
 #endif
 
     // Length properties for SVG.
@@ -4872,7 +4862,7 @@ RefPtr<CSSValue> ComputedStyleExtractor::valueForPropertyInStyle(const RenderSty
         return createConvertingToCSSValueID(style.textZoom());
 
     case CSSPropertyD:
-        return valueForSVGPath(style.d());
+        return valueForD(style, style.d());
 
     case CSSPropertyPaintOrder:
         return paintOrder(style.paintOrder());
@@ -4893,9 +4883,25 @@ RefPtr<CSSValue> ComputedStyleExtractor::valueForPropertyInStyle(const RenderSty
     case CSSPropertyAnchorName:
         return valueForAnchorName(style.anchorNames());
     case CSSPropertyPositionAnchor:
-        if (style.positionAnchor().isNull())
+        if (!style.positionAnchor())
             return CSSPrimitiveValue::create(CSSValueAuto);
-        return CSSPrimitiveValue::createCustomIdent(style.positionAnchor());
+        return valueForScopedName(*style.positionAnchor());
+    case CSSPropertyPositionTryOrder: {
+        switch (style.positionTryOrder()) {
+        case Style::PositionTryOrder::Normal:
+            return CSSPrimitiveValue::create(CSSValueNormal);
+        case Style::PositionTryOrder::MostWidth:
+            return CSSPrimitiveValue::create(CSSValueMostWidth);
+        case Style::PositionTryOrder::MostHeight:
+            return CSSPrimitiveValue::create(CSSValueMostHeight);
+        case Style::PositionTryOrder::MostBlockSize:
+            return CSSPrimitiveValue::create(CSSValueMostBlockSize);
+        case Style::PositionTryOrder::MostInlineSize:
+            return CSSPrimitiveValue::create(CSSValueMostInlineSize);
+        }
+        ASSERT_NOT_REACHED();
+        return CSSPrimitiveValue::create(CSSValueNormal);
+    }
     case CSSPropertyTimelineScope:
         switch (style.timelineScope().type) {
         case TimelineScope::Type::None:
@@ -5237,3 +5243,5 @@ Ref<CSSValue> ComputedStyleExtractor::getMaskShorthandValue() const
 }
 
 } // namespace WebCore
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

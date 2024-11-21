@@ -6,6 +6,8 @@ list(APPEND WebCore_SOURCES
     platform/graphics/texmap/BitmapTexture.cpp
     platform/graphics/texmap/BitmapTexturePool.cpp
     platform/graphics/texmap/ClipStack.cpp
+    platform/graphics/texmap/FloatPlane3D.cpp
+    platform/graphics/texmap/FloatPolygon3D.cpp
     platform/graphics/texmap/GraphicsContextGLTextureMapperANGLE.cpp
     platform/graphics/texmap/TextureMapper.cpp
     platform/graphics/texmap/TextureMapperAnimation.cpp
@@ -13,6 +15,7 @@ list(APPEND WebCore_SOURCES
     platform/graphics/texmap/TextureMapperFPSCounter.cpp
     platform/graphics/texmap/TextureMapperGCGLPlatformLayer.cpp
     platform/graphics/texmap/TextureMapperLayer.cpp
+    platform/graphics/texmap/TextureMapperLayer3DRenderingContext.cpp
     platform/graphics/texmap/TextureMapperPlatformLayer.cpp
     platform/graphics/texmap/TextureMapperShaderProgram.cpp
 )
@@ -21,6 +24,8 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/texmap/BitmapTexture.h
     platform/graphics/texmap/BitmapTexturePool.h
     platform/graphics/texmap/ClipStack.h
+    platform/graphics/texmap/FloatPlane3D.h
+    platform/graphics/texmap/FloatPolygon3D.h
     platform/graphics/texmap/GraphicsContextGLTextureMapperANGLE.h
     platform/graphics/texmap/GraphicsLayerContentsDisplayDelegateTextureMapper.h
     platform/graphics/texmap/GraphicsLayerTextureMapper.h
@@ -31,6 +36,7 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/texmap/TextureMapperFPSCounter.h
     platform/graphics/texmap/TextureMapperGLHeaders.h
     platform/graphics/texmap/TextureMapperLayer.h
+    platform/graphics/texmap/TextureMapperLayer3DRenderingContext.h
     platform/graphics/texmap/TextureMapperPlatformLayer.h
     platform/graphics/texmap/TextureMapperPlatformLayerProxy.h
     platform/graphics/texmap/TextureMapperSolidColorLayer.h
@@ -63,7 +69,6 @@ if (USE_COORDINATED_GRAPHICS)
         platform/graphics/texmap/coordinated/CoordinatedAnimatedBackingStoreClient.h
         platform/graphics/texmap/coordinated/CoordinatedBackingStore.h
         platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxy.h
-        platform/graphics/texmap/coordinated/CoordinatedBackingStoreProxyClient.h
         platform/graphics/texmap/coordinated/CoordinatedBackingStoreTile.h
         platform/graphics/texmap/coordinated/CoordinatedGraphicsLayer.h
         platform/graphics/texmap/coordinated/CoordinatedImageBackingStore.h
@@ -87,7 +92,17 @@ if (USE_COORDINATED_GRAPHICS)
     endif ()
 
     if (USE_CAIRO)
+        list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
+            platform/graphics/cairo/CairoPaintingEngine.h
+        )
+
         list(APPEND WebCore_SOURCES
+            platform/graphics/cairo/CairoOperationRecorder.cpp
+            platform/graphics/cairo/CairoPaintingContext.cpp
+            platform/graphics/cairo/CairoPaintingEngine.cpp
+            platform/graphics/cairo/CairoPaintingEngineBasic.cpp
+            platform/graphics/cairo/CairoPaintingEngineThreaded.cpp
+
             platform/graphics/texmap/coordinated/CoordinatedGraphicsLayerCairo.cpp
         )
     elseif (USE_SKIA)
@@ -122,33 +137,11 @@ if (USE_NICOSIA)
         page/scrolling/nicosia/ScrollingTreeFixedNodeNicosia.h
         page/scrolling/nicosia/ScrollingTreeStickyNodeNicosia.h
 
-        platform/graphics/nicosia/NicosiaBackingStore.h
         platform/graphics/nicosia/NicosiaCompositionLayer.h
         platform/graphics/nicosia/NicosiaPlatformLayer.h
         platform/graphics/nicosia/NicosiaScene.h
         platform/graphics/nicosia/NicosiaSceneIntegration.h
     )
-
-    if (USE_CAIRO)
-        list(APPEND WebCore_PRIVATE_INCLUDE_DIRECTORIES
-            "${WEBCORE_DIR}/platform/graphics/nicosia/cairo"
-        )
-        list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
-            platform/graphics/nicosia/NicosiaPaintingEngine.h
-        )
-
-        # Currently NicosiaPaintingContext.cpp will cause a compilation error
-        # when building without USE_CAIRO so these are not in unified sources
-        list(APPEND WebCore_SOURCES
-            platform/graphics/nicosia/NicosiaPaintingContext.cpp
-            platform/graphics/nicosia/NicosiaPaintingEngine.cpp
-            platform/graphics/nicosia/NicosiaPaintingEngineBasic.cpp
-            platform/graphics/nicosia/NicosiaPaintingEngineThreaded.cpp
-
-            platform/graphics/nicosia/cairo/NicosiaCairoOperationRecorder.cpp
-            platform/graphics/nicosia/cairo/NicosiaPaintingContextCairo.cpp
-        )
-    endif ()
 endif ()
 
 if (USE_GRAPHICS_LAYER_WC)

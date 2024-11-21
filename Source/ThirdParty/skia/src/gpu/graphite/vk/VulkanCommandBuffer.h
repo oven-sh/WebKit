@@ -26,7 +26,8 @@ class Buffer;
 class VulkanCommandBuffer final : public CommandBuffer {
 public:
     static std::unique_ptr<VulkanCommandBuffer> Make(const VulkanSharedContext*,
-                                                     VulkanResourceProvider*);
+                                                     VulkanResourceProvider*,
+                                                     Protected);
     ~VulkanCommandBuffer() override;
 
     bool setNewCommandBufferResources() override;
@@ -54,7 +55,8 @@ private:
     VulkanCommandBuffer(VkCommandPool pool,
                         VkCommandBuffer primaryCommandBuffer,
                         const VulkanSharedContext* sharedContext,
-                        VulkanResourceProvider* resourceProvider);
+                        VulkanResourceProvider* resourceProvider,
+                        Protected);
 
     ResourceProvider* resourceProvider() const override { return fResourceProvider; }
 
@@ -109,8 +111,8 @@ private:
     void bindInputBuffer(const Buffer* buffer, VkDeviceSize offset, uint32_t binding);
     void bindIndexBuffer(const Buffer* indexBuffer, size_t offset);
     void bindIndirectBuffer(const Buffer* indirectBuffer, size_t offset);
-    void setScissor(unsigned int left, unsigned int top,
-                    unsigned int width, unsigned int height);
+    void setScissor(const Scissor&);
+    void setScissor(const SkIRect&);
 
     void draw(PrimitiveType type, unsigned int baseVertex, unsigned int vertexCount);
     void drawIndexed(PrimitiveType type, unsigned int baseIndex, unsigned int indexCount,
@@ -148,6 +150,11 @@ private:
                                 SkIPoint dstPoint,
                                 int mipLevel) override;
 
+    bool pushConstants(VkShaderStageFlags stageFlags,
+                       uint32_t offset,
+                       uint32_t size,
+                       const void* values);
+
     bool onSynchronizeBufferToCpu(const Buffer*, bool* outDidResultInWork) override;
     bool onClearBuffer(const Buffer*, size_t offset, size_t size) override;
 
@@ -165,12 +172,12 @@ private:
 
     // Update the intrinsic constant uniform buffer and binding to reflect the updated viewport.
     // The resource provider is responsible for finding a suitable buffer and managing its lifetime.
-    void updateIntrinsicUniforms(SkIRect viewport);
+    bool updateIntrinsicUniforms(SkIRect viewport);
 
-    bool updateLoadMSAAVertexBuffer();
     bool loadMSAAFromResolve(const RenderPassDesc&,
                              VulkanTexture& resolveTexture,
-                             SkISize dstDimensions);
+                             SkISize dstDimensions,
+                             SkIRect nativeBounds);
     bool updateAndBindLoadMSAAInputAttachment(const VulkanTexture& resolveTexture);
     void updateBuffer(const VulkanBuffer* buffer,
                       const void* data,
@@ -223,6 +230,9 @@ private:
     size_t fBoundIndirectBufferOffset = 0;
 
     float fCachedBlendConstant[4];
+
+    class IntrinsicConstantsManager;
+    std::unique_ptr<IntrinsicConstantsManager> fIntrinsicConstants;
 };
 
 } // namespace skgpu::graphite

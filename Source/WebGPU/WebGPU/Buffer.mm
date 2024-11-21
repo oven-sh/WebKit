@@ -28,18 +28,22 @@
 
 #import "APIConversions.h"
 #import "Device.h"
-#if ENABLE(WEBGPU_SWIFT)
-#import "WebGPUSwiftInternal.h"
-#endif
+
 #import <wtf/CheckedArithmetic.h>
 #import <wtf/StdLibExtras.h>
 #import <wtf/TZoneMallocInlines.h>
+
+#if ENABLE(WEBGPU_SWIFT)
+#import "WebGPUSwiftInternal.h"
+
+DEFINE_SWIFTCXX_THUNK(WebGPU::Buffer, copyFrom, void, const std::span<const uint8_t>, const size_t);
+#endif
 
 namespace WebGPU {
 
 static inline auto span(id<MTLBuffer> buffer)
 {
-    return unsafeForgeSpan(static_cast<uint8_t*>(buffer.contents), static_cast<size_t>(buffer.length));
+    return unsafeMakeSpan(static_cast<uint8_t*>(buffer.contents), static_cast<size_t>(buffer.length));
 }
 
 static bool validateDescriptor(const Device& device, const WGPUBufferDescriptor& descriptor)
@@ -178,20 +182,20 @@ Buffer::~Buffer() = default;
 
 void Buffer::incrementBufferMapCount()
 {
-    for (auto& commandEncoder : m_commandEncoders)
-        commandEncoder.incrementBufferMapCount();
+    for (Ref commandEncoder : m_commandEncoders)
+        commandEncoder->incrementBufferMapCount();
 }
 
 void Buffer::decrementBufferMapCount()
 {
-    for (auto& commandEncoder : m_commandEncoders)
-        commandEncoder.decrementBufferMapCount();
+    for (Ref commandEncoder : m_commandEncoders)
+        commandEncoder->decrementBufferMapCount();
 }
 
 void Buffer::setCommandEncoder(CommandEncoder& commandEncoder, bool mayModifyBuffer) const
 {
     UNUSED_PARAM(mayModifyBuffer);
-    m_commandEncoders.add(commandEncoder);
+    CommandEncoder::trackEncoder(commandEncoder, m_commandEncoders);
     commandEncoder.addBuffer(m_buffer);
     if (m_state == State::Mapped || m_state == State::MappedAtCreation)
         commandEncoder.incrementBufferMapCount();
@@ -209,8 +213,8 @@ void Buffer::destroy()
     }
 
     setState(State::Destroyed);
-    for (auto& commandEncoder : m_commandEncoders)
-        commandEncoder.makeSubmitInvalid();
+    for (Ref commandEncoder : m_commandEncoders)
+        commandEncoder->makeSubmitInvalid();
 
     m_commandEncoders.clear();
     m_buffer = protectedDevice()->placeholderBuffer();
@@ -418,19 +422,9 @@ bool Buffer::isValid() const
     return isDestroyed() || m_buffer;
 }
 
-bool Buffer::isDestroyed() const
-{
-    return state() == State::Destroyed;
-}
-
 id<MTLBuffer> Buffer::indirectBuffer() const
 {
     return m_indirectBuffer;
-}
-
-id<MTLBuffer> Buffer::indirectIndexedBuffer() const
-{
-    return m_indirectIndexedBuffer;
 }
 
 bool Buffer::indirectBufferRequiresRecomputation(uint32_t baseIndex, uint32_t indexCount, uint32_t minVertexCount, uint32_t minInstanceCount, MTLIndexType indexType, uint32_t firstInstance) const
@@ -483,20 +477,6 @@ void Buffer::indirectBufferInvalidated()
     m_indirectCache.indexBufferOffsetInBytes = UINT64_MAX;
     indirectBufferRecomputed(0, 0, 0, 0, MTLIndexTypeUInt16, 0);
 }
-
-#if ENABLE(WEBGPU_SWIFT)
-void Buffer::copy(const std::span<const uint8_t> data, const size_t offset)
-{
-    auto buffer = getBufferContents();
-    RELEASE_ASSERT(buffer);
-    auto endOffset = checkedSum<size_t>(offset, data.size());
-    RELEASE_ASSERT(!(endOffset.hasOverflowed() || endOffset.value() > currentSize()));
-    auto checkSize = checkedSum<size_t>(currentSize());
-    RELEASE_ASSERT(!checkSize.hasOverflowed());
-    auto destination = std::span<uint8_t> { buffer + offset, static_cast<size_t>(currentSize()) - offset };
-    WebGPU::copySpan(destination, data);
-}
-#endif
 
 } // namespace WebGPU
 
@@ -585,6 +565,6 @@ WGPUBufferUsageFlags wgpuBufferGetUsage(WGPUBuffer buffer)
 #if ENABLE(WEBGPU_SWIFT)
 void wgpuBufferCopy(WGPUBuffer buffer, std::span<const uint8_t> data, size_t offset)
 {
-    WebGPU::protectedFromAPI(buffer)->copy(data, offset);
+    WebGPU::protectedFromAPI(buffer)->copyFrom(data, offset);
 }
 #endif

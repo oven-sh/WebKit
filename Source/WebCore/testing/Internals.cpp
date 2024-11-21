@@ -43,6 +43,7 @@
 #include "CSSMediaRule.h"
 #include "CSSParser.h"
 #include "CSSPropertyParser.h"
+#include "CSSPropertyParserConsumer+Color.h"
 #include "CSSStyleRule.h"
 #include "CSSSupportsRule.h"
 #include "CacheStorageConnection.h"
@@ -147,7 +148,6 @@
 #include "MediaMetadata.h"
 #include "MediaPlayer.h"
 #include "MediaProducer.h"
-#include "MediaRecorderProvider.h"
 #include "MediaResourceLoader.h"
 #include "MediaSession.h"
 #include "MediaSessionActionDetails.h"
@@ -179,6 +179,7 @@
 #include "PseudoElement.h"
 #include "PushSubscription.h"
 #include "PushSubscriptionData.h"
+#include "Quirks.h"
 #include "RTCNetworkManager.h"
 #include "RTCRtpSFrameTransform.h"
 #include "Range.h"
@@ -414,6 +415,8 @@ using JSC::PropertySlot;
 using JSC::ScriptExecutable;
 using JSC::StackVisitor;
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Internals);
@@ -583,9 +586,7 @@ void Internals::resetToConsistentState(Page& page)
         mainFrameView->setUseFixedLayout(false);
         mainFrameView->setFixedLayoutSize(IntSize());
         mainFrameView->enableFixedWidthAutoSizeMode(false, { });
-#if USE(COORDINATED_GRAPHICS)
-        mainFrameView->setFixedVisibleContentRect(IntRect());
-#endif
+
         if (auto* backing = mainFrameView->tiledBacking())
             backing->setTileSizeUpdateDelayDisabledForTesting(false);
     }
@@ -606,16 +607,16 @@ void Internals::resetToConsistentState(Page& page)
 #if ENABLE(VIDEO)
     page.group().ensureCaptionPreferences().setCaptionDisplayMode(CaptionUserPreferences::CaptionDisplayMode::ForcedOnly);
     page.group().ensureCaptionPreferences().setCaptionsStyleSheetOverride(emptyString());
-    PlatformMediaSessionManager::sharedManager().resetHaveEverRegisteredAsNowPlayingApplicationForTesting();
-    PlatformMediaSessionManager::sharedManager().resetRestrictions();
-    PlatformMediaSessionManager::sharedManager().resetSessionState();
-    PlatformMediaSessionManager::sharedManager().setWillIgnoreSystemInterruptions(true);
-    PlatformMediaSessionManager::sharedManager().applicationWillEnterForeground(false);
+    PlatformMediaSessionManager::singleton().resetHaveEverRegisteredAsNowPlayingApplicationForTesting();
+    PlatformMediaSessionManager::singleton().resetRestrictions();
+    PlatformMediaSessionManager::singleton().resetSessionState();
+    PlatformMediaSessionManager::singleton().setWillIgnoreSystemInterruptions(true);
+    PlatformMediaSessionManager::singleton().applicationWillEnterForeground(false);
     if (page.mediaPlaybackIsSuspended())
         page.resumeAllMediaPlayback();
 #endif
 #if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
-    PlatformMediaSessionManager::sharedManager().setIsPlayingToAutomotiveHeadUnit(false);
+    PlatformMediaSessionManager::singleton().setIsPlayingToAutomotiveHeadUnit(false);
 #endif
     AXObjectCache::setEnhancedUserInterfaceAccessibility(false);
     AXObjectCache::disableAccessibility();
@@ -685,7 +686,7 @@ void Internals::resetToConsistentState(Page& page)
 #endif
 
 #if ENABLE(MEDIA_SESSION) && USE(GLIB)
-    auto& sessionManager = reinterpret_cast<MediaSessionManagerGLib&>(PlatformMediaSessionManager::sharedManager());
+    auto& sessionManager = reinterpret_cast<MediaSessionManagerGLib&>(PlatformMediaSessionManager::singleton());
     sessionManager.setDBusNotificationsEnabled(false);
 #endif
 
@@ -2225,10 +2226,8 @@ ExceptionOr<void> Internals::setViewIsTransparent(bool transparent)
     Document* document = contextDocument();
     if (!document || !document->view())
         return Exception { ExceptionCode::InvalidAccessError };
-    std::optional<Color> backgroundColor;
-    if (transparent)
-        backgroundColor = Color(Color::transparentBlack);
-    document->view()->updateBackgroundRecursively(backgroundColor);
+
+    document->view()->setTransparent(transparent);
     return { };
 }
 
@@ -2237,6 +2236,9 @@ ExceptionOr<String> Internals::viewBaseBackgroundColor()
     Document* document = contextDocument();
     if (!document || !document->view())
         return Exception { ExceptionCode::InvalidAccessError };
+
+    document->updateLayout(LayoutOptions::IgnorePendingStylesheets);
+
     return serializationForCSS(document->view()->baseBackgroundColor());
 }
 
@@ -2255,6 +2257,28 @@ ExceptionOr<void> Internals::setViewBaseBackgroundColor(const String& colorValue
         return { };
     }
     return Exception { ExceptionCode::SyntaxError };
+}
+
+using LazySlowPathColorParsingParameters = std::tuple<
+    CSSPropertyParserHelpers::CSSColorParsingOptions,
+    CSSUnresolvedColorResolutionState,
+    std::optional<CSSUnresolvedColorResolutionDelegate>
+>;
+
+ExceptionOr<void> Internals::setUnderPageBackgroundColorOverride(const String& colorValue)
+{
+    Document* document = contextDocument();
+    if (!document || !document->page())
+        return Exception { ExceptionCode::InvalidAccessError };
+
+    auto color = CSSPropertyParserHelpers::parseColorRaw(colorValue, document->cssParserContext(), [] {
+        return LazySlowPathColorParsingParameters { { }, { }, std::nullopt };
+    });
+    if (!color.isValid())
+        return Exception { ExceptionCode::SyntaxError };
+
+    document->page()->setUnderPageBackgroundColorOverride(WTFMove(color));
+    return { };
 }
 
 ExceptionOr<String> Internals::documentBackgroundColor()
@@ -2349,20 +2373,20 @@ bool Internals::elementShouldAutoComplete(HTMLInputElement& element)
 
 void Internals::setAutofilled(HTMLInputElement& element, bool enabled)
 {
-    element.setAutoFilled(enabled);
+    element.setAutofilled(enabled);
 }
 
-void Internals::setAutoFilledAndViewable(HTMLInputElement& element, bool enabled)
+void Internals::setAutofilledAndViewable(HTMLInputElement& element, bool enabled)
 {
-    element.setAutoFilledAndViewable(enabled);
+    element.setAutofilledAndViewable(enabled);
 }
 
-void Internals::setAutoFilledAndObscured(HTMLInputElement& element, bool enabled)
+void Internals::setAutofilledAndObscured(HTMLInputElement& element, bool enabled)
 {
-    element.setAutoFilledAndObscured(enabled);
+    element.setAutofilledAndObscured(enabled);
 }
 
-static AutoFillButtonType toAutoFillButtonType(Internals::AutoFillButtonType type)
+static AutoFillButtonType toAutofillButtonType(Internals::AutoFillButtonType type)
 {
     switch (type) {
     case Internals::AutoFillButtonType::None:
@@ -2382,7 +2406,7 @@ static AutoFillButtonType toAutoFillButtonType(Internals::AutoFillButtonType typ
     return AutoFillButtonType::None;
 }
 
-static Internals::AutoFillButtonType toInternalsAutoFillButtonType(AutoFillButtonType type)
+static Internals::AutoFillButtonType toInternalsAutofillButtonType(AutoFillButtonType type)
 {
     switch (type) {
     case AutoFillButtonType::None:
@@ -2402,19 +2426,19 @@ static Internals::AutoFillButtonType toInternalsAutoFillButtonType(AutoFillButto
     return Internals::AutoFillButtonType::None;
 }
 
-void Internals::setShowAutoFillButton(HTMLInputElement& element, AutoFillButtonType type)
+void Internals::setAutofillButtonType(HTMLInputElement& element, AutoFillButtonType type)
 {
-    element.setShowAutoFillButton(toAutoFillButtonType(type));
+    element.setAutofillButtonType(toAutofillButtonType(type));
 }
 
-auto Internals::autoFillButtonType(const HTMLInputElement& element) -> AutoFillButtonType
+auto Internals::autofillButtonType(const HTMLInputElement& element) -> AutoFillButtonType
 {
-    return toInternalsAutoFillButtonType(element.autoFillButtonType());
+    return toInternalsAutofillButtonType(element.autofillButtonType());
 }
 
-auto Internals::lastAutoFillButtonType(const HTMLInputElement& element) -> AutoFillButtonType
+auto Internals::lastAutofillButtonType(const HTMLInputElement& element) -> AutoFillButtonType
 {
-    return toInternalsAutoFillButtonType(element.lastAutoFillButtonType());
+    return toInternalsAutofillButtonType(element.lastAutofillButtonType());
 }
 
 Vector<String> Internals::recentSearches(const HTMLInputElement& element)
@@ -4794,7 +4818,7 @@ ExceptionOr<void> Internals::beginMediaSessionInterruption(const String& interru
     else
         return Exception { ExceptionCode::InvalidAccessError };
 
-    PlatformMediaSessionManager::sharedManager().beginInterruption(interruption);
+    PlatformMediaSessionManager::singleton().beginInterruption(interruption);
     return { };
 }
 
@@ -4805,27 +4829,27 @@ void Internals::endMediaSessionInterruption(const String& flagsString)
     if (equalLettersIgnoringASCIICase(flagsString, "mayresumeplaying"_s))
         flags = PlatformMediaSession::EndInterruptionFlags::MayResumePlaying;
 
-    PlatformMediaSessionManager::sharedManager().endInterruption(flags);
+    PlatformMediaSessionManager::singleton().endInterruption(flags);
 }
 
 void Internals::applicationWillBecomeInactive()
 {
-    PlatformMediaSessionManager::sharedManager().applicationWillBecomeInactive();
+    PlatformMediaSessionManager::singleton().applicationWillBecomeInactive();
 }
 
 void Internals::applicationDidBecomeActive()
 {
-    PlatformMediaSessionManager::sharedManager().applicationDidBecomeActive();
+    PlatformMediaSessionManager::singleton().applicationDidBecomeActive();
 }
 
 void Internals::applicationWillEnterForeground(bool suspendedUnderLock) const
 {
-    PlatformMediaSessionManager::sharedManager().applicationWillEnterForeground(suspendedUnderLock);
+    PlatformMediaSessionManager::singleton().applicationWillEnterForeground(suspendedUnderLock);
 }
 
 void Internals::applicationDidEnterBackground(bool suspendedUnderLock) const
 {
-    PlatformMediaSessionManager::sharedManager().applicationDidEnterBackground(suspendedUnderLock);
+    PlatformMediaSessionManager::singleton().applicationDidEnterBackground(suspendedUnderLock);
 }
 
 static PlatformMediaSession::MediaType mediaTypeFromString(const String& mediaTypeString)
@@ -4848,8 +4872,8 @@ ExceptionOr<void> Internals::setMediaSessionRestrictions(const String& mediaType
     if (mediaType == PlatformMediaSession::MediaType::None)
         return Exception { ExceptionCode::InvalidAccessError };
 
-    auto restrictions = PlatformMediaSessionManager::sharedManager().restrictions(mediaType);
-    PlatformMediaSessionManager::sharedManager().removeRestriction(mediaType, restrictions);
+    auto restrictions = PlatformMediaSessionManager::singleton().restrictions(mediaType);
+    PlatformMediaSessionManager::singleton().removeRestriction(mediaType, restrictions);
 
     restrictions = PlatformMediaSessionManager::NoRestrictions;
 
@@ -4867,7 +4891,7 @@ ExceptionOr<void> Internals::setMediaSessionRestrictions(const String& mediaType
         if (equalLettersIgnoringASCIICase(restrictionString, "suspendedunderlockplaybackrestricted"_s))
             restrictions |= PlatformMediaSessionManager::SuspendedUnderLockPlaybackRestricted;
     }
-    PlatformMediaSessionManager::sharedManager().addRestriction(mediaType, restrictions);
+    PlatformMediaSessionManager::singleton().addRestriction(mediaType, restrictions);
     return { };
 }
 
@@ -4877,7 +4901,7 @@ ExceptionOr<String> Internals::mediaSessionRestrictions(const String& mediaTypeS
     if (mediaType == PlatformMediaSession::MediaType::None)
         return Exception { ExceptionCode::InvalidAccessError };
 
-    PlatformMediaSessionManager::SessionRestrictions restrictions = PlatformMediaSessionManager::sharedManager().restrictions(mediaType);
+    PlatformMediaSessionManager::SessionRestrictions restrictions = PlatformMediaSessionManager::singleton().restrictions(mediaType);
     if (restrictions == PlatformMediaSessionManager::NoRestrictions)
         return String();
 
@@ -4978,7 +5002,7 @@ ExceptionOr<void> Internals::postRemoteControlCommand(const String& commandStrin
     else
         return Exception { ExceptionCode::InvalidAccessError };
 
-    PlatformMediaSessionManager::sharedManager().processDidReceiveRemoteControlCommand(command, parameter);
+    PlatformMediaSessionManager::singleton().processDidReceiveRemoteControlCommand(command, parameter);
     return { };
 }
 
@@ -5107,20 +5131,20 @@ void Internals::useMockAudioDestinationCocoa()
 void Internals::simulateSystemSleep() const
 {
 #if ENABLE(VIDEO)
-    PlatformMediaSessionManager::sharedManager().processSystemWillSleep();
+    PlatformMediaSessionManager::singleton().processSystemWillSleep();
 #endif
 }
 
 void Internals::simulateSystemWake() const
 {
 #if ENABLE(VIDEO)
-    PlatformMediaSessionManager::sharedManager().processSystemDidWake();
+    PlatformMediaSessionManager::singleton().processSystemDidWake();
 #endif
 }
 
 std::optional<Internals::NowPlayingMetadata> Internals::nowPlayingMetadata() const
 {
-    if (auto nowPlayingInfo = PlatformMediaSessionManager::sharedManager().nowPlayingInfo())
+    if (auto nowPlayingInfo = PlatformMediaSessionManager::singleton().nowPlayingInfo())
         return nowPlayingInfo->metadata;
     return std::nullopt;
 }
@@ -5128,14 +5152,14 @@ std::optional<Internals::NowPlayingMetadata> Internals::nowPlayingMetadata() con
 ExceptionOr<Internals::NowPlayingState> Internals::nowPlayingState() const
 {
 #if ENABLE(VIDEO)
-    auto lastUpdatedNowPlayingInfoUniqueIdentifier = PlatformMediaSessionManager::sharedManager().lastUpdatedNowPlayingInfoUniqueIdentifier();
-    return { { PlatformMediaSessionManager::sharedManager().lastUpdatedNowPlayingTitle(),
-        PlatformMediaSessionManager::sharedManager().lastUpdatedNowPlayingDuration(),
-        PlatformMediaSessionManager::sharedManager().lastUpdatedNowPlayingElapsedTime(),
+    auto lastUpdatedNowPlayingInfoUniqueIdentifier = PlatformMediaSessionManager::singleton().lastUpdatedNowPlayingInfoUniqueIdentifier();
+    return { { PlatformMediaSessionManager::singleton().lastUpdatedNowPlayingTitle(),
+        PlatformMediaSessionManager::singleton().lastUpdatedNowPlayingDuration(),
+        PlatformMediaSessionManager::singleton().lastUpdatedNowPlayingElapsedTime(),
         lastUpdatedNowPlayingInfoUniqueIdentifier ? lastUpdatedNowPlayingInfoUniqueIdentifier->toUInt64() : 0,
-        PlatformMediaSessionManager::sharedManager().hasActiveNowPlayingSession(),
-        PlatformMediaSessionManager::sharedManager().registeredAsNowPlayingApplication(),
-        PlatformMediaSessionManager::sharedManager().haveEverRegisteredAsNowPlayingApplication()
+        PlatformMediaSessionManager::singleton().hasActiveNowPlayingSession(),
+        PlatformMediaSessionManager::singleton().registeredAsNowPlayingApplication(),
+        PlatformMediaSessionManager::singleton().haveEverRegisteredAsNowPlayingApplication()
     } };
 #else
     return Exception { ExceptionCode::InvalidAccessError };
@@ -5289,7 +5313,7 @@ void Internals::mockMediaPlaybackTargetPickerDismissPopup()
 bool Internals::isMonitoringWirelessRoutes() const
 {
 #if ENABLE(VIDEO)
-    return PlatformMediaSessionManager::sharedManager().isMonitoringWirelessTargets();
+    return PlatformMediaSessionManager::singleton().isMonitoringWirelessTargets();
 #else
     return false;
 #endif // ENABLE(VIDEO)
@@ -6843,14 +6867,14 @@ void Internals::setAlwaysAllowLocalWebarchive(bool alwaysAllowLocalWebarchive)
 void Internals::processWillSuspend()
 {
 #if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
-    PlatformMediaSessionManager::sharedManager().processWillSuspend();
+    PlatformMediaSessionManager::singleton().processWillSuspend();
 #endif
 }
 
 void Internals::processDidResume()
 {
 #if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
-    PlatformMediaSessionManager::sharedManager().processDidResume();
+    PlatformMediaSessionManager::singleton().processDidResume();
 #endif
 }
 
@@ -6887,7 +6911,7 @@ void Internals::setTransientActivationDuration(double seconds)
 void Internals::setIsPlayingToAutomotiveHeadUnit(bool isPlaying)
 {
 #if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
-    PlatformMediaSessionManager::sharedManager().setIsPlayingToAutomotiveHeadUnit(isPlaying);
+    PlatformMediaSessionManager::singleton().setIsPlayingToAutomotiveHeadUnit(isPlaying);
 #else
     UNUSED_PARAM(isPlaying);
 #endif
@@ -7295,7 +7319,7 @@ ExceptionOr<Vector<String>> Internals::platformSupportedCommands() const
 {
     if (!contextDocument())
         return Exception { ExceptionCode::InvalidAccessError };
-    auto commands = PlatformMediaSessionManager::sharedManager().supportedCommands();
+    auto commands = PlatformMediaSessionManager::singleton().supportedCommands();
     Vector<String> commandStrings;
     for (auto command : commands)
         commandStrings.append(convertEnumerationToString(command));
@@ -7405,7 +7429,7 @@ String Internals::dumpStyleResolvers()
     document->updateStyleIfNeeded();
 
     unsigned currentIdentifier = 0;
-    UncheckedKeyHashMap<Style::Resolver*, unsigned> resolverIdentifiers;
+    HashMap<Style::Resolver*, unsigned> resolverIdentifiers;
 
     StringBuilder result;
 
@@ -7709,4 +7733,16 @@ void Internals::setResourceCachingDisabledByWebInspector(bool disabled)
     document->page()->setResourceCachingDisabledByWebInspector(disabled);
 }
 
+void Internals::setTopDocumentURLForQuirks(const String& urlString)
+{
+    RefPtr document = contextDocument();
+    if (!document)
+        return;
+
+    document->protectedPage()->settings().setNeedsSiteSpecificQuirks(true);
+    document->quirks().setTopDocumentURLForTesting(URL { urlString });
+}
+
 } // namespace WebCore
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

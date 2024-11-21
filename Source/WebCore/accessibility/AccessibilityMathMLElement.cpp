@@ -36,17 +36,17 @@
 
 namespace WebCore {
 
-AccessibilityMathMLElement::AccessibilityMathMLElement(RenderObject& renderer, bool isAnonymousOperator)
-    : AccessibilityRenderObject(renderer)
+AccessibilityMathMLElement::AccessibilityMathMLElement(AXID axID, RenderObject& renderer, bool isAnonymousOperator)
+    : AccessibilityRenderObject(axID, renderer)
     , m_isAnonymousOperator(isAnonymousOperator)
 {
 }
 
 AccessibilityMathMLElement::~AccessibilityMathMLElement() = default;
 
-Ref<AccessibilityMathMLElement> AccessibilityMathMLElement::create(RenderObject& renderer, bool isAnonymousOperator)
+Ref<AccessibilityMathMLElement> AccessibilityMathMLElement::create(AXID axID, RenderObject& renderer, bool isAnonymousOperator)
 {
-    return adoptRef(*new AccessibilityMathMLElement(renderer, isAnonymousOperator));
+    return adoptRef(*new AccessibilityMathMLElement(axID, renderer, isAnonymousOperator));
 }
 
 AccessibilityRole AccessibilityMathMLElement::determineAccessibilityRole()
@@ -64,6 +64,25 @@ AccessibilityRole AccessibilityMathMLElement::determineAccessibilityRole()
     // It's not clear which role a platform should choose for a math element.
     // Declaring a math element role should give flexibility to platforms to choose.
     return AccessibilityRole::MathElement;
+}
+
+void AccessibilityMathMLElement::addChildren()
+{
+    if (!hasTagName(MathMLNames::mfencedTag)) {
+        AccessibilityRenderObject::addChildren();
+        return;
+    }
+
+    // mfenced elements generate lots of anonymous renderers due to their `open`, `close`, and `separators` attributes.
+    // Because of this, default to walking the render tree when adding their children (unlike most other object types for
+    // which we walk the DOM). This may cause unexpected behavior for `display:contents` descendants of mfenced elements.
+    // However, this element is very deprecated, and even the most simple usages of it do not render consistently across
+    // browsers, so it's already unlikely to be used by web developers, even more so with `display:contents` mixed in.
+    m_childrenInitialized = true;
+    for (auto& object : AXChildIterator(*this))
+        addChild(&object);
+
+    m_subtreeDirty = false;
 }
 
 String AccessibilityMathMLElement::textUnderElement(TextUnderElementMode mode) const

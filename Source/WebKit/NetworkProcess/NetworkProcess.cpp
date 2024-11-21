@@ -305,12 +305,12 @@ void NetworkProcess::initializeNetworkProcess(NetworkProcessCreationParameters&&
 
     m_suppressMemoryPressureHandler = parameters.shouldSuppressMemoryPressureHandler;
     if (!m_suppressMemoryPressureHandler) {
-        auto& memoryPressureHandler = MemoryPressureHandler::singleton();
-        memoryPressureHandler.setLowMemoryHandler([weakThis = WeakPtr { *this }] (Critical critical, Synchronous) {
+        Ref memoryPressureHandler = MemoryPressureHandler::singleton();
+        memoryPressureHandler->setLowMemoryHandler([weakThis = WeakPtr { *this }] (Critical critical, Synchronous) {
             if (RefPtr process = weakThis.get())
                 process->lowMemoryHandler(critical);
         });
-        memoryPressureHandler.install();
+        memoryPressureHandler->install();
     }
 
     setCacheModel(parameters.cacheModel);
@@ -363,6 +363,7 @@ void NetworkProcess::initializeConnection(IPC::Connection* connection)
 
 void NetworkProcess::createNetworkConnectionToWebProcess(ProcessIdentifier identifier, PAL::SessionID sessionID, NetworkProcessConnectionParameters&& parameters, CompletionHandler<void(std::optional<IPC::Connection::Handle>&&, HTTPCookieAcceptPolicy)>&& completionHandler)
 {
+    RELEASE_LOG(Process, "%p - NetworkProcess::createNetworkConnectionToWebProcess: Create connection for web process core identifier %" PRIu64, this, identifier.toUInt64());
     auto connectionIdentifiers = IPC::Connection::createConnectionIdentifierPair();
     if (!connectionIdentifiers) {
         completionHandler({ }, HTTPCookieAcceptPolicy::Never);
@@ -2149,9 +2150,6 @@ void NetworkProcess::findPendingDownloadLocation(NetworkDataTask& networkDataTas
         if (destination.isEmpty())
             return completionHandler(PolicyAction::Ignore);
         networkDataTask->setPendingDownloadLocation(destination, WTFMove(sandboxExtensionHandle), allowOverwrite == AllowOverwrite::Yes);
-        completionHandler(PolicyAction::Download);
-        if (networkDataTask->state() == NetworkDataTask::State::Canceling || networkDataTask->state() == NetworkDataTask::State::Completed)
-            return;
 
 #if PLATFORM(COCOA)
         URL publishURL;
@@ -2166,6 +2164,11 @@ void NetworkProcess::findPendingDownloadLocation(NetworkDataTask& networkDataTas
             publishDownloadProgress(downloadID, publishURL, WTFMove(placeholderSandboxExtensionHandle));
 #endif // HAVE(MODERN_DOWNLOADPROGRESS)
 #endif // PLATFORM(COCOA)
+
+        completionHandler(PolicyAction::Download);
+        if (networkDataTask->state() == NetworkDataTask::State::Canceling || networkDataTask->state() == NetworkDataTask::State::Completed)
+            return;
+
         if (downloadManager().download(downloadID)) {
             // The completion handler already called dataTaskBecameDownloadTask().
             return;
@@ -2267,6 +2270,15 @@ void NetworkProcess::terminateRemoteWorkerContextConnectionWhenPossible(RemoteWo
             sharedWorkerServer->terminateContextConnectionWhenPossible(registrableDomain, processIdentifier);
         break;
     }
+}
+
+void NetworkProcess::runningOrTerminatingServiceWorkerCountForTesting(PAL::SessionID sessionID, CompletionHandler<void(unsigned)>&& completionHandler) const
+{
+    auto* session = networkSession(sessionID);
+    if (!session)
+        return completionHandler(0);
+
+    completionHandler(session->ensureSWServer().runningOrTerminatingCount());
 }
 
 void NetworkProcess::prepareToSuspend(bool isSuspensionImminent, MonotonicTime estimatedSuspendTime, CompletionHandler<void()>&& completionHandler)
@@ -2881,6 +2893,13 @@ void NetworkProcess::resetServiceWorkerFetchTimeoutForTesting(CompletionHandler<
 {
     m_serviceWorkerFetchTimeout = defaultServiceWorkerFetchTimeout;
     completionHandler();
+}
+
+void NetworkProcess::terminateIdleServiceWorkers(WebCore::ProcessIdentifier processIdentifier, CompletionHandler<void()>&& callback)
+{
+    if (RefPtr connection = webProcessConnection(processIdentifier))
+        connection->terminateIdleServiceWorkers();
+    callback();
 }
 
 Seconds NetworkProcess::randomClosedPortDelay()

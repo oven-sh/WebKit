@@ -70,6 +70,7 @@ GPUProcess/EntryPoint/Cocoa/XPCService/GPUServiceEntryPoint.mm
 GPUProcess/cocoa/GPUConnectionToWebProcessCocoa.mm
 GPUProcess/cocoa/GPUProcessCocoa.mm
 GPUProcess/graphics/RemoteGraphicsContextGLCocoa.cpp
+GPUProcess/graphics/ScopedRenderingResourcesRequestCocoa.mm @no-unify
 GPUProcess/ios/GPUProcessIOS.mm
 GPUProcess/mac/GPUProcessMac.mm
 GPUProcess/mac/LocalAudioSessionRoutingArbitrator.cpp
@@ -302,7 +303,9 @@ UIProcess/API/Cocoa/_WKTextManipulationExclusionRule.mm
 UIProcess/API/Cocoa/_WKTextManipulationItem.mm
 UIProcess/API/Cocoa/_WKTextManipulationToken.mm
 UIProcess/API/Cocoa/_WKTextPreview.mm
+UIProcess/API/Cocoa/_WKTextRun.mm
 UIProcess/API/Cocoa/_WKThumbnailView.mm
+UIProcess/API/Cocoa/_WKTouchEventGenerator.mm
 UIProcess/API/Cocoa/_WKUserContentExtensionStore.mm
 UIProcess/API/Cocoa/_WKUserContentFilter.mm
 UIProcess/API/Cocoa/_WKUserContentWorld.mm
@@ -330,6 +333,7 @@ UIProcess/API/Cocoa/WKBrowsingContextController.mm
 UIProcess/API/Cocoa/WKContentRuleList.mm
 UIProcess/API/Cocoa/WKContentRuleListStore.mm
 UIProcess/API/Cocoa/WKContentWorld.mm
+UIProcess/API/Cocoa/WKContentWorldConfiguration.mm
 UIProcess/API/Cocoa/WKContextMenuElementInfo.mm
 UIProcess/API/Cocoa/WKDownload.mm
 UIProcess/API/Cocoa/WKError.mm
@@ -494,6 +498,7 @@ UIProcess/ios/CompactContextMenuPresenter.mm
 UIProcess/ios/DragDropInteractionState.mm
 UIProcess/ios/GestureRecognizerConsistencyEnforcer.mm
 UIProcess/ios/PageClientImplIOS.mm
+UIProcess/ios/PointerTouchCompatibilitySimulator.mm
 UIProcess/ios/ProcessStateMonitor.mm
 UIProcess/ios/RevealFocusedElementDeferrer.mm
 UIProcess/ios/SmartMagnificationController.mm
@@ -792,8 +797,6 @@ RemoteAudioSessionProxyMessageReceiver.cpp
 RemoteAudioSourceProviderManagerMessageReceiver.cpp
 RemoteImageDecoderAVFProxyMessageReceiver.cpp
 RemoteImageDecoderAVFManagerMessageReceiver.cpp
-RemoteMediaRecorderMessageReceiver.cpp
-RemoteMediaRecorderManagerMessageReceiver.cpp
 RemoteMediaSessionHelperMessageReceiver.cpp
 RemoteMediaSessionHelperProxyMessageReceiver.cpp
 RemoteMediaSessionCoordinatorMessageReceiver.cpp

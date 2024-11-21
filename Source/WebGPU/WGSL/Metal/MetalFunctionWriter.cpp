@@ -515,14 +515,11 @@ void FunctionDefinitionWriter::emitNecessaryHelpers()
     }
 
     if (m_shaderModule.usesMin()) {
-        m_stringBuilder.append(m_indent, "template<typename T>\n"_s,
-            m_indent, "static T __attribute((always_inline)) __wgslMin(T a, T b)\n"_s,
+        m_stringBuilder.append(m_indent, "static uint __attribute((always_inline)) __wgslMin(uint a, uint b)\n"_s,
             m_indent, "{\n"_s);
         {
             IndentationScope scope(m_indent);
-            m_stringBuilder.append(m_indent, "volatile T va = a;\n"_s,
-                m_indent, "volatile T vb = b;\n"_s,
-                m_indent, "return min(va, vb);\n"_s);
+            m_stringBuilder.append("return select(b, a, a < b);\n"_s);
         }
         m_stringBuilder.append(m_indent, "}\n\n"_s);
     }
@@ -603,7 +600,7 @@ void FunctionDefinitionWriter::visit(AST::Structure& structDecl)
         for (auto& member : structDecl.members()) {
             auto& name = member.name();
             auto* type = member.type().inferredType();
-            if (isPrimitiveReference(type, Types::Primitive::TextureExternal)) {
+            if (isPrimitive(type, Types::Primitive::TextureExternal) || isPrimitiveReference(type, Types::Primitive::TextureExternal))  {
                 m_stringBuilder.append(m_indent, "texture2d<float> __"_s, name, "_FirstPlane;\n"_s,
                     m_indent, "texture2d<float> __"_s, name, "_SecondPlane;\n"_s,
                     m_indent, "float3x2 __"_s, name, "_UVRemapMatrix;\n"_s,
@@ -941,6 +938,8 @@ static ASCIILiteral convertToSampleMode(InterpolationType type, InterpolationSam
         return "flat"_s;
     case InterpolationType::Linear:
         switch (sampleType) {
+        case InterpolationSampling::First:
+        case InterpolationSampling::Either:
         case InterpolationSampling::Center:
             return "center_no_perspective"_s;
         case InterpolationSampling::Centroid:
@@ -950,6 +949,8 @@ static ASCIILiteral convertToSampleMode(InterpolationType type, InterpolationSam
         }
     case InterpolationType::Perspective:
         switch (sampleType) {
+        case InterpolationSampling::First:
+        case InterpolationSampling::Either:
         case InterpolationSampling::Center:
             return "center_perspective"_s;
         case InterpolationSampling::Centroid:

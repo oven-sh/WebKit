@@ -27,63 +27,130 @@
 
 #include "ProcessIdentity.h"
 #include "SampleMap.h"
+#include <CoreMedia/CMTime.h>
 #include <wtf/Function.h>
+#include <wtf/Lock.h>
 #include <wtf/Ref.h>
 #include <wtf/RetainPtr.h>
 #include <wtf/ThreadSafeWeakPtr.h>
 
 OBJC_CLASS AVSampleBufferDisplayLayer;
+OBJC_CLASS AVSampleBufferVideoRenderer;
 OBJC_PROTOCOL(WebSampleBufferVideoRendering);
+typedef struct opaqueCMBufferQueue *CMBufferQueueRef;
 typedef struct opaqueCMSampleBuffer *CMSampleBufferRef;
-
-#if HAVE(AVSAMPLEBUFFERDISPLAYLAYER_COPYDISPLAYEDPIXELBUFFER)
+typedef struct OpaqueCMTimebase* CMTimebaseRef;
 typedef struct __CVBuffer* CVPixelBufferRef;
-#endif
+
+namespace WTF {
+class WorkQueue;
+}
 
 namespace WebCore {
 
+class MediaSample;
 class WebCoreDecompressionSession;
 
-class VideoMediaSampleRenderer : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<VideoMediaSampleRenderer> {
+class VideoMediaSampleRenderer : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<VideoMediaSampleRenderer, WTF::DestructionThread::Main> {
 public:
     static Ref<VideoMediaSampleRenderer> create(WebSampleBufferVideoRendering *renderer) { return adoptRef(*new VideoMediaSampleRenderer(renderer)); }
     ~VideoMediaSampleRenderer();
 
+    bool prefersDecompressionSession() { return m_prefersDecompressionSession; }
+    void setPrefersDecompressionSession(bool);
+
+    void setTimebase(RetainPtr<CMTimebaseRef>&&);
+    RetainPtr<CMTimebaseRef> timebase() const;
+
     bool isReadyForMoreMediaData() const;
     void requestMediaDataWhenReady(Function<void()>&&);
-    void enqueueSample(CMSampleBufferRef, bool displaying = true);
+    void enqueueSample(const MediaSample&);
     void stopRequestingMediaData();
+
+    void notifyWhenHasAvailableVideoFrame(Function<void()>&&);
+    void notifyWhenDecodingErrorOccurred(Function<void(OSStatus)>&&);
 
     void flush();
 
     void expectMinimumUpcomingSampleBufferPresentationTime(const MediaTime&);
     void resetUpcomingSampleBufferPresentationTimeExpectations();
 
-    WebSampleBufferVideoRendering *renderer() const { return m_renderer.get(); }
+    WebSampleBufferVideoRendering *renderer() const;
     AVSampleBufferDisplayLayer *displayLayer() const;
-#if HAVE(AVSAMPLEBUFFERDISPLAYLAYER_COPYDISPLAYEDPIXELBUFFER)
-    RetainPtr<CVPixelBufferRef> copyDisplayedPixelBuffer() const;
-    CGRect bounds() const;
-#endif
 
-    void setResourceOwner(const ProcessIdentity& resourceOwner) { m_resourceOwner = resourceOwner; }
+    struct DisplayedPixelBufferEntry {
+        RetainPtr<CVPixelBufferRef> pixelBuffer;
+        MediaTime presentationTimeStamp;
+    };
+    DisplayedPixelBufferEntry copyDisplayedPixelBuffer();
+
+    unsigned totalVideoFrames() const;
+    unsigned droppedVideoFrames() const;
+    unsigned corruptedVideoFrames() const;
+    MediaTime totalFrameDelay() const;
+
+    void setResourceOwner(const ProcessIdentity&);
 
 private:
     VideoMediaSampleRenderer(WebSampleBufferVideoRendering *);
+
+    void clearTimebase();
+
+    WebSampleBufferVideoRendering *rendererOrDisplayLayer() const;
+
     void resetReadyForMoreSample();
     void initializeDecompressionSession();
+    void decodeNextSample();
+    void decodedFrameAvailable(RetainPtr<CMSampleBufferRef>&&);
+    bool maybeQueueFrameForDisplay(CMSampleBufferRef);
+    void flushCompressedSampleQueue();
+    void flushDecodedSampleQueue();
+    bool purgeDecodedSampleQueue();
+    size_t decodedSamplesCount() const;
+    void assignResourceOwner(CMSampleBufferRef);
+    bool areSamplesQueuesReadyForMoreMediaData(size_t waterMark) const;
+    void maybeBecomeReadyForMoreMediaData();
+    bool shouldDecodeSample(CMSampleBufferRef, bool displaying);
 
-    RetainPtr<WebSampleBufferVideoRendering> m_renderer;
+    void notifyHasAvailableVideoFrame();
+    void notifyErrorHasOccurred(OSStatus);
+
+    Ref<GuaranteedSerialFunctionDispatcher> dispatcher() const;
+    void ensureOnDispatcher(Function<void()>&&) const;
+    void ensureOnDispatcherSync(Function<void()>&&) const;
+    dispatch_queue_t dispatchQueue() const;
+
+    void cancelTimer();
+
+    const RefPtr<WTF::WorkQueue> m_workQueue;
+    RetainPtr<AVSampleBufferDisplayLayer> m_displayLayer;
+#if HAVE(AVSAMPLEBUFFERVIDEORENDERER)
+    RetainPtr<AVSampleBufferVideoRenderer> m_renderer;
+#endif
+    mutable Lock m_lock;
+    RetainPtr<CMTimebaseRef> m_timebase WTF_GUARDED_BY_LOCK(m_lock);
+    OSObjectPtr<dispatch_source_t> m_timerSource WTF_GUARDED_BY_LOCK(m_lock);
+    std::atomic<ssize_t> m_framesBeingDecoded { 0 };
+    std::atomic<int> m_flushId { 0 };
+    Deque<std::pair<RetainPtr<CMSampleBufferRef>, int>> m_compressedSampleQueue WTF_GUARDED_BY_CAPABILITY(dispatcher().get());
+    RetainPtr<CMBufferQueueRef> m_decodedSampleQueue; // created on the main thread, immutable after creation.
     RefPtr<WebCoreDecompressionSession> m_decompressionSession;
-    bool m_displayLayerReadyForMoreSample { false };
-    bool m_decompressionSessionReadyForMoreSample { false };
+    bool m_isDecodingSample WTF_GUARDED_BY_CAPABILITY(dispatcher().get()) { false };
+    bool m_isDisplayingSample WTF_GUARDED_BY_CAPABILITY(dispatcher().get()) { false };
+    std::optional<CMTime> m_lastDisplayedTime WTF_GUARDED_BY_CAPABILITY(dispatcher().get());
     Function<void()> m_readyForMoreSampleFunction;
-    uint32_t m_decodePending { 0 };
-    bool m_wasNotDisplaying { false };
-    bool m_requestMediaDataWhenReadySet { false };
+    bool m_prefersDecompressionSession { false };
     std::optional<uint32_t> m_currentCodec;
-    std::optional<MediaTime> m_minimumUpcomingPresentationTime;
+    std::atomic<bool> m_gotDecodingError { false };
 
+    // Playback Statistics
+    std::atomic<unsigned> m_totalVideoFrames { 0 };
+    std::atomic<unsigned> m_droppedVideoFrames { 0 };
+    std::atomic<unsigned> m_corruptedVideoFrames { 0 };
+    MediaTime m_totalFrameDelay { MediaTime::zeroTime() };
+
+    Function<void()> m_hasAvailableFrameCallback WTF_GUARDED_BY_CAPABILITY(mainThread);
+    Function<void(OSStatus)> m_errorOccurredFunction WTF_GUARDED_BY_CAPABILITY(mainThread);
     ProcessIdentity m_resourceOwner;
 };
 

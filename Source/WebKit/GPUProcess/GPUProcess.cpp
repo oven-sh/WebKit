@@ -220,12 +220,12 @@ void GPUProcess::initializeGPUProcess(GPUProcessCreationParameters&& parameters,
     WTF::Thread::setCurrentThreadIsUserInitiated();
     WebCore::initializeCommonAtomStrings();
 
-    auto& memoryPressureHandler = MemoryPressureHandler::singleton();
-    memoryPressureHandler.setLowMemoryHandler([weakThis = WeakPtr { *this }] (Critical critical, Synchronous synchronous) {
+    Ref memoryPressureHandler = MemoryPressureHandler::singleton();
+    memoryPressureHandler->setLowMemoryHandler([weakThis = WeakPtr { *this }] (Critical critical, Synchronous synchronous) {
         if (RefPtr process = weakThis.get())
             process->lowMemoryHandler(critical, synchronous);
     });
-    memoryPressureHandler.install();
+    memoryPressureHandler->install();
 
 #if PLATFORM(IOS_FAMILY) || ENABLE(ROUTING_ARBITRATION)
     DeprecatedGlobalSettings::setShouldManageAudioSessionCategory(true);
@@ -298,11 +298,6 @@ void GPUProcess::updateGPUProcessPreferences(GPUProcessPreferences&& preferences
         PlatformMediaSessionManager::setVorbisDecoderEnabled(*m_preferences.vorbisDecoderEnabled);
 #endif
     
-#if ENABLE(MEDIA_SOURCE) && HAVE(AVSAMPLEBUFFERVIDEOOUTPUT)
-    if (updatePreference(m_preferences.mediaSourceInlinePaintingEnabled, preferences.mediaSourceInlinePaintingEnabled))
-        DeprecatedGlobalSettings::setMediaSourceInlinePaintingEnabled(*m_preferences.mediaSourceInlinePaintingEnabled);
-#endif
-
 #if USE(MODERN_AVCONTENTKEYSESSION)
     if (updatePreference(m_preferences.shouldUseModernAVContentKeySession, preferences.shouldUseModernAVContentKeySession))
         MediaSessionManagerCocoa::setShouldUseModernAVContentKeySession(*m_preferences.shouldUseModernAVContentKeySession);

@@ -49,6 +49,8 @@
 #include <limits>
 #include <mutex>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace JSC {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED_TEMPLATE(MemoryJSWebAssemblyInstanceWeakCGSet, Wasm::Memory::JSWebAssemblyInstanceWeakCGSet);
@@ -181,7 +183,7 @@ RefPtr<Memory> Memory::tryCreate(VM& vm, PageCount initial, PageCount maximum, M
         tryAllocate(vm,
             [&] () -> BufferMemoryResult::Kind {
                 auto result = BufferMemoryManager::singleton().tryAllocateFastMemory();
-                fastMemory = bitwise_cast<char*>(result.basePtr);
+                fastMemory = std::bit_cast<char*>(result.basePtr);
                 return result.kind;
             });
     }
@@ -225,7 +227,7 @@ RefPtr<Memory> Memory::tryCreate(VM& vm, PageCount initial, PageCount maximum, M
         tryAllocate(vm,
             [&] () -> BufferMemoryResult::Kind {
                 auto result = BufferMemoryManager::singleton().tryAllocateGrowableBoundsCheckingMemory(maximumBytes);
-                slowMemory = bitwise_cast<char*>(result.basePtr);
+                slowMemory = std::bit_cast<char*>(result.basePtr);
                 return result.kind;
             });
         if (!slowMemory) {
@@ -450,5 +452,7 @@ void Memory::dump(PrintStream& out) const
 } // namespace Wasm
 
 } // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEBASSEMBLY)

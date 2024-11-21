@@ -201,8 +201,8 @@ public:
     float zoom;
     AtomString pseudoElementNameArgument;
 
-    Vector<AtomString> anchorNames;
-    AtomString positionAnchor;
+    Vector<Style::ScopedName> anchorNames;
+    std::optional<Style::ScopedName> positionAnchor;
 
     std::optional<Length> blockStepSize;
     unsigned blockStepInsert : 1; // BlockStepInsert
@@ -247,6 +247,8 @@ public:
     unsigned overflowAnchor : 1; // Scroll Anchoring- OverflowAnchor
 
     bool hasClip : 1;
+
+    unsigned positionTryOrder : 3; // Style::PositionTryOrder; 5 values so 3 bits.
 
     FieldSizing fieldSizing { FieldSizing::Fixed };
 

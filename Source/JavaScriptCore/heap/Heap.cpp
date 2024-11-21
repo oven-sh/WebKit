@@ -137,6 +137,14 @@ size_t proportionalHeapSize(size_t heapSize, size_t ramSize)
     if (VM::isInMiniMode())
         return Options::miniVMHeapGrowthFactor() * heapSize;
 
+    // Use new heuristic function for machines >= 16GB RAM.
+    // https://www.mathway.com/en/Algebra?asciimath=2%20*%20e%5E(-1%20*%20x)%20%2B%201%20%3Dy
+    size_t heapGrowthFunctionThresholdInBytes = static_cast<size_t>(Options::heapGrowthFunctionThresholdInMB()) * MB;
+    if (ramSize >= heapGrowthFunctionThresholdInBytes) {
+        double x = static_cast<double>(std::min(heapSize, ramSize)) / ramSize;
+        double ratio = Options::heapGrowthMaxIncrease() * std::exp(-(Options::heapGrowthSteepnessFactor() * x)) + 1;
+        return ratio * heapSize;
+    }
 #if USE(BMALLOC_MEMORY_FOOTPRINT_API)
     size_t memoryFootprint = bmalloc::api::memoryFootprint();
     if (memoryFootprint < ramSize * Options::smallHeapRAMFraction())
@@ -1664,6 +1672,7 @@ NEVER_INLINE bool Heap::runEndPhase(GCConductor conn)
         if (vm().typeProfiler())
             vm().typeProfiler()->invalidateTypeSetCache(vm());
 
+        cancelDeferredWorkIfNeeded();
         reapWeakHandles();
         pruneStaleEntriesFromWeakGCHashTables();
         sweepArrayBuffers();
@@ -2341,6 +2350,11 @@ void Heap::prepareForMarking()
     m_objectSpace.prepareForMarking();
 }
 
+void Heap::cancelDeferredWorkIfNeeded()
+{
+    vm().deferredWorkTimer->cancelPendingWork(vm());
+}
+
 void Heap::reapWeakHandles()
 {
     m_objectSpace.reapWeakSets();
@@ -2539,7 +2553,7 @@ void Heap::didAllocate(size_t bytes)
 
 void Heap::addFinalizer(JSCell* cell, CFinalizer finalizer)
 {
-    WeakSet::allocate(cell, &m_cFinalizerOwner, bitwise_cast<void*>(finalizer)); // Balanced by CFinalizerOwner::finalize().
+    WeakSet::allocate(cell, &m_cFinalizerOwner, std::bit_cast<void*>(finalizer)); // Balanced by CFinalizerOwner::finalize().
 }
 
 void Heap::addFinalizer(JSCell* cell, LambdaFinalizer function)
@@ -2550,7 +2564,7 @@ void Heap::addFinalizer(JSCell* cell, LambdaFinalizer function)
 void Heap::CFinalizerOwner::finalize(Handle<Unknown> handle, void* context)
 {
     HandleSlot slot = handle.slot();
-    CFinalizer finalizer = bitwise_cast<CFinalizer>(context);
+    CFinalizer finalizer = std::bit_cast<CFinalizer>(context);
     finalizer(slot->asCell());
     WeakSet::deallocate(WeakImpl::asWeakImpl(slot));
 }
@@ -3246,14 +3260,12 @@ void Heap::runTaskInParallel(RefPtr<SharedTask<void(SlotVisitor&)>> task)
     }
 }
 
-void Heap::verifyGC()
+void Heap::verifierMark()
 {
-    RELEASE_ASSERT(m_verifierSlotVisitor);
     RELEASE_ASSERT(!m_isMarkingForGCVerifier);
-    m_isMarkingForGCVerifier = true;
 
+    SetForScope isMarkingForGCVerifierScope(m_isMarkingForGCVerifier, true);
     VerifierSlotVisitor& visitor = *m_verifierSlotVisitor;
-
     do {
         while (!visitor.isEmpty())
             visitor.drain();
@@ -3261,7 +3273,39 @@ void Heap::verifyGC()
         visitor.executeConstraintTasks();
     } while (!visitor.isEmpty());
 
-    m_isMarkingForGCVerifier = false;
+    visitor.setDoneMarking();
+}
+
+void Heap::dumpVerifierMarkerData(HeapCell* cell)
+{
+    if (!Options::verifyGC())
+        return;
+
+    if (!Heap::isMarked(cell)) {
+        dataLogLn("\n" "GC Verifier: cell ", RawPointer(cell), " was not marked by SlotVisitor");
+        return;
+    }
+
+    // Use VerifierSlotVisitorScope to keep it live.
+    RELEASE_ASSERT(m_verifierSlotVisitor && !m_isMarkingForGCVerifier);
+    VerifierSlotVisitor& visitor = *m_verifierSlotVisitor;
+    RELEASE_ASSERT(visitor.doneMarking());
+
+    if (!visitor.isMarked(cell)) {
+        dataLogLn("\n" "GC Verifier: ERROR cell ", RawPointer(cell), " was not marked by VerifierSlotVisitor");
+        return;
+    }
+
+    dataLogLn("\n" "GC Verifier: Found marked cell ", RawPointer(cell), " with MarkerData:");
+    visitor.dumpMarkerData(cell);
+}
+
+void Heap::verifyGC()
+{
+    RELEASE_ASSERT(m_verifierSlotVisitor);
+    verifierMark();
+    VerifierSlotVisitor& visitor = *m_verifierSlotVisitor;
+    RELEASE_ASSERT(visitor.doneMarking() && !m_isMarkingForGCVerifier);
 
     visitor.forEachLiveCell([&] (HeapCell* cell) {
         if (Heap::isMarked(cell))
@@ -3273,7 +3317,16 @@ void Heap::verifyGC()
         RELEASE_ASSERT(this->isMarked(cell));
     });
 
+    if (!m_keepVerifierSlotVisitor)
+        clearVerifierSlotVisitor();
+}
+
+void Heap::setKeepVerifierSlotVisitor() { m_keepVerifierSlotVisitor = true; }
+
+void Heap::clearVerifierSlotVisitor()
+{
     m_verifierSlotVisitor = nullptr;
+    m_keepVerifierSlotVisitor = false;
 }
 
 void Heap::scheduleOpportunisticFullCollection()

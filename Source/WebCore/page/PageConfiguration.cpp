@@ -44,10 +44,10 @@
 #include "HistoryItem.h"
 #include "InspectorClient.h"
 #include "LocalFrameLoaderClient.h"
-#include "MediaRecorderProvider.h"
 #include "ModelPlayerProvider.h"
 #include "PerformanceLoggingClient.h"
 #include "PluginInfoProvider.h"
+#include "ProcessSyncClient.h"
 #include "ProgressTrackerClient.h"
 #include "RemoteFrameClient.h"
 #include "ScreenOrientationManager.h"
@@ -89,7 +89,6 @@ PageConfiguration::PageConfiguration(
     FrameIdentifier mainFrameIdentifier,
     RefPtr<Frame>&& mainFrameOpener,
     UniqueRef<SpeechRecognitionProvider>&& speechRecognitionProvider,
-    UniqueRef<MediaRecorderProvider>&& mediaRecorderProvider,
     Ref<BroadcastChannelRegistry>&& broadcastChannelRegistry,
     UniqueRef<StorageProvider>&& storageProvider,
     UniqueRef<ModelPlayerProvider>&& modelPlayerProvider,
@@ -102,7 +101,8 @@ PageConfiguration::PageConfiguration(
     UniqueRef<PaymentCoordinatorClient>&& paymentCoordinatorClient,
 #endif
     UniqueRef<ChromeClient>&& chromeClient,
-    UniqueRef<CryptoClient>&& cryptoClient
+    UniqueRef<CryptoClient>&& cryptoClient,
+    UniqueRef<ProcessSyncClient>&& processSyncClient
 )
     : identifier(identifier)
     , sessionID(sessionID)
@@ -126,12 +126,12 @@ PageConfiguration::PageConfiguration(
     , userContentProvider(WTFMove(userContentProvider))
     , broadcastChannelRegistry(WTFMove(broadcastChannelRegistry))
     , speechRecognitionProvider(WTFMove(speechRecognitionProvider))
-    , mediaRecorderProvider(WTFMove(mediaRecorderProvider))
     , storageProvider(WTFMove(storageProvider))
     , modelPlayerProvider(WTFMove(modelPlayerProvider))
     , badgeClient(WTFMove(badgeClient))
     , historyItemClient(WTFMove(historyItemClient))
     , cryptoClient(WTFMove(cryptoClient))
+    , processSyncClient(WTFMove(processSyncClient))
 {
 }
 

@@ -33,7 +33,7 @@
 
 namespace WebCore {
 
-class Shape;
+class LayoutShape;
 class RenderObject;
 
 namespace Layout {
@@ -164,6 +164,7 @@ public:
     const Box* previousInFlowOrFloatingSibling() const;
     const Box* previousOutOfFlowSibling() const;
     bool isDescendantOf(const ElementBox&) const;
+    bool isInFormattingContextEstablishedBy(const ElementBox& formattingContextRoot) const;
 
     // FIXME: This is currently needed for style updates.
     Box* nextSibling() { return m_nextSibling.get(); }
@@ -192,8 +193,8 @@ public:
     void setIsInlineIntegrationRoot() { m_isInlineIntegrationRoot = true; }
     void setIsFirstChildForIntegration(bool value) { m_isFirstChildForIntegration = value; }
 
-    const Shape* shape() const;
-    void setShape(RefPtr<const Shape>);
+    const LayoutShape* shape() const;
+    void setShape(RefPtr<const LayoutShape>);
 
     const ElementBox* associatedRubyAnnotationBox() const;
 
@@ -217,12 +218,13 @@ private:
         CellSpan tableCellSpan;
         std::optional<LayoutUnit> columnWidth;
         std::unique_ptr<RenderStyle> firstLineStyle;
-        RefPtr<const Shape> shape;
+        RefPtr<const LayoutShape> shape;
     };
 
     bool hasRareData() const { return m_hasRareData; }
     void setHasRareData(bool hasRareData) { m_hasRareData = hasRareData; }
     const BoxRareData& rareData() const;
+    Box::BoxRareData& rareData();
     BoxRareData& ensureRareData();
     void removeRareData();
     

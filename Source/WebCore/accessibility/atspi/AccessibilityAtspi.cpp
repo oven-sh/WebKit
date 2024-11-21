@@ -147,6 +147,7 @@ void AccessibilityAtspi::initializeRegistry()
     }, this);
 }
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib port
 static GUniquePtr<char*> eventConvertingDetailToNonCamelCase(const char* eventName)
 {
     GUniquePtr<char*> event(g_strsplit(eventName, ":", 3));
@@ -193,6 +194,7 @@ static bool eventIsSubtype(char** needle, char** haystack)
 
     return true;
 }
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 void AccessibilityAtspi::removeEventListener(const char* dbusName, const char* eventName)
 {
@@ -678,7 +680,6 @@ static constexpr std::pair<AccessibilityRole, RoleNameEntry> roleNames[] = {
     { AccessibilityRole::MathElement, { "math", N_("math") } },
     { AccessibilityRole::Menu, { "menu", N_("menu") } },
     { AccessibilityRole::MenuBar, { "menu bar", N_("menu bar") } },
-    { AccessibilityRole::MenuButton, { "menu item", N_("menu item") } },
     { AccessibilityRole::MenuItem, { "menu item", N_("menu item") } },
     { AccessibilityRole::MenuItemCheckbox, { "check menu item", N_("check menu item") } },
     { AccessibilityRole::MenuItemRadio, { "radio menu item", N_("radio menu item") } },

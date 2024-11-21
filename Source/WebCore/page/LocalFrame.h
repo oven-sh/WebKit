@@ -131,10 +131,7 @@ public:
     WEBCORE_EXPORT void initWithSimpleHTMLDocument(const AtomString& style, const URL&);
 #endif
     WEBCORE_EXPORT void setView(RefPtr<LocalFrameView>&&);
-    WEBCORE_EXPORT void createView(const IntSize&, const std::optional<Color>& backgroundColor,
-        const IntSize& fixedLayoutSize, const IntRect& fixedVisibleContentRect,
-        bool useFixedLayout = false, ScrollbarMode = ScrollbarMode::Auto, bool horizontalLock = false,
-        ScrollbarMode = ScrollbarMode::Auto, bool verticalLock = false);
+    WEBCORE_EXPORT void createView(const IntSize&, const std::optional<Color>& backgroundColor, const IntSize& fixedLayoutSize, bool useFixedLayout = false, ScrollbarMode = ScrollbarMode::Auto, bool horizontalLock = false, ScrollbarMode = ScrollbarMode::Auto, bool verticalLock = false);
 
     WEBCORE_EXPORT ~LocalFrame();
 
@@ -153,8 +150,8 @@ public:
 
     Editor& editor() { return document()->editor(); }
     const Editor& editor() const { return document()->editor(); }
-    WEBCORE_EXPORT CheckedRef<Editor> checkedEditor();
-    CheckedRef<const Editor> checkedEditor() const;
+    WEBCORE_EXPORT Ref<Editor> protectedEditor();
+    Ref<const Editor> protectedEditor() const;
 
     EventHandler& eventHandler() { return m_eventHandler; }
     const EventHandler& eventHandler() const { return m_eventHandler; }
@@ -177,6 +174,7 @@ public:
 
     bool isRootFrame() const final { return m_rootFrame.ptr() == this; }
     const LocalFrame& rootFrame() const { return m_rootFrame.get(); }
+    LocalFrame& rootFrame() { return m_rootFrame.get(); }
 
     WEBCORE_EXPORT RenderView* contentRenderer() const; // Root of the render tree for the document contained in this frame.
 
@@ -402,7 +400,7 @@ private:
 
     FloatSize m_overrideScreenSize;
 
-    const WeakRef<const LocalFrame> m_rootFrame;
+    const WeakRef<LocalFrame> m_rootFrame;
     SandboxFlags m_sandboxFlags;
     UniqueRef<EventHandler> m_eventHandler;
     HashSet<RegistrableDomain> m_storageAccessExceptionDomains;

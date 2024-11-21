@@ -38,6 +38,7 @@
 #include "ContextMenuController.h"
 #include "ContextMenuItem.h"
 #include "ContextMenuProvider.h"
+#include "DocumentInlines.h"
 #include "Event.h"
 #include "EventListener.h"
 #include "EventNames.h"
@@ -57,6 +58,7 @@
 #include "Node.h"
 #include "Page.h"
 #include "PageGroup.h"
+#include "Quirks.h"
 #include "RenderTheme.h"
 #include "ShadowRoot.h"
 #include "TextTrack.h"
@@ -328,6 +330,13 @@ bool MediaControlsHost::supportsRewind() const
     return false;
 }
 
+bool MediaControlsHost::needsChromeMediaControlsPseudoElement() const
+{
+    if (m_mediaElement)
+        return m_mediaElement->document().quirks().needsChromeMediaControlsPseudoElement();
+    return false;
+}
+
 String MediaControlsHost::externalDeviceDisplayName() const
 {
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
@@ -560,7 +569,7 @@ bool MediaControlsHost::showMediaControlsContextMenu(HTMLElement& target, String
         PlaybackSpeed,
         ShowMediaStatsTag
     >;
-    UncheckedKeyHashMap<MenuItemIdentifier, MenuData> idMap;
+    HashMap<MenuItemIdentifier, MenuData> idMap;
 
     auto createSubmenu = [] (const String& title, const String& icon, Vector<MenuItem>&& children) -> MenuItem {
 #if USE(UICONTEXTMENU)

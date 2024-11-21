@@ -103,6 +103,8 @@
 #include "MediaPlayerPrivateHolePunch.h"
 #endif
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(MediaPlayer);
@@ -733,7 +735,7 @@ void MediaPlayer::setBufferingPolicy(BufferingPolicy policy)
 
 #if ENABLE(LEGACY_ENCRYPTED_MEDIA)
 
-std::unique_ptr<LegacyCDMSession> MediaPlayer::createSession(const String& keySystem, LegacyCDMSessionClient& client)
+RefPtr<LegacyCDMSession> MediaPlayer::createSession(const String& keySystem, LegacyCDMSessionClient& client)
 {
     return m_private->createSession(keySystem, client);
 }
@@ -1184,13 +1186,6 @@ RefPtr<VideoFrame> MediaPlayer::videoFrameForCurrentTime()
     return m_private->videoFrameForCurrentTime();
 }
 
-
-#if PLATFORM(COCOA) && !HAVE(AVSAMPLEBUFFERDISPLAYLAYER_COPYDISPLAYEDPIXELBUFFER)
-void MediaPlayer::willBeAskedToPaintGL()
-{
-    m_private->willBeAskedToPaintGL();
-}
-#endif
 
 RefPtr<NativeImage> MediaPlayer::nativeImageForCurrentTime()
 {
@@ -2149,5 +2144,7 @@ String convertSpatialVideoMetadataToString(const SpatialVideoMetadata& metadata)
 }
 
 } // namespace WebCore
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(VIDEO)

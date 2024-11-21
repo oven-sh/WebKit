@@ -87,7 +87,8 @@ public:
 
     id<MTLBuffer> buffer() const { return m_buffer; }
     id<MTLBuffer> indirectBuffer() const;
-    id<MTLBuffer> indirectIndexedBuffer() const;
+    id<MTLBuffer> indirectIndexedBuffer() const { return m_indirectIndexedBuffer; }
+
     uint64_t initialSize() const;
     uint64_t currentSize() const;
     WGPUBufferUsageFlags usage() const { return m_usage; }
@@ -95,7 +96,8 @@ public:
 
     Device& device() const { return m_device; }
     Ref<Device> protectedDevice() const { return m_device; }
-    bool isDestroyed() const;
+    bool isDestroyed() const { return state() == State::Destroyed; }
+
     void setCommandEncoder(CommandEncoder&, bool mayModifyBuffer = false) const;
     std::span<uint8_t> getBufferContents();
     bool indirectBufferRequiresRecomputation(uint32_t baseIndex, uint32_t indexCount, uint32_t minVertexCount, uint32_t minInstanceCount, MTLIndexType, uint32_t firstInstance) const;
@@ -107,7 +109,7 @@ public:
     void indirectIndexedBufferRecomputed(MTLIndexType, NSUInteger indexBufferOffsetInBytes, uint64_t indirectOffset, uint32_t minVertexCount, uint32_t minInstanceCount);
     void indirectBufferInvalidated();
 #if ENABLE(WEBGPU_SWIFT)
-    void copy(const std::span<const uint8_t>, const size_t offset);
+    void copyFrom(const std::span<const uint8_t>, const size_t offset) HAS_SWIFTCXX_THUNK;
 #endif
 
 private:
@@ -121,7 +123,9 @@ private:
     void incrementBufferMapCount();
     void decrementBufferMapCount();
 
+private PUBLIC_IN_WEBGPU_SWIFT:
     id<MTLBuffer> m_buffer { nil };
+private:
     id<MTLBuffer> m_indirectBuffer { nil };
     id<MTLBuffer> m_indirectIndexedBuffer { nil };
 

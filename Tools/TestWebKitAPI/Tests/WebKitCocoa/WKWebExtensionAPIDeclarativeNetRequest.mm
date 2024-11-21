@@ -1958,6 +1958,106 @@ TEST(WKWebExtensionAPIDeclarativeNetRequest, RuleConversionWithRequestDomains)
     EXPECT_NS_EQUAL(convertedRule, correctRuleConversion);
 }
 
+TEST(WKWebExtensionAPIDeclarativeNetRequest, RuleConversionWithInitiatorDomains)
+{
+    NSDictionary *rule = @{
+        @"id": @1,
+        @"action": @{ @"type": @"block" },
+        @"condition": @{
+            @"initiatorDomains": @[ @"apple.com", @"facebook.com", @"google.com" ],
+            @"resourceTypes": @[ @"font" ],
+        },
+    };
+
+    _WKWebExtensionDeclarativeNetRequestRule *validatedRule = [[_WKWebExtensionDeclarativeNetRequestRule alloc] initWithDictionary:rule errorString:nil];
+    NSDictionary *convertedRule = validatedRule.ruleInWebKitFormat.firstObject;
+    EXPECT_NOT_NULL(convertedRule);
+
+    NSDictionary *correctRuleConversion = @{
+        @"action": @{
+            @"type": @"block",
+        },
+        @"trigger": @{
+            @"if-frame-url": @[ @"^[^:]+://+([^:/]+\\.)?apple\\.com/.*", @"^[^:]+://+([^:/]+\\.)?facebook\\.com/.*", @"^[^:]+://+([^:/]+\\.)?google\\.com/.*" ],
+            @"resource-type": @[ @"font" ],
+            @"url-filter": @".*",
+        },
+    };
+
+    EXPECT_NS_EQUAL(convertedRule, correctRuleConversion);
+}
+
+TEST(WKWebExtensionAPIDeclarativeNetRequest, RuleConversionWithExcludedInitiatorDomains)
+{
+    NSDictionary *rule = @{
+        @"id": @1,
+        @"action": @{ @"type": @"block" },
+        @"condition": @{
+            @"excludedInitiatorDomains": @[ @"apple.com", @"facebook.com", @"google.com" ],
+            @"resourceTypes": @[ @"font" ],
+        },
+    };
+
+    _WKWebExtensionDeclarativeNetRequestRule *validatedRule = [[_WKWebExtensionDeclarativeNetRequestRule alloc] initWithDictionary:rule errorString:nil];
+    NSDictionary *convertedRule = validatedRule.ruleInWebKitFormat.firstObject;
+    EXPECT_NOT_NULL(convertedRule);
+
+    NSDictionary *correctRuleConversion = @{
+        @"action": @{
+            @"type": @"block",
+        },
+        @"trigger": @{
+            @"unless-frame-url": @[ @"^[^:]+://+([^:/]+\\.)?apple\\.com/.*", @"^[^:]+://+([^:/]+\\.)?facebook\\.com/.*", @"^[^:]+://+([^:/]+\\.)?google\\.com/.*" ],
+            @"resource-type": @[ @"font" ],
+            @"url-filter": @".*",
+        },
+    };
+
+    EXPECT_NS_EQUAL(convertedRule, correctRuleConversion);
+}
+
+TEST(WKWebExtensionAPIDeclarativeNetRequest, RuleConversionWithExcludedInitiatorDomainsAndInitiatorDomains)
+{
+    NSDictionary *rule = @{
+        @"id": @1,
+        @"action": @{ @"type": @"block" },
+        @"condition": @{
+            @"initiatorDomains": @[ @"example.com" ],
+            @"excludedInitiatorDomains": @[ @"blog.example.com" ],
+            @"resourceTypes": @[ @"font" ],
+        },
+    };
+
+    _WKWebExtensionDeclarativeNetRequestRule *validatedRule = [[_WKWebExtensionDeclarativeNetRequestRule alloc] initWithDictionary:rule errorString:nil];
+    NSArray *convertedRules = validatedRule.ruleInWebKitFormat;
+    EXPECT_NOT_NULL(convertedRules);
+
+    NSArray *correctRuleConversion = @[
+        @{
+            @"action": @{
+                @"type": @"block",
+            },
+            @"trigger": @{
+                @"if-frame-url": @[ @"^[^:]+://+([^:/]+\\.)?example\\.com/.*" ],
+                @"resource-type": @[ @"font" ],
+                @"url-filter": @".*",
+            }
+        },
+        @{
+            @"action": @{
+                @"type": @"ignore-previous-rules",
+            },
+            @"trigger": @{
+                @"if-frame-url": @[ @"^[^:]+://+([^:/]+\\.)?blog\\.example\\.com/.*" ],
+                @"resource-type": @[ @"font" ],
+                @"url-filter": @".*",
+            }
+        }
+    ];
+
+    EXPECT_NS_EQUAL(convertedRules, correctRuleConversion);
+}
+
 TEST(WKWebExtensionAPIDeclarativeNetRequest, RuleConversionWithEmptyExcludedDomains)
 {
     NSDictionary *rule = @{

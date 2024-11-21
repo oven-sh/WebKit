@@ -27,6 +27,8 @@
 #include "CachePayload.h"
 #include <span>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace JSC {
 
 CachePayload CachePayload::makeMappedPayload(FileSystem::MappedFileData&& data)
@@ -34,14 +36,14 @@ CachePayload CachePayload::makeMappedPayload(FileSystem::MappedFileData&& data)
     return CachePayload(WTFMove(data));
 }
 
-CachePayload CachePayload::makeMallocPayload(MallocPtr<uint8_t, VMMalloc>&& data, size_t size)
+CachePayload CachePayload::makeMallocPayload(MallocSpan<uint8_t, VMMalloc>&& data)
 {
-    return CachePayload(std::pair { WTFMove(data), size });
+    return CachePayload(WTFMove(data));
 }
 
 CachePayload CachePayload::makeEmptyPayload()
 {
-    return CachePayload(std::pair { nullptr, 0 });
+    return CachePayload({ });
 }
 
 CachePayload CachePayload::makePayloadWithDestructor(std::span<uint8_t> data, Destructor&& destructor)
@@ -49,15 +51,9 @@ CachePayload CachePayload::makePayloadWithDestructor(std::span<uint8_t> data, De
     return CachePayload(data, WTFMove(destructor));
 }
 
-CachePayload::CachePayload(CachePayload&& other)
-{
-    m_data = WTFMove(other.m_data);
-    m_destructor = WTFMove(other.m_destructor);
-    other.m_data = std::pair { nullptr, 0 };
-    other.m_destructor = nullptr;
-}
+CachePayload::CachePayload(CachePayload&&) = default;
 
-CachePayload::CachePayload(std::variant<FileSystem::MappedFileData, std::pair<MallocPtr<uint8_t, VMMalloc>, size_t>, std::span<uint8_t>> && data, Destructor&& destructor)
+CachePayload::CachePayload(DataType&& data, Destructor&& destructor)
     : m_data(WTFMove(data)), m_destructor(WTFMove(destructor))
 {
 }
@@ -69,15 +65,15 @@ CachePayload::~CachePayload() {
 
 std::span<const uint8_t> CachePayload::span() const
 {
-    return WTF::switchOn(m_data,
-        [](const FileSystem::MappedFileData& data) {
-            return data.span();
-        }, [](const std::pair<MallocPtr<uint8_t, VMMalloc>, size_t>& data) {
-            return std::span<const uint8_t> { data.first.get(), data.second };
-        }, [](const std::span<uint8_t>& data) -> std::span<const uint8_t> { 
+    return WTF::switchOn(m_data, 
+        [](const std::span<uint8_t>&data) -> std::span<const uint8_t> {
             return data;
+        }, [](const auto& data) {
+            return data.span();
         }
     );
 }
 
 } // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -47,9 +47,10 @@
 #include "NetworkRTCUDPSocketCocoa.h"
 #include "NetworkSessionCocoa.h"
 #else // PLATFORM(COCOA)
-ALLOW_COMMA_BEGIN
+
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <webrtc/rtc_base/async_packet_socket.h>
-ALLOW_COMMA_END
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #endif // PLATFORM(COCOA)
 
 namespace WebKit {

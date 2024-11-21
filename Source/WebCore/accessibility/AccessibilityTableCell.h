@@ -37,8 +37,8 @@ class AccessibilityTableRow;
 
 class AccessibilityTableCell : public AccessibilityRenderObject {
 public:
-    static Ref<AccessibilityTableCell> create(RenderObject&);
-    static Ref<AccessibilityTableCell> create(Node&);
+    static Ref<AccessibilityTableCell> create(AXID, RenderObject&);
+    static Ref<AccessibilityTableCell> create(AXID, Node&);
     virtual ~AccessibilityTableCell();
     bool isTableCell() const final { return true; }
 
@@ -56,7 +56,6 @@ public:
     // Returns the start location and column span of the cell.
     std::pair<unsigned, unsigned> columnIndexRange() const final;
 
-    AccessibilityChildrenVector columnHeaders() override;
     AccessibilityChildrenVector rowHeaders() override;
 
     int axColumnIndex() const override;
@@ -76,12 +75,11 @@ public:
 #endif
 
 protected:
-    explicit AccessibilityTableCell(RenderObject&);
-    explicit AccessibilityTableCell(Node&);
+    explicit AccessibilityTableCell(AXID, RenderObject&);
+    explicit AccessibilityTableCell(AXID, Node&);
 
     AccessibilityTableRow* parentRow() const;
     AccessibilityRole determineAccessibilityRole() final;
-    AccessibilityObject* parentObjectUnignored() const override;
 
 private:
     // If a table cell is not exposed as a table cell, a TH element can serve as its title UI element.

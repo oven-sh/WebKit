@@ -54,13 +54,14 @@ class VisibleSelection;
 
 class AccessibilityRenderObject : public AccessibilityNodeObject {
 public:
-    static Ref<AccessibilityRenderObject> create(RenderObject&);
+    static Ref<AccessibilityRenderObject> create(AXID, RenderObject&);
     virtual ~AccessibilityRenderObject();
     
     FloatRect frameRect() const final;
     bool isNonLayerSVGObject() const override;
 
     bool isAttachment() const override;
+    bool isDetached() const final { return !m_renderer && AccessibilityNodeObject::isDetached(); }
     bool isOffScreen() const override;
     bool hasBoldFont() const override;
     bool hasItalicFont() const override;
@@ -79,7 +80,6 @@ public:
     AccessibilityObject* previousSibling() const final;
     AccessibilityObject* nextSibling() const final;
     AccessibilityObject* parentObject() const override;
-    AccessibilityObject* parentObjectIfExists() const override;
     AccessibilityObject* observableObject() const override;
     AXCoreObject* titleUIElement() const override;
 
@@ -138,14 +138,12 @@ public:
     String secureFieldValue() const override;
     void labelText(Vector<AccessibilityText>&) const override;
 protected:
-    explicit AccessibilityRenderObject(RenderObject&);
-    explicit AccessibilityRenderObject(Node&);
+    explicit AccessibilityRenderObject(AXID, RenderObject&);
+    explicit AccessibilityRenderObject(AXID, Node&);
     void detachRemoteParts(AccessibilityDetachmentType) override;
     ScrollableArea* getScrollableAreaIfScrollable() const override;
     void scrollTo(const IntPoint&) const override;
     
-    bool isDetached() const final { return !m_renderer && AccessibilityNodeObject::isDetached(); }
-
     bool shouldIgnoreAttributeRole() const override;
     AccessibilityRole determineAccessibilityRole() override;
     bool computeIsIgnored() const override;
@@ -161,7 +159,7 @@ private:
     bool isAllowedChildOfTree() const;
     CharacterRange documentBasedSelectedTextRange() const;
     RefPtr<Element> rootEditableElementForPosition(const Position&) const;
-    bool nodeIsTextControl(const Node&) const;
+    bool elementIsTextControl(const Element&) const;
     Path elementPath() const override;
     
     AccessibilityObject* accessibilityImageMapHitTest(HTMLAreaElement&, const IntPoint&) const;
@@ -170,9 +168,7 @@ private:
 
     bool renderObjectIsObservable(RenderObject&) const;
     RenderObject* renderParentObject() const;
-#if USE(ATSPI)
     RenderObject* markerRenderer() const;
-#endif
 
     bool isSVGImage() const;
     void detachRemoteSVGRoot();
@@ -182,15 +178,15 @@ private:
     void offsetBoundingBoxForRemoteSVGElement(LayoutRect&) const;
     bool supportsPath() const override;
 
+#if USE(ATSPI)
     void addNodeOnlyChildren();
+    void addCanvasChildren();
+#endif // USE(ATSPI)
     void addTextFieldChildren();
     void addImageMapChildren();
-    void addCanvasChildren();
     void addAttachmentChildren();
     void addRemoteSVGChildren();
-#if USE(ATSPI)
     void addListItemMarker();
-#endif
 #if PLATFORM(COCOA)
     void updateAttachmentViewParents();
 #endif
@@ -200,7 +196,7 @@ private:
 
     bool inheritsPresentationalRole() const override;
 
-    bool shouldGetTextFromNode(TextUnderElementMode) const;
+    bool shouldGetTextFromNode(const TextUnderElementMode&) const;
 
 #if ENABLE(APPLE_PAY)
     bool isApplePayButton() const;

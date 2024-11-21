@@ -45,7 +45,6 @@
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -112,11 +111,10 @@ template<> void JSTestStringifierReadWriteAttributeDOMConstructor::initializePro
 
 /* Hash table for prototype */
 
-static const HashTableValue JSTestStringifierReadWriteAttributePrototypeTableValues[] =
-{
-    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestStringifierReadWriteAttributeConstructor, 0 } },
-    { "identifier"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestStringifierReadWriteAttribute_identifier, setJSTestStringifierReadWriteAttribute_identifier } },
-    { "toString"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestStringifierReadWriteAttributePrototypeFunction_toString, 0 } },
+static const std::array<HashTableValue, 3> JSTestStringifierReadWriteAttributePrototypeTableValues {
+    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestStringifierReadWriteAttributeConstructor, 0 } },
+    HashTableValue { "identifier"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsTestStringifierReadWriteAttribute_identifier, setJSTestStringifierReadWriteAttribute_identifier } },
+    HashTableValue { "toString"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTestStringifierReadWriteAttributePrototypeFunction_toString, 0 } },
 };
 
 const ClassInfo JSTestStringifierReadWriteAttributePrototype::s_info = { "TestStringifierReadWriteAttribute"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestStringifierReadWriteAttributePrototype) };
@@ -252,6 +250,7 @@ void JSTestStringifierReadWriteAttributeOwner::finalize(JSC::Handle<JSC::Unknown
     uncacheWrapper(world, jsTestStringifierReadWriteAttribute->protectedWrapped().ptr(), jsTestStringifierReadWriteAttribute);
 }
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -276,6 +275,8 @@ template<typename T, typename = std::enable_if_t<std::is_same_v<T, TestStringifi
     }
 }
 #endif
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<TestStringifierReadWriteAttribute>&& impl)
 {
 #if ENABLE(BINDING_INTEGRITY)

@@ -59,6 +59,7 @@
 #include "SecurityOrigin.h"
 #include "SecurityPolicy.h"
 #include "Settings.h"
+#include "UserContentProvider.h"
 #include <wtf/CompletionHandler.h>
 
 namespace WebCore {
@@ -267,7 +268,7 @@ LocalFrame* FrameLoader::SubframeLoader::loadOrRedirectSubframe(HTMLFrameOwnerEl
                 page->willChangeLocationInCompletelyLoadedSubframe();
         }
 
-        frame->checkedNavigationScheduler()->scheduleLocationChange(initiatingDocument, initiatingDocument->protectedSecurityOrigin(), upgradedRequestURL, m_frame->loader().outgoingReferrer(), lockHistory, lockBackForwardList, NavigationHistoryBehavior::Auto, WTFMove(stopDelayingLoadEvent));
+        frame->protectedNavigationScheduler()->scheduleLocationChange(initiatingDocument, initiatingDocument->protectedSecurityOrigin(), upgradedRequestURL, m_frame->loader().outgoingReferrer(), lockHistory, lockBackForwardList, NavigationHistoryBehavior::Auto, WTFMove(stopDelayingLoadEvent));
     } else
         frame = loadSubframe(ownerElement, upgradedRequestURL, frameName, m_frame->loader().outgoingReferrerURL());
 
@@ -327,6 +328,16 @@ RefPtr<LocalFrame> FrameLoader::SubframeLoader::loadSubframe(HTMLFrameOwnerEleme
     auto referrerToUse = url.isAboutBlank() ? referrer.string() : SecurityPolicy::generateReferrerHeader(policy, url, referrer, OriginAccessPatternsForWebProcess::singleton());
 
     frame->protectedLoader()->loadURLIntoChildFrame(url, referrerToUse, subFrame.get());
+
+#if ENABLE(CONTENT_EXTENSIONS)
+    RefPtr subFramePage = subFrame->page();
+    if ((url.isAboutBlank() || url.isAboutSrcDoc()) && subFramePage) {
+        subFramePage->protectedUserContentProvider()->userContentExtensionBackend().forEach([&] (const String& identifier, ContentExtensions::ContentExtension& extension) {
+            if (RefPtr styleSheetContents = extension.globalDisplayNoneStyleSheet())
+                subFrame->document()->extensionStyleSheets().maybeAddContentExtensionSheet(identifier, *styleSheetContents);
+        });
+    }
+#endif
 
     document->decrementLoadEventDelayCount();
 

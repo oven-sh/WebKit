@@ -44,6 +44,8 @@
 #include "PasteboardTypes.h"
 #include "PluginView.h"
 #include "WKAccessibilityPDFDocumentObject.h"
+#include "WKAccessibilityWebPageObjectIOS.h"
+#include "WKAccessibilityWebPageObjectMac.h"
 #include "WebEventConversion.h"
 #include "WebEventModifier.h"
 #include "WebEventType.h"
@@ -83,6 +85,7 @@
 #include <WebCore/PageOverlay.h>
 #include <WebCore/PageOverlayController.h>
 #include <WebCore/PlatformScreen.h>
+#include <WebCore/RenderEmbeddedObject.h>
 #include <WebCore/RenderLayer.h>
 #include <WebCore/RenderLayerBacking.h>
 #include <WebCore/RenderLayerCompositor.h>
@@ -91,11 +94,13 @@
 #include <WebCore/ScrollTypes.h>
 #include <WebCore/ScrollbarTheme.h>
 #include <WebCore/ScrollbarsController.h>
+#include <WebCore/ShadowRoot.h>
 #include <WebCore/VoidCallback.h>
 #include <pal/spi/cg/CoreGraphicsSPI.h>
 #include <wtf/Algorithms.h>
 #include <wtf/Scope.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/cocoa/TypeCastsCocoa.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringToIntegerConversion.h>
 #include <wtf/text/TextStream.h>
@@ -103,7 +108,7 @@
 #include "PDFKitSoftLink.h"
 
 @interface WKPDFFormMutationObserver : NSObject {
-    WebKit::UnifiedPDFPlugin* _plugin;
+    ThreadSafeWeakPtr<WebKit::UnifiedPDFPlugin> _plugin;
 }
 @end
 
@@ -119,10 +124,11 @@
 
 - (void)formChanged:(NSNotification *)notification
 {
-    _plugin->didMutatePDFDocument();
+    RefPtr plugin = _plugin.get();
+    plugin->didMutatePDFDocument();
 
     NSString *fieldName = (NSString *)[[notification userInfo] objectForKey:@"PDFFormFieldName"];
-    _plugin->repaintAnnotationsForFormField(fieldName);
+    plugin->repaintAnnotationsForFormField(fieldName);
 }
 @end
 
@@ -157,17 +163,13 @@ UnifiedPDFPlugin::UnifiedPDFPlugin(HTMLPlugInElement& element)
     this->setVerticalScrollElasticity(ScrollElasticity::Automatic);
     this->setHorizontalScrollElasticity(ScrollElasticity::Automatic);
 
-    if (supportsForms()) {
-        Ref document = element.document();
-        m_annotationContainer = document->createElement(HTMLNames::divTag, false);
-        m_annotationContainer->setAttributeWithoutSynchronization(HTMLNames::idAttr, "annotationContainer"_s);
-
-        auto annotationStyleElement = document->createElement(HTMLNames::styleTag, false);
-        annotationStyleElement->setTextContent(annotationStyle);
-
-        m_annotationContainer->appendChild(annotationStyleElement);
-        RefPtr { document->bodyOrFrameset() }->appendChild(*m_annotationContainer);
-    }
+    Ref document = element.document();
+    m_annotationContainer = document->createElement(HTMLNames::divTag, false);
+    m_annotationContainer->setAttributeWithoutSynchronization(HTMLNames::idAttr, "annotationContainer"_s);
+    Ref annotationStyleElement = document->createElement(HTMLNames::styleTag, false);
+    annotationStyleElement->setTextContent(annotationStyle());
+    m_annotationContainer->appendChild(annotationStyleElement);
+    installAnnotationContainer();
 
     setDisplayMode(PDFDocumentLayout::DisplayMode::SinglePageContinuous);
 
@@ -175,11 +177,36 @@ UnifiedPDFPlugin::UnifiedPDFPlugin(HTMLPlugInElement& element)
     m_accessibilityDocumentObject = adoptNS([[WKAccessibilityPDFDocumentObject alloc] initWithPDFDocument:m_pdfDocument andElement:&element]);
     [m_accessibilityDocumentObject setPDFPlugin:this];
     if (this->isFullFramePlugin() && m_frame && m_frame->page() && m_frame->isMainFrame())
-        [m_accessibilityDocumentObject setParent:dynamic_objc_cast<NSObject>(m_frame->protectedPage()->accessibilityRemoteObject())];
+        [m_accessibilityDocumentObject setParent:m_frame->protectedPage()->accessibilityRemoteObject()];
 #endif
 
     if (m_presentationController->wantsWheelEvents())
         wantsWheelEventsChanged();
+}
+
+void UnifiedPDFPlugin::installAnnotationContainer()
+{
+    if (!m_annotationContainer) {
+        ASSERT_NOT_REACHED();
+        return;
+    }
+
+    Ref document = m_element->document();
+
+    if (supportsForms()) {
+        RefPtr { document->bodyOrFrameset() }->appendChild(*m_annotationContainer);
+        return;
+    }
+
+    if (RefPtr existingShadowRoot = m_element->userAgentShadowRoot())
+        existingShadowRoot->removeChildren();
+
+    m_shadowRoot = &m_element->ensureUserAgentShadowRoot();
+    m_shadowRoot->appendChild(*m_annotationContainer);
+    if (CheckedPtr renderer = dynamicDowncast<RenderEmbeddedObject>(m_element->renderer()))
+        renderer->setHasShadowContent();
+
+    document->updateLayoutIgnorePendingStylesheets();
 }
 
 UnifiedPDFPlugin::~UnifiedPDFPlugin() = default;
@@ -291,10 +318,13 @@ void UnifiedPDFPlugin::installPDFDocument()
 
     revealFragmentIfNeeded();
 
-    if (m_pdfTestCallback) {
-        m_pdfTestCallback->handleEvent();
-        m_pdfTestCallback = nullptr;
+    if (m_element) {
+        if (RefPtr callback = m_element->takePendingPDFTestCallback())
+            registerPDFTest(WTFMove(callback));
     }
+
+    if (m_pdfTestCallback)
+        std::exchange(m_pdfTestCallback, nullptr)->handleEvent();
 }
 
 void UnifiedPDFPlugin::incrementalLoadingDidProgress()
@@ -348,18 +378,26 @@ void UnifiedPDFPlugin::didInvalidateDataDetectorHighlightOverlayRects()
 
 #endif
 
+// FIXME: Disambiguate between supportsForms/supportsPasswordForm. The former is a slight misnomer now.
+bool UnifiedPDFPlugin::supportsPasswordForm() const
+{
+    return supportsForms() || m_shadowRoot;
+}
+
 void UnifiedPDFPlugin::createPasswordEntryForm()
 {
-    if (!supportsForms())
+    if (!supportsPasswordForm())
         return;
 
-    auto passwordForm = PDFPluginPasswordForm::create(this);
+    Ref passwordForm = PDFPluginPasswordForm::create(this);
     m_passwordForm = passwordForm.ptr();
     passwordForm->attach(m_annotationContainer.get());
 
-    auto passwordField = PDFPluginPasswordField::create(this);
-    m_passwordField = passwordField.ptr();
-    passwordField->attach(m_annotationContainer.get());
+    if (supportsForms()) {
+        Ref passwordField = PDFPluginPasswordField::create(this);
+        m_passwordField = passwordField.ptr();
+        passwordField->attach(m_annotationContainer.get());
+    }
 }
 
 void UnifiedPDFPlugin::teardownPasswordEntryForm()
@@ -650,6 +688,9 @@ bool UnifiedPDFPlugin::isInWindow() const
 
 void UnifiedPDFPlugin::didChangeIsInWindow()
 {
+    if (!m_pdfDocument)
+        return;
+
     RefPtr page = this->page();
     if (!page)
         return;
@@ -2530,11 +2571,12 @@ void UnifiedPDFPlugin::performCopyLinkOperation(const IntPoint& contextMenuEvent
         return;
 
 #if PLATFORM(MAC)
-    NSString *urlAbsoluteString = [url absoluteString];
-    NSArray *types = @[ NSPasteboardTypeString, NSPasteboardTypeHTML ];
-    NSArray *items = @[ [urlAbsoluteString dataUsingEncoding:NSUTF8StringEncoding], [urlAbsoluteString dataUsingEncoding:NSUTF8StringEncoding] ];
-
-    writeItemsToPasteboard(NSPasteboardNameGeneral, items, types);
+    RetainPtr urlData = [[url absoluteString] dataUsingEncoding:NSUTF8StringEncoding];
+    Vector<PasteboardItem> pasteboardItems {
+        { urlData, NSPasteboardTypeURL },
+        { urlData, NSPasteboardTypeString },
+    };
+    writeItemsToPasteboard(NSPasteboardNameGeneral, WTFMove(pasteboardItems));
 #else
     // FIXME: Implement.
 #endif
@@ -2575,6 +2617,21 @@ bool UnifiedPDFPlugin::isEditingCommandEnabled(const String& commandName)
     return false;
 }
 
+#if PLATFORM(MAC)
+static NSData *htmlDataFromSelection(PDFSelection *selection)
+{
+    if (!selection)
+        return nil;
+#if HAVE(PDFSELECTION_HTMLDATA_RTFDATA)
+    if ([selection respondsToSelector:@selector(htmlData)])
+        return [selection htmlData];
+#endif
+ALLOW_DEPRECATED_DECLARATIONS_BEGIN
+    return [[selection html] dataUsingEncoding:NSUTF8StringEncoding];
+ALLOW_DEPRECATED_DECLARATIONS_END
+}
+#endif
+
 bool UnifiedPDFPlugin::performCopyEditingOperation() const
 {
 #if PLATFORM(MAC)
@@ -2586,25 +2643,22 @@ bool UnifiedPDFPlugin::performCopyEditingOperation() const
         return false;
     }
 
-    NSMutableArray *types = [NSMutableArray array];
-    NSMutableArray *items = [NSMutableArray array];
+    Vector<PasteboardItem> pasteboardItems;
 
-    if (NSData *webArchiveData = [m_currentSelection webArchive]) {
-        [types addObject:PasteboardTypes::WebArchivePboardType];
-        [items addObject:webArchiveData];
+    if (NSData *htmlData = htmlDataFromSelection(m_currentSelection.get()))
+        pasteboardItems.append({ htmlData, NSPasteboardTypeHTML });
+
+#if HAVE(PDFSELECTION_HTMLDATA_RTFDATA)
+    if ([m_currentSelection respondsToSelector:@selector(rtfData)]) {
+        if (NSData *rtfData = [m_currentSelection rtfData])
+            pasteboardItems.append({ rtfData, NSPasteboardTypeRTF });
     }
+#endif
 
-    if (NSData *plainStringData = [[m_currentSelection string] dataUsingEncoding:NSUTF8StringEncoding]) {
-        [types addObject:NSPasteboardTypeString];
-        [items addObject:plainStringData];
-    }
+    if (NSData *plainStringData = [[m_currentSelection string] dataUsingEncoding:NSUTF8StringEncoding])
+        pasteboardItems.append({ plainStringData, NSPasteboardTypeString });
 
-    if (NSData *htmlStringData = [[m_currentSelection html] dataUsingEncoding:NSUTF8StringEncoding]) {
-        [types addObject:NSPasteboardTypeHTML];
-        [items addObject:htmlStringData];
-    }
-
-    writeItemsToPasteboard(NSPasteboardNameGeneral, items, types);
+    writeItemsToPasteboard(NSPasteboardNameGeneral, WTFMove(pasteboardItems));
     return true;
 #endif
     return false;
@@ -2621,12 +2675,12 @@ bool UnifiedPDFPlugin::takeFindStringFromSelection()
         return false;
 
 #if PLATFORM(MAC)
-    writeItemsToPasteboard(NSPasteboardNameFind, @[ [nsStringNilIfEmpty(findString) dataUsingEncoding:NSUTF8StringEncoding] ], @[ NSPasteboardTypeString ]);
+    writeItemsToPasteboard(NSPasteboardNameFind, { { [nsStringNilIfEmpty(findString) dataUsingEncoding:NSUTF8StringEncoding], NSPasteboardTypeString } });
 #else
     if (!m_frame || !m_frame->coreLocalFrame())
         return false;
 
-    if (CheckedPtr client = m_frame->coreLocalFrame()->checkedEditor()->client())
+    if (CheckedPtr client = m_frame->coreLocalFrame()->protectedEditor()->client())
         client->updateStringForFind(findString);
     else
         return false;
@@ -2639,7 +2693,7 @@ bool UnifiedPDFPlugin::forwardEditingCommandToEditor(const String& commandName, 
 {
     if (!m_frame || !m_frame->coreLocalFrame())
         return false;
-    return m_frame->coreLocalFrame()->checkedEditor()->command(commandName).execute(argument);
+    return m_frame->coreLocalFrame()->protectedEditor()->command(commandName).execute(argument);
 }
 
 void UnifiedPDFPlugin::selectAll()

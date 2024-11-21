@@ -36,7 +36,6 @@
 #include "CoordinateSystem.h"
 #include "PageLoadState.h"
 #include "WebAutomationSessionMacros.h"
-#include "WebAutomationSessionMessages.h"
 #include "WebAutomationSessionProxyMessages.h"
 #include "WebFrameProxy.h"
 #include "WebFullScreenManagerProxy.h"
@@ -167,13 +166,7 @@ void WebAutomationSession::setClient(std::unique_ptr<API::AutomationSessionClien
 
 void WebAutomationSession::setProcessPool(WebKit::WebProcessPool* processPool)
 {
-    if (auto pool = protectedProcessPool())
-        pool->removeMessageReceiver(Messages::WebAutomationSession::messageReceiverName());
-
     m_processPool = processPool;
-
-    if (auto pool = protectedProcessPool())
-        pool->addMessageReceiver(Messages::WebAutomationSession::messageReceiverName(), *this);
 }
 
 RefPtr<WebProcessPool> WebAutomationSession::protectedProcessPool() const
@@ -1059,19 +1052,16 @@ void WebAutomationSession::evaluateJavaScriptFunction(const Inspector::Protocol:
     uint64_t callbackID = m_nextEvaluateJavaScriptCallbackID++;
     m_evaluateJavaScriptFunctionCallbacks.set(callbackID, WTFMove(callback));
 
-    page->sendToProcessContainingFrame(frameID, Messages::WebAutomationSessionProxy::EvaluateJavaScriptFunction(page->webPageIDInMainFrameProcess(), frameID, function, argumentsVector, expectsImplicitCallbackArgument.value_or(false), forceUserGesture.value_or(false), WTFMove(callbackTimeout), callbackID));
-}
+    page->sendWithAsyncReplyToProcessContainingFrameWithoutDestinationIdentifier(frameID, Messages::WebAutomationSessionProxy::EvaluateJavaScriptFunction(page->webPageIDInMainFrameProcess(), frameID, function, argumentsVector, expectsImplicitCallbackArgument.value_or(false), forceUserGesture.value_or(false), WTFMove(callbackTimeout)), CompletionHandler<void(String&&, String&&)> { [protectedThis = Ref { *this }, callbackID] (String&& result, String&& errorType) {
+        auto callback = protectedThis->m_evaluateJavaScriptFunctionCallbacks.take(callbackID);
+        if (!callback)
+            return;
 
-void WebAutomationSession::didEvaluateJavaScriptFunction(uint64_t callbackID, const String& result, const String& errorType)
-{
-    auto callback = m_evaluateJavaScriptFunctionCallbacks.take(callbackID);
-    if (!callback)
-        return;
-
-    if (!errorType.isEmpty())
-        callback->sendFailure(STRING_FOR_PREDEFINED_ERROR_MESSAGE_AND_DETAILS(errorType, result));
-    else
-        callback->sendSuccess(result);
+        if (!errorType.isEmpty())
+            callback->sendFailure(STRING_FOR_PREDEFINED_ERROR_MESSAGE_AND_DETAILS(errorType, result));
+        else
+            callback->sendSuccess(result);
+    } });
 }
 
 void WebAutomationSession::resolveChildFrameHandle(const Inspector::Protocol::Automation::BrowsingContextHandle& browsingContextHandle, const Inspector::Protocol::Automation::FrameHandle& frameHandle, std::optional<int>&& optionalOrdinal, const String& optionalName, const Inspector::Protocol::Automation::NodeHandle& optionalNodeHandle, Ref<ResolveChildFrameHandleCallback>&& callback)
@@ -2471,6 +2461,19 @@ void WebAutomationSession::takeScreenshot(const Inspector::Protocol::Automation:
     bool scrollIntoViewIfNeeded = optionalScrollIntoViewIfNeeded ? *optionalScrollIntoViewIfNeeded : false;
     bool clipToViewport = optionalClipToViewport ? *optionalClipToViewport : false;
 
+    auto ipcCompletionHandler = [callback] {
+        return CompletionHandler<void(std::optional<ShareableBitmap::Handle>&&, String&&)> { [callback] (std::optional<ShareableBitmap::Handle>&& imageDataHandle, String&& errorType) {
+            if (!errorType.isEmpty())
+                return callback->sendFailure(STRING_FOR_PREDEFINED_ERROR_MESSAGE(errorType));
+            if (!imageDataHandle)
+                ASYNC_FAIL_WITH_PREDEFINED_ERROR(InternalError);
+            std::optional<String> base64EncodedData = platformGetBase64EncodedPNGData(WTFMove(*imageDataHandle));
+            if (!base64EncodedData)
+                ASYNC_FAIL_WITH_PREDEFINED_ERROR(InternalError);
+            callback->sendSuccess(base64EncodedData.value());
+        } };
+    };
+
 #if PLATFORM(COCOA)
     // FIXME: <webkit.org/b/242215> We can currently only get viewport snapshots from the UIProcess, so fall back to
     // taking a snapshot in the WebProcess if we need to snapshot a specific element. This has the side effect of not
@@ -2480,13 +2483,8 @@ void WebAutomationSession::takeScreenshot(const Inspector::Protocol::Automation:
     // snapshot of the entire viewport without the window's rounded corners being excluded. So we trade off those corner
     // pixels for accurate pixels in the rest of the viewport which help us verify features like CSS transforms are
     // actually behaving correctly.
-    if (!nodeHandle.isEmpty()) {
-        uint64_t callbackID = m_nextScreenshotCallbackID++;
-        m_screenshotCallbacks.set(callbackID, WTFMove(callback));
-
-        page->sendToProcessContainingFrame(frameID, Messages::WebAutomationSessionProxy::TakeScreenshot(page->webPageIDInMainFrameProcess(), frameID, nodeHandle, scrollIntoViewIfNeeded, clipToViewport, callbackID));
-        return;
-    }
+    if (!nodeHandle.isEmpty())
+        return page->sendWithAsyncReplyToProcessContainingFrameWithoutDestinationIdentifier(frameID, Messages::WebAutomationSessionProxy::TakeScreenshot(page->webPageIDInMainFrameProcess(), frameID, nodeHandle, scrollIntoViewIfNeeded, clipToViewport), ipcCompletionHandler());
 #endif
 #if PLATFORM(GTK) || PLATFORM(COCOA)
     Function<void(WebPageProxy&, std::optional<WebCore::IntRect>&&, Ref<TakeScreenshotCallback>&&)> takeViewSnapsot = [](WebPageProxy& page, std::optional<WebCore::IntRect>&& rect, Ref<TakeScreenshotCallback>&& callback) {
@@ -2519,32 +2517,8 @@ void WebAutomationSession::takeScreenshot(const Inspector::Protocol::Automation:
 
     page->sendWithAsyncReplyToProcessContainingFrame(frameID, Messages::WebAutomationSessionProxy::SnapshotRectForScreenshot(page->webPageIDInMainFrameProcess(), frameID, nodeHandle, scrollIntoViewIfNeeded, clipToViewport), WTFMove(completionHandler));
 #else
-    uint64_t callbackID = m_nextScreenshotCallbackID++;
-    m_screenshotCallbacks.set(callbackID, WTFMove(callback));
-
-    page->sendToProcessContainingFrame(frameID, Messages::WebAutomationSessionProxy::TakeScreenshot(page->webPageIDInMainFrameProcess(), frameID, nodeHandle, scrollIntoViewIfNeeded, clipToViewport, callbackID));
+    page->sendWithAsyncReplyToProcessContainingFrameWithoutDestinationIdentifier(frameID, Messages::WebAutomationSessionProxy::TakeScreenshot(page->webPageIDInMainFrameProcess(), frameID, nodeHandle, scrollIntoViewIfNeeded, clipToViewport), ipcCompletionHandler());
 #endif
-}
-
-void WebAutomationSession::didTakeScreenshot(uint64_t callbackID, std::optional<ShareableBitmap::Handle>&& imageDataHandle, const String& errorType)
-{
-    auto callback = m_screenshotCallbacks.take(callbackID);
-    if (!callback)
-        return;
-
-    if (!errorType.isEmpty()) {
-        callback->sendFailure(STRING_FOR_PREDEFINED_ERROR_MESSAGE(errorType));
-        return;
-    }
-
-    if (!imageDataHandle)
-        return;
-
-    std::optional<String> base64EncodedData = platformGetBase64EncodedPNGData(WTFMove(*imageDataHandle));
-    if (!base64EncodedData)
-        ASYNC_FAIL_WITH_PREDEFINED_ERROR(InternalError);
-
-    callback->sendSuccess(base64EncodedData.value());
 }
 
 Ref<Inspector::FrontendRouter> WebAutomationSession::protectedFrontendRouter() const

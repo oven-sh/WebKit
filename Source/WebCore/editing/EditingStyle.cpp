@@ -66,6 +66,8 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace WebCore {
 
 // Editing style properties must be preserved during editing operation.
@@ -1358,6 +1360,10 @@ void EditingStyle::mergeStyle(const StyleProperties* style, CSSPropertyOverrideM
 static Ref<MutableStyleProperties> styleFromMatchedRulesForElement(Element& element, unsigned rulesToInclude)
 {
     Ref style = MutableStyleProperties::create();
+
+    if (!element.isConnected())
+        return style;
+
     for (auto& matchedRule : element.styleResolver().styleRulesForElement(&element, rulesToInclude))
         style->mergeAndOverrideOnConflict(matchedRule->protectedProperties());
     
@@ -2008,3 +2014,5 @@ RefPtr<CSSValue> backgroundColorInEffect(Node* node)
 }
 
 }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

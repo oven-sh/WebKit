@@ -32,6 +32,7 @@
 #include "SecurityContext.h"
 #include "Timer.h"
 #include <JavaScriptCore/InspectorBackendDispatchers.h>
+#include <wtf/CheckedPtr.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/JSONValues.h>
@@ -65,9 +66,10 @@ namespace Style {
 class Resolver;
 }
 
-class InspectorCSSAgent final : public InspectorAgentBase , public Inspector::CSSBackendDispatcherHandler , public InspectorStyleSheet::Listener {
+class InspectorCSSAgent final : public InspectorAgentBase , public Inspector::CSSBackendDispatcherHandler , public InspectorStyleSheet::Listener, public CanMakeCheckedPtr<InspectorCSSAgent> {
     WTF_MAKE_NONCOPYABLE(InspectorCSSAgent);
     WTF_MAKE_TZONE_ALLOCATED(InspectorCSSAgent);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(InspectorCSSAgent);
 public:
     explicit InspectorCSSAgent(PageAgentContext&);
     ~InspectorCSSAgent();
@@ -151,10 +153,10 @@ private:
     class SetRuleHeaderTextAction;
     class AddRuleAction;
 
-    typedef UncheckedKeyHashMap<Inspector::Protocol::CSS::StyleSheetId, RefPtr<InspectorStyleSheet>> IdToInspectorStyleSheet;
-    typedef UncheckedKeyHashMap<CSSStyleSheet*, RefPtr<InspectorStyleSheet>> CSSStyleSheetToInspectorStyleSheet;
-    typedef UncheckedKeyHashMap<RefPtr<Document>, Vector<RefPtr<InspectorStyleSheet>>> DocumentToViaInspectorStyleSheet; // "via inspector" stylesheets
-    typedef HashSet<CSSSelector::PseudoClass, IntHash<CSSSelector::PseudoClass>, WTF::StrongEnumHashTraits<CSSSelector::PseudoClass>> PseudoClassHashSet;
+    using IdToInspectorStyleSheet = HashMap<Inspector::Protocol::CSS::StyleSheetId, RefPtr<InspectorStyleSheet>>;
+    using CSSStyleSheetToInspectorStyleSheet = HashMap<CSSStyleSheet*, RefPtr<InspectorStyleSheet>>;
+    using DocumentToViaInspectorStyleSheet = HashMap<RefPtr<Document>, Vector<RefPtr<InspectorStyleSheet>>>; // "via inspector" stylesheets
+    using PseudoClassHashSet = HashSet<CSSSelector::PseudoClass, IntHash<CSSSelector::PseudoClass>, WTF::StrongEnumHashTraits<CSSSelector::PseudoClass>>;
 
     InspectorStyleSheetForInlineStyle& asInspectorStyleSheet(StyledElement&);
     Element* elementForId(Inspector::Protocol::ErrorString&, Inspector::Protocol::DOM::NodeId);
@@ -187,10 +189,10 @@ private:
     Page& m_inspectedPage;
     IdToInspectorStyleSheet m_idToInspectorStyleSheet;
     CSSStyleSheetToInspectorStyleSheet m_cssStyleSheetToInspectorStyleSheet;
-    UncheckedKeyHashMap<Node*, Ref<InspectorStyleSheetForInlineStyle>> m_nodeToInspectorStyleSheet; // bogus "stylesheets" with elements' inline styles
+    HashMap<Node*, Ref<InspectorStyleSheetForInlineStyle>> m_nodeToInspectorStyleSheet; // bogus "stylesheets" with elements' inline styles
     DocumentToViaInspectorStyleSheet m_documentToInspectorStyleSheet;
-    UncheckedKeyHashMap<Document*, HashSet<CSSStyleSheet*>> m_documentToKnownCSSStyleSheets;
-    UncheckedKeyHashMap<Inspector::Protocol::DOM::NodeId, PseudoClassHashSet> m_nodeIdToForcedPseudoState;
+    HashMap<Document*, HashSet<CSSStyleSheet*>> m_documentToKnownCSSStyleSheets;
+    HashMap<Inspector::Protocol::DOM::NodeId, PseudoClassHashSet> m_nodeIdToForcedPseudoState;
     HashSet<Document*> m_documentsWithForcedPseudoStates;
 
     int m_lastStyleSheetId { 1 };

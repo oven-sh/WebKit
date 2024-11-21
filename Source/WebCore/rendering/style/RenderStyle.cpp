@@ -428,7 +428,7 @@ void RenderStyle::copyPseudoElementsFrom(const RenderStyle& other)
     if (!other.m_cachedPseudoStyles)
         return;
 
-    for (auto& pseudoElementStyle : other.m_cachedPseudoStyles->styles)
+    for (auto& [key, pseudoElementStyle] : other.m_cachedPseudoStyles->styles)
         addCachedPseudoStyle(makeUnique<RenderStyle>(cloneIncludingPseudoElements(*pseudoElementStyle)));
 }
 
@@ -453,7 +453,7 @@ bool RenderStyle::hasUniquePseudoStyle() const
     if (!m_cachedPseudoStyles || pseudoElementType() != PseudoId::None)
         return false;
 
-    for (auto& pseudoStyle : m_cachedPseudoStyles->styles) {
+    for (auto& [key, pseudoStyle] : m_cachedPseudoStyles->styles) {
         if (pseudoStyle->unique())
             return true;
     }
@@ -466,12 +466,7 @@ RenderStyle* RenderStyle::getCachedPseudoStyle(const Style::PseudoElementIdentif
     if (!m_cachedPseudoStyles)
         return nullptr;
 
-    for (auto& pseudoStyle : m_cachedPseudoStyles->styles) {
-        if (pseudoStyle->pseudoElementType() == pseudoElementIdentifier.pseudoId && pseudoStyle->pseudoElementNameArgument() == pseudoElementIdentifier.nameArgument)
-            return pseudoStyle.get();
-    }
-
-    return nullptr;
+    return m_cachedPseudoStyles->styles.get(pseudoElementIdentifier);
 }
 
 RenderStyle* RenderStyle::addCachedPseudoStyle(std::unique_ptr<RenderStyle> pseudo)
@@ -486,7 +481,7 @@ RenderStyle* RenderStyle::addCachedPseudoStyle(std::unique_ptr<RenderStyle> pseu
     if (!m_cachedPseudoStyles)
         m_cachedPseudoStyles = makeUnique<PseudoStyleCache>();
 
-    m_cachedPseudoStyles->styles.append(WTFMove(pseudo));
+    m_cachedPseudoStyles->styles.add(Style::PseudoElementIdentifier { result->pseudoElementType(), result->pseudoElementNameArgument() }, WTFMove(pseudo));
 
     return result;
 }
@@ -722,7 +717,8 @@ inline bool RenderStyle::changeAffectsVisualOverflow(const RenderStyle& other) c
         // is specified. We can take an early out here.
         if (isAlignedForUnder(*this) || isAlignedForUnder(other))
             return true;
-        return visualOverflowForDecorations(*this) != visualOverflowForDecorations(other);
+        if (visualOverflowForDecorations(*this) != visualOverflowForDecorations(other))
+            return true;
     }
 
     auto hasOutlineInVisualOverflow = this->hasOutlineInVisualOverflow();
@@ -1418,7 +1414,7 @@ bool RenderStyle::scrollAnchoringSuppressionStyleDidChange(const RenderStyle* ot
             return true;
     }
 
-    if (hasTransformRelatedProperty() != other->hasTransformRelatedProperty())
+    if (hasTransformRelatedProperty() != other->hasTransformRelatedProperty() || transform() != other->transform())
         return true;
 
     return false;
@@ -1934,6 +1930,8 @@ void RenderStyle::conservativelyCollectChangedAnimatableProperties(const RenderS
             changingProperties.m_properties.set(CSSPropertyAnchorName);
         if (first.positionAnchor != second.positionAnchor)
             changingProperties.m_properties.set(CSSPropertyPositionAnchor);
+        if (first.positionTryOrder != second.positionTryOrder)
+            changingProperties.m_properties.set(CSSPropertyPositionTryOrder);
         if (first.scrollSnapAlign != second.scrollSnapAlign)
             changingProperties.m_properties.set(CSSPropertyScrollSnapAlign);
         if (first.scrollSnapStop != second.scrollSnapStop)
@@ -3168,9 +3166,9 @@ Color RenderStyle::usedScrollbarTrackColor() const
     return colorResolvingCurrentColor(scrollbarColor().value().trackColor);
 }
 
-const BorderValue& RenderStyle::borderBefore(const RenderStyle& styleForFlow) const
+const BorderValue& RenderStyle::borderBefore(const WritingMode writingMode) const
 {
-    switch (styleForFlow.writingMode().blockDirection()) {
+    switch (writingMode.blockDirection()) {
     case FlowDirection::TopToBottom:
         return borderTop();
     case FlowDirection::BottomToTop:
@@ -3184,9 +3182,9 @@ const BorderValue& RenderStyle::borderBefore(const RenderStyle& styleForFlow) co
     return borderTop();
 }
 
-const BorderValue& RenderStyle::borderAfter(const RenderStyle& styleForFlow) const
+const BorderValue& RenderStyle::borderAfter(const WritingMode writingMode) const
 {
-    switch (styleForFlow.writingMode().blockDirection()) {
+    switch (writingMode.blockDirection()) {
     case FlowDirection::TopToBottom:
         return borderBottom();
     case FlowDirection::BottomToTop:
@@ -3200,23 +3198,23 @@ const BorderValue& RenderStyle::borderAfter(const RenderStyle& styleForFlow) con
     return borderBottom();
 }
 
-const BorderValue& RenderStyle::borderStart(const RenderStyle& styleForFlow) const
+const BorderValue& RenderStyle::borderStart(const WritingMode writingMode) const
 {
-    if (styleForFlow.writingMode().isHorizontal())
-        return styleForFlow.writingMode().isInlineLeftToRight() ? borderLeft() : borderRight();
-    return styleForFlow.writingMode().isInlineTopToBottom() ? borderTop() : borderBottom();
+    if (writingMode.isHorizontal())
+        return writingMode.isInlineLeftToRight() ? borderLeft() : borderRight();
+    return writingMode.isInlineTopToBottom() ? borderTop() : borderBottom();
 }
 
-const BorderValue& RenderStyle::borderEnd(const RenderStyle& styleForFlow) const
+const BorderValue& RenderStyle::borderEnd(const WritingMode writingMode) const
 {
-    if (styleForFlow.writingMode().isHorizontal())
-        return styleForFlow.writingMode().isInlineLeftToRight() ? borderRight() : borderLeft();
-    return styleForFlow.writingMode().isInlineTopToBottom() ? borderBottom() : borderTop();
+    if (writingMode.isHorizontal())
+        return writingMode.isInlineLeftToRight() ? borderRight() : borderLeft();
+    return writingMode.isInlineTopToBottom() ? borderBottom() : borderTop();
 }
 
-float RenderStyle::borderBeforeWidth() const
+float RenderStyle::borderBeforeWidth(const WritingMode writingMode) const
 {
-    switch (writingMode().blockDirection()) {
+    switch (writingMode.blockDirection()) {
     case FlowDirection::TopToBottom:
         return borderTopWidth();
     case FlowDirection::BottomToTop:
@@ -3230,9 +3228,9 @@ float RenderStyle::borderBeforeWidth() const
     return borderTopWidth();
 }
 
-float RenderStyle::borderAfterWidth() const
+float RenderStyle::borderAfterWidth(const WritingMode writingMode) const
 {
-    switch (writingMode().blockDirection()) {
+    switch (writingMode.blockDirection()) {
     case FlowDirection::TopToBottom:
         return borderBottomWidth();
     case FlowDirection::BottomToTop:
@@ -3246,18 +3244,18 @@ float RenderStyle::borderAfterWidth() const
     return borderBottomWidth();
 }
 
-float RenderStyle::borderStartWidth() const
+float RenderStyle::borderStartWidth(const WritingMode writingMode) const
 {
-    if (writingMode().isHorizontal())
-        return writingMode().isInlineLeftToRight() ? borderLeftWidth() : borderRightWidth();
-    return writingMode().isInlineTopToBottom() ? borderTopWidth() : borderBottomWidth();
+    if (writingMode.isHorizontal())
+        return writingMode.isInlineLeftToRight() ? borderLeftWidth() : borderRightWidth();
+    return writingMode.isInlineTopToBottom() ? borderTopWidth() : borderBottomWidth();
 }
 
-float RenderStyle::borderEndWidth() const
+float RenderStyle::borderEndWidth(const WritingMode writingMode) const
 {
-    if (writingMode().isHorizontal())
-        return writingMode().isInlineLeftToRight() ? borderRightWidth() : borderLeftWidth();
-    return writingMode().isInlineTopToBottom() ? borderBottomWidth() : borderTopWidth();
+    if (writingMode.isHorizontal())
+        return writingMode.isInlineLeftToRight() ? borderRightWidth() : borderLeftWidth();
+    return writingMode.isInlineTopToBottom() ? borderBottomWidth() : borderTopWidth();
 }
 
 void RenderStyle::setMarginStart(Length&& margin)

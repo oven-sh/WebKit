@@ -1074,8 +1074,8 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 // FIXME: Remove when rdar://108002223 can be resolved.
 - (void)URLSession:(NSURLSession *)session task:(NSURLSessionTask *)task _didReceiveInformationalResponse:(NSURLResponse *)response
 {
-    if ([response isKindOfClass:[NSHTTPURLResponse class]])
-        [self URLSession:session task:task didReceiveInformationalResponse:(NSHTTPURLResponse *)response];
+    if (auto *httpResponse = dynamic_objc_cast<NSHTTPURLResponse>(response))
+        [self URLSession:session task:task didReceiveInformationalResponse:httpResponse];
 }
 
 - (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)dataTask didReceiveResponse:(NSURLResponse *)response completionHandler:(void (^)(NSURLSessionResponseDisposition disposition))completionHandler
@@ -1103,9 +1103,9 @@ ALLOW_DEPRECATED_DECLARATIONS_END
         ALLOW_DEPRECATED_DECLARATIONS_END
 
         // Avoid MIME type sniffing if the response comes back as 304 Not Modified.
-        auto isNSHTTPURLResponseClass = [response isKindOfClass:NSHTTPURLResponse.class];
-        int statusCode = isNSHTTPURLResponseClass ? [(NSHTTPURLResponse *)response statusCode] : 0;
-        NSString *xContentTypeOptions = isNSHTTPURLResponseClass ? [(NSHTTPURLResponse *)response valueForHTTPHeaderField:@"X-Content-Type-Options"] : nil;
+        auto httpResponse = dynamic_objc_cast<NSHTTPURLResponse>(response);
+        int statusCode = httpResponse ? [httpResponse statusCode] : 0;
+        NSString *xContentTypeOptions = httpResponse ? [httpResponse valueForHTTPHeaderField:@"X-Content-Type-Options"] : nil;
         bool isNoSniff = xContentTypeOptions && [xContentTypeOptions caseInsensitiveCompare:@"nosniff"] == NSOrderedSame;
         if (statusCode != httpStatus304NotModified) {
             bool isMainResourceLoad = networkDataTask->firstRequest().requester() == WebCore::ResourceRequestRequester::Main;
@@ -1185,8 +1185,8 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     Ref<NetworkDataTaskCocoa> protectedNetworkDataTask(*networkDataTask);
     auto downloadID = *networkDataTask->pendingDownloadID();
     auto& downloadManager = sessionCocoa->networkProcess().downloadManager();
-    auto download = makeUnique<WebKit::Download>(downloadManager, downloadID, downloadTask, *sessionCocoa, networkDataTask->suggestedFilename());
-    networkDataTask->transferSandboxExtensionToDownload(*download);
+    Ref download = WebKit::Download::create(downloadManager, downloadID, downloadTask, *sessionCocoa, networkDataTask->suggestedFilename());
+    networkDataTask->transferSandboxExtensionToDownload(download);
     ASSERT(FileSystem::fileExists(networkDataTask->pendingDownloadLocation()));
     download->didCreateDestination(networkDataTask->pendingDownloadLocation());
     downloadManager.dataTaskBecameDownloadTask(downloadID, WTFMove(download));

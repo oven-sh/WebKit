@@ -1235,6 +1235,7 @@ JS_BINDING_IDLS := \
     $(WebCore)/dom/ViewTransition+Types.idl \
     $(WebCore)/dom/ViewTransitionUpdateCallback.idl \
     $(WebCore)/dom/VisibilityState.idl \
+    $(WebCore)/dom/VisitorCallback.idl \
     $(WebCore)/dom/WheelEvent.idl \
     $(WebCore)/dom/WindowOrWorkerGlobalScope+TrustedTypes.idl \
     $(WebCore)/dom/XMLDocument.idl \
@@ -1894,6 +1895,7 @@ all : \
     Namespace.h \
     NodeName.cpp \
     NodeName.h \
+    ProcessSyncClient.cpp \
     SVGElementFactory.cpp \
     SVGElementFactory.h \
     SVGElementTypeHelpers.h \
@@ -2108,6 +2110,7 @@ USER_AGENT_STYLE_SHEETS = \
     $(WebCore)/css/viewTransitions.css \
     $(WebCore)/html/shadow/mac/imageControlsMac.css \
     $(WebCore)/html/shadow/attachmentElementShadow.css \
+    $(WebCore)/html/shadow/detailsElementShadow.css \
     $(WebCore)/html/shadow/imageOverlay.css \
     $(WebCore)/html/shadow/meterElementShadow.css \
     $(WebCore)/html/shadow/spatialImageControls.css \
@@ -2669,5 +2672,22 @@ vpath %.js $(sort $(foreach f,$(WebCore_BUILTINS_SOURCES),$(realpath $(dir $(f))
 
 all : $(notdir $(WebCore_BUILTINS_SOURCES:%.js=%Builtins.h)) $(WebCore_BUILTINS_WRAPPERS)
 
-# ------------------------
+#
 
+PROCESS_SYNC_DATA_INPUT_FILES = \
+    $(WebCore)/page/ProcessSyncData.in \
+
+GENERATED_PROCESS_SYNC_CLIENT_OUTPUT_FILES = \
+	ProcessSyncClient.cpp \
+	ProcessSyncClient.h \
+	ProcessSyncData.h \
+	ProcessSyncData.serialization.in \
+
+GENERATED_PROCESS_SYNC_CLIENT_OUTPUT_PATTERNS = $(subst .cpp,%cpp, $(subst .h,%h, $(subst .in,%in, $(GENERATED_PROCESS_SYNC_CLIENT_OUTPUT_FILES))))
+
+all : $(GENERATED_PROCESS_SYNC_CLIENT_OUTPUT_FILES)
+
+$(GENERATED_PROCESS_SYNC_CLIENT_OUTPUT_PATTERNS) : $(WebCore)/Scripts/generate-process-sync-data.py $(PROCESS_SYNC_DATA_INPUT_FILES)
+	$(PYTHON) $(WebCore)/Scripts/generate-process-sync-data.py $(PROCESS_SYNC_DATA_INPUT_FILES)
+
+# ------------------------

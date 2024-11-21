@@ -72,6 +72,7 @@
 #include "Settings.h"
 #include "TextAutoSizing.h"
 #include "TextBoxTrimmer.h"
+#include "TextUtil.h"
 #include "VisiblePosition.h"
 #include <wtf/TZoneMallocInlines.h>
 
@@ -758,7 +759,7 @@ void RenderBlockFlow::layoutBlockChildren(bool relayoutChildren, LayoutUnit& max
         if (child.isExcludedFromNormalLayout())
             continue; // Skip this child, since it will be positioned by the specialized subclass (fieldsets and ruby runs).
 
-        if (child.isSkippedContentForLayout()) {
+        if (layoutContext().isSkippedContentForLayout(child)) {
             child.clearNeedsLayoutForSkippedContent();
             continue;
         }
@@ -1098,7 +1099,7 @@ void RenderBlockFlow::determineLogicalLeftPositionForChild(RenderBox& child, App
     // If the child is being centred then the margin calculated to do that has factored in any offset required to
     // avoid floats, so use it if necessary.
 
-    if (style().textAlign() == TextAlignMode::WebKitCenter || child.style().marginStartUsing(&style()).isAuto())
+    if (style().textAlign() == TextAlignMode::WebKitCenter || child.style().marginStart(writingMode()).isAuto())
         newPosition = std::max(newPosition, positionToAvoidFloats + childMarginStart);
     else if (positionToAvoidFloats > initialStartPosition)
         newPosition = std::max(newPosition, positionToAvoidFloats);
@@ -3053,7 +3054,7 @@ LayoutUnit RenderBlockFlow::getClearDelta(RenderBox& child, LayoutUnit logicalTo
                 return newLogicalTop - logicalTop;
 
             RenderFragmentContainer* fragment = fragmentAtBlockOffset(logicalTopForChild(child));
-            LayoutRect borderBox = child.borderBoxRectInFragment(fragment, DoNotCacheRenderBoxFragmentInfo);
+            LayoutRect borderBox = child.borderBoxRectInFragment(fragment, RenderBoxFragmentInfoFlags::DoNotCacheRenderBoxFragmentInfo);
             LayoutUnit childLogicalWidthAtOldLogicalTopOffset = isHorizontalWritingMode() ? borderBox.width() : borderBox.height();
 
             // FIXME: None of this is right for perpendicular writing-mode children.
@@ -3065,7 +3066,7 @@ LayoutUnit RenderBlockFlow::getClearDelta(RenderBox& child, LayoutUnit logicalTo
             child.setLogicalTop(newLogicalTop);
             child.updateLogicalWidth();
             fragment = fragmentAtBlockOffset(logicalTopForChild(child));
-            borderBox = child.borderBoxRectInFragment(fragment, DoNotCacheRenderBoxFragmentInfo);
+            borderBox = child.borderBoxRectInFragment(fragment, RenderBoxFragmentInfoFlags::DoNotCacheRenderBoxFragmentInfo);
             LayoutUnit childLogicalWidthAtNewLogicalTopOffset = isHorizontalWritingMode() ? borderBox.width() : borderBox.height();
 
             child.setLogicalTop(childOldLogicalTop);
@@ -4427,6 +4428,61 @@ static inline void stripTrailingSpace(float& inlineMax, float& inlineMin, Render
     }
 }
 
+static inline std::optional<std::pair<const RenderText&, const RenderText&>> trailingRubyBaseAndAdjacentTextContent(const RenderInline& rubyBase, const RenderBlockFlow& blockContainer)
+{
+    // This functions returns adjacent _content_ renderers by skipping non-inline content (floats, out-of-flow content) inline boxes and related annotation boxes.
+    // e.g. <ruby>
+    //       <span>base</span><rt>annotation</rt>
+    //       <span>adjacent base</span><rt>annotation</rt>
+    //      </ruby>
+    // returns "base" and "adjacent base" RenderText renderers.
+    if (!rubyBase.firstInFlowChild())
+        return { };
+
+    auto shouldSkip = [&](auto& renderer) {
+        return !renderer.isInFlow() || is<RenderInline>(renderer) || renderer.style().display() == DisplayType::RubyAnnotation;
+    };
+
+    auto walker = InlineWalker(blockContainer, rubyBase.firstInFlowChild());
+    auto lastInlineChildOfRubyBase = [&]() -> RenderObject* {
+        RenderObject* lastChild = nullptr;
+        for (; !walker.atEnd(); walker.advance()) {
+            auto* renderer = walker.current();
+            if (renderer->parent() == rubyBase.parent())
+                return lastChild;
+            if (!shouldSkip(*renderer))
+                lastChild = renderer;
+        }
+        return { };
+    };
+    auto* lastCHild = lastInlineChildOfRubyBase();
+    if (!lastCHild || !is<RenderText>(*lastCHild))
+        return { };
+
+    auto firstInlineAfterRubyBase = [&]() -> RenderObject* {
+        for (; !walker.atEnd(); walker.advance()) {
+            if (!shouldSkip(*walker.current()))
+                return walker.current();
+        }
+        return { };
+    };
+    auto* firstSibling = firstInlineAfterRubyBase();
+    if (!firstSibling || !is<RenderText>(*firstSibling))
+        return { };
+
+    return { std::pair<const RenderText&, const RenderText&> { downcast<RenderText>(*lastCHild), downcast<RenderText>(*firstSibling) } };
+}
+
+static inline bool hasTrailingSoftWrapOpportunity(const RenderInline& rubyBase, const RenderBlockFlow& blockContainer)
+{
+    if (!rubyBase.parent()->style().autoWrap())
+        return false;
+
+    if (auto lastAndNextTextContent = trailingRubyBaseAndAdjacentTextContent(rubyBase, blockContainer))
+        return Layout::TextUtil::mayBreakInBetween(lastAndNextTextContent->first.text(), lastAndNextTextContent->first.style(), lastAndNextTextContent->second.text(), lastAndNextTextContent->second.style());
+    return false;
+}
+
 static inline LayoutUnit preferredWidth(LayoutUnit preferredWidth, float result)
 {
     return std::max(preferredWidth, LayoutUnit::fromFloatCeil(result));
@@ -4562,6 +4618,10 @@ void RenderBlockFlow::computeInlinePreferredLogicalWidths(LayoutUnit& minLogical
                         if (!rubyBaseMinimumMaximumWidthStack.isEmpty()) {
                             auto rubyBaseStart = rubyBaseMinimumMaximumWidthStack.last();
                             rubyBaseMinimumMaximumWidthStack.last() = std::pair { inlineMin - rubyBaseStart.first, inlineMax - rubyBaseStart.second };
+                            if (hasTrailingSoftWrapOpportunity(*renderInline, *this)) {
+                                minLogicalWidth = preferredWidth(minLogicalWidth, inlineMin);
+                                inlineMin = 0;
+                            }
                         } else
                             ASSERT_NOT_REACHED();
                     }
@@ -4572,8 +4632,8 @@ void RenderBlockFlow::computeInlinePreferredLogicalWidths(LayoutUnit& minLogical
                     if (!child->isFloating())
                         lastText = nullptr;
                     LayoutUnit margins;
-                    Length startMargin = childStyle.marginStartUsing(&style());
-                    Length endMargin = childStyle.marginEndUsing(&style());
+                    Length startMargin = childStyle.marginStart(writingMode());
+                    Length endMargin = childStyle.marginEnd(writingMode());
                     if (startMargin.isFixed())
                         margins += LayoutUnit::fromFloatCeil(startMargin.value());
                     if (endMargin.isFixed())

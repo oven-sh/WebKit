@@ -167,6 +167,10 @@ enum class ReplacementBehavior : uint8_t;
 - (void)_didHandleAcceptedCandidate;
 - (void)_didUpdateCandidateListVisibility:(BOOL)visible;
 
+- (BOOL)_web_hasActiveIntelligenceTextEffects;
+- (void)_web_suppressContentRelativeChildViews;
+- (void)_web_restoreContentRelativeChildViews;
+
 @end
 
 namespace WebCore {
@@ -264,10 +268,11 @@ public:
     NSPrintOperation *printOperationWithPrintInfo(NSPrintInfo *, WebFrameProxy&);
 
     void setAutomaticallyAdjustsContentInsets(bool);
-    bool automaticallyAdjustsContentInsets() const { return m_automaticallyAdjustsContentInsets; }
+    bool automaticallyAdjustsContentInsets() const;
     void updateContentInsetsIfAutomatic();
     void setTopContentInset(CGFloat);
     CGFloat topContentInset() const;
+    void flushPendingTopContentInset();
 
     void prepareContentInRect(CGRect);
     void updateViewExposedRect();
@@ -485,9 +490,9 @@ public:
 
     NSTrackingRectTag addTrackingRect(CGRect, id owner, void* userData, bool assumeInside);
     NSTrackingRectTag addTrackingRectWithTrackingNum(CGRect, id owner, void* userData, bool assumeInside, int tag);
-    void addTrackingRectsWithTrackingNums(CGRect*, id owner, void** userDataList, bool assumeInside, NSTrackingRectTag *trackingNums, int count);
+    void addTrackingRectsWithTrackingNums(Vector<CGRect>, id owner, void** userDataList, bool assumeInside, NSTrackingRectTag *trackingNums);
     void removeTrackingRect(NSTrackingRectTag);
-    void removeTrackingRects(NSTrackingRectTag *, int count);
+    void removeTrackingRects(std::span<NSTrackingRectTag>);
     NSString *stringForToolTip(NSToolTipTag tag);
     void toolTipChanged(const String& oldToolTip, const String& newToolTip);
 
@@ -768,8 +773,10 @@ private:
     bool isRichlyEditableForTouchBar() const;
 
 #if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
-    void installImageAnalysisOverlayView(VKCImageAnalysis *);
+    void installImageAnalysisOverlayView(RetainPtr<VKCImageAnalysis>&&);
     void uninstallImageAnalysisOverlayView();
+    void performOrDeferImageAnalysisOverlayViewHierarchyTask(std::function<void()>&&);
+    void fulfillDeferredImageAnalysisOverlayViewHierarchyTask();
 #endif
 
     bool hasContentRelativeChildViews() const;
@@ -802,9 +809,6 @@ private:
 
     bool supportsArbitraryLayoutModes() const;
     float intrinsicDeviceScaleFactor() const;
-
-    void scheduleSetTopContentInsetDispatch();
-    void dispatchSetTopContentInset();
 
     void sendToolTipMouseExited();
     void sendToolTipMouseEntered();
@@ -855,7 +859,7 @@ private:
 
 #if ENABLE(IMAGE_ANALYSIS)
     CocoaImageAnalyzer *ensureImageAnalyzer();
-    int32_t processImageAnalyzerRequest(CocoaImageAnalyzerRequest *, CompletionHandler<void(CocoaImageAnalysis *, NSError *)>&&);
+    int32_t processImageAnalyzerRequest(CocoaImageAnalyzerRequest *, CompletionHandler<void(RetainPtr<CocoaImageAnalysis>&&, NSError *)>&&);
 #endif
 
     std::optional<EditorState::PostLayoutData> postLayoutDataForContentEditable();
@@ -877,10 +881,6 @@ private:
     bool m_didScheduleWindowAndViewFrameUpdate { false };
     bool m_windowOcclusionDetectionEnabled { true };
 
-    bool m_automaticallyAdjustsContentInsets { false };
-    std::optional<CGFloat> m_pendingTopContentInset;
-    bool m_didScheduleSetTopContentInsetDispatch { false };
-    
     CGSize m_scrollOffsetAdjustment { 0, 0 };
 
     CGSize m_intrinsicContentSize { 0, 0 };
@@ -1021,6 +1021,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     RetainPtr<WKImageAnalysisOverlayViewDelegate> m_imageAnalysisOverlayViewDelegate;
     uint32_t m_currentImageAnalysisRequestID { 0 };
     WebCore::FloatRect m_imageAnalysisInteractionBounds;
+    std::function<void()> m_imageAnalysisOverlayViewHierarchyDeferredTask;
 #endif
 
 #if HAVE(TRANSLATION_UI_SERVICES) && ENABLE(CONTEXT_MENUS)

@@ -423,11 +423,14 @@ void WebLocalFrameLoaderClient::dispatchWillPerformClientRedirect(const URL& url
 
 void WebLocalFrameLoaderClient::dispatchDidChangeLocationWithinPage()
 {
-    RefPtr webPage = m_frame->page();
-    if (!webPage)
-        return;
+    if (RefPtr webPage = m_frame->page())
+        webPage->didSameDocumentNavigationForFrame(m_frame);
+}
 
-    webPage->didSameDocumentNavigationForFrame(m_frame);
+void WebLocalFrameLoaderClient::dispatchDidNavigateWithinPage()
+{
+    if (RefPtr webPage = m_frame->page())
+        webPage->didNavigateWithinPageForFrame(m_frame);
 }
 
 void WebLocalFrameLoaderClient::dispatchDidChangeMainDocument()
@@ -436,7 +439,11 @@ void WebLocalFrameLoaderClient::dispatchDidChangeMainDocument()
     if (!webPage)
         return;
 
-    webPage->send(Messages::WebPageProxy::DidChangeMainDocument(m_frame->frameID()));
+    std::optional<NavigationIdentifier> navigationID;
+    if (RefPtr documentLoader = m_localFrame->loader().documentLoader())
+        navigationID = documentLoader->navigationID();
+
+    webPage->send(Messages::WebPageProxy::DidChangeMainDocument(m_frame->frameID(), navigationID));
 }
 
 void WebLocalFrameLoaderClient::dispatchWillChangeDocument(const URL& currentURL, const URL& newURL)
@@ -581,10 +588,10 @@ void WebLocalFrameLoaderClient::dispatchDidStartProvisionalLoad()
         UserData(WebProcess::singleton().transformObjectsToHandles(userData.get()).get()), WallTime::now()));
 }
 
-static constexpr unsigned maxTitleLength = 1000; // Closest power of 10 above the W3C recommendation for Title length.
-
 void WebLocalFrameLoaderClient::dispatchDidReceiveTitle(const StringWithDirection& title)
 {
+    static constexpr unsigned maxTitleLength = 1000; // Closest power of 10 above the W3C recommendation for Title length.
+
     RefPtr webPage = m_frame->page();
     if (!webPage)
         return;
@@ -786,11 +793,6 @@ void WebLocalFrameLoaderClient::dispatchDidReachLayoutMilestone(OptionSet<WebCor
         // new didLayout API.
         webPage->injectedBundleLoaderClient().didFirstLayoutForFrame(*webPage, m_frame, userData);
         webPage->send(Messages::WebPageProxy::DidFirstLayoutForFrame(m_frame->frameID(), UserData(WebProcess::singleton().transformObjectsToHandles(userData.get()).get())));
-
-#if USE(COORDINATED_GRAPHICS)
-        // Make sure viewport properties are dispatched on the main frame by the time the first layout happens.
-        ASSERT(!webPage->useFixedLayout() || m_frame.ptr() != &m_frame->page()->mainWebFrame() || m_localFrame->document()->didDispatchViewportPropertiesChanged());
-#endif
     }
 
 #if !RELEASE_LOG_DISABLED
@@ -1510,20 +1512,12 @@ void WebLocalFrameLoaderClient::transitionToCommittedForNewPage(InitializingIfra
     bool shouldUseFixedLayout = isMainFrame && webPage->useFixedLayout();
     bool shouldDisableScrolling = isMainFrame && !webPage->mainFrameIsScrollable();
     bool shouldHideScrollbars = shouldDisableScrolling;
-    IntRect fixedVisibleContentRect;
 
     auto oldView = m_localFrame->view();
 
     auto overrideSizeForCSSDefaultViewportUnits = oldView ? oldView->overrideSizeForCSSDefaultViewportUnits() : std::nullopt;
     auto overrideSizeForCSSSmallViewportUnits = oldView ? oldView->overrideSizeForCSSSmallViewportUnits() : std::nullopt;
     auto overrideSizeForCSSLargeViewportUnits = oldView ? oldView->overrideSizeForCSSLargeViewportUnits() : std::nullopt;
-
-#if USE(COORDINATED_GRAPHICS)
-    if (oldView)
-        fixedVisibleContentRect = oldView->fixedVisibleContentRect();
-    if (shouldUseFixedLayout)
-        shouldHideScrollbars = true;
-#endif
 
     m_frameHasCustomContentProvider = isMainFrame
         && m_localFrame->loader().documentLoader()
@@ -1539,8 +1533,7 @@ void WebLocalFrameLoaderClient::transitionToCommittedForNewPage(InitializingIfra
     bool verticalLock = shouldHideScrollbars || webPage->alwaysShowsVerticalScroller();
 
     auto size = m_frame->isRootFrame() && !isMainFrame && oldView ? oldView->size() : webPage->size();
-    m_localFrame->createView(size, webPage->backgroundColor(),
-        webPage->fixedLayoutSize(), fixedVisibleContentRect, shouldUseFixedLayout,
+    m_localFrame->createView(size, webPage->backgroundColor(), webPage->fixedLayoutSize(), shouldUseFixedLayout,
         horizontalScrollbarMode, horizontalLock, verticalScrollbarMode, verticalLock);
 
     RefPtr view = m_localFrame->view();
@@ -1589,14 +1582,6 @@ void WebLocalFrameLoaderClient::transitionToCommittedForNewPage(InitializingIfra
 
     if (initializingIframe == InitializingIframe::No)
         webPage->scheduleFullEditorStateUpdate();
-
-#if USE(COORDINATED_GRAPHICS)
-    if (shouldUseFixedLayout) {
-        view->setDelegatedScrollingMode(shouldUseFixedLayout ? DelegatedScrollingMode::DelegatedToNativeScrollView : DelegatedScrollingMode::NotDelegated);
-        view->setPaintsEntireContents(shouldUseFixedLayout);
-        return;
-    }
-#endif
 }
 
 void WebLocalFrameLoaderClient::didRestoreFromBackForwardCache()
@@ -1942,14 +1927,6 @@ void WebLocalFrameLoaderClient::getLoadDecisionForIcons(const Vector<std::pair<W
         webPage->send(Messages::WebPageProxy::GetLoadDecisionForIcon(icon.first, CallbackID::fromInteger(icon.second)));
 }
 
-void WebLocalFrameLoaderClient::broadcastMainFrameURLChangeToOtherProcesses(const URL& url)
-{
-    RefPtr webPage = m_frame->page();
-    if (!webPage)
-        return;
-    webPage->send(Messages::WebPageProxy::BroadcastMainFrameURLChangeToOtherProcesses(url));
-}
-
 void WebLocalFrameLoaderClient::didFinishServiceWorkerPageRegistration(bool success)
 {
     RefPtr webPage = m_frame->page();
@@ -2030,8 +2007,17 @@ void WebLocalFrameLoaderClient::didAccessWindowProxyPropertyViaOpener(WebCore::S
 
 void WebLocalFrameLoaderClient::frameNameChanged(const String& frameName)
 {
+    if (!siteIsolationEnabled())
+        return;
     if (RefPtr page = m_frame->page())
         page->send(Messages::WebPageProxy::FrameNameChanged(m_frame->frameID(), frameName));
+}
+
+bool WebLocalFrameLoaderClient::siteIsolationEnabled() const
+{
+    if (RefPtr coreFrame = m_frame->coreFrame())
+        return coreFrame->settings().siteIsolationEnabled();
+    return false;
 }
 
 } // namespace WebKit

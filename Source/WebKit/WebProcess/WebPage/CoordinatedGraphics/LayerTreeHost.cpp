@@ -32,7 +32,7 @@
 #if USE(COORDINATED_GRAPHICS)
 
 #include "DrawingArea.h"
-#include "WebPage.h"
+#include "WebPageInlines.h"
 #include "WebPageProxyMessages.h"
 #include "WebProcess.h"
 #include <WebCore/AsyncScrollingCoordinator.h>
@@ -50,7 +50,7 @@
 #include <wtf/TZoneMallocInlines.h>
 
 #if USE(CAIRO)
-#include <WebCore/NicosiaPaintingEngine.h>
+#include <WebCore/CairoPaintingEngine.h>
 #elif USE(SKIA)
 #include <WebCore/ProcessCapabilities.h>
 #include <WebCore/SkiaThreadedPaintingPool.h>
@@ -71,13 +71,12 @@ LayerTreeHost::LayerTreeHost(WebPage& webPage)
 LayerTreeHost::LayerTreeHost(WebPage& webPage, WebCore::PlatformDisplayID displayID)
 #endif
     : m_webPage(webPage)
-    , m_viewportController(webPage.size())
     , m_layerFlushTimer(RunLoop::main(), this, &LayerTreeHost::layerFlushTimerFired)
 #if !HAVE(DISPLAY_LINK)
     , m_displayID(displayID)
 #endif
 #if USE(CAIRO)
-    , m_paintingEngine(Nicosia::PaintingEngine::create())
+    , m_paintingEngine(Cairo::PaintingEngine::create())
 #endif
 {
 #if USE(SKIA)
@@ -103,20 +102,12 @@ LayerTreeHost::LayerTreeHost(WebPage& webPage, WebCore::PlatformDisplayID displa
 #endif
     scheduleLayerFlush();
 
-    if (auto* frameView = m_webPage.localMainFrameView()) {
-        auto contentsSize = frameView->contentsSize();
-        if (!contentsSize.isEmpty())
-            m_viewportController.didChangeContentsSize(contentsSize);
-    }
-
 #if HAVE(DISPLAY_LINK)
-    m_compositor = ThreadedCompositor::create(*this, m_webPage.deviceScaleFactor() * m_viewportController.pageScaleFactor());
+    m_compositor = ThreadedCompositor::create(*this, m_webPage.deviceScaleFactor());
 #else
-    m_compositor = ThreadedCompositor::create(*this, *this, m_webPage.deviceScaleFactor() * m_viewportController.pageScaleFactor(), displayID);
+    m_compositor = ThreadedCompositor::create(*this, *this, m_webPage.deviceScaleFactor(), displayID);
 #endif
     m_layerTreeContext.contextID = m_compositor->surfaceID();
-
-    didChangeViewport();
 }
 
 LayerTreeHost::~LayerTreeHost()
@@ -205,7 +196,7 @@ void LayerTreeHost::flushLayers()
     WTFBeginSignpost(this, FlushRootCompositingLayer);
     m_rootLayer->flushCompositingStateForThisLayerOnly();
     if (m_overlayCompositingLayer)
-        m_overlayCompositingLayer->flushCompositingState(m_visibleContentsRect);
+        m_overlayCompositingLayer->flushCompositingState(visibleContentsRect());
     WTFEndSignpost(this, FlushRootCompositingLayer);
 
     OptionSet<FinalizeRenderingUpdateFlags> flags;
@@ -228,12 +219,8 @@ void LayerTreeHost::flushLayers()
         WTFBeginSignpost(this, SyncFrame);
 
         m_nicosia.scene->accessState([this](Nicosia::Scene::State& state) {
-            for (auto& compositionLayer : m_nicosia.state.layers) {
-                compositionLayer->flushState([] (const Nicosia::CompositionLayer::LayerState& state) {
-                    if (state.backingStore)
-                        state.backingStore->flushUpdate();
-                });
-            }
+            for (auto& compositionLayer : m_nicosia.state.layers)
+                compositionLayer->flushState();
 
             ++state.id;
             state.layers = m_nicosia.state.layers;
@@ -316,18 +303,6 @@ void LayerTreeHost::setViewOverlayRootLayer(GraphicsLayer* graphicsLayer)
         m_rootLayer->addChild(*m_overlayCompositingLayer);
 }
 
-void LayerTreeHost::scrollNonCompositedContents(const IntRect& rect)
-{
-    m_scrolledSinceLastFrame = true;
-
-    auto* frameView = m_webPage.localMainFrameView();
-    if (!frameView || !frameView->delegatesScrolling())
-        return;
-
-    m_viewportController.didScroll(rect.location());
-    didChangeViewport();
-}
-
 void LayerTreeHost::forceRepaint()
 {
     // This is necessary for running layout tests. Since in this case we are not waiting for a UIProcess to reply nicely.
@@ -361,9 +336,7 @@ void LayerTreeHost::sizeDidChange(const IntSize& size)
     m_rootLayer->setSize(size);
     scheduleLayerFlush();
 
-    m_viewportController.didChangeViewportSize(size);
-    m_compositor->setViewportSize(size, m_webPage.deviceScaleFactor() * m_viewportController.pageScaleFactor());
-    didChangeViewport();
+    m_compositor->setViewportSize(size, m_webPage.deviceScaleFactor());
 }
 
 void LayerTreeHost::pauseRendering()
@@ -384,74 +357,17 @@ GraphicsLayerFactory* LayerTreeHost::graphicsLayerFactory()
     return this;
 }
 
-void LayerTreeHost::contentsSizeChanged(const IntSize& newSize)
+FloatRect LayerTreeHost::visibleContentsRect() const
 {
-    m_viewportController.didChangeContentsSize(newSize);
-    didChangeViewport();
-}
-
-void LayerTreeHost::didChangeViewportAttributes(ViewportAttributes&& attr)
-{
-    m_viewportController.didChangeViewportAttributes(WTFMove(attr));
-    didChangeViewport();
-}
-
-void LayerTreeHost::didChangeViewport()
-{
-    FloatRect visibleRect(m_viewportController.visibleContentsRect());
-    if (visibleRect.isEmpty())
-        return;
-
-    // When using non overlay scrollbars, the contents size doesn't include the scrollbars, but we need to include them
-    // in the visible area used by the compositor to ensure that the scrollbar layers are also updated.
-    // See https://bugs.webkit.org/show_bug.cgi?id=160450.
-    auto* localMainFrame = dynamicDowncast<WebCore::LocalFrame>(m_webPage.corePage()->mainFrame());
-    auto* view = localMainFrame ? localMainFrame->view() : nullptr;
-    if (!view)
-        return;
-
-    auto* scrollbar = view->verticalScrollbar();
-    if (scrollbar && !scrollbar->isOverlayScrollbar())
-        visibleRect.expand(scrollbar->width(), 0);
-    scrollbar = view->horizontalScrollbar();
-    if (scrollbar && !scrollbar->isOverlayScrollbar())
-        visibleRect.expand(0, scrollbar->height());
-
-    if (visibleRect != m_visibleContentsRect) {
-        m_visibleContentsRect = visibleRect;
-        for (auto& registeredLayer : m_registeredLayers.values())
-            registeredLayer->setNeedsVisibleRectAdjustment();
-        if (view->useFixedLayout()) {
-            // Round the rect instead of enclosing it to make sure that its size stay
-            // the same while panning. This can have nasty effects on layout.
-            view->setFixedVisibleContentRect(roundedIntRect(visibleRect));
-        }
-    }
-
-    scheduleLayerFlush();
-
-    float pageScale = m_viewportController.pageScaleFactor();
-    IntPoint scrollPosition = roundedIntPoint(visibleRect.location());
-    if (m_lastScrollPosition != scrollPosition) {
-        m_scrolledSinceLastFrame = true;
-        m_lastScrollPosition = scrollPosition;
-        m_compositor->setScrollPosition(m_lastScrollPosition, m_webPage.deviceScaleFactor() * pageScale);
-
-        if (!view->useFixedLayout())
-            view->notifyScrollPositionChanged(m_lastScrollPosition);
-    }
-
-    if (m_lastPageScaleFactor != pageScale) {
-        m_lastPageScaleFactor = pageScale;
-        m_webPage.scalePage(pageScale, m_lastScrollPosition);
-    }
+    if (auto* localMainFrameView = m_webPage.localMainFrameView())
+        return FloatRect({ }, localMainFrameView->sizeForVisibleContent(ScrollableArea::VisibleContentRectIncludesScrollbars::Yes));
+    return m_webPage.bounds();
 }
 
 void LayerTreeHost::deviceOrPageScaleFactorChanged()
 {
     m_webPage.corePage()->pageOverlayController().didChangeDeviceScaleFactor();
-    m_compositor->setViewportSize(m_webPage.size(), m_webPage.deviceScaleFactor() * m_viewportController.pageScaleFactor());
-    didChangeViewport();
+    m_compositor->setViewportSize(m_webPage.size(), m_webPage.deviceScaleFactor());
 }
 
 void LayerTreeHost::backgroundColorDidChange()
@@ -484,7 +400,7 @@ void LayerTreeHost::attachLayer(CoordinatedGraphicsLayer* layer)
 }
 
 #if USE(CAIRO)
-Nicosia::PaintingEngine& LayerTreeHost::paintingEngine()
+Cairo::PaintingEngine& LayerTreeHost::paintingEngine()
 {
     return *m_paintingEngine;
 }

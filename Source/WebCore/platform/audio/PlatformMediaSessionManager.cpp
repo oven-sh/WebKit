@@ -37,6 +37,8 @@
 #include "VP9UtilitiesCocoa.h"
 #endif
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(PlatformMediaSessionManager);
@@ -73,7 +75,7 @@ static std::unique_ptr<PlatformMediaSessionManager>& sharedPlatformMediaSessionM
     return platformMediaSessionManager.get();
 }
 
-PlatformMediaSessionManager& PlatformMediaSessionManager::sharedManager()
+PlatformMediaSessionManager& PlatformMediaSessionManager::singleton()
 {
     auto& manager = sharedPlatformMediaSessionManager();
     if (!manager) {
@@ -83,7 +85,7 @@ PlatformMediaSessionManager& PlatformMediaSessionManager::sharedManager()
     return *manager;
 }
 
-PlatformMediaSessionManager* PlatformMediaSessionManager::sharedManagerIfExists()
+PlatformMediaSessionManager* PlatformMediaSessionManager::singletonIfExists()
 {
     return sharedPlatformMediaSessionManager().get();
 }
@@ -97,13 +99,13 @@ std::unique_ptr<PlatformMediaSessionManager> PlatformMediaSessionManager::create
 
 void PlatformMediaSessionManager::updateNowPlayingInfoIfNecessary()
 {
-    if (auto existingManager = PlatformMediaSessionManager::sharedManagerIfExists())
+    if (RefPtr existingManager = PlatformMediaSessionManager::singletonIfExists())
         existingManager->scheduleSessionStatusUpdate();
 }
 
 void PlatformMediaSessionManager::updateAudioSessionCategoryIfNecessary()
 {
-    if (auto existingManager = PlatformMediaSessionManager::sharedManagerIfExists())
+    if (RefPtr existingManager = PlatformMediaSessionManager::singletonIfExists())
         existingManager->scheduleUpdateSessionState();
 }
 
@@ -928,3 +930,5 @@ void PlatformMediaSessionManager::dumpSessionStates()
 #endif
 
 } // namespace WebCore
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

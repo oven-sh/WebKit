@@ -50,7 +50,9 @@
 #include <wtf/TypeTraits.h>
 #include <wtf/WeakPtr.h>
 
+OBJC_CLASS NSData;
 OBJC_CLASS NSDictionary;
+OBJC_CLASS NSString;
 OBJC_CLASS PDFAnnotation;
 OBJC_CLASS PDFDocument;
 OBJC_CLASS PDFSelection;
@@ -88,6 +90,11 @@ using ByteRangeRequestIdentifier = ObjectIdentifier<ByteRangeRequestIdentifierTy
 
 enum class CheckValidRanges : bool { No, Yes };
 
+struct PDFPluginPasteboardItem {
+    RetainPtr<NSData> data;
+    RetainPtr<NSString> type;
+};
+
 class PDFPluginBase : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<PDFPluginBase>, public CanMakeThreadSafeCheckedPtr<PDFPluginBase>, public WebCore::ScrollableArea, public Identified<PDFPluginIdentifier> {
     WTF_MAKE_NONCOPYABLE(PDFPluginBase);
     WTF_MAKE_TZONE_ALLOCATED(PDFPluginBase);
@@ -101,10 +108,10 @@ public:
     virtual ~PDFPluginBase();
 
     // CheckedPtr interface
-    uint32_t ptrCount() const final { return CanMakeThreadSafeCheckedPtr::ptrCount(); }
-    uint32_t ptrCountWithoutThreadCheck() const final { return CanMakeThreadSafeCheckedPtr::ptrCountWithoutThreadCheck(); }
-    void incrementPtrCount() const final { CanMakeThreadSafeCheckedPtr::incrementPtrCount(); }
-    void decrementPtrCount() const final { CanMakeThreadSafeCheckedPtr::decrementPtrCount(); }
+    uint32_t checkedPtrCount() const final { return CanMakeThreadSafeCheckedPtr::checkedPtrCount(); }
+    uint32_t checkedPtrCountWithoutThreadCheck() const final { return CanMakeThreadSafeCheckedPtr::checkedPtrCountWithoutThreadCheck(); }
+    void incrementCheckedPtrCount() const final { CanMakeThreadSafeCheckedPtr::incrementCheckedPtrCount(); }
+    void decrementCheckedPtrCount() const final { CanMakeThreadSafeCheckedPtr::decrementCheckedPtrCount(); }
 
     void startLoading();
     void destroy();
@@ -208,6 +215,8 @@ public:
     WebCore::ScrollPosition scrollPositionForTesting() const { return scrollPosition(); }
     WebCore::Scrollbar* horizontalScrollbar() const override { return m_horizontalScrollbar.get(); }
     WebCore::Scrollbar* verticalScrollbar() const override { return m_verticalScrollbar.get(); }
+    RefPtr<WebCore::Scrollbar> protectedHorizontalScrollbar() const { return horizontalScrollbar(); }
+    RefPtr<WebCore::Scrollbar> protectedVerticalScrollbar() const { return verticalScrollbar(); }
     void setScrollOffset(const WebCore::ScrollOffset&) final;
 
     virtual void willAttachScrollingNode() { }
@@ -271,8 +280,9 @@ public:
 
     virtual void didSameDocumentNavigationForFrame(WebFrame&) { }
 
+    using PasteboardItem = PDFPluginPasteboardItem;
 #if PLATFORM(MAC)
-    void writeItemsToPasteboard(NSString *pasteboardName, NSArray *items, NSArray *types) const;
+    void writeItemsToPasteboard(NSString *pasteboardName, Vector<PasteboardItem>&&) const;
 #endif
 
     uint64_t streamedBytes() const;
@@ -295,7 +305,7 @@ private:
     // FIXME: It would be nice to avoid having both the "copy into a buffer" and "return a pointer" ways of getting data.
     std::span<const uint8_t> dataSpanForRange(uint64_t sourcePosition, size_t count, CheckValidRanges) const;
     // Returns true only if we can satisfy all of the requests.
-    bool getByteRanges(CFMutableArrayRef, const CFRange*, size_t count) const;
+    bool getByteRanges(CFMutableArrayRef, std::span<const CFRange>) const;
 
 protected:
     explicit PDFPluginBase(WebCore::HTMLPlugInElement&);
@@ -304,7 +314,7 @@ protected:
 
     virtual void teardown();
 
-    bool supportsForms();
+    bool supportsForms() const;
 
     void createPDFDocument();
     virtual void installPDFDocument() = 0;
@@ -380,6 +390,8 @@ protected:
 
     virtual void teardownPasswordEntryForm() = 0;
 
+    String annotationStyle() const;
+
     SingleThreadWeakPtr<PluginView> m_view;
     WeakPtr<WebFrame> m_frame;
     WeakPtr<WebCore::HTMLPlugInElement, WebCore::WeakPtrImplWithEventTargetData> m_element;
@@ -432,66 +444,6 @@ protected:
     CompletionHandler<void(const String&, const URL&, std::span<const uint8_t>)> m_pendingSaveCompletionHandler;
     CompletionHandler<void(const String&, FrameInfoData&&, std::span<const uint8_t>, const String&)> m_pendingOpenCompletionHandler;
 #endif
-
-    // Set overflow: hidden on the annotation container so <input> elements scrolled out of view don't show
-    // scrollbars on the body. We can't add annotations directly to the body, because overflow: hidden on the body
-    // will break rubber-banding.
-    static constexpr auto annotationStyle =
-    "#annotationContainer {"
-    "    overflow: hidden;"
-    "    position: absolute;"
-    "    pointer-events: none;"
-    "    top: 0;"
-    "    left: 0;"
-    "    right: 0;"
-    "    bottom: 0;"
-    "    display: flex;"
-    "    flex-direction: column;"
-    "    justify-content: center;"
-    "    align-items: center;"
-    "}"
-    ""
-    ".annotation {"
-    "    position: absolute;"
-    "    pointer-events: auto;"
-    "}"
-    ""
-    "textarea.annotation { "
-    "    resize: none;"
-    "}"
-    ""
-    "input.annotation[type='password'] {"
-    "    position: static;"
-    "    width: 238px;"
-    "    margin-top: 110px;"
-    "    font-size: 15px;"
-    "}"
-    ""
-    ".lock-icon {"
-    "    width: 64px;"
-    "    height: 64px;"
-    "    margin-bottom: 12px;"
-    "}"
-    ""
-    ".password-form {"
-    "    position: static;"
-    "    display: block;"
-    "    text-align: center;"
-    "    font-family: system-ui;"
-    "    font-size: 15px;"
-    "}"
-    ""
-    ".password-form p {"
-    "    margin: 4pt;"
-    "}"
-    ""
-    ".password-form .subtitle {"
-    "    font-size: 12px;"
-    "}"
-    ""
-    ".password-form + input.annotation[type='password'] {"
-    "    margin-top: 16px;"
-    "}"_s;
 };
 
 } // namespace WebKit

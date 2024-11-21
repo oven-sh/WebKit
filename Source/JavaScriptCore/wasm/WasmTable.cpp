@@ -28,12 +28,15 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "IntegrityInlines.h"
 #include "JSCJSValueInlines.h"
 #include "JSWebAssemblyInstance.h"
 #include "WasmTypeDefinitionInlines.h"
 #include <type_traits>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/TZoneMallocInlines.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace Wasm {
 
@@ -188,6 +191,7 @@ void Table::set(uint32_t index, JSValue value)
 {
     ASSERT(index < length());
     ASSERT(m_owner);
+    Integrity::auditCell<Integrity::AuditLevel::Full>(owner()->vm(), value);
     visitDerived([&](auto& table) {
         table.set(index, value);
     });
@@ -332,5 +336,7 @@ void FuncRefTable::set(uint32_t index, JSValue value)
 }
 
 } } // namespace JSC::Table
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(WEBASSEMBLY)

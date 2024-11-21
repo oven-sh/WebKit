@@ -1,4 +1,3 @@
-
 ByteLengthQueuingStrategyBuiltins.h
 CommandLineAPIModuleSourceBuiltins.h
 CompressionStreamBuiltins.h
@@ -447,16 +446,8 @@ Modules/WebGPU/GPUSampler.cpp
 Modules/WebGPU/GPUShaderModule.cpp
 Modules/WebGPU/GPUTexture.cpp
 Modules/WebGPU/GPUTextureView.cpp
-Modules/WebGPU/Implementation/WebGPUCommandEncoderImpl.cpp
-Modules/WebGPU/Implementation/WebGPUComputePassEncoderImpl.cpp
 Modules/WebGPU/Implementation/WebGPUDeviceImpl.cpp
 Modules/WebGPU/Implementation/WebGPUImpl.cpp
-Modules/WebGPU/Implementation/WebGPUPresentationContextImpl.cpp
-Modules/WebGPU/Implementation/WebGPUQueueImpl.cpp
-Modules/WebGPU/Implementation/WebGPURenderBundleEncoderImpl.cpp
-Modules/WebGPU/Implementation/WebGPURenderPassEncoderImpl.cpp
-Modules/WebGPU/Implementation/WebGPUTextureImpl.cpp
-Modules/WebGPU/Implementation/WebGPUXRBindingImpl.cpp
 Modules/airplay/WebMediaSessionManager.cpp
 Modules/applepay-ams-ui/ApplePayAMSUIPaymentHandler.cpp
 Modules/applepay/ApplePaySession.cpp
@@ -716,7 +707,7 @@ accessibility/AccessibilityNodeObject.cpp
 accessibility/AccessibilityObject.cpp
 accessibility/AccessibilityObject.h
 accessibility/AccessibilityRenderObject.cpp
-accessibility/AccessibilitySVGElement.cpp
+accessibility/AccessibilitySVGObject.cpp
 accessibility/AccessibilityScrollView.cpp
 accessibility/AccessibilityScrollbar.cpp
 accessibility/AccessibilitySlider.cpp
@@ -732,7 +723,7 @@ accessibility/mac/AXObjectCacheMac.mm
 accessibility/mac/AccessibilityObjectMac.mm
 accessibility/mac/WebAccessibilityObjectWrapperBase.mm
 accessibility/mac/WebAccessibilityObjectWrapperMac.mm
-animation/AcceleratedTimeline.cpp
+animation/AcceleratedEffectStackUpdater.cpp
 animation/AnimationEffect.cpp
 animation/AnimationEffectTiming.cpp
 animation/AnimationTimeline.cpp
@@ -883,9 +874,6 @@ contentextensions/ContentExtensionStyleSheet.cpp
 contentextensions/ContentExtensionsBackend.cpp
 crypto/SubtleCrypto.cpp
 crypto/parameters/CryptoAlgorithmRsaKeyGenParams.h
-css/BasicShapeConversion.cpp
-css/CSSBasicShapes.cpp
-css/CSSBasicShapes.h
 css/CSSComputedStyleDeclaration.cpp
 css/CSSCounterStyle.cpp
 css/CSSCounterStyleDescriptors.cpp
@@ -931,8 +919,6 @@ css/CSSPrimitiveValue.cpp
 css/CSSPrimitiveValueMappings.h
 css/CSSProperty.h
 css/CSSPropertyRule.cpp
-css/CSSRayValue.cpp
-css/CSSRayValue.h
 css/CSSReflectValue.cpp
 css/CSSReflectValue.h
 css/CSSRuleList.h
@@ -942,7 +928,6 @@ css/CSSSegmentedFontFace.cpp
 css/CSSSelector.cpp
 css/CSSShadowValue.cpp
 css/CSSShadowValue.h
-css/CSSShapeSegmentValue.cpp
 css/CSSStyleRule.cpp
 css/CSSStyleSheet.cpp
 css/CSSStyleSheetObservableArray.cpp
@@ -987,7 +972,6 @@ css/color/CSSUnresolvedLightDark.cpp
 css/parser/CSSParserImpl.cpp
 css/parser/CSSPropertyParser.cpp
 css/parser/CSSPropertyParserConsumer+Grid.cpp
-css/parser/CSSSelectorParser.cpp
 css/parser/SizesCalcParser.cpp
 css/query/GenericMediaQuerySerialization.cpp
 css/typedom/CSSOMVariableReferenceValue.cpp
@@ -1019,7 +1003,6 @@ dom/Attr.cpp
 dom/BoundaryPoint.cpp
 dom/BroadcastChannel.cpp
 dom/ChildListMutationScope.h
-dom/ComposedTreeAncestorIterator.h
 dom/ComposedTreeIterator.cpp
 dom/ContainerNode.cpp
 dom/ContainerNodeAlgorithms.cpp
@@ -1083,7 +1066,6 @@ dom/NodeRareData.h
 dom/NodeWithIndex.h
 dom/Observable.cpp
 dom/PendingScript.cpp
-dom/PopoverData.h
 dom/Position.cpp
 dom/PositionIterator.cpp
 dom/PositionIterator.h
@@ -1108,13 +1090,11 @@ dom/StaticNodeList.cpp
 dom/StaticRange.cpp
 dom/StyledElement.cpp
 dom/Subscriber.cpp
-dom/Subscriber.h
 dom/TextDecoderStreamDecoder.h
 dom/Traversal.cpp
 dom/TreeScope.cpp
 dom/TreeWalker.cpp
 dom/TrustedType.cpp
-dom/TypedElementDescendantIteratorInlines.h
 dom/ViewTransition.cpp
 dom/ViewTransitionTypeSet.cpp
 dom/VisitedLinkState.cpp
@@ -1328,7 +1308,6 @@ html/parser/HTMLScriptRunner.cpp
 html/parser/HTMLTreeBuilder.cpp
 html/shadow/DateTimeEditElement.cpp
 html/shadow/DateTimeFieldElement.cpp
-html/shadow/DetailsMarkerControl.cpp
 html/shadow/MediaControlTextTrackContainerElement.cpp
 html/shadow/SliderThumbElement.cpp
 html/shadow/SpinButtonElement.cpp
@@ -1535,18 +1514,12 @@ page/scrolling/ScrollingStateNode.h
 page/scrolling/ScrollingStateTree.cpp
 page/scrolling/ScrollingThread.cpp
 page/scrolling/ScrollingTree.cpp
-page/scrolling/ScrollingTreeFrameHostingNode.cpp
 page/scrolling/ScrollingTreeGestureState.cpp
-page/scrolling/ScrollingTreeOverflowScrollProxyNode.cpp
-page/scrolling/ScrollingTreePositionedNode.cpp
-page/scrolling/ScrollingTreeScrollingNode.cpp
 page/scrolling/ScrollingTreeScrollingNodeDelegate.h
-page/scrolling/ScrollingTreeStickyNode.cpp
 page/scrolling/ThreadedScrollingCoordinator.cpp
 page/scrolling/ThreadedScrollingTree.cpp
 page/scrolling/mac/ScrollerMac.mm
 page/scrolling/mac/ScrollingCoordinatorMac.mm
-page/scrolling/mac/ScrollingTreeFrameScrollingNodeMac.mm
 page/scrolling/mac/ScrollingTreeScrollingNodeDelegateMac.mm
 page/text-extraction/TextExtraction.cpp
 platform/Cursor.h
@@ -1608,7 +1581,6 @@ platform/graphics/ImageAdapter.cpp
 platform/graphics/ImageBackingStore.h
 platform/graphics/ImageBufferContextSwitcher.cpp
 platform/graphics/ImageFrame.cpp
-platform/graphics/ImageFrameAnimator.cpp
 platform/graphics/ImageFrameWorkQueue.cpp
 platform/graphics/MediaPlayer.cpp
 platform/graphics/Path.cpp
@@ -1684,7 +1656,7 @@ platform/graphics/coretext/ComplexTextControllerCoreText.mm
 platform/graphics/coretext/FontCascadeCoreText.cpp
 platform/graphics/coretext/FontCustomPlatformDataCoreText.cpp
 platform/graphics/coretext/FontPlatformDataCoreText.cpp
-platform/graphics/cv/GraphicsContextGLCVCocoa.cpp
+platform/graphics/cv/GraphicsContextGLCVCocoa.mm
 platform/graphics/displaylists/DisplayListItem.cpp
 platform/graphics/filters/FEDisplacementMap.cpp
 platform/graphics/filters/FilterImage.cpp
@@ -1709,8 +1681,6 @@ platform/mediarecorder/MediaRecorderPrivate.h
 platform/mediarecorder/MediaRecorderPrivateAVFImpl.cpp
 platform/mediarecorder/MediaRecorderPrivateMock.cpp
 platform/mediarecorder/cocoa/AudioSampleBufferCompressor.mm
-platform/mediarecorder/cocoa/MediaRecorderPrivateWriterCocoa.mm
-platform/mediarecorder/cocoa/VideoSampleBufferCompressor.mm
 platform/mediastream/AudioTrackPrivateMediaStream.cpp
 platform/mediastream/MediaStreamTrackDataHolder.cpp
 platform/mediastream/MediaStreamTrackPrivate.cpp
@@ -1773,7 +1743,6 @@ rendering/LegacyInlineFlowBox.cpp
 rendering/LegacyLineLayout.cpp
 rendering/MarkedText.cpp
 rendering/MotionPath.cpp
-rendering/PathOperation.h
 rendering/RenderAttachment.cpp
 rendering/RenderBlock.cpp
 rendering/RenderBlock.h
@@ -1859,7 +1828,6 @@ rendering/style/RenderStyleInlines.h
 rendering/style/RenderStyleSetters.h
 rendering/style/SVGRenderStyle.cpp
 rendering/style/SVGRenderStyle.h
-rendering/style/ShapeValue.cpp
 rendering/style/StyleCachedImage.cpp
 rendering/style/StyleCanvasImage.cpp
 rendering/style/StyleCrossfadeImage.cpp
@@ -1959,7 +1927,6 @@ style/Styleable.cpp
 style/Styleable.h
 style/TransformOperationsBuilder.cpp
 style/UserAgentStyle.cpp
-style/values/StylePrimitiveNumericTypes.h
 svg/SVGAElement.cpp
 svg/SVGAElement.h
 svg/SVGAltGlyphElement.cpp
@@ -2072,7 +2039,6 @@ testing/MockPaymentCoordinator.cpp
 testing/ServiceWorkerInternals.cpp
 testing/js/WebCoreTestSupport.cpp
 workers/DedicatedWorkerGlobalScope.cpp
-workers/ScriptBuffer.cpp
 workers/Worker.cpp
 workers/WorkerAnimationController.cpp
 workers/WorkerConsoleClient.cpp

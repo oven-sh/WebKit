@@ -172,8 +172,6 @@
 #import <pal/cocoa/WritingToolsUISoftLink.h>
 #import <pal/mac/DataDetectorsSoftLink.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 #if HAVE(TOUCH_BAR) && ENABLE(WEB_PLAYBACK_CONTROLS_MANAGER)
 SOFT_LINK_FRAMEWORK(AVKit)
 SOFT_LINK_CLASS(AVKit, AVTouchBarPlaybackControlsProvider)
@@ -1827,68 +1825,32 @@ NSPrintOperation *WebViewImpl::printOperationWithPrintInfo(NSPrintInfo *printInf
 
 void WebViewImpl::setAutomaticallyAdjustsContentInsets(bool automaticallyAdjustsContentInsets)
 {
-    m_automaticallyAdjustsContentInsets = automaticallyAdjustsContentInsets;
-    updateContentInsetsIfAutomatic();
+    m_page->setAutomaticallyAdjustsContentInsets(automaticallyAdjustsContentInsets);
+}
+
+bool WebViewImpl::automaticallyAdjustsContentInsets() const
+{
+    return m_page->automaticallyAdjustsContentInsets();
 }
 
 void WebViewImpl::updateContentInsetsIfAutomatic()
 {
-    if (!m_automaticallyAdjustsContentInsets)
-        return;
-
-    m_pendingTopContentInset = std::nullopt;
-
-    scheduleSetTopContentInsetDispatch();
+    m_page->updateContentInsetsIfAutomatic();
 }
 
 CGFloat WebViewImpl::topContentInset() const
 {
-    return m_pendingTopContentInset.value_or(m_page->topContentInset());
+    return m_page->pendingOrActualTopContentInset();
 }
 
 void WebViewImpl::setTopContentInset(CGFloat contentInset)
 {
-    m_pendingTopContentInset = contentInset;
-
-    scheduleSetTopContentInsetDispatch();
+    m_page->setTopContentInsetAsync(contentInset);
 }
 
-void WebViewImpl::scheduleSetTopContentInsetDispatch()
+void WebViewImpl::flushPendingTopContentInset()
 {
-    if (m_didScheduleSetTopContentInsetDispatch)
-        return;
-
-    m_didScheduleSetTopContentInsetDispatch = true;
-
-    RunLoop::main().dispatch([weakThis = WeakPtr { *this }] {
-        if (!weakThis)
-            return;
-        weakThis->dispatchSetTopContentInset();
-    });
-}
-
-void WebViewImpl::dispatchSetTopContentInset()
-{
-    if (!m_didScheduleSetTopContentInsetDispatch)
-        return;
-
-    m_didScheduleSetTopContentInsetDispatch = false;
-
-    if (!m_pendingTopContentInset) {
-        if (!m_automaticallyAdjustsContentInsets)
-            return;
-
-        NSWindow *window = [m_view window];
-        if ((window.styleMask & NSWindowStyleMaskFullSizeContentView) && !window.titlebarAppearsTransparent && ![m_view enclosingScrollView]) {
-            NSRect contentLayoutRectInWebViewCoordinates = [m_view convertRect:window.contentLayoutRect fromView:nil];
-            m_pendingTopContentInset = std::max<CGFloat>(contentLayoutRectInWebViewCoordinates.origin.y, 0);
-        } else
-            m_pendingTopContentInset = 0;
-    }
-
-    m_page->setTopContentInset(*m_pendingTopContentInset);
-
-    m_pendingTopContentInset = std::nullopt;
+    m_page->dispatchSetTopContentInset();
 }
 
 void WebViewImpl::prepareContentInRect(CGRect rect)
@@ -2210,6 +2172,15 @@ bool WebViewImpl::shouldDelayWindowOrderingForEvent(NSEvent *event)
     if (![m_view hitTest:event.locationInWindow])
         return false;
 
+    if (!protectedPage()->legacyMainFrameProcess().isResponsive())
+        return false;
+
+    if (protectedPage()->editorState().hasPostLayoutData()) {
+        auto locationInView = [m_view convertPoint:event.locationInWindow fromView:nil];
+        if (!protectedPage()->selectionBoundingRectInRootViewCoordinates().contains(roundedIntPoint(locationInView)))
+            return false;
+    }
+
     auto previousEvent = setLastMouseDownEvent(event);
     bool result = m_page->shouldDelayWindowOrderingForEvent(WebEventFactory::createWebMouseEvent(event, m_lastPressureEvent.get(), m_view.getAutoreleased()));
     setLastMouseDownEvent(previousEvent.get());
@@ -2469,7 +2440,7 @@ void WebViewImpl::endDeferringViewInWindowChanges()
     m_shouldDeferViewInWindowChanges = false;
 
     if (m_viewInWindowChangeWasDeferred) {
-        dispatchSetTopContentInset();
+        flushPendingTopContentInset();
         m_page->activityStateDidChange(WebCore::ActivityState::IsInWindow);
         m_viewInWindowChangeWasDeferred = false;
     }
@@ -2485,7 +2456,7 @@ void WebViewImpl::endDeferringViewInWindowChangesSync()
     m_shouldDeferViewInWindowChanges = false;
 
     if (m_viewInWindowChangeWasDeferred) {
-        dispatchSetTopContentInset();
+        flushPendingTopContentInset();
         m_page->activityStateDidChange(WebCore::ActivityState::IsInWindow);
         m_viewInWindowChangeWasDeferred = false;
     }
@@ -2504,7 +2475,7 @@ void WebViewImpl::prepareForMoveToWindow(NSWindow *targetWindow, WTF::Function<v
     WeakPtr weakThis { *this };
     m_page->installActivityStateChangeCompletionHandler(WTFMove(completionHandler));
 
-    dispatchSetTopContentInset();
+    flushPendingTopContentInset();
     m_page->activityStateDidChange(WebCore::ActivityState::IsInWindow, WebPageProxy::ActivityStateChangeDispatchMode::Immediate);
     m_viewInWindowChangeWasDeferred = false;
 }
@@ -2694,11 +2665,10 @@ static String commandNameForSelector(SEL selector)
     // Remove the trailing colon.
     // No need to capitalize the command name since Editor command names are
     // not case sensitive.
-    const char* selectorName = sel_getName(selector);
-    size_t selectorNameLength = strlen(selectorName);
-    if (selectorNameLength < 2 || selectorName[selectorNameLength - 1] != ':')
+    auto selectorName = span(sel_getName(selector));
+    if (selectorName.size() < 2 || selectorName[selectorName.size() - 1] != ':')
         return String();
-    return String({ selectorName, selectorNameLength - 1 });
+    return String(selectorName.first(selectorName.size() - 1));
 }
 
 bool WebViewImpl::executeSavedCommandBySelector(SEL selector)
@@ -3452,7 +3422,7 @@ void WebViewImpl::dismissContentRelativeChildWindowsFromViewOnly()
 bool WebViewImpl::hasContentRelativeChildViews() const
 {
 #if ENABLE(WRITING_TOOLS)
-    return [m_textAnimationTypeManager hasActiveTextAnimationType];
+    return [m_view _web_hasActiveIntelligenceTextEffects] || [m_textAnimationTypeManager hasActiveTextAnimationType];
 #else
     return false;
 #endif
@@ -3489,6 +3459,7 @@ void WebViewImpl::contentRelativeViewsHysteresisTimerFired(PAL::HysteresisState 
 void WebViewImpl::suppressContentRelativeChildViews()
 {
 #if ENABLE(WRITING_TOOLS)
+    [m_view _web_suppressContentRelativeChildViews];
     [m_textAnimationTypeManager suppressTextAnimationType];
 #endif
 }
@@ -3496,6 +3467,7 @@ void WebViewImpl::suppressContentRelativeChildViews()
 void WebViewImpl::restoreContentRelativeChildViews()
 {
 #if ENABLE(WRITING_TOOLS)
+    [m_view _web_restoreContentRelativeChildViews];
     [m_textAnimationTypeManager restoreTextAnimationType];
 #endif
 }
@@ -3736,9 +3708,9 @@ NSTrackingRectTag WebViewImpl::addTrackingRectWithTrackingNum(CGRect, id owner, 
     return TRACKING_RECT_TAG;
 }
 
-void WebViewImpl::addTrackingRectsWithTrackingNums(CGRect*, id owner, void** userDataList, bool assumeInside, NSTrackingRectTag *trackingNums, int count)
+void WebViewImpl::addTrackingRectsWithTrackingNums(Vector<CGRect> cgRects, id owner, void** userDataList, bool assumeInside, NSTrackingRectTag *trackingNums)
 {
-    ASSERT(count == 1);
+    ASSERT_UNUSED(cgRects, cgRects.size() == 1);
     ASSERT(trackingNums[0] == 0 || trackingNums[0] == TRACKING_RECT_TAG);
     ASSERT(!m_trackingRectOwner);
     m_trackingRectOwner = owner;
@@ -3767,10 +3739,9 @@ void WebViewImpl::removeTrackingRect(NSTrackingRectTag tag)
     ASSERT_NOT_REACHED();
 }
 
-void WebViewImpl::removeTrackingRects(NSTrackingRectTag *tags, int count)
+void WebViewImpl::removeTrackingRects(std::span<NSTrackingRectTag> tags)
 {
-    for (int i = 0; i < count; ++i) {
-        int tag = tags[i];
+    for (auto& tag : tags) {
         if (tag == 0)
             continue;
         ASSERT(tag == TRACKING_RECT_TAG);
@@ -4554,7 +4525,7 @@ static RetainPtr<CGImageRef> takeWindowSnapshot(CGSWindowID windowID, bool captu
     CGWindowImageOption imageOptions = kCGWindowImageBoundsIgnoreFraming | kCGWindowImageShouldBeOpaque;
     if (captureAtNominalResolution)
         imageOptions |= kCGWindowImageNominalResolution;
-    return adoptCF(WebCore::cgWindowListCreateImage(CGRectNull, kCGWindowListOptionIncludingWindow, windowID, imageOptions));
+    return WebCore::cgWindowListCreateImage(CGRectNull, kCGWindowListOptionIncludingWindow, windowID, imageOptions);
 }
 
 RefPtr<ViewSnapshot> WebViewImpl::takeViewSnapshot()
@@ -4647,11 +4618,11 @@ void WebViewImpl::removeTextPlaceholder(NSTextPlaceholder *placeholder, bool wil
 
 void WebViewImpl::showWritingTools(WTRequestedTool tool)
 {
-    IntRect selectionRect;
+    FloatRect selectionRect;
 
     auto& editorState = m_page->editorState();
-    if (editorState.selectionIsRange && editorState.hasPostLayoutData())
-        selectionRect = editorState.postLayoutData->selectionBoundingRect;
+    if (editorState.selectionIsRange)
+        selectionRect = protectedPage()->selectionBoundingRectInRootViewCoordinates();
 
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     [[PAL::getWTWritingToolsClass() sharedInstance] showTool:tool forSelectionRect:selectionRect ofView:m_view.getAutoreleased() forDelegate:(NSObject<WTWritingToolsDelegate> *)m_view.getAutoreleased()];
@@ -5865,6 +5836,10 @@ void WebViewImpl::mouseUp(NSEvent *event)
 
     setLastMouseDownEvent(nil);
 
+#if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
+    fulfillDeferredImageAnalysisOverlayViewHierarchyTask();
+#endif
+
     for (auto& hud : _pdfHUDViews.values()) {
         if ([hud handleMouseUp:event])
             return;
@@ -5990,7 +5965,7 @@ void WebViewImpl::updateTouchBar()
         return;
 
     NSTouchBar *touchBar = nil;
-    bool userActionRequirementsHaveBeenMet = !requiresUserActionForEditingControlsManager() || m_page->hasHadSelectionChangesFromUserInteraction();
+    bool userActionRequirementsHaveBeenMet = !requiresUserActionForEditingControlsManager() || m_page->hasFocusedElementWithUserInteraction();
     if (m_page->editorState().isContentEditable && !m_page->isTouchBarUpdateSuppressedForHiddenContentEditable()) {
         updateTextTouchBar();
         if (userActionRequirementsHaveBeenMet)
@@ -6445,7 +6420,7 @@ void WebViewImpl::updateCursorAccessoryPlacement()
     }
 
     // Otherwise, the cursor accessory should be hidden if it will not show up in the correct position.
-    context.showsCursorAccessories = !postLayoutData.editableRootIsTransparentOrFullyClipped;
+    context.showsCursorAccessories = !postLayoutData.selectionIsTransparentOrFullyClipped;
 }
 #endif
 
@@ -6530,7 +6505,7 @@ void WebViewImpl::handleContextMenuTranslation(const WebCore::TranslationContext
 
 bool WebViewImpl::canHandleContextMenuWritingTools() const
 {
-    return [PAL::getWTWritingToolsViewControllerClass() isAvailable] && m_page->writingToolsBehavior() != WebCore::WritingTools::Behavior::None;
+    return PAL::isWritingToolsUIFrameworkAvailable() && [PAL::getWTWritingToolsViewControllerClass() isAvailable] && m_page->writingToolsBehavior() != WebCore::WritingTools::Behavior::None;
 }
 
 #endif
@@ -6593,11 +6568,11 @@ CocoaImageAnalyzer *WebViewImpl::ensureImageAnalyzer()
     return m_imageAnalyzer.get();
 }
 
-int32_t WebViewImpl::processImageAnalyzerRequest(CocoaImageAnalyzerRequest *request, CompletionHandler<void(CocoaImageAnalysis *, NSError *)>&& completion)
+int32_t WebViewImpl::processImageAnalyzerRequest(CocoaImageAnalyzerRequest *request, CompletionHandler<void(RetainPtr<CocoaImageAnalysis>&&, NSError *)>&& completion)
 {
-    return [ensureImageAnalyzer() processRequest:request progressHandler:nil completionHandler:makeBlockPtr([completion = WTFMove(completion)] (CocoaImageAnalysis *result, NSError *error) mutable {
-        callOnMainRunLoop([completion = WTFMove(completion), result = RetainPtr { result }, error = RetainPtr { error }] () mutable {
-            completion(result.get(), error.get());
+    return [ensureImageAnalyzer() processRequest:request progressHandler:nil completionHandler:makeBlockPtr([completion = WTFMove(completion)](CocoaImageAnalysis *result, NSError *error) mutable {
+        callOnMainRunLoop([completion = WTFMove(completion), result = RetainPtr { result }, error = RetainPtr { error }] mutable {
+            completion(WTFMove(result), error.get());
         });
     }).get()];
 }
@@ -6635,8 +6610,8 @@ void WebViewImpl::requestTextRecognition(const URL& imageURL, ShareableBitmap::H
 
     auto request = createImageAnalyzerRequest(cgImage.get(), imageURL, [NSURL _web_URLWithWTFString:m_page->currentURL()], VKAnalysisTypeText);
     auto startTime = MonotonicTime::now();
-    processImageAnalyzerRequest(request.get(), [completion = WTFMove(completion), startTime] (CocoaImageAnalysis *analysis, NSError *) mutable {
-        auto result = makeTextRecognitionResult(analysis);
+    processImageAnalyzerRequest(request.get(), [completion = WTFMove(completion), startTime](RetainPtr<CocoaImageAnalysis>&& analysis, NSError *) mutable {
+        auto result = makeTextRecognitionResult(analysis.get());
         RELEASE_LOG(ImageAnalysis, "Image analysis completed in %.0f ms (found text? %d)", (MonotonicTime::now() - startTime).milliseconds(), !result.isEmpty());
         completion(WTFMove(result));
     });
@@ -6686,7 +6661,7 @@ void WebViewImpl::beginTextRecognitionForVideoInElementFullscreen(ShareableBitma
         return;
 
     auto request = WebKit::createImageAnalyzerRequest(image.get(), VKAnalysisTypeText);
-    m_currentImageAnalysisRequestID = processImageAnalyzerRequest(request.get(), [this, weakThis = WeakPtr { *this }, bounds](CocoaImageAnalysis *result, NSError *error) {
+    m_currentImageAnalysisRequestID = processImageAnalyzerRequest(request.get(), [this, weakThis = WeakPtr { *this }, bounds](RetainPtr<CocoaImageAnalysis>&& result, NSError *error) {
         if (!weakThis || !m_currentImageAnalysisRequestID)
             return;
 
@@ -6695,7 +6670,7 @@ void WebViewImpl::beginTextRecognitionForVideoInElementFullscreen(ShareableBitma
             return;
 
         m_imageAnalysisInteractionBounds = bounds;
-        installImageAnalysisOverlayView(result);
+        installImageAnalysisOverlayView(WTFMove(result));
     });
 #else
     UNUSED_PARAM(bitmapHandle);
@@ -6714,31 +6689,56 @@ void WebViewImpl::cancelTextRecognitionForVideoInElementFullscreen()
 
 #if ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
 
-void WebViewImpl::installImageAnalysisOverlayView(VKCImageAnalysis *analysis)
+void WebViewImpl::installImageAnalysisOverlayView(RetainPtr<VKCImageAnalysis>&& analysis)
 {
-    if (!m_imageAnalysisOverlayView) {
-        m_imageAnalysisOverlayView = adoptNS([PAL::allocVKCImageAnalysisOverlayViewInstance() initWithFrame:[m_view bounds]]);
-        m_imageAnalysisOverlayViewDelegate = adoptNS([[WKImageAnalysisOverlayViewDelegate alloc] initWithWebViewImpl:*this]);
-        [m_imageAnalysisOverlayView setDelegate:m_imageAnalysisOverlayViewDelegate.get()];
-        prepareImageAnalysisForOverlayView(m_imageAnalysisOverlayView.get());
-        RELEASE_LOG(ImageAnalysis, "Installing image analysis overlay view at {{ %.0f, %.0f }, { %.0f, %.0f }}",
-            m_imageAnalysisInteractionBounds.x(), m_imageAnalysisInteractionBounds.y(), m_imageAnalysisInteractionBounds.width(), m_imageAnalysisInteractionBounds.height());
-    }
+    auto installTask = [this, weakThis = WeakPtr { *this }, analysis = WTFMove(analysis)] {
+        if (!weakThis)
+            return;
 
-    [m_imageAnalysisOverlayView setAnalysis:analysis];
-    [m_view addSubview:m_imageAnalysisOverlayView.get()];
+        if (!m_imageAnalysisOverlayView) {
+            m_imageAnalysisOverlayView = adoptNS([PAL::allocVKCImageAnalysisOverlayViewInstance() initWithFrame:[m_view bounds]]);
+            m_imageAnalysisOverlayViewDelegate = adoptNS([[WKImageAnalysisOverlayViewDelegate alloc] initWithWebViewImpl:*this]);
+            [m_imageAnalysisOverlayView setDelegate:m_imageAnalysisOverlayViewDelegate.get()];
+            prepareImageAnalysisForOverlayView(m_imageAnalysisOverlayView.get());
+            RELEASE_LOG(ImageAnalysis, "Installing image analysis overlay view at {{ %.0f, %.0f }, { %.0f, %.0f }}",
+                m_imageAnalysisInteractionBounds.x(), m_imageAnalysisInteractionBounds.y(), m_imageAnalysisInteractionBounds.width(), m_imageAnalysisInteractionBounds.height());
+        }
+
+        [m_imageAnalysisOverlayView setAnalysis:analysis.get()];
+        [m_view addSubview:m_imageAnalysisOverlayView.get()];
+    };
+
+    performOrDeferImageAnalysisOverlayViewHierarchyTask(WTFMove(installTask));
 }
 
 void WebViewImpl::uninstallImageAnalysisOverlayView()
 {
-    if (!m_imageAnalysisOverlayView)
-        return;
+    auto uninstallTask = [this, weakThis = WeakPtr { *this }] {
+        if (!m_imageAnalysisOverlayView)
+            return;
 
-    RELEASE_LOG(ImageAnalysis, "Uninstalling image analysis overlay view");
-    [m_imageAnalysisOverlayView removeFromSuperview];
-    m_imageAnalysisOverlayViewDelegate = nil;
-    m_imageAnalysisOverlayView = nil;
-    m_imageAnalysisInteractionBounds = { };
+        RELEASE_LOG(ImageAnalysis, "Uninstalling image analysis overlay view");
+        [m_imageAnalysisOverlayView removeFromSuperview];
+        m_imageAnalysisOverlayViewDelegate = nil;
+        m_imageAnalysisOverlayView = nil;
+        m_imageAnalysisInteractionBounds = { };
+    };
+
+    performOrDeferImageAnalysisOverlayViewHierarchyTask(WTFMove(uninstallTask));
+}
+
+void WebViewImpl::performOrDeferImageAnalysisOverlayViewHierarchyTask(std::function<void()>&& task)
+{
+    if (m_lastMouseDownEvent)
+        m_imageAnalysisOverlayViewHierarchyDeferredTask = WTFMove(task);
+    else
+        task();
+}
+
+void WebViewImpl::fulfillDeferredImageAnalysisOverlayViewHierarchyTask()
+{
+    if (auto&& task = std::exchange(m_imageAnalysisOverlayViewHierarchyDeferredTask, nullptr))
+        task();
 }
 
 #endif // ENABLE(IMAGE_ANALYSIS_ENHANCEMENTS)
@@ -6749,7 +6749,5 @@ Ref<WebPageProxy> WebViewImpl::protectedPage() const
 }
 
 } // namespace WebKit
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // PLATFORM(MAC)

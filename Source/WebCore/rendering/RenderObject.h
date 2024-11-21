@@ -58,6 +58,7 @@ class HitTestRequest;
 class HitTestResult;
 class HostWindow;
 class LegacyInlineBox;
+class LocalFrameViewLayoutContext;
 class Path;
 class Position;
 class ReferencedSVGResources;
@@ -101,8 +102,8 @@ enum class RepaintOutlineBounds : bool { No, Yes };
 enum class RequiresFullRepaint : bool { No, Yes };
 
 // Base class for all rendering tree objects.
-class RenderObject : public CachedImageClient, public CanMakeCheckedPtr<RenderObject> {
-    WTF_MAKE_COMPACT_TZONE_OR_ISO_ALLOCATED(RenderObject);
+class RenderObject : public CachedImageClient {
+    WTF_MAKE_TZONE_OR_ISO_ALLOCATED(RenderObject);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderObject);
     friend class RenderBlock;
     friend class RenderBlockFlow;
@@ -167,6 +168,7 @@ public:
         Video,
         View,
         ViewTransitionCapture,
+        ViewTransitionRoot,
 #if ENABLE(MATHML)
         MathMLBlock,
         MathMLFenced,
@@ -460,6 +462,7 @@ public:
 #endif
     bool isRenderFragmentContainer() const { return isRenderBlockFlow() && m_typeSpecificFlags.blockFlowFlags().contains(BlockFlowFlag::IsFragmentContainer); }
     bool isRenderViewTransitionContainer() const { return isRenderBlockFlow() && m_typeSpecificFlags.blockFlowFlags().contains(BlockFlowFlag::IsViewTransitionContainer); }
+    bool isRenderViewTransitionRoot() const { return type() == Type::ViewTransitionRoot; }
     bool isRenderReplica() const { return type() == Type::Replica; }
 
     bool isRenderSlider() const { return type() == Type::Slider; }
@@ -727,7 +730,7 @@ public:
     inline bool hasTransformOrPerspective() const;
 
     bool capturedInViewTransition() const { return m_stateBitfields.hasFlag(StateFlag::CapturedInViewTransition); }
-    void setCapturedInViewTransition(bool);
+    bool setCapturedInViewTransition(bool);
 
     // When the document element is captured, the captured contents uses the RenderView
     // instead. Returns the capture state with this adjustment applied.
@@ -737,6 +740,7 @@ public:
 
     RenderView& view() const { return *document().renderView(); }
     CheckedRef<RenderView> checkedView() const;
+    inline const LocalFrameViewLayoutContext& layoutContext() const;
 
     HostWindow* hostWindow() const;
 
@@ -1143,9 +1147,6 @@ public:
 
     bool isSkippedContent() const;
 
-    bool isSkippedContentRoot() const;
-    bool isSkippedContentForLayout() const;
-
     PointerEvents usedPointerEvents() const;
 
 protected:
@@ -1534,7 +1535,7 @@ inline RenderObject::SetLayoutNeededForbiddenScope::SetLayoutNeededForbiddenScop
 
 inline void Node::setRenderer(RenderObject* renderer)
 {
-    m_rendererWithStyleFlags.setPointer(renderer);
+    m_renderer = renderer;
 
     if (UNLIKELY(InspectorInstrumentationPublic::hasFrontends()))
         notifyInspectorOfRendererChange();

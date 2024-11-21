@@ -27,6 +27,7 @@
 
 #include "AnchorPositionEvaluator.h"
 #include "CSSCalcSymbolTable.h"
+#include "CSSCalcTree+Copy.h"
 #include "CSSCalcTree+Evaluation.h"
 #include "CSSCalcTree+NumericIdentity.h"
 #include "CSSCalcTree+Traversal.h"
@@ -1327,10 +1328,31 @@ std::optional<Child> simplify(Anchor& anchor, const SimplificationOptions& optio
     return CanonicalDimension { .value = *result, .dimension = CanonicalDimension::Dimension::Length };
 }
 
-std::optional<Child> simplify(AnchorSize&, const SimplificationOptions&)
+std::optional<Child> simplify(AnchorSize& anchorSize, const SimplificationOptions& options)
 {
-    // FIXME (webkit.org/b/280789): evaluate anchor-size()
-    return CanonicalDimension { .value = 0, .dimension = CanonicalDimension::Dimension::Length };
+    if (!options.conversionData || !options.conversionData->styleBuilderState())
+        return { };
+
+    auto& builderState = *options.conversionData->styleBuilderState();
+
+    std::optional<Style::ScopedName> anchorSizeScopedName;
+    if (!anchorSize.elementName.isNull()) {
+        anchorSizeScopedName = Style::ScopedName {
+            .name = anchorSize.elementName,
+            .scopeOrdinal = builderState.styleScopeOrdinal()
+        };
+    }
+
+    auto result = Style::AnchorPositionEvaluator::evaluateSize(builderState, anchorSizeScopedName, anchorSize.dimension);
+
+    if (!result) {
+        if (!anchorSize.fallback)
+            options.conversionData->styleBuilderState()->setCurrentPropertyInvalidAtComputedValueTime();
+
+        return std::exchange(anchorSize.fallback, { });
+    }
+
+    return CanonicalDimension { .value = *result, .dimension = CanonicalDimension::Dimension::Length };
 }
 
 // MARK: Copy & Simplify.
@@ -1370,6 +1392,15 @@ template<typename Op> static auto copyAndSimplifyChildren(const IndirectNode<Op>
 static auto copyAndSimplifyChildren(const IndirectNode<Anchor>& anchor, const SimplificationOptions& options) -> Anchor
 {
     return Anchor { .elementName = anchor->elementName, .side = copy(anchor->side), .fallback = copyAndSimplify(anchor->fallback, options) };
+}
+
+static auto copyAndSimplifyChildren(const IndirectNode<AnchorSize>& anchorSize, const SimplificationOptions& options) -> AnchorSize
+{
+    return AnchorSize {
+        .elementName = anchorSize->elementName,
+        .dimension = anchorSize->dimension,
+        .fallback = copyAndSimplify(anchorSize->fallback, options)
+    };
 }
 
 Child copyAndSimplify(const Child& root, const SimplificationOptions& options)

@@ -373,14 +373,6 @@ static bool shouldInlinifyForRuby(const RenderStyle& style, const RenderStyle& p
     return hasRubyParent && !style.hasOutOfFlowPosition() && !style.isFloating();
 }
 
-static bool isRubyContainerOrInternalRubyBox(const RenderStyle& style)
-{
-    auto display = style.display();
-    return display == DisplayType::Ruby
-        || display == DisplayType::RubyAnnotation
-        || display == DisplayType::RubyBase;
-}
-
 static bool hasUnsupportedRubyDisplay(DisplayType display, const Element* element)
 {
     // Only allow ruby elements to have ruby display types for now.
@@ -497,7 +489,7 @@ void Adjuster::adjust(RenderStyle& style, const RenderStyle* userAgentAppearance
         if (shouldInlinifyForRuby(style, m_parentBoxStyle))
             style.setEffectiveDisplay(equivalentInlineDisplay(style));
         // https://drafts.csswg.org/css-ruby-1/#bidi
-        if (isRubyContainerOrInternalRubyBox(style))
+        if (style.isRubyContainerOrInternalRubyBox())
             style.setUnicodeBidi(forceBidiIsolationForRuby(style.unicodeBidi()));
     }
 
@@ -759,8 +751,12 @@ void Adjuster::adjust(RenderStyle& style, const RenderStyle* userAgentAppearance
             adjustForTextAutosizing(style, *m_element);
 #endif
     }
-    if (isSkippedContentRoot(style, m_element.get()) && m_parentStyle.contentVisibility() != ContentVisibility::Hidden)
-        style.setUsedContentVisibility(style.contentVisibility());
+
+    if (m_parentStyle.contentVisibility() != ContentVisibility::Hidden) {
+        auto isSkippedContentRoot = style.contentVisibility() != ContentVisibility::Visible && doesSizeContainmentApplyByDisplayType(style) && m_element && !m_element->isRelevantToUser();
+        if (isSkippedContentRoot)
+            style.setUsedContentVisibility(style.contentVisibility());
+    }
 
     if (style.contentVisibility() == ContentVisibility::Auto) {
         style.containIntrinsicWidthAddAuto();
@@ -923,6 +919,11 @@ void Adjuster::adjustForSiteSpecificQuirks(RenderStyle& style) const
     if (!m_element)
         return;
 
+    if (is<HTMLBodyElement>(m_element) && m_document->quirks().needsBodyScrollbarWidthNoneDisabledQuirk()) {
+        if (style.scrollbarWidth() == ScrollbarWidth::None)
+            style.setScrollbarWidth(ScrollbarWidth::Auto);
+    }
+
     if (m_document->quirks().needsGMailOverflowScrollQuirk()) {
         // This turns sidebar scrollable without mouse move event.
         static MainThreadNeverDestroyed<const AtomString> roleValue("navigation"_s);
@@ -967,6 +968,14 @@ void Adjuster::adjustForSiteSpecificQuirks(RenderStyle& style) const
         if (m_element->hasClassName(className))
             style.setUserSelect(UserSelect::None);
     }
+
+#if PLATFORM(IOS_FAMILY)
+    if (m_document->quirks().needsGoogleMapsScrollingQuirk()) {
+        static MainThreadNeverDestroyed<const AtomString> className("PUtLdf"_s);
+        if (is<HTMLBodyElement>(*m_element) && m_element->hasClassName(className))
+            style.setUsedTouchActions({ TouchAction::Auto });
+    }
+#endif
 
 #if ENABLE(VIDEO)
     if (m_document->quirks().needsFullscreenDisplayNoneQuirk()) {

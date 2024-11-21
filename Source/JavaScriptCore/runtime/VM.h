@@ -74,6 +74,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <wtf/HashMap.h>
 #include <wtf/LazyRef.h>
 #include <wtf/LazyUniqueRef.h>
+#include <wtf/MallocPtr.h>
 #include <wtf/SetForScope.h>
 #include <wtf/StackPointer.h>
 #include <wtf/Stopwatch.h>
@@ -265,7 +266,7 @@ struct ScratchBuffer {
 
     static ScratchBuffer* fromData(void* buffer)
     {
-        return bitwise_cast<ScratchBuffer*>(static_cast<char*>(buffer) - OBJECT_OFFSETOF(ScratchBuffer, m_buffer));
+        return std::bit_cast<ScratchBuffer*>(static_cast<char*>(buffer) - OBJECT_OFFSETOF(ScratchBuffer, m_buffer));
     }
 
     static size_t allocationSize(Checked<size_t> bufferSize) { return sizeof(ScratchBuffer) + bufferSize; }

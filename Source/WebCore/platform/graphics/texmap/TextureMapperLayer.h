@@ -39,6 +39,7 @@ template<> struct IsDeprecatedWeakRefSmartPointerException<WebCore::TextureMappe
 namespace WebCore {
 
 class TextureMapper;
+class TextureMapperFlattenedLayer;
 class TextureMapperPaintOptions;
 class TextureMapperPlatformLayer;
 
@@ -81,6 +82,7 @@ public:
     FloatSize size() const { return m_state.size; }
     float opacity() const { return m_state.opacity; }
     TransformationMatrix transform() const { return m_state.transform; }
+    const TransformationMatrix& toSurfaceTransform() const { return m_layerTransforms.combined; }
     WEBCORE_EXPORT void setContentsVisible(bool);
     WEBCORE_EXPORT void setContentsOpaque(bool);
     WEBCORE_EXPORT void setBackfaceVisibility(bool);
@@ -117,6 +119,7 @@ public:
     WEBCORE_EXPORT bool descendantsOrSelfHaveRunningAnimations() const;
 
     WEBCORE_EXPORT void paint(TextureMapper&);
+    void collectDamage(TextureMapper&);
 
     void addChild(TextureMapperLayer*);
 
@@ -128,20 +131,28 @@ public:
     ALWAYS_INLINE void addDamage(const Damage&);
     ALWAYS_INLINE void addDamage(const FloatRect&);
 
+    FloatRect effectiveLayerRect() const;
+
 private:
     TextureMapperLayer& rootLayer() const
     {
         if (m_effectTarget)
             return m_effectTarget->rootLayer();
-        if (m_parent)
+        if (m_parent) {
+            if (m_parent->flattensAsLeafOf3DSceneOr3DPerspective())
+                return *m_parent;
             return m_parent->rootLayer();
+        }
         return const_cast<TextureMapperLayer&>(*this);
     }
 
+    void processDescendantLayersFlatteningRequirements();
+    void processFlatteningRequirements();
+    void computeFlattenedRegion(Region&, bool);
+    void destroyFlattenedDescendantLayers();
+
     struct ComputeTransformData;
     void computeTransformsRecursive(ComputeTransformData&);
-
-    static void sortByZOrder(Vector<TextureMapperLayer* >& array);
 
     TransformationMatrix replicaTransform();
     void removeFromParent();
@@ -161,6 +172,8 @@ private:
     void computeOverlapRegions(ComputeOverlapRegionData&, const TransformationMatrix&, bool includesReplica = true);
 
     void paintRecursive(TextureMapperPaintOptions&);
+    void paintFlattened(TextureMapperPaintOptions&);
+    void collectDamageRecursive(TextureMapperPaintOptions&);
     void paintWith3DRenderingContext(TextureMapperPaintOptions&);
     void paintSelfChildrenReplicaFilterAndMask(TextureMapperPaintOptions&);
     void paintUsingOverlapRegions(TextureMapperPaintOptions&);
@@ -169,14 +182,22 @@ private:
     void paintSelfAndChildrenWithIntermediateSurface(TextureMapperPaintOptions&, const IntRect&);
     void paintSelfChildrenFilterAndMask(TextureMapperPaintOptions&);
     void paintSelf(TextureMapperPaintOptions&);
+    void collectDamageSelf(TextureMapperPaintOptions&);
     void paintSelfAndChildren(TextureMapperPaintOptions&);
     void paintSelfAndChildrenWithReplica(TextureMapperPaintOptions&);
+    void paintBackdrop(TextureMapperPaintOptions&);
     void applyMask(TextureMapperPaintOptions&);
     void recordDamage(const FloatRect&, const TransformationMatrix&, const TextureMapperPaintOptions&);
+    void collect3DSceneLayers(Vector<TextureMapperLayer*>&);
 
     bool isVisible() const;
 
     bool shouldBlend() const;
+
+    bool flattensAsLeafOf3DSceneOr3DPerspective() const;
+
+    bool preserves3D() const { return m_state.preserves3D; }
+    bool isFlattened() const { return !!m_flattenedLayer; }
 
     inline FloatRect layerRect() const
     {
@@ -188,9 +209,9 @@ private:
     WeakPtr<TextureMapperLayer> m_effectTarget;
     TextureMapperBackingStore* m_backingStore { nullptr };
     TextureMapperPlatformLayer* m_contentsLayer { nullptr };
+    std::unique_ptr<TextureMapperFlattenedLayer> m_flattenedLayer;
     float m_currentOpacity { 1.0 };
     FilterOperations m_currentFilters;
-    float m_centerZ { 0 };
 
     struct State {
         FloatPoint pos;

@@ -121,10 +121,6 @@ class RemoteMediaResourceManager;
 class RemoteVideoFrameObjectHeap;
 #endif
 
-#if PLATFORM(COCOA) && ENABLE(MEDIA_RECORDER)
-class RemoteMediaRecorderManager;
-#endif
-
 #if ENABLE(WEBGL)
 class RemoteGraphicsContextGL;
 #endif
@@ -172,8 +168,6 @@ public:
 
     bool isLockdownModeEnabled() const { return m_isLockdownModeEnabled; }
     bool isLockdownSafeFontParserEnabled() const { return sharedPreferencesForWebProcess() ? sharedPreferencesForWebProcess()->lockdownFontParserEnabled : false; }
-
-    bool allowTestOnlyIPC() const { return sharedPreferencesForWebProcess() ? sharedPreferencesForWebProcess()->allowTestOnlyIPC : false; }
 
     Logger& logger();
 
@@ -265,6 +259,8 @@ public:
     void setMediaEnvironment(WebCore::PageIdentifier, const String&);
 #endif
 
+    bool isAlwaysOnLoggingAllowed() const;
+
 private:
     GPUConnectionToWebProcess(GPUProcess&, WebCore::ProcessIdentifier, PAL::SessionID, IPC::Connection::Handle&&, GPUProcessConnectionParameters&&);
 
@@ -274,14 +270,12 @@ private:
 
 #if ENABLE(WEB_AUDIO)
     RemoteAudioDestinationManager& remoteAudioDestinationManager();
+    Ref<RemoteAudioDestinationManager> protectedRemoteAudioDestinationManager();
 #endif
 #if PLATFORM(COCOA) && ENABLE(MEDIA_STREAM)
     Ref<RemoteSampleBufferDisplayLayerManager> protectedSampleBufferDisplayLayerManager() const;
     UserMediaCaptureManagerProxy& userMediaCaptureManagerProxy();
     RemoteAudioMediaStreamTrackRendererInternalUnitManager& audioMediaStreamTrackRendererInternalUnitManager();
-#endif
-#if PLATFORM(COCOA) && ENABLE(MEDIA_RECORDER)
-    RemoteMediaRecorderManager& mediaRecorderManager();
 #endif
 
     void createRenderingBackend(RenderingBackendIdentifier, IPC::StreamServerConnection::Handle&&);
@@ -377,9 +371,6 @@ private:
     Ref<RemoteSampleBufferDisplayLayerManager> m_sampleBufferDisplayLayerManager;
 #endif
 
-#if PLATFORM(COCOA) && ENABLE(MEDIA_RECORDER)
-    std::unique_ptr<RemoteMediaRecorderManager> m_remoteMediaRecorderManager;
-#endif
 #if ENABLE(MEDIA_STREAM)
     Ref<WebCore::SecurityOrigin> m_captureOrigin;
     bool m_allowsAudioCapture { false };

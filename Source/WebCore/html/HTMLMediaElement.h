@@ -759,6 +759,8 @@ protected:
     bool videoFullscreenStandby() const { return m_videoFullscreenStandby; }
     void setVideoFullscreenStandbyInternal(bool videoFullscreenStandby) { m_videoFullscreenStandby = videoFullscreenStandby; }
 
+    void ignoreFullscreenPermissionPolicyOnNextCallToEnterFullscreen() { m_ignoreFullscreenPermissionsPolicy = true; }
+
 protected:
     // ActiveDOMObject
     void stop() override;
@@ -1116,6 +1118,12 @@ private:
     void watchtimeTimerFired();
     void startBufferingStopwatch();
     void invalidateBufferingStopwatch();
+    void logTextTrackDiagnostics(Ref<TextTrack>, double);
+
+
+    enum ForceMuteChange { False, True };
+    void setMutedInternal(bool muted, ForceMuteChange);
+    bool implicitlyMuted() const { return m_implicitlyMuted.value_or(false); }
 
     Timer m_progressEventTimer;
     Timer m_playbackProgressTimer;
@@ -1232,6 +1240,8 @@ private:
 
     BufferingPolicy m_bufferingPolicy { BufferingPolicy::Default };
 
+    std::optional<bool> m_implicitlyMuted;
+
     bool m_firstTimePlaying : 1;
     bool m_playing : 1;
     bool m_isWaitingUntilMediaCanStart : 1;
@@ -1241,7 +1251,6 @@ private:
     bool m_autoplaying : 1;
     bool m_muted : 1;
     bool m_explicitlyMuted : 1;
-    bool m_initiallyMuted : 1;
     bool m_paused : 1;
     bool m_seeking : 1;
     bool m_buffering : 1;
@@ -1423,6 +1432,8 @@ private:
 
     std::unique_ptr<PausableIntervalTimer> m_watchtimeTimer;
     RefPtr<WTF::Stopwatch> m_bufferingStopwatch;
+
+    bool m_ignoreFullscreenPermissionsPolicy { false };
 };
 
 String convertEnumerationToString(HTMLMediaElement::AutoplayEventPlaybackState);

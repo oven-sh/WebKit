@@ -111,7 +111,6 @@ private:
     void didChangeContentSize(const WebCore::IntSize&) override;
     void setCursor(const WebCore::Cursor&) override;
     void setCursorHiddenUntilMouseMoves(bool) override;
-    void didChangeViewportProperties(const WebCore::ViewportAttributes&) override;
     void registerEditCommand(Ref<WebEditCommandProxy>&&, UndoOrRedo) override;
     void clearAllEditCommands() override;
     bool canUndoRedo(UndoOrRedo) override;
@@ -202,6 +201,7 @@ private:
     void elementDidBlur() override;
     void focusedElementDidChangeInputMode(WebCore::InputMode) override;
     void didUpdateEditorState() override;
+    void reconcileEnclosingScrollViewContentOffset(EditorState&) final;
     bool isFocusingElement() override;
     void selectionDidChange() override;
     bool interpretKeyEvent(const NativeWebKeyboardEvent&, bool isCharEvent) override;
@@ -354,6 +354,8 @@ private:
 #if PLATFORM(IOS_FAMILY)
     UIViewController *presentingViewController() const final;
 #endif
+
+    bool isPotentialTapInProgress() const final;
 
     WebCore::FloatPoint webViewToRootView(const WebCore::FloatPoint&) const final;
     WebCore::FloatRect rootViewToWebView(const WebCore::FloatRect&) const final;

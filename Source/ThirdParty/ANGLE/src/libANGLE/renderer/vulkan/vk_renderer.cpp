@@ -287,6 +287,12 @@ constexpr const char *kNoListRestartSkippedMessages[] = {
     "VUID-VkPipelineInputAssemblyStateCreateInfo-topology-06252",
 };
 
+// Validation messages that should be ignored only when ES 3.2 is enabled on certain test platforms.
+constexpr const char *kExposeES32ForTestingSkippedMessages[] = {
+    // http://issuetracker.google.com/376899587
+    "VUID-VkSwapchainCreateInfoKHR-presentMode-01427",
+};
+
 // VVL appears has a bug tracking stageMask on VkEvent with secondary command buffer.
 // https://github.com/KhronosGroup/Vulkan-ValidationLayers/issues/7849
 constexpr const char *kSkippedMessagesWithVulkanSecondaryCommandBuffer[] = {
@@ -1725,7 +1731,7 @@ Renderer::Renderer()
       mCurrentQueueFamilyIndex(std::numeric_limits<uint32_t>::max()),
       mMaxVertexAttribDivisor(1),
       mMaxVertexAttribStride(0),
-      mMaxInputAttachmentCount(0),
+      mMaxColorInputAttachmentCount(0),
       mDefaultUniformBufferSize(kPreferredDefaultUniformBufferSize),
       mDevice(VK_NULL_HANDLE),
       mDeviceLost(false),
@@ -2523,6 +2529,10 @@ angle::Result Renderer::initializeMemoryAllocator(vk::Context *context)
 // - VK_EXT_rasterization_order_attachment_access or
 //   VK_ARM_rasterization_order_attachment_access:     rasterizationOrderColorAttachmentAccess
 //                                                                                   (feature)
+//                                                     rasterizationOrderDepthAttachmentAccess
+//                                                                                   (feature)
+//                                                     rasterizationOrderStencilAttachmentAccess
+//                                                                                   (feature)
 // - VK_EXT_swapchain_maintenance1:                    swapchainMaintenance1 (feature)
 // - VK_EXT_legacy_dithering:                          supportsLegacyDithering (feature)
 // - VK_EXT_physical_device_drm:                       hasPrimary (property),
@@ -2736,31 +2746,11 @@ void Renderer::appendDeviceExtensionFeaturesPromotedTo11(
 {
     vk::AddToPNextChain(deviceProperties, &mSubgroupProperties);
     vk::AddToPNextChain(deviceFeatures, &mProtectedMemoryFeatures);
-
-    if (ExtensionFound(VK_KHR_SAMPLER_YCBCR_CONVERSION_EXTENSION_NAME, deviceExtensionNames) ||
-        IsVulkan11(mInstanceVersion))
-    {
-        vk::AddToPNextChain(deviceFeatures, &mSamplerYcbcrConversionFeatures);
-    }
-
-    if (ExtensionFound(VK_KHR_MULTIVIEW_EXTENSION_NAME, deviceExtensionNames) ||
-        IsVulkan11(mInstanceVersion))
-    {
-        vk::AddToPNextChain(deviceFeatures, &mMultiviewFeatures);
-        vk::AddToPNextChain(deviceProperties, &mMultiviewProperties);
-    }
-
-    if (ExtensionFound(VK_KHR_16BIT_STORAGE_EXTENSION_NAME, deviceExtensionNames) ||
-        IsVulkan11(mInstanceVersion))
-    {
-        vk::AddToPNextChain(deviceFeatures, &m16BitStorageFeatures);
-    }
-
-    if (ExtensionFound(VK_KHR_VARIABLE_POINTERS_EXTENSION_NAME, deviceExtensionNames) ||
-        IsVulkan11(mInstanceVersion))
-    {
-        vk::AddToPNextChain(deviceFeatures, &mVariablePointersFeatures);
-    }
+    vk::AddToPNextChain(deviceFeatures, &mSamplerYcbcrConversionFeatures);
+    vk::AddToPNextChain(deviceFeatures, &mMultiviewFeatures);
+    vk::AddToPNextChain(deviceProperties, &mMultiviewProperties);
+    vk::AddToPNextChain(deviceFeatures, &m16BitStorageFeatures);
+    vk::AddToPNextChain(deviceFeatures, &mVariablePointersFeatures);
 }
 
 // The following features and properties used by ANGLE have been promoted to Vulkan 1.2:
@@ -3555,15 +3545,10 @@ void Renderer::enableDeviceExtensionsPromotedTo11(const vk::ExtensionNameList &d
         mFeatures.supports16BitUniformAndStorageBuffer.enabled ||
         mFeatures.supports16BitPushConstant.enabled || mFeatures.supports16BitInputOutput.enabled)
     {
-        mEnabledDeviceExtensions.push_back(VK_KHR_16BIT_STORAGE_EXTENSION_NAME);
         vk::AddToPNextChain(&mEnabledFeatures, &m16BitStorageFeatures);
     }
 
-    if (ExtensionFound(VK_KHR_VARIABLE_POINTERS_EXTENSION_NAME, deviceExtensionNames))
-    {
-        mEnabledDeviceExtensions.push_back(VK_KHR_VARIABLE_POINTERS_EXTENSION_NAME);
-        vk::AddToPNextChain(&mEnabledFeatures, &mVariablePointersFeatures);
-    }
+    vk::AddToPNextChain(&mEnabledFeatures, &mVariablePointersFeatures);
 }
 
 // See comment above appendDeviceExtensionFeaturesPromotedTo12.  Additional extensions are enabled
@@ -3778,7 +3763,7 @@ void Renderer::initDeviceExtensionEntryPoints()
     {
         InitTransformFeedbackEXTFunctions(mDevice);
     }
-    if (useLogicOpDynamicState())
+    if (getFeatures().supportsLogicOpDynamicState.enabled)
     {
         // VK_EXT_extended_dynamic_state2 is only partially core in Vulkan 1.3.  If the logicOp
         // dynamic state (only from the extension) is used, need to load the entry points from the
@@ -4140,6 +4125,13 @@ void Renderer::initializeValidationMessageSuppressions()
             kNoListRestartSkippedMessages + ArraySize(kNoListRestartSkippedMessages));
     }
 
+    if (getFeatures().exposeES32ForTesting.enabled)
+    {
+        mSkippedValidationMessages.insert(
+            mSkippedValidationMessages.end(), kExposeES32ForTestingSkippedMessages,
+            kExposeES32ForTestingSkippedMessages + ArraySize(kExposeES32ForTestingSkippedMessages));
+    }
+
     if (getFeatures().useVkEventForImageBarrier.enabled &&
         (!vk::OutsideRenderPassCommandBuffer::ExecutesInline() ||
          !vk::RenderPassCommandBuffer::ExecutesInline()))
@@ -4308,10 +4300,14 @@ gl::Version Renderer::getMaxSupportedESVersion() const
         return maxVersion;
     }
 
-    // Limit to ES3.1 if there are any blockers for 3.2.
     ensureCapsInitialized();
-    if (!mFeatures.exposeNonConformantExtensionsAndVersions.enabled &&
-        !CanSupportGLES32(mNativeExtensions))
+
+    // Limit to ES3.1 if there are any blockers for 3.2.
+    if (mFeatures.exposeES32ForTesting.enabled)
+    {
+        return maxVersion;
+    }
+    if (!CanSupportGLES32(mNativeExtensions))
     {
         maxVersion = LimitVersionTo(maxVersion, {3, 1});
     }
@@ -4401,16 +4397,7 @@ gl::Version Renderer::getMaxSupportedESVersion() const
 
 gl::Version Renderer::getMaxConformantESVersion() const
 {
-    const gl::Version maxSupportedESVersion = getMaxSupportedESVersion();
-    const bool hasGeometryAndTessSupport =
-        getNativeExtensions().geometryShaderAny() && getNativeExtensions().tessellationShaderAny();
-
-    if (!hasGeometryAndTessSupport || !mFeatures.exposeNonConformantExtensionsAndVersions.enabled)
-    {
-        return LimitVersionTo(maxSupportedESVersion, {3, 1});
-    }
-
-    return maxSupportedESVersion;
+    return getMaxSupportedESVersion();
 }
 
 uint32_t Renderer::getDeviceVersion()
@@ -5093,6 +5080,18 @@ void Renderer::initFeatures(const vk::ExtensionNameList &deviceExtensionNames,
     ANGLE_FEATURE_CONDITION(&mFeatures, exposeNonConformantExtensionsAndVersions,
                             kExposeNonConformantExtensionsAndVersions);
 
+    // http://issuetracker.google.com/376899587
+    // Currently some testing platforms do not fully support ES 3.2 due to lack of certain features
+    // or extensions. For the purpose of testing coverage, we would still enable ES 3.2 on these
+    // platforms. However, once a listed test platform is updated to a version that does support
+    // ES 3.2, it should be unlisted.
+    ANGLE_FEATURE_CONDITION(
+        &mFeatures, exposeES32ForTesting,
+        mFeatures.exposeNonConformantExtensionsAndVersions.enabled &&
+            (isSwiftShader ||
+             IsPixel4(mPhysicalDeviceProperties.vendorID, mPhysicalDeviceProperties.deviceID) ||
+             (IsLinux() && isNvidia && nvidiaVersion.major <= 440) || (IsWindows() && isIntel)));
+
     ANGLE_FEATURE_CONDITION(
         &mFeatures, supportsMemoryBudget,
         ExtensionFound(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME, deviceExtensionNames));
@@ -5118,16 +5117,20 @@ void Renderer::initFeatures(const vk::ExtensionNameList &deviceExtensionNames,
     // natively anyway.
     ANGLE_FEATURE_CONDITION(&mFeatures, overrideSurfaceFormatRGB8ToRGBA8, true);
 
-    // We set
+    // We set the following when there is color framebuffer fetch:
     //
     // - VK_PIPELINE_COLOR_BLEND_STATE_CREATE_RASTERIZATION_ORDER_ATTACHMENT_ACCESS_BIT_EXT
     // - VK_SUBPASS_DESCRIPTION_RASTERIZATION_ORDER_ATTACHMENT_COLOR_ACCESS_BIT_EXT
     //
-    // when this feature is supported and there is framebuffer fetch.  But the
-    // check for framebuffer fetch is not accurate enough and those bits can
-    // have great impact on Qualcomm (it only affects the open source driver
-    // because the proprietary driver does not expose the extension).  Let's
-    // disable it on Qualcomm.
+    // and the following with depth/stencil framebuffer fetch:
+    //
+    // - VK_PIPELINE_DEPTH_STENCIL_STATE_CREATE_RASTERIZATION_ORDER_ATTACHMENT_DEPTH_ACCESS_BIT_EXT
+    // -
+    // VK_PIPELINE_DEPTH_STENCIL_STATE_CREATE_RASTERIZATION_ORDER_ATTACHMENT_STENCIL_ACCESS_BIT_EXT
+    //
+    // But the check for framebuffer fetch is not accurate enough and those bits can have great
+    // impact on Qualcomm (it only affects the open source driver because the proprietary driver
+    // does not expose the extension).  Let's disable it on Qualcomm.
     //
     // https://issuetracker.google.com/issues/255837430
     ANGLE_FEATURE_CONDITION(
@@ -5196,11 +5199,15 @@ void Renderer::initFeatures(const vk::ExtensionNameList &deviceExtensionNames,
     // - Intel on Linux before mesa 22.0
     //
     // Without VK_GOOGLE_surfaceless_query, there is no way to automatically deduce this support.
+    // http://issuetracker.google.com/376899587
+    // This feature currently prevents Windows/Intel from supporting ES 3.2.
     const bool isMesaAtLeast22_0_0 = mesaVersion.major >= 22;
     ANGLE_FEATURE_CONDITION(
         &mFeatures, emulateAdvancedBlendEquations,
         !mFeatures.supportsBlendOperationAdvanced.enabled &&
-            (IsAndroid() || !isIntel || (isIntel && IsLinux() && isMesaAtLeast22_0_0)));
+            (IsAndroid() || !isIntel || (isIntel && IsLinux() && isMesaAtLeast22_0_0) ||
+             (isIntel && IsWindows() &&
+              mFeatures.exposeNonConformantExtensionsAndVersions.enabled)));
 
     // GL_KHR_blend_equation_advanced_coherent ensures that the blending operations are performed in
     // API primitive order.
@@ -5352,20 +5359,20 @@ void Renderer::initFeatures(const vk::ExtensionNameList &deviceExtensionNames,
 
     // Samsung Vulkan driver with API level < 1.3.244 has a bug in imageless framebuffer support.
     // http://issuetracker.google.com/42266906
-    //
+    const bool isSamsungDriverWithImagelessFramebufferBug =
+        isSamsung && mPhysicalDeviceProperties.apiVersion < VK_MAKE_VERSION(1, 3, 244);
     // Qualcomm with imageless framebuffers, vkCreateFramebuffer loops forever.
     // http://issuetracker.google.com/369693310
-    //
+    const bool isQualcommWithImagelessFramebufferBug =
+        isQualcommProprietary && qualcommDriverVersion < QualcommDriverVersion(512, 802, 0);
     // PowerVR with imageless framebuffer spends enormous amounts of time in framebuffer destruction
     // and creation. ANGLE doesn't cache imageless framebuffers, instead adding them to garbage
     // collection, expecting them to be lightweight.
     // http://issuetracker.google.com/372273294
-    const bool isSamsungDriverWithImagelessFramebufferBug =
-        isSamsung && mPhysicalDeviceProperties.apiVersion < VK_MAKE_VERSION(1, 3, 244);
     ANGLE_FEATURE_CONDITION(&mFeatures, supportsImagelessFramebuffer,
                             mImagelessFramebufferFeatures.imagelessFramebuffer == VK_TRUE &&
                                 !isSamsungDriverWithImagelessFramebufferBug &&
-                                !isQualcommProprietary && !isPowerVR);
+                                !isQualcommWithImagelessFramebufferBug && !isPowerVR);
 
     if (ExtensionFound(VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME, deviceExtensionNames))
     {
@@ -5674,7 +5681,8 @@ void Renderer::initFeatures(const vk::ExtensionNameList &deviceExtensionNames,
     // Emulation of GL_EXT_multisampled_render_to_texture is not possible with dynamic rendering.
     // That support is also not sacrificed for dynamic rendering.
     //
-    // Use of dynamic rendering is disabled on ARM due to driver bugs (b/356051947).
+    // Use of dynamic rendering is disabled on older ARM drivers due to driver bugs
+    // (http://issuetracker.google.com/356051947).
     const bool hasLegacyDitheringV1 =
         mFeatures.supportsLegacyDithering.enabled &&
         (mLegacyDitheringVersion < 2 || !mFeatures.supportsMaintenance5.enabled);
@@ -5685,7 +5693,7 @@ void Renderer::initFeatures(const vk::ExtensionNameList &deviceExtensionNames,
                             mFeatures.supportsDynamicRendering.enabled &&
                                 mFeatures.supportsDynamicRenderingLocalRead.enabled &&
                                 !hasLegacyDitheringV1 && !emulatesMultisampledRenderToTexture &&
-                                !isARM);
+                                !(isARM && armDriverVersion < ARMDriverVersion(52, 0, 0)));
 
     // On tile-based renderers, breaking the render pass is costly.  Changing into and out of
     // framebuffer fetch causes the render pass to break so that the layout of the color attachments
@@ -5696,6 +5704,21 @@ void Renderer::initFeatures(const vk::ExtensionNameList &deviceExtensionNames,
     // break when switching framebuffer fetch usage.
     ANGLE_FEATURE_CONDITION(&mFeatures, permanentlySwitchToFramebufferFetchMode,
                             isTileBasedRenderer && !mFeatures.preferDynamicRendering.enabled);
+
+    // Vulkan supports depth/stencil input attachments same as it does with color.
+    // GL_ARM_shader_framebuffer_fetch_depth_stencil requires coherent behavior however, so this
+    // extension is exposed only where coherent framebuffer fetch is available.
+    //
+    // Additionally, the implementation assumes VK_KHR_dynamic_rendering_local_read to avoid
+    // complications with VkRenderPass objects.
+    ANGLE_FEATURE_CONDITION(
+        &mFeatures, supportsShaderFramebufferFetchDepthStencil,
+        mFeatures.supportsShaderFramebufferFetch.enabled &&
+            mRasterizationOrderAttachmentAccessFeatures.rasterizationOrderDepthAttachmentAccess ==
+                VK_TRUE &&
+            mRasterizationOrderAttachmentAccessFeatures.rasterizationOrderStencilAttachmentAccess ==
+                VK_TRUE &&
+            mFeatures.preferDynamicRendering.enabled);
 
     ANGLE_FEATURE_CONDITION(&mFeatures, supportsSynchronization2,
                             mSynchronization2Features.synchronization2 == VK_TRUE);

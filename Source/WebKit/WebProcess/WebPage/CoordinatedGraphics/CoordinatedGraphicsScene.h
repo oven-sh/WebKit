@@ -30,6 +30,7 @@
 #include <WebCore/TextureMapperLayer.h>
 #include <WebCore/TextureMapperPlatformLayerProxy.h>
 #include <wtf/Function.h>
+#include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/RunLoop.h>
 #include <wtf/ThreadingPrimitives.h>
@@ -45,6 +46,7 @@ class CoordinatedGraphicsSceneClient {
 public:
     virtual ~CoordinatedGraphicsSceneClient() { }
     virtual void updateViewport() = 0;
+    virtual const WebCore::Damage& addSurfaceDamage(const WebCore::Damage&) = 0;
 };
 
 class CoordinatedGraphicsScene : public ThreadSafeRefCounted<CoordinatedGraphicsScene>, public WebCore::TextureMapperPlatformLayerProxy::Compositor
@@ -54,7 +56,7 @@ public:
     virtual ~CoordinatedGraphicsScene();
 
     void applyStateChanges(const Vector<RefPtr<Nicosia::Scene>>&);
-    void paintToCurrentGLContext(const WebCore::TransformationMatrix&, const WebCore::FloatRect&, bool flipY = false);
+    void paintToCurrentGLContext(const WebCore::TransformationMatrix&, const WebCore::FloatRect&, bool unifyDamagedRegions, bool flipY = false);
     void updateSceneState();
     void detach();
 
@@ -72,6 +74,8 @@ private:
     void commitSceneState(const RefPtr<Nicosia::Scene>&);
 
     WebCore::TextureMapperLayer* rootLayer() { return m_rootLayer.get(); }
+
+    void removeLayer(Nicosia::CompositionLayer&);
 
     void updateViewport();
 
@@ -96,6 +100,8 @@ private:
     std::unique_ptr<WebCore::TextureMapperLayer> m_rootLayer;
 
     Nicosia::PlatformLayer::LayerID m_rootLayerID { 0 };
+
+    HashMap<WebCore::TextureMapperLayer*, Ref<WebCore::CoordinatedBackingStore>> m_backingStores;
 
     WebCore::TextureMapperFPSCounter m_fpsCounter;
 };

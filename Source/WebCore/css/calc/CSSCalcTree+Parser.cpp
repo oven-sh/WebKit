@@ -25,11 +25,11 @@
 #include "config.h"
 #include "CSSCalcTree+Parser.h"
 
+#include "AnchorPositionEvaluator.h"
 #include "CSSCalcSymbolTable.h"
 #include "CSSCalcTree+Serialization.h"
 #include "CSSCalcTree+Simplification.h"
 #include "CSSCalcTree.h"
-#include "CSSCalcValue.h"
 #include "CSSParserContext.h"
 #include "CSSParserTokenRange.h"
 #include "CSSPropertyParserConsumer+Ident.h"
@@ -42,6 +42,8 @@
 #include "CalculationOperator.h"
 #include "Logging.h"
 #include <wtf/SortedArrayMap.h>
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace WebCore {
 namespace CSSCalc {
@@ -795,11 +797,32 @@ static std::optional<TypedChild> consumeAnchor(CSSParserTokenRange& tokens, int 
     state.requiresConversionData = true;
 
     auto anchor = Anchor {
-        .elementName = AtomString { anchorElement },
+        .elementName = AtomString { WTFMove(anchorElement) },
         .side = WTFMove(*anchorSide),
         .fallback = WTFMove(fallback)
     };
+
     return TypedChild { makeChild(WTFMove(anchor), type), type };
+}
+
+static std::optional<Style::AnchorSizeDimension> cssValueIDToAnchorSizeDimension(CSSValueID value)
+{
+    switch (value) {
+    case CSSValueWidth:
+        return Style::AnchorSizeDimension::Width;
+    case CSSValueHeight:
+        return Style::AnchorSizeDimension::Height;
+    case CSSValueBlock:
+        return Style::AnchorSizeDimension::Block;
+    case CSSValueInline:
+        return Style::AnchorSizeDimension::Inline;
+    case CSSValueSelfBlock:
+        return Style::AnchorSizeDimension::SelfBlock;
+    case CSSValueSelfInline:
+        return Style::AnchorSizeDimension::SelfInline;
+    default:
+        return { };
+    }
 }
 
 static std::optional<TypedChild> consumeAnchorSize(CSSParserTokenRange& tokens, int depth, ParserState& state)
@@ -843,21 +866,33 @@ static std::optional<TypedChild> consumeAnchorSize(CSSParserTokenRange& tokens, 
         fallback = consumeValueWithoutSimplifyingCalc(tokens, depth, state);
     }
 
-    // make sure fallback value is a <length-percentage>
-    if (fallback && !fallback->type.matches(Calculation::Category::LengthPercentage))
-        return { };
+    auto type = Type::makeLength();
+
+    // anchor-size() resolves to a <length> if it can be resolved, otherwise the fallback
+    // value is resolved, which is of type <length-percentage>. Therefore the overall type
+    // of anchor-size() is <length> or <length-percentage>, depending on the type of the
+    // fallback value.
+    if (fallback) {
+        auto category = fallback->type.calculationCategory();
+        if (!category)
+            return { };
+        if (*category != Calculation::Category::Length && *category != Calculation::Category::LengthPercentage)
+            return { };
+
+        type.percentHint = Type::determinePercentHint(*category);
+    }
 
     state.requiresConversionData = true;
 
     auto anchorSize = AnchorSize {
         .elementName = AtomString { WTFMove(maybeAnchorElement) },
-        .size = WTFMove(maybeAnchorSize),
+        .dimension = maybeAnchorSize ? cssValueIDToAnchorSizeDimension(*maybeAnchorSize) : std::nullopt,
         .fallback = fallback ? std::make_optional(WTFMove(fallback->child)) : std::nullopt
     };
 
     return TypedChild {
-        .child = makeChild(WTFMove(anchorSize), Type::makeLength()),
-        .type = Type::makeLength()
+        .child = makeChild(WTFMove(anchorSize), type),
+        .type = type
     };
 }
 
@@ -1265,3 +1300,5 @@ std::optional<TypedChild> parseCalcDimension(const CSSParserToken& token, Parser
 
 } // namespace CSSCalc
 } // namespace WebCore
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

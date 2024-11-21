@@ -37,6 +37,8 @@
 #include "TypeError.h"
 #include <wtf/Assertions.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace JSC {
 
 struct CompactHashIndex {
@@ -519,16 +521,16 @@ inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const Proper
     }
     
     if (value.attributes() & PropertyAttribute::CellProperty) {
-        LazyCellProperty* property = bitwise_cast<LazyCellProperty*>(
-            bitwise_cast<char*>(&thisObj) + value.lazyCellPropertyOffset());
+        LazyCellProperty* property = std::bit_cast<LazyCellProperty*>(
+            std::bit_cast<char*>(&thisObj) + value.lazyCellPropertyOffset());
         JSCell* result = property->get(&thisObj);
         thisObj.putDirect(vm, propertyName, result, attributesForStructure(value.attributes()));
         return;
     }
     
     if (value.attributes() & PropertyAttribute::ClassStructure) {
-        LazyClassStructure* lazyStructure = bitwise_cast<LazyClassStructure*>(
-            bitwise_cast<char*>(&thisObj) + value.lazyClassStructureOffset());
+        LazyClassStructure* lazyStructure = std::bit_cast<LazyClassStructure*>(
+            std::bit_cast<char*>(&thisObj) + value.lazyClassStructureOffset());
         JSObject* constructor = lazyStructure->constructor(jsCast<JSGlobalObject*>(&thisObj));
         thisObj.putDirect(vm, propertyName, constructor, attributesForStructure(value.attributes()));
         return;
@@ -559,8 +561,8 @@ inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const Proper
     thisObj.putDirectCustomAccessor(vm, propertyName, customGetterSetter, attributesForStructure(value.attributes()));
 }
 
-template<unsigned numberOfValues>
-inline void reifyStaticProperties(VM& vm, const ClassInfo* classInfo, const HashTableValue (&values)[numberOfValues], JSObject& thisObj)
+template<typename ArrayType>
+inline void reifyStaticProperties(VM& vm, const ClassInfo* classInfo, const ArrayType& values, JSObject& thisObj)
 {
     BatchedTransitionOptimizer transitionOptimizer(vm, &thisObj);
     for (auto& value : values) {
@@ -572,3 +574,5 @@ inline void reifyStaticProperties(VM& vm, const ClassInfo* classInfo, const Hash
 }
 
 } // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

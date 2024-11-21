@@ -48,9 +48,6 @@
 #include "RemoteMediaPlayerManagerProxyMessages.h"
 #include "RemoteMediaPlayerProxy.h"
 #include "RemoteMediaPlayerProxyMessages.h"
-#include "RemoteMediaRecorderManager.h"
-#include "RemoteMediaRecorderManagerMessages.h"
-#include "RemoteMediaRecorderMessages.h"
 #include "RemoteMediaResourceManager.h"
 #include "RemoteMediaResourceManagerMessages.h"
 #include "RemoteRemoteCommandListenerProxy.h"
@@ -513,7 +510,8 @@ bool GPUConnectionToWebProcess::allowsExitUnderMemoryPressure() const
         return false;
 
 #if ENABLE(WEB_AUDIO)
-    if (m_remoteAudioDestinationManager && !m_remoteAudioDestinationManager->allowsExitUnderMemoryPressure())
+    RefPtr remoteAudioDestinationManager = m_remoteAudioDestinationManager.get();
+    if (remoteAudioDestinationManager && !remoteAudioDestinationManager->allowsExitUnderMemoryPressure())
         return false;
 #endif
 #if PLATFORM(COCOA) && ENABLE(MEDIA_STREAM)
@@ -522,10 +520,6 @@ bool GPUConnectionToWebProcess::allowsExitUnderMemoryPressure() const
     if (m_audioMediaStreamTrackRendererInternalUnitManager && m_audioMediaStreamTrackRendererInternalUnitManager->hasUnits())
         return false;
     if (!protectedSampleBufferDisplayLayerManager()->allowsExitUnderMemoryPressure())
-        return false;
-#endif
-#if PLATFORM(COCOA) && ENABLE(MEDIA_RECORDER)
-    if (m_remoteMediaRecorderManager && !m_remoteMediaRecorderManager->allowsExitUnderMemoryPressure())
         return false;
 #endif
 #if HAVE(AVASSETREADER)
@@ -551,7 +545,7 @@ Logger& GPUConnectionToWebProcess::logger()
 {
     if (!m_logger) {
         m_logger = Logger::create(this);
-        m_logger->setEnabled(this, m_sessionID.isAlwaysOnLoggingAllowed());
+        m_logger->setEnabled(this, isAlwaysOnLoggingAllowed());
     }
 
     return *m_logger;
@@ -585,9 +579,14 @@ void GPUConnectionToWebProcess::lowMemoryHandler(Critical critical, Synchronous 
 RemoteAudioDestinationManager& GPUConnectionToWebProcess::remoteAudioDestinationManager()
 {
     if (!m_remoteAudioDestinationManager)
-        m_remoteAudioDestinationManager = makeUnique<RemoteAudioDestinationManager>(*this);
+        m_remoteAudioDestinationManager = makeUniqueWithoutRefCountedCheck<RemoteAudioDestinationManager>(*this);
 
     return *m_remoteAudioDestinationManager;
+}
+
+Ref<RemoteAudioDestinationManager> GPUConnectionToWebProcess::protectedRemoteAudioDestinationManager()
+{
+    return remoteAudioDestinationManager();
 }
 #endif
 
@@ -631,16 +630,6 @@ RemoteAudioMediaStreamTrackRendererInternalUnitManager& GPUConnectionToWebProces
         m_audioMediaStreamTrackRendererInternalUnitManager = makeUnique<RemoteAudioMediaStreamTrackRendererInternalUnitManager>(*this);
 
     return *m_audioMediaStreamTrackRendererInternalUnitManager;
-}
-#endif
-
-#if PLATFORM(COCOA) && ENABLE(MEDIA_RECORDER)
-RemoteMediaRecorderManager& GPUConnectionToWebProcess::mediaRecorderManager()
-{
-    if (!m_remoteMediaRecorderManager)
-        m_remoteMediaRecorderManager = makeUnique<RemoteMediaRecorderManager>(*this);
-
-    return *m_remoteMediaRecorderManager;
 }
 #endif
 
@@ -918,7 +907,7 @@ void GPUConnectionToWebProcess::releaseRemoteCommandListener(RemoteRemoteCommand
 
 void GPUConnectionToWebProcess::setMediaOverridesForTesting(MediaOverridesForTesting overrides)
 {
-    if (!allowTestOnlyIPC()) {
+    if (!m_sharedPreferencesForWebProcess.allowTestOnlyIPC) {
         MESSAGE_CHECK(!overrides.systemHasAC && !overrides.systemHasBattery && !overrides.vp9HardwareDecoderDisabled && !overrides.vp9DecoderDisabled && !overrides.vp9ScreenSizeAndScale);
 #if PLATFORM(COCOA)
 #if ENABLE(VP9)
@@ -944,7 +933,7 @@ bool GPUConnectionToWebProcess::dispatchMessage(IPC::Connection& connection, IPC
 {
 #if ENABLE(WEB_AUDIO)
     if (decoder.messageReceiverName() == Messages::RemoteAudioDestinationManager::messageReceiverName()) {
-        remoteAudioDestinationManager().didReceiveMessageFromWebProcess(connection, decoder);
+        protectedRemoteAudioDestinationManager()->didReceiveMessageFromWebProcess(connection, decoder);
         return true;
     }
 #endif
@@ -969,16 +958,6 @@ bool GPUConnectionToWebProcess::dispatchMessage(IPC::Connection& connection, IPC
     }
     if (decoder.messageReceiverName() == Messages::RemoteAudioMediaStreamTrackRendererInternalUnitManager::messageReceiverName()) {
         audioMediaStreamTrackRendererInternalUnitManager().didReceiveMessage(connection, decoder);
-        return true;
-    }
-#endif
-#if PLATFORM(COCOA) && ENABLE(MEDIA_RECORDER)
-    if (decoder.messageReceiverName() == Messages::RemoteMediaRecorderManager::messageReceiverName()) {
-        mediaRecorderManager().didReceiveMessageFromWebProcess(connection, decoder);
-        return true;
-    }
-    if (decoder.messageReceiverName() == Messages::RemoteMediaRecorder::messageReceiverName()) {
-        mediaRecorderManager().didReceiveRemoteMediaRecorderMessage(connection, decoder);
         return true;
     }
 #endif
@@ -1271,6 +1250,11 @@ void GPUConnectionToWebProcess::enableMediaPlaybackIfNecessary()
     m_routingArbitrator = LocalAudioSessionRoutingArbitrator::create(*this);
     protectedGPUProcess()->protectedAudioSessionManager()->session().setRoutingArbitrationClient(m_routingArbitrator.get());
 #endif
+}
+
+bool GPUConnectionToWebProcess::isAlwaysOnLoggingAllowed() const
+{
+    return m_sessionID.isAlwaysOnLoggingAllowed() || m_sharedPreferencesForWebProcess.allowPrivacySensitiveOperationsInNonPersistentDataStores;
 }
 
 } // namespace WebKit

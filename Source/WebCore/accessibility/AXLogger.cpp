@@ -246,6 +246,7 @@ void AXLogger::log(const String& collectionName, const AXObjectCache::DeferredCo
         [&size] (const WeakHashSet<AccessibilityTable>& typedCollection) { size = typedCollection.computeSize(); },
         [&size] (const WeakHashSet<AccessibilityTableCell>& typedCollection) { size = typedCollection.computeSize(); },
         [&size] (const WeakListHashSet<Node, WeakPtrImplWithEventTargetData>& typedCollection) { size = typedCollection.computeSize(); },
+        [&size] (const WeakListHashSet<Element, WeakPtrImplWithEventTargetData>& typedCollection) { size = typedCollection.computeSize(); },
         [&size] (const WeakHashMap<Element, String, WeakPtrImplWithEventTargetData>& typedCollection) { size = typedCollection.computeSize(); },
         [] (auto&) {
             ASSERT_NOT_REACHED();
@@ -413,7 +414,7 @@ TextStream& operator<<(TextStream& stream, const AccessibilitySearchCriteria& cr
     TextStream::GroupScope groupScope(stream);
     auto streamCriteriaObject = [&stream] (ASCIILiteral objectLabel, auto* axObject) {
         stream.startGroup();
-        stream << objectLabel.characters() << " " << axObject << ", ID " << (axObject && axObject->objectID() ? axObject->objectID()->toUInt64() : 0);
+        stream << objectLabel.characters() << " " << axObject << ", ID " << (axObject ? axObject->objectID().toUInt64() : 0);
         stream.endGroup();
     };
 
@@ -681,9 +682,6 @@ TextStream& operator<<(WTF::TextStream& stream, AXPropertyName property)
     case AXPropertyName::CanSetSelectedAttribute:
         stream << "CanSetSelectedAttribute";
         break;
-    case AXPropertyName::CanSetSelectedChildren:
-        stream << "CanSetSelectedChildren";
-        break;
     case AXPropertyName::CanSetValueAttribute:
         stream << "CanSetValueAttribute";
         break;
@@ -709,9 +707,6 @@ TextStream& operator<<(WTF::TextStream& stream, AXPropertyName property)
         break;
     case AXPropertyName::ColumnHeader:
         stream << "ColumnHeader";
-        break;
-    case AXPropertyName::ColumnHeaders:
-        stream << "ColumnHeaders";
         break;
     case AXPropertyName::ColumnIndex:
         stream << "ColumnIndex";
@@ -764,8 +759,14 @@ TextStream& operator<<(WTF::TextStream& stream, AXPropertyName property)
     case AXPropertyName::HasApplePDFAnnotationAttribute:
         stream << "HasApplePDFAnnotationAttribute";
         break;
+    case AXPropertyName::HasBodyTag:
+        stream << "HasBodyTag";
+        break;
     case AXPropertyName::HasBoldFont:
         stream << "HasBoldFont";
+        break;
+    case AXPropertyName::HasClickHandler:
+        stream << "HasClickHandler";
         break;
     case AXPropertyName::HasHighlighting:
         stream << "HasHighlighting";
@@ -833,9 +834,6 @@ TextStream& operator<<(WTF::TextStream& stream, AXPropertyName property)
     case AXPropertyName::IsColumnHeader:
         stream << "IsColumnHeader";
         break;
-    case AXPropertyName::IsControl:
-        stream << "IsControl";
-        break;
     case AXPropertyName::IsEnabled:
         stream << "IsEnabled";
         break;
@@ -871,12 +869,6 @@ TextStream& operator<<(WTF::TextStream& stream, AXPropertyName property)
         break;
     case AXPropertyName::IsKeyboardFocusable:
         stream << "IsKeyboardFocusable";
-        break;
-    case AXPropertyName::IsLink:
-        stream << "IsLink";
-        break;
-    case AXPropertyName::IsList:
-        stream << "IsList";
         break;
     case AXPropertyName::IsListBox:
         stream << "IsListBox";
@@ -919,9 +911,6 @@ TextStream& operator<<(WTF::TextStream& stream, AXPropertyName property)
         break;
     case AXPropertyName::IsMathToken:
         stream << "IsMathToken";
-        break;
-    case AXPropertyName::IsMeter:
-        stream << "IsMeter";
         break;
     case AXPropertyName::IsMultiSelectable:
         stream << "IsMultiSelectable";
@@ -1163,17 +1152,8 @@ TextStream& operator<<(WTF::TextStream& stream, AXPropertyName property)
     case AXPropertyName::SupportsPosInSet:
         stream << "SupportsPosInSet";
         break;
-    case AXPropertyName::SupportsPressAction:
-        stream << "SupportsPressAction";
-        break;
     case AXPropertyName::SupportsRangeValue:
         stream << "SupportsRangeValue";
-        break;
-    case AXPropertyName::SupportsRequiredAttribute:
-        stream << "SupportsRequiredAttribute";
-        break;
-    case AXPropertyName::SupportsSelectedRows:
-        stream << "SupportsSelectedRows";
         break;
     case AXPropertyName::SupportsSetSize:
         stream << "SupportsSetSize";
@@ -1302,7 +1282,7 @@ void streamAXCoreObject(TextStream& stream, const AXCoreObject& object, const Op
 
     if (options & AXStreamOptions::ParentID) {
         auto* parent = object.parentObjectUnignored();
-        stream.dumpProperty("parentID", parent && parent->objectID()? parent->objectID()->toUInt64() : 0);
+        stream.dumpProperty("parentID", parent ? parent->objectID().toUInt64() : 0);
     }
 
     auto id = options & AXStreamOptions::IdentifierAttribute ? object.identifierAttribute() : emptyString();

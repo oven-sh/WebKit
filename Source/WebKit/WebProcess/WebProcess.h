@@ -103,6 +103,7 @@ namespace WebCore {
 class CPUMonitor;
 class PageGroup;
 class SecurityOriginData;
+class Site;
 class UserGestureToken;
 
 enum class EventMakesGamepadsVisible : bool;
@@ -549,7 +550,7 @@ private:
     void gamepadDisconnected(unsigned index);
 #endif
 
-    void establishRemoteWorkerContextConnectionToNetworkProcess(RemoteWorkerType, PageGroupIdentifier, WebPageProxyIdentifier, WebCore::PageIdentifier, const WebPreferencesStore&, WebCore::RegistrableDomain&&, std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, RemoteWorkerInitializationData&&, CompletionHandler<void()>&&);
+    void establishRemoteWorkerContextConnectionToNetworkProcess(RemoteWorkerType, PageGroupIdentifier, WebPageProxyIdentifier, WebCore::PageIdentifier, const WebPreferencesStore&, WebCore::Site&&, std::optional<WebCore::ScriptExecutionContextIdentifier> serviceWorkerPageIdentifier, RemoteWorkerInitializationData&&, CompletionHandler<void()>&&);
 
     void fetchWebsiteData(OptionSet<WebsiteDataType>, CompletionHandler<void(WebsiteData&&)>&&);
     void deleteWebsiteData(OptionSet<WebsiteDataType>, WallTime modifiedSince, CompletionHandler<void()>&&);
@@ -694,7 +695,7 @@ private:
 #if ENABLE(LOGD_BLOCKING_IN_WEBCONTENT)
     void registerLogHook();
     void setupLogStream();
-    void sendLogOnStream(std::span<const uint8_t> logChannel, std::span<const uint8_t> logCategory, std::span<uint8_t> logString, os_log_type_t);
+    void sendLogOnStream(std::span<const uint8_t> logChannel, std::span<const uint8_t> logCategory, std::span<const uint8_t> logString, os_log_type_t);
 #endif
 
     HashMap<WebCore::PageIdentifier, RefPtr<WebPage>> m_pageMap;

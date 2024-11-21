@@ -32,6 +32,8 @@
 #include <wtf/Gigacage.h>
 #include <wtf/SafeStrerror.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace JSC {
 namespace ArrayBufferInternal {
 static constexpr bool verbose = false;
@@ -94,7 +96,7 @@ static RefPtr<BufferMemoryHandle> tryAllocateResizableMemory(VM* vm, size_t size
     tryAllocate(vm,
         [&] () -> BufferMemoryResult::Kind {
             auto result = BufferMemoryManager::singleton().tryAllocateGrowableBoundsCheckingMemory(maximumBytes);
-            slowMemory = bitwise_cast<char*>(result.basePtr);
+            slowMemory = std::bit_cast<char*>(result.basePtr);
             return result.kind;
         });
     if (!slowMemory) {
@@ -147,7 +149,7 @@ void ArrayBufferContents::makeShared()
 
 SharedArrayBufferContents::~SharedArrayBufferContents()
 {
-    WaiterListManager::singleton().unregister(bitwise_cast<uint8_t*>(data()), m_sizeInBytes);
+    WaiterListManager::singleton().unregister(std::bit_cast<uint8_t*>(data()), m_sizeInBytes);
     if (m_destructor) {
         // FIXME: we shouldn't use getUnsafe here https://bugs.webkit.org/show_bug.cgi?id=197698
         m_destructor->run(m_data.getUnsafe());
@@ -509,7 +511,7 @@ Expected<int64_t, GrowFailReason> ArrayBuffer::resize(VM& vm, size_t newByteLeng
         }
 
         if (m_contents.m_sizeInBytes < newByteLength)
-            memset(bitwise_cast<uint8_t*>(data()) + m_contents.m_sizeInBytes, 0, newByteLength - m_contents.m_sizeInBytes);
+            memset(std::bit_cast<uint8_t*>(data()) + m_contents.m_sizeInBytes, 0, newByteLength - m_contents.m_sizeInBytes);
 
         m_contents.m_sizeInBytes = newByteLength;
     }
@@ -587,7 +589,7 @@ Expected<int64_t, GrowFailReason> SharedArrayBufferContents::grow(const Abstract
         m_memoryHandle->updateSize(desiredSize);
     }
 
-    memset(bitwise_cast<uint8_t*>(data()) + sizeInBytes, 0, newByteLength - sizeInBytes);
+    memset(std::bit_cast<uint8_t*>(data()) + sizeInBytes, 0, newByteLength - sizeInBytes);
 
     updateSize(newByteLength);
     return deltaByteLength;
@@ -616,3 +618,4 @@ std::optional<ArrayBufferContents> ArrayBufferContents::fromSpan(std::span<const
 
 } // namespace JSC
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

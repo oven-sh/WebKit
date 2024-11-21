@@ -46,7 +46,7 @@ public:
     {
         if (size() < s_skip)
             return;
-        WTFPrintBacktrace(array() + s_skip, size() - s_skip);
+        WTFPrintBacktrace(span().subspan(s_skip));
     }
 
 private:

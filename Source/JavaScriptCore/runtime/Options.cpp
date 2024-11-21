@@ -112,10 +112,12 @@ public:
 
     bool operator==(const Option&) const;
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     ASCIILiteral name() const { return g_constMetaData[m_id].name; }
     ASCIILiteral description() const { return g_constMetaData[m_id].description; }
     Options::Type type() const { return g_constMetaData[m_id].type; }
     Options::Availability availability() const { return g_constMetaData[m_id].availability; }
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     Option(Options::ID id, void* addressOfValue)
         : m_id(id)
@@ -157,6 +159,8 @@ static void releaseMetadata()
     g_metadata.get() = nullptr;
 }
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 static const Option defaultFor(Options::ID id)
 {
     auto offset = g_constMetaData[id].offsetOfOption;
@@ -169,6 +173,8 @@ inline static void* addressOfOption(Options::ID id)
     auto offset = g_constMetaData[id].offsetOfOption;
     return reinterpret_cast<uint8_t*>(&g_jscConfig.options) + offset;
 }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 static const Option optionFor(Options::ID id)
 {
@@ -383,6 +389,9 @@ bool Options::isAvailable(Options::ID id, Options::Availability availability)
         return !!LLINT_TRACING;
     if (id == traceWasmLLIntExecutionID)
         return !!LLINT_TRACING;
+
+    if (id == validateVMEntryCalleeSavesID)
+        return !!ASSERT_ENABLED;
     return false;
 }
 
@@ -410,6 +419,8 @@ bool overrideOptionWithHeuristic(T& variable, Options::ID id, const char* name, 
     return false;
 }
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 bool Options::overrideAliasedOptionWithHeuristic(const char* name)
 {
     const char* stringValue = getenv(name);
@@ -423,6 +434,8 @@ bool Options::overrideAliasedOptionWithHeuristic(const char* name)
     fprintf(stderr, "WARNING: failed to parse %s=%s\n", name, stringValue);
     return false;
 }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // !PLATFORM(COCOA)
 
@@ -454,6 +467,8 @@ bool Options::defaultTCSMValue()
 }
 
 const char* const OptionRange::s_nullRangeStr = "<null>";
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 bool OptionRange::init(const char* rangeString)
 {
@@ -501,6 +516,8 @@ bool OptionRange::init(const char* rangeString)
 
     return true;
 }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 bool OptionRange::isInRange(unsigned count) const
 {
@@ -725,6 +742,9 @@ void Options::executeDumpOptions()
     dumpAllOptions(builder, level, title, nullptr, "   "_s, "\n"_s, DumpDefaults);
     dataLog(builder.toString());
 }
+
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 void Options::notifyOptionsChanged()
 {
@@ -970,14 +990,13 @@ void Options::notifyOptionsChanged()
     Options::useWasmFastMemory() = false;
 #endif
 
-    uint8_t* reservedConfigBytes = reinterpret_cast_ptr<uint8_t*>(WebConfig::g_config + WebConfig::reservedSlotsForExecutableAllocator);
-    reservedConfigBytes[WebConfig::ReservedByteForAllocationProfiling] = Options::useAllocationProfiling() ? 1 : 0;
-
     // Do range checks where needed and make corrections to the options:
     ASSERT(Options::thresholdForOptimizeAfterLongWarmUp() >= Options::thresholdForOptimizeAfterWarmUp());
     ASSERT(Options::thresholdForOptimizeAfterWarmUp() >= 0);
     ASSERT(Options::criticalGCMemoryThreshold() > 0.0 && Options::criticalGCMemoryThreshold() < 1.0);
 }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #if OS(WINDOWS)
 // FIXME: Use equalLettersIgnoringASCIICase.
@@ -986,6 +1005,8 @@ inline bool strncasecmp(const char* str1, const char* str2, size_t n)
     return _strnicmp(str1, str2, n);
 }
 #endif
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 void Options::initialize()
 {
@@ -1074,6 +1095,8 @@ void Options::initialize()
     });
 }
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
 void Options::finalize()
 {
     ASSERT(!g_jscConfig.options.allowUnfinalizedAccess);
@@ -1092,6 +1115,8 @@ static bool isSeparator(char c)
 {
     return isUnicodeCompatibleASCIIWhitespace(c) || (c == ',');
 }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 bool Options::setOptions(const char* optionsStr)
 {
@@ -1207,6 +1232,8 @@ bool Options::setOptionWithoutAlias(const char* arg, bool verify)
     return false; // No option matched.
 }
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
 static ASCIILiteral invertBoolOptionValue(const char* valueStr)
 {
     std::optional<OptionsStorage::Bool> value = parse<OptionsStorage::Bool>(valueStr);
@@ -1215,6 +1242,8 @@ static ASCIILiteral invertBoolOptionValue(const char* valueStr)
     return value.value() ? "false"_s : "true"_s;
 }
 
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 bool Options::setAliasedOption(const char* arg, bool verify)
 {
@@ -1251,6 +1280,8 @@ bool Options::setAliasedOption(const char* arg, bool verify)
 
     return false; // No option matched.
 }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 bool Options::setOption(const char* arg, bool verify)
 {
@@ -1351,6 +1382,8 @@ void Options::assertOptionsAreCoherent()
 
 namespace OptionsHelper {
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 void Option::initValue(void* addressOfValue)
 {
     Options::Type type = g_constMetaData[m_id].type;
@@ -1384,6 +1417,8 @@ void Option::initValue(void* addressOfValue)
         break;
     }
 }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 void Option::dump(StringBuilder& builder) const
 {

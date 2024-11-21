@@ -116,8 +116,6 @@ $(PROJECT_DIR)/GPUProcess/webrtc/LibWebRTCCodecsProxy.messages.in
 $(PROJECT_DIR)/GPUProcess/webrtc/RemoteAudioMediaStreamTrackRenderer.messages.in
 $(PROJECT_DIR)/GPUProcess/webrtc/RemoteAudioMediaStreamTrackRendererInternalUnitManager.messages.in
 $(PROJECT_DIR)/GPUProcess/webrtc/RemoteAudioMediaStreamTrackRendererManager.messages.in
-$(PROJECT_DIR)/GPUProcess/webrtc/RemoteMediaRecorder.messages.in
-$(PROJECT_DIR)/GPUProcess/webrtc/RemoteMediaRecorderManager.messages.in
 $(PROJECT_DIR)/GPUProcess/webrtc/RemoteSampleBufferDisplayLayer.messages.in
 $(PROJECT_DIR)/GPUProcess/webrtc/RemoteSampleBufferDisplayLayerManager.messages.in
 $(PROJECT_DIR)/ModelProcess/ModelConnectionToWebProcess.messages.in
@@ -271,6 +269,7 @@ $(PROJECT_DIR)/Shared/Cocoa/RemoteObjectInvocation.serialization.in
 $(PROJECT_DIR)/Shared/Cocoa/RevealItem.serialization.in
 $(PROJECT_DIR)/Shared/Cocoa/SharedCARingBuffer.serialization.in
 $(PROJECT_DIR)/Shared/Cocoa/WebCoreArgumentCodersCocoa.serialization.in
+$(PROJECT_DIR)/Shared/ContentWorldData.serialization.in
 $(PROJECT_DIR)/Shared/ContextMenuContextData.serialization.in
 $(PROJECT_DIR)/Shared/CoordinateSystem.serialization.in
 $(PROJECT_DIR)/Shared/Databases/IndexedDB/WebIDBResult.serialization.in
@@ -381,6 +380,7 @@ $(PROJECT_DIR)/Shared/WebExtensionContextParameters.serialization.in
 $(PROJECT_DIR)/Shared/WebExtensionControllerParameters.serialization.in
 $(PROJECT_DIR)/Shared/WebFindOptions.serialization.in
 $(PROJECT_DIR)/Shared/WebFoundTextRange.serialization.in
+$(PROJECT_DIR)/Shared/WebFrameMetrics.serialization.in
 $(PROJECT_DIR)/Shared/WebGPU/WebGPUBindGroupDescriptor.serialization.in
 $(PROJECT_DIR)/Shared/WebGPU/WebGPUBindGroupEntry.serialization.in
 $(PROJECT_DIR)/Shared/WebGPU/WebGPUBindGroupLayoutDescriptor.serialization.in
@@ -497,7 +497,6 @@ $(PROJECT_DIR)/Shared/mac/SecItemRequestData.serialization.in
 $(PROJECT_DIR)/Shared/mac/SecItemResponseData.serialization.in
 $(PROJECT_DIR)/Shared/mac/WebHitTestResultPlatformData.serialization.in
 $(PROJECT_DIR)/UIProcess/Automation/Automation.json
-$(PROJECT_DIR)/UIProcess/Automation/WebAutomationSession.messages.in
 $(PROJECT_DIR)/UIProcess/Cocoa/PlaybackSessionManagerProxy.messages.in
 $(PROJECT_DIR)/UIProcess/Cocoa/UserMediaCaptureManagerProxy.messages.in
 $(PROJECT_DIR)/UIProcess/Cocoa/VideoPresentationManagerProxy.messages.in
@@ -706,6 +705,7 @@ $(WEBCORE_PRIVATE_HEADERS_DIR)/PlatformMediaSession.serialization.in
 $(WEBCORE_PRIVATE_HEADERS_DIR)/PlatformScreen.serialization.in
 $(WEBCORE_PRIVATE_HEADERS_DIR)/PlatformWheelEvent.serialization.in
 $(WEBCORE_PRIVATE_HEADERS_DIR)/PlaybackSessionModel.serialization.in
+$(WEBCORE_PRIVATE_HEADERS_DIR)/ProcessSyncData.serialization.in
 $(WEBCORE_PRIVATE_HEADERS_DIR)/ProtectionSpaceBase.serialization.in
 $(WEBCORE_PRIVATE_HEADERS_DIR)/ScrollTypes.serialization.in
 $(WEBCORE_PRIVATE_HEADERS_DIR)/WebGPU.serialization.in

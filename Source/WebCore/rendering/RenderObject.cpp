@@ -93,7 +93,7 @@ namespace WebCore {
 
 using namespace HTMLNames;
 
-WTF_MAKE_COMPACT_TZONE_OR_ISO_ALLOCATED_IMPL(RenderObject);
+WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(RenderObject);
 WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(RenderObjectRenderObjectRareData, RenderObject::RenderObjectRareData);
 
 #if ASSERT_ENABLED
@@ -112,7 +112,7 @@ RenderObject::SetLayoutNeededForbiddenScope::~SetLayoutNeededForbiddenScope()
 
 #endif
 
-struct SameSizeAsRenderObject final : public CachedImageClient, public CanMakeCheckedPtr<SameSizeAsRenderObject> {
+struct SameSizeAsRenderObject final : public CachedImageClient {
     WTF_MAKE_STRUCT_FAST_ALLOCATED;
     WTF_STRUCT_OVERRIDE_DELETE_FOR_CHECKED_PTR(SameSizeAsRenderObject);
 
@@ -1826,24 +1826,31 @@ bool RenderObject::isSelectionBorder() const
         || view().selection().end() == this;
 }
 
-void RenderObject::setCapturedInViewTransition(bool captured)
+bool RenderObject::setCapturedInViewTransition(bool captured)
 {
-    if (capturedInViewTransition() != captured) {
-        m_stateBitfields.setFlag(StateFlag::CapturedInViewTransition, captured);
+    if (capturedInViewTransition() == captured)
+        return false;
 
-        CheckedPtr<RenderLayer> layerToInvalidate;
-        if (isDocumentElementRenderer())
-            layerToInvalidate = view().layer();
-        else if (hasLayer())
-            layerToInvalidate = downcast<RenderLayerModelObject>(*this).layer();
+    m_stateBitfields.setFlag(StateFlag::CapturedInViewTransition, captured);
 
-        if (layerToInvalidate) {
-            layerToInvalidate->setNeedsPostLayoutCompositingUpdate();
+    CheckedPtr<RenderLayer> layerToInvalidate;
+    if (isDocumentElementRenderer()) {
+        layerToInvalidate = view().layer();
+        view().compositor().setRootElementCapturedInViewTransition(captured);
+    } else if (hasLayer())
+        layerToInvalidate = downcast<RenderLayerModelObject>(*this).layer();
 
-            // Invalidate transform applied by `RenderLayerBacking::updateTransform`.
-            layerToInvalidate->setNeedsCompositingGeometryUpdate();
-        }
+    if (layerToInvalidate) {
+        layerToInvalidate->setNeedsPostLayoutCompositingUpdate();
+
+        // Invalidate transform applied by `RenderLayerBacking::updateTransform`.
+        layerToInvalidate->setNeedsCompositingGeometryUpdate();
     }
+
+    if (CheckedPtr renderBox = dynamicDowncast<RenderBox>(*this))
+        renderBox->invalidateAncestorBackgroundObscurationStatus();
+
+    return true;
 }
 
 void RenderObject::willBeDestroyed()
@@ -2942,11 +2949,6 @@ String RenderObject::debugDescription() const
 bool RenderObject::isSkippedContent() const
 {
     return parent() && parent()->style().hasSkippedContent();
-}
-
-bool RenderObject::isSkippedContentForLayout() const
-{
-    return isSkippedContent() && !view().frameView().layoutContext().needsSkippedContentLayout();
 }
 
 TextStream& operator<<(TextStream& ts, const RenderObject& renderer)

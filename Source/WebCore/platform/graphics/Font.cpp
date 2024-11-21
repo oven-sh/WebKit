@@ -50,6 +50,8 @@
 #include "OpenTypeVerticalData.h"
 #endif
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace WebCore {
 
 unsigned GlyphPage::s_count = 0;
@@ -183,7 +185,8 @@ void Font::platformGlyphInit()
 
 Font::~Font()
 {
-    SystemFallbackFontCache::forCurrentThread().remove(this);
+    if (auto* cache = SystemFallbackFontCache::forCurrentThreadIfExists())
+        cache->remove(this);
 }
 
 RenderingResourceIdentifier Font::renderingResourceIdentifier() const
@@ -681,3 +684,5 @@ TextStream& operator<<(TextStream& ts, const Font& font)
 #endif
 
 } // namespace WebCore
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

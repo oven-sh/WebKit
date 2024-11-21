@@ -1229,24 +1229,44 @@ void GraphicsLayerCA::setContentsToImage(Image* image)
         if (!newImage)
             return;
 
-        // FIXME: probably don't need m_uncorrectedContentsImage at all now.
-        if (m_uncorrectedContentsImage == newImage)
+        if (m_pendingContentsImage == newImage)
             return;
-        
-        m_uncorrectedContentsImage = WTFMove(newImage);
-        m_pendingContentsImage = m_uncorrectedContentsImage;
 
+        m_pendingContentsImage = WTFMove(newImage);
         m_contentsLayerPurpose = ContentsLayerPurpose::Image;
         if (!m_contentsLayer)
             noteSublayersChanged();
     } else {
-        m_uncorrectedContentsImage = nullptr;
         m_pendingContentsImage = nullptr;
         m_contentsLayerPurpose = ContentsLayerPurpose::None;
         if (m_contentsLayer)
             noteSublayersChanged();
     }
     m_contentsDisplayDelegate = nullptr;
+    m_pendingContentsImageBuffer = nullptr;
+
+    noteLayerPropertyChanged(ContentsImageChanged);
+}
+
+void GraphicsLayerCA::setContentsToImageBuffer(ImageBuffer* image)
+{
+    if (image) {
+        if (m_pendingContentsImageBuffer == image)
+            return;
+
+        m_pendingContentsImageBuffer = image;
+
+        m_contentsLayerPurpose = ContentsLayerPurpose::Image;
+        if (!m_contentsLayer)
+            noteSublayersChanged();
+    } else {
+        m_pendingContentsImageBuffer = nullptr;
+        m_contentsLayerPurpose = ContentsLayerPurpose::None;
+        if (m_contentsLayer)
+            noteSublayersChanged();
+    }
+    m_contentsDisplayDelegate = nullptr;
+    m_pendingContentsImage = nullptr;
 
     noteLayerPropertyChanged(ContentsImageChanged);
 }
@@ -1878,7 +1898,7 @@ void GraphicsLayerCA::recursiveCommitChanges(CommitState& commitState, const Tra
     }
 
     if (isBackdropRoot())
-        commitState.backdropRootIsOpaque = backgroundColor().isOpaque();
+        childCommitState.backdropRootIsOpaque = backgroundColor().isOpaque();
 
     if (GraphicsLayerCA* maskLayer = downcast<GraphicsLayerCA>(m_maskLayer.get())) {
         maskLayer->setVisibleAndCoverageRects(rects);
@@ -2006,14 +2026,15 @@ void GraphicsLayerCA::platformCALayerLogFilledVisibleFreshTile(unsigned blankPix
 
 bool GraphicsLayerCA::platformCALayerDelegatesDisplay(PlatformCALayer* layer) const
 {
-    return m_contentsDisplayDelegate && m_contentsLayer == layer;
+    return (m_contentsDisplayDelegate || m_contentsLayerPurpose == ContentsLayerPurpose::Image) && m_contentsLayer == layer;
 }
 
 void GraphicsLayerCA::platformCALayerLayerDisplay(PlatformCALayer* layer)
 {
-    ASSERT(m_contentsDisplayDelegate);
+    ASSERT(m_contentsDisplayDelegate || m_contentsLayerPurpose == ContentsLayerPurpose::Image);
     ASSERT(layer == m_contentsLayer);
-    m_contentsDisplayDelegate->display(*layer);
+    if (m_contentsDisplayDelegate)
+        m_contentsDisplayDelegate->display(*layer);
 }
 
 bool GraphicsLayerCA::platformCALayerNeedsPlatformContext(const PlatformCALayer*) const
@@ -2910,7 +2931,7 @@ void GraphicsLayerCA::updateBackgroundColor()
 
 void GraphicsLayerCA::updateContentsImage()
 {
-    if (m_pendingContentsImage) {
+    if (m_pendingContentsImage || m_pendingContentsImageBuffer) {
         if (!m_contentsLayer.get()) {
             m_contentsLayer = createPlatformCALayer(PlatformCALayer::LayerType::LayerTypeLayer, this);
 #if ENABLE(TREE_DEBUGGING)
@@ -2925,14 +2946,24 @@ void GraphicsLayerCA::updateContentsImage()
         // FIXME: maybe only do trilinear if the image is being scaled down,
         // but then what if the layer size changes?
         m_contentsLayer->setMinificationFilter(PlatformCALayer::FilterType::Trilinear);
-        m_contentsLayer->setContents(m_pendingContentsImage->platformImage().get());
-        m_pendingContentsImage = nullptr;
+
+        if (m_pendingContentsImage) {
+            m_contentsLayer->setContents(m_pendingContentsImage->platformImage().get());
+            m_pendingContentsImage = nullptr;
+        } else
+            setLayerContentsToImageBuffer(m_contentsLayer.get(), m_pendingContentsImageBuffer.get());
 
         if (m_layerClones) {
-            for (auto& layer : m_layerClones->contentsLayerClones.values())
-                layer->setContents(m_contentsLayer->contents());
+            for (auto& layer : m_layerClones->contentsLayerClones.values()) {
+                if (m_pendingContentsImageBuffer)
+                    setLayerContentsToImageBuffer(layer.get(), m_pendingContentsImageBuffer.get());
+                else
+                    layer->setContents(m_contentsLayer->contents());
+            }
         }
-        
+
+        m_pendingContentsImageBuffer = nullptr;
+
         updateContentsRects();
     } else {
         // No image.
@@ -2978,6 +3009,14 @@ void GraphicsLayerCA::updateContentsColorLayer()
 // roundedRect is in the coordinate space of clippingLayer.
 void GraphicsLayerCA::updateClippingStrategy(PlatformCALayer& clippingLayer, RefPtr<PlatformCALayer>& shapeMaskLayer, const FloatRoundedRect& roundedRect)
 {
+#if HAVE(CORE_ANIMATION_SEPARATED_LAYERS)
+    if (m_isSeparated && roundedRect.radii().hasEvenCorners() && clippingLayer.bounds() == roundedRect.rect()) {
+        m_layer->setCornerRadius(roundedRect.radii().topLeft().width());
+        return;
+    }
+    m_layer->setCornerRadius(0);
+#endif
+
     if (roundedRect.radii().isUniformCornerRadius() && clippingLayer.bounds() == roundedRect.rect()) {
         clippingLayer.setMaskLayer(nullptr);
         if (shapeMaskLayer) {
@@ -4636,6 +4675,8 @@ void GraphicsLayerCA::changeLayerTypeTo(PlatformCALayer::LayerType newLayerType)
 
     if (wasTiledLayer || isTiledLayer)
         client().tiledBackingUsageChanged(this, isTiledLayer);
+
+    oldLayer->setOwner(nullptr);
 }
 
 void GraphicsLayerCA::setupContentsLayer(PlatformCALayer* contentsLayer, CompositingCoordinatesOrientation orientation)

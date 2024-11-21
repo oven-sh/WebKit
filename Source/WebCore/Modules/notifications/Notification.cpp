@@ -60,9 +60,9 @@ namespace WebCore {
 WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(Notification);
 
 static Lock nonPersistentNotificationMapLock;
-static UncheckedKeyHashMap<WTF::UUID, Notification*>& nonPersistentNotificationMap() WTF_REQUIRES_LOCK(nonPersistentNotificationMapLock)
+static HashMap<WTF::UUID, Notification*>& nonPersistentNotificationMap() WTF_REQUIRES_LOCK(nonPersistentNotificationMapLock)
 {
-    static NeverDestroyed<UncheckedKeyHashMap<WTF::UUID, Notification*>> map;
+    static NeverDestroyed<HashMap<WTF::UUID, Notification*>> map;
     return map;
 }
 
@@ -143,6 +143,7 @@ Ref<Notification> Notification::create(ScriptExecutionContext& context, const UR
 
     RefPtr<SerializedScriptValue> dataScriptValue;
     if (payload.options && !payload.options->dataJSONString.isEmpty() && context.globalObject()) {
+        JSC::JSLockHolder lock(context.globalObject());
         auto value = JSONParse(context.globalObject(), payload.options->dataJSONString);
         dataScriptValue = SerializedScriptValue::convert(*context.globalObject(), value);
     }

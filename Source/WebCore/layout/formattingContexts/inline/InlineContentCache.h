@@ -48,6 +48,7 @@ public:
             bool requiresVisualReordering { false };
             // Note that <span>this is text</span> returns true as inline boxes are not considered 'content' here.
             bool hasTextAndLineBreakOnlyContent { false };
+            bool hasTextAutospace { false };
             size_t inlineBoxCount { 0 };
         };
         void set(InlineItemList&&, ContentAttributes);
@@ -59,6 +60,7 @@ public:
 
         bool requiresVisualReordering() const { return m_contentAttributes.requiresVisualReordering; }
         bool hasTextAndLineBreakOnlyContent() const { return m_contentAttributes.hasTextAndLineBreakOnlyContent; }
+        bool hasTextAutospace() const { return m_contentAttributes.hasTextAutospace; }
         bool hasInlineBoxes() const { return !!inlineBoxCount(); }
         size_t inlineBoxCount() const { return m_contentAttributes.inlineBoxCount; }
 
@@ -80,12 +82,17 @@ public:
     std::optional<InlineLayoutUnit> maximumContentSize() const { return m_maximumContentSize; }
     void resetMinimumMaximumContentSizes();
 
-    const InlineBoxBoundaryTextSpacings& inlineBoxBoundaryTextSpacings() const { return m_inlineBoxBoundaryTextSpacings; }
-    void setInlineBoxBoundaryTextSpacings(InlineBoxBoundaryTextSpacings&& spacings) { m_inlineBoxBoundaryTextSpacings = WTFMove(spacings); }
+    const InlineBoxBoundaryTextSpacings& inlineBoxBoundaryTextSpacings() const { return m_textSpacingContext.inlineBoxBoundaryTextSpacings; }
+    void setInlineBoxBoundaryTextSpacings(InlineBoxBoundaryTextSpacings&& spacings) { m_textSpacingContext.inlineBoxBoundaryTextSpacings = WTFMove(spacings); }
+    const TrimmableTextSpacings& trimmableTextSpacings() const { return m_textSpacingContext.trimmableTextSpacings; }
+    void setTrimmableTextSpacings(TrimmableTextSpacings&& spacings) { m_textSpacingContext.trimmableTextSpacings = WTFMove(spacings); }
+
+    const TextSpacingContext& textSpacingContext() const { return m_textSpacingContext; }
 
 private:
     InlineItems m_inlineItems;
-    InlineBoxBoundaryTextSpacings m_inlineBoxBoundaryTextSpacings;
+    TextSpacingContext m_textSpacingContext;
+
     std::optional<LineLayoutResult> m_maximumIntrinsicWidthLineContent { };
     std::optional<InlineLayoutUnit> m_minimumContentSize { };
     std::optional<InlineLayoutUnit> m_maximumContentSize { };

@@ -295,6 +295,7 @@ AllowPrivacySensitiveOperationsInNonPersistentDataStores:
       default: false
     WebCore:
       default: false
+  sharedPreferenceForWebProcess: true
 
 AllowRunningOfInsecureContent:
   type: bool
@@ -860,17 +861,20 @@ BeaconAPIEnabled:
 
 BlobFileAccessEnforcementEnabled:
   type: bool
-  status: testable
+  status: embedder
   category: security
   humanReadableName: "Enforce blob backed file access valid for web process"
   humanReadableDescription: "Validate file backed blobs were created by the correct web process"
   sharedPreferenceForWebProcess: true
   defaultValue:
     WebKitLegacy:
+      "PLATFORM(COCOA)": true
       default: false
     WebKit:
+      "PLATFORM(COCOA)": true
       default: false
     WebCore:
+      "PLATFORM(COCOA)": true
       default: false
 
 BlobRegistryTopOriginPartitioningEnabled:
@@ -924,6 +928,7 @@ BlockIconServicesInWebContentSandbox:
   exposed: [ WebKit ]
   defaultValue:
     WebKit:
+      "ENABLE(REMOVE_XPC_AND_MACH_SANDBOX_EXTENSIONS_IN_WEBCONTENT)": true
       default: false
 
 BlockMediaLayerRehostingInWebContentProcess:
@@ -978,6 +983,7 @@ BlockOpenDirectoryInWebContentSandbox:
   exposed: [ WebKit ]
   defaultValue:
     WebKit:
+      "ENABLE(REMOVE_XPC_AND_MACH_SANDBOX_EXTENSIONS_IN_WEBCONTENT)": true
       default: false
 
 BlockWebInspectorInWebContentSandbox:
@@ -1543,17 +1549,17 @@ CSSStyleQueriesEnabled:
 
 CSSTextAutospaceEnabled:
   type: bool
-  status: testable
+  status: stable
   category: css
   humanReadableName: "CSS text-autospace property"
   humanReadableDescription: "Enable the property text-autospace, defined in CSS Text 4"
   defaultValue:
     WebKitLegacy:
-      default: false
+      default: true
     WebKit:
-      default: false
+      default: true
     WebCore:
-      default: false
+      default: true
 
 CSSTextBoxTrimEnabled:
   type: bool
@@ -1871,6 +1877,20 @@ ChildProcessDebuggabilityEnabled:
   humanReadableName: "Child Process Debuggability"
   humanReadableDescription: "Enable stopping child processes with a debugger"
   exposed: [ WebKit ]
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
+ClearSiteDataExecutionContextsSupportEnabled:
+  type: bool
+  status: testable
+  category: networking
+  humanReadableName: "Clear-Site-Data: 'executionContexts' support"
+  humanReadableDescription: "Enable Clear-Site-Data: 'executionContexts' support"
   defaultValue:
     WebKitLegacy:
       default: false
@@ -2440,20 +2460,6 @@ DeprecateAESCFBWebCryptoEnabled:
   category: dom
   humanReadableName: "Deprecate AES-CFB Web Crypto"
   humanReadableDescription: "Enable Deprecation of AES-CFB from Web Crypto"
-  defaultValue:
-    WebKitLegacy:
-      default: true
-    WebKit:
-      default: true
-    WebCore:
-      default: true
-
-DeprecateRSAESPKCSWebCryptoEnabled:
-  type: bool
-  status: stable
-  category: dom
-  humanReadableName: "Deprecate RSAES-PKCS1-v1_5 Web Crypto"
-  humanReadableDescription: "Enable Deprecation of RSAES-PKCS1-v1_5 Web Crypto"
   defaultValue:
     WebKitLegacy:
       default: true
@@ -4817,7 +4823,7 @@ MediaRecorderEnabled:
 
 MediaRecorderEnabledWebM:
   type: bool
-  status: testable
+  status: preview
   category: media
   humanReadableName: "MediaRecorder WebM"
   humanReadableDescription: "Enable WebM support with MediaRecorder"
@@ -4927,22 +4933,6 @@ MediaSourceInWorkerEnabled:
       default: true
     WebCore:
       default: true
-
-MediaSourceInlinePaintingEnabled:
-  type: bool
-  status: mature
-  category: media
-  humanReadableName: "Experimental MediaSource Inline Painting"
-  humanReadableDescription: "Experimental MediaSource Inline Painting"
-  condition: ENABLE(MEDIA_SOURCE) && (HAVE(AVSAMPLEBUFFERVIDEOOUTPUT) || USE(GSTREAMER))
-  webcoreBinding: DeprecatedGlobalSettings
-  defaultValue:
-    WebKitLegacy:
-      "HAVE(AVSAMPLEBUFFERDISPLAYLAYER_COPYDISPLAYEDPIXELBUFFER)": true
-      default: false
-    WebKit:
-      "HAVE(AVSAMPLEBUFFERDISPLAYLAYER_COPYDISPLAYEDPIXELBUFFER)": true
-      default: false
 
 # FIXME: Is this implemented for WebKitLegacy? If not, this should be excluded from WebKitLegacy entirely (though we should still set the default value to false when initializing settings).
 # FIXME: Seems to be unused. Remove once verified.
@@ -5695,18 +5685,18 @@ PitchCorrectionAlgorithm:
 
 PointerLockOptionsEnabled:
   type: bool
-  status: testable
+  status: stable
   category: dom
   condition: ENABLE(POINTER_LOCK)
   humanReadableName: "Pointer Lock Options"
   humanReadableDescription: "Element.requestPointerLock(options) and promise support."
   defaultValue:
     WebKitLegacy:
-      default: false
+      default: true
     WebKit:
-      default: false
+      default: true
     WebCore:
-      default: false
+      default: true
 
 PopoverAttributeEnabled:
   type: bool
@@ -5838,7 +5828,7 @@ ProcessSwapOnCrossSiteNavigationEnabled:
 
 PropagateDamagingInformation:
    type: bool
-   status: testable
+   status: unstable
    category: dom
    humanReadableName: "Propagate Damaging Information"
    humanReadableDescription: "Propagate Damaging Information"
@@ -6201,6 +6191,20 @@ SansSerifFontFamily:
     WebCore:
       default: '""_str'
 
+ScopedCustomElementRegistryEnabled:
+  type: bool
+  status: stable
+  category: dom
+  humanReadableName: "Scoped custom element registry"
+  humanReadableDescription: "Enable scoped custom element registry"
+  defaultValue:
+    WebKitLegacy:
+      default: true
+    WebKit:
+      default: true
+    WebCore:
+      default: true
+
 # FIXME: Is this implemented for WebKitLegacy? If not, this should be excluded from WebKitLegacy entirely.
 # FIXME: This should have it's own ENABLE.
 ScreenCaptureEnabled:
@@ -6335,7 +6339,7 @@ ScrollToTextFragmentEnabled:
 
 ScrollToTextFragmentFeatureDetectionEnabled:
   type: bool
-  status: preview
+  status: stable
   category: dom
   humanReadableName: "Scroll To Text Fragment Feature Detection"
   humanReadableDescription: "Enable Scroll To Text Fragment Feature Detection"
@@ -6343,9 +6347,9 @@ ScrollToTextFragmentFeatureDetectionEnabled:
     WebKitLegacy:
       default: false
     WebKit:
-      default: false
+      default: true
     WebCore:
-      default: false
+      default: true
 
 ScrollToTextFragmentGenerationEnabled:
   type: bool
@@ -6477,6 +6481,7 @@ SelectionHonorsOverflowScrolling:
   exposed: [ WebKit ]
   defaultValue:
     WebKit:
+      "ENABLE(SELECTION_HONORS_OVERFLOW_SCROLLING_BY_DEFAULT)" : true
       default: false
     WebKitLegacy:
       default: false
@@ -6926,6 +6931,7 @@ SiteIsolationEnabled:
       default: false
     WebCore:
       default: false
+  sharedPreferenceForWebProcess: true
 
 # FIXME: This is handled via WebView SPI rather than WebPreferences for WebKitLegacy. We should change the SPI to lookup the WebPreferences value instead.
 SmartInsertDeleteEnabled:
@@ -7487,7 +7493,7 @@ UAVisualTransitionDetectionEnabled:
 URLPatternAPIEnabled:
   type: bool
   category: dom
-  status: unstable
+  status: testable
   humanReadableName: "URL Pattern API"
   humanReadableDescription: "Enable URL Pattern API"
   defaultValue:
@@ -7532,7 +7538,7 @@ UnifiedPDFEnabled:
 
 UnifyDamagedRegions:
    type: bool
-   status: testable
+   status: unstable
    category: dom
    humanReadableName: "Unify Damaged Regions"
    humanReadableDescription: "Unify Damaged Regions"

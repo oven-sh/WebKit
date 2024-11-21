@@ -47,7 +47,7 @@
 #import "WebFrame.h"
 #import "WebHitTestResultData.h"
 #import "WebImage.h"
-#import "WebInspector.h"
+#import "WebInspectorInternal.h"
 #import "WebKeyboardEvent.h"
 #import "WebMouseEvent.h"
 #import "WebPageOverlay.h"
@@ -1086,7 +1086,7 @@ bool WebPage::shouldAvoidComputingPostLayoutDataForEditorState() const
         return false;
     }
 
-    if (!m_requiresUserActionForEditingControlsManager || m_hasEverFocusedElementDueToUserInteractionSincePageTransition) {
+    if (!m_requiresUserActionForEditingControlsManager || !m_userInteractionsSincePageTransition.isEmpty()) {
         // Text editing controls on the touch bar depend on having post-layout editor state data.
         return false;
     }

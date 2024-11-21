@@ -61,6 +61,7 @@
 #include "RenderSVGRoot.h"
 #include "RenderStyleInlines.h"
 #include "RenderTreeBuilder.h"
+#include "RenderViewTransitionRoot.h"
 #include "RenderWidget.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGImage.h"
@@ -234,7 +235,6 @@ LayoutUnit RenderView::pageOrViewLogicalHeight() const
 
 LayoutUnit RenderView::clientLogicalWidthForFixedPosition() const
 {
-    // FIXME: If the FrameView's fixedVisibleContentRect() is not empty, perhaps it should be consulted here too?
     Ref frameView = this->frameView();
     if (frameView->fixedElementsLayoutRelativeToFrame())
         return LayoutUnit((isHorizontalWritingMode() ? frameView->visibleWidth() : frameView->visibleHeight()) / frameView->frame().frameScaleFactor());
@@ -252,7 +252,6 @@ LayoutUnit RenderView::clientLogicalWidthForFixedPosition() const
 
 LayoutUnit RenderView::clientLogicalHeightForFixedPosition() const
 {
-    // FIXME: If the FrameView's fixedVisibleContentRect() is not empty, perhaps it should be consulted here too?
     Ref frameView = this->frameView();
     if (frameView->fixedElementsLayoutRelativeToFrame())
         return LayoutUnit((isHorizontalWritingMode() ? frameView->visibleHeight() : frameView->visibleWidth()) / frameView->frame().frameScaleFactor());
@@ -1112,12 +1111,12 @@ SingleThreadWeakHashSet<RenderCounter> RenderView::takeCountersNeedingUpdate()
     return std::exchange(m_countersNeedingUpdate, { });
 }
 
-SingleThreadWeakPtr<RenderElement> RenderView::viewTransitionRoot() const
+SingleThreadWeakPtr<RenderViewTransitionRoot> RenderView::viewTransitionRoot() const
 {
     return m_viewTransitionRoot;
 }
 
-void RenderView::setViewTransitionRoot(RenderElement& renderer)
+void RenderView::setViewTransitionRoot(RenderViewTransitionRoot& renderer)
 {
     m_viewTransitionRoot = renderer;
 }

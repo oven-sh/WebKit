@@ -321,10 +321,13 @@ void RemoteLayerTreePropertyApplier::applyPropertiesToLayer(CALayer *layer, Remo
 
     if (properties.changedProperties & LayerChange::ContentsFormatChanged) {
         auto contentsFormat = properties.contentsFormat;
-        [layer setContentsFormat:contentsFormatString(contentsFormat)];
+        if (NSString *formatString = contentsFormatString(contentsFormat))
+            [layer setContentsFormat:formatString];
 #if HAVE(HDR_SUPPORT)
-        [layer setWantsExtendedDynamicRangeContent:contentsFormatWantsExtendedDynamicRangeContent(contentsFormat)];
-        [layer setToneMapMode:contentsFormatWantsToneMapMode(contentsFormat) ? CAToneMapModeIfSupported : CAToneMapModeAutomatic];
+        if (contentsFormat == ContentsFormat::RGBA16F) {
+            [layer setWantsExtendedDynamicRangeContent:true];
+            [layer setToneMapMode:CAToneMapModeIfSupported];
+        }
 #endif
     }
 }
@@ -438,11 +441,11 @@ void RemoteLayerTreePropertyApplier::updateMask(RemoteLayerTreeNode& node, const
     ASSERT(maskNode);
     if (!maskNode)
         return;
-    CALayer *maskLayer = maskNode->layer();
-    ASSERT(!maskLayer.superlayer);
-    if (maskLayer.superlayer)
-        return;
-    maskOwnerLayer.mask = maskLayer;
+
+    RetainPtr maskLayer = maskNode->layer();
+    [maskLayer removeFromSuperlayer];
+
+    maskOwnerLayer.mask = maskLayer.get();
 }
 
 #if PLATFORM(IOS_FAMILY)

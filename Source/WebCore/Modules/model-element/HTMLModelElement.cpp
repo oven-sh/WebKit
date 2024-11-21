@@ -236,7 +236,7 @@ void HTMLModelElement::dataReceived(CachedResource& resource, const SharedBuffer
         m_data.append(buffer);
 #if ENABLE(MODEL_PROCESS)
     else if (&resource == m_environmentMapResource)
-        m_pendingEnvironmentMapData.append(buffer);
+        m_environmentMapData.append(buffer);
 #endif
     else
         ASSERT_NOT_REACHED();
@@ -305,8 +305,10 @@ void HTMLModelElement::createModelPlayer()
     m_modelPlayer->load(*m_model, size);
 
 #if ENABLE(MODEL_PROCESS)
-    if (m_pendingEnvironmentMapData)
-        m_modelPlayer->setEnvironmentMap(m_pendingEnvironmentMapData.takeAsContiguous().get());
+    if (m_environmentMapData)
+        m_modelPlayer->setEnvironmentMap(m_environmentMapData.takeAsContiguous().get());
+    else if (!m_environmentMapURL.isEmpty())
+        environmentMapRequestResource();
 #endif
 }
 
@@ -444,9 +446,14 @@ void HTMLModelElement::didUpdateBoundingBox(ModelPlayer&, const FloatPoint3D& ce
     m_boundingBoxExtents = DOMPointReadOnly::fromFloatPoint(extents);
 }
 
-void HTMLModelElement::didFinishEnvironmentMapLoading()
+void HTMLModelElement::didFinishEnvironmentMapLoading(bool succeeded)
 {
-    m_environmentMapReadyPromise->resolve();
+    if (!m_environmentMapReadyPromise->isFulfilled()) {
+        if (succeeded)
+            m_environmentMapReadyPromise->resolve();
+        else
+            m_environmentMapReadyPromise->reject(Exception { ExceptionCode::AbortError });
+    }
 }
 #endif // ENABLE(MODEL_PROCESS)
 
@@ -698,18 +705,41 @@ void HTMLModelElement::setEnvironmentMap(const URL& url)
 
     m_environmentMapURL = url;
 
-    m_pendingEnvironmentMapData.reset();
-
-    if (m_environmentMapResource) {
-        m_environmentMapResource->removeClient(*this);
-        m_environmentMapResource = nullptr;
-    }
-
-    if (!m_environmentMapReadyPromise->isFulfilled())
-        m_environmentMapReadyPromise->reject(Exception { ExceptionCode::AbortError });
-
+    environmentMapResetAndReject(Exception { ExceptionCode::AbortError });
     m_environmentMapReadyPromise = makeUniqueRef<EnvironmentMapPromise>();
 
+    if (m_environmentMapURL.isEmpty()) {
+        // sending a message with empty data to indicate resource removal
+        if (m_modelPlayer)
+            m_modelPlayer->setEnvironmentMap(SharedBuffer::create());
+        return;
+    }
+
+    environmentMapRequestResource();
+}
+
+void HTMLModelElement::updateEnvironmentMap()
+{
+    setEnvironmentMap(selectEnvironmentMapURL());
+}
+
+URL HTMLModelElement::selectEnvironmentMapURL() const
+{
+    if (!document().hasBrowsingContext())
+        return { };
+
+    if (hasAttributeWithoutSynchronization(environmentmapAttr)) {
+        const auto& attr = attributeWithoutSynchronization(environmentmapAttr).string().trim(isASCIIWhitespace);
+        if (StringView(attr).containsOnly<isASCIIWhitespace<UChar>>())
+            return { };
+        return getURLAttribute(environmentmapAttr);
+    }
+
+    return { };
+}
+
+void HTMLModelElement::environmentMapRequestResource()
+{
     ResourceLoaderOptions options = CachedResourceLoader::defaultCachedResourceOptions();
     options.destination = FetchOptions::Destination::Environmentmap;
 
@@ -727,38 +757,30 @@ void HTMLModelElement::setEnvironmentMap(const URL& url)
         return;
     }
 
-    m_pendingEnvironmentMapData.empty();
+    m_environmentMapData.empty();
 
     m_environmentMapResource = resource.value();
     m_environmentMapResource->addClient(*this);
 }
 
-void HTMLModelElement::updateEnvironmentMap()
+void HTMLModelElement::environmentMapResetAndReject(Exception&& exception)
 {
-    setEnvironmentMap(selectEnvironmentMapURL());
-}
+    m_environmentMapData.reset();
 
-URL HTMLModelElement::selectEnvironmentMapURL() const
-{
-    if (!document().hasBrowsingContext())
-        return { };
+    if (m_environmentMapResource) {
+        m_environmentMapResource->removeClient(*this);
+        m_environmentMapResource = nullptr;
+    }
 
-    if (hasAttributeWithoutSynchronization(environmentmapAttr))
-        return getURLAttribute(environmentmapAttr);
-
-    return { };
+    if (!m_environmentMapReadyPromise->isFulfilled())
+        m_environmentMapReadyPromise->reject(WTFMove(exception));
 }
 
 void HTMLModelElement::environmentMapResourceFinished()
 {
-    if (m_environmentMapResource->loadFailedOrCanceled()) {
-        m_pendingEnvironmentMapData.reset();
-
-        m_environmentMapResource->removeClient(*this);
-        m_environmentMapResource = nullptr;
-
-        if (!m_environmentMapReadyPromise->isFulfilled())
-            m_environmentMapReadyPromise->reject(Exception { ExceptionCode::NetworkError });
+    int status = m_environmentMapResource->response().httpStatusCode();
+    if (m_environmentMapResource->loadFailedOrCanceled() || (status && (status < 200 || status > 299))) {
+        environmentMapResetAndReject(Exception { ExceptionCode::NetworkError });
 
         // sending a message with empty data to indicate resource removal
         if (m_modelPlayer)
@@ -766,7 +788,7 @@ void HTMLModelElement::environmentMapResourceFinished()
         return;
     }
     if (m_modelPlayer)
-        m_modelPlayer->setEnvironmentMap(m_pendingEnvironmentMapData.takeAsContiguous().get());
+        m_modelPlayer->setEnvironmentMap(m_environmentMapData.takeAsContiguous().get());
 
     m_environmentMapResource->removeClient(*this);
     m_environmentMapResource = nullptr;

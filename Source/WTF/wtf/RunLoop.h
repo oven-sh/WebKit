@@ -28,6 +28,7 @@
 #pragma once
 
 #include <functional>
+#include <wtf/CheckedPtr.h>
 #include <wtf/Condition.h>
 #include <wtf/Deque.h>
 #include <wtf/Forward.h>
@@ -41,6 +42,7 @@
 #include <wtf/ThreadSpecific.h>
 #include <wtf/Threading.h>
 #include <wtf/ThreadingPrimitives.h>
+#include <wtf/TypeTraits.h>
 #include <wtf/WeakHashSet.h>
 #include <wtf/text/WTFString.h>
 
@@ -71,6 +73,9 @@ using RunLoopMode = CFStringRef;
 using RunLoopMode = unsigned;
 #define DefaultRunLoopMode 0
 #endif
+
+// Classes that offer Timers should be ref-counted of CanMakeCheckedPtr. Please do not add new exceptions.
+template<typename T> struct IsDeprecatedTimerSmartPointerException : std::false_type { };
 
 class WTF_CAPABILITY("is current") RunLoop final : public GuaranteedSerialFunctionDispatcher {
     WTF_MAKE_NONCOPYABLE(RunLoop);
@@ -178,9 +183,34 @@ public:
         WTF_MAKE_FAST_ALLOCATED;
     public:
         template <typename TimerFiredClass>
-        Timer(Ref<RunLoop>&& runLoop, TimerFiredClass* o, void (TimerFiredClass::*f)())
-            : Timer(WTFMove(runLoop), std::bind(f, o))
+        requires (WTF::HasRefPtrMemberFunctions<TimerFiredClass>::value)
+        Timer(Ref<RunLoop>&& runLoop, TimerFiredClass* object, void (TimerFiredClass::*function)())
+            : Timer(WTFMove(runLoop), [object, function] {
+                RefPtr protectedObject { object };
+                (object->*function)();
+            })
         {
+        }
+
+        template <typename TimerFiredClass>
+        requires (WTF::HasCheckedPtrMemberFunctions<TimerFiredClass>::value && !WTF::HasRefPtrMemberFunctions<TimerFiredClass>::value)
+        Timer(Ref<RunLoop>&& runLoop, TimerFiredClass* object, void (TimerFiredClass::*function)())
+            : Timer(WTFMove(runLoop), [object, function] {
+                CheckedPtr checkedObject { object };
+                (object->*function)();
+            })
+        {
+        }
+
+        // FIXME: This constructor isn't as safe as the other ones and should be removed.
+        template <typename TimerFiredClass>
+        requires (!WTF::HasRefPtrMemberFunctions<TimerFiredClass>::value && !WTF::HasCheckedPtrMemberFunctions<TimerFiredClass>::value)
+        Timer(Ref<RunLoop>&& runLoop, TimerFiredClass* object, void (TimerFiredClass::*function)())
+            : Timer(WTFMove(runLoop), std::bind(function, object))
+        {
+            static_assert(IsDeprecatedTimerSmartPointerException<std::remove_cv_t<TimerFiredClass>>::value,
+                "Classes that use Timer should be ref-counted or CanMakeCheckedPtr. Please do not add new exceptions."
+            );
         }
 
         Timer(Ref<RunLoop>&& runLoop, Function<void ()>&& function)

@@ -44,6 +44,8 @@
 #include <wtf/Range.h>
 #include <wtf/TZoneMallocInlines.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace JSC { namespace ARM64Disassembler {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(A64DOpcodeOpcodeGroup, A64DOpcode::OpcodeGroup);
@@ -215,7 +217,7 @@ void A64DOpcode::appendPCRelativeOffset(uint32_t* pc, int32_t immediate)
     else
         targetInfo = " -> <unknown>";
 
-    bufferPrintf("0x%" PRIxPTR "%s", bitwise_cast<uintptr_t>(targetPC),  targetInfo);
+    bufferPrintf("0x%" PRIxPTR "%s", std::bit_cast<uintptr_t>(targetPC),  targetInfo);
 }
 
 void A64DOpcode::appendRegisterName(unsigned registerNumber, bool is64Bit)
@@ -1786,7 +1788,7 @@ typename Trait::ResultType A64DOpcodeMoveWide::parse()
         if (!doneBuildingConstant)
             return;
 
-        void* ptr = removeCodePtrTag(bitwise_cast<void*>(m_builtConstant));
+        void* ptr = removeCodePtrTag(std::bit_cast<void*>(m_builtConstant));
         if (!ptr)
             return;
 
@@ -1966,5 +1968,7 @@ const char* A64DOpcodeVectorDataProcessingLogical2Source::opName()
 }
 
 } } // namespace JSC::ARM64Disassembler
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(ARM64_DISASSEMBLER)

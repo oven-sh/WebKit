@@ -30,6 +30,8 @@
 #include "AccessibilityObject.h"
 #include "TextIterator.h"
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace WebCore {
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(AXSearchManager);
@@ -126,7 +128,7 @@ bool AXSearchManager::matchForSearchKeyAtIndex(RefPtr<AXCoreObject> axObject, co
         auto ranges = axObject->misspellingRanges();
         bool hasMisspelling = !ranges.isEmpty();
         if (hasMisspelling)
-            m_misspellingRanges.set(*axObject->objectID(), WTFMove(ranges));
+            m_misspellingRanges.set(axObject->objectID(), WTFMove(ranges));
         return hasMisspelling;
     }
     case AccessibilitySearchKey::Outline:
@@ -352,8 +354,8 @@ std::optional<AXTextMarkerRange> AXSearchManager::findMatchingRange(Accessibilit
 
     bool forward = criteria.searchDirection == AccessibilitySearchDirection::Next;
     if (match(startObject, criteria)) {
-        ASSERT(m_misspellingRanges.contains(*startObject->objectID()));
-        const auto& ranges = m_misspellingRanges.get(*startObject->objectID());
+        ASSERT(m_misspellingRanges.contains(startObject->objectID()));
+        const auto& ranges = m_misspellingRanges.get(startObject->objectID());
         ASSERT(!ranges.isEmpty());
 
         AXTextMarkerRange startRange { startObject->treeID(), startObject->objectID(), criteria.startRange };
@@ -375,8 +377,8 @@ std::optional<AXTextMarkerRange> AXSearchManager::findMatchingRange(Accessibilit
     if (!objects.isEmpty() && objects[0]) {
         auto& object = *objects[0];
         AXLOG(object);
-        ASSERT(m_misspellingRanges.contains(*object.objectID()));
-        const auto& ranges = m_misspellingRanges.get(*object.objectID());
+        ASSERT(m_misspellingRanges.contains(object.objectID()));
+        const auto& ranges = m_misspellingRanges.get(object.objectID());
         ASSERT(!ranges.isEmpty());
         return forward ? ranges[0] : ranges.last();
     }
@@ -384,3 +386,5 @@ std::optional<AXTextMarkerRange> AXSearchManager::findMatchingRange(Accessibilit
 }
 
 } // namespace WebCore
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

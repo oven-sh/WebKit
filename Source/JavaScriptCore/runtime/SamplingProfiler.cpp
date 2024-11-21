@@ -54,6 +54,8 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace JSC {
 
 static double sNumTotalStackTraces = 0;
@@ -203,7 +205,7 @@ protected:
 
     bool isValidFramePointer(void* callFrame)
     {
-        uint8_t* fpCast = bitwise_cast<uint8_t*>(callFrame);
+        uint8_t* fpCast = std::bit_cast<uint8_t*>(callFrame);
         for (auto& thread : m_vm.heap.machineThreads().threads(m_machineThreadsLocker)) {
             uint8_t* stackBase = static_cast<uint8_t*>(thread->stack().origin());
             uint8_t* stackLimit = static_cast<uint8_t*>(thread->stack().end());
@@ -659,7 +661,7 @@ void SamplingProfiler::processUnverifiedStackTraces()
                 // by ignoring it.
                 BytecodeIndex bytecodeIndex = BytecodeIndex(0);
                 if (topCodeBlock->jitType() == JITType::InterpreterThunk || topCodeBlock->jitType() == JITType::BaselineJIT) {
-                    unsigned bits = static_cast<unsigned>(bitwise_cast<uintptr_t>(unprocessedStackTrace.llintPC));
+                    unsigned bits = static_cast<unsigned>(std::bit_cast<uintptr_t>(unprocessedStackTrace.llintPC));
                     bytecodeIndex = tryGetBytecodeIndex(bits, topCodeBlock);
 
                     UNUSED_PARAM(bytecodeIndex); // FIXME: do something with this info for the web inspector: https://bugs.webkit.org/show_bug.cgi?id=153455
@@ -1423,5 +1425,7 @@ void printInternal(PrintStream& out, SamplingProfiler::FrameType frameType)
 }
 
 } // namespace WTF
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(SAMPLING_PROFILER)

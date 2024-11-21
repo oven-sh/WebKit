@@ -52,6 +52,15 @@ class ShareableBitmapHandle;
 }
 
 namespace WebKit {
+class AcceleratedSurfaceDMABuf;
+}
+
+namespace WTF {
+template<typename T> struct IsDeprecatedTimerSmartPointerException;
+template<> struct IsDeprecatedTimerSmartPointerException<WebKit::AcceleratedSurfaceDMABuf> : std::true_type { };
+}
+
+namespace WebKit {
 
 class WebPage;
 
@@ -76,6 +85,8 @@ private:
     void willDestroyGLContext() override;
     void willRenderFrame() override;
     void didRenderFrame(WebCore::Region&&) override;
+
+    const WebCore::Damage& addDamage(const WebCore::Damage&) override;
 
     void didCreateCompositingRunLoop(WTF::RunLoop&) override;
     void willDestroyCompositingRunLoop() override;
@@ -102,9 +113,11 @@ private:
         virtual ~RenderTarget();
 
         uint64_t id() const { return m_id; }
+        const WebCore::Damage& damage() { return m_damage; }
+        void addDamage(const WebCore::Damage&);
 
         virtual void willRenderFrame() const;
-        virtual void didRenderFrame() { }
+        virtual void didRenderFrame() { m_damage = WebCore::Damage { }; }
 
         std::unique_ptr<WebCore::GLFence> createRenderingFence(bool) const;
         void setReleaseFenceFD(UnixFileDescriptor&&);
@@ -119,6 +132,7 @@ private:
         uint64_t m_surfaceID { 0 };
         unsigned m_depthStencilBuffer { 0 };
         UnixFileDescriptor m_releaseFenceFD;
+        WebCore::Damage m_damage { WebCore::Damage::invalid() };
     };
 
     class RenderTargetColorBuffer : public RenderTarget {
@@ -223,6 +237,8 @@ private:
         void releaseTarget(uint64_t, UnixFileDescriptor&& releaseFence);
         void reset();
         void releaseUnusedBuffers();
+
+        void addDamage(const WebCore::Damage&);
 
         unsigned size() const { return m_freeTargets.size() + m_lockedTargets.size(); }
 

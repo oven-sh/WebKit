@@ -45,6 +45,8 @@
 #include <wtf/persistence/PersistentDecoder.h>
 #include <wtf/text/MakeString.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SWRegistrationDatabase);
@@ -151,15 +153,15 @@ static ASCIILiteral currentRecordsTableSchemaAlternate()
     return RECORDS_TABLE_SCHEMA_PREFIX "\"Records\"" RECORDS_TABLE_SCHEMA_SUFFIX;
 }
 
-static UncheckedKeyHashMap<URL, ImportedScriptAttributes> stripScriptSources(const MemoryCompactRobinHoodHashMap<URL, ServiceWorkerContextData::ImportedScript>& map)
+static HashMap<URL, ImportedScriptAttributes> stripScriptSources(const MemoryCompactRobinHoodHashMap<URL, ServiceWorkerContextData::ImportedScript>& map)
 {
-    UncheckedKeyHashMap<URL, ImportedScriptAttributes> mapWithoutScripts;
+    HashMap<URL, ImportedScriptAttributes> mapWithoutScripts;
     for (auto& pair : map)
         mapWithoutScripts.add(pair.key, ImportedScriptAttributes { pair.value.responseURL, pair.value.mimeType });
     return mapWithoutScripts;
 }
 
-static MemoryCompactRobinHoodHashMap<URL, ServiceWorkerContextData::ImportedScript> populateScriptSourcesFromDisk(SWScriptStorage& scriptStorage, const ServiceWorkerRegistrationKey& registrationKey, UncheckedKeyHashMap<URL, ImportedScriptAttributes>&& map)
+static MemoryCompactRobinHoodHashMap<URL, ServiceWorkerContextData::ImportedScript> populateScriptSourcesFromDisk(SWScriptStorage& scriptStorage, const ServiceWorkerRegistrationKey& registrationKey, HashMap<URL, ImportedScriptAttributes>&& map)
 {
     MemoryCompactRobinHoodHashMap<URL, ServiceWorkerContextData::ImportedScript> importedScripts;
     for (auto& pair : map) {
@@ -368,7 +370,7 @@ std::optional<Vector<ServiceWorkerContextData>> SWRegistrationDatabase::importRe
         auto scriptResourceMapDataSpan = statement->columnBlobAsSpan(11);
         if (scriptResourceMapDataSpan.size()) {
             WTF::Persistence::Decoder scriptResourceMapDecoder(scriptResourceMapDataSpan);
-            std::optional<UncheckedKeyHashMap<URL, ImportedScriptAttributes>> scriptResourceMapWithoutScripts;
+            std::optional<HashMap<URL, ImportedScriptAttributes>> scriptResourceMapWithoutScripts;
             scriptResourceMapDecoder >> scriptResourceMapWithoutScripts;
             if (!scriptResourceMapWithoutScripts) {
                 RELEASE_LOG_ERROR(ServiceWorker, "SWRegistrationDatabase::importRegistrations failed to decode scriptResourceMapWithoutScripts");
@@ -517,5 +519,7 @@ void SWRegistrationDatabase::clearAllRegistrations()
     FileSystem::deleteNonEmptyDirectory(scriptDirectoryPath(m_directory));
     FileSystem::deleteEmptyDirectory(m_directory);
 }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 } // namespace WebCore

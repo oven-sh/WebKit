@@ -49,6 +49,8 @@
 #include <unicode/udateintervalformat.h>
 #define U_HIDE_DRAFT_API 1
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace JSC {
 
 // We do not use ICUDeleter<udtitvfmt_close> because we do not want to include udateintervalformat.h in IntlDateTimeFormat.h.
@@ -156,7 +158,7 @@ Vector<String> IntlDateTimeFormat::localeData(const String& locale, RelevantExte
         int32_t nameLength;
         while (const char* availableName = uenum_next(calendars, &nameLength, &status)) {
             ASSERT(U_SUCCESS(status));
-            String calendar = String(unsafeForgeSpan(availableName, static_cast<size_t>(nameLength)));
+            String calendar = String(unsafeMakeSpan(availableName, static_cast<size_t>(nameLength)));
             keyLocaleData.append(calendar);
             // Adding "islamicc" candidate for backward compatibility.
             if (calendar == "islamic-civil"_s)
@@ -1790,3 +1792,5 @@ JSValue IntlDateTimeFormat::formatRangeToParts(JSGlobalObject* globalObject, dou
 
 
 } // namespace JSC
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

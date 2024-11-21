@@ -45,9 +45,8 @@
 #import <pal/spi/mac/NSTextFinderSPI.h>
 #import <pal/spi/mac/NSTextInputContextSPI.h>
 #import <pal/spi/mac/NSViewSPI.h>
+#import <wtf/StdLibExtras.h>
 #import <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 _WKOverlayScrollbarStyle toAPIScrollbarStyle(std::optional<WebCore::ScrollbarOverlayStyle> coreScrollbarStyle)
 {
@@ -877,13 +876,13 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
     return _impl->addTrackingRectWithTrackingNum(NSRectToCGRect(rect), owner, data, assumeInside, tag);
 }
 
-- (void)_addTrackingRects:(NSRect *)rects owner:(id)owner userDataList:(void **)userDataList assumeInsideList:(BOOL *)assumeInsideList trackingNums:(NSTrackingRectTag *)trackingNums count:(int)count
+- (void)_addTrackingRects:(NSRect *)rawRects owner:(id)owner userDataList:(void **)userDataList assumeInsideList:(BOOL *)assumeInsideList trackingNums:(NSTrackingRectTag *)trackingNums count:(int)count
 {
-    CGRect *cgRects = (CGRect *)calloc(1, sizeof(CGRect));
-    for (int i = 0; i < count; i++)
-        cgRects[i] = NSRectToCGRect(rects[i]);
-    _impl->addTrackingRectsWithTrackingNums(cgRects, owner, userDataList, assumeInsideList, trackingNums, count);
-    free(cgRects);
+    auto nsRects = unsafeMakeSpan(rawRects, count);
+    auto cgRects = WTF::map(nsRects, [](auto& nsRect) {
+        return NSRectToCGRect(nsRect);
+    });
+    _impl->addTrackingRectsWithTrackingNums(cgRects, owner, userDataList, assumeInsideList, trackingNums);
 }
 
 - (void)removeTrackingRect:(NSTrackingRectTag)tag
@@ -897,7 +896,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 {
     if (!_impl)
         return;
-    _impl->removeTrackingRects(tags, count);
+    _impl->removeTrackingRects(unsafeMakeSpan(tags, count));
 }
 
 ALLOW_DEPRECATED_IMPLEMENTATIONS_BEGIN
@@ -1271,6 +1270,29 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 {
 }
 
+- (BOOL)_web_hasActiveIntelligenceTextEffects
+{
+#if ENABLE(WRITING_TOOLS)
+    return [_intelligenceTextEffectCoordinator hasActiveEffects];
+#else
+    return NO;
+#endif
+}
+
+- (void)_web_suppressContentRelativeChildViews
+{
+#if ENABLE(WRITING_TOOLS)
+    [_intelligenceTextEffectCoordinator hideEffectsWithCompletion:^{ }];
+#endif
+}
+
+- (void)_web_restoreContentRelativeChildViews
+{
+#if ENABLE(WRITING_TOOLS)
+    [_intelligenceTextEffectCoordinator showEffectsWithCompletion:^{ }];
+#endif
+}
+
 #if ENABLE(DRAG_SUPPORT)
 
 - (WKDragDestinationAction)_web_dragDestinationActionForDraggingInfo:(id <NSDraggingInfo>)draggingInfo
@@ -1451,12 +1473,19 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 - (void)_setTopContentInset:(CGFloat)contentInset
 {
-    return _impl->setTopContentInset(contentInset);
+    _impl->setTopContentInset(contentInset);
 }
 
 - (CGFloat)_topContentInset
 {
     return _impl->topContentInset();
+}
+
+- (void)_setTopContentInset:(CGFloat)contentInset immediate:(BOOL)immediate
+{
+    _impl->setTopContentInset(contentInset);
+    if (immediate)
+        _impl->flushPendingTopContentInset();
 }
 
 - (void)_setAutomaticallyAdjustsContentInsets:(BOOL)automaticallyAdjustsContentInsets
@@ -1827,7 +1856,5 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     return [[NSImage alloc] initWithCGImage:snapshot.get() size:NSZeroSize];
 }
 @end
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // PLATFORM(MAC)

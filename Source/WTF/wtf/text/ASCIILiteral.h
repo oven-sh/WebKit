@@ -36,6 +36,10 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/SuperFastHash.h>
 
+#if USE(CF)
+typedef const struct __CFString * CFStringRef;
+#endif
+
 OBJC_CLASS NSString;
 
 namespace WTF {
@@ -49,7 +53,7 @@ public:
     static constexpr ASCIILiteral fromLiteralUnsafe(const char *string)
     {
         ASSERT_UNDER_CONSTEXPR_CONTEXT(string);
-        return ASCIILiteral { unsafeForgeSpan(string, std::char_traits<char>::length(string) + 1) };
+        return ASCIILiteral { unsafeMakeSpan(string, std::char_traits<char>::length(string) + 1) };
     }
 
     WTF_EXPORT_PRIVATE void dump(PrintStream &out) const;
@@ -79,6 +83,10 @@ public:
 
     static ASCIILiteral deletedValue();
     bool isDeletedValue() const { return characters() == reinterpret_cast<char *>(-1); }
+
+#if USE(CF)
+    WTF_EXPORT_PRIVATE RetainPtr<CFStringRef> createCFString() const;
+#endif
 
 private:
     constexpr explicit ASCIILiteral(std::span<const char> spanWithNullTerminator)
@@ -143,7 +151,7 @@ constexpr ASCIILiteral operator""_s(const char *characters, size_t)
 
 constexpr std::span<const LChar> operator""_span(const char *characters, size_t n)
 {
-    auto span = byteCast<LChar>(unsafeForgeSpan(characters, n));
+    auto span = byteCast<LChar>(unsafeMakeSpan(characters, n));
 #if ASSERT_ENABLED
     for (size_t i = 0, size = span.size(); i < size; ++i)
         ASSERT_UNDER_CONSTEXPR_CONTEXT(isASCII(span[i]));

@@ -36,6 +36,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "AXTreeStore.h"
 #include "AccessibilityObject.h"
 #include "SimpleRange.h"
+#include "StyleChange.h"
 #include "Timer.h"
 #include "VisibleUnits.h"
 #include <limits.h>
@@ -57,6 +58,8 @@ class TextStream;
 namespace WebCore {
 
 class AXRemoteFrame;
+class AccessibilityNodeObject;
+class AccessibilityRenderObject;
 class AccessibilityTable;
 class AccessibilityTableCell;
 class Document;
@@ -203,7 +206,6 @@ protected:
     macro(SelectedStateChanged) \
     macro(SelectedTextChanged) \
     macro(SetSizeChanged) \
-    macro(TableHeadersChanged) \
     macro(TextCompositionBegan) \
     macro(TextCompositionEnded) \
     macro(URLChanged) \
@@ -299,7 +301,7 @@ public:
 
     // used for objects without backing elements
     AccessibilityObject* create(AccessibilityRole);
-    
+
     // Will only return the AccessibilityObject if it already exists.
     inline AccessibilityObject* get(RenderObject* renderer)
     {
@@ -337,21 +339,25 @@ public:
     void setPageActivityState(OptionSet<ActivityState> state) { m_pageActivityState = state; }
     OptionSet<ActivityState> pageActivityState() const { return m_pageActivityState; }
 
-    void childrenChanged(Node*, Node* newChild = nullptr);
+    void childrenChanged(Node*, Element* newChild = nullptr);
     void childrenChanged(RenderObject*, RenderObject* newChild = nullptr);
     void childrenChanged(AccessibilityObject*);
+    void onEventListenerAdded(Node&, const AtomString& eventType);
+    void onEventListenerRemoved(Node&, const AtomString& eventType);
     void onFocusChange(Element* oldElement, Element* newElement);
+    void onInertOrVisibilityChange(RenderElement&);
     void onPopoverToggle(const HTMLElement&);
     void onScrollbarFrameRectChange(const Scrollbar&);
-    void onSelectedChanged(Node&);
+    void onSelectedChanged(Element&);
+    void onStyleChange(Element&, Style::Change, const RenderStyle* newStyle, const RenderStyle* oldStyle);
     void onTextSecurityChanged(HTMLInputElement&);
     void onTitleChange(Document&);
     void onValidityChange(Element&);
     void onTextCompositionChange(Node&, CompositionState, bool, const String&, size_t, bool);
     void onWidgetVisibilityChanged(RenderWidget&);
     void valueChanged(Element&);
-    void checkedStateChanged(Node&);
-    void autofillTypeChanged(Node&);
+    void checkedStateChanged(Element&);
+    void autofillTypeChanged(HTMLInputElement&);
     void handleRoleChanged(AccessibilityObject&);
 
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
@@ -392,11 +398,12 @@ public:
         , WeakHashSet<AccessibilityTable>
         , WeakHashSet<AccessibilityTableCell>
         , WeakListHashSet<Node, WeakPtrImplWithEventTargetData>
+        , WeakListHashSet<Element, WeakPtrImplWithEventTargetData>
         , WeakHashMap<Element, String, WeakPtrImplWithEventTargetData>>;
     void deferFocusedUIElementChangeIfNeeded(Node* oldFocusedNode, Node* newFocusedNode);
     void deferModalChange(Element&);
     void deferMenuListValueChange(Element*);
-    void deferNodeAddedOrRemoved(Node*);
+    void deferElementAddedOrRemoved(Element*);
     void handleScrolledToAnchor(const Node& anchorNode);
     void onScrollbarUpdate(ScrollView&);
     void onRemoteFrameInitialized(AXRemoteFrame&);
@@ -436,7 +443,7 @@ public:
 #endif
 
     const Element* rootAXEditableElement(const Node*);
-    bool nodeIsTextControl(const Node&);
+    bool elementIsTextControl(const Element&);
 
     AccessibilityObject* objectForID(const AXID id) const { return m_objects.get(id); }
     template<typename U> Vector<RefPtr<AXCoreObject>> objectsForIDs(const U&) const;
@@ -549,13 +556,23 @@ public:
     Ref<Document> protectedDocument() const;
     constexpr const std::optional<PageIdentifier>& pageID() const { return m_pageID; }
 
-#if !ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE) && ENABLE(ACCESSIBILITY_ISOLATED_TREE)
-    void objectBecameIgnored(AXID axID)
+#if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
+    void objectBecameIgnored(const AccessibilityObject& object)
     {
         if (RefPtr tree = AXIsolatedTree::treeForPageID(m_pageID))
-            tree->objectBecameIgnored(axID);
+            tree->objectBecameIgnored(object);
     }
-#endif // !ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
+
+    void objectBecameUnignored(const AccessibilityObject& object)
+    {
+#if ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
+        if (RefPtr tree = AXIsolatedTree::treeForPageID(m_pageID))
+            tree->objectBecameUnignored(object);
+#else
+        UNUSED_PARAM(object);
+#endif // ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
+    }
+#endif // ENABLE(ACCESSIBILITY_ISOLATED_TREE)
 
 #if PLATFORM(MAC)
     static void setShouldRepostNotificationsForTests(bool);
@@ -611,7 +628,7 @@ private:
 
 protected:
     void postPlatformNotification(AccessibilityObject&, AXNotification);
-    void platformHandleFocusedUIElementChanged(Node* oldFocusedNode, Node* newFocusedNode);
+    void platformHandleFocusedUIElementChanged(Element* oldFocus, Element* newFocus);
 
     void platformPerformDeferredCacheUpdate();
 
@@ -670,8 +687,7 @@ private:
     AccessibilityObject* focusedObjectForNode(Node*);
     static AccessibilityObject* focusedImageMapUIElement(HTMLAreaElement&);
 
-    AXID getAXID(AccessibilityObject&);
-    AXID generateNewObjectID() const;
+    AXID generateNewObjectID();
 
     void notificationPostTimerFired();
 
@@ -703,10 +719,10 @@ private:
     void handleAllDeferredChildrenChanged();
     void handleRoleChanged(Element&, const AtomString&, const AtomString&);
     void handleRoleDescriptionChanged(Element&);
-    void handleMenuOpened(Node&);
-    void handleLiveRegionCreated(Node&);
-    void handleMenuItemSelected(Node*);
-    void handleTabPanelSelected(Node*, Node*);
+    void handleMenuOpened(Element&);
+    void handleLiveRegionCreated(Element&);
+    void handleMenuItemSelected(Element*);
+    void handleTabPanelSelected(Element*, Element*);
     void handleRowCountChanged(AccessibilityObject*, Document*);
     void handleAttributeChange(Element*, const QualifiedName&, const AtomString&, const AtomString&);
     bool shouldProcessAttributeChange(Element*, const QualifiedName&);
@@ -714,9 +730,9 @@ private:
     void selectedChildrenChanged(RenderObject*);
     void handleScrollbarUpdate(ScrollView&);
     void handleActiveDescendantChange(Element&, const AtomString&, const AtomString&);
-    void handleAriaExpandedChange(Node&);
+    void handleAriaExpandedChange(Element&);
     enum class UpdateModal : bool { No, Yes };
-    void handleFocusedUIElementChanged(Node* oldFocusedNode, Node* newFocusedNode, UpdateModal = UpdateModal::Yes);
+    void handleFocusedUIElementChanged(Element* oldFocus, Element* newFocus, UpdateModal = UpdateModal::Yes);
     void handleMenuListValueChanged(Element&);
     void handleTextChanged(AccessibilityObject*);
     void handleRecomputeCellSlots(AccessibilityTable&);
@@ -759,7 +775,8 @@ private:
 #endif
 
     // Object creation.
-    Ref<AccessibilityObject> createObjectFromRenderer(RenderObject&);
+    Ref<AccessibilityRenderObject> createObjectFromRenderer(RenderObject&);
+    Ref<AccessibilityNodeObject> createFromNode(Node&);
 
     WeakRef<Document, WeakPtrImplWithEventTargetData> m_document;
     const std::optional<PageIdentifier> m_pageID; // constant for object's lifetime.
@@ -816,13 +833,13 @@ private:
     WeakListHashSet<Node, WeakPtrImplWithEventTargetData> m_deferredTextChangedList;
     WeakHashSet<Element, WeakPtrImplWithEventTargetData> m_deferredSelectedChildredChangedList;
     ListHashSet<Ref<AccessibilityObject>> m_deferredChildrenChangedList;
-    WeakListHashSet<Node, WeakPtrImplWithEventTargetData> m_deferredNodeAddedOrRemovedList;
+    WeakListHashSet<Element, WeakPtrImplWithEventTargetData> m_deferredElementAddedOrRemovedList;
     WeakHashSet<Element, WeakPtrImplWithEventTargetData> m_deferredModalChangedList;
     WeakHashSet<Element, WeakPtrImplWithEventTargetData> m_deferredMenuListChange;
     SingleThreadWeakHashSet<ScrollView> m_deferredScrollbarUpdateChangeList;
     WeakHashMap<Element, String, WeakPtrImplWithEventTargetData> m_deferredTextFormControlValue;
     Vector<AttributeChange> m_deferredAttributeChange;
-    std::optional<std::pair<WeakPtr<Node, WeakPtrImplWithEventTargetData>, WeakPtr<Node, WeakPtrImplWithEventTargetData>>> m_deferredFocusedNodeChange;
+    std::optional<std::pair<WeakPtr<Element, WeakPtrImplWithEventTargetData>, WeakPtr<Element, WeakPtrImplWithEventTargetData>>> m_deferredFocusedNodeChange;
     WeakHashSet<AccessibilityObject> m_deferredUnconnectedObjects;
 
 #if ENABLE(ACCESSIBILITY_ISOLATED_TREE)
@@ -913,9 +930,16 @@ private:
     bool m_wasAlreadyCaching { false };
 };
 
-bool nodeHasRole(Node*, StringView role);
-bool nodeHasCellRole(Node*);
-bool nodeHasTableRole(Node*);
+bool hasRole(Element&, StringView role);
+bool hasAnyRole(Element&, Vector<StringView>&& roles);
+bool hasAnyRole(Element*, Vector<StringView>&& roles);
+bool hasCellARIARole(Element&);
+bool hasPresentationRole(Element&);
+bool hasTableRole(Element&);
+bool isRowGroup(Element&);
+bool isRowGroup(Node*);
+ContainerNode* composedParentIgnoringDocumentFragments(Node&);
+ContainerNode* composedParentIgnoringDocumentFragments(Node*);
 
 // Returns true if the element has an attribute that will result in an accname being computed.
 // https://www.w3.org/TR/accname-1.2/

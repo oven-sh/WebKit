@@ -604,7 +604,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
             'compile-webkit',
             'trigger'
         ],
-        'Apple-Sonoma-Safer-CPP-Checks': [
+        'Apple-Sequoia-Safer-CPP-Checks': [
             'configure-build',
             'configuration',
             'clean-and-update-working-directory',
@@ -614,7 +614,11 @@ class TestExpectedBuildSteps(unittest.TestCase):
             'delete-WebKitBuild-directory',
             'delete-stale-build-files',
             'prune-coresymbolicationd-cache-if-too-large',
+            'install-cmake',
+            'install-ninja',
             'print-clang-version',
+            'checkout-llvm-project',
+            'update-clang',
             'scan-build'
         ],
         'Apple-Ventura-Release-WK1-Tests': [
@@ -1176,7 +1180,6 @@ class TestExpectedBuildSteps(unittest.TestCase):
             'jhbuild',
             'compile-webkit',
             'generate-jsc-bundle',
-            'install-built-product',
             'trigger'
         ],
         'GTK-Linux-64-bit-Release-Clang-Build': [
@@ -1255,7 +1258,6 @@ class TestExpectedBuildSteps(unittest.TestCase):
             'delete-stale-build-files',
             'jhbuild',
             'compile-webkit',
-            'install-built-product',
             'trigger'
         ],
         'GTK-Linux-64-bit-Debug-Tests': [
@@ -1444,7 +1446,6 @@ class TestExpectedBuildSteps(unittest.TestCase):
             'bindings-generation-tests',
             'builtins-generator-tests',
             'API-tests',
-            'install-built-product',
             'archive-built-product',
             'upload-built-product',
             'webdriver-test'
@@ -1471,7 +1472,6 @@ class TestExpectedBuildSteps(unittest.TestCase):
             'bindings-generation-tests',
             'builtins-generator-tests',
             'API-tests',
-            'install-built-product',
             'archive-built-product',
             'upload-built-product'
         ],
@@ -1493,6 +1493,21 @@ class TestExpectedBuildSteps(unittest.TestCase):
             'upload',
             'extract-test-results',
             'set-permissions'
+        ],
+        'GTK-Linux-64bit-Release-GNOMEWebCanary-Packaging-Nightly': [
+            'configure-build',
+            'configuration',
+            'clean-and-update-working-directory',
+            'checkout-specific-revision',
+            'show-identifier',
+            'kill-old-processes',
+            'delete-WebKitBuild-directory',
+            'delete-stale-build-files',
+            'jhbuild',
+            'compile-webkit',
+            'install-built-product',
+            'archive-built-product',
+            'upload-built-product-via-sftp'
         ],
         'Windows-64-bit-Release-Build': [
             'configure-build',
@@ -1909,7 +1924,6 @@ class TestExpectedBuildSteps(unittest.TestCase):
             'bindings-generation-tests',
             'builtins-generator-tests',
             'API-tests',
-            'install-built-product',
             'archive-built-product',
             'upload-built-product'
         ],

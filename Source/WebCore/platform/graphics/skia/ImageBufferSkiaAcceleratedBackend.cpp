@@ -34,9 +34,11 @@
 #include "PixelBufferConversion.h"
 #include "PlatformDisplay.h"
 #include "ProcessCapabilities.h"
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkBitmap.h>
 #include <skia/core/SkPixmap.h>
 #include <skia/gpu/ganesh/SkSurfaceGanesh.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #include <wtf/TZoneMallocInlines.h>
 
 #if USE(COORDINATED_GRAPHICS)
@@ -47,9 +49,11 @@
 #include "GraphicsLayerContentsDisplayDelegateTextureMapper.h"
 #include "TextureMapperFlags.h"
 #include "TextureMapperPlatformLayerProxy.h"
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/gpu/ganesh/GrBackendSurface.h>
 #include <skia/gpu/ganesh/gl/GrGLBackendSurface.h>
 #include <skia/gpu/ganesh/gl/GrGLDirectContext.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #endif
 
 namespace WebCore {
@@ -108,6 +112,33 @@ ImageBufferSkiaAcceleratedBackend::~ImageBufferSkiaAcceleratedBackend()
 #endif
 }
 
+void ImageBufferSkiaAcceleratedBackend::finishAcceleratedRenderingAndCreateFence()
+{
+    auto* glContext = PlatformDisplay::sharedDisplay().skiaGLContext();
+    if (!glContext || !glContext->makeContextCurrent())
+        return;
+
+    auto* grContext = PlatformDisplay::sharedDisplay().skiaGrContext();
+    RELEASE_ASSERT(grContext);
+
+    if (GLFence::isSupported()) {
+        grContext->flushAndSubmit(m_surface.get(), GrSyncCpu::kNo);
+        m_fence = GLFence::create();
+        if (!m_fence)
+            grContext->submit(GrSyncCpu::kYes);
+    } else
+        grContext->flushAndSubmit(m_surface.get(), GrSyncCpu::kYes);
+}
+
+void ImageBufferSkiaAcceleratedBackend::waitForAcceleratedRenderingFenceCompletion()
+{
+    if (!m_fence)
+        return;
+
+    m_fence->serverWait();
+    m_fence = nullptr;
+}
+
 RefPtr<NativeImage> ImageBufferSkiaAcceleratedBackend::copyNativeImage()
 {
     // SkSurface uses a copy-on-write mechanism for makeImageSnapshot(), so it's
@@ -133,15 +164,33 @@ void ImageBufferSkiaAcceleratedBackend::getPixelBuffer(const IntRect& srcRect, P
     if (!PlatformDisplay::sharedDisplay().skiaGLContext()->makeContextCurrent())
         return;
 
-    auto info = m_surface->imageInfo();
-    auto data = SkData::MakeUninitialized(info.computeMinByteSize());
-    auto* pixels = static_cast<uint8_t*>(data->writable_data());
-    size_t rowBytes = static_cast<size_t>(info.minRowBytes64());
+    const IntRect backendRect { { }, size() };
+    const auto sourceRectClipped = intersection(backendRect, srcRect);
+    IntRect destinationRect { IntPoint::zero(), sourceRectClipped.size() };
 
-    // Create a SkImageInfo so the readPixels call will convert the RGBA pixels from the surface into BGRA.
-    SkImageInfo imageInfo = SkImageInfo::Make(info.width(), info.height(), SkColorType::kBGRA_8888_SkColorType, SkAlphaType::kPremul_SkAlphaType, colorSpace().platformColorSpace());
-    if (m_surface->readPixels(imageInfo, pixels, rowBytes, 0, 0))
-        ImageBufferBackend::getPixelBuffer(srcRect, pixels, destination);
+    if (srcRect.x() < 0)
+        destinationRect.setX(destinationRect.x() - srcRect.x());
+    if (srcRect.y() < 0)
+        destinationRect.setY(destinationRect.y() - srcRect.y());
+
+    if (destination.size() != sourceRectClipped.size())
+        destination.zeroFill();
+
+    const auto destinationColorType = (destination.format().pixelFormat == PixelFormat::RGBA8)
+        ? SkColorType::kRGBA_8888_SkColorType : SkColorType::kBGRA_8888_SkColorType;
+
+    const auto destinationAlphaType = (destination.format().alphaFormat == AlphaPremultiplication::Premultiplied)
+        ? SkAlphaType::kPremul_SkAlphaType : SkAlphaType::kUnpremul_SkAlphaType;
+
+    auto destinationInfo = SkImageInfo::Make(destination.size().width(), destination.size().height(),
+        destinationColorType, destinationAlphaType, destination.format().colorSpace.platformColorSpace());
+    SkPixmap pixmap(destinationInfo, destination.bytes().data(), destination.size().width() * 4);
+
+    SkPixmap dstPixmap;
+    if (UNLIKELY(!pixmap.extractSubset(&dstPixmap, destinationRect)))
+        return;
+
+    m_surface->readPixels(dstPixmap, sourceRectClipped.x(), sourceRectClipped.y());
 }
 
 void ImageBufferSkiaAcceleratedBackend::putPixelBuffer(const PixelBuffer& pixelBuffer, const IntRect& srcRect, const IntPoint& destPoint, AlphaPremultiplication destFormat)

@@ -34,6 +34,8 @@
 #include <wtf/text/StringBuilder.h>
 #include <wtf/unicode/CharacterNames.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace PAL {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(TextCodecCJK);
@@ -1089,9 +1091,9 @@ constexpr size_t maxUChar32Digits = 10;
 
 static void appendDecimal(char32_t c, Vector<uint8_t>& result)
 {
-    uint8_t buffer[lengthOfIntegerAsString(std::numeric_limits<decltype(c)>::max())];
-    writeIntegerToBuffer(c, buffer);
-    result.append(std::span { buffer, lengthOfIntegerAsString(c) });
+    std::array<uint8_t, lengthOfIntegerAsString(std::numeric_limits<decltype(c)>::max())> buffer;
+    writeIntegerToBuffer(c, std::span<uint8_t> { buffer });
+    result.append(std::span { buffer }.first(lengthOfIntegerAsString(c)));
 }
 
 static void urlEncodedEntityUnencodableHandler(char32_t c, Vector<uint8_t>& result)
@@ -1206,3 +1208,5 @@ Vector<uint8_t> TextCodecCJK::encode(StringView string, UnencodableHandling hand
 }
 
 } // namespace PAL
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

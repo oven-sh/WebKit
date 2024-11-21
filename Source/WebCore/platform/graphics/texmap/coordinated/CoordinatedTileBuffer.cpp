@@ -38,6 +38,7 @@
 #include "GLFence.h"
 #include "PlatformDisplay.h"
 #include "ProcessCapabilities.h"
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkColorSpace.h>
 #include <skia/core/SkImage.h>
 #include <skia/core/SkStream.h>
@@ -45,6 +46,7 @@
 #include <skia/gpu/ganesh/SkSurfaceGanesh.h>
 #include <skia/gpu/ganesh/gl/GrGLBackendSurface.h>
 #include <skia/gpu/ganesh/gl/GrGLDirectContext.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #include <wtf/MainThread.h>
 
 #if USE(LIBEPOXY)
@@ -96,7 +98,7 @@ CoordinatedUnacceleratedTileBuffer::CoordinatedUnacceleratedTileBuffer(const Int
     , m_size(size)
 {
     const auto checkedArea = size.area() * 4;
-    m_data = MallocPtr<unsigned char>::tryZeroedMalloc(checkedArea);
+    m_data = MallocSpan<unsigned char>::tryZeroedMalloc(checkedArea);
 
     {
         Locker locker { s_layersMemoryUsageLock };
@@ -135,7 +137,7 @@ bool CoordinatedUnacceleratedTileBuffer::tryEnsureSurface()
     auto imageInfo = SkImageInfo::Make(m_size.width(), m_size.height(), colorType, kPremul_SkAlphaType, SkColorSpace::MakeSRGB());
     // FIXME: ref buffer and unref on release proc?
     SkSurfaceProps properties = { 0, FontRenderOptions::singleton().subpixelOrder() };
-    m_surface = SkSurfaces::WrapPixels(imageInfo, m_data.get(), imageInfo.minRowBytes64(), &properties);
+    m_surface = SkSurfaces::WrapPixels(imageInfo, data(), imageInfo.minRowBytes64(), &properties);
     return true;
 }
 #endif

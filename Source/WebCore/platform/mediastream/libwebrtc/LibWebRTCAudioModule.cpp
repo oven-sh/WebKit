@@ -30,15 +30,12 @@
 
 #include "LibWebRTCAudioFormat.h"
 #include "Logging.h"
-#include <wtf/TZoneMallocInlines.h>
 
 #if PLATFORM(COCOA)
 #include "IncomingAudioMediaStreamTrackRendererUnit.h"
 #endif
 
 namespace WebCore {
-
-WTF_MAKE_TZONE_ALLOCATED_IMPL(LibWebRTCAudioModule);
 
 LibWebRTCAudioModule::LibWebRTCAudioModule()
     : m_queue(WorkQueue::create("WebKitWebRTCAudioModule"_s, WorkQueue::QOS::UserInteractive))
@@ -153,7 +150,7 @@ void LibWebRTCAudioModule::pollFromSource()
         char data[LibWebRTCAudioFormat::sampleByteSize * channels * LibWebRTCAudioFormat::chunkSampleCount];
         m_audioTransport->PullRenderData(LibWebRTCAudioFormat::sampleByteSize * 8, LibWebRTCAudioFormat::sampleRate, channels, LibWebRTCAudioFormat::chunkSampleCount, data, &elapsedTime, &ntpTime);
 #if PLATFORM(COCOA)
-        if (m_isRenderingIncomingAudio)
+        if (m_isRenderingIncomingAudioCounter)
             m_incomingAudioMediaStreamTrackRendererUnit->newAudioChunkPushed(m_currentAudioSampleCount);
         m_currentAudioSampleCount += LibWebRTCAudioFormat::chunkSampleCount;
 #endif
@@ -164,7 +161,7 @@ void LibWebRTCAudioModule::pollFromSource()
 BaseAudioMediaStreamTrackRendererUnit& LibWebRTCAudioModule::incomingAudioMediaStreamTrackRendererUnit()
 {
     if (!m_incomingAudioMediaStreamTrackRendererUnit)
-        m_incomingAudioMediaStreamTrackRendererUnit = makeUnique<IncomingAudioMediaStreamTrackRendererUnit>(*this);
+        m_incomingAudioMediaStreamTrackRendererUnit = makeUniqueWithoutRefCountedCheck<IncomingAudioMediaStreamTrackRendererUnit>(*this);
     return *m_incomingAudioMediaStreamTrackRendererUnit;
 }
 #endif

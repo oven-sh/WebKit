@@ -27,12 +27,15 @@
 #define ResponsivenessTimer_h
 
 #include <wtf/AbstractRefCountedAndCanMakeWeakPtr.h>
+#include <wtf/CheckedPtr.h>
 #include <wtf/RunLoop.h>
 #include <wtf/WeakRef.h>
 
 namespace WebKit {
 
-class ResponsivenessTimer {
+class ResponsivenessTimer : public CanMakeCheckedPtr<ResponsivenessTimer> {
+    WTF_MAKE_FAST_ALLOCATED;
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ResponsivenessTimer);
 public:
     class Client : public AbstractRefCountedAndCanMakeWeakPtr<Client> {
     public:

@@ -269,6 +269,17 @@ FrameInfoData WebFrame::info() const
 {
     RefPtr parent = parentFrame();
 
+    WebFrameMetrics metrics;
+    if (m_coreFrame) {
+        if (RefPtr coreView = m_coreFrame->virtualView()) {
+            IsScrollable isScrollable = hasHorizontalScrollbar() || hasVerticalScrollbar() ? IsScrollable::Yes : IsScrollable::No;
+            IntSize contentSize = { coreView->contentsWidth(), coreView->contentsHeight() };
+            auto visibleContentSize = coreView->visibleContentRectIncludingScrollbars().size();
+            auto visibleContentSizeExcludingScrollbars = coreView->visibleContentRect().size();
+            metrics = { isScrollable, contentSize, visibleContentSize, visibleContentSizeExcludingScrollbars };
+        }
+    }
+
     FrameInfoData info {
         isMainFrame(),
         is<WebCore::LocalFrame>(coreFrame()) ? FrameType::Local : FrameType::Remote,
@@ -280,7 +291,8 @@ FrameInfoData WebFrame::info() const
         parent ? std::optional<WebCore::FrameIdentifier> { parent->frameID() } : std::nullopt,
         getCurrentProcessID(),
         isFocused(),
-        coreLocalFrame() ? coreLocalFrame()->loader().errorOccurredInLoading() : false
+        coreLocalFrame() ? coreLocalFrame()->loader().errorOccurredInLoading() : false,
+        WTFMove(metrics)
     };
 
     return info;
@@ -373,7 +385,7 @@ void WebFrame::loadDidCommitInAnotherProcess(std::optional<WebCore::LayerHosting
     };
     auto newFrame = ownerElement
         ? WebCore::RemoteFrame::createSubframeWithContentsInAnotherProcess(*corePage, WTFMove(clientCreator), m_frameID, *ownerElement, layerHostingContextIdentifier)
-        : parent ? WebCore::RemoteFrame::createSubframe(*corePage, WTFMove(clientCreator), m_frameID, *parent, localFrame->opener()) : WebCore::RemoteFrame::createMainFrame(*corePage, WTFMove(clientCreator), m_frameID, localFrame->opener());
+        : parent ? WebCore::RemoteFrame::createSubframe(*corePage, WTFMove(clientCreator), m_frameID, *parent, nullptr) : WebCore::RemoteFrame::createMainFrame(*corePage, WTFMove(clientCreator), m_frameID, nullptr);
     if (!parent)
         corePage->setMainFrame(newFrame.copyRef());
     newFrame->takeWindowProxyAndOpenerFrom(*localFrame);

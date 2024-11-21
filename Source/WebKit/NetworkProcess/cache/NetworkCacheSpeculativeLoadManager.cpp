@@ -245,7 +245,7 @@ private:
             LOG(NetworkCacheSpeculativePreloading, "(NetworkProcess) * Subresource: '%s'.", subresourceLoad->key.identifier().utf8().data());
 #endif
 
-        Ref storage = m_storage.get();
+        RefPtr storage = m_storage.get();
         if (m_existingEntry) {
             m_existingEntry->updateSubresourceLoads(m_subresourceLoads);
             storage->store(m_existingEntry->encodeAsStorageRecord(), [](const Data&) { });
@@ -255,7 +255,7 @@ private:
         }
     }
 
-    CheckedRef<Storage> m_storage;
+    ThreadSafeWeakPtr<Storage> m_storage; // Not expected be to be null.
     Key m_mainResourceKey;
     Vector<std::unique_ptr<SubresourceLoad>> m_subresourceLoads;
     WTF::Function<void()> m_loadCompletionHandler;
@@ -275,13 +275,11 @@ SpeculativeLoadManager::SpeculativeLoadManager(Cache& cache, Storage& storage)
 {
 }
 
-SpeculativeLoadManager::~SpeculativeLoadManager()
-{
-}
+SpeculativeLoadManager::~SpeculativeLoadManager() = default;
 
 Ref<Storage> SpeculativeLoadManager::protectedStorage() const
 {
-    return m_storage.get();
+    return m_storage.get().releaseNonNull();
 }
 
 bool SpeculativeLoadManager::canUsePreloadedEntry(const PreloadedEntry& entry, const ResourceRequest& actualRequest)
@@ -430,11 +428,12 @@ void SpeculativeLoadManager::addPreloadedEntry(std::unique_ptr<Entry> entry, con
 void SpeculativeLoadManager::retrieveEntryFromStorage(const SubresourceInfo& info, RetrieveCompletionHandler&& completionHandler)
 {
     protectedStorage()->retrieve(info.key(), static_cast<unsigned>(info.priority()), [completionHandler = WTFMove(completionHandler)](auto record, auto timings) {
-        if (!record) {
+        if (record.isNull()) {
             completionHandler(nullptr);
             return false;
         }
-        auto entry = Entry::decodeStorageRecord(*record);
+
+        auto entry = Entry::decodeStorageRecord(record);
         if (!entry) {
             completionHandler(nullptr);
             return false;
@@ -627,15 +626,15 @@ void SpeculativeLoadManager::startSpeculativeRevalidation(const GlobalFrameID& f
 void SpeculativeLoadManager::retrieveSubresourcesEntry(const Key& storageKey, WTF::Function<void (std::unique_ptr<SubresourcesEntry>)>&& completionHandler)
 {
     ASSERT(storageKey.type() == "Resource"_s);
-    Ref storage = m_storage.get();
+    RefPtr storage = m_storage.get();
     auto subresourcesStorageKey = makeSubresourcesKey(storageKey, storage->salt());
     storage->retrieve(subresourcesStorageKey, static_cast<unsigned>(ResourceLoadPriority::Medium), [completionHandler = WTFMove(completionHandler)](auto record, auto timings) {
-        if (!record) {
+        if (record.isNull()) {
             completionHandler(nullptr);
             return false;
         }
 
-        auto subresourcesEntry = SubresourcesEntry::decodeStorageRecord(*record);
+        auto subresourcesEntry = SubresourcesEntry::decodeStorageRecord(record);
         if (!subresourcesEntry) {
             completionHandler(nullptr);
             return false;

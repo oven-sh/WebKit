@@ -61,14 +61,12 @@ class IntPoint;
 class IntSize;
 class ScrollableArea;
 
-bool nodeHasPresentationRole(Node&);
-
 class AccessibilityObject : public AXCoreObject, public CanMakeWeakPtr<AccessibilityObject> {
 public:
     virtual ~AccessibilityObject();
 
     std::optional<AXID> treeID() const final;
-    String dbg() const final;
+    String dbgInternal(bool, OptionSet<AXDebugStringOption>) const final;
 
     // After constructing an AccessibilityObject, it must be given a
     // unique ID, then added to AXObjectCache, and finally init() must
@@ -117,7 +115,6 @@ public:
     bool isAXIsolatedObjectInstance() const final { return false; }
 
     virtual bool isAttachmentElement() const { return false; }
-    bool isLink() const override { return false; }
     bool isSecureField() const override { return false; }
     bool isContainedBySecureField() const;
     bool isNativeTextControl() const override { return false; }
@@ -127,11 +124,10 @@ public:
     bool isFileUploadButton() const final;
     bool isInputImage() const override { return false; }
     virtual bool isSliderThumb() const { return false; }
-    bool isControl() const override { return false; }
     bool isRadioInput() const override { return false; }
     bool isLabel() const { return isAccessibilityLabelInstance() || labelForObjects().size(); }
 
-    bool isList() const override { return false; }
+    virtual bool isListInstance() const { return false; }
     virtual bool isUnorderedList() const { return false; }
     virtual bool isOrderedList() const { return false; }
     virtual bool isDescriptionList() const { return false; }
@@ -139,14 +135,12 @@ public:
     // Table support.
     bool isTable() const override { return false; }
     bool isExposable() const override { return true; }
-    bool supportsSelectedRows() const override { return false; }
     AccessibilityChildrenVector columns() override { return AccessibilityChildrenVector(); }
     AccessibilityChildrenVector rows() override { return AccessibilityChildrenVector(); }
     unsigned columnCount() override { return 0; }
     unsigned rowCount() override { return 0; }
     AccessibilityChildrenVector cells() override { return AccessibilityChildrenVector(); }
     AccessibilityObject* cellForColumnAndRow(unsigned, unsigned) override { return nullptr; }
-    AccessibilityChildrenVector columnHeaders() override { return AccessibilityChildrenVector(); }
     AccessibilityChildrenVector rowHeaders() override { return AccessibilityChildrenVector(); }
     AccessibilityChildrenVector visibleRows() override { return AccessibilityChildrenVector(); }
     String cellScope() const final { return getAttribute(HTMLNames::scopeAttr); }
@@ -195,7 +189,6 @@ public:
     bool isARIATextControl() const;
     bool isNonNativeTextControl() const override;
     bool isRangeControl() const;
-    bool isMeter() const final;
     bool isStyleFormatGroup() const;
     bool isFigureElement() const;
     bool isKeyboardFocusable() const override;
@@ -214,7 +207,6 @@ public:
     bool isPressed() const override { return false; }
     InsideLink insideLink() const final;
     bool isRequired() const override { return false; }
-    bool supportsRequiredAttribute() const override { return false; }
     bool isExpanded() const override;
     bool isVisible() const override { return !isHidden(); }
     virtual bool isCollapsed() const { return false; }
@@ -250,7 +242,6 @@ public:
     bool canSetFocusAttribute() const override { return false; }
     bool canSetValueAttribute() const override { return false; }
     bool canSetSelectedAttribute() const override { return false; }
-    bool canSetSelectedChildren() const override { return false; }
 
     Element* element() const override;
     Node* node() const override { return nullptr; }
@@ -340,7 +331,7 @@ public:
     AccessibilityObject* previousSiblingUnignored(unsigned limit = std::numeric_limits<unsigned>::max()) const;
     AccessibilityObject* parentObject() const override { return nullptr; }
     AccessibilityObject* displayContentsParent() const;
-    AccessibilityObject* parentObjectUnignored() const override { return downcast<AccessibilityObject>(AXCoreObject::parentObjectUnignored()); }
+    AccessibilityObject* parentObjectUnignored() const final { return downcast<AccessibilityObject>(AXCoreObject::parentObjectUnignored()); }
     // Returns the parent in the "core", platform-agnostic accessibility tree, which is not necessarily
     // the same parent that is actually exposed to assistive technologies (i.e. one that is unignored).
     AccessibilityObject* parentInCoreTree() const
@@ -351,7 +342,6 @@ public:
         return parentObjectUnignored();
 #endif // ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
     }
-    virtual AccessibilityObject* parentObjectIfExists() const { return nullptr; }
     static AccessibilityObject* firstAccessibleObjectFromNode(const Node*);
     AccessibilityChildrenVector findMatchingObjects(AccessibilitySearchCriteria&&) final;
     virtual bool isDescendantOfBarrenParent() const { return false; }
@@ -431,8 +421,7 @@ public:
     // Only if isColorWell()
     SRGBA<uint8_t> colorValue() const override;
 
-    // FIXME: This should be made final after AccessibilityTable is fixed to use m_role rather than computing its own roleValue().
-    AccessibilityRole roleValue() const override { return m_role; }
+    AccessibilityRole roleValue() const final { return m_role; }
     virtual AccessibilityRole determineAccessibilityRole() = 0;
     String rolePlatformString() const override;
     String roleDescription() const override;
@@ -444,7 +433,6 @@ public:
     static AccessibilityObject* headingElementForNode(Node*);
     virtual Element* anchorElement() const { return nullptr; }
     virtual RefPtr<Element> popoverTargetElement() const { return nullptr; }
-    bool supportsPressAction() const override;
     Element* actionElement() const override { return nullptr; }
     virtual LayoutRect boundingBoxRect() const { return { }; }
     LayoutRect elementRect() const override = 0;
@@ -524,7 +512,7 @@ public:
     void decrement() override { }
     virtual bool toggleDetailsAncestor() { return false; }
 
-    virtual void updateRole();
+    void updateRole();
     bool childrenInitialized() const { return m_childrenInitialized; }
     const AccessibilityChildrenVector& children(bool updateChildrenIfNeeded = true) override;
     virtual void addChildren() { }
@@ -558,6 +546,7 @@ public:
     String nameAttribute() const final;
     int getIntegralAttribute(const QualifiedName&) const;
     bool hasTagName(const QualifiedName&) const;
+    bool hasBodyTag() const final { return hasTagName(HTMLNames::bodyTag); }
     AtomString tagName() const;
     bool hasDisplayContents() const;
 
@@ -631,7 +620,7 @@ public:
     bool liveRegionAtomic() const override { return false; }
     bool isBusy() const override { return false; }
     static const String defaultLiveRegionStatusForRole(AccessibilityRole);
-    static bool contentEditableAttributeIsEnabled(Element*);
+    static bool contentEditableAttributeIsEnabled(Element&);
     bool hasContentEditableAttributeSet() const;
 
     bool supportsReadOnly() const;
@@ -749,6 +738,8 @@ public:
     void setCaretBrowsingEnabled(bool) override;
 #endif
 
+    bool hasClickHandler() const override { return false; }
+    AccessibilityObject* clickableSelfOrAncestor(ClickHandlerFilter filter = ClickHandlerFilter::ExcludeBody) const final { return Accessibility::clickableSelfOrAncestor(*this, filter); };
     AccessibilityObject* focusableAncestor() override { return Accessibility::focusableAncestor(*this); }
     AccessibilityObject* editableAncestor() override { return Accessibility::editableAncestor(*this); };
     AccessibilityObject* highestEditableAncestor() override { return Accessibility::highestEditableAncestor(*this); }
@@ -868,7 +859,7 @@ public:
     }; // class iterator
 
 protected:
-    AccessibilityObject() = default;
+    explicit AccessibilityObject(AXID);
 
     // FIXME: Make more of these member functions private.
 
@@ -904,12 +895,12 @@ private:
     std::optional<SimpleRange> rangeOfStringClosestToRangeInDirection(const SimpleRange&, AccessibilitySearchDirection, const Vector<String>&) const;
     std::optional<SimpleRange> selectionRange() const;
     std::optional<SimpleRange> findTextRange(const Vector<String>& searchStrings, const SimpleRange& start, AccessibilitySearchTextDirection) const;
-    std::optional<SimpleRange> visibleCharacterRangeInternal(const std::optional<SimpleRange>&, const FloatRect&, const IntRect&) const;
+    std::optional<SimpleRange> visibleCharacterRangeInternal(SimpleRange&, const FloatRect&, const IntRect&) const;
     Vector<BoundaryPoint> previousLineStartBoundaryPoints(const VisiblePosition&, const SimpleRange&, unsigned) const;
     std::optional<VisiblePosition> previousLineStartPositionInternal(const VisiblePosition&) const;
-    bool boundaryPointsContainedInRect(const BoundaryPoint&, const BoundaryPoint&, const FloatRect&) const;
-    std::optional<BoundaryPoint> lastBoundaryPointContainedInRect(const Vector<BoundaryPoint>&, const BoundaryPoint&, const FloatRect&, int, int) const;
-    std::optional<BoundaryPoint> lastBoundaryPointContainedInRect(const Vector<BoundaryPoint>& boundaryPoints, const BoundaryPoint& startBoundaryPoint, const FloatRect& targetRect) const;
+    bool boundaryPointsContainedInRect(const BoundaryPoint&, const BoundaryPoint&, const FloatRect&, bool isFlippedWritingMode) const;
+    std::optional<BoundaryPoint> lastBoundaryPointContainedInRect(const Vector<BoundaryPoint>&, const BoundaryPoint&, const FloatRect&, int, int, bool isFlippedWritingMode) const;
+    std::optional<BoundaryPoint> lastBoundaryPointContainedInRect(const Vector<BoundaryPoint>& boundaryPoints, const BoundaryPoint& startBoundaryPoint, const FloatRect& targetRect, bool isFlippedWritingMode) const;
 
     // Note that "withoutCache" refers to the lack of referencing AXComputedObjectAttributeCache in the function, not the AXObjectCache parameter we pass in here.
     bool isIgnoredWithoutCache(AXObjectCache*) const;
@@ -929,10 +920,6 @@ protected: // FIXME: Make the data members private.
 private:
     OptionSet<AXAncestorFlag> m_ancestorFlags;
     AccessibilityObjectInclusion m_lastKnownIsIgnoredValue { AccessibilityObjectInclusion::DefaultBehavior };
-    // std::nullopt is a valid cached value if this object has no visible characters.
-    mutable std::optional<SimpleRange> m_cachedVisibleCharacterRange;
-    // This is std::nullopt if we haven't cached any input yet.
-    mutable std::optional<std::tuple<std::optional<SimpleRange>, FloatRect, IntRect>> m_cachedVisibleCharacterRangeInputs;
 #if PLATFORM(IOS_FAMILY)
     InlineTextPrediction m_lastPresentedTextPrediction;
     InlineTextPrediction m_lastPresentedTextPredictionComplete;
@@ -956,9 +943,9 @@ inline void AccessibilityObject::recomputeIsIgnored()
     isIgnoredWithoutCache(axObjectCache());
 }
 
-inline std::optional<BoundaryPoint> AccessibilityObject::lastBoundaryPointContainedInRect(const Vector<BoundaryPoint>& boundaryPoints, const BoundaryPoint& startBoundaryPoint, const FloatRect& targetRect) const
+inline std::optional<BoundaryPoint> AccessibilityObject::lastBoundaryPointContainedInRect(const Vector<BoundaryPoint>& boundaryPoints, const BoundaryPoint& startBoundaryPoint, const FloatRect& targetRect, bool isFlippedWritingMode) const
 {
-    return lastBoundaryPointContainedInRect(boundaryPoints, startBoundaryPoint, targetRect, 0, boundaryPoints.size() - 1);
+    return lastBoundaryPointContainedInRect(boundaryPoints, startBoundaryPoint, targetRect, 0, boundaryPoints.size() - 1, isFlippedWritingMode);
 }
 
 inline VisiblePosition AccessibilityObject::previousLineStartPosition(const VisiblePosition& position) const

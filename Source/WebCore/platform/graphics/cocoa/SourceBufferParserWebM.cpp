@@ -53,6 +53,8 @@
 
 WTF_WEAK_LINK_FORCE_IMPORT(webm::swap);
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace WTF {
 
 template<typename> struct LogArgument;
@@ -1075,13 +1077,13 @@ WebMParser::ConsumeFrameDataResult WebMParser::VideoTrackData::consumeFrameData(
 
         if (m_headerParser.key()) {
             isKey = true;
-            setFormatDescription(createVideoInfoFromVP9HeaderParser(m_headerParser, track().video.value().colour));
+            setFormatDescription(createVideoInfoFromVP9HeaderParser(m_headerParser, track().video.value()));
         }
     } else if (codec() == CodecType::VP8) {
         auto header = parseVP8FrameHeader(segmentHeaderData);
         if (header && header->keyframe) {
             isKey = true;
-            setFormatDescription(createVideoInfoFromVP8Header(*header, track().video.value().colour));
+            setFormatDescription(createVideoInfoFromVP8Header(*header, track().video.value()));
         }
     }
 
@@ -1607,5 +1609,7 @@ void SourceBufferParserWebM::setMinimumAudioSampleDuration(float duration)
 }
 
 }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // ENABLE(MEDIA_SOURCE)

@@ -60,7 +60,9 @@ public:
     }
     bool shouldEmitLogMessage(const WTFLogChannel& channel) const final
     {
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib
         return g_str_has_prefix(channel.name, "WebRTC");
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     }
 };
 
@@ -241,9 +243,11 @@ RefPtr<RTCRtpSender> GStreamerPeerConnectionBackend::findExistingSender(const Ve
 ExceptionOr<Ref<RTCRtpSender>> GStreamerPeerConnectionBackend::addTrack(MediaStreamTrack& track, FixedVector<String>&& mediaStreamIds)
 {
     GST_DEBUG_OBJECT(m_endpoint->pipeline(), "Adding new track.");
-    auto senderBackend = WTF::makeUnique<GStreamerRtpSenderBackend>(*this, nullptr);
-    if (!m_endpoint->addTrack(*senderBackend, track, mediaStreamIds))
-        return Exception { ExceptionCode::TypeError, "Unable to add track"_s };
+    auto addTrackResult = m_endpoint->addTrack(track, mediaStreamIds);
+    if (addTrackResult.hasException())
+        return addTrackResult.releaseException();
+
+    auto senderBackend = addTrackResult.releaseReturnValue();
 
     Ref peerConnection = m_peerConnection.get();
     if (auto sender = findExistingSender(peerConnection->currentTransceivers(), *senderBackend)) {
@@ -293,9 +297,9 @@ ExceptionOr<Ref<RTCRtpTransceiver>> GStreamerPeerConnectionBackend::addTransceiv
     return addTransceiverFromTrackOrKind(WTFMove(track), init, IgnoreNegotiationNeededFlag::No);
 }
 
-GStreamerRtpSenderBackend::Source GStreamerPeerConnectionBackend::createLinkedSourceForTrack(MediaStreamTrack& track)
+GStreamerRtpSenderBackend::Source GStreamerPeerConnectionBackend::createSourceForTrack(MediaStreamTrack& track)
 {
-    return m_endpoint->createLinkedSourceForTrack(track);
+    return m_endpoint->createSourceForTrack(track);
 }
 
 static inline GStreamerRtpTransceiverBackend& backendFromRTPTransceiver(RTCRtpTransceiver& transceiver)
@@ -307,6 +311,15 @@ RTCRtpTransceiver* GStreamerPeerConnectionBackend::existingTransceiver(WTF::Func
 {
     for (auto& transceiver : protectedPeerConnection()->currentTransceivers()) {
         if (matchingFunction(backendFromRTPTransceiver(*transceiver)))
+            return transceiver.get();
+    }
+    return nullptr;
+}
+
+RTCRtpTransceiver* GStreamerPeerConnectionBackend::existingTransceiverForTrackId(const String& trackId)
+{
+    for (auto& transceiver : protectedPeerConnection()->currentTransceivers()) {
+        if (transceiver->receiver().track().id() == trackId)
             return transceiver.get();
     }
     return nullptr;

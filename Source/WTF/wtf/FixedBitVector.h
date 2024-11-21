@@ -33,6 +33,8 @@
 #include <wtf/StdIntExtras.h>
 #include <wtf/StdLibExtras.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace WTF {
 
 // FIXME: This should be `: private BitVector`.
@@ -97,7 +99,7 @@ ALWAYS_INLINE bool FixedBitVector::concurrentTestAndSet(size_t bitIndex, Depende
     WordType mask = one << (bitIndex % wordSize);
     size_t wordIndex = bitIndex / wordSize;
     WordType* data = dependency.consume(m_bitVector.bits()) + wordIndex;
-    return !bitwise_cast<Atomic<WordType>*>(data)->transactionRelaxed(
+    return !std::bit_cast<Atomic<WordType>*>(data)->transactionRelaxed(
         [&](WordType& value) -> bool {
             if (value & mask)
                 return false;
@@ -115,7 +117,7 @@ ALWAYS_INLINE bool FixedBitVector::concurrentTestAndClear(size_t bitIndex, Depen
     WordType mask = one << (bitIndex % wordSize);
     size_t wordIndex = bitIndex / wordSize;
     WordType* data = dependency.consume(m_bitVector.bits()) + wordIndex;
-    return bitwise_cast<Atomic<WordType>*>(data)->transactionRelaxed(
+    return std::bit_cast<Atomic<WordType>*>(data)->transactionRelaxed(
         [&](WordType& value) -> bool {
             if (!(value & mask))
                 return false;
@@ -210,3 +212,5 @@ template<> struct HashTraits<FixedBitVector> : public CustomHashTraits<FixedBitV
 } // namespace WTF
 
 using WTF::FixedBitVector;
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

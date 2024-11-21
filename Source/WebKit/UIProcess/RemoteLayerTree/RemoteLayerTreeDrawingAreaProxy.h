@@ -113,7 +113,7 @@ protected:
 
     ProcessState& processStateForConnection(IPC::Connection&);
     const ProcessState& processStateForIdentifier(WebCore::ProcessIdentifier) const;
-    IPC::Connection& connectionForIdentifier(WebCore::ProcessIdentifier);
+    IPC::Connection* connectionForIdentifier(WebCore::ProcessIdentifier);
     void forEachProcessState(Function<void(ProcessState&, WebProcessProxy&)>&&);
 
 private:
@@ -129,6 +129,8 @@ private:
 
     virtual void scheduleDisplayRefreshCallbacks() { }
     virtual void pauseDisplayRefreshCallbacks() { }
+
+    virtual void dispatchSetTopContentInset() { }
 
     float indicatorScale(WebCore::IntSize contentsSize) const;
     void updateDebugIndicator() final;

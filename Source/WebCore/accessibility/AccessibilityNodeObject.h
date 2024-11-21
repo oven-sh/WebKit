@@ -39,14 +39,9 @@ class Element;
 class HTMLLabelElement;
 class Node;
 
-enum MouseButtonListenerResultFilter {
-    ExcludeBodyElement = 1,
-    IncludeBodyElement,
-};
-
 class AccessibilityNodeObject : public AccessibilityObject {
 public:
-    static Ref<AccessibilityNodeObject> create(Node&);
+    static Ref<AccessibilityNodeObject> create(AXID, Node&);
     virtual ~AccessibilityNodeObject();
 
     void init() override;
@@ -54,12 +49,11 @@ public:
     bool canvasHasFallbackContent() const override;
 
     bool isBusy() const override;
-    bool isControl() const override;
+    bool isDetached() const override { return !m_node; }
     bool isRadioInput() const override;
     bool isFieldset() const override;
     bool isHovered() const override;
     bool isInputImage() const override;
-    bool isLink() const override;
     bool isMultiSelectable() const override;
     bool isNativeImage() const;
     bool isNativeTextControl() const override;
@@ -72,7 +66,6 @@ public:
     bool isPressed() const final;
     bool isRequired() const override;
     bool supportsARIAOwns() const final;
-    bool supportsRequiredAttribute() const override;
 
     bool supportsDropping() const override;
     bool supportsDragging() const override;
@@ -118,15 +111,14 @@ public:
     String ariaLabeledByAttribute() const override;
     bool hasAccNameAttribute() const;
     bool hasAttributesRequiredForInclusion() const final;
+    bool hasClickHandler() const final;
     void setIsExpanded(bool) override;
 
     Element* actionElement() const override;
-    Element* mouseButtonListener(MouseButtonListenerResultFilter = ExcludeBodyElement) const;
     Element* anchorElement() const override;
     RefPtr<Element> popoverTargetElement() const final;
     AXCoreObject* internalLinkElement() const final;
     AccessibilityChildrenVector radioButtonGroup() const final;
-    AccessibilityObject* menuForMenuButton() const;
    
     virtual void changeValueByPercent(float percentChange);
  
@@ -135,7 +127,6 @@ public:
     AccessibilityObject* previousSibling() const override;
     AccessibilityObject* nextSibling() const override;
     AccessibilityObject* parentObject() const override;
-    AccessibilityObject* parentObjectIfExists() const override;
 
     bool matchesTextAreaRole() const;
 
@@ -150,15 +141,13 @@ public:
 #endif
 
 protected:
-    explicit AccessibilityNodeObject(Node*);
+    explicit AccessibilityNodeObject(AXID, Node*);
     void detachRemoteParts(AccessibilityDetachmentType) override;
 
     AccessibilityRole m_ariaRole { AccessibilityRole::Unknown };
 #ifndef NDEBUG
     bool m_initialized { false };
 #endif
-
-    bool isDetached() const override { return !m_node; }
 
     AccessibilityRole determineAccessibilityRole() override;
     enum class TreatStyleFormatGroupAsInline : bool { No, Yes };
@@ -209,9 +198,6 @@ protected:
     LayoutRect boundingBoxRect() const override;
     String ariaDescribedByAttribute() const override;
     
-    Element* menuElementForMenuButton() const;
-    Element* menuItemElementForMenu() const;
-    AccessibilityObject* menuButtonForMenu() const;
     AccessibilityObject* captionForFigure() const;
     virtual void labelText(Vector<AccessibilityText>&) const;
 private:

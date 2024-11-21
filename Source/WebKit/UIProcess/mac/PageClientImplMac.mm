@@ -348,10 +348,6 @@ void PageClientImpl::setCursorHiddenUntilMouseMoves(bool hiddenUntilMouseMoves)
     [NSCursor setHiddenUntilMouseMoves:hiddenUntilMouseMoves];
 }
 
-void PageClientImpl::didChangeViewportProperties(const WebCore::ViewportAttributes&)
-{
-}
-
 void PageClientImpl::registerEditCommand(Ref<WebEditCommandProxy>&& command, UndoOrRedo undoOrRedo)
 {
     m_impl->registerEditCommand(WTFMove(command), undoOrRedo);
@@ -1021,6 +1017,17 @@ void PageClientImpl::requestScrollToRect(const WebCore::FloatRect& targetRect, c
 bool PageClientImpl::windowIsFrontWindowUnderMouse(const NativeWebMouseEvent& event)
 {
     return m_impl->windowIsFrontWindowUnderMouse(event.nativeEvent());
+}
+
+std::optional<float> PageClientImpl::computeAutomaticTopContentInset()
+{
+    RetainPtr window = [m_view window];
+    if (([window styleMask] & NSWindowStyleMaskFullSizeContentView) && ![window titlebarAppearsTransparent] && ![m_view enclosingScrollView]) {
+        NSRect contentLayoutRectInWebViewCoordinates = [m_view convertRect:[window contentLayoutRect] fromView:nil];
+        return std::max<float>(contentLayoutRectInWebViewCoordinates.origin.y, 0);
+    }
+
+    return std::nullopt;
 }
 
 WebCore::UserInterfaceLayoutDirection PageClientImpl::userInterfaceLayoutDirection()

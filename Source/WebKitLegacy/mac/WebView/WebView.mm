@@ -191,7 +191,6 @@
 #import <WebCore/LocalizedStrings.h>
 #import <WebCore/LogInitialization.h>
 #import <WebCore/MIMETypeRegistry.h>
-#import <WebCore/MediaRecorderProvider.h>
 #import <WebCore/MemoryCache.h>
 #import <WebCore/MemoryRelease.h>
 #import <WebCore/MutableStyleProperties.h>
@@ -206,6 +205,7 @@
 #import <WebCore/PlatformEventFactoryMac.h>
 #import <WebCore/PlatformScreen.h>
 #import <WebCore/PlatformTextAlternatives.h>
+#import <WebCore/ProcessSyncClient.h>
 #import <WebCore/ProgressTracker.h>
 #import <WebCore/Range.h>
 #import <WebCore/RemoteFrameClient.h>
@@ -1524,7 +1524,6 @@ static WebCore::ApplicationCacheStorage& webApplicationCacheStorage()
         WebCore::FrameIdentifier::generate(),
         nullptr, // Opener may be set by setOpenerForWebKitLegacy after instantiation.
         makeUniqueRef<WebCore::DummySpeechRecognitionProvider>(),
-        makeUniqueRef<WebCore::MediaRecorderProvider>(),
         WebBroadcastChannelRegistry::getOrCreate([[self preferences] privateBrowsingEnabled]),
         makeUniqueRef<WebCore::DummyStorageProvider>(),
         makeUniqueRef<WebCore::DummyModelPlayerProvider>(),
@@ -1541,7 +1540,8 @@ static WebCore::ApplicationCacheStorage& webApplicationCacheStorage()
 #else
         makeUniqueRef<WebChromeClientIOS>(self),
 #endif
-        makeUniqueRef<WebCryptoClient>(self)
+        makeUniqueRef<WebCryptoClient>(self),
+        makeUniqueRef<WebCore::ProcessSyncClient>()
     );
 #if !PLATFORM(IOS_FAMILY)
     pageConfiguration.validationMessageClient = makeUnique<WebValidationMessageClient>(self);
@@ -1790,7 +1790,6 @@ static WebCore::ApplicationCacheStorage& webApplicationCacheStorage()
         WebCore::FrameIdentifier::generate(),
         nullptr, // Opener may be set by setOpenerForWebKitLegacy after instantiation.
         makeUniqueRef<WebCore::DummySpeechRecognitionProvider>(),
-        makeUniqueRef<WebCore::MediaRecorderProvider>(),
         WebBroadcastChannelRegistry::getOrCreate([[self preferences] privateBrowsingEnabled]),
         makeUniqueRef<WebCore::DummyStorageProvider>(),
         makeUniqueRef<WebCore::DummyModelPlayerProvider>(),
@@ -1800,7 +1799,8 @@ static WebCore::ApplicationCacheStorage& webApplicationCacheStorage()
         makeUniqueRef<WebPaymentCoordinatorClient>(),
 #endif
         makeUniqueRef<WebChromeClientIOS>(self),
-        makeUniqueRef<WebCryptoClient>(self)
+        makeUniqueRef<WebCryptoClient>(self),
+        makeUniqueRef<WebCore::ProcessSyncClient>()
     );
 #if ENABLE(DRAG_SUPPORT)
     pageConfiguration.dragClient = makeUnique<WebDragClient>(self);

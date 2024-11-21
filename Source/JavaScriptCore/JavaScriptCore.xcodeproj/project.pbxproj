@@ -2200,11 +2200,13 @@
 		FEF90A8D28AC135F00C14B84 /* APIIntegrityPrivate.h in Headers */ = {isa = PBXBuildFile; fileRef = FEF90A8C28AC135C00C14B84 /* APIIntegrityPrivate.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		FEF934472B4DC61500DFA7F5 /* ExpressionInfoInlines.h in Headers */ = {isa = PBXBuildFile; fileRef = FEF934462B4DC61500DFA7F5 /* ExpressionInfoInlines.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		FEFD6FC61D5E7992008F2F0B /* JSStringInlines.h in Headers */ = {isa = PBXBuildFile; fileRef = FEFD6FC51D5E7970008F2F0B /* JSStringInlines.h */; settings = {ATTRIBUTES = (Private, ); }; };
+		FF1D8E872CE7C9BF00E211DD /* VerifierSlotVisitorScope.h in Headers */ = {isa = PBXBuildFile; fileRef = FF1D8E862CE7C9BF00E211DD /* VerifierSlotVisitorScope.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		FF3394AA2CB4944E004AFF6A /* RegExpSubstringGlobalAtomCache.h in Headers */ = {isa = PBXBuildFile; fileRef = FF3394A92CB4941B004AFF6A /* RegExpSubstringGlobalAtomCache.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		FF41590C28FF3C6B00F80B96 /* WaiterListManager.h in Headers */ = {isa = PBXBuildFile; fileRef = FF41590B28FF3C6B00F80B96 /* WaiterListManager.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		FFB951142C043CA800349750 /* OrderedHashTableHelper.h in Headers */ = {isa = PBXBuildFile; fileRef = FFB951132C043CA800349750 /* OrderedHashTableHelper.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		FFCC9A412BDD7C4700C75345 /* OrderedHashTable.h in Headers */ = {isa = PBXBuildFile; fileRef = FFCC9A402BDD7C4700C75345 /* OrderedHashTable.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		FFF3373F2BCDF1240070D04B /* JSCBytecodeCacheVersion.h in Headers */ = {isa = PBXBuildFile; fileRef = FFF3373E2BCDF1240070D04B /* JSCBytecodeCacheVersion.h */; settings = {ATTRIBUTES = (Private, ); }; };
+		FFF4D5A32CE304CD006EA634 /* DeferredWorkTimerInlines.h in Headers */ = {isa = PBXBuildFile; fileRef = FFF4D5A22CE304C2006EA634 /* DeferredWorkTimerInlines.h */; settings = {ATTRIBUTES = (Private, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXBuildRule section */
@@ -6087,6 +6089,7 @@
 		FEF90A8E28AC187A00C14B84 /* APIIntegrity.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = APIIntegrity.cpp; sourceTree = "<group>"; };
 		FEF934462B4DC61500DFA7F5 /* ExpressionInfoInlines.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ExpressionInfoInlines.h; sourceTree = "<group>"; };
 		FEFD6FC51D5E7970008F2F0B /* JSStringInlines.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = JSStringInlines.h; sourceTree = "<group>"; };
+		FF1D8E862CE7C9BF00E211DD /* VerifierSlotVisitorScope.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = VerifierSlotVisitorScope.h; sourceTree = "<group>"; };
 		FF27D0E42BE2AEDB00397A8C /* OrderedHashTable.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = OrderedHashTable.cpp; sourceTree = "<group>"; };
 		FF3394A92CB4941B004AFF6A /* RegExpSubstringGlobalAtomCache.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = RegExpSubstringGlobalAtomCache.h; sourceTree = "<group>"; };
 		FF3394AB2CB4948E004AFF6A /* RegExpSubstringGlobalAtomCache.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = RegExpSubstringGlobalAtomCache.cpp; sourceTree = "<group>"; };
@@ -6096,6 +6099,7 @@
 		FFCC9A402BDD7C4700C75345 /* OrderedHashTable.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = OrderedHashTable.h; sourceTree = "<group>"; };
 		FFF3373D2BCDF1240070D04B /* JSCBytecodeCacheVersion.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = JSCBytecodeCacheVersion.cpp; sourceTree = "<group>"; };
 		FFF3373E2BCDF1240070D04B /* JSCBytecodeCacheVersion.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = JSCBytecodeCacheVersion.h; sourceTree = "<group>"; };
+		FFF4D5A22CE304C2006EA634 /* DeferredWorkTimerInlines.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = DeferredWorkTimerInlines.h; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -7197,6 +7201,7 @@
 				FE2BD66E25C0DC8200999D3B /* VerifierSlotVisitor.cpp */,
 				FE287D01252FB2E800D723F9 /* VerifierSlotVisitor.h */,
 				6BCCEC0325D1FA27000F391D /* VerifierSlotVisitorInlines.h */,
+				FF1D8E862CE7C9BF00E211DD /* VerifierSlotVisitorScope.h */,
 				0F4D8C721FC7A973001D32AC /* VisitCounter.h */,
 				0F952A9F1DF7860700E06FBD /* VisitRaceKey.cpp */,
 				0F952AA01DF7860700E06FBD /* VisitRaceKey.h */,
@@ -8081,6 +8086,7 @@
 				276B38AB2A71D1E700252F4E /* DatePrototypeInlines.h */,
 				534638761E71E06E00F12AC1 /* DeferredWorkTimer.cpp */,
 				534638741E70DDEC00F12AC1 /* DeferredWorkTimer.h */,
+				FFF4D5A22CE304C2006EA634 /* DeferredWorkTimerInlines.h */,
 				FE9F3FC626163CA90069E89F /* DeferTermination.h */,
 				169948EDE68D4054B01EF797 /* DefinePropertyAttributes.h */,
 				734B655423F4A33100A069D1 /* DeletePropertySlot.h */,
@@ -10638,6 +10644,7 @@
 				0FC712DF17CD877C008CC93C /* DeferredCompilationCallback.h in Headers */,
 				FE5068651AE246390009DAB7 /* DeferredSourceDump.h in Headers */,
 				534638751E70DDEC00F12AC1 /* DeferredWorkTimer.h in Headers */,
+				FFF4D5A32CE304CD006EA634 /* DeferredWorkTimerInlines.h in Headers */,
 				FE9F3FC826163CA90069E89F /* DeferTermination.h in Headers */,
 				473DA4A4764C45FE871B0485 /* DefinePropertyAttributes.h in Headers */,
 				0FBB73BB1DEF8645002C009E /* DeleteAllCodeEffort.h in Headers */,
@@ -11887,6 +11894,7 @@
 				0FE0502D1AA9095600D33B33 /* VarOffset.h in Headers */,
 				FE287D02252FB2E800D723F9 /* VerifierSlotVisitor.h in Headers */,
 				6BCCEC0425D1FA27000F391D /* VerifierSlotVisitorInlines.h in Headers */,
+				FF1D8E872CE7C9BF00E211DD /* VerifierSlotVisitorScope.h in Headers */,
 				0F426A491460CBB700131F8F /* VirtualRegister.h in Headers */,
 				0F4D8C741FC7A97A001D32AC /* VisitCounter.h in Headers */,
 				0F952AA11DF7860900E06FBD /* VisitRaceKey.h in Headers */,

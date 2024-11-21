@@ -29,7 +29,6 @@
 #if USE(COORDINATED_GRAPHICS)
 #include "CallbackID.h"
 #include "LayerTreeContext.h"
-#include "SimpleViewportController.h"
 #include "ThreadedCompositor.h"
 #include <WebCore/CoordinatedGraphicsLayer.h>
 #include <WebCore/CoordinatedImageBackingStore.h>
@@ -51,7 +50,6 @@
 #endif
 
 namespace Nicosia {
-class PaintingEngine;
 class SceneIntegration;
 }
 
@@ -64,7 +62,20 @@ class GraphicsLayer;
 class GraphicsLayerFactory;
 class NativeImage;
 class SkiaThreadedPaintingPool;
-struct ViewportAttributes;
+#if USE(CAIRO)
+namespace Cairo {
+class PaintingEngine;
+}
+#endif
+}
+
+namespace WebKit {
+class LayerTreeHost;
+}
+
+namespace WTF {
+template<typename T> struct IsDeprecatedTimerSmartPointerException;
+template<> struct IsDeprecatedTimerSmartPointerException<WebKit::LayerTreeHost> : std::true_type { };
 }
 
 namespace WebKit {
@@ -96,7 +107,6 @@ public:
     void setRootCompositingLayer(WebCore::GraphicsLayer*);
     void setViewOverlayRootLayer(WebCore::GraphicsLayer*);
 
-    void scrollNonCompositedContents(const WebCore::IntRect&);
     void forceRepaint();
     void forceRepaintAsync(CompletionHandler<void()>&&);
     void sizeDidChange(const WebCore::IntSize& newSize);
@@ -105,9 +115,6 @@ public:
     void resumeRendering();
 
     WebCore::GraphicsLayerFactory* graphicsLayerFactory();
-
-    void contentsSizeChanged(const WebCore::IntSize&);
-    void didChangeViewportAttributes(WebCore::ViewportAttributes&&);
 
     void deviceOrPageScaleFactorChanged();
     void backgroundColorDidChange();
@@ -135,16 +142,15 @@ private:
     void layerFlushTimerFired();
     void flushLayers();
     void commitSceneState(const RefPtr<Nicosia::Scene>&);
-    void didChangeViewport();
     void renderNextFrame(bool);
 
     // CoordinatedGraphicsLayerClient
     bool isFlushingLayerChanges() const override { return m_isFlushingLayerChanges; }
-    WebCore::FloatRect visibleContentsRect() const override { return m_visibleContentsRect; }
+    WebCore::FloatRect visibleContentsRect() const override;
     void detachLayer(WebCore::CoordinatedGraphicsLayer*) override;
     void attachLayer(WebCore::CoordinatedGraphicsLayer*) override;
 #if USE(CAIRO)
-    Nicosia::PaintingEngine& paintingEngine() override;
+    WebCore::Cairo::PaintingEngine& paintingEngine() override;
 #elif USE(SKIA)
     WebCore::BitmapTexturePool* skiaAcceleratedBitmapTexturePool() const override { return m_skiaAcceleratedBitmapTexturePool.get(); }
     WebCore::SkiaThreadedPaintingPool* skiaThreadedPaintingPool() const override { return m_skiaThreadedPaintingPool.get(); }
@@ -183,13 +189,9 @@ private:
     bool m_isWaitingForRenderer { false };
     bool m_scheduledWhileWaitingForRenderer { false };
     bool m_forceFrameSync { false };
-    float m_lastPageScaleFactor { 1 };
     WebCore::IntPoint m_lastScrollPosition;
-    bool m_scrolledSinceLastFrame { false };
     double m_lastAnimationServiceTime { 0 };
     RefPtr<ThreadedCompositor> m_compositor;
-    SimpleViewportController m_viewportController;
-    WebCore::FloatRect m_visibleContentsRect;
     struct {
         CompletionHandler<void()> callback;
         bool needsFreshFlush { false };
@@ -199,7 +201,7 @@ private:
     WebCore::PlatformDisplayID m_displayID;
 #endif
 #if USE(CAIRO)
-    std::unique_ptr<Nicosia::PaintingEngine> m_paintingEngine;
+    std::unique_ptr<WebCore::Cairo::PaintingEngine> m_paintingEngine;
 #elif USE(SKIA)
     std::unique_ptr<WebCore::BitmapTexturePool> m_skiaAcceleratedBitmapTexturePool;
     std::unique_ptr<WebCore::SkiaThreadedPaintingPool> m_skiaThreadedPaintingPool;

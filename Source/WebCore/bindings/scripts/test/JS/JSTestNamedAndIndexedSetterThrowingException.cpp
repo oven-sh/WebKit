@@ -48,7 +48,6 @@
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -109,9 +108,8 @@ template<> void JSTestNamedAndIndexedSetterThrowingExceptionDOMConstructor::init
 
 /* Hash table for prototype */
 
-static const HashTableValue JSTestNamedAndIndexedSetterThrowingExceptionPrototypeTableValues[] =
-{
-    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestNamedAndIndexedSetterThrowingExceptionConstructor, 0 } },
+static const std::array<HashTableValue, 1> JSTestNamedAndIndexedSetterThrowingExceptionPrototypeTableValues {
+    HashTableValue { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTestNamedAndIndexedSetterThrowingExceptionConstructor, 0 } },
 };
 
 const ClassInfo JSTestNamedAndIndexedSetterThrowingExceptionPrototype::s_info = { "TestNamedAndIndexedSetterThrowingException"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTestNamedAndIndexedSetterThrowingExceptionPrototype) };
@@ -429,6 +427,7 @@ void JSTestNamedAndIndexedSetterThrowingExceptionOwner::finalize(JSC::Handle<JSC
     uncacheWrapper(world, jsTestNamedAndIndexedSetterThrowingException->protectedWrapped().ptr(), jsTestNamedAndIndexedSetterThrowingException);
 }
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -453,6 +452,8 @@ template<typename T, typename = std::enable_if_t<std::is_same_v<T, TestNamedAndI
     }
 }
 #endif
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<TestNamedAndIndexedSetterThrowingException>&& impl)
 {
 #if ENABLE(BINDING_INTEGRITY)

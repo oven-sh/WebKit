@@ -136,7 +136,7 @@ Ref<Element> HTMLInputElement::cloneElementWithoutAttributesAndChildren(Document
 HTMLImageLoader& HTMLInputElement::ensureImageLoader()
 {
     if (!m_imageLoader)
-        m_imageLoader = makeUnique<HTMLImageLoader>(*this);
+        m_imageLoader = makeUniqueWithoutRefCountedCheck<HTMLImageLoader>(*this);
     return *m_imageLoader;
 }
 
@@ -508,11 +508,11 @@ void HTMLInputElement::setType(const AtomString& type)
 
 void HTMLInputElement::resignStrongPasswordAppearance()
 {
-    if (!hasAutoFillStrongPasswordButton())
+    if (!hasAutofillStrongPasswordButton())
         return;
-    setAutoFilled(false);
-    setAutoFilledAndViewable(false);
-    setShowAutoFillButton(AutoFillButtonType::None);
+    setAutofilled(false);
+    setAutofilledAndViewable(false);
+    setAutofillButtonType(AutoFillButtonType::None);
     if (auto* page = document().page())
         page->chrome().client().inputElementDidResignStrongPasswordAppearance(*this);
 }
@@ -1037,10 +1037,10 @@ void HTMLInputElement::reset()
     }
 
     setInteractedWithSinceLastFormSubmitEvent(false);
-    setAutoFilled(false);
-    setAutoFilledAndViewable(false);
-    setAutoFilledAndObscured(false);
-    setShowAutoFillButton(AutoFillButtonType::None);
+    setAutofilled(false);
+    setAutofilledAndViewable(false);
+    setAutofilledAndObscured(false);
+    setAutofillButtonType(AutoFillButtonType::None);
     setChecked(hasAttributeWithoutSynchronization(checkedAttr));
     m_dirtyCheckednessFlag = false;
 }
@@ -1199,7 +1199,7 @@ ExceptionOr<void> HTMLInputElement::setValue(const String& value, TextFieldEvent
         resignStrongPasswordAppearance();
 
         if (m_isAutoFilledAndObscured)
-            setAutoFilledAndObscured(false);
+            setAutofilledAndObscured(false);
     }
 
     return { };
@@ -1266,16 +1266,16 @@ void HTMLInputElement::setValueFromRenderer(const String& value)
     updateValidity();
 
     // We clear certain AutoFill flags here because this catches user edits.
-    setAutoFilled(false);
+    setAutofilled(false);
 
     if (!value.isEmpty())
         return;
 
     if (m_isAutoFilledAndViewable)
-        setAutoFilledAndViewable(false);
+        setAutofilledAndViewable(false);
 
     if (m_isAutoFilledAndObscured)
-        setAutoFilledAndObscured(false);
+        setAutofilledAndObscured(false);
 }
 
 void HTMLInputElement::willDispatchEvent(Event& event, InputElementClickState& state)
@@ -1530,7 +1530,7 @@ URL HTMLInputElement::src() const
     return document().completeURL(attributeWithoutSynchronization(srcAttr));
 }
 
-void HTMLInputElement::setAutoFilled(bool autoFilled)
+void HTMLInputElement::setAutofilled(bool autoFilled)
 {
     if (autoFilled == m_isAutoFilled)
         return;
@@ -1539,7 +1539,7 @@ void HTMLInputElement::setAutoFilled(bool autoFilled)
     m_isAutoFilled = autoFilled;
 }
 
-void HTMLInputElement::setAutoFilledAndViewable(bool autoFilledAndViewable)
+void HTMLInputElement::setAutofilledAndViewable(bool autoFilledAndViewable)
 {
     if (autoFilledAndViewable == m_isAutoFilledAndViewable)
         return;
@@ -1548,7 +1548,7 @@ void HTMLInputElement::setAutoFilledAndViewable(bool autoFilledAndViewable)
     m_isAutoFilledAndViewable = autoFilledAndViewable;
 }
 
-void HTMLInputElement::setAutoFilledAndObscured(bool autoFilledAndObscured)
+void HTMLInputElement::setAutofilledAndObscured(bool autoFilledAndObscured)
 {
     if (autoFilledAndObscured == m_isAutoFilledAndObscured)
         return;
@@ -1560,9 +1560,9 @@ void HTMLInputElement::setAutoFilledAndObscured(bool autoFilledAndObscured)
         cache->onTextSecurityChanged(*this);
 }
 
-void HTMLInputElement::setShowAutoFillButton(AutoFillButtonType autoFillButtonType)
+void HTMLInputElement::setAutofillButtonType(AutoFillButtonType autoFillButtonType)
 {
-    if (autoFillButtonType == this->autoFillButtonType())
+    if (autoFillButtonType == this->autofillButtonType())
         return;
 
     m_lastAutoFillButtonType = m_autoFillButtonType;
@@ -1573,6 +1573,34 @@ void HTMLInputElement::setShowAutoFillButton(AutoFillButtonType autoFillButtonTy
 
     if (CheckedPtr cache = document().existingAXObjectCache())
         cache->autofillTypeChanged(*this);
+}
+
+auto HTMLInputElement::autofillVisibility() const -> AutofillVisibility
+{
+    ASSERT(!autofilledAndObscured() || !autofilledAndViewable());
+    if (autofilledAndObscured())
+        return AutofillVisibility::Hidden;
+    if (autofilledAndViewable())
+        return AutofillVisibility::Visible;
+    return AutofillVisibility::Normal;
+}
+
+void HTMLInputElement::setAutofillVisibility(AutofillVisibility state)
+{
+    switch (state) {
+    case AutofillVisibility::Normal:
+        setAutofilledAndViewable(false);
+        setAutofilledAndObscured(false);
+        break;
+    case AutofillVisibility::Visible:
+        setAutofilledAndViewable(true);
+        setAutofilledAndObscured(false);
+        break;
+    case AutofillVisibility::Hidden:
+        setAutofilledAndViewable(false);
+        setAutofilledAndObscured(true);
+        break;
+    }
 }
 
 #if ENABLE(INPUT_TYPE_COLOR)
@@ -2335,7 +2363,7 @@ RenderStyle HTMLInputElement::createInnerTextStyle(const RenderStyle& style)
 
     textBlockStyle.setDisplay(DisplayType::Block);
 
-    if (hasAutoFillStrongPasswordButton() && isMutable()) {
+    if (hasAutofillStrongPasswordButton() && isMutable()) {
         textBlockStyle.setDisplay(DisplayType::InlineBlock);
         textBlockStyle.setLogicalMaxWidth(Length { 100, LengthType::Percent });
         textBlockStyle.setColor(Color::black.colorWithAlphaByte(153));
@@ -2350,7 +2378,7 @@ RenderStyle HTMLInputElement::createInnerTextStyle(const RenderStyle& style)
         // Do not allow line-height to be smaller than our default.
         if (textBlockStyle.metricsOfPrimaryFont().intLineSpacing() > style.computedLineHeight())
             return true;
-        return isText() && !style.logicalHeight().isAuto() && !hasAutoFillStrongPasswordButton();
+        return isText() && !style.logicalHeight().isAuto() && !hasAutofillStrongPasswordButton();
     };
     if (shouldUseInitialLineHeight())
         textBlockStyle.setLineHeight(RenderStyle::initialLineHeight());

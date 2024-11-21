@@ -189,7 +189,6 @@ media/track/track-webvtt-snap-to-lines-inline-style.html [ Pass Crash ]
 perf
 
 webkit.org/b/184608 [ Debug ] animations/added-while-suspended.html [ Skip ]
-webkit.org/b/184608 [ Debug ] transitions/created-while-suspended.html [ Skip ]
 
 # Safari doesn't allow to customize outermost scrollbars.
 webkit.org/b/43960 scrollbars/custom-scrollbar-with-incomplete-style.html
@@ -207,6 +206,10 @@ http/tests/images/webp-partial-load.html
 http/tests/images/webp-progressive-load.html
 fast/images/animated-webp-expected.html
 
+# This test is highly time dependent on when a MediaStream will start. Failure is expected some time, but should pass most of the time.
+http/wpt/mediarecorder/MediaRecorder-first-frame.html [ Pass Failure ]
+# MediaRecorder Opus in MP4 is supported on Sonoma and later
+[ Ventura ] http/wpt/mediarecorder/MediaRecorder-audio-bitrate-mp4-opus.html [ Failure ]
 
 # DRT does not support toggling caret browsing on / off
 editing/selection/caret-mode-paragraph-keys-navigation.html
@@ -494,8 +497,6 @@ webkit.org/b/131244 svg/as-image/svg-as-image-canvas.html [ Pass ImageOnlyFailur
 webkit.org/b/117427 compositing/reflections/load-video-in-reflection.html [ Pass ImageOnlyFailure ]
 
 webkit.org/b/122031 fast/animation/request-animation-frame-time-unit.html [ Pass Failure ]
-
-webkit.org/b/122038 animations/transform-non-accelerated.html [ Pass Failure ]
 
 inspector/debugger/didSampleProbe-multiple-probes.html
 inspector/debugger/nested-inspectors.html
@@ -799,6 +800,13 @@ imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-mode
 ## --- End W3C Imported WebVTT Tests ---
 # --- End WebVTT Tests
 
+# webkit.org/b/261038 localhost alias
+imported/w3c/web-platform-tests/scroll-to-text-fragment/iframe-scroll.sub.html [ Skip ]
+imported/w3c/web-platform-tests/scroll-to-text-fragment/iframes.sub.html [ Skip ]
+imported/w3c/web-platform-tests/scroll-to-text-fragment/scroll-to-text-fragment-security.sub.html [ Skip ]
+
+imported/w3c/web-platform-tests/scroll-to-text-fragment/sequential-focus.html [ Failure ]
+
 # FIXME: Needs bugzilla
 editing/mac/input/undo-grouping-on-text-insertion.html [ Skip ]
 
@@ -937,7 +945,6 @@ webkit.org/b/149930 fast/canvas/webgl/oes-texture-float-linear.html [ Pass Failu
 imported/blink/compositing/video/video-controls-layer-creation-squashing.html [ Pass ImageOnlyFailure ]
 
 webkit.org/b/150806 imported/w3c/web-platform-tests/xhr/send-timeout-events.htm [ Pass Failure ]
-webkit.org/b/150823 imported/w3c/web-platform-tests/xhr/getresponseheader-chunked-trailer.htm [ Pass Failure ]
 
 webkit.org/b/140217 http/tests/navigation/forward-and-cancel.html [ Pass Failure ]
 
@@ -1352,7 +1359,6 @@ imported/w3c/web-platform-tests/pointerevents/pointerevent_auxclick_is_a_pointer
 imported/w3c/web-platform-tests/pointerevents/pointerevent_auxclick_is_a_pointerevent.html?pen [ Skip ]
 imported/w3c/web-platform-tests/pointerevents/pointerevent_boundary_events_in_capturing.html [ Skip ]
 imported/w3c/web-platform-tests/pointerevents/pointerevent_boundary_events_in_capturing.html?touch [ Skip ]
-imported/w3c/web-platform-tests/pointerevents/pointerevent_capture_suppressing_mouse.html [ Skip ]
 imported/w3c/web-platform-tests/pointerevents/pointerevent_change-touch-action-onpointerdown_touch.html [ Skip ]
 imported/w3c/web-platform-tests/pointerevents/pointerevent_click_is_a_pointerevent.html?mouse [ Pass ]
 imported/w3c/web-platform-tests/pointerevents/pointerevent_click_is_a_pointerevent.html?pen [ Skip ]
@@ -1363,7 +1369,6 @@ imported/w3c/web-platform-tests/pointerevents/pointerevent_disabled_form_control
 imported/w3c/web-platform-tests/pointerevents/pointerevent_disabled_form_control.html?touch [ Skip ]
 imported/w3c/web-platform-tests/pointerevents/pointerevent_fractional_coordinates.html?touch [ Skip ]
 imported/w3c/web-platform-tests/pointerevents/pointerevent_iframe-touch-action-none_touch.html [ Skip ]
-imported/w3c/web-platform-tests/pointerevents/pointerevent_mouse_pointercapture_inactivate_pointer.html [ Skip ]
 imported/w3c/web-platform-tests/pointerevents/pointerevent_movementxy.html?touch [ Skip ]
 imported/w3c/web-platform-tests/pointerevents/pointerevent_pointerId_scope.html [ Skip ]
 imported/w3c/web-platform-tests/pointerevents/pointerevent_pointercancel_touch.html [ Skip ]
@@ -1741,8 +1746,6 @@ webkit.org/b/217641 [ Debug ] imported/w3c/web-platform-tests/xhr/event-timeout.
 
 webkit.org/b/217620 inspector/audit/basic-async.html [ Pass Timeout ]
 
-webkit.org/b/217669 http/wpt/service-workers/service-worker-spinning-message.https.html [ Pass Failure ]
-
 webkit.org/b/217994 imported/w3c/web-platform-tests/webaudio/the-audio-api/the-audioworklet-interface/audioworkletnode-output-channel-count.https.html [ Pass Failure ]
 
 webkit.org/b/219555 inspector/animation/effectChanged.html [ Pass Timeout ]
@@ -2050,12 +2053,11 @@ http/tests/media/fairplay/fps-mse-unmuxed-key-rotation.html [ Pass Failure ]
 imported/w3c/web-platform-tests/html/semantics/embedded-content/media-elements/autoplay-allowed-by-feature-policy-attribute-redirect-on-load.https.sub.html [ Pass Failure ]
 [ Ventura+ ] fast/text/synthetic-bold-transformed.html [ Pass ImageOnlyFailure ]
 [ x86_64 ] js/promises-tests/promises-tests-2-3-3.html [ Pass Timeout ]
+[ Ventura+ ] editing/execCommand/delete-non-editable-range-crash.html [ Pass Timeout ]
 
 webkit.org/b/254637 fast/text/web-font-load-invisible-during-loading.html [ Pass Failure ]
 
 webkit.org/b/242804 media/track/track-forced-subtitles-in-band.html [ Pass Failure ]
-
-webkit.org/b/257832 imported/w3c/web-platform-tests/html/rendering/the-details-element/summary-text-decoration.html [ ImageOnlyFailure ]
 
 webkit.org/b/251099 [ Ventura+ ] fast/images/avif-image-document.html [ Pass Crash ]
 
@@ -2404,9 +2406,6 @@ imported/w3c/web-platform-tests/html/semantics/embedded-content/the-img-element/
 # webkit.org/b/280193 [ Sequoia ] fast/inline/justify-emphasi s-inline-box.html is a constant failure. 
 [ Sequoia ] fast/inline/justify-emphasis-inline-box.html [ Failure ]
 
-# webkit.org/b/280304 [ Sequoia ] fast/ruby/ruby-expansion-cjk-4.html is a constant image only failure.
-[ Sequoia ] fast/ruby/ruby-expansion-cjk-4.html [ ImageOnlyFailure ]
-
 # webkit.org/b/280378 [ Sequoia arm64 ] 14x http/tests/media/fairplay/* are constant failures
 [ Sequoia arm64 ] http/tests/media/fairplay/fps-hls-key-rotation.html [ Failure ]
 [ Sequoia arm64 ] http/tests/media/fairplay/fps-hls-update-reject.html [ Failure ]
@@ -2414,6 +2413,7 @@ imported/w3c/web-platform-tests/html/semantics/embedded-content/the-img-element/
 [ Sequoia arm64 ] http/tests/media/fairplay/fps-init-data-cenc.html [ Failure ]
 [ Sequoia arm64 ] http/tests/media/fairplay/fps-init-data-sinf.html [ Failure ]
 [ Sequoia arm64 ] http/tests/media/fairplay/fps-init-data-skd.html [ Failure ]
+[ Sequoia arm64 ] http/tests/media/fairplay/legacy-fairplay-mse-muxed-nowait.html [ Failure ]
 [ Sequoia arm64 ] http/tests/media/fairplay/fps-mse-play-while-not-in-dom.html [ Failure ]
 [ Sequoia arm64 ] http/tests/media/fairplay/fps-mse-unmuxed-audio-only.html [ Failure ]
 [ Sequoia arm64 ] http/tests/media/fairplay/fps-mse-unmuxed-key-renewal.html [ Failure ]
@@ -2429,8 +2429,6 @@ webkit.org/b/257011 imported/w3c/web-platform-tests/css/css-text/hyphens/hyphena
 # webkit.org/b/280646 [macOS Debug EWS] media/video-webkit-playsinline.html is a flaky crash
 [ Debug ] media/video-webkit-playsinline.html [ Skip ]
 
-webkit.org/b/280792 inspector/worker/debugger-pause-subworker.html [ Skip ]
-
 # webkit.org/b/280985 [macOS Debug]: media/track/track-text-track-destructor-crash.html is a flaky crash (failure in EWS)
 [ Debug ] media/track/track-text-track-destructor-crash.html [ Pass Crash ]
 
@@ -2443,5 +2441,21 @@ webkit.org/b/280792 inspector/worker/debugger-pause-subworker.html [ Skip ]
 # Platform-specific test enabled on macOS and iOS separately.
 webanimations/scroll-timeline-clamped-current-time-while-rubber-banding-mac.html [ Pass ]
 
+# macOS-only test.
+media/webkit-media-controls-not-visible-after-exiting-fullscreen.html [ Pass ]
+
 # webkit.org/b/281765 PROGRESSION (285251@main): [ macOS iOS ] imported/w3c/web-platform-tests/navigation-api/navigate-event/cross-origin-traversal-redirect.html is a constant failure. 
 imported/w3c/web-platform-tests/navigation-api/navigate-event/cross-origin-traversal-redirect.html [ Skip ]
+
+# Modern AVContentKeySession is only available on Sonoma
+[ Ventura Sonoma ] http/tests/media/fairplay/legacy-fairplay-mse-muxed-nowait.html [ Skip ]
+
+# webkit.org/b/280304 [ Sequoia ] fast/ruby/ruby-expansion-cjk-4.html is a constant image only failure.
+[ Sequoia ] fast/ruby/ruby-expansion-cjk-4.html [ ImageOnlyFailure ]
+
+# webkit.org/b/280792 [macOS] ASSERTION FAILED: Unsafe to ref/deref from different threads (flaky in EWS)
+inspector/worker/debugger-pause-subworker.html [ Skip ]
+inspector/worker/console-basic-subworker.html [ Skip ]
+
+webkit.org/b/283203 [ Ventura+ ] fast/canvas/imageData-consistency.html [ Pass Timeout ]
+

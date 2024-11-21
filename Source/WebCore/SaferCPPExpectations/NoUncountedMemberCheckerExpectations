@@ -1,3 +1,4 @@
+ByteLengthQueuingStrategyBuiltins.h
 CommandLineAPIModuleSourceBuiltins.h
 Modules/WebGPU/GPUPresentationContextDescriptor.h
 Modules/encryptedmedia/MediaKeyStatusMap.h
@@ -44,7 +45,6 @@ css/StyleSheetList.h
 css/color/CSSUnresolvedStyleColorResolutionState.h
 css/parser/SizesCalcParser.h
 dom/CollectionIndexCache.h
-dom/ContainerNode.h
 dom/ElementAncestorIterator.h
 dom/Node.cpp
 dom/Node.h
@@ -62,7 +62,6 @@ inspector/DOMPatchSupport.cpp
 inspector/DOMPatchSupport.h
 inspector/InspectorFrontendHost.cpp
 inspector/InspectorFrontendHost.h
-inspector/InspectorOverlay.h
 inspector/InspectorShaderProgram.h
 inspector/InspectorStyleSheet.cpp
 inspector/InspectorStyleSheet.h
@@ -86,7 +85,6 @@ page/FrameSnapshotting.cpp
 page/NavigatorLoginStatus.h
 page/OpportunisticTaskScheduler.h
 page/PerformanceLogging.h
-page/PointerCaptureController.h
 page/PointerLockController.h
 page/RenderingUpdateScheduler.h
 page/ResourceUsageThread.h
@@ -95,7 +93,6 @@ page/WheelEventTestMonitor.h
 page/scrolling/ScrollLatchingController.h
 page/scrolling/ScrollingCoordinator.h
 page/scrolling/ScrollingTreeGestureState.h
-page/scrolling/ScrollingTreeNode.h
 page/scrolling/ScrollingTreeScrollingNodeDelegate.h
 page/scrolling/mac/ScrollerMac.h
 platform/DragImage.cpp
@@ -106,7 +103,6 @@ platform/graphics/ComplexTextController.h
 platform/graphics/DrawGlyphsRecorder.h
 platform/graphics/GraphicsLayer.h
 platform/graphics/ImageBuffer.h
-platform/graphics/ImageFrameAnimator.h
 platform/graphics/avfoundation/AudioSourceProviderAVFObjC.mm
 platform/graphics/avfoundation/MediaSelectionGroupAVFObjC.h
 platform/graphics/avfoundation/objc/MediaPlayerPrivateAVFoundationObjC.h
@@ -131,7 +127,6 @@ plugins/PluginData.h
 rendering/RenderQuote.cpp
 rendering/RenderVTTCue.h
 rendering/TextBoxPainter.h
-rendering/style/BasicShapesShape.cpp
 rendering/style/StyleGeneratedImage.cpp
 rendering/svg/SVGTextLayoutAttributesBuilder.h
 rendering/updating/RenderTreeUpdater.h

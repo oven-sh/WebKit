@@ -45,6 +45,7 @@
 #include "FrameLoaderStateMachine.h"
 #include "HTMLFormElement.h"
 #include "HTMLFrameOwnerElement.h"
+#include "HistoryController.h"
 #include "HistoryItem.h"
 #include "InspectorInstrumentation.h"
 #include "LocalDOMWindow.h"
@@ -292,24 +293,23 @@ public:
 
     void fire(Frame& frame) override
     {
-        // If the destination HistoryItem is no longer in the back/forward list, then we don't proceed.
-        RefPtr page { frame.page() };
+        RefPtr localFrame = dynamicDowncast<LocalFrame>(frame);
+        if (!localFrame)
+            return;
+
+        RefPtr page { localFrame->page() };
         if (!page || !page->checkedBackForward()->containsItem(m_historyItem))
             return;
 
         UserGestureIndicator gestureIndicator(userGestureToForward());
 
         if (page->checkedBackForward()->currentItem() && page->checkedBackForward()->currentItem()->identifier() == m_historyItem->identifier()) {
-            // Special case for go(0) from a frame -> reload only the frame
-            // To follow Firefox and IE's behavior, history reload can only navigate the self frame.
-            if (RefPtr localFrame = dynamicDowncast<LocalFrame>(frame))
-                localFrame->protectedLoader()->changeLocation(localFrame->document()->url(), selfTargetFrameName(), 0, ReferrerPolicy::EmptyString, shouldOpenExternalURLs(), std::nullopt, nullAtom(), std::nullopt, NavigationHistoryBehavior::Reload);
+            localFrame->protectedLoader()->changeLocation(localFrame->document()->url(), selfTargetFrameName(), 0, ReferrerPolicy::EmptyString, shouldOpenExternalURLs(), std::nullopt, nullAtom(), std::nullopt, NavigationHistoryBehavior::Reload);
             return;
         }
         
-        // go(i!=0) from a frame navigates into the history of the frame only,
-        // in both IE and NS (but not in Mozilla). We can't easily do that.
-        page->goToItem(page->mainFrame(), m_historyItem, FrameLoadType::IndexedBackForward, ShouldTreatAsContinuingLoad::No);
+        Ref rootFrame = localFrame->rootFrame();
+        page->goToItem(rootFrame, m_historyItem, FrameLoadType::IndexedBackForward, ShouldTreatAsContinuingLoad::No);
     }
 
 private:
@@ -334,6 +334,35 @@ public:
             m_completionHandler(ScheduleHistoryNavigationResult::Aborted);
     }
 
+    std::optional<Ref<HistoryItem>> findBackForwardItemByKey(const LocalFrame& localFrame)
+    {
+        auto entry = localFrame.window()->navigation().findEntryByKey(m_key);
+        if (!entry)
+            return std::nullopt;
+
+        Ref historyItem = entry.value()->associatedHistoryItem();
+
+        if (localFrame.isMainFrame())
+            return historyItem;
+
+        // FIXME: heuristic to fix disambigaute-* tests, we should find something more exact.
+        bool backwards = entry.value()->index() < localFrame.window()->navigation().currentEntry()->index();
+
+        RefPtr page { localFrame.page() };
+        auto items = page->checkedBackForward()->allItems();
+        for (size_t i = 0 ; i < items.size(); i++) {
+            Ref item = items[backwards ? items.size() - 1 - i: i];
+            auto index = item->children().findIf([&historyItem](const auto& child) {
+                return child->itemSequenceNumber() == historyItem->itemSequenceNumber();
+            });
+            if (index != notFound) {
+                historyItem = item;
+                break;
+            }
+        }
+        return historyItem;
+    }
+
     void fire(Frame& frame) override
     {
         RefPtr localFrame = dynamicDowncast<LocalFrame>(frame);
@@ -343,23 +372,23 @@ public:
             return;
         }
 
-        auto entry = localFrame->window()->navigation().findEntryByKey(m_key);
-        if (!entry) {
+        auto historyItem = findBackForwardItemByKey(*localFrame);
+        if (!historyItem) {
             m_completionHandler(ScheduleHistoryNavigationResult::Aborted);
             return;
         }
-        Ref historyItem = entry.value()->associatedHistoryItem();
 
         UserGestureIndicator gestureIndicator(userGestureToForward());
 
-        if (page->backForward().currentItem() && page->backForward().currentItem()->identifier() == historyItem->identifier()) {
+        if (page->backForward().currentItem() && page->backForward().currentItem()->identifier() == (*historyItem)->identifier()) {
             if (RefPtr localFrame = dynamicDowncast<LocalFrame>(frame))
                 localFrame->protectedLoader()->changeLocation(localFrame->document()->url(), selfTargetFrameName(), 0, ReferrerPolicy::EmptyString, shouldOpenExternalURLs(), std::nullopt, nullAtom(), std::nullopt, NavigationHistoryBehavior::Reload);
             return;
         }
 
         auto completionHandler = std::exchange(m_completionHandler, nullptr);
-        page->goToItem(page->mainFrame(), historyItem, FrameLoadType::IndexedBackForward, ShouldTreatAsContinuingLoad::No);
+        Ref rootFrame = localFrame->rootFrame();
+        page->goToItem(rootFrame, *historyItem, FrameLoadType::IndexedBackForward, ShouldTreatAsContinuingLoad::No);
         completionHandler(ScheduleHistoryNavigationResult::Completed);
     }
 
@@ -678,7 +707,13 @@ void NavigationScheduler::scheduleHistoryNavigation(int steps)
         return;
     }
 
-    RefPtr historyItem = backForward->itemAtIndex(steps);
+    RefPtr localFrame = dynamicDowncast<LocalFrame>(m_frame.get());
+    if (!localFrame) {
+        cancel();
+        return;
+    }
+
+    RefPtr historyItem = backForward->itemAtIndex(steps, localFrame->rootFrame().frameID());
     if (!historyItem) {
         cancel();
         return;
@@ -702,6 +737,17 @@ void NavigationScheduler::schedulePageBlock(Document& originDocument)
 {
     if (shouldScheduleNavigation())
         schedule(makeUnique<ScheduledPageBlock>(originDocument));
+}
+
+
+void NavigationScheduler::ref() const
+{
+    m_frame->ref();
+}
+
+void NavigationScheduler::deref() const
+{
+    m_frame->deref();
 }
 
 void NavigationScheduler::timerFired()

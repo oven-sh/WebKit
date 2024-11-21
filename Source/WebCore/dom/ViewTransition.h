@@ -67,9 +67,13 @@ public:
     LayoutPoint oldLayerToLayoutOffset;
     LayoutSize oldSize;
     RefPtr<MutableStyleProperties> oldProperties;
-    WeakStyleable newElement;
-    Vector<AtomString> classList;
+    bool initiallyIntersectsViewport { false };
 
+    WeakStyleable newElement;
+    LayoutRect newOverflowRect;
+    LayoutSize newSize;
+
+    Vector<AtomString> classList;
     RefPtr<MutableStyleProperties> groupStyleProperties;
 };
 
@@ -139,7 +143,7 @@ public:
 
 private:
     ListHashSet<AtomString> m_keys;
-    UncheckedKeyHashMap<AtomString, UniqueRef<CapturedElement>> m_map;
+    HashMap<AtomString, UniqueRef<CapturedElement>> m_map;
 };
 
 struct ViewTransitionParams {
@@ -195,7 +199,8 @@ private:
     ViewTransition(Document&, RefPtr<ViewTransitionUpdateCallback>&&, Vector<AtomString>&&);
     ViewTransition(Document&, Vector<AtomString>&&);
 
-    Ref<MutableStyleProperties> copyElementBaseProperties(RenderLayerModelObject&, LayoutSize&);
+    Ref<MutableStyleProperties> copyElementBaseProperties(RenderLayerModelObject&, LayoutSize&, LayoutRect& overflowRect, bool& intersectsViewport);
+    bool updatePropertiesForRenderer(CapturedElement&, RenderBoxModelObject*, const AtomString&);
 
     // Setup view transition sub-algorithms.
     ExceptionOr<void> captureOldState();
@@ -205,7 +210,8 @@ private:
 
     void callUpdateCallback();
 
-    ExceptionOr<void> updatePseudoElementStyles();
+    void updatePseudoElementStyles();
+    ExceptionOr<void> updatePseudoElementSizes();
     ExceptionOr<void> checkForViewportSizeChange();
 
     void clearViewTransition();
@@ -215,6 +221,7 @@ private:
 
     // ActiveDOMObject.
     void stop() final;
+    bool virtualHasPendingActivity() const final;
 
     bool isCrossDocument() { return m_isCrossDocument; }
 

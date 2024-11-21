@@ -381,28 +381,30 @@ CString String::ascii() const
     // preserved, characters outside of this range are converted to '?'.
 
     if (isEmpty()) {
-        char* characterBuffer;
+        std::span<char> characterBuffer;
         return CString::newUninitialized(0, characterBuffer);
     }
 
     if (this->is8Bit()) {
         auto characters = this->span8();
 
-        char* characterBuffer;
+        std::span<char> characterBuffer;
         CString result = CString::newUninitialized(characters.size(), characterBuffer);
 
+        size_t characterBufferIndex = 0;
         for (auto character : characters)
-            *characterBuffer++ = character && (character < 0x20 || character > 0x7f) ? '?' : character;
+            characterBuffer[characterBufferIndex++] = character && (character < 0x20 || character > 0x7f) ? '?' : character;
 
         return result;        
     }
 
     auto characters = span16();
-    char* characterBuffer;
+    std::span<char> characterBuffer;
     CString result = CString::newUninitialized(characters.size(), characterBuffer);
 
+    size_t characterBufferIndex = 0;
     for (auto character : characters)
-        *characterBuffer++ = character && (character < 0x20 || character > 0x7f) ? '?' : character;
+        characterBuffer[characterBufferIndex++] = character && (character < 0x20 || character > 0x7f) ? '?' : character;
 
     return result;
 }
@@ -419,11 +421,12 @@ CString String::latin1() const
         return CString(this->span8());
 
     auto characters = this->span16();
-    char* characterBuffer;
+    std::span<char> characterBuffer;
     CString result = CString::newUninitialized(characters.size(), characterBuffer);
 
+    size_t characterBufferIndex = 0;
     for (auto character : characters)
-        *characterBuffer++ = !isLatin1(character) ? '?' : character;
+        characterBuffer[characterBufferIndex++] = !isLatin1(character) ? '?' : character;
 
     return result;
 }
@@ -447,9 +450,9 @@ CString String::utf8(ConversionMode mode) const
 
 String String::make8Bit(std::span<const UChar> source)
 {
-    LChar* destination;
+    std::span<LChar> destination;
     String result = String::createUninitialized(source.size(), destination);
-    StringImpl::copyCharacters(destination, source);
+    StringImpl::copyCharacters(destination.data(), source);
     return result;
 }
 
@@ -457,9 +460,9 @@ void String::convertTo16Bit()
 {
     if (isNull() || !is8Bit())
         return;
-    UChar* destination;
+    std::span<UChar> destination;
     auto convertedString = String::createUninitialized(length(), destination);
-    StringImpl::copyCharacters(destination, span8());
+    StringImpl::copyCharacters(destination.data(), span8());
     *this = WTFMove(convertedString);
 }
 
@@ -513,11 +516,11 @@ String String::fromUTF8WithLatin1Fallback(std::span<const char8_t> string)
 
 String String::fromCodePoint(char32_t codePoint)
 {
-    UChar buffer[2];
+    std::array<UChar, 2> buffer;
     uint8_t length = 0;
     UBool error = false;
     U16_APPEND(buffer, length, 2, codePoint, error);
-    return error ? String() : String({ buffer, length });
+    return error ? String() : String(std::span { buffer }.first(length));
 }
 
 // String Operations

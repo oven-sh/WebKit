@@ -47,7 +47,7 @@
         },
         "-internal-html-document": {},
         "-internal-in-window-fullscreen": {
-            "conditional": "ENABLE(FULLSCREEN_API) && ENABLE(VIDEO)"
+            "conditional": "ENABLE(FULLSCREEN_API)"
         },
         "-internal-media-document": {},
         "-webkit-any": {
@@ -341,10 +341,6 @@
             "status": "non-standard",
             "user-agent-part": true
         },
-        "-webkit-details-marker": {
-            "status": "non-standard",
-            "user-agent-part": true
-        },
         "-webkit-generic-cue-root": {
             "status": "non-standard",
             "user-agent-part": true
@@ -354,6 +350,11 @@
             "user-agent-part": true
         },
         "-webkit-list-button": {
+            "status": "non-standard",
+            "user-agent-part": true
+        },
+        "-webkit-media-controls": {
+            "comment": "For needsChromeMediaControlsPseudoElement quirk",
             "status": "non-standard",
             "user-agent-part": true
         },

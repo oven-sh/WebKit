@@ -34,6 +34,8 @@
 #include <limits>
 #include <pal/spi/cg/CoreGraphicsSPI.h>
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
 namespace WebCore {
 
 IntSize PlatformImageNativeImageBackend::size() const
@@ -109,20 +111,6 @@ std::optional<Color> NativeImage::singlePixelSolidColor() const
 void NativeImage::draw(GraphicsContext& context, const FloatRect& destinationRect, const FloatRect& sourceRect, ImagePaintingOptions options)
 {
 #if !HAVE(CORE_ANIMATION_FIX_FOR_RADAR_93560567)
-    auto isHDRColorSpace = [](CGColorSpaceRef colorSpace) -> bool {
-ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-        return CGColorSpaceIsHDR(colorSpace);
-ALLOW_DEPRECATED_DECLARATIONS_END
-    };
-
-    auto isHDRNativeImage = [&](const NativeImage& image) -> bool {
-        return isHDRColorSpace(CGImageGetColorSpace(image.platformImage().get()));
-    };
-
-    auto isHDRContext = [&](GraphicsContext& context) -> bool {
-        return isHDRColorSpace(context.colorSpace().platformColorSpace());
-    };
-
     auto colorSpaceForHDRImageBuffer = [](GraphicsContext& context) -> const DestinationColorSpace& {
 #if PLATFORM(IOS_FAMILY)
         // iOS typically renders into extended range sRGB to preserve wide gamut colors, but we want
@@ -136,12 +124,12 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     };
 
     auto drawHDRNativeImage = [&](GraphicsContext& context, const FloatRect& destinationRect, const FloatRect& sourceRect, ImagePaintingOptions options) -> bool {
-        if (sourceRect.isEmpty() || !isHDRNativeImage(*this))
+        if (sourceRect.isEmpty() || colorSpace().usesStandardRange())
             return false;
 
         // If context and the image have HDR colorSpaces, draw the image directly without
         // going through the workaround.
-        if (isHDRContext(context))
+        if (!context.colorSpace().usesStandardRange())
             return false;
 
         // Create a temporary ImageBuffer for destinationRect with the current scaleFator.
@@ -176,5 +164,7 @@ void NativeImage::clearSubimages()
 }
 
 } // namespace WebCore
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // USE(CG)

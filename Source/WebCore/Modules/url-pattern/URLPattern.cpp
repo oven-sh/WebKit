@@ -31,7 +31,11 @@
 #include "URLPatternOptions.h"
 #include "URLPatternResult.h"
 #include <wtf/RefCounted.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/URL.h>
+#include <wtf/URLParser.h>
+#include <wtf/text/MakeString.h>
+#include <wtf/text/StringToIntegerConversion.h>
 
 namespace WebCore {
 
@@ -161,7 +165,7 @@ static ExceptionOr<URLPatternInit> processInit(URLPatternInit&& init, BaseURLStr
         result.password = canonicalizePassword(init.password, type);
 
     if (!init.hostname.isNull()) {
-        auto hostResult = canonicalizeHost(init.hostname, type);
+        auto hostResult = canonicalizeHostname(init.hostname, type);
 
         if (hostResult.hasException())
             return hostResult.releaseException();
@@ -188,7 +192,7 @@ static ExceptionOr<URLPatternInit> processInit(URLPatternInit&& init, BaseURLStr
             if (slashIndex != notFound)
                 result.pathname = makeString(StringView { baseURLPath }.left(slashIndex + 1), result.pathname);
 
-            auto pathResult = canonicalizePath(result.pathname, baseURL.protocol(), type);
+            auto pathResult = processPathname(result.pathname, baseURL.protocol(), type);
 
             if (pathResult.hasException())
                 return pathResult.releaseException();
@@ -241,6 +245,28 @@ ExceptionOr<Ref<URLPattern>> URLPattern::create(std::optional<URLPatternInput>&&
         return maybeProcessedInit.releaseException();
 
     auto processedInit = maybeProcessedInit.releaseReturnValue();
+
+    if (!processedInit.protocol)
+        processedInit.protocol = "*"_s;
+    if (!processedInit.username)
+        processedInit.username = "*"_s;
+    if (!processedInit.password)
+        processedInit.password = "*"_s;
+    if (!processedInit.hostname)
+        processedInit.hostname= "*"_s;
+    if (!processedInit.pathname)
+        processedInit.pathname = "*"_s;
+    if (!processedInit.search)
+        processedInit.search = "*"_s;
+    if (!processedInit.hash)
+        processedInit.hash = "*"_s;
+    if (!processedInit.port)
+        processedInit.port = "*"_s;
+
+    if (auto parsedPort = parseInteger<uint16_t>(processedInit.port)) {
+        if (WTF::URLParser::isSpecialScheme(processedInit.protocol) && isDefaultPortForProtocol(*parsedPort, processedInit.protocol))
+            processedInit.port = emptyString();
+    }
 
     // FIXME: Implement compiling the component for each URLPattern member field to replace this current placeholder code which reroutes processed URLPatternInit object to URLPattern result.
     return adoptRef(*new URLPattern(WTFMove(processedInit)));

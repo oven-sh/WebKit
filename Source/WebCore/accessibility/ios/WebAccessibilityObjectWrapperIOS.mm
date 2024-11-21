@@ -315,7 +315,6 @@ static AccessibilityObjectWrapper* AccessibilityUnignoredAncestor(AccessibilityO
     case AccessibilityRole::Link:
     case AccessibilityRole::ListBox:
     case AccessibilityRole::ListBoxOption:
-    case AccessibilityRole::MenuButton:
     case AccessibilityRole::MenuItem:
     case AccessibilityRole::MenuItemCheckbox:
     case AccessibilityRole::MenuItemRadio:
@@ -843,7 +842,6 @@ static AccessibilityObjectWrapper *ancestorWithRole(const AXCoreObject& descenda
     case AccessibilityRole::SpinButton:
         traits |= [self _axAdjustableTrait];
         break;
-    case AccessibilityRole::MenuButton:
     case AccessibilityRole::MenuItem:
         traits |= [self _axMenuItemTrait];
         break;
@@ -908,7 +906,6 @@ static AccessibilityObjectWrapper *ancestorWithRole(const AXCoreObject& descenda
     case AccessibilityRole::ColorWell:
     case AccessibilityRole::RadioButton:
     case AccessibilityRole::Slider:
-    case AccessibilityRole::MenuButton:
     case AccessibilityRole::Image:
     case AccessibilityRole::ImageMapLink:
     case AccessibilityRole::ProgressIndicator:
@@ -916,7 +913,6 @@ static AccessibilityObjectWrapper *ancestorWithRole(const AXCoreObject& descenda
     case AccessibilityRole::MenuItem:
     case AccessibilityRole::MenuItemCheckbox:
     case AccessibilityRole::MenuItemRadio:
-    case AccessibilityRole::Incrementor:
     case AccessibilityRole::ComboBox:
     case AccessibilityRole::DateTime:
     case AccessibilityRole::ImageMap:
@@ -2062,15 +2058,18 @@ static RenderObject* rendererForView(WAKView* view)
     return self.axBackingObject->scrollVisibleContentRect();
 }
 
-- (AXCoreObject*)detailParentForSummaryObject:(AccessibilityObject*)object
+- (AXCoreObject*)detailParentForSummaryObject:(AccessibilityObject&)object
 {
+    bool foundSummary = false;
     // Use this to check if an object is the child of a summary object.
     // And return the summary's parent, which is the expandable details object.
-    if (const AccessibilityObject* summary = Accessibility::findAncestor<AccessibilityObject>(*object, true, [] (const AccessibilityObject& object) {
-        return object.hasTagName(summaryTag);
-    }))
-        return summary->parentObject();
-    return nil;
+    return Accessibility::findAncestor<AccessibilityObject>(object, true, [&] (const AccessibilityObject& object) {
+        auto tag = object.tagName();
+        if (tag == summaryTag)
+            foundSummary = true;
+
+        return tag == detailsTag && foundSummary;
+    });
 }
 
 - (AXCoreObject*)detailParentForObject:(AccessibilityObject*)object
@@ -2914,7 +2913,7 @@ static RenderObject* rendererForView(WAKView* view)
     
     // Since details element is ignored on iOS, we should expose the expanded status on its
     // summary's accessible children.
-    if (auto* detailParent = [self detailParentForSummaryObject:self.axBackingObject])
+    if (auto* detailParent = [self detailParentForSummaryObject:*self.axBackingObject])
         return detailParent->supportsExpanded();
     
     if (AXCoreObject* treeItemParent = [self treeItemParentForObject:self.axBackingObject])
@@ -2930,7 +2929,7 @@ static RenderObject* rendererForView(WAKView* view)
 
     // Since details element is ignored on iOS, we should expose the expanded status on its
     // summary's accessible children.
-    if (auto* detailParent = [self detailParentForSummaryObject:self.axBackingObject])
+    if (auto* detailParent = [self detailParentForSummaryObject:*self.axBackingObject])
         return detailParent->isExpanded();
     
     if (AXCoreObject* treeItemParent = [self treeItemParentForObject:self.axBackingObject])
