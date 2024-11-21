@@ -26,6 +26,7 @@
 #pragma once
 
 #include "Algorithm.h"
+#include "BunExtras.h"
 #include <array>
 #include <bit>
 
