@@ -1,3 +1,5 @@
+#pragma once
+
 #include <bit>
 
 #if defined(__cpp_lib_bit_cast) && __cpp_lib_bit_cast >= 201806L
