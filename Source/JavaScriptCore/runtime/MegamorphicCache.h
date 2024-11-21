@@ -169,37 +169,37 @@ public:
 
     ALWAYS_INLINE static uint32_t primaryHash(StructureID structureID, UniquedStringImpl* uid)
     {
-        uint32_t sid = std::bit_cast<uint32_t>(structureID);
+        uint32_t sid = __bit_cast<uint32_t>(structureID);
         return ((sid >> structureIDHashShift1) ^ (sid >> structureIDHashShift2)) + uid->hash();
     }
 
     ALWAYS_INLINE static uint32_t secondaryHash(StructureID structureID, UniquedStringImpl* uid)
     {
-        uint32_t key = std::bit_cast<uint32_t>(structureID) + static_cast<uint32_t>(std::bit_cast<uintptr_t>(uid));
+        uint32_t key = __bit_cast<uint32_t>(structureID) + static_cast<uint32_t>(__bit_cast<uintptr_t>(uid));
         return key + (key >> structureIDHashShift3);
     }
 
     ALWAYS_INLINE static uint32_t storeCachePrimaryHash(StructureID structureID, UniquedStringImpl* uid)
     {
-        uint32_t sid = std::bit_cast<uint32_t>(structureID);
+        uint32_t sid = __bit_cast<uint32_t>(structureID);
         return ((sid >> structureIDHashShift1) ^ (sid >> structureIDHashShift4)) + uid->hash();
     }
 
     ALWAYS_INLINE static uint32_t storeCacheSecondaryHash(StructureID structureID, UniquedStringImpl* uid)
     {
-        uint32_t key = std::bit_cast<uint32_t>(structureID) + static_cast<uint32_t>(std::bit_cast<uintptr_t>(uid));
+        uint32_t key = __bit_cast<uint32_t>(structureID) + static_cast<uint32_t>(__bit_cast<uintptr_t>(uid));
         return key + (key >> structureIDHashShift5);
     }
 
     ALWAYS_INLINE static uint32_t hasCachePrimaryHash(StructureID structureID, UniquedStringImpl* uid)
     {
-        uint32_t sid = std::bit_cast<uint32_t>(structureID);
+        uint32_t sid = __bit_cast<uint32_t>(structureID);
         return ((sid >> structureIDHashShift1) ^ (sid >> structureIDHashShift6)) + uid->hash();
     }
 
     ALWAYS_INLINE static uint32_t hasCacheSecondaryHash(StructureID structureID, UniquedStringImpl* uid)
     {
-        uint32_t key = std::bit_cast<uint32_t>(structureID) + static_cast<uint32_t>(std::bit_cast<uintptr_t>(uid));
+        uint32_t key = __bit_cast<uint32_t>(structureID) + static_cast<uint32_t>(__bit_cast<uintptr_t>(uid));
         return key + (key >> structureIDHashShift7);
     }
 

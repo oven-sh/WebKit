@@ -194,7 +194,7 @@ public:
         if (didRefStrongOnly)
             return;
 
-        std::bit_cast<ThreadSafeWeakPtrControlBlock*>(m_bits.loadRelaxed())->strongRef();
+        __bit_cast<ThreadSafeWeakPtrControlBlock*>(m_bits.loadRelaxed())->strongRef();
     }
 
     void deref() const
@@ -230,7 +230,7 @@ public:
             return;
         }
 
-        std::bit_cast<ThreadSafeWeakPtrControlBlock*>(m_bits.loadRelaxed())->template strongDeref<T, destructionThread>();
+        __bit_cast<ThreadSafeWeakPtrControlBlock*>(m_bits.loadRelaxed())->template strongDeref<T, destructionThread>();
     }
 
     size_t refCount() const
@@ -243,7 +243,7 @@ public:
             return (bits & ~strongOnlyFlag) / refIncrement;
         }
 
-        return std::bit_cast<ThreadSafeWeakPtrControlBlock*>(bits)->refCount();
+        return __bit_cast<ThreadSafeWeakPtrControlBlock*>(bits)->refCount();
     }
 
     bool hasOneRef() const { return refCount() == 1; }
@@ -256,7 +256,7 @@ protected:
         // to strong only.
         uintptr_t bits = m_bits.loadRelaxed();
         if (LIKELY(!isStrongOnly(bits)))
-            return *std::bit_cast<ThreadSafeWeakPtrControlBlock*>(bits);
+            return *__bit_cast<ThreadSafeWeakPtrControlBlock*>(bits);
 
         auto* controlBlock = new ThreadSafeWeakPtrControlBlock(const_cast<T*>(static_cast<const T*>(this)));
 
@@ -270,7 +270,7 @@ protected:
             ASSERT(!(bits & destructionStartedFlag));
             // Technically, this bit-and isn't needed but it's included for clarity since the compiler will elide it anyway.
             controlBlock->setStrongReferenceCountDuringInitialization((bits & ~strongOnlyFlag) / refIncrement);
-            bits = std::bit_cast<uintptr_t>(controlBlock);
+            bits = __bit_cast<uintptr_t>(controlBlock);
             ASSERT(!isStrongOnly(bits));
             return true;
         }, std::memory_order_release); // We want memory_order_release here to make sure other threads see the right ref count / object.
@@ -278,7 +278,7 @@ protected:
             return *controlBlock;
 
         delete controlBlock;
-        return *std::bit_cast<ThreadSafeWeakPtrControlBlock*>(m_bits.loadRelaxed());
+        return *__bit_cast<ThreadSafeWeakPtrControlBlock*>(m_bits.loadRelaxed());
     }
 
 private:

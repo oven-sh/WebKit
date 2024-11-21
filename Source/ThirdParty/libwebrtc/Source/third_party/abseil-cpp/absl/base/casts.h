@@ -30,7 +30,7 @@
 #include <utility>
 
 #if defined(__cpp_lib_bit_cast) && __cpp_lib_bit_cast >= 201806L
-#include <bit>  // For std::bit_cast.
+#include <bit>  // For __bit_cast.
 #endif  // defined(__cpp_lib_bit_cast) && __cpp_lib_bit_cast >= 201806L
 
 #include "absl/base/internal/identity.h"
@@ -139,13 +139,13 @@ constexpr To implicit_cast(typename absl::internal::type_identity_t<To> to) {
 // accessed in the wrong way).
 //
 // The requirements of `absl::bit_cast` are more strict than that of
-// `std::bit_cast` unless compiler support is available. Specifically, without
+// `__bit_cast` unless compiler support is available. Specifically, without
 // compiler support, this implementation also requires `Dest` to be
 // default-constructible. In C++20, `absl::bit_cast` is replaced by
-// `std::bit_cast`.
+// `__bit_cast`.
 #if defined(__cpp_lib_bit_cast) && __cpp_lib_bit_cast >= 201806L
 
-using std::bit_cast;
+using __bit_cast;
 
 #else  // defined(__cpp_lib_bit_cast) && __cpp_lib_bit_cast >= 201806L
 

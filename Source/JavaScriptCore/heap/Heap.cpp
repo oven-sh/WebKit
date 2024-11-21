@@ -2553,7 +2553,7 @@ void Heap::didAllocate(size_t bytes)
 
 void Heap::addFinalizer(JSCell* cell, CFinalizer finalizer)
 {
-    WeakSet::allocate(cell, &m_cFinalizerOwner, std::bit_cast<void*>(finalizer)); // Balanced by CFinalizerOwner::finalize().
+    WeakSet::allocate(cell, &m_cFinalizerOwner, __bit_cast<void*>(finalizer)); // Balanced by CFinalizerOwner::finalize().
 }
 
 void Heap::addFinalizer(JSCell* cell, LambdaFinalizer function)
@@ -2564,7 +2564,7 @@ void Heap::addFinalizer(JSCell* cell, LambdaFinalizer function)
 void Heap::CFinalizerOwner::finalize(Handle<Unknown> handle, void* context)
 {
     HandleSlot slot = handle.slot();
-    CFinalizer finalizer = std::bit_cast<CFinalizer>(context);
+    CFinalizer finalizer = __bit_cast<CFinalizer>(context);
     finalizer(slot->asCell());
     WeakSet::deallocate(WeakImpl::asWeakImpl(slot));
 }

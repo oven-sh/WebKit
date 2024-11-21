@@ -127,7 +127,7 @@ public:
 
     static JSCell* deletedKey()
     {
-        return std::bit_cast<JSCell*>(static_cast<uintptr_t>(-3));
+        return __bit_cast<JSCell*>(static_cast<uintptr_t>(-3));
     }
 
     bool isDeleted()
@@ -171,7 +171,7 @@ public:
 
     ALWAYS_INLINE BucketType* buffer() const
     {
-        return std::bit_cast<BucketType*>(this);
+        return __bit_cast<BucketType*>(this);
     }
 
     static MallocPtr<WeakMapBuffer> create(uint32_t capacity)

@@ -82,7 +82,7 @@ public:
 
     FunctionCodeBlock* codeBlockForCall() const
     {
-        return std::bit_cast<FunctionCodeBlock*>(m_codeBlockForCall.get());
+        return __bit_cast<FunctionCodeBlock*>(m_codeBlockForCall.get());
     }
 
     bool isGeneratedForConstruct() const
@@ -92,7 +92,7 @@ public:
 
     FunctionCodeBlock* codeBlockForConstruct() const
     {
-        return std::bit_cast<FunctionCodeBlock*>(m_codeBlockForConstruct.get());
+        return __bit_cast<FunctionCodeBlock*>(m_codeBlockForConstruct.get());
     }
         
     bool isGeneratedFor(CodeSpecializationKind kind)

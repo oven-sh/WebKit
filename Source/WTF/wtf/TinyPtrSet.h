@@ -451,7 +451,7 @@ private:
             fastFree(list);
         }
         
-        T* list() { return std::bit_cast<T*>(this + 1); }
+        T* list() { return __bit_cast<T*>(this + 1); }
         
         OutOfLineList(unsigned length, unsigned capacity)
             : m_length(length)
@@ -475,13 +475,13 @@ private:
     
     void* pointer() const
     {
-        return std::bit_cast<void*>(m_pointer & ~flags);
+        return __bit_cast<void*>(m_pointer & ~flags);
     }
     
     T singleEntry() const
     {
         ASSERT(isThin());
-        return std::bit_cast<T>(pointer());
+        return __bit_cast<T>(pointer());
     }
     
     OutOfLineList* list() const
@@ -492,11 +492,11 @@ private:
     
     void set(T value)
     {
-        set(std::bit_cast<uintptr_t>(value), true);
+        set(__bit_cast<uintptr_t>(value), true);
     }
     void set(OutOfLineList* list)
     {
-        set(std::bit_cast<uintptr_t>(list), false);
+        set(__bit_cast<uintptr_t>(list), false);
     }
     void setEmpty()
     {

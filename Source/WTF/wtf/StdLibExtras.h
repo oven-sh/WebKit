@@ -47,20 +47,6 @@
 #include <wtf/TypeTraits.h>
 #include <bit>
 
-#if defined(__cpp_lib_bit_cast) && __cpp_lib_bit_cast >= 201806L
-#define __bit_cast std::bit_cast
-#else
-template <
-    typename Dest, typename Source,
-    typename std::enable_if<sizeof(Dest) == sizeof(Source) &&
-                                std::is_trivially_copyable<Source>::value &&
-                                std::is_trivially_copyable<Dest>::value,
-                            int>::type = 0>
-inline constexpr Dest __bit_cast(const Source &source) {
-  return __builtin_bit_cast(Dest, source);
-}
-#endif
-
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #define SINGLE_ARG(...) __VA_ARGS__ // useful when a macro argument includes a comma
@@ -153,6 +139,20 @@ inline bool isPointerTypeAlignmentOkay(Type*)
 #endif
 
 namespace WTF {
+
+#if defined(__cpp_lib_bit_cast) && __cpp_lib_bit_cast >= 201806L
+#define __bit_cast std::bit_cast
+#else
+template <
+    typename Dest, typename Source,
+    typename std::enable_if<sizeof(Dest) == sizeof(Source) &&
+                                std::is_trivially_copyable<Source>::value &&
+                                std::is_trivially_copyable<Dest>::value,
+                            int>::type = 0>
+inline constexpr Dest __bit_cast(const Source &source) {
+  return __builtin_bit_cast(Dest, source);
+}
+#endif
 
 enum CheckMoveParameterTag { CheckMoveParameter };
 
@@ -904,11 +904,11 @@ template<ByteType T> struct ByteCastTraits<T> {
 };
 
 template<ByteType T> struct ByteCastTraits<T*> {
-    template<ByteType U> static constexpr auto cast(T* pointer) { return std::bit_cast<U*>(pointer); }
+    template<ByteType U> static constexpr auto cast(T* pointer) { return __bit_cast<U*>(pointer); }
 };
 
 template<ByteType T> struct ByteCastTraits<const T*> {
-    template<ByteType U> static constexpr auto cast(const T* pointer) { return std::bit_cast<const U*>(pointer); }
+    template<ByteType U> static constexpr auto cast(const T* pointer) { return __bit_cast<const U*>(pointer); }
 };
 
 template<ByteType T, size_t Extent> struct ByteCastTraits<std::span<T, Extent>> {

@@ -182,7 +182,7 @@ public:
     T* cast()
     {
         ASSERT((is<T>()));
-        return std::bit_cast<T*>(this);
+        return __bit_cast<T*>(this);
     }
 
     template<class T>

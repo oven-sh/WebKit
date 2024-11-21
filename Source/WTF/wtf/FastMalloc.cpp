@@ -367,7 +367,7 @@ public:
 
     static uintptr_t avoidRecordingCount()
     {
-        return std::bit_cast<uintptr_t>(threadSpecificGet(avoidRecordingCountKey));
+        return __bit_cast<uintptr_t>(threadSpecificGet(avoidRecordingCountKey));
     }
 };
 
@@ -378,12 +378,12 @@ AvoidRecordingScope::AvoidRecordingScope()
         // The value stored in TLS is initially 0.
         threadSpecificKeyCreate(&avoidRecordingCountKey, [](void*) { });
     });
-    threadSpecificSet(avoidRecordingCountKey, std::bit_cast<void*>(avoidRecordingCount() + 1));
+    threadSpecificSet(avoidRecordingCountKey, __bit_cast<void*>(avoidRecordingCount() + 1));
 }
 
 AvoidRecordingScope::~AvoidRecordingScope()
 {
-    threadSpecificSet(avoidRecordingCountKey, std::bit_cast<void*>(avoidRecordingCount() - 1));
+    threadSpecificSet(avoidRecordingCountKey, __bit_cast<void*>(avoidRecordingCount() - 1));
 }
 
 class MallocCallTracker {

@@ -135,18 +135,18 @@ LLINT_DECLARE_ROUTINE_VALIDATE(ipint_entry);
 #endif
 
 #define LLINT_ROUTINE(functionName) { \
-        std::bit_cast<void*>(LLInt::getCodeFunctionPtr<CFunctionPtrTag>(functionName)), \
+        __bit_cast<void*>(LLInt::getCodeFunctionPtr<CFunctionPtrTag>(functionName)), \
         LLINT_OP_EXTRAS(LLINT_ROUTINE_VALIDATE(functionName)) \
     },
 
 #define LLINT_OP(name) { \
-        std::bit_cast<void*>(LLInt::getCodeFunctionPtr<CFunctionPtrTag>(name)), \
+        __bit_cast<void*>(LLInt::getCodeFunctionPtr<CFunctionPtrTag>(name)), \
         LLINT_OP_EXTRAS(LLINT_RETURN_VALIDATE(name)) \
     }, { \
-        std::bit_cast<void*>(LLInt::getWide16CodeFunctionPtr<CFunctionPtrTag>(name)), \
+        __bit_cast<void*>(LLInt::getWide16CodeFunctionPtr<CFunctionPtrTag>(name)), \
         LLINT_OP_EXTRAS(LLINT_RETURN_WIDE16_VALIDATE(name)) \
     }, { \
-        std::bit_cast<void*>(LLInt::getWide32CodeFunctionPtr<CFunctionPtrTag>(name)), \
+        __bit_cast<void*>(LLInt::getWide32CodeFunctionPtr<CFunctionPtrTag>(name)), \
         LLINT_OP_EXTRAS(LLINT_RETURN_WIDE32_VALIDATE(name)) \
     },
 

@@ -146,7 +146,7 @@ public:
 #if CPU(LITTLE_ENDIAN)
         memcpy(&value, m_storage.data(), storageSize);
 #else
-        memcpy(std::bit_cast<uint8_t*>(&value) + (sizeof(void*) - storageSize), m_storage.data(), storageSize);
+        memcpy(__bit_cast<uint8_t*>(&value) + (sizeof(void*) - storageSize), m_storage.data(), storageSize);
 #endif
 
         if (isAlignmentShiftProfitable)
@@ -162,23 +162,23 @@ public:
         //
         // Reference: https://en.wikipedia.org/wiki/X86-64#Virtual_address_space_details
         constexpr unsigned shiftBits = countOfBits<uintptr_t> - OS_CONSTANT(EFFECTIVE_ADDRESS_WIDTH);
-        value = (std::bit_cast<intptr_t>(value) << shiftBits) >> shiftBits;
+        value = (__bit_cast<intptr_t>(value) << shiftBits) >> shiftBits;
 #endif
 
-        return std::bit_cast<T*>(value);
+        return __bit_cast<T*>(value);
     }
 
     void set(T* passedValue)
     {
-        uintptr_t value = std::bit_cast<uintptr_t>(passedValue);
+        uintptr_t value = __bit_cast<uintptr_t>(passedValue);
         if (isAlignmentShiftProfitable)
             value >>= alignmentShiftSize;
 #if CPU(LITTLE_ENDIAN)
         memcpy(m_storage.data(), &value, storageSize);
 #else
-        memcpy(m_storage.data(), std::bit_cast<uint8_t*>(&value) + (sizeof(void*) - storageSize), storageSize);
+        memcpy(m_storage.data(), __bit_cast<uint8_t*>(&value) + (sizeof(void*) - storageSize), storageSize);
 #endif
-        ASSERT(std::bit_cast<uintptr_t>(get()) == value);
+        ASSERT(__bit_cast<uintptr_t>(get()) == value);
     }
 
     void clear()
@@ -247,8 +247,8 @@ public:
     using Base::Base;
 
     // Hash table deleted values, which are only constructed and never copied or destroyed.
-    Packed(HashTableDeletedValueType) : Base(std::bit_cast<T*>(static_cast<uintptr_t>(Base::alignment))) { }
-    bool isHashTableDeletedValue() const { return Base::get() == std::bit_cast<T*>(static_cast<uintptr_t>(Base::alignment)); }
+    Packed(HashTableDeletedValueType) : Base(__bit_cast<T*>(static_cast<uintptr_t>(Base::alignment))) { }
+    bool isHashTableDeletedValue() const { return Base::get() == __bit_cast<T*>(static_cast<uintptr_t>(Base::alignment)); }
 };
 
 template<typename T>
@@ -300,8 +300,8 @@ struct PackedPtrTraits {
     // We assume that,
     // 1. The alignment is < 4KB. (It is tested by HashTraits).
     // 2. The first page (including nullptr) is never mapped.
-    static StorageType hashTableDeletedValue() { return StorageType { std::bit_cast<T*>(static_cast<uintptr_t>(StorageType::alignment)) }; }
-    static ALWAYS_INLINE bool isHashTableDeletedValue(const StorageType& ptr) { return ptr.get() == std::bit_cast<T*>(static_cast<uintptr_t>(StorageType::alignment)); }
+    static StorageType hashTableDeletedValue() { return StorageType { __bit_cast<T*>(static_cast<uintptr_t>(StorageType::alignment)) }; }
+    static ALWAYS_INLINE bool isHashTableDeletedValue(const StorageType& ptr) { return ptr.get() == __bit_cast<T*>(static_cast<uintptr_t>(StorageType::alignment)); }
 };
 
 template<typename P> struct DefaultHash<PackedPtr<P>> : PtrHash<PackedPtr<P>> { };

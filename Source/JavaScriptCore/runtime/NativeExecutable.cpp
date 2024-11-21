@@ -95,10 +95,10 @@ Intrinsic NativeExecutable::intrinsic() const
 CodeBlockHash NativeExecutable::hashFor(CodeSpecializationKind kind) const
 {
     if (kind == CodeForCall)
-        return CodeBlockHash(std::bit_cast<uintptr_t>(m_function));
+        return CodeBlockHash(__bit_cast<uintptr_t>(m_function));
 
     RELEASE_ASSERT(kind == CodeForConstruct);
-    return CodeBlockHash(std::bit_cast<uintptr_t>(m_constructor));
+    return CodeBlockHash(__bit_cast<uintptr_t>(m_constructor));
 }
 
 JSString* NativeExecutable::toStringSlow(JSGlobalObject *globalObject)

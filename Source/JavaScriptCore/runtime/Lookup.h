@@ -521,16 +521,16 @@ inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const Proper
     }
     
     if (value.attributes() & PropertyAttribute::CellProperty) {
-        LazyCellProperty* property = std::bit_cast<LazyCellProperty*>(
-            std::bit_cast<char*>(&thisObj) + value.lazyCellPropertyOffset());
+        LazyCellProperty* property = __bit_cast<LazyCellProperty*>(
+            __bit_cast<char*>(&thisObj) + value.lazyCellPropertyOffset());
         JSCell* result = property->get(&thisObj);
         thisObj.putDirect(vm, propertyName, result, attributesForStructure(value.attributes()));
         return;
     }
     
     if (value.attributes() & PropertyAttribute::ClassStructure) {
-        LazyClassStructure* lazyStructure = std::bit_cast<LazyClassStructure*>(
-            std::bit_cast<char*>(&thisObj) + value.lazyClassStructureOffset());
+        LazyClassStructure* lazyStructure = __bit_cast<LazyClassStructure*>(
+            __bit_cast<char*>(&thisObj) + value.lazyClassStructureOffset());
         JSObject* constructor = lazyStructure->constructor(jsCast<JSGlobalObject*>(&thisObj));
         thisObj.putDirect(vm, propertyName, constructor, attributesForStructure(value.attributes()));
         return;

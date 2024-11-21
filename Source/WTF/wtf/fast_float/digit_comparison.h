@@ -58,7 +58,7 @@ adjusted_mantissa to_extended(T value) noexcept {
   int32_t bias = binary_format<T>::mantissa_explicit_bits() - binary_format<T>::minimum_exponent();
   equiv_uint bits;
 #if FASTFLOAT_HAS_BIT_CAST
-  bits = std::bit_cast<equiv_uint>(value);
+  bits = __bit_cast<equiv_uint>(value);
 #else
   ::memcpy(&bits, &value, sizeof(T));
 #endif

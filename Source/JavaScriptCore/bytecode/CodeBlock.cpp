@@ -795,12 +795,12 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
             auto entry = jitCode->m_constantPool.at(i);
             switch (entry.type()) {
             case JITConstantPool::Type::FunctionDecl: {
-                unsigned index = std::bit_cast<uintptr_t>(entry.pointer());
+                unsigned index = __bit_cast<uintptr_t>(entry.pointer());
                 baselineJITData->trailingSpan()[i] = functionDecl(index);
                 break;
             }
             case JITConstantPool::Type::FunctionExpr: {
-                unsigned index = std::bit_cast<uintptr_t>(entry.pointer());
+                unsigned index = __bit_cast<uintptr_t>(entry.pointer());
                 baselineJITData->trailingSpan()[i] = functionExpr(index);
                 break;
             }
@@ -2633,7 +2633,7 @@ void CodeBlock::setOptimizationThresholdBasedOnCompilationResult(CompilationResu
     JITType type = jitType();
     if (type != JITType::BaselineJIT) {
         dataLogLn(*this, ": expected to have baseline code but have ", type);
-        CRASH_WITH_INFO(std::bit_cast<uintptr_t>(jitCode().get()), static_cast<uint8_t>(type));
+        CRASH_WITH_INFO(__bit_cast<uintptr_t>(jitCode().get()), static_cast<uint8_t>(type));
     }
     
     CodeBlock* replacement = this->replacement();

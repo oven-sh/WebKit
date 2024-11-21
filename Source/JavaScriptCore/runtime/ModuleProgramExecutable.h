@@ -49,14 +49,14 @@ public:
 
     ModuleProgramCodeBlock* codeBlock() const
     {
-        return std::bit_cast<ModuleProgramCodeBlock*>(Base::codeBlock());
+        return __bit_cast<ModuleProgramCodeBlock*>(Base::codeBlock());
     }
 
     UnlinkedModuleProgramCodeBlock* getUnlinkedCodeBlock(JSGlobalObject*);
 
     UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock() const
     {
-        return std::bit_cast<UnlinkedModuleProgramCodeBlock*>(Base::unlinkedCodeBlock());
+        return __bit_cast<UnlinkedModuleProgramCodeBlock*>(Base::unlinkedCodeBlock());
     }
 
     Ref<JSC::JITCode> generatedJITCode()

@@ -46,13 +46,13 @@ inline TypeInformation& TypeInformation::singleton()
 inline TypeIndex TypeDefinition::index() const
 {
     ASSERT(refCount() > 1); // TypeInformation::m_typeSet + caller
-    return std::bit_cast<TypeIndex>(this);
+    return __bit_cast<TypeIndex>(this);
 }
 
 inline const TypeDefinition& TypeInformation::get(TypeIndex index)
 {
     ASSERT(index != TypeDefinition::invalidIndex);
-    auto def = std::bit_cast<const TypeDefinition*>(index);
+    auto def = __bit_cast<const TypeDefinition*>(index);
     ASSERT(def->refCount() > 1); // TypeInformation::m_typeSet + caller
     return *def;
 }

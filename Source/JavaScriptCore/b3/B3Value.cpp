@@ -123,7 +123,7 @@ void DeepValueDump::dump(PrintStream& out) const
 Value::~Value()
 {
     if (m_numChildren == VarArgs)
-        std::bit_cast<Vector<Value*, 3> *>(childrenAlloc())->Vector<Value*, 3>::~Vector();
+        __bit_cast<Vector<Value*, 3> *>(childrenAlloc())->Vector<Value*, 3>::~Vector();
 }
 
 void Value::replaceWithIdentity(Value* value)

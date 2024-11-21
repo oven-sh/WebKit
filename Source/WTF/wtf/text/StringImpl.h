@@ -421,7 +421,7 @@ public:
     {
         static_assert(sizeof(UChar) == sizeof(uint16_t));
         static_assert(sizeof(LChar) == sizeof(uint8_t));
-        return copyElements(std::bit_cast<uint16_t*>(destination), source.data(), source.size());
+        return copyElements(__bit_cast<uint16_t*>(destination), source.data(), source.size());
     }
 
     ALWAYS_INLINE static void copyCharacters(LChar* destination, std::span<const UChar> source)
@@ -432,7 +432,7 @@ public:
         for (auto character : source)
             ASSERT(isLatin1(character));
 #endif
-        return copyElements(std::bit_cast<uint8_t*>(destination), std::bit_cast<const uint16_t*>(source.data()), source.size());
+        return copyElements(__bit_cast<uint8_t*>(destination), __bit_cast<const uint16_t*>(source.data()), source.size());
     }
 
     // Some string features, like reference counting and the atomicity flag, are not

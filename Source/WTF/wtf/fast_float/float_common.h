@@ -579,7 +579,7 @@ void to_float(bool negative, adjusted_mantissa am, T &value) {
   word |= fastfloat_uint(am.power2) << binary_format<T>::mantissa_explicit_bits();
   word |= fastfloat_uint(negative) << binary_format<T>::sign_index();
 #if FASTFLOAT_HAS_BIT_CAST
-  value = std::bit_cast<T>(word);
+  value = __bit_cast<T>(word);
 #else
   ::memcpy(&value, &word, sizeof(T));
 #endif

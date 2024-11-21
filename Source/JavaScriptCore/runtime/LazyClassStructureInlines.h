@@ -38,8 +38,8 @@ void LazyClassStructure::initLater(const Callback&)
     m_structure.initLater(
         [] (const StructureInitializer& structureInit) {
             ptrdiff_t offset = OBJECT_OFFSETOF(LazyClassStructure, m_structure);
-            LazyClassStructure* thisStructure = std::bit_cast<LazyClassStructure*>(
-                std::bit_cast<char*>(&structureInit.property) - offset);
+            LazyClassStructure* thisStructure = __bit_cast<LazyClassStructure*>(
+                __bit_cast<char*>(&structureInit.property) - offset);
             Initializer init(structureInit.vm, structureInit.owner, *thisStructure, structureInit);
             callStatelessLambda<void, Callback>(init);
         });

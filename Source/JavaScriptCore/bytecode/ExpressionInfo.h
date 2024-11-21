@@ -216,12 +216,12 @@ private:
 
     Chapter* chapters() const
     {
-        return std::bit_cast<Chapter*>(this + 1);
+        return __bit_cast<Chapter*>(this + 1);
     }
 
     EncodedInfo* encodedInfo() const
     {
-        return std::bit_cast<EncodedInfo*>(&chapters()[m_numberOfChapters]);
+        return __bit_cast<EncodedInfo*>(&chapters()[m_numberOfChapters]);
     }
 
     EncodedInfo* endEncodedInfo() const
@@ -241,7 +241,7 @@ private:
 
     unsigned* payload() const
     {
-        return std::bit_cast<unsigned*>(this + 1);
+        return __bit_cast<unsigned*>(this + 1);
     }
 
     static MallocPtr<ExpressionInfo> createUninitialized(unsigned numberOfChapters, unsigned numberOfEncodedInfo, unsigned numberOfEncodedInfoExtensions);

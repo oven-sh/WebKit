@@ -82,7 +82,7 @@ protected:
 
     EncodedJSValue* inlineBuffer()
     {
-        return std::bit_cast<EncodedJSValue*>(std::bit_cast<uint8_t*>(this) + sizeof(MarkedVectorBase));
+        return __bit_cast<EncodedJSValue*>(__bit_cast<uint8_t*>(this) + sizeof(MarkedVectorBase));
     }
 
     Status expandCapacity();
@@ -238,7 +238,7 @@ public:
         // gets marked only while mutator is stopping. So, while clearing in the mutator, concurrent
         // marker will not see the buffer.
 #if USE(JSVALUE64)
-        memset(std::bit_cast<void*>(buffer), 0, sizeof(JSValue) * count);
+        memset(__bit_cast<void*>(buffer), 0, sizeof(JSValue) * count);
 #else
         for (unsigned i = 0; i < count; ++i)
             buffer[i] = JSValue();

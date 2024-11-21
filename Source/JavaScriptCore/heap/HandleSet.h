@@ -48,7 +48,7 @@ public:
 
     static HandleNode* toHandleNode(HandleSlot slot)
     {
-        return std::bit_cast<HandleNode*>(std::bit_cast<uintptr_t>(slot) - OBJECT_OFFSETOF(HandleNode, m_value));
+        return __bit_cast<HandleNode*>(__bit_cast<uintptr_t>(slot) - OBJECT_OFFSETOF(HandleNode, m_value));
     }
 
 private:

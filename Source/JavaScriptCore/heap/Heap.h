@@ -1119,8 +1119,8 @@ public:
         
         static IsoCellSet& setFor(Subspace& space)
         {
-            return *std::bit_cast<IsoCellSet*>(
-                std::bit_cast<char*>(&space) -
+            return *__bit_cast<IsoCellSet*>(
+                __bit_cast<char*>(&space) -
                 OBJECT_OFFSETOF(SpaceAndSet, space) +
                 OBJECT_OFFSETOF(SpaceAndSet, set));
         }
@@ -1154,8 +1154,8 @@ public:
 
         static ScriptExecutableSpaceAndSets& setAndSpaceFor(Subspace& space)
         {
-            return *std::bit_cast<ScriptExecutableSpaceAndSets*>(
-                std::bit_cast<char*>(&space) -
+            return *__bit_cast<ScriptExecutableSpaceAndSets*>(
+                __bit_cast<char*>(&space) -
                 OBJECT_OFFSETOF(ScriptExecutableSpaceAndSets, space));
         }
 

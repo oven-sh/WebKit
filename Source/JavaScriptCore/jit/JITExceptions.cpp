@@ -86,7 +86,7 @@ void genericUnwind(VM& vm, CallFrame* callFrame)
     } else
         catchRoutine = LLInt::handleUncaughtException(vm).code().taggedPtr();
 
-    ASSERT(std::bit_cast<uintptr_t>(callFrame) < std::bit_cast<uintptr_t>(vm.topEntryFrame));
+    ASSERT(__bit_cast<uintptr_t>(callFrame) < __bit_cast<uintptr_t>(vm.topEntryFrame));
 
     assertIsTaggedWith<ExceptionHandlerPtrTag>(catchRoutine);
     vm.callFrameForCatch = callFrame;

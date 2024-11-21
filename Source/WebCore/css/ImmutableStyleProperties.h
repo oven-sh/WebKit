@@ -71,7 +71,7 @@ inline void ImmutableStyleProperties::deref() const
 
 inline PackedPtr<const CSSValue>* ImmutableStyleProperties::valueArray() const
 {
-    return std::bit_cast<PackedPtr<const CSSValue>*>(std::bit_cast<const uint8_t*>(metadataArray()) + (m_arraySize * sizeof(StylePropertyMetadata)));
+    return __bit_cast<PackedPtr<const CSSValue>*>(__bit_cast<const uint8_t*>(metadataArray()) + (m_arraySize * sizeof(StylePropertyMetadata)));
 }
 
 inline const StylePropertyMetadata* ImmutableStyleProperties::metadataArray() const

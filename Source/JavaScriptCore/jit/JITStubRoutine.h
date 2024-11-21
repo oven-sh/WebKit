@@ -123,7 +123,7 @@ public:
     
     static bool passesFilter(uintptr_t address)
     {
-        return isJITPC(std::bit_cast<void*>(address));
+        return isJITPC(__bit_cast<void*>(address));
     }
     
     bool visitWeak(VM&);

@@ -820,11 +820,11 @@ public:
     bool hasInlineStorage() const { return structure()->hasInlineStorage(); }
     ConstPropertyStorage inlineStorageUnsafe() const
     {
-        return std::bit_cast<ConstPropertyStorage>(this + 1);
+        return __bit_cast<ConstPropertyStorage>(this + 1);
     }
     PropertyStorage inlineStorageUnsafe()
     {
-        return std::bit_cast<PropertyStorage>(this + 1);
+        return __bit_cast<PropertyStorage>(this + 1);
     }
     ConstPropertyStorage inlineStorage() const
     {

@@ -214,12 +214,12 @@ public:
 
     static ValueRep constantDouble(double value)
     {
-        return ValueRep::constant(std::bit_cast<int64_t>(value));
+        return ValueRep::constant(__bit_cast<int64_t>(value));
     }
 
     static ValueRep constantFloat(float value)
     {
-        return ValueRep::constant(static_cast<uint64_t>(std::bit_cast<uint32_t>(value)));
+        return ValueRep::constant(static_cast<uint64_t>(__bit_cast<uint32_t>(value)));
     }
 
     Kind kind() const { return m_kind; }
@@ -303,12 +303,12 @@ public:
 
     double doubleValue() const
     {
-        return std::bit_cast<double>(value());
+        return __bit_cast<double>(value());
     }
 
     float floatValue() const
     {
-        return std::bit_cast<float>(static_cast<uint32_t>(static_cast<uint64_t>(value())));
+        return __bit_cast<float>(static_cast<uint32_t>(static_cast<uint64_t>(value())));
     }
 
     ValueRep withOffset(intptr_t offset) const

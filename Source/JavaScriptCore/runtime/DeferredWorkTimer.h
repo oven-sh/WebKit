@@ -126,7 +126,7 @@ inline JSObject* DeferredWorkTimer::TicketData::target()
     ASSERT(!isCancelled() && isTargetObject());
     // This function can be triggered on the main thread with a GC end phase
     // and a sweeping state. So, jsCast is not wanted here.
-    return std::bit_cast<JSObject*>(m_dependencies.last());
+    return __bit_cast<JSObject*>(m_dependencies.last());
 }
 
 inline const FixedVector<JSCell*>& DeferredWorkTimer::TicketData::dependencies(bool mayBeCancelled)

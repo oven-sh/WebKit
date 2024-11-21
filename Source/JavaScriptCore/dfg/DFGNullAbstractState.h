@@ -46,7 +46,7 @@ public:
     AbstractValue& forNode(Node*)
     {
         RELEASE_ASSERT_NOT_REACHED();
-        return *std::bit_cast<AbstractValue*>(static_cast<intptr_t>(0x1234));
+        return *__bit_cast<AbstractValue*>(static_cast<intptr_t>(0x1234));
     }
     
     AbstractValue& forNode(Edge)

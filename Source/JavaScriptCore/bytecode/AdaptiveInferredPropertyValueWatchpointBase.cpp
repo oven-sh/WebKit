@@ -90,7 +90,7 @@ void AdaptiveInferredPropertyValueWatchpointBase::StructureWatchpoint::fireInter
 {
     ptrdiff_t myOffset = OBJECT_OFFSETOF(AdaptiveInferredPropertyValueWatchpointBase, m_structureWatchpoint);
 
-    AdaptiveInferredPropertyValueWatchpointBase* parent = std::bit_cast<AdaptiveInferredPropertyValueWatchpointBase*>(std::bit_cast<char*>(this) - myOffset);
+    AdaptiveInferredPropertyValueWatchpointBase* parent = __bit_cast<AdaptiveInferredPropertyValueWatchpointBase*>(__bit_cast<char*>(this) - myOffset);
 
     parent->fire(vm, detail);
 }
@@ -99,7 +99,7 @@ void AdaptiveInferredPropertyValueWatchpointBase::PropertyWatchpoint::fireIntern
 {
     ptrdiff_t myOffset = OBJECT_OFFSETOF(AdaptiveInferredPropertyValueWatchpointBase, m_propertyWatchpoint);
 
-    AdaptiveInferredPropertyValueWatchpointBase* parent = std::bit_cast<AdaptiveInferredPropertyValueWatchpointBase*>(std::bit_cast<char*>(this) - myOffset);
+    AdaptiveInferredPropertyValueWatchpointBase* parent = __bit_cast<AdaptiveInferredPropertyValueWatchpointBase*>(__bit_cast<char*>(this) - myOffset);
     
     parent->fire(vm, detail);
 }
