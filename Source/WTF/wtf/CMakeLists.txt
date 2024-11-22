@@ -295,6 +295,7 @@ set(WTF_PUBLIC_HEADERS
     StdFilesystem.h
     StdIntExtras.h
     StdLibExtras.h
+    BunStdExtras.h
     StdList.h
     StdMap.h
     StdMultimap.h

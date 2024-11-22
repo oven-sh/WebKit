@@ -29,7 +29,7 @@
 #include "IsoTLSDeallocatorEntry.h"
 #include "IsoSharedHeapInlines.h"
 #include "IsoSharedPageInlines.h"
-#include "BunExtras.h"
+#include "<wtf/BunStdExtras.h>"
 
 #if !BUSE(LIBPAS)
 
