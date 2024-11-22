@@ -297,6 +297,11 @@ void DeferredWorkTimer::cancelPendingWork(VM& vm)
             }
         }
     }
+
+    if (onCancelPendingWork) {
+        return;
+    }
+
     // GC can be triggered before an invalid and scheduled ticket is fired. In that case,
     // we also need to remove the corresponding pending task. Since doWork handles all cases
     // for removal, we should let it handle that for consistency.
