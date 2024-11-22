@@ -29,7 +29,7 @@
 #include "IsoTLSDeallocatorEntry.h"
 #include "IsoSharedHeapInlines.h"
 #include "IsoSharedPageInlines.h"
-#include "../../WTF/wtf/BunStdExtras.h"
+#include <BunExtras.h>
 
 #if !BUSE(LIBPAS)
 
@@ -319,7 +319,7 @@ void* IsoHeapImpl<Config>::allocateFromShared(const LockHolder&, bool abortOnFai
             fprintf(stderr, "%p: allocated %p from shared of size %u\n", this, result, Config::objectSize);
         BASSERT(index < IsoHeapImplBase::maxAllocationFromShared);
         *indexSlotFor<Config>(result) = index;
-        m_sharedCells[index] = __bit_cast<uint8_t*>(result);
+        m_sharedCells[index] = bmalloc::__bit_cast<uint8_t*>(result);
     }
     BASSERT(result);
     m_availableShared &= ~(1U << index);
