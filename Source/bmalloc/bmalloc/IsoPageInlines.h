@@ -30,7 +30,7 @@
 #include "IsoHeapImpl.h"
 #include "IsoPage.h"
 #include "VMAllocate.h"
-#include "<wtf/BunStdExtras.h>"
+#include "../../WTF/wtf/BunStdExtras.h"
 #include <bit>
 
 #if !BUSE(LIBPAS)

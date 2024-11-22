@@ -27,7 +27,7 @@
 
 #include "Algorithm.h"
 #include "GigacageKind.h"
-#include "<wtf/BunStdExtras.h>"
+#include "../../WTF/wtf/BunStdExtras.h"
 #include <bit>
 #include <inttypes.h>
 
