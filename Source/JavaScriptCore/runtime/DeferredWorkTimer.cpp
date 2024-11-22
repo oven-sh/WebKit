@@ -293,7 +293,7 @@ void DeferredWorkTimer::cancelPendingWork(VM& vm)
             needToFire = true;
 
             if (onCancelPendingWork) {
-                onCancelPendingWork(ticket);
+                onCancelPendingWork(&ticket.get());
             }
         }
     }
