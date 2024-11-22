@@ -298,7 +298,6 @@ set(bmalloc_PUBLIC_HEADERS
     bmalloc/Zone.h
     bmalloc/bmalloc.h
     bmalloc/valgrind.h
-    bmalloc/BunExtras.h
 
     libpas/src/libpas/bmalloc_heap_config.h
     libpas/src/libpas/bmalloc_heap.h
