@@ -291,6 +291,10 @@ void DeferredWorkTimer::cancelPendingWork(VM& vm)
             // So, they are safe to clear here for better debugging and testing.
             ticket->cancelAndClear();
             needToFire = true;
+
+            if (onCancelPendingWork) {
+                onCancelPendingWork(ticket);
+            }
         }
     }
     // GC can be triggered before an invalid and scheduled ticket is fired. In that case,
