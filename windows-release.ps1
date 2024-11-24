@@ -182,7 +182,6 @@ $WebAssemblyState = if ($NoWebassembly) { "OFF" } else { "ON" }
 cmake -S . -B $WebKitBuild `
     -DPORT="JSCOnly" `
     -DENABLE_STATIC_JSC=ON `
-    -DENABLE_SINGLE_THREADED_VM_ENTRY_SCOPE=ON `
     -DALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS=ON `
     "-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}" `
     -DUSE_THIN_ARCHIVES=OFF `
