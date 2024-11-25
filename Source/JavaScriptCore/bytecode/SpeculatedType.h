@@ -256,9 +256,19 @@ inline bool isInt8ArraySpeculation(SpeculatedType value)
     return value == SpecInt8Array;
 }
 
+inline bool isNotInt8ArraySpeculation(SpeculatedType value)
+{
+    return value && !(value & SpecInt8Array);
+}
+
 inline bool isInt16ArraySpeculation(SpeculatedType value)
 {
     return value == SpecInt16Array;
+}
+
+inline bool isNotInt16ArraySpeculation(SpeculatedType value)
+{
+    return value && !(value & SpecInt16Array);
 }
 
 inline bool isInt32ArraySpeculation(SpeculatedType value)
@@ -266,9 +276,19 @@ inline bool isInt32ArraySpeculation(SpeculatedType value)
     return value == SpecInt32Array;
 }
 
+inline bool isNotInt32ArraySpeculation(SpeculatedType value)
+{
+    return value && !(value & SpecInt32Array);
+}
+
 inline bool isUint8ArraySpeculation(SpeculatedType value)
 {
     return value == SpecUint8Array;
+}
+
+inline bool isNotUint8ArraySpeculation(SpeculatedType value)
+{
+    return value && !(value & SpecUint8Array);
 }
 
 inline bool isUint8ClampedArraySpeculation(SpeculatedType value)
@@ -276,14 +296,30 @@ inline bool isUint8ClampedArraySpeculation(SpeculatedType value)
     return value == SpecUint8ClampedArray;
 }
 
+inline bool isNotUint8ClampedArraySpeculation(SpeculatedType value)
+{
+    return value && !(value & SpecUint8ClampedArray);
+}
+
 inline bool isUint16ArraySpeculation(SpeculatedType value)
 {
     return value == SpecUint16Array;
 }
 
+inline bool isNotUint16ArraySpeculation(SpeculatedType value)
+{
+    return value && !(value & SpecUint16Array);
+}
+
+
 inline bool isUint32ArraySpeculation(SpeculatedType value)
 {
     return value == SpecUint32Array;
+}
+
+inline bool isNotUint32ArraySpeculation(SpeculatedType value)
+{
+    return value && !(value & SpecUint32Array);
 }
 
 inline bool isFloat16ArraySpeculation(SpeculatedType value)
@@ -291,14 +327,29 @@ inline bool isFloat16ArraySpeculation(SpeculatedType value)
     return value == SpecFloat16Array;
 }
 
+inline bool isNotFloat16ArraySpeculation(SpeculatedType value)
+{
+    return value && !(value & SpecFloat16Array);
+}
+
 inline bool isFloat32ArraySpeculation(SpeculatedType value)
 {
     return value == SpecFloat32Array;
 }
 
+inline bool isNotFloat32ArraySpeculation(SpeculatedType value)
+{
+    return value && !(value & SpecFloat32Array);
+}
+
 inline bool isFloat64ArraySpeculation(SpeculatedType value)
 {
     return value == SpecFloat64Array;
+}
+
+inline bool isNotFloat64ArraySpeculation(SpeculatedType value)
+{
+    return value && !(value & SpecFloat64Array);
 }
 
 inline bool isBigInt64ArraySpeculation(SpeculatedType value)
@@ -384,6 +435,11 @@ inline bool isAnyInt52Speculation(SpeculatedType value)
 inline bool isInt32OrInt52Speculation(SpeculatedType value)
 {
     return !!value && (value & (SpecInt32Only | SpecInt52Any)) == value;
+}
+
+inline bool isNotInt32OrInt52Speculation(SpeculatedType value)
+{
+    return value && !(value & (SpecInt32Only | SpecInt52Any));
 }
 
 inline bool isIntAnyFormat(SpeculatedType value)
