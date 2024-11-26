@@ -133,6 +133,10 @@ if (LOWERCASE_EVENT_LOOP_TYPE STREQUAL "glib")
         ${GLIB_GOBJECT_LIBRARIES}
         ${GLIB_LIBRARIES}
     )
+elseif (LOWERCASE_EVENT_LOOP_TYPE STREQUAL "bun")
+    list(APPEND WTF_SOURCES
+        bun/RunLoopBun.cpp
+    )
 else ()
     list(APPEND WTF_SOURCES
         generic/RunLoopGeneric.cpp
