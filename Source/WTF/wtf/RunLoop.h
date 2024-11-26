@@ -171,6 +171,7 @@ public:
 
         class ScheduledTask;
         Ref<ScheduledTask> m_scheduledTask;
+#elif USE(BUN_EVENT_LOOP)
 #endif
     };
 
