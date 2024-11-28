@@ -228,6 +228,15 @@ if (COMPILER_IS_GCC_OR_CLANG)
     # Makes builds faster. The GCC manual warns about the possibility that the assembler being
     # used may not support input from a pipe, but in practice the toolchains we support all do.
     WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-pipe)
+
+    if (USE_BUN_JSC_ADDITIONS)
+        WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-Wl,-U,_WTFTimer__create
+                                             -Wl,-U,_WTFTimer__update
+                                             -Wl,-U,_WTFTimer__deinit
+                                             -Wl,-U,_WTFTimer__isActive
+                                             -Wl,-U,_WTFTimer__secondsUntilTimer
+                                             -Wl,-U,_WTFTimer__cancel)
+    endif ()
 endif ()
 
 if (COMPILER_IS_GCC_OR_CLANG AND NOT MSVC)

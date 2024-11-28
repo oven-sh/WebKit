@@ -144,6 +144,9 @@ public:
 #if USE(GLIB_EVENT_LOOP)
         WTF_EXPORT_PRIVATE void setName(ASCIILiteral);
         WTF_EXPORT_PRIVATE void setPriority(int);
+#elif USE(BUN_EVENT_LOOP)
+        // WTFTimer in Timer.zig
+        struct Bun__WTFTimer;
 #endif
 
     private:
@@ -172,6 +175,7 @@ public:
         class ScheduledTask;
         Ref<ScheduledTask> m_scheduledTask;
 #elif USE(BUN_EVENT_LOOP)
+        Bun__WTFTimer* m_zigTimer;
 #endif
     };
 
