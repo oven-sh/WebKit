@@ -211,7 +211,7 @@ protected:
     const_iterator begin() const { return m_map.begin(); }
     const_iterator end() const { return m_map.end(); }
 
-    DataStorage::KeysConstIteratorRange keys() const { return m_map.keys(); }
+    OrderStorage keys() const { return m_order; }
 
     unsigned size() const { return m_map.size(); }
 

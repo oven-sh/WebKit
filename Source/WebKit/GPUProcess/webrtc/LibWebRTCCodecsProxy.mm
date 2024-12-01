@@ -73,7 +73,7 @@ Ref<LibWebRTCCodecsProxy> LibWebRTCCodecsProxy::create(GPUConnectionToWebProcess
 
 LibWebRTCCodecsProxy::LibWebRTCCodecsProxy(GPUConnectionToWebProcess& webProcessConnection, SharedPreferencesForWebProcess& sharedPreferencesForWebProcess)
     : m_connection(webProcessConnection.connection())
-    , m_queue(webProcessConnection.gpuProcess().libWebRTCCodecsQueue())
+    , m_queue(webProcessConnection.protectedGPUProcess()->libWebRTCCodecsQueue())
     , m_videoFrameObjectHeap(webProcessConnection.videoFrameObjectHeap())
     , m_resourceOwner(webProcessConnection.webProcessIdentity())
     , m_sharedPreferencesForWebProcess(sharedPreferencesForWebProcess)

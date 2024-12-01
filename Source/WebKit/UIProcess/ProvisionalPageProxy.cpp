@@ -200,7 +200,7 @@ void ProvisionalPageProxy::processDidTerminate()
         page->provisionalProcessDidTerminate();
 }
 
-std::unique_ptr<DrawingAreaProxy> ProvisionalPageProxy::takeDrawingArea()
+RefPtr<DrawingAreaProxy> ProvisionalPageProxy::takeDrawingArea()
 {
     return WTFMove(m_drawingArea);
 }

@@ -83,8 +83,6 @@
 #include "ImageControlsMac.h"
 #endif
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 @interface WebCoreRenderThemeNotificationObserver : NSObject
 @end
 
@@ -406,8 +404,8 @@ ALLOW_DEPRECATED_DECLARATIONS_BEGIN
 ALLOW_DEPRECATED_DECLARATIONS_END
     }
 
-    NSUInteger pixel[4];
-    [offscreenRep getPixel:pixel atX:0 y:0];
+    std::array<NSUInteger, 4> pixel;
+    [offscreenRep getPixel:pixel.data() atX:0 y:0];
 
     return makeFromComponentsClamping<SRGBA<uint8_t>>(pixel[0], pixel[1], pixel[2], pixel[3]);
 }
@@ -714,7 +712,7 @@ bool RenderThemeMac::isControlStyled(const RenderStyle& style, const RenderStyle
     return RenderTheme::isControlStyled(style, userAgentStyle);
 }
 
-static FloatRect inflateRect(const FloatRect& rect, const IntSize& size, const int* margins, float zoomLevel)
+static FloatRect inflateRect(const FloatRect& rect, const IntSize& size, std::span<const int, 4> margins, float zoomLevel)
 {
     // Only do the inflation if the available width/height are too small. Otherwise try to
     // fit the glow/check space into the available box's width/height.
@@ -732,7 +730,7 @@ static FloatRect inflateRect(const FloatRect& rect, const IntSize& size, const i
     return result;
 }
 
-static NSControlSize controlSizeFromPixelSize(const IntSize* sizes, const IntSize& minSize, float zoomLevel)
+static NSControlSize controlSizeFromPixelSize(std::span<const IntSize, 4> sizes, const IntSize& minSize, float zoomLevel)
 {
     if (ThemeMac::supportsLargeFormControls()
         && minSize.width() >= static_cast<int>(sizes[NSControlSizeLarge].width() * zoomLevel)
@@ -750,39 +748,36 @@ static NSControlSize controlSizeFromPixelSize(const IntSize* sizes, const IntSiz
     return NSControlSizeMini;
 }
 
-static const int* popupButtonMargins(NSControlSize size)
+static std::span<const int, 4> popupButtonMargins(NSControlSize size)
 {
-    static const int margins[4][4] =
-    {
-        { 0, 3, 1, 3 },
-        { 0, 3, 2, 3 },
-        { 0, 1, 0, 1 },
-        { 0, 6, 2, 6 },
+    static constexpr std::array margins {
+        std::array { 0, 3, 1, 3 },
+        std::array { 0, 3, 2, 3 },
+        std::array { 0, 1, 0, 1 },
+        std::array { 0, 6, 2, 6 },
     };
     return margins[size];
 }
 
-static const IntSize* popupButtonSizes()
+static std::span<const IntSize, 4> popupButtonSizes()
 {
-    static const IntSize sizes[4] = { IntSize(0, 21), IntSize(0, 18), IntSize(0, 15), IntSize(0, 24) };
+    static constexpr std::array sizes { IntSize(0, 21), IntSize(0, 18), IntSize(0, 15), IntSize(0, 24) };
     return sizes;
 }
 
-static const int* popupButtonPadding(NSControlSize size, bool isRTL)
+static std::span<const int, 4> popupButtonPadding(NSControlSize size, bool isRTL)
 {
-    static const int paddingLTR[4][4] =
-    {
-        { 2, 26, 3, 8 },
-        { 2, 23, 3, 8 },
-        { 2, 22, 3, 10 },
-        { 2, 26, 3, 8 },
+    static constexpr std::array paddingLTR {
+        std::array { 2, 26, 3, 8 },
+        std::array { 2, 23, 3, 8 },
+        std::array { 2, 22, 3, 10 },
+        std::array { 2, 26, 3, 8 },
     };
-    static const int paddingRTL[4][4] =
-    {
-        { 2, 8, 3, 26 },
-        { 2, 8, 3, 23 },
-        { 2, 8, 3, 22 },
-        { 2, 8, 3, 26 },
+    static constexpr std::array paddingRTL {
+        std::array { 2, 8, 3, 26 },
+        std::array { 2, 8, 3, 23 },
+        std::array { 2, 8, 3, 22 },
+        std::array { 2, 8, 3, 26 },
     };
     return isRTL ? paddingRTL[size] : paddingLTR[size];
 }
@@ -865,7 +860,7 @@ static NSControlSize controlSizeForFont(const RenderStyle& style)
     return NSControlSizeMini;
 }
 
-static IntSize sizeForFont(const RenderStyle& style, const IntSize* sizes)
+static IntSize sizeForFont(const RenderStyle& style, std::span<const IntSize, 4> sizes)
 {
     if (style.usedZoom() != 1.0f) {
         IntSize result = sizes[controlSizeForFont(style)];
@@ -874,7 +869,7 @@ static IntSize sizeForFont(const RenderStyle& style, const IntSize* sizes)
     return sizes[controlSizeForFont(style)];
 }
 
-static IntSize sizeForSystemFont(const RenderStyle& style, const IntSize* sizes)
+static IntSize sizeForSystemFont(const RenderStyle& style, std::span<const IntSize, 4> sizes)
 {
     if (style.usedZoom() != 1.0f) {
         IntSize result = sizes[controlSizeForSystemFont(style)];
@@ -883,7 +878,7 @@ static IntSize sizeForSystemFont(const RenderStyle& style, const IntSize* sizes)
     return sizes[controlSizeForSystemFont(style)];
 }
 
-static void setSizeFromFont(RenderStyle& style, const IntSize* sizes)
+static void setSizeFromFont(RenderStyle& style, std::span<const IntSize, 4> sizes)
 {
     // FIXME: Check is flawed, since it doesn't take min-width/max-width into account.
     IntSize size = sizeForFont(style, sizes);
@@ -963,9 +958,9 @@ const int styledPopupPaddingLeft = 8;
 const int styledPopupPaddingTop = 1;
 const int styledPopupPaddingBottom = 2;
 
-static const IntSize* menuListButtonSizes()
+static std::span<const IntSize, 4> menuListButtonSizes()
 {
-    static const IntSize sizes[4] = { IntSize(0, 21), IntSize(0, 18), IntSize(0, 15), IntSize(0, 28) };
+    static constexpr std::array sizes { IntSize(0, 21), IntSize(0, 18), IntSize(0, 15), IntSize(0, 28) };
     return sizes;
 }
 
@@ -998,7 +993,7 @@ void RenderThemeMac::adjustMenuListStyle(RenderStyle& style, const Element* e) c
 LengthBox RenderThemeMac::popupInternalPaddingBox(const RenderStyle& style) const
 {
     if (style.usedAppearance() == StyleAppearance::Menulist) {
-        const int* padding = popupButtonPadding(controlSizeForFont(style), style.writingMode().isBidiRTL());
+        auto padding = popupButtonPadding(controlSizeForFont(style), style.writingMode().isBidiRTL());
         return { static_cast<int>(padding[topPadding] * style.usedZoom()),
             static_cast<int>(padding[rightPadding] * style.usedZoom()),
             static_cast<int>(padding[bottomPadding] * style.usedZoom()),
@@ -1050,9 +1045,9 @@ void RenderThemeMac::adjustMenuListButtonStyle(RenderStyle& style, const Element
     style.setLineHeight(RenderStyle::initialLineHeight());
 }
 
-const IntSize* RenderThemeMac::menuListSizes() const
+std::span<const IntSize, 4> RenderThemeMac::menuListSizes() const
 {
-    static const IntSize sizes[4] = { IntSize(9, 0), IntSize(5, 0), IntSize(0, 0), IntSize(13, 0) };
+    static constexpr std::array sizes { IntSize(9, 0), IntSize(5, 0), IntSize(0, 0), IntSize(13, 0) };
     return sizes;
 }
 
@@ -1072,9 +1067,9 @@ void RenderThemeMac::adjustSliderThumbStyle(RenderStyle& style, const Element* e
     style.setBoxShadow(nullptr);
 }
 
-const IntSize* RenderThemeMac::searchFieldSizes() const
+std::span<const IntSize, 4> RenderThemeMac::searchFieldSizes() const
 {
-    static const IntSize sizes[4] = { IntSize(0, 22), IntSize(0, 19), IntSize(0, 17), IntSize(0, 30) };
+    static constexpr std::array sizes { IntSize(0, 22), IntSize(0, 19), IntSize(0, 17), IntSize(0, 30) };
     return sizes;
 }
 
@@ -1120,9 +1115,9 @@ void RenderThemeMac::adjustSearchFieldStyle(RenderStyle& style, const Element*) 
     style.setBoxShadow(nullptr);
 }
 
-const IntSize* RenderThemeMac::cancelButtonSizes() const
+std::span<const IntSize, 4> RenderThemeMac::cancelButtonSizes() const
 {
-    static const IntSize sizes[4] = { IntSize(22, 22), IntSize(19, 19), IntSize(15, 15), IntSize(22, 22) };
+    static constexpr std::array sizes { IntSize(22, 22), IntSize(19, 19), IntSize(15, 15), IntSize(22, 22) };
     return sizes;
 }
 
@@ -1134,10 +1129,10 @@ void RenderThemeMac::adjustSearchFieldCancelButtonStyle(RenderStyle& style, cons
     style.setBoxShadow(nullptr);
 }
 
-const int resultsArrowWidth = 5;
-const IntSize* RenderThemeMac::resultsButtonSizes() const
+constexpr int resultsArrowWidth = 5;
+std::span<const IntSize, 4> RenderThemeMac::resultsButtonSizes() const
 {
-    static const IntSize sizes[4] = { IntSize(19, 22), IntSize(17, 19), IntSize(17, 15), IntSize(19, 22) };
+    static constexpr std::array sizes { IntSize(19, 22), IntSize(17, 19), IntSize(17, 15), IntSize(19, 22) };
     return sizes;
 }
 
@@ -1525,7 +1520,5 @@ bool RenderThemeMac::paintAttachment(const RenderObject& renderer, const PaintIn
 #endif // ENABLE(ATTACHMENT_ELEMENT)
 
 } // namespace WebCore
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #endif // PLATFORM(MAC)

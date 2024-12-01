@@ -52,6 +52,7 @@
 #include "Text.h"
 #include "TypedElementDescendantIteratorInlines.h"
 #include "ViewTransition.h"
+#include "ViewTransitionTypeSet.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -62,6 +63,29 @@ using namespace HTMLNames;
 enum class VisitedMatchType : unsigned char {
     Disabled, Enabled
 };
+
+static bool matchesActiveViewTransitionTypePseudoClass(const Element& element, const FixedVector<AtomString>& types)
+{
+    // This pseudo class only matches the root element.
+    if (&element != element.document().documentElement())
+        return false;
+
+    if (const auto* viewTransition = element.document().activeViewTransition()) {
+        const auto& activeTypes = viewTransition->types();
+
+        for (const auto& type : types) {
+            // https://github.com/w3c/csswg-drafts/issues/9534#issuecomment-1802364085
+            // RESOLVED: type can accept any idents, except 'none' or '-ua-' prefixes
+            if (type.convertToASCIILowercase() == "none"_s || type.convertToASCIILowercase().startsWith("-ua-"_s))
+                continue;
+
+            if (activeTypes.hasType(type))
+                return true;
+        }
+    }
+
+    return false;
+}
 
 struct SelectorChecker::LocalContext {
     LocalContext(const CSSSelector& selector, const Element& element, VisitedMatchType visitedMatchType, std::optional<Style::PseudoElementIdentifier> pseudoElementIdentifier)
@@ -752,14 +776,8 @@ bool SelectorChecker::checkOne(CheckingContext& checkingContext, LocalContext& c
     }
 
     if (selector.match() == CSSSelector::Match::HasScope) {
-        bool matches = &element == checkingContext.hasScope || checkingContext.matchesAllHasScopes;
-
-        if (!matches && checkingContext.hasScope) {
-            if (element.isDescendantOf(*checkingContext.hasScope))
-                checkingContext.matchedInsideScope = true;
-        }
-
-        return matches;
+        checkingContext.matchedInsideScope = true;
+        return &element == checkingContext.hasScope || checkingContext.matchesAllHasScopes;
     }
 
     if (selector.match() == CSSSelector::Match::PseudoClass) {
@@ -1416,6 +1434,9 @@ bool SelectorChecker::matchHasPseudoClass(CheckingContext& checkingContext, cons
     auto checkDescendants = [&](const Element& descendantRoot) {
         for (auto it = descendantsOfType<Element>(descendantRoot).begin(); it;) {
             auto& descendant = *it;
+            if (checkRelative(descendant))
+                return true;
+
             if (cache && descendant.firstElementChild()) {
                 auto key = Style::makeHasPseudoClassCacheKey(descendant, hasSelector);
                 if (cache->get(key) == Style::HasPseudoClassMatch::FailsSubtree) {
@@ -1423,8 +1444,6 @@ bool SelectorChecker::matchHasPseudoClass(CheckingContext& checkingContext, cons
                     continue;
                 }
             }
-            if (checkRelative(descendant))
-                return true;
 
             it.traverseNext();
         }

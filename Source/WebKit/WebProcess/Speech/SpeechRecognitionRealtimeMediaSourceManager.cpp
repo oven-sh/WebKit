@@ -152,15 +152,35 @@ private:
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SpeechRecognitionRealtimeMediaSourceManager);
 
-SpeechRecognitionRealtimeMediaSourceManager::SpeechRecognitionRealtimeMediaSourceManager(Ref<IPC::Connection>&& connection)
-    : m_connection(WTFMove(connection))
+SpeechRecognitionRealtimeMediaSourceManager::SpeechRecognitionRealtimeMediaSourceManager(WebProcess& process)
+    : m_process(process)
 {
-    WebProcess::singleton().addMessageReceiver(Messages::SpeechRecognitionRealtimeMediaSourceManager::messageReceiverName(), *this);
+    process.addMessageReceiver(Messages::SpeechRecognitionRealtimeMediaSourceManager::messageReceiverName(), *this);
 }
 
 SpeechRecognitionRealtimeMediaSourceManager::~SpeechRecognitionRealtimeMediaSourceManager()
 {
-    WebProcess::singleton().removeMessageReceiver(*this);
+    m_process->removeMessageReceiver(*this);
+}
+
+IPC::Connection& SpeechRecognitionRealtimeMediaSourceManager::connection() const
+{
+    return *m_process->parentProcessConnection();
+}
+
+Ref<IPC::Connection> SpeechRecognitionRealtimeMediaSourceManager::protectedConnection() const
+{
+    return *m_process->parentProcessConnection();
+}
+
+void SpeechRecognitionRealtimeMediaSourceManager::ref() const
+{
+    m_process->ref();
+}
+
+void SpeechRecognitionRealtimeMediaSourceManager::deref() const
+{
+    m_process->deref();
 }
 
 void SpeechRecognitionRealtimeMediaSourceManager::createSource(RealtimeMediaSourceIdentifier identifier, const CaptureDevice& device, PageIdentifier pageIdentifier)
@@ -173,7 +193,7 @@ void SpeechRecognitionRealtimeMediaSourceManager::createSource(RealtimeMediaSour
     }
 
     ASSERT(!m_sources.contains(identifier));
-    m_sources.add(identifier, makeUnique<Source>(identifier, result.source(), m_connection.copyRef()));
+    m_sources.add(identifier, makeUnique<Source>(identifier, result.source(), protectedConnection()));
 }
 
 void SpeechRecognitionRealtimeMediaSourceManager::deleteSource(RealtimeMediaSourceIdentifier identifier)
@@ -195,7 +215,7 @@ void SpeechRecognitionRealtimeMediaSourceManager::stop(RealtimeMediaSourceIdenti
 
 IPC::Connection* SpeechRecognitionRealtimeMediaSourceManager::messageSenderConnection() const
 {
-    return m_connection.ptr();
+    return &connection();
 }
 
 uint64_t SpeechRecognitionRealtimeMediaSourceManager::messageSenderDestinationID() const

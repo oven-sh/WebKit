@@ -104,14 +104,23 @@ ASCIILiteral WebNotificationManager::supplementName()
 }
 
 WebNotificationManager::WebNotificationManager(WebProcess& process)
+    : m_process(process)
 {
 #if ENABLE(NOTIFICATIONS)
     process.addMessageReceiver(Messages::WebNotificationManager::messageReceiverName(), *this);
 #endif
 }
 
-WebNotificationManager::~WebNotificationManager()
+WebNotificationManager::~WebNotificationManager() = default;
+
+void WebNotificationManager::ref() const
 {
+    m_process->ref();
+}
+
+void WebNotificationManager::deref() const
+{
+    m_process->deref();
 }
 
 void WebNotificationManager::initialize(const WebProcessCreationParameters& parameters)

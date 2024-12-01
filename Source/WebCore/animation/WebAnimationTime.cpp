@@ -124,9 +124,19 @@ bool WebAnimationTime::isZero() const
     return !m_value;
 }
 
+bool WebAnimationTime::isNaN() const
+{
+    return std::isnan(m_value);
+}
+
 WebAnimationTime WebAnimationTime::matchingZero() const
 {
     return { m_type, 0 };
+}
+
+WebAnimationTime WebAnimationTime::matchingInfinity() const
+{
+    return { m_type, std::numeric_limits<double>::infinity() };
 }
 
 WebAnimationTime WebAnimationTime::matchingEpsilon() const

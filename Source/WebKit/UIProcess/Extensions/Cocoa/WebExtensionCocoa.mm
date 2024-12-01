@@ -270,18 +270,22 @@ bool WebExtension::parseManifest(NSData *manifestData)
             recordError(createError(Error::InvalidDefaultLocale));
     }
 
-    m_localization = [[_WKWebExtensionLocalization alloc] initWithWebExtension:*this];
-
-    m_manifest = [m_localization.get() localizedDictionaryForDictionary:m_manifest.get()];
-    if (!m_manifest) {
+    RefPtr localization = WebExtensionLocalization::create(*this);
+    RefPtr manifestJSON = JSON::Value::parseJSON(String(encodeJSONString(m_manifest.get())));
+    if (!manifestJSON || !manifestJSON->asObject()) {
         m_manifestJSON = JSON::Value::null();
         recordError(createError(Error::InvalidManifest));
         return false;
     }
 
-    // Parse m_manifestJSON after localization so it gets the localized version.
-    RefPtr manifestJSON = JSON::Value::parseJSON(String(encodeJSONString(m_manifest.get())));
-    if (!manifestJSON || !manifestJSON->asObject()) {
+    localization->localizedJSONforJSON(manifestJSON->asObject());
+
+    m_localization = localization;
+
+    auto *cocoaLocalization = [[_WKWebExtensionLocalization alloc] initWithWebExtension:*this];
+
+    m_manifest = [cocoaLocalization localizedDictionaryForDictionary:m_manifest.get()];
+    if (!m_manifest) {
         m_manifestJSON = JSON::Value::null();
         recordError(createError(Error::InvalidManifest));
         return false;
@@ -315,11 +319,6 @@ NSDictionary *WebExtension::manifest()
 Ref<API::Data> WebExtension::serializeManifest()
 {
     return API::Data::createWithoutCopying(encodeJSONData(manifest()));
-}
-
-Ref<API::Data> WebExtension::serializeLocalization()
-{
-    return API::Data::createWithoutCopying(encodeJSONData(m_localization.get().localizationDictionary));
 }
 
 SecStaticCodeRef WebExtension::bundleStaticCode() const
@@ -475,14 +474,6 @@ void WebExtension::recordError(Ref<API::Error> error)
     [wrapper() willChangeValueForKey:@"errors"];
     m_errors.append(error);
     [wrapper() didChangeValueForKey:@"errors"];
-}
-
-_WKWebExtensionLocalization *WebExtension::localization()
-{
-    if (!manifestParsedSuccessfully())
-        return nil;
-
-    return m_localization.get();
 }
 
 RefPtr<WebCore::Icon> WebExtension::iconForPath(const String& imagePath, RefPtr<API::Error>& outError, WebCore::FloatSize sizeForResizing)

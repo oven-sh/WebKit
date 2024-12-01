@@ -228,7 +228,7 @@ static void adjustCandidateAutocorrectionInFrame(const String& correction, Local
     if (correctedRange.collapsed())
         return;
 
-    addMarker(correctedRange, WebCore::DocumentMarker::Type::CorrectionIndicator);
+    addMarker(correctedRange, WebCore::DocumentMarkerType::CorrectionIndicator);
 #else
     UNUSED_PARAM(frame);
 #endif
@@ -403,7 +403,7 @@ void WebPage::getPlatformEditorState(LocalFrame& frame, EditorState& result) con
 
 #if USE(DICTATION_ALTERNATIVES)
     if (selectedRange) {
-        auto markers = frame.document()->markers().markersInRange(*selectedRange, DocumentMarker::Type::DictationAlternatives);
+        auto markers = frame.document()->markers().markersInRange(*selectedRange, DocumentMarkerType::DictationAlternatives);
         postLayoutData.dictationContextsForSelection = WTF::map(markers, [] (auto& marker) {
             return std::get<DocumentMarker::DictationData>(marker->data()).context;
         });
@@ -420,7 +420,7 @@ void WebPage::getPlatformEditorState(LocalFrame& frame, EditorState& result) con
                 auto& style = editableRoot->renderer()->style();
                 postLayoutData.caretColor = CaretBase::computeCaretColor(style, editableRoot.get());
                 postLayoutData.hasCaretColorAuto = style.hasAutoCaretColor();
-                postLayoutData.hasGrammarDocumentMarkers = editableRoot->document().markers().hasMarkers(makeRangeSelectingNodeContents(*editableRoot), DocumentMarker::Type::Grammar);
+                postLayoutData.hasGrammarDocumentMarkers = editableRoot->document().markers().hasMarkers(makeRangeSelectingNodeContents(*editableRoot), DocumentMarkerType::Grammar);
             }
         }
 
@@ -1936,11 +1936,38 @@ void WebPage::clearSelectionAfterTappingSelectionHighlightIfNeeded(WebCore::Floa
         clearSelection();
 }
 
+void WebPage::setShouldDrawVisuallyContiguousBidiSelection(bool value)
+{
+    if (m_shouldDrawVisuallyContiguousBidiSelection == value)
+        return;
+
+    m_shouldDrawVisuallyContiguousBidiSelection = value;
+    scheduleFullEditorStateUpdate();
+}
+
 void WebPage::updateSelectionWithTouches(const IntPoint& point, SelectionTouch selectionTouch, bool baseIsStart, CompletionHandler<void(const WebCore::IntPoint&, SelectionTouch, OptionSet<SelectionFlags>)>&& completionHandler)
 {
     RefPtr frame = m_page->checkedFocusController()->focusedOrMainFrame();
     if (!frame)
         return;
+
+    bool shouldExpandBidiSelection = false;
+    if (m_page->settings().visuallyContiguousBidiTextSelectionEnabled()) {
+        switch (selectionTouch) {
+        case SelectionTouch::Started:
+            setShouldDrawVisuallyContiguousBidiSelection(true);
+            break;
+        case SelectionTouch::Moved:
+            break;
+        case SelectionTouch::Ended:
+        case SelectionTouch::EndedMovingForward:
+        case SelectionTouch::EndedMovingBackward:
+        case SelectionTouch::EndedNotMoving:
+            shouldExpandBidiSelection = true;
+            setShouldDrawVisuallyContiguousBidiSelection(false);
+            break;
+        }
+    }
 
     IntPoint pointInDocument = RefPtr(frame->view())->rootViewToContents(point);
     VisiblePosition position = frame->visiblePositionForPoint(pointInDocument);
@@ -1974,6 +2001,12 @@ void WebPage::updateSelectionWithTouches(const IntPoint& point, SelectionTouch s
     case SelectionTouch::Moved:
         std::tie(range, selectionFlipped) = rangeForPointInRootViewCoordinates(*frame, point, baseIsStart, selectionFlippingEnabled());
         break;
+    }
+
+    if (shouldExpandBidiSelection) {
+        range = range ?: frame->selection().selection().toNormalizedRange();
+        if (range)
+            range = adjustToVisuallyContiguousRange(*range);
     }
 
     if (range)
@@ -2025,7 +2058,7 @@ void WebPage::extendSelectionForReplacement(CompletionHandler<void()>&& completi
     if (!container)
         return;
 
-    auto markerRanges = document->markers().markersFor(*container, { DocumentMarker::Type::DictationAlternatives, DocumentMarker::Type::CorrectionIndicator }).map([&](auto& marker) {
+    auto markerRanges = document->markers().markersFor(*container, { DocumentMarkerType::DictationAlternatives, DocumentMarkerType::CorrectionIndicator }).map([&](auto& marker) {
         return makeSimpleRange(*container, *marker);
     });
 
@@ -3465,12 +3498,18 @@ static void populateCaretContext(const HitTestResult& hitTestResult, const Inter
     info.lineCaretExtent = view->contentsToRootView(lineRect);
     info.caretLength = info.isVerticalWritingMode ? info.lineCaretExtent.width() : info.lineCaretExtent.height();
 
+    auto cursorTypeIs = [](const auto& maybeCursor, auto type) {
+        return maybeCursor.transform([type](const auto& cursor) {
+            return cursor.type() == type;
+        }).value_or(false);
+    };
+
     bool lineContainsRequestPoint = info.lineCaretExtent.contains(request.point);
     // Force an I-beam cursor if the page didn't request a hand, and we're inside the bounds of the line.
-    if (lineContainsRequestPoint && info.cursor->type() != Cursor::Type::Hand && canForceCaretForPosition(position))
+    if (lineContainsRequestPoint && !cursorTypeIs(info.cursor, Cursor::Type::Hand) && canForceCaretForPosition(position))
         info.cursor = Cursor::fromType(Cursor::Type::IBeam);
 
-    if (!lineContainsRequestPoint && info.cursor->type() == Cursor::Type::IBeam) {
+    if (!lineContainsRequestPoint && cursorTypeIs(info.cursor, Cursor::Type::IBeam)) {
         auto approximateLineRectInContentCoordinates = renderer->absoluteBoundingBoxRect();
         approximateLineRectInContentCoordinates.setHeight(renderer->style().computedLineHeight());
         info.lineCaretExtent = view->contentsToRootView(approximateLineRectInContentCoordinates);
@@ -5396,7 +5435,7 @@ void WebPage::requestDocumentEditingContext(DocumentEditingContextRequest&& requ
 
     if (request.options.contains(DocumentEditingContextRequest::Options::AutocorrectedRanges)) {
         if (auto contextRange = makeSimpleRange(contextBeforeStart, contextAfterEnd)) {
-            auto ranges = frame->document()->markers().rangesForMarkersInRange(*contextRange, DocumentMarker::Type::CorrectionIndicator);
+            auto ranges = frame->document()->markers().rangesForMarkersInRange(*contextRange, DocumentMarkerType::CorrectionIndicator);
             context.autocorrectedRanges = ranges.map([&] (auto& range) {
                 auto characterRangeInContext = characterRange(*contextRange, range);
                 return DocumentEditingContext::Range { characterRangeInContext.location, characterRangeInContext.length };

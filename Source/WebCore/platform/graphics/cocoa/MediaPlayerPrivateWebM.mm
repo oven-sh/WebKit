@@ -430,7 +430,7 @@ void MediaPlayerPrivateWebM::seekInternal()
         if (RefPtr protectedThis = weakThis.get()) {
             MediaTime synchronizerTime = PAL::toMediaTime([m_synchronizer currentTime]);
 
-            m_isSynchronizerSeeking = synchronizerTime != m_lastSeekTime;
+            m_isSynchronizerSeeking = std::abs((synchronizerTime - m_lastSeekTime).toMicroseconds()) > 1000;
             ALWAYS_LOG(LOGIDENTIFIER, "seekedTime = ", m_lastSeekTime, ", synchronizerTime = ", synchronizerTime, "synchronizer seeking = ", m_isSynchronizerSeeking);
 
             if (!m_isSynchronizerSeeking) {
@@ -449,7 +449,7 @@ void MediaPlayerPrivateWebM::seekInternal()
                 auto trackId = trackBufferPair.first;
 
                 trackBuffer.setNeedsReenqueueing(true);
-                reenqueueMediaForTime(trackBuffer, trackId, m_lastSeekTime);
+                reenqueueMediaForTime(trackBuffer, trackId, m_lastSeekTime, NeedsFlush::No);
             }
 
             maybeCompleteSeek();
@@ -652,9 +652,10 @@ bool MediaPlayerPrivateWebM::updateLastImage()
     if (m_isGatheringVideoFrameMetadata) {
         if (!m_lastPixelBuffer)
             return false;
-        if (m_sampleCount == m_lastConvertedSampleCount)
+        auto sampleCount = m_videoRenderer ? m_videoRenderer->totalDisplayedFrames() : 0;
+        if (sampleCount == m_lastConvertedSampleCount)
             return false;
-        m_lastConvertedSampleCount = m_sampleCount;
+        m_lastConvertedSampleCount = sampleCount;
     } else if (!updateLastPixelBuffer())
         return false;
 
@@ -746,7 +747,6 @@ void MediaPlayerPrivateWebM::setHasAvailableVideoFrame(bool hasAvailableVideoFra
     if (auto player = m_player.get())
         player->firstVideoFrameAvailable();
 
-    checkNewVideoFrameMetadata(currentTime());
     if (m_seekState == WaitingForAvailableFame)
         maybeCompleteSeek();
 
@@ -942,11 +942,8 @@ void MediaPlayerPrivateWebM::enqueueSample(Ref<MediaSample>&& sample, TrackID tr
         if (formatSize != m_naturalSize)
             setNaturalSize(formatSize);
 
-        if (!m_videoRenderer)
-            return;
-
-        m_videoRenderer->enqueueSample(sample);
-        registerNotifyWhenHasAvailableVideoFrame();
+        if (m_videoRenderer)
+            m_videoRenderer->enqueueSample(sample);
 
         return;
     }
@@ -1558,14 +1555,6 @@ void MediaPlayerPrivateWebM::clearTracks()
     m_audioTracks.clear();
 }
 
-void MediaPlayerPrivateWebM::registerNotifyWhenHasAvailableVideoFrame()
-{
-    m_videoRenderer->notifyWhenHasAvailableVideoFrame([weakThis = WeakPtr { *this }] {
-        if (RefPtr protectedThis = weakThis.get())
-            protectedThis->setHasAvailableVideoFrame(true);
-    });
-}
-
 void MediaPlayerPrivateWebM::startVideoFrameMetadataGathering()
 {
     ASSERT(m_synchronizer);
@@ -1578,7 +1567,7 @@ void MediaPlayerPrivateWebM::stopVideoFrameMetadataGathering()
     m_videoFrameMetadata = { };
 }
 
-void MediaPlayerPrivateWebM::checkNewVideoFrameMetadata(MediaTime currentTime)
+void MediaPlayerPrivateWebM::checkNewVideoFrameMetadata(const MediaTime& presentationTime, double displayTime)
 {
     auto player = m_player.get();
     if (!player)
@@ -1587,19 +1576,17 @@ void MediaPlayerPrivateWebM::checkNewVideoFrameMetadata(MediaTime currentTime)
     if (!updateLastPixelBuffer())
         return;
 
-    auto presentationTime = m_lastPixelBufferPresentationTimeStamp;
-    if (!presentationTime.isValid())
-        presentationTime = currentTime;
-
-    auto displayTime = MonotonicTime::now().secondsSinceEpoch().seconds() - (currentTime - presentationTime).toDouble();
-
+#ifndef NDEBUG
+    if (m_lastPixelBufferPresentationTimeStamp != presentationTime)
+        ALWAYS_LOG(LOGIDENTIFIER, "notification of new frame delayed retrieved:", m_lastPixelBufferPresentationTimeStamp, " expected:", presentationTime);
+#endif
     VideoFrameMetadata metadata;
     metadata.width = m_naturalSize.width();
     metadata.height = m_naturalSize.height();
-    metadata.presentedFrames = ++m_sampleCount;
+    metadata.presentedFrames = m_videoRenderer->totalDisplayedFrames();
     metadata.presentationTime = displayTime;
     metadata.expectedDisplayTime = displayTime;
-    metadata.mediaTime = presentationTime.toDouble();
+    metadata.mediaTime = (m_lastPixelBufferPresentationTimeStamp.isValid() ? m_lastPixelBufferPresentationTimeStamp : presentationTime).toDouble();
 
     m_videoFrameMetadata = metadata;
     player->onNewVideoFrameMetadata(WTFMove(metadata), m_lastPixelBuffer.get());
@@ -1906,11 +1893,20 @@ void MediaPlayerPrivateWebM::setVideoRenderer(WebSampleBufferVideoRendering *ren
     m_videoRenderer->setPrefersDecompressionSession(true);
     m_videoRenderer->setTimebase([m_synchronizer timebase]);
     m_videoRenderer->notifyWhenDecodingErrorOccurred([weakThis = WeakPtr { *this }](OSStatus) {
-        if (RefPtr protectedThis = weakThis.get()) {
-            protectedThis->setNetworkState(MediaPlayer::NetworkState::DecodeError);
-            protectedThis->setReadyState(MediaPlayer::ReadyState::HaveNothing);
-            protectedThis->m_errored = true;
-        }
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis)
+            return;
+        protectedThis->setNetworkState(MediaPlayer::NetworkState::DecodeError);
+        protectedThis->setReadyState(MediaPlayer::ReadyState::HaveNothing);
+        protectedThis->m_errored = true;
+    });
+    m_videoRenderer->notifyWhenHasAvailableVideoFrame([weakThis = WeakPtr { *this }](const MediaTime& presentationTime, double displayTime) {
+        RefPtr protectedThis = weakThis.get();
+        if (!protectedThis)
+            return;
+        protectedThis->setHasAvailableVideoFrame(true);
+        if (protectedThis->m_isGatheringVideoFrameMetadata)
+            protectedThis->checkNewVideoFrameMetadata(presentationTime, displayTime);
     });
     configureVideoRenderer(*m_videoRenderer);
 }
@@ -1989,6 +1985,20 @@ void MediaPlayerPrivateWebM::isInFullscreenOrPictureInPictureChanged(bool isInFu
 #else
     UNUSED_PARAM(isInFullscreenOrPictureInPicture);
 #endif
+}
+
+std::optional<VideoPlaybackQualityMetrics> MediaPlayerPrivateWebM::videoPlaybackQualityMetrics()
+{
+    if (!m_videoRenderer)
+        return std::nullopt;
+
+    return VideoPlaybackQualityMetrics {
+        m_videoRenderer->totalVideoFrames(),
+        m_videoRenderer->droppedVideoFrames(),
+        m_videoRenderer->corruptedVideoFrames(),
+        m_videoRenderer->totalFrameDelay().toDouble(),
+        m_videoRenderer->totalDisplayedFrames()
+    };
 }
 
 } // namespace WebCore

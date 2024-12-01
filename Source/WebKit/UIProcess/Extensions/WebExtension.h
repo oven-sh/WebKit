@@ -30,6 +30,7 @@
 #include "APIData.h"
 #include "APIObject.h"
 #include "WebExtensionContentWorldType.h"
+#include "WebExtensionLocalization.h"
 #include "WebExtensionMatchPattern.h"
 #include <WebCore/FloatSize.h>
 #include <WebCore/Icon.h>
@@ -219,7 +220,7 @@ public:
     double manifestVersion();
     bool supportsManifestVersion(double version) { ASSERT(version > 2); return manifestVersion() >= version; }
 
-    Ref<API::Data> serializeLocalization();
+    RefPtr<API::Data> serializeLocalization();
 
     NSBundle *bundle() const { return m_bundle.get(); }
     SecStaticCodeRef bundleStaticCode() const;
@@ -236,7 +237,7 @@ public:
     String resourceStringForPath(const String&, RefPtr<API::Error>&, CacheResult = CacheResult::No, SuppressNotFoundErrors = SuppressNotFoundErrors::No);
     RefPtr<API::Data> resourceDataForPath(const String&, RefPtr<API::Error>&, CacheResult = CacheResult::No, SuppressNotFoundErrors = SuppressNotFoundErrors::No);
 
-    _WKWebExtensionLocalization *localization();
+    RefPtr<WebExtensionLocalization> localization();
 
     const Vector<String>& supportedLocales();
     const String& defaultLocale();
@@ -394,7 +395,7 @@ private:
 
     String m_defaultLocale;
     Vector<String> m_supportedLocales;
-    RetainPtr<_WKWebExtensionLocalization> m_localization;
+    RefPtr<WebExtensionLocalization> m_localization;
 
     Vector<Ref<API::Error>> m_errors;
 

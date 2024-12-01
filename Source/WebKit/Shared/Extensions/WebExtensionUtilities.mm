@@ -37,7 +37,13 @@
 #import "Logging.h"
 #import "WebExtensionAPITabs.h"
 #import "WebExtensionMessageSenderParameters.h"
+#import "WebFrame.h"
+#import <WebCore/LocalFrame.h>
 #import <objc/runtime.h>
+
+#if PLATFORM(IOS_FAMILY)
+#import <UIKit/UIKit.h>
+#endif
 
 namespace WebKit {
 

@@ -33,6 +33,7 @@
 #include <WebCore/FloatPoint.h>
 #include <WebCore/IntPoint.h>
 #include <WebCore/IntSize.h>
+#include <wtf/RefCounted.h>
 #include <wtf/WeakHashMap.h>
 
 namespace WebKit {
@@ -43,13 +44,15 @@ class RemoteScrollingCoordinatorProxy;
 class RemoteScrollingCoordinatorProxy;
 class RemoteScrollingCoordinatorTransaction;
 
-class RemoteLayerTreeDrawingAreaProxy : public DrawingAreaProxy {
+class RemoteLayerTreeDrawingAreaProxy : public DrawingAreaProxy, public RefCounted<RemoteLayerTreeDrawingAreaProxy> {
     WTF_MAKE_TZONE_ALLOCATED(RemoteLayerTreeDrawingAreaProxy);
     WTF_MAKE_NONCOPYABLE(RemoteLayerTreeDrawingAreaProxy);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RemoteLayerTreeDrawingAreaProxy);
 public:
-    RemoteLayerTreeDrawingAreaProxy(WebPageProxy&, WebProcessProxy&);
     virtual ~RemoteLayerTreeDrawingAreaProxy();
+
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
 
     virtual bool isRemoteLayerTreeDrawingAreaProxyMac() const { return false; }
     virtual bool isRemoteLayerTreeDrawingAreaProxyIOS() const { return false; }
@@ -86,6 +89,8 @@ public:
     unsigned countOfTransactionsWithNonEmptyLayerChanges() const { return m_countOfTransactionsWithNonEmptyLayerChanges; }
 
 protected:
+    RemoteLayerTreeDrawingAreaProxy(WebPageProxy&, WebProcessProxy&);
+
     void updateDebugIndicatorPosition();
 
     bool shouldCoalesceVisualEditorStateUpdates() const override { return true; }

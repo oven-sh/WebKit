@@ -28,18 +28,24 @@
 #if !PLATFORM(IOS_FAMILY)
 
 #include "DrawingAreaProxy.h"
+#include <wtf/RefCounted.h>
 
 namespace WebKit {
 
-class TiledCoreAnimationDrawingAreaProxy final : public DrawingAreaProxy {
+class TiledCoreAnimationDrawingAreaProxy final : public DrawingAreaProxy, public RefCounted<TiledCoreAnimationDrawingAreaProxy> {
     WTF_MAKE_TZONE_ALLOCATED(TiledCoreAnimationDrawingAreaProxy);
     WTF_MAKE_NONCOPYABLE(TiledCoreAnimationDrawingAreaProxy);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(TiledCoreAnimationDrawingAreaProxy);
 public:
-    TiledCoreAnimationDrawingAreaProxy(WebPageProxy&, WebProcessProxy&);
+    static Ref<TiledCoreAnimationDrawingAreaProxy> create(WebPageProxy&, WebProcessProxy&);
     virtual ~TiledCoreAnimationDrawingAreaProxy();
 
+    void ref() const final { RefCounted::ref(); }
+    void deref() const final { RefCounted::deref(); }
+
 private:
+    TiledCoreAnimationDrawingAreaProxy(WebPageProxy&, WebProcessProxy&);
+
     // DrawingAreaProxy
     void deviceScaleFactorDidChange(CompletionHandler<void()>&&) override;
     void sizeDidChange() override;

@@ -373,7 +373,6 @@ webkit.org/b/142258 fast/css/object-fit/object-fit-canvas.html [ Pass ImageOnlyF
 
 # --- Compositing ----
 css3/filters/composited-during-transition-layertree.html
-webkit.org/b/95622 css3/filters/composited-during-animation-layertree.html [ Pass Failure ]
 
 platform/mac/fast/text/combining-character-sequence-fallback.html [ Pass Failure ]
 
@@ -655,6 +654,9 @@ webkit.org/b/112492 media/track/track-prefer-captions.html [ Skip ]
 webkit.org/b/259658 http/tests/media/video-play-stall.html [ Pass Failure ]
 webkit.org/b/136708 http/tests/media/video-play-stall-seek.html
 webkit.org/b/136708 media/media-fullscreen-not-in-document.html
+
+webkit.org/b/283448 media/media-rvfc-paused-mp4.html [ Failure ]
+webkit.org/b/283448 media/media-rvfc-paused-offscreen-mp4.html [ Failure ]
 
 webkit.org/b/236722 http/tests/media/video-play-waiting.html [ Timeout ]
 
@@ -1195,7 +1197,6 @@ fast/canvas/canvas-currentColor.html [ Failure ]
 fast/canvas/set-colors.html [ Failure ]
 
 # WebCryptoAPI features that enabled only for High Sierra/iOS 11
-imported/w3c/web-platform-tests/WebCryptoAPI/wrapKey_unwrapKey/wrapKey_unwrapKey.https.worker.html [ Pass Failure ]
 crypto/subtle/rsa-pss-generate-export-key-jwk-sha1.html [ Pass ]
 crypto/subtle/rsa-pss-generate-export-key-jwk-sha224.html [ Pass ]
 crypto/subtle/rsa-pss-generate-export-key-jwk-sha256.html [ Pass ]
@@ -2443,9 +2444,6 @@ webanimations/scroll-timeline-clamped-current-time-while-rubber-banding-mac.html
 
 # macOS-only test.
 media/webkit-media-controls-not-visible-after-exiting-fullscreen.html [ Pass ]
-
-# webkit.org/b/281765 PROGRESSION (285251@main): [ macOS iOS ] imported/w3c/web-platform-tests/navigation-api/navigate-event/cross-origin-traversal-redirect.html is a constant failure. 
-imported/w3c/web-platform-tests/navigation-api/navigate-event/cross-origin-traversal-redirect.html [ Skip ]
 
 # Modern AVContentKeySession is only available on Sonoma
 [ Ventura Sonoma ] http/tests/media/fairplay/legacy-fairplay-mse-muxed-nowait.html [ Skip ]

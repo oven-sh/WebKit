@@ -23,7 +23,6 @@
 
 #pragma once
 
-#include "DocumentMarker.h"
 #include "RenderElement.h"
 #include "RenderTextLineBoxes.h"
 #include "Text.h"
@@ -37,6 +36,7 @@ class Font;
 class LegacyInlineTextBox;
 struct GlyphOverflow;
 struct WordTrailingSpace;
+enum class DocumentMarkerType : uint32_t;
 
 namespace Layout {
 class InlineTextBox;
@@ -187,7 +187,7 @@ public:
     
     bool containsOnlyCSSWhitespace(unsigned from, unsigned length) const;
 
-    Vector<std::pair<unsigned, unsigned>> contentRangesBetweenOffsetsForType(const DocumentMarker::Type, unsigned startOffset, unsigned endOffset) const;
+    Vector<std::pair<unsigned, unsigned>> contentRangesBetweenOffsetsForType(const DocumentMarkerType, unsigned startOffset, unsigned endOffset) const;
 
     RenderInline* inlineWrapperForDisplayContents();
     void setInlineWrapperForDisplayContents(RenderInline*);
@@ -211,7 +211,7 @@ protected:
     void willBeDestroyed() override;
 
     virtual void setRenderedText(const String&);
-    virtual UChar previousCharacter() const;
+    virtual Vector<UChar> previousCharacter() const;
 
     virtual void setTextInternal(const String&, bool force);
 
@@ -287,8 +287,10 @@ private:
     unsigned m_hasSecureTextTimer : 1 { false };
 };
 
-String applyTextTransform(const RenderStyle&, const String&, UChar previousCharacter);
-String capitalize(const String&, UChar previousCharacter);
+String applyTextTransform(const RenderStyle&, const String&, Vector<UChar> previousCharacter);
+String applyTextTransform(const RenderStyle&, const String&);
+String capitalize(const String&, Vector<UChar> previousCharacter);
+String capitalize(const String&);
 TextBreakIterator::LineMode::Behavior mapLineBreakToIteratorMode(LineBreak);
 TextBreakIterator::ContentAnalysis mapWordBreakToContentAnalysis(WordBreak);
 

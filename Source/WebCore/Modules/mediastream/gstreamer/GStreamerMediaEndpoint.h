@@ -117,9 +117,12 @@ public:
 
     void connectIncomingTrack(WebRTCTrackData&);
 
+    void startRTCLogs();
+    void stopRTCLogs();
+
 protected:
 #if !RELEASE_LOG_DISABLED
-    void onStatsDelivered(GUniquePtr<GstStructure>&&);
+    void onStatsDelivered(const GstStructure*);
 #endif
 
 private:
@@ -212,9 +215,11 @@ private:
 
     bool m_shouldIgnoreNegotiationNeededSignal { false };
 
-    Vector<String> m_pendingIncomingTracks;
+    Vector<RefPtr<MediaStreamTrackPrivate>> m_pendingIncomingTracks;
 
     Vector<RefPtr<RealtimeOutgoingMediaSourceGStreamer>> m_unlinkedOutgoingSources;
+
+    bool m_isGatheringRTCLogs { false };
 };
 
 } // namespace WebCore

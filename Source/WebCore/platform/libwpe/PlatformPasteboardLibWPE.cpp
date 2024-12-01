@@ -56,11 +56,7 @@ void PlatformPasteboard::getTypes(Vector<String>& types) const
 {
     struct wpe_pasteboard_string_vector pasteboardTypes = { nullptr, 0 };
     wpe_pasteboard_get_types(m_pasteboard, &pasteboardTypes);
-
-    for (unsigned i = 0; i < pasteboardTypes.length; ++i) {
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // WPE port
-        auto& typeString = pasteboardTypes.strings[i];
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    for (auto& typeString : unsafeMakeSpan(pasteboardTypes.strings, pasteboardTypes.length)) {
         const auto length = std::min(static_cast<size_t>(typeString.length), std::numeric_limits<size_t>::max());
         types.append(String({ typeString.data, length }));
     }
@@ -84,23 +80,21 @@ String PlatformPasteboard::readString(size_t, const String& type) const
 
 void PlatformPasteboard::write(const PasteboardWebContent& content)
 {
-    static const char plainText[] = "text/plain;charset=utf-8";
-    static const char htmlText[] = "text/html;charset=utf-8";
+    static constexpr auto plainText = "text/plain;charset=utf-8"_s;
+    static constexpr auto htmlText = "text/html;charset=utf-8"_s;
 
     CString textString = content.text.utf8();
     CString markupString = content.markup.utf8();
 
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // WPE port
-    struct wpe_pasteboard_string_pair pairs[] = {
+    std::array<struct wpe_pasteboard_string_pair, 2> pairs = { {
         { { nullptr, 0 }, { nullptr, 0 } },
         { { nullptr, 0 }, { nullptr, 0 } },
-    };
-    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    } };
     wpe_pasteboard_string_initialize(&pairs[0].type, plainText, strlen(plainText));
     wpe_pasteboard_string_initialize(&pairs[0].string, textString.data(), textString.length());
     wpe_pasteboard_string_initialize(&pairs[1].type, htmlText, strlen(htmlText));
     wpe_pasteboard_string_initialize(&pairs[1].string, markupString.data(), markupString.length());
-    struct wpe_pasteboard_string_map map = { pairs, 2 };
+    struct wpe_pasteboard_string_map map = { pairs.data(), pairs.size() };
 
     wpe_pasteboard_write(m_pasteboard, &map);
 

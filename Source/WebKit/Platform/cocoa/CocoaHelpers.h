@@ -23,6 +23,8 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#if ENABLE(WK_WEB_EXTENSIONS)
+
 #import <WebCore/Icon.h>
 #import <wtf/HashSet.h>
 #import <wtf/OptionSet.h>
@@ -155,3 +157,5 @@ HashSet<String> toImpl(NSSet *);
 HashMap<String, Ref<API::Data>> toDataMap(NSDictionary *);
 
 } // namespace WebKit
+
+#endif // ENABLE(WK_WEB_EXTENSIONS)

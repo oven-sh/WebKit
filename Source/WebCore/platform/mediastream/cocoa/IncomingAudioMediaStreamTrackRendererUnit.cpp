@@ -104,7 +104,7 @@ void IncomingAudioMediaStreamTrackRendererUnit::addSource(const String& deviceID
         if (!shouldStart)
             return;
 
-        if (!!m_outputStreamDescription) {
+        if (!m_outputStreamDescription) {
             m_outputStreamDescription = outputDescription;
             m_audioBufferList = makeUnique<WebAudioBufferList>(*m_outputStreamDescription);
             m_sampleCount = m_outputStreamDescription->sampleRate() / 100;

@@ -148,22 +148,28 @@ Vector<DMABufRendererBufferFormat> AcceleratedBackingStoreDMABuf::preferredBuffe
 }
 #endif
 
-std::unique_ptr<AcceleratedBackingStoreDMABuf> AcceleratedBackingStoreDMABuf::create(WebPageProxy& webPage)
+Ref<AcceleratedBackingStoreDMABuf> AcceleratedBackingStoreDMABuf::create(WebPageProxy& webPage)
 {
     ASSERT(checkRequirements());
-    return std::unique_ptr<AcceleratedBackingStoreDMABuf>(new AcceleratedBackingStoreDMABuf(webPage));
+    return adoptRef(*new AcceleratedBackingStoreDMABuf(webPage));
 }
 
 AcceleratedBackingStoreDMABuf::AcceleratedBackingStoreDMABuf(WebPageProxy& webPage)
     : AcceleratedBackingStore(webPage)
-    , m_fenceMonitor([this] { gtk_widget_queue_draw(m_webPage.viewWidget()); })
+    , m_fenceMonitor([this] {
+        if (m_webPage)
+            gtk_widget_queue_draw(m_webPage->viewWidget());
+    })
+    , m_legacyMainFrameProcess(webPage.legacyMainFrameProcess())
 {
 }
 
 AcceleratedBackingStoreDMABuf::~AcceleratedBackingStoreDMABuf()
 {
-    if (m_surfaceID)
-        m_webPage.legacyMainFrameProcess().removeMessageReceiver(Messages::AcceleratedBackingStoreDMABuf::messageReceiverName(), m_surfaceID);
+    if (m_surfaceID) {
+        if (RefPtr legacyMainFrameProcess = m_legacyMainFrameProcess.get())
+            legacyMainFrameProcess->removeMessageReceiver(Messages::AcceleratedBackingStoreDMABuf::messageReceiverName(), m_surfaceID);
+    }
 
     if (m_gdkGLContext) {
         gdk_gl_context_make_current(m_gdkGLContext.get());
@@ -173,7 +179,7 @@ AcceleratedBackingStoreDMABuf::~AcceleratedBackingStoreDMABuf()
 }
 
 AcceleratedBackingStoreDMABuf::Buffer::Buffer(WebPageProxy& webPage, uint64_t id, uint64_t surfaceID, const WebCore::IntSize& size, DMABufRendererBufferFormat::Usage usage)
-    : m_webPage(&webPage)
+    : m_webPage(webPage)
     , m_id(id)
     , m_surfaceID(surfaceID)
     , m_size(size)
@@ -552,29 +558,37 @@ void AcceleratedBackingStoreDMABuf::BufferSHM::release()
 
 void AcceleratedBackingStoreDMABuf::didCreateBuffer(uint64_t id, const WebCore::IntSize& size, uint32_t format, Vector<WTF::UnixFileDescriptor>&& fds, Vector<uint32_t>&& offsets, Vector<uint32_t>&& strides, uint64_t modifier, DMABufRendererBufferFormat::Usage usage)
 {
+    RefPtr webPage = m_webPage.get();
+    if (!webPage)
+        return;
+
 #if USE(GBM)
     if (!Display::singleton().glDisplayIsSharedWithGtk()) {
         ASSERT(fds.size() == 1 && strides.size() == 1);
-        if (auto buffer = BufferGBM::create(m_webPage, id, m_surfaceID, size, usage, format, WTFMove(fds[0]), strides[0]))
+        if (auto buffer = BufferGBM::create(*webPage, id, m_surfaceID, size, usage, format, WTFMove(fds[0]), strides[0]))
             m_buffers.add(id, WTFMove(buffer));
         return;
     }
 #endif
 
 #if GTK_CHECK_VERSION(4, 13, 4)
-    if (auto buffer = BufferDMABuf::create(m_webPage, id, m_surfaceID, size, usage, format, WTFMove(fds), WTFMove(offsets), WTFMove(strides), modifier)) {
+    if (auto buffer = BufferDMABuf::create(*webPage, id, m_surfaceID, size, usage, format, WTFMove(fds), WTFMove(offsets), WTFMove(strides), modifier)) {
         m_buffers.add(id, WTFMove(buffer));
         return;
     }
 #endif
 
-    if (auto buffer = BufferEGLImage::create(m_webPage, id, m_surfaceID, size, usage, format, WTFMove(fds), WTFMove(offsets), WTFMove(strides), modifier))
+    if (auto buffer = BufferEGLImage::create(*webPage, id, m_surfaceID, size, usage, format, WTFMove(fds), WTFMove(offsets), WTFMove(strides), modifier))
         m_buffers.add(id, WTFMove(buffer));
 }
 
 void AcceleratedBackingStoreDMABuf::didCreateBufferSHM(uint64_t id, WebCore::ShareableBitmap::Handle&& handle)
 {
-    if (auto buffer = BufferSHM::create(m_webPage, id, m_surfaceID, WebCore::ShareableBitmap::create(WTFMove(handle), WebCore::SharedMemory::Protection::ReadOnly)))
+    RefPtr webPage = m_webPage.get();
+    if (!webPage)
+        return;
+
+    if (auto buffer = BufferSHM::create(*webPage, id, m_surfaceID, WebCore::ShareableBitmap::create(WTFMove(handle), WebCore::SharedMemory::Protection::ReadOnly)))
         m_buffers.add(id, WTFMove(buffer));
 }
 
@@ -599,7 +613,8 @@ void AcceleratedBackingStoreDMABuf::frame(uint64_t bufferID, WebCore::Region&& d
 
 void AcceleratedBackingStoreDMABuf::frameDone()
 {
-    m_webPage.legacyMainFrameProcess().send(Messages::AcceleratedSurfaceDMABuf::FrameDone(), m_surfaceID);
+    if (RefPtr legacyMainFrameProcess = m_legacyMainFrameProcess.get())
+        legacyMainFrameProcess->send(Messages::AcceleratedSurfaceDMABuf::FrameDone(), m_surfaceID);
 }
 
 void AcceleratedBackingStoreDMABuf::unrealize()
@@ -618,11 +633,15 @@ void AcceleratedBackingStoreDMABuf::ensureGLContext()
     if (m_gdkGLContext)
         return;
 
+    RefPtr webPage = m_webPage.get();
+    if (!webPage)
+        return;
+
     GUniqueOutPtr<GError> error;
 #if USE(GTK4)
-    m_gdkGLContext = adoptGRef(gdk_surface_create_gl_context(gtk_native_get_surface(gtk_widget_get_native(m_webPage.viewWidget())), &error.outPtr()));
+    m_gdkGLContext = adoptGRef(gdk_surface_create_gl_context(gtk_native_get_surface(gtk_widget_get_native(webPage->viewWidget())), &error.outPtr()));
 #else
-    m_gdkGLContext = adoptGRef(gdk_window_create_gl_context(gtk_widget_get_window(m_webPage.viewWidget()), &error.outPtr()));
+    m_gdkGLContext = adoptGRef(gdk_window_create_gl_context(gtk_widget_get_window(webPage->viewWidget()), &error.outPtr()));
 #endif
     if (!m_gdkGLContext)
         g_error("GDK is not able to create a GL context: %s.", error->message);
@@ -648,12 +667,15 @@ void AcceleratedBackingStoreDMABuf::update(const LayerTreeContext& context)
             buffer->setSurfaceID(0);
         }
 
-        m_webPage.legacyMainFrameProcess().removeMessageReceiver(Messages::AcceleratedBackingStoreDMABuf::messageReceiverName(), m_surfaceID);
+        if (RefPtr legacyMainFrameProcess = m_legacyMainFrameProcess.get())
+            legacyMainFrameProcess->removeMessageReceiver(Messages::AcceleratedBackingStoreDMABuf::messageReceiverName(), m_surfaceID);
     }
 
     m_surfaceID = context.contextID;
-    if (m_surfaceID)
-        m_webPage.legacyMainFrameProcess().addMessageReceiver(Messages::AcceleratedBackingStoreDMABuf::messageReceiverName(), m_surfaceID, *this);
+    if (m_surfaceID && m_webPage) {
+        m_legacyMainFrameProcess = m_webPage->legacyMainFrameProcess();
+        Ref { *m_legacyMainFrameProcess }->addMessageReceiver(Messages::AcceleratedBackingStoreDMABuf::messageReceiverName(), m_surfaceID, *this);
+    }
 }
 
 bool AcceleratedBackingStoreDMABuf::swapBuffersIfNeeded()

@@ -3,7 +3,7 @@
  *           (C) 1999 Antti Koivisto (koivisto@kde.org)
  *           (C) 2000 Dirk Mueller (mueller@kde.org)
  *           (C) 2004 Allan Sandfeld Jensen (kde@carewolf.com)
- * Copyright (C) 2004-2020 Apple Inc. All rights reserved.
+ * Copyright (C) 2004-2024 Apple Inc. All rights reserved.
  * Copyright (C) 2009 Google Inc. All rights reserved.
  * Copyright (C) 2009 Torch Mobile Inc. All rights reserved. (http://www.torchmobile.com/)
  *
@@ -30,6 +30,7 @@
 #include "AXObjectCache.h"
 #include "DocumentInlines.h"
 #include "Editing.h"
+#include "Editor.h"
 #include "ElementAncestorIteratorInlines.h"
 #include "FloatQuad.h"
 #include "FrameSelection.h"
@@ -76,6 +77,7 @@
 #include "RenderView.h"
 #include "RenderWidget.h"
 #include "SVGRenderSupport.h"
+#include "Settings.h"
 #include "StyleResolver.h"
 #include "TransformState.h"
 #include <algorithm>
@@ -94,7 +96,7 @@ namespace WebCore {
 using namespace HTMLNames;
 
 WTF_MAKE_TZONE_OR_ISO_ALLOCATED_IMPL(RenderObject);
-WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(RenderObjectRenderObjectRareData, RenderObject::RenderObjectRareData);
+WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(RenderObject, RenderObjectRareData);
 
 #if ASSERT_ENABLED
 
@@ -1959,7 +1961,7 @@ RefPtr<Node> RenderObject::protectedNodeForHitTest() const
     return nodeForHitTest();
 }
 
-void RenderObject::updateHitTestResult(HitTestResult& result, const LayoutPoint& point)
+void RenderObject::updateHitTestResult(HitTestResult& result, const LayoutPoint& point) const
 {
     if (result.innerNode())
         return;
@@ -2546,7 +2548,7 @@ static bool areOnSameLine(const SelectionGeometry& a, const SelectionGeometry& b
 
 static void makeBidiSelectionVisuallyContiguousIfNeeded(const SimpleRange& range, Vector<SelectionGeometry>& geometries)
 {
-    if (!range.startContainer().document().settings().visuallyContiguousBidiTextSelectionEnabled())
+    if (!range.startContainer().document().editor().shouldDrawVisuallyContiguousBidiSelection())
         return;
 
     FloatPoint selectionStartTop;
@@ -2597,7 +2599,6 @@ static void makeBidiSelectionVisuallyContiguousIfNeeded(const SimpleRange& range
         // For a single line selection, simply merge the end into the start and remove other selection geometries on the same line.
         startGeometry->setQuad({ selectionStartTop, selectionEndTop, selectionEndBottom, selectionStartBottom });
         startGeometry->setContainsEnd(true);
-        startGeometry->setMayAppearLogicallyDiscontiguous(true);
         geometries.append(WTFMove(*startGeometry));
         return;
     }
@@ -2637,7 +2638,6 @@ static void makeBidiSelectionVisuallyContiguousIfNeeded(const SimpleRange& range
         selectionEndBottom = endRect.maxXMaxYCorner();
     }
 
-    startGeometry->setMayAppearLogicallyDiscontiguous(true);
     startGeometry->setQuad({
         selectionStartTop,
         selectionExtents.p2(),
@@ -2645,7 +2645,6 @@ static void makeBidiSelectionVisuallyContiguousIfNeeded(const SimpleRange& range
         selectionStartBottom,
     });
 
-    endGeometry->setMayAppearLogicallyDiscontiguous(true);
     endGeometry->setQuad({
         selectionExtents.p1(),
         selectionEndTop,
@@ -2656,13 +2655,40 @@ static void makeBidiSelectionVisuallyContiguousIfNeeded(const SimpleRange& range
     geometries.appendList({ WTFMove(*startGeometry), WTFMove(*endGeometry) });
 }
 
+static void adjustTextDirectionForCoalescedGeometries(const SimpleRange& range, Vector<SelectionGeometry>& geometries)
+{
+    if (!range.protectedStartContainer()->protectedDocument()->settings().visuallyContiguousBidiTextSelectionEnabled())
+        return;
+
+    auto [start, end] = positionsForRange(range);
+    if (inSameLine(start, end)) {
+        auto direction = primaryDirectionForSingleLineRange(start, end);
+        for (auto& geometry : geometries)
+            geometry.setDirection(direction);
+        return;
+    }
+
+    for (auto& geometry : geometries) {
+        if (geometry.containsStart()) {
+            auto endOfFirstLine = logicalEndOfLine(start).deepEquivalent();
+            geometry.setDirection(primaryDirectionForSingleLineRange(start, endOfFirstLine));
+        }
+
+        if (geometry.containsEnd()) {
+            auto startOfLastLine = logicalStartOfLine(end).deepEquivalent();
+            geometry.setDirection(primaryDirectionForSingleLineRange(startOfLastLine, end));
+        }
+    }
+}
+
 auto RenderObject::collectSelectionGeometriesInternal(const SimpleRange& range) -> SelectionGeometries
 {
     Vector<SelectionGeometry> geometries;
     Vector<SelectionGeometry> newGeometries;
     bool hasFlippedWritingMode = range.start.container->renderer() && range.start.container->renderer()->writingMode().isBlockFlipped();
     bool containsDifferentWritingModes = false;
-    bool hasAnyRightToLeftText = false;
+    bool hasLeftToRightText = false;
+    bool hasRightToLeftText = false;
     for (Ref node : intersectingNodesWithDeprecatedZeroOffsetStartQuirk(range)) {
         CheckedPtr renderer = node->renderer();
         // Only ask leaf render objects for their line box rects.
@@ -2688,7 +2714,9 @@ auto RenderObject::collectSelectionGeometriesInternal(const SimpleRange& range) 
                 if (selectionGeometry.logicalWidth() || selectionGeometry.logicalHeight())
                     geometries.append(selectionGeometry);
                 if (selectionGeometry.direction() == TextDirection::RTL)
-                    hasAnyRightToLeftText = true;
+                    hasRightToLeftText = true;
+                else
+                    hasLeftToRightText = true;
             }
             newGeometries.shrink(0);
         }
@@ -2817,7 +2845,7 @@ auto RenderObject::collectSelectionGeometriesInternal(const SimpleRange& range) 
             selectionGeometry.setLogicalWidth(selectionGeometry.maxX() - selectionGeometry.logicalLeft());
     }
 
-    return { WTFMove(geometries), maxLineNumber, hasAnyRightToLeftText };
+    return { WTFMove(geometries), maxLineNumber, hasRightToLeftText && hasLeftToRightText };
 }
 
 static bool coalesceSelectionGeometryWithAdjacentQuadsIfPossible(SelectionGeometry& current, const SelectionGeometry& next)
@@ -2852,7 +2880,7 @@ static bool coalesceSelectionGeometryWithAdjacentQuadsIfPossible(SelectionGeomet
 
 Vector<SelectionGeometry> RenderObject::collectSelectionGeometries(const SimpleRange& range)
 {
-    auto [geometries, maxLineNumber, hasAnyRightToLeftText] = RenderObject::collectSelectionGeometriesInternal(range);
+    auto [geometries, maxLineNumber, hasBidirectionalText] = RenderObject::collectSelectionGeometriesInternal(range);
     auto numberOfGeometries = geometries.size();
 
     // Union all the rectangles on interior lines (i.e. not first or last).
@@ -2916,8 +2944,10 @@ Vector<SelectionGeometry> RenderObject::collectSelectionGeometries(const SimpleR
         }
     }
 
-    if (hasAnyRightToLeftText)
+    if (hasBidirectionalText) {
         makeBidiSelectionVisuallyContiguousIfNeeded(range, coalescedGeometries);
+        adjustTextDirectionForCoalescedGeometries(range, coalescedGeometries);
+    }
 
     return coalescedGeometries;
 }

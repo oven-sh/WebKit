@@ -877,6 +877,76 @@ void testShuffleShiftAndRotate()
     CHECK(things[5] == 5);
 }
 
+void testRotateFringeClobber()
+{
+    B3::Procedure proc;
+    Code& code = proc.code();
+
+    BasicBlock* root = code.addBlock();
+
+    int32_t things[8];
+    Tmp base = code.newTmp(GP);
+    root->append(Move, nullptr, Arg::bigImm(std::bit_cast<intptr_t>(&things)), base);
+
+    loadConstant(root, 1, Tmp(GPRInfo::regT0));
+    loadConstant(root, 2, Tmp(GPRInfo::regT1));
+    loadConstant(root, 3, Tmp(GPRInfo::regT2));
+    loadConstant(root, 4, Tmp(GPRInfo::regT3));
+    loadConstant(root, 5, Tmp(GPRInfo::regT4));
+    loadConstant(root, 6, Tmp(GPRInfo::regT5));
+    loadConstant(root, 7, Tmp(GPRInfo::regT6));
+    loadConstant(root, 8, Tmp(GPRInfo::regT7));
+    root->append(
+        Shuffle, nullptr,
+        Tmp(GPRInfo::regT0), Tmp(GPRInfo::regT1), Arg::widthArg(Width32),
+        Tmp(GPRInfo::regT1), Tmp(GPRInfo::regT2), Arg::widthArg(Width32),
+        Tmp(GPRInfo::regT2), Tmp(GPRInfo::regT0), Arg::widthArg(Width32),
+        Tmp(GPRInfo::regT2), Tmp(GPRInfo::regT3), Arg::widthArg(Width32),
+        Tmp(GPRInfo::regT2), Tmp(GPRInfo::regT4), Arg::widthArg(Width32),
+        Tmp(GPRInfo::regT2), Tmp(GPRInfo::regT5), Arg::widthArg(Width32),
+        Tmp(GPRInfo::regT2), Tmp(GPRInfo::regT6), Arg::widthArg(Width32),
+        Tmp(GPRInfo::regT3), Tmp(GPRInfo::regT7), Arg::widthArg(Width32));
+
+    root->append(Move32, nullptr, Tmp(GPRInfo::regT0), Arg::addr(base, 0 * sizeof(int32_t)));
+    root->append(Move32, nullptr, Tmp(GPRInfo::regT1), Arg::addr(base, 1 * sizeof(int32_t)));
+    root->append(Move32, nullptr, Tmp(GPRInfo::regT2), Arg::addr(base, 2 * sizeof(int32_t)));
+    root->append(Move32, nullptr, Tmp(GPRInfo::regT3), Arg::addr(base, 3 * sizeof(int32_t)));
+    root->append(Move32, nullptr, Tmp(GPRInfo::regT4), Arg::addr(base, 4 * sizeof(int32_t)));
+    root->append(Move32, nullptr, Tmp(GPRInfo::regT5), Arg::addr(base, 5 * sizeof(int32_t)));
+    root->append(Move32, nullptr, Tmp(GPRInfo::regT6), Arg::addr(base, 6 * sizeof(int32_t)));
+    root->append(Move32, nullptr, Tmp(GPRInfo::regT7), Arg::addr(base, 7 * sizeof(int32_t)));
+    root->append(Move, nullptr, Arg::imm(0), Tmp(GPRInfo::returnValueGPR));
+    root->append(Ret32, nullptr, Tmp(GPRInfo::returnValueGPR));
+
+    memset(things, 0, sizeof(things));
+
+    // Make sure no scratches are available.
+    for (auto reg : RegisterSetBuilder::allGPRs()) {
+        if (reg == GPRInfo::regT0
+            || reg == GPRInfo::regT1
+            || reg == GPRInfo::regT2
+            || reg == GPRInfo::regT3
+            || reg == GPRInfo::regT4
+            || reg == GPRInfo::regT5
+            || reg == GPRInfo::regT6
+            || reg == GPRInfo::regT7
+            || reg == GPRInfo::regCS0)
+            continue;
+        code.pinRegister(reg);
+    }
+
+    CHECK(!compileAndRun<int>(proc));
+
+    CHECK(things[0] == 2 + 1);
+    CHECK(things[1] == 0 + 1);
+    CHECK(things[2] == 1 + 1);
+    CHECK(things[3] == 2 + 1);
+    CHECK(things[4] == 2 + 1);
+    CHECK(things[5] == 2 + 1);
+    CHECK(things[6] == 2 + 1);
+    CHECK(things[7] == 3 + 1);
+}
+
 void testShuffleShiftAllRegs()
 {
     B3::Procedure proc;
@@ -2657,6 +2727,7 @@ void run(const char* filter)
     RUN(testShuffleRotateWithFringe());
     RUN(testShuffleRotateWithFringeInWeirdOrder());
     RUN(testShuffleRotateWithLongFringe());
+    RUN(testRotateFringeClobber());
     RUN(testShuffleMultipleRotates());
     RUN(testShuffleShiftAndRotate());
     RUN(testShuffleShiftAllRegs());

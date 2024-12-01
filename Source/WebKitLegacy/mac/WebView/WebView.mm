@@ -1533,7 +1533,7 @@ static WebCore::ApplicationCacheStorage& webApplicationCacheStorage()
         makeUniqueRef<WebContextMenuClient>(self),
 #endif
 #if ENABLE(APPLE_PAY)
-        makeUniqueRef<WebPaymentCoordinatorClient>(),
+        WebPaymentCoordinatorClient::create(),
 #endif
 #if !PLATFORM(IOS_FAMILY)
         makeUniqueRef<WebChromeClient>(self),
@@ -1796,7 +1796,7 @@ static WebCore::ApplicationCacheStorage& webApplicationCacheStorage()
         WebCore::EmptyBadgeClient::create(),
         LegacyHistoryItemClient::singleton(),
 #if ENABLE(APPLE_PAY)
-        makeUniqueRef<WebPaymentCoordinatorClient>(),
+        WebPaymentCoordinatorClient::create(),
 #endif
         makeUniqueRef<WebChromeClientIOS>(self),
         makeUniqueRef<WebCryptoClient>(self),

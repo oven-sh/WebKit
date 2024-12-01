@@ -48,10 +48,10 @@ class WebFrame;
 class WebPage;
 class WebAutomationDOMWindowObserver;
 
-class WebAutomationSessionProxy : public IPC::MessageReceiver {
+class WebAutomationSessionProxy : public IPC::MessageReceiver, public RefCounted<WebAutomationSessionProxy> {
     WTF_MAKE_TZONE_ALLOCATED(WebAutomationSessionProxy);
 public:
-    WebAutomationSessionProxy(const String& sessionIdentifier);
+    static Ref<WebAutomationSessionProxy> create(const String& sessionIdentifier);
     ~WebAutomationSessionProxy();
 
     String sessionIdentifier() const { return m_sessionIdentifier; }
@@ -65,6 +65,7 @@ public:
     void didEvaluateJavaScriptFunction(WebCore::FrameIdentifier, JSCallbackIdentifier, const String& result, const String& errorType);
 
 private:
+    explicit WebAutomationSessionProxy(const String& sessionIdentifier);
     JSObjectRef scriptObject(JSGlobalContextRef);
     void setScriptObject(JSGlobalContextRef, JSObjectRef);
     JSObjectRef scriptObjectForFrame(WebFrame&);

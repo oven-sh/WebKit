@@ -26,7 +26,6 @@
 #pragma once
 
 #include "CachedImageClient.h"
-#include "Element.h"
 #include "FloatQuad.h"
 #include "FrameDestructionObserverInlines.h"
 #include "HTMLNames.h"
@@ -821,7 +820,7 @@ public:
     bool hitTest(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestFilter = HitTestAll);
     virtual Node* nodeForHitTest() const;
     RefPtr<Node> protectedNodeForHitTest() const;
-    virtual void updateHitTestResult(HitTestResult&, const LayoutPoint&);
+    virtual void updateHitTestResult(HitTestResult&, const LayoutPoint&) const;
 
     virtual bool nodeAtPoint(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction);
 
@@ -1191,7 +1190,7 @@ private:
     struct SelectionGeometries {
         Vector<SelectionGeometry> geometries;
         int maxLineNumber { 0 };
-        bool hasAnyRightToLeftText { false };
+        bool hasBidirectionalText { false };
     };
     WEBCORE_EXPORT static SelectionGeometries collectSelectionGeometriesInternal(const SimpleRange&);
 #endif

@@ -180,9 +180,9 @@ class EmptyChromeClient : public ChromeClient {
 #endif
 
 #if PLATFORM(PLAYSTATION)
-    void postAccessibilityNotification(AccessibilityObject&, AXObjectCache::AXNotification) final { }
+    void postAccessibilityNotification(AccessibilityObject&, AXNotification) final { }
     void postAccessibilityNodeTextChangeNotification(AccessibilityObject*, AXTextChange, unsigned, const String&) final { }
-    void postAccessibilityFrameLoadingEventNotification(AccessibilityObject*, AXObjectCache::AXLoadingEvent) final { }
+    void postAccessibilityFrameLoadingEventNotification(AccessibilityObject*, AXLoadingEvent) final { }
 #endif
 
 #if ENABLE(IOS_TOUCH_EVENTS)
@@ -225,7 +225,7 @@ class EmptyChromeClient : public ChromeClient {
     void didAssociateFormControls(const Vector<RefPtr<Element>>&, LocalFrame&) final { }
     bool shouldNotifyOnFormChanges() final { return false; }
 
-    RefPtr<Icon> createIconForFiles(const Vector<String>& /* filenames */) final { return nullptr; }
+    RefPtr<Icon> createIconForFiles(const Vector<String>& /* filenames */) final;
 
     void requestCookieConsent(CompletionHandler<void(CookieConsentDecisionResult)>&&) final;
 };

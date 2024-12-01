@@ -189,7 +189,7 @@ std::unique_ptr<LibWebRTCProvider::SuspendableSocketFactory> LibWebRTCProvider::
 
 RefPtr<RTCDataChannelRemoteHandlerConnection> LibWebRTCProvider::createRTCDataChannelRemoteHandlerConnection()
 {
-    return &RTCDataChannelRemoteManager::sharedManager().remoteHandlerConnection();
+    return &RTCDataChannelRemoteManager::singleton().remoteHandlerConnection();
 }
 
 void LibWebRTCProvider::setLoggingLevel(WTFLogLevel level)

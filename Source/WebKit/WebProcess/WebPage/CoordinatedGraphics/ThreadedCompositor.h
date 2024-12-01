@@ -29,6 +29,7 @@
 
 #include "CompositingRunLoop.h"
 #include "CoordinatedGraphicsScene.h"
+#include <WebCore/Damage.h>
 #include <WebCore/DisplayUpdate.h>
 #include <WebCore/GLContext.h>
 #include <WebCore/IntSize.h>
@@ -42,18 +43,15 @@
 #include "ThreadedDisplayRefreshMonitor.h"
 #endif
 
-namespace WebCore {
-class Damage;
-}
-
 namespace WebKit {
 
 class AcceleratedSurface;
 class LayerTreeHost;
 
-class ThreadedCompositor : public CoordinatedGraphicsSceneClient, public ThreadSafeRefCounted<ThreadedCompositor> {
+class ThreadedCompositor : public CoordinatedGraphicsSceneClient, public ThreadSafeRefCounted<ThreadedCompositor>, public CanMakeThreadSafeCheckedPtr<ThreadedCompositor> {
     WTF_MAKE_TZONE_ALLOCATED(ThreadedCompositor);
     WTF_MAKE_NONCOPYABLE(ThreadedCompositor);
+    WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(ThreadedCompositor);
 public:
     enum class DamagePropagation : uint8_t {
         None,
@@ -76,7 +74,6 @@ public:
     void preferredBufferFormatsDidChange();
 #endif
 
-
     uint32_t requestComposition(const RefPtr<Nicosia::Scene>&);
     void updateScene();
     void updateSceneWithoutRendering();
@@ -92,6 +89,10 @@ public:
     void suspend();
     void resume();
 
+#if ENABLE(DAMAGE_TRACKING)
+    void setDamagePropagation(WebCore::Damage::Propagation);
+#endif
+
 private:
 #if HAVE(DISPLAY_LINK)
     ThreadedCompositor(LayerTreeHost&, float scaleFactor);
@@ -101,7 +102,9 @@ private:
 
     // CoordinatedGraphicsSceneClient
     void updateViewport() override;
+#if ENABLE(DAMAGE_TRACKING)
     const WebCore::Damage& addSurfaceDamage(const WebCore::Damage&) override;
+#endif
 
     void renderLayerTree();
     void frameComplete();
@@ -119,7 +122,6 @@ private:
     std::unique_ptr<WebCore::GLContext> m_context;
 
     bool m_flipY { false };
-    DamagePropagation m_damagePropagation { DamagePropagation::None };
     unsigned m_suspendedCount { 0 };
 
     std::unique_ptr<CompositingRunLoop> m_compositingRunLoop;

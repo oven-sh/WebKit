@@ -158,7 +158,7 @@ void AnimationTimelinesController::updateAnimationsAndSendEvents(ReducedResoluti
             // schedule invalidation if required for this animation.
             animation->tick();
 
-            if (!animation->isRelevant() && !animation->needsTick())
+            if (!animation->isRelevant() && !animation->needsTick() && !isPendingTimelineAttachment(animation))
                 animationsToRemove.append(animation);
 
             if (auto* transition = dynamicDowncast<CSSTransition>(animation.get())) {
@@ -566,6 +566,30 @@ void AnimationTimelinesController::updateNamedTimelineMapForTimelineScope(const 
         break;
     }
     attachPendingOperations();
+}
+
+bool AnimationTimelinesController::isPendingTimelineAttachment(const WebAnimation& animation) const
+{
+    return m_pendingAttachOperations.containsIf([&] (auto& entry) {
+        return entry.animation.ptr() == &animation;
+    });
+}
+
+void AnimationTimelinesController::unregisterNamedTimelinesAssociatedWithElement(const Element& element)
+{
+    HashSet<AtomString> namesToClear;
+
+    for (auto& entry : m_nameToTimelineMap) {
+        auto& timelines = entry.value;
+        timelines.removeAllMatching([&] (const auto& timeline) {
+            return originatingElement(timeline) == &element;
+        });
+        if (timelines.isEmpty())
+            namesToClear.add(entry.key);
+    }
+
+    for (auto& name : namesToClear)
+        m_nameToTimelineMap.remove(name);
 }
 
 #if ENABLE(THREADED_ANIMATION_RESOLUTION)

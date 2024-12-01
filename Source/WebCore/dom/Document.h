@@ -107,6 +107,7 @@ class CachedResourceLoader;
 class CachedScript;
 class CanvasRenderingContext;
 class CanvasRenderingContext2D;
+class CaretPosition;
 class CharacterData;
 class Comment;
 class ConstantPropertyMap;
@@ -273,6 +274,7 @@ class DOMTimerHoldingTank;
 struct ApplicationManifest;
 struct BoundaryPoint;
 struct CSSParserContext;
+struct CaretPositionFromPointOptions;
 struct ClientOrigin;
 struct FocusOptions;
 struct IntersectionObserverData;
@@ -527,6 +529,7 @@ public:
 
     WEBCORE_EXPORT RefPtr<Range> caretRangeFromPoint(int x, int y, HitTestSource = HitTestSource::Script);
     std::optional<BoundaryPoint> caretPositionFromPoint(const LayoutPoint& clientPoint, HitTestSource);
+    RefPtr<CaretPosition> caretPositionFromPoint(double x, double y, CaretPositionFromPointOptions);
 
     WEBCORE_EXPORT Element* scrollingElementForAPI();
     WEBCORE_EXPORT Element* scrollingElement();
@@ -1410,10 +1413,10 @@ public:
 #if ENABLE(FULLSCREEN_API)
     FullscreenManager* fullscreenManagerIfExists() { return m_fullscreenManager.get(); }
     const FullscreenManager* fullscreenManagerIfExists() const { return m_fullscreenManager.get(); }
-    inline FullscreenManager& fullscreenManager();
-    inline const FullscreenManager& fullscreenManager() const;
-    inline CheckedRef<FullscreenManager> checkedFullscreenManager(); // Defined in DocumentInlines.h.
-    inline CheckedRef<const FullscreenManager> checkedFullscreenManager() const; // Defined in DocumentInlines.h.
+    WEBCORE_EXPORT FullscreenManager& fullscreenManager();
+    WEBCORE_EXPORT const FullscreenManager& fullscreenManager() const;
+    CheckedRef<FullscreenManager> checkedFullscreenManager(); // Defined in DocumentInlines.h.
+    CheckedRef<const FullscreenManager> checkedFullscreenManager() const; // Defined in DocumentInlines.h.
 #endif
 
 #if ENABLE(POINTER_LOCK)
@@ -1648,7 +1651,7 @@ public:
     void setActiveSpeechRecognition(SpeechRecognition*);
     MediaProducerMediaStateFlags mediaState() const { return m_mediaState; }
     void noteUserInteractionWithMediaElement();
-    inline bool isCapturing() const;
+    bool isCapturing() const;
     WEBCORE_EXPORT void updateIsPlayingMedia();
 
 #if ENABLE(MEDIA_STREAM) && ENABLE(MEDIA_SESSION)

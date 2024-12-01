@@ -229,7 +229,7 @@ void RemoteAudioDestinationManager::deleteAudioDestination(RemoteAudioDestinatio
     m_audioDestinations.remove(identifier);
 
     if (allowsExitUnderMemoryPressure())
-        connection->gpuProcess().tryExitIfUnusedAndUnderMemoryPressure();
+        connection->protectedGPUProcess()->tryExitIfUnusedAndUnderMemoryPressure();
 }
 
 void RemoteAudioDestinationManager::startAudioDestination(RemoteAudioDestinationIdentifier identifier, CompletionHandler<void(bool)>&& completionHandler)

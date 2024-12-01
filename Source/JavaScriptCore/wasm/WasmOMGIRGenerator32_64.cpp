@@ -3187,28 +3187,28 @@ auto OMGIRGenerator::truncSaturated(Ext1OpType op, ExpressionType argVar, Expres
         maxFloat = constant(Float, std::bit_cast<uint32_t>(-static_cast<float>(std::numeric_limits<int64_t>::min())));
         minFloat = constant(Float, std::bit_cast<uint32_t>(static_cast<float>(std::numeric_limits<int64_t>::min())));
         intermediate = m_currentBlock->appendNew<CCallValue>(m_proc, B3::Int64, origin(),
-            m_currentBlock->appendNew<ConstPtrValue>(m_proc, origin(), tagCFunction<OperationPtrTag>(Math::f32_convert_s_i64)),
+            m_currentBlock->appendNew<ConstPtrValue>(m_proc, origin(), tagCFunction<OperationPtrTag>(Math::i64_trunc_s_f32)),
             arg);
         break;
     case Ext1OpType::I64TruncSatF32U:
         maxFloat = constant(Float, std::bit_cast<uint32_t>(static_cast<float>(std::numeric_limits<int64_t>::min()) * static_cast<float>(-2.0)));
         minFloat = constant(Float, std::bit_cast<uint32_t>(static_cast<float>(-1.0)));
         intermediate = append<CCallValue>(m_proc, B3::Int64, origin(),
-            append<ConstPtrValue>(m_proc, origin(), tagCFunction<OperationPtrTag>(Math::f32_convert_u_i64)),
+            append<ConstPtrValue>(m_proc, origin(), tagCFunction<OperationPtrTag>(Math::i64_trunc_u_f32)),
             arg);
         break;
     case Ext1OpType::I64TruncSatF64S:
         maxFloat = constant(Double, std::bit_cast<uint64_t>(-static_cast<double>(std::numeric_limits<int64_t>::min())));
         minFloat = constant(Double, std::bit_cast<uint64_t>(static_cast<double>(std::numeric_limits<int64_t>::min())));
         intermediate = m_currentBlock->appendNew<CCallValue>(m_proc, B3::Int64, origin(),
-            m_currentBlock->appendNew<ConstPtrValue>(m_proc, origin(), tagCFunction<OperationPtrTag>(Math::f64_convert_s_i64)),
+            m_currentBlock->appendNew<ConstPtrValue>(m_proc, origin(), tagCFunction<OperationPtrTag>(Math::i64_trunc_s_f64)),
             arg);
         break;
     case Ext1OpType::I64TruncSatF64U:
         maxFloat = constant(Double, std::bit_cast<uint64_t>(static_cast<double>(std::numeric_limits<int64_t>::min()) * -2.0));
         minFloat = constant(Double, std::bit_cast<uint64_t>(-1.0));
         intermediate = append<CCallValue>(m_proc, B3::Int64, origin(),
-            append<ConstPtrValue>(m_proc, origin(), tagCFunction<OperationPtrTag>(Math::f64_convert_u_i64)),
+            append<ConstPtrValue>(m_proc, origin(), tagCFunction<OperationPtrTag>(Math::i64_trunc_u_f64)),
             arg);
         break;
     default:
@@ -3288,9 +3288,11 @@ auto OMGIRGenerator::truncSaturated(Ext1OpType op, ExpressionType argVar, Expres
 
 auto OMGIRGenerator::addRefI31(ExpressionType value, ExpressionType& result) -> PartialResult
 {
-    Value* i64 = append<Value>(m_proc, B3::ZExt32, origin(), get(value));
-    Value* truncated = append<Value>(m_proc, B3::BitAnd, origin(), i64, constant(Int64, 0x7fffffff));
-    result = push(append<Value>(m_proc, B3::BitOr, origin(), truncated, constant(Int64, static_cast<int64_t>(JSValue::Int32Tag) << 32)));
+    Value* masked = m_currentBlock->appendNew<Value>(m_proc, B3::BitAnd, origin(), get(value), constant(Int32, 0x7fffffff));
+    Value* shiftLeft = m_currentBlock->appendNew<Value>(m_proc, B3::Shl, origin(), masked, constant(Int32, 0x1));
+    Value* shiftRight = m_currentBlock->appendNew<Value>(m_proc, B3::SShr, origin(), shiftLeft, constant(Int32, 0x1));
+    Value* extended = m_currentBlock->appendNew<Value>(m_proc, B3::ZExt32, origin(), shiftRight);
+    result = push(m_currentBlock->appendNew<Value>(m_proc, B3::BitOr, origin(), extended, constant(Int64, static_cast<int64_t>(JSValue::Int32Tag) << 32)));
 
     return { };
 }

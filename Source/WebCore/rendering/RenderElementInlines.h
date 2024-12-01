@@ -50,7 +50,8 @@ inline bool RenderElement::canContainAbsolutelyPositionedObjects() const
         || (hasBackdropFilter() && !isDocumentElementRenderer())
         || (isRenderBlock() && style().willChange() && style().willChange()->createsContainingBlockForAbsolutelyPositioned(isDocumentElementRenderer()))
         || isRenderOrLegacyRenderSVGForeignObject()
-        || shouldApplyLayoutOrPaintContainment();
+        || shouldApplyLayoutContainment()
+        || shouldApplyPaintContainment();
 }
 
 inline bool RenderElement::canContainFixedPositionObjects() const
@@ -60,7 +61,8 @@ inline bool RenderElement::canContainFixedPositionObjects() const
         || (hasBackdropFilter() && !isDocumentElementRenderer())
         || (isRenderBlock() && style().willChange() && style().willChange()->createsContainingBlockForOutOfFlowPositioned(isDocumentElementRenderer()))
         || isRenderOrLegacyRenderSVGForeignObject()
-        || shouldApplyLayoutOrPaintContainment();
+        || shouldApplyLayoutContainment()
+        || shouldApplyPaintContainment();
 }
 
 inline bool RenderElement::createsGroupForStyle(const RenderStyle& style)
@@ -70,53 +72,37 @@ inline bool RenderElement::createsGroupForStyle(const RenderStyle& style)
 
 inline bool RenderElement::shouldApplyAnyContainment() const
 {
-    return shouldApplyLayoutOrPaintContainment() || shouldApplySizeOrStyleContainment(style().containsSizeOrInlineSize() || style().containsStyle());
-}
-
-inline bool RenderElement::shouldApplyInlineSizeContainment() const
-{
-    return isSkippedContentRoot(*this) || shouldApplySizeOrStyleContainment(style().containsInlineSize());
-}
-
-inline bool RenderElement::shouldApplyLayoutContainment() const
-{
-    return shouldApplyLayoutOrPaintContainment(style().containsLayout() || style().contentVisibility() != ContentVisibility::Visible);
-}
-
-inline bool RenderElement::shouldApplyLayoutOrPaintContainment(bool containsAccordingToStyle) const
-{
-    return containsAccordingToStyle && (!isInline() || isAtomicInlineLevelBox()) && style().display() != DisplayType::RubyAnnotation && (!isTablePart() || isRenderBlockFlow());
-}
-
-inline bool RenderElement::shouldApplyLayoutOrPaintContainment() const
-{
-    return shouldApplyLayoutOrPaintContainment(style().containsLayoutOrPaint()) || shouldApplySizeOrStyleContainment(style().contentVisibility() != ContentVisibility::Visible);
-}
-
-inline bool RenderElement::shouldApplyPaintContainment() const
-{
-    return shouldApplyLayoutOrPaintContainment(style().containsPaint()) || shouldApplySizeOrStyleContainment(style().contentVisibility() != ContentVisibility::Visible);
-}
-
-inline bool RenderElement::shouldApplySizeContainment() const
-{
-    return isSkippedContentRoot(*this) || shouldApplySizeOrStyleContainment(style().containsSize());
+    return shouldApplyLayoutContainment() || shouldApplySizeContainment() || shouldApplyInlineSizeContainment() || shouldApplyStyleContainment() || shouldApplyPaintContainment();
 }
 
 inline bool RenderElement::shouldApplySizeOrInlineSizeContainment() const
 {
-    return isSkippedContentRoot(*this) || shouldApplySizeOrStyleContainment(style().containsSizeOrInlineSize());
+    return shouldApplySizeContainment() || shouldApplyInlineSizeContainment();
 }
 
-// FIXME: try to avoid duplication with isSkippedContentRoot.
-inline bool RenderElement::shouldApplySizeOrStyleContainment(bool containsAccordingToStyle) const
+inline bool RenderElement::shouldApplyLayoutContainment() const
 {
-    return containsAccordingToStyle && (!isInline() || isAtomicInlineLevelBox()) && style().display() != DisplayType::RubyAnnotation && (!isTablePart() || isRenderTableCaption()) && !isRenderTable();
+    return element() && WebCore::shouldApplyLayoutContainment(style(), *element());
+}
+
+inline bool RenderElement::shouldApplySizeContainment() const
+{
+    return element() && WebCore::shouldApplySizeContainment(style(), *element());
+}
+
+inline bool RenderElement::shouldApplyInlineSizeContainment() const
+{
+    return element() && WebCore::shouldApplyInlineSizeContainment(style(), *element());
 }
 
 inline bool RenderElement::shouldApplyStyleContainment() const
 {
-    return shouldApplySizeOrStyleContainment(style().containsStyle() || style().contentVisibility() != ContentVisibility::Visible);
+    return element() && WebCore::shouldApplyStyleContainment(style(), *element());
+}
+
+inline bool RenderElement::shouldApplyPaintContainment() const
+{
+    return element() && WebCore::shouldApplyPaintContainment(style(), *element());
 }
 
 inline bool RenderElement::visibleToHitTesting(const std::optional<HitTestRequest>& request) const
@@ -144,16 +130,7 @@ inline LayoutUnit adjustLayoutUnitForAbsoluteZoom(LayoutUnit value, const Render
 
 inline bool isSkippedContentRoot(const RenderElement& renderer)
 {
-    auto& style = renderer.style();
-    if (style.contentVisibility() == ContentVisibility::Visible)
-        return false;
-    // content-visibility applies to elements for which size containment can apply (https://drafts.csswg.org/css-contain/#content-visibility)
-    if (!doesSizeContainmentApplyByDisplayType(style))
-        return false;
-    if (style.contentVisibility() == ContentVisibility::Hidden)
-        return true;
-    ASSERT(style.contentVisibility() == ContentVisibility::Auto);
-    return renderer.element() && !renderer.element()->isRelevantToUser();
+    return renderer.element() && WebCore::isSkippedContentRoot(renderer.style(), *renderer.element());
 }
 
 } // namespace WebCore

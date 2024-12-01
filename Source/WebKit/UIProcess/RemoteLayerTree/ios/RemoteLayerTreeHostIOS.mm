@@ -78,14 +78,17 @@ RefPtr<RemoteLayerTreeNode> RemoteLayerTreeHost::makeNode(const RemoteLayerTreeT
 
 #if HAVE(AVKIT)
         if (properties.videoElementData) {
-            if (auto videoManager = m_drawingArea->page().videoPresentationManager()) {
+            if (auto videoManager = m_drawingArea->page() ? m_drawingArea->page()->videoPresentationManager() : nullptr) {
                 m_videoLayers.add(*properties.layerID, properties.videoElementData->playerIdentifier);
                 return makeWithView(videoManager->createViewWithID(properties.videoElementData->playerIdentifier, properties.hostingContextID(), properties.videoElementData->initialSize, properties.videoElementData->naturalSize, properties.hostingDeviceScaleFactor()));
             }
         }
 #endif
 
-        auto view = adoptNS([[WKUIRemoteView alloc] initWithFrame:CGRectZero pid:m_drawingArea->page().legacyMainFrameProcessID() contextID:properties.hostingContextID()]);
+        if (!m_drawingArea->page())
+            return nullptr;
+
+        auto view = adoptNS([[WKUIRemoteView alloc] initWithFrame:CGRectZero pid:m_drawingArea->page()->legacyMainFrameProcessID() contextID:properties.hostingContextID()]);
         return makeWithView(WTFMove(view));
     }
     case PlatformCALayer::LayerType::LayerTypeShapeLayer:
@@ -100,17 +103,17 @@ RefPtr<RemoteLayerTreeNode> RemoteLayerTreeHost::makeNode(const RemoteLayerTreeT
 #if ENABLE(MODEL_ELEMENT)
     case PlatformCALayer::LayerType::LayerTypeModelLayer:
 #if ENABLE(MODEL_PROCESS)
-        bool modelHandledOutOfProcess = m_drawingArea->page().preferences().modelProcessEnabled();
+        bool modelHandledOutOfProcess = m_drawingArea->page() && m_drawingArea->page()->preferences().modelProcessEnabled();
 #else
         bool modelHandledOutOfProcess = false;
 #endif
 
-        if (!modelHandledOutOfProcess && m_drawingArea->page().preferences().modelElementEnabled()) {
+        if (!modelHandledOutOfProcess && m_drawingArea->page() && m_drawingArea->page()->preferences().modelElementEnabled()) {
             if (auto* model = std::get_if<Ref<Model>>(&properties.additionalData)) {
 #if ENABLE(SEPARATED_MODEL)
                 return makeWithView(adoptNS([[WKSeparatedModelView alloc] initWithModel:*model]));
 #elif ENABLE(ARKIT_INLINE_PREVIEW_IOS)
-                return makeWithView(adoptNS([[WKModelView alloc] initWithModel:*model layerID:*properties.layerID page:m_drawingArea->page()]));
+                return makeWithView(adoptNS([[WKModelView alloc] initWithModel:*model layerID:*properties.layerID page:*m_drawingArea->page()]));
 #endif
             }
         }

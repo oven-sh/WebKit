@@ -112,6 +112,7 @@
 #include "ScrollAnimator.h"
 #include "ScrollLatchingController.h"
 #include "Scrollbar.h"
+#include "ScrollingCoordinator.h"
 #include "ScrollingEffectsController.h"
 #include "SelectionRestorationMode.h"
 #include "Settings.h"
@@ -2490,15 +2491,15 @@ bool EventHandler::dispatchDragEvent(const AtomString& eventType, Element& dragT
     if (CheckedPtr cache = frame->document()->existingAXObjectCache()) {
         auto& eventNames = WebCore::eventNames();
         if (eventType == eventNames.dragstartEvent)
-            cache->postNotification(&dragTarget, AXObjectCache::AXDraggingStarted);
+            cache->postNotification(&dragTarget, AXNotification::DraggingStarted);
         else if (eventType == eventNames.dragendEvent)
-            cache->postNotification(&dragTarget, AXObjectCache::AXDraggingEnded);
+            cache->postNotification(&dragTarget, AXNotification::DraggingEnded);
         else if (eventType == eventNames.dragenterEvent)
-            cache->postNotification(&dragTarget, AXObjectCache::AXDraggingEnteredDropZone);
+            cache->postNotification(&dragTarget, AXNotification::DraggingEnteredDropZone);
         else if (eventType == eventNames.dragleaveEvent)
-            cache->postNotification(&dragTarget, AXObjectCache::AXDraggingExitedDropZone);
+            cache->postNotification(&dragTarget, AXNotification::DraggingExitedDropZone);
         else if (eventType == eventNames.dropEvent)
-            cache->postNotification(&dragTarget, AXObjectCache::AXDraggingDropped);
+            cache->postNotification(&dragTarget, AXNotification::DraggingDropped);
     }
 
     return dragEvent->defaultPrevented();
@@ -4207,7 +4208,7 @@ void EventHandler::invalidateDataTransfer()
 static void removeDraggedContentDocumentMarkersFromAllFramesInPage(Page& page)
 {
     page.forEachDocument([] (Document& document) {
-        document.markers().removeMarkers(DocumentMarker::Type::DraggedContent);
+        document.markers().removeMarkers(DocumentMarkerType::DraggedContent);
     });
 
     if (auto* localMainFrame = dynamicDowncast<LocalFrame>(page.mainFrame())) {

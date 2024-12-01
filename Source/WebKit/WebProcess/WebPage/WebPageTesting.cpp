@@ -46,32 +46,39 @@ using namespace WebCore;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebPageTesting);
 
+Ref<WebPageTesting> WebPageTesting::create(WebPage& page)
+{
+    return adoptRef(*new WebPageTesting(page));
+}
+
 WebPageTesting::WebPageTesting(WebPage& page)
     : m_page(page)
+    , m_pageIdentifier(page.identifier())
 {
-    WebProcess::singleton().addMessageReceiver(Messages::WebPageTesting::messageReceiverName(), m_page->identifier(), *this);
+    WebProcess::singleton().addMessageReceiver(Messages::WebPageTesting::messageReceiverName(), m_pageIdentifier, *this);
 }
 
 WebPageTesting::~WebPageTesting()
 {
-    WebProcess::singleton().removeMessageReceiver(Messages::WebPageTesting::messageReceiverName(), m_page->identifier());
+    WebProcess::singleton().removeMessageReceiver(Messages::WebPageTesting::messageReceiverName(), m_pageIdentifier);
 }
 
 void WebPageTesting::setDefersLoading(bool defersLoading)
 {
-    if (RefPtr page = m_page->corePage())
+    if (RefPtr page = m_page ? m_page->corePage() : nullptr)
         page->setDefersLoading(defersLoading);
 }
 
 void WebPageTesting::isLayerTreeFrozen(CompletionHandler<void(bool)>&& completionHandler)
 {
-    completionHandler(!!m_page->layerTreeFreezeReasons());
+    completionHandler(m_page && !!m_page->layerTreeFreezeReasons());
 }
 
 void WebPageTesting::setPermissionLevel(const String& origin, bool allowed)
 {
 #if ENABLE(NOTIFICATIONS)
-    if (RefPtr notificationPermissionRequestManager = protectedPage()->notificationPermissionRequestManager())
+    RefPtr page = m_page.get();
+    if (RefPtr notificationPermissionRequestManager = page ? page->notificationPermissionRequestManager() : nullptr)
         notificationPermissionRequestManager->setPermissionLevelForTesting(origin, allowed);
 #else
     UNUSED_PARAM(origin);
@@ -81,13 +88,17 @@ void WebPageTesting::setPermissionLevel(const String& origin, bool allowed)
 
 void WebPageTesting::isEditingCommandEnabled(const String& commandName, CompletionHandler<void(bool)>&& completionHandler)
 {
-    RefPtr page = m_page->corePage();
-    RefPtr frame = page->checkedFocusController()->focusedOrMainFrame();
+    RefPtr page = m_page.get();
+    if (!page)
+        return completionHandler(false);
+
+    RefPtr corePage = page->corePage();
+    RefPtr frame = corePage->checkedFocusController()->focusedOrMainFrame();
     if (!frame)
         return completionHandler(false);
 
 #if ENABLE(PDF_PLUGIN)
-    if (RefPtr pluginView = protectedPage()->focusedPluginViewForFrame(*frame))
+    if (RefPtr pluginView = page->focusedPluginViewForFrame(*frame))
         return completionHandler(pluginView->isEditingCommandEnabled(commandName));
 #endif
 
@@ -98,7 +109,7 @@ void WebPageTesting::isEditingCommandEnabled(const String& commandName, Completi
 #if ENABLE(NOTIFICATIONS)
 void WebPageTesting::clearNotificationPermissionState()
 {
-    RefPtr page = m_page->corePage();
+    RefPtr page = m_page ? m_page->corePage() : nullptr;
     auto& client = static_cast<WebNotificationClient&>(WebCore::NotificationController::from(page.get())->client());
     client.clearNotificationPermissionState();
 }
@@ -106,7 +117,7 @@ void WebPageTesting::clearNotificationPermissionState()
 
 void WebPageTesting::clearWheelEventTestMonitor()
 {
-    RefPtr page = m_page->corePage();
+    RefPtr page = m_page ? m_page->corePage() : nullptr;
     if (!page)
         return;
 
@@ -115,22 +126,22 @@ void WebPageTesting::clearWheelEventTestMonitor()
 
 void WebPageTesting::setTopContentInset(float contentInset, CompletionHandler<void()>&& completionHandler)
 {
-    protectedPage()->setTopContentInset(contentInset);
+    if (RefPtr page = m_page.get())
+        page->setTopContentInset(contentInset);
     completionHandler();
-}
-
-Ref<WebPage> WebPageTesting::protectedPage() const
-{
-    return m_page.get();
 }
 
 void WebPageTesting::resetStateBetweenTests()
 {
-    if (RefPtr mainFrame = protectedPage()->mainFrame()) {
+    RefPtr page = m_page.get();
+    if (!page)
+        return;
+
+    if (RefPtr mainFrame = page->mainFrame()) {
         mainFrame->disownOpener();
         mainFrame->tree().clearName();
     }
-    if (RefPtr corePage = protectedPage()->corePage()) {
+    if (RefPtr corePage = page->corePage()) {
         // Force consistent "responsive" behavior for WebPage::eventThrottlingDelay() for testing. Tests can override via internals.
         corePage->setEventThrottlingBehaviorOverride(WebCore::EventThrottlingBehavior::Responsive);
     }
@@ -138,7 +149,7 @@ void WebPageTesting::resetStateBetweenTests()
 
 void WebPageTesting::clearCachedBackForwardListCounts(CompletionHandler<void()>&& completionHandler)
 {
-    RefPtr page = m_page->corePage();
+    RefPtr page = m_page ? m_page->corePage() : nullptr;
     if (!page)
         return completionHandler();
 
@@ -149,7 +160,7 @@ void WebPageTesting::clearCachedBackForwardListCounts(CompletionHandler<void()>&
 
 void WebPageTesting::setTracksRepaints(bool trackRepaints, CompletionHandler<void()>&& completionHandler)
 {
-    RefPtr page = m_page->corePage();
+    RefPtr page = m_page ? m_page->corePage() : nullptr;
     if (!page)
         return completionHandler();
 
@@ -162,12 +173,16 @@ void WebPageTesting::setTracksRepaints(bool trackRepaints, CompletionHandler<voi
 
 void WebPageTesting::displayAndTrackRepaints(CompletionHandler<void()>&& completionHandler)
 {
-    RefPtr page = m_page->corePage();
+    RefPtr page = m_page.get();
     if (!page)
+        return;
+
+    RefPtr corePage = m_page->corePage();
+    if (!corePage)
         return completionHandler();
 
-    protectedPage()->protectedDrawingArea()->updateRenderingWithForcedRepaint();
-    for (auto& rootFrame : page->rootFrames()) {
+    page->protectedDrawingArea()->updateRenderingWithForcedRepaint();
+    for (auto& rootFrame : corePage->rootFrames()) {
         if (RefPtr view = rootFrame->view()) {
             view->setTracksRepaints(true);
             view->resetTrackedRepaints();

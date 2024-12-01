@@ -203,11 +203,17 @@ static Ref<Inspector::Protocol::Animation::Effect> buildObjectForEffect(Animatio
     auto effectPayload = Inspector::Protocol::Animation::Effect::create()
         .release();
 
-    if (auto startDelay = protocolValueForSeconds(effect.delay()))
-        effectPayload->setStartDelay(startDelay.value());
+    // FIXME: convert this to WebAnimationTime.
+    if (auto delayTime = effect.delay().time()) {
+        if (auto delay = protocolValueForSeconds(*delayTime))
+            effectPayload->setStartDelay(*delay);
+    }
 
-    if (auto endDelay = protocolValueForSeconds(effect.endDelay()))
-        effectPayload->setEndDelay(endDelay.value());
+    // FIXME: convert this to WebAnimationTime.
+    if (auto endDelayTime = effect.endDelay().time()) {
+        if (auto endDelay = protocolValueForSeconds(*endDelayTime))
+            effectPayload->setEndDelay(*endDelay);
+    }
 
     effectPayload->setIterationCount(effect.iterations() == std::numeric_limits<double>::infinity() ? -1 : effect.iterations());
     effectPayload->setIterationStart(effect.iterationStart());

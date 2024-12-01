@@ -110,6 +110,7 @@ public:
         });
     }
 
+    bool isUsingSource(const RealtimeMediaSource& source) const { return m_source.ptr() == &source; }
     Ref<RealtimeMediaSource> protectedSource() { return m_source; }
 
     void audioUnitWillStart() final
@@ -461,6 +462,11 @@ private:
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(UserMediaCaptureManagerProxy);
 
+Ref<UserMediaCaptureManagerProxy> UserMediaCaptureManagerProxy::create(UniqueRef<ConnectionProxy>&& connectionProxy)
+{
+    return adoptRef(*new UserMediaCaptureManagerProxy(WTFMove(connectionProxy)));
+}
+
 UserMediaCaptureManagerProxy::UserMediaCaptureManagerProxy(UniqueRef<ConnectionProxy>&& connectionProxy)
     : m_connectionProxy(WTFMove(connectionProxy))
 {
@@ -643,11 +649,18 @@ void UserMediaCaptureManagerProxy::stopProducingData(RealtimeMediaSourceIdentifi
 
 void UserMediaCaptureManagerProxy::removeSource(RealtimeMediaSourceIdentifier id)
 {
-    RefPtr proxy = m_proxies.get(id);
-    if (!proxy)
+    auto iterator = m_proxies.find(id);
+    if (iterator == m_proxies.end())
         return;
 
-    Ref source = proxy->protectedSource();
+    Ref source = iterator->value->protectedSource();
+    m_proxies.remove(iterator);
+
+    for (Ref proxy : m_proxies.values()) {
+        if (proxy->isUsingSource(source))
+            return;
+    }
+
     if (auto pageIdentifier = source->pageIdentifier()) {
         auto iterator = m_pageSources.find(*pageIdentifier);
         if (iterator != m_pageSources.end()) {
@@ -667,7 +680,6 @@ void UserMediaCaptureManagerProxy::removeSource(RealtimeMediaSourceIdentifier id
             }
         }
     }
-    m_proxies.remove(id);
 }
 
 void UserMediaCaptureManagerProxy::capabilities(RealtimeMediaSourceIdentifier id, CompletionHandler<void(RealtimeMediaSourceCapabilities&&)>&& completionHandler)

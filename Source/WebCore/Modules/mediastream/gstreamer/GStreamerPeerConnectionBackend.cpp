@@ -30,6 +30,7 @@
 #include "GStreamerRtpTransceiverBackend.h"
 #include "IceCandidate.h"
 #include "JSRTCStatsReport.h"
+#include "Logging.h"
 #include "MediaEndpointConfiguration.h"
 #include "NotImplemented.h"
 #include "RTCIceCandidate.h"
@@ -60,9 +61,7 @@ public:
     }
     bool shouldEmitLogMessage(const WTFLogChannel& channel) const final
     {
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib
-        return g_str_has_prefix(channel.name, "WebRTC");
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+        return StringView::fromLatin1(channel.name).startsWith("WebRTC"_s);
     }
 };
 
@@ -316,15 +315,6 @@ RTCRtpTransceiver* GStreamerPeerConnectionBackend::existingTransceiver(WTF::Func
     return nullptr;
 }
 
-RTCRtpTransceiver* GStreamerPeerConnectionBackend::existingTransceiverForTrackId(const String& trackId)
-{
-    for (auto& transceiver : protectedPeerConnection()->currentTransceivers()) {
-        if (transceiver->receiver().track().id() == trackId)
-            return transceiver.get();
-    }
-    return nullptr;
-}
-
 RTCRtpTransceiver& GStreamerPeerConnectionBackend::newRemoteTransceiver(std::unique_ptr<GStreamerRtpTransceiverBackend>&& transceiverBackend, RealtimeMediaSource::Type type, String&& receiverTrackId)
 {
     auto trackKind = type == RealtimeMediaSource::Type::Audio ? "audio"_s : "video"_s;
@@ -397,6 +387,27 @@ void GStreamerPeerConnectionBackend::tearDown()
         auto& backend = backendFromRTPTransceiver(*transceiver);
         backend.tearDown();
     }
+}
+
+void GStreamerPeerConnectionBackend::startGatheringStatLogs(Function<void(String&&)>&& callback)
+{
+    if (!m_rtcStatsLogCallback)
+        m_endpoint->startRTCLogs();
+    m_rtcStatsLogCallback = WTFMove(callback);
+}
+
+void GStreamerPeerConnectionBackend::stopGatheringStatLogs()
+{
+    if (m_rtcStatsLogCallback) {
+        m_endpoint->stopRTCLogs();
+        m_rtcStatsLogCallback = { };
+    }
+}
+
+void GStreamerPeerConnectionBackend::provideStatLogs(String&& stats)
+{
+    if (m_rtcStatsLogCallback)
+        m_rtcStatsLogCallback(WTFMove(stats));
 }
 
 #undef GST_CAT_DEFAULT

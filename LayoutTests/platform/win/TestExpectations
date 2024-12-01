@@ -507,6 +507,8 @@ fast/dom/ParentNode-append-fragments.html [ ImageOnlyFailure ]
 fast/flexbox/line-clamp-with-float.html [ ImageOnlyFailure ]
 fast/forms/auto-fill-button/input-strong-password-viewable-baseline-alignment.html [ ImageOnlyFailure ]
 fast/forms/auto-fill-button/input-strong-password-viewable-taller-button-height.html [ ImageOnlyFailure ]
+fast/text/capitalize-content-with-outside-bmp-previous-characters.html [ ImageOnlyFailure ]
+fast/text/capitalize-decomposed-ligatures.html [ ImageOnlyFailure ]
 fast/text/complex-text-selection.html [ ImageOnlyFailure ]
 fast/text/incorrect-baseline-with-nested-inline-box.html [ ImageOnlyFailure ]
 fast/text/soft-hyphen-min-preferred-width.html [ ImageOnlyFailure ]
@@ -695,7 +697,6 @@ http/tests/contentdispositionattachmentsandbox [ Skip ]
 http/tests/contentfiltering [ Skip ]
 
 http/tests/cookies/double-quoted-value-with-semi-colon.html [ Failure ]
-http/tests/cookies/only-accept-first-party-cookies.html [ Pass ]
 
 http/tests/dom/document-attributes-null-handling.html [ Failure ]
 
@@ -1036,6 +1037,8 @@ imported/w3c/web-platform-tests/scroll-animations/scroll-timelines/animation-wit
 
 webkit.org/b/263870 imported/w3c/web-platform-tests/scroll-animations/css/animation-range-ignored.html [ Skip ]
 webkit.org/b/263870 imported/w3c/web-platform-tests/scroll-animations/scroll-timelines/scroll-timeline-range.html [ Skip ]
+
+imported/w3c/web-platform-tests/scroll-animations/scroll-timelines/progress-based-effect-delay.tentative.html [ ImageOnlyFailure ]
 
 #//////////////////////////////////////////////////////////////////////////////////////////
 # Compositing
@@ -2164,6 +2167,7 @@ imported/w3c/web-platform-tests/inert [ Skip ]
 imported/w3c/web-platform-tests/infrastructure [ Skip ]
 imported/w3c/web-platform-tests/interfaces [ Skip ]
 imported/w3c/web-platform-tests/intersection-observer [ Skip ]
+imported/w3c/web-platform-tests/loading [ Skip ]
 imported/w3c/web-platform-tests/mathml [ Skip ]
 imported/w3c/web-platform-tests/media [ Skip ]
 imported/w3c/web-platform-tests/media-capabilities [ Skip ]
@@ -3382,7 +3386,6 @@ fast/css/text-overflow-ellipsis.html [ Skip ]
 fast/css/text-overflow-input.html [ Skip ]
 fast/css/text-rendering.html [ Skip ]
 fast/css/text-security.html [ Skip ]
-fast/css/text-transform-select.html [ Skip ]
 fast/css/textCapitalizeEdgeCases.html [ Skip ]
 fast/css/transform-default-parameter.html [ Skip ]
 fast/css/transformed-mask.html [ Skip ]
@@ -4347,8 +4350,6 @@ streams/writable-stream-create-within-multiple-workers-crash.html [ Skip ]
 
 # Timeout only on Buildbot
 http/tests/misc/embed-image-load-outlives-gc-without-crashing.html [ Pass Timeout ]
-
-fast/dom/no-scroll-when-command-click-fragment-URL.html [ Failure ]
 
 [ Release ] imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-inset-animation.html [ Pass Failure ]
 imported/w3c/web-platform-tests/scroll-animations/css/view-timeline-lookup.html [ Pass Failure ]

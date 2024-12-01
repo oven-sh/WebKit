@@ -597,6 +597,7 @@ GI_DOCGEN(WebKit${WEBKITGTK_API_INFIX} gtk/gtk${GTK_API_VERSION}-webkitgtk.toml.
     CONTENT_TEMPLATES
         gtk/gtk${GTK_API_VERSION}-urlmap.js
         glib/environment-variables.md
+        glib/profiling.md
 )
 
 if (ENABLE_2022_GLIB_API)

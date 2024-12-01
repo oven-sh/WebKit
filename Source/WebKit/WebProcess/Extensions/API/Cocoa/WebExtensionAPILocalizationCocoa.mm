@@ -36,13 +36,14 @@
 #import "MessageSenderInlines.h"
 #import "WebExtensionContextMessages.h"
 #import "WebExtensionContextProxy.h"
+#import "WebExtensionLocalization.h"
 #import "WebExtensionUtilities.h"
 #import "WebProcess.h"
-#import "_WKWebExtensionLocalization.h"
 #import <JavaScriptCore/APICast.h>
 #import <JavaScriptCore/ScriptCallStack.h>
 #import <JavaScriptCore/ScriptCallStackFactory.h>
 #import <wtf/CompletionHandler.h>
+#import <wtf/cocoa/VectorCocoa.h>
 
 #if ENABLE(WK_WEB_EXTENSIONS)
 
@@ -54,7 +55,9 @@ NSString *WebExtensionAPILocalization::getMessage(NSString* messageName, id subs
 {
     // Documentation: https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/i18n/getMessage
 
-    _WKWebExtensionLocalization *localization = extensionContext().localization();
+    RefPtr localization = extensionContext().localization();
+    if (!localization)
+        return emptyString();
 
     NSArray<NSString *> *substitutionsArray;
     if ([substitutions isKindOfClass:NSString.class])
@@ -65,7 +68,9 @@ NSString *WebExtensionAPILocalization::getMessage(NSString* messageName, id subs
         });
     }
 
-    return [localization localizedStringForKey:messageName withPlaceholders:substitutionsArray];
+    auto substitutionsVector = makeVector<String>(substitutionsArray);
+
+    return localization->localizedStringForKey(messageName, substitutionsVector);
 }
 
 NSString *WebExtensionAPILocalization::getUILanguage()

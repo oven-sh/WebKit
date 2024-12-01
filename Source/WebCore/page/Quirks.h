@@ -232,6 +232,11 @@ public:
 
     bool needsBingGestureEventQuirk(EventTarget*) const;
 
+#if PLATFORM(IOS)
+    bool hideForbesVolumeSlider() const;
+    bool hideIGNVolumeSlider() const;
+#endif
+
 private:
     bool needsQuirks() const;
     bool isDomain(const String&) const;

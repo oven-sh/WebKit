@@ -478,12 +478,12 @@ AlternateWebMPlayerEnabled:
   condition: ENABLE(ALTERNATE_WEBM_PLAYER) && ENABLE(MEDIA_SOURCE)
   defaultValue:
     WebKitLegacy:
-     default: true
+      default: true
     WebKit:
       default: true
     WebCore:
       default: true
-      
+
 AltitudeAngleEnabled:
   type: bool
   status: stable
@@ -1792,6 +1792,22 @@ CanvasLayersEnabled:
     WebCore:
       default: false
 
+CanvasPixelFormatEnabled:
+  type: bool
+  status: unstable
+  category: dom
+  humanReadableName: "CanvasRenderingContext2DSettings.pixelFormat"
+  humanReadableDescription: "Allow different pixel formats in 2D canvas"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+  disableInLockdownMode: true
+  sharedPreferenceForWebProcess: true
+
 CanvasUsesAcceleratedDrawing:
   type: bool
   status: embedder
@@ -1862,6 +1878,20 @@ CaptureVideoInUIProcessEnabled:
 CaretBrowsingEnabled:
   type: bool
   status: embedder
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
+CaretPositionFromPointEnabled:
+  type: bool
+  status: testable
+  category: dom
+  humanReadableName: "document.caretPositionFromPoint() API"
+  humanReadableDescription: "Enable document.caretPositionFromPoint() API"
   defaultValue:
     WebKitLegacy:
       default: false
@@ -2597,6 +2627,8 @@ DigitalCredentialsEnabled:
       default: false
     WebCore:
       default: false
+  sharedPreferenceForWebProcess: true
+  richJavaScript: true
 
 DirectoryUploadEnabled:
   type: bool
@@ -2809,7 +2841,6 @@ ExperimentalSandboxEnabled:
     WebKit:
       default: false
 
-# FIXME: Is this implemented for WebKitLegacy? If not, this should be excluded from WebKitLegacy entirely.
 ExposeSpeakersEnabled:
   type: bool
   status: testable
@@ -2818,13 +2849,25 @@ ExposeSpeakersEnabled:
   humanReadableDescription: "Allow speaker device selection"
   condition: ENABLE(MEDIA_STREAM)
   defaultValue:
-    WebKitLegacy:
-      default: false
     WebKit:
       default: false
     WebCore:
       default: false
 
+ExposeSpeakersWithoutMicrophoneEnabled:
+  type: bool
+  status: testable
+  category: media
+  humanReadableName: "Allow selection of speaker device without related microphone"
+  humanReadableDescription: "Allow selection of speaker device without related microphone"
+  condition: ENABLE(MEDIA_STREAM)
+  defaultValue:
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
+# FIXME: Is this implemented for WebKitLegacy? If not, this should be excluded from WebKitLegacy entirely.
 ExtendedAudioDescriptionsEnabled:
   type: bool
   status: preview
@@ -5310,21 +5353,6 @@ ObservableEnabled:
     WebCore:
       default: false
 
-OffscreenCanvasDeprecatedCommitEnabled:
-  type: bool
-  status: testable
-  category: dom
-  humanReadableName: "OffscreenCanvasRenderingContext2D's deprecated commit() method"
-  humanReadableDescription: "Support for OffscreenCanvasRenderingContext2D's deprecated commit() method"
-  condition: ENABLE(OFFSCREEN_CANVAS)
-  defaultValue:
-    WebKitLegacy:
-      default: false
-    WebKit:
-      default: false
-    WebCore:
-      default: false
-
 OffscreenCanvasEnabled:
   type: bool
   status: stable
@@ -5603,8 +5631,6 @@ PerElementSpeakerSelectionEnabled:
   humanReadableDescription: "Allow per media element speaker device selection"
   condition: ENABLE(MEDIA_STREAM)
   defaultValue:
-    WebKitLegacy:
-      default: false
     WebKit:
       default: false
     WebCore:
@@ -6311,7 +6337,7 @@ ScrollAnimatorEnabled:
 
 ScrollDrivenAnimationsEnabled:
   type: bool
-  status: testable
+  status: preview
   category: animation
   humanReadableName: "Scroll-driven Animations"
   humanReadableDescription: "Enable Scroll-driven Animations"
@@ -7854,17 +7880,6 @@ UsesSingleWebProcess:
       default: false
   sharedPreferenceForWebProcess: true
 
-VP8DecoderEnabled:
-  type: bool
-  status: embedder
-  webcoreBinding: none
-  condition: ENABLE(VP9)
-  defaultValue:
-    WebKitLegacy:
-      default: false
-    WebKit:
-      default: true
-
 VP9DecoderEnabled:
   type: bool
   status: embedder
@@ -8144,6 +8159,20 @@ WebAnimationsCustomFrameRateEnabled:
   category: animation
   humanReadableName: "Web Animations custom frame rate"
   humanReadableDescription: "Support for specifying a custom frame rate for Web Animations"
+  defaultValue:
+    WebKitLegacy:
+      default: false
+    WebKit:
+      default: false
+    WebCore:
+      default: false
+
+WebAnimationsOverallProgressPropertyEnabled:
+  type: bool
+  status: testable
+  category: animation
+  humanReadableName: "Web Animations 'overallProgress' property"
+  humanReadableDescription: "Support for Animation's overallProgress property"
   defaultValue:
     WebKitLegacy:
       default: false

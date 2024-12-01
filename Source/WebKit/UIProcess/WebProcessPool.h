@@ -148,7 +148,6 @@ void setLockdownModeEnabledGloballyForTesting(std::optional<bool>);
 
 enum class CallDownloadDidStart : bool;
 enum class ProcessSwapRequestedByClient : bool;
-enum class ShouldSkipSuspendedProcesses : bool { No, Yes };
 
 class WebProcessPool final
     : public API::ObjectImpl<API::Object::Type::ProcessPool>
@@ -227,10 +226,10 @@ public:
     WebProcessProxy* dummyProcessProxy(PAL::SessionID sessionID) const { return m_dummyProcessProxies.get(sessionID).get(); }
 
     void forEachProcessForSession(PAL::SessionID, const Function<void(WebProcessProxy&)>&);
-    template<typename T> void sendToAllProcesses(const T& message, ShouldSkipSuspendedProcesses = ShouldSkipSuspendedProcesses::No);
-    template<typename T> void sendToAllProcessesForSession(const T& message, PAL::SessionID, ShouldSkipSuspendedProcesses = ShouldSkipSuspendedProcesses::No);
+    template<typename T> void sendToAllProcesses(const T& message);
+    template<typename T> void sendToAllProcessesForSession(const T& message, PAL::SessionID);
 
-    template<typename T> static void sendToAllRemoteWorkerProcesses(const T& message, ShouldSkipSuspendedProcesses = ShouldSkipSuspendedProcesses::No);
+    template<typename T> static void sendToAllRemoteWorkerProcesses(const T& message);
 
     void processDidFinishLaunching(WebProcessProxy&);
 
@@ -448,7 +447,6 @@ public:
     void updateProcessSuppressionState() const { }
 #endif
 
-    Seconds hiddenPageThrottlingAutoIncreaseLimit() const;
     void updateHiddenPageThrottlingAutoIncreaseLimit();
 
     void setMemoryCacheDisabled(bool);
@@ -930,9 +928,6 @@ private:
     Vector<int> m_notifyTokens;
     Vector<RetainPtr<NSObject>> m_notificationObservers;
 #endif
-#if ENABLE(IPC_TESTING_API)
-    IPCTester m_ipcTester;
-#endif
 
 #if ENABLE(EXTENSION_CAPABILITIES)
     RefPtr<ExtensionCapabilityGranter> m_extensionCapabilityGranter;
@@ -955,39 +950,35 @@ private:
     ApproximateTime m_lastCriticalMemoryPressureStatusTime;
     RunLoop::Timer m_checkMemoryPressureStatusTimer;
 #endif
+
+#if ENABLE(IPC_TESTING_API)
+    const Ref<IPCTester> m_ipcTester;
+#endif
 };
 
 template<typename T>
-void WebProcessPool::sendToAllProcesses(const T& message, ShouldSkipSuspendedProcesses shouldSkipSuspendedProcesses)
+void WebProcessPool::sendToAllProcesses(const T& message)
 {
     for (auto& process : m_processes) {
-        if (!process->canSendMessage())
-            continue;
-        if (shouldSkipSuspendedProcesses == ShouldSkipSuspendedProcesses::Yes && process->throttler().isSuspended())
-            continue;
-        process->send(T(message), 0);
+        if (process->canSendMessage())
+            process->send(T(message), 0);
     }
 }
 
 template<typename T>
-void WebProcessPool::sendToAllProcessesForSession(const T& message, PAL::SessionID sessionID, ShouldSkipSuspendedProcesses shouldSkipSuspendedProcesses)
+void WebProcessPool::sendToAllProcessesForSession(const T& message, PAL::SessionID sessionID)
 {
     forEachProcessForSession(sessionID, [&](auto& process) {
-        if (shouldSkipSuspendedProcesses == ShouldSkipSuspendedProcesses::Yes && process.throttler().isSuspended())
-            return;
         process.send(T(message), 0);
     });
 }
 
 template<typename T>
-void WebProcessPool::sendToAllRemoteWorkerProcesses(const T& message, ShouldSkipSuspendedProcesses shouldSkipSuspendedProcesses)
+void WebProcessPool::sendToAllRemoteWorkerProcesses(const T& message)
 {
     for (Ref process : remoteWorkerProcesses()) {
-        if (!process->canSendMessage())
-            continue;
-        if (shouldSkipSuspendedProcesses == ShouldSkipSuspendedProcesses::Yes && process->throttler().isSuspended())
-            continue;
-        process->send(T(message), 0);
+        if (process->canSendMessage())
+            process->send(T(message), 0);
     }
 }
 

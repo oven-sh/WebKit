@@ -463,11 +463,9 @@ void registerWebKitGStreamerElements()
 
         // Downrank the libav AAC decoders, due to their broken LC support, as reported in:
         // https://ffmpeg.org/pipermail/ffmpeg-devel/2019-July/247063.html
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib port
-        const char* const elementNames[] = { "avdec_aac", "avdec_aac_fixed", "avdec_aac_latm" };
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-        for (unsigned i = 0; i < G_N_ELEMENTS(elementNames); i++) {
-            GRefPtr<GstElementFactory> avAACDecoderFactory = adoptGRef(gst_element_factory_find(elementNames[i]));
+        std::array<ASCIILiteral, 3> elementNames { "avdec_aac"_s, "avdec_aac_fixed"_s, "avdec_aac_latm"_s };
+        for (auto& elementName : elementNames) {
+            GRefPtr<GstElementFactory> avAACDecoderFactory = adoptGRef(gst_element_factory_find(elementName));
             if (avAACDecoderFactory)
                 gst_plugin_feature_set_rank(GST_PLUGIN_FEATURE_CAST(avAACDecoderFactory.get()), GST_RANK_MARGINAL);
         }
@@ -492,14 +490,16 @@ void registerWebKitGStreamerElements()
         // base class does not abstract away network access. They can't work in a sandboxed
         // media process, so demote their rank in order to prevent decodebin3 from auto-plugging them.
         if (webkitGstCheckVersion(1, 22, 0)) {
-            WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib port
-            const char* const elementNames[] = { "dashdemux2", "hlsdemux2", "mssdemux2" };
-            WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-            for (unsigned i = 0; i < G_N_ELEMENTS(elementNames); i++) {
-                if (auto factory = adoptGRef(gst_element_factory_find(elementNames[i])))
+            std::array<ASCIILiteral, 3> elementNames = { "dashdemux2"_s, "hlsdemux2"_s, "mssdemux2"_s };
+            for (auto& elementName : elementNames) {
+                if (auto factory = adoptGRef(gst_element_factory_find(elementName)))
                     gst_plugin_feature_set_rank(GST_PLUGIN_FEATURE_CAST(factory.get()), GST_RANK_NONE);
             }
         }
+
+        // Make sure isofmp4mux is auto-plugged in transcodebin pipelines.
+        if (auto factory = adoptGRef(gst_element_factory_find("isofmp4mux")))
+            gst_plugin_feature_set_rank(GST_PLUGIN_FEATURE_CAST(factory.get()), GST_RANK_PRIMARY + 1);
 
         // The VAAPI plugin is not much maintained anymore and prone to rendering issues. In the
         // mid-term we will leverage the new stateless VA decoders. Disable the legacy plugin,
@@ -1732,7 +1732,7 @@ void gstStructureFilterAndMapInPlace(GstStructure* structure, Function<bool(GstI
 #endif
 }
 
-#if !GST_CHECK_VERSION(1, 24, 0)
+#if USE(GBM) && !GST_CHECK_VERSION(1, 24, 0)
 static GstVideoFormat drmFourccToGstVideoFormat(uint32_t fourcc)
 {
     switch (fourcc) {
@@ -1767,7 +1767,7 @@ static GstVideoFormat drmFourccToGstVideoFormat(uint32_t fourcc)
     RELEASE_ASSERT_NOT_REACHED();
     return GST_VIDEO_FORMAT_UNKNOWN;
 }
-#endif // !GST_CHECK_VERSION(1, 24, 0)
+#endif // USE(GBM) && !GST_CHECK_VERSION(1, 24, 0)
 
 #if USE(GBM)
 GRefPtr<GstCaps> buildDMABufCaps()
@@ -1811,7 +1811,7 @@ GRefPtr<GstCaps> buildDMABufCaps()
                 gst_value_list_append_and_take_value(&supportedFormats, &value);
             }
         }
-#else
+#elif USE(GBM)
         GValue value = G_VALUE_INIT;
         g_value_init(&value, G_TYPE_STRING);
         g_value_set_string(&value, gst_video_format_to_string(drmFourccToGstVideoFormat(format.fourcc)));
@@ -1821,7 +1821,7 @@ GRefPtr<GstCaps> buildDMABufCaps()
 
 #if GST_CHECK_VERSION(1, 24, 0)
     gst_caps_set_value(caps.get(), "drm-format", &supportedFormats);
-#else
+#elif USE(GBM)
     gst_caps_set_value(caps.get(), "format", &supportedFormats);
 #endif
     g_value_unset(&supportedFormats);

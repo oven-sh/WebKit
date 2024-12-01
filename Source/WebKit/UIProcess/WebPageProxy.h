@@ -815,7 +815,7 @@ public:
     void setPageLoadStateObserver(RefPtr<PageLoadStateObserverBase>&&);
 
     void initializeWebPage(const WebCore::Site&, WebCore::SandboxFlags);
-    void setDrawingArea(std::unique_ptr<DrawingAreaProxy>&&);
+    void setDrawingArea(RefPtr<DrawingAreaProxy>&&);
 
     WeakPtr<SecKeyProxyStore> secKeyProxyStore(const WebCore::AuthenticationChallenge&);
 
@@ -1532,7 +1532,6 @@ public:
 
 #if PLATFORM(COCOA)
     void performDictionaryLookupAtLocation(const WebCore::FloatPoint&);
-    void performDictionaryLookupOfCurrentSelection();
 #endif
 
     enum class WillContinueLoadInNewProcess : bool { No, Yes };
@@ -3289,7 +3288,7 @@ private:
     HashSet<WebCore::FrameIdentifier> m_framesWithSubresourceLoadingForPageLoadTiming;
     RunLoop::Timer m_generatePageLoadTimingTimer;
 
-    std::unique_ptr<DrawingAreaProxy> m_drawingArea;
+    RefPtr<DrawingAreaProxy> m_drawingArea;
 #if PLATFORM(COCOA)
     std::unique_ptr<RemoteLayerTreeHost> m_frozenRemoteLayerTreeHost;
 #endif
@@ -3327,7 +3326,7 @@ private:
     RefPtr<WebInspectorUIProxy> m_inspector;
 
 #if ENABLE(FULLSCREEN_API)
-    std::unique_ptr<WebFullScreenManagerProxy> m_fullScreenManager;
+    RefPtr<WebFullScreenManagerProxy> m_fullScreenManager;
     std::unique_ptr<API::FullscreenClient> m_fullscreenClient;
 #endif
 
@@ -3367,7 +3366,7 @@ private:
 #endif
 
 #if ENABLE(WEB_AUTHN)
-    std::unique_ptr<DigitalCredentialsCoordinatorProxy> m_digitalCredentialsMessenger;
+    RefPtr<DigitalCredentialsCoordinatorProxy> m_digitalCredentialsMessenger;
     RefPtr<WebAuthenticatorCoordinatorProxy> m_webAuthnCredentialsMessenger;
 #endif
 
@@ -3699,10 +3698,10 @@ private:
     Vector<InjectedBundleMessage> m_pendingInjectedBundleMessages;
         
 #if PLATFORM(IOS_FAMILY) && ENABLE(DEVICE_ORIENTATION)
-    std::unique_ptr<WebDeviceOrientationUpdateProviderProxy> m_webDeviceOrientationUpdateProviderProxy;
+    RefPtr<WebDeviceOrientationUpdateProviderProxy> m_webDeviceOrientationUpdateProviderProxy;
 #endif
 
-    std::unique_ptr<WebScreenOrientationManagerProxy> m_screenOrientationManager;
+    RefPtr<WebScreenOrientationManagerProxy> m_screenOrientationManager;
 
 #if ENABLE(APP_BOUND_DOMAINS)
     std::optional<NavigatingToAppBoundDomain> m_isNavigatingToAppBoundDomain;

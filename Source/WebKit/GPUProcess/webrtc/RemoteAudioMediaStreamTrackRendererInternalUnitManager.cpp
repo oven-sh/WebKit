@@ -113,8 +113,16 @@ RemoteAudioMediaStreamTrackRendererInternalUnitManager::RemoteAudioMediaStreamTr
 {
 }
 
-RemoteAudioMediaStreamTrackRendererInternalUnitManager::~RemoteAudioMediaStreamTrackRendererInternalUnitManager()
+RemoteAudioMediaStreamTrackRendererInternalUnitManager::~RemoteAudioMediaStreamTrackRendererInternalUnitManager() = default;
+
+void RemoteAudioMediaStreamTrackRendererInternalUnitManager::ref() const
 {
+    m_gpuConnectionToWebProcess.get()->ref();
+}
+
+void RemoteAudioMediaStreamTrackRendererInternalUnitManager::deref() const
+{
+    m_gpuConnectionToWebProcess.get()->deref();
 }
 
 void RemoteAudioMediaStreamTrackRendererInternalUnitManager::createUnit(AudioMediaStreamTrackRendererInternalUnitIdentifier identifier, const String& deviceID,  CompletionHandler<void(std::optional<WebCore::CAAudioStreamDescription>, size_t)>&& callback)
@@ -131,7 +139,7 @@ void RemoteAudioMediaStreamTrackRendererInternalUnitManager::deleteUnit(AudioMed
 
     if (m_units.isEmpty()) {
         if (auto connection = m_gpuConnectionToWebProcess.get())
-            connection->gpuProcess().tryExitIfUnusedAndUnderMemoryPressure();
+            connection->protectedGPUProcess()->tryExitIfUnusedAndUnderMemoryPressure();
     }
 }
 

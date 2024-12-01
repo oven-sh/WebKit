@@ -30,6 +30,7 @@
 
 #include "WebExtensionPermission.h"
 #include "WebExtensionUtilities.h"
+#include <WebCore/LocalizedStrings.h>
 #include <WebCore/TextResourceDecoder.h>
 #include <wtf/Language.h>
 #include <wtf/text/StringToIntegerConversion.h>
@@ -154,6 +155,22 @@ double WebExtension::manifestVersion()
         return *value;
 
     return 0;
+}
+
+RefPtr<API::Data> WebExtension::serializeLocalization()
+{
+    if (!m_localization || !m_localization->localizationJSON())
+        return nullptr;
+
+    return API::Data::create(m_localization->localizationJSON()->toJSONString().utf8().span());
+}
+
+RefPtr<WebExtensionLocalization> WebExtension::localization()
+{
+    if (!manifestParsedSuccessfully())
+        return nullptr;
+
+    return m_localization;
 }
 
 bool WebExtension::hasRequestedPermission(String permission)

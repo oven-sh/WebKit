@@ -1,4 +1,21 @@
 =================
+WPE WebKit 2.47.2
+=================
+
+What's new in WPE WebKit 2.47.2?
+
+  - Move tiles rendering to a secondary thread when using the GPU.
+  - Use the damage information when collected to improve composition in WebKit.
+  - Improve performance of canvas putImageData/getImageData by avoiding
+    buffer copies.
+  - Add system settings API to WPEPlatform.
+  - Fix opacity not being handled correctly for DMA-BUF negotiation.
+  - Fix preserve-3D intersection rendering.
+  - Fix video dimensions since GStreamer 1.24.9.
+  - Fix opening links with window.open() when noopener is present.
+  - Fix several crashes and rendering issues.
+
+=================
 WPE WebKit 2.47.1
 =================
 

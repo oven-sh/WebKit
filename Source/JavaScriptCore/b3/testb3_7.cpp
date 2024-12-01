@@ -2025,13 +2025,9 @@ static void testFMaxMin()
     auto runArgTest = [&] (bool max, FloatType arg1, FloatType arg2) {
         Procedure proc;
         BasicBlock* root = proc.addBlock();
-        auto arguments = cCallArgumentValues<double, double>(proc, root);
+        auto arguments = cCallArgumentValues<FloatType, FloatType>(proc, root);
         Value* a = arguments[0];
         Value* b = arguments[1];
-        if (std::is_same_v<FloatType, float>) {
-            a = root->appendNew<Value>(proc, Trunc, Origin(), a);
-            b = root->appendNew<Value>(proc, Trunc, Origin(), b);
-        }
         Value* result = root->appendNew<Value>(proc, max ? FMax : FMin, Origin(), a, b);
         root->appendNewControlValue(proc, Return, Origin(), result);
         auto code = compileProc(proc);

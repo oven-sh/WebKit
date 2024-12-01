@@ -63,18 +63,18 @@ static AXCoreObject* notifyChildrenSelectionChange(AXCoreObject* object)
     const AccessibilityObject::AccessibilityChildrenVector& items = object->children();
     if (changedItemIndex < 0 || changedItemIndex >= static_cast<int>(items.size()))
         return object;
-    return items.at(changedItemIndex).get();
+    return items.at(changedItemIndex).ptr();
 }
 
-static AXObjectCache::AXNotification checkInteractableObjects(AXCoreObject* object)
+static AXNotification checkInteractableObjects(AXCoreObject* object)
 {
     if (!object->isEnabled())
-        return AXObjectCache::AXNotification::AXPressDidFail;
+        return AXNotification::PressDidFail;
 
     if (object->isTextControl() && !object->canSetValueAttribute()) // Also determine whether it is readonly
-        return AXObjectCache::AXNotification::AXPressDidFail;
+        return AXNotification::PressDidFail;
 
-    return AXObjectCache::AXNotification::AXPressDidSucceed;
+    return AXNotification::PressDidSucceed;
 }
 
 void AXObjectCache::postPlatformNotification(AccessibilityObject& object, AXNotification notification)
@@ -87,10 +87,10 @@ void AXObjectCache::postPlatformNotification(AccessibilityObject& object, AXNoti
 
     RefPtr protectedObject = &object;
     switch (notification) {
-    case AXNotification::AXSelectedChildrenChanged:
+    case AXNotification::SelectedChildrenChanged:
         protectedObject = downcast<AccessibilityObject>(notifyChildrenSelectionChange(protectedObject.get()));
         break;
-    case AXNotification::AXPressDidSucceed:
+    case AXNotification::PressDidSucceed:
         notification = checkInteractableObjects(protectedObject.get());
         break;
     default:
@@ -128,7 +128,7 @@ void AXObjectCache::frameLoadingEventPlatformNotification(AccessibilityObject* o
 void AXObjectCache::handleScrolledToAnchor(const Node& scrolledToNode)
 {
     if (RefPtr object = AccessibilityObject::firstAccessibleObjectFromNode(&scrolledToNode))
-        postPlatformNotification(*object, AXScrolledToAnchor);
+        postPlatformNotification(*object, AXNotification::ScrolledToAnchor);
 }
 
 void AXObjectCache::platformHandleFocusedUIElementChanged(Element*, Element* newFocus)
@@ -141,7 +141,7 @@ void AXObjectCache::platformHandleFocusedUIElementChanged(Element*, Element* new
         return;
 
     if (RefPtr focusedObject = focusedObjectForPage(page))
-        postPlatformNotification(*focusedObject, AXFocusedUIElementChanged);
+        postPlatformNotification(*focusedObject, AXNotification::FocusedUIElementChanged);
 }
 
 void AXObjectCache::platformPerformDeferredCacheUpdate()

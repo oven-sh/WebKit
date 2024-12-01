@@ -62,6 +62,11 @@ namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(WebSharedWorkerContextManagerConnection);
 
+Ref<WebSharedWorkerContextManagerConnection> WebSharedWorkerContextManagerConnection::create(Ref<IPC::Connection>&& connectionToNetworkProcess, WebCore::Site&& site, PageGroupIdentifier pageGroupID, WebPageProxyIdentifier webPageProxyID, WebCore::PageIdentifier pageID, const WebPreferencesStore& preferencesStore, RemoteWorkerInitializationData&& initializationData)
+{
+    return adoptRef(*new WebSharedWorkerContextManagerConnection(WTFMove(connectionToNetworkProcess), WTFMove(site), pageGroupID, webPageProxyID, pageID, preferencesStore, WTFMove(initializationData)));
+}
+
 WebSharedWorkerContextManagerConnection::WebSharedWorkerContextManagerConnection(Ref<IPC::Connection>&& connectionToNetworkProcess, WebCore::Site&& site, PageGroupIdentifier pageGroupID, WebPageProxyIdentifier webPageProxyID, WebCore::PageIdentifier pageID, const WebPreferencesStore& preferencesStore, RemoteWorkerInitializationData&& initializationData)
     : m_connectionToNetworkProcess(WTFMove(connectionToNetworkProcess))
     , m_site(WTFMove(site))

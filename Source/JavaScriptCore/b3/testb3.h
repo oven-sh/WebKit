@@ -256,8 +256,8 @@ template<typename T, typename... Arguments>
 T invoke(CodePtr<JITCompilationPtrTag> ptr, Arguments... arguments)
 {
     void* executableAddress = untagCFunctionPtr<JITCompilationPtrTag>(ptr.taggedPtr());
-    T (SYSV_ABI *function)(Arguments...) = std::bit_cast<T(SYSV_ABI *)(Arguments...)>(executableAddress);
-    return function(arguments...);
+    T (SYSV_ABI *function)(TweakedArgument<Arguments>...) = std::bit_cast<T(SYSV_ABI *)(TweakedArgument<Arguments>...)>(executableAddress);
+    return function(ArgumentTweaker<Arguments>::tweak(arguments)...);
 }
 
 template<typename T, typename... Arguments>

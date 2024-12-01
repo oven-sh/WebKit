@@ -40,7 +40,6 @@
 
 OBJC_CLASS JSValue;
 OBJC_CLASS NSDictionary;
-OBJC_CLASS _WKWebExtensionLocalization;
 
 namespace WebKit {
 
@@ -82,7 +81,7 @@ public:
     double manifestVersion() const { return m_manifestVersion; }
     bool supportsManifestVersion(double version) const { return manifestVersion() >= version; }
 
-    _WKWebExtensionLocalization *localization() const { return m_localization.get(); }
+    RefPtr<WebExtensionLocalization> localization() const { return m_localization; }
 
     bool isSessionStorageAllowedInContentScripts() const { return m_isSessionStorageAllowedInContentScripts; }
 
@@ -136,7 +135,7 @@ public:
 private:
     explicit WebExtensionContextProxy(const WebExtensionContextParameters&);
 
-    static _WKWebExtensionLocalization *parseLocalization(API::Data&, const URL& baseURL);
+    static RefPtr<WebExtensionLocalization> parseLocalization(RefPtr<API::Data>, const URL& baseURL);
 
     // Action
     void dispatchActionClickedEvent(const std::optional<WebExtensionTabParameters>&);
@@ -221,7 +220,7 @@ private:
     URL m_baseURL;
     String m_uniqueIdentifier;
     HashSet<String> m_unsupportedAPIs;
-    RetainPtr<_WKWebExtensionLocalization> m_localization;
+    RefPtr<WebExtensionLocalization> m_localization;
     RetainPtr<NSDictionary> m_manifest;
     double m_manifestVersion { 0 };
     bool m_isSessionStorageAllowedInContentScripts { false };

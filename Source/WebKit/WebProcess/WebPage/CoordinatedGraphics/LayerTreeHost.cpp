@@ -44,6 +44,7 @@
 #include <WebCore/PageOverlayController.h>
 #include <WebCore/RenderLayerBacking.h>
 #include <WebCore/RenderView.h>
+#include <WebCore/Settings.h>
 #include <WebCore/ThreadedScrollingTree.h>
 #include <wtf/SetForScope.h>
 #include <wtf/SystemTracing.h>
@@ -52,8 +53,7 @@
 #if USE(CAIRO)
 #include <WebCore/CairoPaintingEngine.h>
 #elif USE(SKIA)
-#include <WebCore/ProcessCapabilities.h>
-#include <WebCore/SkiaThreadedPaintingPool.h>
+#include <WebCore/SkiaPaintingEngine.h>
 #endif
 
 #if USE(GLIB_EVENT_LOOP)
@@ -77,15 +77,10 @@ LayerTreeHost::LayerTreeHost(WebPage& webPage, WebCore::PlatformDisplayID displa
 #endif
 #if USE(CAIRO)
     , m_paintingEngine(Cairo::PaintingEngine::create())
+#elif USE(SKIA)
+    , m_skiaPaintingEngine(SkiaPaintingEngine::create())
 #endif
 {
-#if USE(SKIA)
-    if (ProcessCapabilities::canUseAcceleratedBuffers() && PlatformDisplay::sharedDisplay().skiaGLContext())
-        m_skiaAcceleratedBitmapTexturePool = makeUnique<BitmapTexturePool>();
-    else
-        m_skiaThreadedPaintingPool = SkiaThreadedPaintingPool::create();
-#endif
-
     m_nicosia.scene = Nicosia::Scene::create();
     m_nicosia.sceneIntegration = Nicosia::SceneIntegration::create(*m_nicosia.scene, *this);
 
@@ -107,6 +102,16 @@ LayerTreeHost::LayerTreeHost(WebPage& webPage, WebCore::PlatformDisplayID displa
 #else
     m_compositor = ThreadedCompositor::create(*this, *this, m_webPage.deviceScaleFactor(), displayID);
 #endif
+#if ENABLE(DAMAGE_TRACKING)
+    auto damagePropagation = ([](const Settings& settings) {
+        if (!settings.propagateDamagingInformation())
+            return Damage::Propagation::None;
+        if (settings.unifyDamagedRegions())
+            return Damage::Propagation::Unified;
+        return Damage::Propagation::Region;
+    })(webPage.corePage()->settings());
+    m_compositor->setDamagePropagation(damagePropagation);
+#endif
     m_layerTreeContext.contextID = m_compositor->surfaceID();
 }
 
@@ -126,8 +131,7 @@ LayerTreeHost::~LayerTreeHost()
     }
 
 #if USE(SKIA)
-    m_skiaAcceleratedBitmapTexturePool = nullptr;
-    m_skiaThreadedPaintingPool = nullptr;
+    m_skiaPaintingEngine = nullptr;
 #endif
 
     m_compositor->invalidate();

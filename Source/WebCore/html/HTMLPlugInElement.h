@@ -72,7 +72,7 @@ public:
     virtual bool isPlugInImageElement() const = 0;
 
     // Return whether or not the replacement content for blocked plugins is accessible to the user.
-    WEBCORE_EXPORT bool setReplacement(RenderEmbeddedObject::PluginUnavailabilityReason, const String& unavailabilityDescription);
+    WEBCORE_EXPORT bool setReplacement(PluginUnavailabilityReason, const String& unavailabilityDescription);
 
     WEBCORE_EXPORT bool isReplacementObscured();
 
@@ -96,6 +96,7 @@ protected:
 
     virtual bool requestObject(const String& url, const String& mimeType, const Vector<AtomString>& paramNames, const Vector<AtomString>& paramValues);
     RenderPtr<RenderElement> createElementRenderer(RenderStyle&&, const RenderTreePosition&) override;
+    bool isReplaced(const RenderStyle&) const final;
     void didAddUserAgentShadowRoot(ShadowRoot&) final;
 
     // This will load the plugin if necessary.

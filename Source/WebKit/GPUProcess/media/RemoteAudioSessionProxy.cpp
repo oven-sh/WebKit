@@ -164,7 +164,7 @@ void RemoteAudioSessionProxy::setSoundStageSize(AudioSession::SoundStageSize siz
 
 RemoteAudioSessionProxyManager& RemoteAudioSessionProxy::audioSessionManager()
 {
-    return m_gpuConnection.get()->gpuProcess().audioSessionManager();
+    return m_gpuConnection.get()->protectedGPUProcess()->audioSessionManager();
 }
 
 Ref<RemoteAudioSessionProxyManager> RemoteAudioSessionProxy::protectedAudioSessionManager()

@@ -30,8 +30,6 @@
 #include <wtf/Assertions.h>
 #include <wtf/Vector.h>
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 // Usage:
 //
 //     // Initialize parallel jobs
@@ -100,5 +98,3 @@ private:
 } // namespace WTF
 
 using WTF::ParallelJobs;
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

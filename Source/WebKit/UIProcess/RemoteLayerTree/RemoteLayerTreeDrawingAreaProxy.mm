@@ -98,9 +98,10 @@ std::unique_ptr<RemoteLayerTreeHost> RemoteLayerTreeDrawingAreaProxy::detachRemo
 
 void RemoteLayerTreeDrawingAreaProxy::sizeDidChange()
 {
-    if (!protectedWebPageProxy()->hasRunningProcess())
+    RefPtr page = m_webPageProxy.get();
+    if (!page || !page->hasRunningProcess())
         return;
-    if (auto scrollingCoordinator = m_webPageProxy->scrollingCoordinatorProxy())
+    if (auto scrollingCoordinator = page->scrollingCoordinatorProxy())
         scrollingCoordinator->viewSizeDidChange();
 
     if (m_isWaitingForDidUpdateGeometry)
@@ -113,7 +114,7 @@ void RemoteLayerTreeDrawingAreaProxy::remotePageProcessDidTerminate(WebCore::Pro
     if (!m_remoteLayerTreeHost)
         return;
 
-    if (auto* scrollingCoordinator = m_webPageProxy->scrollingCoordinatorProxy()) {
+    if (auto* scrollingCoordinator = m_webPageProxy ? m_webPageProxy->scrollingCoordinatorProxy() : nullptr) {
         scrollingCoordinator->willCommitLayerAndScrollingTrees();
         m_remoteLayerTreeHost->remotePageProcessDidTerminate(processIdentifier);
         scrollingCoordinator->didCommitLayerAndScrollingTrees();
@@ -122,13 +123,13 @@ void RemoteLayerTreeDrawingAreaProxy::remotePageProcessDidTerminate(WebCore::Pro
 
 void RemoteLayerTreeDrawingAreaProxy::viewWillStartLiveResize()
 {
-    if (auto scrollingCoordinator = m_webPageProxy->scrollingCoordinatorProxy())
+    if (auto scrollingCoordinator = m_webPageProxy ? m_webPageProxy->scrollingCoordinatorProxy() : nullptr)
         scrollingCoordinator->viewWillStartLiveResize();
 }
 
 void RemoteLayerTreeDrawingAreaProxy::viewWillEndLiveResize()
 {
-    if (auto scrollingCoordinator = m_webPageProxy->scrollingCoordinatorProxy())
+    if (auto scrollingCoordinator = m_webPageProxy ? m_webPageProxy->scrollingCoordinatorProxy() : nullptr)
         scrollingCoordinator->viewWillEndLiveResize();
 }
 
@@ -136,7 +137,8 @@ void RemoteLayerTreeDrawingAreaProxy::deviceScaleFactorDidChange(CompletionHandl
 {
     Ref aggregator = CallbackAggregator::create(WTFMove(completionHandler));
     forEachProcessState([&](ProcessState& state, WebProcessProxy& webProcess) {
-        webProcess.sendWithAsyncReply(Messages::DrawingArea::SetDeviceScaleFactor(protectedWebPageProxy()->deviceScaleFactor()), [aggregator] { }, identifier());
+        if (RefPtr page = m_webPageProxy.get())
+            webProcess.sendWithAsyncReply(Messages::DrawingArea::SetDeviceScaleFactor(page->deviceScaleFactor()), [aggregator] { }, identifier());
     });
 }
 
@@ -146,7 +148,10 @@ void RemoteLayerTreeDrawingAreaProxy::didUpdateGeometry()
 
     m_isWaitingForDidUpdateGeometry = false;
 
-    auto webPageProxy = protectedWebPageProxy();
+    RefPtr webPageProxy = m_webPageProxy.get();
+    if (!webPageProxy)
+        return;
+
     IntSize minimumSizeForAutoLayout = webPageProxy->minimumSizeForAutoLayout();
     IntSize sizeToContentAutoSizeMaximumSize = webPageProxy->sizeToContentAutoSizeMaximumSize();
 
@@ -158,7 +163,10 @@ void RemoteLayerTreeDrawingAreaProxy::didUpdateGeometry()
 
 void RemoteLayerTreeDrawingAreaProxy::sendUpdateGeometry()
 {
-    auto webPageProxy = protectedWebPageProxy();
+    RefPtr webPageProxy = m_webPageProxy.get();
+    if (!webPageProxy)
+        return;
+
     m_lastSentMinimumSizeForAutoLayout = webPageProxy->minimumSizeForAutoLayout();
     m_lastSentSizeToContentAutoSizeMaximumSize = webPageProxy->sizeToContentAutoSizeMaximumSize();
     m_lastSentSize = m_size;
@@ -226,7 +234,8 @@ void RemoteLayerTreeDrawingAreaProxy::commitLayerTreeNotTriggered(IPC::Connectio
     maybePauseDisplayRefreshCallbacks();
 
 #if ENABLE(ASYNC_SCROLLING)
-    m_webPageProxy->scrollingCoordinatorProxy()->applyScrollingTreeLayerPositionsAfterCommit();
+    if (RefPtr page = m_webPageProxy.get())
+        page->scrollingCoordinatorProxy()->applyScrollingTreeLayerPositionsAfterCommit();
 #endif
 }
 
@@ -288,12 +297,15 @@ void RemoteLayerTreeDrawingAreaProxy::commitLayerTreeTransaction(IPC::Connection
     LOG_WITH_STREAM(RemoteLayerTree, stream << "RemoteLayerTreeDrawingAreaProxy::commitLayerTree transaction:" << layerTreeTransaction.description());
     LOG_WITH_STREAM(RemoteLayerTree, stream << "RemoteLayerTreeDrawingAreaProxy::commitLayerTree scrolling tree:" << scrollingTreeTransaction.description());
 
+    RefPtr webPageProxy = m_webPageProxy.get();
+    if (!webPageProxy)
+        return;
+
     state.lastLayerTreeTransactionID = layerTreeTransaction.transactionID();
     if (state.pendingLayerTreeTransactionID < state.lastLayerTreeTransactionID)
         state.pendingLayerTreeTransactionID = state.lastLayerTreeTransactionID;
 
     bool didUpdateEditorState { false };
-    auto webPageProxy = protectedWebPageProxy();
     if (layerTreeTransaction.isMainFrameProcessTransaction()) {
         ASSERT(layerTreeTransaction.transactionID() == m_lastVisibleTransactionID.next());
         m_transactionIDForPendingCACommit = layerTreeTransaction.transactionID();
@@ -423,7 +435,10 @@ static const float indicatorInset = 10;
 FloatPoint RemoteLayerTreeDrawingAreaProxy::indicatorLocation() const
 {
     FloatPoint tiledMapLocation;
-    Ref webPageProxy = m_webPageProxy.get();
+    RefPtr webPageProxy = m_webPageProxy.get();
+    if (!webPageProxy)
+        return { };
+
 #if PLATFORM(IOS_FAMILY)
     tiledMapLocation = webPageProxy->unobscuredContentRect().location().expandedTo(FloatPoint());
     tiledMapLocation = tiledMapLocation.expandedTo(webPageProxy->exposedContentRect().location());
@@ -452,7 +467,11 @@ void RemoteLayerTreeDrawingAreaProxy::updateDebugIndicatorPosition()
 float RemoteLayerTreeDrawingAreaProxy::indicatorScale(IntSize contentsSize) const
 {
     // Pick a good scale.
-    IntSize viewSize = protectedWebPageProxy()->viewSize();
+    RefPtr page = m_webPageProxy.get();
+    if (!page)
+        return 1;
+
+    IntSize viewSize = page->viewSize();
 
     float scale = 1;
     if (!contentsSize.isEmpty()) {
@@ -492,7 +511,10 @@ void RemoteLayerTreeDrawingAreaProxy::updateDebugIndicator(IntSize contentsSize,
     [m_exposedRectIndicatorLayer setBorderWidth:counterScaledBorder];
 
     FloatRect scaledExposedRect;
-    Ref webPageProxy = m_webPageProxy.get();
+    RefPtr webPageProxy = m_webPageProxy.get();
+    if (!webPageProxy)
+        return;
+
 #if PLATFORM(IOS_FAMILY)
     scaledExposedRect = webPageProxy->exposedContentRect();
 #else
@@ -569,7 +591,7 @@ void RemoteLayerTreeDrawingAreaProxy::didRefreshDisplay(ProcessState& state, IPC
 
     state.commitLayerTreeMessageState = CommitLayerTreePending;
 
-    if (&state == &m_webPageProxyProcessState)
+    if (&state == &m_webPageProxyProcessState && m_webPageProxy)
         m_webPageProxy->scrollingCoordinatorProxy()->sendScrollingTreeNodeDidScroll();
 
     // Waiting for CA to commit is insufficient, because the render server can still be
@@ -585,7 +607,8 @@ void RemoteLayerTreeDrawingAreaProxy::didRefreshDisplay(ProcessState& state, IPC
 
 void RemoteLayerTreeDrawingAreaProxy::didRefreshDisplay(IPC::Connection* connection)
 {
-    if (!protectedWebPageProxy()->hasRunningProcess())
+    RefPtr page = m_webPageProxy.get();
+    if (!page || !page->hasRunningProcess())
         return;
 
     if (connection) {
@@ -601,7 +624,8 @@ void RemoteLayerTreeDrawingAreaProxy::didRefreshDisplay(IPC::Connection* connect
     if (maybePauseDisplayRefreshCallbacks())
         return;
 
-    m_webPageProxy->didUpdateActivityState();
+    if (RefPtr page = m_webPageProxy.get())
+        page->didUpdateActivityState();
 }
 
 void RemoteLayerTreeDrawingAreaProxy::waitForDidUpdateActivityState(ActivityStateChangeID activityStateChangeID)
@@ -663,13 +687,15 @@ CALayer *RemoteLayerTreeDrawingAreaProxy::layerWithIDForTesting(WebCore::Platfor
 
 void RemoteLayerTreeDrawingAreaProxy::windowKindDidChange()
 {
-    if (protectedWebPageProxy()->windowKind() == WindowKind::InProcessSnapshotting)
+    RefPtr page = m_webPageProxy.get();
+    if (page && page->windowKind() == WindowKind::InProcessSnapshotting)
         m_remoteLayerTreeHost->mapAllIOSurfaceBackingStore();
 }
 
 void RemoteLayerTreeDrawingAreaProxy::minimumSizeForAutoLayoutDidChange()
 {
-    if (!protectedWebPageProxy()->hasRunningProcess())
+    RefPtr page = m_webPageProxy.get();
+    if (!page || !page->hasRunningProcess())
         return;
 
     if (m_isWaitingForDidUpdateGeometry)
@@ -680,7 +706,8 @@ void RemoteLayerTreeDrawingAreaProxy::minimumSizeForAutoLayoutDidChange()
 
 void RemoteLayerTreeDrawingAreaProxy::sizeToContentAutoSizeMaximumSizeDidChange()
 {
-    if (!protectedWebPageProxy()->hasRunningProcess())
+    RefPtr page = m_webPageProxy.get();
+    if (!page || !page->hasRunningProcess())
         return;
 
     if (m_isWaitingForDidUpdateGeometry)
@@ -692,12 +719,14 @@ void RemoteLayerTreeDrawingAreaProxy::sizeToContentAutoSizeMaximumSizeDidChange(
 #if ENABLE(THREADED_ANIMATION_RESOLUTION)
 void RemoteLayerTreeDrawingAreaProxy::animationsWereAddedToNode(RemoteLayerTreeNode& node)
 {
-    protectedWebPageProxy()->scrollingCoordinatorProxy()->animationsWereAddedToNode(node);
+    if (RefPtr page = m_webPageProxy.get())
+        page->scrollingCoordinatorProxy()->animationsWereAddedToNode(node);
 }
 
 void RemoteLayerTreeDrawingAreaProxy::animationsWereRemovedFromNode(RemoteLayerTreeNode& node)
 {
-    protectedWebPageProxy()->scrollingCoordinatorProxy()->animationsWereRemovedFromNode(node);
+    if (RefPtr page = m_webPageProxy.get())
+        page->scrollingCoordinatorProxy()->animationsWereRemovedFromNode(node);
 }
 
 Seconds RemoteLayerTreeDrawingAreaProxy::acceleratedTimelineTimeOrigin(WebCore::ProcessIdentifier processIdentifier) const

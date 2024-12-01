@@ -30,6 +30,8 @@
 #import "config.h"
 #import "CocoaHelpers.h"
 
+#if ENABLE(WK_WEB_EXTENSIONS)
+
 #import "APIData.h"
 #import "JSWebExtensionWrapper.h"
 #import "Logging.h"
@@ -543,3 +545,5 @@ HashMap<String, Ref<API::Data>> toDataMap(NSDictionary *dictionary)
 }
 
 } // namespace WebKit
+
+#endif // ENABLE(WK_WEB_EXTENSIONS)

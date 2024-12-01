@@ -36,6 +36,7 @@
 #include <WebCore/ScrollingCoordinatorTypes.h>
 #include <WebCore/WheelEventDeltaFilter.h>
 #include <memory>
+#include <wtf/CheckedRef.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
@@ -64,6 +65,7 @@ namespace WebKit {
 class MomentumEventDispatcher;
 class ScrollingAccelerationCurve;
 class WebPage;
+class WebProcess;
 class WebWheelEvent;
 
 class EventDispatcher final :
@@ -76,8 +78,11 @@ class EventDispatcher final :
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(EventDispatcher);
 #endif
 public:
-    EventDispatcher();
+    explicit EventDispatcher(WebProcess&);
     ~EventDispatcher();
+
+    void ref() const;
+    void deref() const;
 
     enum class WheelEventOrigin : bool { UIProcess, MomentumEventDispatcher };
 
@@ -154,6 +159,7 @@ private:
 
     void pageScreenDidChange(WebCore::PageIdentifier, WebCore::PlatformDisplayID, std::optional<unsigned> nominalFramesPerSecond);
 
+    CheckedRef<WebProcess> m_process;
     Ref<WorkQueue> m_queue;
 
 #if ENABLE(ASYNC_SCROLLING) && ENABLE(SCROLLING_THREAD)

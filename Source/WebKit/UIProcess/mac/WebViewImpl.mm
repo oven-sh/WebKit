@@ -1764,17 +1764,17 @@ CGSize WebViewImpl::fixedLayoutSize() const
     return m_page->fixedLayoutSize();
 }
 
-std::unique_ptr<WebKit::DrawingAreaProxy> WebViewImpl::createDrawingAreaProxy(WebProcessProxy& webProcessProxy)
+Ref<WebKit::DrawingAreaProxy> WebViewImpl::createDrawingAreaProxy(WebProcessProxy& webProcessProxy)
 {
     switch (m_drawingAreaType) {
     case DrawingAreaType::TiledCoreAnimation:
-        return makeUnique<TiledCoreAnimationDrawingAreaProxy>(m_page, webProcessProxy);
+        return TiledCoreAnimationDrawingAreaProxy::create(m_page, webProcessProxy);
     case DrawingAreaType::RemoteLayerTree:
-        return makeUnique<RemoteLayerTreeDrawingAreaProxyMac>(m_page, webProcessProxy);
+        return RemoteLayerTreeDrawingAreaProxyMac::create(m_page, webProcessProxy);
     }
 
     ASSERT_NOT_REACHED();
-    return nullptr;
+    return RemoteLayerTreeDrawingAreaProxyMac::create(m_page, webProcessProxy);
 }
 
 bool WebViewImpl::isUsingUISideCompositing() const
@@ -4658,7 +4658,7 @@ void WebViewImpl::hideTextAnimationView()
 ViewGestureController& WebViewImpl::ensureGestureController()
 {
     if (!m_gestureController)
-        m_gestureController = makeUnique<ViewGestureController>(m_page);
+        m_gestureController = ViewGestureController::create(m_page);
     return *m_gestureController;
 }
 

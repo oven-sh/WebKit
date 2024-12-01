@@ -32,8 +32,7 @@
 #include <ResourceError.h>
 #include <ResourceResponse.h>
 #include <libsoup/soup.h>
-#include <wtf/glib/GRefPtr.h>
-#include <wtf/glib/GUniquePtr.h>
+#include <wtf/glib/GSpanExtras.h>
 
 namespace WebCore {
 
@@ -123,23 +122,11 @@ std::optional<CertificateSummary> CertificateInfo::summary() const
         summaryInfo.validUntil = Seconds(static_cast<double>(g_date_time_to_unix(validNotAfter.get())));
     if (subjectName)
         summaryInfo.subject = String::fromUTF8(subjectName.get());
-    if (dnsNames) {
-        for (unsigned i = 0; i < dnsNames->len; ++i) {
-            WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib port
-            GBytes* bytes = static_cast<GBytes*>(dnsNames->pdata[i]);
-            WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-            gsize dataLength;
-            const auto* data = g_bytes_get_data(bytes, &dataLength);
-            summaryInfo.dnsNames.append(String({ static_cast<const char*>(data), dataLength }));
-        }
-    }
-    if (ipAddresses) {
-        for (unsigned i = 0; i < ipAddresses->len; ++i) {
-            WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN // GLib port
-            GUniquePtr<char> ipAddress(g_inet_address_to_string(static_cast<GInetAddress*>(ipAddresses->pdata[i])));
-            WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
-            summaryInfo.ipAddresses.append(String::fromUTF8(ipAddress.get()));
-        }
+    for (auto dnsName : span<GBytes*>(dnsNames))
+        summaryInfo.dnsNames.append(String(span(dnsName)));
+    for (auto address : span<GInetAddress*>(ipAddresses)) {
+        GUniquePtr<char> ipAddress(g_inet_address_to_string(address));
+        summaryInfo.ipAddresses.append(String::fromUTF8(ipAddress.get()));
     }
 
     return summaryInfo;

@@ -51,6 +51,9 @@ Vector<String> makeStringVector(const JSON::Array&);
 Vector<double> availableScreenScales();
 double largestDisplayScale();
 
+RefPtr<JSON::Object> jsonWithLowercaseKeys(RefPtr<JSON::Object>);
+RefPtr<JSON::Object> mergeJSON(RefPtr<JSON::Object>, RefPtr<JSON::Object>);
+
 #ifdef __OBJC__
 
 /// Verifies that a dictionary:

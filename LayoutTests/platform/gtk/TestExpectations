@@ -1002,6 +1002,7 @@ webkit.org/b/116961 perf/show-hide-table-rows.html [ Failure Pass ]
 
 webkit.org/b/263872 imported/w3c/web-platform-tests/scroll-animations/scroll-timelines/animation-with-animatable-interface.html [ ImageOnlyFailure ]
 webkit.org/b/263872 imported/w3c/web-platform-tests/scroll-animations/scroll-timelines/animation-with-display-none.html [ ImageOnlyFailure ]
+webkit.org/b/263872 imported/w3c/web-platform-tests/scroll-animations/scroll-timelines/progress-based-effect-delay.tentative.html [ ImageOnlyFailure ]
 
 # These tests started to time out (or time out more often) since the FTL merge
 webkit.org/b/119253 [ Debug ] js/dfg-osr-entry-hoisted-clobbered-structure-check.html [ Timeout Pass ]
@@ -1931,6 +1932,7 @@ webkit.org/b/278719 fast/events/touch/emulate-touch-events.html [ Failure ]
 webkit.org/b/278719 fast/events/touch/input-touch-target.html [ Failure ]
 webkit.org/b/278719 fast/events/touch/inserted-fragment-touch-target.html [ Timeout ]
 webkit.org/b/278719 fast/events/touch/moved-touch-target.html [ Timeout ]
+webkit.org/b/278719 fast/events/touch/multi-touch-inside-iframes.html [ Timeout ]
 webkit.org/b/278719 fast/events/touch/removed-fragment-touch-target.html [ Timeout ]
 webkit.org/b/278719 fast/events/touch/removed-touch-target.html [ Timeout ]
 webkit.org/b/278719 fast/events/touch/tap-highlight-color.html [ Timeout ]

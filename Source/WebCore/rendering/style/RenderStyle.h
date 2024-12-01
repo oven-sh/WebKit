@@ -33,6 +33,10 @@
 #include <wtf/OptionSet.h>
 #include <wtf/Vector.h>
 
+namespace WTF {
+class TextStream;
+}
+
 namespace WebCore {
 
 class AnimationList;
@@ -113,7 +117,7 @@ enum class AutoRepeatType : uint8_t;
 enum class BackfaceVisibility : uint8_t;
 enum class BlendMode : uint8_t;
 enum class FlowDirection : uint8_t;
-enum class BlockStepInsert : bool;
+enum class BlockStepInsert : uint8_t;
 enum class BorderCollapse : bool;
 enum class BorderStyle : uint8_t;
 enum class BoxAlignment : uint8_t;
@@ -1189,11 +1193,6 @@ public:
     inline void resetBorderBottomRightRadius();
 
     inline void setBackgroundColor(const StyleColor&);
-
-    inline void setBackgroundXPosition(Length&&);
-    inline void setBackgroundYPosition(Length&&);
-    inline void setBackgroundSize(FillSizeType);
-    inline void setBackgroundSizeLength(LengthSize&&);
     inline void setBackgroundAttachment(FillAttachment);
     inline void setBackgroundClip(FillBox);
     inline void setBackgroundOrigin(FillBox);
@@ -1818,6 +1817,10 @@ public:
     bool diffRequiresLayerRepaint(const RenderStyle&, bool isComposited) const;
     void conservativelyCollectChangedAnimatableProperties(const RenderStyle&, CSSPropertiesBitSet&) const;
 
+#if !LOG_DISABLED
+    void dumpDifferences(TextStream&, const RenderStyle&) const;
+#endif
+
     constexpr bool isDisplayInlineType() const;
     constexpr bool isOriginalDisplayInlineType() const;
     constexpr bool isDisplayFlexibleOrGridBox() const;
@@ -2280,6 +2283,10 @@ private:
         bool hasPseudoStyle(PseudoId) const;
         void setHasPseudoStyles(PseudoIdSet);
 
+#if !LOG_DISABLED
+        void dumpDifferences(TextStream&, const NonInheritedFlags&) const;
+#endif
+
         unsigned effectiveDisplay : 5; // DisplayType
         unsigned originalDisplay : 5; // DisplayType
         unsigned overflowX : 3; // Overflow
@@ -2310,6 +2317,10 @@ private:
 
     struct InheritedFlags {
         friend bool operator==(const InheritedFlags&, const InheritedFlags&) = default;
+
+#if !LOG_DISABLED
+        void dumpDifferences(TextStream&, const InheritedFlags&) const;
+#endif
 
         // Writing Mode = 8 bits (can be packed into 6 if needed)
         WritingMode writingMode;
@@ -2414,6 +2425,12 @@ inline bool generatesBox(const RenderStyle&);
 inline bool isNonVisibleOverflow(Overflow);
 
 inline bool isVisibleToHitTesting(const RenderStyle&, const HitTestRequest&);
-inline bool doesSizeContainmentApplyByDisplayType(const RenderStyle&);
+
+inline bool shouldApplyLayoutContainment(const RenderStyle&, const Element&);
+inline bool shouldApplySizeContainment(const RenderStyle&, const Element&);
+inline bool shouldApplyInlineSizeContainment(const RenderStyle&, const Element&);
+inline bool shouldApplyStyleContainment(const RenderStyle&, const Element&);
+inline bool shouldApplyPaintContainment(const RenderStyle&, const Element&);
+inline bool isSkippedContentRoot(const RenderStyle&, const Element&);
 
 } // namespace WebCore

@@ -41,7 +41,9 @@
 #import "WebExtensionContextMessages.h"
 #import "WebExtensionContextProxy.h"
 #import "WebExtensionUtilities.h"
+#import "WebFrame.h"
 #import "WebProcess.h"
+#import <WebCore/LocalFrame.h>
 
 #if PLATFORM(IOS_FAMILY)
 #import <UIKit/UIKit.h>
@@ -640,7 +642,7 @@ void WebExtensionAPIAction::setPopup(NSDictionary *details, Ref<WebExtensionCall
     }, extensionContext().identifier());
 }
 
-void WebExtensionAPIAction::openPopup(WebPage& page, NSDictionary *details, Ref<WebExtensionCallbackHandler>&& callback, NSString **outExceptionString)
+void WebExtensionAPIAction::openPopup(WebPageProxyIdentifier webPageProxyIdentifier, NSDictionary *details, Ref<WebExtensionCallbackHandler>&& callback, NSString **outExceptionString)
 {
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/action/openPopup
 
@@ -649,7 +651,7 @@ void WebExtensionAPIAction::openPopup(WebPage& page, NSDictionary *details, Ref<
     if (!parseActionDetails(details, windowIdentifier, tabIdentifier, outExceptionString))
         return;
 
-    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ActionOpenPopup(page.webPageProxyIdentifier(), windowIdentifier, tabIdentifier), [protectedThis = Ref { *this }, callback = WTFMove(callback)](Expected<void, WebExtensionError>&& result) {
+    WebProcess::singleton().sendWithAsyncReply(Messages::WebExtensionContext::ActionOpenPopup(webPageProxyIdentifier, windowIdentifier, tabIdentifier), [protectedThis = Ref { *this }, callback = WTFMove(callback)](Expected<void, WebExtensionError>&& result) {
         if (!result) {
             callback->reportError(result.error());
             return;

@@ -165,7 +165,6 @@ public:
     NetworkProcess& networkProcess() { return m_networkProcess.get(); }
     Ref<NetworkProcess> protectedNetworkProcess();
 
-    bool isWebTransportEnabled() const { return m_sharedPreferencesForWebProcess.webTransportEnabled; }
     bool usesSingleWebProcess() const { return m_sharedPreferencesForWebProcess.usesSingleWebProcess; }
     bool blobFileAccessEnforcementEnabled() const { return m_sharedPreferencesForWebProcess.blobFileAccessEnforcementEnabled; }
 
@@ -253,6 +252,7 @@ public:
 
 #if ENABLE(WEB_RTC)
     NetworkMDNSRegister& mdnsRegister() { return m_mdnsRegister; }
+    Ref<NetworkMDNSRegister> protectedMDNSRegister() { return m_mdnsRegister; }
 #endif
 
     WebSWServerToContextConnection* swContextConnection() { return m_swContextConnection.get(); }
@@ -517,7 +517,7 @@ private:
     SharedPreferencesForWebProcess m_sharedPreferencesForWebProcess;
     HashSet<String> m_allowedFilePaths;
 #if ENABLE(IPC_TESTING_API)
-    IPCTester m_ipcTester;
+    const Ref<IPCTester> m_ipcTester;
 #endif
 
     HashMap<WebTransportSessionIdentifier, Ref<NetworkTransportSession>> m_networkTransportSessions;

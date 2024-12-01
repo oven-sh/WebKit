@@ -98,7 +98,7 @@ PageConfiguration::PageConfiguration(
     UniqueRef<ContextMenuClient>&& contextMenuClient,
 #endif
 #if ENABLE(APPLE_PAY)
-    UniqueRef<PaymentCoordinatorClient>&& paymentCoordinatorClient,
+    Ref<PaymentCoordinatorClient>&& paymentCoordinatorClient,
 #endif
     UniqueRef<ChromeClient>&& chromeClient,
     UniqueRef<CryptoClient>&& cryptoClient,

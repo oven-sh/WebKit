@@ -24,13 +24,15 @@
 #include "AffineTransform.h"
 #include "RenderSVGBlock.h"
 #include "SVGBoundingBoxComputation.h"
+#include "SVGTextChunk.h"
 #include "SVGTextLayoutAttributesBuilder.h"
 
 namespace WebCore {
 
 class RenderSVGInlineText;
+class SVGRootInlineBox;
 class SVGTextElement;
-class RenderSVGInlineText;
+class SVGTextLayoutEngine;
 
 class RenderSVGText final : public RenderSVGBlock {
     WTF_MAKE_TZONE_OR_ISO_ALLOCATED(RenderSVGText);
@@ -69,13 +71,18 @@ public:
 
     void updatePositionAndOverflow(const FloatRect&);
 
+    SVGRootInlineBox* legacyRootBox() const;
+
 private:
     void graphicsElement() const = delete;
 
     ASCIILiteral renderName() const override { return "RenderSVGText"_s; }
 
     void paint(PaintInfo&, const LayoutPoint&) override;
+    void paintInlineChildren(PaintInfo&, const LayoutPoint&) override;
+
     bool nodeAtPoint(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction) override;
+    bool hitTestInlineChildren(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction) override;
 
     void applyTransform(TransformationMatrix&, const RenderStyle&, const FloatRect& boundingBox, OptionSet<RenderStyle::TransformOperationOption>) const final;
     VisiblePosition positionForPoint(const LayoutPoint&, HitTestSource, const RenderFragmentContainer*) override;
@@ -88,6 +95,12 @@ private:
     }
 
     void layout() override;
+
+    void computePerCharacterLayoutInformation();
+    void layoutCharactersInTextBoxes(LegacyInlineFlowBox*, SVGTextLayoutEngine&);
+    FloatRect layoutChildBoxes(LegacyInlineFlowBox*, SVGTextFragmentMap&);
+    void layoutRootBox(const FloatRect&);
+    void reorderValueListsToLogicalOrder();
 
     void willBeDestroyed() override;
 

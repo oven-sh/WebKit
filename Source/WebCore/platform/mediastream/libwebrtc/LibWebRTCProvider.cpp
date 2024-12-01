@@ -80,19 +80,9 @@ LibWebRTCProvider::LibWebRTCProvider()
 
 LibWebRTCProvider::~LibWebRTCProvider()
 {
-    if (RefPtr audioModule = std::exchange(m_audioModule, { }))
-        audioModule->stop();
 }
 
 #if !PLATFORM(COCOA)
-void LibWebRTCProvider::registerWebKitVP9Decoder()
-{
-}
-
-void LibWebRTCProvider::registerWebKitVP8Decoder()
-{
-}
-
 void WebRTCProvider::setH264HardwareEncoderAllowed(bool)
 {
 }

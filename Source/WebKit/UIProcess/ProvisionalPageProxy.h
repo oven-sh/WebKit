@@ -111,7 +111,7 @@ public:
     bool isProcessSwappingOnNavigationResponse() const { return m_isProcessSwappingOnNavigationResponse; }
 
     DrawingAreaProxy* drawingArea() const { return m_drawingArea.get(); }
-    std::unique_ptr<DrawingAreaProxy> takeDrawingArea();
+    RefPtr<DrawingAreaProxy> takeDrawingArea();
 
     void setNavigation(API::Navigation&);
 
@@ -208,7 +208,7 @@ private:
     // Keep WebsiteDataStore alive for provisional page load.
     RefPtr<WebsiteDataStore> m_websiteDataStore;
 
-    std::unique_ptr<DrawingAreaProxy> m_drawingArea;
+    RefPtr<DrawingAreaProxy> m_drawingArea;
     RefPtr<WebFrameProxy> m_mainFrame;
     RefPtr<WebsiteDataStore> m_replacedDataStoreForWebArchiveLoad;
     WebCore::NavigationIdentifier m_navigationID;

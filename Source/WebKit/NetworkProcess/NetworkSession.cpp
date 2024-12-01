@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2019 Apple Inc. All rights reserved.
+ * Copyright (C) 2015-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -77,7 +77,7 @@ using namespace WebCore;
 constexpr Seconds cachedNetworkResourceLoaderLifetime { 30_s };
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(NetworkSession);
-WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(NetworkSessionCachedNetworkResourceLoader, NetworkSession::CachedNetworkResourceLoader);
+WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(NetworkSession, CachedNetworkResourceLoader);
 
 std::unique_ptr<NetworkSession> NetworkSession::create(NetworkProcess& networkProcess, const NetworkSessionCreationParameters& parameters)
 {
@@ -158,7 +158,7 @@ NetworkSession::NetworkSession(NetworkProcess& networkProcess, const NetworkSess
     , m_persistedDomains(parameters.resourceLoadStatisticsParameters.persistedDomains)
     , m_privateClickMeasurement(managerOrProxy(*this, networkProcess, parameters))
     , m_privateClickMeasurementDebugModeEnabled(parameters.enablePrivateClickMeasurementDebugMode)
-    , m_broadcastChannelRegistry(makeUniqueRef<NetworkBroadcastChannelRegistry>(networkProcess))
+    , m_broadcastChannelRegistry(NetworkBroadcastChannelRegistry::create(networkProcess))
     , m_testSpeedMultiplier(parameters.testSpeedMultiplier)
     , m_allowsServerPreconnect(parameters.allowsServerPreconnect)
     , m_shouldRunServiceWorkersOnMainThreadForTesting(parameters.shouldRunServiceWorkersOnMainThreadForTesting)
@@ -166,7 +166,7 @@ NetworkSession::NetworkSession(NetworkProcess& networkProcess, const NetworkSess
     , m_inspectionForServiceWorkersAllowed(parameters.inspectionForServiceWorkersAllowed)
     , m_storageManager(createNetworkStorageManager(networkProcess, parameters))
 #if ENABLE(WEB_PUSH_NOTIFICATIONS)
-    , m_notificationManager(parameters.sessionID.isEphemeral() ? String { } : parameters.webPushMachServiceName, configurationWithHostAuditToken(networkProcess, parameters.webPushDaemonConnectionConfiguration))
+    , m_notificationManager(NetworkNotificationManager::create(parameters.sessionID.isEphemeral() ? String { } : parameters.webPushMachServiceName, configurationWithHostAuditToken(networkProcess, parameters.webPushDaemonConnectionConfiguration)))
 #endif
 {
     if (!m_sessionID.isEphemeral()) {
@@ -892,5 +892,12 @@ CheckedRef<PrefetchCache> NetworkSession::checkedPrefetchCache()
 {
     return m_prefetchCache;
 }
+
+#if ENABLE(WEB_PUSH_NOTIFICATIONS)
+Ref<NetworkNotificationManager> NetworkSession::protectedNotificationManager()
+{
+    return m_notificationManager.get();
+}
+#endif
 
 } // namespace WebKit

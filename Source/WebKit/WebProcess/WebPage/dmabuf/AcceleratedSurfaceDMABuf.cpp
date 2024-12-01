@@ -30,6 +30,7 @@
 
 #include "AcceleratedBackingStoreDMABufMessages.h"
 #include "AcceleratedSurfaceDMABufMessages.h"
+#include "ThreadedCompositor.h"
 #include "WebPage.h"
 #include "WebProcess.h"
 #include <WebCore/GLFence.h>
@@ -62,9 +63,19 @@ static uint64_t generateID()
     return ++identifier;
 }
 
-std::unique_ptr<AcceleratedSurfaceDMABuf> AcceleratedSurfaceDMABuf::create(WebPage& webPage, Function<void()>&& frameCompleteHandler)
+std::unique_ptr<AcceleratedSurfaceDMABuf> AcceleratedSurfaceDMABuf::create(ThreadedCompositor& compositor, WebPage& webPage, Function<void()>&& frameCompleteHandler)
 {
-    return std::unique_ptr<AcceleratedSurfaceDMABuf>(new AcceleratedSurfaceDMABuf(webPage, WTFMove(frameCompleteHandler)));
+    return std::unique_ptr<AcceleratedSurfaceDMABuf>(new AcceleratedSurfaceDMABuf(compositor, webPage, WTFMove(frameCompleteHandler)));
+}
+
+void AcceleratedSurfaceDMABuf::ref() const
+{
+    m_compositor->ref();
+}
+
+void AcceleratedSurfaceDMABuf::deref() const
+{
+    m_compositor->deref();
 }
 
 static bool useExplicitSync()
@@ -74,8 +85,9 @@ static bool useExplicitSync()
     return extensions.ANDROID_native_fence_sync && (display.eglCheckVersion(1, 5) || extensions.KHR_fence_sync);
 }
 
-AcceleratedSurfaceDMABuf::AcceleratedSurfaceDMABuf(WebPage& webPage, Function<void()>&& frameCompleteHandler)
+AcceleratedSurfaceDMABuf::AcceleratedSurfaceDMABuf(ThreadedCompositor& compositor, WebPage& webPage, Function<void()>&& frameCompleteHandler)
     : AcceleratedSurface(webPage, WTFMove(frameCompleteHandler))
+    , m_compositor(compositor)
     , m_id(generateID())
     , m_swapChain(m_id)
     , m_isVisible(webPage.activityState().contains(WebCore::ActivityState::IsVisible))
@@ -97,7 +109,7 @@ static uint64_t generateTargetID()
     return ++identifier;
 }
 
-WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(AcceleratedSurfaceDMABufRenderTarget, AcceleratedSurfaceDMABuf::RenderTarget);
+WTF_MAKE_TZONE_ALLOCATED_IMPL_NESTED(AcceleratedSurfaceDMABuf, RenderTarget);
 
 AcceleratedSurfaceDMABuf::RenderTarget::RenderTarget(uint64_t surfaceID, const WebCore::IntSize& size)
     : m_id(generateTargetID())
@@ -428,6 +440,8 @@ void AcceleratedSurfaceDMABuf::SwapChain::setupBufferFormat(const Vector<DMABufR
     BufferFormat dmabufFormat;
     const auto& supportedFormats = WebCore::PlatformDisplay::sharedDisplay().dmabufFormats();
     for (const auto& bufferFormat : preferredFormats) {
+
+        auto matchesOpacity = false;
         for (const auto& format : supportedFormats) {
             auto index = bufferFormat.formats.findIf([&](const auto& item) {
                 return format.fourcc == item.fourcc;
@@ -435,7 +449,7 @@ void AcceleratedSurfaceDMABuf::SwapChain::setupBufferFormat(const Vector<DMABufR
             if (index != notFound) {
                 const auto& preferredFormat = bufferFormat.formats[index];
 
-                bool matchesOpacity = isOpaqueFormat(preferredFormat.fourcc) == isOpaque;
+                matchesOpacity = isOpaqueFormat(preferredFormat.fourcc) == isOpaque;
                 if (!matchesOpacity && dmabufFormat.fourcc)
                     continue;
 
@@ -457,7 +471,7 @@ void AcceleratedSurfaceDMABuf::SwapChain::setupBufferFormat(const Vector<DMABufR
             }
         }
 
-        if (dmabufFormat.fourcc)
+        if (dmabufFormat.fourcc && matchesOpacity)
             break;
     }
 
@@ -655,7 +669,7 @@ void AcceleratedSurfaceDMABuf::willRenderFrame()
         WTFLogAlways("AcceleratedSurfaceDMABuf was unable to construct a complete framebuffer");
 }
 
-void AcceleratedSurfaceDMABuf::didRenderFrame(WebCore::Region&& damage)
+void AcceleratedSurfaceDMABuf::didRenderFrame()
 {
     TraceScope traceScope(WaitForCompositionCompletionStart, WaitForCompositionCompletionEnd);
 
@@ -671,11 +685,13 @@ void AcceleratedSurfaceDMABuf::didRenderFrame(WebCore::Region&& damage)
         glFlush();
 
     m_target->didRenderFrame();
-    WebProcess::singleton().parentProcessConnection()->send(Messages::AcceleratedBackingStoreDMABuf::Frame(m_target->id(), WTFMove(damage), WTFMove(renderingFence)), m_id);
+    WebProcess::singleton().parentProcessConnection()->send(Messages::AcceleratedBackingStoreDMABuf::Frame(m_target->id(), m_frameDamage.region(), WTFMove(renderingFence)), m_id);
+    m_frameDamage = WebCore::Damage();
 }
 
 const WebCore::Damage& AcceleratedSurfaceDMABuf::addDamage(const WebCore::Damage& damage)
 {
+    m_frameDamage = damage;
     m_swapChain.addDamage(damage);
     return m_target ? m_target->damage() : WebCore::Damage::invalid();
 }

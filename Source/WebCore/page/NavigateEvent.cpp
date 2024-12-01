@@ -27,6 +27,7 @@
 #include "NavigateEvent.h"
 
 #include "AbortController.h"
+#include "CommonVM.h"
 #include "Element.h"
 #include "ExceptionCode.h"
 #include "HTMLBodyElement.h"
@@ -47,13 +48,14 @@ NavigateEvent::NavigateEvent(const AtomString& type, const NavigateEvent::Init& 
     , m_signal(init.signal)
     , m_formData(init.formData)
     , m_downloadRequest(init.downloadRequest)
-    , m_info(init.info)
     , m_canIntercept(init.canIntercept)
     , m_userInitiated(init.userInitiated)
     , m_hashChange(init.hashChange)
     , m_hasUAVisualTransition(init.hasUAVisualTransition)
     , m_abortController(abortController)
 {
+    Locker<JSC::JSLock> locker(commonVM().apiLock());
+    m_info.setWeakly(init.info);
 }
 
 Ref<NavigateEvent> NavigateEvent::create(const AtomString& type, const NavigateEvent::Init& init, AbortController* abortController)

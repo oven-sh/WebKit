@@ -773,20 +773,20 @@ void WebChromeClient::scrollContainingScrollViewsToRevealRect(const IntRect&) co
     notImplemented();
 }
 
-bool WebChromeClient::shouldUnavailablePluginMessageBeButton(RenderEmbeddedObject::PluginUnavailabilityReason pluginUnavailabilityReason) const
+bool WebChromeClient::shouldUnavailablePluginMessageBeButton(PluginUnavailabilityReason pluginUnavailabilityReason) const
 {
     switch (pluginUnavailabilityReason) {
-    case RenderEmbeddedObject::PluginMissing:
+    case PluginUnavailabilityReason::PluginMissing:
         // FIXME: <rdar://problem/8794397> We should only return true when there is a
         // missingPluginButtonClicked callback defined on the Page UI client.
-    case RenderEmbeddedObject::InsecurePluginVersion:
+    case PluginUnavailabilityReason::InsecurePluginVersion:
         return true;
 
 
-    case RenderEmbeddedObject::PluginCrashed:
-    case RenderEmbeddedObject::PluginBlockedByContentSecurityPolicy:
-    case RenderEmbeddedObject::UnsupportedPlugin:
-    case RenderEmbeddedObject::PluginTooSmall:
+    case PluginUnavailabilityReason::PluginCrashed:
+    case PluginUnavailabilityReason::PluginBlockedByContentSecurityPolicy:
+    case PluginUnavailabilityReason::UnsupportedPlugin:
+    case PluginUnavailabilityReason::PluginTooSmall:
         return false;
     }
 
@@ -794,7 +794,7 @@ bool WebChromeClient::shouldUnavailablePluginMessageBeButton(RenderEmbeddedObjec
     return false;
 }
     
-void WebChromeClient::unavailablePluginButtonClicked(Element& element, RenderEmbeddedObject::PluginUnavailabilityReason pluginUnavailabilityReason) const
+void WebChromeClient::unavailablePluginButtonClicked(Element& element, PluginUnavailabilityReason pluginUnavailabilityReason) const
 {
     UNUSED_PARAM(element);
     UNUSED_PARAM(pluginUnavailabilityReason);
@@ -1762,7 +1762,7 @@ void WebChromeClient::setMockWebAuthenticationConfiguration(const MockWebAuthent
 #endif
 
 #if PLATFORM(PLAYSTATION)
-void WebChromeClient::postAccessibilityNotification(WebCore::AccessibilityObject&, WebCore::AXObjectCache::AXNotification)
+void WebChromeClient::postAccessibilityNotification(WebCore::AccessibilityObject&, WebCore::AXNotification)
 {
     notImplemented();
 }
@@ -1772,7 +1772,7 @@ void WebChromeClient::postAccessibilityNodeTextChangeNotification(WebCore::Acces
     notImplemented();
 }
 
-void WebChromeClient::postAccessibilityFrameLoadingEventNotification(WebCore::AccessibilityObject*, WebCore::AXObjectCache::AXLoadingEvent)
+void WebChromeClient::postAccessibilityFrameLoadingEventNotification(WebCore::AccessibilityObject*, WebCore::AXLoadingEvent)
 {
     notImplemented();
 }

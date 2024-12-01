@@ -32,10 +32,10 @@ namespace IPC {
 
 enum class ReceiverName : uint8_t {
     TestWithCVPixelBuffer = 1
-    , TestWithEnabledBy = 2
-    , TestWithEnabledByAndConjunction = 3
-    , TestWithEnabledByOrConjunction = 4
-    , TestWithEnabledIf = 5
+    , TestWithDeferSendingOption = 2
+    , TestWithEnabledBy = 3
+    , TestWithEnabledByAndConjunction = 4
+    , TestWithEnabledByOrConjunction = 5
     , TestWithIfMessage = 6
     , TestWithImageData = 7
     , TestWithLegacyReceiver = 8
@@ -47,14 +47,15 @@ enum class ReceiverName : uint8_t {
     , TestWithSuperclass = 14
     , TestWithSuperclassAndWantsAsyncDispatch = 15
     , TestWithSuperclassAndWantsDispatch = 16
-    , TestWithWantsAsyncDispatch = 17
-    , TestWithWantsDispatch = 18
-    , TestWithWantsDispatchNoSyncMessages = 19
-    , TestWithoutAttributes = 20
-    , TestWithoutUsingIPCConnection = 21
-    , IPC = 22
-    , AsyncReply = 23
-    , Invalid = 24
+    , TestWithValidator = 17
+    , TestWithWantsAsyncDispatch = 18
+    , TestWithWantsDispatch = 19
+    , TestWithWantsDispatchNoSyncMessages = 20
+    , TestWithoutAttributes = 21
+    , TestWithoutUsingIPCConnection = 22
+    , IPC = 23
+    , AsyncReply = 24
+    , Invalid = 25
 };
 
 enum class MessageName : uint16_t {
@@ -62,14 +63,16 @@ enum class MessageName : uint16_t {
     TestWithCVPixelBuffer_ReceiveCVPixelBuffer,
     TestWithCVPixelBuffer_SendCVPixelBuffer,
 #endif
+    TestWithDeferSendingOption_MultipleIndices,
+    TestWithDeferSendingOption_NoIndices,
+    TestWithDeferSendingOption_NoOptions,
+    TestWithDeferSendingOption_OneIndex,
     TestWithEnabledByAndConjunction_AlwaysEnabled,
     TestWithEnabledByOrConjunction_AlwaysEnabled,
     TestWithEnabledBy_AlwaysEnabled,
     TestWithEnabledBy_ConditionallyEnabled,
     TestWithEnabledBy_ConditionallyEnabledAnd,
     TestWithEnabledBy_ConditionallyEnabledOr,
-    TestWithEnabledIf_AlwaysEnabled,
-    TestWithEnabledIf_OnlyEnabledIfFeatureEnabled,
 #if PLATFORM(COCOA) || PLATFORM(GTK)
     TestWithIfMessage_LoadURL,
 #endif
@@ -129,6 +132,9 @@ enum class MessageName : uint16_t {
     TestWithSuperclass_TestAsyncMessageWithMultipleArguments,
     TestWithSuperclass_TestAsyncMessageWithNoArguments,
 #endif
+    TestWithValidator_AlwaysEnabled,
+    TestWithValidator_EnabledIfPassValidation,
+    TestWithValidator_EnabledIfSomeFeatureEnabledAndPassValidation,
     TestWithWantsAsyncDispatch_TestMessage,
     TestWithWantsDispatchNoSyncMessages_TestMessage,
     TestWithWantsDispatch_TestMessage,

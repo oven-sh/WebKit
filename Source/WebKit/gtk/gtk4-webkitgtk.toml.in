@@ -41,6 +41,7 @@ base_url = "https://github.com/WebKit/WebKit/tree/main/"
 content_files = [
     "overview.md",
     "environment-variables.md",
+    "profiling.md",
     "migrating-to-webkitgtk-6.0.md"
 ]
 

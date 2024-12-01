@@ -67,8 +67,6 @@
 #import <pal/ios/UIKitSoftLink.h>
 #endif
 
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-
 @interface WebCoreRenderThemeBundle : NSObject
 @end
 
@@ -241,8 +239,8 @@ static inline FontSelectionValue cssWeightOfSystemFont(CTFontRef font)
     resultRef = static_cast<CFNumberRef>(CFDictionaryGetValue(traits.get(), kCTFontWeightTrait));
     CFNumberGetValue(resultRef.get(), kCFNumberFloatType, &result);
     // These numbers were experimentally gathered from weights of the system font.
-    static constexpr float weightThresholds[] = { -0.6, -0.365, -0.115, 0.130, 0.235, 0.350, 0.5, 0.7 };
-    for (unsigned i = 0; i < std::size(weightThresholds); ++i) {
+    static constexpr std::array weightThresholds { -0.6f, -0.365f, -0.115f, 0.130f, 0.235f, 0.350f, 0.5f, 0.7f };
+    for (unsigned i = 0; i < weightThresholds.size(); ++i) {
         if (result < weightThresholds[i])
             return FontSelectionValue((static_cast<int>(i) + 1) * 100);
     }
@@ -296,5 +294,3 @@ Color RenderThemeCocoa::platformGrammarMarkerColor(OptionSet<StyleColorOptions> 
 }
 
 }
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

@@ -110,8 +110,12 @@ void CSSAnimation::syncPropertiesWithBackingAnimation()
     if (!m_overriddenProperties.contains(Property::Delay))
         animationEffect->setDelay(Seconds(animation.delay()));
 
-    if (!m_overriddenProperties.contains(Property::Duration))
-        animationEffect->setIterationDuration(Seconds(animation.duration().value_or(0)));
+    if (!m_overriddenProperties.contains(Property::Duration)) {
+        if (auto duration = animation.duration())
+            animationEffect->setIterationDuration(Seconds(*duration));
+        else
+            animationEffect->setIterationDuration(std::nullopt);
+    }
 
     if (!m_overriddenProperties.contains(Property::CompositeOperation)) {
         if (auto* keyframeEffect = dynamicDowncast<KeyframeEffect>(animationEffect))
@@ -141,7 +145,6 @@ void CSSAnimation::syncPropertiesWithBackingAnimation()
     if (!m_overriddenProperties.contains(Property::Range))
         setRange(animation.range());
 
-    animationEffect->updateStaticTimingProperties();
     effectTimingDidChange();
 
     // Synchronize the play state

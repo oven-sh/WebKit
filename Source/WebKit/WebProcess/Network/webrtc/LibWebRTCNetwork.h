@@ -32,10 +32,10 @@
 #include "WebRTCMonitor.h"
 #include "WebRTCResolver.h"
 #include <WebCore/LibWebRTCSocketIdentifier.h>
+#include <wtf/CheckedRef.h>
 #include <wtf/FunctionDispatcher.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/UniqueRef.h>
-#include <wtf/WeakRef.h>
 
 namespace WebKit {
 class WebProcess;
@@ -58,11 +58,12 @@ public:
 
 #if USE(LIBWEBRTC)
     WebRTCMonitor& monitor() { return m_webNetworkMonitor; }
+    Ref<WebRTCMonitor> protectedMonitor() { return m_webNetworkMonitor; }
     LibWebRTCSocketFactory& socketFactory() { return m_socketFactory; }
 
     void disableNonLocalhostConnections() { socketFactory().disableNonLocalhostConnections(); }
 
-    WebRTCResolver resolver(LibWebRTCResolverIdentifier identifier) { return WebRTCResolver(socketFactory(), identifier); }
+    Ref<WebRTCResolver> resolver(LibWebRTCResolverIdentifier identifier) { return WebRTCResolver::create(socketFactory(), identifier); }
 #endif
 
 #if ENABLE(WEB_RTC)
@@ -92,7 +93,7 @@ private:
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) final;
 #endif
 
-    WeakRef<WebProcess> m_webProcess;
+    CheckedRef<WebProcess> m_webProcess;
 
 #if USE(LIBWEBRTC)
     LibWebRTCSocketFactory m_socketFactory;

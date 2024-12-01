@@ -27,7 +27,7 @@
 #include "ImageBufferBackend.h"
 
 #include "GraphicsContext.h"
-#include "Image.h"
+#include "ImageBuffer.h"
 #include "PixelBuffer.h"
 #include "PixelBufferConversion.h"
 #include <wtf/TZoneMallocInlines.h>
@@ -156,6 +156,13 @@ AffineTransform ImageBufferBackend::calculateBaseTransform(const Parameters& par
     baseTransform.scale(parameters.resolutionScale);
     return baseTransform;
 }
+
+#if USE(SKIA)
+RefPtr<ImageBuffer> ImageBufferBackend::copyAcceleratedImageBufferBorrowingBackendRenderTarget(const ImageBuffer&) const
+{
+    return nullptr;
+}
+#endif
 
 TextStream& operator<<(TextStream& ts, VolatilityState state)
 {

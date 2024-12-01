@@ -31,6 +31,7 @@
 
 #include "DMABufRendererBufferFormat.h"
 #include "MessageReceiver.h"
+#include <WebCore/Damage.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/RunLoop.h>
 #include <wtf/TZoneMalloc.h>
@@ -62,12 +63,16 @@ template<> struct IsDeprecatedTimerSmartPointerException<WebKit::AcceleratedSurf
 
 namespace WebKit {
 
+class ThreadedCompositor;
 class WebPage;
 
 class AcceleratedSurfaceDMABuf final : public AcceleratedSurface, public IPC::MessageReceiver {
 public:
-    static std::unique_ptr<AcceleratedSurfaceDMABuf> create(WebPage&, Function<void()>&& frameCompleteHandler);
+    static std::unique_ptr<AcceleratedSurfaceDMABuf> create(ThreadedCompositor&, WebPage&, Function<void()>&& frameCompleteHandler);
     ~AcceleratedSurfaceDMABuf();
+
+    void ref() const;
+    void deref() const;
 
 private:
     uint64_t window() const override { return 0; }
@@ -84,7 +89,7 @@ private:
     void didCreateGLContext() override;
     void willDestroyGLContext() override;
     void willRenderFrame() override;
-    void didRenderFrame(WebCore::Region&&) override;
+    void didRenderFrame() override;
 
     const WebCore::Damage& addDamage(const WebCore::Damage&) override;
 
@@ -98,7 +103,7 @@ private:
     void visibilityDidChange(bool) override;
     bool backgroundColorDidChange() override;
 
-    AcceleratedSurfaceDMABuf(WebPage&, Function<void()>&& frameCompleteHandler);
+    AcceleratedSurfaceDMABuf(ThreadedCompositor&, WebPage&, Function<void()>&& frameCompleteHandler);
 
     // IPC::MessageReceiver.
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
@@ -263,12 +268,14 @@ private:
 #endif
     };
 
+    CheckedRef<ThreadedCompositor> m_compositor;
     uint64_t m_id { 0 };
     unsigned m_fbo { 0 };
     SwapChain m_swapChain;
     RenderTarget* m_target { nullptr };
     bool m_isVisible { false };
     bool m_useExplicitSync { false };
+    WebCore::Damage m_frameDamage;
     std::unique_ptr<RunLoop::Timer> m_releaseUnusedBuffersTimer;
 };
 

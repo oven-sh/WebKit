@@ -1044,7 +1044,7 @@ Node* RenderMultiColumnSet::nodeForHitTest() const
     return document().documentElement();
 }
 
-void RenderMultiColumnSet::updateHitTestResult(HitTestResult& result, const LayoutPoint& point)
+void RenderMultiColumnSet::updateHitTestResult(HitTestResult& result, const LayoutPoint& point) const
 {
     if (result.innerNode() || !parent()->isRenderView())
         return;

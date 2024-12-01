@@ -782,7 +782,7 @@ Node* RenderView::nodeForHitTest() const
     return document().documentElement();
 }
 
-void RenderView::updateHitTestResult(HitTestResult& result, const LayoutPoint& point)
+void RenderView::updateHitTestResult(HitTestResult& result, const LayoutPoint& point) const
 {
     if (result.innerNode())
         return;

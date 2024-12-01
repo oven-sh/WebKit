@@ -30,6 +30,7 @@
 #include "MessageReceiver.h"
 #include "WebProcessSupplement.h"
 #include <WebCore/SystemSettings.h>
+#include <wtf/CheckedRef.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -43,6 +44,9 @@ public:
     explicit SystemSettingsManager(WebProcess&);
     ~SystemSettingsManager();
 
+    void ref() const;
+    void deref() const;
+
     static ASCIILiteral supplementName();
 
 private:
@@ -53,6 +57,8 @@ private:
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&) override;
 
     void didChange(const WebCore::SystemSettings::State&);
+
+    CheckedRef<WebProcess> m_process;
 };
 
 } // namespace WebKit

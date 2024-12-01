@@ -40,6 +40,7 @@ class Decoder;
 
 namespace WebKit {
 
+class LibWebRTCNetwork;
 struct NetworksChangedData;
 
 class WebRTCMonitorObserver : public AbstractRefCountedAndCanMakeWeakPtr<WebRTCMonitorObserver> {
@@ -52,7 +53,10 @@ public:
 
 class WebRTCMonitor {
 public:
-    WebRTCMonitor() = default;
+    explicit WebRTCMonitor(LibWebRTCNetwork&);
+
+    void ref() const;
+    void deref() const;
 
     void addObserver(WebRTCMonitorObserver& observer) { m_observers.add(observer); }
     void removeObserver(WebRTCMonitorObserver& observer) { m_observers.remove(observer); }
@@ -70,6 +74,7 @@ public:
 private:
     void networksChanged(Vector<RTCNetwork>&&, RTCNetwork::IPAddress&&, RTCNetwork::IPAddress&&);
 
+    WeakRef<LibWebRTCNetwork> m_libWebRTCNetwork;
     unsigned m_clientCount { 0 };
     WeakHashSet<WebRTCMonitorObserver> m_observers;
     bool m_didReceiveNetworkList { false };

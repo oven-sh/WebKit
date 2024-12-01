@@ -229,7 +229,7 @@ private:
     void setAnimatedPropertiesInStyle(RenderStyle&, const ComputedEffectTiming&);
     const TimingFunction* timingFunctionForKeyframeAtIndex(size_t) const;
     const TimingFunction* timingFunctionForBlendingKeyframe(const BlendingKeyframe&) const;
-    Ref<const Animation> backingAnimationForCompositedRenderer() const;
+    Ref<const Animation> backingAnimationForCompositedRenderer();
     void computedNeedsForcedLayout();
     void computeStackingContextImpact();
     void computeSomeKeyframesUseStepsOrLinearTimingFunctionWithPoints();
@@ -276,7 +276,7 @@ private:
     void animationTimelineDidChange(const AnimationTimeline*) final;
     void animationDidFinish() final;
     void setAnimation(WebAnimation*) final;
-    Seconds timeToNextTick(const BasicEffectTiming&) const final;
+    Seconds timeToNextTick(const BasicEffectTiming&) final;
     bool ticksContinuouslyWhileActive() const final;
     std::optional<double> progressUntilNextStep(double) const final;
     bool preventsAnimationReadiness() const final;

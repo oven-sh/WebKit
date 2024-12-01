@@ -1261,8 +1261,6 @@ TextStream& operator<<(TextStream& ts, const URL& url)
     return ts;
 }
 
-#if !PLATFORM(COCOA) && !USE(SOUP)
-
 static bool isIPv4Address(StringView string)
 {
     auto count = 0;
@@ -1295,7 +1293,7 @@ static bool isIPv4Address(StringView string)
     return (count == 4);
 }
 
-static bool isIPv6Address(StringView string)
+bool URL::isIPv6Address(StringView string)
 {
     enum SkipState { None, WillSkip, Skipping, Skipped, Final };
     auto skipState = None;
@@ -1346,6 +1344,8 @@ static bool isIPv6Address(StringView string)
 
     return (count == 8 && skipState == None) || skipState == Skipped || skipState == Final;
 }
+
+#if !PLATFORM(COCOA) && !USE(SOUP)
 
 bool URL::hostIsIPAddress(StringView host)
 {
