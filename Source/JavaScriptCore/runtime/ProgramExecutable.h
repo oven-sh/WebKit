@@ -57,12 +57,12 @@ public:
 
     ProgramCodeBlock* codeBlock() const
     {
-        return __bit_cast<ProgramCodeBlock*>(Base::codeBlock());
+        return std::bit_cast<ProgramCodeBlock*>(Base::codeBlock());
     }
 
     UnlinkedProgramCodeBlock* unlinkedCodeBlock() const
     {
-        return __bit_cast<UnlinkedProgramCodeBlock*>(Base::unlinkedCodeBlock());
+        return std::bit_cast<UnlinkedProgramCodeBlock*>(Base::unlinkedCodeBlock());
     }
 
     Ref<JSC::JITCode> generatedJITCode()

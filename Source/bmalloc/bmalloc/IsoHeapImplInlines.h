@@ -29,26 +29,10 @@
 #include "IsoTLSDeallocatorEntry.h"
 #include "IsoSharedHeapInlines.h"
 #include "IsoSharedPageInlines.h"
-#include <bit>
 
 #if !BUSE(LIBPAS)
 
 namespace bmalloc {
-
-// bun!
-#if defined(__cpp_lib_bit_cast) && __cpp_lib_bit_cast >= 201806L
-#define __bit_cast std::bit_cast
-#else
-template <
-    typename Dest, typename Source,
-    typename std::enable_if<sizeof(Dest) == sizeof(Source) &&
-                                std::is_trivially_copyable<Source>::value &&
-                                std::is_trivially_copyable<Dest>::value,
-                            int>::type = 0>
-inline constexpr Dest __bit_cast(const Source &source) {
-  return __builtin_bit_cast(Dest, source);
-}
-#endif
 
 template<typename Config>
 IsoHeapImpl<Config>::IsoHeapImpl()
@@ -334,7 +318,7 @@ void* IsoHeapImpl<Config>::allocateFromShared(const LockHolder&, bool abortOnFai
             fprintf(stderr, "%p: allocated %p from shared of size %u\n", this, result, Config::objectSize);
         BASSERT(index < IsoHeapImplBase::maxAllocationFromShared);
         *indexSlotFor<Config>(result) = index;
-        m_sharedCells[index] = __bit_cast<uint8_t*>(result);
+        m_sharedCells[index] = std::bit_cast<uint8_t*>(result);
     }
     BASSERT(result);
     m_availableShared &= ~(1U << index);

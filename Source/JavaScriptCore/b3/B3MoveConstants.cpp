@@ -307,13 +307,13 @@ private:
             auto* pointer = dataSection + getOffset(entry.key.opcode(), entry.value);
             switch (entry.key.opcode()) {
             case Const128:
-                *__bit_cast<v128_t*>(pointer) = entry.key.vectorValue();
+                *std::bit_cast<v128_t*>(pointer) = entry.key.vectorValue();
                 break;
             case ConstDouble:
-                *__bit_cast<double*>(pointer) = entry.key.doubleValue();
+                *std::bit_cast<double*>(pointer) = entry.key.doubleValue();
                 break;
             case ConstFloat:
-                *__bit_cast<float*>(pointer) = entry.key.floatValue();
+                *std::bit_cast<float*>(pointer) = entry.key.floatValue();
                 break;
             default:
                 RELEASE_ASSERT_NOT_REACHED();
@@ -365,7 +365,7 @@ private:
 
                 Value* tableBase = m_insertionSet.insertIntConstant(
                     valueIndex, value->origin(), pointerType(),
-                    __bit_cast<intptr_t>(dataSection));
+                    std::bit_cast<intptr_t>(dataSection));
                 Value* result = m_insertionSet.insert<MemoryValue>(
                     valueIndex, Load, value->type(), value->origin(), tableBase,
                     static_cast<Value::OffsetType>(offset));
@@ -380,10 +380,10 @@ private:
     {
         switch (value->opcode()) {
         case ConstDouble: {
-            return !Air::Arg::isValidFPImm64Form(__bit_cast<uint64_t>(value->asDouble()));
+            return !Air::Arg::isValidFPImm64Form(std::bit_cast<uint64_t>(value->asDouble()));
         }
         case ConstFloat: {
-            return !Air::Arg::isValidFPImm32Form(__bit_cast<uint32_t>(value->asFloat()));
+            return !Air::Arg::isValidFPImm32Form(std::bit_cast<uint32_t>(value->asFloat()));
         }
         case Const128: {
             return !bitEquals(value->asV128(), v128_t { });

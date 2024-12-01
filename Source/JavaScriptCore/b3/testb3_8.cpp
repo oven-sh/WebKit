@@ -1469,7 +1469,7 @@ void testConstDoubleMove()
             uint64_t upper = (value & 0b01000000U) ? 0b01111111100U : 0b10000000000U;
             uint64_t exp = upper | ((value & 0b00110000U) >> 4);
             uint64_t frac = (value & 0b1111U) << (F - 4);
-            return __bit_cast<double>((sign << 63) | (exp << F) | frac);
+            return std::bit_cast<double>((sign << 63) | (exp << F) | frac);
         };
 
         for (uint8_t i = 0; i < UINT8_MAX; ++i) {
@@ -1500,8 +1500,8 @@ void testConstDoubleMove()
         for (uint8_t i = 0; i < UINT8_MAX; ++i) {
             Procedure proc;
             BasicBlock* root = proc.addBlock();
-            root->appendNewControlValue(proc, Return, Origin(), root->appendNew<ConstDoubleValue>(proc, Origin(), __bit_cast<double>(encode(i))));
-            CHECK_EQ(__bit_cast<uint64_t>(compileAndRun<double>(proc)), encode(i));
+            root->appendNewControlValue(proc, Return, Origin(), root->appendNew<ConstDoubleValue>(proc, Origin(), std::bit_cast<double>(encode(i))));
+            CHECK_EQ(std::bit_cast<uint64_t>(compileAndRun<double>(proc)), encode(i));
         }
     }
 }
@@ -1516,7 +1516,7 @@ void testConstFloatMove()
         uint32_t upper = (value & 0b01000000U) ? 0b01111100U : 0b10000000U;
         uint32_t exp = upper | ((value & 0b00110000U) >> 4);
         uint32_t frac = (value & 0b1111U) << (F - 4);
-        return __bit_cast<float>((sign << 31) | (exp << F) | frac);
+        return std::bit_cast<float>((sign << 31) | (exp << F) | frac);
     };
 
     for (uint8_t i = 0; i < UINT8_MAX; ++i) {

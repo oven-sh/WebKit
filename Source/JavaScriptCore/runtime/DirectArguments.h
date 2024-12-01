@@ -180,7 +180,7 @@ public:
 private:
     WriteBarrier<Unknown>* storage()
     {
-        return __bit_cast<WriteBarrier<Unknown>*>(__bit_cast<char*>(this) + storageOffset());
+        return std::bit_cast<WriteBarrier<Unknown>*>(std::bit_cast<char*>(this) + storageOffset());
     }
     
     unsigned mappedArgumentsSize();

@@ -136,7 +136,7 @@ public:
 private:
     String& uninitializedValueInternal() const
     {
-        return *__bit_cast<String*>(&m_fiber);
+        return *std::bit_cast<String*>(&m_fiber);
     }
 
     String& valueInternal() const
@@ -353,15 +353,15 @@ public:
         JSString* fiber1() const
         {
 #if CPU(LITTLE_ENDIAN)
-            return __bit_cast<JSString*>(WTF::unalignedLoad<uintptr_t>(&m_fiber1Lower) & addressMask);
+            return std::bit_cast<JSString*>(WTF::unalignedLoad<uintptr_t>(&m_fiber1Lower) & addressMask);
 #else
-            return __bit_cast<JSString*>(static_cast<uintptr_t>(m_fiber1Lower) | (static_cast<uintptr_t>(m_fiber1Upper) << 32));
+            return std::bit_cast<JSString*>(static_cast<uintptr_t>(m_fiber1Lower) | (static_cast<uintptr_t>(m_fiber1Upper) << 32));
 #endif
         }
 
         void initializeFiber1(JSString* fiber)
         {
-            uintptr_t pointer = __bit_cast<uintptr_t>(fiber);
+            uintptr_t pointer = std::bit_cast<uintptr_t>(fiber);
             m_fiber1Lower = static_cast<uint32_t>(pointer);
             m_fiber1Upper = static_cast<uint16_t>(pointer >> 32);
         }
@@ -369,14 +369,14 @@ public:
         JSString* fiber2() const
         {
 #if CPU(LITTLE_ENDIAN)
-            return __bit_cast<JSString*>(WTF::unalignedLoad<uintptr_t>(&m_fiber1Upper) >> 16);
+            return std::bit_cast<JSString*>(WTF::unalignedLoad<uintptr_t>(&m_fiber1Upper) >> 16);
 #else
-            return __bit_cast<JSString*>(static_cast<uintptr_t>(m_fiber2Lower) | (static_cast<uintptr_t>(m_fiber2Upper) << 16));
+            return std::bit_cast<JSString*>(static_cast<uintptr_t>(m_fiber2Lower) | (static_cast<uintptr_t>(m_fiber2Upper) << 16));
 #endif
         }
         void initializeFiber2(JSString* fiber)
         {
-            uintptr_t pointer = __bit_cast<uintptr_t>(fiber);
+            uintptr_t pointer = std::bit_cast<uintptr_t>(fiber);
             m_fiber2Lower = static_cast<uint16_t>(pointer);
             m_fiber2Upper = static_cast<uint32_t>(pointer >> 16);
         }
@@ -668,7 +668,7 @@ private:
 
     JSString* fiber0() const
     {
-        return __bit_cast<JSString*>(m_fiber & stringMask);
+        return std::bit_cast<JSString*>(m_fiber & stringMask);
     }
 
     JSString* fiber1() const
@@ -699,7 +699,7 @@ private:
 
     void initializeFiber0(JSString* fiber)
     {
-        uintptr_t pointer = __bit_cast<uintptr_t>(fiber);
+        uintptr_t pointer = std::bit_cast<uintptr_t>(fiber);
         ASSERT(!(pointer & ~stringMask));
         m_fiber = (pointer | (m_fiber & ~stringMask));
     }
@@ -723,12 +723,12 @@ private:
 
     void initializeSubstringOffset(unsigned offset)
     {
-        m_compactFibers.initializeFiber2(__bit_cast<JSString*>(static_cast<uintptr_t>(offset)));
+        m_compactFibers.initializeFiber2(std::bit_cast<JSString*>(static_cast<uintptr_t>(offset)));
     }
 
     unsigned substringOffset() const
     {
-        return static_cast<unsigned>(__bit_cast<uintptr_t>(fiber2()));
+        return static_cast<unsigned>(std::bit_cast<uintptr_t>(fiber2()));
     }
 
     static_assert(s_maxInternalRopeLength >= 2);
@@ -764,7 +764,7 @@ ALWAYS_INLINE bool JSString::is8Bit() const
         // Otherwise, JSRopeString may be converted to JSString between the first and second accesses.
         return pointer & JSRopeString::is8BitInPointer;
     }
-    return __bit_cast<StringImpl*>(pointer)->is8Bit();
+    return std::bit_cast<StringImpl*>(pointer)->is8Bit();
 }
 
 // JSString::length is safe to be called concurrently. Concurrent threads can access length even if the main thread
@@ -775,13 +775,13 @@ ALWAYS_INLINE unsigned JSString::length() const
     uintptr_t pointer = fiberConcurrently();
     if (pointer & isRopeInPointer)
         return jsCast<const JSRopeString*>(this)->length();
-    return __bit_cast<StringImpl*>(pointer)->length();
+    return std::bit_cast<StringImpl*>(pointer)->length();
 }
 
 inline const StringImpl* JSString::getValueImpl() const
 {
     ASSERT(!isRope());
-    return __bit_cast<StringImpl*>(m_fiber);
+    return std::bit_cast<StringImpl*>(m_fiber);
 }
 
 inline const StringImpl* JSString::tryGetValueImpl() const
@@ -789,7 +789,7 @@ inline const StringImpl* JSString::tryGetValueImpl() const
     uintptr_t pointer = fiberConcurrently();
     if (pointer & isRopeInPointer)
         return nullptr;
-    return __bit_cast<StringImpl*>(pointer);
+    return std::bit_cast<StringImpl*>(pointer);
 }
 
 inline JSString* asString(JSValue value)

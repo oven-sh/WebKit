@@ -85,7 +85,7 @@ private:
 
     WriteBarrierBase<AbstractModuleRecord>& moduleRecordSlot()
     {
-        return *__bit_cast<WriteBarrierBase<AbstractModuleRecord>*>(__bit_cast<char*>(this) + offsetOfModuleRecord(symbolTable()));
+        return *std::bit_cast<WriteBarrierBase<AbstractModuleRecord>*>(std::bit_cast<char*>(this) + offsetOfModuleRecord(symbolTable()));
     }
 
     DECLARE_VISIT_CHILDREN;

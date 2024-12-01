@@ -433,14 +433,14 @@ protected:
     const uint8_t* buffer() const
     {
         ASSERT(!isEmpty());
-        return __bit_cast<const uint8_t*>(this) + m_offset;
+        return std::bit_cast<const uint8_t*>(this) + m_offset;
     }
 
     template<typename T>
     const T* buffer() const
     {
-        ASSERT(!(__bit_cast<uintptr_t>(buffer()) % alignof(T)));
-        return __bit_cast<const T*>(buffer());
+        ASSERT(!(std::bit_cast<uintptr_t>(buffer()) % alignof(T)));
+        return std::bit_cast<const T*>(buffer());
     }
 
     uint8_t* allocate(Encoder& encoder, size_t size)
@@ -460,7 +460,7 @@ protected:
     T* allocate(Encoder& encoder, unsigned size = 1)
     {
         uint8_t* result = allocate(encoder, sizeof(T) * size);
-        ASSERT(!(__bit_cast<uintptr_t>(result) % alignof(T)));
+        ASSERT(!(std::bit_cast<uintptr_t>(result) % alignof(T)));
         return new (result) T[size];
     }
 
@@ -2567,9 +2567,9 @@ bool GenericCacheEntry::decode(Decoder& decoder, std::pair<SourceCodeKey, Unlink
 
     switch (m_tag) {
     case CachedProgramCodeBlockTag:
-        return __bit_cast<const CacheEntry<UnlinkedProgramCodeBlock>*>(this)->decode(decoder, reinterpret_cast<std::pair<SourceCodeKey, UnlinkedProgramCodeBlock*>&>(result));
+        return std::bit_cast<const CacheEntry<UnlinkedProgramCodeBlock>*>(this)->decode(decoder, reinterpret_cast<std::pair<SourceCodeKey, UnlinkedProgramCodeBlock*>&>(result));
     case CachedModuleCodeBlockTag:
-        return __bit_cast<const CacheEntry<UnlinkedModuleProgramCodeBlock>*>(this)->decode(decoder, reinterpret_cast<std::pair<SourceCodeKey, UnlinkedModuleProgramCodeBlock*>&>(result));
+        return std::bit_cast<const CacheEntry<UnlinkedModuleProgramCodeBlock>*>(this)->decode(decoder, reinterpret_cast<std::pair<SourceCodeKey, UnlinkedModuleProgramCodeBlock*>&>(result));
     case CachedEvalCodeBlockTag:
         // We do not cache eval code blocks
         RELEASE_ASSERT_NOT_REACHED();
@@ -2603,9 +2603,9 @@ bool GenericCacheEntry::isStillValid(Decoder& decoder, const SourceCodeKey& key,
 
     switch (tag) {
     case CachedProgramCodeBlockTag:
-        return __bit_cast<const CacheEntry<UnlinkedProgramCodeBlock>*>(this)->isStillValid(decoder, key);
+        return std::bit_cast<const CacheEntry<UnlinkedProgramCodeBlock>*>(this)->isStillValid(decoder, key);
     case CachedModuleCodeBlockTag:
-        return __bit_cast<const CacheEntry<UnlinkedModuleProgramCodeBlock>*>(this)->isStillValid(decoder, key);
+        return std::bit_cast<const CacheEntry<UnlinkedModuleProgramCodeBlock>*>(this)->isStillValid(decoder, key);
     case CachedEvalCodeBlockTag:
         // We do not cache eval code blocks
         RELEASE_ASSERT_NOT_REACHED();
@@ -2661,7 +2661,7 @@ std::optional<SourceCodeKey> decodeSourceCodeKey(VM& vm, Ref<CachedBytecode> cac
 }
 UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<CachedBytecode> cachedBytecode)
 {
-    auto* cachedEntry = __bit_cast<const GenericCacheEntry*>(cachedBytecode->span().data());
+    auto* cachedEntry = std::bit_cast<const GenericCacheEntry*>(cachedBytecode->span().data());
     Ref decoder = Decoder::create(vm, WTFMove(cachedBytecode), &key.source().provider());
     std::pair<SourceCodeKey, UnlinkedCodeBlock*> entry;
     {
@@ -2679,7 +2679,7 @@ bool isCachedBytecodeStillValid(VM& vm, Ref<CachedBytecode> cachedBytecode, cons
     auto span = cachedBytecode->span();
     if (span.empty())
         return false;
-    auto* cachedEntry = __bit_cast<const GenericCacheEntry*>(span.data());
+    auto* cachedEntry = std::bit_cast<const GenericCacheEntry*>(span.data());
     Ref decoder = Decoder::create(vm, WTFMove(cachedBytecode));
     return cachedEntry->isStillValid(decoder.get(), key, tagFromSourceCodeType(type));
 }

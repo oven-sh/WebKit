@@ -1482,7 +1482,7 @@ public:
 
         // Try to force normalisation, and check that there's no change
         // in the bit pattern
-        if (__bit_cast<uint64_t>(value * 1.0) != __bit_cast<uint64_t>(value))
+        if (std::bit_cast<uint64_t>(value * 1.0) != std::bit_cast<uint64_t>(value))
             return shouldConsiderBlinding();
 
         value = std::abs(value);
@@ -1616,7 +1616,7 @@ public:
             if (jsValue.isDouble() && !shouldBlindDouble(jsValue.asDouble()))
                 return false;
 
-            if (!shouldBlindDouble(__bit_cast<double>(value)))
+            if (!shouldBlindDouble(std::bit_cast<double>(value)))
                 return false;
         }
         }

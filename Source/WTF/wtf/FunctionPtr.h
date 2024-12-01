@@ -160,7 +160,7 @@ public:
 
 protected:
     FunctionPtr(AlreadyTaggedValueTag, void* ptr)
-        : m_ptr(__bit_cast<Ptr>(ptr))
+        : m_ptr(std::bit_cast<Ptr>(ptr))
     {
         assertIsNullOrTaggedWith<tag>(ptr);
     }

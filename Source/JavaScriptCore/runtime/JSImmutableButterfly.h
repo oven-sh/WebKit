@@ -142,8 +142,8 @@ public:
     unsigned vectorLength() const { return m_header.vectorLength(); }
     unsigned length() const { return m_header.publicLength(); }
 
-    Butterfly* toButterfly() const { return __bit_cast<Butterfly*>(__bit_cast<char*>(this) + offsetOfData()); }
-    static JSImmutableButterfly* fromButterfly(Butterfly* butterfly) { return __bit_cast<JSImmutableButterfly*>(__bit_cast<char*>(butterfly) - offsetOfData()); }
+    Butterfly* toButterfly() const { return std::bit_cast<Butterfly*>(std::bit_cast<char*>(this) + offsetOfData()); }
+    static JSImmutableButterfly* fromButterfly(Butterfly* butterfly) { return std::bit_cast<JSImmutableButterfly*>(std::bit_cast<char*>(butterfly) - offsetOfData()); }
 
     JSValue get(unsigned index) const
     {

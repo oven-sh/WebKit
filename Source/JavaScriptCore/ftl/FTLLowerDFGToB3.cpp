@@ -5900,7 +5900,7 @@ IGNORE_CLANG_WARNINGS_END
 
         LBasicBlock lastNext = m_out.appendTo(outOfBoundsCase, continuation);
         vmCall(Void, operationReportBoundsCheckEliminationErrorAndCrash,
-            m_out.constIntPtr(__bit_cast<intptr_t>(codeBlock())),
+            m_out.constIntPtr(std::bit_cast<intptr_t>(codeBlock())),
             m_out.constInt32(m_node->index()),
             m_out.constInt32(m_node->child1()->index()),
             m_out.constInt32(m_node->child2()->index()),
@@ -7750,7 +7750,7 @@ IGNORE_CLANG_WARNINGS_END
                     m_out.notZero64(result), usually(continuation), rarely(slowCase));
             } else {
                 LValue result = m_out.loadDouble(pointer);
-                m_out.store64(m_out.constInt64(__bit_cast<int64_t>(PNaN)), pointer);
+                m_out.store64(m_out.constInt64(std::bit_cast<int64_t>(PNaN)), pointer);
                 results.append(m_out.anchor(boxDouble(result)));
                 m_out.branch(
                     m_out.doubleEqual(result, result),
@@ -8008,7 +8008,7 @@ IGNORE_CLANG_WARNINGS_END
         m_out.store64(arg1, fastObject, m_heaps.JSBoundFunction_boundArg1);
         m_out.store64(arg2, fastObject, m_heaps.JSBoundFunction_boundArg2);
         m_out.storePtr(m_out.intPtrZero, fastObject, m_heaps.JSBoundFunction_nameMayBeNull);
-        m_out.store64(m_out.constInt64(__bit_cast<uint64_t>(PNaN)), fastObject, m_heaps.JSBoundFunction_length);
+        m_out.store64(m_out.constInt64(std::bit_cast<uint64_t>(PNaN)), fastObject, m_heaps.JSBoundFunction_length);
         m_out.store32(m_out.constInt32(numberOfBoundArguments), fastObject, m_heaps.JSBoundFunction_boundArgsLength);
         m_out.store32As8(m_out.constInt32(static_cast<uint32_t>(TriState::Indeterminate)), fastObject, m_heaps.JSBoundFunction_canConstruct);
         mutatorFence();
@@ -8330,9 +8330,9 @@ IGNORE_CLANG_WARNINGS_END
                     unsure(slowCase), unsure(rareDataCase));
 
                 m_out.appendTo(rareDataCase, useCacheCase);
-                ASSERT(__bit_cast<uintptr_t>(StructureRareData::cachedPropertyNamesSentinel()) == 1);
+                ASSERT(std::bit_cast<uintptr_t>(StructureRareData::cachedPropertyNamesSentinel()) == 1);
                 LValue cached = m_out.loadPtr(previousOrRareData, abstractHeapForOwnPropertyKeysCache(op));
-                m_out.branch(m_out.belowOrEqual(cached, m_out.constIntPtr(__bit_cast<void*>(StructureRareData::cachedPropertyNamesSentinel()))), unsure(slowCase), unsure(useCacheCase));
+                m_out.branch(m_out.belowOrEqual(cached, m_out.constIntPtr(std::bit_cast<void*>(StructureRareData::cachedPropertyNamesSentinel()))), unsure(slowCase), unsure(useCacheCase));
 
                 m_out.appendTo(useCacheCase, slowButArrayBufferCase);
                 RegisteredStructure arrayStructure = m_graph.registerStructure(globalObject->arrayStructureForIndexingTypeDuringAllocation(CopyOnWriteArrayWithContiguous));
@@ -8400,8 +8400,8 @@ IGNORE_CLANG_WARNINGS_END
             m_out.appendTo(useCacheCase, slowCase);
             LValue string = m_out.loadPtr(cache, m_heaps.SpecialPropertyCache_cachedToStringTagValue);
             ValueFromBlock fastResult = m_out.anchor(string);
-            ASSERT(__bit_cast<uintptr_t>(JSCell::seenMultipleCalleeObjects()) == 1);
-            m_out.branch(m_out.belowOrEqual(string, m_out.constIntPtr(__bit_cast<void*>(JSCell::seenMultipleCalleeObjects()))), unsure(slowCase), unsure(continuation));
+            ASSERT(std::bit_cast<uintptr_t>(JSCell::seenMultipleCalleeObjects()) == 1);
+            m_out.branch(m_out.belowOrEqual(string, m_out.constIntPtr(std::bit_cast<void*>(JSCell::seenMultipleCalleeObjects()))), unsure(slowCase), unsure(continuation));
 
             m_out.appendTo(slowCase, continuation);
             VM& vm = this->vm();
@@ -10477,7 +10477,7 @@ IGNORE_CLANG_WARNINGS_END
 
             case GetByOffsetMethod::Constant:
                 if (m_node->hasDoubleResult())
-                    result = m_out.constDouble(__bit_cast<double>(JSValue::encode(method.constant()->value())));
+                    result = m_out.constDouble(std::bit_cast<double>(JSValue::encode(method.constant()->value())));
                 else
                     result = m_out.constInt64(JSValue::encode(method.constant()->value()));
                 break;
@@ -15351,13 +15351,13 @@ IGNORE_CLANG_WARNINGS_END
 
     void compileSuperSamplerBegin()
     {
-        TypedPointer counter = m_out.absolute(__bit_cast<void*>(&g_superSamplerCount));
+        TypedPointer counter = m_out.absolute(std::bit_cast<void*>(&g_superSamplerCount));
         m_out.store32(m_out.add(m_out.load32(counter), m_out.constInt32(1)), counter);
     }
 
     void compileSuperSamplerEnd()
     {
-        TypedPointer counter = m_out.absolute(__bit_cast<void*>(&g_superSamplerCount));
+        TypedPointer counter = m_out.absolute(std::bit_cast<void*>(&g_superSamplerCount));
         m_out.store32(m_out.sub(m_out.load32(counter), m_out.constInt32(1)), counter);
     }
 
@@ -17053,12 +17053,12 @@ IGNORE_CLANG_WARNINGS_END
         CallSiteIndex callSiteIndex = m_ftlState.jitCode->common.codeOrigins->addCodeOrigin(m_origin.semantic);
 
         m_out.storePtr(m_callFrame, packet, m_heaps.ShadowChicken_Packet_frame);
-        m_out.storePtr(m_out.constIntPtr(__bit_cast<intptr_t>(ShadowChicken::Packet::tailMarker())), packet, m_heaps.ShadowChicken_Packet_callee);
+        m_out.storePtr(m_out.constIntPtr(std::bit_cast<intptr_t>(ShadowChicken::Packet::tailMarker())), packet, m_heaps.ShadowChicken_Packet_callee);
         m_out.store64(thisValue, packet, m_heaps.ShadowChicken_Packet_thisValue);
         m_out.storePtr(scope, packet, m_heaps.ShadowChicken_Packet_scope);
         // We don't want the CodeBlock to have a weak pointer to itself because
         // that would cause it to always get collected.
-        m_out.storePtr(m_out.constIntPtr(__bit_cast<intptr_t>(codeBlock())), packet, m_heaps.ShadowChicken_Packet_codeBlock);
+        m_out.storePtr(m_out.constIntPtr(std::bit_cast<intptr_t>(codeBlock())), packet, m_heaps.ShadowChicken_Packet_codeBlock);
         m_out.store32(m_out.constInt32(callSiteIndex.bits()), packet, m_heaps.ShadowChicken_Packet_callSiteIndex);
     }
 
@@ -17298,7 +17298,7 @@ IGNORE_CLANG_WARNINGS_END
 
             LValue hole;
             if (hasDouble(rawIndexingType))
-                hole = m_out.constInt64(__bit_cast<int64_t>(PNaN));
+                hole = m_out.constInt64(std::bit_cast<int64_t>(PNaN));
             else
                 hole = m_out.constInt64(JSValue::encode(JSValue()));
 
@@ -17306,7 +17306,7 @@ IGNORE_CLANG_WARNINGS_END
         } else {
             LValue hole = m_out.select(
                 m_out.equal(m_out.bitAnd(indexingType, m_out.constInt32(IndexingShapeMask)), m_out.constInt32(DoubleShape)),
-                m_out.constInt64(__bit_cast<int64_t>(PNaN)),
+                m_out.constInt64(std::bit_cast<int64_t>(PNaN)),
                 m_out.constInt64(JSValue::encode(JSValue())));
             splatWords(butterfly, begin, end, hole, m_heaps.root);
         }
@@ -19282,7 +19282,7 @@ IGNORE_CLANG_WARNINGS_END
     {
         JITAllocator actualAllocator;
         if (allocator->hasIntPtr())
-            actualAllocator = JITAllocator::constant(Allocator(__bit_cast<LocalAllocator*>(allocator->asIntPtr())));
+            actualAllocator = JITAllocator::constant(Allocator(std::bit_cast<LocalAllocator*>(allocator->asIntPtr())));
         else
             actualAllocator = JITAllocator::variable();
 
@@ -19386,7 +19386,7 @@ IGNORE_CLANG_WARNINGS_END
     void storeStructure(LValue object, LValue structure)
     {
         if (structure->hasIntPtr()) {
-            storeStructure(object, __bit_cast<Structure*>(structure->asIntPtr()));
+            storeStructure(object, std::bit_cast<Structure*>(structure->asIntPtr()));
             return;
         }
 
@@ -19417,7 +19417,7 @@ IGNORE_CLANG_WARNINGS_END
             splatWords(
                 result,
                 m_out.constInt32(JSFinalObject::offsetOfInlineStorage() / 8),
-                m_out.constInt32(JSFinalObject::offsetOfInlineStorage() / 8 + __bit_cast<Structure*>(structure->asIntPtr())->inlineCapacity()),
+                m_out.constInt32(JSFinalObject::offsetOfInlineStorage() / 8 + std::bit_cast<Structure*>(structure->asIntPtr())->inlineCapacity()),
                 m_out.int64Zero,
                 m_heaps.properties.atAnyNumber());
         } else {
@@ -19458,7 +19458,7 @@ IGNORE_CLANG_WARNINGS_END
 
         // Try to do some constant-folding here.
         if (subspace->hasIntPtr() && size->hasIntPtr()) {
-            CompleteSubspace* actualSubspace = __bit_cast<CompleteSubspace*>(subspace->asIntPtr());
+            CompleteSubspace* actualSubspace = std::bit_cast<CompleteSubspace*>(subspace->asIntPtr());
             size_t actualSize = size->asIntPtr();
 
             Allocator actualAllocator = actualSubspace->allocatorFor(actualSize, AllocatorForMode::AllocatorIfExists);
@@ -19590,7 +19590,7 @@ IGNORE_CLANG_WARNINGS_END
                 unsigned publicLengthConst = static_cast<unsigned>(publicLength->asInt32());
                 if (publicLengthConst <= MAX_STORAGE_VECTOR_LENGTH) {
                     publicLengthConst = Butterfly::optimalContiguousVectorLength(
-                        __bit_cast<Structure*>(structure->asIntPtr())->outOfLineCapacity(), publicLengthConst);
+                        std::bit_cast<Structure*>(structure->asIntPtr())->outOfLineCapacity(), publicLengthConst);
                     staticVectorLengthFromPublicLength = publicLengthConst;
                 }
 
@@ -19599,7 +19599,7 @@ IGNORE_CLANG_WARNINGS_END
                 unsigned vectorLengthConst = static_cast<unsigned>(vectorLength->asInt32());
                 if (vectorLengthConst <= MAX_STORAGE_VECTOR_LENGTH) {
                     vectorLengthConst = Butterfly::optimalContiguousVectorLength(
-                        __bit_cast<Structure*>(structure->asIntPtr())->outOfLineCapacity(), vectorLengthConst);
+                        std::bit_cast<Structure*>(structure->asIntPtr())->outOfLineCapacity(), vectorLengthConst);
                     vectorLength = m_out.constInt32(vectorLengthConst);
                     staticVectorLength = vectorLengthConst;
                 }
@@ -23779,7 +23779,7 @@ IGNORE_CLANG_WARNINGS_END
             m_out.operation(ftlUnreachable),
             // We don't want the CodeBlock to have a weak pointer to itself because
             // that would cause it to always get collected.
-            m_out.constIntPtr(__bit_cast<intptr_t>(codeBlock())), m_out.constInt32(blockIndex),
+            m_out.constIntPtr(std::bit_cast<intptr_t>(codeBlock())), m_out.constInt32(blockIndex),
             m_out.constInt32(nodeIndex));
 #endif // ASSERT_ENABLED
         m_out.unreachable();

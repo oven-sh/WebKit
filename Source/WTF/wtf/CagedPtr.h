@@ -117,7 +117,7 @@ public:
 
     T* rawBits() const
     {
-        return __bit_cast<T*>(m_ptr);
+        return std::bit_cast<T*>(m_ptr);
     }
     
 protected:

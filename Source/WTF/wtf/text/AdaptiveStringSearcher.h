@@ -85,9 +85,9 @@ public:
         const SubjectChar* charPos = nullptr;
         ASSERT(maxN - index >= 0);
         if constexpr (sizeof(SubjectChar) == 2)
-            charPos = __bit_cast<const SubjectChar*>(find16(__bit_cast<const uint16_t*>(start), searchCharacter, searchLength));
+            charPos = std::bit_cast<const SubjectChar*>(find16(std::bit_cast<const uint16_t*>(start), searchCharacter, searchLength));
         else
-            charPos = __bit_cast<const SubjectChar*>(find8(__bit_cast<const uint8_t*>(start), searchCharacter, searchLength));
+            charPos = std::bit_cast<const SubjectChar*>(find8(std::bit_cast<const uint8_t*>(start), searchCharacter, searchLength));
         if (charPos == nullptr)
             return -1;
         return static_cast<int>(charPos - subjectPtr);

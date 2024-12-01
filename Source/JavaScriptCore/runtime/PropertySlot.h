@@ -268,9 +268,9 @@ public:
         ASSERT(attributes == attributesForStructure(attributes));
         
         ASSERT(getValue);
-        assertIsTaggedWith<GetValueFuncPtrTag>(__bit_cast<void*>(getValue));
+        assertIsTaggedWith<GetValueFuncPtrTag>(std::bit_cast<void*>(getValue));
         m_data.custom.getValue = getValue;
-        assertIsNullOrTaggedWith<PutValueFuncPtrTag>(__bit_cast<void*>(putValue));
+        assertIsNullOrTaggedWith<PutValueFuncPtrTag>(std::bit_cast<void*>(putValue));
         m_data.custom.putValue = putValue;
         m_attributes = attributes;
 

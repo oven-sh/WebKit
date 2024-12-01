@@ -39,21 +39,6 @@ extern "C" Slot g_config[];
 
 namespace Gigacage {
 
-// bun!
-#if defined(__cpp_lib_bit_cast) && __cpp_lib_bit_cast >= 201806L
-#define __bit_cast std::bit_cast
-#else
-template <
-    typename Dest, typename Source,
-    typename std::enable_if<sizeof(Dest) == sizeof(Source) &&
-                                std::is_trivially_copyable<Source>::value &&
-                                std::is_trivially_copyable<Dest>::value,
-                            int>::type = 0>
-inline constexpr Dest __bit_cast(const Source &source) {
-  return __builtin_bit_cast(Dest, source);
-}
-#endif
-
 struct Config {
     void* basePtr(Kind kind) const
     {
@@ -125,6 +110,6 @@ constexpr size_t alignmentOfGigacageConfig = std::alignment_of<Gigacage::Config>
 static_assert(sizeof(Gigacage::Config) + startOffsetOfGigacageConfig <= reservedBytesForGigacageConfig);
 static_assert(bmalloc::roundUpToMultipleOf<alignmentOfGigacageConfig>(startOffsetOfGigacageConfig) == startOffsetOfGigacageConfig);
 
-#define g_gigacageConfig (*__bit_cast<Gigacage::Config*>(&WebConfig::g_config[Gigacage::startSlotOfGigacageConfig]))
+#define g_gigacageConfig (*std::bit_cast<Gigacage::Config*>(&WebConfig::g_config[Gigacage::startSlotOfGigacageConfig]))
 
 } // namespace Gigacage

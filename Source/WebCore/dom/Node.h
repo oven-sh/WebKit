@@ -676,8 +676,8 @@ protected:
     inline void setElementStateFlag(ElementStateFlag, bool value = true) const;
     void clearElementStateFlag(ElementStateFlag flag) const { setElementStateFlag(flag, false); }
 
-    RareDataBitFields rareDataBitfields() const { return __bit_cast<RareDataBitFields>(m_rareDataWithBitfields.type()); }
-    void setRareDataBitfields(RareDataBitFields bitfields) { m_rareDataWithBitfields.setType(__bit_cast<uint16_t>(bitfields)); }
+    RareDataBitFields rareDataBitfields() const { return std::bit_cast<RareDataBitFields>(m_rareDataWithBitfields.type()); }
+    void setRareDataBitfields(RareDataBitFields bitfields) { m_rareDataWithBitfields.setType(std::bit_cast<uint16_t>(bitfields)); }
 
     TabIndexState tabIndexState() const { return static_cast<TabIndexState>(rareDataBitfields().tabIndexState); }
     void setTabIndexState(TabIndexState);
@@ -715,8 +715,8 @@ protected:
 
     struct StyleBitfields {
     public:
-        static StyleBitfields fromRaw(uint16_t packed) { return __bit_cast<StyleBitfields>(packed); }
-        uint16_t toRaw() const { return __bit_cast<uint16_t>(*this); }
+        static StyleBitfields fromRaw(uint16_t packed) { return std::bit_cast<StyleBitfields>(packed); }
+        uint16_t toRaw() const { return std::bit_cast<uint16_t>(*this); }
 
         Style::Validity styleValidity() const { return static_cast<Style::Validity>(m_styleValidity); }
         void setStyleValidity(Style::Validity validity) { m_styleValidity = enumToUnderlyingType(validity); }

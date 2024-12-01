@@ -37,21 +37,6 @@
 
 namespace bmalloc {
 
-// bun!
-#if defined(__cpp_lib_bit_cast) && __cpp_lib_bit_cast >= 201806L
-#define __bit_cast std::bit_cast
-#else
-template <
-    typename Dest, typename Source,
-    typename std::enable_if<sizeof(Dest) == sizeof(Source) &&
-                                std::is_trivially_copyable<Source>::value &&
-                                std::is_trivially_copyable<Dest>::value,
-                            int>::type = 0>
-inline constexpr Dest __bit_cast(const Source &source) {
-  return __builtin_bit_cast(Dest, source);
-}
-#endif
-
 template<typename T>
 class Packed {
 public:
@@ -156,22 +141,22 @@ public:
 #if BCPU(LITTLE_ENDIAN)
         memcpy(&value, m_storage.data(), storageSize);
 #else
-        memcpy(__bit_cast<uint8_t*>(&value) + (sizeof(void*) - storageSize), m_storage.data(), storageSize);
+        memcpy(std::bit_cast<uint8_t*>(&value) + (sizeof(void*) - storageSize), m_storage.data(), storageSize);
 #endif
         if (isAlignmentShiftProfitable)
             value <<= alignmentShiftSize;
-        return __bit_cast<T*>(value);
+        return std::bit_cast<T*>(value);
     }
 
     void set(T* passedValue)
     {
-        uintptr_t value = __bit_cast<uintptr_t>(passedValue);
+        uintptr_t value = std::bit_cast<uintptr_t>(passedValue);
         if (isAlignmentShiftProfitable)
             value >>= alignmentShiftSize;
 #if BCPU(LITTLE_ENDIAN)
         memcpy(m_storage.data(), &value, storageSize);
 #else
-        memcpy(m_storage.data(), __bit_cast<uint8_t*>(&value) + (sizeof(void*) - storageSize), storageSize);
+        memcpy(m_storage.data(), std::bit_cast<uint8_t*>(&value) + (sizeof(void*) - storageSize), storageSize);
 #endif
     }
 

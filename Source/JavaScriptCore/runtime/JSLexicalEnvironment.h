@@ -54,7 +54,7 @@ public:
 
     WriteBarrierBase<Unknown>* variables()
     {
-        return __bit_cast<WriteBarrierBase<Unknown>*>(__bit_cast<char*>(this) + offsetOfVariables());
+        return std::bit_cast<WriteBarrierBase<Unknown>*>(std::bit_cast<char*>(this) + offsetOfVariables());
     }
 
     bool isValidScopeOffset(ScopeOffset offset)

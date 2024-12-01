@@ -36,21 +36,6 @@
 
 namespace bmalloc {
 
-// bun!
-#if defined(__cpp_lib_bit_cast) && __cpp_lib_bit_cast >= 201806L
-#define __bit_cast std::bit_cast
-#else
-template <
-    typename Dest, typename Source,
-    typename std::enable_if<sizeof(Dest) == sizeof(Source) &&
-                                std::is_trivially_copyable<Source>::value &&
-                                std::is_trivially_copyable<Dest>::value,
-                            int>::type = 0>
-inline constexpr Dest __bit_cast(const Source &source) {
-  return __builtin_bit_cast(Dest, source);
-}
-#endif
-
 template<typename Config>
 IsoPage<Config>* IsoPage<Config>::tryCreate(IsoDirectoryBase<Config>& directory, unsigned index)
 {
@@ -214,7 +199,7 @@ FreeList IsoPage<Config>::startAllocating(const LockHolder&)
         char* cellByte = reinterpret_cast<char*>(this) + index * Config::objectSize;
         if (verbose)
             fprintf(stderr, "%p: putting %p on free list.\n", this, cellByte);
-        FreeCell* cell = __bit_cast<FreeCell*>(cellByte);
+        FreeCell* cell = std::bit_cast<FreeCell*>(cellByte);
         cell->setNext(head, secret);
         head = cell;
         bytes += Config::objectSize;

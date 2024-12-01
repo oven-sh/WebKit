@@ -203,7 +203,7 @@ WatchpointSet* InlineWatchpointSet::inflateSlow()
     ASSERT(!isCompilationThread());
     WatchpointSet* fat = &WatchpointSet::create(decodeState(m_data)).leakRef();
     WTF::storeStoreFence();
-    m_data = __bit_cast<uintptr_t>(fat);
+    m_data = std::bit_cast<uintptr_t>(fat);
     return fat;
 }
 
